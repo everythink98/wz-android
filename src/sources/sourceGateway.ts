@@ -17,6 +17,10 @@ import {
   searchLinuxDoSemantic as searchLinuxDoSemanticDirect
 } from '../localLinuxdo';
 import {
+  getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile,
+  type LinuxDoLevelProfile
+} from '../linuxdoLevel';
+import {
   getXiaoyinsiLevelProfile as getLocalXiaoyinsiLevelProfile,
   type XiaoyinsiApiCredentials,
   type XiaoyinsiLevelProfile,
@@ -164,7 +168,10 @@ type SourceGatewayDependencies = {
   currentYaohuoCredentialGeneration?: () => number;
   currentXiaoyinsiCredentialGeneration?: () => number;
   fetcher: Fetcher;
-  hasLinuxDoCredentialForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<boolean>;
+  loadLinuxDoAccessForSource: (
+    source: FeedSource,
+    options?: SourceGatewayCredentialLoadOptions
+  ) => Promise<{ cookieHeader: string; userAgent?: string } | undefined>;
   loadNodeSeekCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   loadYaohuoCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   loadXiaoyinsiCredentialsForSource?: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<XiaoyinsiApiCredentials | undefined>;
@@ -185,11 +192,13 @@ type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, ManagedReadKeys>
 type ManagedTagOptionSearchOptions = Omit<DiscourseTagOptionReadOptions, 'auth' | 'fetcher'> & { source: DiscourseSource };
 type ManagedUserOptionSearchOptions = Omit<DiscourseUserOptionReadOptions, 'auth' | 'fetcher'> & { source: DiscourseSource };
 type ManagedSemanticTopicSearchOptions = Omit<NonNullable<Parameters<typeof searchLinuxDoSemanticDirect>[1]>, 'fetcher'> & { query: string; source: 'linuxdo' };
+type ManagedLinuxDoLevelProfileOptions = Omit<Parameters<typeof getLocalLinuxDoLevelProfile>[0], 'cookieHeader' | 'fetcher' | 'userAgent'> & {
+  source: 'linuxdo';
+};
 type ManagedLevelProfileOptions = Omit<XiaoyinsiOptions, 'credentials' | 'fetcher'> & {
   source: 'xiaoyinsi';
 };
 export type SourceGatewayReadContext = {
-  isCurrent?: () => boolean;
   trace?: DiagnosticTrace;
 };
 
@@ -239,6 +248,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
   const read = async <T>(source: FeedSource, operationName: string, operation: (credentials: {
     discourseAuth?: DiscourseReadAuth;
     fetcher: Fetcher;
+    linuxDoAccess?: { cookieHeader: string; userAgent?: string };
     nodeSeekCookie?: string;
     nodeSeekUserAgent?: string;
     unavailableSources?: readonly Source[];
@@ -265,7 +275,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         || !dependencies.currentXiaoyinsiCredentialGeneration
         || dependencies.currentXiaoyinsiCredentialGeneration() === xiaoyinsiGeneration)
     );
-    const readIsCurrent = () => context?.isCurrent?.() !== false && credentialGenerationsAreCurrent();
+    const readIsCurrent = credentialGenerationsAreCurrent;
     const credentialErrors: SourceErrors = {};
     const loadCredential = async <T>(credentialSource: FeedSource, loader: () => Promise<T>) => {
       try {
@@ -284,16 +294,18 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       }
     };
     try {
+      let linuxDoAccess: { cookieHeader: string; userAgent?: string } | undefined;
       let hasLinuxDoCredential = false;
       let isLinuxDoCredentialKnown: boolean | undefined;
       let linuxDoCredentialReason: ReturnType<typeof normalizeDiagnosticReason> | undefined;
       if (source === 'linuxdo' || source === 'all') {
         isLinuxDoCredentialKnown = true;
         try {
-          hasLinuxDoCredential = await dependencies.hasLinuxDoCredentialForSource(source, {
+          linuxDoAccess = await dependencies.loadLinuxDoAccessForSource(source, {
             captureGeneration: (generation) => { linuxDoGeneration = generation; },
             diagnosticTrace: trace
           });
+          hasLinuxDoCredential = Boolean(linuxDoAccess?.cookieHeader);
         } catch (error) {
           isLinuxDoCredentialKnown = false;
           linuxDoCredentialReason = normalizeDiagnosticReason(error);
@@ -326,8 +338,11 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
           diagnosticTrace: trace
         }))
         : undefined;
-      const discourseAuth: DiscourseReadAuth | undefined = xiaoyinsiCredentials
-        ? { xiaoyinsi: xiaoyinsiCredentials }
+      const discourseAuth: DiscourseReadAuth | undefined = linuxDoAccess || xiaoyinsiCredentials
+        ? {
+            ...(linuxDoAccess ? { linuxdo: linuxDoAccess } : {}),
+            ...(xiaoyinsiCredentials ? { xiaoyinsi: xiaoyinsiCredentials } : {})
+          }
         : undefined;
       const unavailableSources = source === 'all'
         ? Object.keys(credentialErrors) as Source[]
@@ -346,6 +361,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       const result = await operation({
         discourseAuth,
         fetcher: withDiagnosticFetcher(trace, dependencies.fetcher),
+        linuxDoAccess,
         nodeSeekCookie,
         nodeSeekUserAgent: source === 'nodeseek' || source === 'all' ? dependencies.nodeSeekUserAgent() : undefined,
         ...(unavailableSources.length ? { unavailableSources } : {}),
@@ -376,7 +392,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         : null;
       if (
         hasXiaoyinsiCredentials
-        && context?.isCurrent?.() !== false
+        && credentialGenerationsAreCurrent()
         && (xiaoyinsiResultError?.kind === 'login-expired' || xiaoyinsiResultError?.kind === 'permission-denied')
       ) {
         await dependencies.refreshXiaoyinsiAuthorization?.(trace).catch(() => false);
@@ -424,7 +440,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       }
       const sourceError = sourceErrorFromUnknown(source, error);
       let credentialCleanupSuperseded = false;
-      if (source === 'yaohuo' && sourceError.kind === 'login-expired' && context?.isCurrent?.() !== false) {
+      if (source === 'yaohuo' && sourceError.kind === 'login-expired' && credentialGenerationsAreCurrent()) {
         try {
           const cleared = await dependencies.clearYaohuoLoginState({
             generation: yaohuoGeneration,
@@ -449,7 +465,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       if (
         source === 'xiaoyinsi'
         && hasXiaoyinsiCredentials
-        && context?.isCurrent?.() !== false
+        && credentialGenerationsAreCurrent()
         && (sourceError.kind === 'login-expired' || sourceError.kind === 'permission-denied')
       ) {
         await dependencies.refreshXiaoyinsiAuthorization?.(trace).catch(() => false);
@@ -518,6 +534,22 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         ...options,
         fetcher
       }), context);
+    },
+    getLinuxDoLevelProfile({ source, ...options }: ManagedLinuxDoLevelProfileOptions, context?: SourceGatewayReadContext): Promise<LinuxDoLevelProfile> {
+      return read(source, 'getLevelProfile', ({ fetcher, linuxDoAccess }) => {
+        if (!linuxDoAccess?.cookieHeader) {
+          throw Object.assign(new Error('请先完成 linux.do 登录 / 验证。'), {
+            source: 'linuxdo' as const,
+            loginRequired: true
+          });
+        }
+        return getLocalLinuxDoLevelProfile({
+          ...options,
+          cookieHeader: linuxDoAccess.cookieHeader,
+          userAgent: linuxDoAccess.userAgent,
+          fetcher
+        });
+      }, context);
     },
     getTopic(options: ManagedGetTopicOptions, context?: SourceGatewayReadContext) {
       return read(options.source, 'getTopic', (credentials) => getTopic({

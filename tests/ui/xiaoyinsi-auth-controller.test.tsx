@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { AppState, Linking } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 
@@ -49,7 +50,11 @@ jest.mock('../../src/xiaoyinsiAuth', () => {
 });
 
 import * as XiaoyinsiAuth from '../../src/xiaoyinsiAuth';
-import { useXiaoyinsiAuthController } from '../../src/app/useXiaoyinsiAuthController';
+import {
+  useXiaoyinsiAuthController,
+  type XiaoyinsiAuthorizationReadResult
+} from '../../src/app/useXiaoyinsiAuthController';
+import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
 
@@ -121,12 +126,24 @@ async function renderController(dispatchSiteSessionEvent = jest.fn(), notify = j
   } as unknown as SourceGateway;
   return {
     dispatchSiteSessionEvent,
-    hook: await renderHook(() => useXiaoyinsiAuthController({
-      dispatchSiteSessionEvent,
-      fetcher,
-      notify,
-      sourceGateway
-    })),
+    hook: await (async () => {
+      const hook = await renderHook(() => useXiaoyinsiAuthController({
+        credentialScope: emptyForumCredentialScope,
+        dispatchSiteSessionEvent,
+        fetcher,
+        notify,
+        sourceGateway
+      }), {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={appQueryClient}>{children}</QueryClientProvider>
+        )
+      });
+      await act(async () => {
+        void hook.result.current.refreshAuthorization();
+        await Promise.resolve();
+      });
+      return hook;
+    })(),
     notify,
     sourceGateway
   };
@@ -154,6 +171,7 @@ describe('小隐寺授权 controller', () => {
   });
 
   afterEach(() => {
+    appQueryClient.clear();
     setDiagnosticWriter(null);
     jest.useRealTimers();
     jest.restoreAllMocks();
@@ -280,7 +298,7 @@ describe('小隐寺授权 controller', () => {
       expect.objectContaining({ source: 'xiaoyinsi' }),
       expect.any(Object)
     );
-    expect(hook.result.current.levelProfile).toEqual(levelProfile);
+    await waitFor(() => expect(hook.result.current.levelProfile).toEqual(levelProfile));
     expect(hook.result.current.levelError).toBe('');
     expect(notify).toHaveBeenCalledWith('小隐寺等级已更新。');
     const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
@@ -288,6 +306,43 @@ describe('小隐寺授权 controller', () => {
     expect(context?.trace?.traceId).toBe(events[0]?.traceId);
     expect(events.map((event) => event.phase)).toEqual(['intent', 'guard', 'apply', 'finish']);
     expect(events.at(-1)).toMatchObject({ area: 'session', operation: 'refresh', outcome: 'success' });
+  });
+
+  it('[REG-ACCOUNT-016] returns a read-only authorization event without publishing it to workflow state', async () => {
+    Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background', writable: true });
+    mockLoadPending.mockResolvedValue(pending);
+    const { hook, dispatchSiteSessionEvent } = await renderController();
+    await waitFor(() => expect(hook.result.current.phase).toBe('waiting'));
+    mockLoadPending.mockResolvedValue(undefined);
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
+    const publishedBeforeRead = dispatchSiteSessionEvent.mock.calls.length;
+    const workflowBeforeRead = {
+      message: hook.result.current.message,
+      pending: hook.result.current.pending,
+      phase: hook.result.current.phase
+    };
+
+    let result: XiaoyinsiAuthorizationReadResult | undefined;
+    await act(async () => {
+      result = await hook.result.current.readAuthorization(undefined, {
+        signal: { aborted: false } as AbortSignal
+      });
+    });
+
+    expect(result).toMatchObject({
+      authenticated: true,
+      sessionEvent: {
+        type: 'cookie-loaded',
+        loggedIn: true,
+        currentUser: expect.objectContaining({ username: 'alice' })
+      }
+    });
+    expect(dispatchSiteSessionEvent).toHaveBeenCalledTimes(publishedBeforeRead);
+    expect({
+      message: hook.result.current.message,
+      pending: hook.result.current.pending,
+      phase: hook.result.current.phase
+    }).toEqual(workflowBeforeRead);
   });
 
   const terminalCases: Array<[

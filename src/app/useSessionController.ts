@@ -65,7 +65,7 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticTrace
 } from '../diagnostics';
-import { appQueryClient, resetForumSourceQueries } from './serverState';
+import { appQueryClient, emptyForumCredentialScope } from './serverState';
 import {
   createSiteSessionViewModels,
   createSiteSessionStates,
@@ -82,6 +82,7 @@ import {
   isCredentialWriteCurrent,
   preemptActiveBrowserFetchRequest,
   replaceCredentialWrite,
+  resetForumSourceQueries,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   rejectBrowserFetchRequest,
@@ -369,6 +370,7 @@ export function useSessionController({
   const nodeSeekCredentialGateRef = useRef(createCredentialWriteGate());
   const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
   const [siteSessionStates, setSiteSessionStates] = useState(() => createSiteSessionStates());
+  const [forumCredentialScope, setForumCredentialScope] = useState(emptyForumCredentialScope);
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
 
   const dispatchSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
@@ -377,12 +379,18 @@ export function useSessionController({
       eventType: event.type
     });
     if (siteSessionEventInvalidatesForumQueries(event)) {
-      resetForumSourceQueries(
+      const recoveryQueryKey = 'recoveryQueryKey' in event ? event.recoveryQueryKey : undefined;
+      const preservedRecovery = resetForumSourceQueries(
         event.site,
         appQueryClient,
-        event.type,
-        'recoveryKey' in event ? event.recoveryKey : undefined
+        recoveryQueryKey
       );
+      if (!preservedRecovery) {
+        setForumCredentialScope((current) => ({
+          ...current,
+          [event.site]: current[event.site] + 1
+        }));
+      }
     }
     if (event.site === 'nodeseek' && (
       event.type === 'login-expired'
@@ -1495,6 +1503,7 @@ export function useSessionController({
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,
     forumFetchWithWebViewFallback,
+    forumCredentialScope,
     hiddenBrowserFetchRequests: {
       linuxDo: linuxDoBrowserFetchRequest,
       nodeSeek: nodeSeekBrowserFetchRequest

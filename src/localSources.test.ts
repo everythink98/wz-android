@@ -143,7 +143,7 @@ describe('Android local sources', () => {
     });
 
     const feed = await getFeed({ source: 'nodeseek', fetcher });
-    const categories = await getCategories({ source: 'nodeseek', fetcher, nocache: true });
+    const categories = await getCategories({ source: 'nodeseek', fetcher });
     const topic = await getTopic({ source: 'nodeseek', id: '101', fetcher });
     const replies = await getReplies({ source: 'nodeseek', id: '101', page: 2, offset: 0, fetcher });
     const search = await searchTopics({ source: 'nodeseek', query: 'NodeSeek', fetcher });
@@ -1948,7 +1948,7 @@ describe('Android local sources', () => {
       }]
     }));
 
-    const categories = await getCategories({ source: 'linuxdo', fetcher, nocache: true });
+    const categories = await getCategories({ source: 'linuxdo', fetcher });
 
     expect(categories.items).toHaveLength(2);
     expect(categories.items.find((category) => category.id === '4')).toEqual({
@@ -3181,23 +3181,6 @@ describe('Android local sources', () => {
     });
 
     expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=replyTime', expect.any(Object));
-  });
-
-  it('sends no-cache headers when refreshing the NodeSeek Android feed', async () => {
-    const fetcher = vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`));
-
-    await getFeed({
-      source: 'nodeseek',
-      fetcher,
-      nocache: true
-    });
-
-    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=postTime', expect.objectContaining({
-      headers: expect.objectContaining({
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache'
-      })
-    }));
   });
 
   it('reports NodeSeek Cloudflare HTML as a verification requirement', async () => {

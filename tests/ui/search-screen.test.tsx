@@ -9,6 +9,7 @@ import { SearchScreen } from '../../src/screens/SearchScreen';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicListItemStateIndex } from '../../src/topicListItemState';
 import type { Category, FeedSource, Source, Topic } from '../../src/types';
+import { emptyForumCredentialScope } from '../../src/app/serverState';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 
@@ -204,6 +205,7 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
     <SearchScreen
       busy={false}
       categories={categories}
+      credentialScope={emptyForumCredentialScope}
       query={query}
       recentSearches={[]}
       topicStateIndex={topicStateIndex}
@@ -254,6 +256,7 @@ function RecentSearchHarness({
     <SearchScreen
       busy={false}
       categories={categories}
+      credentialScope={emptyForumCredentialScope}
       query={query}
       recentSearches={['codex', 'react native']}
       topicStateIndex={topicStateIndex}
@@ -287,6 +290,7 @@ function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof 
   const props: React.ComponentProps<typeof SearchScreen> = {
     busy: false,
     categories,
+    credentialScope: emptyForumCredentialScope,
     query: 'codex',
     recentSearches: [],
     topicStateIndex,
@@ -1045,6 +1049,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择标签'));
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
+    await waitFor(() => expect(view.getByLabelText('标签 快问快答')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 快问快答'));
     await fireEvent.press(view.getByText('完成'));
     await fireEvent.press(view.getByLabelText('匹配全部标签'));

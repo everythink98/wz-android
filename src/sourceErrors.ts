@@ -1,4 +1,5 @@
 import type { FeedSource, SourceErrorInfo, SourceErrorKind, SourceErrors } from './types';
+import { isCanceledRequest } from './appUtils';
 
 type LegacySourceErrorInfo = string | (Omit<SourceErrorInfo, 'kind'> & { kind?: SourceErrorKind });
 
@@ -61,6 +62,18 @@ export function sourceErrorFromUnknown(source: FeedSource, error: unknown): Sour
     ...(errorFlag(error, 'loginRequired') ? { loginRequired: true } : {}),
     ...(kind === 'verification-required' ? { verificationRequired: true } : {})
   };
+}
+
+export function sourceReadRecoveryOutcome(
+  source: FeedSource,
+  error: unknown
+): 'failed' | 'verification-required' | 'stale' {
+  if (isCanceledRequest(error)) {
+    return 'stale';
+  }
+  return sourceErrorFromUnknown(source, error).kind === 'verification-required'
+    ? 'verification-required'
+    : 'failed';
 }
 
 export function normalizeSourceErrorInfo(error?: SourceErrorInfo | LegacySourceErrorInfo): SourceErrorInfo | undefined {

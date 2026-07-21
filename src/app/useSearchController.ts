@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isCancelledError } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueries, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { aggregateSearchSources } from '../sourceCatalog';
-import {
-  mergeTopics,
-  type SearchSort
-} from '../feedLogic';
+import { aggregateSearchSources, type DiscourseSource } from '../sourceCatalog';
+import { mergeTopics, type SearchSort } from '../feedLogic';
 import {
   buildDiscourseSearchQuery,
   DEFAULT_SEARCH_FILTERS,
@@ -13,77 +10,103 @@ import {
   type SourceSearchFilter
 } from '../searchFilters';
 import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '../searchHistory';
-import type { SourceGateway, SourceGatewayReadContext } from '../sources/sourceGateway';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason,
-  type DiagnosticFields,
-  type DiagnosticOutcome,
-  type DiagnosticReason
-} from '../diagnostics';
-import { isCanceledRequest, sourceLabel } from '../appUtils';
+import type { SourceGateway } from '../sources/sourceGateway';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, normalizeDiagnosticReason } from '../diagnostics';
+import { sourceLabel } from '../appUtils';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import { sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
+import {
+  sourceErrorFromUnknown,
+  sourceReadRecoveryOutcome,
+  yaohuoErrorRequiresLoginPanel
+} from '../sourceErrors';
 import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
-import type { Category, FeedSource, Source, SourceErrorInfo, Topic } from '../types';
-import type { DiscourseSource } from '../sourceCatalog';
+import type { Category, FeedSource, Source } from '../types';
 import type { SearchGroup } from '../searchListItems';
-import { useCommitRefValue } from './useCommittedRef';
 import {
   createSearchHistoryWriteQueue,
-  createNodeSeekRetrySearchOptions,
-  createSearchMoreRequestSnapshot,
   enqueueSearchHistoryWrite,
   groupFromRemoteSearchResult,
+  hasNextSearchPage,
   linuxDoAiFailureState,
   mergeLinuxDoAiTopics,
   remoteSearchSort,
-  remoteSearchActionForSource,
   snapshotSearchFilters,
   type LinuxDoAiSearchState,
-  type RemoteSearchAction,
   type RemoteSearchSourceResult,
   type SearchRunOptions
 } from '../searchControllerResults';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import {
-  appQueryClient,
+  emptyForumCredentialScope,
   forumQueryKeys,
-  subscribeForumSourceResets
+  type ForumCredentialScope
 } from './serverState';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
-type SearchRunInput = Source | (Partial<SearchRunOptions> & { suppressLinuxDoVerification?: boolean });
+type SearchRunInput = Source | Partial<SearchRunOptions>;
+type SubmittedSearch = {
+  filters: SearchFilterState;
+  query: string;
+  source: FeedSource;
+};
 
-function mergedSearchGroupItemCount(groups: SearchGroup[]) {
-  const merged = groups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
-  return merged.length;
+class SearchPageError extends Error {
+  constructor(readonly page: number, readonly result: RemoteSearchSourceResult) {
+    super(groupFromRemoteSearchResult(result).error || '搜索失败');
+  }
 }
 
 function remoteSearchResult(group: SearchGroup): RemoteSearchSourceResult {
   return group.error ? { kind: 'failed', group } : { kind: 'success', group };
 }
 
-function diagnosticReasonForSearchError(error?: SourceErrorInfo): DiagnosticReason {
-  if (error?.kind === 'login-required' || error?.kind === 'login-expired') return 'login_required';
-  if (error?.kind === 'verification-required') return 'verification_required';
-  if (error?.kind === 'permission-denied') return 'permission_denied';
-  return error ? normalizeDiagnosticReason(error.message) : 'unknown';
+function searchGroupForUnexpectedError(source: Source, error: unknown, sessionViewModels: SiteSessionViewModels): SearchGroup {
+  const sourceError = sourceErrorFromUnknown(source, error);
+  return {
+    source,
+    label: sourceLabel(source),
+    items: [],
+    error: sourceError.message,
+    errorKind: sourceError.kind,
+    authNotice: authNoticeForSourceError(sourceError) || authNoticeForSource(source, sessionViewModels, 'search') || undefined,
+    hasMore: false,
+    nextPage: null
+  };
 }
 
-function isCanceledSearchQuery(error: unknown) {
-  return isCancelledError(error) || isCanceledRequest(error);
-}
-
-export function hasNextSearchPage(hasMore: boolean | undefined, nextPage: number | null | undefined, requestedPage: number) {
-  return Boolean(hasMore && nextPage && nextPage !== requestedPage);
+function mergeSearchPages(pages: RemoteSearchSourceResult[], error: unknown): SearchGroup | null {
+  if (!pages.length) {
+    return null;
+  }
+  const first = groupFromRemoteSearchResult(pages[0]);
+  const merged = pages.reduce((current, page) => {
+    const group = groupFromRemoteSearchResult(page);
+    return {
+      ...group,
+      items: mergeTopics(current.items, group.items),
+      authNotice: group.authNotice || current.authNotice
+    };
+  }, first);
+  if (error instanceof SearchPageError) {
+    const failed = groupFromRemoteSearchResult(error.result);
+    return {
+      ...merged,
+      error: failed.error,
+      errorKind: failed.errorKind,
+      authNotice: failed.authNotice || merged.authNotice,
+      hasMore: error.page > 1 ? true : merged.hasMore,
+      nextPage: error.page > 1 ? error.page : merged.nextPage,
+      loading: false,
+      loadingMore: false
+    };
+  }
+  return merged;
 }
 
 export function useSearchController({
   categories,
+  credentialScope = emptyForumCredentialScope,
   notify,
   onNodeSeekSearchVerificationRequired,
   sessionViewModels,
@@ -93,6 +116,7 @@ export function useSearchController({
   sourceGateway
 }: {
   categories: Category[];
+  credentialScope?: ForumCredentialScope;
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, retry: () => void) => void;
   sessionViewModels: SiteSessionViewModels;
@@ -101,86 +125,58 @@ export function useSearchController({
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
 }) {
-  const searchRecoveryGenerationRef = useRef(0);
-  const activeSearchRecoveryRef = useRef<{
-    key: string;
-    lane: 'root' | 'more';
-    source: Source;
-  } | null>(null);
-  const linuxDoAiGenerationRef = useRef(0);
-  const linuxDoAiQueryRef = useRef('');
-  const searchGroupsRef = useRef<SearchGroup[]>([]);
-  const searchQueryRef = useRef('');
-  const submittedSearchQueryRef = useRef('');
-  const submittedSearchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
-  const submittedSearchSourceRef = useRef<FeedSource>('all');
-  const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
-  const runSearchRef = useRef<((options?: SearchRunInput) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
-  const loadMoreSearchSourceRef = useRef<((source: Source, page: number, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+  const queryClient = useQueryClient();
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
   const recentSearchHistoryHydratedRef = useRef(false);
   const recentSearchHistoryReadFailedRef = useRef(false);
   const pendingRecentSearchRemovalKeysRef = useRef(new Set<string>());
-  const [searchBusy, setSearchBusy] = useState(false);
+  const handledSearchActionsRef = useRef(new WeakSet<RemoteSearchSourceResult>());
   const [searchQuery, setSearchQuery] = useState('');
-  const [submittedSearchQuery, setSubmittedSearchQuery] = useState('');
-  const [searchSource, setSearchSource] = useState<FeedSource>('all');
+  const [searchSource, setSearchSourceState] = useState<FeedSource>('all');
   const [searchFilters, setSearchFilters] = useState<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
-  const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
-  const [linuxDoAiItems, setLinuxDoAiItems] = useState<Topic[]>([]);
-  const [linuxDoAiState, setLinuxDoAiState] = useState<LinuxDoAiSearchState>({ status: 'idle', enabled: false, count: 0 });
+  const [submittedSearch, setSubmittedSearch] = useState<SubmittedSearch | null>(null);
+  const [linuxDoAiEnabled, setLinuxDoAiEnabled] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [recentSearchesHydrated, setRecentSearchesHydrated] = useState(false);
   const [recentSearchHistoryReadAttempt, setRecentSearchHistoryReadAttempt] = useState(0);
-  const searchSessionNotices = useMemo(() => (
-    searchSessionNoticeItems(searchSource, sessionViewModels)
-  ), [searchSource, sessionViewModels]);
+  const searchSessionNotices = useMemo(
+    () => searchSessionNoticeItems(searchSource, sessionViewModels),
+    [searchSource, sessionViewModels]
+  );
 
   useEffect(() => {
     let active = true;
     recentSearchHistoryReadFailedRef.current = false;
     AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
       .then((raw) => {
-        if (active) {
-          const storedHistory = mergeLoadedSearchHistory([], raw);
-          const removedKeys = new Set(pendingRecentSearchRemovalKeysRef.current);
-          recentSearchHistoryHydratedRef.current = true;
-          pendingRecentSearchRemovalKeysRef.current.clear();
-          lastSavedRecentSearchesRef.current = storedHistory;
-          setRecentSearches((current) => {
-            const merged = mergeLoadedSearchHistory(current, raw)
-              .filter((item) => !removedKeys.has(item.toLowerCase()));
-            return sameSearchHistory(current, merged) ? current : merged;
-          });
-          setRecentSearchesHydrated(true);
-        }
+        if (!active) return;
+        const storedHistory = mergeLoadedSearchHistory([], raw);
+        const removedKeys = new Set(pendingRecentSearchRemovalKeysRef.current);
+        recentSearchHistoryHydratedRef.current = true;
+        pendingRecentSearchRemovalKeysRef.current.clear();
+        lastSavedRecentSearchesRef.current = storedHistory;
+        setRecentSearches((current) => {
+          const merged = mergeLoadedSearchHistory(current, raw)
+            .filter((item) => !removedKeys.has(item.toLowerCase()));
+          return sameSearchHistory(current, merged) ? current : merged;
+        });
+        setRecentSearchesHydrated(true);
       })
       .catch(() => {
-        if (active) {
-          recentSearchHistoryReadFailedRef.current = true;
-        }
+        if (active) recentSearchHistoryReadFailedRef.current = true;
       });
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [recentSearchHistoryReadAttempt]);
 
   useEffect(() => {
-    if (!recentSearchesHydrated) {
+    if (!recentSearchesHydrated || sameSearchHistory(lastSavedRecentSearchesRef.current, recentSearches)) {
       return;
     }
-    if (sameSearchHistory(lastSavedRecentSearchesRef.current, recentSearches)) {
-      return;
-    }
-    const nextRecentSearches = recentSearches;
+    const next = recentSearches;
     void enqueueSearchHistoryWrite(recentSearchWriteQueueRef.current, () => (
-      AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(nextRecentSearches))
-    ))
-      .then(() => {
-        lastSavedRecentSearchesRef.current = nextRecentSearches;
-      })
-      .catch(() => undefined);
+      AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next))
+    )).then(() => { lastSavedRecentSearchesRef.current = next; }).catch(() => undefined);
   }, [recentSearches, recentSearchesHydrated]);
 
   const retryRecentSearchHistoryRead = useCallback(() => {
@@ -192,17 +188,13 @@ export function useSearchController({
 
   const addRecentSearch = useCallback((query: string) => {
     const clean = query.trim();
-    if (!clean) {
-      return;
-    }
+    if (!clean) return;
     pendingRecentSearchRemovalKeysRef.current.delete(clean.toLowerCase());
     retryRecentSearchHistoryRead();
-    setRecentSearches((current) => {
-      return normalizeSearchHistory([
-        clean,
-        ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())
-      ]);
-    });
+    setRecentSearches((current) => normalizeSearchHistory([
+      clean,
+      ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())
+    ]));
   }, [retryRecentSearchHistoryRead]);
 
   const removeRecentSearch = useCallback((query: string) => {
@@ -210,187 +202,32 @@ export function useSearchController({
       pendingRecentSearchRemovalKeysRef.current.add(query.toLowerCase());
     }
     retryRecentSearchHistoryRead();
-    setRecentSearches((current) => {
-      const next = current.filter((item) => item !== query);
-      return next;
-    });
+    setRecentSearches((current) => current.filter((item) => item !== query));
   }, [retryRecentSearchHistoryRead]);
-
-  const clearLinuxDoAiSearch = useCallback(() => {
-    linuxDoAiGenerationRef.current += 1;
-    void appQueryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'semantic-search'
-    });
-    linuxDoAiQueryRef.current = '';
-    setLinuxDoAiItems([]);
-    setLinuxDoAiState({ status: 'idle', enabled: false, count: 0 });
-  }, []);
-
-  const runLinuxDoAiSearch = useCallback((fullQuery: string) => {
-    const requestGeneration = ++linuxDoAiGenerationRef.current;
-    const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
-    let traceFinished = false;
-    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
-      if (!traceFinished) {
-        traceFinished = true;
-        finishDiagnosticTrace(trace, outcome, fields);
-      }
-    };
-    let querySignal: AbortSignal | undefined;
-    const isCurrent = () => requestGeneration === linuxDoAiGenerationRef.current && !querySignal?.aborted;
-    const queryKey = forumQueryKeys.semanticSearch('linuxdo', fullQuery);
-    linuxDoAiQueryRef.current = fullQuery;
-    setLinuxDoAiItems([]);
-    setLinuxDoAiState({ status: 'loading', enabled: false, count: 0 });
-    markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started' });
-    void (async () => {
-      try {
-        const result = await appQueryClient.fetchQuery({
-          queryKey,
-          queryFn: async ({ signal }) => {
-            querySignal = signal;
-            const result = await sourceGateway.searchSemanticTopics({
-              source: 'linuxdo',
-              query: fullQuery,
-              signal
-            }, { trace, isCurrent: () => !signal.aborted });
-            if (!result) {
-              throw new Error('AI 搜索未返回结果');
-            }
-            return result;
-          }
-        });
-        if (!isCurrent()) {
-          finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
-            source: 'linuxdo',
-            reason: querySignal?.aborted ? 'canceled' : 'superseded'
-          });
-          return;
-        }
-        markDiagnosticStage(trace, 'apply', { source: 'linuxdo', itemCount: result.items.length });
-        setLinuxDoAiItems(result.items);
-        setLinuxDoAiState(result.items.length
-          ? { status: 'ready', enabled: false, count: result.items.length }
-          : { status: 'empty', enabled: false, count: 0, message: '未找到 AI 结果' });
-        finishTrace('success', { source: 'linuxdo', itemCount: result.items.length });
-      } catch (error) {
-        if (isCanceledSearchQuery(error)) {
-          finishTrace('canceled', { source: 'linuxdo', reason: 'canceled' });
-          return;
-        }
-        if (requestGeneration !== linuxDoAiGenerationRef.current) {
-          finishTrace('stale', { source: 'linuxdo', reason: 'superseded' });
-          return;
-        }
-        const sourceError = sourceErrorFromUnknown('linuxdo', error);
-        const reason = diagnosticReasonForSearchError(sourceError);
-        setLinuxDoAiItems([]);
-        setLinuxDoAiState(linuxDoAiFailureState(error));
-        finishTrace(
-          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
-          { source: 'linuxdo', reason }
-        );
-      } finally {
-        if (!traceFinished) {
-          finishTrace(isCurrent() ? 'failure' : querySignal?.aborted ? 'canceled' : 'stale', {
-            source: 'linuxdo',
-            reason: isCurrent() ? 'unknown' : querySignal?.aborted ? 'canceled' : 'superseded'
-          });
-        }
-      }
-    })();
-  }, [sourceGateway]);
-
-  useEffect(() => subscribeForumSourceResets(({ source, preserveRecoveryKey }) => {
-    const activeRecovery = activeSearchRecoveryRef.current;
-    const preservedRecovery = activeRecovery
-      && activeRecovery.key === preserveRecoveryKey
-      && activeRecovery.source === source
-      ? activeRecovery
-      : null;
-    if (submittedSearchSourceRef.current === source && !preservedRecovery) {
-      searchRecoveryGenerationRef.current += 1;
-      setSearchBusy(false);
-    }
-    if (!preservedRecovery) {
-      activeSearchRecoveryRef.current = null;
-    }
-    const nextGroups = preservedRecovery
-      ? searchGroupsRef.current.map((group) => group.source === source
-        ? preservedRecovery.lane === 'more'
-          ? { ...group, loading: false, loadingMore: false, error: undefined, errorKind: undefined }
-          : { ...group, items: [], loading: false, loadingMore: false, error: undefined, errorKind: undefined, hasMore: false, nextPage: null }
-        : group)
-      : searchGroupsRef.current.filter((group) => group.source !== source);
-    searchGroupsRef.current = nextGroups;
-    setSearchGroups(nextGroups);
-    if (source === 'linuxdo') {
-      clearLinuxDoAiSearch();
-    }
-  }), [clearLinuxDoAiSearch]);
-
-  const clearSearchResults = useCallback(() => {
-    searchRecoveryGenerationRef.current += 1;
-    void appQueryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'search'
-    });
-    setSearchGroups([]);
-    searchGroupsRef.current = [];
-    setSearchBusy(false);
-    clearLinuxDoAiSearch();
-  }, [clearLinuxDoAiSearch]);
-
-  useEffect(() => {
-    const cleanQuery = searchQuery.trim();
-    if (cleanQuery && cleanQuery === submittedSearchQueryRef.current) {
-      return;
-    }
-    clearSearchResults();
-    submittedSearchQueryRef.current = '';
-    setSubmittedSearchQuery('');
-  }, [clearSearchResults, searchQuery]);
-
-  useEffect(() => {
-    clearSearchResults();
-  }, [clearSearchResults, searchSource]);
-
-  useEffect(() => {
-    if (!sessionViewModels.linuxdo.isLoggedIn) {
-      clearLinuxDoAiSearch();
-    }
-  }, [clearLinuxDoAiSearch, sessionViewModels.linuxdo.isLoggedIn]);
-
-  const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => void) => {
-    if (onNodeSeekSearchVerificationRequired) {
-      onNodeSeekSearchVerificationRequired(message, retry);
-      return;
-    }
-    showNodeSeekVerification(message);
-  }, [onNodeSeekSearchVerificationRequired, showNodeSeekVerification]);
 
   const runRemoteSearchSource = useCallback(async (
     source: Source,
     query: string,
     page: number,
     signal: AbortSignal,
-    sort: SearchSort = 'relevance',
-    filter?: SourceSearchFilter,
-    options?: SourceGatewayReadContext
+    sort: SearchSort,
+    filter?: SourceSearchFilter
   ): Promise<RemoteSearchSourceResult> => {
+    const trace = beginDiagnosticTrace('search', page > 1 ? 'load-more' : 'run', { source, page });
     const sourceStatusNotice = authNoticeForSource(source, sessionViewModels, 'search') || undefined;
     try {
+      markDiagnosticStage(trace, 'guard', { source, page, state: page > 1 ? 'load-more' : 'started' });
       const activeFilter = filter?.source === source ? filter : undefined;
-      const searchLimit = source === 'linuxdo' ? 50 : 30;
       const data = await sourceGateway.searchTopics({
         query,
         source,
         page,
-        limit: searchLimit,
+        limit: source === 'linuxdo' ? 50 : 30,
         categories,
         sort: source === 'v2ex' ? sort : 'relevance',
         filter: activeFilter,
         signal
-      }, options);
+      }, { trace });
       const parserSummary = sourceDiagnosticSummary(data);
       const sourceError = data.errors?.[source] || (parserSummary?.isParseEmpty ? {
         kind: 'ordinary' as const,
@@ -398,622 +235,363 @@ export function useSearchController({
         reason: 'parse_empty',
         retryable: true
       } : undefined);
-      const sourceErrorText = sourceError?.message || undefined;
-      const group = {
+      const group: SearchGroup = {
         source,
         label: sourceLabel(source),
         items: data.items,
         authNotice: sourceError ? authNoticeForSourceError(sourceError) || undefined : sourceStatusNotice,
-        error: sourceErrorText,
+        error: sourceError?.message,
         errorKind: sourceError?.kind,
-        hasMore: sourceErrorText ? false : Boolean(data.hasMore && data.nextPage),
-        nextPage: sourceErrorText ? null : data.nextPage ?? null
+        hasMore: !sourceError && hasNextSearchPage(data.hasMore, data.nextPage, page),
+        nextPage: !sourceError && hasNextSearchPage(data.hasMore, data.nextPage, page) ? data.nextPage ?? null : null
       };
-      if (source === 'nodeseek' && group.errorKind === 'verification-required' && group.error) {
-        return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message: group.error } };
-      }
-      if (source === 'linuxdo' && group.errorKind === 'verification-required' && group.error) {
-        return { kind: 'action-required', group, action: { type: 'linuxdo-verification', message: group.error } };
-      }
-      return remoteSearchResult(group);
+      const result: RemoteSearchSourceResult = sourceError?.kind === 'verification-required' && (source === 'nodeseek' || source === 'linuxdo')
+        ? { kind: 'action-required', group, action: { type: `${source === 'nodeseek' ? 'nodeseek' : 'linuxdo'}-verification`, message: sourceError.message } }
+        : remoteSearchResult(group);
+      finishDiagnosticTrace(trace, sourceError ? 'failure' : 'success', {
+        source,
+        itemCount: data.items.length,
+        ...(sourceError ? { reason: normalizeDiagnosticReason(sourceError.message) } : {})
+      });
+      return result;
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (signal.aborted) {
+        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
         throw error;
       }
       const sourceError = sourceErrorFromUnknown(source, error);
-      const message = sourceError.message;
+      const group: SearchGroup = {
+        source,
+        label: sourceLabel(source),
+        items: [],
+        error: sourceError.message,
+        errorKind: sourceError.kind,
+        authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice,
+        hasMore: false,
+        nextPage: null
+      };
+      finishDiagnosticTrace(trace,
+        sourceError.kind === 'verification-required' || sourceError.kind === 'login-required' || sourceError.kind === 'permission-denied'
+          ? 'blocked'
+          : 'failure',
+        { source, reason: normalizeDiagnosticReason(error) }
+      );
       if (source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
-        const group = { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice, hasMore: false, nextPage: null };
-        return { kind: 'action-required', group, action: { type: 'yaohuo-login', message } };
+        return { kind: 'action-required', group, action: { type: 'yaohuo-login', message: sourceError.message } };
       }
       if (source === 'nodeseek' && sourceError.kind === 'verification-required') {
-        const group = { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice, hasMore: false, nextPage: null };
-        return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message } };
+        return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message: sourceError.message } };
       }
       if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
-        const group = { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice, hasMore: false, nextPage: null };
-        return { kind: 'action-required', group, action: { type: 'linuxdo-verification', message } };
+        return { kind: 'action-required', group, action: { type: 'linuxdo-verification', message: sourceError.message } };
       }
-      return { kind: 'failed', group: { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || undefined, hasMore: false, nextPage: null } };
+      return { kind: 'failed', group };
     }
   }, [categories, sessionViewModels, sourceGateway]);
 
-  const handleRemoteSearchAction = useCallback((action: RemoteSearchAction, retryNodeSeek = () => { void runSearchRef.current?.('nodeseek'); }) => {
-    if (action.type === 'yaohuo-login') {
-      showYaohuoLogin(action.message);
+  const submittedSource = submittedSearch?.source === 'all' ? 'v2ex' : submittedSearch?.source || 'v2ex';
+  const submittedFilter = submittedSearch ? submittedSearch.filters[submittedSource] : undefined;
+  const submittedSort = submittedSearch ? remoteSearchSort(submittedSearch.source, submittedSearch.filters) : 'relevance';
+  const singleSearchKey = forumQueryKeys.search({
+    source: submittedSource,
+    query: submittedSearch?.query || '',
+    sort: submittedSort,
+    filter: submittedFilter,
+    scope: credentialScope
+  });
+
+  const aggregateKeys = aggregateSearchSources.map((source) => forumQueryKeys.search({
+    source,
+    query: submittedSearch?.query || '',
+    sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
+    scope: credentialScope
+  }));
+  const aggregateQueries = useQueries({
+    queries: aggregateSearchSources.map((source, index) => ({
+      queryKey: aggregateKeys[index],
+      enabled: Boolean(submittedSearch?.query && submittedSearch.source === 'all'),
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const result = await runRemoteSearchSource(
+          source,
+          submittedSearch?.query || '',
+          1,
+          signal,
+          submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance'
+        );
+        const existing = queryClient.getQueryData<RemoteSearchSourceResult>(aggregateKeys[index]);
+        if (existing?.kind === 'success' && result.kind !== 'success') {
+          throw new SearchPageError(1, result);
+        }
+        return result;
+      }
+    }))
+  });
+
+  const singleSearchQuery = useInfiniteQuery({
+    queryKey: singleSearchKey,
+    enabled: Boolean(submittedSearch?.query && submittedSearch.source !== 'all'),
+    initialPageParam: 1,
+    queryFn: async ({ pageParam, signal }) => {
+      const result = await runRemoteSearchSource(
+        submittedSource,
+        submittedSearch?.query || '',
+        pageParam,
+        signal,
+        submittedSort,
+        submittedFilter
+      );
+      const existing = queryClient.getQueryData<InfiniteData<RemoteSearchSourceResult, number>>(singleSearchKey);
+      const hasTrustedData = existing?.pages.some((page) => page.kind === 'success');
+      if (result.kind !== 'success' && (pageParam > 1 || hasTrustedData)) {
+        throw new SearchPageError(pageParam, result);
+      }
+      return result;
+    },
+    getNextPageParam: (lastPage, _pages, lastPageParam) => {
+      const group = groupFromRemoteSearchResult(lastPage);
+      return hasNextSearchPage(group.hasMore, group.nextPage, lastPageParam) ? group.nextPage ?? undefined : undefined;
+    }
+  });
+
+  const aggregateGroups = useMemo(() => aggregateSearchSources.map((source, index): SearchGroup => {
+    const query = aggregateQueries[index];
+    if (query.data) {
+      return { ...groupFromRemoteSearchResult(query.data), loading: query.isFetching };
+    }
+    if (query.error instanceof SearchPageError) {
+      return { ...groupFromRemoteSearchResult(query.error.result), loading: false };
+    }
+    if (query.error) {
+      return searchGroupForUnexpectedError(source, query.error, sessionViewModels);
+    }
+    return {
+      source,
+      label: sourceLabel(source),
+      items: [],
+      authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined,
+      loading: Boolean(submittedSearch?.query && submittedSearch.source === 'all')
+    };
+  }), [aggregateQueries, sessionViewModels, submittedSearch?.query, submittedSearch?.source]);
+  const singleGroup = useMemo(() => {
+    const merged = mergeSearchPages(singleSearchQuery.data?.pages || [], singleSearchQuery.error);
+    if (merged) {
+      return {
+        ...merged,
+        loading: singleSearchQuery.isPending,
+        loadingMore: singleSearchQuery.isFetchingNextPage
+      };
+    }
+    if (singleSearchQuery.error instanceof SearchPageError) {
+      return groupFromRemoteSearchResult(singleSearchQuery.error.result);
+    }
+    if (singleSearchQuery.error) {
+      return searchGroupForUnexpectedError(submittedSource, singleSearchQuery.error, sessionViewModels);
+    }
+    return null;
+  }, [singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.isFetchingNextPage, singleSearchQuery.isPending, sessionViewModels, submittedSource]);
+  const baseSearchGroups = submittedSearch?.source === 'all'
+    ? aggregateGroups
+    : singleGroup ? [singleGroup] : [];
+
+  const linuxDoAiVisible = Boolean(
+    submittedSearch?.query
+    && submittedSearch.source === 'linuxdo'
+    && submittedSearch.filters.linuxdo.order === 'relevance'
+    && sessionViewModels.linuxdo.isLoggedIn
+  );
+  const linuxDoAiFullQuery = linuxDoAiVisible && submittedSearch
+    ? buildDiscourseSearchQuery(submittedSearch.query, submittedSearch.filters.linuxdo, categories)
+    : '';
+  const linuxDoAiQuery = useQuery({
+    queryKey: forumQueryKeys.semanticSearch(linuxDoAiFullQuery, credentialScope),
+    enabled: Boolean(linuxDoAiFullQuery),
+    queryFn: async ({ signal }) => {
+      const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
+      try {
+        markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started' });
+        const result = await sourceGateway.searchSemanticTopics({ source: 'linuxdo', query: linuxDoAiFullQuery, signal }, { trace });
+        if (!result) throw new Error('AI 搜索未返回结果');
+        if (signal.aborted) {
+          finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+          return result;
+        }
+        markDiagnosticStage(trace, 'apply', { source: 'linuxdo', itemCount: result.items.length });
+        finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: result.items.length });
+        return result;
+      } catch (error) {
+        finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
+        throw error;
+      }
+    }
+  });
+  const linuxDoAiState = useMemo<LinuxDoAiSearchState>(() => {
+    if (!linuxDoAiVisible) return { status: 'idle', enabled: false, count: 0 };
+    if (linuxDoAiQuery.isPending) return { status: 'loading', enabled: false, count: 0 };
+    if (linuxDoAiQuery.isError) return linuxDoAiFailureState(linuxDoAiQuery.error);
+    const count = linuxDoAiQuery.data?.items.length || 0;
+    return count
+      ? { status: 'ready', enabled: linuxDoAiEnabled, count }
+      : { status: 'empty', enabled: false, count: 0, message: '未找到 AI 结果' };
+  }, [linuxDoAiEnabled, linuxDoAiQuery.data?.items.length, linuxDoAiQuery.error, linuxDoAiQuery.isError, linuxDoAiQuery.isPending, linuxDoAiVisible]);
+  const searchGroups = useMemo(() => linuxDoAiState.enabled
+    ? baseSearchGroups.map((group) => group.source === 'linuxdo'
+      ? { ...group, items: mergeLinuxDoAiTopics(group.items, linuxDoAiQuery.data?.items || [], true) }
+      : group)
+    : baseSearchGroups,
+  [baseSearchGroups, linuxDoAiQuery.data?.items, linuxDoAiState.enabled]);
+
+  const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => void) => {
+    if (onNodeSeekSearchVerificationRequired) {
+      onNodeSeekSearchVerificationRequired(message, retry);
+    } else {
+      showNodeSeekVerification(message);
+    }
+  }, [onNodeSeekSearchVerificationRequired, showNodeSeekVerification]);
+
+  const retrySearchSource = useCallback((source: Source) => {
+    if (submittedSearch?.source === 'all') {
+      const index = aggregateSearchSources.indexOf(source);
+      if (index >= 0) void aggregateQueries[index].refetch({ cancelRefetch: false });
       return;
     }
-    if (action.type === 'linuxdo-verification') {
-      return;
+    if (source !== submittedSource) return;
+    if (singleSearchQuery.error instanceof SearchPageError && singleSearchQuery.error.page > 1) {
+      void singleSearchQuery.fetchNextPage({ cancelRefetch: false });
+    } else {
+      void singleSearchQuery.refetch({ cancelRefetch: false });
     }
-    requireNodeSeekSearchVerification(action.message, retryNodeSeek);
-  }, [requireNodeSeekSearchVerification, showYaohuoLogin]);
+  }, [aggregateQueries, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.refetch, submittedSearch?.source, submittedSource]);
+
+  const loadMoreSearchSource = useCallback(async (source: Source, page: number): Promise<LinuxDoReadResumeOutcome> => {
+    if (submittedSearch?.source === 'all' || source !== submittedSource || singleSearchQuery.isFetchingNextPage) {
+      return 'stale';
+    }
+    const last = singleSearchQuery.data?.pages.at(-1);
+    const group = last ? groupFromRemoteSearchResult(last) : null;
+    const retryPage = singleSearchQuery.error instanceof SearchPageError ? singleSearchQuery.error.page : group?.nextPage;
+    if (retryPage !== page) return 'stale';
+    const result = await singleSearchQuery.fetchNextPage({ cancelRefetch: false });
+    return result.isError ? 'failed' : 'completed';
+  }, [singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchingNextPage, submittedSearch?.source, submittedSource]);
+
+  useEffect(() => {
+    const results = submittedSearch?.source === 'all'
+      ? aggregateQueries.map((query) => query.data || (query.error instanceof SearchPageError ? query.error.result : null))
+      : [singleSearchQuery.error instanceof SearchPageError
+        ? singleSearchQuery.error.result
+        : singleSearchQuery.data?.pages.at(-1)];
+    results.forEach((result) => {
+      if (!result || result.kind !== 'action-required') return;
+      if (handledSearchActionsRef.current.has(result)) return;
+      handledSearchActionsRef.current.add(result);
+      if (result.action.type === 'linuxdo-verification') {
+        if (submittedSearch?.source !== 'linuxdo') return;
+        const loadMore = singleSearchQuery.error instanceof SearchPageError && singleSearchQuery.error.page > 1;
+        const recovery: LinuxDoReadRecovery = {
+          queryKey: singleSearchKey,
+          resume: async () => {
+            const resumed = loadMore
+              ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
+              : await singleSearchQuery.refetch({ cancelRefetch: false });
+            if (resumed.isError) return sourceReadRecoveryOutcome('linuxdo', resumed.error);
+            const resumedResult = loadMore ? resumed.data?.pages.at(-1) : resumed.data?.pages[0];
+            if (resumedResult?.kind === 'action-required' && resumedResult.action.type === 'linuxdo-verification') {
+              handledSearchActionsRef.current.add(resumedResult);
+              return 'verification-required';
+            }
+            return resumedResult?.kind === 'success' ? 'completed' : 'failed';
+          }
+        };
+        void showLinuxDoVerification(result.action.message, recovery);
+      } else if (result.action.type === 'nodeseek-verification') {
+        requireNodeSeekSearchVerification(result.action.message, () => retrySearchSource('nodeseek'));
+      } else if (submittedSearch?.source !== 'all') {
+        showYaohuoLogin(result.action.message);
+      }
+    });
+  }, [
+    aggregateQueries,
+    requireNodeSeekSearchVerification,
+    retrySearchSource,
+    showLinuxDoVerification,
+    showYaohuoLogin,
+    singleSearchKey,
+    singleSearchQuery.dataUpdatedAt,
+    singleSearchQuery.error,
+    singleSearchQuery.errorUpdatedAt,
+    singleSearchQuery.fetchNextPage,
+    singleSearchQuery.refetch,
+    submittedSearch?.source
+  ]);
 
   const runSearch = useCallback(async (options?: SearchRunInput): Promise<LinuxDoReadResumeOutcome> => {
-    const runOptions: Partial<SearchRunOptions> & { sourceOverride?: Source; suppressLinuxDoVerification?: boolean } = typeof options === 'string' ? { sourceOverride: options } : options || {};
+    const runOptions = typeof options === 'string' ? { sourceOverride: options } : options || {};
+    if ('sourceOverride' in runOptions && runOptions.sourceOverride) {
+      retrySearchSource(runOptions.sourceOverride as Source);
+      return 'completed';
+    }
     const query = (runOptions.query ?? searchQuery).trim();
-    const requestSearchSource = runOptions.source ?? searchSource;
-    const trace = beginDiagnosticTrace('search', 'run', {
-      source: runOptions.sourceOverride || requestSearchSource,
-      hasQuery: Boolean(query)
-    });
-    let traceFinished = false;
-    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
-      if (!traceFinished) {
-        traceFinished = true;
-        finishDiagnosticTrace(trace, outcome, fields);
-      }
-    };
     if (!query) {
-      markDiagnosticStage(trace, 'guard', { state: 'missing-query' });
-      finishTrace('blocked', { reason: 'not_ready' });
       notify('请输入搜索词');
       return 'completed';
     }
-    if (runOptions.query !== undefined && searchQueryRef.current !== query) {
-      searchQueryRef.current = query;
-      setSearchQuery(query);
-    }
-    if (runOptions.source !== undefined && runOptions.source !== searchSource) {
-      setSearchSource(runOptions.source);
-    }
-    const requestFilters = runOptions.filters ?? searchFiltersRef.current;
-    const sourceOverride = runOptions.sourceOverride;
-    if (!sourceOverride) {
-      clearLinuxDoAiSearch();
-      const linuxDoFilter = requestFilters.linuxdo;
-      if (requestSearchSource === 'linuxdo' && sessionViewModels.linuxdo.isLoggedIn && linuxDoFilter.order === 'relevance') {
-        runLinuxDoAiSearch(buildDiscourseSearchQuery(query, linuxDoFilter, categories));
+    const source = runOptions.source ?? searchSource;
+    const filters = snapshotSearchFilters(runOptions.filters ?? searchFilters);
+    if (runOptions.query !== undefined) setSearchQuery(query);
+    if (runOptions.source !== undefined) setSearchSourceState(source);
+    addRecentSearch(query);
+    setLinuxDoAiEnabled(false);
+    const next = { query, source, filters };
+    const same = submittedSearch
+      && submittedSearch.query === query
+      && submittedSearch.source === source
+      && JSON.stringify(submittedSearch.filters) === JSON.stringify(filters);
+    if (same) {
+      if (source === 'all') {
+        aggregateQueries.forEach((result) => { void result.refetch({ cancelRefetch: false }); });
+      } else {
+        void singleSearchQuery.refetch({ cancelRefetch: false });
       }
-    }
-    submittedSearchQueryRef.current = query;
-    submittedSearchFiltersRef.current = snapshotSearchFilters(requestFilters);
-    submittedSearchSourceRef.current = requestSearchSource;
-    setSubmittedSearchQuery(query);
-    const requestGeneration = ++searchRecoveryGenerationRef.current;
-    activeSearchRecoveryRef.current = null;
-    const activeFilter = requestSearchSource === 'all'
-      ? undefined
-      : requestFilters[(sourceOverride || requestSearchSource) as Source];
-    const requestFilter = requestSearchSource === 'all' ? undefined : activeFilter;
-    let recoveryGeneration = requestGeneration;
-    const isCurrentSearchRequest = () => searchRecoveryGenerationRef.current === requestGeneration;
-    const isCurrentSearchRecovery = () => (
-      searchRecoveryGenerationRef.current === recoveryGeneration
-    );
-    const linuxDoRecovery = (): LinuxDoReadRecovery => ({
-      key: `search:${sourceOverride || requestSearchSource}:${query}:${JSON.stringify(activeFilter || {})}`,
-      isCurrent: isCurrentSearchRecovery,
-      resume: async () => {
-        if (!isCurrentSearchRecovery()) {
-          return 'stale';
-        }
-        const resumedRequest = runSearchRef.current?.({
-          filters: snapshotSearchFilters(requestFilters),
-          query,
-          source: requestSearchSource,
-          sourceOverride: 'linuxdo',
-          suppressLinuxDoVerification: true
-        });
-        if (!resumedRequest) {
-          return 'stale';
-        }
-        const outcome = await resumedRequest;
-        recoveryGeneration = searchRecoveryGenerationRef.current;
-        return outcome;
-      }
-    });
-    const activeSources = sourceOverride
-      ? [sourceOverride]
-      : requestSearchSource === 'all'
-        ? aggregateSearchSources
-        : [requestSearchSource as Source];
-    const activeSort = remoteSearchSort(requestSearchSource, requestFilters);
-    markDiagnosticStage(trace, 'guard', {
-      source: sourceOverride || requestSearchSource,
-      state: sourceOverride ? 'retry' : 'started',
-      count: activeSources.length
-    });
-    if (sourceOverride) {
-      const nextGroups = searchGroupsRef.current.map((group) => (
-        group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : { ...group, loading: false, loadingMore: false }
-      ));
-      searchGroupsRef.current = nextGroups;
-      setSearchGroups(nextGroups);
     } else {
-      const nextGroups = activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined, loading: true }));
-      searchGroupsRef.current = nextGroups;
-      setSearchGroups(nextGroups);
+      setSubmittedSearch(next);
     }
-    setSearchBusy(true);
-    try {
-      addRecentSearch(query);
-      const resultsBySource: Partial<Record<Source, RemoteSearchSourceResult>> = {};
-      await Promise.all(activeSources.map(async (source) => {
-        const sourceFilter = requestFilter?.source === source ? requestFilter : undefined;
-        const requestKey = JSON.stringify({ query, page: 1, sort: activeSort, filter: sourceFilter || null });
-        const queryKey = forumQueryKeys.search(source, requestKey);
-        if (sourceOverride) {
-          void appQueryClient.cancelQueries({ queryKey, exact: true });
-          appQueryClient.removeQueries({ queryKey, exact: true });
-        }
-        let result: RemoteSearchSourceResult;
-        try {
-          result = await appQueryClient.fetchQuery({
-            queryKey,
-            staleTime: 0,
-            queryFn: ({ signal }) => runRemoteSearchSource(source, query, 1, signal, activeSort, sourceFilter, {
-              isCurrent: () => !signal.aborted,
-              trace
-            })
-          });
-        } catch (error) {
-          if (
-            isCanceledSearchQuery(error)
-            && requestSearchSource === 'all'
-            && !sourceOverride
-            && isCurrentSearchRequest()
-          ) {
-            markDiagnosticStage(trace, 'apply', {
-              source,
-              state: 'session-reset'
-            });
-            return;
-          }
-          throw error;
-        }
-        if (!isCurrentSearchRequest()) {
-          return;
-        }
-        if (result.kind !== 'success') {
-          appQueryClient.removeQueries({ queryKey, exact: true });
-        }
-        resultsBySource[source] = result;
-        const group = groupFromRemoteSearchResult(result);
-        const beforeCount = searchGroupsRef.current.find((currentGroup) => currentGroup.source === source)?.items.length || 0;
-        markDiagnosticStage(trace, 'apply', {
-          source,
-          beforeCount,
-          afterCount: group.items.length,
-          itemCount: group.items.length,
-          hasMore: Boolean(group.hasMore)
-        });
-        const nextGroups = searchGroupsRef.current.map((currentGroup) => {
-          if (currentGroup.source !== source) {
-            return currentGroup;
-          }
-          if (sourceOverride && result.kind !== 'success' && group.items.length === 0) {
-            return {
-              ...group,
-              items: currentGroup.items,
-              authNotice: group.authNotice || currentGroup.authNotice,
-              hasMore: currentGroup.hasMore,
-              nextPage: currentGroup.nextPage,
-              loading: false
-            };
-          }
-          return { ...group, loading: false };
-        });
-        searchGroupsRef.current = nextGroups;
-        setSearchGroups(nextGroups);
-      }));
-      if (!isCurrentSearchRequest()) {
-        finishTrace('stale', {
-          source: sourceOverride || requestSearchSource,
-          reason: 'superseded'
-        });
-        return 'stale';
-      }
-      const nextGroups = searchGroupsRef.current.map((group) => (
-        activeSources.includes(group.source) ? { ...group, loading: false } : group
-      ));
-      searchGroupsRef.current = nextGroups;
-      setSearchGroups(nextGroups);
-      const resultCount = mergedSearchGroupItemCount(nextGroups);
-      const action = remoteSearchActionForSource(sourceOverride || requestSearchSource, activeSources.map((source) => resultsBySource[source]).filter(Boolean) as RemoteSearchSourceResult[]);
-      if (action) {
-        if (action.type === 'linuxdo-verification') {
-          finishTrace(resultCount ? 'partial' : 'blocked', {
-            source: 'linuxdo',
-            reason: 'verification_required',
-            itemCount: resultCount
-          });
-          if (requestSearchSource === 'linuxdo' && !runOptions.suppressLinuxDoVerification) {
-            const recovery = linuxDoRecovery();
-            activeSearchRecoveryRef.current = { key: recovery.key, lane: 'root', source: 'linuxdo' };
-            await showLinuxDoVerification(action.message, recovery);
-          }
-          return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
-        }
-        handleRemoteSearchAction(action, () => {
-          void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
-            filters: requestFilters,
-            query,
-            searchSource: requestSearchSource
-          }));
-        });
-        finishTrace(resultCount ? 'partial' : 'blocked', {
-          source: sourceOverride || requestSearchSource,
-          reason: action.type === 'nodeseek-verification' ? 'verification_required' : 'login_required',
-          itemCount: resultCount
-        });
-        return 'completed';
-      }
-      const errors = nextGroups.filter((group) => activeSources.includes(group.source) && group.error);
-      if (errors.length) {
-        notify(errors.map((group) => `${group.label}：${group.error}`).join('；'));
-      }
-      if (errors.length) {
-        const reason = diagnosticReasonForSearchError(errors[0]?.errorKind ? {
-          kind: errors[0].errorKind,
-          message: errors[0].error || ''
-        } : undefined);
-        finishTrace(
-          resultCount ? 'partial' : reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
-          { source: sourceOverride || requestSearchSource, reason, itemCount: resultCount, partialErrorCount: errors.length }
-        );
-        return requestSearchSource === 'all' && !sourceOverride && resultCount ? 'completed' : 'failed';
-      } else {
-        finishTrace('success', { source: sourceOverride || requestSearchSource, itemCount: resultCount });
-      }
-      return 'completed';
-    } catch (error) {
-      if (isCanceledSearchQuery(error)) {
-        finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
-          source: sourceOverride || requestSearchSource,
-          reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
-        });
-        return 'stale';
-      } else if (!isCurrentSearchRequest()) {
-        finishTrace('stale', { source: sourceOverride || requestSearchSource, reason: 'superseded' });
-        return 'stale';
-      } else {
-        const failureSource = sourceOverride || requestSearchSource;
-        const sourceError = sourceErrorFromUnknown(failureSource, error);
-        const reason = diagnosticReasonForSearchError(sourceError);
-        const outcome = reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied'
-          ? 'blocked'
-          : 'failure';
-        if (failureSource === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
-          if (sourceError.kind === 'login-expired') {
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(sourceError.message);
-          }
-          finishTrace(outcome, { source: failureSource, reason });
-          return 'completed';
-        }
-        if (failureSource === 'nodeseek' && sourceError.kind === 'verification-required') {
-          requireNodeSeekSearchVerification(sourceError.message, () => {
-            void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
-              filters: requestFilters,
-              query,
-              searchSource: requestSearchSource
-            }));
-          });
-          finishTrace(outcome, { source: failureSource, reason });
-          return 'completed';
-        }
-        if (failureSource === 'linuxdo' && sourceError.kind === 'verification-required') {
-          finishTrace(outcome, { source: failureSource, reason });
-          if (requestSearchSource === 'linuxdo' && !runOptions.suppressLinuxDoVerification) {
-            const recovery = linuxDoRecovery();
-            activeSearchRecoveryRef.current = { key: recovery.key, lane: 'root', source: 'linuxdo' };
-            await showLinuxDoVerification(sourceError.message, recovery);
-          }
-          return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
-        }
-        notify(sourceError.message);
-        finishTrace(outcome, { source: failureSource, reason });
-        return 'failed';
-      }
-    } finally {
-      if (!traceFinished) {
-        finishTrace(isCurrentSearchRequest() ? 'failure' : 'stale', {
-          source: sourceOverride || requestSearchSource,
-          reason: isCurrentSearchRequest() ? 'unknown' : 'superseded'
-        });
-      }
-      if (isCurrentSearchRequest()) {
-        setSearchBusy(false);
-      }
-    }
-  }, [
-    addRecentSearch,
-    categories,
-    clearLinuxDoAiSearch,
-    notify,
-    requireNodeSeekSearchVerification,
-    handleRemoteSearchAction,
-    runRemoteSearchSource,
-    runLinuxDoAiSearch,
-    searchQuery,
-    searchSource,
-    sessionViewModels,
-    showLinuxDoVerification,
-    showYaohuoLogin
-  ]);
-
-  const loadMoreSearchSource = useCallback(async (
-    source: Source,
-    page: number,
-    suppressLinuxDoVerification = false
-  ): Promise<LinuxDoReadResumeOutcome> => {
-    const trace = beginDiagnosticTrace('search', 'load-more', { source, page });
-    let traceFinished = false;
-    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
-      if (!traceFinished) {
-        traceFinished = true;
-        finishDiagnosticTrace(trace, outcome, fields);
-      }
-    };
-    const requestFilters = snapshotSearchFilters(submittedSearchFiltersRef.current);
-    const requestSearchSource = submittedSearchSourceRef.current;
-    const requestSnapshot = createSearchMoreRequestSnapshot({
-      filters: requestFilters,
-      page,
-      searchSource: requestSearchSource,
-      source,
-      submittedQuery: submittedSearchQueryRef.current
-    });
-    if (!requestSnapshot) {
-      markDiagnosticStage(trace, 'guard', { source, state: 'missing-snapshot' });
-      finishTrace('blocked', { source, reason: 'not_ready' });
-      return 'completed';
-    }
-    const { activeFilter, ownerKey, query, sort } = requestSnapshot;
-    const currentGroup = searchGroupsRef.current.find((group) => group.source === source);
-    if (!currentGroup || currentGroup.loading || currentGroup.loadingMore || !currentGroup.hasMore) {
-      const busy = Boolean(currentGroup?.loading || currentGroup?.loadingMore);
-      markDiagnosticStage(trace, 'guard', {
-        source,
-        state: !currentGroup ? 'missing-group' : busy ? 'busy' : 'complete'
-      });
-      finishTrace(busy ? 'blocked' : currentGroup ? 'noop' : 'blocked', {
-        source,
-        ...(busy ? { reason: 'busy' } : currentGroup ? {} : { reason: 'not_ready' })
-      });
-      return 'completed';
-    }
-    markDiagnosticStage(trace, 'guard', { source, state: 'load-more', page });
-    const markedGroups = searchGroupsRef.current.map((group) => (
-      group.source === source ? { ...group, loadingMore: true, error: undefined } : { ...group, loadingMore: false }
-    ));
-    searchGroupsRef.current = markedGroups;
-    setSearchGroups(markedGroups);
-    const requestGeneration = ++searchRecoveryGenerationRef.current;
-    activeSearchRecoveryRef.current = null;
-    let recoveryGeneration = requestGeneration;
-    let querySignal: AbortSignal | undefined;
-    const isLatestSearchRequest = () => searchRecoveryGenerationRef.current === requestGeneration;
-    const isCurrentSearchRequest = () => isLatestSearchRequest() && !querySignal?.aborted;
-    const isCurrentSearchRecovery = () => (
-      searchRecoveryGenerationRef.current === recoveryGeneration
-    );
-    const linuxDoRecovery: LinuxDoReadRecovery = {
-      key: ownerKey,
-      isCurrent: isCurrentSearchRecovery,
-      resume: async () => {
-        if (!isCurrentSearchRecovery()) {
-          return 'stale';
-        }
-        const resumedRequest = loadMoreSearchSourceRef.current?.(source, page, true);
-        if (!resumedRequest) {
-          return 'stale';
-        }
-        const outcome = await resumedRequest;
-        recoveryGeneration = searchRecoveryGenerationRef.current;
-        return outcome;
-      }
-    };
-    const queryKey = forumQueryKeys.search(source, ownerKey);
-    setSearchBusy(true);
-    try {
-      const result = await appQueryClient.fetchQuery({
-        queryKey,
-        queryFn: ({ signal }) => {
-          querySignal = signal;
-          return runRemoteSearchSource(source, query, page, signal, sort, activeFilter, {
-            isCurrent: () => !signal.aborted,
-            trace
-          });
-        }
-      });
-      if (!isCurrentSearchRequest()) {
-        finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
-          source,
-          reason: querySignal?.aborted ? 'canceled' : 'superseded'
-        });
-        return 'stale';
-      }
-      const data = groupFromRemoteSearchResult(result);
-      if (result.kind !== 'success') {
-        appQueryClient.removeQueries({ queryKey, exact: true });
-      }
-      const nextGroups = searchGroupsRef.current.map((group) => {
-        if (group.source !== source) {
-          return group;
-        }
-        const paginationFailed = result.kind !== 'success';
-        const mergedItems = paginationFailed ? group.items : mergeTopics(group.items, data.items);
-        const nextRequest = data.nextPage ? createSearchMoreRequestSnapshot({
-          filters: requestFilters,
-          page: data.nextPage,
-          searchSource: requestSearchSource,
-          source,
-          submittedQuery: query
-        }) : null;
-        const canLoadNext = Boolean(
-          nextRequest
-          && hasNextSearchPage(data.hasMore, data.nextPage, page)
-        );
-        return {
-          ...data,
-          items: mergedItems,
-          loading: false,
-          loadingMore: false,
-          hasMore: paginationFailed ? true : canLoadNext,
-          nextPage: paginationFailed ? page : canLoadNext ? data.nextPage ?? null : null
-        };
-      });
-      const updated = nextGroups.find((group) => group.source === source);
-      markDiagnosticStage(trace, 'apply', {
-        source,
-        beforeCount: currentGroup.items.length,
-        afterCount: updated?.items.length || currentGroup.items.length,
-        itemCount: data.items.length,
-        hasMore: Boolean(updated?.hasMore)
-      });
-      searchGroupsRef.current = nextGroups;
-      setSearchGroups(nextGroups);
-      if (result.kind === 'action-required') {
-        if (result.action.type === 'linuxdo-verification') {
-          finishTrace(updated?.items.length ? 'partial' : 'blocked', {
-            source,
-            reason: 'verification_required',
-            itemCount: updated?.items.length || 0
-          });
-          if (requestSearchSource === 'linuxdo' && !suppressLinuxDoVerification) {
-            activeSearchRecoveryRef.current = { key: linuxDoRecovery.key, lane: 'more', source };
-            await showLinuxDoVerification(result.action.message, linuxDoRecovery);
-          }
-          return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
-        }
-        handleRemoteSearchAction(result.action, () => {
-          void loadMoreSearchSourceRef.current?.(source, page);
-        });
-        finishTrace(updated?.items.length ? 'partial' : 'blocked', {
-          source,
-          reason: result.action.type === 'nodeseek-verification' ? 'verification_required' : 'login_required',
-          itemCount: updated?.items.length || 0
-        });
-        return 'completed';
-      }
-      if (updated?.error) {
-        notify(`${updated.label}：${updated.error}`);
-        const reason = diagnosticReasonForSearchError(updated.errorKind ? { kind: updated.errorKind, message: updated.error } : undefined);
-        finishTrace(updated.items.length > currentGroup.items.length ? 'partial' : 'failure', {
-          source,
-          reason,
-          beforeCount: currentGroup.items.length,
-          afterCount: updated.items.length
-        });
-        return 'failed';
-      } else {
-        finishTrace('success', {
-          source,
-          beforeCount: currentGroup.items.length,
-          afterCount: updated?.items.length || currentGroup.items.length,
-          hasMore: Boolean(updated?.hasMore)
-        });
-      }
-      return 'completed';
-    } catch (error) {
-      if (isCanceledSearchQuery(error)) {
-        finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
-          source,
-          reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
-        });
-        return 'stale';
-      } else if (!isCurrentSearchRequest()) {
-        finishTrace('stale', { source, reason: 'superseded' });
-        return 'stale';
-      } else {
-        const sourceError = sourceErrorFromUnknown(source, error);
-        const nextGroups = searchGroupsRef.current.map((group) => (
-          group.source === source ? {
-            ...group,
-            loadingMore: false,
-            error: sourceError.message,
-            errorKind: sourceError.kind,
-            authNotice: authNoticeForSourceError(sourceError) || group.authNotice
-          } : group
-        ));
-        searchGroupsRef.current = nextGroups;
-        setSearchGroups(nextGroups);
-        const reason = diagnosticReasonForSearchError(sourceError);
-        finishTrace(
-          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
-          { source, reason }
-        );
-        if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
-          if (requestSearchSource === 'linuxdo' && !suppressLinuxDoVerification) {
-            activeSearchRecoveryRef.current = { key: linuxDoRecovery.key, lane: 'more', source };
-            await showLinuxDoVerification(sourceError.message, linuxDoRecovery);
-          }
-          return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
-        }
-        notify(sourceError.message);
-        return 'failed';
-      }
-    } finally {
-      if (!traceFinished) {
-        finishTrace(isCurrentSearchRequest() ? 'failure' : querySignal?.aborted ? 'canceled' : 'stale', {
-          source,
-          reason: isCurrentSearchRequest() ? 'unknown' : querySignal?.aborted ? 'canceled' : 'superseded'
-        });
-      }
-      if (isLatestSearchRequest()) {
-        setSearchBusy(false);
-      }
-    }
-  }, [handleRemoteSearchAction, notify, runRemoteSearchSource, showLinuxDoVerification]);
-
-  useCommitRefValue(loadMoreSearchSourceRef, loadMoreSearchSource);
-  useCommitRefValue(runSearchRef, runSearch);
-  useCommitRefValue(searchQueryRef, searchQuery);
-
-
-  const applySearchFilter = useCallback((source: Source, filter: SourceSearchFilter) => {
-    const nextFilters = {
-      ...searchFiltersRef.current,
-      [source]: filter
-    };
-    searchFiltersRef.current = nextFilters;
-    setSearchFilters(nextFilters);
-    const cleanQuery = searchQueryRef.current.trim();
-    if (searchSource === source && cleanQuery) {
-      void runSearchRef.current?.();
-    }
-  }, [searchSource]);
+    return 'completed';
+  }, [addRecentSearch, aggregateQueries, notify, retrySearchSource, searchFilters, searchQuery, searchSource, singleSearchQuery.refetch, submittedSearch]);
 
   useEffect(() => {
-    const cleanQuery = searchQueryRef.current.trim();
-    if (!cleanQuery || cleanQuery !== submittedSearchQueryRef.current) {
-      return;
+    if (submittedSearch && searchQuery.trim() !== submittedSearch.query) {
+      setSubmittedSearch(null);
+      setLinuxDoAiEnabled(false);
     }
-    void runSearchRef.current?.();
-  }, [searchSource]);
+  }, [searchQuery, submittedSearch]);
 
-  const retrySearchSource = useCallback((source: Source) => {
-    void runSearch(source);
-  }, [runSearch]);
+  useEffect(() => {
+    if (!sessionViewModels.linuxdo.isLoggedIn) setLinuxDoAiEnabled(false);
+  }, [sessionViewModels.linuxdo.isLoggedIn]);
+
+  const setSearchSource = useCallback((source: FeedSource) => {
+    setSearchSourceState(() => source);
+    setLinuxDoAiEnabled(false);
+    setSubmittedSearch((current) => current && current.query === searchQuery.trim()
+      ? { ...current, source, filters: snapshotSearchFilters(searchFilters) }
+      : current
+    );
+  }, [searchFilters, searchQuery]);
+
+  const applySearchFilter = useCallback((source: Source, filter: SourceSearchFilter) => {
+    const next = { ...searchFilters, [source]: filter };
+    setSearchFilters(next);
+    setSubmittedSearch((submitted) => submitted && submitted.source === source && submitted.query === searchQuery.trim()
+      ? { ...submitted, filters: snapshotSearchFilters(next) }
+      : submitted
+    );
+    setLinuxDoAiEnabled(false);
+  }, [searchFilters, searchQuery]);
 
   const searchDiscourseTags = useCallback(async (options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
     const source = options.source || 'linuxdo';
     const { source: _source, ...request } = options;
     const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source });
-    const isCurrent = () => !options.signal?.aborted;
     markDiagnosticStage(trace, 'guard', {
       source,
       state: 'started',
@@ -1021,25 +599,12 @@ export function useSearchController({
       selectedCount: options.selectedTags?.length || 0
     });
     try {
-      const items = await sourceGateway.searchTagOptions({ source, ...request }, { trace, isCurrent });
-      if (!isCurrent()) {
-        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
-        return items;
-      }
+      const items = await sourceGateway.searchTagOptions({ source, ...request }, { trace });
       markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
       finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
       return items;
     } catch (error) {
-      if (options.signal?.aborted || isCanceledRequest(error)) {
-        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
-      } else {
-        const reason = diagnosticReasonForSearchError(sourceErrorFromUnknown(source, error));
-        finishDiagnosticTrace(
-          trace,
-          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
-          { source, reason }
-        );
-      }
+      finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
       throw error;
     }
   }, [sourceGateway]);
@@ -1048,70 +613,31 @@ export function useSearchController({
     const source = options.source || 'linuxdo';
     const { source: _source, ...request } = options;
     const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
-    const isCurrent = () => !options.signal?.aborted;
     markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
     try {
-      const items = await sourceGateway.searchUserOptions({ source, ...request }, { trace, isCurrent });
-      if (!isCurrent()) {
-        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
-        return items;
-      }
+      const items = await sourceGateway.searchUserOptions({ source, ...request }, { trace });
       markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
       finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
       return items;
     } catch (error) {
-      if (options.signal?.aborted || isCanceledRequest(error)) {
-        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
-      } else {
-        const reason = diagnosticReasonForSearchError(sourceErrorFromUnknown(source, error));
-        finishDiagnosticTrace(
-          trace,
-          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
-          { source, reason }
-        );
-      }
+      finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
       throw error;
     }
   }, [sourceGateway]);
 
-  const linuxDoAiVisible = Boolean(
-    submittedSearchQuery
-    && searchSource === 'linuxdo'
-    && searchFilters.linuxdo.order === 'relevance'
-    && sessionViewModels.linuxdo.isLoggedIn
-  );
-  const visibleSearchGroups = useMemo(() => (
-    linuxDoAiState.enabled
-      ? searchGroups.map((group) => group.source === 'linuxdo'
-        ? { ...group, items: mergeLinuxDoAiTopics(group.items, linuxDoAiItems, true) }
-        : group)
-      : searchGroups
-  ), [linuxDoAiItems, linuxDoAiState.enabled, searchGroups]);
-
   const toggleLinuxDoAiSearch = useCallback(() => {
-    setLinuxDoAiState((current) => current.status === 'ready'
-      ? { ...current, enabled: !current.enabled }
-      : current);
-  }, []);
-
+    if (linuxDoAiState.status === 'ready') setLinuxDoAiEnabled((current) => !current);
+  }, [linuxDoAiState.status]);
   const retryLinuxDoAiSearch = useCallback(() => {
-    if (linuxDoAiState.status === 'error' && linuxDoAiQueryRef.current) {
-      runLinuxDoAiSearch(linuxDoAiQueryRef.current);
-    }
-  }, [linuxDoAiState.status, runLinuxDoAiSearch]);
-
+    if (linuxDoAiQuery.isError) void linuxDoAiQuery.refetch({ cancelRefetch: false });
+  }, [linuxDoAiQuery.isError, linuxDoAiQuery.refetch]);
   const abortSearchRequests = useCallback(() => {
-    searchRecoveryGenerationRef.current += 1;
-    linuxDoAiGenerationRef.current += 1;
-    void appQueryClient.cancelQueries({
-      predicate: ({ queryKey }) => (
-        queryKey[0] === 'forum'
+    void queryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum'
         && typeof queryKey[2] === 'string'
         && (queryKey[2].startsWith('search') || queryKey[2] === 'semantic-search')
-      )
     });
-  }, []);
-
+  }, [queryClient]);
   useEffect(() => abortSearchRequests, [abortSearchRequests]);
 
   return {
@@ -1123,9 +649,13 @@ export function useSearchController({
     retrySearchSource,
     retryLinuxDoAiSearch,
     runSearch,
-    searchBusy,
+    searchBusy: !submittedSearch
+      ? false
+      : submittedSearch.source === 'all'
+        ? aggregateQueries.some((query) => query.isPending)
+        : singleSearchQuery.isPending,
     searchFilters,
-    searchGroups: visibleSearchGroups,
+    searchGroups,
     searchDiscourseTags,
     searchDiscourseUsers,
     linuxDoAiState,
@@ -1133,7 +663,7 @@ export function useSearchController({
     searchSessionNotices,
     searchQuery,
     searchSource,
-    submittedSearchQuery,
+    submittedSearchQuery: submittedSearch?.query || '',
     setSearchQuery,
     setSearchSource,
     toggleLinuxDoAiSearch

@@ -1,4 +1,5 @@
 import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import type { QueryKey } from '@tanstack/react-query';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import {
   buildLinuxDoCookieHeader,
@@ -36,6 +37,7 @@ import {
 } from '../diagnostics';
 import { useCommitRefValue } from './useCommittedRef';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
+import { appQueryClient } from './serverState';
 
 const LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS = 5000;
 const LINUXDO_CLEARANCE_DETECT_INTERVAL_MS = 500;
@@ -48,8 +50,7 @@ export type LinuxDoReadResumeOutcome = 'completed' | 'failed' | 'verification-re
 type LinuxDoVerificationPhase = 'idle' | 'preparing' | 'awaiting-clearance' | 'checking-clearance' | 'resuming-read' | 'closing';
 
 export type LinuxDoReadRecovery = {
-  key: string;
-  isCurrent: () => boolean;
+  queryKey: QueryKey;
   resume: () => Promise<LinuxDoReadResumeOutcome>;
 };
 
@@ -57,6 +58,13 @@ type ActiveLinuxDoReadRecovery = {
   generation: number;
   recovery: LinuxDoReadRecovery;
 };
+
+function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
+  return appQueryClient.getQueryCache().find({
+    queryKey: recovery.queryKey,
+    exact: true
+  })?.isActive() === true;
+}
 
 export function useVerificationController({
   changeNodeSeekLoginPanel,
@@ -109,7 +117,7 @@ export function useVerificationController({
   linuxDoWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
   onLoginWebViewFailure: (site: 'linuxdo', attempt: number, reason: LoginWebViewFailureReason) => void;
-  openTopicRef: Ref<((topic: Topic, nocache?: boolean) => Promise<unknown>) | null>;
+  openTopicRef: Ref<((topic: Topic, refresh?: boolean) => Promise<unknown>) | null>;
   resetLinuxDoLevelState: () => void;
   selectedTopic: Topic | null;
   setChecking: Dispatch<SetStateAction<boolean>>;
@@ -175,7 +183,7 @@ export function useVerificationController({
     return linuxDoVerificationTraceRef.current || startLinuxDoVerificationTrace(mode);
   }, [startLinuxDoVerificationTrace]);
 
-  const refreshLinuxDoClearanceState = useCallback(async (recovery?: Pick<LinuxDoReadRecovery, 'key' | 'isCurrent'>) => {
+  const refreshLinuxDoClearanceState = useCallback(async (activeRecovery?: ActiveLinuxDoReadRecovery) => {
     const access = await clearLinuxDoClearance();
     if (access === undefined) {
       return false;
@@ -184,17 +192,21 @@ export function useVerificationController({
     setLinuxDoWebViewCookieHeader('');
     const summary = linuxDoAccessSummary(access);
     const cookieSummary = summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names;
-    const recoveryKey = recovery?.isCurrent() ? recovery.key : undefined;
+    const recoveryQueryKey = activeRecovery
+      && linuxDoReadRecoveryRef.current === activeRecovery
+      && isActiveRecoveryQuery(activeRecovery.recovery)
+      ? activeRecovery.recovery.queryKey
+      : undefined;
     updateLinuxDoSession(summary.hasClearance || summary.loggedIn
       ? {
         type: 'session-updated',
         cookieSummary,
         hasVerification: summary.hasClearance,
         loggedIn: summary.loggedIn,
-        ...(recoveryKey ? { recoveryKey } : {}),
+        ...(recoveryQueryKey ? { recoveryQueryKey } : {}),
         at: new Date().toISOString()
       }
-      : { type: 'cleared', ...(recoveryKey ? { recoveryKey } : {}) });
+      : { type: 'cleared', ...(recoveryQueryKey ? { recoveryQueryKey } : {}) });
     resetLinuxDoLevelState();
     return true;
   }, [linuxDoWebViewCookieHeaderRef, resetLinuxDoLevelState, setLinuxDoWebViewCookieHeader, updateLinuxDoSession]);
@@ -377,7 +389,7 @@ export function useVerificationController({
       }
       if (queued.recovery && (
         linuxDoCanceledRecoveriesRef.current.has(queued.recovery)
-        || !queued.recovery.isCurrent()
+        || !isActiveRecoveryQuery(queued.recovery)
       )) {
         return;
       }
@@ -503,7 +515,7 @@ export function useVerificationController({
   ) => {
     if (recovery && (
       linuxDoCanceledRecoveriesRef.current.has(recovery)
-      || !recovery.isCurrent()
+      || !isActiveRecoveryQuery(recovery)
     )) {
       return;
     }
@@ -547,7 +559,7 @@ export function useVerificationController({
         return true;
       };
       const failPreparation = () => {
-        const recoveryIsCurrent = recovery.isCurrent();
+        const recoveryIsCurrent = isActiveRecoveryQuery(recovery);
         const abandoned = abandonPreparation(
           recoveryIsCurrent ? 'failure' : 'stale',
           recoveryIsCurrent ? 'storage_error' : 'stale'
@@ -566,7 +578,7 @@ export function useVerificationController({
       if (linuxDoReadRecoveryRef.current !== activeRecovery) {
         return;
       }
-      if (!recovery.isCurrent()) {
+      if (!isActiveRecoveryQuery(recovery)) {
         abandonPreparation('stale', 'stale');
         return;
       }
@@ -574,10 +586,7 @@ export function useVerificationController({
       linuxDoClearanceBaselineAvailableRef.current = true;
       let clearanceReset: boolean;
       try {
-        clearanceReset = await refreshLinuxDoClearanceState({
-          key: recovery.key,
-          isCurrent: () => linuxDoReadRecoveryRef.current === activeRecovery && recovery.isCurrent()
-        });
+        clearanceReset = await refreshLinuxDoClearanceState(activeRecovery);
       } catch {
         failPreparation();
         return;
@@ -589,7 +598,7 @@ export function useVerificationController({
         failPreparation();
         return;
       }
-      if (!recovery.isCurrent()) {
+      if (!isActiveRecoveryQuery(recovery)) {
         abandonPreparation('stale', 'stale');
         return;
       }
@@ -923,14 +932,14 @@ export function useVerificationController({
         recovery
         && activeRecovery
         && linuxDoReadRecoveryRef.current === activeRecovery
-        && recovery.isCurrent()
+        && isActiveRecoveryQuery(recovery)
       );
       updateLinuxDoSession({
         type: 'session-updated',
         cookieSummary: summary.names,
         hasVerification: summary.hasClearance,
         loggedIn: summary.loggedIn,
-        ...(recoveryIsCurrent && recovery ? { recoveryKey: recovery.key } : {}),
+        ...(recoveryIsCurrent && recovery ? { recoveryQueryKey: recovery.queryKey } : {}),
         at: new Date().toISOString()
       });
       if (recovery && activeRecovery) {

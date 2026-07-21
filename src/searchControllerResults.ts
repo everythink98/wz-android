@@ -33,6 +33,14 @@ export type LinuxDoAiSearchState = {
   message?: string;
 };
 
+export function hasNextSearchPage(
+  hasMore: boolean | undefined,
+  nextPage: number | null | undefined,
+  requestedPage: number
+) {
+  return Boolean(hasMore && nextPage && nextPage !== requestedPage);
+}
+
 export function snapshotSearchFilters(filters: SearchFilterState): SearchFilterState {
   return {
     v2ex: { ...filters.v2ex },

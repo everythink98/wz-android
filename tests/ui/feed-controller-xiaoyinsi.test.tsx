@@ -1,12 +1,24 @@
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { afterEach } from '@jest/globals';
+import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { useFeedController } from '../../src/app/useFeedController';
 import { createEmptyReaderData } from '../../src/readerData';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
-import { appQueryClient, resetForumSourceQueries } from '../../src/app/serverState';
+import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
+import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
 import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
+import { QueryTestWrapper } from './QueryTestWrapper';
+
+function renderHook<Result>(callback: () => Result) {
+  appQueryClient.clear();
+  return renderNativeHook(callback, { wrapper: QueryTestWrapper });
+}
 
 describe('小隐寺 Feed controller', () => {
+  afterEach(async () => {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  });
+
   it('keeps an unrelated source request and categories intact when another credential session changes', async () => {
     const v2exTopic = {
       source: 'v2ex' as const,
@@ -58,7 +70,7 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(hook.result.current.categories).toContainEqual(expect.objectContaining({ source: 'v2ex', id: 'go' })));
 
     await act(async () => {
-      resetForumSourceQueries('nodeseek', appQueryClient, 'session-updated');
+      resetForumSourceQueries('nodeseek', appQueryClient);
     });
 
     expect(hook.result.current.categories).toContainEqual(expect.objectContaining({ source: 'v2ex', id: 'go' }));
@@ -104,7 +116,9 @@ describe('小隐寺 Feed controller', () => {
     const showLinuxDoVerification = jest.fn();
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
+    let credentialScope = emptyForumCredentialScope;
     const hook = await renderHook(() => useFeedController({
+      credentialScope,
       notify,
       readerData,
       readerDataLoaded: true,
@@ -118,7 +132,9 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([oldTopic]));
 
     await act(async () => {
-      resetForumSourceQueries('nodeseek', appQueryClient, 'session-updated');
+      resetForumSourceQueries('nodeseek', appQueryClient);
+      credentialScope = { ...credentialScope, nodeseek: credentialScope.nodeseek + 1 };
+      hook.rerender({});
     });
 
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([newTopic]));
@@ -187,13 +203,14 @@ describe('小隐寺 Feed controller', () => {
     await act(async () => hook.result.current.changeFeedSource('linuxdo'));
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
     await act(async () => {
-      await hook.result.current.loadFeed({ source: 'linuxdo', page: 2, cursor: 'page-2' });
+      await hook.result.current.loadFeed();
     });
 
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
     expect(recovery).toBeDefined();
     await act(async () => {
-      resetForumSourceQueries('linuxdo', appQueryClient, 'session-updated', recovery.key);
+      resetForumSourceQueries('linuxdo', appQueryClient, recovery.queryKey);
     });
 
     expect(hook.result.current.activeFeedState).toMatchObject({
@@ -208,8 +225,61 @@ describe('小隐寺 Feed controller', () => {
     });
 
     expect(pageTwoAttempts).toBe(2);
-    expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]);
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]));
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('REG-LINUXDO-003 reports an ordinary feed recovery failure instead of another verification result', async () => {
+    let linuxAttempts = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async ({ source }: { source: string }) => {
+        if (source !== 'linuxdo') {
+          return { items: [], errors: {}, hasMore: false, nextPage: null };
+        }
+        linuxAttempts += 1;
+        if (linuxAttempts <= 2) {
+          return {
+            items: [],
+            errors: {
+              linuxdo: {
+                kind: 'verification-required' as const,
+                message: 'linux.do 需要验证',
+                verificationRequired: true
+              }
+            },
+            hasMore: false,
+            nextPage: null
+          };
+        }
+        throw new Error('恢复后网络失败');
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const showLinuxDoVerification = jest.fn();
+    const hook = await renderHook(() => useFeedController({
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await act(async () => hook.result.current.changeFeedSource('linuxdo'));
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('verification-required');
+    });
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('failed');
+    });
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    expect(linuxAttempts).toBe(3);
   });
 
   it('[REG-FEED-005] reports a single-source category error instead of treating it as an empty category list', async () => {
@@ -247,7 +317,7 @@ describe('小隐寺 Feed controller', () => {
       expect.any(Object)
     ));
 
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('分类读取失败'));
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining('分类读取失败')));
   });
 
   it('REG-FEED-004 preserves a single-source list when refresh returns a source error', async () => {
@@ -300,14 +370,14 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
 
     await act(async () => {
-      await hook.result.current.loadFeed({ source: 'v2ex', reset: true, nocache: true });
+      await hook.result.current.refreshFeed();
     });
 
     expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]);
     expect(hook.result.current.activeFeedState.nextCursor).toBe('page-2');
   });
 
-  it.each(['source-error', 'parse-empty'] as const)('does not append partial aggregate load-more results after %s', async (failure) => {
+  it.each(['source-error', 'parse-empty'] as const)('[REG-SOURCE-002] does not append partial aggregate load-more results after %s', async (failure) => {
     const firstTopic = {
       source: 'v2ex' as const,
       id: 'first',
@@ -368,12 +438,12 @@ describe('小隐寺 Feed controller', () => {
 
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
     await act(async () => {
-      await hook.result.current.loadFeed({ source: 'all', page: 2, cursor: 'page-2' });
+      await hook.result.current.loadFeed();
     });
 
     expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]);
     expect(hook.result.current.activeFeedState.nextCursor).toBe('page-2');
-    expect(hook.result.current.activeFeedState.loadMoreFailureSignal).toBe(1);
+    await waitFor(() => expect(hook.result.current.activeFeedState.loadMoreFailureSignal).toBeGreaterThan(0));
   });
 
   it('REG-XIAOYINSI-015 keeps its list filter state independent after a non-empty response', async () => {

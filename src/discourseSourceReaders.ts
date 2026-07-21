@@ -64,18 +64,13 @@ export type DiscourseFeedReadOptions = DiscourseReadOptions & {
   category?: string;
   filter?: DiscourseFeedFilter;
   limit?: number;
-  nocache?: boolean;
   page?: number;
 };
 
-export type DiscourseTopicReadOptions = DiscourseReadOptions & {
-  nocache?: boolean;
-  replyLimit?: number;
-};
+export type DiscourseTopicReadOptions = DiscourseReadOptions & { replyLimit?: number };
 
 export type DiscourseRepliesReadOptions = DiscourseReadOptions & {
   limit?: number;
-  nocache?: boolean;
   offset?: number | null;
   page?: number;
 };
@@ -104,7 +99,7 @@ export type DiscourseUserOptionReadOptions = DiscourseReadOptions & {
 };
 
 type DiscourseSourceReader = {
-  getCategories: (options: DiscourseReadOptions & { nocache?: boolean }) => Promise<CategoriesResponse>;
+  getCategories: (options: DiscourseReadOptions) => Promise<CategoriesResponse>;
   getCurrentUserProfile: (options: DiscourseReadOptions) => Promise<UserProfile>;
   getEmojiUrls: (options: DiscourseReadOptions) => Promise<DiscourseEmojiUrlMap>;
   getFeed: (options: DiscourseFeedReadOptions) => Promise<FeedResponse>;
@@ -182,7 +177,7 @@ export function getDiscourseSourceFeed(source: DiscourseSource, options: Discour
 
 export function getDiscourseSourceCategories(
   source: DiscourseSource,
-  options: DiscourseReadOptions & { nocache?: boolean }
+  options: DiscourseReadOptions
 ) {
   return discourseSourceReaders[source].getCategories(options);
 }

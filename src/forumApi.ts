@@ -217,7 +217,6 @@ export async function getFeed({
   cursor,
   category,
   feedFilter,
-  nocache = false,
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
@@ -233,7 +232,6 @@ export async function getFeed({
   cursor?: string;
   category?: string;
   feedFilter?: SourceFeedFilter;
-  nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
@@ -243,7 +241,7 @@ export async function getFeed({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
-  const options = { page, limit, cursor, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { page, limit, cursor, category, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const unavailableSourceSet = new Set(unavailableSources);
     const cursorState = decodeAllFeedCursor(cursor);
@@ -274,7 +272,6 @@ export async function getFeed({
           category,
           fetcher,
           limit: adapterLimit,
-          nocache,
           page: requestedPages[item],
           signal,
           timeoutMs
@@ -362,7 +359,6 @@ export async function getFeed({
       fetcher,
       filter: feedFilter as DiscourseFeedFilter | undefined,
       limit,
-      nocache,
       page,
       signal,
       timeoutMs
@@ -376,7 +372,6 @@ export async function getFeed({
 
 export async function getCategories({
   source = 'all',
-  nocache = false,
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
@@ -386,7 +381,6 @@ export async function getCategories({
   timeoutMs
 }: {
   source?: FeedSource;
-  nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
@@ -395,7 +389,7 @@ export async function getCategories({
   signal?: AbortSignal;
   timeoutMs?: number;
 } = {}): Promise<CategoriesResponse> {
-  const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const sources = sourceValues;
     const results = await Promise.allSettled(sources.map((item) => {
@@ -406,7 +400,6 @@ export async function getCategories({
         return getDiscourseSourceCategories(item, {
           auth: discourseAuth,
           fetcher,
-          nocache,
           signal,
           timeoutMs
         });
@@ -443,7 +436,6 @@ export async function getCategories({
     return getDiscourseSourceCategories(source, {
       auth: discourseAuth,
       fetcher,
-      nocache,
       signal,
       timeoutMs
     });
@@ -457,7 +449,6 @@ export async function getCategories({
 export function getTopic({
   source,
   id,
-  nocache = false,
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
@@ -467,7 +458,6 @@ export function getTopic({
 }: {
   source: Source;
   id: string;
-  nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
@@ -475,12 +465,11 @@ export function getTopic({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
-  const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (isDiscourseSource(source)) {
     return getDiscourseSourceTopic(source, id, {
       auth: discourseAuth,
       fetcher,
-      nocache,
       signal,
       timeoutMs
     });
@@ -497,7 +486,6 @@ export function getReplies({
   page,
   limit = 20,
   offset,
-  nocache = false,
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
@@ -511,7 +499,6 @@ export function getReplies({
   page: number;
   limit?: number;
   offset?: number | null;
-  nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
@@ -520,13 +507,12 @@ export function getReplies({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
-  const options = { page, limit, offset, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, fillPages, signal, timeoutMs };
+  const options = { page, limit, offset, fetcher, nodeSeekCookie, nodeSeekUserAgent, fillPages, signal, timeoutMs };
   if (isDiscourseSource(source)) {
     return getDiscourseSourceReplies(source, id, {
       auth: discourseAuth,
       fetcher,
       limit,
-      nocache,
       offset,
       page,
       signal,

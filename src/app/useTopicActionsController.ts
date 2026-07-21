@@ -1,7 +1,14 @@
-import { useCallback, useMemo, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as SecureStore from 'expo-secure-store';
+import {
+  useMutation,
+  useMutationState,
+  useQueryClient,
+  type InfiniteData,
+  type QueryKey
+} from '@tanstack/react-query';
 import {
   buildNodeSeekAttendanceRequest,
   buildNodeSeekCollectionRequest,
@@ -14,24 +21,24 @@ import {
 } from '../nodeseekActions';
 import {
   buildYaohuoDeleteFavoriteRequest,
-  buildYaohuoFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
+  buildYaohuoFavoriteRequest,
   buildYaohuoReplyRequest,
   buildYaohuoVoteRequest,
   extractYaohuoSid,
   type YaohuoActionRequest
 } from '../yaohuoActions';
-import {
-  type DiscourseAction,
-  type DiscourseActionRequest
-} from '../discourseActions';
-import {
-  buildDiscourseSourceActionRequest,
-  discourseSourceUploadUrl
-} from '../discourseSourceActions';
+import type { DiscourseAction } from '../discourseActions';
+import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '../discourseSourceActions';
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '../nodeseekActionClient';
-import { runYaohuoAction } from '../yaohuoActionClient';
+import { runYaohuoAction, type YaohuoActionResult } from '../yaohuoActionClient';
 import {
+  applyBookmarkToTopic,
+  applyInteractionToReplies,
+  applyInteractionToTopic,
+  applyNodeSeekCollectionToTopic,
+  applyPollVoteToReplies,
+  applyPollVoteToTopic,
   discourseBookmarkIdFromActionResult,
   topicActionStateKey,
   type InteractionType,
@@ -39,7 +46,6 @@ import {
 } from '../topicActionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
-import type { TopicRepliesRefreshOptions } from '../appTypes';
 import {
   DEFAULT_NODESEEK_ANDROID_USER_AGENT,
   NODESEEK_ACCESS_STORAGE_KEY,
@@ -49,71 +55,49 @@ import {
   parseNodeSeekAccessRecord
 } from '../nodeseekCookies';
 import type { Fetcher } from '../request';
-import {
-  abortTopicActionRuns,
-  clearBusyTopicActionRuns,
-  finishBusyTopicActionRun,
-  finishTopicActionRun,
-  isCurrentTopicActionRun,
-  trackBusyTopicActionRun,
-  type TopicActionBusyRunSet,
-  startTopicActionRun,
-  type TopicActionRun,
-  type TopicActionRunMap
-} from './topicActionRuns';
-import { errorMessage, isCanceledRequest } from '../appUtils';
+import { errorMessage } from '../appUtils';
 import { canToggleDiscourseLike } from '../discoursePermissions';
-import {
-  isDiscourseSource,
-  isSessionSource,
-  sourceValues,
-  type DiscourseSource
-} from '../sourceCatalog';
+import { isDiscourseSource, isSessionSource, sourceValues, type DiscourseSource } from '../sourceCatalog';
 import {
   normalizeReplyImageAsset,
   replyImageMarkupForSource,
   replyImageUploadSupported,
-  type NormalizedReplyImageAsset,
   uploadNodeSeekReplyImageWithApiKey,
   uploadYaohuoReplyImage
 } from '../replyImageUpload';
 import { currentNodeImageApiKeyGeneration } from '../nodeimageCredentials';
 import { createSiteSessionViewModels, isSiteLoggedIn, type SiteSessionStates } from '../siteSessionState';
 import { authActionMessageForSource } from '../siteSessionPrompts';
+import { useCommittedRef } from './useCommittedRef';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
+  hintDiagnosticOutcome,
   markDiagnosticStage,
   normalizeDiagnosticReason,
   withDiagnosticFetcher,
-  type DiagnosticOutcome,
-  type DiagnosticPhase,
-  type DiagnosticReason,
   type DiagnosticTrace
 } from '../diagnostics';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
+import { isNodeSeekLoginRequiredError } from './topicActionHelpers';
 import {
-  beginOptimisticTopicAction,
-  isNodeSeekLoginRequiredError,
-  runOptimisticActionQueue as runOptimisticActionQueueHelper
-} from './topicActionHelpers';
-import { appQueryClient, forumMutationKeys, forumQueryKeys } from './serverState';
+  forumMutationKeys,
+  forumQueryKeys,
+  type ForumCredentialScope
+} from './serverState';
 import {
   prepareDiscourseActionRuntime,
-  type DiscourseActionRuntimeDependencies,
-  type DiscourseActionRuntimeRecovery,
-  type PreparedDiscourseActionRuntime
+  type DiscourseActionRuntimeDependencies
 } from './discourseActionRuntime';
 import {
   canSubmitReplyToTopic,
   canVotePollOnTopic,
   currentTopicActionTopic,
-  isTopicScopedActionKey,
+  applyEditedReplyContent,
   isNodeSeekActionTopic,
   isXiaoyinsiActionTopic,
   isYaohuoActionTopic,
-  nodeSeekAttendanceActionKey,
   topicEditReplyActionKey,
   topicPollVoteActionKey,
   topicReplyActionKey,
@@ -121,100 +105,51 @@ import {
   YAOHUO_DEFAULT_CLASS_ID
 } from './topicActionControllerHelpers';
 
-type Ref<T> = MutableRefObject<T>;
-export type TopicActionContext = {
-  generation: number;
-  key: string;
-};
-type TopicActionRequestOwner = {
+type Ref<T> = { current: T };
+type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unknown>;
+
+type MutationVariables = {
   actionKey: string;
-  context: TopicActionContext;
-};
-type ActionRunOptions = {
-  busy?: boolean;
-  deferDiagnosticFailure?: boolean;
-  diagnosticTrace?: DiagnosticTrace;
-  fallbackKey?: string;
-  key?: string;
-  notifySuccess?: boolean;
-  owner?: TopicActionRequestOwner;
-  restoreOnFailure?: boolean;
-};
-type ActionRun = TopicActionRun & {
-  cancelOnTopicChange: boolean;
-};
-type OptimisticTopicActionOptions = {
-  key: string;
-  requestOwner: TopicActionRequestOwner;
-  currentActive: boolean;
-  applyDisplayed: (desiredActive: boolean) => void;
-  sendDesired: (desiredActive: boolean) => Promise<boolean>;
-  successMessage: (active: boolean) => string;
-  diagnosticTrace: DiagnosticTrace;
+  busy: boolean;
+  credential: number;
+  detailKey: QueryKey;
+  repliesKey: QueryKey;
+  source: Source;
+  task: () => Promise<unknown>;
+  topicId: string;
+  trace: DiagnosticTrace;
+  applyOptimistic?: () => void;
+  applyResult?: (result: unknown) => void;
+  successMessage?: string | ((result: unknown) => string);
 };
 
-function optimisticOwnerKey(requestOwner: TopicActionRequestOwner) {
-  return [
-    requestOwner.context.key,
-    requestOwner.context.generation,
-    requestOwner.actionKey
-  ].join(':');
-}
-function actionMessage(message: string, restoreOnFailure?: boolean) {
-  return restoreOnFailure ? `${message}，已恢复原状态。` : message;
-}
+type MutationContext = {
+  previousDetail?: TopicDetail;
+  previousReplies?: ReplyCache;
+};
 
-function failDiagnosticActionRequest(
-  options: ActionRunOptions,
-  source: 'nodeseek' | 'linuxdo' | 'yaohuo' | 'xiaoyinsi',
-  phase: DiagnosticPhase,
-  outcome: DiagnosticOutcome,
-  reason: DiagnosticReason
-) {
-  if (!options.diagnosticTrace) {
-    return;
-  }
-  markDiagnosticStage(options.diagnosticTrace, phase, { source, state: 'failure', reason });
-  if (!options.deferDiagnosticFailure) {
-    finishDiagnosticTrace(options.diagnosticTrace, outcome, { source, reason });
+type AttendanceMutationVariables = {
+  credential: number;
+  trace: DiagnosticTrace;
+};
+
+class HandledMutationError extends Error {
+  constructor(
+    message: string,
+    readonly outcome: 'blocked' | 'canceled' | 'failure' | 'stale',
+    readonly reason: string
+  ) {
+    super(message);
   }
 }
 
-function actionRequestDiagnosticFields(
-  source: 'nodeseek' | 'linuxdo' | 'yaohuo' | 'xiaoyinsi',
-  request: NodeSeekActionRequest | DiscourseActionRequest | YaohuoActionRequest,
-  discourseCsrfSource: 'none' | 'session-endpoint' = 'none'
-) {
-  const path = request.path.split('?', 1)[0].toLowerCase();
-  if (source === 'nodeseek') {
-    const requestType = path === '/api/content/new-comment' ? 'reply'
-      : path === '/api/content/edit-comment' ? 'edit'
-        : path === '/api/statistics/collection' ? 'collection'
-          : path.startsWith('/api/statistics/') ? 'interaction'
-            : path === '/api/attendance' ? 'attendance'
-              : path === '/api/vote/voteforitem' ? 'vote'
-                : 'unknown';
-    return {
-      requestType,
-      csrfSource: requestType === 'reply' || requestType === 'edit' ? 'local-generated' : 'none'
-    };
-  }
-  if (isDiscourseSource(source)) {
-    const requestType = path === '/posts.json' ? 'reply'
-      : path === '/uploads.json' ? 'image-upload'
-        : /^\/posts\/\d+\.json$/.test(path) ? request.method === 'PUT' ? 'edit' : 'delete'
-          : path.startsWith('/post_actions') ? 'interaction'
-            : path.startsWith('/bookmarks') ? 'bookmark'
-              : path === '/polls/vote' ? 'vote'
-                : 'unknown';
-    return { requestType, csrfSource: discourseCsrfSource };
-  }
-  const requestType = path === '/bbs/book_re.aspx' ? 'reply'
-    : path === '/bbs/book_re_del.aspx' ? 'delete'
-      : path === '/bbs/share.aspx' || path === '/bbs/favlist.aspx' ? 'favorite'
-        : path === '/bbs/book_view_tovote.aspx' ? 'vote'
-          : 'unknown';
-  return { requestType, csrfSource: 'none' };
+function credentialValue(source: Source, scope: ForumCredentialScope) {
+  return source === 'v2ex' ? 0 : scope[source];
+}
+
+function mutationFailure(error: unknown, outcome: HandledMutationError['outcome'] = 'failure') {
+  if (error instanceof HandledMutationError) return error;
+  return new HandledMutationError(errorMessage(error), outcome, normalizeDiagnosticReason(error));
 }
 
 function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
@@ -223,9 +158,7 @@ function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
 
 async function loadNodeSeekActionAccess() {
   const savedAccess = parseNodeSeekAccessRecord(await SecureStore.getItemAsync(NODESEEK_ACCESS_STORAGE_KEY));
-  if (savedAccess) {
-    return savedAccess;
-  }
+  if (savedAccess) return savedAccess;
   const [cookieHeader, userAgent] = await Promise.all([
     SecureStore.getItemAsync(NODESEEK_COOKIE_STORAGE_KEY),
     SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY)
@@ -233,1493 +166,856 @@ async function loadNodeSeekActionAccess() {
   return cookieHeader ? nodeSeekAccessRecord(cookieHeader, userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT) : null;
 }
 
+function updateReplyCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  queryKey: QueryKey,
+  update: (replies: Reply[]) => Reply[]
+) {
+  queryClient.setQueryData<ReplyCache>(queryKey, (current) => current ? {
+    ...current,
+    pages: current.pages.map((page) => ({ ...page, items: update(page.items) }))
+  } : current);
+}
+
 export function useTopicActionsController({
-  actionAbortRef,
   clearNodeSeekLoginCookiesOnly,
   clearYaohuoLoginState,
+  credentialScope,
   currentNodeSeekCredentialGeneration,
   currentYaohuoCredentialGeneration,
   discourseActionRuntimeDependencies,
   discourseLoginPrompts,
+  ensureNodeImageApiKey,
   fetcher,
   loadYaohuoCookieForSource,
   nodeSeekWebViewUserAgentRef,
-  ensureNodeImageApiKey,
   notify,
-  optimisticTopicActionsRef,
-  refreshTopicReplies,
-  setActionBusy,
-  setOptimisticTopicActions,
   showYaohuoLogin,
   siteSessionStates,
-  topicActionContextRef,
+  topicDetail,
+  topicReplies,
   topicSession
 }: {
-  actionAbortRef: Ref<{ abort: () => void; abortAll: () => void } | null>;
   clearNodeSeekLoginCookiesOnly: (options?: CredentialClearOptions) => Promise<void>;
   clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<boolean>;
+  credentialScope: ForumCredentialScope;
   currentNodeSeekCredentialGeneration: () => number;
   currentYaohuoCredentialGeneration: () => number;
   discourseActionRuntimeDependencies: DiscourseActionRuntimeDependencies;
   discourseLoginPrompts: Record<DiscourseSource, (message?: string) => void>;
+  ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
   fetcher: Fetcher;
   loadYaohuoCookieForSource: (source: 'yaohuo', options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
-  ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
   notify: (message: string) => void;
-  optimisticTopicActionsRef: Ref<Record<string, OptimisticActionState>>;
-  refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
-  setActionBusy: Dispatch<SetStateAction<boolean>>;
-  setOptimisticTopicActions: Dispatch<SetStateAction<Record<string, OptimisticActionState>>>;
   showYaohuoLogin: (message?: string) => void;
   siteSessionStates: SiteSessionStates;
-  topicActionContextRef: Ref<TopicActionContext>;
+  topicDetail: TopicDetail | null;
+  topicReplies: Reply[];
   topicSession: TopicSessionController;
 }) {
+  const queryClient = useQueryClient();
+  const credentialScopeRef = useCommittedRef(credentialScope);
   const {
-    state: { replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic, topicDetail, topicReplies },
-    commands: {
-      actions: topicActions,
-      composer: topicComposer
-    }
+    state: { replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic },
+    commands: { composer: topicComposer, topic: topicCommands }
   } = topicSession;
-  const appendReplyMarkup = topicComposer.appendMarkup;
-  const applyTopicActionUpdate = topicActions.applyUpdate;
-  const completeReplySubmission = topicComposer.completeSubmission;
+  const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+  const mutationSource = detail?.source || 'nodeseek';
+  const mutationTopicId = detail?.id || 'global';
+  const mutationKey = useMemo(
+    () => forumMutationKeys.topic(mutationSource, mutationTopicId),
+    [mutationSource, mutationTopicId]
+  );
+  const mutationScope = `forum:${mutationSource}:topic:${mutationTopicId}`;
+  const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
   const sourceActionAvailability = Object.fromEntries(sourceValues.map((source) => [
     source,
     isSessionSource(source) && isSiteLoggedIn(siteSessionStates[source])
   ])) as Record<Source, boolean>;
-  const canUseNodeSeekActions = sourceActionAvailability.nodeseek;
-  const canUseYaohuoActions = sourceActionAvailability.yaohuo;
-  const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
-  const topicActionRunsRef = useRef<TopicActionRunMap>({});
-  const detachedActionRunsRef = useRef<TopicActionRunMap>({});
-  const busyActionRunsRef = useRef<TopicActionBusyRunSet>(new Set());
 
-  const startTopicActionRequest = useCallback((key: string): TopicActionRequestOwner => ({
-    actionKey: key,
-    context: { ...topicActionContextRef.current }
-  }), [topicActionContextRef]);
-
-  const startOptimisticTopicActionRequest = useCallback((key: string) => (
-    startTopicActionRequest(key)
-  ), [startTopicActionRequest]);
-
-  const isCurrentTopicActionRequest = useCallback((requestOwner: TopicActionRequestOwner) => (
-    requestOwner.context.generation === topicActionContextRef.current.generation
-    && requestOwner.context.key === topicActionContextRef.current.key
-  ), [topicActionContextRef]);
-
-  const startActionRun = useCallback((key: string, busy: boolean, cancelOnTopicChange = true): ActionRun => {
-    const run = {
-      ...startTopicActionRun(cancelOnTopicChange ? topicActionRunsRef : detachedActionRunsRef, key),
-      cancelOnTopicChange
-    };
-    actionAbortRef.current = {
-      abort: () => {
-        for (const controller of abortTopicActionRuns(topicActionRunsRef)) {
-          busyActionRunsRef.current.delete(controller);
-        }
-        setActionBusy(busyActionRunsRef.current.size > 0);
-        if (!Object.keys(detachedActionRunsRef.current).length) {
-          actionAbortRef.current = null;
-        }
-      },
-      abortAll: () => {
-        abortTopicActionRuns(topicActionRunsRef);
-        abortTopicActionRuns(detachedActionRunsRef);
-        clearBusyTopicActionRuns(busyActionRunsRef);
-        setActionBusy(false);
-        actionAbortRef.current = null;
-      }
-    };
-    if (busy) {
-      trackBusyTopicActionRun(busyActionRunsRef, run);
-      setActionBusy(true);
-    }
-    return run;
-  }, [actionAbortRef, setActionBusy]);
-
-  const isCurrentActionRun = useCallback((run: ActionRun) => (
-    isCurrentTopicActionRun(run, run.cancelOnTopicChange ? topicActionRunsRef : detachedActionRunsRef)
-  ), []);
-
-  const finishActionRun = useCallback((run: ActionRun, busy: boolean) => {
-    finishTopicActionRun(run, run.cancelOnTopicChange ? topicActionRunsRef : detachedActionRunsRef);
-    if (!Object.keys(topicActionRunsRef.current).length && !Object.keys(detachedActionRunsRef.current).length) {
-      actionAbortRef.current = null;
-    }
-    if (busy) {
-      setActionBusy(finishBusyTopicActionRun(busyActionRunsRef, run));
-    }
-  }, [actionAbortRef, setActionBusy]);
-
-  const executeTopicMutation = useCallback(<T,>(key: string, task: () => Promise<T>) => {
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    const source = detail?.source || 'nodeseek';
-    const topicId = detail?.id || 'global';
-    const mutationKey = forumMutationKeys.topicAction(source, topicId, key);
-    const mutation = appQueryClient.getMutationCache().build<T, unknown, void, unknown>(appQueryClient, {
-      mutationKey,
-      mutationFn: task,
-      scope: { id: mutationKey.join(':') },
-      onSettled: () => {
-        if (detail) {
-          void appQueryClient.invalidateQueries({
-            queryKey: forumQueryKeys.topic(detail.source, detail.id),
-            refetchType: 'none'
-          });
-        }
-      }
-    });
-    return mutation.execute(undefined);
-  }, [selectedTopic, topicDetail]);
-
-  const runSingleNonIdempotentTopicAction = useCallback(<T,>(key: string, task: () => Promise<T>, diagnosticTrace?: DiagnosticTrace) => {
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    const mutationKey = forumMutationKeys.topicAction(detail?.source || 'nodeseek', detail?.id || 'global', key);
-    if (appQueryClient.isMutating({ mutationKey, exact: true })) {
-      notify('操作正在提交，请稍后。');
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'guard', { isBusy: true, reason: 'duplicate' });
-        finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'duplicate' });
-      }
-      return Promise.resolve(undefined);
-    }
-    return executeTopicMutation(key, async () => {
-      try {
-        const result = await task();
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'success');
-        }
-        return result;
-      } catch (error) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'failure', { reason: normalizeDiagnosticReason(error) });
-        }
-        throw error;
-      }
-    });
-  }, [executeTopicMutation, notify, selectedTopic, topicDetail]);
-
-  const refreshTopicRepliesAfterWrite = useCallback(async (diagnosticTrace: DiagnosticTrace, options: TopicRepliesRefreshOptions) => {
-    try {
-      const refreshed = await refreshTopicReplies({ ...options, diagnosticTrace });
-      if (refreshed === false || refreshed === 'failed' || refreshed === 'stale' || refreshed === 'verification-required') {
-        finishDiagnosticTrace(diagnosticTrace, 'partial', { reason: 'refresh_failed' });
+  const mutation = useMutation<unknown, unknown, MutationVariables, MutationContext>({
+    mutationKey,
+    scope: { id: mutationScope },
+    mutationFn: (variables) => variables.task(),
+    onMutate: async (variables) => {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: variables.detailKey, exact: true }),
+        queryClient.cancelQueries({ queryKey: variables.repliesKey, exact: true })
+      ]);
+      const context = {
+        previousDetail: queryClient.getQueryData<TopicDetail>(variables.detailKey),
+        previousReplies: queryClient.getQueryData<ReplyCache>(variables.repliesKey)
+      };
+      variables.applyOptimistic?.();
+      markDiagnosticStage(variables.trace, 'apply', {
+        source: variables.source,
+        state: variables.applyOptimistic ? 'optimistic' : 'pending',
+        localApplied: Boolean(variables.applyOptimistic)
+      });
+      return context;
+    },
+    onSuccess: (result, variables) => {
+      if (credentialValue(variables.source, credentialScopeRef.current) !== variables.credential) {
+        finishDiagnosticTrace(variables.trace, 'stale', { source: variables.source, reason: 'stale' });
         return;
       }
-      markDiagnosticStage(diagnosticTrace, 'apply', { state: 'refreshed', refreshSucceeded: true });
-    } catch (error) {
-      finishDiagnosticTrace(diagnosticTrace, 'partial', { reason: 'refresh_failed' });
-      throw error;
+      variables.applyResult?.(result);
+      const message = typeof variables.successMessage === 'function'
+        ? variables.successMessage(result)
+        : variables.successMessage;
+      if (message) notify(message);
+      finishDiagnosticTrace(variables.trace, 'success', { source: variables.source, serverConfirmed: true });
+    },
+    onError: (error, variables, context) => {
+      const failure = mutationFailure(error);
+      const credentialIsCurrent = credentialValue(variables.source, credentialScopeRef.current) === variables.credential;
+      if (credentialIsCurrent && failure.outcome !== 'stale') {
+        if (context?.previousDetail) queryClient.setQueryData(variables.detailKey, context.previousDetail);
+        if (context?.previousReplies) queryClient.setQueryData(variables.repliesKey, context.previousReplies);
+        if (variables.applyOptimistic) {
+          markDiagnosticStage(variables.trace, 'rollback', { source: variables.source, state: 'local' });
+        }
+      }
+      finishDiagnosticTrace(variables.trace, credentialIsCurrent ? failure.outcome : 'stale', {
+        source: variables.source,
+        reason: credentialIsCurrent ? failure.reason : 'stale'
+      });
     }
-  }, [refreshTopicReplies]);
+  });
 
-  const runNodeSeekRequest = useCallback(async (
-    requestFactory: () => NodeSeekActionRequest,
-    success: string,
-    options: ActionRunOptions = {}
+  const pendingVariables = useMutationState<MutationVariables>({
+    filters: { mutationKey, status: 'pending' },
+    select: (entry) => entry.state.variables as MutationVariables
+  });
+  const optimisticTopicActions = useMemo<Record<string, OptimisticActionState>>(() => Object.fromEntries(
+    pendingVariables
+      .filter((variables) => variables?.applyOptimistic)
+      .map((variables) => [variables.actionKey, {
+        inFlight: true
+      }])
+  ), [pendingVariables]);
+
+  const cacheKeys = useCallback((actionTopic: TopicDetail) => {
+    const detailKey = forumQueryKeys.topic({
+      source: actionTopic.source,
+      topicId: actionTopic.id,
+      scope: credentialScopeRef.current
+    });
+    return { detailKey, repliesKey: forumQueryKeys.replies(detailKey) };
+  }, []);
+
+  const executeMutation = useCallback(async (
+    actionTopic: TopicDetail,
+    variables: Omit<MutationVariables, 'credential' | 'detailKey' | 'repliesKey' | 'source' | 'topicId'>
   ) => {
-    const diagnosticTrace = options.diagnosticTrace;
-    if (!canUseNodeSeekActions) {
-      if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'nodeseek', reason: 'stale' });
-        }
-        return false;
-      }
-      notify(actionMessage(authActionMessageForSource('nodeseek', siteSessionViewModels), options.restoreOnFailure));
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'credential', { source: 'nodeseek', hasCredential: false, reason: 'login_required' });
-        if (!options.deferDiagnosticFailure) {
-          finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: 'nodeseek', reason: 'login_required' });
-        }
-      }
+    const keys = cacheKeys(actionTopic);
+    try {
+      await mutation.mutateAsync({
+        ...variables,
+        ...keys,
+        credential: credentialValue(actionTopic.source, credentialScopeRef.current),
+        source: actionTopic.source,
+        topicId: actionTopic.id
+      });
+      return true;
+    } catch {
       return false;
     }
-    const actionKey = options.key || options.owner?.actionKey || success || options.fallbackKey || 'nodeseek-action';
-    const topicScoped = isTopicScopedActionKey(actionKey);
-    const requestOwner = options.owner || (topicScoped ? startTopicActionRequest(actionKey) : undefined);
-    const busy = options.busy ?? true;
-    if (diagnosticTrace) {
-      markDiagnosticStage(diagnosticTrace, 'guard', { source: 'nodeseek', hasOwner: Boolean(requestOwner), isBusy: busy });
-      markDiagnosticStage(diagnosticTrace, 'credential', { source: 'nodeseek', state: 'load' });
+  }, [cacheKeys, mutation.mutateAsync]);
+
+  const runNodeSeekRequest = useCallback(async (request: NodeSeekActionRequest, trace: DiagnosticTrace) => {
+    if (!sourceActionAvailability.nodeseek) {
+      notify(authActionMessageForSource('nodeseek', siteSessionViewModels));
+      throw new HandledMutationError('NodeSeek 未登录', 'blocked', 'login_required');
     }
-    const run = startActionRun(actionKey, busy, topicScoped);
-    const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
-    const isNodeSeekCredentialCurrent = () => currentNodeSeekCredentialGeneration() === nodeSeekGeneration;
+    const generation = currentNodeSeekCredentialGeneration();
+    const access = await loadNodeSeekActionAccess();
+    if (generation !== currentNodeSeekCredentialGeneration()) {
+      throw new HandledMutationError('凭据已变化', 'stale', 'stale');
+    }
+    markDiagnosticStage(trace, 'credential', {
+      source: 'nodeseek',
+      state: 'ready',
+      hasCredential: Boolean(access?.cookieHeader),
+      credentialSource: 'secure-store'
+    });
     try {
-      const access = await loadNodeSeekActionAccess();
-      if (!isNodeSeekCredentialCurrent() || !isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'nodeseek', reason: 'stale' });
-        }
-        return false;
-      }
-      const request = requestFactory();
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'credential', {
-          source: 'nodeseek',
-          state: 'ready',
-          hasCredential: Boolean(access?.cookieHeader),
-          credentialSource: 'secure-store',
-          ...actionRequestDiagnosticFields('nodeseek', request)
-        });
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'nodeseek', state: 'start' });
-      }
       await runNodeSeekAction({
         cookieHeader: access?.cookieHeader || '',
-        fetcher: diagnosticTrace ? withDiagnosticFetcher(diagnosticTrace, fetcher) : fetcher,
+        fetcher: withDiagnosticFetcher(trace, fetcher),
         request,
-        signal: run.controller.signal,
         userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
       });
-      if (!isNodeSeekCredentialCurrent() || !isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'nodeseek', reason: 'stale' });
-        }
-        return false;
-      }
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
-      }
-      if (options.notifySuccess !== false && success) {
-        notify(success);
-      }
-      return true;
     } catch (error) {
-      if (!isNodeSeekCredentialCurrent() || !isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner)) || isCanceledRequest(error)) {
-        if (diagnosticTrace) {
-          const reason = isCanceledRequest(error) ? 'canceled' : 'stale';
-          finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source: 'nodeseek', reason });
-        }
-        return false;
+      if (generation !== currentNodeSeekCredentialGeneration()) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      const diagnosticReason = normalizeDiagnosticReason(error);
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'nodeseek', state: 'failure', reason: diagnosticReason });
-      }
-      let failureMessage = errorMessage(error);
+      let message = errorMessage(error);
       if (isNodeSeekLoginRequiredError(error)) {
         try {
-          await clearNodeSeekLoginCookiesOnly({
-            generation: nodeSeekGeneration,
-            expiredMessage: failureMessage
-          });
-        } catch (cleanupError) {
-          failureMessage = `${failureMessage} 本机 Cookie 清理未完成，请重试。`;
-          if (diagnosticTrace) {
-            markDiagnosticStage(diagnosticTrace, 'persist', {
-              source: 'nodeseek',
-              store: 'multi-store',
-              state: 'partial',
-              reason: normalizeDiagnosticReason(cleanupError)
-            });
-          }
-        }
-        if (!isNodeSeekCredentialCurrent() || !isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
-          if (diagnosticTrace) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'nodeseek', reason: 'stale' });
-          }
-          return false;
+          await clearNodeSeekLoginCookiesOnly({ generation, expiredMessage: message });
+        } catch {
+          message = `${message} 本机 Cookie 清理未完成，请重试。`;
         }
       }
-      notify(actionMessage(failureMessage, options.restoreOnFailure));
-      if (diagnosticTrace && !options.deferDiagnosticFailure) {
-        finishDiagnosticTrace(diagnosticTrace, 'failure', { source: 'nodeseek', reason: diagnosticReason });
+      if (generation !== currentNodeSeekCredentialGeneration()) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      return false;
-    } finally {
-      finishActionRun(run, busy);
+      notify(message);
+      throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
-  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
+    if (generation !== currentNodeSeekCredentialGeneration()) {
+      throw new HandledMutationError('凭据已变化', 'stale', 'stale');
+    }
+    markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
+    return true;
+  }, [clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, fetcher, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, sourceActionAvailability.nodeseek]);
+
+  const attendanceMutation = useMutation<unknown, unknown, AttendanceMutationVariables>({
+    mutationKey: forumMutationKeys.topic('nodeseek', 'global'),
+    scope: { id: 'forum:nodeseek:topic:global' },
+    mutationFn: ({ trace }) => runNodeSeekRequest(
+      buildNodeSeekAttendanceRequest({ random: false }),
+      trace
+    ),
+    onSuccess: (_result, variables) => {
+      if (credentialScopeRef.current.nodeseek !== variables.credential) {
+        finishDiagnosticTrace(variables.trace, 'stale', { source: 'nodeseek', reason: 'stale' });
+        return;
+      }
+      notify('签到请求已提交');
+      finishDiagnosticTrace(variables.trace, 'success', { source: 'nodeseek', serverConfirmed: true });
+    },
+    onError: (error, variables) => {
+      const current = credentialScopeRef.current.nodeseek === variables.credential;
+      const failure = mutationFailure(error);
+      finishDiagnosticTrace(variables.trace, current ? failure.outcome : 'stale', {
+        source: 'nodeseek',
+        reason: current ? failure.reason : 'stale'
+      });
+    }
+  });
+  const actionBusy = attendanceMutation.isPending
+    || pendingVariables.some((variables) => variables?.busy !== false);
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
-    success: string,
-    options: ActionRunOptions = {}
+    trace: DiagnosticTrace
   ) => {
-    const diagnosticTrace = options.diagnosticTrace;
-    if (!canUseYaohuoActions) {
-      if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'yaohuo', reason: 'stale' });
-        }
-        return false;
-      }
+    if (!sourceActionAvailability.yaohuo) {
       showYaohuoLogin(authActionMessageForSource('yaohuo', siteSessionViewModels));
-      failDiagnosticActionRequest(options, 'yaohuo', 'credential', 'blocked', 'login_required');
-      return false;
+      throw new HandledMutationError('妖火未登录', 'blocked', 'login_required');
     }
-    const requestOwner = options.owner || startTopicActionRequest(options.key || success);
-    const busy = options.busy ?? true;
-    const run = startActionRun(options.key || requestOwner.actionKey || success, busy);
-    if (diagnosticTrace) {
-      markDiagnosticStage(diagnosticTrace, 'guard', { source: 'yaohuo', hasOwner: true, isBusy: busy });
-      markDiagnosticStage(diagnosticTrace, 'credential', { source: 'yaohuo', state: 'load' });
+    let generation = currentYaohuoCredentialGeneration();
+    const cookieHeader = await loadYaohuoCookieForSource('yaohuo', {
+      captureGeneration: (value) => { generation = value; },
+      diagnosticTrace: trace
+    });
+    if (generation !== currentYaohuoCredentialGeneration()) {
+      throw new HandledMutationError('凭据已变化', 'stale', 'stale');
     }
-    let yaohuoGeneration = currentYaohuoCredentialGeneration();
-    const isYaohuoCredentialCurrent = () => currentYaohuoCredentialGeneration() === yaohuoGeneration;
+    if (!cookieHeader) {
+      showYaohuoLogin(authActionMessageForSource('yaohuo', siteSessionViewModels));
+      throw new HandledMutationError('妖火登录信息不可用', 'blocked', 'missing_credential');
+    }
     try {
-      const cookieHeader = await loadYaohuoCookieForSource('yaohuo', {
-        captureGeneration: (generation) => { yaohuoGeneration = generation; },
-        diagnosticTrace
-      });
-      if (!isYaohuoCredentialCurrent() || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'yaohuo', reason: 'stale' });
-        }
-        return false;
-      }
-      if (!cookieHeader) {
-        showYaohuoLogin(authActionMessageForSource('yaohuo', siteSessionViewModels));
-        failDiagnosticActionRequest(options, 'yaohuo', 'credential', 'blocked', 'missing_credential');
-        return false;
-      }
-      const request = requestFactory(cookieHeader);
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'credential', {
-          source: 'yaohuo',
-          state: 'ready',
-          hasCredential: true,
-          credentialSource: 'secure-store',
-          ...actionRequestDiagnosticFields('yaohuo', request)
-        });
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'yaohuo', state: 'start' });
-      }
       const result = await runYaohuoAction({
         cookieHeader,
-        fetcher: diagnosticTrace ? withDiagnosticFetcher(diagnosticTrace, fetcher) : fetcher,
-        request,
-        signal: run.controller.signal
+        fetcher: withDiagnosticFetcher(trace, fetcher),
+        request: requestFactory(cookieHeader)
       });
-      if (!isYaohuoCredentialCurrent() || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'yaohuo', reason: 'stale' });
-        }
-        return false;
+      if (generation !== currentYaohuoCredentialGeneration()) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      const resultConfirmed = result.message !== '操作结果无法确认，请刷新原帖核对';
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'yaohuo', state: resultConfirmed ? 'confirmed' : 'unconfirmed', serverConfirmed: resultConfirmed });
+      if (result.message === '操作结果无法确认，请刷新原帖核对') {
+        notify(result.message);
+        throw new HandledMutationError(result.message, 'failure', 'invalid_response');
       }
-      notify(result.message === '操作已提交' ? success : result.message);
-      if (!resultConfirmed) {
-        failDiagnosticActionRequest(options, 'yaohuo', 'transport', 'failure', 'invalid_response');
-      }
-      return resultConfirmed ? result : false;
+      markDiagnosticStage(trace, 'transport', { source: 'yaohuo', state: 'confirmed', serverConfirmed: true });
+      return result;
     } catch (error) {
-      if (!isYaohuoCredentialCurrent() || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
-        if (diagnosticTrace) {
-          const reason = isCanceledRequest(error) ? 'canceled' : 'stale';
-          finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source: 'yaohuo', reason });
-        }
-        return false;
+      if (error instanceof HandledMutationError) throw error;
+      if (generation !== currentYaohuoCredentialGeneration()) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      const diagnosticReason = normalizeDiagnosticReason(error);
-      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        let loginMessage = errorMessage(error);
+      const loginRequired = Boolean(error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired);
+      let message = errorMessage(error);
+      if (loginRequired) {
         if ((error as { reason?: unknown }).reason === 'expired') {
-          try {
-            await clearYaohuoLoginState({
-              generation: yaohuoGeneration,
-              expiredMessage: loginMessage
-            });
-          } catch (cleanupError) {
-            loginMessage = `${loginMessage} 本机 Cookie 清理未完成，请重试。`;
-            if (diagnosticTrace) {
-              markDiagnosticStage(diagnosticTrace, 'persist', {
-                source: 'yaohuo',
-                store: 'multi-store',
-                state: 'partial',
-                reason: normalizeDiagnosticReason(cleanupError)
-              });
-            }
+          const cleared = await clearYaohuoLoginState({ generation, expiredMessage: message }).catch(() => false);
+          if (generation !== currentYaohuoCredentialGeneration()) {
+            throw new HandledMutationError('凭据已变化', 'stale', 'stale');
           }
-          if (!isYaohuoCredentialCurrent() || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-            if (diagnosticTrace) {
-              finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'yaohuo', reason: 'stale' });
-            }
-            return false;
+          if (!cleared) {
+            message = `${message} 本机登录信息清理未完成，请重试。`;
           }
         }
-        showYaohuoLogin(loginMessage);
-        failDiagnosticActionRequest(options, 'yaohuo', 'credential', 'blocked', diagnosticReason);
-        return false;
+        showYaohuoLogin(message);
+        throw new HandledMutationError(message, 'blocked', 'login_required');
       }
-      notify(errorMessage(error));
-      failDiagnosticActionRequest(options, 'yaohuo', 'transport', 'failure', diagnosticReason);
-      return false;
-    } finally {
-      finishActionRun(run, busy);
+      notify(message);
+      throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
-  }, [canUseYaohuoActions, clearYaohuoLoginState, currentYaohuoCredentialGeneration, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest]);
+  }, [clearYaohuoLoginState, currentYaohuoCredentialGeneration, fetcher, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, sourceActionAvailability.yaohuo]);
 
   const runDiscourseRequest = useCallback(async (
     source: DiscourseSource,
-    actionFactory: () => DiscourseAction,
-    success: string,
-    options: ActionRunOptions = {}
+    action: DiscourseAction,
+    trace: DiagnosticTrace
   ) => {
-    const diagnosticTrace = options.diagnosticTrace;
     const loginPrompt = discourseLoginPrompts[source];
     if (!sourceActionAvailability[source]) {
-      if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source, reason: 'stale' });
-        }
-        return false;
-      }
-      const message = authActionMessageForSource(source, siteSessionViewModels);
-      loginPrompt(actionMessage(message, options.restoreOnFailure));
-      failDiagnosticActionRequest(options, source, 'credential', 'blocked', 'login_required');
-      return false;
+      loginPrompt(authActionMessageForSource(source, siteSessionViewModels));
+      throw new HandledMutationError(`${source} 未登录`, 'blocked', 'login_required');
     }
-    const actionKey = options.key || options.owner?.actionKey || success || options.fallbackKey || `${source}-action`;
-    const requestOwner = options.owner || startTopicActionRequest(actionKey);
-    const busy = options.busy ?? true;
-    const run = startActionRun(actionKey, busy);
-    let runtime: PreparedDiscourseActionRuntime | undefined;
-    const isRuntimeCredentialCurrent = () => runtime?.isCredentialCurrent?.() !== false;
-    if (diagnosticTrace) {
-      markDiagnosticStage(diagnosticTrace, 'guard', { source, hasOwner: true, isBusy: busy });
-      markDiagnosticStage(diagnosticTrace, 'credential', { source, state: 'load' });
+    const runtime = await prepareDiscourseActionRuntime(source, {
+      ...discourseActionRuntimeDependencies,
+      fetcher: withDiagnosticFetcher(trace, fetcher)
+    });
+    if (runtime.isCredentialCurrent?.() === false) {
+      throw new HandledMutationError('凭据已变化', 'stale', 'stale');
+    }
+    if (!runtime.credentialReady || !runtime.execute) {
+      runtime.onMissingCredential?.();
+      loginPrompt(authActionMessageForSource(source, siteSessionViewModels));
+      throw new HandledMutationError('登录信息不可用', 'blocked', 'missing_credential');
     }
     try {
-      runtime = await prepareDiscourseActionRuntime(source, {
-        ...discourseActionRuntimeDependencies,
-        fetcher: diagnosticTrace ? withDiagnosticFetcher(diagnosticTrace, fetcher) : fetcher
-      });
-      if (!isRuntimeCredentialCurrent() || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source, reason: 'stale' });
-        }
-        return false;
+      const result = await runtime.execute(buildDiscourseSourceActionRequest(source, action));
+      if (runtime.isCredentialCurrent?.() === false) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      if (!runtime.credentialReady || !runtime.execute) {
-        runtime.onMissingCredential?.();
-        const message = authActionMessageForSource(source, siteSessionViewModels);
-        loginPrompt(actionMessage(message, options.restoreOnFailure));
-        failDiagnosticActionRequest(options, source, 'credential', 'blocked', 'missing_credential');
-        return false;
-      }
-      const request = buildDiscourseSourceActionRequest(source, actionFactory());
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'credential', {
-          source,
-          state: 'ready',
-          hasCredential: true,
-          credentialSource: runtime.credentialSource,
-          ...actionRequestDiagnosticFields(source, request, runtime.csrfSource)
-        });
-        markDiagnosticStage(diagnosticTrace, 'transport', { source, state: 'start' });
-      }
-      const result = await runtime.execute(request, run.controller.signal);
-      if (!isRuntimeCredentialCurrent() || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source, reason: 'stale' });
-        }
-        return false;
-      }
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'transport', { source, state: 'confirmed', serverConfirmed: true });
-      }
-      if (options.notifySuccess !== false && success) {
-        notify(success);
-      }
+      markDiagnosticStage(trace, 'transport', { source, state: 'confirmed', serverConfirmed: true });
       return result ?? true;
     } catch (error) {
-      if (!isRuntimeCredentialCurrent() || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
-        if (diagnosticTrace) {
-          const reason = isCanceledRequest(error) ? 'canceled' : 'stale';
-          finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source, reason });
-        }
-        return false;
+      if (error instanceof HandledMutationError) throw error;
+      if (runtime.isCredentialCurrent?.() === false) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      const diagnosticReason = normalizeDiagnosticReason(error);
-      const loginRequired = Boolean(error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired);
-      let recoveryFailure: unknown;
-      let recovery: DiscourseActionRuntimeRecovery;
+      let recovery;
+      let recoveryError: unknown;
       try {
-        recovery = runtime
-          ? await runtime.recover(error)
-          : { loginRequired, phase: loginRequired ? 'credential' : 'transport' };
-      } catch (recoverError) {
-        recoveryFailure = recoverError;
-        recovery = {
-          loginRequired,
-          phase: loginRequired || source === 'xiaoyinsi' ? 'credential' : 'transport'
-        };
-        if (diagnosticTrace) {
-          markDiagnosticStage(diagnosticTrace, 'credential', {
-            source,
-            state: 'partial',
-            reason: normalizeDiagnosticReason(recoverError)
-          });
-        }
+        recovery = await runtime.recover(error);
+      } catch (errorDuringRecovery) {
+        recoveryError = errorDuringRecovery;
+        recovery = { loginRequired: false, phase: 'credential' as const };
       }
-      if (recovery.stale || !isRuntimeCredentialCurrent() || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source, reason: 'stale' });
-        }
-        return false;
+      if (recovery.stale || runtime.isCredentialCurrent?.() === false) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      const recoveryMessage = recoveryFailure
-        ? `${errorMessage(error)} ${source === 'linuxdo'
-          ? '本机 Cookie 清理未完成，请重试。'
-          : '授权状态复核未完成，请重试。'}`
-        : errorMessage(error);
+      const originalMessage = errorMessage(error);
+      const recoveryMessage = recoveryError ? errorMessage(recoveryError) : '';
+      const message = recoveryError
+        ? `${originalMessage}；${recoveryMessage.includes('复核未完成')
+          ? recoveryMessage
+          : `授权状态复核未完成：${recoveryMessage}`}`
+        : originalMessage;
       if (recovery.loginRequired) {
-        loginPrompt(actionMessage(recoveryMessage, options.restoreOnFailure));
-        failDiagnosticActionRequest(options, source, 'credential', 'blocked', diagnosticReason);
-        return false;
+        const promptMessage = recovery.message || message;
+        loginPrompt(promptMessage);
+        throw new HandledMutationError(promptMessage, 'blocked', 'login_required');
       }
-      notify(actionMessage(recoveryMessage, options.restoreOnFailure));
-      failDiagnosticActionRequest(options, source, recovery.phase, 'failure', diagnosticReason);
-      return false;
-    } finally {
-      finishActionRun(run, busy);
+      notify(message);
+      throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
-  }, [
-    discourseActionRuntimeDependencies,
-    discourseLoginPrompts,
-    fetcher,
-    finishActionRun,
-    isCurrentActionRun,
-    isCurrentTopicActionRequest,
-    notify,
-    siteSessionViewModels,
-    sourceActionAvailability,
-    startActionRun,
-    startTopicActionRequest
-  ]);
+  }, [discourseActionRuntimeDependencies, discourseLoginPrompts, fetcher, notify, siteSessionViewModels, sourceActionAvailability]);
 
-  const setOptimisticTopicActionState = useCallback((key: string, state?: OptimisticActionState) => {
-    const next = { ...optimisticTopicActionsRef.current };
-    if (!state || (!state.inFlight && state.displayed === state.confirmed && state.desired === state.confirmed)) {
-      delete next[key];
-    } else {
-      next[key] = state;
-    }
-    optimisticTopicActionsRef.current = next;
-    setOptimisticTopicActions(next);
-  }, [optimisticTopicActionsRef, setOptimisticTopicActions]);
-
-  const runNodeSeekActionForOptimisticUpdate = useCallback(async (
-    requestFactory: () => NodeSeekActionRequest,
-    options: ActionRunOptions = {}
-  ) => runNodeSeekRequest(requestFactory, '', {
-    ...options,
-    busy: false,
-    fallbackKey: 'nodeseek-optimistic',
-    deferDiagnosticFailure: true,
-    notifySuccess: false,
-    restoreOnFailure: true
-  }), [runNodeSeekRequest]);
-
-  const runDiscourseActionForOptimisticUpdate = useCallback(async (
-    source: DiscourseSource,
-    actionFactory: () => DiscourseAction,
-    options: ActionRunOptions = {}
-  ) => runDiscourseRequest(source, actionFactory, '', {
-    ...options,
-    busy: false,
-    deferDiagnosticFailure: true,
-    fallbackKey: 'discourse-optimistic',
-    notifySuccess: false,
-    restoreOnFailure: true
-  }), [runDiscourseRequest]);
-
-  const runOptimisticActionQueue = useCallback(async ({
-    key,
-    requestOwner,
-    applyDisplayed,
-    sendDesired,
-    successMessage,
-    diagnosticTrace
-  }: Omit<OptimisticTopicActionOptions, 'currentActive'>) => {
-    let lastResult: boolean | undefined;
-    await executeTopicMutation(key, () => runOptimisticActionQueueHelper({
-        key,
-        requestOwner,
-        applyDisplayed,
-        sendDesired: async (desiredActive) => {
-          try {
-            lastResult = await sendDesired(desiredActive);
-            return lastResult;
-          } catch (error) {
-            lastResult = false;
-            throw error;
-          }
-        },
-        successMessage,
-        isCurrentRequest: isCurrentTopicActionRequest,
-        notify,
-        optimisticActions: optimisticTopicActionsRef,
-        ownerKey: optimisticOwnerKey(requestOwner),
-        setOptimisticActionState: setOptimisticTopicActionState
-      }));
-    if (!isCurrentTopicActionRequest(requestOwner)) {
-      finishDiagnosticTrace(diagnosticTrace, 'stale', { reason: 'stale' });
-      return;
-    }
-    if (lastResult === false) {
-      markDiagnosticStage(diagnosticTrace, 'rollback', { state: 'local' });
-      finishDiagnosticTrace(diagnosticTrace, 'failure', { reason: 'unknown' });
-    } else if (lastResult === true) {
-      markDiagnosticStage(diagnosticTrace, 'apply', { state: 'confirmed', localApplied: true });
-      finishDiagnosticTrace(diagnosticTrace, 'success');
-    } else {
-      finishDiagnosticTrace(diagnosticTrace, 'stale', { reason: 'stale' });
-    }
-  }, [executeTopicMutation, isCurrentTopicActionRequest, notify, optimisticTopicActionsRef, setOptimisticTopicActionState]);
-
-  const startOptimisticTopicAction = useCallback(({
-    key,
-    requestOwner,
-    currentActive,
-    applyDisplayed,
-    sendDesired,
-    successMessage,
-    diagnosticTrace
-  }: OptimisticTopicActionOptions) => {
-    if (!isCurrentTopicActionRequest(requestOwner)) {
-      finishDiagnosticTrace(diagnosticTrace, 'stale', { reason: 'stale' });
-      return;
-    }
-    const alreadyInFlight = Boolean(optimisticTopicActionsRef.current[key]?.inFlight);
-    markDiagnosticStage(diagnosticTrace, 'apply', { state: 'optimistic', localApplied: true });
-    beginOptimisticTopicAction({
-      key,
-      currentActive,
-      requestOwner,
-      applyDisplayed,
-      isCurrentRequest: isCurrentTopicActionRequest,
-      optimisticActions: optimisticTopicActionsRef,
-      ownerKey: optimisticOwnerKey(requestOwner),
-      setOptimisticActionState: setOptimisticTopicActionState,
-      startQueue: () => {
-        void runOptimisticActionQueue({
-          key,
-          requestOwner,
-          applyDisplayed,
-          sendDesired,
-          successMessage,
-          diagnosticTrace
-        });
-      }
-    });
-    if (alreadyInFlight) {
-      markDiagnosticStage(diagnosticTrace, 'apply', { state: 'queued', localApplied: true });
-      finishDiagnosticTrace(diagnosticTrace, 'success', { state: 'queued' });
-    }
-  }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runOptimisticActionQueue, setOptimisticTopicActionState]);
+  const updateInteraction = useCallback((actionTopic: TopicDetail, patch: Parameters<typeof applyInteractionToTopic>[1]) => {
+    const { detailKey, repliesKey } = cacheKeys(actionTopic);
+    queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyInteractionToTopic(current || null, patch) || current);
+    updateReplyCache(queryClient, repliesKey, (replies) => applyInteractionToReplies(replies, patch));
+  }, [cacheKeys, queryClient]);
 
   const submitReply = useCallback(async () => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('reply', replyEditTarget ? 'edit' : 'submit', {
-      ...(actionSource ? { source: actionSource } : {}),
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    const trace = beginDiagnosticTrace('reply', replyEditTarget ? 'edit' : 'submit', {
+      ...(actionTopic ? { source: actionTopic.source } : {}),
       contentLength: replyContent.length
     });
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    const canEditExistingDiscourseReply = Boolean(
-      detail
-      && isDiscourseSource(detail.source)
-      && replyEditTarget
-    );
-    if (!detail || (!canEditExistingDiscourseReply && !canSubmitReplyToTopic(detail))) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'not_ready' });
+    const canEditDiscourseReply = Boolean(actionTopic && isDiscourseSource(actionTopic.source) && replyEditTarget);
+    if (!actionTopic || (!canEditDiscourseReply && !canSubmitReplyToTopic(actionTopic))) {
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
     }
-    const requestTopicKey = topicKey(detail);
     if (!replyContent.trim()) {
       notify('请输入回复内容');
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
       return;
     }
+    const actionTopicKey = topicKey(actionTopic);
     if (replyEditTarget) {
-      if (!isNodeSeekActionTopic(detail) && !isDiscourseSource(detail.source)) {
+      if (!isNodeSeekActionTopic(actionTopic) && !isDiscourseSource(actionTopic.source)) {
         notify('当前来源暂不支持编辑回复');
-        finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
         return;
       }
-      markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-      const actionKey = topicEditReplyActionKey(requestTopicKey, replyEditTarget.commentId);
-      await runSingleNonIdempotentTopicAction(actionKey, async () => {
-        const requestOwner = startTopicActionRequest(actionKey);
-        const submitted = isNodeSeekActionTopic(detail)
-          ? await runNodeSeekRequest(
-            () => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: replyContent, csrfToken: '' }),
-            '回复已更新',
-            { owner: requestOwner, diagnosticTrace }
-          )
-          : await runDiscourseRequest(
-              detail.source as DiscourseSource,
-              () => ({ type: 'edit-post', postId: replyEditTarget.commentId, content: replyContent }),
-              '回复已更新',
-              { owner: requestOwner, diagnosticTrace }
-            );
-        if (submitted) {
-          if (!isCurrentTopicActionRequest(requestOwner)) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-            return;
-          }
-          const editedReplyContent = {
-            commentId: replyEditTarget.commentId,
-            contentMarkdown: replyContent
-          };
-          if (isXiaoyinsiActionTopic(detail)) {
-            completeReplySubmission();
-          } else {
-            completeReplySubmission({ editedReplyContent, source: detail.source });
-          }
-          markDiagnosticStage(diagnosticTrace, 'apply', isXiaoyinsiActionTopic(detail)
-            ? { source: detail.source, state: 'server-refresh-start' }
-            : { source: detail.source, state: 'local', localApplied: true });
-          await refreshTopicRepliesAfterWrite(diagnosticTrace, {
-            silent: true,
-            afterSubmit: true,
-            nocache: true,
-            targetReply: replyEditTarget,
-            editedReplyContent
-          });
-        }
-      }, diagnosticTrace);
+      const edit = { ...replyEditTarget, contentMarkdown: replyContent };
+      await executeMutation(actionTopic as TopicDetail, {
+        actionKey: topicEditReplyActionKey(actionTopicKey, replyEditTarget.commentId),
+        busy: true,
+        trace,
+        task: () => isNodeSeekActionTopic(actionTopic)
+          ? runNodeSeekRequest(buildNodeSeekEditReplyRequest({ commentId: edit.commentId, content: edit.contentMarkdown, csrfToken: '' }), trace)
+          : runDiscourseRequest(actionTopic.source as DiscourseSource, {
+              type: 'edit-post', postId: edit.commentId, content: edit.contentMarkdown
+            }, trace),
+        applyResult: () => {
+          const { repliesKey } = cacheKeys(actionTopic as TopicDetail);
+          updateReplyCache(queryClient, repliesKey, (replies) => applyEditedReplyContent(replies, edit, actionTopic.source));
+          void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
+          if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
+        },
+        successMessage: '回复已更新'
+      });
       return;
     }
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    const actionKey = topicReplyActionKey(requestTopicKey);
-    await runSingleNonIdempotentTopicAction(actionKey, async () => {
-      const requestOwner = startTopicActionRequest(actionKey);
-      if (isYaohuoActionTopic(detail)) {
-        if (replyTarget && !replyTarget.authorId) {
-          notify('当前楼层缺少用户 id，刷新主题后再试。');
-          finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
-          return;
-        }
-        const submitted = await runYaohuoRequest(
-          (cookieHeader) => buildYaohuoReplyRequest({
-            topicId: detail.id,
-            classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-            content: replyContent,
-            face: replyFace,
+    if (isYaohuoActionTopic(actionTopic) && replyTarget && !replyTarget.authorId) {
+      notify('当前楼层缺少用户 id，刷新主题后再试。');
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+      return;
+    }
+    const content = replyContent;
+    const face = replyFace;
+    const target = replyTarget;
+    await executeMutation(actionTopic as TopicDetail, {
+      actionKey: topicReplyActionKey(actionTopicKey),
+      busy: true,
+      trace,
+      task: () => isYaohuoActionTopic(actionTopic)
+        ? runYaohuoRequest((cookieHeader) => buildYaohuoReplyRequest({
+            topicId: actionTopic.id,
+            classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+            content,
+            face,
             sid: extractYaohuoSid(cookieHeader),
-            replyFloor: replyTarget?.floor,
-            toUserId: replyTarget?.authorId
-          }),
-          '回复已提交',
-          { owner: requestOwner, diagnosticTrace }
-        );
-        if (submitted) {
-          if (!isCurrentTopicActionRequest(requestOwner)) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-            return;
-          }
-          completeReplySubmission();
-          markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
-          await refreshTopicRepliesAfterWrite(diagnosticTrace, { silent: true, afterSubmit: true });
-        }
-        return;
-      }
-      if (isDiscourseSource(detail.source)) {
-        const submitted = await runDiscourseRequest(
-          detail.source,
-          () => ({
-            type: 'reply',
-            topicId: detail.id,
-            content: replyContent,
-            replyToPostNumber: replyTarget?.floor
-          }),
-          '回复已提交',
-          { owner: requestOwner, diagnosticTrace }
-        );
-        if (submitted) {
-          if (!isCurrentTopicActionRequest(requestOwner)) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-            return;
-          }
-          completeReplySubmission();
-          markDiagnosticStage(diagnosticTrace, 'apply', detail.source === 'xiaoyinsi'
-            ? { source: detail.source, state: 'server-refresh-start' }
-            : { source: detail.source, state: 'local', localApplied: true });
-          await refreshTopicRepliesAfterWrite(diagnosticTrace, { silent: true, afterSubmit: true });
-        }
-        return;
-      }
-      const submitted = await runNodeSeekRequest(
-        () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget, csrfToken: '' }),
-        '回复已提交',
-        { owner: requestOwner, diagnosticTrace }
-      );
-      if (submitted) {
-        if (!isCurrentTopicActionRequest(requestOwner)) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-          return;
-        }
-        completeReplySubmission();
-        markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
-        await refreshTopicRepliesAfterWrite(diagnosticTrace, { silent: true, afterSubmit: true });
-      }
-    }, diagnosticTrace);
-  }, [completeReplySubmission, isCurrentTopicActionRequest, notify, refreshTopicRepliesAfterWrite, replyContent, replyEditTarget, replyFace, replyTarget, runDiscourseRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+            replyFloor: target?.floor,
+            toUserId: target?.authorId
+          }), trace)
+        : isDiscourseSource(actionTopic.source)
+          ? runDiscourseRequest(actionTopic.source, {
+              type: 'reply', topicId: actionTopic.id, content, replyToPostNumber: target?.floor
+            }, trace)
+          : runNodeSeekRequest(buildNodeSeekReplyRequest({ postId: actionTopic.id, content, replyTarget: target, csrfToken: '' }), trace),
+      applyResult: () => {
+        if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
+        const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
+        void queryClient.invalidateQueries({ queryKey: detailKey, exact: true });
+        void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
+      },
+      successMessage: '回复已提交'
+    });
+  }, [cacheKeys, executeMutation, notify, queryClient, replyContent, replyEditTarget, replyFace, replyTarget, runDiscourseRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
 
-  const deleteReplyConfirmed = useCallback(async (reply: Reply, diagnosticTrace: DiagnosticTrace) => {
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!detail) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'not_ready' });
+  const deleteReplyConfirmed = useCallback(async (reply: Reply, trace: DiagnosticTrace) => {
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!actionTopic || !reply.canDelete) {
+      notify(actionTopic ? '当前回复不能删除' : '主题尚未加载');
+      finishDiagnosticTrace(trace, 'blocked', { reason: actionTopic ? 'permission_denied' : 'not_ready' });
       return;
     }
-    if (!reply.canDelete) {
-      notify('当前回复不能删除');
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'permission_denied' });
+    if (isNodeSeekActionTopic(actionTopic)) {
+      notify('NodeSeek 原站没有删除评论入口');
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
       return;
     }
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    const requestTopicKey = topicKey(detail);
-    const actionKey = topicDeleteReplyActionKey(requestTopicKey, reply);
-    await runSingleNonIdempotentTopicAction(actionKey, async () => {
-      const requestOwner = startTopicActionRequest(actionKey);
-      let deleted: unknown = false;
-      if (isYaohuoActionTopic(detail)) {
-        if (!reply.deletePath) {
-          notify('当前回复缺少删除链接，刷新主题后再试。');
-          finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
-          return;
-        }
-        deleted = await runYaohuoRequest(
-          (cookieHeader) => buildYaohuoDeleteReplyRequest({
-            deletePath: reply.deletePath || '',
-            sid: extractYaohuoSid(cookieHeader)
-          }),
-          '回复已删除',
-          { owner: requestOwner, diagnosticTrace }
-        );
-      } else if (isDiscourseSource(detail.source)) {
-        if (!reply.commentId) {
-          notify('当前回复缺少评论 id，刷新主题后再试。');
-          finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
-          return;
-        }
-        deleted = await runDiscourseRequest(
-          detail.source,
-          () => ({ type: 'delete-post', postId: reply.commentId || 0 }),
-          '回复已删除',
-          { owner: requestOwner, diagnosticTrace }
-        );
-      } else if (isNodeSeekActionTopic(detail)) {
-        notify('NodeSeek 原站没有删除评论入口');
-        finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
-        return;
-      } else {
-        finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
-        return;
-      }
-      if (!deleted || !isCurrentTopicActionRequest(requestOwner)) {
-        if (deleted) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-        }
-        return;
-      }
-      applyTopicActionUpdate({ type: 'reply-deleted', reply });
-      markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
-      await refreshTopicRepliesAfterWrite(diagnosticTrace, { silent: true, afterSubmit: true, targetReply: reply, excludeReply: reply });
-    }, diagnosticTrace);
-  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, refreshTopicRepliesAfterWrite, runDiscourseRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+    if (isYaohuoActionTopic(actionTopic) && !reply.deletePath) {
+      notify('当前回复缺少删除链接，刷新主题后再试。');
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+      return;
+    }
+    if (isDiscourseSource(actionTopic.source) && !reply.commentId) {
+      notify('当前回复缺少评论 id，刷新主题后再试。');
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+      return;
+    }
+    const actionTopicKey = topicKey(actionTopic);
+    const patch = () => {
+      const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
+      updateReplyCache(queryClient, repliesKey, (replies) => replies.filter((item) => (
+        reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor
+      )));
+      queryClient.setQueryData<TopicDetail>(detailKey, (current) => current ? {
+        ...current,
+        replyCount: Math.max(0, current.replyCount - 1),
+        replies: current.replies.filter((item) => reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor)
+      } : current);
+    };
+    await executeMutation(actionTopic as TopicDetail, {
+      actionKey: topicDeleteReplyActionKey(actionTopicKey, reply),
+      busy: true,
+      trace,
+      task: () => isYaohuoActionTopic(actionTopic)
+        ? runYaohuoRequest((cookieHeader) => buildYaohuoDeleteReplyRequest({
+            deletePath: reply.deletePath || '', sid: extractYaohuoSid(cookieHeader)
+          }), trace)
+        : runDiscourseRequest(actionTopic.source as DiscourseSource, {
+            type: 'delete-post', postId: reply.commentId || 0
+          }, trace),
+      applyOptimistic: patch,
+      applyResult: () => {
+        const { repliesKey } = cacheKeys(actionTopic as TopicDetail);
+        void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
+      },
+      successMessage: '回复已删除'
+    });
+  }, [cacheKeys, executeMutation, notify, queryClient, runDiscourseRequest, runYaohuoRequest, selectedTopic, topicDetail]);
 
   const deleteReply = useCallback((reply: Reply) => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('reply', 'delete', actionSource ? { source: actionSource } : {});
+    const trace = beginDiagnosticTrace('reply', 'delete', detail ? { source: detail.source } : {});
     if (!reply.canDelete) {
       notify('当前回复不能删除');
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'permission_denied' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'permission_denied' });
       return;
     }
     let handled = false;
     Alert.alert('删除回复', '确认删除这条回复？', [
-      {
-        text: '取消',
-        style: 'cancel',
-        onPress: () => {
-          handled = true;
-          finishDiagnosticTrace(diagnosticTrace, 'canceled', { reason: 'canceled' });
-        }
-      },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: () => {
-          handled = true;
-          void deleteReplyConfirmed(reply, diagnosticTrace);
-        }
-      }
+      { text: '取消', style: 'cancel', onPress: () => {
+        handled = true;
+        finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+      } },
+      { text: '删除', style: 'destructive', onPress: () => {
+        handled = true;
+        void deleteReplyConfirmed(reply, trace);
+      } }
     ], {
       cancelable: true,
       onDismiss: () => {
-        if (!handled) {
-          finishDiagnosticTrace(diagnosticTrace, 'canceled', { reason: 'canceled' });
-        }
+        if (!handled) finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
       }
     });
-  }, [deleteReplyConfirmed, notify, selectedTopic, topicDetail]);
+  }, [deleteReplyConfirmed, detail, notify]);
 
   const uploadReplyImage = useCallback(async () => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('reply', 'image-upload', actionSource ? { source: actionSource } : {});
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    const canEditExistingXiaoyinsiReply = Boolean(
-      detail
-      && isXiaoyinsiActionTopic(detail)
-      && replyEditTarget
-    );
-    if (!detail || (!canEditExistingXiaoyinsiReply && !canSubmitReplyToTopic(detail))) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'not_ready' });
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    const trace = beginDiagnosticTrace('reply', 'image-upload', actionTopic ? { source: actionTopic.source } : {});
+    const canEditXiaoyinsiReply = Boolean(actionTopic && isXiaoyinsiActionTopic(actionTopic) && replyEditTarget);
+    if (!actionTopic || (!canEditXiaoyinsiReply && !canSubmitReplyToTopic(actionTopic))) {
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
     }
-    if (!replyImageUploadSupported(detail.source)) {
+    if (!replyImageUploadSupported(actionTopic.source)) {
       notify('当前来源暂不支持上传图片');
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
       return;
     }
-
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    const actionKey = `${topicReplyActionKey(topicKey(detail))}:image`;
-    await runSingleNonIdempotentTopicAction(actionKey, async () => {
-      const requestOwner = startTopicActionRequest(actionKey);
-      let nodeSeekApiKey: string | null = null;
-      let nodeImageCredentialGeneration: number | undefined;
-      const isNodeImageCredentialCurrent = () => nodeImageCredentialGeneration === undefined
-        || currentNodeImageApiKeyGeneration() === nodeImageCredentialGeneration;
-      if (isNodeSeekActionTopic(detail)) {
-        markDiagnosticStage(diagnosticTrace, 'credential', { source: detail.source, credentialSource: 'nodeimage', state: 'load' });
-        nodeSeekApiKey = await ensureNodeImageApiKey();
-        nodeImageCredentialGeneration = currentNodeImageApiKeyGeneration();
-        if (!nodeSeekApiKey || !isCurrentTopicActionRequest(requestOwner)) {
-          if (!isCurrentTopicActionRequest(requestOwner)) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-          } else {
-            finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'missing_credential' });
-          }
-          return;
+    const actionTopicKey = topicKey(actionTopic);
+    await executeMutation(actionTopic as TopicDetail, {
+      actionKey: `${topicReplyActionKey(actionTopicKey)}:image`,
+      busy: true,
+      trace,
+      task: async () => {
+        let nodeSeekApiKey: string | null = null;
+        let nodeImageGeneration: number | undefined;
+        if (isNodeSeekActionTopic(actionTopic)) {
+          nodeSeekApiKey = await ensureNodeImageApiKey();
+          nodeImageGeneration = currentNodeImageApiKeyGeneration();
+          if (!nodeSeekApiKey) throw new HandledMutationError('NodeImage 授权不可用', 'blocked', 'missing_credential');
         }
-        markDiagnosticStage(diagnosticTrace, 'credential', {
-          source: detail.source,
-          credentialSource: 'nodeimage',
-          state: 'ready',
-          hasCredential: true,
-          requestType: 'image-upload',
-          csrfSource: 'none'
+        const picked = await DocumentPicker.getDocumentAsync({
+          type: 'image/*', copyToCacheDirectory: true, multiple: false
         });
-      }
-      let file: NormalizedReplyImageAsset;
-      try {
-        const result = await DocumentPicker.getDocumentAsync({
-          type: 'image/*',
-          copyToCacheDirectory: true,
-          multiple: false
-        });
-        if (result.canceled || !result.assets?.[0]) {
-          finishDiagnosticTrace(diagnosticTrace, 'canceled', { source: detail.source, reason: 'canceled' });
-          return;
+        if (picked.canceled || !picked.assets?.[0]) {
+          throw new HandledMutationError('已取消选择', 'canceled', 'canceled');
         }
-        file = normalizeReplyImageAsset(result.assets[0]);
-      } catch (error) {
-        notify(errorMessage(error));
-        finishDiagnosticTrace(diagnosticTrace, 'failure', { source: detail.source, reason: normalizeDiagnosticReason(error) });
-        return;
-      }
-      if (!isCurrentTopicActionRequest(requestOwner) || !isNodeImageCredentialCurrent()) {
-        finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-        return;
-      }
-      const uploadRun = startActionRun(`${actionKey}:lifecycle`, true);
-      try {
+        const file = normalizeReplyImageAsset(picked.assets[0]);
         let imageUrl = '';
-        if (isDiscourseSource(detail.source)) {
-          const result = await runDiscourseRequest(
-            detail.source,
-            () => ({ type: 'upload', file }),
-            '',
-            { owner: requestOwner, key: actionKey, busy: false, notifySuccess: false, diagnosticTrace }
-          );
-          if (!result || !isCurrentTopicActionRequest(requestOwner)) {
-            if (result) {
-              finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-            }
-            return;
-          }
-          imageUrl = discourseSourceUploadUrl(detail.source, result);
-        } else if (isYaohuoActionTopic(detail)) {
-          markDiagnosticStage(diagnosticTrace, 'credential', {
-            source: detail.source,
-            credentialSource: 'none',
-            state: 'not-required',
-            hasCredential: false,
-            requestType: 'image-upload',
-            csrfSource: 'none'
-          });
-          markDiagnosticStage(diagnosticTrace, 'transport', { source: detail.source, state: 'start' });
-          imageUrl = await uploadYaohuoReplyImage({
-            fetcher: withDiagnosticFetcher(diagnosticTrace, fetcher),
-            file,
-            signal: uploadRun.controller.signal
-          });
-          markDiagnosticStage(diagnosticTrace, 'transport', { source: detail.source, state: 'confirmed', serverConfirmed: Boolean(imageUrl) });
-          if (!isCurrentTopicActionRequest(requestOwner)) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-            return;
-          }
-        } else if (isNodeSeekActionTopic(detail)) {
-          markDiagnosticStage(diagnosticTrace, 'transport', { source: detail.source, state: 'start' });
+        if (isDiscourseSource(actionTopic.source)) {
+          const result = await runDiscourseRequest(actionTopic.source, { type: 'upload', file }, trace);
+          imageUrl = discourseSourceUploadUrl(actionTopic.source, result);
+        } else if (isYaohuoActionTopic(actionTopic)) {
+          imageUrl = await uploadYaohuoReplyImage({ fetcher: withDiagnosticFetcher(trace, fetcher), file });
+        } else if (isNodeSeekActionTopic(actionTopic)) {
           imageUrl = await uploadNodeSeekReplyImageWithApiKey({
             ensureApiKey: async (options) => {
-              if (!options?.forceRefresh) {
-                return nodeSeekApiKey;
-              }
-              const refreshedApiKey = await ensureNodeImageApiKey({ forceRefresh: true, clearOnCancel: true });
-              if (refreshedApiKey) {
-                nodeImageCredentialGeneration = currentNodeImageApiKeyGeneration();
-              }
-              return refreshedApiKey;
+              if (!options?.forceRefresh) return nodeSeekApiKey;
+              const refreshed = await ensureNodeImageApiKey({ forceRefresh: true, clearOnCancel: true });
+              if (refreshed) nodeImageGeneration = currentNodeImageApiKeyGeneration();
+              return refreshed;
             },
-            fetcher: withDiagnosticFetcher(diagnosticTrace, fetcher),
-            file,
-            signal: uploadRun.controller.signal
+            fetcher: withDiagnosticFetcher(trace, fetcher),
+            file
           });
-          markDiagnosticStage(diagnosticTrace, 'transport', { source: detail.source, state: 'confirmed', serverConfirmed: Boolean(imageUrl) });
-          if (!isCurrentTopicActionRequest(requestOwner) || !isNodeImageCredentialCurrent()) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-            return;
+          if (nodeImageGeneration !== currentNodeImageApiKeyGeneration()) {
+            throw new HandledMutationError('NodeImage 凭据已变化', 'stale', 'stale');
           }
         }
-
-        if (!imageUrl) {
-          finishDiagnosticTrace(diagnosticTrace, 'failure', { source: detail.source, reason: 'invalid_response' });
-          return;
-        }
-        const markup = replyImageMarkupForSource(detail.source, imageUrl, file.name);
-        appendReplyMarkup(markup);
-        markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', markupApplied: true });
-        notify('图片已插入');
-      } catch (error) {
-        if (!isNodeImageCredentialCurrent()) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-          return;
-        }
-        const reason = isCanceledRequest(error) ? 'canceled' : normalizeDiagnosticReason(error);
-        finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'failure', { source: detail.source, reason });
-        if (!isCanceledRequest(error) && isCurrentTopicActionRequest(requestOwner)) {
-          notify(errorMessage(error));
-        }
-      } finally {
-        finishActionRun(uploadRun, true);
-      }
-    }, diagnosticTrace);
-  }, [appendReplyMarkup, ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, replyEditTarget, runDiscourseRequest, runSingleNonIdempotentTopicAction, selectedTopic, startActionRun, startTopicActionRequest, topicDetail]);
+        if (!imageUrl) throw new HandledMutationError('图片上传结果不正确', 'failure', 'invalid_response');
+        return { imageUrl, name: file.name };
+      },
+      applyResult: (result) => {
+        if (topicCommands.getCurrentKey() !== actionTopicKey) return;
+        const uploaded = result as { imageUrl: string; name: string };
+        topicComposer.appendMarkup(replyImageMarkupForSource(actionTopic.source, uploaded.imageUrl, uploaded.name));
+      },
+      successMessage: '图片已插入'
+    });
+  }, [ensureNodeImageApiKey, executeMutation, fetcher, notify, replyEditTarget, runDiscourseRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
 
   const checkIn = useCallback(async () => {
-    const diagnosticTrace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });
-    const actionKey = nodeSeekAttendanceActionKey();
-    await runSingleNonIdempotentTopicAction(actionKey, () => runNodeSeekRequest(
-      () => buildNodeSeekAttendanceRequest({ random: false }),
-      '签到请求已提交',
-      { key: actionKey, diagnosticTrace }
-    ), diagnosticTrace);
-  }, [runNodeSeekRequest, runSingleNonIdempotentTopicAction]);
+    const trace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });
+    try {
+      await attendanceMutation.mutateAsync({
+        credential: credentialScopeRef.current.nodeseek,
+        trace
+      });
+    } catch {
+      // Error reporting and diagnostics are owned by the mutation callbacks.
+    }
+  }, [attendanceMutation.mutateAsync]);
 
   const interact = useCallback(async (type: InteractionType, commentId?: number) => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('topic', 'interaction', {
-      ...(actionSource ? { source: actionSource } : {}),
-      action: type
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    const trace = beginDiagnosticTrace('topic', 'interaction', {
+      ...(actionTopic ? { source: actionTopic.source } : {}), action: type
     });
-    if (!commentId) {
+    if (!actionTopic || !commentId) {
       notify('当前内容缺少评论 id，刷新主题后再试。');
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'not_ready' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
     }
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!detail) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'not_ready' });
-      return;
-    }
-    if (isDiscourseSource(detail.source)) {
-      const discourseSource = detail.source;
-      if (type !== 'like') {
-        finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
+    const target = [topicDetail, ...topicReplies].find((item) => item?.commentId === commentId);
+    if (isDiscourseSource(actionTopic.source)) {
+      if (type !== 'like' || !canToggleDiscourseLike(target)) {
+        notify(type === 'like' ? '当前帖子不能点赞' : '当前来源暂不支持此操作');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
         return;
       }
-      const requestTopicKey = topicKey(detail);
-      const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: 'like' });
-      const requestOwner = startOptimisticTopicActionRequest(actionKey);
-      const target = [
-        topicDetail,
-        ...topicReplies
-      ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean; canLike?: boolean } | undefined);
-      if (!canToggleDiscourseLike(target)) {
-        notify('当前帖子不能点赞');
-        finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'permission_denied' });
-        return;
-      }
-      markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-      startOptimisticTopicAction({
-        key: actionKey,
-        requestOwner,
-        currentActive: Boolean(target?.liked),
-        applyDisplayed: (desiredActive) => {
-          const patch = { commentId, type: 'like' as const, mode: desiredActive ? 'add' as const : 'remove' as const, reactionId: 'heart' };
-          applyTopicActionUpdate({ type: 'interaction', patch });
-        },
-        sendDesired: async (desiredActive) => Boolean(await runDiscourseActionForOptimisticUpdate(
-          discourseSource,
-          () => ({ type: 'set-like', postId: commentId, active: desiredActive }),
-          { owner: requestOwner, diagnosticTrace }
-        )),
-        successMessage: (active) => active ? '点赞已提交' : '已取消点赞',
-        diagnosticTrace
+      const desired = !Boolean(target?.liked);
+      const actionKey = topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: commentId, action: 'like' });
+      const patch = { commentId, type: 'like' as const, mode: desired ? 'add' as const : 'remove' as const, reactionId: 'heart' };
+      await executeMutation(actionTopic as TopicDetail, {
+        actionKey,
+        busy: false,
+        trace,
+        applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
+        task: () => runDiscourseRequest(actionTopic.source as DiscourseSource, {
+          type: 'set-like', postId: commentId, active: desired
+        }, trace),
+        successMessage: desired ? '点赞已提交' : '已取消点赞'
       });
       return;
     }
-    if (!isNodeSeekActionTopic(detail)) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
+    if (!isNodeSeekActionTopic(actionTopic)) {
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
       return;
     }
-    const requestTopicKey = topicKey(detail);
-    const activeFields: Record<InteractionType, 'upvoted' | 'liked' | 'disliked'> = {
-      upvote: 'upvoted',
-      like: 'liked',
-      dislike: 'disliked'
-    };
-    const target = [
-      topicDetail,
-      ...topicReplies
-    ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as (Pick<TopicDetail | Reply, 'upvoted' | 'liked' | 'disliked'> | undefined);
-    const activeField = activeFields[type];
-    if (target?.[activeField]) {
+    const fields = { upvote: 'upvoted', like: 'liked', dislike: 'disliked' } as const;
+    if (target?.[fields[type]]) {
       notify(nodeSeekInteractionRemovalMessage(type));
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
       return;
     }
-    const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: type });
-    const requestOwner = startOptimisticTopicActionRequest(actionKey);
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    startOptimisticTopicAction({
-      key: actionKey,
-      requestOwner,
-      currentActive: Boolean(target?.[activeField]),
-      applyDisplayed: (desiredActive) => {
-        const patch = { commentId, type, mode: desiredActive ? 'add' as const : 'remove' as const };
-        applyTopicActionUpdate({ type: 'interaction', patch });
-      },
-      sendDesired: (desiredActive) => runNodeSeekActionForOptimisticUpdate(
-        () => buildNodeSeekInteractionRequest({ type, commentId, active: !desiredActive }),
-        { owner: requestOwner, diagnosticTrace }
-      ),
-      successMessage: (active) => active
-        ? type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
-        : type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对',
-      diagnosticTrace
+    const actionKey = topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: commentId, action: type });
+    const patch = { commentId, type, mode: 'add' as const };
+    await executeMutation(actionTopic as TopicDetail, {
+      actionKey,
+      busy: false,
+      trace,
+      applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
+      task: () => runNodeSeekRequest(buildNodeSeekInteractionRequest({ type, commentId, active: false }), trace),
+      successMessage: type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
     });
-  }, [applyTopicActionUpdate, notify, runDiscourseActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail, topicReplies]);
+  }, [executeMutation, notify, runDiscourseRequest, runNodeSeekRequest, selectedTopic, topicDetail, topicReplies, updateInteraction]);
 
   const favoriteOnYaohuoSite = useCallback(async () => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('topic', 'favorite', actionSource ? { source: actionSource } : {});
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!isYaohuoActionTopic(detail)) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'unsupported' });
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    const trace = beginDiagnosticTrace('topic', 'favorite', actionTopic ? { source: actionTopic.source } : {});
+    if (!isYaohuoActionTopic(actionTopic)) {
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'unsupported' });
       return;
     }
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    const requestTopicKey = topicKey(detail);
-    const actionKey = yaohuoFavoriteActionKey(requestTopicKey);
-    const favoriteDetail = detail as TopicDetail;
-    const bookmarked = Boolean(favoriteDetail.bookmarked);
-    if (bookmarked && !favoriteDetail.bookmarkId) {
+    const actionDetail = actionTopic as TopicDetail;
+    const bookmarked = Boolean(actionDetail.bookmarked);
+    if (bookmarked && !actionDetail.bookmarkId) {
       notify('当前收藏记录不完整，请刷新主题后再试。');
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
+      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
       return;
     }
-    await runSingleNonIdempotentTopicAction(actionKey, async () => {
-      const requestOwner = startTopicActionRequest(actionKey);
-      const result = await runYaohuoRequest(
-        () => bookmarked
-          ? buildYaohuoDeleteFavoriteRequest({ favoriteId: favoriteDetail.bookmarkId || 0 })
-          : buildYaohuoFavoriteRequest({
-            topicId: detail.id,
-            classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID
-          }),
-        bookmarked ? '已取消原站收藏' : '原站收藏已提交',
-        { owner: requestOwner, busy: false, diagnosticTrace }
-      );
-      if (!result || !isCurrentTopicActionRequest(requestOwner)) {
-        if (result) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-        }
-        return;
-      }
-      if (!bookmarked && !result.favoriteId) {
-        failDiagnosticActionRequest({ diagnosticTrace }, 'yaohuo', 'transport', 'failure', 'invalid_response');
-        return;
-      }
-      applyTopicActionUpdate({
-        type: 'bookmark',
-        bookmarked: !bookmarked,
-        bookmarkId: bookmarked ? undefined : result.favoriteId
-      });
-      markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
-    }, diagnosticTrace);
-  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+    const patch = (active: boolean, bookmarkId?: number) => {
+      const { detailKey } = cacheKeys(actionDetail);
+      queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyBookmarkToTopic(current || null, {
+        bookmarked: active, bookmarkId
+      }) || current);
+    };
+    await executeMutation(actionDetail, {
+      actionKey: yaohuoFavoriteActionKey(topicKey(actionTopic)),
+      busy: false,
+      trace,
+      applyOptimistic: () => patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId),
+      task: () => runYaohuoRequest(() => bookmarked
+        ? buildYaohuoDeleteFavoriteRequest({ favoriteId: actionDetail.bookmarkId || 0 })
+        : buildYaohuoFavoriteRequest({
+            topicId: actionTopic.id,
+            classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID
+          }), trace),
+      applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : (result as YaohuoActionResult).favoriteId),
+      successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
+    });
+  }, [cacheKeys, executeMutation, notify, queryClient, runYaohuoRequest, selectedTopic, topicDetail]);
 
   const collectOnNodeSeekSite = useCallback(async () => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('topic', 'collection', actionSource ? { source: actionSource } : {});
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!isNodeSeekActionTopic(detail)) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'unsupported' });
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    const trace = beginDiagnosticTrace('topic', 'collection', actionTopic ? { source: actionTopic.source } : {});
+    if (!isNodeSeekActionTopic(actionTopic)) {
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'unsupported' });
       return;
     }
-    const requestTopicKey = topicKey(detail);
-    const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'collection' });
-    const requestOwner = startOptimisticTopicActionRequest(actionKey);
-    const collected = Boolean((detail as TopicDetail).collected);
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    startOptimisticTopicAction({
-      key: actionKey,
-      requestOwner,
-      currentActive: collected,
-      applyDisplayed: (desiredActive) => {
-        applyTopicActionUpdate({ type: 'collection', collected: desiredActive });
-      },
-      sendDesired: (desiredActive) => runNodeSeekActionForOptimisticUpdate(
-        () => buildNodeSeekCollectionRequest({
-          postId: detail.id,
-          collected: !desiredActive
-        }),
-        { owner: requestOwner, diagnosticTrace }
-      ),
-      successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏',
-      diagnosticTrace
+    const actionDetail = actionTopic as TopicDetail;
+    const collected = Boolean(actionDetail.collected);
+    const patch = () => {
+      const { detailKey } = cacheKeys(actionDetail);
+      queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyNodeSeekCollectionToTopic(current || null, {
+        collected: !collected
+      }) || current);
+    };
+    await executeMutation(actionDetail, {
+      actionKey: topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: actionTopic.id, action: 'collection' }),
+      busy: false,
+      trace,
+      applyOptimistic: patch,
+      task: () => runNodeSeekRequest(buildNodeSeekCollectionRequest({ postId: actionTopic.id, collected }), trace),
+      successMessage: collected ? '已取消原站收藏' : '原站收藏已提交'
     });
-  }, [applyTopicActionUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
+  }, [cacheKeys, executeMutation, queryClient, runNodeSeekRequest, selectedTopic, topicDetail]);
 
   const bookmarkOnDiscourseSite = useCallback(async () => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('topic', 'bookmark', actionSource ? { source: actionSource } : {});
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!detail || !isDiscourseSource(detail.source)) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'unsupported' });
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    const trace = beginDiagnosticTrace('topic', 'bookmark', actionTopic ? { source: actionTopic.source } : {});
+    if (!actionTopic || !isDiscourseSource(actionTopic.source)) {
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'unsupported' });
       return;
     }
-    const discourseSource = detail.source;
-    const requestTopicKey = topicKey(detail);
-    const bookmarked = Boolean((detail as TopicDetail).bookmarked);
-    let bookmarkId = (detail as TopicDetail).bookmarkId;
-    const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'bookmark' });
-    const requestOwner = startOptimisticTopicActionRequest(actionKey);
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    startOptimisticTopicAction({
-      key: actionKey,
-      requestOwner,
-      currentActive: bookmarked,
-      applyDisplayed: (desiredActive) => {
-        applyTopicActionUpdate({
-          type: 'bookmark',
-          bookmarked: desiredActive,
-          bookmarkId: desiredActive ? bookmarkId : undefined
-        });
-      },
-      sendDesired: async (desiredActive) => {
-        const result = await runDiscourseActionForOptimisticUpdate(
-          discourseSource,
-          () => ({
-            type: 'set-bookmark',
-            targetId: detail.id,
-            targetType: 'Topic',
-            active: desiredActive,
-            bookmarkId
-          }),
-          { owner: requestOwner, diagnosticTrace }
-        );
-        if (!result) {
-          return false;
-        }
-        if (!desiredActive) {
-          bookmarkId = undefined;
-          if (isCurrentTopicActionRequest(requestOwner) && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
-            applyTopicActionUpdate({ type: 'bookmark', bookmarked: true });
-          }
-        }
-        if (desiredActive) {
-          const resultBookmarkId = discourseBookmarkIdFromActionResult(result);
-          if (resultBookmarkId) {
-            bookmarkId = resultBookmarkId;
-            if (isCurrentTopicActionRequest(requestOwner) && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
-              applyTopicActionUpdate({ type: 'bookmark', bookmarked: true, bookmarkId });
-            }
-          }
-        }
-        return true;
-      },
-      successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏',
-      diagnosticTrace
+    const actionDetail = actionTopic as TopicDetail;
+    const bookmarked = Boolean(actionDetail.bookmarked);
+    const patch = (active: boolean, bookmarkId?: number) => {
+      const { detailKey } = cacheKeys(actionDetail);
+      queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyBookmarkToTopic(current || null, {
+        bookmarked: active, bookmarkId
+      }) || current);
+    };
+    await executeMutation(actionDetail, {
+      actionKey: topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: actionTopic.id, action: 'bookmark' }),
+      busy: false,
+      trace,
+      applyOptimistic: () => patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId),
+      task: () => runDiscourseRequest(actionTopic.source as DiscourseSource, {
+        type: 'set-bookmark',
+        targetId: actionTopic.id,
+        targetType: 'Topic',
+        active: !bookmarked,
+        bookmarkId: actionDetail.bookmarkId
+      }, trace),
+      applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : discourseBookmarkIdFromActionResult(result)),
+      successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
     });
-  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, optimisticTopicActionsRef, runDiscourseActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
+  }, [cacheKeys, executeMutation, queryClient, runDiscourseRequest, selectedTopic, topicDetail]);
 
   const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('topic', 'vote', {
-      ...(actionSource ? { source: actionSource } : {}),
-      selectedCount: optionIds.length
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    const trace = beginDiagnosticTrace('topic', 'vote', {
+      ...(actionTopic ? { source: actionTopic.source } : {}), selectedCount: optionIds.length
     });
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!canVotePollOnTopic(detail)) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'not_ready' });
+    if (!canVotePollOnTopic(actionTopic) || !optionIds.length) {
+      if (!optionIds.length) notify('请选择投票选项');
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
     }
-    if (!optionIds.length) {
-      notify('请选择投票选项');
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
-      return;
-    }
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    const requestTopicKey = topicKey(detail);
-    const actionKey = topicPollVoteActionKey(requestTopicKey, poll);
-    const submitVote = () => runSingleNonIdempotentTopicAction(actionKey, async () => {
-      const requestOwner = startTopicActionRequest(actionKey);
-      let submitted: unknown = false;
-      let confirmedPoll: TopicPoll | undefined;
-      let resultRefreshFailed = false;
-      if (isNodeSeekActionTopic(detail)) {
-        submitted = await runNodeSeekRequest(
-          () => buildNodeSeekVoteRequest({ optionIds }),
-          '',
-          { owner: requestOwner, diagnosticTrace, notifySuccess: false }
-        );
-        if (submitted) {
-          try {
-            if (!poll.id) {
-              throw new Error('投票 id 不正确');
+    const submit = async () => {
+      await executeMutation(actionTopic as TopicDetail, {
+        actionKey: topicPollVoteActionKey(topicKey(actionTopic), poll),
+        busy: true,
+        trace,
+        task: async () => {
+          if (isNodeSeekActionTopic(actionTopic)) {
+            await runNodeSeekRequest(buildNodeSeekVoteRequest({ optionIds }), trace);
+            try {
+              if (!poll.id) throw new Error('投票 id 不正确');
+              const access = await loadNodeSeekActionAccess();
+              if (!access?.cookieHeader) throw new Error('NodeSeek 登录信息不可用');
+              const confirmedPoll = await fetchNodeSeekVoteInfo({
+                cookieHeader: access.cookieHeader,
+                pollId: poll.id,
+                fetcher: withDiagnosticFetcher(trace, fetcher),
+                userAgent: access.userAgent || nodeSeekWebViewUserAgentRef.current
+              });
+              return { confirmedPoll, refreshFailed: false };
+            } catch {
+              hintDiagnosticOutcome(trace, 'partial', {
+                source: 'nodeseek',
+                reason: 'refresh_failed'
+              });
+              return { confirmedPoll: undefined, refreshFailed: true };
             }
-            const access = await loadNodeSeekActionAccess();
-            if (!access?.cookieHeader) {
-              throw new Error('NodeSeek 登录信息不可用');
-            }
-            confirmedPoll = await fetchNodeSeekVoteInfo({
-              cookieHeader: access.cookieHeader,
-              pollId: poll.id,
-              fetcher: withDiagnosticFetcher(diagnosticTrace, fetcher),
-              userAgent: access.userAgent || nodeSeekWebViewUserAgentRef.current
-            });
-          } catch {
-            resultRefreshFailed = true;
           }
-        }
-      } else if (isDiscourseSource(detail.source)) {
-        if (!poll.postId || !poll.name) {
-          notify('当前投票信息不完整，刷新主题后再试。');
-          finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
-          return;
-        }
-        submitted = await runDiscourseRequest(
-          detail.source,
-          () => ({
-            type: 'vote',
-            postId: poll.postId || '',
-            pollName: poll.name || '',
-            optionIds
-          }),
-          '投票已提交',
-          { owner: requestOwner, diagnosticTrace }
-        );
-      } else {
-        submitted = await runYaohuoRequest(
-          () => buildYaohuoVoteRequest({
-            topicId: detail.id,
-            classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-            voteIds: optionIds
-          }),
-          '投票已提交',
-          { owner: requestOwner, diagnosticTrace }
-        );
-      }
-      if (submitted) {
-        if (!isCurrentTopicActionRequest(requestOwner)) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-          return;
-        }
-        applyTopicActionUpdate({
-          type: 'poll-vote',
-          patch: {
+          if (isDiscourseSource(actionTopic.source)) {
+            if (!poll.postId || !poll.name) {
+              throw new HandledMutationError('当前投票信息不完整，刷新主题后再试。', 'blocked', 'not_ready');
+            }
+            await runDiscourseRequest(actionTopic.source, {
+              type: 'vote', postId: poll.postId, pollName: poll.name, optionIds
+            }, trace);
+          } else {
+            await runYaohuoRequest(() => buildYaohuoVoteRequest({
+              topicId: actionTopic.id,
+              classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+              voteIds: optionIds
+            }), trace);
+          }
+          return { confirmedPoll: undefined, refreshFailed: false };
+        },
+        applyResult: (result) => {
+          const voteResult = result as { confirmedPoll?: TopicPoll; refreshFailed: boolean };
+          const patch = {
             pollId: poll.id,
             pollName: poll.name,
             pollPostId: poll.postId,
             optionIds,
-            ...(confirmedPoll ? { confirmedPoll } : {}),
-            ...(resultRefreshFailed ? { preserveUnknownCounts: true } : {})
-          }
-        });
-        markDiagnosticStage(diagnosticTrace, 'apply', {
-          source: detail.source,
-          state: confirmedPoll ? 'server' : 'local',
-          localApplied: true,
-          ...(confirmedPoll ? { serverConfirmed: true } : {})
-        });
-        if (isNodeSeekActionTopic(detail)) {
-          if (resultRefreshFailed) {
-            notify('提交成功但结果刷新失败，请手动刷新。');
-            finishDiagnosticTrace(diagnosticTrace, 'partial', { source: detail.source, reason: 'refresh_failed' });
-          } else {
-            notify('投票已提交');
-          }
-        }
-      }
-    }, diagnosticTrace);
-    if (isNodeSeekActionTopic(detail)) {
-      let resolved = false;
-      const cancelVote = () => {
-        if (resolved) {
-          return;
-        }
-        resolved = true;
-        finishDiagnosticTrace(diagnosticTrace, 'canceled', { source: detail.source, reason: 'canceled' });
-      };
-      Alert.alert('确认提交投票？', '提交后不可修改。', [
-        {
-          text: '取消',
-          style: 'cancel',
-          onPress: cancelVote
+            ...(voteResult.confirmedPoll ? { confirmedPoll: voteResult.confirmedPoll } : {}),
+            ...(voteResult.refreshFailed ? { preserveUnknownCounts: true } : {})
+          };
+          const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
+          queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyPollVoteToTopic(current || null, patch) || current);
+          updateReplyCache(queryClient, repliesKey, (replies) => applyPollVoteToReplies(replies, patch));
+          if (voteResult.refreshFailed) notify('提交成功但结果刷新失败，请手动刷新。');
         },
-        {
-          text: '提交',
-          style: 'destructive',
-          onPress: () => {
-            if (resolved) {
-              return;
-            }
-            resolved = true;
-            void submitVote();
-          }
-        }
-      ], {
-        cancelable: true,
-        onDismiss: cancelVote
+        successMessage: (result) => (result as { refreshFailed: boolean }).refreshFailed ? '' : '投票已提交'
       });
+    };
+    if (!isNodeSeekActionTopic(actionTopic)) {
+      await submit();
       return;
     }
-    await submitVote();
-  }, [applyTopicActionUpdate, fetcher, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, runDiscourseRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+    let handled = false;
+    Alert.alert('确认提交投票？', '提交后不可修改。', [
+      { text: '取消', style: 'cancel', onPress: () => {
+        handled = true;
+        finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
+      } },
+      { text: '提交', style: 'destructive', onPress: () => {
+        if (handled) return;
+        handled = true;
+        void submit();
+      } }
+    ], {
+      cancelable: true,
+      onDismiss: () => {
+        if (!handled) finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
+      }
+    });
+  }, [cacheKeys, executeMutation, fetcher, nodeSeekWebViewUserAgentRef, notify, queryClient, runDiscourseRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail]);
 
   return {
+    actionBusy,
     bookmarkOnDiscourseSite,
     checkIn,
     collectOnNodeSeekSite,
     deleteReply,
     favoriteOnYaohuoSite,
     interact,
-    submitReply,
+    optimisticTopicActions,
     sourceActionAvailability,
+    submitReply,
     uploadReplyImage,
     votePoll
   };

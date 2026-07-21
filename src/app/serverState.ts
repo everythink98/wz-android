@@ -1,55 +1,167 @@
 import { QueryClient } from '@tanstack/react-query';
+import type { SourceSearchFilter } from '../searchFilters';
 import type { FeedSource, Source } from '../types';
 
-export type ForumSourceResetReason =
-  | 'session-updated'
-  | 'login-detected'
-  | 'login-expired'
-  | 'cleared'
-  | 'session-changed';
-export type ForumSourceResetEvent = {
-  source: Source;
-  reason: ForumSourceResetReason;
-  preserveRecoveryKey?: string;
+export type ForumCredentialScope = Readonly<{
+  linuxdo: number;
+  nodeseek: number;
+  xiaoyinsi: number;
+  yaohuo: number;
+}>;
+
+export const emptyForumCredentialScope: ForumCredentialScope = {
+  linuxdo: 0,
+  nodeseek: 0,
+  xiaoyinsi: 0,
+  yaohuo: 0
 };
 
-const forumSourceResetListeners = new Set<(event: ForumSourceResetEvent) => void>();
+function credentialKey(source: FeedSource, scope: ForumCredentialScope) {
+  if (source === 'all') {
+    return scope;
+  }
+  return source === 'v2ex' ? 0 : scope[source];
+}
 
 export const forumQueryKeys = {
   all: ['forum'] as const,
   source: (source: FeedSource) => ['forum', source] as const,
-  categories: (source: FeedSource) => ['forum', source, 'categories'] as const,
-  feed: (source: FeedSource, requestKey: string) => ['forum', source, 'feed', requestKey] as const,
-  feedPage: (source: FeedSource, requestKey: string, page: number, cursor?: string) => (
-    ['forum', source, 'feed', requestKey, page, cursor || null] as const
+  categories: (source: FeedSource, scope: ForumCredentialScope = emptyForumCredentialScope) => (
+    ['forum', source, 'categories', credentialKey(source, scope)] as const
   ),
-  search: (source: Source, requestKey: string) => ['forum', source, 'search', requestKey] as const,
-  searchTags: (source: Source, requestKey: string) => ['forum', source, 'search-tags', requestKey] as const,
-  searchUsers: (source: Source, requestKey: string) => ['forum', source, 'search-users', requestKey] as const,
-  semanticSearch: (source: Source, requestKey: string) => ['forum', source, 'semantic-search', requestKey] as const,
-  topic: (source: Source, topicId: string) => ['forum', source, 'topic', topicId] as const,
-  replies: (source: Source, topicId: string) => ['forum', source, 'topic', topicId, 'replies'] as const,
-  replyPage: (source: Source, topicId: string, page: number | null | undefined, offset: number | null | undefined) => (
-    ['forum', source, 'topic', topicId, 'replies', page ?? null, offset ?? null] as const
+  feed: ({
+    category,
+    feedFilter,
+    scope,
+    source
+  }: {
+    category?: string;
+    feedFilter?: string;
+    scope: ForumCredentialScope;
+    source: FeedSource;
+  }) => ['forum', source, 'feed', {
+    category: category || null,
+    credential: credentialKey(source, scope),
+    feedFilter: feedFilter || null
+  }] as const,
+  search: ({
+    filter,
+    query,
+    scope,
+    sort,
+    source
+  }: {
+    filter?: SourceSearchFilter;
+    query: string;
+    scope: ForumCredentialScope;
+    sort: string;
+    source: Source;
+  }) => ['forum', source, 'search', {
+    credential: credentialKey(source, scope),
+    filter: filter || null,
+    query,
+    sort
+  }] as const,
+  searchTags: ({
+    categoryId,
+    query,
+    scope,
+    selectedTags,
+    source
+  }: {
+    categoryId?: string;
+    query: string;
+    scope: ForumCredentialScope;
+    selectedTags: string[];
+    source: Source;
+  }) => ['forum', source, 'search-tags', {
+    categoryId: categoryId || null,
+    credential: credentialKey(source, scope),
+    query,
+    selectedTags
+  }] as const,
+  searchUsers: ({
+    categoryId,
+    scope,
+    source,
+    term
+  }: {
+    categoryId?: string;
+    scope: ForumCredentialScope;
+    source: Source;
+    term: string;
+  }) => ['forum', source, 'search-users', {
+    categoryId: categoryId || null,
+    credential: credentialKey(source, scope),
+    term
+  }] as const,
+  semanticSearch: (query: string, scope: ForumCredentialScope) => (
+    ['forum', 'linuxdo', 'semantic-search', { credential: scope.linuxdo, query }] as const
   ),
-  reply: (source: Source, topicId: string, replyId: string) => ['forum', source, 'topic', topicId, 'reply', replyId] as const,
-  user: (source: Source, userId: string) => ['forum', source, 'user', userId] as const,
-  userPage: (source: Source, userId: string, lane: 'topics' | 'replies', cursor: string) => (
-    ['forum', source, 'user', userId, lane, cursor] as const
-  ),
-  account: (source: Source) => ['forum', source, 'account'] as const,
-  accountStatus: (source: Source, generation: number, lane: 'login' | 'profile' | 'authorization') => (
-    ['forum', source, 'account', generation, lane] as const
-  ),
-  authorization: (source: Source) => ['forum', source, 'authorization'] as const,
-  authorizationCheck: (source: Source, generation: number) => ['forum', source, 'authorization', generation] as const,
+  topic: ({
+    scope,
+    source,
+    topicId
+  }: {
+    scope: ForumCredentialScope;
+    source: Source;
+    topicId: string;
+  }) => ['forum', source, 'topic', {
+    credential: credentialKey(source, scope),
+    topicId
+  }] as const,
+  replies: (topicQueryKey: readonly unknown[]) => [...topicQueryKey, 'replies'] as const,
+  reply: ({
+    postNumber,
+    scope,
+    source,
+    topicId
+  }: {
+    postNumber: number;
+    scope: ForumCredentialScope;
+    source: Source;
+    topicId: string;
+  }) => ['forum', source, 'topic-reply', {
+    credential: credentialKey(source, scope),
+    postNumber,
+    topicId
+  }] as const,
+  user: ({
+    scope,
+    source,
+    userId,
+    username
+  }: {
+    scope: ForumCredentialScope;
+    source: Source;
+    userId: string;
+    username: string;
+  }) => ['forum', source, 'user', {
+    credential: credentialKey(source, scope),
+    userId,
+    username
+  }] as const,
+  userLane: (userKey: readonly unknown[], lane: 'topics' | 'replies') => [...userKey, lane] as const,
+  accountStatus: ({
+    credentialScope,
+    source
+  }: {
+    credentialScope: ForumCredentialScope;
+    source: Source;
+  }) => ['forum', source, 'account-status', { credential: credentialKey(source, credentialScope) }] as const,
   level: (source: Source) => ['forum', source, 'level'] as const,
-  levelProfile: (source: Source, generation: number) => ['forum', source, 'level', generation] as const
+  levelProfile: ({
+    credentialScope,
+    source
+  }: {
+    credentialScope: ForumCredentialScope;
+    source: Source;
+  }) => ['forum', source, 'level', { credential: credentialKey(source, credentialScope) }] as const
 };
 
 export const forumMutationKeys = {
-  topicAction: (source: Source, topicId: string, actionKey: string) => (
-    ['forum', source, 'mutation', 'topic', topicId, actionKey] as const
+  topic: (source: Source, topicId: string) => (
+    ['forum', source, 'mutation', 'topic', topicId] as const
   )
 };
 
@@ -71,29 +183,3 @@ export function createAppQueryClient() {
 }
 
 export const appQueryClient = createAppQueryClient();
-
-export function subscribeForumSourceResets(listener: (event: ForumSourceResetEvent) => void) {
-  forumSourceResetListeners.add(listener);
-  return () => {
-    forumSourceResetListeners.delete(listener);
-  };
-}
-
-export function resetForumSourceQueries(
-  source: Source,
-  client = appQueryClient,
-  reason: ForumSourceResetReason = 'session-changed',
-  preserveRecoveryKey?: string
-) {
-  const affectedSources: FeedSource[] = [source, 'all'];
-  for (const affectedSource of affectedSources) {
-    void client.cancelQueries({ queryKey: forumQueryKeys.source(affectedSource) });
-    client.removeQueries({ queryKey: forumQueryKeys.source(affectedSource) });
-  }
-  const event = {
-    source,
-    reason,
-    ...(preserveRecoveryKey ? { preserveRecoveryKey } : {})
-  } satisfies ForumSourceResetEvent;
-  forumSourceResetListeners.forEach((listener) => listener(event));
-}

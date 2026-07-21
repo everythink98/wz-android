@@ -1,181 +1,263 @@
-import { describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { appQueryClient, resetForumSourceQueries } from '../../src/app/serverState';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
+import {
+  appQueryClient,
+  emptyForumCredentialScope,
+  type ForumCredentialScope
+} from '../../src/app/serverState';
+import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
 import { useUserController } from '../../src/app/useUserController';
 import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
 import { LinuxDoCloudflareError } from '../../src/cloudflareChallenge';
 import { createEmptyReaderData } from '../../src/readerData';
-import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
+import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
 import type { UserProfile } from '../../src/types';
+import { QueryTestWrapper } from './QueryTestWrapper';
+
+function renderHook<Result>(callback: () => Result) {
+  return renderNativeHook(callback, { wrapper: QueryTestWrapper });
+}
 
 const user: UserProfile = {
   source: 'nodeseek',
-  id: 'alice',
+  id: '1',
   username: 'alice',
   displayName: 'Alice',
   url: 'https://www.nodeseek.com/space/1',
   topics: []
 };
 
-describe('user controller session isolation', () => {
-  it('clears a changed source profile without disturbing it for another source transition', async () => {
-    const hook = await renderHook(() => useUserController({
-      notify: jest.fn(),
-      onOpenUserScreen: jest.fn(),
-      readerData: createEmptyReaderData(),
-      screen: 'user',
-      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates()),
-      showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
-      showNodeSeekVerification: jest.fn(),
-      showYaohuoLogin: jest.fn(),
-      sourceGateway: {
-        getUserProfile: jest.fn(async () => user)
-      } as unknown as SourceGateway
+function renderUserController({
+  getCredentialScope = () => emptyForumCredentialScope,
+  getUserProfile,
+  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
+}: {
+  getCredentialScope?: () => ForumCredentialScope;
+  getUserProfile: SourceGateway['getUserProfile'];
+  showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
+}) {
+  return renderHook(() => useUserController({
+    credentialScope: getCredentialScope(),
+    notify: jest.fn(),
+    onOpenUserScreen: jest.fn(),
+    readerData: createEmptyReaderData(),
+    screen: 'user',
+    showLinuxDoVerification,
+    showNodeSeekVerification: jest.fn(),
+    showYaohuoLogin: jest.fn(),
+    sourceGateway: { getUserProfile } as unknown as SourceGateway
+  }));
+}
+
+describe('user query controller', () => {
+  beforeEach(() => appQueryClient.clear());
+  afterEach(async () => {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  });
+
+  it('loads the profile once and seeds both pagination lanes without repeating first-page transport', async () => {
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
+      ...user,
+      topics: [{
+        source: 'nodeseek',
+        id: 'topic-1',
+        title: '首屏主题',
+        author: 'alice',
+        url: 'https://www.nodeseek.com/post-1-1',
+        createdAt: '2026-07-20T00:00:00.000Z',
+        replyCount: 0
+      }],
+      replies: []
+    }));
+    const hook = await renderUserController({ getUserProfile });
+
+    await act(async () => { void hook.result.current.openUser(user); });
+    await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
+
+    expect(getUserProfile).toHaveBeenCalledTimes(1);
+    expect(getUserProfile.mock.calls[0]?.[0]).not.toHaveProperty('cursorType');
+  });
+
+  it('REG-USER-001 keeps topic and reply cursors independent', async () => {
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async ({ cursorType }) => {
+      if (!cursorType) {
+        return {
+          ...user,
+          hasMoreTopics: true,
+          nextTopicsCursor: 'topics-2',
+          hasMoreReplies: true,
+          nextRepliesCursor: 'replies-2'
+        };
+      }
+      return cursorType === 'topics'
+        ? {
+          ...user,
+          topics: [{
+            source: 'nodeseek',
+            id: 'topic-2',
+            title: '第二页主题',
+            author: 'alice',
+            url: 'https://www.nodeseek.com/post-2-1',
+            createdAt: '2026-07-20T00:00:00.000Z',
+            replyCount: 0
+          }],
+          hasMoreTopics: false,
+          nextTopicsCursor: null
+        }
+        : {
+          ...user,
+          replies: [{
+            source: 'nodeseek',
+            id: 'reply-2',
+            topicId: 'topic-2',
+            topicTitle: '第二页主题',
+            topicUrl: 'https://www.nodeseek.com/post-2-1',
+            url: 'https://www.nodeseek.com/post-2-2'
+          }],
+          hasMoreReplies: false,
+          nextRepliesCursor: null
+        };
+    });
+    const hook = await renderUserController({ getUserProfile });
+
+    await act(async () => { void hook.result.current.openUser(user); });
+    await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
+    await act(async () => {
+      await Promise.all([
+        hook.result.current.loadMoreUserTopics(),
+        hook.result.current.loadMoreUserReplies()
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-2']);
+      expect(hook.result.current.userProfile?.replies?.map(({ id }) => id)).toEqual(['reply-2']);
+    });
+    expect(getUserProfile.mock.calls.map(([request]) => request.cursorType)).toEqual([undefined, 'topics', 'replies']);
+  });
+
+  it('isolates a replacement credential scope from the previous cached profile', async () => {
+    const replacement = Promise.withResolvers<UserProfile>();
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+      .mockResolvedValueOnce(user)
+      .mockImplementationOnce(async () => replacement.promise);
+    let credentialScope = emptyForumCredentialScope;
+    const hook = await renderUserController({ getCredentialScope: () => credentialScope, getUserProfile });
+
+    await act(async () => { void hook.result.current.openUser(user); });
+    await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({
+      source: 'nodeseek',
+      id: '1',
+      username: 'alice',
+      displayName: 'Alice'
     }));
 
     await act(async () => {
-      await hook.result.current.openUser(user);
+      resetForumSourceQueries('nodeseek', appQueryClient);
+      credentialScope = { ...credentialScope, nodeseek: credentialScope.nodeseek + 1 };
+      hook.rerender(undefined);
     });
-    await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({ source: 'nodeseek', id: 'alice' }));
-
-    await act(async () => {
-      resetForumSourceQueries('linuxdo', appQueryClient, 'login-expired');
-    });
-    expect(hook.result.current.userProfile).toMatchObject({ source: 'nodeseek', id: 'alice' });
-
-    await act(async () => {
-      resetForumSourceQueries('nodeseek', appQueryClient, 'login-expired');
-    });
-
-    expect(hook.result.current.selectedUser).toMatchObject({ source: 'nodeseek', id: '1' });
     expect(hook.result.current.userProfile).toBeNull();
-    expect(hook.result.current.userBusy).toBe(false);
-    expect(hook.result.current.userError?.message).toContain('会话已变化');
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      replacement.resolve({ ...user, displayName: 'New session' });
+      await replacement.promise;
+    });
+    await waitFor(() => expect(hook.result.current.userProfile?.displayName).toBe('New session'));
   });
 
-  it.each(['topics', 'replies'] as const)(
-    'REG-LINUXDO-002 preserves the loaded user profile across session reset before resuming %s pagination',
-    async (lane) => {
-      const firstTopic = {
-        source: 'linuxdo' as const,
-        id: 'topic-1',
-        title: '第一页帖子',
-        author: 'alice',
-        url: 'https://linux.do/t/topic-1',
-        createdAt: '2026-07-20T00:00:00.000Z',
-        replyCount: 0
-      };
-      const secondTopic = {
-        ...firstTopic,
-        id: 'topic-2',
-        title: '第二页帖子',
-        url: 'https://linux.do/t/topic-2'
-      };
-      const firstReply = {
-        source: 'linuxdo' as const,
-        id: 'reply-1',
-        topicId: 'topic-1',
-        topicTitle: '第一页帖子',
-        topicUrl: 'https://linux.do/t/topic-1',
-        url: 'https://linux.do/t/topic-1/1',
-        excerpt: '第一页回复'
-      };
-      const secondReply = {
-        ...firstReply,
-        id: 'reply-2',
-        url: 'https://linux.do/t/topic-1/2',
-        excerpt: '第二页回复'
-      };
-      const linuxDoUser: UserProfile = {
-        source: 'linuxdo',
-        id: 'alice',
-        username: 'alice',
-        displayName: 'Alice',
-        url: 'https://linux.do/u/alice',
-        topics: [firstTopic],
-        hasMoreTopics: true,
-        nextTopicsCursor: 'topics-2',
-        replies: [firstReply],
-        hasMoreReplies: true,
-        nextRepliesCursor: 'replies-2'
-      };
-      let paginationAttempts = 0;
-      const getUserProfile = jest.fn(async ({ cursorType }: { cursorType?: 'topics' | 'replies' }) => {
-        if (!cursorType) {
-          return linuxDoUser;
-        }
-        paginationAttempts += 1;
-        if (paginationAttempts === 1) {
-          throw new LinuxDoCloudflareError();
-        }
-        return lane === 'topics'
-          ? {
-            ...linuxDoUser,
-            topics: [secondTopic],
-            replies: [],
-            hasMoreTopics: false,
-            nextTopicsCursor: null
-          }
-          : {
-            ...linuxDoUser,
-            topics: [],
-            replies: [secondReply],
-            hasMoreReplies: false,
-            nextRepliesCursor: null
-          };
-      });
-      const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-      const hook = await renderHook(() => useUserController({
-        notify: jest.fn(),
-        onOpenUserScreen: jest.fn(),
-        readerData: createEmptyReaderData(),
-        screen: 'user',
-        sessionViewModels: createSiteSessionViewModels(createSiteSessionStates({
-          linuxdo: {
-            site: 'linuxdo',
-            status: 'logged-in',
-            cookieSummary: ['session-present'],
-            isVerifying: false
-          }
-        })),
-        showLinuxDoVerification,
-        showNodeSeekVerification: jest.fn(),
-        showYaohuoLogin: jest.fn(),
-        sourceGateway: { getUserProfile } as unknown as SourceGateway
-      }));
+  it('REG-USER-006 REG-LINUXDO-002 seeds the visible cursor before verification retries the exact failed page', async () => {
+    const linuxUser: UserProfile = {
+      ...user,
+      source: 'linuxdo',
+      id: 'alice',
+      url: 'https://linux.do/u/alice',
+      hasMoreTopics: true,
+      nextTopicsCursor: 'topics-2'
+    };
+    const secondTopic = {
+      source: 'linuxdo' as const,
+      id: 'topic-2',
+      title: '第二页主题',
+      author: 'alice',
+      url: 'https://linux.do/t/topic-2',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    let attempts = 0;
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async ({ cursorType }) => {
+      if (!cursorType) return linuxUser;
+      attempts += 1;
+      if (attempts === 1) throw new LinuxDoCloudflareError();
+      return { ...linuxUser, topics: [secondTopic], hasMoreTopics: false, nextTopicsCursor: null };
+    });
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderUserController({ getUserProfile, showLinuxDoVerification });
 
-      await act(async () => {
-        await hook.result.current.openUser(linuxDoUser);
-      });
-      await waitFor(() => expect(hook.result.current.userProfile).toEqual(linuxDoUser));
-      await act(async () => {
-        await (lane === 'topics'
-          ? hook.result.current.loadMoreUserTopics()
-          : hook.result.current.loadMoreUserReplies());
-      });
+    await act(async () => { void hook.result.current.openUser(linuxUser); });
+    await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
+    await act(async () => { await hook.result.current.loadMoreUserTopics(); });
+    await waitFor(
+      () => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1),
+      { timeout: 3000 }
+    );
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
 
-      const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
-      expect(recovery).toBeDefined();
-      await act(async () => {
-        resetForumSourceQueries('linuxdo', appQueryClient, 'session-updated', recovery.key);
-      });
+    await act(async () => {
+      resetForumSourceQueries('linuxdo', appQueryClient, recovery.queryKey);
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
 
-      expect(hook.result.current.userProfile).toEqual(linuxDoUser);
-      expect(hook.result.current.userLoadingMoreTopics).toBe(false);
-      expect(hook.result.current.userLoadingMoreReplies).toBe(false);
+    await waitFor(() => expect(hook.result.current.userProfile?.topics).toEqual([secondTopic]));
+    expect(attempts).toBe(2);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
 
-      await act(async () => {
-        await expect(recovery.resume()).resolves.toBe('completed');
-      });
+  it('REG-LINUXDO-003 reports an ordinary user recovery failure instead of another verification result', async () => {
+    const linuxUser: UserProfile = {
+      ...user,
+      source: 'linuxdo',
+      id: 'alice',
+      url: 'https://linux.do/u/alice'
+    };
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockRejectedValueOnce(new Error('恢复后网络失败'));
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderUserController({ getUserProfile, showLinuxDoVerification });
 
-      expect(paginationAttempts).toBe(2);
-      if (lane === 'topics') {
-        expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-1', 'topic-2']);
-      } else {
-        expect(hook.result.current.userProfile?.replies?.map(({ id }) => id)).toEqual(['reply-1', 'reply-2']);
-      }
-      expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
-    }
-  );
+    await act(async () => { void hook.result.current.openUser(linuxUser); });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('verification-required');
+    });
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('failed');
+    });
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    expect(getUserProfile).toHaveBeenCalledTimes(3);
+  });
+
+  it('[REG-SOURCE-002] does not cache a parse-empty profile', async () => {
+    const parsedEmpty = annotateSourceDiagnosticSummary({ ...user, displayName: '', topics: [] }, {
+      parserVariant: 'html-user',
+      candidateCount: 1,
+      validCount: 0,
+      droppedCount: 1,
+      isExpectedEmpty: false
+    });
+    const hook = await renderUserController({
+      getUserProfile: jest.fn<SourceGateway['getUserProfile']>(async () => parsedEmpty)
+    });
+
+    await act(async () => { void hook.result.current.openUser(user); });
+    await waitFor(() => expect(hook.result.current.userError?.message).toContain('解析为空'));
+    expect(hook.result.current.userProfile).toBeNull();
+  });
 });

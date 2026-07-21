@@ -35,6 +35,7 @@ import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
 import { appQueryClient, forumQueryKeys } from '../app/serverState';
+import type { ForumCredentialScope } from '../app/serverState';
 
 const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 50,
@@ -203,6 +204,7 @@ function FilterTextField({
 
 function SearchFilterSheet({
   categories,
+  credentialScope,
   source,
   searchFilters,
   styles,
@@ -214,6 +216,7 @@ function SearchFilterSheet({
   onClose
 }: {
   categories: Category[];
+  credentialScope: ForumCredentialScope;
   source: Source;
   searchFilters: SearchFilterState;
   styles: ReturnType<typeof createStyles>;
@@ -229,13 +232,11 @@ function SearchFilterSheet({
   const [tagPickerVisible, setTagPickerVisible] = useState(false);
   const [tagQuery, setTagQuery] = useState('');
   const [debouncedTagQuery, setDebouncedTagQuery] = useState<string | null>(null);
-  const [tagRetry, setTagRetry] = useState(0);
   const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
   const [categoryQuery, setCategoryQuery] = useState('');
   const [userPickerVisible, setUserPickerVisible] = useState(false);
   const [userQuery, setUserQuery] = useState('');
   const [debouncedUserQuery, setDebouncedUserQuery] = useState<string | null>(null);
-  const [userRetry, setUserRetry] = useState(0);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [filterError, setFilterError] = useState('');
   const nodeSeekCategoryItems = useMemo(() => categoryOptions(categories, 'nodeseek'), [categories]);
@@ -309,44 +310,38 @@ function SearchFilterSheet({
     return () => clearTimeout(timer);
   }, [userPickerVisible, userQuery]);
 
-  const tagRequestKey = JSON.stringify({
-    categoryId: discourseDraft?.category || null,
-    query: debouncedTagQuery,
-    retry: tagRetry,
-    selectedTags: discourseDraft?.tags || []
-  });
-  const tagProjectionKey = JSON.stringify({
-    categoryId: discourseDraft?.category || null,
-    query: debouncedTagQuery,
-    source: discourseDraft?.source || null
-  });
-  const tagCandidatesQuery = useQuery<{ items: DiscourseTagOption[]; projectionKey: string }>({
-    queryKey: forumQueryKeys.searchTags(discourseDraft?.source || 'linuxdo', tagRequestKey),
+  const tagCandidatesQuery = useQuery<DiscourseTagOption[]>({
+    queryKey: forumQueryKeys.searchTags({
+      categoryId: discourseDraft?.category || undefined,
+      query: debouncedTagQuery || '',
+      scope: credentialScope,
+      selectedTags: discourseDraft?.tags || [],
+      source: discourseDraft?.source || 'linuxdo'
+    }),
     enabled: visible && tagPickerVisible && Boolean(discourseDraft) && debouncedTagQuery !== null,
     placeholderData: (previousData) => previousData,
     queryFn: async ({ signal }) => {
       if (!discourseDraft || debouncedTagQuery === null) {
-        return { items: [] as DiscourseTagOption[], projectionKey: tagProjectionKey };
+        return [] as DiscourseTagOption[];
       }
-      const items = await onSearchDiscourseTags({
+      return onSearchDiscourseTags({
         source: discourseDraft.source,
         query: debouncedTagQuery,
         categoryId: discourseDraft.category || undefined,
         selectedTags: discourseDraft.tags,
         signal
       });
-      return { items, projectionKey: tagProjectionKey };
     }
   }, appQueryClient);
 
   const normalizedUserQuery = userQuery.trim();
-  const userRequestKey = JSON.stringify({
-    categoryId: discourseDraft?.category || null,
-    retry: userRetry,
-    term: debouncedUserQuery
-  });
-  const userCandidatesQuery = useQuery({
-    queryKey: forumQueryKeys.searchUsers(discourseDraft?.source || 'linuxdo', userRequestKey),
+  const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
+    queryKey: forumQueryKeys.searchUsers({
+      categoryId: discourseDraft?.category || undefined,
+      scope: credentialScope,
+      source: discourseDraft?.source || 'linuxdo',
+      term: debouncedUserQuery || ''
+    }),
     enabled: visible
       && userPickerVisible
       && Boolean(discourseDraft)
@@ -365,9 +360,9 @@ function SearchFilterSheet({
   }, appQueryClient);
 
   const tagDebouncing = tagPickerVisible && debouncedTagQuery !== tagQuery;
-  const tagOptions = tagDebouncing || tagCandidatesQuery.data?.projectionKey !== tagProjectionKey
+  const tagOptions = tagDebouncing || tagCandidatesQuery.isPlaceholderData
     ? []
-    : tagCandidatesQuery.data.items;
+    : tagCandidatesQuery.data || [];
   const tagLoading = tagDebouncing || tagCandidatesQuery.isFetching;
   const tagError = !tagDebouncing && tagCandidatesQuery.isError ? '标签候选加载失败' : '';
   const userDebouncing = userPickerVisible
@@ -784,7 +779,7 @@ function SearchFilterSheet({
             {tagError ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{tagError}</Text>
-                <AppButton compact label="重试标签候选" variant="ghost" styles={styles} onPress={() => setTagRetry((value) => value + 1)} />
+                <AppButton compact label="重试标签候选" variant="ghost" styles={styles} onPress={() => { void tagCandidatesQuery.refetch(); }} />
               </View>
             ) : null}
             {!tagLoading && !tagError && !tagOptions.length ? <EmptyText text="没有匹配标签" styles={styles} /> : null}
@@ -903,7 +898,7 @@ function SearchFilterSheet({
             {userError ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{userError}</Text>
-                <AppButton compact label="重试作者候选" variant="ghost" styles={styles} onPress={() => setUserRetry((value) => value + 1)} />
+                <AppButton compact label="重试作者候选" variant="ghost" styles={styles} onPress={() => { void userCandidatesQuery.refetch(); }} />
               </View>
             ) : null}
             {!userQuery.trim() ? <EmptyText text="输入用户名后选择" styles={styles} /> : null}
@@ -1073,6 +1068,7 @@ function LinuxDoAiControl({
 export const SearchScreen = memo(function SearchScreen({
   busy,
   categories,
+  credentialScope,
   query,
   recentSearches,
   topicStateIndex,
@@ -1101,6 +1097,7 @@ export const SearchScreen = memo(function SearchScreen({
 }: {
   busy: boolean;
   categories: Category[];
+  credentialScope: ForumCredentialScope;
   query: string;
   recentSearches: string[];
   topicStateIndex: TopicListItemStateIndex;
@@ -1635,6 +1632,7 @@ export const SearchScreen = memo(function SearchScreen({
       {searchSource !== 'all' ? (
         <SearchFilterSheet
           categories={categories}
+          credentialScope={credentialScope}
           source={searchSource as Source}
           searchFilters={searchFilters}
           styles={styles}

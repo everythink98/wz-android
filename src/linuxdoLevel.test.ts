@@ -30,9 +30,9 @@ describe('linux.do level profile', () => {
   });
 
   it('REG-ACCOUNT-009 cancels a level read before fallback or snapshot persistence when credentials change', async () => {
-    let current = true;
+    const controller = new AbortController();
     const fetcher = vi.fn(async () => {
-      current = false;
+      controller.abort();
       return new Response(JSON.stringify({ username: 'old-user', trust_level: 1 }), {
         headers: { 'content-type': 'application/json' }
       });
@@ -41,7 +41,7 @@ describe('linux.do level profile', () => {
     await expect(getLinuxDoLevelProfile({
       cookieHeader: '_t=old',
       fetcher,
-      isCurrent: () => current
+      signal: controller.signal
     })).rejects.toThrow('请求已取消');
 
     expect(fetcher).toHaveBeenCalledTimes(1);

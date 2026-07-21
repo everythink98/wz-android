@@ -10,6 +10,7 @@ import type { DiscourseSource } from '../sourceCatalog';
 import type { SiteSessionEvent } from '../siteSessionState';
 import { runXiaoyinsiAction } from '../xiaoyinsiActionClient';
 import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
+import { errorMessage } from '../appUtils';
 import { clearExpiredLinuxDoLogin } from './topicActionHelpers';
 
 export type DiscourseActionRuntimeDependencies = {
@@ -25,6 +26,7 @@ export type DiscourseActionRuntimeContext = DiscourseActionRuntimeDependencies &
 
 export type DiscourseActionRuntimeRecovery = {
   loginRequired: boolean;
+  message?: string;
   phase: 'credential' | 'transport';
   stale?: boolean;
 };
@@ -33,7 +35,7 @@ export type PreparedDiscourseActionRuntime = {
   credentialReady: boolean;
   credentialSource: 'secure-store';
   csrfSource: 'none' | 'session-endpoint';
-  execute?: (request: DiscourseActionRequest, signal: AbortSignal) => Promise<unknown>;
+  execute?: (request: DiscourseActionRequest, signal?: AbortSignal) => Promise<unknown>;
   isCredentialCurrent?: () => boolean;
   onMissingCredential?: () => void;
   recover: (error: unknown) => Promise<DiscourseActionRuntimeRecovery>;
@@ -65,7 +67,7 @@ const discourseActionRuntimes = {
             message: 'linux.do 登录状态已失效'
           })
         } : {
-          execute: (request: DiscourseActionRequest, signal: AbortSignal) => runLinuxDoAction({
+          execute: (request: DiscourseActionRequest, signal?: AbortSignal) => runLinuxDoAction({
             cookieHeader: access!.cookieHeader,
             fetcher: context.fetcher,
             userAgent: access!.userAgent || context.linuxDoUserAgent(),
@@ -80,13 +82,25 @@ const discourseActionRuntimes = {
           if (!hasFlag(error, 'loginRequired')) {
             return { loginRequired: false, phase: 'transport' as const };
           }
-          const recovered = await clearExpiredLinuxDoLogin({
-            error,
-            generation,
-            cookieHeader: access?.cookieHeader,
-            resetLinuxDoLevelState: context.resetLinuxDoLevelState,
-            updateLinuxDoSession: context.updateLinuxDoSession
-          });
+          let recovered: boolean | undefined;
+          try {
+            recovered = await clearExpiredLinuxDoLogin({
+              error,
+              generation,
+              cookieHeader: access?.cookieHeader,
+              resetLinuxDoLevelState: context.resetLinuxDoLevelState,
+              updateLinuxDoSession: context.updateLinuxDoSession
+            });
+          } catch {
+            if (!isCredentialCurrent()) {
+              return { loginRequired: false, phase: 'credential' as const, stale: true };
+            }
+            return {
+              loginRequired: true,
+              message: `${errorMessage(error)} 本机 Cookie 清理未完成，请重试。`,
+              phase: 'credential' as const
+            };
+          }
           if (!recovered || !isCredentialCurrent()) {
             return { loginRequired: false, phase: 'credential' as const, stale: true };
           }
@@ -106,7 +120,7 @@ const discourseActionRuntimes = {
         csrfSource: 'none',
         isCredentialCurrent,
         ...(credentials ? {
-          execute: (request: DiscourseActionRequest, signal: AbortSignal) => runXiaoyinsiAction({
+          execute: (request: DiscourseActionRequest, signal?: AbortSignal) => runXiaoyinsiAction({
             credentials,
             fetcher: context.fetcher,
             request,

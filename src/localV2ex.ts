@@ -32,7 +32,6 @@ import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sour
 const HTML_LIST_PAGE_SIZE = 20;
 const V2EX_FEED_CURSOR_LIMIT = 200;
 const V2EX_HTML_TIMEZONE = '+08:00';
-const latestCache: { savedAt: number; data: unknown[] } = { savedAt: 0, data: [] };
 const atomParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '',
@@ -448,14 +447,9 @@ async function fetchText(url: string, options: V2exOptions = {}) {
   return text;
 }
 
-async function loadLatest(options: V2exOptions & { nocache?: boolean } = {}) {
-  if (!options.nocache && latestCache.data.length && Date.now() - latestCache.savedAt < 60_000) {
-    return latestCache.data;
-  }
+async function loadLatest(options: V2exOptions = {}) {
   const data = await fetchJson<unknown[]>(`${BASE_URL}/api/topics/latest.json`, options);
-  latestCache.savedAt = Date.now();
-  latestCache.data = Array.isArray(data) ? data : [];
-  return latestCache.data;
+  return Array.isArray(data) ? data : [];
 }
 
 async function fetchHtmlWindow(options: V2exOptions & {
@@ -513,7 +507,6 @@ export async function getV2exFeed(options: V2exOptions & {
   limit?: number;
   category?: string;
   feedFilter?: V2exFeedFilter;
-  nocache?: boolean;
 } = {}): Promise<FeedResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
@@ -631,7 +624,7 @@ export async function getV2exFeed(options: V2exOptions & {
   });
 }
 
-export async function getV2exCategories(options: V2exOptions & { nocache?: boolean } = {}): Promise<CategoriesResponse> {
+export async function getV2exCategories(options: V2exOptions = {}): Promise<CategoriesResponse> {
   const data = await loadLatest(options);
   const seen = new Set<string>();
   const items = data.map((topic) => {

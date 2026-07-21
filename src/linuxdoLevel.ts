@@ -360,29 +360,27 @@ export async function getLinuxDoLevelProfile({
   cookieHeader,
   userAgent,
   fetcher = fetch,
-  isCurrent = () => true,
   signal,
   timeoutMs
 }: {
   cookieHeader: string;
   userAgent?: string;
   fetcher?: Fetcher;
-  isCurrent?: () => boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }) {
-  const assertCurrent = () => {
-    if (!isCurrent() || signal?.aborted) {
+  const assertNotAborted = () => {
+    if (signal?.aborted) {
       throw new Error(REQUEST_CANCELED_MESSAGE);
     }
   };
   const throwIfCanceled = (error: unknown) => {
-    assertCurrent();
+    assertNotAborted();
     if (error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE) {
       throw error;
     }
   };
-  assertCurrent();
+  assertNotAborted();
   const cleanCookie = cookieHeader.trim();
   if (!cleanCookie) {
     throw new Error('请先登录 linux.do');
@@ -398,19 +396,19 @@ export async function getLinuxDoLevelProfile({
   let currentUser: LinuxDoCurrentUser | null = null;
   try {
     data = await fetchLinuxDoJson('/my/summary.json', requestOptions);
-    assertCurrent();
+    assertNotAborted();
   } catch (error) {
     throwIfCanceled(error);
     currentUser = await fetchCurrentUser(requestOptions);
-    assertCurrent();
+    assertNotAborted();
     data = await fetchLinuxDoJson(`/u/${encodeURIComponent(currentUser.username)}/summary.json`, requestOptions);
-    assertCurrent();
+    assertNotAborted();
   }
   const summary = normalizeSummaryPayload(data);
   if (!currentUser && (!hasTrustLevel(summary) || !hasUsername(summary))) {
     try {
       currentUser = await fetchCurrentUser(requestOptions);
-      assertCurrent();
+      assertNotAborted();
     } catch (error) {
       throwIfCanceled(error);
       currentUser = null;
@@ -421,18 +419,18 @@ export async function getLinuxDoLevelProfile({
   if (profile.currentLevel >= 2) {
     try {
       const html = await fetchLinuxDoConnectHtml(requestOptions);
-      assertCurrent();
+      assertNotAborted();
       nextProfile = parseLinuxDoConnectProgress(html, profile);
     } catch (error) {
       throwIfCanceled(error);
       nextProfile = profile;
     }
   }
-  assertCurrent();
+  assertNotAborted();
   const snapshot = await loadSnapshot(nextProfile.username);
-  assertCurrent();
+  assertNotAborted();
   const profileWithChange = withSnapshotChange(nextProfile, snapshot);
   await saveSnapshot(nextProfile);
-  assertCurrent();
+  assertNotAborted();
   return profileWithChange;
 }

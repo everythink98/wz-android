@@ -2,16 +2,10 @@ import type { Reply, TopicDetail, TopicPoll } from './types';
 
 export type InteractionType = 'upvote' | 'like' | 'dislike';
 type InteractionMode = 'add' | 'remove';
-type ActionOperation = 'add' | 'remove';
 export type TopicActionStateKind = InteractionType | 'collection' | 'bookmark';
 
 export type OptimisticActionState = {
-  confirmed: boolean;
-  displayed: boolean;
-  desired: boolean;
   inFlight: boolean;
-  inFlightTarget?: boolean;
-  ownerKey?: string;
 };
 
 type InteractionPatch = {
@@ -89,77 +83,6 @@ export function applyInteractionToTopic<T extends TopicDetail | null>(topic: T, 
 
 export function applyInteractionToReplies(replies: Reply[], patch: InteractionPatch) {
   return replies.map((reply) => applyInteractionFields(reply, patch));
-}
-
-export function beginOptimisticAction(
-  current: OptimisticActionState | undefined,
-  confirmedActive: boolean
-): { state: OptimisticActionState; request: ActionOperation | null } {
-  const base = current || {
-    confirmed: confirmedActive,
-    displayed: confirmedActive,
-    desired: confirmedActive,
-    inFlight: false
-  };
-  const desired = !base.displayed;
-  const state = {
-    ...base,
-    displayed: desired,
-    desired
-  };
-  if (base.inFlight) {
-    return { state, request: null };
-  }
-  return {
-    state: {
-      ...state,
-      inFlight: true,
-      inFlightTarget: desired
-    },
-    request: desired ? 'add' : 'remove'
-  };
-}
-
-export function completeOptimisticAction(
-  current: OptimisticActionState,
-  success: boolean
-): { state: OptimisticActionState; request: ActionOperation | null } {
-  if (!current.inFlight || typeof current.inFlightTarget !== 'boolean') {
-    return { state: current, request: null };
-  }
-  if (!success) {
-    return {
-      state: {
-        confirmed: current.confirmed,
-        displayed: current.confirmed,
-        desired: current.confirmed,
-        inFlight: false
-      },
-      request: null
-    };
-  }
-  const confirmed = current.inFlightTarget;
-  if (current.desired !== confirmed) {
-    return {
-      state: {
-        confirmed,
-        displayed: current.desired,
-        desired: current.desired,
-        inFlight: true,
-        inFlightTarget: current.desired
-      },
-      request: current.desired ? 'add' : 'remove'
-    };
-  }
-  return {
-    state: {
-      confirmed,
-      displayed: confirmed,
-      desired: confirmed,
-      inFlight: false
-    },
-    request: null
-  };
 }
 
 export function applyBookmarkToTopic<T extends TopicDetail | null>(

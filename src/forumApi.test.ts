@@ -75,7 +75,7 @@ describe('Android local forum facade', () => {
     });
   });
 
-  it('passes no-cache through NodeSeek topic and reply reads', async () => {
+  it('marks NodeSeek topic and reply reads as foreground browser work', async () => {
     const payload = Buffer.from(JSON.stringify({
       postData: {
         postId: 101,
@@ -88,15 +88,11 @@ describe('Android local forum facade', () => {
     })).toString('base64');
     const fetcher = vi.fn(async () => new Response(`<script>${payload}</script>`));
 
-    await getTopic({ source: 'nodeseek', id: '101', fetcher, nocache: true });
-    await getReplies({ source: 'nodeseek', id: '101', page: 1, fetcher, nocache: true });
+    await getTopic({ source: 'nodeseek', id: '101', fetcher });
+    await getReplies({ source: 'nodeseek', id: '101', page: 1, fetcher });
 
     const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
     for (const [, init] of calls) {
-      expect(init?.headers).toMatchObject({
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache'
-      });
       expect(browserFetchIntentFromInit(init)).toMatchObject({
         owner: 'topic',
         priority: 'foreground',

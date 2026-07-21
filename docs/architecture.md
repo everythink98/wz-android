@@ -19,7 +19,8 @@
 | --- | --- |
 | `App.tsx` | 应用入口，提供唯一 `QueryClientProvider` 并加载 `AppRoot` |
 | `src/app/AppRoot.tsx` | App 根组件，组合控制器、主题、导航、Provider、全局弹层、隐藏 WebView 和页面参数 |
-| `src/app/serverState.ts` | TanStack Query 的唯一 client、五站 query/mutation key 和按来源清理边界 |
+| `src/app/serverState.ts` | TanStack Query 的唯一 client，以及五站类型化 query/mutation key |
+| `src/app/sessionControllerHelpers.ts` | 凭据 transaction、WebView 队列和会话 transition 的精确 Query 清理规则 |
 | `src/app/useDeferredNavigationTask.ts` | AppRoot 的延迟导航时机，避免把 `InteractionManager` 细节留在根组件里 |
 | `src/app/use*Controller.ts` | 首页、搜索、详情、用户、账号、会话、验证、备份等运行逻辑 |
 | `src/sources/sourceGateway.ts` | App 统一来源读取入口，隐藏五站读取 adapter 差异 |
@@ -45,7 +46,7 @@
 
 - App controller 通过 `src/sources/sourceGateway.ts` 的 `getFeed`、`searchTopics`、`getTopic`、`getReplies` 和用户资料 interface 读取五站数据。
 - `src/sourceCatalog.ts` 是来源集合的唯一静态事实源；来源类型、聚合 Feed/Search、筛选状态、可登录站点、诊断枚举和页面 action capability 都从这里派生，不在页面中维护 LinuxDo/小隐寺成对名单。
-- 五站的首页、搜索、主题、回复和用户资料读取均已进入 managed gateway：`createSourceGateway` 组装 WebView fallback fetcher、Cookie、User-Agent、凭据 generation、妖火失效清理和按来源键控的 `discourseAuth`；controller 只传业务参数和请求归属上下文。
+- 五站的首页、搜索、主题、回复和用户资料读取均已进入 managed gateway：`createSourceGateway` 组装 WebView fallback fetcher、Cookie、User-Agent、凭据 generation、妖火失效清理和按来源键控的 `discourseAuth`；Query function 只传业务参数、TanStack `AbortSignal` 和诊断 trace。
 - linux.do 与小隐寺是两个独立 adapter，共同实现 `src/discourseSourceReaders.ts` 的标准读取 port；两者组合 `discourseModel` 等无站点偏向模块，不继承彼此，也不共享 Cookie、CSRF、Cloudflare、User API Key 或缓存状态。
 - 标准 Discourse 回复、点赞、书签、编辑、删除、投票和上传先表达为 `DiscourseAction`，再由 `discourseSourceActions` 选择标准 request builder 或最小站点 override；小隐寺 Topic 无 bookmark id 的取消收藏是当前 override。`discourseActionRuntime` 按来源注册独立鉴权和 transport，Topic controller 只执行统一 action 生命周期。
 - Feed、Search、Topic UI 只消费语义筛选、权限和 action capability；标准 Discourse emoji 目录由各 adapter 独立读取后交给公共 presenter，linux.do boost、Cloudflare 验证、小隐寺 Device Code 等站点特性留在站点 presenter、鉴权或 transport 边界。
@@ -57,13 +58,14 @@
 
 ## 服务器状态与请求生命周期
 
-- Feed、Search、Topic/回复/引用、User 和 Account/等级读取由 `src/app/serverState.ts` 的 TanStack Query client 统一拥有。key 固定以 `forum -> source -> resource` 开头，并包含会改变响应身份的筛选、排序、页码或 cursor；只有账号检查等按凭据快照执行的 workflow 才把 generation 放进 key。页面不得再新建 transport request id/owner map。
-- Query `queryFn` 的有效性只由 TanStack 提供的 `AbortSignal` 决定，并把它直接传给 `sourceGateway`；相同 key 的并发读取共享一个 transport。页面 generation 只阻止较旧调用方应用共享结果或覆盖 Loading，不得反向取消仍被较新调用方需要的 Query。`sourceGateway` 仍只负责凭据 generation 校验、adapter、transport 和标准化错误，不承担 UI 请求归属。来源返回失败、需要验证或 `parse_empty` 时不保存为可信数据。
+- Feed、Search、Topic/回复/引用、User 和 Account/等级读取由 `src/app/serverState.ts` 的唯一 TanStack Query client 统一拥有。Query key 固定以 `forum -> source -> resource` 开头，只包含会改变响应身份的结构化业务参数和非敏感 `ForumCredentialScope`；Infinite Query 的页码与 cursor 只放在 `pageParam`，Cookie、token 和序列化 request key 不进入 key。各 `use*Controller` 只组合 Query result 与页面本地状态，不复制远端 data/loading/error，也不再拥有 transport request id、owner map、generation 或 Abort ref。
+- Feed/Search/Topic/User/等级的 Query `queryFn` 只使用 TanStack 提供的 `AbortSignal`，并直接传给 managed `sourceGateway`；账号状态的四个 Query 同样只由 Query signal 驱动，凭据读写 transaction 继续留在登录边界。相同 key 的并发读取共享一个 transport。`sourceGateway` 只负责凭据 generation 校验、adapter、transport 和标准化错误，不承担 UI 请求归属。来源返回失败、需要验证或 `parse_empty` 时不保存为可信数据；刷新或分页失败由 Query 保留此前可信 data/pages 和 cursor。
 - 默认不自动 retry，不因 mount、重连或回到前台自动重发。Android Home 只更新 TanStack focus 和 `src/request.ts` 的 active-time timeout 时钟，不取消在飞详情请求；离开 Topic route 才取消对应读取。
-- 读取已保存凭据和原站身份只发布 `cookie-loaded` 观察事件，不得取消当前 Query；小隐寺的被动授权复核也遵守这一语义。新凭据提交、Device Code 授权完成发布 `session-updated`，登录确认变化、凭据过期和明确清除也是会话 transition。`useSessionController` 对这些 transition 只取消并移除对应 source 以及可能混入它的 `all` 聚合 Query，并同步清除 Feed/Search/Topic/User 的该来源页面投影；其他来源保持不变，聚合 Search 中未受影响来源继续结算。
-- linux.do 打开验证前先清理旧 clearance；该次 transition 无论落为 `session-updated` 还是 `cleared` 都携带 recovery key。新凭据保存后只在 recovery 仍 current 时再次携带同一个 key；stale recovery 不得借 session transition 保活。各 controller 只按 key、source、lane 完全相等保留触发验证的精确 Feed/Search/Topic/User 请求；首屏 lane 清旧投影后重读，分页、回复和引用 lane 保留已加载数据与 cursor 作为合并基线。恢复成功后的 `verification-succeeded` 只是状态观察，不得再次失效 Query 或擦除刚恢复的页面。见 `REG-LINUXDO-002`、`REG-TOPIC-022`。
-- Query cache 里已经存在下一页，不代表页面已经展示了下一页；Feed、Search、Topic 和 User 只能比较服务端返回的 next cursor 与本次请求 cursor 来判断是否还有更多，缓存页仍须经过当前页面的追加与去重逻辑。
-- Topic 非幂等写操作进入 MutationCache，以 source/topic/action key 防重、串行同 scope 并使该 Topic 读缓存失效。TanStack Mutation 不提供 transport cancel，所以 `src/app/topicActionRuns.ts` 只保留写请求的 `AbortController`、Topic 离开取消和 busy 收口；乐观切换队列仍是业务状态，不是另一层服务器缓存。
+- 读取已保存凭据和原站身份只发布 `cookie-loaded` 观察事件，不得取消当前 Query；小隐寺的被动授权复核也遵守这一语义。新凭据提交、Device Code 授权完成发布 `session-updated`，登录确认变化、凭据过期和明确清除也是会话 transition。`useSessionController` 对这些 transition 通过 QueryClient 精确取消并移除对应 source 以及可能混入旧私有数据的 `all` 聚合 Query；其他来源保持不变，聚合 Search 中未受影响来源继续结算。
+- linux.do 打开验证前先清理旧 clearance；只有 recovery 引用未被替换且对应结构化 Query key 仍有 active observer，transition 才携带该 `recoveryQueryKey`。QueryClient 只保留与这个 key `exact` 匹配的一条 Feed/Search/Topic/User Query，前缀相似、其他 lane、其他来源和已失去 observer 的 key 都照常清除；分页、回复和引用因此保留已加载 pages/cursor 作为恢复基线。恢复成功后的 `verification-succeeded` 只是状态观察，不得再次失效 Query 或擦除刚恢复的数据。见 `REG-LINUXDO-002`、`REG-TOPIC-022`。
+- Feed、单站 Search、Topic 回复和 User 两个 lane 使用 Infinite Query；服务端 next page/cursor 与本次 `pageParam` 相同即停止，失败页不追加。User 的 Profile Query 刚显示 next cursor 时，分页命令先确保对应 lane 已用同一 profile seed，再从 Query cache 的最后 page/pageParam 发起准确下一页，不能因 observer 提交稍晚而静默早退，见 `REG-USER-006`。Topic 回复下一页的验证恢复继续调用 `fetchNextPage()` 重试原 page/offset，首屏恢复才使用 `refetch()`。聚合 Search 使用五个独立 `useQueries` 渐进结算，单站失败不能阻断其他来源。
+- Query 的内部状态只有在对应业务请求已经启用后才可投影为页面 busy；未提交 Search 的 disabled Infinite Query 即使 `isPending` 也不能禁用首次提交入口，见 `REG-SEARCH-006`。
+- Topic 写操作只通过 Topic `useMutation` 入口进入 MutationCache；`scope.id = forum:{source}:topic:{id}` 让同一 Topic 串行、不同 Topic 可并发。乐观 apply、rollback 和成功结果只修改精确 Topic/Replies cache，busy 从 pending mutation 派生；非幂等请求发出后不取消，离开页面仍允许结算，凭据 scope 已变化时迟到结果不得重新写回已清缓存。账号中心的 NodeSeek 签到是独立全局 mutation，固定使用 `nodeseek/global` key 与 scope，不读取或取消残留 Topic。
 - Cloudflare/WebView 恢复、小隐寺 Device Code 轮询、凭据存储 transaction 和导航快照是多步 workflow，仍可使用受限 generation 防止过期恢复落地；不得用它们重新实现 Query 已有的 dedupe、cache 或取消所有权。
 
 ### Discourse 字段规则
@@ -99,13 +101,14 @@
 - `src/credentialVault.ts` 使用现有 SecureStore 按站点隔离原三站账号密码；`src/loginFormAdapters.ts` 只允许在这三站声明的可信登录 URL 和字段上主动填入，触发输入事件但不提交。小隐寺不保存或填入 Google / Discord 账号密码。
 - 网站 Cookie 与保存的账号密码是两套独立数据：清除网站登录不删除凭据，删除凭据也不退出当前网站登录。
 - More 页 `服务器代理` 由 `src/screens/more/NetworkProxyModal.tsx` 承载，配置 HTTP / SOCKS5 代理并可测试延迟。
-- `src/app/useAccountStatusController.ts` 负责 `refreshAccountStatus`；`src/app/useBackupStatusController.ts` 只负责备份导入导出。`AppRoot` 在本机资料加载完成后静默刷新一次，手动刷新才提示结果。
+- `src/app/useAccountStatusController.ts` 以四个 `useQueries` 负责 `refreshAccountStatus`，并直接从各 Query 的 data/error/fetchStatus 派生账号中心 view model；不把远端身份、错误或 Loading 复制回 session state。`src/app/useBackupStatusController.ts` 只负责备份导入导出。`AppRoot` 在本机资料加载完成后静默刷新一次，手动刷新才提示结果。
 - `src/app/useAccountController.ts` 负责 NodeSeek、linux.do、妖火登录 / 验证页检测、Cookie 保存 / 清理和 linux.do 等级读取。
 - `src/app/useSessionController.ts` 只负责加载 Cookie 和会话事实；NodeSeek Cookie 加载只返回本次凭据里的 userId，不顺带读取个人资料。
-- `SiteSessionState` 是账号中心和登录弹层的唯一登录状态来源；NodeSeek 的 WebView userId 只在 session 已登录时补充身份，不能覆盖已失效、匿名或需要验证状态。
+- `SiteSessionState` 是登录弹层、凭据 transaction 和验证/授权 workflow 的本地生命周期来源；账号中心在它之上组合当前 Account Query 快照，远端刷新结果不反写第二份 session projection。NodeSeek 的 WebView userId 只在 session 已登录时补充身份，不能覆盖已失效、匿名或需要验证状态。
+- `SiteSessionState` 不是小隐寺数据读取的授权投影。managed Gateway 直接读取 SecureStore 中的 User API Key / Client ID，并用 credential generation 拒绝迟到结果；不得因为 Account Query 不再回写 workflow session，就把仍有效的凭据当作不存在。
 - NodeSeek 当前账号由账号刷新读取，普通请求优先，失败再 WebView 兜底；兜底 userId 只来自本次凭据，不使用旧页面状态。确定未登录的 session event 会清理运行时身份提示，普通 `check-failed` 不会误判退出。
 - linux.do 验证弹层由 `src/app/LinuxDoVerifyModal.tsx` 和全局 modal host 承载。
-- 小隐寺由 `src/app/useXiaoyinsiAuthController.ts` 驱动独立 Device Code 状态机：App 生成安装级 Client ID、单次 nonce 与 Android Keystore RSA 密钥；系统浏览器只承载一次性 Google / Discord 身份确认和站点授权页，不提供 Cookie 或 App 登录态。App 前台轮询并在解密后校验 nonce，之后只以 User API Key、Client ID 和 `/session/current.json` 维护身份。待授权状态可在十分钟内跨进程恢复，后台暂停轮询。
+- 小隐寺由 `src/app/useXiaoyinsiAuthController.ts` 驱动独立 Device Code 状态机：App 生成安装级 Client ID、单次 nonce 与 Android Keystore RSA 密钥；系统浏览器只承载一次性 Google / Discord 身份确认和站点授权页，不提供 Cookie 或 App 登录态。App 前台轮询并在解密后校验 nonce，之后只以 User API Key、Client ID 和 `/session/current.json` 维护身份。待授权状态可在十分钟内跨进程恢复，后台暂停轮询。Account Query 使用该 controller 的只读授权检查结果直接构造 Query session，不发布 `SiteSessionState` 事件；Device Code、撤销和被动失效流程才提交 workflow session event。
 - 小隐寺 User API Key、Client ID 与短期待授权状态使用独立 SecureStore key；RSA 私钥不导出 Keystore。撤销先请求原站，成功后才删除本机授权材料；站点不支持 Device Code 时继续匿名读取，不降级到 WebView Cookie 登录。
 
 ## 服务器代理
