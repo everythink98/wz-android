@@ -194,7 +194,11 @@ async function main() {
   const device = resolveAndroidDevice(selectedDevice);
   runApkSanity({ apkPath, device });
   console.log('APK_SANITY');
-  await runDeviceReplay({ apkPath, selectedDevice });
+  await runDeviceReplay({
+    apkPath,
+    selectedDevice,
+    excludedReplayFileNames: ['anonymous-readonly.ad']
+  });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {

@@ -253,7 +253,7 @@ describe('xiaoyinsi adapter', () => {
     expect(postReadUrls.every((url) => url.searchParams.get('include_raw') === '1')).toBe(true);
   });
 
-  it('[REG-XIAOYINSI-018] uses only a reliable topic OP when search matches a reply', async () => {
+  it('[REG-XIAOYINSI-018][REG-SEARCH-013] keeps reply matches without claiming the reply author is the OP', async () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/search.json') {
@@ -275,13 +275,15 @@ describe('xiaoyinsi adapter', () => {
 
     const result = await searchXiaoyinsi('回复', { fetcher });
 
-    expect(result.items).toHaveLength(1);
+    expect(result.items).toHaveLength(2);
     expect(result.items[0]).toMatchObject({ author: 'alice', excerpt: '命中回复' });
+    expect(result.items[1]).toMatchObject({ author: '', excerpt: '没有楼主身份' });
     expect(sourceDiagnosticSummary(result)).toMatchObject({
       candidateCount: 2,
-      validCount: 1,
-      droppedCount: 1,
-      isExpectedEmpty: false
+      validCount: 2,
+      droppedCount: 0,
+      isExpectedEmpty: false,
+      isParseEmpty: false
     });
   });
 

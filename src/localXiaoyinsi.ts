@@ -201,7 +201,8 @@ async function categoryMapForTopics(data: unknown, topics: unknown[], options: X
 function normalizeTopic(
   raw: unknown,
   categories: CategoryMap,
-  authorData?: Record<string, unknown>
+  authorData?: Record<string, unknown>,
+  allowUnknownAuthor = false
 ): Topic | null {
   if (!isRecord(raw)) {
     return null;
@@ -212,7 +213,7 @@ function normalizeTopic(
   }
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
   const author = String(authorData?.username || createdBy.username || '').trim();
-  if (!author) {
+  if (!author && !allowUnknownAuthor) {
     return null;
   }
   const trustLevel = levelLabel(authorData) || levelLabel(createdBy);
@@ -220,9 +221,9 @@ function normalizeTopic(
     ...fields,
     source: 'xiaoyinsi',
     author,
-    authorId: author,
+    authorId: author || undefined,
     authorAvatar: avatarUrl(authorData?.avatar_template || createdBy.avatar_template),
-    authorUrl: userUrl(author),
+    authorUrl: author ? userUrl(author) : undefined,
     category: fields.categoryId ? categories.get(fields.categoryId) || '未分类' : '未分类',
     url: `${XIAOYINSI_BASE_URL}/t/${raw.slug || fields.id}/${fields.id}`,
     createdAt: fields.createdAt,
@@ -495,7 +496,7 @@ async function topicsFromSearch(data: Record<string, unknown>, options: Xiaoyins
     }
     const post = postsByTopic.get(String(raw.id));
     const authorData = discourseOriginalPoster(raw, users) || (Number(post?.post_number) === 1 ? post : undefined);
-    const topic = normalizeTopic(raw, categories, authorData);
+    const topic = normalizeTopic(raw, categories, authorData, true);
     return topic ? [{ ...topic, excerpt: textExcerpt(post?.blurb || topic.excerpt || '') }] : [];
   });
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};

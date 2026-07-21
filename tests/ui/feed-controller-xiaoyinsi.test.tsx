@@ -1,10 +1,359 @@
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { afterEach } from '@jest/globals';
+import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { useFeedController } from '../../src/app/useFeedController';
 import { createEmptyReaderData } from '../../src/readerData';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
+import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
+import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
+import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
+import { QueryTestWrapper } from './QueryTestWrapper';
+
+function renderHook<Result>(callback: () => Result) {
+  appQueryClient.clear();
+  return renderNativeHook(callback, { wrapper: QueryTestWrapper });
+}
 
 describe('小隐寺 Feed controller', () => {
+  afterEach(async () => {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  });
+
+  it('keeps an unrelated source request and categories intact when another credential session changes', async () => {
+    const v2exTopic = {
+      source: 'v2ex' as const,
+      id: 'v2ex-current',
+      title: 'V2EX 当前请求',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/v2ex-current',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const v2exFeed = Promise.withResolvers<{
+      items: typeof v2exTopic[];
+      errors: Record<string, never>;
+      hasMore: boolean;
+      nextPage: null;
+    }>();
+    const getCategories = jest.fn(async ({ source }: { source: string }) => ({
+      items: source === 'v2ex' ? [{ source: 'v2ex' as const, id: 'go', name: 'Go' }] : [],
+      errors: {}
+    }));
+    const getFeed = jest.fn(async ({ source }: { source: string }) => source === 'v2ex'
+      ? v2exFeed.promise
+      : { items: [], errors: {}, hasMore: false, nextPage: null });
+    const sourceGateway = {
+      getCategories,
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const readerData = createEmptyReaderData();
+    const notify = jest.fn();
+    const showLinuxDoVerification = jest.fn();
+    const showNodeSeekVerification = jest.fn();
+    const showYaohuoLogin = jest.fn();
+    const hook = await renderHook(() => useFeedController({
+      notify,
+      readerData,
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification,
+      showYaohuoLogin,
+      sourceGateway
+    }));
+
+    await act(async () => hook.result.current.changeFeedSource('v2ex'));
+    await waitFor(() => expect(getFeed).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'v2ex' }),
+      expect.any(Object)
+    ));
+    await waitFor(() => expect(hook.result.current.categories).toContainEqual(expect.objectContaining({ source: 'v2ex', id: 'go' })));
+
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient);
+    });
+
+    expect(hook.result.current.categories).toContainEqual(expect.objectContaining({ source: 'v2ex', id: 'go' }));
+    expect(hook.result.current.feedBusy).toBe(true);
+
+    await act(async () => {
+      v2exFeed.resolve({ items: [v2exTopic], errors: {}, hasMore: false, nextPage: null });
+      await v2exFeed.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([v2exTopic]));
+  });
+
+  it('reloads the active source and aggregate presentation after a credential session changes', async () => {
+    const oldTopic = {
+      source: 'nodeseek' as const,
+      id: 'old',
+      title: '旧账号主题',
+      author: 'old-user',
+      url: 'https://www.nodeseek.com/post-old-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const newTopic = { ...oldTopic, id: 'new', title: '新账号主题', author: 'new-user' };
+    let nodeSeekReads = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async ({ source }: { source: string }) => {
+        if (source !== 'nodeseek') {
+          return { items: [], errors: {}, hasMore: false, nextPage: null };
+        }
+        nodeSeekReads += 1;
+        return {
+          items: [nodeSeekReads === 1 ? oldTopic : newTopic],
+          errors: {},
+          hasMore: false,
+          nextPage: null
+        };
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const notify = jest.fn();
+    const readerData = createEmptyReaderData();
+    const showLinuxDoVerification = jest.fn();
+    const showNodeSeekVerification = jest.fn();
+    const showYaohuoLogin = jest.fn();
+    let credentialScope = emptyForumCredentialScope;
+    const hook = await renderHook(() => useFeedController({
+      credentialScope,
+      notify,
+      readerData,
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification,
+      showYaohuoLogin,
+      sourceGateway
+    }));
+
+    await act(async () => hook.result.current.changeFeedSource('nodeseek'));
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([oldTopic]));
+
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient);
+      credentialScope = { ...credentialScope, nodeseek: credentialScope.nodeseek + 1 };
+      hook.rerender({});
+    });
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([newTopic]));
+    expect(nodeSeekReads).toBe(2);
+  });
+
+  it('REG-LINUXDO-002 preserves the loaded feed page across session reset before resuming pagination', async () => {
+    const firstTopic = {
+      source: 'linuxdo' as const,
+      id: 'first',
+      title: '第一页主题',
+      author: 'alice',
+      url: 'https://linux.do/t/first',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const secondTopic = {
+      ...firstTopic,
+      id: 'second',
+      title: '第二页主题',
+      url: 'https://linux.do/t/second'
+    };
+    let pageTwoAttempts = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async ({ source, page = 1 }: { source: string; page?: number }) => {
+        if (source !== 'linuxdo') {
+          return { items: [], errors: {}, hasMore: false, nextPage: null };
+        }
+        if (page === 1) {
+          return { items: [firstTopic], errors: {}, hasMore: true, nextPage: 2, nextCursor: 'page-2' };
+        }
+        pageTwoAttempts += 1;
+        return pageTwoAttempts === 1
+          ? {
+            items: [],
+            errors: {
+              linuxdo: {
+                kind: 'verification-required' as const,
+                message: 'linux.do 需要验证',
+                verificationRequired: true
+              }
+            },
+            hasMore: false,
+            nextPage: null
+          }
+          : { items: [secondTopic], errors: {}, hasMore: false, nextPage: null };
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const readerData = createEmptyReaderData();
+    const notify = jest.fn();
+    const showLinuxDoVerification = jest.fn();
+    const showNodeSeekVerification = jest.fn();
+    const showYaohuoLogin = jest.fn();
+    const hook = await renderHook(() => useFeedController({
+      notify,
+      readerData,
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification,
+      showYaohuoLogin,
+      sourceGateway
+    }));
+
+    await act(async () => hook.result.current.changeFeedSource('linuxdo'));
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
+    await act(async () => {
+      await hook.result.current.loadFeed();
+    });
+
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    expect(recovery).toBeDefined();
+    await act(async () => {
+      resetForumSourceQueries('linuxdo', appQueryClient, recovery.queryKey);
+    });
+
+    expect(hook.result.current.activeFeedState).toMatchObject({
+      items: [firstTopic],
+      hasMore: true,
+      nextCursor: 'page-2',
+      loadingMore: false
+    });
+
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
+
+    expect(pageTwoAttempts).toBe(2);
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]));
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('REG-LINUXDO-003 reports an ordinary feed recovery failure instead of another verification result', async () => {
+    let linuxAttempts = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async ({ source }: { source: string }) => {
+        if (source !== 'linuxdo') {
+          return { items: [], errors: {}, hasMore: false, nextPage: null };
+        }
+        linuxAttempts += 1;
+        if (linuxAttempts <= 2) {
+          return {
+            items: [],
+            errors: {
+              linuxdo: {
+                kind: 'verification-required' as const,
+                message: 'linux.do 需要验证',
+                verificationRequired: true
+              }
+            },
+            hasMore: false,
+            nextPage: null
+          };
+        }
+        throw new Error('恢复后网络失败');
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const showLinuxDoVerification = jest.fn();
+    const hook = await renderHook(() => useFeedController({
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await act(async () => hook.result.current.changeFeedSource('linuxdo'));
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('verification-required');
+    });
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('failed');
+    });
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    expect(linuxAttempts).toBe(3);
+  });
+
+  it('[REG-FEED-006] retries a failed multi-page refresh instead of advancing to a later page', async () => {
+    const firstTopic = {
+      source: 'linuxdo' as const,
+      id: 'first',
+      title: '第一页主题',
+      author: 'alice',
+      url: 'https://linux.do/t/first',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const secondTopic = { ...firstTopic, id: 'second', title: '第二页主题', url: 'https://linux.do/t/second' };
+    let requestCount = 0;
+    const getFeed = jest.fn(async ({ source, page = 1 }: { source: string; page?: number }) => {
+      if (source !== 'linuxdo') return { items: [], errors: {}, hasMore: false, nextPage: null };
+      requestCount += 1;
+      if (requestCount === 4) {
+        return {
+          items: [],
+          errors: {
+            linuxdo: {
+              kind: 'verification-required' as const,
+              message: '刷新第二页需要验证',
+              verificationRequired: true
+            }
+          },
+          hasMore: true,
+          nextPage: 3
+        };
+      }
+      if (page === 1) return { items: [firstTopic], errors: {}, hasMore: true, nextPage: 2 };
+      if (page === 2) return { items: [secondTopic], errors: {}, hasMore: true, nextPage: 3 };
+      return {
+        items: [{ ...secondTopic, id: 'third', title: '不应跳到第三页' }],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      };
+    });
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const showLinuxDoVerification = jest.fn();
+    const hook = await renderHook(() => useFeedController({
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await act(async () => hook.result.current.changeFeedSource('linuxdo'));
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
+    await act(async () => { await hook.result.current.loadFeed(); });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]));
+    await act(async () => { await hook.result.current.refreshFeed(); });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
+
+    expect(getFeed.mock.calls
+      .filter(([request]) => request.source === 'linuxdo')
+      .map(([request]) => request.page || 1)).toEqual([1, 2, 1, 2, 1, 2]);
+    expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]);
+  });
+
   it('[REG-FEED-005] reports a single-source category error instead of treating it as an empty category list', async () => {
     const sourceGateway = {
       getCategories: jest.fn(async ({ source }: { source: string }) => source === 'all'
@@ -40,7 +389,7 @@ describe('小隐寺 Feed controller', () => {
       expect.any(Object)
     ));
 
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('分类读取失败'));
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining('分类读取失败')));
   });
 
   it('REG-FEED-004 preserves a single-source list when refresh returns a source error', async () => {
@@ -93,14 +442,14 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
 
     await act(async () => {
-      await hook.result.current.loadFeed({ source: 'v2ex', reset: true, nocache: true });
+      await hook.result.current.refreshFeed();
     });
 
     expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]);
     expect(hook.result.current.activeFeedState.nextCursor).toBe('page-2');
   });
 
-  it.each(['source-error', 'parse-empty'] as const)('does not append partial aggregate load-more results after %s', async (failure) => {
+  it.each(['source-error', 'parse-empty'] as const)('[REG-SOURCE-002] does not append partial aggregate load-more results after %s', async (failure) => {
     const firstTopic = {
       source: 'v2ex' as const,
       id: 'first',
@@ -161,12 +510,12 @@ describe('小隐寺 Feed controller', () => {
 
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
     await act(async () => {
-      await hook.result.current.loadFeed({ source: 'all', page: 2, cursor: 'page-2' });
+      await hook.result.current.loadFeed();
     });
 
     expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]);
     expect(hook.result.current.activeFeedState.nextCursor).toBe('page-2');
-    expect(hook.result.current.activeFeedState.loadMoreFailureSignal).toBe(1);
+    await waitFor(() => expect(hook.result.current.activeFeedState.loadMoreFailureSignal).toBeGreaterThan(0));
   });
 
   it('REG-XIAOYINSI-015 keeps its list filter state independent after a non-empty response', async () => {

@@ -7,8 +7,6 @@ import {
   applyInteractionToTopic,
   applyNodeSeekCollectionToTopic,
   applyPollVoteToTopic,
-  beginOptimisticAction,
-  completeOptimisticAction,
   discourseBookmarkIdFromActionResult,
   topicActionStateKey
 } from './topicActionState';
@@ -161,40 +159,6 @@ describe('topic action state patches', () => {
 
     expect(next[0]).toMatchObject({ liked: false, likeCount: 0 });
     expect(repeated[0]).toMatchObject({ liked: false, likeCount: 0 });
-  });
-
-  it('queues the latest optimistic action target while a request is pending', () => {
-    const first = beginOptimisticAction(undefined, false);
-    const second = beginOptimisticAction(first.state, false);
-    const afterFirstSuccess = completeOptimisticAction(second.state, true);
-    const afterSecondSuccess = completeOptimisticAction(afterFirstSuccess.state, true);
-
-    expect(first.request).toBe('add');
-    expect(second.request).toBeNull();
-    expect(second.state).toMatchObject({ displayed: false, desired: false, inFlightTarget: true });
-    expect(afterFirstSuccess.request).toBe('remove');
-    expect(afterFirstSuccess.state).toMatchObject({ confirmed: true, displayed: false, inFlightTarget: false });
-    expect(afterSecondSuccess.request).toBeNull();
-    expect(afterSecondSuccess.state).toMatchObject({ confirmed: false, displayed: false, inFlight: false });
-  });
-
-  it('restores the confirmed optimistic action state after failure', () => {
-    const first = beginOptimisticAction(undefined, false);
-    const failed = completeOptimisticAction(first.state, false);
-
-    expect(failed.request).toBeNull();
-    expect(failed.state).toMatchObject({ confirmed: false, displayed: false, desired: false, inFlight: false });
-  });
-
-  it('restores the added state when a queued remove request fails', () => {
-    const add = beginOptimisticAction(undefined, false);
-    const cancel = beginOptimisticAction(add.state, false);
-    const afterAddSuccess = completeOptimisticAction(cancel.state, true);
-    const failedCancel = completeOptimisticAction(afterAddSuccess.state, false);
-
-    expect(afterAddSuccess.request).toBe('remove');
-    expect(failedCancel.request).toBeNull();
-    expect(failedCancel.state).toMatchObject({ confirmed: true, displayed: true, desired: true, inFlight: false });
   });
 
   it('builds stable optimistic action keys for topic and reply actions', () => {

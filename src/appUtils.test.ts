@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  finishAbortableRequest,
   forumAccessRequirementText,
   isCanceledRequest,
   isLinuxDoCloudflareError,
@@ -10,7 +9,6 @@ import {
   parseInternalTopicOpenLink,
   parseForumUserLink,
   sourceLabel,
-  startAbortableRequest,
   topicListDisplayTime,
   topicListDisplayTimeText
 } from './appUtils';
@@ -47,19 +45,6 @@ describe('Android app utils', () => {
       label: '需权限',
       detail: '权限不足'
     })).toBe('需权限');
-  });
-
-  it('starts and finishes abortable requests by controller identity', () => {
-    const ref: { current: AbortController | null } = { current: null };
-    const first = startAbortableRequest(ref);
-    const second = startAbortableRequest(ref);
-
-    expect(first.signal.aborted).toBe(true);
-    expect(ref.current).toBe(second);
-    expect(finishAbortableRequest(ref, first)).toBe(false);
-    expect(ref.current).toBe(second);
-    expect(finishAbortableRequest(ref, second)).toBe(true);
-    expect(ref.current).toBeNull();
   });
 
   it('distinguishes expired yaohuo login from access verification', () => {

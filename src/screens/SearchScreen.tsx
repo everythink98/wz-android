@@ -33,6 +33,8 @@ import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
+import type { ForumCredentialScope } from '../app/serverState';
+import { useSearchCandidateQueries } from '../app/useSearchController';
 
 const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 50,
@@ -201,6 +203,7 @@ function FilterTextField({
 
 function SearchFilterSheet({
   categories,
+  credentialScope,
   source,
   searchFilters,
   styles,
@@ -212,6 +215,7 @@ function SearchFilterSheet({
   onClose
 }: {
   categories: Category[];
+  credentialScope: ForumCredentialScope;
   source: Source;
   searchFilters: SearchFilterState;
   styles: ReturnType<typeof createStyles>;
@@ -226,20 +230,12 @@ function SearchFilterSheet({
   const [v2exMoreVisible, setV2exMoreVisible] = useState(false);
   const [tagPickerVisible, setTagPickerVisible] = useState(false);
   const [tagQuery, setTagQuery] = useState('');
-  const [tagOptions, setTagOptions] = useState<DiscourseTagOption[]>([]);
-  const [tagLoading, setTagLoading] = useState(false);
-  const [tagError, setTagError] = useState('');
-  const [tagRetry, setTagRetry] = useState(0);
-  const tagRequestIdRef = useRef(0);
+  const [debouncedTagQuery, setDebouncedTagQuery] = useState<string | null>(null);
   const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
   const [categoryQuery, setCategoryQuery] = useState('');
   const [userPickerVisible, setUserPickerVisible] = useState(false);
   const [userQuery, setUserQuery] = useState('');
-  const [userOptions, setUserOptions] = useState<DiscourseUserOption[]>([]);
-  const [userLoading, setUserLoading] = useState(false);
-  const [userError, setUserError] = useState('');
-  const [userRetry, setUserRetry] = useState(0);
-  const userRequestIdRef = useRef(0);
+  const [debouncedUserQuery, setDebouncedUserQuery] = useState<string | null>(null);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [filterError, setFilterError] = useState('');
   const nodeSeekCategoryItems = useMemo(() => categoryOptions(categories, 'nodeseek'), [categories]);
@@ -295,93 +291,56 @@ function SearchFilterSheet({
   }, [categoryNames, categoryQuery, discourseCategories]);
 
   useEffect(() => {
+    setDebouncedTagQuery(null);
     if (!tagPickerVisible) {
       return;
     }
-    setTagOptions([]);
-    setTagLoading(true);
-    setTagError('');
+    const timer = setTimeout(() => setDebouncedTagQuery(tagQuery), 300);
+    return () => clearTimeout(timer);
   }, [tagPickerVisible, tagQuery]);
 
   useEffect(() => {
-    if (!tagPickerVisible || !discourseDraft) {
-      return;
-    }
-    setTagLoading(true);
-    setTagError('');
-    const requestId = ++tagRequestIdRef.current;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const items = await onSearchDiscourseTags({
-            source: discourseDraft.source,
-            query: tagQuery,
-            categoryId: discourseDraft.category || undefined,
-            selectedTags: discourseDraft.tags,
-            signal: controller.signal
-          });
-          if (requestId === tagRequestIdRef.current && !controller.signal.aborted) {
-            setTagOptions(items);
-          }
-        } catch {
-          if (requestId === tagRequestIdRef.current && !controller.signal.aborted) {
-            setTagError('标签候选加载失败');
-          }
-        } finally {
-          if (requestId === tagRequestIdRef.current && !controller.signal.aborted) {
-            setTagLoading(false);
-          }
-        }
-      })();
-    }, 300);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [discourseDraft?.category, discourseDraft?.source, discourseDraft?.tags, onSearchDiscourseTags, tagPickerVisible, tagQuery, tagRetry]);
-
-  useEffect(() => {
+    setDebouncedUserQuery(null);
     const term = userQuery.trim();
-    if (!userPickerVisible || !discourseDraft || !term) {
-      setUserOptions([]);
-      setUserLoading(false);
-      setUserError('');
+    if (!userPickerVisible || !term) {
       return;
     }
-    setUserOptions([]);
-    setUserLoading(true);
-    setUserError('');
-    const requestId = ++userRequestIdRef.current;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const items = await onSearchDiscourseUsers({
-            source: discourseDraft.source,
-            term,
-            categoryId: discourseDraft.category || undefined,
-            signal: controller.signal
-          });
-          if (requestId === userRequestIdRef.current && !controller.signal.aborted) {
-            setUserOptions(items);
-          }
-        } catch {
-          if (requestId === userRequestIdRef.current && !controller.signal.aborted) {
-            setUserError('作者候选加载失败');
-          }
-        } finally {
-          if (requestId === userRequestIdRef.current && !controller.signal.aborted) {
-            setUserLoading(false);
-          }
-        }
-      })();
-    }, 300);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [discourseDraft?.category, discourseDraft?.source, onSearchDiscourseUsers, userPickerVisible, userQuery, userRetry]);
+    const timer = setTimeout(() => setDebouncedUserQuery(term), 300);
+    return () => clearTimeout(timer);
+  }, [userPickerVisible, userQuery]);
+
+  const normalizedUserQuery = userQuery.trim();
+  const candidates = useSearchCandidateQueries({
+    credentialScope,
+    searchDiscourseTags: onSearchDiscourseTags,
+    searchDiscourseUsers: onSearchDiscourseUsers,
+    tagRequest: visible && tagPickerVisible && discourseDraft && debouncedTagQuery !== null
+      ? {
+        source: discourseDraft.source,
+        query: debouncedTagQuery,
+        categoryId: discourseDraft.category || undefined,
+        selectedTags: discourseDraft.tags
+      }
+      : null,
+    userRequest: visible && userPickerVisible && discourseDraft && debouncedUserQuery
+      ? {
+        source: discourseDraft.source,
+        term: debouncedUserQuery,
+        categoryId: discourseDraft.category || undefined
+      }
+      : null
+  });
+
+  const tagDebouncing = tagPickerVisible && debouncedTagQuery !== tagQuery;
+  const tagOptions = tagDebouncing ? [] : candidates.tags.options;
+  const tagLoading = tagDebouncing || candidates.tags.loading;
+  const tagError = !tagDebouncing && candidates.tags.error ? '标签候选加载失败' : '';
+  const userDebouncing = userPickerVisible
+    && Boolean(normalizedUserQuery)
+    && debouncedUserQuery !== normalizedUserQuery;
+  const userOptions = userDebouncing ? [] : candidates.users.options;
+  const userLoading = userDebouncing || candidates.users.loading;
+  const userError = !userDebouncing && candidates.users.error ? '作者候选加载失败' : '';
 
   const toggleTag = useCallback((name: string) => {
     setFilterError('');
@@ -790,7 +749,7 @@ function SearchFilterSheet({
             {tagError ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{tagError}</Text>
-                <AppButton compact label="重试标签候选" variant="ghost" styles={styles} onPress={() => setTagRetry((value) => value + 1)} />
+                <AppButton compact label="重试标签候选" variant="ghost" styles={styles} onPress={() => { void candidates.tags.retry(); }} />
               </View>
             ) : null}
             {!tagLoading && !tagError && !tagOptions.length ? <EmptyText text="没有匹配标签" styles={styles} /> : null}
@@ -909,7 +868,7 @@ function SearchFilterSheet({
             {userError ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{userError}</Text>
-                <AppButton compact label="重试作者候选" variant="ghost" styles={styles} onPress={() => setUserRetry((value) => value + 1)} />
+                <AppButton compact label="重试作者候选" variant="ghost" styles={styles} onPress={() => { void candidates.users.retry(); }} />
               </View>
             ) : null}
             {!userQuery.trim() ? <EmptyText text="输入用户名后选择" styles={styles} /> : null}
@@ -1079,6 +1038,7 @@ function LinuxDoAiControl({
 export const SearchScreen = memo(function SearchScreen({
   busy,
   categories,
+  credentialScope,
   query,
   recentSearches,
   topicStateIndex,
@@ -1107,6 +1067,7 @@ export const SearchScreen = memo(function SearchScreen({
 }: {
   busy: boolean;
   categories: Category[];
+  credentialScope: ForumCredentialScope;
   query: string;
   recentSearches: string[];
   topicStateIndex: TopicListItemStateIndex;
@@ -1641,6 +1602,7 @@ export const SearchScreen = memo(function SearchScreen({
       {searchSource !== 'all' ? (
         <SearchFilterSheet
           categories={categories}
+          credentialScope={credentialScope}
           source={searchSource as Source}
           searchFilters={searchFilters}
           styles={styles}

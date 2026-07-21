@@ -65,6 +65,7 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticTrace
 } from '../diagnostics';
+import { appQueryClient, emptyForumCredentialScope } from './serverState';
 import {
   createSiteSessionViewModels,
   createSiteSessionStates,
@@ -81,6 +82,7 @@ import {
   isCredentialWriteCurrent,
   preemptActiveBrowserFetchRequest,
   replaceCredentialWrite,
+  resetForumSourceQueries,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   rejectBrowserFetchRequest,
@@ -88,6 +90,7 @@ import {
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
   shouldKeepQueuedBrowserFetchRequest,
+  siteSessionEventInvalidatesForumQueries,
   startNextBrowserFetchRequest,
   type CredentialClearOptions,
   type CredentialLoadOptions
@@ -367,6 +370,7 @@ export function useSessionController({
   const nodeSeekCredentialGateRef = useRef(createCredentialWriteGate());
   const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
   const [siteSessionStates, setSiteSessionStates] = useState(() => createSiteSessionStates());
+  const [forumCredentialScope, setForumCredentialScope] = useState(emptyForumCredentialScope);
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
 
   const dispatchSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
@@ -374,12 +378,27 @@ export function useSessionController({
       source: event.site,
       eventType: event.type
     });
+    if (siteSessionEventInvalidatesForumQueries(event)) {
+      const recoveryQueryKey = 'recoveryQueryKey' in event ? event.recoveryQueryKey : undefined;
+      const preservedRecovery = resetForumSourceQueries(
+        event.site,
+        appQueryClient,
+        recoveryQueryKey
+      );
+      if (!preservedRecovery) {
+        setForumCredentialScope((current) => ({
+          ...current,
+          [event.site]: current[event.site] + 1
+        }));
+      }
+    }
     if (event.site === 'nodeseek' && (
       event.type === 'login-expired'
       || event.type === 'cleared'
       || event.type === 'verification-required'
       || event.type === 'verification-started'
       || (event.type === 'cookie-loaded' && event.loggedIn !== true)
+      || (event.type === 'session-updated' && event.loggedIn !== true)
       || (event.type === 'verification-succeeded' && event.loggedIn !== true)
     )) {
       setWebLoginUserId(null);
@@ -507,7 +526,7 @@ export function useSessionController({
         const linuxDoSummary = linuxDoAccessSummary(linuxDoAccess);
         const linuxDoCookies = parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '');
         linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(linuxDoCookies) || null;
-        updateLinuxDoSession(siteEventWithCookieFacts('linuxdo', summarizeLinuxDoCookies(linuxDoCookies).names, linuxDoSummary.hasClearance, linuxDoSummary.loggedIn));
+        updateLinuxDoSession(siteEventWithCookieFacts('linuxdo', summarizeLinuxDoCookies(linuxDoCookies).names, linuxDoSummary.hasClearance, false));
         if (linuxDoAccess?.userAgent) {
           const userAgent = sanitizeLinuxDoUserAgent(linuxDoAccess.userAgent);
           if (userAgent) {
@@ -626,7 +645,7 @@ export function useSessionController({
         }
         publishNodeSeekCookieHeader(cookieHeader);
         updateNodeSeekSession({
-          type: 'cookie-loaded',
+          type: generation === undefined ? 'session-updated' : 'cookie-loaded',
           cookieSummary: summary.names,
           hasVerification: true,
           loggedIn: summary.loggedIn,
@@ -1484,6 +1503,7 @@ export function useSessionController({
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,
     forumFetchWithWebViewFallback,
+    forumCredentialScope,
     hiddenBrowserFetchRequests: {
       linuxDo: linuxDoBrowserFetchRequest,
       nodeSeek: nodeSeekBrowserFetchRequest

@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react';
 import type RenderHTML from 'react-native-render-html';
 import type { DiagnosticTrace } from './diagnostics';
-import type { Reply, Topic, TopicDetail } from './types';
+import type { Reply, Topic } from './types';
 
 export type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic' | 'user';
 export type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
@@ -32,7 +32,6 @@ export interface TopicRepliesRefreshOptions {
   diagnosticTrace?: DiagnosticTrace;
   silent?: boolean;
   afterSubmit?: boolean;
-  nocache?: boolean;
   editedReplyContent?: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>;
   targetReply?: ReplyRefreshTarget | null;
   excludeReply?: ReplyRefreshTarget | null;
@@ -41,13 +40,6 @@ export interface TopicRepliesRefreshOptions {
 export type TopicSnapshot = {
   key?: string;
   selectedTopic: Topic | null;
-  topicDetail: TopicDetail | null;
-  topicReplies: Reply[];
-  topicError: string;
-  replyHasMore: boolean;
-  replyNextPage: number | null;
-  replyNextOffset: number | null;
-  unreadReplyCount: number;
   commentQuery: string;
   replyFilter: ReplyFilter;
   replyContent: string;
@@ -56,7 +48,5 @@ export type TopicSnapshot = {
   replyTarget: ReplyTarget | null;
   replyEditTarget: ReplyEditTarget | null;
   expandedQuotes: Record<string, boolean>;
-  loadedQuotedReplies: Record<string, Reply>;
-  loadingQuotedFloors: Record<string, boolean>;
   scrollY?: number;
 };

@@ -1,12 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback } from 'react';
+import { isCancelledError, useQueries } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 import { checkLinuxDoLoginAccess, checkYaohuoLogin, getCurrentUserProfile } from '../sources/sourceGateway';
-import {
-  errorMessage,
-  finishAbortableRequest,
-  isCanceledRequest,
-  startAbortableRequest
-} from '../appUtils';
+import { errorMessage, isCanceledRequest } from '../appUtils';
 import { summarizeYaohuoCookies, yaohuoCookieMapFromHeader } from '../yaohuoCookies';
 import { parseNodeSeekDocumentCookie, summarizeNodeSeekCookies } from '../nodeseekCookies';
 import {
@@ -17,27 +13,80 @@ import {
   parseLinuxDoDocumentCookie,
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
-import type { ScopedSiteSessionEvent } from '../siteSessionState';
+import {
+  createSiteSessionStates,
+  createSiteSessionViewModel,
+  reduceSiteSessionState,
+  type ScopedSiteSessionEvent,
+  type SiteSessionState,
+  type SiteSessionViewModel,
+  type SiteSessionViewModels
+} from '../siteSessionState';
 import type { FeedSource, Source } from '../types';
-import type { Fetcher } from '../request';
+import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
+import type { XiaoyinsiAuthorizationReadResult } from './useXiaoyinsiAuthController';
 import { isLinuxDoLoginCheckUnknown } from './accountStatusHelpers';
+import { appQueryClient, forumQueryKeys, type ForumCredentialScope } from './serverState';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason,
   withDiagnosticFetcher,
-  type DiagnosticFields,
-  type DiagnosticOutcome,
   type DiagnosticTrace
 } from '../diagnostics';
 
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 type RefreshAccountStatusOptions = { silent?: boolean };
+type StatusSource = 'linuxdo' | 'nodeseek' | 'xiaoyinsi' | 'yaohuo';
+type StatusQueryData = {
+  failed?: boolean;
+  session?: SiteSessionState;
+};
+
+const STATUS_SOURCES = ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const satisfies readonly StatusSource[];
+const STATUS_LABELS: Record<StatusSource, string> = {
+  linuxdo: 'linux.do',
+  nodeseek: 'NodeSeek',
+  xiaoyinsi: '小隐寺',
+  yaohuo: '妖火'
+};
+
+function isCanceledStatusQuery(error: unknown) {
+  return isCancelledError(error) || isCanceledRequest(error);
+}
+
+function canceledStatusQuery(): never {
+  throw new Error(REQUEST_CANCELED_MESSAGE);
+}
+
+function sessionFromEvents(site: StatusSource, events: ScopedSiteSessionEvent[]) {
+  return events.reduce<SiteSessionState>(
+    (state, { site: _site, ...event }) => reduceSiteSessionState(state, event),
+    createSiteSessionStates()[site]
+  );
+}
+
+function accountStatusViewModel(
+  base: SiteSessionViewModel,
+  data: StatusQueryData | undefined,
+  error: unknown
+) {
+  const ownsVisibleWorkflow = base.status === 'verifying'
+    || base.status === 'authorizing'
+    || base.status === 'verification-required';
+  const remote = !ownsVisibleWorkflow && data?.session
+    ? createSiteSessionViewModel(data.session)
+    : base;
+  return error && !isCanceledStatusQuery(error)
+    ? { ...remote, lastError: errorMessage(error) }
+    : remote;
+}
 
 export function useAccountStatusController({
   clearYaohuoLoginState,
+  credentialScope,
   currentNodeSeekCredentialGeneration,
   currentYaohuoCredentialGeneration,
   linuxDoWebViewCookieHeaderRef,
@@ -46,547 +95,403 @@ export function useAccountStatusController({
   fetcher,
   nodeSeekUserAgentRef,
   notify,
-  refreshXiaoyinsiAuthorization,
+  onLinuxDoExpired,
+  readXiaoyinsiAuthorization,
   resetLinuxDoLevelState,
   saveNodeSeekCookieHeader,
-  setLinuxDoWebViewCookieHeader,
-  dispatchSiteSessionEvent
+  sessionViewModels,
+  setLinuxDoWebViewCookieHeader
 }: {
   clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<boolean>;
+  credentialScope: ForumCredentialScope;
   currentNodeSeekCredentialGeneration: () => number;
   currentYaohuoCredentialGeneration: () => number;
-  dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   linuxDoWebViewCookieHeaderRef: { current: string };
   linuxDoUserAgentRef: { current: string };
   loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
-  refreshXiaoyinsiAuthorization: () => Promise<boolean | null>;
+  onLinuxDoExpired: (message: string) => void;
+  readXiaoyinsiAuthorization: (
+    trace?: DiagnosticTrace,
+    options?: { signal?: AbortSignal }
+  ) => Promise<XiaoyinsiAuthorizationReadResult>;
   resetLinuxDoLevelState: () => void;
+  sessionViewModels: SiteSessionViewModels;
   saveNodeSeekCookieHeader: (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
     options?: { generation?: number; userId?: number | null; diagnosticTrace?: DiagnosticTrace }
   ) => Promise<string>;
   setLinuxDoWebViewCookieHeader: (cookieHeader: string) => void;
 }) {
-  const statusAbortRef = useRef<AbortController | null>(null);
-  const statusBusyRef = useRef(false);
-  const [statusBusy, setStatusBusy] = useState(false);
-
-  const refreshAccountStatus = useCallback(async (options: RefreshAccountStatusOptions = {}) => {
-    const trace = beginDiagnosticTrace('session', 'refresh', {
-      mode: options.silent ? 'silent' : 'manual'
-    });
-    let traceFinished = false;
-    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
-      if (traceFinished) {
-        return;
+  const statusQueries = useQueries({
+    queries: [
+      {
+        enabled: false,
+        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'nodeseek' }),
+        queryFn: async ({ signal }): Promise<StatusQueryData> => {
+          const trace = beginDiagnosticTrace('session', 'refresh', { source: 'nodeseek' });
+          let generation = currentNodeSeekCredentialGeneration();
+          let nodeSeekCredentialUserId: number | null = null;
+          try {
+            const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
+            const cookieHeader = await loadNodeSeekCookieForSource('nodeseek', {
+              captureGeneration: (nextGeneration) => { generation = nextGeneration; },
+              captureNodeSeekUserId: (nextUserId) => { nodeSeekCredentialUserId = nextUserId; },
+              diagnosticTrace: trace
+            });
+            if (signal.aborted || currentNodeSeekCredentialGeneration() !== generation) {
+              finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
+              return canceledStatusQuery();
+            }
+            const summary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(cookieHeader || ''));
+            markDiagnosticStage(trace, 'credential', {
+              source: 'nodeseek',
+              generation,
+              hasCredential: summary.count > 0
+            });
+            const currentUser = summary.loggedIn
+              ? await getCurrentUserProfile({
+                source: 'nodeseek',
+                fetcher: diagnosticFetcher,
+                nodeSeekCookie: cookieHeader,
+                nodeSeekUserId: nodeSeekCredentialUserId,
+                nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+                signal
+              })
+              : null;
+            if (signal.aborted || currentNodeSeekCredentialGeneration() !== generation) {
+              finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
+              return canceledStatusQuery();
+            }
+            const currentUserId = Number(currentUser?.id);
+            let persistenceError: unknown;
+            if (cookieHeader && Number.isInteger(currentUserId) && currentUserId > 0) {
+              try {
+                await saveNodeSeekCookieHeader(parseNodeSeekDocumentCookie(cookieHeader), {
+                  generation,
+                  userId: currentUserId,
+                  diagnosticTrace: trace
+                });
+              } catch (error) {
+                persistenceError = error;
+              }
+            }
+            if (signal.aborted || currentNodeSeekCredentialGeneration() !== generation) {
+              finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
+              return canceledStatusQuery();
+            }
+            const checkedAt = new Date().toISOString();
+            finishDiagnosticTrace(trace, persistenceError ? 'partial' : 'success', {
+              source: 'nodeseek',
+              ...(persistenceError ? { reason: normalizeDiagnosticReason(persistenceError) } : {})
+            });
+            return {
+              failed: Boolean(persistenceError),
+              session: sessionFromEvents('nodeseek', [{
+                site: 'nodeseek',
+                type: 'cookie-loaded',
+                cookieSummary: summary.names,
+                hasVerification: summary.count > 0,
+                loggedIn: summary.loggedIn,
+                currentUser,
+                at: checkedAt
+              }, ...(persistenceError ? [{
+                site: 'nodeseek' as const,
+                type: 'check-failed' as const,
+                message: errorMessage(persistenceError),
+                at: checkedAt
+              }] : [])])
+            };
+          } catch (error) {
+            const canceled = signal.aborted || isCanceledStatusQuery(error);
+            finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
+              source: 'nodeseek',
+              reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
+            });
+            throw error;
+          }
+        }
+      },
+      {
+        enabled: false,
+        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'linuxdo' }),
+        queryFn: async ({ signal }): Promise<StatusQueryData> => {
+          const trace = beginDiagnosticTrace('session', 'refresh', { source: 'linuxdo' });
+          const generation = currentLinuxDoAccessGeneration();
+          try {
+            const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
+            let access = await loadLinuxDoAccess();
+            if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
+              finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
+              return canceledStatusQuery();
+            }
+            let summary = linuxDoAccessSummary(access);
+            const cookieHeader = access?.cookieHeader || '';
+            const userAgent = access?.userAgent || linuxDoUserAgentRef.current;
+            markDiagnosticStage(trace, 'credential', {
+              source: 'linuxdo',
+              generation,
+              hasCredential: Boolean(cookieHeader)
+            });
+            if (!cookieHeader || !summary.loggedIn) {
+              finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
+              return {
+                session: sessionFromEvents('linuxdo', [{
+                  site: 'linuxdo',
+                  type: 'cookie-loaded',
+                  cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(cookieHeader)).names,
+                  hasVerification: summary.hasClearance,
+                  loggedIn: false,
+                  currentUser: null,
+                  at: new Date().toISOString()
+                }])
+              };
+            }
+            const login = await checkLinuxDoLoginAccess({
+              cookieHeader,
+              fetcher: diagnosticFetcher,
+              userAgent,
+              signal
+            });
+            if (isLinuxDoLoginCheckUnknown(login)) {
+              throw new Error(login?.message || 'linux.do 状态暂时无法确认');
+            }
+            if (login?.loginRequired) {
+              let cleanupError: unknown;
+              try {
+                access = await clearLinuxDoAccessForGeneration(generation, cookieHeader);
+              } catch (error) {
+                cleanupError = error;
+              }
+              if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
+                finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
+                return canceledStatusQuery();
+              }
+              summary = linuxDoAccessSummary(access);
+              if (!cleanupError) {
+                const nextCookieHeader = access?.cookieHeader || '';
+                linuxDoWebViewCookieHeaderRef.current = nextCookieHeader;
+                setLinuxDoWebViewCookieHeader(nextCookieHeader);
+              }
+              resetLinuxDoLevelState();
+              const expiryMessage = cleanupError
+                ? 'linux.do 登录已失效，本机 Cookie 清理未完成，请重试。'
+                : login.message || 'linux.do 登录已失效';
+              onLinuxDoExpired(expiryMessage);
+              finishDiagnosticTrace(trace, cleanupError ? 'partial' : 'success', {
+                source: 'linuxdo',
+                ...(cleanupError ? { reason: normalizeDiagnosticReason(cleanupError) } : {})
+              });
+              return {
+                failed: Boolean(cleanupError),
+                session: sessionFromEvents('linuxdo', [{
+                  site: 'linuxdo',
+                  type: 'login-expired',
+                  message: expiryMessage
+                }])
+              };
+            }
+            const currentUser = await getCurrentUserProfile({
+              source: 'linuxdo',
+              fetcher: diagnosticFetcher,
+              discourseAuth: { linuxdo: { cookieHeader, userAgent } },
+              signal
+            });
+            if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
+              finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
+              return canceledStatusQuery();
+            }
+            finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
+            return {
+              session: sessionFromEvents('linuxdo', [{
+                site: 'linuxdo',
+                type: 'cookie-loaded',
+                cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(cookieHeader)).names,
+                hasVerification: summary.hasClearance,
+                loggedIn: Boolean(login?.ok),
+                currentUser,
+                at: new Date().toISOString()
+              }])
+            };
+          } catch (error) {
+            const canceled = signal.aborted || isCanceledStatusQuery(error);
+            finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
+              source: 'linuxdo',
+              reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
+            });
+            throw error;
+          }
+        }
+      },
+      {
+        enabled: false,
+        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'yaohuo' }),
+        queryFn: async ({ signal }): Promise<StatusQueryData> => {
+          const trace = beginDiagnosticTrace('session', 'refresh', { source: 'yaohuo' });
+          const generation = currentYaohuoCredentialGeneration();
+          try {
+            const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
+            const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+            if (signal.aborted || currentYaohuoCredentialGeneration() !== generation) {
+              finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
+              return canceledStatusQuery();
+            }
+            const cookieSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookieHeader || '')).names;
+            markDiagnosticStage(trace, 'credential', {
+              source: 'yaohuo',
+              generation,
+              hasCredential: Boolean(cookieHeader)
+            });
+            if (!cookieHeader) {
+              finishDiagnosticTrace(trace, 'success', { source: 'yaohuo' });
+              return {
+                session: sessionFromEvents('yaohuo', [{
+                  site: 'yaohuo',
+                  type: 'cookie-loaded',
+                  cookieSummary,
+                  hasVerification: false,
+                  loggedIn: false,
+                  currentUser: null,
+                  at: new Date().toISOString()
+                }])
+              };
+            }
+            const check = await checkYaohuoLogin({
+              yaohuoCookie: cookieHeader,
+              yaohuoFetcher: diagnosticFetcher,
+              signal
+            });
+            const expired = 'reason' in check && check.reason === 'expired';
+            if (expired) {
+              let cleanupError: unknown;
+              try {
+                await clearYaohuoLoginState({
+                  generation,
+                  expiredMessage: '妖火登录已失效'
+                });
+              } catch (error) {
+                cleanupError = error;
+              }
+              if (signal.aborted || currentYaohuoCredentialGeneration() !== generation) {
+                finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
+                return canceledStatusQuery();
+              }
+              finishDiagnosticTrace(trace, cleanupError ? 'partial' : 'success', {
+                source: 'yaohuo',
+                ...(cleanupError ? { reason: normalizeDiagnosticReason(cleanupError) } : {})
+              });
+              return {
+                failed: Boolean(cleanupError),
+                session: sessionFromEvents('yaohuo', [{
+                  site: 'yaohuo',
+                  type: 'login-expired',
+                  message: cleanupError ? '妖火登录已失效，本机 Cookie 清理未完成，请重试。' : '妖火登录已失效'
+                }])
+              };
+            }
+            const loggedIn = check.ok && !check.loginRequired;
+            const currentUser = loggedIn
+              ? ('currentUser' in check && check.currentUser
+                ? check.currentUser
+                : await getCurrentUserProfile({
+                  source: 'yaohuo',
+                  fetcher: diagnosticFetcher,
+                  yaohuoCookie: cookieHeader,
+                  signal
+                }))
+              : null;
+            if (signal.aborted || currentYaohuoCredentialGeneration() !== generation) {
+              finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
+              return canceledStatusQuery();
+            }
+            finishDiagnosticTrace(trace, 'success', { source: 'yaohuo' });
+            return {
+              session: sessionFromEvents('yaohuo', [{
+                site: 'yaohuo',
+                type: 'cookie-loaded',
+                cookieSummary,
+                hasVerification: false,
+                loggedIn,
+                currentUser,
+                at: new Date().toISOString()
+              }])
+            };
+          } catch (error) {
+            const canceled = signal.aborted || isCanceledStatusQuery(error);
+            finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
+              source: 'yaohuo',
+              reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
+            });
+            throw error;
+          }
+        }
+      },
+      {
+        enabled: false,
+        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'xiaoyinsi' }),
+        queryFn: async ({ signal }): Promise<StatusQueryData> => {
+          const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
+          try {
+            const result = await readXiaoyinsiAuthorization(trace, { signal });
+            if (!result.sessionEvent) {
+              return canceledStatusQuery();
+            }
+            if (result.authenticated === null) {
+              throw new Error(result.sessionEvent.type === 'check-failed'
+                ? result.sessionEvent.message || '小隐寺状态暂时无法确认'
+                : '小隐寺状态暂时无法确认');
+            }
+            finishDiagnosticTrace(trace, 'success', { source: 'xiaoyinsi' });
+            return {
+              session: sessionFromEvents('xiaoyinsi', [{
+                ...result.sessionEvent,
+                site: 'xiaoyinsi'
+              } as ScopedSiteSessionEvent])
+            };
+          } catch (error) {
+            const canceled = signal.aborted || isCanceledStatusQuery(error);
+            finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
+              source: 'xiaoyinsi',
+              reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
+            });
+            throw error;
+          }
+        }
       }
-      traceFinished = true;
-      finishDiagnosticTrace(trace, outcome, { source: 'all', ...fields });
-    };
-    if (statusBusyRef.current) {
-      markDiagnosticStage(trace, 'guard', { state: 'busy' });
-      finishTrace('blocked', { reason: 'busy' });
+    ]
+  });
+
+  const [nodeSeekStatus, linuxDoStatus, yaohuoStatus, xiaoyinsiStatus] = statusQueries;
+
+  const accountSessionViewModels: SiteSessionViewModels = {
+    nodeseek: accountStatusViewModel(sessionViewModels.nodeseek, nodeSeekStatus.data, nodeSeekStatus.error),
+    linuxdo: accountStatusViewModel(sessionViewModels.linuxdo, linuxDoStatus.data, linuxDoStatus.error),
+    yaohuo: accountStatusViewModel(sessionViewModels.yaohuo, yaohuoStatus.data, yaohuoStatus.error),
+    xiaoyinsi: accountStatusViewModel(sessionViewModels.xiaoyinsi, xiaoyinsiStatus.data, xiaoyinsiStatus.error)
+  };
+
+  const statusBusy = statusQueries.some((query) => query.fetchStatus === 'fetching');
+  const refreshAccountStatus = useCallback(async (options: RefreshAccountStatusOptions = {}) => {
+    if (appQueryClient.isFetching({
+      predicate: (query) => query.queryKey[0] === 'forum' && query.queryKey[2] === 'account-status'
+    })) {
       return;
     }
-    markDiagnosticStage(trace, 'guard', { state: 'ready' });
-    statusBusyRef.current = true;
-    const controller = startAbortableRequest(statusAbortRef);
-    setStatusBusy(true);
-    try {
-      const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
-      const yaohuoGeneration = currentYaohuoCredentialGeneration();
-      const linuxDoGeneration = currentLinuxDoAccessGeneration();
-      let nodeSeekGeneration = currentNodeSeekCredentialGeneration();
-      let nodeSeekCredentialUserId: number | null = null;
-      const [yaohuoCredentialCheck, nodeSeekCredentialCheck, linuxDoCredentialCheck] = await Promise.allSettled([
-        SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY),
-        loadNodeSeekCookieForSource('nodeseek', {
-          captureGeneration: (generation) => { nodeSeekGeneration = generation; },
-          captureNodeSeekUserId: (userId) => { nodeSeekCredentialUserId = userId; },
-          diagnosticTrace: trace
-        }),
-        loadLinuxDoAccess()
-      ] as const);
-      if (controller.signal.aborted) {
-        finishTrace('canceled', { reason: 'canceled' });
-        return;
-      }
-      const yaohuoCookie = yaohuoCredentialCheck.status === 'fulfilled' ? yaohuoCredentialCheck.value : null;
-      const nodeSeekCookie = nodeSeekCredentialCheck.status === 'fulfilled' ? nodeSeekCredentialCheck.value : undefined;
-      const nodeSeekSummary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(nodeSeekCookie || ''));
-      let linuxDoAccess = linuxDoCredentialCheck.status === 'fulfilled' ? linuxDoCredentialCheck.value : null;
-      let access = linuxDoAccessSummary(linuxDoAccess);
-      const nodeSeekCredentialCurrent = currentNodeSeekCredentialGeneration() === nodeSeekGeneration;
-      const linuxDoCredentialCurrent = currentLinuxDoAccessGeneration() === linuxDoGeneration;
-      const yaohuoCredentialCurrent = currentYaohuoCredentialGeneration() === yaohuoGeneration;
-      markDiagnosticStage(trace, 'credential', {
-        source: 'nodeseek',
-        generation: nodeSeekGeneration ?? 0,
-        hasCredential: nodeSeekSummary.count > 0,
-        ...(nodeSeekCredentialCheck.status === 'rejected' ? {
-          state: 'error' as const,
-          reason: normalizeDiagnosticReason(nodeSeekCredentialCheck.reason)
-        } : {})
-      });
-      markDiagnosticStage(trace, 'credential', {
-        source: 'linuxdo',
-        generation: linuxDoGeneration,
-        hasCredential: Boolean(linuxDoAccess?.cookieHeader),
-        ...(linuxDoCredentialCheck.status === 'rejected' ? {
-          state: 'error' as const,
-          reason: normalizeDiagnosticReason(linuxDoCredentialCheck.reason)
-        } : {})
-      });
-      markDiagnosticStage(trace, 'credential', {
-        source: 'yaohuo',
-        generation: yaohuoGeneration,
-        hasCredential: Boolean(yaohuoCookie),
-        ...(yaohuoCredentialCheck.status === 'rejected' ? {
-          state: 'error' as const,
-          reason: normalizeDiagnosticReason(yaohuoCredentialCheck.reason)
-        } : {})
-      });
-      const linuxDoLoginPromise = linuxDoCredentialCurrent && linuxDoAccess?.cookieHeader && access.loggedIn
-        ? checkLinuxDoLoginAccess({
-          cookieHeader: linuxDoAccess.cookieHeader,
-          fetcher: diagnosticFetcher,
-          userAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current,
-          signal: controller.signal
-        })
-        : Promise.resolve(undefined);
-      const nodeSeekCurrentUserPromise = nodeSeekCredentialCurrent && nodeSeekSummary.loggedIn
-        ? getCurrentUserProfile({
-          source: 'nodeseek',
-          fetcher: diagnosticFetcher,
-          nodeSeekCookie,
-          nodeSeekUserId: nodeSeekCredentialUserId,
-          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-          signal: controller.signal
-        })
-        : Promise.resolve(null);
-      const linuxDoCurrentUserPromise = linuxDoCredentialCurrent && linuxDoAccess?.cookieHeader && access.loggedIn
-        ? getCurrentUserProfile({
-          source: 'linuxdo',
-          fetcher: diagnosticFetcher,
-          discourseAuth: {
-            linuxdo: {
-              cookieHeader: linuxDoAccess.cookieHeader,
-              userAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current
-            }
-          },
-          signal: controller.signal
-        })
-        : Promise.resolve(null);
-      const yaohuoStatusPromise = yaohuoCredentialCurrent && yaohuoCookie
-        ? checkYaohuoLogin({ yaohuoCookie, yaohuoFetcher: diagnosticFetcher, signal: controller.signal })
-        : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
-      const yaohuoCurrentUserPromise = yaohuoCredentialCurrent && yaohuoCookie
-        ? yaohuoStatusPromise.then((check) => {
-          if (check.ok && !check.loginRequired && 'currentUser' in check && check.currentUser) {
-            return check.currentUser;
-          }
-          if (!check.ok || check.loginRequired) {
-            return null;
-          }
-          return getCurrentUserProfile({
-            source: 'yaohuo',
-            fetcher: diagnosticFetcher,
-            yaohuoCookie,
-            signal: controller.signal
-          });
-        })
-        : Promise.resolve(null);
-      const xiaoyinsiAuthorizationPromise = refreshXiaoyinsiAuthorization();
-      markDiagnosticStage(trace, 'transport', {
-        source: 'all',
-        channel: 'direct',
-        state: 'start',
-        count: 6
-      });
-      const [yaohuoCheck, linuxDoLoginCheck, nodeSeekCurrentUserCheck, linuxDoCurrentUserCheck, yaohuoCurrentUserCheck, xiaoyinsiAuthorizationCheck] = await Promise.allSettled([
-        yaohuoStatusPromise,
-        linuxDoLoginPromise,
-        nodeSeekCurrentUserPromise,
-        linuxDoCurrentUserPromise,
-        yaohuoCurrentUserPromise,
-        xiaoyinsiAuthorizationPromise
-      ] as const);
-      if (controller.signal.aborted) {
-        finishTrace('canceled', { reason: 'canceled' });
-        return;
-      }
-      markDiagnosticStage(trace, 'transport', {
-        source: 'all',
-        channel: 'direct',
-        state: 'finish',
-        partialErrorCount: [
-          yaohuoCheck,
-          linuxDoLoginCheck,
-          nodeSeekCurrentUserCheck,
-          linuxDoCurrentUserCheck,
-          yaohuoCurrentUserCheck,
-          xiaoyinsiAuthorizationCheck
-        ].filter((result) => result.status === 'rejected').length
-      });
-      let nodeSeekReadCurrent = currentNodeSeekCredentialGeneration() === nodeSeekGeneration;
-      let linuxDoReadCurrent = currentLinuxDoAccessGeneration() === linuxDoGeneration;
-      let yaohuoReadCurrent = currentYaohuoCredentialGeneration() === yaohuoGeneration;
-      const failedSites: string[] = [
-        ...(nodeSeekReadCurrent && nodeSeekCredentialCheck.status === 'rejected' ? ['NodeSeek'] : []),
-        ...(linuxDoReadCurrent && linuxDoCredentialCheck.status === 'rejected' ? ['linux.do'] : []),
-        ...(yaohuoReadCurrent && yaohuoCredentialCheck.status === 'rejected' ? ['妖火'] : [])
-      ];
-      let linuxDoCleanupError: unknown;
-      let yaohuoCleanupError: unknown;
-      const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
-      if (nodeSeekReadCurrent && nodeSeekSummary.loggedIn && nodeSeekCurrentUserCheck.status === 'rejected') {
-        failedSites.push('NodeSeek');
-      }
-      if (yaohuoReadCurrent && yaohuoOk && yaohuoCurrentUserCheck.status === 'rejected') {
-        failedSites.push('妖火');
-      }
-      const linuxDoLogin = linuxDoLoginCheck.status === 'fulfilled' ? linuxDoLoginCheck.value : undefined;
-      if (linuxDoReadCurrent && linuxDoLoginCheck.status === 'rejected') {
-        failedSites.push('linux.do');
-      }
-      if (linuxDoReadCurrent && isLinuxDoLoginCheckUnknown(linuxDoLogin)) {
-        failedSites.push('linux.do');
-      }
-      if (linuxDoReadCurrent && access.loggedIn && !linuxDoLogin?.loginRequired && linuxDoCurrentUserCheck.status === 'rejected') {
-        failedSites.push('linux.do');
-      }
-      if (linuxDoReadCurrent && linuxDoLogin?.loginRequired) {
-        markDiagnosticStage(trace, 'credential', {
-          source: 'linuxdo',
-          generation: linuxDoGeneration,
-          state: 'expired'
-        });
-        try {
-          linuxDoAccess = await clearLinuxDoAccessForGeneration(linuxDoGeneration, linuxDoAccess?.cookieHeader);
-        } catch (error) {
-          linuxDoCleanupError = error;
-          markDiagnosticStage(trace, 'persist', {
-            source: 'linuxdo',
-            generation: linuxDoGeneration,
-            store: 'multi-store',
-            state: 'partial',
-            reason: normalizeDiagnosticReason(error)
-          });
-        }
-        if (controller.signal.aborted) {
-          finishTrace('canceled', { reason: 'canceled' });
-          return;
-        }
-        access = linuxDoAccessSummary(linuxDoAccess);
-        linuxDoReadCurrent = currentLinuxDoAccessGeneration() === linuxDoGeneration;
-        if (linuxDoReadCurrent && !linuxDoCleanupError) {
-          const cookieHeader = linuxDoAccess?.cookieHeader || '';
-          linuxDoWebViewCookieHeaderRef.current = cookieHeader;
-          setLinuxDoWebViewCookieHeader(cookieHeader);
-        }
-        markDiagnosticStage(trace, 'apply', {
-          source: 'linuxdo',
-          generation: linuxDoGeneration,
-          hasCredential: Boolean(linuxDoAccess?.cookieHeader),
-          state: linuxDoCleanupError ? 'partial' : 'applied'
-        });
-        if (linuxDoReadCurrent) {
-          resetLinuxDoLevelState();
-        }
-      }
-      const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
-      if (yaohuoReadCurrent && yaohuoExpired) {
-        markDiagnosticStage(trace, 'credential', {
-          source: 'yaohuo',
-          generation: yaohuoGeneration,
-          state: 'expired'
-        });
-        try {
-          await clearYaohuoLoginState({
-            generation: yaohuoGeneration,
-            expiredMessage: '妖火登录已失效'
-          });
-        } catch (error) {
-          yaohuoCleanupError = error;
-          markDiagnosticStage(trace, 'persist', {
-            source: 'yaohuo',
-            generation: yaohuoGeneration,
-            store: 'multi-store',
-            state: 'partial',
-            reason: normalizeDiagnosticReason(error)
-          });
-        }
-        if (controller.signal.aborted) {
-          finishTrace('canceled', { reason: 'canceled' });
-          return;
-        }
-        yaohuoReadCurrent = currentYaohuoCredentialGeneration() === yaohuoGeneration;
-        markDiagnosticStage(trace, 'apply', {
-          source: 'yaohuo',
-          generation: yaohuoGeneration,
-          hasCredential: Boolean(yaohuoCleanupError && yaohuoCookie),
-          state: yaohuoCleanupError ? 'partial' : 'applied'
-        });
-      }
-      const checkedAt = new Date().toISOString();
-      const nodeSeekCurrentUser = nodeSeekCurrentUserCheck.status === 'fulfilled' ? nodeSeekCurrentUserCheck.value : null;
-      const nodeSeekCredentialFailed = nodeSeekCredentialCheck.status === 'rejected';
-      const nodeSeekIdentityFailed = nodeSeekSummary.loggedIn && nodeSeekCurrentUserCheck.status === 'rejected';
-      let nodeSeekPersistenceError: unknown;
-      const nodeSeekCurrentUserId = Number(nodeSeekCurrentUser?.id);
-      if (nodeSeekReadCurrent && nodeSeekCookie && Number.isInteger(nodeSeekCurrentUserId) && nodeSeekCurrentUserId > 0) {
-        markDiagnosticStage(trace, 'persist', {
-          source: 'nodeseek',
-          generation: nodeSeekGeneration,
-          hasCurrentUser: true
-        });
-        try {
-          await saveNodeSeekCookieHeader(parseNodeSeekDocumentCookie(nodeSeekCookie), {
-            generation: nodeSeekGeneration,
-            userId: nodeSeekCurrentUserId,
-            diagnosticTrace: trace
-          });
-        } catch (error) {
-          nodeSeekPersistenceError = error;
-        }
-        nodeSeekReadCurrent = currentNodeSeekCredentialGeneration() === nodeSeekGeneration;
-      }
-      if (!nodeSeekReadCurrent) {
-        markDiagnosticStage(trace, 'apply', {
-          source: 'nodeseek',
-          generation: nodeSeekGeneration,
-          state: 'stale'
-        });
-      } else if (nodeSeekPersistenceError) {
-        failedSites.push('NodeSeek');
-        markDiagnosticStage(trace, 'persist', {
-          source: 'nodeseek',
-          generation: nodeSeekGeneration,
-          store: 'multi-store',
-          state: 'partial',
-          reason: normalizeDiagnosticReason(nodeSeekPersistenceError)
-        });
-        dispatchSiteSessionEvent({
-          site: 'nodeseek',
-          type: 'check-failed',
-          message: 'NodeSeek 身份已确认，但凭据更新未保存，请重试刷新。',
-          at: checkedAt
-        });
-      } else {
-        const nodeSeekCheckFailed = nodeSeekCredentialFailed || nodeSeekIdentityFailed;
-        markDiagnosticStage(trace, 'apply', {
-          source: 'nodeseek',
-          hasCredential: nodeSeekSummary.count > 0,
-          hasCurrentUser: Boolean(nodeSeekCurrentUser),
-          isLoggedIn: nodeSeekSummary.loggedIn,
-          ...(nodeSeekCheckFailed ? { state: 'failed' as const } : {})
-        });
-        dispatchSiteSessionEvent(nodeSeekCheckFailed
-          ? {
-            site: 'nodeseek',
-            type: 'check-failed',
-            message: nodeSeekCredentialCheck.status === 'rejected'
-              ? errorMessage(nodeSeekCredentialCheck.reason)
-              : nodeSeekCurrentUserCheck.status === 'rejected'
-                ? errorMessage(nodeSeekCurrentUserCheck.reason)
-                : 'NodeSeek 状态暂时无法确认',
-            at: checkedAt
-          }
-          : {
-            site: 'nodeseek',
-            type: 'cookie-loaded',
-            cookieSummary: nodeSeekSummary.names,
-            hasVerification: nodeSeekSummary.count > 0,
-            loggedIn: nodeSeekSummary.loggedIn,
-            currentUser: nodeSeekCurrentUser,
-            at: checkedAt
-          });
-      }
-      const yaohuoCredentialFailed = yaohuoCredentialCheck.status === 'rejected';
-      const yaohuoIdentityFailed = yaohuoOk && yaohuoCurrentUserCheck.status === 'rejected';
-      if (!yaohuoReadCurrent) {
-        markDiagnosticStage(trace, 'apply', {
-          source: 'yaohuo',
-          generation: yaohuoGeneration,
-          state: 'stale'
-        });
-      } else if (yaohuoCredentialFailed || yaohuoCheck.status === 'rejected' || yaohuoIdentityFailed) {
-        failedSites.push('妖火');
-        markDiagnosticStage(trace, 'apply', {
-          source: 'yaohuo',
-          hasCredential: Boolean(yaohuoCookie),
-          hasCurrentUser: false,
-          isLoggedIn: false,
-          state: 'failed'
-        });
-        dispatchSiteSessionEvent({
-          site: 'yaohuo',
-          type: 'check-failed',
-          message: yaohuoCredentialCheck.status === 'rejected'
-            ? errorMessage(yaohuoCredentialCheck.reason)
-            : yaohuoCheck.status === 'rejected'
-              ? errorMessage(yaohuoCheck.reason)
-              : yaohuoCurrentUserCheck.status === 'rejected'
-                ? errorMessage(yaohuoCurrentUserCheck.reason)
-                : '妖火身份暂时无法确认',
-          at: checkedAt
-        });
-      } else {
-        if (yaohuoCleanupError) {
-          failedSites.push('妖火');
-        }
-        const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || ''));
-        markDiagnosticStage(trace, 'apply', {
-          source: 'yaohuo',
-          hasCredential: Boolean(yaohuoCookie),
-          hasCurrentUser: yaohuoCurrentUserCheck.status === 'fulfilled' && Boolean(yaohuoCurrentUserCheck.value),
-          isLoggedIn: yaohuoOk
-        });
-        dispatchSiteSessionEvent(yaohuoExpired
-          ? {
-            site: 'yaohuo',
-            type: 'login-expired',
-            message: yaohuoCleanupError ? '妖火登录已失效，本机 Cookie 清理未完成，请重试。' : '妖火登录已失效'
-          }
-          : {
-            site: 'yaohuo',
-            type: 'cookie-loaded',
-            cookieSummary: yaohuoSummary.names,
-            hasVerification: false,
-            loggedIn: yaohuoOk,
-            currentUser: yaohuoCurrentUserCheck.status === 'fulfilled' ? yaohuoCurrentUserCheck.value : null,
-            at: checkedAt
-          });
-      }
-      const linuxDoCredentialFailed = linuxDoCredentialCheck.status === 'rejected';
-      const linuxDoIdentityFailed = access.loggedIn
-        && Boolean(linuxDoLogin?.ok)
-        && linuxDoCurrentUserCheck.status === 'rejected';
-      if (!linuxDoReadCurrent) {
-        markDiagnosticStage(trace, 'apply', {
-          source: 'linuxdo',
-          generation: linuxDoGeneration,
-          state: 'stale'
-        });
-      } else if (linuxDoCredentialFailed || linuxDoLoginCheck.status === 'rejected' || isLinuxDoLoginCheckUnknown(linuxDoLogin) || linuxDoIdentityFailed) {
-        markDiagnosticStage(trace, 'apply', {
-          source: 'linuxdo',
-          hasCredential: Boolean(linuxDoAccess?.cookieHeader),
-          hasCurrentUser: false,
-          isLoggedIn: false,
-          state: 'failed'
-        });
-        dispatchSiteSessionEvent({
-          site: 'linuxdo',
-          type: 'check-failed',
-          message: linuxDoCredentialCheck.status === 'rejected'
-            ? errorMessage(linuxDoCredentialCheck.reason)
-            : linuxDoLoginCheck.status === 'rejected'
-              ? errorMessage(linuxDoLoginCheck.reason)
-              : linuxDoIdentityFailed
-                ? errorMessage(linuxDoCurrentUserCheck.reason)
-                : linuxDoLogin?.message || 'linux.do 状态暂时无法确认',
-          at: checkedAt
-        });
-      } else if (linuxDoLogin?.loginRequired) {
-        if (linuxDoCleanupError) {
-          failedSites.push('linux.do');
-        }
-        markDiagnosticStage(trace, 'apply', {
-          source: 'linuxdo',
-          hasCredential: Boolean(linuxDoAccess?.cookieHeader),
-          hasCurrentUser: false,
-          isLoggedIn: false,
-          state: linuxDoCleanupError ? 'partial' : 'expired'
-        });
-        dispatchSiteSessionEvent({
-          site: 'linuxdo',
-          type: 'login-expired',
-          message: linuxDoCleanupError
-            ? 'linux.do 登录已失效，本机 Cookie 清理未完成，请重试。'
-            : linuxDoLogin.message || 'linux.do 登录已失效'
-        });
-      } else {
-        const hasLinuxDoLogin = access.loggedIn && Boolean(linuxDoLogin?.ok);
-        markDiagnosticStage(trace, 'apply', {
-          source: 'linuxdo',
-          hasCredential: Boolean(linuxDoAccess?.cookieHeader),
-          hasCurrentUser: linuxDoCurrentUserCheck.status === 'fulfilled' && Boolean(linuxDoCurrentUserCheck.value),
-          isLoggedIn: hasLinuxDoLogin
-        });
-        dispatchSiteSessionEvent({
-          site: 'linuxdo',
-          type: 'cookie-loaded',
-          cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names,
-          hasVerification: access.hasClearance,
-          loggedIn: hasLinuxDoLogin,
-          currentUser: linuxDoCurrentUserCheck.status === 'fulfilled' ? linuxDoCurrentUserCheck.value : null,
-          at: checkedAt
-        });
-      }
-      if (xiaoyinsiAuthorizationCheck.status === 'rejected' || xiaoyinsiAuthorizationCheck.value === null) {
-        failedSites.push('小隐寺');
-      }
-      const uniqueFailedSites = Array.from(new Set(failedSites));
-      markDiagnosticStage(trace, 'apply', {
-        source: 'all',
-        state: 'status-updated',
-        partialErrorCount: uniqueFailedSites.length
-      });
-      if (!options.silent) {
-        notify(uniqueFailedSites.length ? `账号状态部分刷新失败：${uniqueFailedSites.join('、')}` : '账号状态已刷新');
-      }
-      finishTrace(uniqueFailedSites.length ? 'partial' : 'success', {
-        partialErrorCount: uniqueFailedSites.length
-      });
-    } catch (error) {
-      if (controller.signal.aborted || isCanceledRequest(error)) {
-        finishTrace('canceled', { reason: 'canceled' });
-      } else {
-        finishTrace('failure', { reason: normalizeDiagnosticReason(error) });
-      }
-      if (!options.silent && !controller.signal.aborted && !isCanceledRequest(error)) {
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (!traceFinished) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'failure', {
-          reason: controller.signal.aborted ? 'canceled' : 'unknown'
-        });
-      }
-      if (finishAbortableRequest(statusAbortRef, controller)) {
-        statusBusyRef.current = false;
-        setStatusBusy(false);
-      }
+    const results = await Promise.all(statusQueries.map((query) => query.refetch({ cancelRefetch: false })));
+    if (options.silent) {
+      return;
     }
-  }, [
-    clearYaohuoLoginState,
-    currentNodeSeekCredentialGeneration,
-    currentYaohuoCredentialGeneration,
-    dispatchSiteSessionEvent,
-    fetcher,
-    linuxDoWebViewCookieHeaderRef,
-    linuxDoUserAgentRef,
-    loadNodeSeekCookieForSource,
-    nodeSeekUserAgentRef,
-    notify,
-    refreshXiaoyinsiAuthorization,
-    resetLinuxDoLevelState,
-    saveNodeSeekCookieHeader,
-    setLinuxDoWebViewCookieHeader
-  ]);
-
-  const abortAccountStatusRequests = useCallback(() => {
-    statusAbortRef.current?.abort();
-  }, []);
-
-  useEffect(() => abortAccountStatusRequests, [abortAccountStatusRequests]);
+    const failedSites = results.flatMap((result, index) => {
+      const failed = Boolean(result.error && !isCanceledStatusQuery(result.error)) || Boolean(result.data?.failed);
+      return failed ? [STATUS_LABELS[STATUS_SOURCES[index]]] : [];
+    });
+    notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
+  }, [notify, statusQueries]);
 
   return {
-    abortAccountStatusRequests,
+    accountSessionViewModels,
     refreshAccountStatus,
     statusBusy
   };

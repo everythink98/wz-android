@@ -1,6 +1,6 @@
 import type { SearchGroup } from './searchListItems';
 import type { SearchSort } from './feedLogic';
-import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from './searchFilters';
+import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from './searchFilters';
 import type { FeedSource, Source, Topic } from './types';
 
 export type SearchHistoryWriteQueue = {
@@ -32,6 +32,14 @@ export type LinuxDoAiSearchState = {
   count: number;
   message?: string;
 };
+
+export function hasNextSearchPage(
+  hasMore: boolean | undefined,
+  nextPage: number | null | undefined,
+  requestedPage: number
+) {
+  return Boolean(hasMore && nextPage && nextPage !== requestedPage);
+}
 
 export function snapshotSearchFilters(filters: SearchFilterState): SearchFilterState {
   return {
@@ -80,65 +88,8 @@ export function remoteSearchSort(searchSource: FeedSource, searchFilters: Search
       : 'relevance';
 }
 
-function searchPageVisitKey(source: Source, query: string, filter: SourceSearchFilter | undefined) {
-  return `${source}:${query}:${JSON.stringify(filter || {})}`;
-}
-
-export function createSearchMoreRequestSnapshot({
-  filters,
-  page,
-  searchSource,
-  source,
-  submittedQuery
-}: {
-  filters: SearchFilterState;
-  page: number;
-  searchSource: FeedSource;
-  source: Source;
-  submittedQuery: string;
-}) {
-  const query = submittedQuery.trim();
-  if (!query) {
-    return null;
-  }
-  const activeFilter = searchSource === 'all' ? undefined : filters[source];
-  const filterKey = JSON.stringify(activeFilter || {});
-  return {
-    activeFilter,
-    ownerKey: `search-more:${source}:${query}:${page}:${filterKey}`,
-    query,
-    sort: remoteSearchSort(searchSource, filters),
-    visitedKey: searchPageVisitKey(source, query, activeFilter)
-  };
-}
-
-export function createNodeSeekRetrySearchOptions({
-  filters,
-  query,
-  searchSource
-}: {
-  filters: SearchFilterState;
-  query: string;
-  searchSource: FeedSource;
-}): SearchRunOptions {
-  return {
-    filters: snapshotSearchFilters(filters),
-    query,
-    source: searchSource,
-    sourceOverride: 'nodeseek'
-  };
-}
-
 export function groupFromRemoteSearchResult(result: RemoteSearchSourceResult) {
   return result.group;
-}
-
-export function firstRemoteSearchAction(results: RemoteSearchSourceResult[]) {
-  return results.find((result) => result.kind === 'action-required')?.action;
-}
-
-export function remoteSearchActionForSource(source: FeedSource, results: RemoteSearchSourceResult[]) {
-  return source === 'all' ? undefined : firstRemoteSearchAction(results);
 }
 
 export function createSearchHistoryWriteQueue(): SearchHistoryWriteQueue {

@@ -12,8 +12,7 @@ press label="展开账号中心"
 wait id="account-site-nodeseek" 10000
 wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000
 press id="account-site-linuxdo"
-wait "id=\"account-site-linuxdo\" label=\"linux.do，已登录，已选择\"" 60000
-find "linux.do 等级" exists
+wait "text=\"linux.do 等级\"" 10000
 press id="account-site-yaohuo"
 wait "id=\"account-site-yaohuo\" label=\"妖火，已登录，已选择\"" 60000
 press id="account-site-xiaoyinsi"

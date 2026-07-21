@@ -41,7 +41,6 @@ const NODESEEK_READ_TIMEOUT_MS = 30000;
 
 interface NodeSeekOptions {
   fetcher?: Fetcher;
-  nocache?: boolean;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   cursor?: string | null;
@@ -764,10 +763,6 @@ async function fetchNodeSeekText(
   };
   if (cookie) {
     headers.cookie = cookie;
-  }
-  if (options.nocache) {
-    headers['Cache-Control'] = 'no-cache';
-    headers.Pragma = 'no-cache';
   }
   const response = await fetchWithTimeout(`${BASE_URL}${path}`, withBrowserFetchIntent({
     headers

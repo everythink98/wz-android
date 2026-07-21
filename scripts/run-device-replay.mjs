@@ -250,9 +250,13 @@ function gitIdentity() {
   };
 }
 
-export function listReplayFiles(deviceDir = path.join(rootDir, 'tests', 'device')) {
+export function listReplayFiles(
+  deviceDir = path.join(rootDir, 'tests', 'device'),
+  excludedReplayFileNames = []
+) {
+  const excluded = new Set(excludedReplayFileNames);
   return readdirSync(deviceDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.ad'))
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.ad') && !excluded.has(entry.name))
     .map((entry) => path.join(deviceDir, entry.name))
     .sort((left, right) => left.localeCompare(right));
 }
@@ -290,7 +294,11 @@ export async function runReplayBatch(replayFiles, executeReplay) {
   }
 }
 
-export async function runDeviceReplay({ apkPath: apkValue, selectedDevice: selectedValue } = {}) {
+export async function runDeviceReplay({
+  apkPath: apkValue,
+  selectedDevice: selectedValue,
+  excludedReplayFileNames = []
+} = {}) {
   const apkPath = resolveExpectedApkPath(apkValue);
   const selectedDevice = selectedDeviceName(selectedValue);
   assertAgentDeviceVersion(rootDir);
@@ -299,7 +307,7 @@ export async function runDeviceReplay({ apkPath: apkValue, selectedDevice: selec
   assertNoExistingAgentDeviceRecording(device.id);
   const artifactsDir = path.join(rootDir, 'tmp', 'agent-device');
   mkdirSync(artifactsDir, { recursive: true });
-  const replayFiles = listReplayFiles();
+  const replayFiles = listReplayFiles(undefined, excludedReplayFileNames);
   if (replayFiles.length === 0) {
     throw new Error('tests/device 中没有可执行的 .ad Replay。');
   }

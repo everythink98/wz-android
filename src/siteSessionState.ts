@@ -35,6 +35,7 @@ export type SiteSessionViewModels = Record<SessionSite, SiteSessionViewModel>;
 
 export type SiteSessionEvent =
   | { type: 'cookie-loaded'; cookieSummary?: string[]; hasVerification?: boolean; loggedIn?: boolean; currentUser?: UserProfile | null; at?: string }
+  | { type: 'session-updated'; cookieSummary?: string[]; hasVerification?: boolean; loggedIn?: boolean; currentUser?: UserProfile | null; recoveryQueryKey?: readonly unknown[]; at?: string }
   | { type: 'login-detected'; cookieSummary?: string[]; currentUser?: UserProfile | null; at?: string }
   | { type: 'verification-required'; message?: string; at?: string }
   | { type: 'verification-started'; at?: string }
@@ -42,7 +43,7 @@ export type SiteSessionEvent =
   | { type: 'verification-succeeded'; cookieSummary?: string[]; loggedIn?: boolean; currentUser?: UserProfile | null; at: string }
   | { type: 'login-expired'; message?: string; at?: string }
   | { type: 'check-failed'; message: string; at?: string }
-  | { type: 'cleared'; at?: string };
+  | { type: 'cleared'; recoveryQueryKey?: readonly unknown[]; at?: string };
 export type ScopedSiteSessionEvent = SiteSessionEvent & { site: SessionSite };
 
 function cleanCookieSummary(cookieSummary: string[] = []) {
@@ -86,6 +87,16 @@ export function applyDevAnonymousOverrides(states: SiteSessionStates, overrides:
   ])) as SiteSessionStates;
 }
 
+export function applyDevAnonymousViewModelOverrides(viewModels: SiteSessionViewModels, overrides: DevAnonymousOverrides = {}): SiteSessionViewModels {
+  if (!sessionSources.some((site) => overrides[site])) {
+    return viewModels;
+  }
+  return Object.fromEntries(sessionSources.map((site) => [
+    site,
+    overrides[site] ? createSiteSessionViewModel(createSiteState(site, 'anonymous')) : viewModels[site]
+  ])) as SiteSessionViewModels;
+}
+
 export function isDevAnonymousSource(source: FeedSource, site: SessionSite, overrides: DevAnonymousOverrides = {}) {
   return Boolean(overrides[site] && (source === 'all' || source === site));
 }
@@ -114,7 +125,7 @@ function stateWithCookieFacts(state: SiteSessionState, event: {
 }
 
 export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessionEvent): SiteSessionState {
-  if (event.type === 'cookie-loaded') {
+  if (event.type === 'cookie-loaded' || event.type === 'session-updated') {
     return stateWithCookieFacts(state, event);
   }
   if (event.type === 'login-detected') {

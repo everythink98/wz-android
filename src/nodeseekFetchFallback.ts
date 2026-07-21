@@ -1,4 +1,4 @@
-import type { Fetcher } from './request';
+import { scheduleRequestTimeout, type Fetcher } from './request';
 import { isGoogleSiteSearchUrl } from './googleSearchFallback';
 import { isNodeSeekChallengeResponse } from './localNodeseekHelpers';
 import {
@@ -46,14 +46,14 @@ async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, ini
   const controller = new AbortController();
   const parentSignal = init?.signal;
   const abortFromParent = () => controller.abort();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let cancelTimeout: (() => void) | undefined;
   let timeoutPromise: Promise<never> | undefined;
   if (parentSignal?.aborted) {
     controller.abort();
   } else {
     parentSignal?.addEventListener('abort', abortFromParent, { once: true });
     timeoutPromise = new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => {
+      cancelTimeout = scheduleRequestTimeout(() => {
         controller.abort();
         reject(new Error(NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE));
       }, NODESEEK_DIRECT_FETCH_TIMEOUT_MS);
@@ -63,9 +63,7 @@ async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, ini
     const fetchPromise = defaultFetcher(input, { ...init, signal: controller.signal });
     return await (timeoutPromise ? Promise.race([fetchPromise, timeoutPromise]) : fetchPromise);
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
+    cancelTimeout?.();
     parentSignal?.removeEventListener('abort', abortFromParent);
   }
 }

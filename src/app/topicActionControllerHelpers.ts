@@ -1,7 +1,6 @@
-import type { ReplyEditTarget, Screen, TopicSnapshot } from '../appTypes';
+import type { ReplyEditTarget } from '../appTypes';
 import { nodeSeekMarkdownToHtml } from '../nodeSeekMarkdown';
 import { sourceSupportsTopicAction, sourceUsesTopicCreatePermission } from '../sourceCatalog';
-import type { OptimisticActionState } from '../topicActionState';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 
 type TopicActionTopic = Topic | TopicDetail;
@@ -57,38 +56,6 @@ export function topicPollVoteActionKey(topicKey: string, poll: Pick<TopicPoll, '
 
 export function nodeSeekAttendanceActionKey() {
   return 'nodeseek:attendance';
-}
-
-export function isTopicScopedActionKey(key: string) {
-  return key !== nodeSeekAttendanceActionKey();
-}
-
-export function shouldInvalidateTopicActionsOnScreenChange(currentScreen: Screen, nextScreen: Screen) {
-  return currentScreen === 'topic' && nextScreen !== 'topic';
-}
-
-export function hasPendingOptimisticTopicAction(actions: Record<string, OptimisticActionState>) {
-  return Object.values(actions).some((action) => action.inFlight);
-}
-
-export function topicSnapshotForUserReturn(snapshot: TopicSnapshot, hasPendingOptimisticAction: boolean): TopicSnapshot {
-  if (!hasPendingOptimisticAction) {
-    return snapshot;
-  }
-  return {
-    ...snapshot,
-    selectedTopic: snapshot.selectedTopic || snapshot.topicDetail,
-    topicDetail: null,
-    topicReplies: [],
-    replyHasMore: false,
-    replyNextPage: null,
-    replyNextOffset: null,
-    unreadReplyCount: 0,
-    expandedQuotes: {},
-    loadedQuotedReplies: {},
-    loadingQuotedFloors: {},
-    scrollY: 0
-  };
 }
 
 export function applyEditedReplyContent(replies: Reply[], edit: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>, source: Source) {

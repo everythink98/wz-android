@@ -1,17 +1,10 @@
 import { topicKey } from './readerData';
-import type { Reply, Topic, TopicDetail } from './types';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from './appTypes';
+import type { Topic } from './types';
 
 export type TopicSession = {
   key: string;
   selectedTopic: Topic | null;
-  topicDetail: TopicDetail | null;
-  topicReplies: Reply[];
-  topicError: string;
-  replyHasMore: boolean;
-  replyNextPage: number | null;
-  replyNextOffset: number | null;
-  unreadReplyCount: number;
   commentQuery: string;
   replyFilter: ReplyFilter;
   replyContent: string;
@@ -20,8 +13,6 @@ export type TopicSession = {
   replyTarget: ReplyTarget | null;
   replyEditTarget: ReplyEditTarget | null;
   expandedQuotes: Record<string, boolean>;
-  loadedQuotedReplies: Record<string, Reply>;
-  loadingQuotedFloors: Record<string, boolean>;
   scrollY: number;
 };
 
@@ -32,9 +23,7 @@ export function createTopicRouteSessionStore(): TopicRouteSessionStore {
 }
 
 export function saveTopicRouteSnapshot(store: TopicRouteSessionStore, routeKey: string, snapshot: TopicSnapshot) {
-  if (routeKey) {
-    store.set(routeKey, snapshot);
-  }
+  if (routeKey) store.set(routeKey, snapshot);
 }
 
 export function readTopicRouteSnapshot(store: TopicRouteSessionStore, routeKey: string) {
@@ -45,36 +34,10 @@ export function removeTopicRouteSnapshot(store: TopicRouteSessionStore, routeKey
   store.delete(routeKey);
 }
 
-export function shouldReuseCurrentTopicDetail({
-  currentDetail,
-  nextTopic,
-  nocache,
-  reopenExistingTopicScreen
-}: {
-  currentDetail: TopicDetail | null;
-  nextTopic: Topic;
-  nocache: boolean;
-  reopenExistingTopicScreen: boolean;
-}) {
-  return Boolean(
-    currentDetail
-      && !nocache
-      && !reopenExistingTopicScreen
-      && topicKey(currentDetail) === topicKey(nextTopic)
-  );
-}
-
 export function createInactiveTopicSession(): TopicSession {
   return {
     key: '',
     selectedTopic: null,
-    topicDetail: null,
-    topicReplies: [],
-    topicError: '',
-    replyHasMore: false,
-    replyNextPage: null,
-    replyNextOffset: null,
-    unreadReplyCount: 0,
     commentQuery: '',
     replyFilter: 'all',
     replyContent: '',
@@ -83,25 +46,16 @@ export function createInactiveTopicSession(): TopicSession {
     replyTarget: null,
     replyEditTarget: null,
     expandedQuotes: {},
-    loadedQuotedReplies: {},
-    loadingQuotedFloors: {},
     scrollY: 0
   };
 }
 
 export function createEmptyTopicSession(topic: Topic): TopicSession {
-  return {
-    ...createInactiveTopicSession(),
-    key: topicKey(topic),
-    selectedTopic: topic
-  };
+  return { ...createInactiveTopicSession(), key: topicKey(topic), selectedTopic: topic };
 }
 
 export function pushTopicSession(stack: TopicSession[], current: TopicSession, nextTopic?: Topic) {
-  if (nextTopic && current.key === topicKey(nextTopic)) {
-    return stack;
-  }
-  return [...stack, current];
+  return nextTopic && current.key === topicKey(nextTopic) ? stack : [...stack, current];
 }
 
 export function pushTopicSnapshot(stack: TopicSnapshot[], current: TopicSnapshot, nextTopic?: Topic) {
@@ -116,13 +70,6 @@ export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
   return {
     key: session.key,
     selectedTopic: session.selectedTopic,
-    topicDetail: session.topicDetail,
-    topicReplies: session.topicReplies,
-    topicError: '',
-    replyHasMore: session.replyHasMore,
-    replyNextPage: session.replyNextPage,
-    replyNextOffset: session.replyNextOffset,
-    unreadReplyCount: session.unreadReplyCount,
     commentQuery: session.commentQuery,
     replyFilter: session.replyFilter,
     replyContent: session.replyContent,
@@ -131,24 +78,14 @@ export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
     replyTarget: session.replyTarget,
     replyEditTarget: session.replyEditTarget,
     expandedQuotes: session.expandedQuotes,
-    loadedQuotedReplies: session.loadedQuotedReplies,
-    loadingQuotedFloors: {},
     scrollY: session.scrollY
   };
 }
 
 export function topicSessionFromSnapshot(snapshot: TopicSnapshot): TopicSession {
-  const currentTopic = snapshot.topicDetail || snapshot.selectedTopic;
   return {
-    key: snapshot.key || (currentTopic ? topicKey(currentTopic) : ''),
+    key: snapshot.key || (snapshot.selectedTopic ? topicKey(snapshot.selectedTopic) : ''),
     selectedTopic: snapshot.selectedTopic,
-    topicDetail: snapshot.topicDetail,
-    topicReplies: snapshot.topicReplies,
-    topicError: '',
-    replyHasMore: snapshot.replyHasMore,
-    replyNextPage: snapshot.replyNextPage,
-    replyNextOffset: snapshot.replyNextOffset,
-    unreadReplyCount: snapshot.unreadReplyCount,
     commentQuery: snapshot.commentQuery,
     replyFilter: snapshot.replyFilter,
     replyContent: snapshot.replyContent,
@@ -157,8 +94,6 @@ export function topicSessionFromSnapshot(snapshot: TopicSnapshot): TopicSession 
     replyTarget: snapshot.replyTarget,
     replyEditTarget: snapshot.replyEditTarget || null,
     expandedQuotes: snapshot.expandedQuotes,
-    loadedQuotedReplies: snapshot.loadedQuotedReplies,
-    loadingQuotedFloors: {},
     scrollY: snapshot.scrollY || 0
   };
 }

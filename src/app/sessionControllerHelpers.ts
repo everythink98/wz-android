@@ -1,5 +1,9 @@
+import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import type { BrowserFetchIntent } from '../browserFetchIntent';
 import type { DiagnosticTrace } from '../diagnostics';
+import type { SiteSessionEvent } from '../siteSessionState';
+import type { FeedSource, Source } from '../types';
+import { appQueryClient } from './serverState';
 
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;
@@ -23,6 +27,47 @@ export type CredentialWriteGate = {
   generation: number;
   queue: Promise<void>;
 };
+
+export type ForumQueryInvalidatingSessionEvent = Extract<SiteSessionEvent, {
+  type: 'session-updated' | 'login-detected' | 'login-expired' | 'cleared';
+}>;
+
+export function siteSessionEventInvalidatesForumQueries(
+  event: SiteSessionEvent
+): event is ForumQueryInvalidatingSessionEvent {
+  return event.type === 'session-updated'
+    || event.type === 'login-detected'
+    || event.type === 'login-expired'
+    || event.type === 'cleared';
+}
+
+export function resetForumSourceQueries(
+  source: Source,
+  client: QueryClient = appQueryClient,
+  preserveRecoveryQueryKey?: QueryKey
+) {
+  const preservedQuery = preserveRecoveryQueryKey
+    ? client.getQueryCache().find({ queryKey: preserveRecoveryQueryKey, exact: true })
+    : undefined;
+  const canPreserve = Boolean(
+    preservedQuery?.isActive()
+    && preservedQuery.queryKey[0] === 'forum'
+    && (preservedQuery.queryKey[1] === source || preservedQuery.queryKey[1] === 'all')
+  );
+  const affectedSources: FeedSource[] = [source, 'all'];
+  for (const affectedSource of affectedSources) {
+    const filters = {
+      predicate: (query: { queryKey: readonly unknown[] }) => (
+        query.queryKey[0] === 'forum'
+        && query.queryKey[1] === affectedSource
+        && (!canPreserve || query !== preservedQuery)
+      )
+    };
+    void client.cancelQueries(filters);
+    client.removeQueries(filters);
+  }
+  return canPreserve;
+}
 
 export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
   id: number;

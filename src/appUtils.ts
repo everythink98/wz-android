@@ -1,4 +1,3 @@
-import { type MutableRefObject } from 'react';
 import { REQUEST_CANCELED_MESSAGE } from './request';
 import { sourceCatalog } from './sourceCatalog';
 import type { AccessRequirement, FeedSource, Source, Topic, UserProfile } from './types';
@@ -350,19 +349,4 @@ export function errorMessage(error: unknown) {
 
 export function isCanceledRequest(error: unknown) {
   return error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE;
-}
-
-export function startAbortableRequest(ref: MutableRefObject<AbortController | null>) {
-  ref.current?.abort();
-  const controller = new AbortController();
-  ref.current = controller;
-  return controller;
-}
-
-export function finishAbortableRequest(ref: MutableRefObject<AbortController | null>, controller: AbortController) {
-  if (ref.current !== controller) {
-    return false;
-  }
-  ref.current = null;
-  return true;
 }

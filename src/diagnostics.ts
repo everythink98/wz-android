@@ -214,7 +214,7 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   section: closedValues('favorites', 'history', 'replies', 'topics', 'users'),
   protocol: closedValues('http', 'socks5'),
   eventType: closedValues(
-    'authorization-started', 'check-failed', 'cleared', 'cookie-loaded', 'login-detected', 'login-expired',
+    'authorization-started', 'check-failed', 'cleared', 'cookie-loaded', 'login-detected', 'login-expired', 'session-updated',
     'verification-required', 'verification-started', 'verification-succeeded'
   ),
   result: closedValues('blocked', 'canceled', 'failure', 'noop', 'partial', 'stale', 'success'),

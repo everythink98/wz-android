@@ -64,18 +64,13 @@ export type DiscourseFeedReadOptions = DiscourseReadOptions & {
   category?: string;
   filter?: DiscourseFeedFilter;
   limit?: number;
-  nocache?: boolean;
   page?: number;
 };
 
-export type DiscourseTopicReadOptions = DiscourseReadOptions & {
-  nocache?: boolean;
-  replyLimit?: number;
-};
+export type DiscourseTopicReadOptions = DiscourseReadOptions & { replyLimit?: number };
 
 export type DiscourseRepliesReadOptions = DiscourseReadOptions & {
   limit?: number;
-  nocache?: boolean;
   offset?: number | null;
   page?: number;
 };
@@ -86,6 +81,7 @@ export type DiscourseUserReadOptions = DiscourseReadOptions & {
 };
 
 export type DiscourseSearchReadOptions = DiscourseReadOptions & {
+  authenticated?: boolean;
   limit?: number;
   page?: number;
 };
@@ -104,7 +100,7 @@ export type DiscourseUserOptionReadOptions = DiscourseReadOptions & {
 };
 
 type DiscourseSourceReader = {
-  getCategories: (options: DiscourseReadOptions & { nocache?: boolean }) => Promise<CategoriesResponse>;
+  getCategories: (options: DiscourseReadOptions) => Promise<CategoriesResponse>;
   getCurrentUserProfile: (options: DiscourseReadOptions) => Promise<UserProfile>;
   getEmojiUrls: (options: DiscourseReadOptions) => Promise<DiscourseEmojiUrlMap>;
   getFeed: (options: DiscourseFeedReadOptions) => Promise<FeedResponse>;
@@ -117,9 +113,14 @@ type DiscourseSourceReader = {
   searchUserOptions: (options: DiscourseUserOptionReadOptions) => Promise<DiscourseUserOption[]>;
 };
 
-function withoutAuth<T extends DiscourseReadOptions>(options: T): Omit<T, 'auth'> {
-  const { auth: _auth, ...requestOptions } = options;
-  return requestOptions;
+function withLinuxDoAuth<T extends DiscourseReadOptions>(options: T): Omit<T, 'auth'> & {
+  linuxDoAccess?: DiscourseReadAuthMap['linuxdo'];
+} {
+  const { auth, ...requestOptions } = options;
+  return {
+    ...requestOptions,
+    ...(auth?.linuxdo ? { linuxDoAccess: auth.linuxdo } : {})
+  };
 }
 
 function withXiaoyinsiAuth<T extends DiscourseReadOptions>(options: T): Omit<T, 'auth'> & {
@@ -134,27 +135,27 @@ function withXiaoyinsiAuth<T extends DiscourseReadOptions>(options: T): Omit<T, 
 
 const discourseSourceReaders = {
   linuxdo: {
-    getCategories: (options) => getLinuxDoCategories(withoutAuth(options)),
-    getCurrentUserProfile: (options) => {
-      const auth = options.auth?.linuxdo;
+    getCategories: (options) => getLinuxDoCategories(withLinuxDoAuth(options)),
+    getCurrentUserProfile: ({ auth, ...options }) => {
+      const linuxDoAuth = auth?.linuxdo;
       return getLinuxDoCurrentUserProfile({
-        ...withoutAuth(options),
-        linuxDoCookie: auth?.cookieHeader,
-        linuxDoUserAgent: auth?.userAgent
+        ...options,
+        linuxDoCookie: linuxDoAuth?.cookieHeader,
+        linuxDoUserAgent: linuxDoAuth?.userAgent
       });
     },
-    getEmojiUrls: (options) => getLinuxDoEmojiUrls(withoutAuth(options)),
+    getEmojiUrls: (options) => getLinuxDoEmojiUrls(withLinuxDoAuth(options)),
     getFeed: ({ filter, ...options }) => getLinuxDoFeed({
-      ...withoutAuth(options),
+      ...withLinuxDoAuth(options),
       linuxDoFilter: filter
     }),
-    getReplies: (id, options) => getLinuxDoReplies(id, withoutAuth(options)),
-    getReply: (id, floor, options) => getLinuxDoReply(id, floor, withoutAuth(options)),
-    getTopic: (id, options) => getLinuxDoTopic(id, withoutAuth(options)),
-    getUserProfile: (id, username, options) => getLinuxDoUserProfile(id, username, withoutAuth(options)),
-    searchTagOptions: (options) => searchLinuxDoTags(withoutAuth(options)),
-    searchTopics: (query, options) => searchLinuxDo(query, withoutAuth(options)),
-    searchUserOptions: (options) => searchLinuxDoUsers(withoutAuth(options))
+    getReplies: (id, options) => getLinuxDoReplies(id, withLinuxDoAuth(options)),
+    getReply: (id, floor, options) => getLinuxDoReply(id, floor, withLinuxDoAuth(options)),
+    getTopic: (id, options) => getLinuxDoTopic(id, withLinuxDoAuth(options)),
+    getUserProfile: (id, username, options) => getLinuxDoUserProfile(id, username, withLinuxDoAuth(options)),
+    searchTagOptions: (options) => searchLinuxDoTags(withLinuxDoAuth(options)),
+    searchTopics: (query, options) => searchLinuxDo(query, withLinuxDoAuth(options)),
+    searchUserOptions: (options) => searchLinuxDoUsers(withLinuxDoAuth(options))
   },
   xiaoyinsi: {
     getCategories: (options) => getXiaoyinsiCategories(withXiaoyinsiAuth(options)),
@@ -182,7 +183,7 @@ export function getDiscourseSourceFeed(source: DiscourseSource, options: Discour
 
 export function getDiscourseSourceCategories(
   source: DiscourseSource,
-  options: DiscourseReadOptions & { nocache?: boolean }
+  options: DiscourseReadOptions
 ) {
   return discourseSourceReaders[source].getCategories(options);
 }

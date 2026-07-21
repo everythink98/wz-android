@@ -12,11 +12,11 @@ fill id="search-query" AI
 is text id="search-query" AI
 press id="search-submit"
 keyboard dismiss
-wait id="search-complete" 60000
+wait "id=\"search-overview-source-v2ex\" enabled=true" 60000
 is visible id="search-overview-source-v2ex"
 press id="search-overview-source-v2ex"
 wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000
-wait id="search-complete" 60000
+wait id="search-result-first" 60000
 is visible id="search-result-first"
 press id="search-result-first"
 wait id="topic-detail-loaded" 60000
@@ -33,8 +33,7 @@ wait label="选择标签" 10000
 press id="search-filter-close"
 wait label="打开搜索筛选，当前默认" 10000
 is text id="search-query" AI
-wait id="search-complete" 60000
-wait "label=\"AI 搜索\"" 60000
+wait id="search-result-first" 60000
 is visible id="search-result-first"
 press id="search-result-first"
 wait id="topic-detail-loaded" 60000
@@ -46,14 +45,14 @@ wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
 press label="清空搜索关键词"
 wait "label=\"搜索最近记录 AI\"" 10000
 press "label=\"搜索最近记录 AI\""
-wait id="search-complete" 60000
+wait id="search-result-first" 60000
 is text id="search-query" AI
 is visible id="search-result-first"
 
 press id="search-source-nodeseek"
 wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
 is text id="search-query" AI
-wait id="search-complete" 60000
+wait id="search-result-first" 60000
 is visible id="search-result-first"
 press id="search-result-first"
 wait id="topic-detail-loaded" 60000
@@ -65,7 +64,7 @@ wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
 press id="search-source-yaohuo"
 wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000
 is text id="search-query" AI
-wait id="search-complete" 60000
+wait id="search-result-first" 60000
 is visible id="search-result-first"
 press id="search-result-first"
 wait id="topic-detail-loaded" 60000

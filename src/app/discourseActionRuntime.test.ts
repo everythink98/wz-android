@@ -86,4 +86,18 @@ describe('Discourse action runtime registry', () => {
     });
     expect(context.refreshXiaoyinsiAuthorization).not.toHaveBeenCalled();
   });
+
+  it('REG-ACCOUNT-007 keeps linux.do login-required when credential cleanup fails', async () => {
+    mocks.clearExpiredLinuxDoLogin.mockRejectedValueOnce(new Error('SecureStore cleanup failed'));
+    const runtime = await prepareDiscourseActionRuntime('linuxdo', runtimeContext());
+
+    await expect(runtime.recover(Object.assign(new Error('linux.do 登录已失效'), {
+      loginRequired: true,
+      source: 'linuxdo'
+    }))).resolves.toMatchObject({
+      loginRequired: true,
+      message: expect.stringContaining('清理未完成'),
+      phase: 'credential'
+    });
+  });
 });

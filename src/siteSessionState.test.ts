@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyDevAnonymousViewModelOverrides,
   createSiteSessionViewModels,
   applyDevAnonymousOverrides,
   nodeSeekUserIdForSession,
@@ -370,6 +371,29 @@ describe('site session state', () => {
       summaryLabel: '匿名可用',
       canWrite: false
     });
+  });
+
+  it('[REG-TEST-003] keeps temporary anonymous state after account status refreshes', () => {
+    const refreshed = createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: ['session'],
+        isVerifying: false
+      },
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'logged-in',
+        cookieSummary: ['_t'],
+        isVerifying: false
+      }
+    }));
+
+    const effective = applyDevAnonymousViewModelOverrides(refreshed, { nodeseek: true });
+
+    expect(effective.nodeseek).toMatchObject({ status: 'anonymous', canWrite: false });
+    expect(effective.linuxdo).toBe(refreshed.linuxdo);
+    expect(refreshed.nodeseek.status).toBe('logged-in');
   });
 
   it('matches temporary anonymous overrides only for all or the selected source', () => {

@@ -16,25 +16,48 @@ vi.mock('react-native', () => ({
 }));
 
 const linuxDoMocks = vi.hoisted(() => ({
-  canAcceptLinuxDoAccessUpdate: vi.fn(() => true),
+  canAcceptLinuxDoAccessUpdate: vi.fn((
+    _cookies?: unknown,
+    _previousClearance?: string | null,
+    _requireFreshClearance?: boolean
+  ) => true),
+  canStoreLinuxDoLogin: vi.fn(() => false),
   clearLinuxDoAccessForGeneration: vi.fn(),
   clearLinuxDoClearance: vi.fn(async () => null),
   currentLinuxDoAccessGeneration: vi.fn(() => 7),
+  linuxDoClearanceValue: vi.fn(() => 'CLEARANCE_VALUE_SECRET'),
   loadLinuxDoAccess: vi.fn(),
   readLinuxDoCookiesFromStores: vi.fn(),
   saveLinuxDoAccess: vi.fn()
 }));
+
+const serverStateMocks = vi.hoisted(() => ({
+  recoveryActive: vi.fn(() => true)
+}));
+
+vi.mock('./serverState', () => ({
+  appQueryClient: {
+    getQueryCache: () => ({
+      find: () => ({ isActive: serverStateMocks.recoveryActive })
+    })
+  }
+}));
+
+function recoveryQueryKeyFor(id: string) {
+  return ['forum', 'linuxdo', 'test-recovery', { id }] as const;
+}
 
 vi.mock('../linuxdoCookieBridge', () => ({
   buildLinuxDoCookieHeader: () => 'COOKIE_VALUE_SECRET',
   canAcceptLinuxDoAccessUpdate: linuxDoMocks.canAcceptLinuxDoAccessUpdate,
   canStoreLinuxDoAccess: () => true,
   canStoreLinuxDoClearance: () => true,
+  canStoreLinuxDoLogin: linuxDoMocks.canStoreLinuxDoLogin,
   clearLinuxDoAccessForGeneration: linuxDoMocks.clearLinuxDoAccessForGeneration,
   clearLinuxDoClearance: linuxDoMocks.clearLinuxDoClearance,
   currentLinuxDoAccessGeneration: linuxDoMocks.currentLinuxDoAccessGeneration,
   linuxDoAccessSummary: () => ({ hasClearance: true, loggedIn: true }),
-  linuxDoClearanceValue: () => 'CLEARANCE_VALUE_SECRET',
+  linuxDoClearanceValue: linuxDoMocks.linuxDoClearanceValue,
   loadLinuxDoAccess: linuxDoMocks.loadLinuxDoAccess,
   mergeLinuxDoCookies: (...maps: Array<Record<string, unknown>>) => Object.assign({}, ...maps),
   parseLinuxDoDocumentCookie: (header: string) => header ? {
@@ -52,11 +75,16 @@ vi.mock('../linuxdoCookieBridge', () => ({
 }));
 
 import { setDiagnosticWriter, type DiagnosticEvent } from '../diagnostics';
+import type { SiteSessionEvent } from '../siteSessionState';
 import { useVerificationController } from './useVerificationController';
 
 const ref = <T,>(current: T) => ({ current });
 
-function createController() {
+function createController({
+  onUpdateLinuxDoSession
+}: {
+  onUpdateLinuxDoSession?: (event: SiteSessionEvent) => void;
+} = {}) {
   const showLinuxDoPanelRef = ref(false);
   const linuxDoWebViewSessionRef = ref(0);
   const linuxDoWebViewCookieHeaderRef = ref('');
@@ -65,7 +93,10 @@ function createController() {
     stopLoading: vi.fn()
   });
   const onLoginWebViewFailure = vi.fn();
-  const updateLinuxDoSession = vi.fn();
+  const notify = vi.fn();
+  const updateLinuxDoSession = vi.fn((event: SiteSessionEvent) => {
+    onUpdateLinuxDoSession?.(event);
+  });
   const controller = useVerificationController({
     changeNodeSeekLoginPanel: vi.fn(),
     changeScreen: vi.fn(),
@@ -82,7 +113,7 @@ function createController() {
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgent: '',
     linuxDoWebViewUserAgentRef: ref(''),
-    notify: vi.fn(),
+    notify,
     onLoginWebViewFailure,
     openTopicRef: ref(null),
     resetLinuxDoLevelState: vi.fn(),
@@ -111,13 +142,16 @@ function createController() {
       url: event.nativeEvent.url || 'https://linux.do/latest'
     }
   }, webViewKey);
-  return { controller, linuxDoWebViewCookieHeaderRef, linuxDoWebViewRef, linuxDoWebViewSessionRef, onLoginWebViewFailure, showLinuxDoPanelRef, updateLinuxDoSession };
+  return { controller, linuxDoWebViewCookieHeaderRef, linuxDoWebViewRef, linuxDoWebViewSessionRef, notify, onLoginWebViewFailure, showLinuxDoPanelRef, updateLinuxDoSession };
 }
 
 afterEach(() => {
   setDiagnosticWriter(null);
   vi.clearAllMocks();
+  serverStateMocks.recoveryActive.mockReset().mockReturnValue(true);
   linuxDoMocks.canAcceptLinuxDoAccessUpdate.mockReturnValue(true);
+  linuxDoMocks.canStoreLinuxDoLogin.mockReturnValue(false);
+  linuxDoMocks.linuxDoClearanceValue.mockReturnValue('CLEARANCE_VALUE_SECRET');
   vi.useRealTimers();
 });
 
@@ -140,7 +174,7 @@ describe('linux.do visible verification diagnostics', () => {
     expect(linuxDoWebViewCookieHeaderRef.current).toBe('');
   });
 
-  it('keeps the Account manual panel open and records an explicit check as cookie-loaded', async () => {
+  it('keeps the Account manual panel open and records newly saved access as session-updated', async () => {
     vi.useFakeTimers();
     linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
     linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({
@@ -173,11 +207,329 @@ describe('linux.do visible verification diagnostics', () => {
     await check;
 
     expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'cookie-loaded',
+      type: 'session-updated',
       hasVerification: true
     }));
     expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-succeeded' }));
     expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it('keeps the exact recovery current while clearing the old clearance before opening verification', async () => {
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue({ cookieHeader: 'OLD_CLEARANCE_SECRET' });
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+    linuxDoMocks.clearLinuxDoClearance.mockResolvedValue(null);
+    const recoveryQueryKey = recoveryQueryKeyFor('search-more:stable:2');
+    let recoveryCurrent = true;
+    serverStateMocks.recoveryActive.mockImplementation(() => recoveryCurrent);
+    const { controller, showLinuxDoPanelRef, updateLinuxDoSession } = createController({
+      onUpdateLinuxDoSession: (event) => {
+        if (
+          (event.type === 'session-updated' || event.type === 'cleared')
+          && event.recoveryQueryKey !== recoveryQueryKey
+        ) {
+          recoveryCurrent = false;
+        }
+      }
+    });
+
+    await controller.showLinuxDoVerification('需要验证', {
+      queryKey: recoveryQueryKey,
+      resume: vi.fn(async () => 'completed' as const)
+    });
+
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+      recoveryQueryKey
+    }));
+    expect(recoveryCurrent).toBe(true);
+    expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it('abandons a recovery that becomes stale while clearing so a later manual verification can finish', async () => {
+    vi.useFakeTimers();
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue({ cookieHeader: 'OLD_CLEARANCE_SECRET' });
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+    const clearanceReset = Promise.withResolvers<null>();
+    linuxDoMocks.clearLinuxDoClearance.mockReturnValue(clearanceReset.promise);
+    linuxDoMocks.saveLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'COOKIE_VALUE_SECRET',
+      savedAt: '2026-07-10T00:00:00.000Z',
+      source: 'webview'
+    });
+    let recoveryCurrent = true;
+    serverStateMocks.recoveryActive.mockImplementation(() => recoveryCurrent);
+    const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
+
+    const showing = controller.showLinuxDoVerification('需要验证', {
+      queryKey: recoveryQueryKeyFor('feed:stale-during-clear'),
+      resume: vi.fn(async () => 'completed' as const)
+    });
+    await vi.waitFor(() => expect(linuxDoMocks.clearLinuxDoClearance).toHaveBeenCalledTimes(1));
+    recoveryCurrent = false;
+    clearanceReset.resolve(null);
+    await showing;
+
+    const clearanceTransition = updateLinuxDoSession.mock.calls.find(([
+      event
+    ]) => event.type === 'session-updated' || event.type === 'cleared')?.[0];
+    expect(clearanceTransition).toBeDefined();
+    expect(clearanceTransition).not.toHaveProperty('recoveryQueryKey');
+    expect(showLinuxDoPanelRef.current).toBe(false);
+
+    updateLinuxDoSession.mockClear();
+    await controller.showLinuxDoVerification();
+    await vi.advanceTimersByTimeAsync(80);
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+          userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+        })
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+    const check = controller.checkLinuxDoCookie();
+    await vi.advanceTimersByTimeAsync(250);
+    await check;
+
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session-updated',
+      hasVerification: true
+    }));
+    expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it.each(['baseline-read', 'clearance-clear'] as const)(
+    'abandons a recovery when %s preparation rejects so a later manual verification can finish',
+    async (failure) => {
+      vi.useFakeTimers();
+      linuxDoMocks.loadLinuxDoAccess.mockReset();
+      linuxDoMocks.clearLinuxDoClearance.mockReset();
+      linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+      linuxDoMocks.saveLinuxDoAccess.mockResolvedValue({
+        cookieHeader: 'COOKIE_VALUE_SECRET',
+        savedAt: '2026-07-10T00:00:00.000Z',
+        source: 'webview'
+      });
+      linuxDoMocks.clearLinuxDoClearance.mockResolvedValue(null);
+      if (failure === 'baseline-read') {
+        linuxDoMocks.loadLinuxDoAccess
+          .mockRejectedValueOnce(new Error('storage read failed'))
+          .mockResolvedValue(null);
+      } else {
+        linuxDoMocks.loadLinuxDoAccess
+          .mockResolvedValueOnce({ cookieHeader: 'OLD_CLEARANCE_SECRET' })
+          .mockResolvedValue(null);
+        linuxDoMocks.clearLinuxDoClearance
+          .mockRejectedValueOnce(new Error('storage clear failed'));
+      }
+      const resume = vi.fn(async () => 'completed' as const);
+      const { controller, linuxDoWebViewSessionRef, notify, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
+
+      await expect(controller.showLinuxDoVerification('需要验证', {
+        queryKey: recoveryQueryKeyFor(`feed:${failure}`),
+        resume
+      })).resolves.toBeUndefined();
+      expect(showLinuxDoPanelRef.current).toBe(false);
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenCalledWith('linux.do 验证准备失败，请重试。');
+
+      updateLinuxDoSession.mockClear();
+      await controller.showLinuxDoVerification();
+      await vi.advanceTimersByTimeAsync(80);
+      controller.handleLinuxDoMessage({
+        nativeEvent: {
+          data: JSON.stringify({
+            type: 'linuxdo-webview',
+            cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+            userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+          })
+        }
+      } as never, linuxDoWebViewSessionRef.current);
+      const check = controller.checkLinuxDoCookie();
+      await vi.advanceTimersByTimeAsync(250);
+      await check;
+
+      expect(resume).not.toHaveBeenCalled();
+      expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'session-updated',
+        hasVerification: true
+      }));
+      expect(showLinuxDoPanelRef.current).toBe(true);
+    }
+  );
+
+  it('does not report a preparation storage failure after its recovery becomes stale', async () => {
+    const baselineRead = Promise.withResolvers<null>();
+    linuxDoMocks.loadLinuxDoAccess.mockReturnValueOnce(baselineRead.promise);
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+    let recoveryCurrent = true;
+    serverStateMocks.recoveryActive.mockImplementation(() => recoveryCurrent);
+    const { controller, notify, showLinuxDoPanelRef } = createController();
+
+    const showing = controller.showLinuxDoVerification('需要验证', {
+      queryKey: recoveryQueryKeyFor('feed:stale-storage-failure'),
+      resume: vi.fn(async () => 'completed' as const)
+    });
+    recoveryCurrent = false;
+    baselineRead.reject(new Error('late storage read failure'));
+    await expect(showing).resolves.toBeUndefined();
+
+    expect(notify).not.toHaveBeenCalled();
+    expect(showLinuxDoPanelRef.current).toBe(false);
+  });
+
+  it.each([
+    ['an unchanged clearance', false],
+    ['an explicit login cookie', true]
+  ] as const)('handles %s fail-closed when a manual baseline read rejects', async (_credential, explicitLogin) => {
+    vi.useFakeTimers();
+    linuxDoMocks.canStoreLinuxDoLogin.mockReturnValue(explicitLogin);
+    linuxDoMocks.loadLinuxDoAccess
+      .mockRejectedValueOnce(new Error('storage read failed'))
+      .mockResolvedValue(null);
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+    linuxDoMocks.saveLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'COOKIE_VALUE_SECRET',
+      savedAt: '2026-07-10T00:00:00.000Z',
+      source: 'webview'
+    });
+    const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
+
+    await controller.showLinuxDoVerification();
+    await vi.advanceTimersByTimeAsync(80);
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+          userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+        })
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+    const check = controller.checkLinuxDoCookie();
+    await vi.advanceTimersByTimeAsync(250);
+    await check;
+
+    if (explicitLogin) {
+      expect(linuxDoMocks.saveLinuxDoAccess).toHaveBeenCalledTimes(1);
+      expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'session-updated',
+        hasVerification: true
+      }));
+    } else {
+      expect(linuxDoMocks.saveLinuxDoAccess).not.toHaveBeenCalled();
+      expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'verification-required'
+      }));
+      expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({
+        type: 'session-updated'
+      }));
+    }
+    expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores a manual baseline that finishes with late %s after a newer login check succeeds',
+    async (settlement) => {
+      vi.useFakeTimers();
+      const baselineRead = Promise.withResolvers<{ cookieHeader: string } | null>();
+      linuxDoMocks.loadLinuxDoAccess
+        .mockReturnValueOnce(baselineRead.promise)
+        .mockResolvedValue(null);
+      linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+      linuxDoMocks.canStoreLinuxDoLogin.mockReturnValue(true);
+      linuxDoMocks.linuxDoClearanceValue
+        .mockReturnValueOnce('FRESH_CLEARANCE_SECRET')
+        .mockReturnValueOnce('OLD_CLEARANCE_SECRET');
+      linuxDoMocks.saveLinuxDoAccess.mockResolvedValue({
+        cookieHeader: 'COOKIE_VALUE_SECRET',
+        savedAt: '2026-07-10T00:00:00.000Z',
+        source: 'webview'
+      });
+      const { controller, linuxDoWebViewSessionRef, updateLinuxDoSession } = createController();
+
+      await controller.showLinuxDoVerification();
+      await vi.advanceTimersByTimeAsync(80);
+      controller.handleLinuxDoMessage({
+        nativeEvent: {
+          data: JSON.stringify({
+            type: 'linuxdo-webview',
+            cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+            userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+          })
+        }
+      } as never, linuxDoWebViewSessionRef.current);
+      const firstCheck = controller.checkLinuxDoCookie();
+      await vi.advanceTimersByTimeAsync(250);
+      await firstCheck;
+      expect(linuxDoMocks.saveLinuxDoAccess).toHaveBeenCalledTimes(1);
+
+      linuxDoMocks.saveLinuxDoAccess.mockClear();
+      updateLinuxDoSession.mockClear();
+      linuxDoMocks.canStoreLinuxDoLogin.mockReturnValue(false);
+      linuxDoMocks.canAcceptLinuxDoAccessUpdate.mockImplementation((
+        _cookies?: unknown,
+        previousClearance?: string | null
+      ) => previousClearance !== 'FRESH_CLEARANCE_SECRET');
+      if (settlement === 'resolve') {
+        baselineRead.resolve({ cookieHeader: 'OLD_CLEARANCE_SECRET' });
+      } else {
+        baselineRead.reject(new Error('late baseline failure'));
+      }
+      await vi.advanceTimersByTimeAsync(0);
+
+      const secondCheck = controller.checkLinuxDoCookie();
+      await vi.advanceTimersByTimeAsync(250);
+      await secondCheck;
+
+      expect(linuxDoMocks.saveLinuxDoAccess).not.toHaveBeenCalled();
+      expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'verification-required'
+      }));
+      expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({
+        type: 'session-updated'
+      }));
+    }
+  );
+
+  it('does not preserve a stale recovery lane when newly saved credentials invalidate it', async () => {
+    vi.useFakeTimers();
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({
+      cf_clearance: { name: 'PRIVATE_COOKIE_NAME', value: 'COOKIE_VALUE_SECRET' }
+    });
+    linuxDoMocks.saveLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'COOKIE_VALUE_SECRET',
+      savedAt: '2026-07-10T00:00:00.000Z',
+      source: 'webview'
+    });
+    let recoveryCurrent = true;
+    serverStateMocks.recoveryActive.mockImplementation(() => recoveryCurrent);
+    const { controller, linuxDoWebViewSessionRef, updateLinuxDoSession } = createController();
+
+    await controller.showLinuxDoVerification('需要验证', {
+      queryKey: recoveryQueryKeyFor('topic:stale'),
+      resume: vi.fn(async () => 'completed' as const)
+    });
+    await vi.advanceTimersByTimeAsync(80);
+    updateLinuxDoSession.mockClear();
+    recoveryCurrent = false;
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+          userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+        })
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+    await vi.runAllTimersAsync();
+
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session-updated'
+    }));
+    const savedCredentialTransition = updateLinuxDoSession.mock.calls.find(([event]) => event.type === 'session-updated')?.[0];
+    expect(savedCredentialTransition).not.toHaveProperty('recoveryQueryKey');
   });
 
   it('keeps the panel open and avoids an automatic retry loop when the resumed read still needs verification', async () => {
@@ -195,8 +547,7 @@ describe('linux.do visible verification diagnostics', () => {
     const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef } = createController();
 
     await controller.showLinuxDoVerification('需要验证', {
-      key: 'feed:linuxdo:latest',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('feed:latest'),
       resume
     });
     await vi.advanceTimersByTimeAsync(80);
@@ -325,8 +676,7 @@ describe('linux.do visible verification diagnostics', () => {
     const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
 
     await controller.showLinuxDoVerification('需要验证', {
-      key: 'feed:linuxdo:ordinary-failure',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('feed:ordinary-failure'),
       resume
     });
     await vi.advanceTimersByTimeAsync(80);
@@ -362,8 +712,7 @@ describe('linux.do visible verification diagnostics', () => {
     const { controller, linuxDoWebViewSessionRef } = createController();
 
     await controller.showLinuxDoVerification('需要验证', {
-      key: 'feed:linuxdo:same-clearance',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('feed:same-clearance'),
       resume
     });
     await vi.advanceTimersByTimeAsync(80);
@@ -398,8 +747,7 @@ describe('linux.do visible verification diagnostics', () => {
     const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
 
     await controller.showLinuxDoVerification('需要验证', {
-      key: 'topic:linuxdo:42',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('topic:42'),
       resume
     });
     await vi.advanceTimersByTimeAsync(80);
@@ -416,12 +764,19 @@ describe('linux.do visible verification diagnostics', () => {
 
     expect(resume).toHaveBeenCalledTimes(1);
     expect(showLinuxDoPanelRef.current).toBe(true);
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session-updated',
+      recoveryQueryKey: recoveryQueryKeyFor('topic:42')
+    }));
     expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-succeeded' }));
 
     resumed.resolve('completed');
     await vi.runAllTimersAsync();
 
     expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-succeeded' }));
+    expect(updateLinuxDoSession.mock.calls.findIndex(([event]) => event.type === 'session-updated')).toBeLessThan(
+      updateLinuxDoSession.mock.calls.findIndex(([event]) => event.type === 'verification-succeeded')
+    );
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
@@ -430,8 +785,7 @@ describe('linux.do visible verification diagnostics', () => {
     linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
     linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
     const recovery = {
-      key: 'topic:linuxdo:42:request-1',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('topic:42:request-1'),
       resume: vi.fn(async () => 'completed' as const)
     };
     const { controller, showLinuxDoPanelRef } = createController();
@@ -453,18 +807,15 @@ describe('linux.do visible verification diagnostics', () => {
     linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
     linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
     const firstRecovery = {
-      key: 'feed:linuxdo:request-1',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('feed:request-1'),
       resume: vi.fn(async () => 'completed' as const)
     };
     const queuedRecovery = {
-      key: 'search:linuxdo:request-2',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('search:request-2'),
       resume: vi.fn(async () => 'completed' as const)
     };
     const latestRecovery = {
-      key: 'user:linuxdo:request-3',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('user:request-3'),
       resume: vi.fn(async () => 'completed' as const)
     };
     const { controller, showLinuxDoPanelRef } = createController();
@@ -503,13 +854,11 @@ describe('linux.do visible verification diagnostics', () => {
       source: 'webview'
     });
     const oldRecovery = {
-      key: 'feed:linuxdo:request-1',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('feed:request-1'),
       resume: vi.fn(async () => 'completed' as const)
     };
     const newerRecovery = {
-      key: 'topic:linuxdo:request-2',
-      isCurrent: () => true,
+      queryKey: recoveryQueryKeyFor('topic:request-2'),
       resume: vi.fn(async () => 'completed' as const)
     };
     const { controller, linuxDoWebViewSessionRef } = createController();
