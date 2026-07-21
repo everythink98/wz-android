@@ -361,11 +361,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 小隐寺搜索卡片把命中回复的用户显示为主题作者；打开详情后才看到真实楼主是另一人。 |
 | 触发条件 | `/search.json` 的 `posts[]` 返回命中的回复；`topics[].posters` 可能提供 Original Poster，也可能完全缺失作者身份。 |
 | 根因 seam | `src/localXiaoyinsi.ts` 的 `topicsFromSearch` 优先把命中帖子传给主题归一化，覆盖了主题自己的 Original Poster。 |
-| 必须保持的行为 | 搜索作者优先取主题 Original Poster；仅当命中帖明确为 `post_number=1` 时才可作为后备。命中帖继续提供摘要；缺少可靠 OP 时不得用回复者或最后回复者猜测。 |
-| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 的 `REG-XIAOYINSI-018` 同时提供两个二楼命中：bob 的主题有 alice 这个 Original Poster，要求结果显示 alice 且保留 bob 的命中摘要；另一个主题没有可靠 OP，要求整项丢弃而不是显示回复者或最后回复者。 |
+| 必须保持的行为 | 搜索作者优先取主题 Original Poster；仅当命中帖明确为 `post_number=1` 时才可作为后备。命中帖继续提供摘要；缺少可靠 OP 时按 `REG-SEARCH-013` 保留结果并显示未知作者，不得用回复者或最后回复者猜测。 |
+| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 的 `REG-XIAOYINSI-018` 同时提供两个二楼命中：bob 的主题有 alice 这个 Original Poster，要求结果显示 alice 且保留 bob 的命中摘要；另一个主题没有可靠 OP，要求结果仍保留、作者为空，并且两条候选都计为有效。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：Adapter 公开搜索接口可固定原站载荷与归一化结果；源码字符串、页面可打开或动态标题不能证明作者正确。 |
 | Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 保持小隐寺搜索入口可用；作者正确性需在 App 内打开一个命中回复的结果，对照详情或原站楼主，记录为 `LIVE_PASS`。 |
-| 负向验证方式 | 恢复命中帖子优先级后，编号测试会把作者从 alice 错误改为 bob 并失败。 |
+| 负向验证方式 | 恢复命中帖子优先级会把作者从 alice 错误改为 bob；恢复空作者即丢弃会让第二条结果消失，编号测试都会失败。 |
 | 明确不覆盖范围 | 不根据作者名、最后回复者或回复顺序猜测 OP；动态搜索结果当天是否存在由 Live 验收记录。 |
 
 ## `REG-XIAOYINSI-019` Token 已保存但首次 session 复核失败后重复发起授权
@@ -443,20 +443,35 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 临时恢复 `group.error` 的无条件提前返回，或让分页错误按钮调用 `onRetrySearchSource`，`REG-SEARCH-002` 的列表/UI 用例必须分别失败；临时移除 arm 或 pending 门禁，重复回调用例必须失败；给“全部”恢复分页哨兵时概览用例必须失败，随后还原。 |
 | 明确不覆盖范围 | 不改四站搜索 API、Cookie Mock、SourceGateway、筛选快照、去重、重复页或 server-state key 归属；不预取整站、不自动重试失败请求，也不固定动态第二页的标题或数量。 |
 
-## `REG-SEARCH-003` linux.do 搜索作者和头像丢失
+## `REG-SEARCH-003` linux.do 首帖搜索作者和头像丢失
 
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-03` |
-| 用户症状 | 已登录 linux.do 搜索的每条结果都显示“未知作者”，头像也不展示；标题、摘要和详情仍可用。 |
-| 触发条件 | 标准 Discourse `/search.json` 返回 `topics[]` 与 `posts[]`，作者位于匹配 post 的 `username/avatar_template`，而 topic 没有列表页专属的 `posters`，`users[]` 为空。 |
-| 根因 seam | `src/localLinuxdo.ts` 的 `topicsFromLinuxDoSearchData` 已按 `topic_id` 找到匹配 post，却只读取其 `blurb`；作者仍调用列表页的 `originalPoster(topic, users)`，因此被归一化为空。普通搜索和 AI 语义搜索共用该转换层。 |
-| 必须保持的行为 | 搜索结果优先使用匹配 post 的用户名和头像；响应没有匹配 post 时继续使用原有 `topics[].posters → users[]` fallback。不得为每条结果新增用户请求，也不得改变搜索顺序、摘要、分页或登录态。 |
-| 精确失败 oracle | `src/localSources.test.ts` 的 `REG-SEARCH-003` 使用 `topics[]` 无 `posters`、`users[]` 为空且 `posts[]` 含 `username/avatar_template` 的标准响应，断言最终 Topic 保留作者和绝对头像 URL。修复前同一用例得到空作者和 `undefined` 头像。 |
+| 用户症状 | 已登录 linux.do 搜索明确命中首帖时仍显示“未知作者”，头像也不展示；标题、摘要和详情可用。 |
+| 触发条件 | 标准 Discourse `/search.json` 返回 `topics[]` 与 `posts[]`，命中 post 明确为 `post_number=1` 且含 `username/avatar_template`，而 topic 没有列表页专属的 `posters`，`users[]` 为空。 |
+| 根因 seam | `src/localLinuxdo.ts` 的 `topicsFromLinuxDoSearchData` 已按 `topic_id` 找到首帖，却只读取其 `blurb`；作者仍调用列表页的 `originalPoster(topic, users)`，因此被归一化为空。普通搜索和 AI 语义搜索共用该转换层。 |
+| 必须保持的行为 | 优先使用 `topics[].posters → users[]` 的可靠 OP；缺失时仅允许明确的首帖提供主题作者和头像。回复命中按 `REG-SEARCH-013` 保留结果但不得冒充楼主。不得为每条结果新增用户请求，也不得改变搜索顺序、摘要、分页或登录态。 |
+| 精确失败 oracle | `src/localSources.test.ts` 的 `REG-SEARCH-003` 使用 `topics[]` 无 `posters`、`users[]` 为空且 `posts[]` 含 `post_number=1`、`username/avatar_template` 的标准响应，断言最终 Topic 保留作者和绝对头像 URL。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 直接覆盖真实 `searchTopics → searchLinuxDo → topicsFromLinuxDoSearchData` 链路；只测 `TopicCard` fallback、源码字符串或详情页作者都不能证明搜索字段已正确转换。 |
-| Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 固定已登录 linux.do 搜索、详情和返回链；Live 在 App 内已登录状态检查普通搜索首屏至少一条结果同时显示非“未知作者”的作者和头像，不导出或删除 Cookie。AI 当前有结果时沿同一标准检查，不把 AI 零结果当失败。 |
-| 负向验证方式 | 临时把搜索作者数据恢复为只调用 `originalPoster(topic, users)`，`REG-SEARCH-003` 必须精确失败，随后还原。 |
+| Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 固定已登录 linux.do 搜索、详情和返回链；Live 只有在能确认结果命中首帖时才要求作者和头像，否则按 `REG-SEARCH-013` 显示未知作者。 |
+| 负向验证方式 | 临时移除明确首帖的作者 fallback，`REG-SEARCH-003` 必须精确失败，随后还原。 |
 | 明确不覆盖范围 | 临时匿名 Google fallback 的结果本来不含可靠作者字段，本条不新增抓取或逐帖补全；不改变 Feed、Topic 或 User 页作者解析。 |
+
+## `REG-SEARCH-013` Discourse 回复命中被丢弃或冒充楼主
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
+| 用户症状 | 小隐寺有真实搜索命中却显示“内容无法解析”；已登录 linux.do 则可能把命中回复者或最后回复者显示成主题作者。是否出现取决于查询命中首帖还是回复。 |
+| 触发条件 | Discourse 搜索返回合法 `topics[]` 和命中回复 `posts[]`，但 topic 没有可映射的 Original Poster，且命中帖的 `post_number>1`。 |
+| 根因 seam | `src/localXiaoyinsi.ts` 把缺少作者的 Topic 当作无效候选丢弃；`src/localLinuxdo.ts` 优先把命中 post 或 `last_poster_username` 归一化成主题作者。 |
+| 必须保持的行为 | 搜索命中本身足以保留结果。只有 `topics[].posters → users[]` 或明确的首帖才能填写主题作者；其余情况作者留空，由现有 TopicCard 显示“未知作者”。命中回复仍提供摘要，候选不得计入 dropped/parse_empty；不得新增逐主题请求。 |
+| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 同时固定可靠 OP 与无 OP 的二楼命中，要求两条都保留且后者作者为空；`src/localSources.test.ts` 固定 linux.do 二楼命中且同时提供回复者和最后回复者，要求结果保留、作者为空。两者都断言 `validCount=candidateCount`、`droppedCount=0`、`isParseEmpty=false`。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：必须经过两站公开 search adapter 和诊断汇总；TopicCard 已有空作者降级，动态标题或单次页面成功不能固定作者语义。 |
+| Replay 或真实验收路径 | 小隐寺搜索 `codex` 当前可命中仅含回复作者的结果，要求展示条目而非解析错误；linux.do 保留当前登录态，只在原站响应自然命中回复时核对 App 显示未知作者，不清 Cookie 制造状态。 |
+| 负向验证方式 | 恢复小隐寺空作者即丢弃，或让 linux.do 再次使用匹配回复/最后回复者作为主题作者，编号测试必须分别失败。 |
+| 明确不覆盖范围 | 不猜测楼主、不逐条读取主题详情，也不新增“命中回复者”字段；若产品以后要展示命中者，应作为明确的独立语义。 |
 
 ## `REG-LINUXDO-001` linux.do Cloudflare 429 被降级且大响应被截断
 

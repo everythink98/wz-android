@@ -120,7 +120,7 @@ function linuxDoLevelLabel(raw?: Record<string, unknown>) {
   return Number.isInteger(level) && level >= 0 ? `Lv${level}` : undefined;
 }
 
-function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string, authorData?: Record<string, unknown>): Topic | null {
+function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string | null, authorData?: Record<string, unknown>): Topic | null {
   if (!isRecord(raw)) {
     return null;
   }
@@ -133,7 +133,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   const category = fields.categoryId ? categoryMap.get(fields.categoryId) : undefined;
   const accessRequirement = preferredLinuxDoAccessRequirement(accessRequirementFromObject(raw), category?.accessRequirement);
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
-  const authorName = author || String(createdBy.username || raw.last_poster_username || '');
+  const authorName = author || String(createdBy.username || (author === null ? '' : raw.last_poster_username) || '');
   const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
   const authorLevelLabel = linuxDoLevelLabel(authorData) || linuxDoLevelLabel(createdBy);
   return {
@@ -836,8 +836,10 @@ async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, option
   const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
   const items = topics.map((topic) => {
     const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
-    const authorData = post || (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined);
-    const normalized = normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
+    const authorData = (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined)
+      || (Number(post?.post_number) === 1 ? post : undefined);
+    const author = String(authorData?.username || '').trim();
+    const normalized = normalizeTopic(topic, categoryMap, author || null, authorData);
     return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
   }).filter(Boolean) as Topic[];
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};

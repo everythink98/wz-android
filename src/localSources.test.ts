@@ -2889,7 +2889,7 @@ describe('Android local sources', () => {
     expect(calls).not.toContain('https://linux.do/latest.json');
   });
 
-  it('REG-SEARCH-003 maps Discourse search post authors and paginates results', async () => {
+  it('REG-SEARCH-003 maps Discourse first-post authors and paginates results', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       expect(url.pathname).toBe('/search');
@@ -2909,6 +2909,7 @@ describe('Android local sources', () => {
         posts: [501, 502, 503].map((id) => ({
           id: id + 1000,
           topic_id: id,
+          post_number: 1,
           username: `author-${id}`,
           avatar_template: `/user_avatar/linux.do/author-${id}/{size}/1.png`,
           blurb: `matching post ${id}`
@@ -2936,6 +2937,84 @@ describe('Android local sources', () => {
     expect(second.items.map((item) => item.id)).toEqual(['502']);
     const searchCalls = fetcher.mock.calls.map((call) => new URL(String(call[0]))).filter((url) => url.pathname === '/search');
     expect(searchCalls.map((url) => url.searchParams.get('page'))).toEqual(['1', '1']);
+  });
+
+  it('[REG-SEARCH-013] keeps linux.do reply matches without claiming the reply author is the OP', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/session/csrf.json') {
+        return json({ csrf: 'csrf-token' });
+      }
+      if (url.pathname === '/search') {
+        return json({
+          grouped_search_result: { more_full_page_results: false },
+          topics: [{
+            id: 504,
+            title: 'reply-only match',
+            slug: 'reply-only-match',
+            created_at: '2026-05-21T00:00:00.000Z',
+            bumped_at: '2026-05-21T00:01:00.000Z',
+            posts_count: 2,
+            posters: [],
+            last_poster_username: 'last-replier'
+          }, {
+            id: 505,
+            title: 'reply match with topic creator',
+            slug: 'reply-match-with-topic-creator',
+            created_at: '2026-05-21T00:00:00.000Z',
+            bumped_at: '2026-05-21T00:01:00.000Z',
+            posts_count: 2,
+            posters: [],
+            last_poster_username: 'another-last-replier',
+            details: {
+              created_by: {
+                username: 'topic-owner',
+                avatar_template: '/user_avatar/linux.do/topic-owner/{size}/1.png'
+              }
+            }
+          }],
+          posts: [{
+            topic_id: 504,
+            post_number: 2,
+            username: 'reply-author',
+            avatar_template: '/user_avatar/linux.do/reply-author/{size}/1.png',
+            blurb: 'matching reply'
+          }, {
+            topic_id: 505,
+            post_number: 2,
+            username: 'another-reply-author',
+            avatar_template: '/user_avatar/linux.do/another-reply-author/{size}/1.png',
+            blurb: 'another matching reply'
+          }],
+          users: []
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({
+      source: 'linuxdo', query: 'reply-only', fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
+
+    expect(search.items).toEqual([
+      expect.objectContaining({
+        id: '504',
+        author: '',
+        excerpt: 'matching reply'
+      }),
+      expect.objectContaining({
+        id: '505',
+        author: 'topic-owner',
+        excerpt: 'another matching reply'
+      })
+    ]);
+    expect(sourceDiagnosticSummary(search)).toMatchObject({
+      candidateCount: 2,
+      validCount: 2,
+      droppedCount: 0,
+      isParseEmpty: false
+    });
   });
 
   it('keeps official linux.do search results even when they do not contain the full query text', async () => {

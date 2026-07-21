@@ -70,7 +70,7 @@
 
 ### Discourse 字段规则
 
-- 跨站身份、正文、时间、计数、标准权限和标准 action 状态进入公共模型；缺少身份或正文等必需字段时 adapter 必须报告解析失败，不能伪造。
+- 跨站身份、正文、时间、计数、标准权限和标准 action 状态进入公共模型；Feed、详情、回复或用户数据缺少其必需身份/正文时 adapter 必须报告解析失败，不能伪造。搜索命中缺少可靠主题作者时仍保留结果并让 UI 显示未知作者，不能把命中回复者或最后回复者冒充楼主。
 - 头像、标签、展示计数等可选公共字段允许缺失，UI 按缺失状态降级；写权限缺失必须 fail-closed，不得因为字段没返回就显示操作。
 - 站点新增但业务上重要的独有字段进入 `src/types.ts` 的 `SiteExtensionMap`，以 `siteExtension.source` 形成可穷尽的判别联合；当前 linux.do `boostCount` 与 `needsApproval` 即按此处理。它只能由对应 adapter 写入、对应 presenter/行为 adapter 消费，不能塞进公共顶层字段，也不能使用无类型 `Record<string, unknown>` 绕过边界。
 - `reactions[]` 与 `/emojis.json` 是标准 Discourse 语义：`discourseReactions` 负责 id、计数、图片 URL 和未知 id 的文字回退；linux.do 与小隐寺分别在自己的 adapter 内请求、绝对化并缓存目录，经 `discourseSourceReaders` port 交给 UI。目录和缓存不得跨站复用，linux.do boost 不进入公共 reaction 模型。
