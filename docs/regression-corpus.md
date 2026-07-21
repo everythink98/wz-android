@@ -451,7 +451,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 已登录 linux.do 搜索明确命中首帖时仍显示“未知作者”，头像也不展示；标题、摘要和详情可用。 |
 | 触发条件 | 标准 Discourse `/search.json` 返回 `topics[]` 与 `posts[]`，命中 post 明确为 `post_number=1` 且含 `username/avatar_template`，而 topic 没有列表页专属的 `posters`，`users[]` 为空。 |
 | 根因 seam | `src/localLinuxdo.ts` 的 `topicsFromLinuxDoSearchData` 已按 `topic_id` 找到首帖，却只读取其 `blurb`；作者仍调用列表页的 `originalPoster(topic, users)`，因此被归一化为空。普通搜索和 AI 语义搜索共用该转换层。 |
-| 必须保持的行为 | 优先使用 `topics[].posters → users[]` 的可靠 OP；缺失时仅允许明确的首帖提供主题作者和头像。回复命中按 `REG-SEARCH-013` 保留结果但不得冒充楼主。不得为每条结果新增用户请求，也不得改变搜索顺序、摘要、分页或登录态。 |
+| 必须保持的行为 | 优先使用 `topics[].posters → users[]` 或 `details.created_by` 的可靠 OP；缺失时仅允许明确的首帖提供主题作者和头像。回复命中按 `REG-SEARCH-013` 保留结果但不得冒充楼主。不得为每条结果新增用户请求，也不得改变搜索顺序、摘要、分页或登录态。 |
 | 精确失败 oracle | `src/localSources.test.ts` 的 `REG-SEARCH-003` 使用 `topics[]` 无 `posters`、`users[]` 为空且 `posts[]` 含 `post_number=1`、`username/avatar_template` 的标准响应，断言最终 Topic 保留作者和绝对头像 URL。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 直接覆盖真实 `searchTopics → searchLinuxDo → topicsFromLinuxDoSearchData` 链路；只测 `TopicCard` fallback、源码字符串或详情页作者都不能证明搜索字段已正确转换。 |
 | Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 固定已登录 linux.do 搜索、详情和返回链；Live 只有在能确认结果命中首帖时才要求作者和头像，否则按 `REG-SEARCH-013` 显示未知作者。 |
@@ -466,8 +466,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 小隐寺有真实搜索命中却显示“内容无法解析”；已登录 linux.do 则可能把命中回复者或最后回复者显示成主题作者。是否出现取决于查询命中首帖还是回复。 |
 | 触发条件 | Discourse 搜索返回合法 `topics[]` 和命中回复 `posts[]`，但 topic 没有可映射的 Original Poster，且命中帖的 `post_number>1`。 |
 | 根因 seam | `src/localXiaoyinsi.ts` 把缺少作者的 Topic 当作无效候选丢弃；`src/localLinuxdo.ts` 优先把命中 post 或 `last_poster_username` 归一化成主题作者。 |
-| 必须保持的行为 | 搜索命中本身足以保留结果。只有 `topics[].posters → users[]` 或明确的首帖才能填写主题作者；其余情况作者留空，由现有 TopicCard 显示“未知作者”。命中回复仍提供摘要，候选不得计入 dropped/parse_empty；不得新增逐主题请求。 |
-| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 同时固定可靠 OP 与无 OP 的二楼命中，要求两条都保留且后者作者为空；`src/localSources.test.ts` 固定 linux.do 二楼命中且同时提供回复者和最后回复者，要求结果保留、作者为空。两者都断言 `validCount=candidateCount`、`droppedCount=0`、`isParseEmpty=false`。 |
+| 必须保持的行为 | 搜索命中本身足以保留结果。只有 `topics[].posters → users[]`、`details.created_by` 或明确的首帖才能填写主题作者；其余情况作者留空，由现有 TopicCard 显示“未知作者”。命中回复仍提供摘要，候选不得计入 dropped/parse_empty；不得新增逐主题请求。 |
+| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 同时固定可靠 OP 与无 OP 的二楼命中，要求两条都保留且后者作者为空；`src/localSources.test.ts` 固定 linux.do 二楼命中且同时提供回复者和最后回复者，要求结果保留、作者为空，并另以 `details.created_by` 固定可靠 topic creator 不被误清空。两者都断言 `validCount=candidateCount`、`droppedCount=0`、`isParseEmpty=false`。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须经过两站公开 search adapter 和诊断汇总；TopicCard 已有空作者降级，动态标题或单次页面成功不能固定作者语义。 |
 | Replay 或真实验收路径 | 小隐寺搜索 `codex` 当前可命中仅含回复作者的结果，要求展示条目而非解析错误；linux.do 保留当前登录态，只在原站响应自然命中回复时核对 App 显示未知作者，不清 Cookie 制造状态。 |
 | 负向验证方式 | 恢复小隐寺空作者即丢弃，或让 linux.do 再次使用匹配回复/最后回复者作为主题作者，编号测试必须分别失败。 |
