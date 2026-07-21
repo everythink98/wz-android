@@ -264,6 +264,18 @@ describe('Android release evidence guards', () => {
     expect(multiSourceSearchReplay.match(/back --system/g)).toHaveLength(4);
   });
 
+  it('[REG-TEST-002] waits for search results instead of a stale completion marker', () => {
+    const anonymousReadonlyReplay = readFileSync(path.join(rootDir, 'tests', 'device', 'anonymous-readonly.ad'), 'utf8');
+    const multiSourceSearchReplay = readFileSync(path.join(rootDir, 'tests', 'device', 'search-multi-source.ad'), 'utf8');
+    const topicReturnReplay = readFileSync(path.join(rootDir, 'tests', 'device', 'search-topic-user-return.ad'), 'utf8');
+
+    expect(anonymousReadonlyReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(3);
+    expect(anonymousReadonlyReplay).not.toContain('wait id="search-complete" 60000');
+    expect(multiSourceSearchReplay).toContain('wait id="search-overview-source-v2ex" 60000');
+    expect(multiSourceSearchReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(5);
+    expect(topicReturnReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(1);
+  });
+
   it('[REG-OPS-009] keeps the development-only anonymous Replay out of release APK smoke', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
     const releaseReplayNames = listReplayFiles(deviceDir, ['anonymous-readonly.ad'])

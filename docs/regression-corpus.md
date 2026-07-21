@@ -2168,6 +2168,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 注入 `REG-FEED-001` 故障时 APK 仍可启动，但 UI 测试必须失败，证明两个证据层互不替代；从任一搜索来源删除结果可见、点击、详情等待或返回步骤时，守卫测试必须失败。 |
 | 明确不覆盖范围 | 不设置覆盖率百分比；测试价值由能否拦住具体用户行为回归判断。 |
 
+## `REG-TEST-002` 搜索完成标记残留导致 Replay 提前断言
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`RELEASE-02` |
+| 用户症状 | 真实搜索仍显示“正在搜索...”，Replay 却已经越过等待并立即报告首条结果不存在；同一路径重跑又可能通过。 |
+| 触发条件 | 新搜索发出后，Android accessibility snapshot 短暂保留上一状态的 `search-complete` 节点；实时请求耗时足以让后续即时结果断言先执行。 |
+| 根因 seam | `tests/device/anonymous-readonly.ad`、`search-multi-source.ad` 与 `search-topic-user-return.ad` 把请求生命周期 marker 当成下一条用户可见成功 oracle 的等待目标。 |
+| 必须保持的行为 | 预期成功的搜索直接等待可见来源预览或 `search-result-first`，再验证并按旅程打开结果；零重试，真实空结果、错误或超时仍必须失败。`search-complete` 只用于返回搜索页后的状态恢复等不以新结果出现为前提的边界。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 的 `REG-TEST-002` 固定匿名三站、登录态五次结果和 V2EX 详情旅程都使用直接结果等待。修复前当前开发 APK 的匿名 Replay 在第 26 步失败，首败视频同时显示 NodeSeek 仍在“正在搜索...”。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 tracked Replay 的等待语义；`DEVICE_REPLAY_PASS` 在真实 Android accessibility 与动态请求时序下证明旅程完成。 |
+| Replay 或真实验收路径 | 在身份匹配的当前开发包执行 `npm run test:device`；匿名旅程必须屏蔽四站 credential 视图后完成 NodeSeek、linux.do、小隐寺搜索和首页，其他两条搜索旅程继续打开结果并返回。 |
+| 负向验证方式 | 把任一预期结果前的直接等待恢复为 `wait id="search-complete"`，`REG-TEST-002` 必须失败；不靠增加 retries 掩盖竞态。 |
+| 明确不覆盖范围 | 不保证第三方来源永远有结果，也不把真实来源错误降级为通过；动态内容仍只固定可打开性，不固定标题和数量。 |
+
 ## 待确认观察
 
 下表只保存本轮探索中出现过、但尚不足以认定为当前业务 bug 的线索。它们不等同于 `REG-*`，也不能据此增加猜测式 workaround。只有在身份匹配的当前 APK 上稳定复现并得到明确失败 oracle 后，才升级为回归条目和最低可靠测试。53 个失联 daemon、30 个工具录屏进程及设备录屏分片未清理已经有完整证据，归入 `REG-OPS-002`，不再作为“疑似”。

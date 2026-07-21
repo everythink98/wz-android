@@ -18,7 +18,7 @@ fill id="search-query" codex
 is text id="search-query" codex
 press id="search-submit"
 keyboard dismiss
-wait id="search-complete" 60000
+wait id="search-result-first" 60000
 is visible id="search-result-first"
 press id="search-result-first"
 wait id="topic-detail-loaded" 60000
