@@ -879,6 +879,7 @@ export async function searchTopics({
   nodeSeekCookie,
   nodeSeekUserAgent,
   discourseAuth,
+  linuxDoAuthenticated,
   yaohuoCookie,
   unavailableSources,
   sort = 'relevance',
@@ -895,6 +896,7 @@ export async function searchTopics({
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
+  linuxDoAuthenticated?: boolean;
   yaohuoCookie?: string;
   unavailableSources?: readonly Source[];
   sort?: SearchSort;
@@ -913,6 +915,7 @@ export async function searchTopics({
       }
       if (isDiscourseSource(item)) {
         return searchDiscourseSourceTopics(item, adapterQuery, {
+          authenticated: item === 'linuxdo' && linuxDoAuthenticated === true,
           auth: discourseAuth,
           fetcher,
           limit: adapterLimit,
@@ -971,6 +974,7 @@ export async function searchTopics({
         ? buildDiscourseSearchQuery(adapterQuery, activeFilter, categories)
         : adapterQuery,
       {
+        authenticated: source === 'linuxdo' && linuxDoAuthenticated === true,
         auth: discourseAuth,
         fetcher,
         limit: adapterLimit,

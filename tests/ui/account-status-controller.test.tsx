@@ -186,6 +186,39 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenCalledWith('账号状态部分刷新失败：NodeSeek');
   });
 
+  it('[REG-LINUXDO-005] keeps a cold-start Cookie candidate non-authenticated when identity is unknown', async () => {
+    mockLoadLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'cf_clearance=verification; _t=stale-session',
+      savedAt: '2026-07-20T00:00:00.000Z',
+      source: 'webview',
+      userAgent: 'safe-agent'
+    });
+    mockCheckLinuxDoLogin.mockResolvedValue({
+      ok: false,
+      loginRequired: false,
+      message: 'linux.do 状态暂时无法确认'
+    });
+    const states = createSiteSessionStates({
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'verified',
+        cookieSummary: ['cf_clearance', '_t'],
+        isVerifying: false
+      }
+    });
+    const { hook } = await renderStatusController({
+      sessionViewModels: createSiteSessionViewModels(states)
+    });
+
+    await act(async () => { await hook.result.current.refreshAccountStatus(); });
+
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.linuxdo).toMatchObject({
+      status: 'verified',
+      isLoggedIn: false,
+      lastError: 'linux.do 状态暂时无法确认'
+    }));
+  });
+
   it('REG-ACCOUNT-002 isolates a credential-store failure from the other sites', async () => {
     mockGetItem.mockRejectedValueOnce(new Error('secure store unavailable'));
     const { hook, notify, readXiaoyinsiAuthorization } = await renderStatusController();

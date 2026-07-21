@@ -5,6 +5,7 @@ import type { LinuxDoReadRecovery } from '../../src/app/useVerificationControlle
 import { setDiagnosticWriter } from '../../src/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '../../src/searchFilters';
 import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
+import type { SiteSessionViewModels } from '../../src/siteSessionState';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
 import type { SearchResponse, Source, Topic } from '../../src/types';
@@ -78,14 +79,15 @@ function renderSearchController(
   sourceGateway: SourceGateway,
   notify = jest.fn<(message: string) => void>(),
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
-  getCredentialScope: () => ForumCredentialScope = () => emptyForumCredentialScope
+  getCredentialScope: () => ForumCredentialScope = () => emptyForumCredentialScope,
+  sessionViewModels: SiteSessionViewModels = loggedInSessions
 ) {
   appQueryClient.clear();
   return renderHook(() => useSearchController({
     categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
     credentialScope: getCredentialScope(),
     notify,
-    sessionViewModels: loggedInSessions,
+    sessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification: jest.fn(),
     showYaohuoLogin: jest.fn(),
@@ -126,6 +128,44 @@ describe('linux.do AI search controller', () => {
 
     await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+  });
+
+  it('[REG-LINUXDO-005] selects anonymous search until linux.do identity is confirmed', async () => {
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const unconfirmedSessions = createSiteSessionViewModels(createSiteSessionStates({
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'verified',
+        cookieSummary: ['cf_clearance', '_t'],
+        isVerifying: false
+      }
+    }));
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => emptyForumCredentialScope,
+      unconfirmedSessions
+    );
+    await prepareLinuxDoSearch(hook, 'codex');
+
+    await act(async () => {
+      await hook.result.current.runSearch();
+    });
+
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'linuxdo',
+        linuxDoAuthenticated: false
+      }),
+      expect.any(Object)
+    ));
+    expect(hook.result.current.linuxDoAiState).toMatchObject({ status: 'idle', enabled: false });
   });
 
   it('REG-LINUXDO-002 resumes the exact foreground search without recursively reopening verification', async () => {

@@ -526,7 +526,7 @@ export function useSessionController({
         const linuxDoSummary = linuxDoAccessSummary(linuxDoAccess);
         const linuxDoCookies = parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '');
         linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(linuxDoCookies) || null;
-        updateLinuxDoSession(siteEventWithCookieFacts('linuxdo', summarizeLinuxDoCookies(linuxDoCookies).names, linuxDoSummary.hasClearance, linuxDoSummary.loggedIn));
+        updateLinuxDoSession(siteEventWithCookieFacts('linuxdo', summarizeLinuxDoCookies(linuxDoCookies).names, linuxDoSummary.hasClearance, false));
         if (linuxDoAccess?.userAgent) {
           const userAgent = sanitizeLinuxDoUserAgent(linuxDoAccess.userAgent);
           if (userAgent) {

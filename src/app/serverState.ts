@@ -45,18 +45,21 @@ export const forumQueryKeys = {
     feedFilter: feedFilter || null
   }] as const,
   search: ({
+    authenticated,
     filter,
     query,
     scope,
     sort,
     source
   }: {
+    authenticated?: boolean;
     filter?: SourceSearchFilter;
     query: string;
     scope: ForumCredentialScope;
     sort: string;
     source: Source;
   }) => ['forum', source, 'search', {
+    authenticated: source === 'linuxdo' && authenticated === true,
     credential: credentialKey(source, scope),
     filter: filter || null,
     query,

@@ -66,7 +66,7 @@ import {
   uploadYaohuoReplyImage
 } from '../replyImageUpload';
 import { currentNodeImageApiKeyGeneration } from '../nodeimageCredentials';
-import { createSiteSessionViewModels, isSiteLoggedIn, type SiteSessionStates } from '../siteSessionState';
+import type { SiteSessionViewModels } from '../siteSessionState';
 import { authActionMessageForSource } from '../siteSessionPrompts';
 import { useCommittedRef } from './useCommittedRef';
 import {
@@ -191,7 +191,7 @@ export function useTopicActionsController({
   nodeSeekWebViewUserAgentRef,
   notify,
   showYaohuoLogin,
-  siteSessionStates,
+  siteSessionViewModels,
   topicDetail,
   topicReplies,
   topicSession
@@ -209,7 +209,7 @@ export function useTopicActionsController({
   nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
   showYaohuoLogin: (message?: string) => void;
-  siteSessionStates: SiteSessionStates;
+  siteSessionViewModels: SiteSessionViewModels;
   topicDetail: TopicDetail | null;
   topicReplies: Reply[];
   topicSession: TopicSessionController;
@@ -228,10 +228,9 @@ export function useTopicActionsController({
     [mutationSource, mutationTopicId]
   );
   const mutationScope = `forum:${mutationSource}:topic:${mutationTopicId}`;
-  const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
   const sourceActionAvailability = Object.fromEntries(sourceValues.map((source) => [
     source,
-    isSessionSource(source) && isSiteLoggedIn(siteSessionStates[source])
+    isSessionSource(source) && siteSessionViewModels[source].canWrite
   ])) as Record<Source, boolean>;
 
   const mutation = useMutation<unknown, unknown, MutationVariables, MutationContext>({

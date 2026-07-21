@@ -1131,6 +1131,36 @@ export function AppRoot() {
   }, [xiaoyinsiAuthController.refreshAuthorization]);
 
   const {
+    accountSessionViewModels,
+    refreshAccountStatus,
+    statusBusy
+  } = useAccountStatusController({
+    clearYaohuoLoginState,
+    credentialScope: forumCredentialScope,
+    currentNodeSeekCredentialGeneration,
+    currentYaohuoCredentialGeneration,
+    fetcher: forumFetchWithWebViewFallback,
+    linuxDoWebViewCookieHeaderRef,
+    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
+    loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    onLinuxDoExpired: (message) => updateLinuxDoSession({ type: 'login-expired', message }),
+    readXiaoyinsiAuthorization: xiaoyinsiAuthController.readAuthorization,
+    resetLinuxDoLevelState,
+    saveNodeSeekCookieHeader,
+    sessionViewModels: siteSessionViewModels,
+    setLinuxDoWebViewCookieHeader
+  });
+  useEffect(() => {
+    if (!readerDataLoaded || accountStatusInitialRefreshRef.current) {
+      return;
+    }
+    accountStatusInitialRefreshRef.current = true;
+    void refreshAccountStatus({ silent: true });
+  }, [readerDataLoaded, refreshAccountStatus]);
+
+  const {
     activeFeedState,
     categories,
     categoryFilter,
@@ -1184,7 +1214,7 @@ export function AppRoot() {
     credentialScope: forumCredentialScope,
     notify,
     onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
-    sessionViewModels: siteSessionViewModels,
+    sessionViewModels: accountSessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,
@@ -1208,22 +1238,22 @@ export function AppRoot() {
     deviceModel: Platform.OS === 'android' ? Platform.constants.Model : undefined,
     expoVersion: CURRENT_EXPO_VERSION,
     fontScale,
-    linuxDoSession: siteSessionViewModels.linuxdo.status,
-    nodeSeekSession: siteSessionViewModels.nodeseek.status,
+    linuxDoSession: accountSessionViewModels.linuxdo.status,
+    nodeSeekSession: accountSessionViewModels.nodeseek.status,
     proxyEnabled: networkProxyState.enabled,
     reactNativeVersion: CURRENT_REACT_NATIVE_VERSION,
     screenHeight: height,
     screenWidth: width,
     theme: theme.dark ? 'dark' as const : 'light' as const,
     versionCode: CURRENT_ANDROID_VERSION_CODE,
-    yaohuoSession: siteSessionViewModels.yaohuo.status,
-    xiaoyinsiSession: siteSessionViewModels.xiaoyinsi.status
+    yaohuoSession: accountSessionViewModels.yaohuo.status,
+    xiaoyinsiSession: accountSessionViewModels.xiaoyinsi.status
   }), [
     fontScale,
     height,
     networkProxyState.enabled,
     screen,
-    siteSessionViewModels,
+    accountSessionViewModels,
     theme.dark,
     width
   ]);
@@ -1231,35 +1261,6 @@ export function AppRoot() {
     diagnosticBusy,
     exportDiagnosticLogFile
   } = useDiagnosticLogController({ getCurrentScreen, metadata: diagnosticMetadata, notify });
-  const {
-    accountSessionViewModels,
-    refreshAccountStatus,
-    statusBusy
-  } = useAccountStatusController({
-    clearYaohuoLoginState,
-    credentialScope: forumCredentialScope,
-    currentNodeSeekCredentialGeneration,
-    currentYaohuoCredentialGeneration,
-    fetcher: forumFetchWithWebViewFallback,
-    linuxDoWebViewCookieHeaderRef,
-    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
-    loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
-    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
-    notify,
-    onLinuxDoExpired: (message) => updateLinuxDoSession({ type: 'login-expired', message }),
-    readXiaoyinsiAuthorization: xiaoyinsiAuthController.readAuthorization,
-    resetLinuxDoLevelState,
-    saveNodeSeekCookieHeader,
-    sessionViewModels: siteSessionViewModels,
-    setLinuxDoWebViewCookieHeader
-  });
-  useEffect(() => {
-    if (!readerDataLoaded || accountStatusInitialRefreshRef.current) {
-      return;
-    }
-    accountStatusInitialRefreshRef.current = true;
-    void refreshAccountStatus({ silent: true });
-  }, [readerDataLoaded, refreshAccountStatus]);
   const {
     appUpdateBusy,
     appUpdateDownloading,
@@ -1464,7 +1465,7 @@ export function AppRoot() {
     ensureNodeImageApiKey,
     notify,
     showYaohuoLogin,
-    siteSessionStates: effectiveSiteSessionStates,
+    siteSessionViewModels: accountSessionViewModels,
     topicDetail,
     topicReplies,
     topicSession

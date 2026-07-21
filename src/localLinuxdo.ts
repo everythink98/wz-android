@@ -52,6 +52,12 @@ interface LinuxDoOptions {
   timeoutMs?: number;
 }
 
+type LinuxDoSearchOptions = LinuxDoOptions & {
+  authenticated?: boolean;
+  limit?: number;
+  page?: number;
+};
+
 interface LinuxDoCurrentUserOptions extends LinuxDoOptions {
   linuxDoCookie?: string;
   linuxDoUserAgent?: string;
@@ -965,12 +971,12 @@ async function searchLinuxDoGoogle(query: string, options: LinuxDoOptions & { li
   });
 }
 
-export async function searchLinuxDo(query: string, options: LinuxDoOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
+export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions = {}): Promise<SearchResponse> {
   const limit = options.limit || 30;
   const page = options.page || 1;
   const cleanQuery = query.trim();
   const access = await loadLinuxDoAccess();
-  if (!linuxDoAccessSummary(access).loggedIn) {
+  if (!options.authenticated || !linuxDoAccessSummary(access).loggedIn) {
     return searchLinuxDoGoogle(cleanQuery, options);
   }
   const searchReferer = `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}`;

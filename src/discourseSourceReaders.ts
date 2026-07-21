@@ -81,6 +81,7 @@ export type DiscourseUserReadOptions = DiscourseReadOptions & {
 };
 
 export type DiscourseSearchReadOptions = DiscourseReadOptions & {
+  authenticated?: boolean;
   limit?: number;
   page?: number;
 };

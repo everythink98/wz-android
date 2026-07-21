@@ -61,7 +61,12 @@ import {
 import { currentNodeImageApiKeyGeneration } from '../../src/nodeimageCredentials';
 import { uploadNodeSeekReplyImageWithApiKey } from '../../src/replyImageUpload';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
-import { createSiteSessionStates, type SiteSessionStates } from '../../src/siteSessionState';
+import {
+  createSiteSessionStates,
+  createSiteSessionViewModels,
+  type SiteSessionStates,
+  type SiteSessionViewModels
+} from '../../src/siteSessionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '../../src/types';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
@@ -137,6 +142,7 @@ async function renderActions({
   loadYaohuoCookieForSource = jest.fn(async () => 'sidyaohuo=test'),
   notify = jest.fn(),
   showYaohuoLogin = jest.fn(),
+  siteSessionViewModels,
   siteSessionStates,
   topicDetail = detail,
   topicReplies = []
@@ -151,6 +157,7 @@ async function renderActions({
   loadYaohuoCookieForSource?: () => Promise<string | undefined>;
   notify?: (message: string) => void;
   showYaohuoLogin?: (message?: string) => void;
+  siteSessionViewModels?: SiteSessionViewModels;
   siteSessionStates?: SiteSessionStates;
   topicDetail?: TopicDetail;
   topicReplies?: Reply[];
@@ -178,7 +185,9 @@ async function renderActions({
       nodeSeekWebViewUserAgentRef: { current: 'safe-agent' },
       notify,
       showYaohuoLogin,
-      siteSessionStates: siteSessionStates || loggedInStates(topicDetail.source as ActionSource),
+      siteSessionViewModels: siteSessionViewModels || createSiteSessionViewModels(
+        siteSessionStates || loggedInStates(topicDetail.source as ActionSource)
+      ),
       topicDetail,
       topicReplies,
       topicSession
@@ -246,6 +255,25 @@ describe('topic action query mutations', () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     setDiagnosticWriter(null);
     jest.restoreAllMocks();
+  });
+
+  it('[REG-WRITE-016] uses refreshed account status for Discourse action availability', async () => {
+    const workflowStates = loggedInStates('linuxdo');
+    const accountStates = createSiteSessionStates({
+      linuxdo: { ...workflowStates.linuxdo, status: 'verifying', isVerifying: true },
+      xiaoyinsi: {
+        ...workflowStates.xiaoyinsi,
+        status: 'logged-in'
+      }
+    });
+    const hook = await renderActions({
+      siteSessionStates: workflowStates,
+      siteSessionViewModels: createSiteSessionViewModels(accountStates),
+      topicDetail: detailFor('linuxdo')
+    });
+
+    expect(hook.result.current.actions.sourceActionAvailability.linuxdo).toBe(false);
+    expect(hook.result.current.actions.sourceActionAvailability.xiaoyinsi).toBe(true);
   });
 
   it('serializes mutations for the same topic without a handwritten queue', async () => {

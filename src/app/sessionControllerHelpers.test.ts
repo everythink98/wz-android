@@ -136,6 +136,38 @@ describe('session controller helpers', () => {
     }));
   });
 
+  it('[REG-LINUXDO-005] does not treat stored linux.do login cookies as a confirmed session', async () => {
+    const lines: string[] = [];
+    const getItemAsync = vi.mocked(SecureStore.getItemAsync);
+    getItemAsync.mockImplementation(async (key) => key === 'linuxdo-clearance'
+      ? JSON.stringify({
+        cookieHeader: 'cf_clearance=saved-clearance; _t=expired-login; _forum_session=expired-session',
+        savedAt: '2026-07-21T00:00:00.000Z',
+        source: 'webview'
+      })
+      : null);
+    setDiagnosticWriter((line) => { lines.push(line); });
+
+    createTestSessionController();
+
+    await vi.waitFor(() => {
+      const transition = lines
+        .map((line) => JSON.parse(line))
+        .find(({ operation, phase, source }) => (
+          operation === 'state-transition'
+          && phase === 'apply'
+          && source === 'linuxdo'
+        ));
+      expect(transition).toMatchObject({
+        eventType: 'cookie-loaded',
+        previousState: 'anonymous',
+        nextState: 'verified'
+      });
+    });
+
+    getItemAsync.mockResolvedValue(null);
+  });
+
   it.each([
     ['NodeSeek', 'clearNodeSeekLoginState'],
     ['妖火', 'clearYaohuoLoginState']

@@ -147,7 +147,7 @@ npm run smoke:android
 
 ```powershell
 npm test -- src/forumApi.test.ts src/localSources.test.ts src/localXiaoyinsi.test.ts src/searchFilters.test.ts src/searchListItems.test.ts src/sources/sourceGateway.test.ts src/sources/sourceGatewayContract.test.ts src/yaohuoApi.test.ts src/app/serverState.test.ts src/app/useSearchController.test.ts
-npm run test:ui -- tests/ui/search-screen.test.tsx
+npm run test:ui -- tests/ui/search-screen.test.tsx tests/ui/search-controller-ai.test.tsx tests/ui/account-status-controller.test.tsx
 npm run typecheck
 ```
 
@@ -157,10 +157,13 @@ npm run typecheck
 - NodeSeek、linux.do、V2EX、妖火、小隐寺的搜索请求没有回到本地项目服务。
 - 单站失败不会让全部搜索整体失败。
 - 筛选参数和分页参数进入真实站点请求。
+- linux.do 冷启动残留 Cookie 只形成候选态；身份未知时账号与搜索保持非登录、AI 关闭，匿名/已确认登录搜索的 Query key 和 transport 不串用，见 `REG-LINUXDO-005`。
 
 ### 模拟器验收
 
 在不清 App 数据的前提下执行。推荐关键词：
+
+若设备自然存在 linux.do 残留 `_t` 且远端身份检查为未知，必须保留该现场冷启动验收：账号中心不显示已登录，搜索不开放 AI 或登录专属路径，Topic 不显示依赖登录的写入口；不得清 Cookie 制造或消除该状态。若身份被远端重新确认，则三个入口应同时恢复登录能力。
 
 | 关键词 | 目的 |
 | --- | --- |

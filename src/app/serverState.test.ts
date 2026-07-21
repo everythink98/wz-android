@@ -36,6 +36,27 @@ describe('forum server state', () => {
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-LINUXDO-005] separates anonymous and confirmed linux.do search caches', () => {
+    const anonymous = forumQueryKeys.search({
+      authenticated: false,
+      query: 'codex',
+      scope: emptyForumCredentialScope,
+      sort: 'relevance',
+      source: 'linuxdo'
+    });
+    const authenticated = forumQueryKeys.search({
+      authenticated: true,
+      query: 'codex',
+      scope: emptyForumCredentialScope,
+      sort: 'relevance',
+      source: 'linuxdo'
+    });
+
+    expect(anonymous).not.toEqual(authenticated);
+    expect(JSON.stringify(anonymous)).not.toMatch(/_t|cookie|token/i);
+    expect(JSON.stringify(authenticated)).not.toMatch(/_t|cookie|token/i);
+  });
+
   it('removes only the changed source and aggregate caches', () => {
     const client = createAppQueryClient();
     const nodeSeekKey = forumQueryKeys.topic({ source: 'nodeseek', topicId: '123', scope: emptyForumCredentialScope });

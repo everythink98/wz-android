@@ -518,6 +518,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把账号探针恢复为 `/session/csrf`，或删除 WebView `status` 上报/过期分支，编号测试必须分别恢复假登录或不清理。 |
 | 明确不覆盖范围 | 不自动重新登录，不输入或保存新凭据，不保证 Google 当天可达或有结果，也不以普通网络/限流/CF 错误推断退出。 |
 
+## `REG-LINUXDO-005` 冷启动残留 Cookie 被当作已确认登录并选择登录搜索
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`WRITE-01`、`WRITE-03` |
+| 用户症状 | linux.do 会话已经不可用，冷启动后的账号中心仍显示“身份未识别 · 已登录”，搜索页仍显示已登录、开放 AI 搜索并选择登录专属搜索；真正请求时才要求登录或失败。 |
+| 触发条件 | 本机仍保存 `_t`/`_forum_session`，启动恢复直接把 Cookie 存在等同于登录；随后 `/session/current.json` 因 429、网络或其他未知结果无法确认身份，账号视图保留了这个未经远端确认的猜测，搜索又独立按 Cookie 选择 transport。 |
+| 根因 seam | `useSessionController` 冷启动凭据恢复 → `useAccountStatusController` 的 Query 会话视图 → `AppRoot` 向 Search/Topic 传递的 canonical view model → `useSearchController` 的模式与 Query key → `searchLinuxDo` transport 选择。 |
+| 必须保持的行为 | 冷启动读到登录 Cookie 只建立凭据/clearance 候选，不确认登录。只有远端当前用户或本次 App 内原站明确登录结果才能开放写入口、AI 和登录搜索；未知/限流/网络失败不得猜测已过期，也不得把冷启动候选升级为已登录。账号页、搜索和 Topic 写权限共用同一合并会话视图。linux.do 匿名与已确认登录搜索使用不同结构化 Query key，匿名模式即使存有 `_t` 也不得发送 Cookie 或调用登录搜索。明确失效仍由 `REG-LINUXDO-004` 清理。 |
+| 精确失败 oracle | `src/app/sessionControllerHelpers.test.ts` 固定冷启动 `_t` 只进入候选态；`tests/ui/account-status-controller.test.tsx` 固定身份未知时仍非登录；`tests/ui/search-controller-ai.test.tsx` 固定 canonical view model 选择匿名模式并关闭 AI；`src/app/serverState.test.ts` 固定两种模式不共用缓存；`src/sources/sourceGatewayContract.test.ts` 与 `src/localSources.test.ts` 固定匿名决定贯穿 Gateway 且最终不调用 linux.do 登录搜索。`tests/device/more-readonly.ad` 与 `tests/device/search-multi-source.ad` 只固定账号/搜索稳定入口，不把动态登录或 AI 可见性写死。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：启动状态、Account Query 合并、Search Controller、Query key 和真实来源 adapter 必须共同通过；只测 Cookie 解析、错误文案或单个搜索 fallback 不能证明整条状态链一致。 |
+| Replay 或真实验收路径 | 保留设备当前自然形成的残留 Cookie，覆盖安装后冷启动；若远端身份仍为未知，账号中心不得显示 linux.do 已登录，搜索页不得显示已登录或 AI，普通搜索必须走匿名路径，Topic 不显示依赖登录的写入口。不得清 App 数据或 Cookie 制造状态；若远端重新确认身份，则应一致恢复登录搜索、AI 和允许的写入口。 |
+| 负向验证方式 | 恢复冷启动 `loggedIn = linuxDoAccessSummary(...).loggedIn`，让 Search 读取 workflow view model，删除 `linuxDoAuthenticated` transport 决策或从 Query key 移除模式；对应编号测试必须恢复假登录、错误 transport 或缓存串用并失败。 |
+| 明确不覆盖范围 | 不把 429、网络、CF 或普通来源错误当成失效，不自动清理或重新登录，不保证匿名 Google 当天可达或返回结果。 |
+
 ## `REG-ACCOUNT-001` 身份读取失败覆盖已确认账号状态
 
 | 字段 | 内容 |
@@ -1792,6 +1807,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 只读离开非 NodeSeek 详情后查看账号中心签到入口；真实签到属于远端写操作，未经单独授权不点击。 |
 | 负向验证方式 | 重新用 `detail || nodeseek/global` 选择 action topic，编号测试收到残留来源。 |
 | 明确不覆盖范围 | 不执行真实签到，不更改签到协议、幂等性或站点登录规则。 |
+
+## `REG-WRITE-016` 账号状态与 Topic 写入口读取相反的会话投影
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`WRITE-01`、`WRITE-03` |
+| 用户症状 | 账号中心显示小隐寺已登录且等级可读，但详情没有回复、点赞等入口；linux.do 已进入验证或失效状态时，详情却仍保留回复入口。 |
+| 触发条件 | 账号刷新 Query 已得到新的远端会话状态，而 Topic action controller 仍直接读取授权 workflow 的旧 `SiteSessionStates`。两份投影可以同时给出相反的可写结论。 |
+| 根因 seam | `src/app/AppRoot.tsx` 向 `src/app/useTopicActionsController.ts` 传递会话权限的边界。 |
+| 必须保持的行为 | Topic 写入口只使用账户 Query 与当前验证 workflow 合并后的 `accountSessionViewModels`；验证中、失效或匿名必须撤销该站写入口，确认已登录则开放站点级写能力，再由主题 `can_create_post` 和逐条 `can_*` 权限 fail-closed 收窄。不得新增第三份登录状态或绕过对象权限。 |
+| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-016` 同时构造 workflow 认为 linux.do 可写/小隐寺不可写、账户投影给出相反结果；旧实现精确返回 linux.do=true、小隐寺=false。 |
+| 最低可靠自动测试层 | `UI_PASS`：用真实 Controller 与合并后的 view model 固定 Topic 可见权限；纯 parser 单测无法暴露跨 Controller 状态分叉。 |
+| Replay 或真实验收路径 | 账号中心刷新后分别打开 linux.do 与小隐寺详情；只读核对账号状态、回复入口和原站允许的点赞入口一致。主题或帖子本身不可写时必须继续隐藏对应入口，不发送回复。 |
+| 负向验证方式 | 改回从 `effectiveSiteSessionStates` 派生 Topic actions，编号测试会再次得到与账户投影相反的两个布尔值。 |
+| 明确不覆盖范围 | 不把“已登录”解释成所有主题都可回复或所有帖子都可点赞；不改变原站权限字段、授权 scope 或写请求协议。 |
 
 ## `REG-XIAOYINSI-022` 写操作确认授权失效后不打开重授权
 

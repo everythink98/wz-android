@@ -214,6 +214,7 @@ export function useSearchController({
     () => searchSessionNoticeItems(searchSource, sessionViewModels),
     [searchSource, sessionViewModels]
   );
+  const linuxDoAuthenticated = sessionViewModels.linuxdo.isLoggedIn;
 
   useEffect(() => {
     let active = true;
@@ -294,6 +295,7 @@ export function useSearchController({
         page,
         limit: source === 'linuxdo' ? 50 : 30,
         categories,
+        linuxDoAuthenticated,
         sort: source === 'v2ex' ? sort : 'relevance',
         filter: activeFilter,
         signal
@@ -357,12 +359,13 @@ export function useSearchController({
       }
       return { kind: 'failed', group };
     }
-  }, [categories, sessionViewModels, sourceGateway]);
+  }, [categories, linuxDoAuthenticated, sessionViewModels, sourceGateway]);
 
   const submittedSource = submittedSearch?.source === 'all' ? 'v2ex' : submittedSearch?.source || 'v2ex';
   const submittedFilter = submittedSearch ? submittedSearch.filters[submittedSource] : undefined;
   const submittedSort = submittedSearch ? remoteSearchSort(submittedSearch.source, submittedSearch.filters) : 'relevance';
   const singleSearchKey = forumQueryKeys.search({
+    authenticated: submittedSource === 'linuxdo' && linuxDoAuthenticated,
     source: submittedSource,
     query: submittedSearch?.query || '',
     sort: submittedSort,
@@ -371,6 +374,7 @@ export function useSearchController({
   });
 
   const aggregateKeys = aggregateSearchSources.map((source) => forumQueryKeys.search({
+    authenticated: source === 'linuxdo' && linuxDoAuthenticated,
     source,
     query: submittedSearch?.query || '',
     sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',

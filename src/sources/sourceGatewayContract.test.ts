@@ -478,6 +478,38 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getUserProfile).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'user-1' }));
   });
 
+  it('[REG-LINUXDO-005] preserves the confirmed-auth decision through the managed gateway', async () => {
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => true),
+      fetcher: vi.fn(),
+      loadLinuxDoAccessForSource: vi.fn(async () => ({
+        cookieHeader: 'cf_clearance=verification; _t=stale-session',
+        userAgent: 'linux.do UA'
+      })),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+
+    await gateway.searchTopics({
+      source: 'linuxdo',
+      query: 'codex',
+      linuxDoAuthenticated: false
+    });
+
+    expect(forumMocks.searchTopics).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'linuxdo',
+      query: 'codex',
+      linuxDoAuthenticated: false,
+      discourseAuth: {
+        linuxdo: {
+          cookieHeader: 'cf_clearance=verification; _t=stale-session',
+          userAgent: 'linux.do UA'
+        }
+      }
+    }));
+  });
+
   it('keeps linux.do search candidates and AI reads behind the managed gateway', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });

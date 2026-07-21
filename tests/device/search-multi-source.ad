@@ -34,7 +34,6 @@ press id="search-filter-close"
 wait label="打开搜索筛选，当前默认" 10000
 is text id="search-query" AI
 wait id="search-complete" 60000
-wait "label=\"AI 搜索\"" 60000
 is visible id="search-result-first"
 press id="search-result-first"
 wait id="topic-detail-loaded" 60000

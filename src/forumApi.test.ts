@@ -1308,7 +1308,13 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const result = await searchTopics({ source: 'all', query: 'match', limit: 6, fetcher });
+    const result = await searchTopics({
+      source: 'all',
+      query: 'match',
+      limit: 6,
+      fetcher,
+      linuxDoAuthenticated: true
+    });
 
     expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'nodeseek', 'nodeseek', 'nodeseek', 'linuxdo', 'v2ex']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -1361,7 +1367,13 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const result = await searchTopics({ source: 'all', query: 'match', limit: 3, fetcher });
+    const result = await searchTopics({
+      source: 'all',
+      query: 'match',
+      limit: 3,
+      fetcher,
+      linuxDoAuthenticated: true
+    });
 
     expect(result.items.map((item) => item.source)).toEqual(['linuxdo', 'v2ex', 'nodeseek']);
   });

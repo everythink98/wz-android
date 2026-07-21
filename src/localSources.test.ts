@@ -2836,6 +2836,31 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain('https://linux.do/search');
   });
 
+  it('[REG-LINUXDO-005] ignores stale login cookies until the account session is confirmed', async () => {
+    mockStoredLinuxDoLoginAccess();
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      expect(url.hostname).toBe('www.google.com');
+      expect(JSON.stringify(init?.headers || {})).not.toContain('Cookie');
+      return html(`
+        <html>
+          <head><title>site:linux.do codex - Google Search</title></head>
+          <body><a href="https://linux.do/t/topic/1424130">Anonymous result</a></body>
+        </html>
+      `);
+    });
+
+    const search = await searchTopics({
+      source: 'linuxdo',
+      query: 'codex',
+      fetcher,
+      linuxDoAuthenticated: false
+    });
+
+    expect(search.items.map((item) => item.id)).toEqual(['1424130']);
+    expect(fetcher.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain('https://linux.do/search');
+  });
+
   it('loads more anonymous linux.do Google search pages by Google start offset', async () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
@@ -2899,7 +2924,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'fallback keyword', fetcher });
+    const search = await searchTopics({ source: 'linuxdo', query: 'fallback keyword', fetcher, linuxDoAuthenticated: true });
 
     expect(search.items).toEqual([]);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -2936,8 +2961,8 @@ describe('Android local sources', () => {
       });
     });
 
-    const first = await searchTopics({ source: 'linuxdo', query: 'keyword', limit: 1, fetcher });
-    const second = await searchTopics({ source: 'linuxdo', query: 'keyword', page: first.nextPage ?? 2, limit: 1, fetcher });
+    const first = await searchTopics({ source: 'linuxdo', query: 'keyword', limit: 1, fetcher, linuxDoAuthenticated: true });
+    const second = await searchTopics({ source: 'linuxdo', query: 'keyword', page: first.nextPage ?? 2, limit: 1, fetcher, linuxDoAuthenticated: true });
 
     expect(first.items).toEqual([expect.objectContaining({
       id: '501',
@@ -2984,7 +3009,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: '安卓手机免', fetcher });
+    const search = await searchTopics({ source: 'linuxdo', query: '安卓手机免', fetcher, linuxDoAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['901', '902']);
   });
@@ -3013,7 +3038,7 @@ describe('Android local sources', () => {
       });
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
+    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher, linuxDoAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['605']);
     const calls = fetcher.mock.calls.map((call) => String(call[0])).join('\n');
@@ -3061,7 +3086,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
+    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher, linuxDoAuthenticated: true });
 
     expect(search.items[0]).toMatchObject({
       id: '701',
@@ -3100,7 +3125,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
+    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher, linuxDoAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['801', '802']);
   });
@@ -3132,7 +3157,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input} ${JSON.stringify(init)}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
+    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher, linuxDoAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['601']);
     const [input, init] = fetcher.mock.calls.find((call) => new URL(String(call[0])).pathname === '/search') || [];
@@ -4854,6 +4879,7 @@ describe('Android local sources', () => {
     await searchTopics({
       source: 'linuxdo',
       query: 'AI',
+      linuxDoAuthenticated: true,
       categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
       filter: {
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
