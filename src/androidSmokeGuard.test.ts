@@ -271,7 +271,9 @@ describe('Android release evidence guards', () => {
 
     expect(anonymousReadonlyReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(3);
     expect(anonymousReadonlyReplay).not.toContain('wait id="search-complete" 60000');
-    expect(multiSourceSearchReplay).toContain('wait id="search-overview-source-v2ex" 60000');
+    expect(anonymousReadonlyReplay).toContain('wait text="未登录搜索，结果可能不完整。" 10000');
+    expect(anonymousReadonlyReplay).toContain('wait "text=\\"未登录搜索使用 Google，结果可能不完整。\\"" 10000');
+    expect(multiSourceSearchReplay).toContain('wait "id=\\"search-overview-source-v2ex\\" enabled=true" 60000');
     expect(multiSourceSearchReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(5);
     expect(topicReturnReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(1);
   });

@@ -2176,12 +2176,26 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 真实搜索仍显示“正在搜索...”，Replay 却已经越过等待并立即报告首条结果不存在；同一路径重跑又可能通过。 |
 | 触发条件 | 新搜索发出后，Android accessibility snapshot 短暂保留上一状态的 `search-complete` 节点；实时请求耗时足以让后续即时结果断言先执行。 |
 | 根因 seam | `tests/device/anonymous-readonly.ad`、`search-multi-source.ad` 与 `search-topic-user-return.ad` 把请求生命周期 marker 当成下一条用户可见成功 oracle 的等待目标。 |
-| 必须保持的行为 | 预期成功的搜索直接等待可见来源预览或 `search-result-first`，再验证并按旅程打开结果；零重试，真实空结果、错误或超时仍必须失败。`search-complete` 只用于返回搜索页后的状态恢复等不以新结果出现为前提的边界。 |
-| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 的 `REG-TEST-002` 固定匿名三站、登录态五次结果和 V2EX 详情旅程都使用直接结果等待。修复前当前开发 APK 的匿名 Replay 在第 26 步失败，首败视频同时显示 NodeSeek 仍在“正在搜索...”。 |
+| 必须保持的行为 | 预期成功的搜索直接等待可见来源预览或 `search-result-first`，再验证并按旅程打开结果；来源预览还必须等待按钮真实 `enabled` 后才能点击。零重试，真实空结果、错误或超时仍必须失败。`search-complete` 只用于返回搜索页后的状态恢复等不以新结果出现为前提的边界。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 的 `REG-TEST-002` 固定匿名三站、登录态五次结果和 V2EX 详情旅程都使用直接结果等待，并固定 V2EX 来源预览等待 `enabled=true`。修复前当前开发 APK 的匿名 Replay 在第 26 步失败，首败视频同时显示 NodeSeek 仍在“正在搜索...”；全量 Replay 还曾在 V2EX 来源按钮已出现但尚不可点击时错误继续。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定 tracked Replay 的等待语义；`DEVICE_REPLAY_PASS` 在真实 Android accessibility 与动态请求时序下证明旅程完成。 |
 | Replay 或真实验收路径 | 在身份匹配的当前开发包执行 `npm run test:device`；匿名旅程必须屏蔽四站 credential 视图后完成 NodeSeek、linux.do、小隐寺搜索和首页，其他两条搜索旅程继续打开结果并返回。 |
-| 负向验证方式 | 把任一预期结果前的直接等待恢复为 `wait id="search-complete"`，`REG-TEST-002` 必须失败；不靠增加 retries 掩盖竞态。 |
+| 负向验证方式 | 把任一预期结果前的直接等待恢复为 `wait id="search-complete"`，或把来源预览等待降回仅检查节点存在，`REG-TEST-002` 必须失败；不靠增加 retries 掩盖竞态。 |
 | 明确不覆盖范围 | 不保证第三方来源永远有结果，也不把真实来源错误降级为通过；动态内容仍只固定可打开性，不固定标题和数量。 |
+
+## `REG-TEST-003` 临时匿名状态被账号刷新结果覆盖
+
+| 字段 | 内容 |
+| --- | --- |
+| 用户可见行为 | 开发版开启某站“临时匿名”后，搜索提示和写入权限仍显示该站已登录，导致所谓无 Cookie 回放实际只屏蔽了 credential loader，用户看到的状态与测试前提矛盾。 |
+| 触发条件 | App 启动后的账号状态 Query 已得到登录结果，再从“更多 → 测试工具”开启临时匿名并进入搜索或主题操作。 |
+| 根因 seam | `AppRoot` 已为 workflow state 生成匿名 view model，但搜索、诊断和 Topic action 仍直接消费账号 Query 合并后的 `accountSessionViewModels`；账号远端结果因此越过 dev override。 |
+| 必须保持的行为 | 临时匿名只影响本次运行且不删除 Cookie；被覆盖站点的搜索提示、诊断身份和写入门禁统一使用匿名 view model，未覆盖站点继续使用账号 Query 结果；账号中心仍可证明保存的真实会话存在，relaunch 后恢复正常行为。 |
+| 精确失败 oracle | `src/siteSessionState.test.ts` 的 `REG-TEST-003` 用登录态账号 view model 输入并要求只把指定站投影为 `anonymous/canWrite=false`；`tests/device/anonymous-readonly.ad` 在提交 NodeSeek、linux.do 搜索前分别等待未登录提示，旅程末尾 relaunch 后再次确认 NodeSeek 已登录。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 view model 合并规则；`DEVICE_REPLAY_PASS` 证明真实账号刷新、临时覆盖、搜索接线与重启恢复共同成立。 |
+| Replay 或真实验收路径 | 当前身份匹配的开发包执行 `tests/device/anonymous-readonly.ad`：账号中心先确认 NodeSeek 已登录，开启四站临时匿名，检查搜索提示、结果与首页，再 relaunch 确认原会话恢复。 |
+| 负向验证方式 | 让搜索或 Topic action 重新直接消费 `accountSessionViewModels`，或删除回放中的匿名提示断言，编号单测或结构守卫必须失败。 |
+| 明确不覆盖范围 | 不删除、改写或导出真实 Cookie；不保证公开搜索永远不受第三方反爬影响，只要求一次真实可打开结果并如实记录外部阻碍。 |
 
 ## 待确认观察
 

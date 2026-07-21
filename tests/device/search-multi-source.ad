@@ -12,7 +12,7 @@ fill id="search-query" AI
 is text id="search-query" AI
 press id="search-submit"
 keyboard dismiss
-wait id="search-overview-source-v2ex" 60000
+wait "id=\"search-overview-source-v2ex\" enabled=true" 60000
 is visible id="search-overview-source-v2ex"
 press id="search-overview-source-v2ex"
 wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000

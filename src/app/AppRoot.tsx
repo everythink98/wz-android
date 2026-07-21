@@ -84,6 +84,7 @@ import { focusManager } from '@tanstack/react-query';
 import { appQueryClient, forumQueryKeys } from './serverState';
 import {
   applyDevAnonymousOverrides,
+  applyDevAnonymousViewModelOverrides,
   createSiteSessionViewModels,
   isDevAnonymousSource,
   nodeSeekUserIdForSession,
@@ -1152,6 +1153,9 @@ export function AppRoot() {
     sessionViewModels: siteSessionViewModels,
     setLinuxDoWebViewCookieHeader
   });
+  const effectiveAccountSessionViewModels = useMemo(() => (
+    __DEV__ ? applyDevAnonymousViewModelOverrides(accountSessionViewModels, devAnonymousOverrides) : accountSessionViewModels
+  ), [accountSessionViewModels, devAnonymousOverrides]);
   useEffect(() => {
     if (!readerDataLoaded || accountStatusInitialRefreshRef.current) {
       return;
@@ -1214,7 +1218,7 @@ export function AppRoot() {
     credentialScope: forumCredentialScope,
     notify,
     onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
-    sessionViewModels: accountSessionViewModels,
+    sessionViewModels: effectiveAccountSessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,
@@ -1238,22 +1242,22 @@ export function AppRoot() {
     deviceModel: Platform.OS === 'android' ? Platform.constants.Model : undefined,
     expoVersion: CURRENT_EXPO_VERSION,
     fontScale,
-    linuxDoSession: accountSessionViewModels.linuxdo.status,
-    nodeSeekSession: accountSessionViewModels.nodeseek.status,
+    linuxDoSession: effectiveAccountSessionViewModels.linuxdo.status,
+    nodeSeekSession: effectiveAccountSessionViewModels.nodeseek.status,
     proxyEnabled: networkProxyState.enabled,
     reactNativeVersion: CURRENT_REACT_NATIVE_VERSION,
     screenHeight: height,
     screenWidth: width,
     theme: theme.dark ? 'dark' as const : 'light' as const,
     versionCode: CURRENT_ANDROID_VERSION_CODE,
-    yaohuoSession: accountSessionViewModels.yaohuo.status,
-    xiaoyinsiSession: accountSessionViewModels.xiaoyinsi.status
+    yaohuoSession: effectiveAccountSessionViewModels.yaohuo.status,
+    xiaoyinsiSession: effectiveAccountSessionViewModels.xiaoyinsi.status
   }), [
     fontScale,
     height,
     networkProxyState.enabled,
     screen,
-    accountSessionViewModels,
+    effectiveAccountSessionViewModels,
     theme.dark,
     width
   ]);
@@ -1466,7 +1470,7 @@ export function AppRoot() {
     notify,
     refreshTopicReplies,
     showYaohuoLogin,
-    siteSessionViewModels: accountSessionViewModels,
+    siteSessionViewModels: effectiveAccountSessionViewModels,
     topicDetail,
     topicReplies,
     topicSession

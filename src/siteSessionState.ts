@@ -87,6 +87,16 @@ export function applyDevAnonymousOverrides(states: SiteSessionStates, overrides:
   ])) as SiteSessionStates;
 }
 
+export function applyDevAnonymousViewModelOverrides(viewModels: SiteSessionViewModels, overrides: DevAnonymousOverrides = {}): SiteSessionViewModels {
+  if (!sessionSources.some((site) => overrides[site])) {
+    return viewModels;
+  }
+  return Object.fromEntries(sessionSources.map((site) => [
+    site,
+    overrides[site] ? createSiteSessionViewModel(createSiteState(site, 'anonymous')) : viewModels[site]
+  ])) as SiteSessionViewModels;
+}
+
 export function isDevAnonymousSource(source: FeedSource, site: SessionSite, overrides: DevAnonymousOverrides = {}) {
   return Boolean(overrides[site] && (source === 'all' || source === site));
 }
