@@ -129,7 +129,7 @@ npm run test:device
 
 `test:device` 要求可信安装为 `agent-device >= 0.19.0`，随后核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。每个 `.ad` 使用唯一 session、独立 relaunch且不自行 `close`，让 test harness 先完成录屏 stop，再执行 session cleanup；单文件内部零重试并在失败处停止。普通执行失败时外层继续其余文件并汇总为非零退出，任何录屏隔离或恢复失败都立即中止。执行前若明确设备存在 active manifest、对应 `.tmp`、工具录屏进程或 orphan scratch，流程按 `BLOCKED_BY_ENV` 停止并保留现场；正式 manifest 即使为空也按文件存在视为占用。执行后只对同时匹配本条唯一 session 与 device 的 manifest 调用 agent-device `record stop`，未知或畸形 manifest、录屏进程和 scratch 一律不终止、不删除。runner 不结束本机 daemon，不使用 wildcard 清设备文件，也不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。动态结果只断言状态、来源和可打开性，不固定主题标题或数量，也不把依赖动态对象内容长度、回复组成或权限的交互塞进固定 Replay；这类行为由 RNTL 固定、Agent Live 选择满足前置条件的真实对象核实。
 
-`tests/device/anonymous-readonly.ad` 使用开发版“临时匿名”屏蔽 credential 视图而不删除 Cookie：开始时先确认 NodeSeek 已登录；开启四站后要求 NodeSeek、linux.do、小隐寺搜索有可打开结果，“全部”与三站首页有真实首条，妖火搜索和首页都进入 App 内登录限制；最后 relaunch 并确认 NodeSeek 登录恢复。不得用设备本来未登录、清 Cookie 或只看提示文案替代这条证据。
+`tests/device/anonymous-readonly.ad` 使用开发版“临时匿名”屏蔽 credential 视图而不删除 Cookie：开始时先确认 NodeSeek 已登录；开启四站后要求 NodeSeek、linux.do、小隐寺搜索有可打开结果，“全部”与三站首页有真实首条，妖火搜索和首页都进入 App 内登录限制；最后 relaunch 并确认 NodeSeek 登录恢复。它只能在身份匹配的当前开发包执行；正式 bundle 按 `MORE-05` 不显示测试工具，Release Smoke 明确排除该文件并执行其余七条。发布前两层都要通过，不得用未登录设备、清 Cookie、只看提示文案或把测试工具暴露进正式包替代。
 
 发布脚本分别校验正式 APK 与开发签名 smoke APK 后运行：
 
@@ -137,7 +137,7 @@ npm run test:device
 npm run smoke:android
 ```
 
-通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；覆盖安装后先读取设备 epoch、再写唯一 logcat marker 并执行第一次启动，以 `logcat -T` 有界读取该时间之后的日志，按包名与该包 PID 裁剪 marker 后窗口，同时保留 agent-device session 的第二次 relaunch 日志。任一窗口出现崩溃、ANR 或 RedBox，或 marker 丢失，都不能形成 `APK_SANITY`；不得清空设备全局 logcat。随后执行 tracked Replay，形成独立的 `DEVICE_REPLAY_PASS`。缺少搜索结果、用户主题、收藏基线、页面 readiness 或 APK 身份均判定失败，不降级为跳过。全程只读，不创建或切换收藏，也不执行其他真实写操作；受影响来源仍要继续执行本文件对应专项验收。
+通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；覆盖安装后先读取设备 epoch、再写唯一 logcat marker 并执行第一次启动，以 `logcat -T` 有界读取该时间之后的日志，按包名与该包 PID 裁剪 marker 后窗口，同时保留 agent-device session 的第二次 relaunch 日志。任一窗口出现崩溃、ANR 或 RedBox，或 marker 丢失，都不能形成 `APK_SANITY`；不得清空设备全局 logcat。随后执行七条 release-safe Replay，形成正式候选独立的 `DEVICE_REPLAY_PASS`；开发态匿名 Replay 必须已在同 revision 开发包通过。缺少搜索结果、用户主题、收藏基线、页面 readiness 或 APK 身份均判定失败，不降级为跳过。全程只读，不创建或切换收藏，也不执行其他真实写操作；受影响来源仍要继续执行本文件对应专项验收。
 
 动态来源、真实账号和已授权写操作按 `tests/live/agent-live.md` 执行。普通改动只跑受影响能力的 `targeted`；集中修复、里程碑或发布前跑 `full`。场景相互独立，CF 由用户手动处理；无人处理记 `BLOCKED_BY_ENV`，不可逆结果不明确时不得重试。
 

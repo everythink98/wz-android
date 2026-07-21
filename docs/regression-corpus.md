@@ -859,7 +859,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 必须保持的行为 | 设备 ID 和完全相同的显示名继续精确匹配；AVD 名只把连续下划线/空白视为等价并且仍须唯一匹配；不能模糊选择另一台设备。 |
 | 精确失败 oracle | `src/androidSmokeGuard.test.ts` 以清单设备 `emulator-5554 / WZ Pixel API 35` 断言配置值 `WZ_Pixel_API_35` 唯一映射到同一设备；修复前返回空数组。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定纯设备匹配，`APK_SANITY` 与 `DEVICE_REPLAY_PASS` 证明 release 命令能在同一保留数据设备继续完成。 |
-| Replay 或真实验收路径 | `.env.release.local` 保持 `WZ_ANDROID_SMOKE_DEVICE=WZ_Pixel_API_35`，执行 `npm run release:android`；身份行必须记录解析后的 display name/ID，八条 Replay 全部零重试通过。 |
+| Replay 或真实验收路径 | `.env.release.local` 保持 `WZ_ANDROID_SMOKE_DEVICE=WZ_Pixel_API_35`，执行 `npm run release:android`；身份行必须记录解析后的 display name/ID，七条 release-safe Replay 全部零重试通过；开发包另按 `REG-OPS-009` 跑完整八条。 |
 | 负向验证方式 | 在隔离测试中恢复完全相等比较，AVD 名映射断言必须收到空数组；不改真实 AVD 名、不创建重复设备制造失败。 |
 | 明确不覆盖范围 | 不把连字符、任意标点或部分字符串当成同一设备；归一化后出现多个候选仍必须拒绝，也不自动启动另一台设备。 |
 
@@ -922,6 +922,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 先执行版本门禁，再在明确设备运行 `npm run test:device`；版本不满足时不得进入设备发现、录屏或 App 操作。 |
 | 负向验证方式 | 把最低版本恢复为 0.14.0，`REG-OPS-008` 必须精确收到旧值并失败。 |
 | 明确不覆盖范围 | 不自动安装或升级全局工具；未来版本若移除参数，需要单独更新兼容契约和测试。 |
+
+## `REG-OPS-009` 开发态匿名 Replay 被错误放进 Release Smoke
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-05`、`RELEASE-02` |
+| 用户症状 | 正式 APK 已构建并通过 APK sanity，但 Release Smoke 在 `anonymous-readonly.ad` 点击“展开测试工具”时失败，发布被一个正式版按设计不存在的入口阻断。 |
+| 触发条件 | `anonymous-readonly.ad` 加入 tracked Replay 后，`scripts/smoke-android.mjs` 未区分开发态旅程，继续把 `tests/device/` 的全部文件交给 Release bundle。 |
+| 根因 seam | `MORE-05` 只在 `__DEV__` 开放临时匿名，而 `runDeviceReplay` 默认文件发现与 Release Smoke 共用同一未筛选列表。 |
+| 必须保持的行为 | 明确开发包执行 `npm run test:device` 时仍跑完整八条；Release Smoke 只跑七条 release-safe Replay。不得为让 Release 通过而暴露测试工具、清 Cookie 或弱化匿名旅程断言。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 的 `REG-OPS-009` 断言默认列表包含八条，排除 `anonymous-readonly.ad` 后精确得到七条 release-safe 文件，并固定 `scripts/smoke-android.mjs` 传入该排除项。修复前 Release bundle 精确失败在 Replay 第 8 步找不到“展开测试工具”。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定文件分流；当前 revision 的开发包八条 `DEVICE_REPLAY_PASS` 固定匿名行为，Release APK 的 `APK_SANITY` 与七条 `DEVICE_REPLAY_PASS` 固定正式候选。 |
+| Replay 或真实验收路径 | 先在身份匹配的当前开发包执行完整 `npm run test:device`，再执行 `npm run release:android`；两层都必须零重试通过，且正式 APK 中不得出现测试工具。 |
+| 负向验证方式 | 从 Release Smoke 移除排除项，`REG-OPS-009` 单测必须失败；真实 Release bundle 会再次在“展开测试工具”处失败。 |
+| 明确不覆盖范围 | 不让正式 APK 支持临时匿名，不用未登录设备替代有 Cookie 的匿名屏蔽证据，也不新增第二套 Replay runner。 |
 
 ## `REG-TOPIC-001` 回复已筛选但标题仍显示主题总数
 

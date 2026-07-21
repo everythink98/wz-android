@@ -106,7 +106,7 @@ describe('Android release evidence guards', () => {
     expect(smokeScript).toContain("['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']");
     expect(smokeScript).toContain("waitFor('id=\"feed-list-ready-all\"', 60_000, runAgentDeviceCommand);");
     expect(smokeScript).toContain("console.log('APK_SANITY');");
-    expect(smokeScript).toContain('await runDeviceReplay({ apkPath, selectedDevice });');
+    expect(smokeScript).toContain("excludedReplayFileNames: ['anonymous-readonly.ad']");
     expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:press|click|fill|type|back|uninstall|reinstall)['"]/);
     expect(smokeScript).not.toContain("'--shutdown'");
     expect(smokeScript).not.toMatch(/['"]pm['"]\s*,\s*['"]clear['"]/);
@@ -262,6 +262,25 @@ describe('Android release evidence guards', () => {
     expect(multiSourceSearchReplay.match(/press id="search-result-first"/g)).toHaveLength(4);
     expect(multiSourceSearchReplay.match(/wait id="topic-detail-loaded" 60000/g)).toHaveLength(4);
     expect(multiSourceSearchReplay.match(/back --system/g)).toHaveLength(4);
+  });
+
+  it('[REG-OPS-009] keeps the development-only anonymous Replay out of release APK smoke', () => {
+    const deviceDir = path.join(rootDir, 'tests', 'device');
+    const releaseReplayNames = listReplayFiles(deviceDir, ['anonymous-readonly.ad'])
+      .map((file) => path.basename(file));
+
+    expect(releaseReplayNames).toEqual([
+      'feed-topic-return.ad',
+      'four-source-feed.ad',
+      'library-return.ad',
+      'more-readonly.ad',
+      'nodeseek-session.ad',
+      'search-multi-source.ad',
+      'search-topic-user-return.ad'
+    ]);
+    expect(readProjectFile('scripts', 'smoke-android.mjs')).toContain(
+      "excludedReplayFileNames: ['anonymous-readonly.ad']"
+    );
   });
 
   it('continues independent Replay files and reports all failures together', async () => {
