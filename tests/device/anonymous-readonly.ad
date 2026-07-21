@@ -1,0 +1,80 @@
+context platform=android
+context timeout=240000
+context retries=0
+env APP_ID=com.wz.reader
+
+open ${APP_ID} --relaunch
+wait id="feed-list-ready-all" 60000
+press id="main-tab-more"
+wait text="关于阅坛" 10000
+
+press label="展开账号中心"
+wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000
+press label="收起账号中心"
+
+press label="展开测试工具"
+wait "text=\"只影响本次运行，不删除 Cookie。重启后恢复。\"" 10000
+press label="NodeSeek"
+wait "text=\"已开启 1 项\"" 10000
+press label="linux.do"
+wait "text=\"已开启 2 项\"" 10000
+press label="小隐寺"
+wait "text=\"已开启 3 项\"" 10000
+press label="妖火"
+wait "text=\"已开启 4 项\"" 10000
+
+press id="main-tab-search"
+wait id="search-query" 10000
+press id="search-source-nodeseek"
+wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
+fill id="search-query" codex
+press id="search-submit"
+keyboard dismiss
+wait id="search-complete" 60000
+is visible id="search-result-first"
+
+press id="search-source-linuxdo"
+wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
+wait id="search-complete" 60000
+is visible id="search-result-first"
+
+press id="search-source-xiaoyinsi"
+wait "id=\"search-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000
+wait id="search-complete" 60000
+is visible id="search-result-first"
+
+press id="search-source-yaohuo"
+wait label="检测登录" 60000
+wait label="刷新页面" 10000
+
+back --system
+wait text="关于阅坛" 10000
+press id="main-tab-feed"
+wait id="feed-list-ready-all" 60000
+wait id="feed-topic-first" 10000
+
+press id="feed-source-nodeseek"
+wait "id=\"feed-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
+wait id="feed-list-ready-nodeseek" 60000
+wait id="feed-topic-first" 10000
+
+press id="feed-source-linuxdo"
+wait "id=\"feed-source-linuxdo\" label=\"linux.do，已选择\"" 10000
+wait id="feed-list-ready-linuxdo" 60000
+wait id="feed-topic-first" 10000
+
+press id="feed-source-xiaoyinsi"
+wait "id=\"feed-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000
+wait id="feed-list-ready-xiaoyinsi" 60000
+wait id="feed-topic-first" 10000
+
+press id="feed-source-yaohuo"
+wait label="检测登录" 60000
+wait label="刷新页面" 10000
+
+open ${APP_ID} --relaunch
+wait id="feed-list-ready-all" 60000
+press id="main-tab-more"
+wait text="关于阅坛" 10000
+press label="展开账号中心"
+wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000

@@ -129,6 +129,8 @@ npm run test:device
 
 `test:device` 要求可信安装为 `agent-device >= 0.19.0`，随后核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。每个 `.ad` 使用唯一 session、独立 relaunch且不自行 `close`，让 test harness 先完成录屏 stop，再执行 session cleanup；单文件内部零重试并在失败处停止。普通执行失败时外层继续其余文件并汇总为非零退出，任何录屏隔离或恢复失败都立即中止。执行前若明确设备存在 active manifest、对应 `.tmp`、工具录屏进程或 orphan scratch，流程按 `BLOCKED_BY_ENV` 停止并保留现场；正式 manifest 即使为空也按文件存在视为占用。执行后只对同时匹配本条唯一 session 与 device 的 manifest 调用 agent-device `record stop`，未知或畸形 manifest、录屏进程和 scratch 一律不终止、不删除。runner 不结束本机 daemon，不使用 wildcard 清设备文件，也不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。动态结果只断言状态、来源和可打开性，不固定主题标题或数量，也不把依赖动态对象内容长度、回复组成或权限的交互塞进固定 Replay；这类行为由 RNTL 固定、Agent Live 选择满足前置条件的真实对象核实。
 
+`tests/device/anonymous-readonly.ad` 使用开发版“临时匿名”屏蔽 credential 视图而不删除 Cookie：开始时先确认 NodeSeek 已登录；开启四站后要求 NodeSeek、linux.do、小隐寺搜索有可打开结果，“全部”与三站首页有真实首条，妖火搜索和首页都进入 App 内登录限制；最后 relaunch 并确认 NodeSeek 登录恢复。不得用设备本来未登录、清 Cookie 或只看提示文案替代这条证据。
+
 发布脚本分别校验正式 APK 与开发签名 smoke APK 后运行：
 
 ```powershell

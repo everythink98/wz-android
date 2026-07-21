@@ -165,9 +165,10 @@ describe('Android release evidence guards', () => {
     expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
   });
 
-  it('[REG-OPS-006] keeps the seven tracked Replay journeys deterministic and lets the test harness stop video', () => {
+  it('[REG-OPS-006] keeps the eight tracked Replay journeys deterministic and lets the test harness stop video', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
     const expected = [
+      'anonymous-readonly.ad',
       'feed-topic-return.ad',
       'four-source-feed.ad',
       'library-return.ad',
@@ -190,6 +191,43 @@ describe('Android release evidence guards', () => {
       expect(replay).not.toMatch(/(?:清除登录|退出登录|清空历史|取消收藏|取消关注|删除回复|提交回复|保存 Key|签到)/);
       expect(replay).not.toMatch(/^\s*(?:uninstall|reinstall|settings reset|shutdown)\b/m);
     }
+    const anonymousReadonlyReplay = readFileSync(path.join(deviceDir, 'anonymous-readonly.ad'), 'utf8');
+    expect(anonymousReadonlyReplay.match(/open \$\{APP_ID\} --relaunch/g)).toHaveLength(2);
+    expect(anonymousReadonlyReplay.match(/wait "id=\\"account-site-nodeseek\\" label=\\"NodeSeek，已登录，已选择\\"" 60000/g)).toHaveLength(2);
+    expect(anonymousReadonlyReplay).toContain('press label="展开测试工具"');
+    expect(anonymousReadonlyReplay).toContain('wait "text=\\"只影响本次运行，不删除 Cookie。重启后恢复。\\"" 10000');
+    expect(anonymousReadonlyReplay).toContain('press label="NodeSeek"');
+    expect(anonymousReadonlyReplay).toContain('wait "text=\\"已开启 1 项\\"" 10000');
+    expect(anonymousReadonlyReplay).toContain('press label="linux.do"');
+    expect(anonymousReadonlyReplay).toContain('wait "text=\\"已开启 2 项\\"" 10000');
+    expect(anonymousReadonlyReplay).toContain('press label="小隐寺"');
+    expect(anonymousReadonlyReplay).toContain('wait "text=\\"已开启 3 项\\"" 10000');
+    expect(anonymousReadonlyReplay).toContain('press label="妖火"');
+    expect(anonymousReadonlyReplay).toContain('wait "text=\\"已开启 4 项\\"" 10000');
+    expect(anonymousReadonlyReplay).toContain('press id="search-source-nodeseek"');
+    expect(anonymousReadonlyReplay).toContain('wait "id=\\"search-source-nodeseek\\" label=\\"NodeSeek，已选择\\"" 10000');
+    expect(anonymousReadonlyReplay).toContain('press id="search-source-linuxdo"');
+    expect(anonymousReadonlyReplay).toContain('wait "id=\\"search-source-linuxdo\\" label=\\"linux.do，已选择\\"" 10000');
+    expect(anonymousReadonlyReplay).toContain('press id="search-source-xiaoyinsi"');
+    expect(anonymousReadonlyReplay).toContain('wait "id=\\"search-source-xiaoyinsi\\" label=\\"小隐寺，已选择\\"" 10000');
+    expect(anonymousReadonlyReplay).toContain('press id="search-source-yaohuo"');
+    expect(anonymousReadonlyReplay).toContain('fill id="search-query" codex');
+    expect(anonymousReadonlyReplay).toContain('press id="search-submit"');
+    expect(anonymousReadonlyReplay).toContain('wait label="检测登录" 60000');
+    expect(anonymousReadonlyReplay).toContain('wait label="刷新页面" 10000');
+    expect(anonymousReadonlyReplay.match(/is visible id="search-result-first"/g)).toHaveLength(3);
+    expect(anonymousReadonlyReplay).toContain('press id="main-tab-feed"');
+    expect(anonymousReadonlyReplay).toContain('wait id="feed-list-ready-all" 60000');
+    expect(anonymousReadonlyReplay).toContain('press id="feed-source-nodeseek"');
+    expect(anonymousReadonlyReplay).toContain('wait id="feed-list-ready-nodeseek" 60000');
+    expect(anonymousReadonlyReplay).toContain('press id="feed-source-linuxdo"');
+    expect(anonymousReadonlyReplay).toContain('wait id="feed-list-ready-linuxdo" 60000');
+    expect(anonymousReadonlyReplay).toContain('press id="feed-source-xiaoyinsi"');
+    expect(anonymousReadonlyReplay).toContain('wait id="feed-list-ready-xiaoyinsi" 60000');
+    expect(anonymousReadonlyReplay).toContain('press id="feed-source-yaohuo"');
+    expect(anonymousReadonlyReplay.match(/wait id="feed-topic-first" 10000/g)).toHaveLength(4);
+    expect(anonymousReadonlyReplay.match(/wait label="检测登录" 60000/g)).toHaveLength(2);
+
     const nodeSeekReplay = readFileSync(path.join(deviceDir, 'nodeseek-session.ad'), 'utf8');
     expect(nodeSeekReplay).toContain('wait "role=\\"webview\\" label=\\"NodeSeek\\"" 15000');
     expect(nodeSeekReplay).toContain('wait "role=\\"image\\" label=\\"logo\\"" 15000');
