@@ -21,12 +21,12 @@ import {
   saveNetworkProxyState,
   testNetworkProxy,
   validateNetworkProxyProfile,
+  type NetworkProxyApplyStatus,
   type NetworkProxyProfile,
   type NetworkProxyState
 } from '../networkProxy';
 
-type ApplyStatus = 'loading' | 'disabled' | 'applying' | 'applied' | 'failed';
-type SettledApplyStatus = Extract<ApplyStatus, 'disabled' | 'applied'>;
+type SettledApplyStatus = Extract<NetworkProxyApplyStatus, 'disabled' | 'applied'>;
 const RESOLVED_VOID_PROMISE: Promise<void> = Promise.resolve();
 
 function diagnosticProxyState(state: NetworkProxyState) {
@@ -69,7 +69,7 @@ function enqueueProxyEnabledTransition(
 export function useNetworkProxyController({ notify }: { notify: (message: string) => void }) {
   const [proxyState, setProxyState] = useState<NetworkProxyState>(() => createEmptyNetworkProxyState());
   const [loaded, setLoaded] = useState(false);
-  const [applyStatus, setApplyStatus] = useState<ApplyStatus>('loading');
+  const [applyStatus, setApplyStatus] = useState<NetworkProxyApplyStatus>('loading');
   const [applyError, setApplyError] = useState('');
   const readyPromiseRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
   const proxyStateRef = useRef(proxyState);
@@ -87,7 +87,7 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
     notifyRef.current = notify;
   }, [notify]);
 
-  const setApplyState = useCallback((status: ApplyStatus, error = '') => {
+  const setApplyState = useCallback((status: NetworkProxyApplyStatus, error = '') => {
     applyStatusRef.current = status;
     applyErrorRef.current = error;
     setApplyStatus(status);
@@ -343,7 +343,7 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
         ...(result.latencyMs === undefined ? {} : { latencyMs: result.latencyMs })
       });
       finishDiagnosticTrace(trace, 'success');
-      notify(`代理测试通过 · ${result.latencyMs} ms`);
+      notify(`代理连通性测试通过 · ${result.latencyMs} ms`);
       return result;
     } catch (error) {
       finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });

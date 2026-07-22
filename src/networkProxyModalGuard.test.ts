@@ -9,12 +9,12 @@ function readSource(...parts: string[]) {
 }
 
 describe('network proxy modal guard', () => {
-  it('keeps latency testing on the status hit area without selecting the row', () => {
+  it('[REG-PROXY-005] keeps connectivity testing on the status hit area without selecting the row', () => {
     const source = readSource('src', 'screens', 'more', 'NetworkProxyModal.tsx');
 
     expect(source).toContain("const canTestLatency = !selecting && testingId !== profile.id && applyStatus !== 'applying' && pendingEnabled === null;");
     expect(source).toContain("event.stopPropagation();");
-    expect(source).toContain("`${status}${latency ? ` · Ping: ${latency}` : ' · 测试延迟'}`");
+    expect(source).toContain("`${status}${latency ? ` · 连通性: ${latency}` : ' · 连通性测试'}`");
     expect(source).toContain('const { [draftProfile.id]: _removed, ...rest } = current;');
   });
 

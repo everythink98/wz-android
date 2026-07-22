@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,3 +18,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify
+      - run: npx expo prebuild --platform android --clean --no-install
+        env:
+          NODE_ENV: production
+      - run: ./gradlew :app:testReleaseUnitTest :app:compileReleaseKotlin --no-daemon --console=plain
+        working-directory: android
+        env:
+          NODE_ENV: production

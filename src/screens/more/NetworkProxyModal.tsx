@@ -356,19 +356,19 @@ export function NetworkProxyModal({
               status = '已选择，未开启';
             }
             if (activeDisplayedEnabled) {
-              status = applyStatus === 'failed' ? '代理异常' : `已连接${latency ? `, Ping: ${latency}` : ''}`;
+              status = applyStatus === 'failed' ? '代理异常' : `已连接${latency ? `, 连通性: ${latency}` : ''}`;
             }
             if (activeApplying) {
               status = displayedEnabled ? '正在开启代理...' : '正在关闭代理...';
             }
             if (testingId === profile.id) {
-              status = '正在测试延迟...';
+              status = '正在测试连通性...';
             }
             const canTestLatency = !selecting && testingId !== profile.id && applyStatus !== 'applying' && pendingEnabled === null;
             const statusText = canTestLatency
               ? activeDisplayedEnabled
                 ? `✓ ${status}`
-                : `${status}${latency ? ` · Ping: ${latency}` : ' · 测试延迟'}`
+                : `${status}${latency ? ` · 连通性: ${latency}` : ' · 连通性测试'}`
               : status;
             return (
               <Pressable
@@ -397,7 +397,7 @@ export function NetworkProxyModal({
                   {canTestLatency ? (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="测试代理延迟"
+                      accessibilityLabel="测试代理连通性"
                       disabled={busy}
                       style={proxyStyles.statusHit}
                       onPress={(event) => {
@@ -462,7 +462,7 @@ export function NetworkProxyModal({
               </View>
               <View style={proxyStyles.fieldRow}>
                 <ProxyInput label="用户名" value={draft.username} error={visibleErrors.username} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" style={proxyStyles.fieldMain} onChangeText={(username) => setDraft((current) => ({ ...current, username }))} />
-                <ProxyInput label="密码" value={draft.password} error={visibleErrors.password} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" style={proxyStyles.fieldMain} onChangeText={(password) => setDraft((current) => ({ ...current, password }))} />
+                <ProxyInput label="密码" value={draft.password} error={visibleErrors.password} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" secureTextEntry style={proxyStyles.fieldMain} onChangeText={(password) => setDraft((current) => ({ ...current, password }))} />
               </View>
             </ScrollView>
             <View style={styles.searchFilterActions}>
@@ -483,6 +483,7 @@ function ProxyInput({
   keyboardType,
   label,
   placeholder,
+  secureTextEntry,
   style,
   styles,
   theme,
@@ -494,6 +495,7 @@ function ProxyInput({
   keyboardType?: 'number-pad';
   label: string;
   placeholder?: string;
+  secureTextEntry?: boolean;
   style?: object;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
@@ -504,12 +506,16 @@ function ProxyInput({
     <View style={[styles.stack, style]}>
       <Text style={styles.panelTitle}>{label}</Text>
       <TextInput
+        accessibilityLabel={label}
         autoCapitalize={autoCapitalize}
+        autoComplete={secureTextEntry ? 'current-password' : undefined}
         autoCorrect={false}
         keyboardType={keyboardType}
         placeholder={placeholder || label}
         placeholderTextColor={theme.muted}
+        secureTextEntry={secureTextEntry}
         style={styles.input}
+        textContentType={secureTextEntry ? 'password' : undefined}
         value={value}
         onChangeText={onChangeText}
       />

@@ -17,6 +17,7 @@ import {
   loadNetworkProxyState,
   networkProxyModuleFromReactNativeImport,
   networkProxySummary,
+  networkProxyWebViewBlockMessage,
   normalizeNetworkProxyState,
   removeNetworkProxyProfile,
   recoverNodeSeekNetwork,
@@ -125,6 +126,27 @@ describe('network proxy settings', () => {
     vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce('{broken-json');
 
     await expect(loadNetworkProxyState()).rejects.toThrow('代理配置已损坏');
+  });
+
+  it('[REG-PROXY-004] keeps WebViews blocked throughout enabled and disabled proxy transitions', () => {
+    expect(networkProxyWebViewBlockMessage({
+      applyError: '',
+      applyStatus: 'applying',
+      enabled: true,
+      loaded: true
+    })).not.toBe('');
+    expect(networkProxyWebViewBlockMessage({
+      applyError: '',
+      applyStatus: 'applying',
+      enabled: false,
+      loaded: true
+    })).not.toBe('');
+    expect(networkProxyWebViewBlockMessage({
+      applyError: '',
+      applyStatus: 'disabled',
+      enabled: false,
+      loaded: true
+    })).toBe('');
   });
 
   it('blocks enabled proxy mode when the native module is missing', async () => {

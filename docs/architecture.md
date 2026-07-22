@@ -49,7 +49,7 @@
 - 五站的首页、搜索、主题、回复和用户资料读取均已进入 managed gateway：`createSourceGateway` 组装 WebView fallback fetcher、Cookie、User-Agent、凭据 generation、妖火失效清理和按来源键控的 `discourseAuth`；Query function 只传业务参数、TanStack `AbortSignal` 和诊断 trace。
 - linux.do 与小隐寺是两个独立 adapter，共同实现 `src/discourseSourceReaders.ts` 的标准读取 port；两者组合 `discourseModel` 等无站点偏向模块，不继承彼此，也不共享 Cookie、CSRF、Cloudflare、User API Key 或缓存状态。
 - 标准 Discourse 回复、点赞、书签、编辑、删除、投票和上传先表达为 `DiscourseAction`，再由 `discourseSourceActions` 选择标准 request builder 或最小站点 override；小隐寺 Topic 无 bookmark id 的取消收藏是当前 override。`discourseActionRuntime` 按来源注册独立鉴权和 transport，Topic controller 只执行统一 action 生命周期。
-- Feed、Search、Topic UI 只消费语义筛选、权限和 action capability；标准 Discourse emoji 目录由各 adapter 独立读取后交给公共 presenter，linux.do boost、Cloudflare 验证、小隐寺 Device Code 等站点特性留在站点 presenter、鉴权或 transport 边界。
+- Feed、Search、Topic UI 只消费语义筛选、权限和 action capability；标准 Discourse emoji 目录由 Topic 通过 managed `sourceGateway.getEmojiUrls` 读取，复用代理 fetcher、站点凭据、诊断和 `AbortSignal`，各 adapter 只保留站点级目录缓存并把结果交给公共 presenter。linux.do boost、Cloudflare 验证、小隐寺 Device Code 等站点特性留在站点 presenter、鉴权或 transport 边界。
 - App controller 使用不带 `Direct` 和站点前缀的通用读取入口；妖火的 `Direct` 命名只保留在 gateway 后的来源实现。
 - `sourceGateway` 内部仍转发到 `src/forumApi.ts` 和 `src/yaohuoApi.ts`；Discourse adapter 注册集中在 `discourseSourceReaders` / `discourseSourceActions`。
 - `src/forumApi.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
@@ -74,7 +74,7 @@
 - 跨站身份、正文、时间、计数、标准权限和标准 action 状态进入公共模型；Feed、详情、回复或用户数据缺少其必需身份/正文时 adapter 必须报告解析失败，不能伪造。搜索命中缺少可靠主题作者时仍保留结果并让 UI 显示未知作者，不能把命中回复者或最后回复者冒充楼主。
 - 头像、标签、展示计数等可选公共字段允许缺失，UI 按缺失状态降级；写权限缺失必须 fail-closed，不得因为字段没返回就显示操作。
 - 站点新增但业务上重要的独有字段进入 `src/types.ts` 的 `SiteExtensionMap`，以 `siteExtension.source` 形成可穷尽的判别联合；当前 linux.do `boostCount` 与 `needsApproval` 即按此处理。它只能由对应 adapter 写入、对应 presenter/行为 adapter 消费，不能塞进公共顶层字段，也不能使用无类型 `Record<string, unknown>` 绕过边界。
-- `reactions[]` 与 `/emojis.json` 是标准 Discourse 语义：`discourseReactions` 负责 id、计数、图片 URL 和未知 id 的文字回退；linux.do 与小隐寺分别在自己的 adapter 内请求、绝对化并缓存目录，经 `discourseSourceReaders` port 交给 UI。目录和缓存不得跨站复用，linux.do boost 不进入公共 reaction 模型。
+- `reactions[]` 与 `/emojis.json` 是标准 Discourse 语义：`discourseReactions` 负责 id、计数、图片 URL 和未知 id 的文字回退；linux.do 与小隐寺的目录请求经 `sourceGateway` 和 `discourseSourceReaders` port 进入各自 adapter，由 adapter 绝对化并缓存。Topic 切站或卸载会取消旧请求，迟到结果不得落到当前站点；目录和缓存不得跨站复用，linux.do boost 不进入公共 reaction 模型。
 - 仅用于 transport 或一次请求解析、UI 与业务都不消费的原始字段不进入领域模型。
 
 ### 新 Discourse 站点接入
@@ -101,7 +101,7 @@
 - 账号中心顶部只有一个公共 `刷新账号状态`，一次刷新四个可登录来源；原三站主页、登录 / 验证、检测、清除登录、刷新网页、NodeImage、签到和 linux.do 等级入口保持不变。小隐寺已授权时显示本人主页、授权管理和底部独立的“查看等级”入口，未授权时显示 Device Code 授权。测试工具、代理、诊断、备份和外观保持独立。
 - `src/credentialVault.ts` 使用现有 SecureStore 按站点隔离原三站账号密码；`src/loginFormAdapters.ts` 只允许在这三站声明的可信登录 URL 和字段上主动填入，触发输入事件但不提交。小隐寺不保存或填入 Google / Discord 账号密码。
 - 网站 Cookie 与保存的账号密码是两套独立数据：清除网站登录不删除凭据，删除凭据也不退出当前网站登录。
-- More 页 `服务器代理` 由 `src/screens/more/NetworkProxyModal.tsx` 承载，配置 HTTP / SOCKS5 代理并可测试延迟。
+- More 页 `服务器代理` 由 `src/screens/more/NetworkProxyModal.tsx` 承载，配置 HTTP / SOCKS5 代理并执行完整 TLS、HTTPS hostname 与固定 204 HTTP 响应的连通性测试；显示耗时是整段往返时间，不是 TCP Ping。
 - `src/app/useAccountStatusController.ts` 以四个 `useQueries` 负责 `refreshAccountStatus`，并直接从各 Query 的 data/error/fetchStatus 派生账号中心 view model；不把远端身份、错误或 Loading 复制回 session state。`src/app/useBackupStatusController.ts` 只负责备份导入导出。`AppRoot` 在本机资料加载完成后静默刷新一次，手动刷新才提示结果。
 - `src/app/useAccountController.ts` 负责 NodeSeek、linux.do、妖火登录 / 验证页检测、Cookie 保存 / 清理和 linux.do 等级读取。
 - `src/app/useSessionController.ts` 只负责加载 Cookie 和会话事实；NodeSeek Cookie 加载只返回本次凭据里的 userId，不顺带读取个人资料。
@@ -115,7 +115,8 @@
 ## 服务器代理
 
 - 代理配置保存在 Android 安全存储，不进入备份 JSON。
-- 启用代理后，App 请求和 WebView 都必须等代理成功应用；代理应用失败时阻止相关网络请求，不能静默回退直连。
+- 原生 runtime 安装后立即 fail-closed；只有安全存储读取成功并完成一次完整 apply，才允许发布代理或直连。启用、切换和关闭期间，App 请求与 WebView 都保持阻止状态；即使 JS 已先把 `enabled` 更新为 false，WebView 也必须等原生 clear callback 成功后才能加载。代理应用失败时不能静默回退直连。
+- 原生 server 拥有全部 client/upstream socket，连接与 copy executor 均有固定上限；停止或 bridge 销毁时先拒绝新的 probe、取消受管 OkHttp、关闭旧 server/tunnel，再释放 worker。旧 bridge 不能停止或覆盖新 bridge 的 server/WebView 状态。
 - Android 原生代理模块由 `plugins/withNetworkProxyModule.js` 写入生成目录，并通过 `app.json` 的 plugin 列表持久化。
 - 本地开发地址 `localhost`、`127.*`、`10.0.2.2` 和 `::1` 不走代理。
 

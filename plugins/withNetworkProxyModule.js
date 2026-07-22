@@ -28,11 +28,20 @@ import java.net.SocketException
 import java.net.URI
 import java.nio.charset.Charset
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 import android.util.Log
 import android.util.Base64
 import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 
 data class NetworkProxyProfile(
@@ -43,16 +52,61 @@ data class NetworkProxyProfile(
   val password: String?
 )
 
+internal interface ProxyTlsConnection {
+  val socket: Socket
+  fun setReadTimeout(timeoutMs: Int)
+  fun enableHttpsHostnameVerification()
+  fun startHandshake()
+  fun outputStream(): OutputStream
+  fun inputStream(): InputStream
+}
+
 private data class ProxyTarget(val host: String, val port: Int)
 private const val BLOCKED_PROXY_PORT = 9
+private const val MAX_PROXY_CONNECTIONS = 16
 private const val LOG_TAG = "WzNetworkProxy"
+
+private class PlatformProxyTlsConnection(
+  private val tlsSocket: SSLSocket
+) : ProxyTlsConnection {
+  override val socket: Socket
+    get() = tlsSocket
+
+  override fun setReadTimeout(timeoutMs: Int) {
+    tlsSocket.soTimeout = timeoutMs
+  }
+
+  override fun enableHttpsHostnameVerification() {
+    val parameters = tlsSocket.sslParameters
+    parameters.endpointIdentificationAlgorithm = "HTTPS"
+    tlsSocket.sslParameters = parameters
+  }
+
+  override fun startHandshake() {
+    tlsSocket.startHandshake()
+  }
+
+  override fun outputStream(): OutputStream = tlsSocket.getOutputStream()
+
+  override fun inputStream(): InputStream = tlsSocket.getInputStream()
+}
+
+private fun createPlatformProxyTlsConnection(
+  tunnel: Socket,
+  host: String,
+  port: Int
+): ProxyTlsConnection = PlatformProxyTlsConnection(
+  (SSLSocketFactory.getDefault() as SSLSocketFactory)
+    .createSocket(tunnel, host, port, true) as SSLSocket
+)
 
 object NetworkProxyRuntime {
   private val lock = Any()
   private val selector = NetworkProxySelector()
   private val blockedProxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", BLOCKED_PROXY_PORT))
-  @Volatile private var localProxy: Proxy? = null
-  @Volatile private var connectionPool = ConnectionPool()
+  @Volatile private var localProxy: Proxy? = blockedProxy
+  private val connectionPool = ConnectionPool()
+  private val dispatcher = Dispatcher()
   private var installed = false
 
   fun install(context: Context) {
@@ -79,32 +133,34 @@ object NetworkProxyRuntime {
       Log.i(LOG_TAG, "disabled app proxy")
       null
     } else {
-      Log.i(LOG_TAG, "enabled app proxy on 127.0.0.1:" + port)
+      Log.i(LOG_TAG, "enabled app proxy")
       Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port))
     }
   }
 
   fun blockNetworkRequests() {
-    Log.w(LOG_TAG, "blocked app requests while proxy switches")
     localProxy = blockedProxy
+    dispatcher.cancelAll()
+    connectionPool.evictAll()
+    Log.i(LOG_TAG, "blocked app requests while proxy switches")
   }
 
   fun recoverNodeSeekNetwork() {
-    val previous = synchronized(lock) {
-      val current = connectionPool
-      connectionPool = ConnectionPool()
-      current
-    }
-    previous.evictAll()
-    Log.w(LOG_TAG, "recovered NodeSeek network connection pool")
+    dispatcher.cancelAll()
+    connectionPool.evictAll()
+    Log.i(LOG_TAG, "recovered managed network connections")
   }
 
   private fun applyClientState(builder: OkHttpClient.Builder) {
     builder.proxySelector(selector)
     builder.connectionPool(connectionPool)
+    builder.dispatcher(dispatcher)
   }
 
   fun currentLocalProxy(): Proxy? = localProxy
+
+  fun currentLocalProxyPort(): Int? =
+    (localProxy?.address() as? InetSocketAddress)?.port
 }
 
 class NetworkProxySelector : ProxySelector() {
@@ -123,7 +179,6 @@ class NetworkProxySelector : ProxySelector() {
     if (proxy == null) {
       return delegate?.select(uri)?.toMutableList() ?: mutableListOf(Proxy.NO_PROXY)
     }
-    Log.i(LOG_TAG, "select proxy for " + (uri?.scheme ?: "unknown") + "://" + targetHost + " via " + proxy.address())
     return mutableListOf(proxy)
   }
 
@@ -132,22 +187,49 @@ class NetworkProxySelector : ProxySelector() {
   }
 }
 
-class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
+internal class LocalNetworkProxyServer(
+  private val upstream: NetworkProxyProfile,
+  maxConnections: Int = MAX_PROXY_CONNECTIONS,
+  private val socketConnector: (Socket, String, Int) -> Unit = { socket, host, port ->
+    socket.connect(InetSocketAddress(host, port), 15_000)
+  },
+  private val tlsConnectionFactory: (Socket, String, Int) -> ProxyTlsConnection =
+    ::createPlatformProxyTlsConnection
+) {
   private val serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
-  private val executor = Executors.newCachedThreadPool()
+  private val acceptExecutor = Executors.newSingleThreadExecutor()
+  private val connectionExecutor = ThreadPoolExecutor(
+    maxConnections,
+    maxConnections,
+    0L,
+    TimeUnit.MILLISECONDS,
+    SynchronousQueue()
+  )
+  private val copyExecutor = Executors.newFixedThreadPool(maxConnections * 2)
+  private val sockets = ConcurrentHashMap.newKeySet<Socket>()
+  private val socketLock = Any()
   @Volatile private var running = true
 
   val port: Int
     get() = serverSocket.localPort
 
   fun start() {
-    Log.i(LOG_TAG, "local proxy listening on 127.0.0.1:" + port + " upstream=" + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
-    executor.execute {
+    Log.i(LOG_TAG, "local proxy started")
+    acceptExecutor.execute {
       while (running) {
         try {
-          val client = serverSocket.accept()
-          executor.execute {
-            handleClient(client)
+          val client = own(serverSocket.accept())
+          try {
+            connectionExecutor.execute {
+              handleClient(client)
+            }
+          } catch (_: RejectedExecutionException) {
+            try {
+              writeProxyError(client.getOutputStream(), 503, "Busy")
+            } catch (_: IOException) {
+            } finally {
+              closeOwned(client)
+            }
           }
         } catch (_: SocketException) {
           if (running) {
@@ -163,63 +245,115 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
   }
 
   fun stop() {
-    running = false
-    Log.i(LOG_TAG, "local proxy stopped on 127.0.0.1:" + port)
+    val ownedSockets = synchronized(socketLock) {
+      running = false
+      sockets.toList().also { sockets.clear() }
+    }
+    Log.i(LOG_TAG, "local proxy stopped")
     try {
       serverSocket.close()
     } catch (_: IOException) {
     }
-    executor.shutdownNow()
+    ownedSockets.forEach { socket ->
+      try {
+        socket.close()
+      } catch (_: IOException) {
+      }
+    }
+    acceptExecutor.shutdownNow()
+    connectionExecutor.shutdownNow()
+    copyExecutor.shutdownNow()
+  }
+
+  private fun <T : Socket> own(socket: T): T {
+    synchronized(socketLock) {
+      if (!running) {
+        socket.close()
+        throw SocketException("Proxy server stopped")
+      }
+      sockets.add(socket)
+    }
+    return socket
+  }
+
+  private fun closeOwned(socket: Socket) {
+    try {
+      socket.close()
+    } catch (_: IOException) {
+    } finally {
+      sockets.remove(socket)
+    }
+  }
+
+  private fun connectPlainOwned(host: String, port: Int): Socket {
+    val socket = own(Socket())
+    try {
+      socketConnector(socket, host, port)
+      return socket
+    } catch (error: Exception) {
+      closeOwned(socket)
+      throw error
+    }
   }
 
   private fun handleClient(client: Socket) {
-    client.use { local ->
-      try {
-        local.soTimeout = 30_000
-        val header = readHeaderBlock(local.getInputStream())
-        val requestLine = header.lineSequence().firstOrNull()?.trim().orEmpty()
-        val parts = requestLine.split(" ")
-        if (parts.size < 3) {
-          writeProxyError(local.getOutputStream(), 400, "Bad Request")
-          return
-        }
-        val method = parts[0].uppercase(Locale.US)
-        if (method == "CONNECT") {
-          val target = parseHostPort(parts[1], 443)
-          Log.i(LOG_TAG, "tunnel CONNECT " + target.host + ":" + target.port + " via " + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
-          val remote = connectToTarget(target)
-          local.getOutputStream().write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray(HEADER_CHARSET))
-          local.soTimeout = 0
-          pipeBoth(local, remote)
-          return
-        }
+    try {
+      client.use { local ->
+        try {
+          local.soTimeout = 30_000
+          val header = readHeaderBlock(local.getInputStream())
+          val requestLine = header.lineSequence().firstOrNull()?.trim().orEmpty()
+          val parts = requestLine.split(" ")
+          if (parts.size < 3) {
+            writeProxyError(local.getOutputStream(), 400, "Bad Request")
+            return
+          }
+          val method = parts[0].uppercase(Locale.US)
+          if (method == "CONNECT") {
+            val target = parseHostPort(parts[1], 443)
+            val remote = connectToTarget(target)
+            try {
+              local.getOutputStream().write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray(HEADER_CHARSET))
+              local.soTimeout = 0
+              pipeBoth(local, remote, copyExecutor)
+            } finally {
+              closeOwned(remote)
+            }
+            return
+          }
 
-        val target = targetFromHttpRequest(parts[1], header)
-        Log.i(LOG_TAG, "proxy " + method + " " + target.host + ":" + target.port + " via " + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
-        val remote = if (upstream.protocol == "http") {
-          connectPlain(upstream.host, upstream.port)
-        } else {
-          connectViaSocks5(target)
-        }
-        val outboundHeader = if (upstream.protocol == "http") {
-          headerWithHttpProxyAuthorization(header)
-        } else {
-          originHeaderForDirectRequest(header, parts, target)
-        }
-        remote.getOutputStream().write(outboundHeader.toByteArray(HEADER_CHARSET))
-        local.soTimeout = 0
-        pipeBoth(local, remote)
-      } catch (_: IOException) {
-        try {
-          writeProxyError(local.getOutputStream(), 502, "Proxy Error")
+          val target = targetFromHttpRequest(parts[1], header)
+          val remote = if (upstream.protocol == "http") {
+            connectPlainOwned(upstream.host, upstream.port)
+          } else {
+            connectViaSocks5(target)
+          }
+          try {
+            val outboundHeader = if (upstream.protocol == "http") {
+              headerWithHttpProxyAuthorization(header)
+            } else {
+              originHeaderForDirectRequest(header, parts, target)
+            }
+            remote.getOutputStream().write(outboundHeader.toByteArray(HEADER_CHARSET))
+            local.soTimeout = 0
+            pipeBoth(local, remote, copyExecutor)
+          } finally {
+            closeOwned(remote)
+          }
         } catch (_: IOException) {
-        }
-      } catch (_: IllegalArgumentException) {
-        try {
-          writeProxyError(local.getOutputStream(), 400, "Bad Request")
-        } catch (_: IOException) {
+          try {
+            writeProxyError(local.getOutputStream(), 502, "Proxy Error")
+          } catch (_: IOException) {
+          }
+        } catch (_: IllegalArgumentException) {
+          try {
+            writeProxyError(local.getOutputStream(), 400, "Bad Request")
+          } catch (_: IOException) {
+          }
         }
       }
+    } finally {
+      sockets.remove(client)
     }
   }
 
@@ -227,59 +361,68 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
     if (upstream.protocol == "http") connectViaHttpProxy(target) else connectViaSocks5(target)
 
   private fun connectViaHttpProxy(target: ProxyTarget): Socket {
-    val socket = connectPlain(upstream.host, upstream.port)
-    socket.soTimeout = 15_000
-    val builder = StringBuilder()
-    builder.append("CONNECT ").append(target.host).append(":").append(target.port).append(" HTTP/1.1\\r\\n")
-    builder.append("Host: ").append(target.host).append(":").append(target.port).append("\\r\\n")
-    httpProxyAuthorizationHeader()?.let { builder.append(it).append("\\r\\n") }
-    builder.append("Proxy-Connection: Keep-Alive\\r\\n\\r\\n")
-    socket.getOutputStream().write(builder.toString().toByteArray(HEADER_CHARSET))
-    val response = readHeaderBlock(socket.getInputStream())
-    val statusLine = response.lineSequence().firstOrNull().orEmpty()
-    if (!statusLine.contains(" 200 ")) {
-      socket.close()
-      throw IOException("HTTP proxy rejected CONNECT")
+    val socket = connectPlainOwned(upstream.host, upstream.port)
+    try {
+      socket.soTimeout = 15_000
+      val builder = StringBuilder()
+      builder.append("CONNECT ").append(target.host).append(":").append(target.port).append(" HTTP/1.1\\r\\n")
+      builder.append("Host: ").append(target.host).append(":").append(target.port).append("\\r\\n")
+      httpProxyAuthorizationHeader()?.let { builder.append(it).append("\\r\\n") }
+      builder.append("Proxy-Connection: Keep-Alive\\r\\n\\r\\n")
+      socket.getOutputStream().write(builder.toString().toByteArray(HEADER_CHARSET))
+      val response = readHeaderBlock(socket.getInputStream())
+      val statusLine = response.lineSequence().firstOrNull().orEmpty()
+      if (!statusLine.contains(" 200 ")) {
+        throw IOException("HTTP proxy rejected CONNECT")
+      }
+      socket.soTimeout = 0
+      return socket
+    } catch (error: Exception) {
+      closeOwned(socket)
+      throw error
     }
-    socket.soTimeout = 0
-    return socket
   }
 
   private fun connectViaSocks5(target: ProxyTarget): Socket {
-    val socket = connectPlain(upstream.host, upstream.port)
-    socket.soTimeout = 15_000
-    val input = socket.getInputStream()
-    val output = socket.getOutputStream()
-    val hasAuth = !upstream.username.isNullOrEmpty() || !upstream.password.isNullOrEmpty()
-    if (hasAuth) {
-      output.write(byteArrayOf(0x05, 0x02, 0x00, 0x02))
-    } else {
-      output.write(byteArrayOf(0x05, 0x01, 0x00))
+    val socket = connectPlainOwned(upstream.host, upstream.port)
+    try {
+      socket.soTimeout = 15_000
+      val input = socket.getInputStream()
+      val output = socket.getOutputStream()
+      val hasAuth = !upstream.username.isNullOrEmpty() || !upstream.password.isNullOrEmpty()
+      if (hasAuth) {
+        output.write(byteArrayOf(0x05, 0x02, 0x00, 0x02))
+      } else {
+        output.write(byteArrayOf(0x05, 0x01, 0x00))
+      }
+      output.flush()
+      val version = readByte(input)
+      val method = readByte(input)
+      if (version != 0x05) {
+        throw IOException("Invalid SOCKS5 response")
+      }
+      if (method == 0x02) {
+        sendSocks5Auth(output, input)
+      } else if (method != 0x00) {
+        throw IOException("SOCKS5 proxy rejected authentication")
+      }
+      sendSocks5Connect(output, target)
+      val replyVersion = readByte(input)
+      val replyCode = readByte(input)
+      readByte(input)
+      val addressType = readByte(input)
+      if (replyVersion != 0x05 || replyCode != 0x00) {
+        throw IOException("SOCKS5 connect failed")
+      }
+      consumeSocks5Address(input, addressType)
+      readByte(input)
+      readByte(input)
+      socket.soTimeout = 0
+      return socket
+    } catch (error: Exception) {
+      closeOwned(socket)
+      throw error
     }
-    output.flush()
-    val version = readByte(input)
-    val method = readByte(input)
-    if (version != 0x05) {
-      throw IOException("Invalid SOCKS5 response")
-    }
-    if (method == 0x02) {
-      sendSocks5Auth(output, input)
-    } else if (method != 0x00) {
-      throw IOException("SOCKS5 proxy rejected authentication")
-    }
-    sendSocks5Connect(output, target)
-    val replyVersion = readByte(input)
-    val replyCode = readByte(input)
-    readByte(input)
-    val addressType = readByte(input)
-    if (replyVersion != 0x05 || replyCode != 0x00) {
-      throw IOException("SOCKS5 connect failed")
-    }
-    consumeSocks5Address(input, addressType)
-    readByte(input)
-    readByte(input)
-    socket.soTimeout = 0
-    return socket
   }
 
   private fun sendSocks5Auth(output: OutputStream, input: InputStream) {
@@ -394,19 +537,39 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
   }
 
   fun test() {
-    val socket = connectToTarget(ProxyTarget("www.gstatic.com", 443))
-    socket.close()
+    val host = "www.gstatic.com"
+    val tunnel = connectToTarget(ProxyTarget(host, 443))
+    try {
+      verifyTlsHttpConnectivity(tunnel, host)
+    } finally {
+      closeOwned(tunnel)
+    }
+  }
+
+  private fun verifyTlsHttpConnectivity(tunnel: Socket, host: String) {
+    val connection = tlsConnectionFactory(tunnel, host, 443)
+    val tlsSocket = own(connection.socket)
+    try {
+      connection.setReadTimeout(15_000)
+      connection.enableHttpsHostnameVerification()
+      connection.startHandshake()
+      connection.outputStream().apply {
+        write(
+          ("GET /generate_204 HTTP/1.1\\r\\n"
+            + "Host: " + host + "\\r\\n"
+            + "Connection: close\\r\\n\\r\\n").toByteArray(HEADER_CHARSET)
+        )
+        flush()
+      }
+      validateProxyHealthResponse(connection.inputStream())
+    } finally {
+      closeOwned(tlsSocket)
+    }
   }
 }
 
 private val HEADER_CHARSET: Charset = Charsets.ISO_8859_1
 private val IPV4_PATTERN = Regex("^\\\\d{1,3}(\\\\.\\\\d{1,3}){3}$")
-
-private fun connectPlain(host: String, port: Int): Socket {
-  val socket = Socket()
-  socket.connect(InetSocketAddress(host, port), 15_000)
-  return socket
-}
 
 private fun readHeaderBlock(input: InputStream): String {
   val buffer = ByteArrayOutputStream()
@@ -430,6 +593,18 @@ private fun readHeaderBlock(input: InputStream): String {
     }
   }
   throw IOException("HTTP header too large")
+}
+
+internal fun validateProxyHealthResponse(input: InputStream) {
+  val statusLine = readHeaderBlock(input).lineSequence().firstOrNull().orEmpty()
+  val status = Regex("^HTTP/\\\\d(?:\\\\.\\\\d)?\\\\s+(\\\\d{3})(?:\\\\s|$)")
+    .find(statusLine)
+    ?.groupValues
+    ?.getOrNull(1)
+    ?.toIntOrNull()
+  if (status != 204) {
+    throw IOException("代理连通性验证未返回预期响应")
+  }
 }
 
 private fun readByte(input: InputStream): Int {
@@ -499,32 +674,38 @@ private fun writeProxyError(output: OutputStream, status: Int, message: String) 
   output.write(body)
 }
 
-private fun pipeBoth(left: Socket, right: Socket) {
+private fun pipeBoth(left: Socket, right: Socket, executor: ExecutorService) {
   right.use { remote ->
     val latch = CountDownLatch(2)
-    val executor = Executors.newFixedThreadPool(2)
-    executor.execute {
+    fun submitCopy(copy: () -> Unit) {
       try {
-        copySocket(left.getInputStream(), remote.getOutputStream(), remote)
-      } catch (_: Exception) {
-      } finally {
+        executor.execute {
+          try {
+            copy()
+          } finally {
+            latch.countDown()
+          }
+        }
+      } catch (_: RejectedExecutionException) {
         latch.countDown()
       }
     }
-    executor.execute {
+    submitCopy {
+      try {
+        copySocket(left.getInputStream(), remote.getOutputStream(), remote)
+      } catch (_: Exception) {
+      }
+    }
+    submitCopy {
       try {
         copySocket(remote.getInputStream(), left.getOutputStream(), left)
       } catch (_: Exception) {
-      } finally {
-        latch.countDown()
       }
     }
     try {
       latch.await()
     } catch (_: InterruptedException) {
       Thread.currentThread().interrupt()
-    } finally {
-      executor.shutdownNow()
     }
   }
 }
@@ -578,48 +759,203 @@ import com.facebook.react.bridge.ReadableMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+
+internal fun awaitWebViewProxyOperation(
+  timeoutMessage: String,
+  timeoutMs: Long = 10_000,
+  onTimeoutOrLateCompletion: () -> Unit = {},
+  onLateCompletion: () -> Unit = onTimeoutOrLateCompletion,
+  start: ((() -> Unit) -> Unit)
+) {
+  val latch = CountDownLatch(1)
+  val timedOut = AtomicBoolean(false)
+  start {
+    if (timedOut.get()) {
+      onLateCompletion()
+    }
+    latch.countDown()
+  }
+  val completed = try {
+    latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+  } catch (error: InterruptedException) {
+    timedOut.set(true)
+    onTimeoutOrLateCompletion()
+    Thread.currentThread().interrupt()
+    throw error
+  }
+  if (!completed) {
+    timedOut.set(true)
+    onTimeoutOrLateCompletion()
+    throw IllegalStateException(timeoutMessage)
+  }
+}
+
+internal class SerializedWebViewProxyOperations {
+  private val lock = ReentrantLock(true)
+
+  fun <T> run(operation: () -> T): T {
+    lock.lock()
+    return try {
+      operation()
+    } finally {
+      lock.unlock()
+    }
+  }
+}
+
+internal class InvalidatableResourceSlot<T : Any>(
+  private val releaseRejected: (T) -> Unit
+) {
+  private val lock = Any()
+  private var invalidated = false
+  private var active: T? = null
+
+  fun register(next: T): Boolean {
+    val accepted = synchronized(lock) {
+      if (invalidated) {
+        false
+      } else {
+        active = next
+        true
+      }
+    }
+    if (!accepted) {
+      releaseRejected(next)
+    }
+    return accepted
+  }
+
+  fun clear(expected: T) {
+    synchronized(lock) {
+      if (active === expected) {
+        active = null
+      }
+    }
+  }
+
+  fun invalidate(): T? = synchronized(lock) {
+    invalidated = true
+    active.also { active = null }
+  }
+}
+
+internal class OwnedProxyServerRegistry {
+  private val lock = Any()
+  private var latestOwner = 0L
+  private var activeOwner: Long? = null
+  private var server: LocalNetworkProxyServer? = null
+  private var stateGeneration = 0L
+
+  fun register(owner: Long) {
+    synchronized(lock) {
+      if (owner > latestOwner) {
+        latestOwner = owner
+      }
+    }
+  }
+
+  fun begin(owner: Long, onBegin: () -> Unit): LocalNetworkProxyServer? = synchronized(lock) {
+    check(owner == latestOwner) { "代理 bridge 已失效" }
+    val previous = server
+    activeOwner = owner
+    server = null
+    onBegin()
+    stateGeneration += 1
+    previous
+  }
+
+  fun commit(owner: Long, next: LocalNetworkProxyServer?, onCommit: () -> Unit): Boolean = synchronized(lock) {
+    if (activeOwner != owner || latestOwner != owner) {
+      return@synchronized false
+    }
+    server = next
+    onCommit()
+    stateGeneration += 1
+    true
+  }
+
+  fun release(owner: Long, onRelease: () -> Unit): LocalNetworkProxyServer? = synchronized(lock) {
+    if (activeOwner != owner) {
+      return@synchronized null
+    }
+    val previous = server
+    server = null
+    activeOwner = null
+    onRelease()
+    stateGeneration += 1
+    previous
+  }
+
+  fun requireCurrent(owner: Long) {
+    synchronized(lock) {
+      check(activeOwner == owner && latestOwner == owner) { "代理 bridge 已失效" }
+    }
+  }
+
+  fun generation(): Long = synchronized(lock) { stateGeneration }
+}
+
+internal fun restoreWebViewProxyIfStateChanged(
+  registry: OwnedProxyServerRegistry,
+  expectedGeneration: Long,
+  restore: () -> Unit
+) {
+  if (registry.generation() != expectedGeneration) {
+    restore()
+  }
+}
 
 class NetworkProxyModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
   private val worker = Executors.newSingleThreadExecutor()
+  private val owner = ownerIds.incrementAndGet()
+  private val probes = InvalidatableResourceSlot<LocalNetworkProxyServer> { probe -> probe.stop() }
+
+  init {
+    proxyServers.register(owner)
+  }
 
   override fun getName(): String = "NetworkProxyModule"
 
   @ReactMethod
   fun applyProxy(profile: ReadableMap?, promise: Promise) {
     worker.execute {
+      var transitionStarted = false
+      var nextServer: LocalNetworkProxyServer? = null
       try {
-        NetworkProxyRuntime.install(reactContext)
-        if (profile == null) {
-          replaceServer(null)
-          clearWebViewProxy()
-          promise.resolve(statusMap(true, null))
-          return@execute
-        }
-        val parsed = parseProfile(profile)
-        val nextServer = LocalNetworkProxyServer(parsed)
-        nextServer.start()
-        blockServer()
-        try {
-          applyWebViewProxy(nextServer.port)
-          replaceServer(nextServer)
-          promise.resolve(statusMap(true, nextServer.port))
-        } catch (error: Exception) {
-          nextServer.stop()
-          blockServer()
-          try {
+        val appliedPort = webViewProxyOperations.run {
+          val parsed = profile?.let { parseProfile(it) }
+          NetworkProxyRuntime.install(reactContext)
+          beginTransition()
+          transitionStarted = true
+          if (parsed == null) {
             clearWebViewProxy()
-          } catch (_: Exception) {
+            if (!commitServer(null)) {
+              throw IllegalStateException("代理 bridge 已被替换")
+            }
+            synchronizeWebViewProxyWithRuntime()
+            null
+          } else {
+            val server = LocalNetworkProxyServer(parsed)
+            nextServer = server
+            server.start()
+            applyWebViewProxy(server.port)
+            if (!commitServer(server)) {
+              throw IllegalStateException("代理 bridge 已被替换")
+            }
+            synchronizeWebViewProxyWithRuntime()
+            server.port
           }
-          promise.reject("proxy_apply_failed", error.message ?: "代理启动失败", error)
         }
+        promise.resolve(statusMap(true, appliedPort))
       } catch (error: Exception) {
-        if (profile != null) {
-          blockServer()
-          try {
-            clearWebViewProxy()
-          } catch (_: Exception) {
-          }
+        if (transitionStarted) {
+          releaseOwnedServer()
+          restoreWebViewProxyFromRuntime()
         }
+        nextServer?.stop()
         promise.reject("proxy_apply_failed", error.message ?: "代理启动失败", error)
       }
     }
@@ -630,9 +966,13 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     worker.execute {
       try {
         val probe = LocalNetworkProxyServer(parseProfile(profile))
+        if (!probes.register(probe)) {
+          throw IllegalStateException("代理 bridge 已销毁")
+        }
         try {
           probe.test()
         } finally {
+          probes.clear(probe)
           probe.stop()
         }
         promise.resolve(statusMap(true, null))
@@ -677,33 +1017,108 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
       throw UnsupportedOperationException("当前 WebView 不支持应用内代理")
     }
-    val latch = CountDownLatch(1)
-    val config = ProxyConfig.Builder()
-      .addProxyRule("http://127.0.0.1:" + port)
-      .addBypassRule("localhost")
-      .addBypassRule("*.localhost")
-      .addBypassRule("127.*")
-      .addBypassRule("10.0.2.2")
-      .addBypassRule("[::1]")
-      .bypassSimpleHostnames()
-      .build()
-    ProxyController.getInstance().setProxyOverride(config, { runnable -> runnable.run() }) {
-      latch.countDown()
-    }
-    if (!latch.await(10, TimeUnit.SECONDS)) {
-      throw IllegalStateException("WebView 代理设置超时")
+    webViewProxyOperations.run {
+      proxyServers.requireCurrent(owner)
+      awaitWebViewProxySet(port)
     }
   }
+
+  private fun awaitWebViewProxySet(port: Int) {
+    awaitWebViewProxyOperation(
+      "WebView 代理设置超时",
+      onTimeoutOrLateCompletion = ::restoreWebViewProxyFromRuntime
+    ) { complete ->
+      ProxyController.getInstance().setProxyOverride(webViewProxyConfig(port), { runnable -> runnable.run() }) {
+        complete()
+      }
+    }
+  }
+
+  private fun webViewProxyConfig(port: Int) = ProxyConfig.Builder()
+    .addProxyRule("http://127.0.0.1:" + port)
+    .addBypassRule("localhost")
+    .addBypassRule("*.localhost")
+    .addBypassRule("127.*")
+    .addBypassRule("10.0.2.2")
+    .addBypassRule("[::1]")
+    .bypassSimpleHostnames()
+    .build()
 
   private fun clearWebViewProxy() {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
       return
     }
-    val latch = CountDownLatch(1)
-    ProxyController.getInstance().clearProxyOverride({ runnable -> runnable.run() }) {
-      latch.countDown()
+    webViewProxyOperations.run {
+      proxyServers.requireCurrent(owner)
+      awaitWebViewProxyClear()
     }
-    latch.await(10, TimeUnit.SECONDS)
+  }
+
+  private fun awaitWebViewProxyClear() {
+    awaitWebViewProxyOperation(
+      "WebView 代理清除超时",
+      onTimeoutOrLateCompletion = ::restoreWebViewProxyFromRuntime
+    ) { complete ->
+      ProxyController.getInstance().clearProxyOverride({ runnable -> runnable.run() }) {
+        complete()
+      }
+    }
+  }
+
+  private fun synchronizeWebViewProxyWithRuntime() {
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+      return
+    }
+    webViewProxyOperations.run {
+      proxyServers.requireCurrent(owner)
+      val port = NetworkProxyRuntime.currentLocalProxyPort()
+      if (port == null) {
+        awaitWebViewProxyClear()
+      } else {
+        awaitWebViewProxySet(port)
+      }
+    }
+  }
+
+  private fun restoreWebViewProxyFromRuntime() {
+    try {
+      webViewProxyRestoreExecutor.execute {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+          return@execute
+        }
+        try {
+          webViewProxyOperations.run {
+            val generation = proxyServers.generation()
+            val port = NetworkProxyRuntime.currentLocalProxyPort()
+            if (port == null) {
+              awaitWebViewProxyOperation(
+                "WebView 代理恢复超时",
+                onLateCompletion = {
+                  restoreWebViewProxyIfStateChanged(proxyServers, generation, ::restoreWebViewProxyFromRuntime)
+                }
+              ) { complete ->
+                ProxyController.getInstance().clearProxyOverride({ runnable -> runnable.run() }) {
+                  complete()
+                }
+              }
+            } else {
+              awaitWebViewProxyOperation(
+                "WebView 代理恢复超时",
+                onLateCompletion = {
+                  restoreWebViewProxyIfStateChanged(proxyServers, generation, ::restoreWebViewProxyFromRuntime)
+                }
+              ) { complete ->
+                ProxyController.getInstance().setProxyOverride(webViewProxyConfig(port), { runnable -> runnable.run() }) {
+                  complete()
+                }
+              }
+            }
+          }
+        } catch (_: Exception) {
+        }
+      }
+    } catch (_: Exception) {
+    }
   }
 
   private fun statusMap(ok: Boolean, port: Int?) = Arguments.createMap().apply {
@@ -713,28 +1128,45 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     }
   }
 
-  companion object {
-    private val serverLock = Any()
-    private var server: LocalNetworkProxyServer? = null
-
-    private fun replaceServer(next: LocalNetworkProxyServer?) {
-      val previous: LocalNetworkProxyServer?
-      synchronized(serverLock) {
-        previous = server
-        server = next
-        NetworkProxyRuntime.setLocalProxyPort(next?.port)
-      }
-      previous?.stop()
-    }
-
-    private fun blockServer() {
-      val previous: LocalNetworkProxyServer?
-      synchronized(serverLock) {
-        previous = server
-        server = null
+  private fun beginTransition() {
+    val previous = webViewProxyOperations.run {
+      proxyServers.begin(owner) {
         NetworkProxyRuntime.blockNetworkRequests()
       }
-      previous?.stop()
+    }
+    previous?.stop()
+  }
+
+  private fun commitServer(next: LocalNetworkProxyServer?): Boolean = webViewProxyOperations.run {
+    proxyServers.commit(owner, next) {
+      NetworkProxyRuntime.setLocalProxyPort(next?.port)
+    }
+  }
+
+  private fun releaseOwnedServer() {
+    val previous = webViewProxyOperations.run {
+      proxyServers.release(owner) {
+        NetworkProxyRuntime.blockNetworkRequests()
+      }
+    }
+    previous?.stop()
+  }
+
+  override fun invalidate() {
+    val activeProbe = probes.invalidate()
+    worker.shutdownNow()
+    activeProbe?.stop()
+    releaseOwnedServer()
+    restoreWebViewProxyFromRuntime()
+    super.invalidate()
+  }
+
+  companion object {
+    private val ownerIds = AtomicLong()
+    private val proxyServers = OwnedProxyServerRegistry()
+    private val webViewProxyOperations = SerializedWebViewProxyOperations()
+    private val webViewProxyRestoreExecutor = Executors.newSingleThreadExecutor { runnable ->
+      Thread(runnable, "WzWebViewProxyRestore").apply { isDaemon = true }
     }
   }
 }
@@ -755,6 +1187,526 @@ class NetworkProxyPackage : ReactPackage {
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
     emptyList()
+}
+`;
+}
+
+function networkProxyRuntimeTestSource(packageName) {
+  return `package ${packageName}
+
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
+import java.net.InetAddress
+import java.net.Proxy
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class NetworkProxyRuntimeTest {
+  @Test
+  fun startsBlockedUntilPersistedProxyStateIsApplied() {
+    val proxy = NetworkProxyRuntime.currentLocalProxy()
+
+    assertNotNull("native startup must fail closed", proxy)
+    assertEquals(Proxy.Type.HTTP, proxy?.type())
+    assertEquals(9, (proxy?.address() as InetSocketAddress).port)
+  }
+
+  @Test
+  fun invalidationClaimsTheActiveProbeAndRejectsLateRegistration() {
+    val released = mutableListOf<Any>()
+    val probes = InvalidatableResourceSlot<Any> { released.add(it) }
+    val active = Any()
+    val late = Any()
+
+    assertTrue(probes.register(active))
+    assertSame(active, probes.invalidate())
+    assertFalse(probes.register(late))
+    assertEquals(listOf(late), released)
+    assertNull(probes.invalidate())
+  }
+
+  @Test
+  fun webViewProxyOperationFailsWhenItsCallbackNeverArrives() {
+    val completion = AtomicReference<(() -> Unit)?>()
+    val restoreCalls = AtomicInteger()
+    val error = assertThrows(IllegalStateException::class.java) {
+      awaitWebViewProxyOperation(
+        "WebView 代理清除超时",
+        10,
+        onTimeoutOrLateCompletion = { restoreCalls.incrementAndGet() }
+      ) { complete ->
+        completion.set(complete)
+      }
+    }
+
+    assertEquals("WebView 代理清除超时", error.message)
+    assertEquals("timeout must immediately restore the fail-closed WebView state", 1, restoreCalls.get())
+
+    completion.get()?.invoke()
+
+    assertEquals("a late platform completion must restore the current WebView state again", 2, restoreCalls.get())
+  }
+
+  @Test
+  fun interruptedWebViewWaitAlsoRestoresAfterALateCompletion() {
+    val completion = AtomicReference<(() -> Unit)?>()
+    val operationStarted = CountDownLatch(1)
+    val interrupted = AtomicBoolean(false)
+    val restoreCalls = AtomicInteger()
+    val waiter = Thread {
+      try {
+        awaitWebViewProxyOperation(
+          "WebView 代理设置被中断",
+          10_000,
+          onTimeoutOrLateCompletion = { restoreCalls.incrementAndGet() }
+        ) { complete ->
+          completion.set(complete)
+          operationStarted.countDown()
+        }
+      } catch (_: InterruptedException) {
+        interrupted.set(true)
+      }
+    }
+    waiter.start()
+    assertTrue("the WebView operation must start", operationStarted.await(2, TimeUnit.SECONDS))
+
+    waiter.interrupt()
+    waiter.join(2_000)
+
+    assertTrue("interrupting bridge teardown must release the wait", interrupted.get())
+    assertEquals("interrupt must immediately restore the current WebView state", 1, restoreCalls.get())
+
+    completion.get()?.invoke()
+
+    assertEquals("a completion after bridge teardown must restore the current state again", 2, restoreCalls.get())
+  }
+
+  @Test
+  fun serializedWebViewOperationsPreventAnOlderRestoreFromWinning() {
+    val operations = SerializedWebViewProxyOperations()
+    val runtimePort = AtomicInteger(1)
+    val webViewPort = AtomicInteger(0)
+    val oldRestoreRead = CountDownLatch(1)
+    val releaseOldRestore = CountDownLatch(1)
+    val newSyncEntered = CountDownLatch(1)
+    val executor = Executors.newFixedThreadPool(2)
+    try {
+      val oldRestore = executor.submit {
+        operations.run {
+          val oldPort = runtimePort.get()
+          oldRestoreRead.countDown()
+          releaseOldRestore.await()
+          webViewPort.set(oldPort)
+        }
+      }
+      assertTrue(oldRestoreRead.await(2, TimeUnit.SECONDS))
+      runtimePort.set(2)
+      val newSync = executor.submit {
+        operations.run {
+          newSyncEntered.countDown()
+          webViewPort.set(runtimePort.get())
+        }
+      }
+
+      assertFalse("a newer bridge must wait for the older WebView operation", newSyncEntered.await(100, TimeUnit.MILLISECONDS))
+      releaseOldRestore.countDown()
+      oldRestore.get(2, TimeUnit.SECONDS)
+      newSync.get(2, TimeUnit.SECONDS)
+
+      assertEquals("the final WebView state must match the latest runtime", 2, webViewPort.get())
+    } finally {
+      releaseOldRestore.countDown()
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun staleBridgeCannotWriteWebViewAfterTheNewBridgeHasSynchronized() {
+    val operations = SerializedWebViewProxyOperations()
+    val registry = OwnedProxyServerRegistry()
+    val webViewPort = AtomicInteger(0)
+    registry.register(1)
+    registry.begin(1) {}
+    registry.register(2)
+    registry.begin(2) {}
+    registry.commit(2, null) {}
+    operations.run {
+      registry.requireCurrent(2)
+      webViewPort.set(2)
+    }
+
+    assertThrows(IllegalStateException::class.java) {
+      operations.run {
+        registry.requireCurrent(1)
+        webViewPort.set(1)
+      }
+    }
+
+    assertEquals("a stale normal operation must not overwrite the newer WebView state", 2, webViewPort.get())
+  }
+
+  @Test
+  fun lateWebViewRecoveryRetriesOnlyAfterARealProxyStateChange() {
+    val registry = OwnedProxyServerRegistry()
+    val retryCalls = AtomicInteger()
+    val completionWithoutChange = AtomicReference<(() -> Unit)?>()
+    val stableGeneration = registry.generation()
+    assertThrows(IllegalStateException::class.java) {
+      awaitWebViewProxyOperation(
+        "WebView 代理恢复超时",
+        10,
+        onLateCompletion = {
+          restoreWebViewProxyIfStateChanged(registry, stableGeneration) { retryCalls.incrementAndGet() }
+        }
+      ) { complete ->
+        completionWithoutChange.set(complete)
+      }
+    }
+    completionWithoutChange.get()?.invoke()
+    assertEquals("a late recovery for the same state must not schedule itself again", 0, retryCalls.get())
+
+    val completionAfterChange = AtomicReference<(() -> Unit)?>()
+    val oldGeneration = registry.generation()
+    assertThrows(IllegalStateException::class.java) {
+      awaitWebViewProxyOperation(
+        "WebView 代理恢复超时",
+        10,
+        onLateCompletion = {
+          restoreWebViewProxyIfStateChanged(registry, oldGeneration) { retryCalls.incrementAndGet() }
+        }
+      ) { complete ->
+        completionAfterChange.set(complete)
+      }
+    }
+    registry.register(1)
+    registry.begin(1) {}
+    completionAfterChange.get()?.invoke()
+
+    assertEquals("a late recovery must re-read state after a genuine transition", 1, retryCalls.get())
+  }
+
+  @Test
+  fun newerBridgeRegistrationInvalidatesAnOlderCommit() {
+    val registry = OwnedProxyServerRegistry()
+    val oldServer = LocalNetworkProxyServer(NetworkProxyProfile("http", "127.0.0.1", 1, null, null))
+    try {
+      registry.register(1)
+      registry.begin(1) {}
+      registry.register(2)
+
+      assertFalse("an older bridge must not publish after a newer bridge exists", registry.commit(1, oldServer) {})
+    } finally {
+      oldServer.stop()
+    }
+  }
+
+  @Test
+  fun olderBridgeCannotReleaseTheNewerBridgeServer() {
+    val registry = OwnedProxyServerRegistry()
+    val oldServer = LocalNetworkProxyServer(NetworkProxyProfile("http", "127.0.0.1", 1, null, null))
+    val newServer = LocalNetworkProxyServer(NetworkProxyProfile("http", "127.0.0.1", 1, null, null))
+    var staleReleaseBlockedNetwork = false
+    try {
+      registry.register(1)
+      registry.begin(1) {}
+      assertTrue(registry.commit(1, oldServer) {})
+
+      registry.register(2)
+      assertThrows(IllegalStateException::class.java) {
+        registry.begin(1) {}
+      }
+      assertSame(oldServer, registry.begin(2) {})
+      assertTrue(registry.commit(2, newServer) {})
+
+      assertNull(registry.release(1) { staleReleaseBlockedNetwork = true })
+      assertFalse("a stale bridge must not alter the active runtime", staleReleaseBlockedNetwork)
+      assertSame(newServer, registry.release(2) {})
+    } finally {
+      oldServer.stop()
+      newServer.stop()
+    }
+  }
+
+  @Test
+  fun connectivityProbeRequiresTheExpectedHttpResponse() {
+    assertThrows(java.io.IOException::class.java) {
+      validateProxyHealthResponse(ByteArrayInputStream(ByteArray(0)))
+    }
+    assertThrows(java.io.IOException::class.java) {
+      validateProxyHealthResponse(ByteArrayInputStream("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\n\\r\\n".toByteArray()))
+    }
+
+    validateProxyHealthResponse(ByteArrayInputStream("HTTP/1.1 204 No Content\\r\\nContent-Length: 0\\r\\n\\r\\n".toByteArray()))
+  }
+
+  @Test
+  fun successfulConnectTunnelStillPerformsTlsHostnameAndHttpVerification() {
+    val upstreamListener = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    val upstreamExecutor = Executors.newSingleThreadExecutor()
+    val events = mutableListOf<String>()
+    val request = ByteArrayOutputStream()
+    upstreamExecutor.execute {
+      val accepted = upstreamListener.accept()
+      try {
+        val reader = accepted.getInputStream().bufferedReader()
+        while (!reader.readLine().isNullOrEmpty()) {
+        }
+        accepted.getOutputStream().apply {
+          write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray())
+          flush()
+        }
+      } finally {
+        accepted.close()
+      }
+    }
+    val probe = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null),
+      tlsConnectionFactory = { tunnel, host, port ->
+        events.add("factory:" + host + ":" + port)
+        object : ProxyTlsConnection {
+          override val socket = tunnel
+
+          override fun setReadTimeout(timeoutMs: Int) {
+            events.add("timeout:" + timeoutMs)
+          }
+
+          override fun enableHttpsHostnameVerification() {
+            events.add("hostname")
+          }
+
+          override fun startHandshake() {
+            events.add("handshake")
+          }
+
+          override fun outputStream() = request.also { events.add("output") }
+
+          override fun inputStream() = ByteArrayInputStream(
+            "HTTP/1.1 204 No Content\\r\\nContent-Length: 0\\r\\n\\r\\n".toByteArray()
+          ).also { events.add("input") }
+        }
+      }
+    )
+    try {
+      probe.test()
+
+      assertEquals(
+        listOf("factory:www.gstatic.com:443", "timeout:15000", "hostname", "handshake", "output", "input"),
+        events
+      )
+      val requestText = request.toString(Charsets.ISO_8859_1.name())
+      assertTrue(requestText.startsWith("GET /generate_204 HTTP/1.1\\r\\n"))
+      assertTrue(requestText.contains("Host: www.gstatic.com\\r\\n"))
+      assertTrue(requestText.endsWith("Connection: close\\r\\n\\r\\n"))
+    } finally {
+      probe.stop()
+      upstreamListener.close()
+      upstreamExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun stopInterruptsAnUpstreamConnectionAttempt() {
+    val connectStarted = CountDownLatch(1)
+    val observedClosed = CountDownLatch(1)
+    val probeFinished = CountDownLatch(1)
+    val probeExecutor = Executors.newSingleThreadExecutor()
+    val probe = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", 1, null, null),
+      socketConnector = { socket, _, _ ->
+        connectStarted.countDown()
+        while (!socket.isClosed) {
+          Thread.sleep(5)
+        }
+        observedClosed.countDown()
+        throw SocketException("closed by proxy stop")
+      }
+    )
+    try {
+      probeExecutor.execute {
+        try {
+          probe.test()
+        } catch (_: Exception) {
+        } finally {
+          probeFinished.countDown()
+        }
+      }
+      assertTrue("the local connector must begin", connectStarted.await(2, TimeUnit.SECONDS))
+
+      probe.stop()
+
+      assertTrue("stop must close a socket while connect is still blocked", observedClosed.await(2, TimeUnit.SECONDS))
+      assertTrue("closing the connecting socket must release the probe", probeFinished.await(2, TimeUnit.SECONDS))
+    } finally {
+      probe.stop()
+      probeExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun stopClosesAcceptedClientSockets() {
+    val server = LocalNetworkProxyServer(NetworkProxyProfile("http", "127.0.0.1", 1, null, null))
+    server.start()
+    val client = Socket("127.0.0.1", server.port)
+    try {
+      client.getOutputStream().write("G".toByteArray())
+      Thread.sleep(100)
+
+      server.stop()
+      client.soTimeout = 2_000
+      val closed = try {
+        client.getInputStream().read() == -1
+      } catch (_: SocketException) {
+        true
+      }
+
+      assertTrue("stopping the proxy must close accepted client sockets", closed)
+    } finally {
+      client.close()
+      server.stop()
+    }
+  }
+
+  @Test
+  fun stopClosesUpstreamSocketsForEstablishedTunnels() {
+    val upstreamListener = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    val upstreamExecutor = Executors.newSingleThreadExecutor()
+    val upstreamSocket = AtomicReference<Socket?>()
+    val upstreamClosed = CountDownLatch(1)
+    upstreamExecutor.execute {
+      val accepted = upstreamListener.accept()
+      upstreamSocket.set(accepted)
+      try {
+        val reader = accepted.getInputStream().bufferedReader()
+        while (!reader.readLine().isNullOrEmpty()) {
+        }
+        accepted.getOutputStream().apply {
+          write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray())
+          flush()
+        }
+        try {
+          if (reader.read() == -1) {
+            upstreamClosed.countDown()
+          }
+        } catch (_: SocketException) {
+          upstreamClosed.countDown()
+        }
+      } finally {
+        accepted.close()
+      }
+    }
+    val server = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null)
+    )
+    server.start()
+    val client = Socket("127.0.0.1", server.port)
+    try {
+      client.soTimeout = 2_000
+      client.getOutputStream().apply {
+        write("CONNECT example.invalid:443 HTTP/1.1\\r\\nHost: example.invalid:443\\r\\n\\r\\n".toByteArray())
+        flush()
+      }
+      val reader = client.getInputStream().bufferedReader()
+      assertTrue(reader.readLine().contains("200 Connection Established"))
+      while (!reader.readLine().isNullOrEmpty()) {
+      }
+
+      server.stop()
+
+      assertTrue("stopping the proxy must close its upstream tunnel socket", upstreamClosed.await(2, TimeUnit.SECONDS))
+    } finally {
+      client.close()
+      server.stop()
+      upstreamSocket.get()?.close()
+      upstreamListener.close()
+      upstreamExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun failedUpstreamHandshakeClosesSocketImmediately() {
+    val upstreamListener = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    val upstreamExecutor = Executors.newSingleThreadExecutor()
+    val upstreamClosed = CountDownLatch(1)
+    upstreamExecutor.execute {
+      val accepted = upstreamListener.accept()
+      try {
+        val reader = accepted.getInputStream().bufferedReader()
+        while (!reader.readLine().isNullOrEmpty()) {
+        }
+        accepted.getOutputStream().apply {
+          write("HTTP/1.1 200 Connection Established\\r\\n".toByteArray())
+          flush()
+        }
+        accepted.shutdownOutput()
+        try {
+          if (reader.read() == -1) {
+            upstreamClosed.countDown()
+          }
+        } catch (_: SocketException) {
+          upstreamClosed.countDown()
+        }
+      } finally {
+        accepted.close()
+      }
+    }
+    val probe = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null)
+    )
+    try {
+      assertThrows(java.io.IOException::class.java) {
+        probe.test()
+      }
+
+      assertTrue(
+        "a failed upstream handshake must release its socket without waiting for server shutdown",
+        upstreamClosed.await(2, TimeUnit.SECONDS)
+      )
+    } finally {
+      probe.stop()
+      upstreamListener.close()
+      upstreamExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun rejectsClientsBeyondTheConnectionLimit() {
+    val server = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", 1, null, null),
+      maxConnections = 1
+    )
+    server.start()
+    val first = Socket("127.0.0.1", server.port)
+    val second = Socket("127.0.0.1", server.port)
+    try {
+      first.getOutputStream().write("G".toByteArray())
+      Thread.sleep(100)
+
+      second.soTimeout = 2_000
+      val response = second.getInputStream().bufferedReader().readText()
+
+      assertTrue("connections beyond the limit must be rejected locally", response.contains("503 Busy"))
+    } finally {
+      first.close()
+      second.close()
+      server.stop()
+    }
+  }
 }
 `;
 }
@@ -792,9 +1744,28 @@ function injectWebkitDependency(contents) {
   return contents.replace(dependenciesPattern, (match) => `${match}\n    implementation("androidx.webkit:webkit:1.14.0")`);
 }
 
+function injectNetworkProxyTestSupport(contents) {
+  let next = contents;
+  if (!next.includes('testImplementation("junit:junit:4.13.2")')) {
+    const dependenciesPattern = /dependencies\s*\{/;
+    if (!dependenciesPattern.test(next)) {
+      throw new Error('无法注入代理原生测试依赖：app build.gradle 模板不匹配。');
+    }
+    next = next.replace(dependenciesPattern, (match) => `${match}\n    testImplementation("junit:junit:4.13.2")`);
+  }
+  if (!next.includes('unitTests.returnDefaultValues = true')) {
+    const androidPattern = /android\s*\{/;
+    if (!androidPattern.test(next)) {
+      throw new Error('无法配置代理原生测试：app build.gradle 模板不匹配。');
+    }
+    next = next.replace(androidPattern, (match) => `${match}\n    testOptions { unitTests.returnDefaultValues = true }`);
+  }
+  return next;
+}
+
 module.exports = function withNetworkProxyModule(config) {
   config = withAppBuildGradle(config, (config) => {
-    config.modResults.contents = injectWebkitDependency(config.modResults.contents);
+    config.modResults.contents = injectNetworkProxyTestSupport(injectWebkitDependency(config.modResults.contents));
     return config;
   });
 
@@ -815,6 +1786,16 @@ module.exports = function withNetworkProxyModule(config) {
     fs.writeFileSync(path.join(outputDir, 'NetworkProxyRuntime.kt'), networkProxyRuntimeSource(packageName));
     fs.writeFileSync(path.join(outputDir, 'NetworkProxyModule.kt'), networkProxyModuleSource(packageName));
     fs.writeFileSync(path.join(outputDir, 'NetworkProxyPackage.kt'), networkProxyPackageSource(packageName));
+    const testOutputDir = path.join(
+      config.modRequest.platformProjectRoot,
+      'app',
+      'src',
+      'test',
+      'java',
+      packagePath(packageName)
+    );
+    fs.mkdirSync(testOutputDir, { recursive: true });
+    fs.writeFileSync(path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt'), networkProxyRuntimeTestSource(packageName));
     return config;
   }]);
 

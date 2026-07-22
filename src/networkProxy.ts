@@ -22,6 +22,8 @@ export type NetworkProxyState = {
   profiles: NetworkProxyProfile[];
 };
 
+export type NetworkProxyApplyStatus = 'loading' | 'disabled' | 'applying' | 'applied' | 'failed';
+
 export type NetworkProxyStatus = {
   ok: boolean;
   port?: number;
@@ -164,6 +166,32 @@ export function networkProxySummary(state: NetworkProxyState, applyError = '') {
     return '未启用';
   }
   return `${active.protocol === 'socks5' ? 'SOCKS5' : 'HTTP'} · ${active.host}:${active.port}`;
+}
+
+export function networkProxyWebViewBlockMessage({
+  applyError,
+  applyStatus,
+  enabled,
+  loaded
+}: {
+  applyError: string;
+  applyStatus: NetworkProxyApplyStatus;
+  enabled: boolean;
+  loaded: boolean;
+}) {
+  if (!loaded) {
+    return '代理状态读取中。';
+  }
+  if (applyStatus === 'failed') {
+    return applyError || '代理状态不确定，请重新应用代理设置。';
+  }
+  if (applyStatus === 'loading' || applyStatus === 'applying') {
+    return '代理状态切换中。';
+  }
+  if (enabled && applyStatus !== 'applied') {
+    return applyError || '代理未生效。';
+  }
+  return '';
 }
 
 export function networkProxyModuleFromReactNativeImport(mod: any): NativeNetworkProxyModule | undefined {

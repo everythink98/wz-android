@@ -111,7 +111,7 @@ const operationValues = closedValues(
   'apply', 'attendance', 'bookmark', 'browser-fetch', 'categories', 'check', 'collection',
   'cookie-store-read',
   'clear', 'clear-login-only', 'delete', 'download', 'edit', 'export', 'favorite',
-  'getCategories', 'getFeed', 'getLevelProfile', 'getReplies',
+  'getCategories', 'getEmojiUrls', 'getFeed', 'getLevelProfile', 'getReplies',
   'getReply', 'getTopic', 'getUserProfile', 'guard', 'hardware-back', 'image-upload',
   'import', 'interaction', 'js-error', 'load', 'load-more', 'load-more-replies',
   'load-more-topics', 'load-stored', 'load-summary', 'mutate', 'open', 'page-state', 'parse-topic',

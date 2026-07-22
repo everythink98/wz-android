@@ -57,6 +57,7 @@ import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
 import { currentLinuxDoAccessGeneration, DEFAULT_LINUXDO_ANDROID_USER_AGENT, loadLinuxDoAccess, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
 import { createSourceGateway } from '../sources/sourceGateway';
+import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '../networkProxy';
 import type { FeedSource, Source, Topic, TopicDetail, UserProfile } from '../types';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { isTrustedNodeImageAuthMessageSource, shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
@@ -579,13 +580,12 @@ export function AppRoot() {
     upsertProxyProfile: upsertNetworkProxyProfile
   } = useNetworkProxyController({ notify });
   useEffect(() => setDefaultAvatarFetcher(networkProxyFetcher), [networkProxyFetcher]);
-  const networkProxyWebViewBlockMessage = !networkProxyLoaded
-    ? '代理状态读取中。'
-    : (networkProxyApplyStatus === 'failed'
-      ? networkProxyApplyError || '代理状态不确定，请重新应用代理设置。'
-      : networkProxyState.enabled && networkProxyApplyStatus !== 'applied'
-      ? networkProxyApplyError || '代理未生效。'
-      : '');
+  const networkProxyWebViewBlockMessage = proxyWebViewBlockMessage({
+    applyError: networkProxyApplyError,
+    applyStatus: networkProxyApplyStatus,
+    enabled: networkProxyState.enabled,
+    loaded: networkProxyLoaded
+  });
   const [networkProxyContentReady, setNetworkProxyContentReady] = useState(false);
   useEffect(() => {
     if (networkProxyContentReady || !networkProxyLoaded) {
@@ -2187,6 +2187,7 @@ export function AppRoot() {
       htmlRenderers,
       htmlRenderersProps,
       htmlTagsStyles,
+      getDiscourseEmojiUrls: sourceGateway.getEmojiUrls,
       inlineSizedImageUrls,
       topicImageDeriver,
       expandedQuotes,
@@ -2280,6 +2281,7 @@ export function AppRoot() {
     changeReplyFace,
     changeReplyFilter,
     selectedTopic,
+    sourceGateway,
     stableBookmarkOnDiscourseSite,
     stableCollectOnNodeSeekSite,
     stableDeleteReply,

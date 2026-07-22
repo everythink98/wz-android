@@ -38,7 +38,6 @@ import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForSourceError } from '../../siteSessionPrompts';
-import { getDiscourseSourceEmojiUrls } from '../../discourseSourceReaders';
 import { splitDiscourseContentHtml } from '../../discourseContent';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '../../nodeseekPolls';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '../../discourseReactions';
@@ -425,6 +424,7 @@ export const TopicScreen = memo(function TopicScreen({
   htmlRenderers,
   htmlRenderersProps,
   htmlTagsStyles,
+  getDiscourseEmojiUrls,
   expandedQuotes,
   loadedQuotedReplies,
   loadingMoreReplies,
@@ -491,6 +491,10 @@ export const TopicScreen = memo(function TopicScreen({
   htmlRenderers: HtmlRenderers;
   htmlRenderersProps: HtmlRenderersProps;
   htmlTagsStyles: HtmlTagsStyles;
+  getDiscourseEmojiUrls: (options: {
+    signal?: AbortSignal;
+    source: DiscourseSource;
+  }) => Promise<DiscourseEmojiUrlMap>;
   expandedQuotes: Record<string, boolean>;
   loadedQuotedReplies: Record<string, Reply>;
   loadingMoreReplies: boolean;
@@ -619,28 +623,26 @@ export const TopicScreen = memo(function TopicScreen({
     setPollSelections({});
   }, [item?.id, item?.source]);
   useEffect(() => {
-    let cancelled = false;
     if (!isDiscourseSource(itemSource)) {
       setDiscourseEmojiCatalog(null);
-      return () => {
-        cancelled = true;
-      };
+      return undefined;
     }
-    getDiscourseSourceEmojiUrls(itemSource)
+    const controller = new AbortController();
+    getDiscourseEmojiUrls({ source: itemSource, signal: controller.signal })
       .then((urls) => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setDiscourseEmojiCatalog({ source: itemSource, urls });
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setDiscourseEmojiCatalog(null);
         }
       });
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [itemSource, topic]);
+  }, [getDiscourseEmojiUrls, itemSource, topic]);
   const togglePollSelection = useCallback((key: string, poll: TopicPoll, optionId: string) => {
     setPollSelections((current) => {
       const selected = current[key] || [];

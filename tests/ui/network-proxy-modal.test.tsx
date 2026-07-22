@@ -115,6 +115,17 @@ describe('Network proxy modal', () => {
     expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
   });
 
+  it('[REG-PROXY-005] gives proxy passwords secure input semantics', async () => {
+    const view = await render(proxyModal());
+
+    await fireEvent.press(view.getByText('添加代理'));
+    const password = view.getByLabelText('密码');
+
+    expect(password.props.secureTextEntry).toBe(true);
+    expect(password.props.textContentType).toBe('password');
+    expect(password.props.autoComplete).toBe('current-password');
+  });
+
   it('selects and edits existing proxy profiles without losing their identity', async () => {
     const onSelectProfile = jest.fn(async (_id: string) => undefined);
     const onUpsertProfile = jest.fn(async (_profile: NetworkProxyProfile) => undefined);
@@ -152,7 +163,7 @@ describe('Network proxy modal', () => {
     });
   });
 
-  it('shows latency results and optimistically reflects proxy enable requests', async () => {
+  it('[REG-PROXY-005] shows full connectivity results and optimistically reflects proxy enable requests', async () => {
     const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
     const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));
     const proxyState = {
@@ -167,10 +178,10 @@ describe('Network proxy modal', () => {
       onTestProfile
     }));
 
-    await fireEvent.press(view.getByLabelText('测试代理延迟'));
+    await fireEvent.press(view.getByLabelText('测试代理连通性'));
     await waitFor(() => {
       expect(onTestProfile).toHaveBeenCalledWith(primaryProfile);
-      expect(view.getByText(/Ping: 42 ms/)).toBeTruthy();
+      expect(view.getByText(/连通性: 42 ms/)).toBeTruthy();
     });
 
     expect(view.getByRole('switch').props.accessibilityState.checked).toBe(false);

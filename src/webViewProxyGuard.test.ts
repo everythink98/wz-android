@@ -9,7 +9,7 @@ function readSource(...parts: string[]) {
 }
 
 describe('WebView proxy guard', () => {
-  it('blocks WebViews while an enabled proxy is not applied', () => {
+  it('routes every WebView through the shared proxy transition guard', () => {
     const appRoot = readSource('src', 'app', 'AppRoot.tsx');
     const hiddenBrowserHost = readSource('src', 'app', 'HiddenBrowserHost.tsx');
     const globalModalHost = readSource('src', 'app', 'GlobalModalHost.tsx');

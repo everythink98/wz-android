@@ -115,28 +115,64 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('NetworkingModule.setCustomClientBuilder');
     expect(plugin).toContain('fun recoverNodeSeekNetwork(promise: Promise)');
     expect(plugin).toContain('fun recoverNodeSeekNetwork()');
-    expect(plugin).toContain('connectionPool = ConnectionPool()');
+    expect(plugin).toContain('private val connectionPool = ConnectionPool()');
     expect(plugin).toContain('evictAll()');
-    expect(plugin).not.toContain('cancelAll()');
-    expect(plugin).not.toContain('builder.dispatcher');
+    expect(plugin).toContain('dispatcher.cancelAll()');
+    expect(plugin).toContain('builder.dispatcher(dispatcher)');
     expect(plugin).toContain('androidx.webkit:webkit:1.14.0');
+    expect(plugin).toContain('testImplementation("junit:junit:4.13.2")');
+    expect(plugin).toContain("fs.writeFileSync(path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt')");
   });
 
   it('keeps network proxy failures closed instead of falling back to direct network', () => {
     const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
-    const startIndex = plugin.indexOf('nextServer.start()');
-    const blockIndex = plugin.indexOf('blockServer()', startIndex);
-    const applyIndex = plugin.indexOf('applyWebViewProxy(nextServer.port)');
+    const applyFlow = plugin.slice(plugin.indexOf('fun applyProxy('), plugin.indexOf('fun testProxy('));
+    const serializedTransitionIndex = applyFlow.indexOf('val appliedPort = webViewProxyOperations.run {');
+    const blockIndex = applyFlow.indexOf('beginTransition()');
+    const startIndex = applyFlow.indexOf('server.start()');
+    const applyIndex = applyFlow.indexOf('applyWebViewProxy(server.port)');
+    const commitIndex = applyFlow.indexOf('commitServer(server)');
+    const finalSyncIndex = applyFlow.indexOf('synchronizeWebViewProxyWithRuntime()', commitIndex);
 
     expect(plugin).toContain('fun blockNetworkRequests()');
-    expect(plugin).toContain('private fun blockServer()');
-    expect(plugin).toContain('blockServer()');
+    expect(plugin).toContain('@Volatile private var localProxy: Proxy? = blockedProxy');
+    expect(plugin).toContain('internal class SerializedWebViewProxyOperations');
+    expect(plugin).toContain('private val webViewProxyOperations = SerializedWebViewProxyOperations()');
+    expect(plugin).toContain('proxyServers.requireCurrent(owner)');
+    expect(plugin).toContain('restoreWebViewProxyIfStateChanged(proxyServers, generation');
+    expect(plugin).toContain('"WebView 代理清除超时",\n      onTimeoutOrLateCompletion = ::restoreWebViewProxyFromRuntime');
     expect(plugin.match(/local\.soTimeout = 0/g)?.length).toBeGreaterThanOrEqual(2);
     expect(plugin).not.toContain('latch.await(5, TimeUnit.MINUTES)');
-    expect(startIndex).toBeGreaterThanOrEqual(0);
-    expect(blockIndex).toBeGreaterThan(startIndex);
-    expect(applyIndex).toBeGreaterThan(blockIndex);
+    expect(serializedTransitionIndex).toBeGreaterThanOrEqual(0);
+    expect(blockIndex).toBeGreaterThanOrEqual(0);
+    expect(blockIndex).toBeGreaterThan(serializedTransitionIndex);
+    expect(startIndex).toBeGreaterThan(blockIndex);
+    expect(applyIndex).toBeGreaterThan(startIndex);
+    expect(commitIndex).toBeGreaterThan(applyIndex);
+    expect(finalSyncIndex).toBeGreaterThan(commitIndex);
     expect(plugin).not.toContain('replaceServer(null)\n          try {\n            clearWebViewProxy()');
+  });
+
+  it('[REG-PROXY-004] keeps native proxy lifecycle logs free of destinations and upstream addresses', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(plugin).toContain('Log.i(LOG_TAG, "local proxy started")');
+    expect(plugin).not.toContain('select proxy for ');
+    expect(plugin).not.toContain('tunnel CONNECT ');
+    expect(plugin).not.toContain('upstream=');
+    expect(plugin).not.toContain(' via " + upstream');
+    expect(plugin).not.toContain('enabled app proxy on 127.0.0.1:');
+  });
+
+  it('[REG-PROXY-005] keeps the production connectivity probe wired through TLS, hostname and HTTP validation', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(plugin).toContain('verifyTlsHttpConnectivity(tunnel, host)');
+    expect(plugin).toContain('val connection = tlsConnectionFactory(tunnel, host, 443)');
+    expect(plugin).toContain('parameters.endpointIdentificationAlgorithm = "HTTPS"');
+    expect(plugin).toContain('tlsSocket.startHandshake()');
+    expect(plugin).toContain('GET /generate_204 HTTP/1.1');
+    expect(plugin).toContain('validateProxyHealthResponse(connection.inputStream())');
   });
 
   it('rejects invalid IPv4 literals before encoding SOCKS5 addresses', () => {

@@ -15,6 +15,7 @@ const forumMocks = vi.hoisted(() => ({
   searchTopics: vi.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }))
 }));
 const linuxDoMocks = vi.hoisted(() => ({
+  getLinuxDoEmojiUrls: vi.fn(),
   searchLinuxDoSemantic: vi.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
   searchLinuxDoTags: vi.fn(async (): Promise<DiscourseTagOption[]> => []),
   searchLinuxDoUsers: vi.fn(async (): Promise<DiscourseUserOption[]> => [])
@@ -23,6 +24,7 @@ const linuxDoLevelMocks = vi.hoisted(() => ({
   getLinuxDoLevelProfile: vi.fn()
 }));
 const xiaoyinsiMocks = vi.hoisted(() => ({
+  getXiaoyinsiEmojiUrls: vi.fn(),
   getXiaoyinsiLevelProfile: vi.fn(),
   searchXiaoyinsiTags: vi.fn(async (): Promise<DiscourseTagOption[]> => []),
   searchXiaoyinsiUsers: vi.fn(async (): Promise<DiscourseUserOption[]> => [])
@@ -59,6 +61,41 @@ describe('source gateway read contract', () => {
 
   afterEach(() => {
     setDiagnosticWriter(null);
+  });
+
+  it('[REG-TOPIC-027] routes emoji reads through managed credentials, fetcher, diagnostics, and cancellation', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const signal = new AbortController().signal;
+    const fetcher = vi.fn(async () => new Response('{}'));
+    const loadLinuxDoAccessForSource = vi.fn(async () => ({ cookieHeader: '_t=secret', userAgent: 'LinuxDo UA' }));
+    linuxDoMocks.getLinuxDoEmojiUrls.mockImplementationOnce(async (options) => {
+      await options.fetcher?.('https://linux.do/emojis.json', { signal: options.signal });
+      return { heart: 'https://linux.do/heart.png' };
+    });
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => true),
+      fetcher,
+      loadLinuxDoAccessForSource,
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+
+    await expect(gateway.getEmojiUrls({ source: 'linuxdo', signal })).resolves.toEqual({
+      heart: 'https://linux.do/heart.png'
+    });
+
+    expect(loadLinuxDoAccessForSource).toHaveBeenCalledWith('linuxdo', expect.objectContaining({
+      captureGeneration: expect.any(Function),
+      diagnosticTrace: expect.any(Object)
+    }));
+    expect(linuxDoMocks.getLinuxDoEmojiUrls).toHaveBeenCalledWith(expect.objectContaining({
+      linuxDoAccess: { cookieHeader: '_t=secret', userAgent: 'LinuxDo UA' },
+      signal
+    }));
+    expect(fetcher).toHaveBeenCalledWith('https://linux.do/emojis.json', { signal });
+    expect(lines.map((line) => JSON.parse(line).operation)).toEqual(expect.arrayContaining(['getEmojiUrls']));
   });
 
   it('records one safe partial diagnostic trace for an owned feed read', async () => {

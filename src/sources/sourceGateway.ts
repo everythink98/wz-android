@@ -27,6 +27,7 @@ import {
   type XiaoyinsiOptions
 } from '../localXiaoyinsi';
 import {
+  getDiscourseSourceEmojiUrls,
   searchDiscourseSourceTagOptions,
   searchDiscourseSourceUserOptions,
   type DiscourseReadAuth,
@@ -189,6 +190,10 @@ type ManagedGetTopicOptions = Omit<GetTopicOptions, ManagedReadKeys>;
 type ManagedGetRepliesOptions = Omit<GetRepliesOptions, ManagedReadKeys>;
 type ManagedGetReplyOptions = Omit<GetReplyOptions, ManagedReadKeys>;
 type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, ManagedReadKeys>;
+type ManagedGetEmojiUrlsOptions = Omit<
+  NonNullable<Parameters<typeof getDiscourseSourceEmojiUrls>[1]>,
+  'auth' | 'fetcher'
+> & { source: DiscourseSource };
 type ManagedTagOptionSearchOptions = Omit<DiscourseTagOptionReadOptions, 'auth' | 'fetcher'> & { source: DiscourseSource };
 type ManagedUserOptionSearchOptions = Omit<DiscourseUserOptionReadOptions, 'auth' | 'fetcher'> & { source: DiscourseSource };
 type ManagedSemanticTopicSearchOptions = Omit<
@@ -508,6 +513,13 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       return read(options.source, 'getFeed', (credentials) => getFeed({
         ...options,
         ...credentials
+      }), context);
+    },
+    getEmojiUrls({ source, ...options }: ManagedGetEmojiUrlsOptions, context?: SourceGatewayReadContext) {
+      return read(source, 'getEmojiUrls', ({ discourseAuth, fetcher }) => getDiscourseSourceEmojiUrls(source, {
+        ...options,
+        auth: discourseAuth,
+        fetcher
       }), context);
     },
     searchTopics(options: ManagedSearchTopicsOptions, context?: SourceGatewayReadContext) {

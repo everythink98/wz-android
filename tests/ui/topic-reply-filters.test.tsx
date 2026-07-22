@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '../../src/types';
@@ -106,9 +106,6 @@ jest.mock('lucide-react-native', () => {
 
 jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
 jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
-jest.mock('../../src/discourseSourceReaders', () => ({
-  getDiscourseSourceEmojiUrls: () => mockGetDiscourseSourceEmojiUrls()
-}));
 jest.mock('../../src/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
@@ -212,10 +209,10 @@ jest.mock('../../src/screens/topic/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
-    DiscourseReactionPill: ({ stat }: { stat: { id: string; label: string; value: number } }) => ReactModule.createElement(
+    DiscourseReactionPill: ({ stat }: { stat: { id: string; imageUrl?: string; label: string; value: number } }) => ReactModule.createElement(
       NativeText,
       { testID: `reaction-${stat.id}` },
-      `${stat.label} ${stat.value}`
+      `${stat.label} ${stat.value}${stat.imageUrl ? ` ${stat.imageUrl}` : ''}`
     ),
     MemoizedReplyItem: ({ reply }: { reply: Reply }) => ReactModule.createElement(
       NativeText,
@@ -298,6 +295,7 @@ function TopicFilterHarness({
   canUseYaohuoActions = false,
   filteredCommentQuery,
   expandedQuotes = {},
+  getDiscourseEmojiUrls = mockGetDiscourseSourceEmojiUrls,
   loadedQuotedReplies = {},
   loadingMoreReplies = false,
   loadingQuotedFloors = {},
@@ -326,6 +324,7 @@ function TopicFilterHarness({
   canUseYaohuoActions?: boolean;
   filteredCommentQuery?: string;
   expandedQuotes?: Record<string, boolean>;
+  getDiscourseEmojiUrls?: React.ComponentProps<typeof TopicScreen>['getDiscourseEmojiUrls'];
   loadedQuotedReplies?: Record<string, Reply>;
   loadingMoreReplies?: boolean;
   loadingQuotedFloors?: Record<string, boolean>;
@@ -386,6 +385,7 @@ function TopicFilterHarness({
         htmlRenderers={{}}
         htmlRenderersProps={{}}
         htmlTagsStyles={htmlStyles.htmlTagsStyles}
+        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
         inlineSizedImageUrls={{}}
         loadedQuotedReplies={loadedQuotedReplies}
         loadingMoreReplies={loadingMoreReplies}
@@ -659,6 +659,61 @@ describe('Topic reply filters', () => {
     );
 
     await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(2));
+  });
+
+  it('[REG-TOPIC-027] aborts the old emoji read and ignores its late result after switching sites', async () => {
+    type EmojiLoader = React.ComponentProps<typeof TopicScreen>['getDiscourseEmojiUrls'];
+    type EmojiUrls = Awaited<ReturnType<EmojiLoader>>;
+    let resolveFirst: ((urls: EmojiUrls) => void) | undefined;
+    let resolveSecond: ((urls: EmojiUrls) => void) | undefined;
+    const getDiscourseEmojiUrls = jest.fn((_request: Parameters<EmojiLoader>[0]) => (
+      new Promise<EmojiUrls>((resolve) => {
+        if (!resolveFirst) {
+          resolveFirst = resolve;
+        } else {
+          resolveSecond = resolve;
+        }
+      })
+    ));
+    const xiaoyinsiTopic: TopicDetail = {
+      ...topic,
+      source: 'xiaoyinsi',
+      reactionSummary: [{ id: 'heart', count: 1 }],
+      url: 'https://forum.xiaoyinsi.com/t/topic-1'
+    };
+    const linuxDoTopic: TopicDetail = {
+      ...xiaoyinsiTopic,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic-1'
+    };
+    const view = await render(
+      <TopicFilterHarness
+        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+        selectedTopic={xiaoyinsiTopic}
+        topicDetail={xiaoyinsiTopic}
+      />
+    );
+    await waitFor(() => expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1));
+    const firstSignal = getDiscourseEmojiUrls.mock.calls[0][0].signal;
+
+    await view.rerender(
+      <TopicFilterHarness
+        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+        selectedTopic={linuxDoTopic}
+        topicDetail={linuxDoTopic}
+      />
+    );
+    await waitFor(() => expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(2));
+    expect(firstSignal?.aborted).toBe(true);
+
+    await act(async () => { resolveSecond?.({ heart: 'https://linux.do/current-heart.png' }); });
+    await waitFor(() => {
+      expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/current-heart.png');
+    });
+
+    await act(async () => { resolveFirst?.({ heart: 'https://forum.xiaoyinsi.com/stale-heart.png' }); });
+    expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/current-heart.png');
+    expect(view.getByTestId('reaction-heart').props.children).not.toContain('stale-heart.png');
   });
 
   it.each(['linuxdo', 'yaohuo', 'xiaoyinsi'] as const)('wires %s topic polls through the source-specific writable path', async (source) => {

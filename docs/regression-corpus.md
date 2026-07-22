@@ -2285,6 +2285,51 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 让搜索或 Topic action 重新直接消费 `accountSessionViewModels`，或删除回放中的匿名提示断言，编号单测或结构守卫必须失败。 |
 | 明确不覆盖范围 | 不删除、改写或导出真实 Cookie；不保证公开搜索永远不受第三方反爬影响，只要求一次真实可打开结果并如实记录外部阻碍。 |
 
+## `REG-PROXY-004` 原生代理切换与 bridge 销毁遗留旧连接
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-01`；共享 `FEED-01`、`SEARCH-01`、`ACCOUNT-02`、`MORE-04` 网络 seam |
+| 用户症状 | App 冷启动读取代理配置前可能短暂直连；代理切换、关闭或 React Native bridge 销毁后，旧 tunnel、连通性 probe 和阻塞线程仍存活；并发连接持续创建新线程；WebView 清除回调超时仍提示关闭成功，或在关闭过渡期间提前开始加载。 |
+| 触发条件 | 原生 runtime 默认 `localProxy=null`，server 不拥有已接受/上游 socket，handler 与 tunnel executor 无总量边界，切换先发布状态再关闭旧资源，`clearProxyOverride` 的等待结果被忽略，module 没有 owner generation 与原子化 probe invalidation；JS WebView 门禁只在 `enabled=true` 时检查 `applying`。 |
+| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的 `NetworkProxyRuntime`、`LocalNetworkProxyServer`、`NetworkProxyModule`，`src/networkProxy.ts` 与 `src/app/AppRoot.tsx` 的 WebView 门禁，以及 CI 原生编译门禁。 |
+| 必须保持的行为 | 原生安装即 blocked；只有持久状态成功读取并完整 apply 后才发布代理或直连。切换顺序为阻断新请求并取消受管 OkHttp → 关闭旧 server 及全部 client/upstream socket（包括正在 connect 的 socket）→ 等待 WebView callback → 发布新状态 → 再等待一次按已发布 runtime 的 WebView 同步。JS 在 `loading`、启用或关闭的 `applying`、失败状态都阻止全部 WebView，只有已结算的直连或代理状态才放行。所有 bridge 的完整 apply transition、begin/commit/release 与 WebView 操作共用同一个串行边界，在边界内校验 owner 并读取 runtime，旧 bridge 的恢复或普通 set/clear 都不得在新 bridge 同步后覆盖状态。连接与 copy executor 有固定上限；新 bridge 注册后旧 bridge 不得提交或释放新 bridge server；`invalidate()` 必须先原子标记 probe slot 已失效并取得当前 probe，再中断 worker、关闭取得的 probe 和自己拥有的 server，期间迟到注册的 probe 必须立即关闭。WebView callback 超时或 bridge wait 被中断时立即排队按当前 runtime 恢复 fail-closed 状态，迟到恢复只有在代理 state generation 真正变化时才再次校正，不能形成无限任务链。日志不得包含目标站点或上游代理地址。 |
+| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.kt` 固定启动 blocked、停止关闭 accepted/connecting/established upstream socket、握手失败立即释放、并发上限拒绝、invalidate 取得当前 probe 并拒绝/释放迟到注册、WebView callback 超时/中断与迟到补偿、跨 bridge WebView 串行顺序、旧 bridge 普通写入门禁、恢复重试有界性，以及 bridge owner generation；`src/networkProxy.test.ts` 固定启用与关闭的完整 `applying` 期间都阻止 WebView；`src/releasePackaging.test.ts` 固定切换顺序、发布后 WebView 重同步、owner 校验、全局串行协调器、受管 OkHttp cancel/evict、原生测试生成与匿名生命周期日志。修复前启动断言为 `null`、accepted socket 读超时、connect 中 socket 不归 server 所有、关闭过渡的 WebView 门禁为空、probe 可在 invalidate 读取后迟到注册、旧 WebView restore/normal clear 可晚于新 sync 落地、迟到恢复可无限自排队、新 bridge 注册后旧 commit 仍成功，且 callback/owner helper 不存在。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：Android/JVM Kotlin 行为测试；`STATIC_PASS`：fresh Expo prebuild 与 `:app:compileReleaseKotlin`。源码字符串测试只固定生成/接线和日志隐私，不作为原生正确性的唯一证据。 |
+| Replay 或真实验收路径 | 仅在用户提供并明确授权代理时，保留 App 数据并启用已保存代理，运行内置固定目标连通性测试和正常只读来源旅程；随后关闭代理并验证直连恢复。全程不修改 Cookie、账号、SecureStore profile 或站点状态。 |
+| 负向验证方式 | 恢复初始 `null`、在 connect 后才登记 socket、使用无界 executor、关闭期间按 `enabled=false` 提前放行 WebView、忽略 clear callback 或迟到补偿、只检查 active owner 而不检查最新 bridge，或用可竞态的单一 `activeProbe` 代替 invalidatable slot，对应 Kotlin/TypeScript 测试或打包守卫必须失败。 |
+| 明确不覆盖范围 | 不提供 VPN 级全系统连接撤销，不扫描/压测外部目标，不跨 UID 验证，不改变系统代理，也不处理网络攻击或绕过安全措施。 |
+
+## `REG-PROXY-005` CONNECT 成功被误报为完整连通且密码明文输入
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-01` |
+| 用户症状 | “测试代理延迟”只建立到固定 443 目标的 TCP tunnel 就提示成功，即使 TLS、证书 hostname 或 HTTP 已失败；代理密码在输入框和 Android 可访问性树中以普通文本暴露。 |
+| 触发条件 | native `test()` 在 `connectToTarget()` 后立即关闭 socket，UI 把总耗时称为 Ping；密码 `TextInput` 未设置 secure/password 语义。 |
+| 根因 seam | 生成的 `LocalNetworkProxyServer.test()`、`src/networkProxy.ts` 的 native Promise 计时、`src/app/useNetworkProxyController.ts` 提示与 `src/screens/more/NetworkProxyModal.tsx` 输入属性。 |
+| 必须保持的行为 | CONNECT 后必须以 `HTTPS` endpoint identification 完成 TLS 握手，再请求固定 `/generate_204` 并只接受 204；显示耗时代表整段 TLS/HTTP 往返并统一称“连通性测试”。密码输入必须 `secureTextEntry`，并提供 `password` / `current-password` 语义，不新增显示密码按钮。 |
+| 精确失败 oracle | `NetworkProxyRuntimeTest.successfulConnectTunnelStillPerformsTlsHostnameAndHttpVerification` 用本机 HTTP proxy 返回 CONNECT 200，并以 mock TLS transport 固定 read timeout、HTTPS hostname verification、TLS handshake、`GET /generate_204` 和 204 响应的完整调用顺序；`connectivityProbeRequiresTheExpectedHttpResponse` 对空响应和 200 均失败、204 通过；`src/releasePackaging.test.ts` 固定生产 `SSLSocket` adapter 接线；`tests/ui/network-proxy-modal.test.tsx` 固定连通性文案和三项 password 属性。修复前 CONNECT 后立即成功，UI 字段属性均为空。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：原生 CONNECT → TLS/hostname → HTTP 请求与响应行为；`UI_PASS`：RNTL 输入与文案；`:app:compileReleaseKotlin` 与生成接线守卫固定生产 TLS adapter 接线，源码字符串不单独作为正确性证据。 |
+| Replay 或真实验收路径 | 先用无保存的哑值输入核对密码遮蔽与 Android 可访问性树不暴露明文，再取消草稿；仅在用户提供并明确授权代理时点击“连通性测试”，必须收到完整 TLS/HTTP 成功结果。验收后关闭代理且不改动已保存 profile、账号或 Cookie。 |
+| 负向验证方式 | 删除 TLS handshake、hostname algorithm、204 校验或 `secureTextEntry` 任一项，对应原生/UI 测试或编译门禁必须失败。 |
+| 明确不覆盖范围 | 不验证特定第三方代理 SLA，不访问论坛账号，不扫描、压测或绕过远端安全控制。 |
+
+## `REG-TOPIC-027` Discourse emoji 绕过统一 gateway 且切站迟到落地
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`TOPIC-03`；共享 `MORE-01` 网络 seam |
+| 用户症状 | linux.do / 小隐寺详情中的 reaction 图片目录直接读取 adapter，绕过 App 当前代理 fetcher、站点凭据、诊断和取消；快速切站时旧目录可能在新站点请求后迟到更新。 |
+| 触发条件 | `TopicScreenBody` 直接调用 `getDiscourseSourceEmojiUrls(source)`，只以局部 boolean 忽略部分结果，没有向 transport 传 `AbortSignal`。 |
+| 根因 seam | `src/screens/topic/TopicScreenBody.tsx` → `src/sources/sourceGateway.ts` → `src/discourseSourceReaders.ts` 的受管读取边界。 |
+| 必须保持的行为 | emoji 目录通过 `SourceGateway.getEmojiUrls`，复用当前 proxy fetcher、同一次站点凭据读取和诊断 trace；Topic 切站、刷新替换或卸载时 abort 旧请求，迟到成功/失败都不得覆盖当前站点目录；继续复用 `localLinuxdo` / `localXiaoyinsi` 现有站点级 emoji cache。 |
+| 精确失败 oracle | `src/sources/sourceGatewayContract.test.ts` 的 `REG-TOPIC-027` 要求同一 credential、受管 fetcher、diagnostic operation 和 signal 到达 adapter；`tests/ui/topic-reply-filters.test.tsx` 切换小隐寺 → linux.do，要求旧 signal aborted，新目录先落地后旧 Promise 再 resolve 也不能覆盖。修复前 gateway 方法不存在，Topic 直接 import adapter。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 Gateway 参数所有权；`UI_PASS` 固定 React effect 取消与可见目录隔离。 |
+| Replay 或真实验收路径 | 获得只读网络验收授权后快速切换两站含 reaction 的主题，确认图片始终来自当前站点；本轮不访问论坛，标 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复 Topic 对 adapter 的直接 import、丢弃 gateway fetcher/auth/signal、移除 cleanup abort 或取消迟到结果门禁，编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增 Query 架构，不移除站点级 emoji cache，不执行写操作，也不通过真实账号请求制造竞态。 |
+
 ## 待确认观察
 
 下表只保存本轮探索中出现过、但尚不足以认定为当前业务 bug 的线索。它们不等同于 `REG-*`，也不能据此增加猜测式 workaround。只有在身份匹配的当前 APK 上稳定复现并得到明确失败 oracle 后，才升级为回归条目和最低可靠测试。53 个失联 daemon、30 个工具录屏进程及设备录屏分片未清理已经有完整证据，归入 `REG-OPS-002`，不再作为“疑似”。
