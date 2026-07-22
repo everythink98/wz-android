@@ -329,7 +329,6 @@ export async function runDeviceReplay({
         'test', replayFile,
         '--session', replaySession,
         ...replayDeviceSelectionArgs(device),
-        '--timeout', '180000',
         '--retries', '0',
         '--fail-fast',
         '--record-video',

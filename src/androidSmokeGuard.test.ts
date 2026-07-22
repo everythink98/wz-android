@@ -45,6 +45,14 @@ describe('Android release evidence guards', () => {
     expect(parseAgentDeviceList(output)).toEqual([]);
   });
 
+  it('[REG-OPS-011] lets each Replay own its wall-clock budget', () => {
+    const runner = readProjectFile('scripts', 'run-device-replay.mjs');
+    const fourSourceFeed = readProjectFile('tests', 'device', 'four-source-feed.ad');
+
+    expect(runner).not.toContain("'--timeout', '180000'");
+    expect(fourSourceFeed).toContain('context timeout=240000');
+  });
+
   it('[REG-OPS-004] maps the configured AVD name to the booted device display name', () => {
     const devices = parseAgentDeviceList(JSON.stringify({
       success: true,

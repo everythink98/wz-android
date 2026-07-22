@@ -997,6 +997,20 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 当前开发包八条 `npm run test:device`，随后 `npm run release:android` 的七条 release-safe Replay。 |
 | 明确不覆盖范围 | 不屏蔽 stdout 中的非法内容，也不终止或替换无法证明归属的共享 daemon。 |
 
+## `REG-OPS-011` runner 覆盖 Replay 自有超时预算
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `RELEASE-02` |
+| 用户症状 | 四来源 Feed 与 Search 已拿到结果并进入最后详情，却在目标加载成功前后报整条 `TIMEOUT after 180000ms`。 |
+| 触发条件 | `.ad` 声明 240 秒预算，或长旅程实际需要超过 180 秒，而 runner 统一追加 `--timeout 180000`。 |
+| 根因 seam | `scripts/run-device-replay.mjs` 的命令行 timeout 覆盖 tracked Replay 的 `context timeout`。 |
+| 必须保持的行为 | 每条 Replay 自己声明 wall-clock budget；runner 继续固定 `retries=0`、`fail-fast`、录屏和报告器，不覆盖预算。74 步四来源 Feed 使用 240 秒。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 断言 runner 不含统一 180 秒覆盖，且 `four-source-feed.ad` 声明 240 秒。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定配置边界；开发包八条与 Release 七条 `DEVICE_REPLAY_PASS` 证明真实 wall-clock 行为。 |
+| Replay 或真实验收路径 | 在身份匹配且保留数据的指定设备上依次执行完整开发包 Replay 与 `npm run release:android`。 |
+| 明确不覆盖范围 | 不增加重试，不延长单步 selector deadline，也不把真实请求、断言或 cleanup 失败改判为通过。 |
+
 ## `REG-TOPIC-001` 回复已筛选但标题仍显示主题总数
 
 | 字段 | 内容 |

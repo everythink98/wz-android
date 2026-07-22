@@ -1,5 +1,5 @@
 context platform=android
-context timeout=180000
+context timeout=240000
 context retries=0
 env APP_ID=com.wz.reader
 
