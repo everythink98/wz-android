@@ -679,6 +679,22 @@ describe('Android direct yaohuo API', () => {
     expect(detail.authorLevelLabel).toBe('4级水面的小草');
   });
 
+  it('[REG-VERIFICATION-002] does not treat an ordinary Yaohuo discussion about access verification as a challenge page', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 访问验证实现讨论 (阅1) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
+      <div class="bbscontent"><!--listS-->
+        <p>这里讨论访问验证，“请先登录网站”只是错误提示示例，变量是 <code>window.CAPTCHA_CONFIG = {}</code>。</p>
+      <!--listE--></div>
+    `, {
+      id: '1559686',
+      url: 'https://www.yaohuo.me/bbs-1559686.html'
+    });
+
+    expect(detail.title).toBe('访问验证实现讨论');
+    expect(detail.contentHtml).toContain('CAPTCHA_CONFIG');
+  });
+
   it('does not treat yaohuo reply user ids as author levels', () => {
     const result = parseYaohuoRepliesHtml(`
       <div class="line1">[261楼][回]口乞..<a href="/bbs/userinfo.aspx?touserid=45264">孟婆烤串</a>(45264) 06-28 23:22</div>

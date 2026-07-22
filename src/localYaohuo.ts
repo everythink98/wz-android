@@ -29,16 +29,26 @@ const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, 
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
 type YaohuoClock = { year: number; month: number; day: number; nowMs: number };
 
+function hasYaohuoContentSurface(html: string) {
+  return /class=["'][^"']*\b(?:bbscontent|listdata|line1|line2)\b/i.test(html)
+    || /href=["'][^"']*(?:\/bbs-|book_view)/i.test(html);
+}
+
 export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
   const visibleText = textContentFromHtml(html);
   return /waplogin\.aspx/i.test(responseUrl)
-    || /身份失效了，请重新登录网站|请先登录网站/.test(html)
-    || /访问验证|ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG|请开启JavaScript并刷新该页/i.test(html)
-    || /请先\s+登录/.test(visibleText);
+    || isYaohuoVerificationRequiredHtml(html)
+    || (!hasYaohuoContentSurface(html) && (
+      /身份失效了，请重新登录网站|请先登录网站/.test(html)
+      || /请先\s+登录/.test(visibleText)
+    ));
 }
 
 export function isYaohuoVerificationRequiredHtml(html: string) {
-  return /访问验证|ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG|请开启JavaScript并刷新该页/i.test(html);
+  return /<title\b[^>]*>[^<]*(?:访问验证|请开启JavaScript并刷新该页)[^<]*<\/title>/i.test(html)
+    || /<script\b[^>]*(?:ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG)[^>]*>/i.test(html)
+    || /<script\b[^>]*>[\s\S]*?(?:ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG)[\s\S]*?<\/script>/i.test(html)
+    || /<(?:form|input|img|iframe|div)\b[^>]*(?:id|class|name|src)=["'][^"']*(?:captcha|Gocaptcha|ImageCaptcha)[^"']*["'][^>]*>/i.test(html);
 }
 
 function loginRequiredError(reason = 'expired') {

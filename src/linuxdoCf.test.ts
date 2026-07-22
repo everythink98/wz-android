@@ -65,8 +65,45 @@ describe('linux.do Cloudflare helpers', () => {
 
   it('detects Cloudflare challenge responses but not ordinary errors', () => {
     expect(isCloudflareChallengeResponse(new Response('ok', { status: 403, headers: { 'cf-mitigated': 'challenge' } }))).toBe(true);
-    expect(isCloudflareChallengeResponse({ status: 200, headers: new Headers(), bodyText: '<html>Just a moment cf-turnstile</html>' })).toBe(true);
+    expect(isCloudflareChallengeResponse({
+      status: 200,
+      headers: new Headers(),
+      bodyText: '<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>'
+    })).toBe(true);
     expect(isCloudflareChallengeResponse(new Response('ordinary forbidden', { status: 403 }))).toBe(false);
+  });
+
+  it('[REG-VERIFICATION-002] only inspects HTML bodies while keeping the Cloudflare header authoritative', () => {
+    const markerText = 'ordinary data mentioning cf-turnstile and challenge-platform';
+
+    expect(isCloudflareChallengeResponse({
+      status: 200,
+      headers: new Headers({ 'content-type': 'text/plain' }),
+      bodyText: markerText
+    })).toBe(false);
+    expect(isCloudflareChallengeResponse({
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/problem+json' }),
+      bodyText: JSON.stringify({ detail: markerText })
+    })).toBe(false);
+    expect(isCloudflareChallengeResponse({
+      status: 403,
+      headers: new Headers({
+        'cf-mitigated': 'challenge',
+        'content-type': 'application/json'
+      }),
+      bodyText: JSON.stringify({ detail: markerText })
+    })).toBe(true);
+    expect(isCloudflareChallengeResponse({
+      status: 200,
+      headers: new Headers(),
+      bodyText: JSON.stringify({ detail: markerText })
+    })).toBe(false);
+    expect(isCloudflareChallengeResponse({
+      status: 200,
+      headers: new Headers({ 'content-type': 'text/html' }),
+      bodyText: `<html><body><article>Discussion: ${markerText}, checking your browser, and attention required.</article></body></html>`
+    })).toBe(false);
   });
 
   it('stores linux.do access cookies and never exposes values in summaries', () => {

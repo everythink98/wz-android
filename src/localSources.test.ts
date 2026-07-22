@@ -2939,6 +2939,45 @@ describe('Android local sources', () => {
     expect(searchCalls.map((url) => url.searchParams.get('page'))).toEqual(['1', '1']);
   });
 
+  it('[REG-VERIFICATION-002] does not treat Cloudflare marker text inside Discourse JSON as a challenge', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/session/csrf.json') {
+        return json({ csrf: 'csrf-token' });
+      }
+      expect(url.pathname).toBe('/search');
+      return json({
+        grouped_search_result: { more_full_page_results: false },
+        topics: [{
+          id: 506,
+          title: 'cf-turnstile integration notes',
+          slug: 'cf-turnstile-integration-notes',
+          created_at: '2026-05-21T00:00:00.000Z',
+          bumped_at: '2026-05-21T00:00:00.000Z',
+          posts_count: 1
+        }],
+        posts: [{
+          id: 1506,
+          topic_id: 506,
+          post_number: 1,
+          username: 'author-506',
+          blurb: 'ordinary discussion about challenge-platform behavior'
+        }],
+        users: []
+      });
+    });
+
+    const result = await searchTopics({
+      source: 'linuxdo', query: 'cf-turnstile', fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
+
+    expect(result.items).toEqual([expect.objectContaining({
+      id: '506',
+      title: 'cf-turnstile integration notes'
+    })]);
+  });
+
   it('[REG-SEARCH-013] keeps linux.do reply matches without claiming the reply author is the OP', async () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
@@ -3333,7 +3372,7 @@ describe('Android local sources', () => {
       <div class="cf-turnstile"></div>
       <a class="post-title" href="/post-743015-1">NodeSeek direct detail</a>
       <div class="content-item">
-        <article class="post-content"><p>直接正文</p></article>
+        <article class="post-content"><p>直接正文讨论“正在进行安全验证”提示</p></article>
       </div>
     `));
     const webViewFetcher = vi.fn(async () => html(`
@@ -3386,6 +3425,59 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'nodeseek', id: '743016', fetcher });
 
     expect(topic.title).toBe('NodeSeek direct embedded detail');
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-VERIFICATION-002] does not send NodeSeek JSON business responses to the verification WebView', async () => {
+    const normalFetcher = vi.fn(async () => json({
+      ok: true,
+      message: 'ordinary API data mentioning cf-turnstile and challenge-platform'
+    }));
+    const webViewFetcher = vi.fn(async () => json({ ok: false, message: 'unexpected fallback' }));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const response = await fetcher('https://www.nodeseek.com/api/account/status');
+
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-VERIFICATION-002] does not treat plain Cloudflare discussion text as a NodeSeek challenge page', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <html><body><article>
+        Ordinary documentation mentioning cf-turnstile and challenge-platform.
+      </article></body></html>
+    `));
+    const webViewFetcher = vi.fn(async () => html('<html>unexpected fallback</html>'));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const response = await fetcher('https://www.nodeseek.com/help/cloudflare');
+
+    await expect(response.text()).resolves.toContain('Ordinary documentation');
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-VERIFICATION-002] does not treat Chinese verification discussion text as a NodeSeek challenge page', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <html><body><article>
+        普通文档讨论“正在进行安全验证”和“安全服务防护恶意自动程序”的提示文案。
+      </article></body></html>
+    `));
+    const webViewFetcher = vi.fn(async () => html('<html>unexpected fallback</html>'));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const response = await fetcher('https://www.nodeseek.com/help/security-copy');
+
+    await expect(response.text()).resolves.toContain('普通文档');
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 

@@ -1,5 +1,6 @@
 import { Buffer } from 'buffer';
 import type { HTMLElement } from 'node-html-parser';
+import { canContainCloudflareChallengePage, isCloudflareChallengeResponse } from './cloudflareChallenge';
 import type { Topic, TopicDetail } from './types';
 import {
   absoluteUrl,
@@ -189,13 +190,11 @@ export function isNodeSeekChallengeResponse(response: Pick<Response, 'status' | 
   if (/challenge/i.test(response.headers.get('cf-mitigated') || '')) {
     return true;
   }
-  if (/<title>\s*(?:just a moment|请稍候)/i.test(html)
-    || /正在进行安全验证|安全服务防护恶意自动程序/i.test(html)
-    || (response.status === 403 && /just a moment|cloudflare|请稍候/i.test(html))) {
-    return true;
+  if (!canContainCloudflareChallengePage(response.headers)) {
+    return false;
   }
   if (hasReadableNodeSeekHtml(html, url)) {
     return false;
   }
-  return /cf-turnstile|challenge-platform/i.test(html);
+  return isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: html });
 }

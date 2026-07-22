@@ -578,6 +578,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 在任一 `onLoadEnd`/message handler 中重新调用检测或保存，给 recovery 恢复永久 `resumed` guard，或让 NodeSeek 被动 logged-out message dispatch `login-expired`；对应编号测试必须出现点击前副作用、第二次无 source 调用或 canonical 状态污染并失败。 |
 | 明确不覆盖范围 | 不绕过 Cloudflare、不伪造 clearance、不自动重放写操作；不把 OAuth redirect 或 Device Code server poll 错当成普通 WebView readiness，也不引入新的全局任务调度器。 |
 
+## `REG-VERIFICATION-002` 业务响应关键词被误判为验证页
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`SEARCH-01`、`SEARCH-04`、`TOPIC-01`、`TOPIC-03`、`USER-01`、`ACCOUNT-02`、`ACCOUNT-04`、`WRITE-01`、`WRITE-03` |
+| 用户症状 | linux.do 搜索返回正常结果后却打开 CF 面板；面板显示已登录的普通首页，没有 challenge。用户点击“检测状态”时 WebView Cookie 已重新读取并保存，但恢复搜索再次被误判，于是仍提示“验证未生效”。NodeSeek 或妖火的 API、帖子正文出现相同关键词时也可能错误拉起验证/登录面板。 |
+| 触发条件 | linux.do/NodeSeek 的 transport 与隐藏 WebView 无条件扫描完整响应正文或页面文本中的 `cf-turnstile`、`challenge-platform` 等词；妖火把正文中的“访问验证”、`CAPTCHA_CONFIG` 或“请先登录网站”直接当作页面状态。正常 `200 application/json`、可读 HTML 或代码讨论因此取得了验证工作流执行权。 |
+| 根因 seam | 来源 transport 响应元数据与正文 → Cloudflare/访问验证分类器 → direct/WebView fallback → session recovery 与验证面板。 |
+| 必须保持的行为 | `cf-mitigated: challenge` 始终是 Cloudflare 权威信号，即使响应 MIME 异常也必须进入验证；缺少 header 时只检查 HTML challenge 的 title、表单、Turnstile/Challenge DOM 或 script。明确非 HTML、JSON Content-Type、无 Content-Type 但正文为 JSON、普通 HTML 讨论文字均不得触发 CF。NodeSeek 已识别的列表、详情、受限提示、搜索或 JSON 必须优先作为业务页面；隐藏 WebView 也先返回 JSON/可读业务 DOM。妖火只有验证页 title、captcha script/元素等结构证据才进入访问验证；可读帖子里的验证、登录文案和代码示例仍是正文。真正 challenge、用户显式检测、exact recovery 和面板关闭语义继续由既有回归保持。 |
+| 精确失败 oracle | `src/localSources.test.ts` 用合法 Discourse 搜索 JSON 固定当前设备日志中的 `200 application/json → verification_required` 误判，并固定 NodeSeek JSON/普通 HTML 不进入 WebView fallback；`src/linuxdoCf.test.ts` 固定 header 优先、只检查 HTML、无 header JSON 与普通 HTML 文本均为非 challenge；`src/nodeseekBrowserFetchScript.test.ts` 固定两站隐藏 WebView 的 JSON 和可读 NodeSeek DOM 优先；`src/yaohuoApi.test.ts` 固定普通帖子可讨论“访问验证”“请先登录网站”和 `CAPTCHA_CONFIG`。这些用例修复前分别抛出 CF、调用 fallback、回传 `challenge:true` 或抛出妖火验证错误。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：需要走真实来源 adapter、fallback 与 WebView bridge script，而不是只断言一个正则。既有 verification controller UI 测试继续固定面板与 recovery 接线。 |
+| Replay 或真实验收路径 | 在身份匹配的新 APK 中使用触发本事故的同一 linux.do 关键词：响应为正常 JSON 时直接展示结果，不打开面板；若自然收到真实 `cf-mitigated`/HTML challenge，则只打开一次面板，用户完成后原请求恢复一次。NodeSeek/妖火只读页面出现验证讨论文字时仍可读取。不得清 Cookie 或人为绕过 challenge。 |
+| 负向验证方式 | 恢复正文 `includes` 正则、让隐藏 WebView 先扫描 challenge 词再识别 JSON/业务 DOM、删除 NodeSeek 可读页面优先级或让妖火重新扫描全部正文；对应编号测试必须再次出现 CF error、WebView fallback、`challenge:true` 或妖火验证错误。 |
+| 明确不覆盖范围 | 不绕过或代做任何 challenge，不把 Cookie 存在当作验证成功，不改变 `REG-VERIFICATION-001` 的用户检测提交边界，也不保证第三方站点未来 HTML 结构永不变化；未知响应仍按普通来源错误处理，不能猜成验证成功。 |
+
 ## `REG-ACCOUNT-001` 身份读取失败覆盖已确认账号状态
 
 | 字段 | 内容 |

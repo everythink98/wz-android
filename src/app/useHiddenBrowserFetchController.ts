@@ -6,20 +6,18 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
 (() => {
   const requestId = __NODESEEK_BROWSER_FETCH_ID__;
   const bridgeMessageLimit = 900000;
-  const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;
+  const challengeTitlePattern = /^\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在进行安全验证|请完成验证)[.!…\s]*$/i;
+  const challengeHeadingPattern = challengeTitlePattern;
   const pageText = (limit = 12000) => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim().slice(0, limit);
   const jsonText = () => {
     const text = pageText();
     return /^\\s*[{[]/.test(text) ? text : "";
   };
   const isChallengePage = () => {
-    const challengeText = [document.title || "", pageText(3000)].join(" ");
-    return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
-  };
-  const isInteractiveChallengePage = () => {
-    const challengeText = [document.title || "", pageText(3000)].join(" ");
-    return Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response']"))
-      || /cf-turnstile|attention required|verify you are human|请完成验证|正在进行安全验证/i.test(challengeText);
+    const hasChallengeElement = Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], #cf-challenge-running, #challenge-running, #challenge-stage, form#challenge-form, form[action*='/cdn-cgi/challenge'], iframe[src*='challenges.cloudflare.com'], script[src*='challenge-platform'], script[src*='/cdn-cgi/challenge']"));
+    const hasChallengeHeading = Array.from(document.querySelectorAll("h1, h2")).some((heading) => challengeHeadingPattern.test((heading.textContent || "").trim()));
+    const hasChallengeConfig = Array.from(document.scripts || []).some((script) => /window\._cf_chl_opt|__cf_chl|cf_chl_/i.test(script.textContent || ""));
+    return challengeTitlePattern.test(document.title || "") || hasChallengeElement || hasChallengeHeading || hasChallengeConfig;
   };
   const restrictedNoticePattern = new RegExp(${JSON.stringify(ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE)}, "i");
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
@@ -137,6 +135,14 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       return !(input.getAttribute("value") || "").trim() || !labelText;
     });
   };
+  const hasReadablePage = () => Boolean(
+    jsonText()
+    || embeddedPostDataHtml()
+    || hasReadableContent()
+    || hasRestrictedNotice()
+    || hasSearchPageContent()
+    || hasNodeSeekSearchResultLinks()
+  );
   const postBridgeMessage = (payload) => {
     const message = JSON.stringify(payload);
     if (message.length <= bridgeMessageLimit) {
@@ -170,7 +176,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     } catch {}
   };
   const postResult = () => {
-    const challenge = isChallengePage();
+    const challenge = !hasReadablePage() && isChallengePage();
     const json = jsonText();
     const compactHtml = challenge ? "" : embeddedPostDataHtml();
     postBridgeMessage({
@@ -189,19 +195,19 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
-    if (isInteractiveChallengePage()) {
+    if (jsonText()) {
       postResult();
       return;
     }
-    if (!isChallengePage() && jsonText()) {
+    if (embeddedPostDataHtml()) {
       postResult();
       return;
     }
-    if (!isChallengePage() && embeddedPostDataHtml()) {
+    if ((hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent() || hasNodeSeekSearchResultLinks()) && !hasPendingVotePanel()) {
       postResult();
       return;
     }
-    if (!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent() || hasNodeSeekSearchResultLinks()) && !hasPendingVotePanel()) {
+    if (isChallengePage()) {
       postResult();
       return;
     }
@@ -224,20 +230,18 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
 (() => {
   const requestId = __LINUXDO_BROWSER_FETCH_ID__;
   const bridgeMessageLimit = 900000;
-  const challengePattern = /just a moment|checking your browser|cf-browser-verification|challenge-running|challenge-platform|cf-turnstile|cf_chl_|attention required|enable javascript and cookies|请稍候|正在检查/i;
+  const challengeTitlePattern = /^\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在检查|正在进行安全验证|请完成验证)[.!…\s]*$/i;
+  const challengeHeadingPattern = challengeTitlePattern;
   const pageText = (limit) => {
     const text = (document.body?.innerText || document.documentElement?.innerText || "").trim();
     return typeof limit === "number" ? text.slice(0, limit) : text;
   };
   const pageHtml = () => document.documentElement ? document.documentElement.outerHTML : "";
   const isChallengePage = () => {
-    const challengeText = [document.title || "", pageText(3000)].join(" ");
-    return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
-  };
-  const isInteractiveChallengePage = () => {
-    const challengeText = [document.title || "", pageText(3000)].join(" ");
-    return Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response']"))
-      || /cf-turnstile|attention required|verify you are human|请完成验证|正在进行安全验证/i.test(challengeText);
+    const hasChallengeElement = Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], #cf-challenge-running, #challenge-running, #challenge-stage, form#challenge-form, form[action*='/cdn-cgi/challenge'], iframe[src*='challenges.cloudflare.com'], script[src*='challenge-platform'], script[src*='/cdn-cgi/challenge']"));
+    const hasChallengeHeading = Array.from(document.querySelectorAll("h1, h2")).some((heading) => challengeHeadingPattern.test((heading.textContent || "").trim()));
+    const hasChallengeConfig = Array.from(document.scripts || []).some((script) => /window\._cf_chl_opt|__cf_chl|cf_chl_/i.test(script.textContent || ""));
+    return challengeTitlePattern.test(document.title || "") || hasChallengeElement || hasChallengeHeading || hasChallengeConfig;
   };
   const jsonText = () => {
     const text = pageText();
@@ -254,6 +258,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
         return /linux\\.do\\/t\\//i.test(href);
       }
     });
+  const hasReadablePage = () => Boolean(jsonText() || hasLinuxDoSearchResultLinks());
   const postBridgeMessage = (payload) => {
     const message = JSON.stringify(payload);
     if (message.length <= bridgeMessageLimit) {
@@ -274,7 +279,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
   };
   const postResult = () => {
     const json = jsonText();
-    const challenge = isChallengePage() || isInteractiveChallengePage();
+    const challenge = !hasReadablePage() && isChallengePage();
     postBridgeMessage({
       type: 'linuxdo-browser-fetch',
       id: requestId,
@@ -288,7 +293,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 8000;
   const waitForReadablePage = () => {
-    if (isInteractiveChallengePage() || (!isChallengePage() && (jsonText() || hasLinuxDoSearchResultLinks())) || Date.now() >= deadline) {
+    if (hasReadablePage() || isChallengePage() || Date.now() >= deadline) {
       postResult();
       return;
     }

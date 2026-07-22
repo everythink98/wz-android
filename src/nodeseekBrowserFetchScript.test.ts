@@ -5,6 +5,10 @@ function runNodeSeekBrowserFetchScript(url: string, html: string) {
   window.history.pushState(null, '', url);
   document.title = '';
   document.body.innerHTML = html;
+  Object.defineProperty(document.body, 'innerText', {
+    configurable: true,
+    value: document.body.textContent ?? ''
+  });
   const postMessage = vi.fn();
   Object.defineProperty(window, 'ReactNativeWebView', {
     configurable: true,
@@ -18,10 +22,14 @@ function runNodeSeekBrowserFetchScript(url: string, html: string) {
   return { postMessage, stop };
 }
 
-function runLinuxDoBrowserFetchScript(url: string, html: string) {
+function runLinuxDoBrowserFetchScript(url: string, html: string, innerText?: string) {
   window.history.pushState(null, '', url);
   document.title = '';
   document.body.innerHTML = html;
+  Object.defineProperty(document.body, 'innerText', {
+    configurable: true,
+    value: innerText ?? document.body.textContent ?? ''
+  });
   const postMessage = vi.fn();
   Object.defineProperty(window, 'ReactNativeWebView', {
     configurable: true,
@@ -35,12 +43,7 @@ function runLinuxDoBrowserFetchScript(url: string, html: string) {
 }
 
 function runLinuxDoBrowserFetchJson(url: string, body: string) {
-  document.body.innerHTML = '<pre></pre>';
-  Object.defineProperty(document.body, 'innerText', {
-    configurable: true,
-    value: body
-  });
-  return runLinuxDoBrowserFetchScript(url, document.body.innerHTML);
+  return runLinuxDoBrowserFetchScript(url, '<pre></pre>', body);
 }
 
 describe('hidden browser fetch scripts', () => {
@@ -200,6 +203,40 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
+  it('[REG-VERIFICATION-002] keeps Cloudflare marker text inside NodeSeek browser-fetched JSON as data', () => {
+    const body = JSON.stringify({ message: 'ordinary cf-turnstile challenge-platform data' });
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/api/account/status', `<pre>${body}</pre>`);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'nodeseek-browser-fetch',
+      id: 7,
+      challenge: false,
+      html: body
+    });
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it('[REG-VERIFICATION-002] prefers readable NodeSeek content over injected challenge-platform markup', () => {
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777280-1', `
+      <main>
+        <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+        <article class="post-content"><p>正常正文讨论 cf-turnstile</p></article>
+      </main>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'nodeseek-browser-fetch',
+      id: 7,
+      challenge: false
+    });
+    expect(payload.html).toContain('正常正文');
+    expect(stop).toHaveBeenCalled();
+  });
+
   it('returns the real NodeSeek private-post notice without waiting for timeout', () => {
     const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777282-1', `
       <section id="nsk-frame">
@@ -331,9 +368,30 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
-  it('does not scan full innerHTML while polling challenge pages', () => {
-    expect(NODESEEK_BROWSER_FETCH_SCRIPT).not.toContain('innerHTML');
-    expect(NODESEEK_BROWSER_FETCH_SCRIPT).toContain('pageText(3000)');
+  it('[REG-VERIFICATION-002] does not turn marker text on an incomplete NodeSeek page into a challenge', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=cf-turnstile', `
+        <main>
+          <form action="/search"><input name="q" value="cf-turnstile" /></form>
+          <p>普通页面文字提到 cf-turnstile 和 challenge-platform。</p>
+        </main>
+      `);
+
+      vi.advanceTimersByTime(15000);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+      expect(payload).toMatchObject({
+        type: 'nodeseek-browser-fetch',
+        id: 7,
+        challenge: false,
+        error: 'NodeSeek 搜索页结果没有加载完成，请重试'
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it('does not send linux.do challenge page HTML through the bridge', () => {
@@ -366,6 +424,43 @@ describe('hidden browser fetch scripts', () => {
       challenge: false,
       body
     });
+  });
+
+  it('[REG-VERIFICATION-002] keeps Cloudflare marker text inside linux.do browser-fetched JSON as data', () => {
+    const body = JSON.stringify({ items: ['ordinary cf-turnstile challenge-platform data'] });
+    const { postMessage } = runLinuxDoBrowserFetchJson('/search.json', body);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'linuxdo-browser-fetch',
+      id: 9,
+      challenge: false,
+      body
+    });
+  });
+
+  it('[REG-VERIFICATION-002] does not turn marker text on an ordinary linux.do HTML page into a challenge', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage } = runLinuxDoBrowserFetchScript('/search?q=cf-turnstile', `
+        <main><article>普通页面文字提到 cf-turnstile 和 challenge-platform。</article></main>
+      `);
+
+      vi.advanceTimersByTime(8000);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+      expect(payload).toMatchObject({
+        type: 'linuxdo-browser-fetch',
+        id: 9,
+        challenge: false
+      });
+      expect(payload.body).toContain('普通页面文字');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it('REG-LINUXDO-001 reports an oversized linux.do bridge payload without classifying it as Cloudflare', () => {
