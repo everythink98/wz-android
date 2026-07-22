@@ -161,13 +161,16 @@ export function useTopicController({
   credentialScope?: ForumCredentialScope;
   getCurrentScreen: () => Screen;
   notify: (message: string) => void;
-  onNodeSeekTopicVerificationRequired: (message: string) => void;
+  onNodeSeekTopicVerificationRequired: (message: string, recovery: LinuxDoReadRecovery) => void;
   pushTopicScreen: () => void;
   readerData: ReaderData;
   readerDataRef: MutableRef<ReaderData>;
   reopenExistingTopicScreenRef: MutableRef<boolean>;
   screen: Screen;
-  showLinuxDoVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>;
+  showLinuxDoVerification: (
+    message?: string,
+    recovery?: LinuxDoReadRecovery
+  ) => void | boolean | Promise<void | boolean>;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
   topicReturnScreenRef: MutableRef<Exclude<Screen, 'topic'>>;
@@ -358,13 +361,13 @@ export function useTopicController({
     source: Source,
     error: unknown,
     recovery: LinuxDoReadRecovery,
-    nodeSeekFallback?: () => void
+    nodeSeekFallback?: (recovery: LinuxDoReadRecovery) => void
   ): SourceErrorInfo => {
     const sourceError = sourceErrorFromUnknown(source, error);
     if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
       void showLinuxDoVerification(sourceError.message, recovery);
     } else if (source === 'nodeseek' && sourceError.kind === 'verification-required') {
-      nodeSeekFallback?.();
+      nodeSeekFallback?.(recovery);
     } else if (source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
       showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : sourceError.message);
     } else if (!isCanceledRequest(error)) {
@@ -385,7 +388,10 @@ export function useTopicController({
         handledTopicErrorRef.current = result.errorUpdatedAt;
         return result.error ? readOutcome(topic.source, result.error) : 'completed';
       }
-    }, () => onNodeSeekTopicVerificationRequired(sourceErrorFromUnknown(topic.source, detailQuery.error).message));
+    }, (recovery) => onNodeSeekTopicVerificationRequired(
+      sourceErrorFromUnknown(topic.source, detailQuery.error).message,
+      recovery
+    ));
   }, [
     detailQuery.error,
     detailQuery.errorUpdatedAt,
@@ -413,7 +419,10 @@ export function useTopicController({
         handledRepliesErrorRef.current = result.errorUpdatedAt;
         return result.error ? readOutcome(topic.source, result.error) : 'completed';
       }
-    }, () => onNodeSeekTopicVerificationRequired(sourceErrorFromUnknown(topic.source, repliesQuery.error).message));
+    }, (recovery) => onNodeSeekTopicVerificationRequired(
+      sourceErrorFromUnknown(topic.source, repliesQuery.error).message,
+      recovery
+    ));
   }, [
     handleReadError,
     onNodeSeekTopicVerificationRequired,
@@ -755,7 +764,10 @@ export function useTopicController({
             return readOutcome(selectedTopic.source, retryError);
           }
         }
-      }, () => onNodeSeekTopicVerificationRequired(sourceErrorFromUnknown(selectedTopic.source, error).message));
+      }, (recovery) => onNodeSeekTopicVerificationRequired(
+        sourceErrorFromUnknown(selectedTopic.source, error).message,
+        recovery
+      ));
       return readOutcome(selectedTopic.source, error);
     }
   }, [

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
+import type { Screen } from '../appTypes';
 import type { SourceGateway } from '../sources/sourceGateway';
 import {
   defaultFeedFilters,
@@ -131,24 +132,33 @@ function firstSourceError(errors: SourceErrors): SourceErrorInfo | undefined {
 
 export function useFeedController({
   credentialScope = emptyForumCredentialScope,
+  linuxDoVerificationActive,
   notify,
   readerData,
   readerDataLoaded,
+  screen,
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
   sourceGateway
 }: {
   credentialScope?: ForumCredentialScope;
+  linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
   readerData: ReaderData;
   readerDataLoaded: boolean;
-  showLinuxDoVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>;
+  screen: Screen;
+  showLinuxDoVerification: (
+    message?: string,
+    recovery?: LinuxDoReadRecovery
+  ) => void | boolean | Promise<void | boolean>;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
 }) {
   const queryClient = useQueryClient();
+  const feedActive = screen === 'feed';
+  const categoriesActive = (screen === 'feed' || screen === 'search') && !linuxDoVerificationActive;
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -165,6 +175,7 @@ export function useFeedController({
 
   const allCategoriesQuery = useQuery({
     queryKey: forumQueryKeys.categories('all', credentialScope),
+    enabled: categoriesActive,
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: 'all' });
       try {
@@ -188,7 +199,7 @@ export function useFeedController({
   const needsSourceCategories = feedSource !== 'all' && shouldLoadCategoriesForSource(allCategories, feedSource);
   const sourceCategoriesQuery = useQuery({
     queryKey: forumQueryKeys.categories(feedSource === 'all' ? 'v2ex' : feedSource, credentialScope),
-    enabled: needsSourceCategories,
+    enabled: feedActive && !linuxDoVerificationActive && needsSourceCategories,
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: feedSource });
       try {
@@ -215,7 +226,7 @@ export function useFeedController({
 
   const feedQuery = useInfiniteQuery({
     queryKey: feedQueryKey,
-    enabled: feedEnabled,
+    enabled: feedActive && feedEnabled,
     initialPageParam: { page: 1 } satisfies FeedPageParam,
     queryFn: async ({ pageParam, signal }) => {
       const trace = beginDiagnosticTrace('feed', 'load', {
@@ -297,7 +308,12 @@ export function useFeedController({
   );
 
   useEffect(() => {
-    const query = sourceCategoriesQuery.isError ? sourceCategoriesQuery : allCategoriesQuery;
+    if (!categoriesActive) {
+      return;
+    }
+    const query = feedActive && sourceCategoriesQuery.isError
+      ? sourceCategoriesQuery
+      : allCategoriesQuery;
     if (!query.isError) {
       return;
     }
@@ -310,6 +326,8 @@ export function useFeedController({
   }, [
     allCategoriesQuery.errorUpdatedAt,
     allCategoriesQuery.isError,
+    categoriesActive,
+    feedActive,
     feedSource,
     notify,
     showNodeSeekVerification,
@@ -318,7 +336,7 @@ export function useFeedController({
   ]);
 
   useEffect(() => {
-    if (!feedQuery.isError || handledFeedErrorRef.current === feedQuery.error) {
+    if (!feedActive || !feedQuery.isError || handledFeedErrorRef.current === feedQuery.error) {
       return;
     }
     handledFeedErrorRef.current = feedQuery.error;
@@ -359,6 +377,7 @@ export function useFeedController({
     feedQuery.errorUpdatedAt,
     feedQuery.isError,
     feedQueryKey,
+    feedActive,
     feedSource,
     loadMoreError,
     notify,
@@ -368,6 +387,9 @@ export function useFeedController({
   ]);
 
   useEffect(() => {
+    if (!feedActive) {
+      return;
+    }
     const errors = lastPage?.errors || {};
     if (!Object.keys(errors).length) {
       return;
@@ -378,17 +400,20 @@ export function useFeedController({
     } else {
       notify(formatSourceErrorMessages(errors, sourceLabel));
     }
-  }, [feedQuery.dataUpdatedAt, feedSource, lastPage?.errors, notify, showNodeSeekVerification]);
+  }, [feedActive, feedQuery.dataUpdatedAt, feedSource, lastPage?.errors, notify, showNodeSeekVerification]);
 
   const loadFeed = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!nextPage || feedQuery.isFetchingNextPage) {
+    if (!feedActive || !nextPage || feedQuery.isFetchingNextPage) {
       return 'stale';
     }
     const result = await feedQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [feedQuery.fetchNextPage, feedQuery.isFetchingNextPage, nextPage]);
+  }, [feedActive, feedQuery.fetchNextPage, feedQuery.isFetchingNextPage, nextPage]);
 
   const refreshFeed = useCallback(async () => {
+    if (!feedActive) {
+      return;
+    }
     if (feedQuery.isFetching) {
       notify('列表正在更新');
       return;
@@ -398,7 +423,7 @@ export function useFeedController({
     if (!result.isError) {
       notify('列表已更新');
     }
-  }, [feedQuery.isFetching, feedQuery.refetch, notify]);
+  }, [feedActive, feedQuery.isFetching, feedQuery.refetch, notify]);
 
   const changeFeedSource = useCallback((source: FeedSource) => {
     setFeedSource(source);
@@ -419,6 +444,19 @@ export function useFeedController({
     });
   }, [queryClient]);
 
+  useEffect(() => {
+    if (feedActive) return;
+    void queryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum'
+        && (queryKey[2] === 'feed' || (queryKey[2] === 'categories' && queryKey[1] !== 'all'))
+    });
+  }, [feedActive, queryClient]);
+  useEffect(() => {
+    if (categoriesActive) return;
+    void queryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'categories'
+    });
+  }, [categoriesActive, queryClient]);
   useEffect(() => abortFeedRequests, [abortFeedRequests]);
 
   return {
@@ -428,7 +466,7 @@ export function useFeedController({
     categoryFilter,
     changeFeedSource,
     feedAllowsRemotePagination,
-    feedBusy: feedQuery.isPending,
+    feedBusy: feedActive && feedQuery.isPending,
     feedFilter,
     feedSource,
     loadFeed,

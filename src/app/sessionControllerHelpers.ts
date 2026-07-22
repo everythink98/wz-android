@@ -14,9 +14,9 @@ export type BrowserFetchRequestCleanupTarget = {
 
 type MutableRef<T> = { current: T };
 type WebViewStopRef = { current: { stopLoading: () => void } | null };
-export type NodeSeekVerificationRetry<TopicLike> =
-  | { type: 'search'; retry: () => void }
-  | { type: 'topic'; topic: TopicLike };
+export type NodeSeekVerificationRetry =
+  | { type: 'search'; retry: () => Promise<boolean> }
+  | { type: 'topic'; retry: () => Promise<boolean> };
 export type CredentialLoadOptions = {
   captureGeneration?: (generation: number) => void;
   captureNodeSeekUserId?: (userId: number | null) => void;
@@ -126,18 +126,12 @@ export function nodeSeekBrowserResponse(html: string, challenge: boolean, httpEr
   } as Response;
 }
 
-export function takeNodeSeekVerificationRetry<TopicLike>(
-  searchRetryRef: MutableRef<(() => void) | null>,
-  topicRetryRef: MutableRef<TopicLike | null>
-): NodeSeekVerificationRetry<TopicLike> | null {
-  const retry = searchRetryRef.current;
-  const topic = topicRetryRef.current;
-  searchRetryRef.current = null;
-  topicRetryRef.current = null;
-  if (retry) {
-    return { type: 'search', retry };
-  }
-  return topic ? { type: 'topic', topic } : null;
+export function takeNodeSeekVerificationRetry(
+  retryRef: MutableRef<NodeSeekVerificationRetry | null>
+): NodeSeekVerificationRetry | null {
+  const retry = retryRef.current;
+  retryRef.current = null;
+  return retry;
 }
 
 export function linuxDoBrowserResponse(body: string, httpErrorStatus?: number) {

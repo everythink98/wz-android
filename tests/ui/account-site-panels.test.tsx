@@ -152,7 +152,6 @@ function nodeSeekProps(overrides: Partial<ComponentProps<typeof NodeSeekLoginPan
     onClearNodeImageApiKey: jest.fn(),
     onHandleLoginMessage: jest.fn(),
     onLoginFormMessage: () => false,
-    onRememberNodeSeekCookies: jest.fn(async () => true),
     onRequestCredentialFill: jest.fn(),
     onSaveNodeImageApiKey: jest.fn(),
     onSetLoadingLoginPage: jest.fn(),
@@ -310,14 +309,14 @@ describe('Account site panels', () => {
     expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('');
   });
 
-  it('reports NodeSeek WebView ready, failure, refresh and close states through boundaries', async () => {
-    const onRememberNodeSeekCookies = jest.fn(async () => true);
+  it('[REG-VERIFICATION-001] keeps NodeSeek WebView readiness passive and detects only after the user asks', async () => {
+    const onCheckLogin = jest.fn();
     const onSetLoadingLoginPage = jest.fn();
     const onShowLoginPanelChange = jest.fn();
     const onWebViewState = jest.fn();
     const props = nodeSeekProps({
       loadingLoginPage: true,
-      onRememberNodeSeekCookies,
+      onCheckLogin,
       onSetLoadingLoginPage,
       onShowLoginPanelChange,
       onWebViewState,
@@ -329,8 +328,10 @@ describe('Account site panels', () => {
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载完成'));
     await waitFor(() => {
       expect(onWebViewState).toHaveBeenCalledWith('ready', 3);
-      expect(onRememberNodeSeekCookies).toHaveBeenCalledWith({ silent: true });
     });
+
+    await fireEvent.press(view.getByLabelText('检测登录'));
+    expect(onCheckLogin).toHaveBeenCalledTimes(1);
 
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载失败'));
     expect(view.getByText('NodeSeek 页面加载失败：断网')).toBeTruthy();
@@ -363,16 +364,20 @@ describe('Account site panels', () => {
     expect(view.queryByTestId('nodeseek-login-webview-ready')).toBeNull();
   });
 
-  it('keeps Yaohuo login prompt, ready/error states and retry connected', async () => {
+  it('[REG-VERIFICATION-001] keeps Yaohuo readiness passive and detects only after the user asks', async () => {
+    const onCheckYaohuoLogin = jest.fn();
     const onSetLoadingYaohuoLoginPage = jest.fn();
     const onWebViewState = jest.fn();
     const view = await render(
-      <YaohuoLoginPanel {...yaohuoProps({ onSetLoadingYaohuoLoginPage, onWebViewState })} />
+      <YaohuoLoginPanel {...yaohuoProps({ onCheckYaohuoLogin, onSetLoadingYaohuoLoginPage, onWebViewState })} />
     );
 
     expect(view.getByText('登录后返回本页检测状态')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载完成'));
     expect(onWebViewState).toHaveBeenCalledWith('ready', 4);
+    expect(onCheckYaohuoLogin).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('检测登录'));
+    expect(onCheckYaohuoLogin).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载失败'));
     expect(view.getByText('妖火页面加载失败：断网')).toBeTruthy();
     expect(onWebViewState).toHaveBeenCalledWith('error', 4);

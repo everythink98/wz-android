@@ -1,6 +1,7 @@
 import { afterEach } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { useFeedController } from '../../src/app/useFeedController';
+import type { Screen } from '../../src/appTypes';
 import { createEmptyReaderData } from '../../src/readerData';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
@@ -17,6 +18,233 @@ function renderHook<Result>(callback: () => Result) {
 describe('小隐寺 Feed controller', () => {
   afterEach(async () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  });
+
+  it('[REG-LINUXDO-006] aborts the owned Feed request after leaving Feed and ignores later credential changes', async () => {
+    const pendingFeed = Promise.withResolvers<{
+      items: never[];
+      errors: {
+        linuxdo: {
+          kind: 'verification-required';
+          message: string;
+          verificationRequired: true;
+        };
+      };
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const feedSignals: AbortSignal[] = [];
+    const getFeed = jest.fn(async ({ signal }: { signal: AbortSignal }) => {
+      feedSignals.push(signal);
+      return pendingFeed.promise;
+    });
+    const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
+    const showNodeSeekVerification = jest.fn<void, [message?: string]>();
+    const showYaohuoLogin = jest.fn<void, [message?: string]>();
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let credentialScope = emptyForumCredentialScope;
+    let screen: Screen = 'feed';
+    const hook = await renderHook(() => useFeedController({
+      credentialScope,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen,
+      showLinuxDoVerification,
+      showNodeSeekVerification,
+      showYaohuoLogin,
+      sourceGateway
+    }));
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
+
+    screen = 'more';
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(feedSignals[0]?.aborted).toBe(true));
+
+    credentialScope = { ...emptyForumCredentialScope, linuxdo: 1 };
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await act(async () => {
+      pendingFeed.resolve({
+        items: [],
+        errors: {
+          linuxdo: {
+            kind: 'verification-required',
+            message: '离开页面后的旧请求',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      });
+      await pendingFeed.promise;
+    });
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
+    expect(showNodeSeekVerification).not.toHaveBeenCalled();
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
+  });
+
+  it('[REG-LINUXDO-006] pauses categories during verification without canceling the primary Feed read', async () => {
+    const categorySignals: AbortSignal[] = [];
+    const getCategories = jest.fn(async ({ signal }: { signal: AbortSignal }) => {
+      categorySignals.push(signal);
+      if (categorySignals.length === 1) {
+        return new Promise<{ items: never[]; errors: Record<string, never> }>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      }
+      return { items: [], errors: {} };
+    });
+    const pendingFeed = Promise.withResolvers<{
+      items: never[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const feedSignals: AbortSignal[] = [];
+    const getFeed = jest.fn(async ({ signal }: { signal: AbortSignal }) => {
+      feedSignals.push(signal);
+      return pendingFeed.promise;
+    });
+    const sourceGateway = {
+      getCategories,
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let linuxDoVerificationActive = false;
+    const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+    await waitFor(() => {
+      expect(getCategories).toHaveBeenCalledTimes(1);
+      expect(getFeed).toHaveBeenCalledTimes(1);
+    });
+
+    linuxDoVerificationActive = true;
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(categorySignals[0]?.aborted).toBe(true));
+    expect(feedSignals[0]?.aborted).toBe(false);
+    expect(getCategories).toHaveBeenCalledTimes(1);
+
+    linuxDoVerificationActive = false;
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(2));
+    expect(getFeed).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pendingFeed.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
+      await pendingFeed.promise;
+    });
+  });
+
+  it('[REG-LINUXDO-006] keeps shared categories on Search without starting Feed and cancels them after leaving both owners', async () => {
+    const categorySignals: AbortSignal[] = [];
+    const getCategories = jest.fn(async ({ signal }: { signal: AbortSignal }) => {
+      categorySignals.push(signal);
+      return new Promise<{ items: never[]; errors: Record<string, never> }>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    });
+    const getFeed = jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }));
+    const sourceGateway = {
+      getCategories,
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let screen: Screen = 'search';
+    const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen,
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(1));
+    expect(getFeed).not.toHaveBeenCalled();
+
+    screen = 'more';
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(categorySignals[0]?.aborted).toBe(true));
+    expect(getFeed).not.toHaveBeenCalled();
+  });
+
+  it('[REG-LINUXDO-006] does not replay a stale single-source category panel when shared categories settle on Search', async () => {
+    const sharedCategories = Promise.withResolvers<{ items: never[]; errors: Record<string, never> }>();
+    const getCategories = jest.fn(async ({ source }: { source: string }) => {
+      if (source === 'all') {
+        return sharedCategories.promise;
+      }
+      throw Object.assign(new Error('NodeSeek 分类需要验证'), {
+        source: 'nodeseek',
+        reason: 'cloudflare'
+      });
+    });
+    const showNodeSeekVerification = jest.fn<void, [message?: string]>();
+    const sourceGateway = {
+      getCategories,
+      getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let screen: Screen = 'feed';
+    const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen,
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification,
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+    await act(async () => hook.result.current.changeFeedSource('nodeseek'));
+    await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
+    showNodeSeekVerification.mockClear();
+
+    screen = 'search';
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await act(async () => {
+      sharedCategories.reject(new Error('共享分类读取失败'));
+      await sharedCategories.promise.catch(() => undefined);
+    });
+
+    await act(async () => { await Promise.resolve(); });
+    expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
   it('keeps an unrelated source request and categories intact when another credential session changes', async () => {
@@ -53,9 +281,11 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
       notify,
       readerData,
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin,
@@ -119,9 +349,11 @@ describe('小隐寺 Feed controller', () => {
     let credentialScope = emptyForumCredentialScope;
     const hook = await renderHook(() => useFeedController({
       credentialScope,
+      linuxDoVerificationActive: false,
       notify,
       readerData,
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin,
@@ -191,9 +423,11 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
       notify,
       readerData,
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin,
@@ -258,9 +492,11 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as SourceGateway;
     const showLinuxDoVerification = jest.fn();
     const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
       notify: jest.fn(),
       readerData: createEmptyReaderData(),
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification: jest.fn(),
       showYaohuoLogin: jest.fn(),
@@ -327,9 +563,11 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as SourceGateway;
     const showLinuxDoVerification = jest.fn();
     const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
       notify: jest.fn(),
       readerData: createEmptyReaderData(),
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification: jest.fn(),
       showYaohuoLogin: jest.fn(),
@@ -368,9 +606,11 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
       notify,
       readerData,
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin,
@@ -427,9 +667,11 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
       notify,
       readerData,
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin,
@@ -499,9 +741,11 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
       notify,
       readerData,
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin,
@@ -549,9 +793,11 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
       notify,
       readerData,
       readerDataLoaded: true,
+      screen: 'feed',
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin,
