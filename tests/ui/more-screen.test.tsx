@@ -103,7 +103,6 @@ function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): 
     nodeImageApiKeyBusy: false,
     nodeImageApiKeySaved: false,
     nodeSeekUserId: null,
-    nodeSeekWebViewUserAgent: 'test-agent',
     onAccountCenterCommand: jest.fn(async () => undefined),
     onAuthorizeNodeImageApiKey: jest.fn(),
     onCheckAppUpdate: jest.fn(),

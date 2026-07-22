@@ -70,7 +70,7 @@ const discourseActionRuntimes = {
           execute: (request: DiscourseActionRequest, signal?: AbortSignal) => runLinuxDoAction({
             cookieHeader: access!.cookieHeader,
             fetcher: context.fetcher,
-            userAgent: access!.userAgent || context.linuxDoUserAgent(),
+            userAgent: context.linuxDoUserAgent() || access!.userAgent,
             request,
             signal
           })

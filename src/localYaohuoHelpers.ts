@@ -4,7 +4,6 @@ import { absoluteUrl, elementText, parseHtml, parsePositiveInteger } from './loc
 export const YAOHUO_BASE_URL = 'https://www.yaohuo.me';
 export const YAOHUO_LOGIN_URL = `${YAOHUO_BASE_URL}/waplogin.aspx?siteid=1000`;
 export const YAOHUO_BBS_REFERER = `${YAOHUO_BASE_URL}/bbs/`;
-export const YAOHUO_ANDROID_USER_AGENT = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36';
 export const YAOHUO_CATEGORIES: Category[] = [
   { source: 'yaohuo', id: '177', name: '妖火茶馆' },
   { source: 'yaohuo', id: '213', name: '悬赏问答' },

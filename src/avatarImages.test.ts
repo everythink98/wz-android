@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('./androidWebViewUserAgent', () => ({
+  DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
+}));
+
 import { loadRemoteAvatarSvgText, setDefaultAvatarFetcher } from './avatarImages';
 
 describe('Android remote avatar images', () => {
@@ -20,13 +25,13 @@ describe('Android remote avatar images', () => {
     expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/avatar/58159.png', expect.objectContaining({
       method: 'HEAD',
       headers: expect.objectContaining({
-        'User-Agent': expect.stringContaining('Android 14')
+        'User-Agent': 'native-provider-user-agent'
       })
     }));
     expect(fetcher).toHaveBeenLastCalledWith('https://www.nodeseek.com/avatar/58159.png', expect.objectContaining({
       headers: expect.objectContaining({
         Accept: 'image/svg+xml,image/*,*/*;q=0.8',
-        'User-Agent': expect.stringContaining('Android 14')
+        'User-Agent': 'native-provider-user-agent'
       })
     }));
   });

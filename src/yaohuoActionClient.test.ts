@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('./androidWebViewUserAgent', () => ({
+  DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
+}));
+
 import { runYaohuoAction } from './yaohuoActionClient';
 import { buildYaohuoDeleteFavoriteRequest, buildYaohuoDeleteReplyRequest, buildYaohuoFavoriteRequest, buildYaohuoReplyRequest } from './yaohuoActions';
 
@@ -35,13 +40,18 @@ describe('runYaohuoAction', () => {
         cookie: 'sidyaohuo=secret',
         origin: 'https://www.yaohuo.me',
         referer: 'https://www.yaohuo.me/bbs/',
-        'sec-ch-ua-mobile': '?1',
-        'sec-ch-ua-platform': '"Android"',
         'sec-fetch-site': 'same-origin',
-        'user-agent': expect.stringContaining('Android')
+        'user-agent': 'native-provider-user-agent'
       }),
       body: expect.any(String),
       signal: expect.any(AbortSignal)
+    }));
+    expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      headers: expect.not.objectContaining({
+        'sec-ch-ua': expect.anything(),
+        'sec-ch-ua-mobile': expect.anything(),
+        'sec-ch-ua-platform': expect.anything()
+      })
     }));
     expect(result.message).toBe('评论成功');
     expect(JSON.stringify(result)).not.toContain('secret');

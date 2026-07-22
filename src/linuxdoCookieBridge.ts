@@ -1,6 +1,7 @@
 import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
+import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
 import { createCredentialWriteGate, enqueueCredentialWriteForGeneration, replaceCredentialWrite } from './app/sessionControllerHelpers';
 import {
   beginDiagnosticTrace,
@@ -50,16 +51,12 @@ export function setLinuxDoDevAnonymousOverride(enabled: boolean) {
 export function sanitizeLinuxDoUserAgent(userAgent?: string) {
   return String(userAgent || '')
     .replace(/\s+/g, ' ')
-    .replace(/;\s*wv(?=[;)])/i, '')
-    .replace(/\s*Version\/4\.0\s*/i, ' ')
     .replace(/\(\s+/g, '(')
     .replace(/\s+\)/g, ')')
     .trim();
 }
 
-export const DEFAULT_LINUXDO_ANDROID_USER_AGENT = sanitizeLinuxDoUserAgent(
-  'Mozilla/5.0 (Linux; Android 15; sdk_gphone64_x86_64 Build/AP31.240322.027; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0.6367.219 Mobile Safari/537.36'
-);
+export const DEFAULT_LINUXDO_ANDROID_USER_AGENT = sanitizeLinuxDoUserAgent(DEFAULT_ANDROID_WEBVIEW_USER_AGENT);
 
 async function linuxDoAndroidCookieModule() {
   return linuxDoCookieModuleFromReactNativeImport({ NativeModules });

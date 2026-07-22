@@ -157,14 +157,12 @@ describe('linux.do Cloudflare helpers', () => {
     expect(buildLinuxDoCookieHeader(cookies)).toBe('');
   });
 
-  it('uses a browser-like user agent for linux.do verification', () => {
+  it('[REG-VERIFICATION-003] preserves the native WebView identity used for linux.do verification', () => {
     const webViewUserAgent = 'Mozilla/5.0 (Linux; Android 15; sdk_gphone64_x86_64 Build/AP31.240322.027; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0.6367.219 Mobile Safari/537.36';
 
     const userAgent = sanitizeLinuxDoUserAgent(webViewUserAgent);
 
-    expect(userAgent).not.toContain('; wv');
-    expect(userAgent).not.toContain('Version/4.0');
-    expect(userAgent).toContain('Chrome/124.0.6367.219 Mobile Safari/537.36');
+    expect(userAgent).toBe(webViewUserAgent);
   });
 
   it('reads access cookies from document.cookie fallback data', () => {
@@ -359,6 +357,13 @@ describe('linux.do Cloudflare helpers', () => {
 
     expect(pluginSource).toContain('expectedValues[name]');
     expect(pluginSource).toContain('cookieManager.getCookie(url)');
+  });
+
+  it('[REG-VERIFICATION-003] exports the Android WebView provider user agent from the native bridge', () => {
+    const pluginSource = fs.readFileSync('plugins/withLinuxDoCookieModule.js', 'utf8');
+
+    expect(pluginSource).toContain('WebSettings.getDefaultUserAgent(reactContext)');
+    expect(pluginSource).toContain('"defaultUserAgent"');
   });
 
   it('supports React Native dynamic imports that expose NativeModules on default', () => {

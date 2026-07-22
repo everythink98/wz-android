@@ -1,9 +1,9 @@
 import type { YaohuoActionRequest } from './yaohuoActions';
+import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { elementText, parseHtml, textContentFromHtml } from './localHtml';
 import { isYaohuoLoginRequiredHtml, isYaohuoVerificationRequiredHtml, parseYaohuoFavoriteRecordId } from './localYaohuo';
 import {
-  YAOHUO_ANDROID_USER_AGENT,
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
   YAOHUO_LOGIN_URL
@@ -14,13 +14,12 @@ const YAOHUO_ACTION_HEADERS = {
   'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
   origin: YAOHUO_BASE_URL,
   referer: YAOHUO_BBS_REFERER,
-  'sec-ch-ua': '"Chromium";v="125", "Not.A/Brand";v="24"',
-  'sec-ch-ua-mobile': '?1',
-  'sec-ch-ua-platform': '"Android"',
   'sec-fetch-dest': 'document',
   'sec-fetch-mode': 'navigate',
   'sec-fetch-site': 'same-origin',
-  'user-agent': YAOHUO_ANDROID_USER_AGENT
+  ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT
+    ? { 'user-agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT }
+    : {})
 };
 const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
 const YAOHUO_REPLY_DELETE_PATH_PATTERN = /^\/bbs\/book_re_del\.aspx$/i;

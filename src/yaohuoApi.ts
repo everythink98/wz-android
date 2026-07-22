@@ -1,4 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
+import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
 import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
 import {
   checkYaohuoLoginHtml,
@@ -10,7 +11,6 @@ import {
   parseYaohuoTopicHtml
 } from './localYaohuo';
 import {
-  YAOHUO_ANDROID_USER_AGENT,
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
   YAOHUO_LOGIN_URL,
@@ -65,14 +65,13 @@ function yaohuoRequestInit(cookie: string): RequestInit {
       Cookie: cookie,
       Pragma: 'no-cache',
       Referer: YAOHUO_BBS_REFERER,
-      'Sec-CH-UA': '"Chromium";v="125", "Not.A/Brand";v="24"',
-      'Sec-CH-UA-Mobile': '?1',
-      'Sec-CH-UA-Platform': '"Android"',
       'Sec-Fetch-Dest': 'document',
       'Sec-Fetch-Mode': 'navigate',
       'Sec-Fetch-Site': 'same-origin',
       'Upgrade-Insecure-Requests': '1',
-      'User-Agent': YAOHUO_ANDROID_USER_AGENT
+      ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT
+        ? { 'User-Agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT }
+        : {})
     }
   };
 }

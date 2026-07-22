@@ -491,12 +491,6 @@ export function useSessionController({
       if (nodeSeekResult.status === 'rejected' && nodeSeekReadCurrent) {
         failedSites.push('nodeseek');
         updateNodeSeekSession({ type: 'check-failed', message: '读取本机 NodeSeek 登录信息失败' });
-      } else if (nodeSeekReadCurrent && savedNodeSeekAccess?.userAgent) {
-        const userAgent = sanitizeNodeSeekUserAgent(savedNodeSeekAccess.userAgent);
-        if (userAgent) {
-          nodeSeekWebViewUserAgentRef.current = userAgent;
-          setNodeSeekWebViewUserAgent(userAgent);
-        }
       }
       if (nodeSeekResult.status === 'fulfilled' && nodeSeekReadCurrent) {
         setWebLoginUserId(savedNodeSeekAccess?.userId || null);
@@ -527,13 +521,6 @@ export function useSessionController({
         const linuxDoCookies = parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '');
         linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(linuxDoCookies) || null;
         updateLinuxDoSession(siteEventWithCookieFacts('linuxdo', summarizeLinuxDoCookies(linuxDoCookies).names, linuxDoSummary.hasClearance, false));
-        if (linuxDoAccess?.userAgent) {
-          const userAgent = sanitizeLinuxDoUserAgent(linuxDoAccess.userAgent);
-          if (userAgent) {
-            linuxDoWebViewUserAgentRef.current = userAgent;
-            setLinuxDoWebViewUserAgent(userAgent);
-          }
-        }
       }
       if (failedSites.length > 0) {
         finishDiagnosticTrace(trace, 'partial', { reason: 'storage_error', count: failedSites.length });
@@ -549,13 +536,9 @@ export function useSessionController({
       });
   }, [
     linuxDoClearanceBeforeVerifyRef,
-    linuxDoWebViewUserAgentRef,
-    nodeSeekWebViewUserAgentRef,
     notify,
     publishLinuxDoCookieHeader,
     publishNodeSeekCookieHeader,
-    setLinuxDoWebViewUserAgent,
-    setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
     updateLinuxDoSession,
     updateNodeSeekSession,
@@ -1410,7 +1393,7 @@ export function useSessionController({
         if (!canStoreNodeSeekCookieHeader(verificationCookies) || !verificationHeader) {
           return null;
         }
-        await writeNodeSeekAccessToStore(verificationHeader, access?.userAgent || nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT, null, null);
+        await writeNodeSeekAccessToStore(verificationHeader, nodeSeekWebViewUserAgentRef.current || access?.userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT, null, null);
         return {
           header: verificationHeader,
           summary: summarizeNodeSeekCookies(verificationCookies)

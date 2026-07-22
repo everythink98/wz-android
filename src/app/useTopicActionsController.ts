@@ -378,7 +378,7 @@ export function useTopicActionsController({
         cookieHeader: access?.cookieHeader || '',
         fetcher: withDiagnosticFetcher(trace, fetcher),
         request,
-        userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
+        userAgent: nodeSeekWebViewUserAgentRef.current || access?.userAgent
       });
     } catch (error) {
       if (generation !== currentNodeSeekCredentialGeneration()) {
@@ -987,7 +987,7 @@ export function useTopicActionsController({
                 cookieHeader: access.cookieHeader,
                 pollId: poll.id,
                 fetcher: withDiagnosticFetcher(trace, fetcher),
-                userAgent: access.userAgent || nodeSeekWebViewUserAgentRef.current
+                userAgent: nodeSeekWebViewUserAgentRef.current || access.userAgent
               });
               return { confirmedPoll, refreshFailed: false };
             } catch {

@@ -169,6 +169,53 @@ describe('session controller helpers', () => {
     getItemAsync.mockResolvedValue(null);
   });
 
+  it('[REG-VERIFICATION-003] keeps the current Android WebView identity instead of restoring a stale stored UA', async () => {
+    const lines: string[] = [];
+    const getItemAsync = vi.mocked(SecureStore.getItemAsync);
+    getItemAsync.mockImplementation(async (key) => {
+      if (key === 'nodeseek-access') {
+        return JSON.stringify({
+          cookieHeader: 'cf_clearance=node-clearance',
+          userAgent: 'stale-node-agent',
+          savedAt: '2026-07-21T00:00:00.000Z',
+          source: 'webview'
+        });
+      }
+      if (key === 'linuxdo-clearance') {
+        return JSON.stringify({
+          cookieHeader: 'cf_clearance=linux-clearance',
+          userAgent: 'stale-linux-agent',
+          savedAt: '2026-07-21T00:00:00.000Z',
+          source: 'webview'
+        });
+      }
+      return null;
+    });
+    const nodeSeekWebViewUserAgentRef = { current: 'native-provider-agent' };
+    const linuxDoWebViewUserAgentRef = { current: 'native-provider-agent' };
+    const setNodeSeekWebViewUserAgent = vi.fn();
+    const setLinuxDoWebViewUserAgent = vi.fn();
+    setDiagnosticWriter((line) => { lines.push(line); });
+
+    createTestSessionController(vi.fn(), vi.fn(), vi.fn(), {
+      linuxDoWebViewUserAgentRef,
+      nodeSeekWebViewUserAgentRef,
+      setLinuxDoWebViewUserAgent,
+      setNodeSeekWebViewUserAgent
+    });
+
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    expect(nodeSeekWebViewUserAgentRef.current).toBe('native-provider-agent');
+    expect(linuxDoWebViewUserAgentRef.current).toBe('native-provider-agent');
+    expect(setNodeSeekWebViewUserAgent).not.toHaveBeenCalledWith('stale-node-agent');
+    expect(setLinuxDoWebViewUserAgent).not.toHaveBeenCalledWith('stale-linux-agent');
+
+    getItemAsync.mockResolvedValue(null);
+  });
+
   it.each([
     ['NodeSeek', 'clearNodeSeekLoginState'],
     ['妖火', 'clearYaohuoLoginState']

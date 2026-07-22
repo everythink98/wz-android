@@ -724,7 +724,7 @@ export function AppRoot() {
       options?.captureGeneration?.(generation);
       const access = await loadLinuxDoAccess();
       return generation === currentLinuxDoAccessGeneration() && access?.cookieHeader
-        ? { cookieHeader: access.cookieHeader, userAgent: access.userAgent }
+        ? { cookieHeader: access.cookieHeader, userAgent: linuxDoWebViewUserAgentRef.current || access.userAgent }
         : undefined;
     },
     loadNodeSeekCookieForSource,
@@ -2015,7 +2015,6 @@ export function AppRoot() {
       xiaoyinsiLevelError: xiaoyinsiAuthController.levelError,
       xiaoyinsiLevelProfile: xiaoyinsiAuthController.levelProfile,
       nodeSeekUserId: effectiveNodeSeekUserId,
-      nodeSeekWebViewUserAgent,
       nodeImageApiKeyBusy,
       nodeImageApiKeySaved,
       settings: readerData.settings,
@@ -2126,7 +2125,6 @@ export function AppRoot() {
     effectiveNodeSeekUserId,
     loadingLoginPage,
     loadingYaohuoLoginPage,
-    nodeSeekWebViewUserAgent,
     nodeImageApiKeyBusy,
     nodeImageApiKeySaved,
     networkProxyActiveProfile,
@@ -2432,7 +2430,6 @@ export function AppRoot() {
               linuxDoWebViewError={linuxDoWebViewError}
               linuxDoWebViewKey={linuxDoWebViewKey}
               linuxDoWebViewRef={linuxDoWebViewRef}
-              linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
               loadingLinuxDoPage={loadingLinuxDoPage}
               loadingNodeImageAuthPage={loadingNodeImageAuthPage}
               mountLinuxDoWebView={mountLinuxDoWebView}
@@ -2442,7 +2439,6 @@ export function AppRoot() {
               nodeImageAuthWebViewRef={nodeImageAuthWebViewRef}
               nodeSeekMediaCookieHeader={nodeSeekMediaCookieHeader}
               nodeSeekMediaUserAgent={nodeSeekWebViewUserAgent}
-              nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
               resetLinuxDoWebView={resetLinuxDoWebView}
               savePreviewImage={savePreviewImage}
               selectPreviewImage={selectPreviewImage}

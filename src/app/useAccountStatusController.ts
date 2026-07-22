@@ -229,7 +229,7 @@ export function useAccountStatusController({
             }
             let summary = linuxDoAccessSummary(access);
             const cookieHeader = access?.cookieHeader || '';
-            const userAgent = access?.userAgent || linuxDoUserAgentRef.current;
+            const userAgent = linuxDoUserAgentRef.current || access?.userAgent;
             markDiagnosticStage(trace, 'credential', {
               source: 'linuxdo',
               generation,

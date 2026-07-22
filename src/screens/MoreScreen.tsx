@@ -60,7 +60,6 @@ export const MoreScreen = memo(function MoreScreen({
   nodeImageApiKeyBusy,
   nodeImageApiKeySaved,
   nodeSeekUserId,
-  nodeSeekWebViewUserAgent,
   settings,
   showLoginPanel,
   showYaohuoLoginPanel,
@@ -142,7 +141,6 @@ export const MoreScreen = memo(function MoreScreen({
   nodeImageApiKeyBusy: boolean;
   nodeImageApiKeySaved: boolean;
   nodeSeekUserId: number | null;
-  nodeSeekWebViewUserAgent: string;
   settings: ReaderSettings;
   showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
@@ -343,7 +341,6 @@ export const MoreScreen = memo(function MoreScreen({
               accountExpanded={accountExpanded}
               loginFormMode={credentialLoginSite === 'nodeseek'}
               loadingLoginPage={loadingLoginPage}
-              nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
               showLoginPanel={showLoginPanel}
               styles={styles}
               theme={theme}

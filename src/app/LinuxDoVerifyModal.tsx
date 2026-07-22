@@ -23,7 +23,6 @@ export function LinuxDoVerifyModal({
   linuxDoWebViewError,
   linuxDoWebViewKey,
   linuxDoWebViewRef,
-  linuxDoWebViewUserAgent,
   mountLinuxDoWebView,
   loadingLinuxDoPage,
   showLinuxDoPanel,
@@ -50,7 +49,6 @@ export function LinuxDoVerifyModal({
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
   linuxDoWebViewRef: RefObject<WebView | null>;
-  linuxDoWebViewUserAgent: string;
   mountLinuxDoWebView: boolean;
   loadingLinuxDoPage: boolean;
   showLinuxDoPanel: boolean;
@@ -121,7 +119,6 @@ export function LinuxDoVerifyModal({
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           setSupportMultipleWindows={false}
-          userAgent={linuxDoWebViewUserAgent}
           injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
           onLoadProgress={(event) => {
             if (event.nativeEvent.progress >= 0.8) {

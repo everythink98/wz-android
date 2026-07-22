@@ -593,6 +593,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复正文 `includes` 正则、让隐藏 WebView 先扫描 challenge 词再识别 JSON/业务 DOM、删除 NodeSeek 可读页面优先级或让妖火重新扫描全部正文；对应编号测试必须再次出现 CF error、WebView fallback、`challenge:true` 或妖火验证错误。 |
 | 明确不覆盖范围 | 不绕过或代做任何 challenge，不把 Cookie 存在当作验证成功，不改变 `REG-VERIFICATION-001` 的用户检测提交边界，也不保证第三方站点未来 HTML 结构永不变化；未知响应仍按普通来源错误处理，不能猜成验证成功。 |
 
+## `REG-VERIFICATION-003` 验证 WebView 使用伪造或过期 User-Agent
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-02`、`SEARCH-04`；共享读取回归 `FEED-01`、`TOPIC-01`、`TOPIC-03`、`USER-01` |
+| 用户症状 | NodeSeek Cloudflare 页面可以显示复选框，但用户每次点击后又回到未勾选状态，始终停留在 `Just a moment...`；相同身份错配也可能让 linux.do、NodeImage 或妖火的 WebView 会话不能被后续请求一致复用。 |
+| 触发条件 | App 给 Android WebView 或同站 HTTP 请求强制设置固定 Chrome 版本的 User-Agent，手工发送与真实引擎不一致的 `sec-ch-ua*`，或保存前删除真实 WebView UA 的 `wv` 与 `Version/4.0` 标记。 |
+| 根因 seam | Android WebView provider 的默认身份 → NodeSeek、NodeImage、linux.do、妖火可见 WebView → probe/原生桥取得的真实 UA → Cookie/access 持久化 → 隐藏 WebView、媒体、读取与写操作。 |
+| 必须保持的行为 | 原生桥用 `WebSettings.getDefaultUserAgent()` 提供唯一当前平台默认值；NodeSeek、NodeImage、linux.do、妖火可见 WebView 不设置自定义 `userAgent`，由 provider 自己选择真实身份；probe 只规范空白并保留 `wv`、`Version/4.0`，后续请求使用同一 provider 身份，不伪造固定 Client Hints，旧 SecureStore UA 不得覆盖当前运行时值。该收敛不增加站点级 UA 状态机。修复和重新验证不得清除 App 数据、登录 Cookie、SecureStore、代理配置或其他站点会话；页面事件仍只更新候选，必须由用户显式点击“检测登录”提交。 |
+| 精确失败 oracle | `src/androidWebViewUserAgentValue.test.ts` 与 `src/linuxdoCf.test.ts` 要求原生桥输出并原样保留 provider UA；`tests/ui/account-site-panels.test.tsx` 要求 NodeSeek、linux.do 与妖火可见 WebView 的 `userAgent` prop 缺失；`src/app/sessionControllerHelpers.test.ts` 要求旧存储 UA 不覆盖当前运行时身份；`src/yaohuoApi.test.ts` 与 `src/yaohuoActionClient.test.ts` 要求妖火读取/写入使用 provider UA 且不发送固定 `sec-ch-ua*`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` 固定 WebView adapter 与持久化行为；源码字符串、App 能启动或只看到 challenge 复选框都不能证明完整验证可通过。 |
+| Replay 或真实验收路径 | 不清 App 数据和登录态，在 WebView provider 受支持的当前 Android 环境分别打开 NodeSeek、linux.do 与妖火登录/验证页；自然出现 challenge 时只由用户点击，成功后页面离开验证页，再点站内检测恢复原读取。模拟器环境仍被 Cloudflare 拒绝时记 `BLOCKED_BY_ENV`，使用真实 Android 设备复核，不自动代做或绕过 challenge。 |
+| 负向验证方式 | 重新向任一可见验证 WebView 传入固定 UA、让旧存储 UA 覆盖当前 provider，或在 sanitizer 中删除 `wv`/`Version/4.0`，对应编号测试必须失败。 |
+| 明确不覆盖范围 | 不自动解决 Cloudflare，不伪造 clearance，不通过切换 IP、代理或浏览器指纹规避站点策略；Android System WebView 更新属于验收环境维护，不由 App 静默安装。 |
+
 ## `REG-ACCOUNT-001` 身份读取失败覆盖已确认账号状态
 
 | 字段 | 内容 |

@@ -63,7 +63,6 @@ export function NodeSeekLoginPanel({
   nodeImageApiKeySaved,
   loginFormMode,
   loadingLoginPage,
-  nodeSeekWebViewUserAgent,
   showLoginPanel,
   styles,
   theme,
@@ -93,7 +92,6 @@ export function NodeSeekLoginPanel({
   nodeImageApiKeySaved: boolean;
   loginFormMode: boolean;
   loadingLoginPage: boolean;
-  nodeSeekWebViewUserAgent: string;
   showLoginPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
@@ -252,7 +250,6 @@ export function NodeSeekLoginPanel({
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               setSupportMultipleWindows={false}
-              userAgent={nodeSeekWebViewUserAgent}
               injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
               onLoadEnd={(event) => {
                 onSetLoadingLoginPage(false);

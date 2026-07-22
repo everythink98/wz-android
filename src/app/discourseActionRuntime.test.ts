@@ -65,6 +65,9 @@ describe('Discourse action runtime registry', () => {
     await xiaoyinsi.execute?.(request, new AbortController().signal);
 
     expect(mocks.runLinuxDoAction).toHaveBeenCalledOnce();
+    expect(mocks.runLinuxDoAction).toHaveBeenCalledWith(expect.objectContaining({
+      userAgent: 'test-agent'
+    }));
     expect(mocks.runXiaoyinsiAction).toHaveBeenCalledOnce();
     expect(linuxdo.csrfSource).toBe('session-endpoint');
     expect(xiaoyinsi.csrfSource).toBe('none');

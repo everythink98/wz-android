@@ -89,7 +89,8 @@ describe('runNodeSeekAction', () => {
     await runNodeSeekAction({
       cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
-      fetcher
+      fetcher,
+      userAgent: 'native-provider-user-agent'
     });
 
     expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/api/attendance?random=false', expect.objectContaining({
@@ -101,17 +102,22 @@ describe('runNodeSeekAction', () => {
         cookie: 'session=abc',
         origin: 'https://www.nodeseek.com',
         referer: 'https://www.nodeseek.com/',
-        'sec-ch-ua-mobile': '?1',
-        'sec-ch-ua-platform': '"Android"',
         'sec-fetch-dest': 'empty',
         'sec-fetch-mode': 'cors',
         'sec-fetch-site': 'same-origin',
-        'user-agent': expect.stringContaining('Mozilla/5.0'),
+        'user-agent': 'native-provider-user-agent',
         'x-csrf-challenge': 'simple-token',
         'x-requested-with': 'XMLHttpRequest'
       }),
       body: undefined,
       signal: expect.any(AbortSignal)
+    }));
+    expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      headers: expect.not.objectContaining({
+        'sec-ch-ua': expect.anything(),
+        'sec-ch-ua-mobile': expect.anything(),
+        'sec-ch-ua-platform': expect.anything()
+      })
     }));
     const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
     expect(browserFetchIntentFromInit(calls[0]?.[1])).toEqual({

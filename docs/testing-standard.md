@@ -404,6 +404,7 @@ npm run typecheck
 | 备份敏感字段过滤 | `src/appSecurity.test.ts`、`src/readerBackup.test.ts` | 只检查备份入口；未经用户同意不得点击导出或导入 |
 | 详情页返回、用户页返回、回复弹层返回 | `src/app/backHandlerHelpers.test.ts`、`src/topicSessionState.test.ts`、`src/userNavigation.test.ts` | 打开详情、切换回复筛选、进入作者用户页，再用系统返回，确认回到原详情状态；能安全复现时再测回复弹层关闭 |
 | NodeSeek 清除登录后 WebView 刷新 | 账号 controller 相关测试、`src/nodeseekCookieBridge.test.ts` | 只打开 App 内 NodeSeek 登录 / 验证页并确认包名为 `com.wz.reader`；未经用户同意不得点击 `清除登录` |
+| 登录 WebView UA 与后续请求身份不一致 | `src/androidWebViewUserAgentValue.test.ts`、`src/nodeseekCookies.test.ts`、`src/linuxdoCf.test.ts`、`src/yaohuoApi.test.ts`、`src/yaohuoActionClient.test.ts`、`src/app/sessionControllerHelpers.test.ts`、`tests/ui/account-site-panels.test.tsx` | 保留 App 数据分别打开 NodeSeek、linux.do 与妖火登录 / 验证页；确认 WebView 和后续请求使用 provider 原生 UA，自然 challenge 只由用户点击，成功后再检测站点状态；模拟器被站点拒绝时记 `BLOCKED_BY_ENV`，不绕过验证 |
 | linux.do 缺失引用楼层 | `src/forumApi.test.ts` | 有具体 linux.do 主题链接时再用 App 内详情页复测；没有链接时不靠随机帖子判断 |
 | 详情回复数跟随筛选结果 | `src/topicDerivedData.test.ts`、详情 UI 相关测试 | 打开有回复的详情页，切换 `只看楼主` / `只看带图` 等筛选，确认 `回复列表 N 条` 随筛选变化 |
 | release 签名摘要固定 | `src/releasePackaging.test.ts` | 修改签名、版本、原生构建配置、release manifest 或发布脚本时必须跑 `npm run release:android`；确认签名摘要和 manifest 生成成功 |

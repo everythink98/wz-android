@@ -1,4 +1,5 @@
 import { Buffer } from 'buffer';
+import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
 
 export interface NativeCookie {
   name?: string;
@@ -22,16 +23,12 @@ export const NODESEEK_USER_AGENT_STORAGE_KEY = 'nodeseek-user-agent';
 export function sanitizeNodeSeekUserAgent(userAgent?: string) {
   return String(userAgent || '')
     .replace(/\s+/g, ' ')
-    .replace(/;\s*wv(?=[;)])/i, '')
-    .replace(/\s*Version\/4\.0\s*/i, ' ')
     .replace(/\(\s+/g, '(')
     .replace(/\s+\)/g, ')')
     .trim();
 }
 
-export const DEFAULT_NODESEEK_ANDROID_USER_AGENT = sanitizeNodeSeekUserAgent(
-  'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
-);
+export const DEFAULT_NODESEEK_ANDROID_USER_AGENT = sanitizeNodeSeekUserAgent(DEFAULT_ANDROID_WEBVIEW_USER_AGENT);
 
 export const nodeSeekLoginCookieNames = ['session', 'connect.sid', 'sid'] as const;
 const loginCookieNames = new Set<string>(nodeSeekLoginCookieNames);

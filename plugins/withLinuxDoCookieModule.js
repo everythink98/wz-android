@@ -11,6 +11,7 @@ function linuxDoCookieModuleSource(packageName) {
 
 import android.database.sqlite.SQLiteDatabase
 import android.webkit.CookieManager
+import android.webkit.WebSettings
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -31,6 +32,10 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
   )
 
   override fun getName(): String = "LinuxDoCookieModule"
+
+  override fun getConstants(): Map<String, Any> = mapOf(
+    "defaultUserAgent" to runCatching { WebSettings.getDefaultUserAgent(reactContext) }.getOrDefault("")
+  )
 
   @ReactMethod
   fun getClearance(promise: Promise) {

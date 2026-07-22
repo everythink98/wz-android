@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('./androidWebViewUserAgent', () => ({
+  DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
+}));
 import {
   createImagePreviewCatalog,
   dataImageFileFromUrl,
@@ -122,7 +126,7 @@ describe('Android HTML image preview helpers', () => {
     expect(imageRequestHeadersForUrl('https://www.nodeseek.com/avatar/48872.png')).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       Referer: 'https://www.nodeseek.com',
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+      'User-Agent': 'native-provider-user-agent'
     });
   });
 
@@ -130,7 +134,7 @@ describe('Android HTML image preview helpers', () => {
     expect(imageRequestHeadersForUrl('https://www.nodeseek.com/static/image/sticker/emoji/00.webm', 'uid=1')).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       Referer: 'https://www.nodeseek.com',
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+      'User-Agent': 'native-provider-user-agent'
     });
   });
 

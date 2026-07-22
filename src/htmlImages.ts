@@ -224,7 +224,10 @@ export function imageRequestHeadersForUrl(url: unknown, nodeSeekCookieHeader = '
       Referer: parsed.origin
     };
     if (isNodeSeekHost(parsed.hostname)) {
-      headers['User-Agent'] = String(nodeSeekUserAgent || '').trim() || DEFAULT_NODESEEK_ANDROID_USER_AGENT;
+      const userAgent = String(nodeSeekUserAgent || '').trim() || DEFAULT_NODESEEK_ANDROID_USER_AGENT;
+      if (userAgent) {
+        headers['User-Agent'] = userAgent;
+      }
       const cookieHeader = String(nodeSeekCookieHeader || '').trim();
       if (cookieHeader && !isPublicNodeSeekStaticMedia(parsed)) {
         headers.Cookie = cookieHeader;

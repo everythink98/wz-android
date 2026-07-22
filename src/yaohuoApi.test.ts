@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('./androidWebViewUserAgent', () => ({
+  DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
+}));
+
 import {
   checkYaohuoLoginDirect,
   getYaohuoFeedDirect,
@@ -25,9 +30,19 @@ describe('Android direct yaohuo API', () => {
     expect(yaohuoFetcher).toHaveBeenCalledWith(
       'https://www.yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=2&siteid=1000',
       expect.objectContaining({
-        headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' })
+        headers: expect.objectContaining({
+          Cookie: 'sidyaohuo=secret',
+          'User-Agent': 'native-provider-user-agent'
+        })
       })
     );
+    expect(yaohuoFetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      headers: expect.not.objectContaining({
+        'Sec-CH-UA': expect.anything(),
+        'Sec-CH-UA-Mobile': expect.anything(),
+        'Sec-CH-UA-Platform': expect.anything()
+      })
+    }));
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
   });
 
@@ -469,7 +484,7 @@ describe('Android direct yaohuo API', () => {
     }));
   });
 
-  it('uses mobile browser-like headers for yaohuo read requests', async () => {
+  it('[REG-VERIFICATION-003] uses the Android WebView provider identity for yaohuo read requests', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
 
     await getYaohuoFeedDirect({
@@ -485,7 +500,7 @@ describe('Android direct yaohuo API', () => {
         Cookie: 'sidyaohuo=secret',
         Referer: 'https://www.yaohuo.me/bbs/',
         'Sec-Fetch-Site': 'same-origin',
-        'User-Agent': expect.stringContaining('Android')
+        'User-Agent': 'native-provider-user-agent'
       })
     }));
   });

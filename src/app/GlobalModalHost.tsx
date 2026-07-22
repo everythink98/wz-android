@@ -25,7 +25,6 @@ export function GlobalModalHost({
   linuxDoWebViewError,
   linuxDoWebViewKey,
   linuxDoWebViewRef,
-  linuxDoWebViewUserAgent,
   loadingLinuxDoPage,
   loadingNodeImageAuthPage,
   mountLinuxDoWebView,
@@ -35,7 +34,6 @@ export function GlobalModalHost({
   nodeImageAuthWebViewRef,
   nodeSeekMediaCookieHeader,
   nodeSeekMediaUserAgent,
-  nodeSeekWebViewUserAgent,
   resetLinuxDoWebView,
   checkLinuxDoCookie,
   clearLinuxDoCookie,
@@ -72,7 +70,6 @@ export function GlobalModalHost({
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
   linuxDoWebViewRef: RefObject<WebView | null>;
-  linuxDoWebViewUserAgent: string;
   loadingLinuxDoPage: boolean;
   loadingNodeImageAuthPage: boolean;
   mountLinuxDoWebView: boolean;
@@ -82,7 +79,6 @@ export function GlobalModalHost({
   nodeImageAuthWebViewRef: RefObject<WebView | null>;
   nodeSeekMediaCookieHeader?: string;
   nodeSeekMediaUserAgent?: string;
-  nodeSeekWebViewUserAgent: string;
   resetLinuxDoWebView: () => void;
   checkLinuxDoCookie: () => void;
   clearLinuxDoCookie: () => void;
@@ -122,7 +118,6 @@ export function GlobalModalHost({
         linuxDoWebViewError={linuxDoWebViewError}
         linuxDoWebViewKey={linuxDoWebViewKey}
         linuxDoWebViewRef={linuxDoWebViewRef}
-        linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
         mountLinuxDoWebView={mountLinuxDoWebView}
         loadingLinuxDoPage={loadingLinuxDoPage}
         showLinuxDoPanel={showLinuxDoPanel}
@@ -164,7 +159,6 @@ export function GlobalModalHost({
             sharedCookiesEnabled
             thirdPartyCookiesEnabled
             setSupportMultipleWindows={false}
-            userAgent={nodeSeekWebViewUserAgent}
             injectedJavaScript={nodeImageProbeScript}
             onLoadStart={() => {
               setNodeImageAuthError('');

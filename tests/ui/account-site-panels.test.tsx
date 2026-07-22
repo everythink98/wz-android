@@ -16,6 +16,8 @@ import {
 } from '../../src/siteSessionState';
 import { createStyles, createTheme } from '../../src/theme';
 
+let mockLoginWebViewProps: Record<string, any> = {};
+
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
 }));
@@ -59,6 +61,7 @@ jest.mock('react-native-webview', () => {
   const mockReload = jest.fn();
   const mockInjectJavaScript = jest.fn();
   const WebView = ReactModule.forwardRef(function MockWebView(props: Record<string, any>, ref) {
+    mockLoginWebViewProps = props;
     ReactModule.useImperativeHandle(ref, () => ({
       injectJavaScript: mockInjectJavaScript,
       reload: mockReload
@@ -144,7 +147,6 @@ function nodeSeekProps(overrides: Partial<ComponentProps<typeof NodeSeekLoginPan
     nodeImageApiKeyBusy: false,
     nodeImageApiKeySaved: false,
     nodeSeekSession: session('nodeseek', 'anonymous'),
-    nodeSeekWebViewUserAgent: 'test-agent',
     onAuthorizeNodeImageApiKey: jest.fn(),
     onCheckIn: jest.fn(),
     onCheckLogin: jest.fn(),
@@ -205,7 +207,6 @@ function linuxDoVerifyProps(overrides: Partial<ComponentProps<typeof LinuxDoVeri
     linuxDoWebViewError: '',
     linuxDoWebViewKey: 1,
     linuxDoWebViewRef: { current: null },
-    linuxDoWebViewUserAgent: 'test-agent',
     loadingLinuxDoPage: true,
     loginFormMode: false,
     mountLinuxDoWebView: true,
@@ -344,6 +345,24 @@ describe('Account site panels', () => {
     expect(webViewMock.mockReload).toHaveBeenCalled();
     await fireEvent.press(view.getByLabelText('关闭'));
     expect(onShowLoginPanelChange).toHaveBeenCalledWith(false);
+  });
+
+  it('[REG-VERIFICATION-003] lets Android choose the NodeSeek verification WebView user agent', async () => {
+    await render(<NodeSeekLoginPanel {...nodeSeekProps({ showLoginPanel: true })} />);
+
+    expect(mockLoginWebViewProps.userAgent).toBeUndefined();
+  });
+
+  it('[REG-VERIFICATION-003] lets Android choose the linux.do verification WebView user agent', async () => {
+    await render(<LinuxDoVerifyModal {...linuxDoVerifyProps()} />);
+
+    expect(mockLoginWebViewProps.userAgent).toBeUndefined();
+  });
+
+  it('[REG-VERIFICATION-003] lets Android choose the Yaohuo login WebView user agent', async () => {
+    await render(<YaohuoLoginPanel {...yaohuoProps()} />);
+
+    expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
   it('[REG-NODESEEK-002] does not expose Replay readiness after the WebView enters an error state', async () => {

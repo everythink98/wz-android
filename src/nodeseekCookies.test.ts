@@ -192,9 +192,9 @@ describe('NodeSeek cookie helpers', () => {
     expect(buildCookieHeader(removeNodeSeekLoginCookies(cookies))).toBe('cf_clearance=clearance');
   });
 
-  it('normalizes the WebView user agent before using it for NodeSeek requests', () => {
-    expect(sanitizeNodeSeekUserAgent('Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36')).toBe(
-      'Mozilla/5.0 (Linux; Android 15) Chrome/124 Mobile Safari/537.36'
+  it('[REG-VERIFICATION-003] preserves the WebView identity used for NodeSeek verification', () => {
+    expect(sanitizeNodeSeekUserAgent('  Mozilla/5.0 (Linux; Android 15; wv)   Version/4.0 Chrome/124 Mobile Safari/537.36  ')).toBe(
+      'Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36'
     );
   });
 
@@ -240,7 +240,7 @@ describe('NodeSeek cookie helpers', () => {
     });
   });
 
-  it('parses a combined NodeSeek access record with a normalized user agent', () => {
+  it('parses a combined NodeSeek access record without changing its WebView identity', () => {
     expect(parseNodeSeekAccessRecord(JSON.stringify({
       cookieHeader: 'session=abc',
       userAgent: 'Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
@@ -250,7 +250,7 @@ describe('NodeSeek cookie helpers', () => {
       source: 'webview'
     }))).toEqual({
       cookieHeader: 'session=abc',
-      userAgent: 'Mozilla/5.0 (Linux; Android 15) Chrome/124 Mobile Safari/537.36',
+      userAgent: 'Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
       userId: 48872,
       csrfToken: 'page-csrf',
       savedAt: '2026-06-21T00:00:00.000Z',

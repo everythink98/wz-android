@@ -2,6 +2,7 @@ import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './nodese
 import { withBrowserFetchIntent } from './browserFetchIntent';
 import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './nodeseekPolls';
 import { fetchWithTimeout, type Fetcher } from './request';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
 
 const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 const NODESEEK_ACTION_HEADERS = {
@@ -10,13 +11,9 @@ const NODESEEK_ACTION_HEADERS = {
   'content-type': 'application/json',
   origin: NODESEEK_BASE_URL,
   referer: `${NODESEEK_BASE_URL}/`,
-  'sec-ch-ua': '"Chromium";v="125", "Not.A/Brand";v="24"',
-  'sec-ch-ua-mobile': '?1',
-  'sec-ch-ua-platform': '"Android"',
   'sec-fetch-dest': 'empty',
   'sec-fetch-mode': 'cors',
   'sec-fetch-site': 'same-origin',
-  'user-agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
   'x-csrf-challenge': 'simple-token',
   'x-requested-with': 'XMLHttpRequest'
 };
@@ -61,7 +58,7 @@ export async function fetchNodeSeekVoteInfo({
   if (!/^\d+$/.test(cleanPollId)) {
     throw new Error('投票 id 不正确');
   }
-  const cleanUserAgent = userAgent?.trim();
+  const cleanUserAgent = (userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT).trim();
   const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}/api/vote/info/${encodeURIComponent(cleanPollId)}`, withBrowserFetchIntent({
     method: 'GET',
     headers: {
@@ -110,7 +107,7 @@ export async function runNodeSeekAction({
   if (!cleanCookie) {
     throw nodeSeekActionError(null, 401);
   }
-  const cleanUserAgent = userAgent?.trim();
+  const cleanUserAgent = (userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT).trim();
 
   const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}${request.path}`, withBrowserFetchIntent({
     method: request.method,
