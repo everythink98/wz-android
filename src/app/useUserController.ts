@@ -118,7 +118,10 @@ export function useUserController({
   onOpenUserScreen: () => void;
   readerData: ReaderData;
   screen: Screen;
-  showLinuxDoVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>;
+  showLinuxDoVerification: (
+    message?: string,
+    recovery?: LinuxDoReadRecovery
+  ) => void | boolean | Promise<void | boolean>;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;

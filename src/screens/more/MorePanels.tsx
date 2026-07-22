@@ -80,7 +80,6 @@ export function NodeSeekLoginPanel({
   onRequestCredentialFill,
   onWebViewState,
   handleNodeSeekLoginNavigation,
-  onRememberNodeSeekCookies,
   onSetLoadingLoginPage,
   onShowLoginPanelChange
 }: {
@@ -111,7 +110,6 @@ export function NodeSeekLoginPanel({
   onRequestCredentialFill: () => void;
   onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
-  onRememberNodeSeekCookies: (options?: { silent?: boolean }) => Promise<boolean>;
   onSetLoadingLoginPage: (value: boolean) => void;
   onShowLoginPanelChange: (value: boolean) => void;
 }) {
@@ -269,7 +267,6 @@ export function NodeSeekLoginPanel({
                 if (loginFormMode) {
                   webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.nodeseek.probeScript(credentialAttempt));
                 }
-                void onRememberNodeSeekCookies({ silent: true });
               }}
               onLoadStart={() => {
                 onWebViewState('start', credentialAttempt);

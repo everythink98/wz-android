@@ -46,7 +46,7 @@ import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
 import { useTopicActionsController } from './useTopicActionsController';
 import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
-import { nodeSeekMediaCookieHeaderAfterCredentialLoad, takeNodeSeekVerificationRetry } from './sessionControllerHelpers';
+import { nodeSeekMediaCookieHeaderAfterCredentialLoad, takeNodeSeekVerificationRetry, type NodeSeekVerificationRetry } from './sessionControllerHelpers';
 import { markCurrentNodeSeekOwnRepliesUnlikable } from './topicActionControllerHelpers';
 import { shareTopicWithClipboardFallback } from './topicActionHelpers';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
@@ -181,8 +181,7 @@ export function AppRoot() {
   const openTopicRef = useRef<((topic: Topic, refresh?: boolean) => Promise<unknown>) | null>(null);
   const openUserRef = useRef<((user: UserProfile, refresh?: boolean) => Promise<unknown>) | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
-  const pendingNodeSeekSearchRetryRef = useRef<(() => void) | null>(null);
-  const pendingNodeSeekTopicRetryRef = useRef<Topic | null>(null);
+  const pendingNodeSeekVerificationRetryRef = useRef<NodeSeekVerificationRetry | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const linuxDoWebViewCookieHeaderRef = useRef('');
@@ -190,14 +189,22 @@ export function AppRoot() {
   const linuxDoClearanceBeforeVerifyRef = useRef<string | null>(null);
   const linuxDoRequireFreshClearanceRef = useRef(false);
   const cancelTopicQueriesRef = useRef<() => void>(() => undefined);
-  const showLinuxDoVerificationForTopicRef = useRef<(message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>>(() => undefined);
+  const showLinuxDoVerificationForTopicRef = useRef<(
+    message?: string,
+    recovery?: LinuxDoReadRecovery
+  ) => void | boolean | Promise<void | boolean>>(() => undefined);
   const showYaohuoLoginForTopicRef = useRef<(message?: string) => void>(() => undefined);
-  const nodeSeekTopicVerificationRequiredRef = useRef<(message: string) => void>(() => undefined);
+  const nodeSeekTopicVerificationRequiredRef = useRef<(
+    message: string,
+    recovery: LinuxDoReadRecovery
+  ) => void>(() => undefined);
   const showLinuxDoVerificationForTopic = useCallback((message?: string, recovery?: LinuxDoReadRecovery) => (
     showLinuxDoVerificationForTopicRef.current(message, recovery)
   ), []);
   const showYaohuoLoginForTopic = useCallback((message?: string) => showYaohuoLoginForTopicRef.current(message), []);
-  const nodeSeekTopicVerificationRequired = useCallback((message: string) => nodeSeekTopicVerificationRequiredRef.current(message), []);
+  const nodeSeekTopicVerificationRequired = useCallback((message: string, recovery: LinuxDoReadRecovery) => (
+    nodeSeekTopicVerificationRequiredRef.current(message, recovery)
+  ), []);
   const {
     cancelDeferredNavigationTask,
     flushDeferredNavigationTask,
@@ -959,8 +966,7 @@ export function AppRoot() {
     nodeSeekLoginPanelRequestRef.current += 1;
     if (!visible) {
       handleClearCredentialLoginIntent('nodeseek');
-      pendingNodeSeekSearchRetryRef.current = null;
-      pendingNodeSeekTopicRetryRef.current = null;
+      pendingNodeSeekVerificationRetryRef.current = null;
     }
     webViewRef.current?.stopLoading();
     setLoadingLoginPage(visible);
@@ -1005,7 +1011,6 @@ export function AppRoot() {
     notify,
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     openTopicRef,
-    resetLinuxDoLevelState,
     selectedTopic,
     setChecking,
     setLinuxDoWebViewCookieHeader,
@@ -1031,12 +1036,16 @@ export function AppRoot() {
     previousLinuxDoPanelVisibleRef.current = showLinuxDoPanel;
   }, [handleClearCredentialLoginIntent, showLinuxDoPanel]);
 
-  const handleNodeSeekSearchVerificationRequired = useCallback((message: string, retry: () => void) => {
-    pendingNodeSeekSearchRetryRef.current = retry;
+  const handleNodeSeekSearchVerificationRequired = useCallback((message: string, retry: () => Promise<boolean>) => {
+    pendingNodeSeekVerificationRetryRef.current = { type: 'search', retry };
     showNodeSeekVerification(message);
   }, [showNodeSeekVerification]);
 
-  const handleNodeSeekTopicVerificationRequired = useCallback((message: string) => {
+  const handleNodeSeekTopicVerificationRequired = useCallback((message: string, recovery: LinuxDoReadRecovery) => {
+    pendingNodeSeekVerificationRetryRef.current = {
+      type: 'topic',
+      retry: async () => (await recovery.resume()) === 'completed'
+    };
     updateNodeSeekSession({ type: 'verification-required', message });
   }, [updateNodeSeekSession]);
   useCommitRefValue(nodeSeekTopicVerificationRequiredRef, handleNodeSeekTopicVerificationRequired);
@@ -1053,7 +1062,6 @@ export function AppRoot() {
     linuxDoLevelProfile,
     recordNodeSeekLoginWebViewState,
     recordYaohuoLoginWebViewState,
-    rememberVisibleNodeSeekCookies,
     refreshLinuxDoLevel
   } = useAccountController({
     checkingRequestIdRef,
@@ -1069,6 +1077,7 @@ export function AppRoot() {
     nodeSeekWebViewUserAgentRef,
     notify,
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
+    linuxDoVerificationActive: showLinuxDoPanel,
     resetLinuxDoLevelState,
     resetLinuxDoWebView,
     saveNodeSeekCookieHeader,
@@ -1076,12 +1085,12 @@ export function AppRoot() {
     setChecking,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
+    screen,
     showLinuxDoVerification,
     sourceGateway,
     showLoginPanelRef,
     showYaohuoLoginPanel,
     updateLinuxDoSession,
-    updateNodeSeekSession,
     updateYaohuoSession,
     webLoginDetectedRef,
     webViewRef,
@@ -1182,9 +1191,11 @@ export function AppRoot() {
     shownFeedItems
   } = useFeedController({
     credentialScope: forumCredentialScope,
+    linuxDoVerificationActive: showLinuxDoPanel,
     notify,
     readerData,
     readerDataLoaded,
+    screen,
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,
@@ -1216,8 +1227,10 @@ export function AppRoot() {
   } = useSearchController({
     categories,
     credentialScope: forumCredentialScope,
+    linuxDoVerificationActive: showLinuxDoPanel,
     notify,
     onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
+    screen,
     sessionViewModels: effectiveAccountSessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification,
@@ -1325,24 +1338,38 @@ export function AppRoot() {
     finishDiagnosticTrace(trace, 'success', { state: 'applied' });
   }, [abortTopicReadRequests, activateTopicRoute, clearTopicBackStack, clearTopicRoutes, closeMorePanels, restoreTopicRoute, stopTopicWork]);
 
-  const rememberVisibleNodeSeekCookiesAndRetrySearch = useCallback(async (options?: { silent?: boolean }) => {
-    const saved = await rememberVisibleNodeSeekCookies(options);
+  const checkNodeSeekLoginAndRetry = useCallback(async () => {
+    const saved = await checkLogin();
     if (!saved) {
       return false;
     }
-    const retry = takeNodeSeekVerificationRetry(pendingNodeSeekSearchRetryRef, pendingNodeSeekTopicRetryRef);
-    if (retry?.type === 'search') {
+    const retry = takeNodeSeekVerificationRetry(pendingNodeSeekVerificationRetryRef);
+    if (retry) {
+      setChecking(true);
+      let recovered = false;
+      try {
+        recovered = await retry.retry();
+      } catch (error) {
+        notify(errorMessage(error));
+      } finally {
+        setChecking(false);
+      }
+      if (!recovered) {
+        if (!pendingNodeSeekVerificationRetryRef.current) {
+          pendingNodeSeekVerificationRetryRef.current = retry;
+        }
+        updateNodeSeekSession({
+          type: 'verification-required',
+          message: 'NodeSeek 验证仍未生效，请继续验证后再次检测。'
+        });
+        notify('NodeSeek 验证仍未生效，请继续验证后再次检测。');
+        return false;
+      }
       changeNodeSeekLoginPanel(false);
-      changeScreen('search');
-      retry.retry();
-    } else if (retry?.type === 'topic') {
-      reopenExistingTopicScreenRef.current = true;
-      changeNodeSeekLoginPanel(false);
-      changeScreen('topic');
-      void openTopicRef.current?.(retry.topic, true);
+      changeScreen(retry.type);
     }
     return true;
-  }, [changeNodeSeekLoginPanel, changeScreen, rememberVisibleNodeSeekCookies]);
+  }, [changeNodeSeekLoginPanel, changeScreen, checkLogin, notify, setChecking, updateNodeSeekSession]);
 
   const prepareUserNavigation = useCallback(() => {
     const currentScreen = screenRef.current;
@@ -1427,9 +1454,14 @@ export function AppRoot() {
     if (detail?.source !== 'nodeseek') {
       return;
     }
-    pendingNodeSeekTopicRetryRef.current = detail;
+    if (pendingNodeSeekVerificationRetryRef.current?.type !== 'topic') {
+      pendingNodeSeekVerificationRetryRef.current = {
+        type: 'topic',
+        retry: async () => (await refreshWholeTopic()) === 'completed'
+      };
+    }
     showNodeSeekVerification(topicError?.message || 'NodeSeek 需要完成 Cloudflare 验证');
-  }, [selectedTopic, showNodeSeekVerification, topicDetail, topicError]);
+  }, [refreshWholeTopic, selectedTopic, showNodeSeekVerification, topicDetail, topicError]);
 
   const discourseActionRuntimeDependencies = useMemo(() => ({
     linuxDoUserAgent: () => linuxDoWebViewUserAgentRef.current,
@@ -1874,6 +1906,7 @@ export function AppRoot() {
       busy: searchBusy,
       categories,
       credentialScope: forumCredentialScope,
+      requestsEnabled: screen === 'search' && !showLinuxDoPanel,
       query: searchQuery,
       topicStateIndex,
       recentSearches,
@@ -1920,6 +1953,8 @@ export function AppRoot() {
     searchQuery,
     searchSessionNotices,
     searchSource,
+    screen,
+    showLinuxDoPanel,
     styles,
     submittedSearchQuery,
     tabScrollToTopSignals.search,
@@ -2021,8 +2056,7 @@ export function AppRoot() {
       onCheckAppUpdate: checkAppUpdate,
       onDownloadAppUpdate: downloadAppUpdate,
       onCheckIn: checkIn,
-      onCheckLogin: checkLogin,
-      onRememberNodeSeekCookies: rememberVisibleNodeSeekCookiesAndRetrySearch,
+      onCheckLogin: () => { void checkNodeSeekLoginAndRetry(); },
       onAuthorizeNodeImageApiKey: authorizeNodeImageApiKey,
       onSaveNodeImageApiKey: saveNodeImageApiKeyInput,
       onClearNodeImageApiKey: clearNodeImageApiKeyInput,
@@ -2066,7 +2100,7 @@ export function AppRoot() {
     changeYaohuoLoginPanel,
     checkAppUpdate,
     checkIn,
-    checkLogin,
+    checkNodeSeekLoginAndRetry,
     checkYaohuoCookie,
     checking,
     clearLogin,
@@ -2106,7 +2140,6 @@ export function AppRoot() {
     recordYaohuoLoginWebViewState,
     readerData.settings,
     refreshLinuxDoLevel,
-    rememberVisibleNodeSeekCookiesAndRetrySearch,
     saveNodeImageApiKeyInput,
     clearNodeImageApiKeyInput,
     selectNetworkProxyProfile,

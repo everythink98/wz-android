@@ -64,10 +64,7 @@ function currentAppScreen(): Screen {
 }
 
 export function shouldUpdateAppRootScreen(previousScreen: Screen, nextScreen: Screen) {
-  return previousScreen === 'topic'
-    || previousScreen === 'user'
-    || nextScreen === 'topic'
-    || nextScreen === 'user';
+  return previousScreen !== nextScreen;
 }
 
 export function currentTopicRouteKey() {

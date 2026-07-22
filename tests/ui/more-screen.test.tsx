@@ -123,7 +123,6 @@ function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): 
     onNodeSeekLoginWebViewState: jest.fn(),
     onRefreshLinuxDoLevel: jest.fn(),
     onRefreshXiaoyinsiLevel: jest.fn(),
-    onRememberNodeSeekCookies: jest.fn(async () => true),
     onSaveNodeImageApiKey: jest.fn(),
     onSelectNetworkProxyProfile: jest.fn(async () => undefined),
     onSetLoadingLoginPage: jest.fn(),

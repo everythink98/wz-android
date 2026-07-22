@@ -204,6 +204,7 @@ function FilterTextField({
 function SearchFilterSheet({
   categories,
   credentialScope,
+  requestsEnabled,
   source,
   searchFilters,
   styles,
@@ -216,6 +217,7 @@ function SearchFilterSheet({
 }: {
   categories: Category[];
   credentialScope: ForumCredentialScope;
+  requestsEnabled: boolean;
   source: Source;
   searchFilters: SearchFilterState;
   styles: ReturnType<typeof createStyles>;
@@ -312,6 +314,7 @@ function SearchFilterSheet({
   const normalizedUserQuery = userQuery.trim();
   const candidates = useSearchCandidateQueries({
     credentialScope,
+    enabled: requestsEnabled,
     searchDiscourseTags: onSearchDiscourseTags,
     searchDiscourseUsers: onSearchDiscourseUsers,
     tagRequest: visible && tagPickerVisible && discourseDraft && debouncedTagQuery !== null
@@ -1039,6 +1042,7 @@ export const SearchScreen = memo(function SearchScreen({
   busy,
   categories,
   credentialScope,
+  requestsEnabled,
   query,
   recentSearches,
   topicStateIndex,
@@ -1068,6 +1072,7 @@ export const SearchScreen = memo(function SearchScreen({
   busy: boolean;
   categories: Category[];
   credentialScope: ForumCredentialScope;
+  requestsEnabled: boolean;
   query: string;
   recentSearches: string[];
   topicStateIndex: TopicListItemStateIndex;
@@ -1603,6 +1608,7 @@ export const SearchScreen = memo(function SearchScreen({
         <SearchFilterSheet
           categories={categories}
           credentialScope={credentialScope}
+          requestsEnabled={requestsEnabled}
           source={searchSource as Source}
           searchFilters={searchFilters}
           styles={styles}

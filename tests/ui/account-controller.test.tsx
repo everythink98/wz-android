@@ -52,7 +52,9 @@ import {
 } from '../../src/linuxdoCookieBridge';
 import { checkYaohuoLogin, type LinuxDoLevelProfile, type SourceGateway } from '../../src/sources/sourceGateway';
 import { useAccountController } from '../../src/app/useAccountController';
+import type { Screen } from '../../src/appTypes';
 import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
+import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const mockCookies = {
@@ -75,6 +77,13 @@ const mockManagedLinuxDoLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelPro
 
 const ref = <T,>(current: T) => ({ current });
 
+function linuxDoCloudflareError(message = 'linux.do 需要完成 Cloudflare 验证') {
+  return Object.assign(new Error(message), {
+    source: 'linuxdo',
+    reason: 'cloudflare'
+  });
+}
+
 async function renderAccountController(overrides: Partial<Parameters<typeof useAccountController>[0]> = {}) {
   return renderNativeHook(() => useAccountController({
     checkingRequestIdRef: ref(0),
@@ -84,6 +93,7 @@ async function renderAccountController(overrides: Partial<Parameters<typeof useA
     currentNodeSeekCredentialGeneration: () => 3,
     currentYaohuoCredentialGeneration: () => 4,
     forumFetchWithWebViewFallback: jest.fn(async () => new Response('{}')),
+    linuxDoVerificationActive: false,
     nodeSeekLoginPanelRequestRef: ref(7),
     nodeSeekCurrentUserId: null,
     nodeSeekWebViewCookieHeaderRef: ref(''),
@@ -97,12 +107,12 @@ async function renderAccountController(overrides: Partial<Parameters<typeof useA
     setChecking: jest.fn() as never,
     setNodeSeekWebViewUserAgent: jest.fn() as never,
     setWebLoginUserId: jest.fn() as never,
-    showLinuxDoVerification: jest.fn(),
+    screen: 'more',
+    showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
     sourceGateway: { getLinuxDoLevelProfile: mockManagedLinuxDoLevelProfile },
     showLoginPanelRef: ref(true),
     showYaohuoLoginPanel: true,
     updateLinuxDoSession: jest.fn(),
-    updateNodeSeekSession: jest.fn(),
     updateYaohuoSession: jest.fn(),
     webLoginDetectedRef: ref(false),
     webViewRef: ref({ injectJavaScript: jest.fn(), reload: jest.fn() }) as never,
@@ -127,6 +137,7 @@ describe('account credential workflows with query-backed level state', () => {
   });
 
   afterEach(async () => {
+    jest.useRealTimers();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   });
 
@@ -137,14 +148,202 @@ describe('account credential workflows with query-backed level state', () => {
       sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
     } as never);
 
+    let refresh!: Promise<boolean>;
     await act(async () => {
-      await expect(hook.result.current.refreshLinuxDoLevel()).resolves.toBe(true);
+      refresh = hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
     });
+    await expect(refresh).resolves.toBe(true);
 
     expect(getLevelProfile).toHaveBeenCalledWith({
       source: 'linuxdo',
       signal: expect.any(Object)
     });
+    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
+  });
+
+  it('[REG-LINUXDO-006] keeps a failed Level Query active and resumes that exact request once after verification', async () => {
+    const cloudflare = linuxDoCloudflareError();
+    const profile = { username: 'alice' } as LinuxDoLevelProfile;
+    const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .mockRejectedValueOnce(cloudflare)
+      .mockResolvedValueOnce(profile);
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderAccountController({
+      screen: 'more',
+      showLinuxDoVerification,
+      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+    } as never);
+
+    let refresh!: Promise<boolean>;
+    await act(async () => {
+      refresh = hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
+    });
+    await expect(refresh).resolves.toBe(false);
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+
+    expect(recovery).toBeDefined();
+    expect(getLevelProfile).toHaveBeenCalledTimes(1);
+    expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(true);
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
+
+    expect(getLevelProfile).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-LINUXDO-006] aborts an in-flight Level recovery and makes it stale after leaving More', async () => {
+    let recoverySignal: AbortSignal | undefined;
+    const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .mockRejectedValueOnce(linuxDoCloudflareError())
+      .mockImplementationOnce(async ({ signal }) => {
+        recoverySignal = signal;
+        return new Promise<LinuxDoLevelProfile>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      });
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const overrides = {
+      screen: 'more' as Screen,
+      showLinuxDoVerification,
+      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+    } as Partial<Parameters<typeof useAccountController>[0]>;
+    const hook = await renderAccountController(overrides);
+    await act(async () => {
+      void hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+
+    let resume!: ReturnType<LinuxDoReadRecovery['resume']>;
+    await act(async () => {
+      resume = recovery.resume();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getLevelProfile).toHaveBeenCalledTimes(2));
+
+    overrides.screen = 'feed';
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(recoverySignal?.aborted).toBe(true));
+    await act(async () => {
+      await expect(resume).resolves.toBe('stale');
+    });
+
+    expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(false);
+    expect(getLevelProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-LINUXDO-006] invalidates Level recovery when the user closes verification', async () => {
+    const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .mockRejectedValueOnce(linuxDoCloudflareError());
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const overrides = {
+      linuxDoVerificationActive: false,
+      screen: 'more' as Screen,
+      showLinuxDoVerification,
+      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+    } as Partial<Parameters<typeof useAccountController>[0]>;
+    const hook = await renderAccountController(overrides);
+    await act(async () => {
+      void hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+
+    overrides.linuxDoVerificationActive = true;
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    overrides.linuxDoVerificationActive = false;
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    await expect(recovery.resume()).resolves.toBe('stale');
+    expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(false);
+    expect(getLevelProfile).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-VERIFICATION-001] keeps Level recovery available for an explicit retry after Cloudflare is returned again', async () => {
+    const profile = { username: 'alice' } as LinuxDoLevelProfile;
+    const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .mockRejectedValueOnce(linuxDoCloudflareError())
+      .mockRejectedValueOnce(linuxDoCloudflareError('linux.do 仍需验证'))
+      .mockResolvedValueOnce(profile);
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderAccountController({
+      screen: 'more',
+      showLinuxDoVerification,
+      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+    } as never);
+    await act(async () => {
+      void hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('verification-required');
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
+
+    expect(getLevelProfile).toHaveBeenCalledTimes(3);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
+  });
+
+  it('[REG-LINUXDO-006] releases Level after verification preparation is rejected so the user can retry', async () => {
+    const profile = { username: 'alice' } as LinuxDoLevelProfile;
+    const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .mockRejectedValueOnce(linuxDoCloudflareError())
+      .mockResolvedValueOnce(profile);
+    const showLinuxDoVerification = jest.fn<(
+      message?: string,
+      recovery?: LinuxDoReadRecovery
+    ) => Promise<boolean>>(async () => false);
+    const hook = await renderAccountController({
+      showLinuxDoVerification,
+      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+    } as never);
+
+    let firstRefresh!: Promise<boolean>;
+    await act(async () => {
+      firstRefresh = hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
+    });
+    let firstResult = true;
+    await act(async () => {
+      firstResult = await firstRefresh;
+      await Promise.resolve();
+    });
+    expect(firstResult).toBe(false);
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    await waitFor(() => {
+      expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(false);
+    });
+
+    let secondRefresh!: Promise<boolean>;
+    await act(async () => {
+      secondRefresh = hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
+    });
+    await expect(secondRefresh).resolves.toBe(true);
+
+    expect(getLevelProfile).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
   });
 
@@ -159,13 +358,19 @@ describe('account credential workflows with query-backed level state', () => {
       sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
     } as never);
 
+    let firstRefresh!: Promise<boolean>;
     await act(async () => {
-      await expect(hook.result.current.refreshLinuxDoLevel()).resolves.toBe(true);
+      firstRefresh = hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
     });
+    await expect(firstRefresh).resolves.toBe(true);
     await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
+    let secondRefresh!: Promise<boolean>;
     await act(async () => {
-      await expect(hook.result.current.refreshLinuxDoLevel()).resolves.toBe(false);
+      secondRefresh = hook.result.current.refreshLinuxDoLevel();
+      await Promise.resolve();
     });
+    await expect(secondRefresh).resolves.toBe(false);
 
     await waitFor(() => {
       expect(hook.result.current.linuxDoLevelProfile).toEqual(profile);
@@ -214,11 +419,9 @@ describe('account credential workflows with query-backed level state', () => {
   it('REG-ACCOUNT-005 ignores a valid-looking NodeSeek message from the Cloudflare host', async () => {
     const setWebLoginUserId = jest.fn();
     const setNodeSeekWebViewUserAgent = jest.fn();
-    const updateNodeSeekSession = jest.fn();
     const hook = await renderAccountController({
       setNodeSeekWebViewUserAgent: setNodeSeekWebViewUserAgent as never,
-      setWebLoginUserId: setWebLoginUserId as never,
-      updateNodeSeekSession
+      setWebLoginUserId: setWebLoginUserId as never
     });
 
     await act(async () => {
@@ -238,7 +441,49 @@ describe('account credential workflows with query-backed level state', () => {
 
     expect(setWebLoginUserId).not.toHaveBeenCalled();
     expect(setNodeSeekWebViewUserAgent).not.toHaveBeenCalled();
-    expect(updateNodeSeekSession).not.toHaveBeenCalled();
+  });
+
+  it('[REG-VERIFICATION-001] performs a fresh NodeSeek read for every settled manual check', async () => {
+    jest.useFakeTimers();
+    const saveNodeSeekCookieHeader = jest.fn(async () => 'saved');
+    const hook = await renderAccountController({ saveNodeSeekCookieHeader });
+
+    let first!: ReturnType<typeof hook.result.current.checkLogin>;
+    await act(async () => {
+      first = hook.result.current.checkLogin();
+      await jest.advanceTimersByTimeAsync(250);
+    });
+    await expect(first).resolves.toBe(true);
+
+    let second!: ReturnType<typeof hook.result.current.checkLogin>;
+    await act(async () => {
+      second = hook.result.current.checkLogin();
+      await jest.advanceTimersByTimeAsync(250);
+    });
+    await expect(second).resolves.toBe(true);
+
+    expect(mockBridge.readNodeSeekCookiesFromStores).toHaveBeenCalledTimes(2);
+    expect(saveNodeSeekCookieHeader).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('[REG-VERIFICATION-001] performs a fresh direct Yaohuo check for every settled manual check', async () => {
+    mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' } });
+    mockGateway.checkYaohuoLogin.mockResolvedValue({
+      source: 'yaohuo',
+      ok: true,
+      loginRequired: false,
+      loginUrl: '',
+      message: undefined,
+      reason: undefined
+    });
+    const hook = await renderAccountController();
+
+    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
+    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
+
+    expect(mockCookies.flush).toHaveBeenCalledTimes(2);
+    expect(mockGateway.checkYaohuoLogin).toHaveBeenCalledTimes(2);
   });
 
   it('REG-ACCOUNT-004 keeps confirmed Yaohuo expiry as the final event after cleanup', async () => {

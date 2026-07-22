@@ -53,7 +53,8 @@ import {
   startNextBrowserFetchRequest,
   takeNodeSeekVerificationRetry,
   type BrowserFetchQueueRequest,
-  type BrowserFetchRequestCleanupTarget
+  type BrowserFetchRequestCleanupTarget,
+  type NodeSeekVerificationRetry
 } from './sessionControllerHelpers';
 import {
   beginDiagnosticTrace,
@@ -1439,29 +1440,30 @@ describe('session controller helpers', () => {
   });
 
   it('takes a pending NodeSeek topic verification retry only once', () => {
-    const topic = { source: 'nodeseek' as const, id: '42' };
-    const searchRetryRef = { current: null };
-    const topicRetryRef = { current: topic };
+    const retry = vi.fn(async () => true);
+    const retryRef = { current: { type: 'topic', retry } as const };
 
-    expect(takeNodeSeekVerificationRetry(searchRetryRef, topicRetryRef)).toEqual({
+    expect(takeNodeSeekVerificationRetry(retryRef)).toEqual({
       type: 'topic',
-      topic
-    });
-    expect(takeNodeSeekVerificationRetry(searchRetryRef, topicRetryRef)).toBeNull();
-  });
-
-  it('keeps existing NodeSeek search verification retry ahead of topic retry', () => {
-    const retry = vi.fn();
-    const topic = { source: 'nodeseek' as const, id: '42' };
-    const searchRetryRef = { current: retry };
-    const topicRetryRef = { current: topic };
-
-    expect(takeNodeSeekVerificationRetry(searchRetryRef, topicRetryRef)).toEqual({
-      type: 'search',
       retry
     });
-    expect(searchRetryRef.current).toBeNull();
-    expect(topicRetryRef.current).toBeNull();
+    expect(takeNodeSeekVerificationRetry(retryRef)).toBeNull();
+  });
+
+  it('[REG-VERIFICATION-001] lets the latest NodeSeek recovery owner replace an older one', () => {
+    const searchRetry = vi.fn(async () => true);
+    const topicRetry = vi.fn(async () => true);
+    const retryRef: { current: NodeSeekVerificationRetry | null } = {
+      current: { type: 'search', retry: searchRetry }
+    };
+    retryRef.current = { type: 'topic', retry: topicRetry };
+
+    expect(takeNodeSeekVerificationRetry(retryRef)).toEqual({
+      type: 'topic',
+      retry: topicRetry
+    });
+    expect(searchRetry).not.toHaveBeenCalled();
+    expect(retryRef.current).toBeNull();
   });
 
   it('handles document HTTP errors after allowed redirects', () => {

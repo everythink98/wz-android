@@ -215,6 +215,7 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
       busy={false}
       categories={categories}
       credentialScope={emptyForumCredentialScope}
+      requestsEnabled={true}
       query={query}
       recentSearches={[]}
       topicStateIndex={topicStateIndex}
@@ -266,6 +267,7 @@ function RecentSearchHarness({
       busy={false}
       categories={categories}
       credentialScope={emptyForumCredentialScope}
+      requestsEnabled={true}
       query={query}
       recentSearches={['codex', 'react native']}
       topicStateIndex={topicStateIndex}
@@ -300,6 +302,7 @@ function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof 
     busy: false,
     categories,
     credentialScope: emptyForumCredentialScope,
+    requestsEnabled: true,
     query: 'codex',
     recentSearches: [],
     topicStateIndex,

@@ -32,12 +32,13 @@ describe('AppNavigator', () => {
     expect(AppNavigator).toMatchObject({ $$typeof: Symbol.for('react.memo') });
   });
 
-  it('keeps main-tab state inside the navigator while publishing detail transitions', () => {
-    expect(shouldUpdateAppRootScreen('feed', 'more')).toBe(false);
-    expect(shouldUpdateAppRootScreen('search', 'library')).toBe(false);
+  it('publishes every lifecycle ownership transition to AppRoot', () => {
+    expect(shouldUpdateAppRootScreen('feed', 'more')).toBe(true);
+    expect(shouldUpdateAppRootScreen('search', 'library')).toBe(true);
     expect(shouldUpdateAppRootScreen('more', 'topic')).toBe(true);
     expect(shouldUpdateAppRootScreen('topic', 'more')).toBe(true);
     expect(shouldUpdateAppRootScreen('topic', 'user')).toBe(true);
+    expect(shouldUpdateAppRootScreen('feed', 'feed')).toBe(false);
   });
 });
 

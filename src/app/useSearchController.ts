@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { aggregateSearchSources, type DiscourseSource } from '../sourceCatalog';
@@ -22,6 +22,7 @@ import {
 import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source } from '../types';
+import type { Screen } from '../appTypes';
 import type { SearchGroup } from '../searchListItems';
 import {
   createSearchHistoryWriteQueue,
@@ -119,17 +120,20 @@ type SearchUserCandidatesRequest = {
 
 export function useSearchCandidateQueries({
   credentialScope,
+  enabled,
   searchDiscourseTags,
   searchDiscourseUsers,
   tagRequest,
   userRequest
 }: {
   credentialScope: ForumCredentialScope;
+  enabled: boolean;
   searchDiscourseTags: (options: SearchTagCandidatesRequest & { signal?: AbortSignal }) => Promise<DiscourseTagOption[]>;
   searchDiscourseUsers: (options: SearchUserCandidatesRequest & { signal?: AbortSignal }) => Promise<DiscourseUserOption[]>;
   tagRequest: SearchTagCandidatesRequest | null;
   userRequest: SearchUserCandidatesRequest | null;
 }) {
+  const queryClient = useQueryClient();
   const tagCandidatesQuery = useQuery<DiscourseTagOption[]>({
     queryKey: forumQueryKeys.searchTags({
       categoryId: tagRequest?.categoryId,
@@ -138,7 +142,7 @@ export function useSearchCandidateQueries({
       selectedTags: tagRequest?.selectedTags || [],
       source: tagRequest?.source || 'linuxdo'
     }),
-    enabled: Boolean(tagRequest),
+    enabled: Boolean(enabled && tagRequest),
     placeholderData: (previousData) => previousData,
     queryFn: ({ signal }) => tagRequest
       ? searchDiscourseTags({ ...tagRequest, signal })
@@ -152,11 +156,18 @@ export function useSearchCandidateQueries({
       source: userRequest?.source || 'linuxdo',
       term: userRequest?.term || ''
     }),
-    enabled: Boolean(userRequest),
+    enabled: Boolean(enabled && userRequest),
     queryFn: ({ signal }) => userRequest
       ? searchDiscourseUsers({ ...userRequest, signal })
       : Promise.resolve([])
   });
+  useEffect(() => {
+    if (enabled) return;
+    void queryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum'
+        && (queryKey[2] === 'search-tags' || queryKey[2] === 'search-users')
+    });
+  }, [enabled, queryClient]);
 
   return {
     tags: {
@@ -177,8 +188,10 @@ export function useSearchCandidateQueries({
 export function useSearchController({
   categories,
   credentialScope = emptyForumCredentialScope,
+  linuxDoVerificationActive,
   notify,
   onNodeSeekSearchVerificationRequired,
+  screen,
   sessionViewModels,
   showLinuxDoVerification,
   showNodeSeekVerification,
@@ -187,15 +200,21 @@ export function useSearchController({
 }: {
   categories: Category[];
   credentialScope?: ForumCredentialScope;
+  linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
-  onNodeSeekSearchVerificationRequired?: (message: string, retry: () => void) => void;
+  onNodeSeekSearchVerificationRequired?: (message: string, retry: () => Promise<boolean>) => void;
+  screen: Screen;
   sessionViewModels: SiteSessionViewModels;
-  showLinuxDoVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>;
+  showLinuxDoVerification: (
+    message?: string,
+    recovery?: LinuxDoReadRecovery
+  ) => void | boolean | Promise<void | boolean>;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
 }) {
   const queryClient = useQueryClient();
+  const searchActive = screen === 'search';
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
   const recentSearchHistoryHydratedRef = useRef(false);
@@ -214,7 +233,19 @@ export function useSearchController({
     () => searchSessionNoticeItems(searchSource, sessionViewModels),
     [searchSource, sessionViewModels]
   );
-  const linuxDoAuthenticated = sessionViewModels.linuxdo.isLoggedIn;
+  const linuxDoVerificationInProgress = sessionViewModels.linuxdo.status === 'verification-required'
+    || sessionViewModels.linuxdo.status === 'verifying';
+  const [stableLinuxDoAuthenticated, setStableLinuxDoAuthenticated] = useState(
+    sessionViewModels.linuxdo.isLoggedIn
+  );
+  const linuxDoAuthenticated = linuxDoVerificationInProgress
+    ? stableLinuxDoAuthenticated
+    : sessionViewModels.linuxdo.isLoggedIn;
+  useLayoutEffect(() => {
+    if (!linuxDoVerificationInProgress) {
+      setStableLinuxDoAuthenticated(sessionViewModels.linuxdo.isLoggedIn);
+    }
+  }, [linuxDoVerificationInProgress, sessionViewModels.linuxdo.isLoggedIn]);
 
   useEffect(() => {
     let active = true;
@@ -383,7 +414,7 @@ export function useSearchController({
   const aggregateQueries = useQueries({
     queries: aggregateSearchSources.map((source, index) => ({
       queryKey: aggregateKeys[index],
-      enabled: Boolean(submittedSearch?.query && submittedSearch.source === 'all'),
+      enabled: Boolean(searchActive && submittedSearch?.query && submittedSearch.source === 'all'),
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const result = await runRemoteSearchSource(
           source,
@@ -402,7 +433,7 @@ export function useSearchController({
 
   const singleSearchQuery = useInfiniteQuery({
     queryKey: singleSearchKey,
-    enabled: Boolean(submittedSearch?.query && submittedSearch.source !== 'all'),
+    enabled: Boolean(searchActive && submittedSearch?.query && submittedSearch.source !== 'all'),
     initialPageParam: 1,
     queryFn: async ({ pageParam, signal }) => {
       const result = await runRemoteSearchSource(
@@ -450,9 +481,9 @@ export function useSearchController({
       label: sourceLabel(source),
       items: [],
       authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined,
-      loading: Boolean(submittedSearch?.query && submittedSearch.source === 'all')
+      loading: Boolean(searchActive && submittedSearch?.query && submittedSearch.source === 'all')
     };
-  }), [aggregateQueries, sessionViewModels, submittedSearch?.query, submittedSearch?.source]);
+  }), [aggregateQueries, searchActive, sessionViewModels, submittedSearch?.query, submittedSearch?.source]);
   const singleGroup = useMemo(() => {
     const merged = mergeSearchPages(singleSearchQuery.data?.pages || [], singleSearchQuery.error);
     if (merged) {
@@ -485,7 +516,7 @@ export function useSearchController({
     : '';
   const linuxDoAiQuery = useQuery({
     queryKey: forumQueryKeys.semanticSearch(linuxDoAiFullQuery, credentialScope),
-    enabled: Boolean(linuxDoAiFullQuery),
+    enabled: Boolean(searchActive && !linuxDoVerificationActive && linuxDoAiFullQuery),
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
       try {
@@ -508,6 +539,12 @@ export function useSearchController({
       }
     }
   });
+  useEffect(() => {
+    if (!linuxDoVerificationActive) return;
+    void queryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'semantic-search'
+    });
+  }, [linuxDoVerificationActive, queryClient]);
   const linuxDoAiState = useMemo<LinuxDoAiSearchState>(() => {
     if (!linuxDoAiVisible) return { status: 'idle', enabled: false, count: 0 };
     if (linuxDoAiQuery.isPending) return { status: 'loading', enabled: false, count: 0 };
@@ -524,7 +561,7 @@ export function useSearchController({
     : baseSearchGroups,
   [baseSearchGroups, linuxDoAiQuery.data?.items, linuxDoAiState.enabled]);
 
-  const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => void) => {
+  const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => Promise<boolean>) => {
     if (onNodeSeekSearchVerificationRequired) {
       onNodeSeekSearchVerificationRequired(message, retry);
     } else {
@@ -533,6 +570,7 @@ export function useSearchController({
   }, [onNodeSeekSearchVerificationRequired, showNodeSeekVerification]);
 
   const retrySearchSource = useCallback((source: Source) => {
+    if (!searchActive) return;
     if (submittedSearch?.source === 'all') {
       const index = aggregateSearchSources.indexOf(source);
       if (index >= 0) void aggregateQueries[index].refetch({ cancelRefetch: false });
@@ -544,10 +582,10 @@ export function useSearchController({
     } else {
       void singleSearchQuery.refetch({ cancelRefetch: false });
     }
-  }, [aggregateQueries, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.refetch, submittedSearch?.source, submittedSource]);
+  }, [aggregateQueries, searchActive, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.refetch, submittedSearch?.source, submittedSource]);
 
   const loadMoreSearchSource = useCallback(async (source: Source, page: number): Promise<LinuxDoReadResumeOutcome> => {
-    if (submittedSearch?.source === 'all' || source !== submittedSource || singleSearchQuery.isFetchingNextPage) {
+    if (!searchActive || submittedSearch?.source === 'all' || source !== submittedSource || singleSearchQuery.isFetchingNextPage) {
       return 'stale';
     }
     const last = singleSearchQuery.data?.pages.at(-1);
@@ -558,11 +596,12 @@ export function useSearchController({
     if (retryPage !== page) return 'stale';
     const result = await singleSearchQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.isFetchingNextPage, submittedSearch?.source, submittedSource]);
+  }, [searchActive, singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.isFetchingNextPage, submittedSearch?.source, submittedSource]);
 
   useEffect(() => {
     if (
-      !submittedSearch
+      !searchActive
+      || !submittedSearch
       || submittedSearch.source === 'all'
       || searchQuery.trim() !== submittedSearch.query
     ) return;
@@ -599,14 +638,30 @@ export function useSearchController({
         };
         void showLinuxDoVerification(result.action.message, recovery);
       } else if (result.action.type === 'nodeseek-verification') {
-        requireNodeSeekSearchVerification(result.action.message, () => retrySearchSource('nodeseek'));
+        const loadMore = singleSearchQuery.isFetchNextPageError;
+        requireNodeSeekSearchVerification(result.action.message, async () => {
+          const resumed = loadMore
+            ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
+            : await singleSearchQuery.refetch({ cancelRefetch: false });
+          if (resumed.isError) {
+            if (
+              resumed.error instanceof SearchPageError
+              && resumed.error.result.kind === 'action-required'
+              && resumed.error.result.action.type === 'nodeseek-verification'
+            ) {
+              handledSearchActionsRef.current.add(resumed.error.result);
+            }
+            return false;
+          }
+          const resumedResult = loadMore ? resumed.data?.pages.at(-1) : resumed.data?.pages[0];
+          return resumedResult?.kind === 'success';
+        });
       } else if (submittedSearch?.source !== 'all') {
         showYaohuoLogin(result.action.message);
       }
     });
   }, [
     requireNodeSeekSearchVerification,
-    retrySearchSource,
     showLinuxDoVerification,
     showYaohuoLogin,
     singleSearchKey,
@@ -617,10 +672,12 @@ export function useSearchController({
     singleSearchQuery.isFetchNextPageError,
     singleSearchQuery.refetch,
     searchQuery,
+    searchActive,
     submittedSearch
   ]);
 
   const runSearch = useCallback(async (options?: SearchRunInput): Promise<LinuxDoReadResumeOutcome> => {
+    if (!searchActive) return 'stale';
     const runOptions = typeof options === 'string' ? { sourceOverride: options } : options || {};
     if ('sourceOverride' in runOptions && runOptions.sourceOverride) {
       retrySearchSource(runOptions.sourceOverride as Source);
@@ -652,7 +709,7 @@ export function useSearchController({
       setSubmittedSearch(next);
     }
     return 'completed';
-  }, [addRecentSearch, aggregateQueries, notify, retrySearchSource, searchFilters, searchQuery, searchSource, singleSearchQuery.refetch, submittedSearch]);
+  }, [addRecentSearch, aggregateQueries, notify, retrySearchSource, searchActive, searchFilters, searchQuery, searchSource, singleSearchQuery.refetch, submittedSearch]);
 
   useEffect(() => {
     if (submittedSearch && searchQuery.trim() !== submittedSearch.query) {
@@ -731,8 +788,10 @@ export function useSearchController({
     if (linuxDoAiState.status === 'ready') setLinuxDoAiEnabled((current) => !current);
   }, [linuxDoAiState.status]);
   const retryLinuxDoAiSearch = useCallback(() => {
-    if (linuxDoAiQuery.isError) void linuxDoAiQuery.refetch({ cancelRefetch: false });
-  }, [linuxDoAiQuery.isError, linuxDoAiQuery.refetch]);
+    if (searchActive && !linuxDoVerificationActive && linuxDoAiQuery.isError) {
+      void linuxDoAiQuery.refetch({ cancelRefetch: false });
+    }
+  }, [linuxDoAiQuery.isError, linuxDoAiQuery.refetch, linuxDoVerificationActive, searchActive]);
   const abortSearchRequests = useCallback(() => {
     void queryClient.cancelQueries({
       predicate: ({ queryKey }) => queryKey[0] === 'forum'
@@ -740,6 +799,9 @@ export function useSearchController({
         && (queryKey[2].startsWith('search') || queryKey[2] === 'semantic-search')
     });
   }, [queryClient]);
+  useEffect(() => {
+    if (!searchActive) abortSearchRequests();
+  }, [abortSearchRequests, searchActive]);
   useEffect(() => abortSearchRequests, [abortSearchRequests]);
 
   return {
@@ -751,7 +813,7 @@ export function useSearchController({
     retrySearchSource,
     retryLinuxDoAiSearch,
     runSearch,
-    searchBusy: !submittedSearch
+    searchBusy: !searchActive || !submittedSearch
       ? false
       : submittedSearch.source === 'all'
         ? aggregateQueries.some((query) => query.isPending)

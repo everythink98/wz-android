@@ -32,14 +32,17 @@ const linuxDoMocks = vi.hoisted(() => ({
 }));
 
 const serverStateMocks = vi.hoisted(() => ({
-  recoveryActive: vi.fn(() => true)
+  recoveryActive: vi.fn(() => true),
+  useRealQueryCache: false
 }));
 
 vi.mock('./serverState', () => ({
   appQueryClient: {
-    getQueryCache: () => ({
-      find: () => ({ isActive: serverStateMocks.recoveryActive })
-    })
+    getQueryCache: () => serverStateMocks.useRealQueryCache
+      ? verificationQueryClient.getQueryCache()
+      : {
+          find: () => ({ isActive: serverStateMocks.recoveryActive })
+        }
   }
 }));
 
@@ -75,8 +78,19 @@ vi.mock('../linuxdoCookieBridge', () => ({
 }));
 
 import { setDiagnosticWriter, type DiagnosticEvent } from '../diagnostics';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import type { SiteSessionEvent } from '../siteSessionState';
 import { useVerificationController } from './useVerificationController';
+
+const verificationQueryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnMount: false,
+      retry: false,
+      staleTime: Infinity
+    }
+  }
+});
 
 const ref = <T,>(current: T) => ({ current });
 
@@ -116,7 +130,6 @@ function createController({
     notify,
     onLoginWebViewFailure,
     openTopicRef: ref(null),
-    resetLinuxDoLevelState: vi.fn(),
     selectedTopic: null,
     setChecking: vi.fn(),
     setLinuxDoWebViewCookieHeader: vi.fn(),
@@ -148,7 +161,9 @@ function createController({
 afterEach(() => {
   setDiagnosticWriter(null);
   vi.clearAllMocks();
+  verificationQueryClient.clear();
   serverStateMocks.recoveryActive.mockReset().mockReturnValue(true);
+  serverStateMocks.useRealQueryCache = false;
   linuxDoMocks.canAcceptLinuxDoAccessUpdate.mockReturnValue(true);
   linuxDoMocks.canStoreLinuxDoLogin.mockReturnValue(false);
   linuxDoMocks.linuxDoClearanceValue.mockReturnValue('CLEARANCE_VALUE_SECRET');
@@ -193,6 +208,7 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
@@ -244,6 +260,66 @@ describe('linux.do visible verification diagnostics', () => {
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
+  it('[REG-LINUXDO-006] preserves the active Level Query through credential save, exact resume, and panel close', async () => {
+    vi.useFakeTimers();
+    serverStateMocks.useRealQueryCache = true;
+    const levelQueryKey = ['forum', 'linuxdo', 'level', { credential: 0 }] as const;
+    const initialProfile = { username: 'before-verification' };
+    const resumedProfile = { username: 'after-verification' };
+    verificationQueryClient.setQueryData(levelQueryKey, initialProfile);
+    const observer = new QueryObserver(verificationQueryClient, {
+      queryKey: levelQueryKey,
+      queryFn: async () => initialProfile,
+      staleTime: Infinity
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({
+      cf_clearance: { name: 'PRIVATE_COOKIE_NAME', value: 'COOKIE_VALUE_SECRET' }
+    });
+    linuxDoMocks.saveLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'COOKIE_VALUE_SECRET',
+      savedAt: '2026-07-10T00:00:00.000Z',
+      source: 'webview'
+    });
+    const resume = vi.fn(async () => {
+      verificationQueryClient.setQueryData(levelQueryKey, resumedProfile);
+      return 'completed' as const;
+    });
+    const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef } = createController();
+
+    try {
+      await expect(controller.showLinuxDoVerification('需要验证', {
+        queryKey: levelQueryKey,
+        resume
+      })).resolves.toBe(true);
+      expect(verificationQueryClient.getQueryCache().find({ queryKey: levelQueryKey, exact: true })?.isActive()).toBe(true);
+      expect(verificationQueryClient.getQueryData(levelQueryKey)).toEqual(initialProfile);
+
+      await vi.advanceTimersByTimeAsync(80);
+      controller.handleLinuxDoMessage({
+        nativeEvent: {
+          data: JSON.stringify({
+            type: 'linuxdo-webview',
+            challenge: false,
+            cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+            userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+          })
+        }
+      } as never, linuxDoWebViewSessionRef.current);
+      const check = controller.checkLinuxDoCookie();
+      await vi.advanceTimersByTimeAsync(250);
+      await check;
+
+      expect(resume).toHaveBeenCalledTimes(1);
+      expect(showLinuxDoPanelRef.current).toBe(false);
+      expect(verificationQueryClient.getQueryData(levelQueryKey)).toEqual(resumedProfile);
+      expect(verificationQueryClient.getQueryCache().find({ queryKey: levelQueryKey, exact: true })?.isActive()).toBe(true);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('abandons a recovery that becomes stale while clearing so a later manual verification can finish', async () => {
     vi.useFakeTimers();
     linuxDoMocks.loadLinuxDoAccess.mockResolvedValue({ cookieHeader: 'OLD_CLEARANCE_SECRET' });
@@ -282,6 +358,7 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
@@ -328,7 +405,7 @@ describe('linux.do visible verification diagnostics', () => {
       await expect(controller.showLinuxDoVerification('需要验证', {
         queryKey: recoveryQueryKeyFor(`feed:${failure}`),
         resume
-      })).resolves.toBeUndefined();
+      })).resolves.toBe(false);
       expect(showLinuxDoPanelRef.current).toBe(false);
       expect(notify).toHaveBeenCalledTimes(1);
       expect(notify).toHaveBeenCalledWith('linux.do 验证准备失败，请重试。');
@@ -372,7 +449,7 @@ describe('linux.do visible verification diagnostics', () => {
     });
     recoveryCurrent = false;
     baselineRead.reject(new Error('late storage read failure'));
-    await expect(showing).resolves.toBeUndefined();
+    await expect(showing).resolves.toBe(false);
 
     expect(notify).not.toHaveBeenCalled();
     expect(showLinuxDoPanelRef.current).toBe(false);
@@ -401,6 +478,7 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
@@ -518,12 +596,15 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
       }
     } as never, linuxDoWebViewSessionRef.current);
-    await vi.runAllTimersAsync();
+    const check = controller.checkLinuxDoCookie();
+    await vi.advanceTimersByTimeAsync(250);
+    await check;
 
     expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
       type: 'session-updated'
@@ -532,7 +613,7 @@ describe('linux.do visible verification diagnostics', () => {
     expect(savedCredentialTransition).not.toHaveProperty('recoveryQueryKey');
   });
 
-  it('keeps the panel open and avoids an automatic retry loop when the resumed read still needs verification', async () => {
+  it('[REG-VERIFICATION-001] keeps the panel open and lets each settled explicit check retry when verification is still required', async () => {
     vi.useFakeTimers();
     linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
     linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({
@@ -555,12 +636,18 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
       }
     } as never, linuxDoWebViewSessionRef.current);
     await vi.advanceTimersByTimeAsync(500);
+
+    expect(resume).not.toHaveBeenCalled();
+    const firstExplicitCheck = controller.checkLinuxDoCookie();
+    await vi.advanceTimersByTimeAsync(500);
+    await firstExplicitCheck;
 
     expect(resume).toHaveBeenCalledTimes(1);
     expect(showLinuxDoPanelRef.current).toBe(true);
@@ -569,6 +656,7 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
@@ -684,12 +772,15 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
       }
     } as never, linuxDoWebViewSessionRef.current);
-    await vi.runAllTimersAsync();
+    const check = controller.checkLinuxDoCookie();
+    await vi.advanceTimersByTimeAsync(250);
+    await check;
 
     expect(resume).toHaveBeenCalledTimes(1);
     expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-succeeded' }));
@@ -720,12 +811,15 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
       }
     } as never, linuxDoWebViewSessionRef.current);
-    await vi.runAllTimersAsync();
+    const check = controller.checkLinuxDoCookie();
+    await vi.advanceTimersByTimeAsync(250);
+    await check;
 
     expect(linuxDoMocks.canAcceptLinuxDoAccessUpdate).toHaveBeenCalled();
     expect(resume).toHaveBeenCalledTimes(1);
@@ -755,11 +849,13 @@ describe('linux.do visible verification diagnostics', () => {
       nativeEvent: {
         data: JSON.stringify({
           type: 'linuxdo-webview',
+          challenge: false,
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
       }
     } as never, linuxDoWebViewSessionRef.current);
+    const check = controller.checkLinuxDoCookie();
     await vi.advanceTimersByTimeAsync(250);
 
     expect(resume).toHaveBeenCalledTimes(1);
@@ -771,6 +867,7 @@ describe('linux.do visible verification diagnostics', () => {
     expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-succeeded' }));
 
     resumed.resolve('completed');
+    await check;
     await vi.runAllTimersAsync();
 
     expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-succeeded' }));
@@ -823,9 +920,11 @@ describe('linux.do visible verification diagnostics', () => {
     await controller.showLinuxDoVerification('第一个请求', firstRecovery);
     await vi.advanceTimersByTimeAsync(80);
     controller.closeLinuxDoPanel();
-    await controller.showLinuxDoVerification('排队请求', queuedRecovery);
-    await controller.showLinuxDoVerification('最新请求', latestRecovery);
+    const queuedRequest = controller.showLinuxDoVerification('排队请求', queuedRecovery);
+    const latestRequest = controller.showLinuxDoVerification('最新请求', latestRecovery);
     await vi.advanceTimersByTimeAsync(400);
+    await expect(queuedRequest).resolves.toBe(false);
+    await expect(latestRequest).resolves.toBe(true);
     await vi.advanceTimersByTimeAsync(80);
 
     expect(linuxDoMocks.clearLinuxDoClearance).toHaveBeenCalledTimes(2);
@@ -834,6 +933,107 @@ describe('linux.do visible verification diagnostics', () => {
 
     await controller.showLinuxDoVerification('排队请求的迟到失败', queuedRecovery);
     expect(linuxDoMocks.clearLinuxDoClearance).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-LINUXDO-006] reports a queued Level preparation failure to its owner', async () => {
+    vi.useFakeTimers();
+    linuxDoMocks.loadLinuxDoAccess
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('queued storage read failed'));
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+    const firstRecovery = {
+      queryKey: recoveryQueryKeyFor('feed:closing'),
+      resume: vi.fn(async () => 'completed' as const)
+    };
+    const levelRecovery = {
+      queryKey: ['forum', 'linuxdo', 'level', { credential: 0 }] as const,
+      resume: vi.fn(async () => 'completed' as const)
+    };
+    const { controller, notify, showLinuxDoPanelRef } = createController();
+
+    await controller.showLinuxDoVerification('第一个请求', firstRecovery);
+    controller.closeLinuxDoPanel();
+    const queuedLevel = controller.showLinuxDoVerification('等级需要验证', levelRecovery);
+    await vi.advanceTimersByTimeAsync(400);
+
+    await expect(queuedLevel).resolves.toBe(false);
+    expect(showLinuxDoPanelRef.current).toBe(false);
+    expect(levelRecovery.resume).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('linux.do 验证准备失败，请重试。');
+  });
+
+  it('settles the first manual verification queued during panel closing', async () => {
+    vi.useFakeTimers();
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+    const { controller, showLinuxDoPanelRef } = createController();
+
+    await expect(controller.showLinuxDoVerification()).resolves.toBe(true);
+    controller.closeLinuxDoPanel();
+    const queuedManual = controller.showLinuxDoVerification('手动重新打开');
+    await vi.advanceTimersByTimeAsync(400);
+
+    await expect(queuedManual).resolves.toBe(true);
+    expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it('[REG-VERIFICATION-001] never lets a WebView document consume recovery before an explicit user check', async () => {
+    vi.useFakeTimers();
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({
+      cf_clearance: { name: 'PRIVATE_COOKIE_NAME', value: 'COOKIE_VALUE_SECRET' }
+    });
+    linuxDoMocks.saveLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'COOKIE_VALUE_SECRET',
+      savedAt: '2026-07-22T00:00:00.000Z',
+      source: 'webview'
+    });
+    const resume = vi.fn(async () => 'completed' as const);
+    const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef } = createController();
+
+    await controller.showLinuxDoVerification('等级需要验证', {
+      queryKey: recoveryQueryKeyFor('level:challenge-document'),
+      resume
+    });
+    await vi.advanceTimersByTimeAsync(80);
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          documentKey: 'cloudflare-document',
+          challenge: true,
+          cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+          userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+        })
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(showLinuxDoPanelRef.current).toBe(true);
+
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          documentKey: 'verified-document',
+          challenge: false,
+          cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+          userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+        })
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(resume).not.toHaveBeenCalled();
+    expect(showLinuxDoPanelRef.current).toBe(true);
+
+    const explicitCheck = controller.checkLinuxDoCookie();
+    await vi.advanceTimersByTimeAsync(500);
+    await explicitCheck;
+
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
   it('REG-LINUXDO-002 never lets an obsolete Cookie check resume a newer recovery', async () => {
@@ -870,17 +1070,20 @@ describe('linux.do visible verification diagnostics', () => {
         data: JSON.stringify({
           type: 'linuxdo-webview',
           documentKey: 'old-document',
+          challenge: false,
           cookie: 'OLD_WEBVIEW_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
       }
     } as never, linuxDoWebViewSessionRef.current);
+    const oldCheck = controller.checkLinuxDoCookie();
     await vi.advanceTimersByTimeAsync(250);
 
     const showNewer = controller.showLinuxDoVerification('新请求', newerRecovery);
     oldCookieRead.resolve({
       cf_clearance: { name: 'PRIVATE_COOKIE_NAME', value: 'COOKIE_VALUE_SECRET' }
     });
+    await oldCheck;
     await vi.advanceTimersByTimeAsync(0);
 
     expect(oldRecovery.resume).not.toHaveBeenCalled();
@@ -894,12 +1097,15 @@ describe('linux.do visible verification diagnostics', () => {
         data: JSON.stringify({
           type: 'linuxdo-webview',
           documentKey: 'new-document',
+          challenge: false,
           cookie: 'NEW_WEBVIEW_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
         })
       }
     } as never, linuxDoWebViewSessionRef.current);
-    await vi.runAllTimersAsync();
+    const newerCheck = controller.checkLinuxDoCookie();
+    await vi.advanceTimersByTimeAsync(250);
+    await newerCheck;
 
     expect(oldRecovery.resume).not.toHaveBeenCalled();
     expect(newerRecovery.resume).toHaveBeenCalledTimes(1);

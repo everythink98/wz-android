@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { useSearchController } from '../../src/app/useSearchController';
+import { useSearchCandidateQueries, useSearchController } from '../../src/app/useSearchController';
+import type { Screen } from '../../src/appTypes';
 import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
 import { setDiagnosticWriter } from '../../src/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '../../src/searchFilters';
@@ -88,7 +89,9 @@ function renderSearchController(
   return renderHook(() => useSearchController({
     categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
     credentialScope: getCredentialScope(),
+    linuxDoVerificationActive: false,
     notify,
+    screen: 'search',
     sessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification,
@@ -248,6 +251,221 @@ describe('linux.do AI search controller', () => {
       expect.any(Object)
     ));
     expect(hook.result.current.linuxDoAiState).toMatchObject({ status: 'idle', enabled: false });
+  });
+
+  it('[REG-LINUXDO-006] keeps the active authenticated search identity while verification is in progress', async () => {
+    const restartedSearch = Promise.withResolvers<SearchResponse>();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [],
+        errors: {
+          linuxdo: {
+            kind: 'verification-required',
+            message: 'linux.do 需要验证',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      })
+      .mockImplementation(async () => restartedSearch.promise);
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const sourceGateway = createGateway({ searchTopics });
+    let sessionViewModels = loggedInSessions;
+    appQueryClient.clear();
+    const hook = await renderHook(() => useSearchController({
+      categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
+      credentialScope: emptyForumCredentialScope,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      screen: 'search',
+      sessionViewModels,
+      showLinuxDoVerification,
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }), { wrapper: QueryTestWrapper });
+    await prepareLinuxDoSearch(hook, 'codex');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+
+    sessionViewModels = createSiteSessionViewModels(createSiteSessionStates({
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'verifying',
+        cookieSummary: ['session-present'],
+        isVerifying: true
+      }
+    }));
+    await act(async () => {
+      hook.rerender(undefined);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(true);
+    expect(searchTopics).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-LINUXDO-006] aborts an owned search after leaving Search and does not restart it for a new credential scope', async () => {
+    const pendingSearch = Promise.withResolvers<SearchResponse>();
+    let requestSignal: AbortSignal | undefined;
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async (options) => {
+      requestSignal = options.signal;
+      return pendingSearch.promise;
+    });
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const showNodeSeekVerification = jest.fn<(message?: string) => void>();
+    const showYaohuoLogin = jest.fn<(message?: string) => void>();
+    const sourceGateway = createGateway({ searchTopics });
+    let screen: Screen = 'search';
+    let credentialScope = emptyForumCredentialScope;
+    appQueryClient.clear();
+    const hook = await renderHook(() => useSearchController({
+      categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
+      credentialScope,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      screen,
+      sessionViewModels: loggedInSessions,
+      showLinuxDoVerification,
+      showNodeSeekVerification,
+      showYaohuoLogin,
+      sourceGateway
+    }), { wrapper: QueryTestWrapper });
+    await prepareLinuxDoSearch(hook, 'codex');
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+
+    screen = 'more';
+    credentialScope = { ...emptyForumCredentialScope, linuxdo: 1 };
+    await act(async () => {
+      hook.rerender(undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(requestSignal?.aborted).toBe(true));
+    await act(async () => {
+      pendingSearch.resolve({
+        items: [],
+        errors: {
+          linuxdo: {
+            kind: 'verification-required',
+            message: '离开页面后的旧请求',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      });
+      await pendingSearch.promise;
+    });
+
+    expect(searchTopics).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
+    expect(showNodeSeekVerification).not.toHaveBeenCalled();
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
+  });
+
+  it('[REG-LINUXDO-006] pauses an in-flight AI read while verification is open and resumes it after closing', async () => {
+    const aiSignals: AbortSignal[] = [];
+    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>(async ({ signal }) => {
+      if (signal) aiSignals.push(signal);
+      if (aiSignals.length === 1) {
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      }
+      return { items: [aiOnlyTopic], errors: {}, hasMore: false, nextPage: null };
+    });
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const sourceGateway = createGateway({ searchSemanticTopics, searchTopics });
+    let linuxDoVerificationActive = false;
+    appQueryClient.clear();
+    const hook = await renderHook(() => useSearchController({
+      categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
+      credentialScope: emptyForumCredentialScope,
+      linuxDoVerificationActive,
+      notify: jest.fn(),
+      screen: 'search',
+      sessionViewModels: loggedInSessions,
+      showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+      showNodeSeekVerification: jest.fn<(message?: string) => void>(),
+      showYaohuoLogin: jest.fn<(message?: string) => void>(),
+      sourceGateway
+    }), { wrapper: QueryTestWrapper });
+    await prepareLinuxDoSearch(hook, 'codex');
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(1));
+
+    linuxDoVerificationActive = true;
+    await act(async () => {
+      hook.rerender(undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(aiSignals[0]?.aborted).toBe(true));
+    expect(searchSemanticTopics).toHaveBeenCalledTimes(1);
+
+    linuxDoVerificationActive = false;
+    await act(async () => {
+      hook.rerender(undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(2));
+  });
+
+  it('[REG-LINUXDO-006] cancels candidate reads while verification is open and resumes the current request after closing', async () => {
+    const tagSignals: AbortSignal[] = [];
+    const searchDiscourseTags = jest.fn(async ({ signal }: { signal?: AbortSignal }) => {
+      if (signal) tagSignals.push(signal);
+      if (tagSignals.length === 1) {
+        return new Promise<never[]>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      }
+      return [];
+    });
+    let enabled = true;
+    appQueryClient.clear();
+    const hook = await renderHook(() => useSearchCandidateQueries({
+      credentialScope: emptyForumCredentialScope,
+      enabled,
+      searchDiscourseTags,
+      searchDiscourseUsers: jest.fn(async () => []),
+      tagRequest: {
+        source: 'linuxdo',
+        query: 'react',
+        selectedTags: []
+      },
+      userRequest: null
+    }), { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(searchDiscourseTags).toHaveBeenCalledTimes(1));
+
+    enabled = false;
+    await act(async () => {
+      hook.rerender(undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(tagSignals[0]?.aborted).toBe(true));
+    expect(searchDiscourseTags).toHaveBeenCalledTimes(1);
+
+    enabled = true;
+    await act(async () => {
+      hook.rerender(undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(searchDiscourseTags).toHaveBeenCalledTimes(2));
   });
 
   it('REG-LINUXDO-002 resumes the exact foreground search without recursively reopening verification', async () => {
@@ -1173,12 +1391,24 @@ describe('linux.do AI search controller', () => {
         nextPage: null
       })
       .mockResolvedValueOnce({
+        items: [],
+        errors: {
+          nodeseek: {
+            kind: 'verification-required',
+            message: 'NodeSeek 仍需验证',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      })
+      .mockResolvedValueOnce({
         items: [secondPageTopic],
         errors: {},
         hasMore: false,
         nextPage: null
       });
-    const onVerificationRequired = jest.fn<(message: string, retry: () => void) => void>();
+    const onVerificationRequired = jest.fn<(message: string, retry: () => Promise<boolean>) => void>();
     const gateway = createGateway({
       searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
       searchTopics
@@ -1186,6 +1416,7 @@ describe('linux.do AI search controller', () => {
     appQueryClient.clear();
     const hook = await renderHook(() => useSearchController({
       categories: [],
+      linuxDoVerificationActive: false,
       notify: jest.fn(),
       onNodeSeekSearchVerificationRequired: onVerificationRequired,
       sessionViewModels: createSiteSessionViewModels(createSiteSessionStates({
@@ -1196,6 +1427,7 @@ describe('linux.do AI search controller', () => {
           isVerifying: false
         }
       })),
+      screen: 'search',
       showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
       showNodeSeekVerification: jest.fn(),
       showYaohuoLogin: jest.fn(),
@@ -1222,12 +1454,14 @@ describe('linux.do AI search controller', () => {
     });
     await waitFor(() => expect(onVerificationRequired).toHaveBeenCalledTimes(1));
 
+    const retry = onVerificationRequired.mock.calls[0]?.[1];
     await act(async () => {
-      onVerificationRequired.mock.calls[0]?.[1]();
+      await expect(retry?.()).resolves.toBe(false);
+      await expect(retry?.()).resolves.toBe(true);
     });
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
 
-    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 2]);
+    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 2, 2]);
     await waitFor(() => expect(hook.result.current.searchGroups[0]?.items.map((topic) => topic.id)).toEqual(['1', '2']));
   });
 

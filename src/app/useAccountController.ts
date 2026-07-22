@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import CookieManager from '@react-native-cookies/cookies';
 import { type WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
@@ -33,6 +33,8 @@ import {
 import { checkYaohuoLogin, type SourceGateway } from '../sources/sourceGateway';
 import type { Fetcher } from '../request';
 import type { SiteSessionEvent } from '../siteSessionState';
+import type { Screen } from '../appTypes';
+import { sourceReadRecoveryOutcome } from '../sourceErrors';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
@@ -47,6 +49,8 @@ import {
   type DiagnosticTrace
 } from '../diagnostics';
 import { forumQueryKeys, type ForumCredentialScope } from './serverState';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
+import { useCommitRefValue } from './useCommittedRef';
 
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL];
 const NODESEEK_MESSAGE_HOSTS = ['nodeseek.com'];
@@ -68,6 +72,7 @@ export function useAccountController({
   nodeSeekWebViewUserAgentRef,
   notify,
   onLoginWebViewFailure,
+  linuxDoVerificationActive,
   resetLinuxDoLevelState,
   resetLinuxDoWebView,
   saveNodeSeekCookieHeader,
@@ -75,12 +80,12 @@ export function useAccountController({
   setChecking,
   setNodeSeekWebViewUserAgent,
   setWebLoginUserId,
+  screen,
   showLinuxDoVerification,
   sourceGateway,
   showLoginPanelRef,
   showYaohuoLoginPanel,
   updateLinuxDoSession,
-  updateNodeSeekSession,
   updateYaohuoSession,
   webLoginDetectedRef,
   webViewRef,
@@ -100,6 +105,7 @@ export function useAccountController({
   nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
   onLoginWebViewFailure: (site: 'nodeseek' | 'yaohuo', attempt: number, reason: LoginWebViewFailureReason) => void;
+  linuxDoVerificationActive: boolean;
   resetLinuxDoLevelState: () => void;
   resetLinuxDoWebView: () => void;
   saveNodeSeekCookieHeader: (
@@ -110,18 +116,22 @@ export function useAccountController({
   setChecking: Dispatch<SetStateAction<boolean>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setWebLoginUserId: Dispatch<SetStateAction<number | null>>;
-  showLinuxDoVerification: (message?: string) => void;
+  screen: Screen;
+  showLinuxDoVerification: (
+    message?: string,
+    recovery?: LinuxDoReadRecovery
+  ) => void | boolean | Promise<void | boolean>;
   sourceGateway: Pick<SourceGateway, 'getLinuxDoLevelProfile'>;
   showLoginPanelRef: Ref<boolean>;
   showYaohuoLoginPanel: boolean;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
-  updateNodeSeekSession: (event: SiteSessionEvent) => void;
   updateYaohuoSession: (event: SiteSessionEvent) => void;
   webLoginDetectedRef: Ref<boolean>;
   webViewRef: Ref<WebView | null>;
   yaohuoLoginPanelRequestRef: Ref<number>;
   yaohuoWebViewRef: Ref<WebView | null>;
 }) {
+  const queryClient = useQueryClient();
   const nodeSeekWebLoginUserIdRef = useRef<number | null>(null);
   const nodeSeekWebLoginCsrfTokenRef = useRef('');
   const nodeSeekLoginTraceRef = useRef<{ trace: DiagnosticTrace; panelRequestId: number } | null>(null);
@@ -131,11 +141,150 @@ export function useAccountController({
   const yaohuoTerminalRequestRef = useRef<number | null>(null);
   const wasYaohuoLoginPanelVisibleRef = useRef(false);
   const observedYaohuoLoginPanelRequestRef = useRef(yaohuoLoginPanelRequestRef.current);
+  const [linuxDoLevelRequested, setLinuxDoLevelRequested] = useState(false);
+  const linuxDoLevelCommandRef = useRef<{ resolve: (completed: boolean) => void } | null>(null);
+  const linuxDoLevelRecoveryRef = useRef<LinuxDoReadRecovery | null>(null);
+  const linuxDoLevelRequestedRef = useRef(false);
+  const linuxDoLevelWaitingForVerificationRef = useRef(false);
+  const linuxDoLevelScreenRef = useRef(screen);
+  const linuxDoVerificationWasActiveRef = useRef(linuxDoVerificationActive);
+  useCommitRefValue(linuxDoLevelScreenRef, screen);
+  const linuxDoLevelQueryKey = forumQueryKeys.levelProfile({ credentialScope, source: 'linuxdo' });
   const linuxDoLevelQuery = useQuery({
-    enabled: false,
-    queryKey: forumQueryKeys.levelProfile({ credentialScope, source: 'linuxdo' }),
-    queryFn: ({ signal }) => sourceGateway.getLinuxDoLevelProfile({ source: 'linuxdo', signal })
+    enabled: screen === 'more' && linuxDoLevelRequested,
+    queryKey: linuxDoLevelQueryKey,
+    queryFn: ({ signal }) => sourceGateway.getLinuxDoLevelProfile({ source: 'linuxdo', signal }),
+    retryOnMount: false
   });
+  const finishLinuxDoLevelRequest = useCallback(() => {
+    linuxDoLevelRecoveryRef.current = null;
+    linuxDoLevelRequestedRef.current = false;
+    linuxDoLevelWaitingForVerificationRef.current = false;
+    setLinuxDoLevelRequested(false);
+  }, []);
+  const cancelLinuxDoLevelRequest = useCallback(() => {
+    const command = linuxDoLevelCommandRef.current;
+    linuxDoLevelCommandRef.current = null;
+    command?.resolve(false);
+    finishLinuxDoLevelRequest();
+    void queryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum'
+        && queryKey[1] === 'linuxdo'
+        && queryKey[2] === 'level'
+    });
+  }, [finishLinuxDoLevelRequest, queryClient]);
+
+  useEffect(() => {
+    if (screen !== 'more') {
+      cancelLinuxDoLevelRequest();
+    }
+  }, [cancelLinuxDoLevelRequest, screen]);
+  useEffect(() => {
+    const wasActive = linuxDoVerificationWasActiveRef.current;
+    linuxDoVerificationWasActiveRef.current = linuxDoVerificationActive;
+    if (
+      wasActive
+      && !linuxDoVerificationActive
+      && linuxDoLevelRequestedRef.current
+      && linuxDoLevelWaitingForVerificationRef.current
+    ) {
+      cancelLinuxDoLevelRequest();
+    }
+  }, [cancelLinuxDoLevelRequest, linuxDoVerificationActive]);
+
+  useEffect(() => {
+    const command = linuxDoLevelCommandRef.current;
+    if (!command || linuxDoLevelQuery.isFetching || linuxDoLevelQuery.status === 'pending') {
+      return;
+    }
+    linuxDoLevelCommandRef.current = null;
+    if (linuxDoLevelScreenRef.current !== 'more' || !linuxDoLevelRequestedRef.current) {
+      command.resolve(false);
+      cancelLinuxDoLevelRequest();
+      return;
+    }
+    if (!linuxDoLevelQuery.error) {
+      const completed = Boolean(linuxDoLevelQuery.data);
+      finishLinuxDoLevelRequest();
+      if (completed) {
+        notify('linux.do 等级已更新。');
+      }
+      command.resolve(completed);
+      return;
+    }
+    command.resolve(false);
+    if (!isLinuxDoCloudflareError(linuxDoLevelQuery.error)) {
+      finishLinuxDoLevelRequest();
+      return;
+    }
+
+    linuxDoLevelWaitingForVerificationRef.current = true;
+    const recovery: LinuxDoReadRecovery = {
+      queryKey: linuxDoLevelQueryKey,
+      resume: async (): Promise<LinuxDoReadResumeOutcome> => {
+        if (
+          linuxDoLevelRecoveryRef.current !== recovery
+          || !linuxDoLevelRequestedRef.current
+          || linuxDoLevelScreenRef.current !== 'more'
+        ) {
+          return 'stale';
+        }
+        const result = await linuxDoLevelQuery.refetch({ cancelRefetch: false });
+        if (
+          linuxDoLevelRecoveryRef.current !== recovery
+          || !linuxDoLevelRequestedRef.current
+          || linuxDoLevelScreenRef.current !== 'more'
+        ) {
+          return 'stale';
+        }
+        if (result.error) {
+          if (isLinuxDoCloudflareError(result.error)) {
+            return 'verification-required';
+          }
+          finishLinuxDoLevelRequest();
+          return sourceReadRecoveryOutcome('linuxdo', result.error);
+        }
+        const completed = Boolean(result.data);
+        finishLinuxDoLevelRequest();
+        if (completed) {
+          notify('linux.do 等级已更新。');
+          return 'completed';
+        }
+        return 'failed';
+      }
+    };
+    linuxDoLevelRecoveryRef.current = recovery;
+    let showing: ReturnType<typeof showLinuxDoVerification>;
+    try {
+      showing = showLinuxDoVerification(
+        'linux.do 等级读取需要完成 Cloudflare 验证',
+        recovery
+      );
+    } catch {
+      cancelLinuxDoLevelRequest();
+      return;
+    }
+    void Promise.resolve(showing).then((accepted) => {
+      if (accepted === false && linuxDoLevelRecoveryRef.current === recovery) {
+        cancelLinuxDoLevelRequest();
+      }
+    }, () => {
+      if (linuxDoLevelRecoveryRef.current === recovery) {
+        cancelLinuxDoLevelRequest();
+      }
+    });
+  }, [
+    cancelLinuxDoLevelRequest,
+    finishLinuxDoLevelRequest,
+    linuxDoLevelQuery.data,
+    linuxDoLevelQuery.error,
+    linuxDoLevelQuery.isFetching,
+    linuxDoLevelQuery.refetch,
+    linuxDoLevelQuery.status,
+    linuxDoLevelQueryKey,
+    notify,
+    showLinuxDoVerification
+  ]);
 
   const finishNodeSeekLoginTrace = useCallback((
     trace: DiagnosticTrace,
@@ -351,7 +500,6 @@ export function useAccountController({
         nodeSeekWebLoginUserIdRef.current = null;
         nodeSeekWebLoginCsrfTokenRef.current = '';
         webLoginDetectedRef.current = false;
-        updateNodeSeekSession({ type: 'login-expired', message: 'NodeSeek 登录已失效' });
         setWebLoginUserId(null);
       }
     } catch {
@@ -365,7 +513,6 @@ export function useAccountController({
     nodeSeekWebLoginUserIdRef,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
-    updateNodeSeekSession,
     webLoginDetectedRef
   ]);
 
@@ -481,27 +628,22 @@ export function useAccountController({
     const requestId = ++checkingRequestIdRef.current;
     setChecking(true);
     try {
-      await rememberCurrentNodeSeekCookies({ isCurrent: () => requestId === checkingRequestIdRef.current && showLoginPanelRef.current });
+      return await rememberCurrentNodeSeekCookies({
+        isCurrent: () => requestId === checkingRequestIdRef.current && showLoginPanelRef.current
+      });
     } catch (error) {
       if (requestId === checkingRequestIdRef.current) {
         notify(errorMessage(error));
       } else {
         finishNodeSeekLoginTrace(trace, 'stale', { reason: 'stale' });
       }
+      return false;
     } finally {
       if (requestId === checkingRequestIdRef.current) {
         setChecking(false);
       }
     }
   }, [checkingRequestIdRef, currentNodeSeekLoginTrace, finishNodeSeekLoginTrace, notify, rememberCurrentNodeSeekCookies, setChecking, showLoginPanelRef]);
-
-  const rememberVisibleNodeSeekCookies = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
-    const requestId = nodeSeekLoginPanelRequestRef.current;
-    return rememberCurrentNodeSeekCookies({
-      silent,
-      isCurrent: () => showLoginPanelRef.current && nodeSeekLoginPanelRequestRef.current === requestId
-    });
-  }, [nodeSeekLoginPanelRequestRef, rememberCurrentNodeSeekCookies, showLoginPanelRef]);
 
   const checkYaohuoCookie = useCallback(async () => {
     const trace = currentYaohuoLoginTrace('manual');
@@ -769,20 +911,29 @@ export function useAccountController({
     notify(summary.hasClearance ? '已清除 linux.do 登录信息，保留访问验证。' : '已清除本机保存的 linux.do 登录信息。');
   }, [notify, resetLinuxDoLevelState, resetLinuxDoWebView, updateLinuxDoSession]);
 
-  const refreshLinuxDoLevel = useCallback(async () => {
-    const result = await linuxDoLevelQuery.refetch({ cancelRefetch: false });
-    if (result.error) {
-      if (isLinuxDoCloudflareError(result.error)) {
-        showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
-      }
-      return false;
+  const refreshLinuxDoLevel = useCallback(() => {
+    if (linuxDoLevelScreenRef.current !== 'more') {
+      return Promise.resolve(false);
     }
-    if (result.data) {
-      notify('linux.do 等级已更新。');
-      return true;
+    if (linuxDoLevelRequestedRef.current) {
+      return Promise.resolve(false);
     }
-    return false;
-  }, [linuxDoLevelQuery.refetch, notify, showLinuxDoVerification]);
+    linuxDoLevelRequestedRef.current = true;
+    linuxDoLevelWaitingForVerificationRef.current = false;
+    linuxDoLevelRecoveryRef.current = null;
+    void queryClient.invalidateQueries({
+      exact: true,
+      queryKey: linuxDoLevelQueryKey,
+      refetchType: 'none'
+    });
+    setLinuxDoLevelRequested(true);
+    return new Promise<boolean>((resolve) => {
+      linuxDoLevelCommandRef.current = { resolve };
+    });
+  }, [
+    linuxDoLevelQueryKey,
+    queryClient
+  ]);
 
   return {
     checkLogin,
@@ -793,7 +944,6 @@ export function useAccountController({
     handleLoginMessage,
     recordNodeSeekLoginWebViewState,
     recordYaohuoLoginWebViewState,
-    rememberVisibleNodeSeekCookies,
     linuxDoLevelBusy: linuxDoLevelQuery.isFetching,
     linuxDoLevelError: linuxDoLevelQuery.error
       ? (isLinuxDoCloudflareError(linuxDoLevelQuery.error)

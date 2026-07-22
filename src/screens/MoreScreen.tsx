@@ -91,7 +91,6 @@ export const MoreScreen = memo(function MoreScreen({
   onDownloadAppUpdate,
   onCheckIn,
   onCheckLogin,
-  onRememberNodeSeekCookies,
   onAuthorizeNodeImageApiKey,
   onSaveNodeImageApiKey,
   onClearNodeImageApiKey,
@@ -183,7 +182,6 @@ export const MoreScreen = memo(function MoreScreen({
   onDownloadAppUpdate: () => void;
   onCheckIn: () => void;
   onCheckLogin: () => void;
-  onRememberNodeSeekCookies: (options?: { silent?: boolean }) => Promise<boolean>;
   onAuthorizeNodeImageApiKey: () => void;
   onSaveNodeImageApiKey: (value: string) => void;
   onClearNodeImageApiKey: () => void;
@@ -362,7 +360,6 @@ export const MoreScreen = memo(function MoreScreen({
               onRequestCredentialFill={() => { void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'nodeseek' }); }}
               onWebViewState={onNodeSeekLoginWebViewState}
               handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
-              onRememberNodeSeekCookies={onRememberNodeSeekCookies}
               onSetLoadingLoginPage={onSetLoadingLoginPage}
               onShowLoginPanelChange={onShowLoginPanelChange}
             />
