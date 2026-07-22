@@ -63,7 +63,11 @@ export function runAgentDevice(args, { capture = false, cwd = process.cwd(), ech
   if (result.status !== 0) {
     throw new Error(`agent-device ${args.join(' ')} 失败（退出码 ${result.status ?? 'unknown'}）`);
   }
-  return `${result.stdout || ''}${result.stderr || ''}`;
+  return capturedAgentDeviceOutput(result);
+}
+
+export function capturedAgentDeviceOutput(result) {
+  return String(result.stdout || '');
 }
 
 function versionParts(version) {

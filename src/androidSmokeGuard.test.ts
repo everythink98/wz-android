@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { deviceSelectionArgs, isVersionSupported, MIN_AGENT_DEVICE_VERSION } from '../scripts/agent-device-runtime.mjs';
+import { capturedAgentDeviceOutput, deviceSelectionArgs, isVersionSupported, MIN_AGENT_DEVICE_VERSION } from '../scripts/agent-device-runtime.mjs';
 import { runApkSanity } from '../scripts/smoke-android.mjs';
 import {
   listReplayFiles,
@@ -34,6 +34,15 @@ describe('Android release evidence guards', () => {
   it('requires one explicitly selected device', () => {
     expect(() => deviceSelectionArgs('')).toThrow('WZ_ANDROID_TEST_DEVICE');
     expect(deviceSelectionArgs('  WZ Pixel API 35  ')).toEqual(['--device', 'WZ Pixel API 35']);
+  });
+
+  it('[REG-OPS-010] keeps successful agent-device diagnostics out of captured JSON', () => {
+    const output = capturedAgentDeviceOutput({
+      stdout: '{"success":true,"data":{"devices":[]}}',
+      stderr: 'warning: backend probe timed out\n'
+    });
+
+    expect(parseAgentDeviceList(output)).toEqual([]);
   });
 
   it('[REG-OPS-004] maps the configured AVD name to the booted device display name', () => {

@@ -983,6 +983,20 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 从 Release Smoke 移除排除项，`REG-OPS-009` 单测必须失败；真实 Release bundle 会再次在“展开测试工具”处失败。 |
 | 明确不覆盖范围 | 不让正式 APK 支持临时匿名，不用未登录设备替代有 Cookie 的匿名屏蔽证据，也不新增第二套 Replay runner。 |
 
+## `REG-OPS-010` agent-device 诊断污染设备清单 JSON
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `RELEASE-02` |
+| 用户症状 | Replay 在任何旅程和 APK 身份行之前失败，报 `Unexpected non-whitespace character after JSON`。 |
+| 触发条件 | `agent-device devices --json` 成功返回 JSON，同时把 backend warning 写入 stderr。 |
+| 根因 seam | `scripts/agent-device-runtime.mjs` 的 capture 路径把 stdout 与 stderr 拼接后作为机器可读结果返回。 |
+| 必须保持的行为 | capture 只把 stdout 交给调用方解析；stderr 仍在 `echoCapture` 开启时显示，非零退出仍失败，不得吞掉工具错误。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 给成功 stdout 配一条 stderr warning，返回值仍能被 `parseAgentDeviceList` 解析。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定流分离；完整开发包与 Release Replay 证明真实 CLI 链路。 |
+| Replay 或真实验收路径 | 当前开发包八条 `npm run test:device`，随后 `npm run release:android` 的七条 release-safe Replay。 |
+| 明确不覆盖范围 | 不屏蔽 stdout 中的非法内容，也不终止或替换无法证明归属的共享 daemon。 |
+
 ## `REG-TOPIC-001` 回复已筛选但标题仍显示主题总数
 
 | 字段 | 内容 |
