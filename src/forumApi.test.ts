@@ -1,23 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@react-native-cookies/cookies', () => ({
-  default: {
-    flush: vi.fn(async () => undefined),
-    get: vi.fn(async () => ({})),
-    clearByName: vi.fn(async () => true)
-  }
-}));
-
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn(async () => undefined),
   deleteItemAsync: vi.fn(async () => undefined)
-}));
-
-vi.mock('react-native', () => ({
-  NativeModules: {
-    LinuxDoCookieModule: {}
-  }
 }));
 
 import { getCategories, getCurrentUserProfile, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
@@ -151,7 +137,6 @@ describe('Android local forum facade', () => {
     const result = await searchTopics({
       source: 'all',
       query: '妖火聚合',
-      yaohuoCookie: 'sidyaohuo=secret',
       fetcher
     });
 
@@ -220,7 +205,7 @@ describe('Android local forum facade', () => {
     const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
     const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
     const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
-    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' });
+    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(nodeseek).toMatchObject({ source: 'nodeseek', id: '48872', username: '我是ikun', url: 'https://www.nodeseek.com/space/48872' });
     expect(linuxdo).toMatchObject({ source: 'linuxdo', id: 'alice', username: 'alice', postCount: 8, topicCount: 2 });
@@ -394,7 +379,7 @@ describe('Android local forum facade', () => {
       getUserProfile({ source: 'nodeseek', id: '1', fetcher }),
       getUserProfile({ source: 'linuxdo', id: 'linux', fetcher }),
       getUserProfile({ source: 'v2ex', id: 'v2', fetcher }),
-      getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' })
+      getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher })
     ]);
 
     expect(profiles.map((profile) => sourceDiagnosticSummary(profile)?.partialErrorCount)).toEqual([1, 1, 1, 1]);
@@ -439,7 +424,7 @@ describe('Android local forum facade', () => {
     await expect(getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', cursor: '2', cursorType: 'replies', fetcher })).resolves.toMatchObject({
       replies: [{ topicId: '122', floor: 8, author: 'neo', authorId: 'neo', authorUrl: 'https://www.v2ex.com/member/neo', displayTimeText: '2 分钟前' }]
     });
-    await expect(getUserProfile({ source: 'yaohuo', id: '7', username: '火友', cursor: 'https://www.yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7&page=2', cursorType: 'replies', fetcher, yaohuoCookie: 'sid=ok' })).resolves.toMatchObject({
+    await expect(getUserProfile({ source: 'yaohuo', id: '7', username: '火友', cursor: 'https://www.yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7&page=2', cursorType: 'replies', fetcher })).resolves.toMatchObject({
       replies: [{ topicId: '67', floor: 3 }],
       hasMoreReplies: false
     });
@@ -493,13 +478,13 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' });
+    const nodeseek = await getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true });
     const linuxdo = await getCurrentUserProfile({
       source: 'linuxdo',
       fetcher,
-      discourseAuth: { linuxdo: { cookieHeader: '_t=ok' } }
+      discourseAuth: { linuxdo: { authenticated: true } }
     });
-    const yaohuo = await getCurrentUserProfile({ source: 'yaohuo', fetcher, yaohuoCookie: 'sidyaohuo=ok' });
+    const yaohuo = await getCurrentUserProfile({ source: 'yaohuo', fetcher });
     const xiaoyinsi = await getCurrentUserProfile({
       source: 'xiaoyinsi',
       fetcher,
@@ -557,7 +542,7 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'linuxdo',
       fetcher,
-      discourseAuth: { linuxdo: { cookieHeader: '_t=expired' } }
+      discourseAuth: { linuxdo: { authenticated: true } }
     })).rejects.toMatchObject({
       source: 'linuxdo',
       kind: 'login-expired',
@@ -577,7 +562,7 @@ describe('Android local forum facade', () => {
       await getCurrentUserProfile({
         source: 'linuxdo',
         fetcher,
-        discourseAuth: { linuxdo: { cookieHeader: '_t=candidate' } }
+        discourseAuth: { linuxdo: { authenticated: true } }
       });
     } catch (error) {
       failure = error;
@@ -592,7 +577,7 @@ describe('Android local forum facade', () => {
 
   it('[REG-ACCOUNT-019] does not use a public NodeSeek profile as current-session proof', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://www.nodeseek.com/') {
+      if (input === 'https://www.nodeseek.com/' || input === 'https://www.nodeseek.com/setting') {
         return new Response('<div>NodeSeek</div>');
       }
       if (input === 'https://www.nodeseek.com/api/account/getInfo/15105?readme=1') {
@@ -601,7 +586,7 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
+    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
     expect(fetcher).not.toHaveBeenCalledWith('https://www.nodeseek.com/api/account/getInfo/15105?readme=1', expect.anything());
   });
 
@@ -623,7 +608,7 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'session=unknown'
+      nodeSeekAuthenticated: true
     })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
@@ -638,7 +623,7 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'session=expired'
+      nodeSeekAuthenticated: true
     })).rejects.toMatchObject({
       source: 'nodeseek',
       loginRequired: true,
@@ -664,7 +649,7 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'session=current'
+      nodeSeekAuthenticated: true
     })).resolves.toMatchObject({
       source: 'nodeseek',
       id: '48872',
@@ -696,7 +681,7 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'session=current'
+      nodeSeekAuthenticated: true
     })).resolves.toMatchObject({
       source: 'nodeseek',
       id: '48872',
@@ -716,7 +701,7 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'session=unknown'
+      nodeSeekAuthenticated: true
     })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
@@ -734,8 +719,35 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'session=unknown'
+      nodeSeekAuthenticated: true
     })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
+  });
+
+  it.each([403, 404])('[REG-ACCOUNT-031] keeps the NodeSeek account probe HTTP %i unknown without consulting a guest fallback page', async (status) => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response('', { status });
+      }
+      if (input === 'https://www.nodeseek.com/setting') {
+        return new Response('<header><a href="/signIn.html">登录</a><a href="/register.html">注册</a></header>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+    let failure: unknown;
+
+    try {
+      await getCurrentUserProfile({
+        source: 'nodeseek',
+        fetcher,
+        nodeSeekAuthenticated: true
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toMatchObject({ loginRequired: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('reads the current NodeSeek account from settings when the home page has no user link', async () => {
@@ -749,7 +761,7 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).resolves.toMatchObject({
+    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })).resolves.toMatchObject({
       source: 'nodeseek',
       id: '15105',
       username: '新账号',
@@ -772,7 +784,7 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
+    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
   it('[REG-ACCOUNT-019] does not use UID text beside a homepage author link as current-session proof', async () => {
@@ -789,14 +801,14 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'session=stale'
+      nodeSeekAuthenticated: true
     })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
   it('reads the current yaohuo account name from the signed-in user topic list when the profile only exposes an id', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
-        return new Response('<div class="top"><a href="/bbs/userinfo.aspx?touserid=45245">我的地盘</a> <a href="/bbs/logout.aspx">退出</a></div>');
+        return new Response('<div class="top2"><a href="/myfile.aspx">我的地盘</a><a href="/bbs/userinfo.aspx?touserid=45245">空间</a><a href="/bbs/book_list_search.aspx">帖子</a><a href="/bbs/messagelist.aspx">信箱</a></div>');
       }
       if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=45245&siteid=1000') {
         return new Response(`
@@ -816,7 +828,7 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getCurrentUserProfile({ source: 'yaohuo', fetcher, yaohuoCookie: 'sidyaohuo=ok' })).resolves.toMatchObject({
+    await expect(getCurrentUserProfile({ source: 'yaohuo', fetcher })).resolves.toMatchObject({
       source: 'yaohuo',
       id: '45245',
       username: '流金岁月',
@@ -835,7 +847,7 @@ describe('Android local forum facade', () => {
   it('[REG-ACCOUNT-025] preserves a proven Yaohuo identity when optional profile enrichment fails', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
-        return new Response('<div class="top">欢迎 <a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>');
+        return new Response('<div class="top2"><a href="/myfile.aspx">我的地盘</a><a href="/bbs/userinfo.aspx?touserid=7">火友</a><a href="/bbs/book_list_search.aspx">帖子</a><a href="/bbs/messagelist.aspx">信箱</a></div>');
       }
       if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
         return new Response('temporarily unavailable', { status: 503 });
@@ -846,7 +858,6 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'yaohuo',
       fetcher,
-      yaohuoCookie: 'sidyaohuo=ok'
     })).resolves.toMatchObject({
       source: 'yaohuo',
       id: '7',
@@ -916,7 +927,7 @@ describe('Android local forum facade', () => {
     const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
     const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
     const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
-    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' });
+    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(nodeseek.topics[0]).toMatchObject({
       id: '101',
@@ -961,7 +972,7 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' });
+    const profile = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(profile.topicCount).toBe(2);
     expect(profile.topics.map((topic) => topic.id)).toEqual(['67', '66']);
@@ -992,7 +1003,7 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' });
+    const profile = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(profile.topics).toHaveLength(30);
     expect(profile).toMatchObject({
@@ -1019,7 +1030,7 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'yaohuo', id: '36925', username: '李慕婉o', fetcher, yaohuoCookie: 'sid=ok' });
+    const profile = await getUserProfile({ source: 'yaohuo', id: '36925', username: '李慕婉o', fetcher });
 
     expect(profile.displayName).toBe('李慕婉o');
     expect(profile.topicCount).toBe(1659);
@@ -1071,7 +1082,7 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'yaohuo', id: '36925', username: '李慕婉o', fetcher, yaohuoCookie: 'sid=ok' });
+    const profile = await getUserProfile({ source: 'yaohuo', id: '36925', username: '李慕婉o', fetcher });
 
     expect(profile.displayName).toBe('李慕婉o');
     expect(profile.topicCount).toBe(1659);
@@ -1102,7 +1113,6 @@ describe('Android local forum facade', () => {
       id: '7',
       username: '火友',
       fetcher,
-      yaohuoCookie: 'sid=ok',
       cursor: 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2'
     });
 
@@ -1119,7 +1129,6 @@ describe('Android local forum facade', () => {
       id: '7',
       username: '火友',
       fetcher,
-      yaohuoCookie: 'sid=ok',
       cursor: 'https://evil.example/bbs/book_list.aspx?page=2'
     })).rejects.toThrow('妖火链接不属于 www.yaohuo.me');
 
@@ -1254,7 +1263,7 @@ describe('Android local forum facade', () => {
     const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
     const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
     const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
-    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' });
+    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(nodeseek.topics.map((topic) => topic.id)).toEqual(['102', '101']);
     expect(linuxdo.topics.map((topic) => topic.id)).toEqual(['42', '41']);
@@ -1486,7 +1495,7 @@ describe('Android local forum facade', () => {
       fetcher,
       discourseAuth: {
         linuxdo: {
-          cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+          authenticated: true,
           userAgent: 'LinuxDo WebView UA'
         }
       },
@@ -1550,7 +1559,7 @@ describe('Android local forum facade', () => {
       fetcher,
       discourseAuth: {
         linuxdo: {
-          cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+          authenticated: true,
           userAgent: 'LinuxDo WebView UA'
         }
       },
@@ -2007,6 +2016,6 @@ describe('Android local forum facade', () => {
     expect(result.items).toEqual([]);
     expect(result.hasMore).toBe(false);
     expect(result.nextCursor).toBeUndefined();
-    expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'xiaoyinsi']);
+    expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi']);
   });
 });

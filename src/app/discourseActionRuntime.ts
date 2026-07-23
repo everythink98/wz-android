@@ -1,10 +1,5 @@
 import type { DiscourseActionRequest } from '../discourseActions';
 import { runLinuxDoAction } from '../linuxdoActionClient';
-import {
-  currentLinuxDoAccessGeneration,
-  linuxDoAccessSummary,
-  loadLinuxDoAccess
-} from '../linuxdoCookieBridge';
 import type { Fetcher } from '../request';
 import type { DiscourseSource } from '../sourceCatalog';
 import type { SiteSessionEvent } from '../siteSessionState';
@@ -32,7 +27,7 @@ export type DiscourseActionRuntimeRecovery = {
 
 export type PreparedDiscourseActionRuntime = {
   credentialReady: boolean;
-  credentialSource: 'secure-store';
+  credentialSource: 'managed-cookie-jar' | 'secure-store';
   csrfSource: 'none' | 'session-endpoint';
   execute?: (request: DiscourseActionRequest, signal?: AbortSignal) => Promise<unknown>;
   isCredentialCurrent?: () => boolean;
@@ -51,39 +46,21 @@ function hasFlag(error: unknown, key: 'authorizationCheckRequired' | 'loginRequi
 const discourseActionRuntimes = {
   linuxdo: {
     prepare: async (context) => {
-      const generation = currentLinuxDoAccessGeneration();
-      const isCredentialCurrent = () => currentLinuxDoAccessGeneration() === generation;
-      const access = await loadLinuxDoAccess();
-      const credentialReady = Boolean(access?.cookieHeader && linuxDoAccessSummary(access).loggedIn);
       return {
-        credentialReady,
-        credentialSource: 'secure-store',
+        credentialReady: true,
+        credentialSource: 'managed-cookie-jar',
         csrfSource: 'session-endpoint',
-        isCredentialCurrent,
-        ...(!credentialReady ? {
-          onMissingCredential: () => context.updateLinuxDoSession({
-            type: 'login-expired',
-            message: 'linux.do 登录状态已失效'
-          })
-        } : {
-          execute: (request: DiscourseActionRequest, signal?: AbortSignal) => runLinuxDoAction({
-            cookieHeader: access!.cookieHeader,
-            fetcher: context.fetcher,
-            userAgent: context.linuxDoUserAgent() || access!.userAgent,
-            request,
-            signal
-          })
+        execute: (request: DiscourseActionRequest, signal?: AbortSignal) => runLinuxDoAction({
+          fetcher: context.fetcher,
+          userAgent: context.linuxDoUserAgent(),
+          request,
+          signal
         }),
         recover: async (error: unknown) => {
-          if (!isCredentialCurrent()) {
-            return { loginRequired: false, phase: 'credential' as const, stale: true };
-          }
           if (!hasFlag(error, 'loginRequired')) {
             return { loginRequired: false, phase: 'transport' as const };
           }
           const message = errorMessage(error);
-          context.updateLinuxDoSession({ type: 'login-expired', message });
-          context.resetLinuxDoLevelState();
           return { loginRequired: true, message, phase: 'credential' as const };
         }
       };

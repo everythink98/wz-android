@@ -12,8 +12,8 @@ import type { SourceGateway } from '../../src/sources/sourceGateway';
 import type { SearchResponse, Source, Topic } from '../../src/types';
 import {
   appQueryClient,
-  emptyForumCredentialScope,
-  type ForumCredentialScope
+  initialForumSessionEpochs,
+  type ForumSessionEpochs
 } from '../../src/app/serverState';
 import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
 import { QueryTestWrapper } from './QueryTestWrapper';
@@ -80,7 +80,7 @@ function renderSearchController(
   sourceGateway: SourceGateway,
   notify = jest.fn<(message: string) => void>(),
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
-  getCredentialScope: () => ForumCredentialScope = () => emptyForumCredentialScope,
+  getSessionEpochs: () => ForumSessionEpochs = () => initialForumSessionEpochs,
   sessionViewModels: SiteSessionViewModels = loggedInSessions,
   showNodeSeekVerification = jest.fn<(message?: string) => void>(),
   showYaohuoLogin = jest.fn<(message?: string) => void>()
@@ -88,7 +88,7 @@ function renderSearchController(
   appQueryClient.clear();
   return renderHook(() => useSearchController({
     categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
-    credentialScope: getCredentialScope(),
+    sessionEpochs: getSessionEpochs(),
     linuxDoVerificationActive: false,
     notify,
     screen: 'search',
@@ -179,7 +179,7 @@ describe('linux.do AI search controller', () => {
       createGateway({ searchTopics }),
       jest.fn(),
       jest.fn(),
-      () => emptyForumCredentialScope,
+      () => initialForumSessionEpochs,
       loggedInSessions,
       showNodeSeekVerification
     );
@@ -234,7 +234,7 @@ describe('linux.do AI search controller', () => {
       createGateway({ searchTopics }),
       jest.fn(),
       jest.fn(),
-      () => emptyForumCredentialScope,
+      () => initialForumSessionEpochs,
       unconfirmedSessions
     );
     await prepareLinuxDoSearch(hook, 'codex');
@@ -244,12 +244,15 @@ describe('linux.do AI search controller', () => {
     });
 
     await waitFor(() => expect(searchTopics).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: 'linuxdo',
-        linuxDoAuthenticated: false
-      }),
+      expect.objectContaining({ source: 'linuxdo' }),
       expect.any(Object)
     ));
+    expect(appQueryClient.getQueryCache().getAll().some(({ queryKey }) => (
+      queryKey[0] === 'forum'
+      && queryKey[1] === 'linuxdo'
+      && queryKey[2] === 'search'
+      && (queryKey[3] as { authenticated?: boolean })?.authenticated === false
+    ))).toBe(true);
     expect(hook.result.current.linuxDoAiState).toMatchObject({ status: 'idle', enabled: false });
   });
 
@@ -275,7 +278,7 @@ describe('linux.do AI search controller', () => {
     appQueryClient.clear();
     const hook = await renderHook(() => useSearchController({
       categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
-      credentialScope: emptyForumCredentialScope,
+      sessionEpochs: initialForumSessionEpochs,
       linuxDoVerificationActive: false,
       notify: jest.fn(),
       screen: 'search',
@@ -322,11 +325,11 @@ describe('linux.do AI search controller', () => {
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
     const sourceGateway = createGateway({ searchTopics });
     let screen: Screen = 'search';
-    let credentialScope = emptyForumCredentialScope;
+    let sessionEpochs = initialForumSessionEpochs;
     appQueryClient.clear();
     const hook = await renderHook(() => useSearchController({
       categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
-      credentialScope,
+      sessionEpochs,
       linuxDoVerificationActive: false,
       notify: jest.fn(),
       screen,
@@ -343,7 +346,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
 
     screen = 'more';
-    credentialScope = { ...emptyForumCredentialScope, linuxdo: 1 };
+    sessionEpochs = { ...initialForumSessionEpochs, linuxdo: 1 };
     await act(async () => {
       hook.rerender(undefined);
       await Promise.resolve();
@@ -393,7 +396,7 @@ describe('linux.do AI search controller', () => {
     appQueryClient.clear();
     const hook = await renderHook(() => useSearchController({
       categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
-      credentialScope: emptyForumCredentialScope,
+      sessionEpochs: initialForumSessionEpochs,
       linuxDoVerificationActive,
       notify: jest.fn(),
       screen: 'search',
@@ -439,7 +442,7 @@ describe('linux.do AI search controller', () => {
     let enabled = true;
     appQueryClient.clear();
     const hook = await renderHook(() => useSearchCandidateQueries({
-      credentialScope: emptyForumCredentialScope,
+      sessionEpochs: initialForumSessionEpochs,
       enabled,
       searchDiscourseTags,
       searchDiscourseUsers: jest.fn(async () => []),
@@ -676,7 +679,7 @@ describe('linux.do AI search controller', () => {
     const hook = await renderSearchController(createGateway({
       searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
       searchTopics
-    }), jest.fn(), showLinuxDoVerification, () => emptyForumCredentialScope, loggedInSessions,
+    }), jest.fn(), showLinuxDoVerification, () => initialForumSessionEpochs, loggedInSessions,
     showNodeSeekVerification, showYaohuoLogin);
     await act(async () => {
       hook.result.current.setSearchQuery('codex');
@@ -1634,12 +1637,12 @@ describe('linux.do AI search controller', () => {
       hasMore: false,
       nextPage: null
     });
-    let credentialScope = emptyForumCredentialScope;
+    let sessionEpochs = initialForumSessionEpochs;
     const hook = await renderSearchController(
       createGateway({ searchSemanticTopics, searchTopics }),
       jest.fn(),
       jest.fn(),
-      () => credentialScope
+      () => sessionEpochs
     );
 
     await act(async () => {
@@ -1656,7 +1659,7 @@ describe('linux.do AI search controller', () => {
 
     await act(async () => {
       resetForumSourceQueries('linuxdo', appQueryClient);
-      credentialScope = { ...credentialScope, linuxdo: credentialScope.linuxdo + 1 };
+      sessionEpochs = { ...sessionEpochs, linuxdo: sessionEpochs.linuxdo + 1 };
       hook.rerender(undefined);
     });
 
@@ -1670,6 +1673,91 @@ describe('linux.do AI search controller', () => {
       await replacement.promise;
     });
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+  });
+
+  it('[REG-ACCOUNT-031] pauses a dirty single-source search and AI request without entering permanent loading', async () => {
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>(async () => ({
+      items: [aiOnlyTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const pendingSessions: SiteSessionViewModels = {
+      ...loggedInSessions,
+      linuxdo: {
+        ...loggedInSessions.linuxdo,
+        canWrite: false,
+        identityTrust: 'pending',
+        summaryLabel: '登录状态待确认'
+      }
+    };
+    const hook = await renderSearchController(
+      createGateway({ searchSemanticTopics, searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      pendingSessions
+    );
+
+    await prepareLinuxDoSearch(hook, 'pending identity');
+    await act(async () => {
+      await hook.result.current.runSearch();
+      await Promise.resolve();
+    });
+
+    expect(searchTopics).not.toHaveBeenCalled();
+    expect(searchSemanticTopics).not.toHaveBeenCalled();
+    expect(hook.result.current.searchBusy).toBe(false);
+    expect(hook.result.current.linuxDoAiState.status).toBe('idle');
+  });
+
+  it('[REG-ACCOUNT-031] skips only the dirty source during an aggregate search', async () => {
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => ({
+      items: [{ ...standardTopic, source: source as Source, id: source }],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const pendingSessions: SiteSessionViewModels = {
+      ...loggedInSessions,
+      nodeseek: {
+        ...loggedInSessions.nodeseek,
+        status: 'logged-in',
+        isLoggedIn: true,
+        canWrite: false,
+        identityTrust: 'pending',
+        summaryLabel: '登录状态待确认'
+      }
+    };
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      pendingSessions
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'aggregate pending', source: 'all' });
+    });
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+
+    expect(searchTopics.mock.calls.map(([request]) => request.source)).toEqual([
+      'v2ex',
+      'linuxdo',
+      'yaohuo',
+      'xiaoyinsi'
+    ]);
+    expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')).toMatchObject({
+      items: [],
+      loading: false
+    });
   });
 
   it('keeps an unrelated source search in flight when another credential session changes', async () => {

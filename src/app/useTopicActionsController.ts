@@ -1,7 +1,6 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as SecureStore from 'expo-secure-store';
 import {
   useMutation,
   useMutationState,
@@ -47,27 +46,20 @@ import {
 import type { Reply, Source, TopicDetail, TopicPoll } from '../types';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
 import { topicKey } from '../readerData';
-import {
-  DEFAULT_NODESEEK_ANDROID_USER_AGENT,
-  NODESEEK_ACCESS_STORAGE_KEY,
-  NODESEEK_COOKIE_STORAGE_KEY,
-  NODESEEK_USER_AGENT_STORAGE_KEY,
-  nodeSeekAccessRecord,
-  parseNodeSeekAccessRecord
-} from '../nodeseekCookies';
 import type { Fetcher } from '../request';
 import { errorMessage } from '../appUtils';
 import { canToggleDiscourseLike } from '../discoursePermissions';
 import { isDiscourseSource, isSessionSource, sourceValues, type DiscourseSource } from '../sourceCatalog';
 import {
   normalizeReplyImageAsset,
+  isNodeImageApiKeyExpiredError,
   replyImageMarkupForSource,
   replyImageUploadSupported,
   uploadNodeSeekReplyImageWithApiKey,
   uploadYaohuoReplyImage
 } from '../replyImageUpload';
 import { currentNodeImageApiKeyGeneration } from '../nodeimageCredentials';
-import type { ScopedSiteSessionEvent, SiteSessionViewModels } from '../siteSessionState';
+import type { SessionSite, SiteSessionViewModels } from '../siteSessionState';
 import { authActionMessageForSource } from '../siteSessionPrompts';
 import { useCommittedRef } from './useCommittedRef';
 import {
@@ -79,12 +71,11 @@ import {
   withDiagnosticFetcher,
   type DiagnosticTrace
 } from '../diagnostics';
-import type { CredentialLoadOptions } from './sessionControllerHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
 import {
   forumMutationKeys,
   forumQueryKeys,
-  type ForumCredentialScope
+  type ForumSessionEpochs
 } from './serverState';
 import {
   prepareDiscourseActionRuntime,
@@ -104,6 +95,12 @@ import {
   yaohuoFavoriteActionKey,
   YAOHUO_DEFAULT_CLASS_ID
 } from './topicActionControllerHelpers';
+import {
+  WritableSessionBlockedError,
+  type WritableSessionTicket
+} from '../writableSessionGate';
+import { readManagedCookieHeader } from '../managedCookies';
+import { YAOHUO_BASE_URL } from '../localYaohuoHelpers';
 
 type Ref<T> = { current: T };
 type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unknown>;
@@ -111,11 +108,11 @@ type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unkno
 type MutationVariables = {
   actionKey: string;
   busy: boolean;
-  credential: number;
+  ticket: WritableSessionTicket;
   detailKey: QueryKey;
   repliesKey: QueryKey;
   source: Source;
-  task: () => Promise<unknown>;
+  task: (ticket: WritableSessionTicket) => Promise<unknown>;
   topicId: string;
   trace: DiagnosticTrace;
   applyOptimistic?: () => void;
@@ -125,7 +122,7 @@ type MutationVariables = {
 };
 
 type AttendanceMutationVariables = {
-  credential: number;
+  ticket: WritableSessionTicket;
   trace: DiagnosticTrace;
 };
 
@@ -139,10 +136,6 @@ class HandledMutationError extends Error {
   }
 }
 
-function credentialValue(source: Source, scope: ForumCredentialScope) {
-  return source === 'v2ex' ? 0 : scope[source];
-}
-
 function mutationFailure(error: unknown, outcome: HandledMutationError['outcome'] = 'failure') {
   if (error instanceof HandledMutationError) return error;
   return new HandledMutationError(errorMessage(error), outcome, normalizeDiagnosticReason(error));
@@ -150,16 +143,6 @@ function mutationFailure(error: unknown, outcome: HandledMutationError['outcome'
 
 function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
   return `delete-reply:${topicKeyValue}:${reply.commentId ?? reply.deletePath ?? reply.floor ?? 'reply'}`;
-}
-
-async function loadNodeSeekActionAccess() {
-  const savedAccess = parseNodeSeekAccessRecord(await SecureStore.getItemAsync(NODESEEK_ACCESS_STORAGE_KEY));
-  if (savedAccess) return savedAccess;
-  const [cookieHeader, userAgent] = await Promise.all([
-    SecureStore.getItemAsync(NODESEEK_COOKIE_STORAGE_KEY),
-    SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY)
-  ]);
-  return cookieHeader ? nodeSeekAccessRecord(cookieHeader, userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT) : null;
 }
 
 function updateReplyCache(
@@ -174,44 +157,43 @@ function updateReplyCache(
 }
 
 export function useTopicActionsController({
-  credentialScope,
-  currentNodeSeekCredentialGeneration,
-  currentYaohuoCredentialGeneration,
-  dispatchSiteSessionEvent,
+  sessionEpochs,
   discourseActionRuntimeDependencies,
   discourseLoginPrompts,
   ensureNodeImageApiKey,
+  ensureWritableSession,
   fetcher,
-  loadYaohuoCookieForSource,
+  isWritableSessionTicketCurrent,
   nodeSeekWebViewUserAgentRef,
   notify,
+  reconcileWritableSession,
   refreshTopicReplies,
-  showYaohuoLogin,
   siteSessionViewModels,
   topicDetail,
   topicReplies,
   topicSession
 }: {
-  credentialScope: ForumCredentialScope;
-  currentNodeSeekCredentialGeneration: () => number;
-  currentYaohuoCredentialGeneration: () => number;
-  dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
+  sessionEpochs: ForumSessionEpochs;
   discourseActionRuntimeDependencies: DiscourseActionRuntimeDependencies;
   discourseLoginPrompts: Record<DiscourseSource, (message?: string) => void>;
   ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
+  ensureWritableSession: (source: SessionSite) => Promise<WritableSessionTicket>;
   fetcher: Fetcher;
-  loadYaohuoCookieForSource: (source: 'yaohuo', options?: CredentialLoadOptions) => Promise<string | undefined>;
+  isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
   nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
+  reconcileWritableSession: (source: SessionSite) => Promise<{
+    status: 'anonymous' | 'changed' | 'same' | 'stale' | 'unknown';
+  }>;
   refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
-  showYaohuoLogin: (message?: string) => void;
   siteSessionViewModels: SiteSessionViewModels;
   topicDetail: TopicDetail | null;
   topicReplies: Reply[];
   topicSession: TopicSessionController;
 }) {
   const queryClient = useQueryClient();
-  const credentialScopeRef = useCommittedRef(credentialScope);
+  const pendingActionReservationsRef = useRef(new Set<string>());
+  const sessionEpochsRef = useCommittedRef(sessionEpochs);
   const {
     state: { replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic },
     commands: { composer: topicComposer, topic: topicCommands }
@@ -233,10 +215,16 @@ export function useTopicActionsController({
     mutationKey,
     scope: { id: mutationScope },
     mutationFn: async (variables) => {
+      if (!isWritableSessionTicketCurrent(variables.ticket)) {
+        throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
+      }
       await Promise.all([
         queryClient.cancelQueries({ queryKey: variables.detailKey, exact: true }),
         queryClient.cancelQueries({ queryKey: variables.repliesKey, exact: true })
       ]);
+      if (!isWritableSessionTicketCurrent(variables.ticket)) {
+        throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
+      }
       const previousDetail = variables.applyOptimistic
         ? queryClient.getQueryData<TopicDetail>(variables.detailKey)
         : undefined;
@@ -250,10 +238,13 @@ export function useTopicActionsController({
         localApplied: Boolean(variables.applyOptimistic)
       });
       try {
-        return await variables.task();
+        if (!isWritableSessionTicketCurrent(variables.ticket)) {
+          throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
+        }
+        return await variables.task(variables.ticket);
       } catch (error) {
         const failure = mutationFailure(error);
-        const credentialIsCurrent = credentialValue(variables.source, credentialScopeRef.current) === variables.credential;
+        const credentialIsCurrent = isWritableSessionTicketCurrent(variables.ticket);
         if (variables.applyOptimistic && credentialIsCurrent && failure.outcome !== 'stale') {
           if (previousDetail) queryClient.setQueryData(variables.detailKey, previousDetail);
           if (previousReplies) queryClient.setQueryData(variables.repliesKey, previousReplies);
@@ -263,7 +254,7 @@ export function useTopicActionsController({
       }
     },
     onSuccess: async (result, variables) => {
-      if (credentialValue(variables.source, credentialScopeRef.current) !== variables.credential) {
+      if (!isWritableSessionTicketCurrent(variables.ticket)) {
         finishDiagnosticTrace(variables.trace, 'stale', { source: variables.source, reason: 'stale' });
         return;
       }
@@ -281,7 +272,7 @@ export function useTopicActionsController({
     },
     onError: (error, variables) => {
       const failure = mutationFailure(error);
-      const credentialIsCurrent = credentialValue(variables.source, credentialScopeRef.current) === variables.credential;
+      const credentialIsCurrent = isWritableSessionTicketCurrent(variables.ticket);
       if (credentialIsCurrent && !(error instanceof HandledMutationError)) notify(failure.message);
       finishDiagnosticTrace(variables.trace, credentialIsCurrent ? failure.outcome : 'stale', {
         source: variables.source,
@@ -306,7 +297,7 @@ export function useTopicActionsController({
     const detailKey = forumQueryKeys.topic({
       source: actionTopic.source,
       topicId: actionTopic.id,
-      scope: credentialScopeRef.current
+      scope: sessionEpochsRef.current
     });
     return { detailKey, repliesKey: forumQueryKeys.replies(detailKey) };
   }, []);
@@ -329,8 +320,9 @@ export function useTopicActionsController({
 
   const executeMutation = useCallback(async (
     actionTopic: TopicDetail,
-    variables: Omit<MutationVariables, 'credential' | 'detailKey' | 'repliesKey' | 'source' | 'topicId'>
+    variables: Omit<MutationVariables, 'ticket' | 'detailKey' | 'repliesKey' | 'source' | 'topicId'>
   ) => {
+    const reservationKey = `${actionTopic.source}:${actionTopic.id}:${variables.actionKey}`;
     const duplicate = queryClient.getMutationCache().getAll().some((entry) => {
       const pending = entry.state.variables as MutationVariables | undefined;
       return entry.state.status === 'pending'
@@ -338,76 +330,91 @@ export function useTopicActionsController({
         && pending.source === actionTopic.source
         && pending.topicId === actionTopic.id;
     });
-    if (duplicate) return false;
+    if (duplicate || pendingActionReservationsRef.current.has(reservationKey)) return false;
+    pendingActionReservationsRef.current.add(reservationKey);
     const keys = cacheKeys(actionTopic);
     try {
+      if (!isSessionSource(actionTopic.source)) {
+        throw new WritableSessionBlockedError('当前来源不支持写操作', 'login_required');
+      }
+      const ticket = await ensureWritableSession(actionTopic.source);
       await mutation.mutateAsync({
         ...variables,
         ...keys,
-        credential: credentialValue(actionTopic.source, credentialScopeRef.current),
+        ticket,
         source: actionTopic.source,
         topicId: actionTopic.id
       });
       return true;
-    } catch {
+    } catch (error) {
+      if (error instanceof HandledMutationError) {
+        // Mutation callbacks already own diagnostics and user feedback.
+      } else if (error instanceof WritableSessionBlockedError) {
+        notify(error.message);
+        finishDiagnosticTrace(variables.trace, 'blocked', {
+          source: actionTopic.source,
+          reason: error.reason
+        });
+      } else {
+        notify(errorMessage(error));
+        finishDiagnosticTrace(variables.trace, 'failure', {
+          source: actionTopic.source,
+          reason: normalizeDiagnosticReason(error)
+        });
+      }
       return false;
+    } finally {
+      pendingActionReservationsRef.current.delete(reservationKey);
     }
-  }, [cacheKeys, credentialScopeRef, mutation.mutateAsync, queryClient]);
+  }, [cacheKeys, ensureWritableSession, mutation.mutateAsync, notify, queryClient]);
 
-  const runNodeSeekRequest = useCallback(async (request: NodeSeekActionRequest, trace: DiagnosticTrace) => {
-    if (!sourceActionAvailability.nodeseek) {
-      notify(authActionMessageForSource('nodeseek', siteSessionViewModels));
-      throw new HandledMutationError('NodeSeek 未登录', 'blocked', 'login_required');
+  const assertWritableTicket = useCallback((ticket: WritableSessionTicket) => {
+    if (!isWritableSessionTicketCurrent(ticket)) {
+      throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
     }
-    const generation = currentNodeSeekCredentialGeneration();
-    const access = await loadNodeSeekActionAccess();
-    if (generation !== currentNodeSeekCredentialGeneration()) {
-      throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-    }
+  }, [isWritableSessionTicketCurrent]);
+
+  const runNodeSeekRequest = useCallback(async (
+    request: NodeSeekActionRequest,
+    trace: DiagnosticTrace,
+    ticket: WritableSessionTicket
+  ) => {
+    assertWritableTicket(ticket);
     markDiagnosticStage(trace, 'credential', {
       source: 'nodeseek',
       state: 'ready',
-      hasCredential: Boolean(access?.cookieHeader),
-      credentialSource: 'secure-store'
+      hasCredential: true,
+      credentialSource: 'managed-cookie-jar'
     });
     try {
+      assertWritableTicket(ticket);
       await runNodeSeekAction({
-        cookieHeader: access?.cookieHeader || '',
         fetcher: withDiagnosticFetcher(trace, fetcher),
         request,
-        userAgent: nodeSeekWebViewUserAgentRef.current || access?.userAgent
+        userAgent: nodeSeekWebViewUserAgentRef.current
       });
     } catch (error) {
-      if (generation !== currentNodeSeekCredentialGeneration()) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
-      const loginRequired = Boolean(error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired);
+      assertWritableTicket(ticket);
       const message = errorMessage(error);
-      if (generation !== currentNodeSeekCredentialGeneration()) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
-      if (loginRequired) {
-        dispatchSiteSessionEvent({ site: 'nodeseek', type: 'login-expired', message });
-      }
+      await reconcileWritableSession('nodeseek').catch(() => ({ status: 'unknown' as const }));
       notify(message);
       throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
-    if (generation !== currentNodeSeekCredentialGeneration()) {
-      throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-    }
+    assertWritableTicket(ticket);
     markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
     return true;
-  }, [currentNodeSeekCredentialGeneration, dispatchSiteSessionEvent, fetcher, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, sourceActionAvailability.nodeseek]);
+  }, [assertWritableTicket, fetcher, nodeSeekWebViewUserAgentRef, notify, reconcileWritableSession]);
 
   const attendanceMutation = useMutation<unknown, unknown, AttendanceMutationVariables>({
     mutationKey: forumMutationKeys.topic('nodeseek', 'global'),
     scope: { id: 'forum:nodeseek:topic:global' },
-    mutationFn: ({ trace }) => runNodeSeekRequest(
+    mutationFn: ({ ticket, trace }) => runNodeSeekRequest(
       buildNodeSeekAttendanceRequest({ random: false }),
-      trace
+      trace,
+      ticket
     ),
     onSuccess: (_result, variables) => {
-      if (credentialScopeRef.current.nodeseek !== variables.credential) {
+      if (!isWritableSessionTicketCurrent(variables.ticket)) {
         finishDiagnosticTrace(variables.trace, 'stale', { source: 'nodeseek', reason: 'stale' });
         return;
       }
@@ -415,7 +422,7 @@ export function useTopicActionsController({
       finishDiagnosticTrace(variables.trace, 'success', { source: 'nodeseek', serverConfirmed: true });
     },
     onError: (error, variables) => {
-      const current = credentialScopeRef.current.nodeseek === variables.credential;
+      const current = isWritableSessionTicketCurrent(variables.ticket);
       const failure = mutationFailure(error);
       if (current && !(error instanceof HandledMutationError)) notify(failure.message);
       finishDiagnosticTrace(variables.trace, current ? failure.outcome : 'stale', {
@@ -429,33 +436,28 @@ export function useTopicActionsController({
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
-    trace: DiagnosticTrace
+    trace: DiagnosticTrace,
+    ticket: WritableSessionTicket
   ) => {
-    if (!sourceActionAvailability.yaohuo) {
-      showYaohuoLogin(authActionMessageForSource('yaohuo', siteSessionViewModels));
-      throw new HandledMutationError('妖火未登录', 'blocked', 'login_required');
-    }
-    let generation = currentYaohuoCredentialGeneration();
-    const cookieHeader = await loadYaohuoCookieForSource('yaohuo', {
-      captureGeneration: (value) => { generation = value; },
-      diagnosticTrace: trace
-    });
-    if (generation !== currentYaohuoCredentialGeneration()) {
-      throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-    }
-    if (!cookieHeader) {
-      showYaohuoLogin(authActionMessageForSource('yaohuo', siteSessionViewModels));
-      throw new HandledMutationError('妖火登录信息不可用', 'blocked', 'missing_credential');
+    assertWritableTicket(ticket);
+    const draftRequest = requestFactory('');
+    const actionUrl = new URL(draftRequest.path, YAOHUO_BASE_URL).toString();
+    const cookieRead = await readManagedCookieHeader(actionUrl);
+    assertWritableTicket(ticket);
+    if (cookieRead.status !== 'ok') {
+      throw new HandledMutationError(
+        cookieRead.status === 'error' ? cookieRead.message : '当前安装包不支持读取 WebView Cookie',
+        'blocked',
+        'identity_pending'
+      );
     }
     try {
+      assertWritableTicket(ticket);
       const result = await runYaohuoAction({
-        cookieHeader,
         fetcher: withDiagnosticFetcher(trace, fetcher),
-        request: requestFactory(cookieHeader)
+        request: requestFactory(cookieRead.header)
       });
-      if (generation !== currentYaohuoCredentialGeneration()) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
+      assertWritableTicket(ticket);
       if (result.message === '操作结果无法确认，请刷新原帖核对') {
         notify(result.message);
         throw new HandledMutationError(result.message, 'failure', 'invalid_response');
@@ -464,45 +466,27 @@ export function useTopicActionsController({
       return result;
     } catch (error) {
       if (error instanceof HandledMutationError) throw error;
-      if (generation !== currentYaohuoCredentialGeneration()) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
-      const failure = error && typeof error === 'object'
-        ? error as { loginRequired?: unknown; reason?: unknown }
-        : {};
-      const loginRequired = Boolean(failure.loginRequired);
+      assertWritableTicket(ticket);
       const message = errorMessage(error);
-      if (loginRequired) {
-        if (generation !== currentYaohuoCredentialGeneration()) {
-          throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-        }
-        dispatchSiteSessionEvent({
-          site: 'yaohuo',
-          type: failure.reason === 'verification' ? 'verification-required' : 'login-expired',
-          message
-        });
-        showYaohuoLogin(message);
-        throw new HandledMutationError(message, 'blocked', 'login_required');
-      }
+      await reconcileWritableSession('yaohuo').catch(() => ({ status: 'unknown' as const }));
       notify(message);
       throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
-  }, [currentYaohuoCredentialGeneration, dispatchSiteSessionEvent, fetcher, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, sourceActionAvailability.yaohuo]);
+  }, [assertWritableTicket, fetcher, notify, reconcileWritableSession]);
 
   const runDiscourseRequest = useCallback(async (
     source: DiscourseSource,
     action: DiscourseAction,
-    trace: DiagnosticTrace
+    trace: DiagnosticTrace,
+    ticket: WritableSessionTicket
   ) => {
+    assertWritableTicket(ticket);
     const loginPrompt = discourseLoginPrompts[source];
-    if (!sourceActionAvailability[source]) {
-      loginPrompt(authActionMessageForSource(source, siteSessionViewModels));
-      throw new HandledMutationError(`${source} 未登录`, 'blocked', 'login_required');
-    }
     const runtime = await prepareDiscourseActionRuntime(source, {
       ...discourseActionRuntimeDependencies,
       fetcher: withDiagnosticFetcher(trace, fetcher)
     });
+    assertWritableTicket(ticket);
     if (runtime.isCredentialCurrent?.() === false) {
       throw new HandledMutationError('凭据已变化', 'stale', 'stale');
     }
@@ -512,6 +496,7 @@ export function useTopicActionsController({
       throw new HandledMutationError('登录信息不可用', 'blocked', 'missing_credential');
     }
     try {
+      assertWritableTicket(ticket);
       const result = await runtime.execute(buildDiscourseSourceActionRequest(source, action));
       if (runtime.isCredentialCurrent?.() === false) {
         throw new HandledMutationError('凭据已变化', 'stale', 'stale');
@@ -522,6 +507,12 @@ export function useTopicActionsController({
       if (error instanceof HandledMutationError) throw error;
       if (runtime.isCredentialCurrent?.() === false) {
         throw new HandledMutationError('凭据已变化', 'stale', 'stale');
+      }
+      if (source === 'linuxdo') {
+        const message = errorMessage(error);
+        await reconcileWritableSession(source).catch(() => ({ status: 'unknown' as const }));
+        notify(message);
+        throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
       }
       let recovery;
       let recoveryError: unknown;
@@ -549,7 +540,7 @@ export function useTopicActionsController({
       notify(message);
       throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
-  }, [discourseActionRuntimeDependencies, discourseLoginPrompts, fetcher, notify, siteSessionViewModels, sourceActionAvailability]);
+  }, [assertWritableTicket, discourseActionRuntimeDependencies, discourseLoginPrompts, fetcher, notify, reconcileWritableSession, siteSessionViewModels]);
 
   const updateInteraction = useCallback((actionTopic: TopicDetail, patch: Parameters<typeof applyInteractionToTopic>[1]) => {
     const { detailKey, repliesKey } = cacheKeys(actionTopic);
@@ -585,11 +576,11 @@ export function useTopicActionsController({
         actionKey: topicEditReplyActionKey(actionTopicKey, replyEditTarget.commentId),
         busy: true,
         trace,
-        task: () => isNodeSeekActionTopic(actionTopic)
-          ? runNodeSeekRequest(buildNodeSeekEditReplyRequest({ commentId: edit.commentId, content: edit.contentMarkdown, csrfToken: '' }), trace)
+        task: (ticket) => isNodeSeekActionTopic(actionTopic)
+          ? runNodeSeekRequest(buildNodeSeekEditReplyRequest({ commentId: edit.commentId, content: edit.contentMarkdown, csrfToken: '' }), trace, ticket)
           : runDiscourseRequest(actionTopic.source as DiscourseSource, {
               type: 'edit-post', postId: edit.commentId, content: edit.contentMarkdown
-            }, trace),
+            }, trace, ticket),
         applyResult: () => {
           const { repliesKey } = cacheKeys(actionTopic as TopicDetail);
           updateReplyCache(queryClient, repliesKey, (replies) => applyEditedReplyContent(replies, edit, actionTopic.source));
@@ -618,7 +609,7 @@ export function useTopicActionsController({
       actionKey: topicReplyActionKey(actionTopicKey),
       busy: true,
       trace,
-      task: () => isYaohuoActionTopic(actionTopic)
+      task: (ticket) => isYaohuoActionTopic(actionTopic)
         ? runYaohuoRequest((cookieHeader) => buildYaohuoReplyRequest({
             topicId: actionTopic.id,
             classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
@@ -627,12 +618,12 @@ export function useTopicActionsController({
             sid: extractYaohuoSid(cookieHeader),
             replyFloor: target?.floor,
             toUserId: target?.authorId
-          }), trace)
+          }), trace, ticket)
         : isDiscourseSource(actionTopic.source)
           ? runDiscourseRequest(actionTopic.source, {
               type: 'reply', topicId: actionTopic.id, content, replyToPostNumber: target?.floor
-            }, trace)
-          : runNodeSeekRequest(buildNodeSeekReplyRequest({ postId: actionTopic.id, content, replyTarget: target, csrfToken: '' }), trace),
+            }, trace, ticket)
+          : runNodeSeekRequest(buildNodeSeekReplyRequest({ postId: actionTopic.id, content, replyTarget: target, csrfToken: '' }), trace, ticket),
       applyResult: () => {
         if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
         const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
@@ -685,13 +676,13 @@ export function useTopicActionsController({
       actionKey: topicDeleteReplyActionKey(actionTopicKey, reply),
       busy: true,
       trace,
-      task: () => isYaohuoActionTopic(actionTopic)
+      task: (ticket) => isYaohuoActionTopic(actionTopic)
         ? runYaohuoRequest((cookieHeader) => buildYaohuoDeleteReplyRequest({
             deletePath: reply.deletePath || '', sid: extractYaohuoSid(cookieHeader)
-          }), trace)
+          }), trace, ticket)
         : runDiscourseRequest(actionTopic.source as DiscourseSource, {
             type: 'delete-post', postId: reply.commentId || 0
-          }, trace),
+          }, trace, ticket),
       applyOptimistic: patch,
       applyResult: () => {
         const { repliesKey } = cacheKeys(actionTopic as TopicDetail);
@@ -750,42 +741,61 @@ export function useTopicActionsController({
       actionKey: `${topicReplyActionKey(actionTopicKey)}:image`,
       busy: true,
       trace,
-      task: async () => {
+      task: async (ticket) => {
+        assertWritableTicket(ticket);
         let nodeSeekApiKey: string | null = null;
         let nodeImageGeneration: number | undefined;
         if (isNodeSeekActionTopic(actionTopic)) {
           nodeSeekApiKey = await ensureNodeImageApiKey();
+          assertWritableTicket(ticket);
           nodeImageGeneration = currentNodeImageApiKeyGeneration();
           if (!nodeSeekApiKey) throw new HandledMutationError('NodeImage 授权不可用', 'blocked', 'missing_credential');
         }
         const picked = await DocumentPicker.getDocumentAsync({
           type: 'image/*', copyToCacheDirectory: true, multiple: false
         });
+        assertWritableTicket(ticket);
         if (picked.canceled || !picked.assets?.[0]) {
           throw new HandledMutationError('已取消选择', 'canceled', 'canceled');
         }
         const file = normalizeReplyImageAsset(picked.assets[0]);
         let imageUrl = '';
         if (isDiscourseSource(actionTopic.source)) {
-          const result = await runDiscourseRequest(actionTopic.source, { type: 'upload', file }, trace);
+          const result = await runDiscourseRequest(actionTopic.source, { type: 'upload', file }, trace, ticket);
           imageUrl = discourseSourceUploadUrl(actionTopic.source, result);
         } else if (isYaohuoActionTopic(actionTopic)) {
           imageUrl = await uploadYaohuoReplyImage({ fetcher: withDiagnosticFetcher(trace, fetcher), file });
         } else if (isNodeSeekActionTopic(actionTopic)) {
-          imageUrl = await uploadNodeSeekReplyImageWithApiKey({
-            ensureApiKey: async (options) => {
-              if (!options?.forceRefresh) return nodeSeekApiKey;
-              const refreshed = await ensureNodeImageApiKey({ forceRefresh: true, clearOnCancel: true });
-              if (refreshed) nodeImageGeneration = currentNodeImageApiKeyGeneration();
-              return refreshed;
-            },
-            fetcher: withDiagnosticFetcher(trace, fetcher),
-            file
-          });
+          try {
+            imageUrl = await uploadNodeSeekReplyImageWithApiKey({
+              ensureApiKey: async () => nodeSeekApiKey,
+              fetcher: withDiagnosticFetcher(trace, fetcher),
+              file
+            });
+          } catch (error) {
+            if (!isNodeImageApiKeyExpiredError(error)) {
+              throw error;
+            }
+            const refreshed = await ensureNodeImageApiKey({
+              forceRefresh: true,
+              clearOnCancel: true
+            });
+            assertWritableTicket(ticket);
+            const message = refreshed
+              ? 'NodeImage 授权已更新，请重新选择图片上传'
+              : 'NodeImage 授权不可用';
+            notify(message);
+            throw new HandledMutationError(
+              message,
+              'blocked',
+              'missing_credential'
+            );
+          }
           if (nodeImageGeneration !== currentNodeImageApiKeyGeneration()) {
             throw new HandledMutationError('NodeImage 凭据已变化', 'stale', 'stale');
           }
         }
+        assertWritableTicket(ticket);
         if (!imageUrl) throw new HandledMutationError('图片上传结果不正确', 'failure', 'invalid_response');
         return { imageUrl, name: file.name };
       },
@@ -801,14 +811,22 @@ export function useTopicActionsController({
   const checkIn = useCallback(async () => {
     const trace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });
     try {
+      const ticket = await ensureWritableSession('nodeseek');
       await attendanceMutation.mutateAsync({
-        credential: credentialScopeRef.current.nodeseek,
+        ticket,
         trace
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof WritableSessionBlockedError) {
+        notify(error.message);
+        finishDiagnosticTrace(trace, 'blocked', {
+          source: 'nodeseek',
+          reason: error.reason
+        });
+      }
       // Error reporting and diagnostics are owned by the mutation callbacks.
     }
-  }, [attendanceMutation.mutateAsync, credentialScopeRef]);
+  }, [attendanceMutation.mutateAsync, ensureWritableSession, notify]);
 
   const interact = useCallback(async (type: InteractionType, commentId?: number) => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -835,9 +853,9 @@ export function useTopicActionsController({
         busy: false,
         trace,
         applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
-        task: () => runDiscourseRequest(actionTopic.source as DiscourseSource, {
+        task: (ticket) => runDiscourseRequest(actionTopic.source as DiscourseSource, {
           type: 'set-like', postId: commentId, active: desired
-        }, trace),
+        }, trace, ticket),
         successMessage: desired ? '点赞已提交' : '已取消点赞'
       });
       return;
@@ -859,7 +877,7 @@ export function useTopicActionsController({
       busy: false,
       trace,
       applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
-      task: () => runNodeSeekRequest(buildNodeSeekInteractionRequest({ type, commentId, active: false }), trace),
+      task: (ticket) => runNodeSeekRequest(buildNodeSeekInteractionRequest({ type, commentId, active: false }), trace, ticket),
       successMessage: type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
     });
   }, [executeMutation, notify, runDiscourseRequest, runNodeSeekRequest, selectedTopic, topicDetail, topicReplies, updateInteraction]);
@@ -889,12 +907,12 @@ export function useTopicActionsController({
       busy: false,
       trace,
       applyOptimistic: () => patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId),
-      task: () => runYaohuoRequest(() => bookmarked
+      task: (ticket) => runYaohuoRequest(() => bookmarked
         ? buildYaohuoDeleteFavoriteRequest({ favoriteId: actionDetail.bookmarkId || 0 })
         : buildYaohuoFavoriteRequest({
             topicId: actionTopic.id,
             classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID
-          }), trace),
+          }), trace, ticket),
       applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : (result as YaohuoActionResult).favoriteId),
       successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
     });
@@ -920,7 +938,7 @@ export function useTopicActionsController({
       busy: false,
       trace,
       applyOptimistic: patch,
-      task: () => runNodeSeekRequest(buildNodeSeekCollectionRequest({ postId: actionTopic.id, collected }), trace),
+      task: (ticket) => runNodeSeekRequest(buildNodeSeekCollectionRequest({ postId: actionTopic.id, collected }), trace, ticket),
       successMessage: collected ? '已取消原站收藏' : '原站收藏已提交'
     });
   }, [cacheKeys, executeMutation, queryClient, runNodeSeekRequest, selectedTopic, topicDetail]);
@@ -945,13 +963,13 @@ export function useTopicActionsController({
       busy: false,
       trace,
       applyOptimistic: () => patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId),
-      task: () => runDiscourseRequest(actionTopic.source as DiscourseSource, {
+      task: (ticket) => runDiscourseRequest(actionTopic.source as DiscourseSource, {
         type: 'set-bookmark',
         targetId: actionTopic.id,
         targetType: 'Topic',
         active: !bookmarked,
         bookmarkId: actionDetail.bookmarkId
-      }, trace),
+      }, trace, ticket),
       applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : discourseBookmarkIdFromActionResult(result)),
       successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
     });
@@ -972,18 +990,16 @@ export function useTopicActionsController({
         actionKey: topicPollVoteActionKey(topicKey(actionTopic), poll),
         busy: true,
         trace,
-        task: async () => {
+        task: async (ticket) => {
           if (isNodeSeekActionTopic(actionTopic)) {
-            await runNodeSeekRequest(buildNodeSeekVoteRequest({ optionIds }), trace);
+            await runNodeSeekRequest(buildNodeSeekVoteRequest({ optionIds }), trace, ticket);
             try {
               if (!poll.id) throw new Error('投票 id 不正确');
-              const access = await loadNodeSeekActionAccess();
-              if (!access?.cookieHeader) throw new Error('NodeSeek 登录信息不可用');
+              assertWritableTicket(ticket);
               const confirmedPoll = await fetchNodeSeekVoteInfo({
-                cookieHeader: access.cookieHeader,
                 pollId: poll.id,
                 fetcher: withDiagnosticFetcher(trace, fetcher),
-                userAgent: nodeSeekWebViewUserAgentRef.current || access.userAgent
+                userAgent: nodeSeekWebViewUserAgentRef.current
               });
               return { confirmedPoll, refreshFailed: false };
             } catch {
@@ -1000,13 +1016,13 @@ export function useTopicActionsController({
             }
             await runDiscourseRequest(actionTopic.source, {
               type: 'vote', postId: poll.postId, pollName: poll.name, optionIds
-            }, trace);
+            }, trace, ticket);
           } else {
             await runYaohuoRequest(() => buildYaohuoVoteRequest({
               topicId: actionTopic.id,
               classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
               voteIds: optionIds
-            }), trace);
+            }), trace, ticket);
           }
           return { confirmedPoll: undefined, refreshFailed: false };
         },

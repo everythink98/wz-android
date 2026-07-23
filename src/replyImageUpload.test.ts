@@ -188,7 +188,7 @@ describe('reply image upload helpers', () => {
     ));
   });
 
-  it('refreshes a rejected NodeImage API key once and retries the same file', async () => {
+  it('[REG-WRITE-023] never replays the same NodeImage upload after an authorization failure', async () => {
     const headers: string[] = [];
     const ensureCalls: Array<{ forceRefresh?: boolean } | undefined> = [];
     const fetcher = async (_input: string, init?: RequestInit) => {
@@ -212,10 +212,14 @@ describe('reply image upload helpers', () => {
         mimeType: 'image/png'
       },
       fetcher
-    })).resolves.toBe('https://cdn.nodeimage.com/i/retry.png');
+    })).rejects.toSatisfy((error: unknown) => (
+      error instanceof Error
+      && error.message === 'API Key 无效'
+      && isNodeImageApiKeyExpiredError(error)
+    ));
 
-    expect(headers).toEqual(['old-secret', 'new-secret']);
-    expect(ensureCalls).toEqual([undefined, { forceRefresh: true }]);
+    expect(headers).toEqual(['old-secret']);
+    expect(ensureCalls).toEqual([undefined]);
   });
 
   it('dry-runs a successful NodeSeek image upload into a floor reply payload without posting it', async () => {

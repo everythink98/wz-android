@@ -8,15 +8,6 @@ jest.mock('expo-secure-store', () => ({
   getItemAsync: jest.fn()
 }));
 
-jest.mock('@react-native-cookies/cookies', () => ({
-  default: {
-    clearByName: jest.fn(async () => undefined),
-    flush: jest.fn(async () => undefined),
-    get: jest.fn(async () => ({})),
-    set: jest.fn(async () => true)
-  }
-}));
-
 jest.mock('../../src/nodeseekActionClient', () => ({
   fetchNodeSeekVoteInfo: jest.fn(),
   runNodeSeekAction: jest.fn()
@@ -43,6 +34,13 @@ jest.mock('../../src/nodeimageCredentials', () => ({
   currentNodeImageApiKeyGeneration: jest.fn()
 }));
 
+jest.mock('../../src/managedCookies', () => ({
+  readManagedCookieHeader: jest.fn(async () => ({
+    status: 'ok',
+    header: 'sidyaohuo=test'
+  }))
+}));
+
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '../../src/nodeseekActionClient';
 import { runYaohuoAction } from '../../src/yaohuoActionClient';
 import {
@@ -54,9 +52,9 @@ import { useTopicActionsController } from '../../src/app/useTopicActionsControll
 import { useTopicSessionController } from '../../src/app/useTopicSessionController';
 import {
   appQueryClient,
-  emptyForumCredentialScope,
+  initialForumSessionEpochs,
   forumQueryKeys,
-  type ForumCredentialScope
+  type ForumSessionEpochs
 } from '../../src/app/serverState';
 import { currentNodeImageApiKeyGeneration } from '../../src/nodeimageCredentials';
 import { uploadNodeSeekReplyImageWithApiKey } from '../../src/replyImageUpload';
@@ -69,6 +67,10 @@ import {
   type SiteSessionViewModels
 } from '../../src/siteSessionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '../../src/types';
+import {
+  WritableSessionBlockedError,
+  type WritableSessionTicket
+} from '../../src/writableSessionGate';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const mockGetItem = jest.mocked(SecureStore.getItemAsync);
@@ -133,29 +135,29 @@ function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): Topi
 }
 
 async function renderActions({
-  credentialScope = emptyForumCredentialScope,
-  currentNodeSeekCredentialGeneration,
-  currentYaohuoCredentialGeneration,
-  dispatchSiteSessionEvent = jest.fn(),
+  sessionEpochs = initialForumSessionEpochs,
   discourseLoginPrompts = { linuxdo: jest.fn(), xiaoyinsi: jest.fn() },
   ensureNodeImageApiKey = jest.fn(async () => null),
-  loadYaohuoCookieForSource = jest.fn(async () => 'sidyaohuo=test'),
+  ensureWritableSession,
+  isWritableSessionTicketCurrent,
   notify = jest.fn(),
+  reconcileWritableSession = jest.fn(async () => ({ status: 'same' as const })),
   refreshTopicReplies = jest.fn(async () => 'completed'),
-  showYaohuoLogin = jest.fn(),
   siteSessionViewModels,
   siteSessionStates,
   topicDetail = detail,
   topicReplies = []
 }: {
-  credentialScope?: ForumCredentialScope;
-  currentNodeSeekCredentialGeneration?: () => number;
-  currentYaohuoCredentialGeneration?: () => number;
+  sessionEpochs?: ForumSessionEpochs;
   dispatchSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
   discourseLoginPrompts?: { linuxdo: (message?: string) => void; xiaoyinsi: (message?: string) => void };
   ensureNodeImageApiKey?: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
-  loadYaohuoCookieForSource?: () => Promise<string | undefined>;
+  ensureWritableSession?: (source: ActionSource) => Promise<WritableSessionTicket>;
+  isWritableSessionTicketCurrent?: (ticket: WritableSessionTicket) => boolean;
   notify?: (message: string) => void;
+  reconcileWritableSession?: (source: ActionSource) => Promise<{
+    status: 'anonymous' | 'changed' | 'same' | 'stale' | 'unknown';
+  }>;
   refreshTopicReplies?: () => Promise<unknown>;
   showYaohuoLogin?: (message?: string) => void;
   siteSessionViewModels?: SiteSessionViewModels;
@@ -163,15 +165,10 @@ async function renderActions({
   topicDetail?: TopicDetail;
   topicReplies?: Reply[];
 } = {}) {
-  const hook = await renderNativeHook((props: { credentialScope: ForumCredentialScope }) => {
+  const hook = await renderNativeHook((props: { sessionEpochs: ForumSessionEpochs }) => {
     const topicSession = useTopicSessionController({ notify });
     const actions = useTopicActionsController({
-      credentialScope: props.credentialScope,
-      currentNodeSeekCredentialGeneration: currentNodeSeekCredentialGeneration
-        || (() => props.credentialScope.nodeseek),
-      currentYaohuoCredentialGeneration: currentYaohuoCredentialGeneration
-        || (() => props.credentialScope.yaohuo),
-      dispatchSiteSessionEvent,
+      sessionEpochs: props.sessionEpochs,
       discourseActionRuntimeDependencies: {
         linuxDoUserAgent: () => 'safe-agent',
         refreshXiaoyinsiAuthorization: async () => true,
@@ -180,12 +177,19 @@ async function renderActions({
       },
       discourseLoginPrompts,
       ensureNodeImageApiKey,
+      ensureWritableSession: ensureWritableSession || (async (source) => ({
+        source,
+        identityKey: `${source}:test-user`,
+        sessionEpoch: props.sessionEpochs[source]
+      })),
       fetcher: jest.fn(async () => new Response('{}')),
-      loadYaohuoCookieForSource,
+      isWritableSessionTicketCurrent: isWritableSessionTicketCurrent || ((ticket) => (
+        ticket.sessionEpoch === props.sessionEpochs[ticket.source]
+      )),
       nodeSeekWebViewUserAgentRef: { current: 'safe-agent' },
       notify,
+      reconcileWritableSession,
       refreshTopicReplies,
-      showYaohuoLogin,
       siteSessionViewModels: siteSessionViewModels || createSiteSessionViewModels(
         siteSessionStates || loggedInStates(topicDetail.source as ActionSource)
       ),
@@ -195,7 +199,7 @@ async function renderActions({
     });
     return { actions, topicSession };
   }, {
-    initialProps: { credentialScope },
+    initialProps: { sessionEpochs },
     wrapper: QueryTestWrapper
   });
   await act(async () => {
@@ -207,7 +211,7 @@ async function renderActions({
 function seedTopicCache(
   topicDetail: TopicDetail = detail,
   topicReplies: Reply[] = [],
-  scope = emptyForumCredentialScope
+  scope = initialForumSessionEpochs
 ) {
   const detailKey = forumQueryKeys.topic({ source: topicDetail.source, topicId: topicDetail.id, scope });
   const repliesKey = forumQueryKeys.replies(detailKey);
@@ -242,14 +246,7 @@ describe('topic action query mutations', () => {
     mockGetDocument.mockReset().mockResolvedValue({ canceled: true, assets: null });
     mockUploadNodeSeekReplyImage.mockReset().mockResolvedValue('https://nodeimage.com/test.png');
     mockCurrentNodeImageGeneration.mockReset().mockReturnValue(0);
-    mockGetItem.mockImplementation(async (key) => key === 'nodeseek-access'
-      ? JSON.stringify({
-        cookieHeader: 'session=safe',
-        savedAt: '2026-07-20T00:00:00.000Z',
-        source: 'webview',
-        userAgent: 'safe-agent'
-      })
-      : null);
+    mockGetItem.mockResolvedValue(null);
   });
 
   afterEach(async () => {
@@ -275,6 +272,65 @@ describe('topic action query mutations', () => {
 
     expect(hook.result.current.actions.sourceActionAvailability.linuxdo).toBe(false);
     expect(hook.result.current.actions.sourceActionAvailability.xiaoyinsi).toBe(true);
+  });
+
+  it('[REG-WRITE-023] blocks before optimistic state and transport when identity is unknown', async () => {
+    const { detailKey } = seedTopicCache();
+    const ensureWritableSession = jest.fn(async () => {
+      throw new WritableSessionBlockedError('登录状态暂时无法确认，请重试', 'identity_pending');
+    });
+    const hook = await renderActions({ ensureWritableSession });
+
+    await act(async () => {
+      await hook.result.current.actions.collectOnNodeSeekSite();
+    });
+
+    expect(ensureWritableSession).toHaveBeenCalledWith('nodeseek');
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.collected).toBe(false);
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+  });
+
+  it('[REG-WRITE-023] blocks before optimistic state when identity changes during query cancellation', async () => {
+    const { detailKey } = seedTopicCache();
+    let ticketCurrent = true;
+    const cancellation = Promise.withResolvers<void>();
+    const cancelQueries = jest
+      .spyOn(appQueryClient, 'cancelQueries')
+      .mockImplementation(async () => cancellation.promise);
+    const hook = await renderActions({
+      isWritableSessionTicketCurrent: () => ticketCurrent
+    });
+    let collection!: Promise<void>;
+
+    await act(async () => {
+      collection = hook.result.current.actions.collectOnNodeSeekSite();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(cancelQueries).toHaveBeenCalledTimes(2));
+
+    ticketCurrent = false;
+    await act(async () => {
+      cancellation.resolve();
+      await collection;
+    });
+
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.collected).toBe(false);
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+  });
+
+  it('[REG-WRITE-023] blocks before file selection and upload when identity is dirty', async () => {
+    const ensureWritableSession = jest.fn(async () => {
+      throw new WritableSessionBlockedError('登录状态暂时无法确认，请重试', 'identity_pending');
+    });
+    const hook = await renderActions({ ensureWritableSession });
+
+    await act(async () => {
+      await hook.result.current.actions.uploadReplyImage();
+    });
+
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
   it('serializes mutations for the same topic without a handwritten queue', async () => {
@@ -329,17 +385,21 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-WRITE-020] reports an unexpected credential preparation failure to the user', async () => {
-    mockGetItem.mockRejectedValueOnce(new Error('安全存储读取失败'));
     const notify = jest.fn();
     seedTopicCache();
-    const hook = await renderActions({ notify });
+    const hook = await renderActions({
+      ensureWritableSession: jest.fn(async () => {
+        throw new Error('身份复核失败');
+      }),
+      notify
+    });
 
     await act(async () => {
       await hook.result.current.actions.collectOnNodeSeekSite();
     });
 
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledWith('安全存储读取失败');
+    expect(notify).toHaveBeenCalledWith('身份复核失败');
     expect(notify).not.toHaveBeenCalledWith('原站收藏已提交');
   });
 
@@ -497,8 +557,8 @@ describe('topic action query mutations', () => {
     });
     await waitFor(() => expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.collected).toBe(true));
 
-    const nextScope = { ...emptyForumCredentialScope, nodeseek: 1 };
-    await act(async () => { await hook.rerender({ credentialScope: nextScope }); });
+    const nextScope = { ...initialForumSessionEpochs, nodeseek: 1 };
+    await act(async () => { await hook.rerender({ sessionEpochs: nextScope }); });
     appQueryClient.removeQueries({ queryKey: detailKey, exact: true });
     await act(async () => {
       transport.resolve({ success: true });
@@ -838,39 +898,36 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith('没有权限执行该操作');
   });
 
-  it('[REG-ACCOUNT-026][REG-WRITE-022] projects confirmed Yaohuo expiry without invoking a logout command', async () => {
+  it('[REG-ACCOUNT-026][REG-WRITE-022][REG-WRITE-023] reconciles Yaohuo expiry without clearing Cookie or reopening login', async () => {
     mockRunYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
       loginRequired: true,
       reason: 'expired',
       source: 'yaohuo'
     }));
-    const dispatchSiteSessionEvent = jest.fn();
+    const reconcileWritableSession = jest.fn(async () => ({ status: 'anonymous' as const }));
     const showYaohuoLogin = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
     seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({ dispatchSiteSessionEvent, showYaohuoLogin, topicDetail: yaohuoDetail });
+    const hook = await renderActions({ reconcileWritableSession, showYaohuoLogin, topicDetail: yaohuoDetail });
 
     await act(async () => {
       await expect(hook.result.current.actions.favoriteOnYaohuoSite()).resolves.toBeUndefined();
     });
 
-    expect(dispatchSiteSessionEvent).toHaveBeenCalledWith({
-      site: 'yaohuo',
-      type: 'login-expired',
-      message: '妖火登录已失效'
-    });
-    expect(showYaohuoLogin).toHaveBeenCalledWith('妖火登录已失效');
+    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
+    expect(reconcileWritableSession).toHaveBeenCalledWith('yaohuo');
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-026][REG-WRITE-022] projects confirmed NodeSeek expiry without deleting the original-site login', async () => {
+  it('[REG-ACCOUNT-026][REG-WRITE-022][REG-WRITE-023] reconciles NodeSeek expiry once without deleting original-site login', async () => {
     mockRunNodeSeekAction.mockRejectedValueOnce(Object.assign(new Error('NodeSeek 登录已失效'), {
       loginRequired: true,
       source: 'nodeseek'
     }));
-    const dispatchSiteSessionEvent = jest.fn();
+    const reconcileWritableSession = jest.fn(async () => ({ status: 'anonymous' as const }));
     const notify = jest.fn();
     seedTopicCache();
-    const hook = await renderActions({ dispatchSiteSessionEvent, notify });
+    const hook = await renderActions({ notify, reconcileWritableSession });
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('reply body');
     });
@@ -879,47 +936,39 @@ describe('topic action query mutations', () => {
       await expect(hook.result.current.actions.submitReply()).resolves.toBeUndefined();
     });
 
-    expect(dispatchSiteSessionEvent).toHaveBeenCalledWith({
-      site: 'nodeseek',
-      type: 'login-expired',
-      message: 'NodeSeek 登录已失效'
-    });
+    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
+    expect(reconcileWritableSession).toHaveBeenCalledWith('nodeseek');
     expect(notify).toHaveBeenCalledWith('NodeSeek 登录已失效');
   });
 
-  it('[REG-WRITE-022] keeps Yaohuo verification failures distinct from confirmed expiry', async () => {
+  it('[REG-WRITE-022][REG-WRITE-023] keeps Yaohuo verification failures pending without reopening login', async () => {
     mockRunYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('请回到妖火原站完成登录确认'), {
       loginRequired: true,
       reason: 'verification',
       source: 'yaohuo'
     }));
-    const dispatchSiteSessionEvent = jest.fn();
+    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
     const showYaohuoLogin = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
     seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({ dispatchSiteSessionEvent, showYaohuoLogin, topicDetail: yaohuoDetail });
+    const hook = await renderActions({ reconcileWritableSession, showYaohuoLogin, topicDetail: yaohuoDetail });
 
     await act(async () => {
       await expect(hook.result.current.actions.favoriteOnYaohuoSite()).resolves.toBeUndefined();
     });
 
-    expect(dispatchSiteSessionEvent).toHaveBeenCalledWith({
-      site: 'yaohuo',
-      type: 'verification-required',
-      message: '请回到妖火原站完成登录确认'
-    });
-    expect(dispatchSiteSessionEvent).not.toHaveBeenCalledWith(expect.objectContaining({
-      type: 'login-expired'
-    }));
-    expect(showYaohuoLogin).toHaveBeenCalledWith('请回到妖火原站完成登录确认');
+    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
+    expect(reconcileWritableSession).toHaveBeenCalledWith('yaohuo');
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
   });
 
   it('[REG-WRITE-022] leaves identity unchanged for an ordinary NodeSeek action failure', async () => {
     mockRunNodeSeekAction.mockRejectedValueOnce(new Error('没有权限执行该操作'));
     const dispatchSiteSessionEvent = jest.fn();
+    const reconcileWritableSession = jest.fn(async () => ({ status: 'same' as const }));
     const notify = jest.fn();
     seedTopicCache();
-    const hook = await renderActions({ dispatchSiteSessionEvent, notify });
+    const hook = await renderActions({ dispatchSiteSessionEvent, notify, reconcileWritableSession });
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('reply body');
     });
@@ -929,25 +978,23 @@ describe('topic action query mutations', () => {
     });
 
     expect(dispatchSiteSessionEvent).not.toHaveBeenCalled();
+    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('没有权限执行该操作');
   });
 
-  it('REG-ACCOUNT-007 opens linux.do login with the retained cleanup warning', async () => {
+  it('[REG-WRITE-023] reconciles linux.do action failure once without automatic login replay', async () => {
     mockDiscourseExecute.mockRejectedValueOnce(Object.assign(new Error('linux.do 登录已失效'), {
       loginRequired: true,
       source: 'linuxdo'
     }));
-    mockDiscourseRecover.mockResolvedValueOnce({
-      loginRequired: true,
-      message: 'linux.do 登录已失效 本机 Cookie 清理未完成，请重试。',
-      phase: 'credential'
-    });
+    const reconcileWritableSession = jest.fn(async () => ({ status: 'anonymous' as const }));
     const showLinuxDoLogin = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
     const hook = await renderActions({
       discourseLoginPrompts: { linuxdo: showLinuxDoLogin, xiaoyinsi: jest.fn() },
+      reconcileWritableSession,
       topicDetail: linuxDetail
     });
     await act(async () => {
@@ -958,19 +1005,22 @@ describe('topic action query mutations', () => {
       await expect(hook.result.current.actions.submitReply()).resolves.toBeUndefined();
     });
 
-    expect(showLinuxDoLogin).toHaveBeenCalledWith(expect.stringContaining('清理未完成'));
+    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
+    expect(reconcileWritableSession).toHaveBeenCalledWith('linuxdo');
+    expect(mockDiscourseRecover).not.toHaveBeenCalled();
+    expect(showLinuxDoLogin).not.toHaveBeenCalled();
   });
 
   it('[REG-ACCOUNT-009][REG-WRITE-022] suppresses a NodeSeek failure after a newer login takes ownership', async () => {
-    let generation = 0;
+    let ticketCurrent = true;
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise as never);
     const dispatchSiteSessionEvent = jest.fn();
     const notify = jest.fn();
     seedTopicCache();
     const hook = await renderActions({
-      currentNodeSeekCredentialGeneration: () => generation,
       dispatchSiteSessionEvent,
+      isWritableSessionTicketCurrent: () => ticketCurrent,
       notify
     });
     await act(async () => {
@@ -983,7 +1033,7 @@ describe('topic action query mutations', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
-    generation += 1;
+    ticketCurrent = false;
     await act(async () => {
       transport.reject(Object.assign(new Error('旧 NodeSeek 登录已失效'), {
         loginRequired: true,
@@ -997,7 +1047,7 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-ACCOUNT-009][REG-WRITE-022] suppresses a Yaohuo failure after a newer login takes ownership', async () => {
-    let generation = 0;
+    let ticketCurrent = true;
     const transport = Promise.withResolvers<unknown>();
     mockRunYaohuoAction.mockImplementationOnce(async () => transport.promise as never);
     const dispatchSiteSessionEvent = jest.fn();
@@ -1005,9 +1055,8 @@ describe('topic action query mutations', () => {
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
     seedTopicCache(yaohuoDetail);
     const hook = await renderActions({
-      currentYaohuoCredentialGeneration: () => generation,
       dispatchSiteSessionEvent,
-      showYaohuoLogin,
+      isWritableSessionTicketCurrent: () => ticketCurrent,
       topicDetail: yaohuoDetail
     });
     let action!: Promise<void>;
@@ -1017,7 +1066,7 @@ describe('topic action query mutations', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1));
-    generation += 1;
+    ticketCurrent = false;
     await act(async () => {
       transport.reject(Object.assign(new Error('旧妖火登录已失效'), {
         loginRequired: true,
@@ -1109,6 +1158,41 @@ describe('topic action query mutations', () => {
     });
 
     expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
+    expect(notify).not.toHaveBeenCalledWith('图片已插入');
+  });
+
+  it('[REG-WRITE-023] refreshes rejected NodeImage authorization without replaying the selected upload', async () => {
+    mockCurrentNodeImageGeneration.mockReturnValue(5);
+    mockUploadNodeSeekReplyImage.mockRejectedValueOnce(Object.assign(
+      new Error('API Key 无效'),
+      { nodeImageApiKeyExpired: true }
+    ));
+    mockGetDocument.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+    });
+    const ensureNodeImageApiKey = jest.fn(async (
+      options?: { forceRefresh?: boolean; clearOnCancel?: boolean }
+    ) => options?.forceRefresh ? 'new-key' : 'old-key');
+    const notify = jest.fn();
+    seedTopicCache();
+    const hook = await renderActions({ ensureNodeImageApiKey, notify });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('existing draft');
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.uploadReplyImage();
+    });
+
+    expect(mockUploadNodeSeekReplyImage).toHaveBeenCalledTimes(1);
+    expect(ensureNodeImageApiKey).toHaveBeenNthCalledWith(1);
+    expect(ensureNodeImageApiKey).toHaveBeenNthCalledWith(2, {
+      forceRefresh: true,
+      clearOnCancel: true
+    });
+    expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
+    expect(notify).toHaveBeenCalledWith('NodeImage 授权已更新，请重新选择图片上传');
     expect(notify).not.toHaveBeenCalledWith('图片已插入');
   });
 

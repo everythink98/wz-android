@@ -556,7 +556,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 用户已经离开 Search/Feed 后，旧搜索、AI 或分类请求仍在 More 页后台重启并拉起 linux.do、NodeSeek 或妖火面板；linux.do 验证开始后 Search 从登录 key 漂移到匿名 key，旧 recovery 失活，面板随即关闭又重开；“查看等级”命中 CF 时没有精确 recovery，验证流程清掉 Level cache 后反复取消、弹出或无法落地等级。 |
 | 触发条件 | App 级 controller 长期挂载，Query 只按提交数据或筛选条件 `enabled`，没有当前 `screen` 所有权；`enabled:false` 不会中止已经执行的 Query。`verification-started` 又把 canonical 会话暂时投影为未登录，使 Search key 和 transport 参数同时切换；Level 仅做 disabled Query 的一次 `refetch`，验证控制器却无条件重置 Level cache。 |
 | 根因 seam | `AppRoot` 当前页面/验证 overlay → Feed、Search、Account controller 的 Query 执行权；Search 的稳定认证模式 → 结构化 Query key 与 Gateway 参数；Level 的 exact active Query → `LinuxDoReadRecovery` 与 session reset 保留边界。 |
-| 必须保持的行为 | `AppNavigator` 必须把每次根页面切换同步给长期挂载的 `AppRoot`；Feed 主列表只在 Feed 执行，Search 主查询只在 Search 执行；共享 `all categories` 只在 Feed/Search 执行，单站 categories 只归 Feed。离开所属页面立即 cancel 在途 Query，旧结果和后续 credential scope 变化不得后台重启或拉起任一站点面板；所有 action/error 回调先确认所属页面仍在前台。linux.do overlay 打开时保留触发验证的主读取，取消 Search AI、标签/作者候选和 Feed categories，关闭后只按当前前台页面恢复这些次要读取。Search 在 `verification-required/verifying` 期间冻结最近一次稳定、已确认的 `linuxDoAuthenticated`，Query key 与 Gateway 参数使用同一值；登录确认、明确失效、退出或清除后才切换，`REG-LINUXDO-005` 的冷启动匿名和验证期关闭 `canWrite`/AI 语义不变。Level 只在 More 且用户已请求时 active；首次 CF 向验证控制器交付 exact Level key 和 recovery，一次用户显式检测成功时严格只有原请求一次、resume 一次，等级落地后关闭；离开 More、用户关闭或普通失败立即 cancel/stale，resume 再次遇到 CF 时保持 recovery 可供用户显式重试但不得自动循环。验证控制器不拥有或无条件重置 Level cache；真实登录失效、退出和凭据替换仍走既有 session/query invalidation。Account 手动验证不携带 recovery，检测成功后继续保持打开。 |
+| 必须保持的行为 | `AppNavigator` 必须把每次根页面切换同步给长期挂载的 `AppRoot`；Feed 主列表只在 Feed 执行，Search 主查询只在 Search 执行；共享 `all categories` 只在 Feed/Search 执行，单站 categories 只归 Feed。离开所属页面立即 cancel 在途 Query，旧结果和后续 session epoch 变化不得后台重启或拉起任一站点面板；所有 action/error 回调先确认所属页面仍在前台。linux.do overlay 打开时保留已加载主内容只读，暂停新 Search AI、标签/作者候选和 Feed categories，关闭后先完成 Account 对账，再按当前前台页面恢复；身份 barrier 期间 `canWrite`/AI 均关闭。Level 只在 More 且用户已请求时 active；首次 CF 向验证控制器交付 exact Level key 和 recovery，一次用户显式检测成功时严格只有原请求一次、resume 一次，等级落地后关闭；离开 More、用户关闭或普通失败立即 cancel/stale，resume 再次遇到 CF 时保持 recovery 可供用户显式重试但不得自动循环。验证控制器不拥有或无条件重置 Level cache；真实登录失效、退出和换号统一走 Account reconciliation 与 epoch invalidation。 |
 | 精确失败 oracle | `src/app/AppNavigator.test.ts` 固定每次根 Tab 切换都提交新的 reactive screen；`tests/ui/search-controller-ai.test.tsx` 固定验证中认证 key 不漂移、原 recovery Query 仍 active、离页 signal abort、scope 更新不重启、三站面板不回调，以及 AI/标签候选验证期 cancel、关闭后恢复；`tests/ui/feed-controller-xiaoyinsi.test.tsx` 固定 Feed 离页 cancel、验证期只停 categories、不停主读取，并证明 Search 只共享 aggregate categories 而不启动 Feed；`tests/ui/account-controller.test.tsx` 固定 Level 首次成功为原请求 + resume 恰好两次、exact Query active、离开 More 中止、手动关闭 stale、再次 CF 不自动循环，并证明验证准备被拒绝后可再次请求；`src/app/useVerificationController.test.ts` 用真实 QueryClient 的 active Level observer 固定验证准备、用户显式检测、凭据保存、exact resume、等级 cache 落地和面板关闭全链路，同时证明 closing 期间排队的 Level 准备失败会回告 owner，并覆盖用户关闭、仍为 CF 和 Account 手动入口。`tests/ui/topic-session-controller.test.tsx`、`tests/ui/user-controller-session.test.tsx` 继续固定既有 exact recovery，不得因共享 seam 修改退化。 |
 | 最低可靠自动测试层 | `UI_PASS` 通过真实 QueryClient 固定 observer active、AbortSignal、页面切换、恢复次数和面板回调；`UNIT_PASS` 固定 verification/session reset 对 exact key 的保留与终态。只检查 `enabled` 值、Modal 可见、Cookie 已保存或源码字符串不能证明后台请求已经停止。 |
 | Replay 或真实验收路径 | 在不清 App 数据、Cookie 或登录态的前提下，仅于自然 challenge 出现时验收：Search 触发 CF 后只出现一次 overlay、原请求只恢复一次；保留搜索后进入 More 查看等级，诊断中不得出现后台 Search/Feed，Level 应落地且 overlay 关闭；验证期间手动关闭后 recovery 失效且不重开。无法自然触发 CF 时记 `NOT_VERIFIED`。 |
@@ -587,7 +587,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | linux.do/NodeSeek 的 transport 与隐藏 WebView 无条件扫描完整响应正文或页面文本中的 `cf-turnstile`、`challenge-platform` 等词，或仅凭普通 `403`、`429`、登录接口 `404` 推断 challenge；妖火把正文中的“访问验证”、`CAPTCHA_CONFIG` 或“请先登录网站”直接当作页面状态。正常 JSON、可读 HTML、限流或代码讨论因此取得了验证工作流执行权。 |
 | 根因 seam | 来源 transport 响应元数据与正文 → Cloudflare/访问验证分类器 → direct/WebView fallback → session recovery 与验证面板。 |
 | 必须保持的行为 | `cf-mitigated: challenge` 始终是 Cloudflare 权威信号，即使响应 MIME 异常也必须进入验证；缺少 header 时只检查 HTML challenge 的 title、表单、Turnstile/Challenge DOM 或 script。普通 `403`、`429` 或登录接口 `404` 本身均不是 challenge，只按各站现有业务/身份协议结算；明确非 HTML、JSON Content-Type、无 Content-Type 但正文为 JSON、普通 HTML 讨论文字也不得触发 CF。NodeSeek 已识别的列表、详情、受限提示、搜索或 JSON 必须优先作为业务页面；隐藏 WebView 也先返回 JSON/可读业务 DOM。妖火只有验证页 title、captcha script/元素等结构证据才进入访问验证；可读帖子里的验证、登录文案和代码示例仍是正文。真正 challenge、用户显式检测、exact recovery 和面板关闭语义继续由既有回归保持。 |
-| 精确失败 oracle | `src/localSources.test.ts` 用合法 Discourse 搜索 JSON 固定当前设备日志中的误判，并固定 NodeSeek JSON/普通 HTML、无 challenge header 的普通 403/429 不进入 WebView fallback；`src/linuxdoCf.test.ts` 固定 header 优先、严格 HTML 结构、无 header JSON、普通 HTML 文本与普通状态码均为非 challenge；`src/nodeseekBrowserFetchScript.test.ts` 固定两站隐藏 WebView 的 JSON 和可读 NodeSeek DOM 优先；`src/yaohuoApi.test.ts` 固定普通帖子可讨论“访问验证”“请先登录网站”和 `CAPTCHA_CONFIG`。这些用例修复前分别抛出 CF、调用 fallback、回传 `challenge:true` 或抛出妖火验证错误。 |
+| 精确失败 oracle | `src/localSources.test.ts` 用合法 Discourse 搜索 JSON 固定当前设备日志中的误判，并固定 NodeSeek JSON/普通 HTML、无 challenge header 的普通 403/429 不进入 WebView fallback；`src/sourceErrors.test.ts` 固定 header 优先、严格 HTML 结构、无 header JSON、普通 HTML 文本与普通状态码均为非 challenge；`src/nodeseekBrowserFetchScript.test.ts` 固定两站隐藏 WebView 的 JSON 和可读 NodeSeek DOM 优先；`src/yaohuoApi.test.ts` 固定普通帖子可讨论“访问验证”“请先登录网站”和 `CAPTCHA_CONFIG`。这些用例修复前分别抛出 CF、调用 fallback、回传 `challenge:true` 或抛出妖火验证错误。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：需要走真实来源 adapter、fallback 与 WebView bridge script，而不是只断言一个正则。既有 verification controller UI 测试继续固定面板与 recovery 接线。 |
 | Replay 或真实验收路径 | 在身份匹配的新 APK 中使用触发本事故的同一 linux.do 关键词：响应为正常 JSON 时直接展示结果，不打开面板；若自然收到真实 `cf-mitigated`/HTML challenge，则只打开一次面板，用户完成后原请求恢复一次。NodeSeek/妖火只读页面出现验证讨论文字时仍可读取。不得清 Cookie 或人为绕过 challenge。 |
 | 负向验证方式 | 恢复正文 `includes` 正则、让隐藏 WebView 先扫描 challenge 词再识别 JSON/业务 DOM、删除 NodeSeek 可读页面优先级或让妖火重新扫描全部正文；对应编号测试必须再次出现 CF error、WebView fallback、`challenge:true` 或妖火验证错误。 |
@@ -602,7 +602,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | App 给 Android WebView 或同站 HTTP 请求强制设置固定 Chrome 版本的 User-Agent，手工发送与真实引擎不一致的 `sec-ch-ua*`，或保存前删除真实 WebView UA 的 `wv` 与 `Version/4.0` 标记。 |
 | 根因 seam | Android WebView provider 的默认身份 → NodeSeek、NodeImage、linux.do、妖火可见 WebView → probe/原生桥取得的真实 UA → Cookie/access 持久化 → 隐藏 WebView、媒体、读取与写操作。 |
 | 必须保持的行为 | 原生桥用 `WebSettings.getDefaultUserAgent()` 提供唯一当前平台默认值；NodeSeek、NodeImage、linux.do、妖火可见 WebView 不设置自定义 `userAgent`，由 provider 自己选择真实身份；probe 只规范空白并保留 `wv`、`Version/4.0`，后续请求使用同一 provider 身份，不伪造固定 Client Hints，旧 SecureStore UA 不得覆盖当前运行时值。该收敛不增加站点级 UA 状态机。修复和重新验证不得清除 App 数据、登录 Cookie、SecureStore、代理配置或其他站点会话；页面事件仍只更新候选，必须由用户显式点击“检测登录”提交。 |
-| 精确失败 oracle | `src/androidWebViewUserAgentValue.test.ts` 与 `src/linuxdoCf.test.ts` 要求原生桥输出并原样保留 provider UA；`tests/ui/account-site-panels.test.tsx` 要求 NodeSeek、linux.do 与妖火可见 WebView 的 `userAgent` prop 缺失；`src/app/sessionControllerHelpers.test.ts` 要求旧存储 UA 不覆盖当前运行时身份；`src/yaohuoApi.test.ts` 与 `src/yaohuoActionClient.test.ts` 要求妖火读取/写入使用 provider UA 且不发送固定 `sec-ch-ua*`。 |
+| 精确失败 oracle | `src/androidWebViewUserAgentValue.test.ts` 与 `src/app/sessionControllerHelpers.test.ts` 要求原生桥输出并原样保留 provider UA，且旧存储 UA 不覆盖当前运行时身份；`tests/ui/account-site-panels.test.tsx` 要求 NodeSeek、linux.do 与妖火可见 WebView 的 `userAgent` prop 缺失；`src/yaohuoApi.test.ts` 与 `src/yaohuoActionClient.test.ts` 要求妖火读取/写入使用 provider UA 且不发送固定 `sec-ch-ua*`。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` 固定 WebView adapter 与持久化行为；源码字符串、App 能启动或只看到 challenge 复选框都不能证明完整验证可通过。 |
 | Replay 或真实验收路径 | 不清 App 数据和登录态，在 WebView provider 受支持的当前 Android 环境分别打开 NodeSeek、linux.do 与妖火登录/验证页；自然出现 challenge 时只由用户点击，成功后页面离开验证页，再点站内检测恢复原读取。模拟器环境仍被 Cloudflare 拒绝时记 `BLOCKED_BY_ENV`，使用真实 Android 设备复核，不自动代做或绕过 challenge。 |
 | 负向验证方式 | 重新向任一可见验证 WebView 传入固定 UA、让旧存储 UA 覆盖当前 provider，或在 sanitizer 中删除 `wv`/`Version/4.0`，对应编号测试必须失败。 |
@@ -1122,7 +1122,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `TOPIC-02`、`TOPIC-03` |
 | 用户症状 | 同一正文或评论引用出现在多个位置并同时展开时，会重复读取同一楼层，或让一个实例的 Loading、内容和错误串到另一个 reference。离开原 Topic 后，旧引用与 linux.do 验证恢复还可能继续结算。 |
-| 触发条件 | 引用展开状态按 UI instance 管理，但远端楼层内容也由各 instance 手写持有，没有用 source、topic、post number 与 credential scope 组成统一 Query key。 |
+| 触发条件 | 引用展开状态按 UI instance 管理，但远端楼层内容也由各 instance 手写持有，没有用 source、topic、post number 与 session epoch 组成统一 Query key。 |
 | 根因 seam | `src/app/useTopicController.ts` 的引用 instance 状态与 TanStack Query 远端状态边界，以及 `src/app/serverState.ts` 的结构化 reply key。 |
 | 必须保持的行为 | 展开/收起只属于 Topic session 的 instance 状态；同一 reference key 的所有观察者共享一个 Query transport、缓存、Loading 和错误，不同 reference 可独立并发。linux.do 恢复只 refetch 完全匹配的结构化 key；离开 Topic 精确取消当前详情、回复和引用 Query，不影响其他 Topic。 |
 | 精确失败 oracle | `tests/ui/topic-session-controller.test.tsx` 的 `REG-TOPIC-007` 用 pending Promise 同时展开同一 reference，要求 `getReply × 1` 且两个观察者读取同一 Query 结果；同文件的离开 route 用例要求详情、回复和引用 signal 全部 abort，另一个 Topic 的 Query 保持在飞。 |
@@ -1348,9 +1348,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`MORE-02` |
 | 用户症状 | NodeSeek 或 linux.do 保存的会话 JSON 损坏后，App 把读取结果当成“未登录”，可能覆盖现场并隐藏真正的数据损坏。 |
 | 触发条件 | SecureStore key 存在但 JSON 无法解析或结构无效。 |
-| 根因 seam | `src/app/sessionControllerHelpers.ts` 与 `src/linuxdoCookieBridge.ts` 的持久化读取错误分类。 |
+| 根因 seam | `src/legacyCookieSnapshotMigration.ts` 与 `src/managedCookies.ts` 的旧快照迁移、准确原生读取和错误分类。 |
 | 必须保持的行为 | key 缺失可以表示匿名；key 存在但无法解码必须抛出可诊断错误、保留存储且不自动清理。 |
-| 精确失败 oracle | `src/app/sessionControllerHelpers.test.ts` 与 `src/linuxdoCookieBridge.test.ts` 注入损坏 JSON，要求 rejection 且诊断不宣称匿名成功。 |
+| 精确失败 oracle | `src/legacyCookieSnapshotMigration.test.ts` 注入损坏旧 JSON 与原生读取失败，要求保留旧快照并报告失败；`src/managedCookies.test.ts` 固定空 Cookie 与读取错误不能混淆，均不得宣称匿名成功。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：SecureStore 故障注入足以固定解码边界。 |
 | Replay 或真实验收路径 | 不破坏设备 SecureStore；真实损坏只能报告为 `BLOCKED_BY_ENV` 后由用户决定恢复。 |
 | 负向验证方式 | 再次吞掉 JSON 解析异常，编号测试会得到空会话而非 rejection。 |
@@ -1363,9 +1363,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02` |
 | 用户症状 | 清除站点登录时，一个 URL 读取或一个 Cookie 删除失败会阻止其他可达 Cookie 清除；已成功删除的 Cookie 也可能未 flush，却被误报为清理完成。 |
 | 触发条件 | 多 URL Cookie store 中部分 `get`/`remove` reject，或原生 `remove` 返回 `false`。 |
-| 根因 seam | `src/cookieCleanup.ts` 的全目标遍历、删除确认、flush 与聚合错误顺序。 |
+| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的 `clearManagedLoginCookies` 对全部目标 Cookie、主线程 callback、回读确认与错误聚合的顺序。 |
 | 必须保持的行为 | 所有可达 URL/Cookie 都尝试清理；`false` 算失败；只要有成功删除就 flush，随后聚合报告全部失败，绝不宣称完全成功。 |
-| 精确失败 oracle | `src/cookieCleanup.test.ts` 分别固定读取失败隔离、删除失败后仍 flush 和 `false` 返回值分类。 |
+| 精确失败 oracle | `src/managedCookies.test.ts` 固定窄化 clear port 的 unsupported/false/error 分类；`src/releasePackaging.test.ts` 与生成的原生测试固定全部删除 callback 完成、持久化及回读确认后才返回成功。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须精确断言每个 native 调用及最终错误。 |
 | Replay 或真实验收路径 | 清除真实登录需明确授权，本轮仅执行确定性测试。 |
 | 负向验证方式 | 恢复串行 fail-fast 或忽略 `false`，相应用例会漏删、漏 flush 或错误成功。 |
@@ -1767,13 +1767,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `TOPIC-01`、`USER-01`；共享回归 `FEED-01`、`FEED-02`、`SEARCH-01`、`SEARCH-02`、`ACCOUNT-01` |
 | 用户症状 | NodeSeek 主题详情或关注用户页进入后长期停在“正在读取”；网络请求本可成功，但页面既不显示结果也不进入可重试失败态。真实登录切换、过期或清除时还可能继续显示旧会话的首页、搜索、详情或用户数据。妖火及其他复用同一会话事件边界的读取存在同类风险。 |
-| 触发条件 | Query 的 `queryFn` 读取已保存 Cookie；凭据 loader 在当前读取期间发送 `cookie-loaded`，Session controller 随即把观察事件误当成身份变化，取消并移除正在执行它的 Query。真实会话 transition 若只删旧 cache 却不推进非敏感 credential scope，仍可能重新观察旧 key。 |
-| 根因 seam | `src/app/useSessionController.ts` 的会话事件分类与 credential scope、`src/app/serverState.ts` 的 source/`all` Query cache 边界，以及 TanStack Query observer 的取消结算语义。 |
-| 必须保持的行为 | `cookie-loaded` 只更新会话视图，不取消或移除 Query；恢复完成后的 `verification-succeeded` 同样只是观察事件。新凭据保存或 Device Code 授权完成发布 `session-updated`。`session-updated`、`login-detected`、`login-expired` 和 `cleared` 必须取消并移除对应 source 与 `all` Query，并推进该站 credential scope，让 Feed/Search/Topic/User 直接从新的 Query result 派生 Loading、data 和 error；其他来源不变。linux.do 仅可保留与 source 和结构化 `recoveryQueryKey` 完全匹配且仍有 active observer 的 Query，保留其 pages/cursor 作为恢复合并基线；前缀相似、其他 lane、其他来源和已失去 observer 的 key 都必须清除。 |
-| 精确失败 oracle | `src/app/sessionControllerHelpers.test.ts` 固定 `cookie-loaded`/`verification-succeeded` 的观察分类和 NodeSeek 凭据替换事件；`src/app/serverState.test.ts` 固定 source + `all` 清理、其他来源隔离和结构化 recovery key 精确保留；`tests/ui/feed-controller-xiaoyinsi.test.tsx`、`tests/ui/search-controller-ai.test.tsx`、`tests/ui/topic-session-controller.test.tsx` 与 `tests/ui/user-controller-session.test.tsx` 固定 credential scope 隔离、分页/回复/引用/双 cursor 恢复及聚合 Search 其他来源继续完成。 |
+| 触发条件 | 旧实现的 Query `queryFn` 读取 App Cookie 快照；被动 loader 在当前读取期间发送 `cookie-loaded`，Session controller 随即把观察事件误当成身份变化，取消并移除正在执行它的 Query。真实身份变化若只删旧 cache 却不推进非敏感 session epoch，仍可能重新观察旧 key。 |
+| 根因 seam | `src/app/useSessionController.ts` 的 workflow 事件分类与 session epoch、`src/app/serverState.ts` 的 source/`all` Query cache 边界，以及 TanStack Query observer 的取消结算语义。 |
+| 必须保持的行为 | 被动 workflow 观察不能取消或移除当前 Query；Account canonical probe 明确 A→B/A→anonymous/anonymous→B 后才取消并移除对应 source 与 `all` 私有 Query并推进该站 session epoch，让 Feed/Search/Topic/User 直接从新 Query result 派生 Loading、data 和 error；其他来源不变。登录 surface open/unknown 只建立 barrier并保留旧内容只读，A→A 不推进 epoch。linux.do 权威 recovery 仅可保留与 source 和结构化 `recoveryQueryKey` 完全匹配且仍有 active observer 的 Query；前缀相似、其他 lane、其他来源和已失去 observer 的 key 都必须清除。 |
+| 精确失败 oracle | `src/app/sessionControllerHelpers.test.ts` 固定观察/身份变化分类、source + `all` 清理、其他来源隔离和结构化 recovery key；`src/app/serverState.test.ts` 固定 session epoch key；`tests/ui/feed-controller-xiaoyinsi.test.tsx`、`tests/ui/search-controller-ai.test.tsx`、`tests/ui/topic-session-controller.test.tsx` 与 `tests/ui/user-controller-session.test.tsx` 固定 epoch 隔离、barrier、分页/回复/引用/双 cursor 恢复及聚合 Search 其他来源继续完成。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定 Query 取消、事件分类和精确 cache 边界；`UI_PASS` 通过真实 `QueryClientProvider` 固定 observer、cursor、Loading 与来源隔离；`DEVICE_REPLAY_PASS` 固定 Feed → Topic 与 Library → User 不再永久 Loading；五站动态读取仍需 `LIVE_PASS`。 |
 | Replay 或真实验收路径 | 执行 `feed-topic-return.ad`、`four-source-feed.ad` 与 `library-return.ad`；真实五站逐站打开详情，确认请求完成且没有同站自取消或恢复后重复请求。 |
-| 负向验证方式 | 临时把 `cookie-loaded` 加回 Query 失效集合，观察事件用例必须无法提交详情；真实 transition 不推进 credential scope 时 UI 用例必须继续观察旧 key；只清 source、不清 `all`，或按前缀保留 recovery lane 时 cache 边界断言必须失败。 |
+| 负向验证方式 | 让被动 workflow 事件失效 Query，观察用例必须无法提交详情；真实身份变化不推进 session epoch 时 UI 用例必须继续观察旧 key；只清 source、不清 `all`，或按前缀保留 recovery lane 时 cache 边界断言必须失败。 |
 | 明确不覆盖范围 | 不跳过真实新凭据、登录、退出或明确凭据失效后的缓存隔离；不把账号状态事件改成缓存数据，也不新增另一套请求 owner。 |
 
 ## `REG-TOPIC-023` 回复分页验证恢复重取旧页
@@ -2023,7 +2023,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-04`、`MORE-02`、`WRITE-01`、`WRITE-03` |
 | 用户症状 | NodeSeek 当前登录已经失效，搜索 transport 已回退 Google，但 More 与搜索状态灯仍显示已登录，Topic 写入口也可能继续开放；公开页里的业务文案或旧 Topic 身份又可能被误当当前用户；修复共享缓存 seam 时还可能把旧登录带进新 generation、回写小隐寺授权 workflow 或误清其他站身份。 |
 | 触发条件 | NodeSeek 保存过 userId 且公开资料仍可读取，当前响应同时含明确游客与残留用户字段，真实游客页使用 `/signIn.html`、`/register.html` 而旧 probe 未识别，或弱设置/通知/UID 内容被当当前用户；linux.do 新文档仍收到旧 probe 消息；妖火公开卡片含“我的/欢迎”但没有可信 self-account 结构；站点协议明确返回匿名字段/结构，或成功响应缺少 current user；目标站旧 `account-status` Query 仍有活跃 disabled observer。 |
-| 根因 seam | 当前凭据验证与按 ID 公开资料、Topic 身份或 Cookie 候选混用；WebView probe 缺少文档所有权；妖火把业务文字或“未识别为退出”当成功；Discourse reader 没有完整区分明确匿名与协议不确定；Account Query 与 credential scope 更新时序既可能擦掉刚提交的 expired，也可能通过全局 previous data 保留旧登录。 |
+| 根因 seam | 当前凭据验证与按 ID 公开资料、Topic 身份或 Cookie 候选混用；WebView probe 缺少文档所有权；妖火把业务文字或“未识别为退出”当成功；Discourse reader 没有完整区分明确匿名与协议不确定；Account Query 与 session epoch 更新时序既可能擦掉刚提交的身份结果，也可能通过全局 previous data 保留旧登录。 |
 | 必须保持的行为 | 四站 Credential、generation、Account Query 和验证协议继续按站隔离，但遵守同一证据边界：只有当前凭据端点返回当前用户，或站点专属可信账号容器给出明确 self-account 结构，才是 `logged-in`；只有该站协议明确约定的匿名字段、状态或准确游客结构才是 `logged-out`；其他 HTTP 状态、成功但缺字段、普通业务页、CF、超时、网络与解析不确定都是 `unknown`。Cookie、旧 ID、Topic 作者、公开资料和普通“我的/欢迎”文案不是登录证明；明确游客证据优先于同一响应残留 self 字段。NodeSeek 与 linux.do 手动 probe 使用当前文档私有 nonce/documentKey，新文档先作废旧结果；明确 `logged-out` 只更新 App 为失效，不删除原站 Cookie；四站 unknown 均不清理并保留上次可信身份。外部会话变化 reset 目标站 Account Query；查询自身确认失效则先提交 exact expired，再只 seed 该结果到新 scope，普通新 scope 不继承旧登录；小隐寺只读 Account 失效不发布授权 workflow。其他三站 data/error/busy 不变。各站精确状态契约由 `REG-ACCOUNT-025/026` 固定。 |
 | 精确失败 oracle | `src/forumApi.test.ts`、`src/loginWebViewScripts.test.ts` 与 `tests/ui/account-site-panels.test.tsx` 固定 NodeSeek 公开资料禁用、真实 `.html` 游客结构、明确游客优先级及两站 probe 文档所有权；`src/yaohuoApi.test.ts` 固定公开卡片/业务文案 unknown；`src/linuxdoActionClient.test.ts`、`src/localXiaoyinsi.test.ts` 固定 current user、显式匿名与畸形 200 分界；`tests/ui/xiaoyinsi-auth-controller.test.tsx` 固定只读检查不发布 workflow；`src/app/sessionControllerHelpers.test.ts`、`src/app/serverState.test.ts` 固定 active disabled Query reset 与 exact expired 新 scope seed；`tests/ui/account-status-controller.test.tsx` 固定确认失效提交时序、普通新 scope 不继承旧登录、清理失败和四站 unknown 保留身份；`src/siteSessionPrompts.test.ts` 同时固定 More 非登录、Search 灯非绿色/Google 文案和 Topic 不可写。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Query observer reset、controller 异步结算和三个消费面的同一投影都必须被观察。 |
@@ -2068,9 +2068,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `ACCOUNT-02` |
 | 用户症状 | 用户在 App 内完成 NodeSeek 账号提交和 Cloudflare 验证，站点已签发新身份 Cookie，却跳回游客首页；再次填入或检测会重新加载 WebView、重新拉起验证，形成“登录成功但仍未登录”的循环。 |
 | 触发条件 | WebView Cookie store 同时残留 `.nodeseek.com` 的旧 `session` 与 `www.nodeseek.com` 的新 `session`；专项清理只发送不带 Domain 的过期 Cookie并把 callback 当作完成。用户再次请求填入保存凭据时，递增的 credential attempt 又进入 React key，使当前 WebView 被销毁重建。 |
-| 根因 seam | `src/cookieCleanup.ts` 对 Cookie 身份与完成条件的建模，以及 `src/screens/more/MorePanels.tsx` 把消息 attempt 错当组件身份。 |
+| 根因 seam | 原生 `clearManagedLoginCookies` 对 Cookie 身份与完成条件的建模，以及登录 WebView 把消息 attempt 错当组件身份。 |
 | 必须保持的行为 | NodeSeek 专项清理只处理 `session`、`connect.sid`、`sid`，同时过期当前 host-only 与 `Domain=nodeseek.com; Path=/` 版本；`Domain=.nodeseek.com` 不作为另一种身份重复提交。等待所有 callback 和 `flush` 后从 `www` 与 apex 回读，目标名称仍存在即失败；`cf_clearance`、`pjwt`、其他业务 Cookie和另外三站状态保持不变。NodeSeek 与妖火的 credential attempt 只关联 probe/fill 回执，通过已挂载 WebView ref 注入；只有 renderer 已退出后的显式恢复 key 才能 remount。 |
-| 精确失败 oracle | `src/cookieCleanup.test.ts` 的 `REG-ACCOUNT-022` 要求 host-only 与显式 parent Domain 两个删除 header，禁止冗余前导点版本，并让 callback 全部成功但回读仍有 `session` 时必须失败；`tests/ui/account-site-panels.test.tsx` 改变 NodeSeek/妖火 attempt，要求 mount 次数保持 1 且当前 ref 收到新 attempt probe。修复前分别稳定表现为遗漏 parent Domain/错误报告成功和 WebView mount 次数变 2。 |
+| 精确失败 oracle | `src/releasePackaging.test.ts` 与生成原生测试要求 host-only 与显式 parent Domain 的目标身份完整，callback 全部成功但回读仍有登录 Cookie 时必须失败；`src/managedCookies.test.ts` 固定 JS 只暴露显式 clear port；`tests/ui/account-site-panels.test.tsx` 改变 NodeSeek/妖火 attempt，要求 mount 次数保持 1 且当前 ref 收到新 attempt probe。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Cookie header 与删除回验用 Vitest，React key 对原生 WebView 生命周期的影响用 RNTL mount oracle；源码字符串不能替代。 |
 | Replay 或真实验收路径 | 仅在用户授权后清除 NodeSeek 登录 Cookie，确认 `cf_clearance` 与其他三站状态不变；用户在 App 内手动提交账号并完成自然出现的 CF，随后确认原 WebView 不反复重建、原站首页显示登录身份，并用“检测登录”同步 More/Search/Topic。tracked `nodeseek-session.ad` 只核对当前已登录原站页面，不制造掉线或自动输入凭据，因此本缺陷的动态链路需单独报告 `LIVE_PASS` 或 `NOT_VERIFIED`。 |
 | 负向验证方式 | 去掉 `Domain=nodeseek.com`、去掉 flush 后回读，或重新把 attempt 拼入 NodeSeek/妖火 WebView key，两个编号测试分别暴露残留 Cookie、假成功或 mount 次数增加；若清理 header 包含 `cf_clearance`，保留验证 Cookie 的断言失败。 |
@@ -2132,7 +2132,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | 原站 Cookie jar、App 内请求快照和登录投影没有明确所有权；破坏性清理能力被当作身份判定的附带动作；隐藏 WebView transport 暴露 App 快照；Cookie 名摘要被提升为协议结论。 |
 | 必须保持的行为 | 原站 WebView Cookie 由网站与 Android `CookieManager` 持有。App 可以只读当前 Cookie 并保存 verifier 候选或 sid/CSRF 等协议摘要，但该快照不承担请求传输。检测、公共刷新、明确过期、fallback 和普通读写失败都不得向原站 WebView 写入或删除 Cookie；只有用户明确点击该站“清除登录”才拥有定向删除权限。NodeSeek 显式清除只删登录 Cookie并保留 CF。NodeSeek/linux.do 隐藏 fallback 首跳只传 URL，不能携带 App 快照 Cookie；原生 RN 请求按准确 URL 实时读取，响应保存为 no-op。原生桥只用公开 CookieManager API，不读取私有数据库。四站 Cookie 名只作候选摘要：存在本站候选时必须交给该站真实 current-session verifier，由 current user/明确匿名/unknown 决定身份。 |
 | 来源证据 | Android 官方 [`CookieManager`](https://developer.android.com/reference/android/webkit/CookieManager) 是应用 WebView 使用的单例 Cookie 管理器；React Native WebView 的 [`Managing Cookies`](https://github.com/react-native-webview/react-native-webview/blob/master/docs/Guide.md#managing-cookies) 明确 `source.headers.Cookie` 只影响首个请求，不能作为持续 Cookie 同步方案。成熟客户端把验证当前凭据与显式登出/移除账号分开：Mastodon Android 的 [`GetOwnAccount`](https://github.com/mastodon/mastodon-android/blob/master/mastodon/src/main/java/org/joinmastodon/android/api/requests/accounts/GetOwnAccount.java) 与 [`GetAccountByID`](https://github.com/mastodon/mastodon-android/blob/master/mastodon/src/main/java/org/joinmastodon/android/api/requests/accounts/GetAccountByID.java) 分离，Tusky 的 [`MastodonApi`](https://github.com/tuskyapp/Tusky/blob/develop/app/src/main/java/com/keylesspalace/tusky/network/MastodonApi.kt) 也区分 verify credentials 与按 ID 公开资料。 |
-| 精确失败 oracle | `tests/ui/hidden-browser-host.test.tsx` 断言 NodeSeek/linux.do WebView source 没有 App Cookie header；`src/app/sessionControllerHelpers.test.ts` 断言两站挂载前等待 CookieManager 且公开 request view 不暴露快照；`plugins/withLinuxDoCookieModule.js` 的生成测试禁止 `SQLiteDatabase`、私有 WebView 路径和清理命令泄漏；`tests/ui/account-controller.test.tsx`、`src/app/useVerificationController.test.ts` 固定明确 logged-out 只报告失效而不删除；`tests/ui/account-status-controller.test.tsx` 固定 NodeSeek/linux.do 候选即使没有已知登录 Cookie 名，也由 current-session 响应决定登录。 |
+| 精确失败 oracle | `tests/ui/hidden-browser-host.test.tsx` 断言 NodeSeek/linux.do WebView source 没有 App Cookie header；`src/app/sessionControllerHelpers.test.ts` 断言公开 request view 不暴露快照；`src/releasePackaging.test.ts` 固定原生桥只使用公开 `CookieManager` API并禁止 `SQLiteDatabase`/私有 WebView 路径；`tests/ui/account-controller.test.tsx`、`src/app/useVerificationController.test.ts` 固定明确 logged-out 只更新投影而不删除；`tests/ui/account-status-controller.test.tsx` 固定 linux.do `_forum_session` 即使没有 `_t` 也由 current-session 响应决定身份。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` + 原生生成/编译：需要同时观察 controller 权限、WebView props、共享 CookieManager barrier、生成 Kotlin API 边界和 current-session Query，源码字符串不能单独证明运行行为。 |
 | Replay 或真实验收路径 | 保留当前 App 数据，用户在 App 内原站自然登录并手动检测；依次只读刷新 More、Search、Feed/Topic 后再次打开原站，登录不得被自动删除。隐藏 fallback 只有在来源自然触发时核对；不得清 App 数据、主动退出、撤销授权或为制造 challenge 反复登录。 |
 | 负向验证方式 | 向隐藏 WebView 恢复 `headers.Cookie`、在检测/过期分支重新调用任一原站清理函数、恢复私有 SQLite Cookie 读取，或用 `summary.loggedIn` 阻止已有候选进入 verifier；对应编号测试必须失败。 |
@@ -2159,7 +2159,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-04`、`TOPIC-01`、`MORE-02`、`WRITE-01`、`WRITE-03` |
-| 用户症状 | NodeSeek 已在 More 确认登录后，普通读取恰好没有从 CookieManager/SecureStore 取得快照，账号状态会先变成需要验证、再变成未登录；current user、确认时间和私有 Query scope 一并丢失。 |
+| 用户症状 | NodeSeek 已在 More 确认登录后，旧实现的普通读取恰好没有从 CookieManager/旧 SecureStore 快照取得值，账号状态会先变成需要验证、再变成未登录；current user、确认时间和私有 Query scope 一并丢失。 |
 | 触发条件 | 被动 `loadNodeSeekCookieForSource` 得到空值后发布 `cleared`；保存空摘要的共用 helper 又把“没有可保存快照”发布成 `verification-required`，把观察不到凭据误当成身份结论。 |
 | 根因 seam | `src/app/useSessionController.ts` 的 NodeSeek 凭据持久化、被动观察和身份投影共用同一副作用分支；`cleared` 没有限定为用户明确清除事务。 |
 | 必须保持的行为 | 被动加载或保存空 NodeSeek 快照只返回 `undefined`/发布不带 `loggedIn` 的观察事件，不得发布 `verification-required`、`login-expired` 或 `cleared`；已有 `logged-in`、`expired`、`verification-required`、current user、最后确认时间和 Query scope保持不变。只有 current-page verifier 可以发布登录结论；`cleared` 只来自用户明确清除且 multi-store 事务成功。 |
@@ -2200,6 +2200,22 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 覆盖安装保留数据，连接 Metro 后启动到首页；随后 force-stop 冷启动并进入含远端图片的 Feed/Topic，确认 App 可用且原站 WebView 会话未被响应改写。 |
 | 负向验证方式 | 恢复裸 `JavaNetCookieJar`，或让容器接受 RN/Fresco 传入的新 Jar；定向测试或设备启动必须再次失败。 |
 | 明确不覆盖范围 | 不修改 React Native/Fresco 源码，不新增第二个网络 client，也不改变用户显式清除 Cookie 的事务。 |
+
+## `REG-ACCOUNT-031` 登录页面打开即破坏会话，关闭后又继续信任旧账号
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`ACCOUNT-06`、`FEED-01`、`FEED-02`、`SEARCH-03`、`SEARCH-04`、`TOPIC-01`、`TOPIC-03`、`USER-01`、`WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04` |
+| 用户症状 | 只要进入登录/验证页，原本有效的 WebView 登录态就被 App 清除或旧快照覆盖；反过来，用户在页面内退出或切换账号后直接关闭，账号中心、私有缓存和写入口仍继续信任旧账号，直到手动点击检测。 |
+| 触发条件 | 打开 NodeSeek、linux.do、妖火或 NodeImage surface；通过关闭按钮、系统返回、离开 More、切换登录站点、NodeImage 取消/成功退出；linux.do 因 App inactive 暂时卸载 WebView；或旧 probe 在新 surface generation 之后迟到。 |
+| 根因 seam | 登录 surface 生命周期、Account identity、WebView Cookie 所有权、Query cache scope 与写权限分别维护；打开页面被误当成登出事务，关闭页面又没有强制 identity reconciliation。 |
+| 必须保持的行为 | 打开 surface 只建立含 source/surface/generation/打开时 identity 与 epoch 的 ticket，暂停该站新私有请求和写入，不清 Cookie、不改 identity、不删除可信缓存。只有 surface 确实可见时关闭才异步对账；UI 立即消失，不等待网络。重复关闭 no-op，linux.do inactive 不是关闭，权威检测后的自动关闭不重复 probe。NodeSeek、linux.do、妖火分别使用严格三态 verifier；unknown 保留旧可信账号和已加载内容只读并维持 barrier。A→A 仅解除 barrier；A→B、A→anonymous、anonymous→B 原子提交 Account Query、递增目标站 epoch，并清理该站及 `all` 私有 Query、Level/AI、Topic 服务端内容和媒体身份缓存；其他站不变。旧 probe 只能提交给自己的 generation。 |
+| 来源证据 | Android [`CookieManager`](https://developer.android.com/reference/android/webkit/CookieManager) 明确 `getCookie(url)` 是按 URL 读取，而 `flush()` 是阻塞持久化操作；[RFC 6265](https://datatracker.ietf.org/doc/html/rfc6265) 规定 user agent 负责 Domain、Path、Secure 与 Cookie 顺序。TanStack Query 官方 [Query Keys](https://tanstack.com/query/v5/docs/framework/react/guides/query-keys) 与 [Query Cancellation](https://tanstack.com/query/v5/docs/framework/react/guides/query-cancellation) 要求响应依赖进入 key，取消由 queryFn 消费 `AbortSignal`。 |
+| 精确失败 oracle | `src/authSurfaceCoordinator.test.ts` 固定所有关闭原因、hidden/no-op、switch-surface、inactive 与 generation；`src/managedCookies.test.ts` 固定 exact URL、空值/错误分离、只读与显式清除端口；`src/nodeseekSession.test.ts`、`src/linuxdoSession.test.ts`、`src/yaohuoSession.test.ts` 固定三态证据，`src/loginWebViewScripts.test.ts` 额外固定 login 路径的错误/半加载页仍为 unknown；`tests/ui/account-status-controller.test.tsx` 固定 A→A/A→B/A→anonymous/unknown、single-flight 与迟到 probe；`src/app/sessionControllerHelpers.test.ts`、`src/app/serverState.test.ts` 固定原子 seed、source/`all` 清理和 epoch key；Feed UI 固定其他来源完成刷新后仍合并同 epoch dirty 来源的旧可信条目、换 epoch 后停止合并；User UI 固定 route 只保留定位字段且不回显旧头像/简介/等级/活动；Search/Topic/Account UI 固定 barrier 下只读保留、其他来源继续与 epoch 后不复用旧服务端数据；`src/mediaSessionEpoch.test.ts` 及媒体 UI 测试固定 cacheKey/player 随 epoch 重建。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` + 原生 Release JUnit/Kotlin compile；reducer、Query transaction、surface RNTL 与生成原生边界必须组合覆盖。 |
+| Replay 或真实验收路径 | 覆盖安装同 revision release APK 且不清 App 数据；在已登录 NodeSeek、linux.do、妖火分别验证打开不退出，关闭按钮、系统返回、离开 More 和切站均自动 A→A 对账。NodeImage 只验证取消和已有 Key 恢复。A→B、真实退出和清除 Cookie 需用户另行授权，未执行时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 在任一 surface open 分支调用 clear/flush/写 Cookie，关闭时省略 reconciliation，把 unknown 提交成 anonymous，让 hidden close 重复 probe，或让旧 generation 覆盖新 Account key；编号测试必须分别观察到清理调用、错误身份、重复请求或跨 epoch 缓存。 |
+| 明确不覆盖范围 | 不改变小隐寺 Device Code 协议，不把账号密码自动填入当作 Cookie，不跨应用同步 Cookie，不自动退出/换号，也不执行真实论坛写入。 |
 
 ## `REG-FEED-006` 多页 Feed 刷新失败后跳过失败页
 
@@ -2485,6 +2501,22 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 默认不通过真实写操作制造过期。设备自然出现失效时，只读核对 More、Search 与 Topic 已同步关闭目标站写能力且原站 Cookie仍保留；妖火自然验证态只显示验证要求。否则动态证据记 `NOT_VERIFIED`。 |
 | 负向验证方式 | 删除 dispatcher、在 generation 检查前发布事件、把妖火 verification 映射为 expiry，或从错误分支调用 Cookie 清理；编号 UI 测试、stale generation 测试或 Cookie 所有权测试必须失败。 |
 | 明确不覆盖范围 | 不把单主题权限失败升级为全局退出，不自动重试写操作，不清 Cookie，不执行真实回复/收藏/投票，也不新增统一 verifier 或第二套状态机。 |
+
+## `REG-WRITE-023` 旧主题或账号在身份待确认、换号后继续写入
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04`、`TOPIC-01`、`TOPIC-03` |
+| 用户症状 | 用户从账号 A 打开旧 Topic 后在 WebView 切到账号 B、退出或身份无法确认，App 仍可能先显示 optimistic 成功、打开文件选择器或发送 A 页面上下文下的回复、编辑、删除、互动、投票、上传和签到；失败后还可能自动重放非幂等请求。 |
+| 触发条件 | 写入开始时 surface 开放/刚关闭/unknown；`ensureWritableSession` 返回后、Query cancellation 或文件选择等待期间 epoch 变化；NodeImage Key 属于另一 NodeSeek identity；action 返回 401/403 或站点 typed expiry。 |
+| 根因 seam | 各 action 自行读取 Cookie/SecureStore 判断登录，身份检查与 optimistic snapshot、文件选择、上传及 transport 之间没有一次性 identity/epoch 所有权；恢复逻辑把写请求当成可自动重试读取。 |
+| 必须保持的行为 | 所有回复、楼层回复、编辑、删除、点赞/鸡腿/反对、收藏/书签、投票、四站上传与 NodeSeek 签到统一先调用 `ensureWritableSession(source)`。已确认且干净的会话不增加网络请求；surface 开放、刚关闭或 unknown 时先走 verifier。同一 identity 可继续当前操作一次；换号、退出、unknown 或 ticket 过期都终止。门禁必须位于用户确认之后且在 Query snapshot、optimistic update、文件选择、上传和 transport 之前；等待 Query cancellation 或文件选择后再次校验，失败为零 optimistic、零上传、零 transport。401/403/action failure 只触发一次 verifier，不自动重放。NodeImage 自动 Key 绑定 NodeSeek identity；旧版或手动 Key 首次在当前身份使用前显式确认但不展示 Key。 |
+| 来源证据 | OWASP [Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) 建议集中授权并默认拒绝；[Transaction Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Transaction_Authorization_Cheat_Sheet.html) 要求授权与具体操作绑定并在执行前校验。TanStack Query [Optimistic Updates](https://tanstack.com/query/v5/docs/framework/react/guides/optimistic-updates) 把 cancel、snapshot 与 optimistic apply 的顺序视为 mutation 正确性边界。 |
+| 精确失败 oracle | `src/writableSessionGate.test.ts` 固定 clean fast-path、dirty 强制复核、same/changed/anonymous/unknown 与 ticket validation；`tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-023` 固定 unknown 在 optimistic/transport 前阻断、dirty 在文件选择/上传前阻断、Query cancellation 等待期间换代仍为零 optimistic/transport、写失败只 reconcile 一次且不重放、NodeImage rejected authorization 不重放所选上传；现有 action/upload/签到测试共同证明所有入口接线。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯 gate 单测不足以证明门禁位于 optimistic、picker 和 transport 之前，必须执行真实 controller mutation 时序。 |
+| Replay 或真实验收路径 | 默认只检查入口在 identity pending 时关闭、旧内容保持只读以及重试提示；真实回复、编辑、删除、互动、投票、上传和签到都需逐项授权。自然出现 401/403 时只读核对 More、Search、Topic 投影一致且没有第二次 transport。 |
+| 负向验证方式 | 把 ticket 校验移到 optimistic/picker/transport 之后，删除等待后的复核，让 action 自己拼 Cookie，或在 reconciliation 后自动重放 task；编号测试必须观察到本地状态变化、picker、upload 或 transport 调用。 |
+| 明确不覆盖范围 | 不保证账号 B 对旧主题拥有相同权限，不自动转换草稿归属，不执行真实写操作制造状态，也不把普通单主题权限不足升级为全局退出。 |
 
 ## `REG-TEST-001` Smoke 绿灯被当成功能完整通过
 

@@ -6,7 +6,7 @@ import type { FeedSource, Source } from '../types';
 import {
   appQueryClient,
   forumQueryKeys,
-  type ForumCredentialScope
+  type ForumSessionEpochs
 } from './serverState';
 
 export type BrowserFetchRequestCleanupTarget = {
@@ -86,25 +86,37 @@ export function resetForumSourceQueries(
   return canPreserve;
 }
 
-export function forumCredentialScopeAfterSourceChange(
-  current: ForumCredentialScope,
+export function cancelForumSourceQueries(
+  source: Source,
+  client: QueryClient = appQueryClient
+) {
+  return client.cancelQueries({
+    predicate: ({ queryKey }) => (
+      queryKey[0] === 'forum'
+      && (queryKey[1] === source || queryKey[1] === 'all')
+      && queryKey[2] !== 'account-status'
+      && queryKey[2] !== 'account-status-probe'
+    )
+  });
+}
+
+export function forumSessionEpochsAfterSourceChange(
+  currentEpochs: ForumSessionEpochs,
   source: SessionSite
-): ForumCredentialScope {
+): ForumSessionEpochs {
   return {
-    ...current,
-    [source]: current[source] + 1
+    ...currentEpochs,
+    [source]: currentEpochs[source] + 1
   };
 }
 
 export function commitExpiredAccountStatusQuery(
   source: SessionSite,
-  currentScope: ForumCredentialScope,
+  currentEpochs: ForumSessionEpochs,
   recoveryQueryKey: QueryKey,
   client: QueryClient = appQueryClient
 ) {
   const committedData = client.getQueryData(recoveryQueryKey);
-  resetForumSourceQueries(source, client, recoveryQueryKey);
-  const nextScope = forumCredentialScopeAfterSourceChange(currentScope, source);
   const isExpiredResult = Boolean(
     committedData
     && typeof committedData === 'object'
@@ -114,19 +126,39 @@ export function commitExpiredAccountStatusQuery(
     && 'status' in committedData.session
     && committedData.session.status === 'expired'
   );
-  if (isExpiredResult) {
+  if (!isExpiredResult) {
+    resetForumSourceQueries(source, client, recoveryQueryKey);
+    return forumSessionEpochsAfterSourceChange(currentEpochs, source);
+  }
+  return commitChangedAccountStatusQuery(
+    source,
+    currentEpochs,
+    recoveryQueryKey,
+    client
+  );
+}
+
+export function commitChangedAccountStatusQuery(
+  source: SessionSite,
+  currentEpochs: ForumSessionEpochs,
+  recoveryQueryKey: QueryKey,
+  client: QueryClient = appQueryClient
+) {
+  const committedData = client.getQueryData(recoveryQueryKey);
+  resetForumSourceQueries(source, client);
+  const nextEpochs = forumSessionEpochsAfterSourceChange(currentEpochs, source);
+  if (committedData !== undefined) {
     client.setQueryData(forumQueryKeys.accountStatus({
-      credentialScope: nextScope,
+      sessionEpochs: nextEpochs,
       source
     }), committedData);
   }
-  return nextScope;
+  return nextEpochs;
 }
 
 export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
   id: number;
   url: string;
-  cookie?: string;
   userAgent?: string;
   browserFetchIntent?: BrowserFetchIntent;
   reject: (error: Error) => void;

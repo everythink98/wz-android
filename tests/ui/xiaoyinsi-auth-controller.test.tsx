@@ -54,7 +54,7 @@ import {
   useXiaoyinsiAuthController,
   type XiaoyinsiAuthorizationReadResult
 } from '../../src/app/useXiaoyinsiAuthController';
-import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
+import { appQueryClient, initialForumSessionEpochs } from '../../src/app/serverState';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
 
@@ -119,7 +119,11 @@ const pending = {
   intervalMs: 5_000
 };
 
-async function renderController(dispatchSiteSessionEvent = jest.fn(), notify = jest.fn()) {
+async function renderController(
+  dispatchSiteSessionEvent = jest.fn(),
+  notify = jest.fn(),
+  isIdentityPending = () => false
+) {
   const fetcher = jest.fn(async () => new Response('{}'));
   const sourceGateway = {
     getLevelProfile: jest.fn(async () => levelProfile)
@@ -128,9 +132,10 @@ async function renderController(dispatchSiteSessionEvent = jest.fn(), notify = j
     dispatchSiteSessionEvent,
     hook: await (async () => {
       const hook = await renderHook(() => useXiaoyinsiAuthController({
-        credentialScope: emptyForumCredentialScope,
+        sessionEpochs: initialForumSessionEpochs,
         dispatchSiteSessionEvent,
         fetcher,
+        isIdentityPending,
         notify,
         sourceGateway
       }), {
@@ -306,6 +311,20 @@ describe('小隐寺授权 controller', () => {
     expect(context?.trace?.traceId).toBe(events[0]?.traceId);
     expect(events.map((event) => event.phase)).toEqual(['intent', 'guard', 'apply', 'finish']);
     expect(events.at(-1)).toMatchObject({ area: 'session', operation: 'refresh', outcome: 'success' });
+  });
+
+  it('[REG-ACCOUNT-031] does not refresh the Xiaoyinsi level while identity is pending', async () => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
+    const { hook, sourceGateway } = await renderController(
+      jest.fn(),
+      jest.fn(),
+      () => true
+    );
+    await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
+
+    await expect(hook.result.current.refreshLevel()).resolves.toBe(false);
+    expect(sourceGateway.getLevelProfile).not.toHaveBeenCalled();
+    expect(hook.result.current.levelBusy).toBe(false);
   });
 
   it('[REG-ACCOUNT-018] reports a failed Xiaoyinsi level refresh while retaining trusted data', async () => {

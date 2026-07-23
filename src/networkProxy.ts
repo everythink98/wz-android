@@ -33,7 +33,9 @@ export type NetworkProxyStatus = {
 
 export type NativeNetworkProxyModule = {
   applyProxy?: (profile: NetworkProxyProfile | null) => Promise<NetworkProxyStatus>;
-  getManagedCookieHeaderForUrl?: (url: string) => Promise<string | null>;
+  clearManagedLoginCookies?: (source: string) => Promise<unknown>;
+  defaultWebViewUserAgent?: string;
+  readManagedCookieHeader?: (exactUrl: string) => Promise<unknown>;
   testProxy?: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
 };
 

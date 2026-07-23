@@ -25,6 +25,7 @@ import {
   type ReplyComposerInsertExpression
 } from './replyComposerExpressionCatalogs';
 import { useCommittedRef } from '../../app/useCommittedRef';
+import { useForumMediaSessionIdentity } from '../../mediaSessionEpoch';
 
 type ReplyComposerInputHandle = {
   blur: () => void;
@@ -65,6 +66,7 @@ export function ReplyComposer({
   onSubmitReply: () => void;
   onUploadReplyImage?: () => void;
 }) {
+  const mediaSessionIdentity = useForumMediaSessionIdentity(source);
   const inputRef = useRef<ReplyComposerInputHandle | null>(null);
   const inputFocusedRef = useRef(false);
   const [selection, setSelection] = useState({ start: replyContent.length, end: replyContent.length });
@@ -191,7 +193,7 @@ export function ReplyComposer({
         style={[sticker ? styles.replyStickerChip : styles.replyExpressionChip, actionBusy && styles.buttonDisabled]}
         onPress={() => insertExpression(item)}
       >
-        {item.imageUrl ? <ExpoImage contentFit="contain" recyclingKey={item.imageUrl} source={imageSourceFromUrl(item.imageUrl)} style={sticker ? styles.replyStickerPreview : styles.replyExpressionPreview} /> : null}
+        {item.imageUrl ? <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${item.imageUrl}`} source={imageSourceFromUrl(item.imageUrl, undefined, undefined, mediaSessionIdentity)} style={sticker ? styles.replyStickerPreview : styles.replyExpressionPreview} /> : null}
         {sticker ? null : <Text numberOfLines={1} style={styles.replyExpressionChipText}>{item.label}</Text>}
       </Pressable>
     );
@@ -228,7 +230,7 @@ export function ReplyComposer({
           style={[styles.replyLinuxDoEmojiItem, actionBusy && styles.buttonDisabled]}
           onPress={() => insertExpression(item)}
         >
-          {item.imageUrl ? <ExpoImage contentFit="contain" recyclingKey={item.imageUrl} source={imageSourceFromUrl(item.imageUrl)} style={styles.replyExpressionPreview} /> : null}
+          {item.imageUrl ? <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${item.imageUrl}`} source={imageSourceFromUrl(item.imageUrl, undefined, undefined, mediaSessionIdentity)} style={styles.replyExpressionPreview} /> : null}
           <Text numberOfLines={1} style={styles.replyLinuxDoEmojiItemText}>{item.label}</Text>
         </Pressable>
       );
@@ -269,7 +271,7 @@ export function ReplyComposer({
         ))}
       </GestureScrollView>
     );
-  }, [actionBusy, activeAccessory, activeNodeSeekStickerCategory, discourseEmojiItems, insertExpression, onReplyFaceChange, replyFace, styles]);
+  }, [actionBusy, activeAccessory, activeNodeSeekStickerCategory, discourseEmojiItems, insertExpression, mediaSessionIdentity, onReplyFaceChange, replyFace, styles]);
 
   return (
     <View style={[styles.replyBox, styles.replyComposerSheetBox]}>

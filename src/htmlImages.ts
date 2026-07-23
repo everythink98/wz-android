@@ -1,5 +1,5 @@
 import { escapeQuotedHtmlTagDelimiters, FORUM_VIDEO_STICKER_TAG, isAllowedDataImageUrl, parseHtml, textContentFromHtml } from './localHtml';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekSession';
 
 export interface ImagePreviewList {
   urls: string[];
@@ -235,11 +235,19 @@ export function imageRequestHeadersForUrl(url: unknown, nodeSeekUserAgent = DEFA
   }
 }
 
-export function imageSourceFromUrl(url: string, source?: unknown, nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT) {
+export function imageSourceFromUrl(
+  url: string,
+  source?: unknown,
+  nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT,
+  mediaSessionIdentity = ''
+) {
   const clean = normalizeImagePreviewUrl(url);
   const base: Record<string, unknown> = source && typeof source === 'object' && !Array.isArray(source)
     ? { ...(source as Record<string, unknown>), uri: clean }
     : { uri: clean };
+  if (mediaSessionIdentity && /^https?:\/\//i.test(clean)) {
+    base.cacheKey = `${mediaSessionIdentity}:${clean}`;
+  }
   const headers = imageRequestHeadersForUrl(clean, nodeSeekUserAgent);
   if (!headers) {
     return base;

@@ -29,7 +29,6 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = `
     || numberFromValue(usernameLinkId && usernameLinkId[1])
     || (hasAccountMarker ? numberFromValue(uidMatch && uidMatch[1]) : null);
   const csrfToken = stringFromValue(document.querySelector('meta[name="csrf-token"]')?.getAttribute("content"));
-  const hasGuestPath = /\\/(login|signin|sign-in|register|signup|sign-up)(?:\\.html?)?\\/?$/i.test(location.pathname || "");
   const guestKinds = new Set(Array.from(document.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]')).flatMap((link) => {
     try {
       const href = String(link.getAttribute("href") || "").trim();
@@ -57,7 +56,7 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = `
     }
   }));
   const hasGuestControls = guestKinds.has("login") && guestKinds.has("register");
-  const status = hasConfigUser ? "logged-in" : (hasGuestPath || hasGuestControls) ? "logged-out" : hasAccountMarker ? "logged-in" : "unknown";
+  const status = hasConfigUser ? "logged-in" : hasGuestControls ? "logged-out" : hasAccountMarker ? "logged-in" : "unknown";
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: "nodeseek-login",
     probeId: Number.isInteger(probeId) && probeId > 0 ? probeId : undefined,
@@ -67,8 +66,7 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = `
     userId: status === "logged-in" ? userId : null,
     username: "",
     csrfToken,
-    userAgent: navigator.userAgent || "",
-    cookie: document.cookie || ""
+    userAgent: navigator.userAgent || ""
   }));
 })();
 true;
@@ -101,8 +99,7 @@ export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
     documentKey: String(location.href || "") + ":" + String(performance.timeOrigin || 0),
     status,
     loggedIn: status === "logged-in" ? true : status === "logged-out" ? false : undefined,
-    userAgent: navigator.userAgent || "",
-    cookie: document.cookie || ""
+    userAgent: navigator.userAgent || ""
   }));
 })();
 true;

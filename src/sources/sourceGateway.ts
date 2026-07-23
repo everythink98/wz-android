@@ -63,16 +63,13 @@ export {
   checkYaohuoLoginDirect as checkYaohuoLogin
 } from '../yaohuoApi';
 
-type GetFeedOptions = Parameters<typeof getForumFeed>[0] & {
-  yaohuoCookie?: string;
-};
+type GetFeedOptions = Parameters<typeof getForumFeed>[0];
 
 export function getFeed(options: GetFeedOptions) {
   if (options.source !== 'yaohuo') {
     return getForumFeed(options);
   }
   return getYaohuoFeedDirect({
-    yaohuoCookie: options.yaohuoCookie,
     category: options.category,
     page: options.page,
     limit: options.limit,
@@ -82,9 +79,7 @@ export function getFeed(options: GetFeedOptions) {
   });
 }
 
-type SearchTopicsOptions = Parameters<typeof searchForumTopics>[0] & {
-  yaohuoCookie?: string;
-};
+type SearchTopicsOptions = Parameters<typeof searchForumTopics>[0];
 
 export function searchTopics(options: SearchTopicsOptions) {
   if (options.source !== 'yaohuo') {
@@ -95,17 +90,13 @@ export function searchTopics(options: SearchTopicsOptions) {
     page: options.page,
     limit: options.limit,
     category: options.filter?.source === 'yaohuo' ? options.filter.category : undefined,
-    yaohuoCookie: options.yaohuoCookie,
     yaohuoFetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs
   });
 }
 
-type GetTopicOptions = Parameters<typeof getForumTopic>[0] & {
-  topic?: Topic;
-  yaohuoCookie?: string;
-};
+type GetTopicOptions = Parameters<typeof getForumTopic>[0] & { topic?: Topic };
 
 export function getTopic(options: GetTopicOptions) {
   if (options.source !== 'yaohuo') {
@@ -116,17 +107,13 @@ export function getTopic(options: GetTopicOptions) {
   }
   return getYaohuoTopicDirect({
     topic: options.topic,
-    yaohuoCookie: options.yaohuoCookie,
     yaohuoFetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs
   });
 }
 
-type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & {
-  categoryId?: string;
-  yaohuoCookie?: string;
-};
+type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & { categoryId?: string };
 
 export function getReplies(options: GetRepliesOptions) {
   if (options.source !== 'yaohuo') {
@@ -137,7 +124,6 @@ export function getReplies(options: GetRepliesOptions) {
     categoryId: options.categoryId,
     page: options.page,
     limit: options.limit,
-    yaohuoCookie: options.yaohuoCookie,
     yaohuoFetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs
@@ -147,13 +133,6 @@ export function getReplies(options: GetRepliesOptions) {
 type GetUserProfileOptions = Parameters<typeof getForumUserProfile>[0];
 
 export async function getUserProfile(options: GetUserProfileOptions) {
-  if (options.source === 'yaohuo' && !options.yaohuoCookie?.trim()) {
-    throw Object.assign(new Error('请先登录妖火'), {
-      source: 'yaohuo' as const,
-      loginRequired: true,
-      reason: 'missing_cookie' as const
-    });
-  }
   return getForumUserProfile(options);
 }
 
@@ -163,17 +142,12 @@ type SourceGatewayCredentialLoadOptions = {
 };
 
 type SourceGatewayDependencies = {
-  currentLinuxDoCredentialGeneration?: () => number;
-  currentNodeSeekCredentialGeneration?: () => number;
-  currentYaohuoCredentialGeneration?: () => number;
+  currentSessionEpoch?: (source: Exclude<Source, 'v2ex'>) => number;
   currentXiaoyinsiCredentialGeneration?: () => number;
   fetcher: Fetcher;
-  loadLinuxDoAccessForSource: (
-    source: FeedSource,
-    options?: SourceGatewayCredentialLoadOptions
-  ) => Promise<{ cookieHeader: string; userAgent?: string } | undefined>;
-  loadNodeSeekCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
-  loadYaohuoCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
+  isSourceAuthenticated?: (source: Exclude<Source, 'v2ex'>) => boolean;
+  isSourceIdentityPending?: (source: Exclude<Source, 'v2ex'>) => boolean;
+  linuxDoUserAgent?: () => string;
   loadXiaoyinsiCredentialsForSource?: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<XiaoyinsiApiCredentials | undefined>;
   nodeSeekUserAgent: () => string;
   refreshXiaoyinsiAuthorization?: (trace?: DiagnosticTrace) => Promise<boolean | null>;
@@ -181,7 +155,13 @@ type SourceGatewayDependencies = {
 
 type GetCategoriesOptions = NonNullable<Parameters<typeof getForumCategories>[0]>;
 type GetReplyOptions = Parameters<typeof getForumReply>[0];
-type ManagedReadKeys = 'discourseAuth' | 'fetcher' | 'nodeSeekCookie' | 'nodeSeekUserAgent' | 'unavailableSources' | 'yaohuoCookie';
+type ManagedReadKeys =
+  | 'discourseAuth'
+  | 'fetcher'
+  | 'linuxDoAuthenticated'
+  | 'nodeSeekAuthenticated'
+  | 'nodeSeekUserAgent'
+  | 'unavailableSources';
 type ManagedGetCategoriesOptions = Omit<GetCategoriesOptions, ManagedReadKeys>;
 type ManagedGetFeedOptions = Omit<GetFeedOptions, ManagedReadKeys>;
 type ManagedSearchTopicsOptions = Omit<SearchTopicsOptions, ManagedReadKeys>;
@@ -199,7 +179,7 @@ type ManagedSemanticTopicSearchOptions = Omit<
   NonNullable<Parameters<typeof searchLinuxDoSemanticDirect>[1]>,
   'fetcher' | 'linuxDoAccess'
 > & { query: string; source: 'linuxdo' };
-type ManagedLinuxDoLevelProfileOptions = Omit<Parameters<typeof getLocalLinuxDoLevelProfile>[0], 'cookieHeader' | 'fetcher' | 'userAgent'> & {
+type ManagedLinuxDoLevelProfileOptions = Omit<Parameters<typeof getLocalLinuxDoLevelProfile>[0], 'fetcher' | 'userAgent'> & {
   source: 'linuxdo';
 };
 type ManagedLevelProfileOptions = Omit<XiaoyinsiOptions, 'credentials' | 'fetcher'> & {
@@ -251,33 +231,33 @@ function summarizeReadResult(result: unknown) {
   return summary satisfies DiagnosticFields;
 }
 
-export function createSourceGateway(dependencies: SourceGatewayDependencies) {
+export function createSourceGateway<Dependencies extends SourceGatewayDependencies>(dependencies: Dependencies) {
   const read = async <T>(source: FeedSource, operationName: string, operation: (credentials: {
     discourseAuth?: DiscourseReadAuth;
     fetcher: Fetcher;
-    linuxDoAccess?: { cookieHeader: string; userAgent?: string };
-    nodeSeekCookie?: string;
+    linuxDoAuthenticated?: boolean;
+    nodeSeekAuthenticated?: boolean;
     nodeSeekUserAgent?: string;
     unavailableSources?: readonly Source[];
-    yaohuoCookie?: string;
   }) => Promise<T>, context?: SourceGatewayReadContext) => {
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
-    let linuxDoGeneration: number | undefined;
-    let nodeSeekGeneration: number | undefined;
-    let yaohuoGeneration: number | undefined;
+    const identitySources = (source === 'all'
+      ? ['linuxdo', 'nodeseek', 'xiaoyinsi', 'yaohuo']
+      : source === 'v2ex'
+        ? []
+        : [source]) as Array<Exclude<Source, 'v2ex'>>;
+    const sessionEpochs = Object.fromEntries(identitySources.map((identitySource) => [
+      identitySource,
+      dependencies.currentSessionEpoch?.(identitySource)
+    ])) as Partial<Record<Exclude<Source, 'v2ex'>, number | undefined>>;
     let xiaoyinsiGeneration: number | undefined;
     let hasXiaoyinsiCredentials = false;
     const credentialGenerationsAreCurrent = () => (
-      (linuxDoGeneration === undefined
-        || !dependencies.currentLinuxDoCredentialGeneration
-        || dependencies.currentLinuxDoCredentialGeneration() === linuxDoGeneration)
-      && (nodeSeekGeneration === undefined
-        || !dependencies.currentNodeSeekCredentialGeneration
-        || dependencies.currentNodeSeekCredentialGeneration() === nodeSeekGeneration)
-      && (yaohuoGeneration === undefined
-        || !dependencies.currentYaohuoCredentialGeneration
-        || dependencies.currentYaohuoCredentialGeneration() === yaohuoGeneration)
+      identitySources.every((identitySource) => (
+        sessionEpochs[identitySource] === undefined
+        || dependencies.currentSessionEpoch?.(identitySource) === sessionEpochs[identitySource]
+      ))
       && (xiaoyinsiGeneration === undefined
         || !dependencies.currentXiaoyinsiCredentialGeneration
         || dependencies.currentXiaoyinsiCredentialGeneration() === xiaoyinsiGeneration)
@@ -301,58 +281,41 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       }
     };
     try {
-      let linuxDoAccess: { cookieHeader: string; userAgent?: string } | undefined;
-      let hasLinuxDoCredential = false;
-      let isLinuxDoCredentialKnown: boolean | undefined;
-      let linuxDoCredentialReason: ReturnType<typeof normalizeDiagnosticReason> | undefined;
-      if (source === 'linuxdo' || source === 'all') {
-        isLinuxDoCredentialKnown = true;
-        try {
-          linuxDoAccess = await dependencies.loadLinuxDoAccessForSource(source, {
-            captureGeneration: (generation) => { linuxDoGeneration = generation; },
-            diagnosticTrace: trace
-          });
-          hasLinuxDoCredential = Boolean(linuxDoAccess?.cookieHeader);
-        } catch (error) {
-          isLinuxDoCredentialKnown = false;
-          linuxDoCredentialReason = normalizeDiagnosticReason(error);
-          if (source !== 'all') {
-            throw error;
-          }
-          credentialErrors.linuxdo = sourceErrorFromUnknown('linuxdo', error);
-          markDiagnosticStage(trace, 'credential', {
-            source: 'linuxdo',
-            state: 'error',
-            reason: linuxDoCredentialReason
-          });
-        }
+      const linuxDoAuthenticated = (source === 'linuxdo' || source === 'all')
+        && dependencies.isSourceAuthenticated?.('linuxdo') === true
+        && dependencies.isSourceIdentityPending?.('linuxdo') !== true;
+      const nodeSeekAuthenticated = (source === 'nodeseek' || source === 'all')
+        && dependencies.isSourceAuthenticated?.('nodeseek') === true
+        && dependencies.isSourceIdentityPending?.('nodeseek') !== true;
+      const pendingIdentitySources = identitySources.filter(
+        (identitySource) => dependencies.isSourceIdentityPending?.(identitySource) === true
+      );
+      if (source !== 'all' && pendingIdentitySources.length) {
+        throw new Error('登录状态待确认；已暂停该站的新请求');
       }
-      const nodeSeekCookie = source === 'nodeseek' || source === 'all'
-        ? await loadCredential('nodeseek', () => dependencies.loadNodeSeekCookieForSource(source, {
-          captureGeneration: (generation) => { nodeSeekGeneration = generation; },
-          diagnosticTrace: trace
-        }))
-        : undefined;
-      const yaohuoCookie = source === 'yaohuo' || source === 'all'
-        ? await loadCredential('yaohuo', () => dependencies.loadYaohuoCookieForSource(source, {
-          captureGeneration: (generation) => { yaohuoGeneration = generation; },
-          diagnosticTrace: trace
-        }))
-        : undefined;
-      const xiaoyinsiCredentials = source === 'xiaoyinsi' || source === 'all'
+      const xiaoyinsiCredentials = (source === 'xiaoyinsi' || source === 'all')
+        && !pendingIdentitySources.includes('xiaoyinsi')
         ? await loadCredential('xiaoyinsi', async () => dependencies.loadXiaoyinsiCredentialsForSource?.(source, {
           captureGeneration: (generation) => { xiaoyinsiGeneration = generation; },
           diagnosticTrace: trace
         }))
         : undefined;
-      const discourseAuth: DiscourseReadAuth | undefined = linuxDoAccess || xiaoyinsiCredentials
+      const discourseAuth: DiscourseReadAuth | undefined = source === 'linuxdo' || source === 'all' || xiaoyinsiCredentials
         ? {
-            ...(linuxDoAccess ? { linuxdo: linuxDoAccess } : {}),
+            ...(source === 'linuxdo' || source === 'all' ? {
+              linuxdo: {
+                authenticated: linuxDoAuthenticated,
+                userAgent: dependencies.linuxDoUserAgent?.()
+              }
+            } : {}),
             ...(xiaoyinsiCredentials ? { xiaoyinsi: xiaoyinsiCredentials } : {})
           }
         : undefined;
       const unavailableSources = source === 'all'
-        ? Object.keys(credentialErrors) as Source[]
+        ? [...new Set([
+          ...Object.keys(credentialErrors) as Source[],
+          ...pendingIdentitySources
+        ])]
         : [];
       hasXiaoyinsiCredentials = Boolean(xiaoyinsiCredentials);
       if (!readIsCurrent()) {
@@ -360,24 +323,25 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       }
       markDiagnosticStage(trace, 'credential', {
         source,
-        hasCredential: Boolean(hasLinuxDoCredential || nodeSeekCookie?.trim() || yaohuoCookie?.trim() || xiaoyinsiCredentials),
-        ...(isLinuxDoCredentialKnown !== undefined ? { isCredentialKnown: isLinuxDoCredentialKnown } : {}),
-        ...(linuxDoCredentialReason ? { reason: linuxDoCredentialReason } : {})
+        hasCredential: Boolean(linuxDoAuthenticated || nodeSeekAuthenticated || (
+          (source === 'yaohuo' || source === 'all')
+          && dependencies.isSourceAuthenticated?.('yaohuo') === true
+        ) || xiaoyinsiCredentials),
+        isCredentialKnown: pendingIdentitySources.length === 0
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
       const result = await operation({
         discourseAuth,
         fetcher: withDiagnosticFetcher(trace, dependencies.fetcher),
-        linuxDoAccess,
-        nodeSeekCookie,
+        linuxDoAuthenticated,
+        nodeSeekAuthenticated,
         nodeSeekUserAgent: source === 'nodeseek' || source === 'all' ? dependencies.nodeSeekUserAgent() : undefined,
-        ...(unavailableSources.length ? { unavailableSources } : {}),
-        yaohuoCookie
+        ...(unavailableSources.length ? { unavailableSources } : {})
       });
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
-      if (source === 'all' && result && typeof result === 'object' && !Array.isArray(result) && Object.keys(credentialErrors).length) {
+      if (source === 'all' && result && typeof result === 'object' && !Array.isArray(result) && unavailableSources.length) {
         const aggregateResult = result as { errors?: SourceErrors; items?: unknown[] };
         if (Array.isArray(aggregateResult.items)) {
           const unavailableSourceSet = new Set(unavailableSources);
@@ -482,7 +446,8 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
 
   return {
     async hasYaohuoCredential() {
-      return Boolean((await dependencies.loadYaohuoCookieForSource('yaohuo'))?.trim());
+      return dependencies.isSourceAuthenticated?.('yaohuo') === true
+        && dependencies.isSourceIdentityPending?.('yaohuo') !== true;
     },
     getCategories(options: ManagedGetCategoriesOptions = {}, context?: SourceGatewayReadContext) {
       const source = options.source || 'all';
@@ -527,15 +492,15 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         }), context);
     },
     searchSemanticTopics({ query, source, ...options }: ManagedSemanticTopicSearchOptions, context?: SourceGatewayReadContext) {
-      return read(source, 'searchSemanticTopics', ({ fetcher, linuxDoAccess }) => searchLinuxDoSemanticDirect(query, {
+      return read(source, 'searchSemanticTopics', ({ discourseAuth, fetcher }) => searchLinuxDoSemanticDirect(query, {
         ...options,
         fetcher,
-        linuxDoAccess
+        linuxDoAccess: discourseAuth?.linuxdo
       }), context);
     },
     getLinuxDoLevelProfile({ source, ...options }: ManagedLinuxDoLevelProfileOptions, context?: SourceGatewayReadContext): Promise<LinuxDoLevelProfile> {
-      return read(source, 'getLevelProfile', ({ fetcher, linuxDoAccess }) => {
-        if (!linuxDoAccess?.cookieHeader) {
+      return read(source, 'getLevelProfile', ({ discourseAuth, fetcher }) => {
+        if (discourseAuth?.linuxdo?.authenticated !== true) {
           throw Object.assign(new Error('请先完成 linux.do 登录 / 验证。'), {
             source: 'linuxdo' as const,
             loginRequired: true
@@ -543,8 +508,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         }
         return getLocalLinuxDoLevelProfile({
           ...options,
-          cookieHeader: linuxDoAccess.cookieHeader,
-          userAgent: linuxDoAccess.userAgent,
+          userAgent: discourseAuth.linuxdo.userAgent,
           fetcher
         });
       }, context);

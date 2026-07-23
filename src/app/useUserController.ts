@@ -17,9 +17,10 @@ import type { Screen } from '../appTypes';
 import type { SourceGateway } from '../sources/sourceGateway';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import {
-  emptyForumCredentialScope,
+  initialForumSessionEpochs,
   forumQueryKeys,
-  type ForumCredentialScope
+  type ForumIdentityBarrierSource,
+  type ForumSessionEpochs
 } from './serverState';
 
 type UserLane = 'topics' | 'replies';
@@ -62,11 +63,11 @@ function normalizeRequestedUser(user: UserProfile): UserProfile {
     ? nodeSeekUserIdFromValue(user.id) || nodeSeekUserIdFromValue(user.url) || user.id || user.username
     : user.id || user.username;
   return {
-    ...user,
+    source: user.source,
     id,
     username: user.username || user.displayName || id,
     url: user.url || '',
-    topics: user.topics || []
+    topics: []
   };
 }
 
@@ -103,7 +104,8 @@ function firstLaneData(profile: UserProfile): InfiniteData<UserProfile, string |
 }
 
 export function useUserController({
-  credentialScope = emptyForumCredentialScope,
+  identityBarriers = [],
+  sessionEpochs = initialForumSessionEpochs,
   notify,
   onOpenUserScreen,
   readerData,
@@ -113,7 +115,8 @@ export function useUserController({
   showYaohuoLogin,
   sourceGateway
 }: {
-  credentialScope?: ForumCredentialScope;
+  identityBarriers?: readonly ForumIdentityBarrierSource[];
+  sessionEpochs?: ForumSessionEpochs;
   notify: (message: string) => void;
   onOpenUserScreen: () => void;
   readerData: ReaderData;
@@ -144,19 +147,24 @@ export function useUserController({
     source: selectedSource,
     userId: identity,
     username: selectedUsername,
-    scope: credentialScope
+    scope: sessionEpochs
   }), [
-    credentialScope.linuxdo,
-    credentialScope.nodeseek,
-    credentialScope.xiaoyinsi,
-    credentialScope.yaohuo,
+    sessionEpochs.linuxdo,
+    sessionEpochs.nodeseek,
+    sessionEpochs.xiaoyinsi,
+    sessionEpochs.yaohuo,
     identity,
     selectedSource,
     selectedUsername
   ]);
   const topicKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'topics'), [profileKey]);
   const replyKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'replies'), [profileKey]);
-  const enabled = Boolean(selectedUser && identity && screen === 'user');
+  const selectedIdentityPending = Boolean(
+    selectedUser
+    && selectedUser.source !== 'v2ex'
+    && identityBarriers.includes(selectedUser.source)
+  );
+  const enabled = Boolean(selectedUser && identity && screen === 'user' && !selectedIdentityPending);
 
   const profileQuery = useQuery({
     queryKey: profileKey,
@@ -333,7 +341,7 @@ export function useUserController({
         source: requested.source,
         userId: requested.id || requested.username,
         username: requested.username,
-        scope: credentialScope
+        scope: sessionEpochs
       });
       await queryClient.invalidateQueries({ queryKey: key, exact: true, refetchType: 'active' });
       const profile = queryClient.getQueryData<UserProfile>(key);
@@ -343,9 +351,10 @@ export function useUserController({
       }
     }
     return 'completed';
-  }, [credentialScope, notify, onOpenUserScreen, queryClient]);
+  }, [sessionEpochs, notify, onOpenUserScreen, queryClient]);
 
   const loadMoreUserTopics = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
+    if (selectedIdentityPending) return 'stale';
     if (topicsQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
     seedUserLane(topicKey);
     if (queryClient.getQueryState(topicKey)?.fetchStatus === 'fetching') {
@@ -361,8 +370,9 @@ export function useUserController({
     )) return 'completed';
     const result = await topicsQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [profileQuery.data, queryClient, seedUserLane, topicKey, topicsQuery.fetchNextPage, topicsQuery.isFetchingNextPage, topicsQuery.refetch]);
+  }, [profileQuery.data, queryClient, seedUserLane, selectedIdentityPending, topicKey, topicsQuery.fetchNextPage, topicsQuery.isFetchingNextPage, topicsQuery.refetch]);
   const loadMoreUserReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
+    if (selectedIdentityPending) return 'stale';
     if (repliesQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
     seedUserLane(replyKey);
     if (queryClient.getQueryState(replyKey)?.fetchStatus === 'fetching') {
@@ -378,7 +388,7 @@ export function useUserController({
     )) return 'completed';
     const result = await repliesQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [profileQuery.data, queryClient, repliesQuery.fetchNextPage, repliesQuery.isFetchingNextPage, repliesQuery.refetch, replyKey, seedUserLane]);
+  }, [profileQuery.data, queryClient, repliesQuery.fetchNextPage, repliesQuery.isFetchingNextPage, repliesQuery.refetch, replyKey, seedUserLane, selectedIdentityPending]);
 
   useEffect(() => {
     if (screen === 'user' || !selectedUser) return;

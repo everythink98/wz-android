@@ -9,7 +9,7 @@ import { SearchScreen } from '../../src/screens/SearchScreen';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicListItemStateIndex } from '../../src/topicListItemState';
 import type { Category, FeedSource, Source, Topic } from '../../src/types';
-import { emptyForumCredentialScope } from '../../src/app/serverState';
+import { initialForumSessionEpochs } from '../../src/app/serverState';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
@@ -214,7 +214,7 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
     <SearchScreen
       busy={false}
       categories={categories}
-      credentialScope={emptyForumCredentialScope}
+      sessionEpochs={initialForumSessionEpochs}
       requestsEnabled={true}
       query={query}
       recentSearches={[]}
@@ -266,7 +266,7 @@ function RecentSearchHarness({
     <SearchScreen
       busy={false}
       categories={categories}
-      credentialScope={emptyForumCredentialScope}
+      sessionEpochs={initialForumSessionEpochs}
       requestsEnabled={true}
       query={query}
       recentSearches={['codex', 'react native']}
@@ -301,7 +301,7 @@ function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof 
   const props: React.ComponentProps<typeof SearchScreen> = {
     busy: false,
     categories,
-    credentialScope: emptyForumCredentialScope,
+    sessionEpochs: initialForumSessionEpochs,
     requestsEnabled: true,
     query: 'codex',
     recentSearches: [],

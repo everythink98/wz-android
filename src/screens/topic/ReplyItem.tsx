@@ -29,6 +29,7 @@ import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { stableTextHash } from './topicScreenHelpers';
+import { useManagedMediaSessionIdentity } from '../../mediaSessionEpoch';
 
 type NodeSeekStat = { label: string; value: number };
 
@@ -81,6 +82,7 @@ export function DiscourseReactionPill({
   stat: DiscourseReactionStat;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const mediaSessionIdentity = useManagedMediaSessionIdentity(stat.imageUrl);
   return (
     <View
       accessible
@@ -88,7 +90,12 @@ export function DiscourseReactionPill({
       style={[styles.linuxDoReactionPill, compact && styles.linuxDoReactionPillCompact]}
     >
       {stat.imageUrl ? (
-        <ExpoImage source={imageSourceFromUrl(stat.imageUrl)} style={styles.linuxDoReactionImage} contentFit="contain" />
+        <ExpoImage
+          source={imageSourceFromUrl(stat.imageUrl, undefined, undefined, mediaSessionIdentity)}
+          recyclingKey={`${mediaSessionIdentity}:${stat.imageUrl}`}
+          style={styles.linuxDoReactionImage}
+          contentFit="contain"
+        />
       ) : (
         <Text style={styles.linuxDoReactionLabel} numberOfLines={1}>{stat.label}</Text>
       )}

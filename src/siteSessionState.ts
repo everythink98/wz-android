@@ -27,6 +27,7 @@ export type SiteSessionViewModel = {
   isLoggedIn: boolean;
   isVerifying: boolean;
   canWrite: boolean;
+  identityTrust: 'confirmed' | 'pending' | 'none';
   currentUser?: UserProfile;
   lastVerifiedAt?: string;
   lastError?: string;
@@ -280,6 +281,7 @@ export function createSiteSessionViewModel(state: SiteSessionState): SiteSession
     isLoggedIn,
     isVerifying: state.isVerifying,
     canWrite: isLoggedIn,
+    identityTrust: isLoggedIn ? 'confirmed' : 'none',
     ...(state.currentUser ? { currentUser: state.currentUser } : {}),
     ...(state.lastVerifiedAt ? { lastVerifiedAt: state.lastVerifiedAt } : {}),
     ...(state.lastError ? { lastError: state.lastError } : {})

@@ -1,7 +1,7 @@
 import type { HTMLElement } from 'node-html-parser';
 import { withBrowserFetchIntent, type BrowserFetchIntent, type BrowserFetchOwner, type BrowserFetchPriority } from './browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from './request';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT, hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from './nodeseekCookies';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekSession';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
 import type { NodeSeekSearchFilter } from './searchFilters';
 import type { Category, FeedResponse, NodeSeekFeedFilter, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
@@ -40,8 +40,8 @@ const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
 const NODESEEK_READ_TIMEOUT_MS = 30000;
 
 interface NodeSeekOptions {
+  authenticated?: boolean;
   fetcher?: Fetcher;
-  nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
@@ -756,6 +756,9 @@ async function fetchNodeSeekText(
   if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`)) {
     throw nodeSeekCloudflareError();
   }
+  if (!response.ok && requestOptions.browserFetchIntent?.owner === 'account') {
+    throw new Error(`HTTP ${response.status}`);
+  }
   if (!response.ok && (response.status === 403 || response.status === 404) && accessRequirementFromText(text)) {
     return text;
   }
@@ -766,7 +769,7 @@ async function fetchNodeSeekText(
 }
 
 function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
-  return hasNodeSeekLoginCookie(parseNodeSeekDocumentCookie(options.nodeSeekCookie || ''));
+  return options.authenticated === true;
 }
 
 async function fetchNodeSeekGoogleSearchText(query: string, page: number, options: NodeSeekOptions = {}) {
@@ -1739,38 +1742,21 @@ function nodeSeekLoginExpiredError() {
   });
 }
 
-function isNodeSeekLoginExpiredError(error: unknown) {
-  return isRecord(error) && error.kind === 'login-expired';
-}
-
 export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {}): Promise<UserProfile> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
-  let lastError: unknown;
   for (const path of ['/', '/setting']) {
-    try {
-      const html = await fetchNodeSeekText(path, requestOptions);
-      const embeddedUser = nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html));
-      if (embeddedUser) {
-        return embeddedUser;
-      }
-      if (isNodeSeekLoggedOutHtml(html)) {
-        throw nodeSeekLoginExpiredError();
-      }
-      const user = parseNodeSeekCurrentUserHtml(html, { allowUidText: path === '/setting' });
-      if (user) {
-        return user;
-      }
-    } catch (error) {
-      if (isNodeSeekCloudflareError(error)
-        || isNodeSeekLoginExpiredError(error)
-        || requestOptions.signal?.aborted) {
-        throw error;
-      }
-      lastError = error;
+    const html = await fetchNodeSeekText(path, requestOptions);
+    const embeddedUser = nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html));
+    if (embeddedUser) {
+      return embeddedUser;
     }
-  }
-  if (lastError && requestOptions.signal?.aborted) {
-    throw lastError;
+    if (isNodeSeekLoggedOutHtml(html)) {
+      throw nodeSeekLoginExpiredError();
+    }
+    const user = parseNodeSeekCurrentUserHtml(html, { allowUidText: path === '/setting' });
+    if (user) {
+      return user;
+    }
   }
   throw new Error('无法读取当前 NodeSeek 用户身份，请重新检测 NodeSeek 登录。');
 }

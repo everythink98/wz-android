@@ -1,23 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@react-native-cookies/cookies', () => ({
-  default: {
-    flush: vi.fn(async () => undefined),
-    get: vi.fn(async () => ({})),
-    clearByName: vi.fn(async () => true)
-  }
-}));
-
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn(async () => undefined),
   deleteItemAsync: vi.fn(async () => undefined)
-}));
-
-vi.mock('react-native', () => ({
-  NativeModules: {
-    LinuxDoCookieModule: {}
-  }
 }));
 
 import { getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './sourceGateway';
@@ -34,8 +20,7 @@ describe('source gateway reads', () => {
       category: '177',
       page: 2,
       limit: 30,
-      fetcher,
-      yaohuoCookie: 'sidyaohuo=secret'
+      fetcher
     });
 
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
@@ -57,8 +42,7 @@ describe('source gateway reads', () => {
       page: 2,
       limit: 30,
       filter: { source: 'yaohuo', category: '177' },
-      fetcher,
-      yaohuoCookie: 'sidyaohuo=secret'
+      fetcher
     });
 
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '321', categoryId: '177' });
@@ -88,8 +72,7 @@ describe('source gateway reads', () => {
       source: 'yaohuo',
       id: topic.id,
       topic,
-      fetcher,
-      yaohuoCookie: 'sidyaohuo=secret'
+      fetcher
     });
 
     expect(detail).toMatchObject({ source: 'yaohuo', id: '123', contentHtml: '<p>body</p>' });
@@ -107,8 +90,7 @@ describe('source gateway reads', () => {
       categoryId: '177',
       page: 3,
       limit: 30,
-      fetcher,
-      yaohuoCookie: 'sidyaohuo=secret'
+      fetcher
     });
 
     expect(result.items[0]).toMatchObject({ author: 'bob', floor: 61 });
@@ -128,8 +110,7 @@ describe('source gateway reads', () => {
       source: 'yaohuo',
       id: '7',
       username: '火友',
-      fetcher,
-      yaohuoCookie: 'sidyaohuo=secret'
+      fetcher
     });
 
     expect(profile).toMatchObject({ source: 'yaohuo', id: '7', username: '火友', levelLabel: '2级' });
@@ -140,14 +121,15 @@ describe('source gateway reads', () => {
     expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
-  it('classifies a missing yaohuo credential before reading a user profile', async () => {
+  it('[REG-ACCOUNT-029] lets the native cookie jar decide yaohuo access instead of preflighting a Cookie snapshot', async () => {
+    const fetcher = vi.fn(async () => new Response('<form action="/login.aspx"></form>'));
+
     await expect(getUserProfile({
       source: 'yaohuo',
-      id: '7'
-    })).rejects.toMatchObject({
-      source: 'yaohuo',
-      loginRequired: true,
-      reason: 'missing_cookie'
-    });
+      id: '7',
+      fetcher
+    })).resolves.toMatchObject({ source: 'yaohuo', id: '7' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 });

@@ -2,18 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   currentXiaoyinsiCredentialGeneration: vi.fn(() => 11),
-  loadLinuxDoAccess: vi.fn(),
   loadXiaoyinsiCredentials: vi.fn(),
   runLinuxDoAction: vi.fn(async () => ({ ok: true })),
   runXiaoyinsiAction: vi.fn(async () => ({ ok: true }))
 }));
 
 vi.mock('../linuxdoActionClient', () => ({ runLinuxDoAction: mocks.runLinuxDoAction }));
-vi.mock('../linuxdoCookieBridge', () => ({
-  currentLinuxDoAccessGeneration: () => 7,
-  linuxDoAccessSummary: () => ({ loggedIn: true }),
-  loadLinuxDoAccess: mocks.loadLinuxDoAccess
-}));
 vi.mock('../xiaoyinsiActionClient', () => ({ runXiaoyinsiAction: mocks.runXiaoyinsiAction }));
 vi.mock('../xiaoyinsiAuth', () => ({
   currentXiaoyinsiCredentialGeneration: mocks.currentXiaoyinsiCredentialGeneration,
@@ -37,7 +31,6 @@ function runtimeContext(): DiscourseActionRuntimeContext {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.loadLinuxDoAccess.mockResolvedValue({ cookieHeader: 'sid=test', userAgent: 'saved-agent' });
   mocks.loadXiaoyinsiCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
   mocks.currentXiaoyinsiCredentialGeneration.mockReturnValue(11);
 });
@@ -87,7 +80,7 @@ describe('Discourse action runtime registry', () => {
     expect(context.refreshXiaoyinsiAuthorization).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-026] projects linux.do expiry without invoking credential cleanup', async () => {
+  it('[REG-ACCOUNT-026] reports linux.do expiry without mutating identity or Cookie state', async () => {
     const context = runtimeContext();
     const runtime = await prepareDiscourseActionRuntime('linuxdo', context);
 
@@ -98,10 +91,7 @@ describe('Discourse action runtime registry', () => {
       loginRequired: true,
       phase: 'credential'
     });
-    expect(context.updateLinuxDoSession).toHaveBeenCalledWith({
-      type: 'login-expired',
-      message: 'linux.do 登录已失效'
-    });
-    expect(context.resetLinuxDoLevelState).toHaveBeenCalledOnce();
+    expect(context.updateLinuxDoSession).not.toHaveBeenCalled();
+    expect(context.resetLinuxDoLevelState).not.toHaveBeenCalled();
   });
 });

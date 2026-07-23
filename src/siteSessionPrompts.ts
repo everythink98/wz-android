@@ -32,6 +32,20 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
     return null;
   }
   const session = sessions[source];
+  if (session.identityTrust === 'pending') {
+    const label = source === 'nodeseek'
+      ? 'NodeSeek'
+      : source === 'linuxdo'
+        ? 'linux.do'
+        : source === 'yaohuo'
+          ? '妖火'
+          : '小隐寺';
+    return notice(
+      'verification-required',
+      `${label} 登录状态待确认，已暂停${surface === 'action' ? '写入' : '新请求和写入'}。`,
+      'warning'
+    );
+  }
   if (source === 'xiaoyinsi') {
     if (session.status === 'logged-in') {
       return notice('logged-in', '小隐寺已授权。', 'neutral');

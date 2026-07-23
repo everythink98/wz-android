@@ -1,5 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   AppState,
   BackHandler,
   KeyboardAvoidingView,
@@ -20,7 +21,7 @@ import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekCookies';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekSession';
 import { setDefaultAvatarFetcher } from '../avatarImages';
 import type { TopicRecord } from '../readerData';
 import { useReaderDataController } from './useReaderDataController';
@@ -28,7 +29,10 @@ import { useReaderDataActionsController } from './useReaderDataActionsController
 import { useReaderSettingsController } from './useReaderSettingsController';
 import { useBackupStatusController } from './useBackupStatusController';
 import { useDiagnosticLogController } from './useDiagnosticLogController';
-import { useAccountStatusController } from './useAccountStatusController';
+import {
+  useAccountStatusController,
+  type AccountReconcileResult
+} from './useAccountStatusController';
 import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
@@ -55,10 +59,10 @@ import { useCommitRefValue } from './useCommittedRef';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
-import { currentLinuxDoAccessGeneration, DEFAULT_LINUXDO_ANDROID_USER_AGENT, loadLinuxDoAccess, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoSession';
 import { createSourceGateway } from '../sources/sourceGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '../networkProxy';
-import type { FeedSource, Source, Topic, TopicDetail, UserProfile } from '../types';
+import type { Topic, TopicDetail, UserProfile } from '../types';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { isTrustedNodeImageAuthMessageSource, shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '../topicListItemState';
@@ -82,7 +86,13 @@ import type { TopicListItem } from '../screens/TopicScreen';
 import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
 import { setRequestTimeoutsActive } from '../request';
 import { focusManager } from '@tanstack/react-query';
-import { appQueryClient, forumQueryKeys } from './serverState';
+import {
+  appQueryClient,
+  initialForumSessionEpochs,
+  forumQueryKeys,
+  type ForumIdentityBarrierSource,
+  type ForumSessionEpochs
+} from './serverState';
 import {
   applyDevAnonymousOverrides,
   applyDevAnonymousViewModelOverrides,
@@ -98,9 +108,11 @@ import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '
 import {
   beginNodeImageApiKeyAuthorization,
   clearNodeImageApiKey,
+  confirmNodeImageApiKeyOwnership,
   invalidateNodeImageApiKeyAuthorization,
   loadNodeImageApiKey,
-  restoreNodeImageApiKeyAfterCanceledAuthorization,
+  loadNodeImageApiKeyCredential,
+  nodeImageApiKeyUseStatus,
   saveNodeImageApiKey,
   saveNodeImageApiKeyForGeneration
 } from '../nodeimageCredentials';
@@ -119,6 +131,25 @@ import {
   markDiagnosticStage,
   type DiagnosticTrace
 } from '../diagnostics';
+import {
+  beginAuthSurface,
+  closeOtherAuthSurfaces,
+  createAuthSurfaceRegistry,
+  finishAuthSurface,
+  hasOpenAuthSurfaceForSource,
+  type AuthSurface,
+  type AuthSurfaceCloseReason
+} from '../authSurfaceCoordinator';
+import {
+  ensureWritableSessionTicket,
+  validateWritableSessionTicket,
+  type WritableSessionSnapshot,
+  type WritableSessionTicket
+} from '../writableSessionGate';
+import {
+  ForumSessionEpochProvider,
+  mediaSessionIdentityForSource
+} from '../mediaSessionEpoch';
 
 type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;
@@ -153,6 +184,16 @@ function sortedRecords(records: Record<string, TopicRecord>) {
   return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
 }
 
+function accountIdentityKey(view: {
+  site: SessionSite;
+  status: string;
+  currentUser?: UserProfile;
+}) {
+  return view.status === 'logged-in' && view.currentUser?.id
+    ? `${view.site}:${view.currentUser.id}`
+    : `${view.site}:anonymous`;
+}
+
 export function AppRoot() {
   const webViewRef = useRef<WebView>(null);
   const nodeImageAuthWebViewRef = useRef<WebView>(null);
@@ -164,7 +205,6 @@ export function AppRoot() {
   const nodeImageAuthResolverRef = useRef<((apiKey: string | null) => void) | null>(null);
   const nodeImageAuthPromiseRef = useRef<Promise<string | null> | null>(null);
   const nodeImageAuthGenerationRef = useRef<number | null>(null);
-  const nodeImageAuthPreviousApiKeyRef = useRef<string | undefined>(undefined);
   const nodeImageApiKeyBusyRef = useRef(false);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
@@ -183,11 +223,31 @@ export function AppRoot() {
   const openUserRef = useRef<((user: UserProfile, refresh?: boolean) => Promise<unknown>) | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
   const pendingNodeSeekVerificationRetryRef = useRef<NodeSeekVerificationRetry | null>(null);
-  const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-  const linuxDoWebViewCookieHeaderRef = useRef('');
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const cancelTopicQueriesRef = useRef<() => void>(() => undefined);
+  const authSurfaceRegistryRef = useRef(createAuthSurfaceRegistry());
+  const prepareAuthSurfaceOpenRef = useRef<(surface: AuthSurface) => void>(() => undefined);
+  const accountIdentityKeysRef = useRef<Record<SessionSite, string>>({
+    linuxdo: 'linuxdo:anonymous',
+    nodeseek: 'nodeseek:anonymous',
+    xiaoyinsi: 'xiaoyinsi:anonymous',
+    yaohuo: 'yaohuo:anonymous'
+  });
+  const accountIdentityPendingRef = useRef<Record<SessionSite, boolean>>({
+    linuxdo: false,
+    nodeseek: false,
+    xiaoyinsi: false,
+    yaohuo: false
+  });
+  const forumSessionEpochsRef = useRef<ForumSessionEpochs>(initialForumSessionEpochs);
+  const beginAccountIdentityCheckRef = useRef<(
+    source: SessionSite,
+    surfaceGeneration?: number
+  ) => void>(() => undefined);
+  const reconcileAccountStatusRef = useRef<(source: SessionSite, options?: {
+    surfaceGeneration?: number;
+  }) => Promise<AccountReconcileResult>>(async () => ({ status: 'stale' }));
   const showLinuxDoVerificationForTopicRef = useRef<(
     message?: string,
     recovery?: LinuxDoReadRecovery
@@ -225,6 +285,44 @@ export function AppRoot() {
     }
     ToastAndroid.show(message, ToastAndroid.SHORT);
   }, []);
+  const beginAuthSurfaceTicket = useCallback((surface: AuthSurface, source: SessionSite) => {
+    const ticket = beginAuthSurface(authSurfaceRegistryRef.current, {
+      source,
+      surface,
+      identityKey: accountIdentityKeysRef.current[source],
+      sessionEpoch: forumSessionEpochsRef.current[source]
+    });
+    beginAccountIdentityCheckRef.current(source, ticket.generation);
+    return ticket;
+  }, []);
+  const finishAuthSurfaceTicket = useCallback((
+    surface: AuthSurface,
+    reason: AuthSurfaceCloseReason
+  ) => {
+    const ticket = finishAuthSurface(authSurfaceRegistryRef.current, surface, reason);
+    if (!ticket || !ticket.shouldReconcile) {
+      return null;
+    }
+    const reconciliation = reconcileAccountStatusRef.current(ticket.source, {
+      surfaceGeneration: ticket.generation
+    }).catch((error): AccountReconcileResult => ({
+      status: 'unknown',
+      error: errorMessage(error)
+    }));
+    void reconciliation.then((result) => {
+      if (result.status === 'changed') {
+        const username = result.session?.currentUser?.displayName
+          || result.session?.currentUser?.username
+          || '新账号';
+        notify(`已切换为 ${username}，正在刷新该站数据`);
+      } else if (result.status === 'anonymous') {
+        notify('已退出登录，已切换为匿名模式');
+      } else if (result.status === 'unknown') {
+        notify('登录状态待确认；已暂停该站写入，请稍后重试');
+      }
+    });
+    return reconciliation;
+  }, [notify]);
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
   const [loadingLinuxDoPage, setLoadingLinuxDoPage] = useState(true);
@@ -345,15 +443,17 @@ export function AppRoot() {
       setNodeImageApiKeyBusy(false);
     }
   }, [notify]);
-  const finishNodeImageAuth = useCallback(async (apiKey: string | null) => {
+  const finishNodeImageAuth = useCallback(async (
+    apiKey: string | null,
+    closeReason: AuthSurfaceCloseReason = 'cancel'
+  ) => {
     const resolve = nodeImageAuthResolverRef.current;
-    if (!resolve) {
+    const generation = nodeImageAuthGenerationRef.current;
+    if (!resolve || generation === null) {
       return;
     }
-    const previousApiKey = nodeImageAuthPreviousApiKeyRef.current;
     nodeImageAuthResolverRef.current = null;
     nodeImageAuthGenerationRef.current = null;
-    nodeImageAuthPreviousApiKeyRef.current = undefined;
     nodeImageAuthWebViewRef.current?.stopLoading();
     setShowNodeImageAuthPanel(false);
     setNodeImageAuthPayload(null);
@@ -361,46 +461,104 @@ export function AppRoot() {
     if (apiKey) {
       setNodeImageAuthError('');
     } else {
-      try {
-        if (previousApiKey === undefined) {
-          invalidateNodeImageApiKeyAuthorization();
-        } else {
-          await restoreNodeImageApiKeyAfterCanceledAuthorization(previousApiKey);
-        }
-        setNodeImageApiKeySaved(Boolean(await loadNodeImageApiKey()));
-      } catch (error) {
-        notify(`NodeImage 授权已取消，但原 Key 恢复失败：${errorMessage(error)}`);
-      }
+      invalidateNodeImageApiKeyAuthorization();
     }
-    nodeImageAuthPromiseRef.current = null;
-    resolve?.(apiKey);
-  }, [notify]);
-  const closeNodeImageAuthPanel = useCallback(() => {
-    void finishNodeImageAuth(null);
+    const reconciliation = finishAuthSurfaceTicket(
+      'nodeimage-auth',
+      apiKey ? 'success' : closeReason
+    );
+    let usableApiKey: string | null = null;
+    try {
+      const result = reconciliation ? await reconciliation : { status: 'stale' as const };
+      if (
+        apiKey
+        && (result.status === 'same' || result.status === 'changed')
+      ) {
+        const identityKey = accountIdentityKey(result.session);
+        const saved = await saveNodeImageApiKeyForGeneration(
+          generation,
+          apiKey,
+          identityKey
+        );
+        if (saved) {
+          usableApiKey = saved;
+          setNodeImageApiKeySaved(true);
+          notify('NodeImage API Key 已保存');
+        }
+      }
+      if (!usableApiKey) {
+        setNodeImageApiKeySaved(Boolean(await loadNodeImageApiKey()));
+      }
+    } catch (error) {
+      notify(`NodeImage 授权结果未保存：${errorMessage(error)}`);
+    } finally {
+      nodeImageAuthPromiseRef.current = null;
+      resolve(usableApiKey);
+    }
+  }, [finishAuthSurfaceTicket, notify]);
+  const closeNodeImageAuthPanel = useCallback((
+    reason: AuthSurfaceCloseReason = 'close-button'
+  ) => {
+    void finishNodeImageAuth(null, reason);
   }, [finishNodeImageAuth]);
   const openNodeImageAuthPanel = useCallback(() => {
     if (nodeImageAuthPromiseRef.current) {
       return nodeImageAuthPromiseRef.current;
     }
+    prepareAuthSurfaceOpenRef.current('nodeimage-auth');
     setNodeImageAuthUrl(NODEIMAGE_AUTH_URL);
     setNodeImageAuthPayload(null);
     setNodeImageAuthError('');
     setLoadingNodeImageAuthPage(true);
+    beginAuthSurfaceTicket('nodeimage-auth', 'nodeseek');
     setShowNodeImageAuthPanel(true);
     nodeImageAuthGenerationRef.current = beginNodeImageApiKeyAuthorization();
-    nodeImageAuthPreviousApiKeyRef.current = undefined;
     const promise = new Promise<string | null>((resolve) => {
       nodeImageAuthResolverRef.current = resolve;
     });
     nodeImageAuthPromiseRef.current = promise;
     return promise;
-  }, []);
+  }, [beginAuthSurfaceTicket]);
+  const confirmUnverifiedNodeImageApiKey = useCallback(() => new Promise<boolean>((resolve) => {
+    let settled = false;
+    const settle = (confirmed: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(confirmed);
+    };
+    Alert.alert(
+      '确认 NodeImage API Key 归属',
+      '这个 Key 来自旧版本或手动输入。确认它属于当前 NodeSeek 账号后，才会用于本次上传。',
+      [
+        { text: '取消', style: 'cancel', onPress: () => settle(false) },
+        { text: '确认归属', onPress: () => settle(true) }
+      ],
+      { cancelable: true, onDismiss: () => settle(false) }
+    );
+  }), []);
   const ensureNodeImageApiKey = useCallback(async (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => {
     if (!options?.forceRefresh) {
-      const apiKey = await loadNodeImageApiKey();
-      if (apiKey) {
+      const identityKey = accountIdentityKeysRef.current.nodeseek;
+      const credential = await loadNodeImageApiKeyCredential();
+      const useStatus = nodeImageApiKeyUseStatus(credential, identityKey);
+      if (credential && useStatus === 'usable') {
         setNodeImageApiKeySaved(true);
-        return apiKey;
+        return credential.apiKey;
+      }
+      if (credential && useStatus === 'confirmation-required') {
+        const confirmed = await confirmUnverifiedNodeImageApiKey();
+        if (
+          !confirmed
+          || accountIdentityKeysRef.current.nodeseek !== identityKey
+          || accountIdentityPendingRef.current.nodeseek
+        ) {
+          return null;
+        }
+        const owned = await confirmNodeImageApiKeyOwnership(identityKey);
+        return owned?.apiKey || null;
+      }
+      if (credential && useStatus === 'identity-mismatch') {
+        notify('NodeImage API Key 属于另一个 NodeSeek 账号，需要重新授权');
       }
     }
     const apiKey = await openNodeImageAuthPanel();
@@ -409,7 +567,7 @@ export function AppRoot() {
       setNodeImageApiKeySaved(false);
     }
     return apiKey;
-  }, [openNodeImageAuthPanel]);
+  }, [confirmUnverifiedNodeImageApiKey, notify, openNodeImageAuthPanel]);
   const authorizeNodeImageApiKey = useCallback(() => {
     void ensureNodeImageApiKey({ forceRefresh: true });
   }, [ensureNodeImageApiKey]);
@@ -452,17 +610,9 @@ export function AppRoot() {
           setNodeImageAuthError(String(data.error || '需要完成 NodeSeek 授权后才能自动获取 NodeImage Key。'));
           return;
         }
-        const previousApiKey = await loadNodeImageApiKey();
         if (nodeImageAuthResolverRef.current !== owner || nodeImageAuthGenerationRef.current !== generation) {
           return;
         }
-        nodeImageAuthPreviousApiKeyRef.current = previousApiKey;
-        const saved = await saveNodeImageApiKeyForGeneration(generation, apiKey);
-        if (!saved || nodeImageAuthResolverRef.current !== owner || nodeImageAuthGenerationRef.current !== generation) {
-          return;
-        }
-        setNodeImageApiKeySaved(true);
-        notify('NodeImage API Key 已保存');
         await finishNodeImageAuth(apiKey);
       } catch (error) {
         if (nodeImageAuthResolverRef.current === owner && nodeImageAuthGenerationRef.current === generation) {
@@ -523,6 +673,7 @@ export function AppRoot() {
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const showLoginPanelRef = useRef(showLoginPanel);
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
+  const showYaohuoLoginPanelRef = useRef(showYaohuoLoginPanel);
   const [yaohuoLoginPrompt, setYaohuoLoginPrompt] = useState('');
   const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
   const [showNetworkProxyPanel, setShowNetworkProxyPanel] = useState(false);
@@ -530,6 +681,7 @@ export function AppRoot() {
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   useCommitRefValue(screenRef, screen);
   useCommitRefValue(showLoginPanelRef, showLoginPanel);
+  useCommitRefValue(showYaohuoLoginPanelRef, showYaohuoLoginPanel);
   useCommitRefValue(showLinuxDoPanelRef, showLinuxDoPanel);
   const {
     fontFamily,
@@ -593,36 +745,28 @@ export function AppRoot() {
   }, [networkProxyApplyStatus, networkProxyContentReady, networkProxyLoaded, networkProxyState.enabled]);
 
   const {
-    clearNodeSeekLoginState: clearStoredNodeSeekLoginState,
+    clearLinuxDoLoginState,
+    clearNodeSeekLoginState,
     clearYaohuoLoginState,
-    commitAccountStatusExpiry,
+    commitAccountStatusChange,
     completeLinuxDoBrowserFetch,
     completeNodeSeekBrowserFetch,
-    currentNodeSeekCredentialGeneration,
-    currentYaohuoCredentialGeneration,
     failLinuxDoBrowserFetchById,
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,
-    forumCredentialScope,
+    forumSessionEpochs,
     forumFetchWithWebViewFallback,
     hiddenBrowserFetchRequests,
-    loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
-    loadYaohuoCookieForSource: loadStoredYaohuoCookieForSource,
-    saveNodeSeekCookieHeader,
-    saveYaohuoCookieHeader,
     siteSessionStates,
     markLinuxDoBrowserFetchHttpError,
     markNodeSeekBrowserFetchHttpError,
     updateLinuxDoSession,
-    updateNodeSeekSession,
-    updateYaohuoSession
+    updateNodeSeekSession
   } = useSessionController({
     defaultFetcher: networkProxyFetcher,
     linuxDoBrowserWebViewRef,
-    linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewUserAgentRef,
     nodeSeekBrowserWebViewRef,
-    nodeSeekWebViewCookieHeaderRef,
     nodeSeekWebViewUserAgentRef,
     notify,
     setLinuxDoWebViewUserAgent,
@@ -630,6 +774,7 @@ export function AppRoot() {
     setWebLoginUserId,
     webLoginDetectedRef
   });
+  useCommitRefValue(forumSessionEpochsRef, forumSessionEpochs);
 
   const refreshXiaoyinsiAuthorizationRef = useRef<((
     trace?: DiagnosticTrace,
@@ -641,10 +786,6 @@ export function AppRoot() {
     __DEV__ ? applyDevAnonymousOverrides(siteSessionStates, devAnonymousOverrides) : siteSessionStates
   ), [devAnonymousOverrides, siteSessionStates]);
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(effectiveSiteSessionStates), [effectiveSiteSessionStates]);
-  useEffect(() => {
-    setLinuxDoDevAnonymousOverride(Boolean(__DEV__ && devAnonymousOverrides.linuxdo));
-    return () => setLinuxDoDevAnonymousOverride(false);
-  }, [devAnonymousOverrides.linuxdo]);
   const toggleDevAnonymousOverride = useCallback((site: SessionSite) => {
     if (!__DEV__) {
       return;
@@ -654,53 +795,15 @@ export function AppRoot() {
       [site]: !current[site]
     }));
   }, []);
-  const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source, options?: Parameters<typeof loadStoredNodeSeekCookieForSource>[1]) => {
-    const isNodeSeekSource = source === 'all' || source === 'nodeseek';
-    if (__DEV__ && isDevAnonymousSource(source, 'nodeseek', { nodeseek: devAnonymousOverrides.nodeseek })) {
-      return undefined;
-    }
-    let credentialGeneration = currentNodeSeekCredentialGeneration();
-    const cookieHeader = await loadStoredNodeSeekCookieForSource(source, {
-      ...options,
-      captureGeneration: (generation) => {
-        credentialGeneration = generation;
-        options?.captureGeneration?.(generation);
-      }
-    });
-    const credentialIsCurrent = credentialGeneration === currentNodeSeekCredentialGeneration();
-    if (isNodeSeekSource) {
-      if (credentialIsCurrent && cookieHeader) {
-        nodeSeekWebViewCookieHeaderRef.current = cookieHeader;
-      }
-    }
-    return cookieHeader;
-  }, [currentNodeSeekCredentialGeneration, devAnonymousOverrides.nodeseek, loadStoredNodeSeekCookieForSource]);
-  const clearNodeSeekLoginState = useCallback(
-    () => clearStoredNodeSeekLoginState(),
-    [clearStoredNodeSeekLoginState]
-  );
-  const loadYaohuoCookieForSource = useCallback((source: FeedSource | Source, options?: Parameters<typeof loadStoredYaohuoCookieForSource>[1]) => {
-    if (__DEV__ && isDevAnonymousSource(source, 'yaohuo', devAnonymousOverrides)) {
-      return Promise.resolve(undefined);
-    }
-    return loadStoredYaohuoCookieForSource(source, options);
-  }, [devAnonymousOverrides.yaohuo, loadStoredYaohuoCookieForSource]);
   const sourceGateway = useMemo(() => createSourceGateway({
-    currentLinuxDoCredentialGeneration: currentLinuxDoAccessGeneration,
-    currentNodeSeekCredentialGeneration,
-    currentYaohuoCredentialGeneration,
+    currentSessionEpoch: (source) => forumSessionEpochsRef.current[source],
     currentXiaoyinsiCredentialGeneration,
     fetcher: forumFetchWithWebViewFallback,
-    loadLinuxDoAccessForSource: async (_source, options) => {
-      const generation = currentLinuxDoAccessGeneration();
-      options?.captureGeneration?.(generation);
-      const access = await loadLinuxDoAccess();
-      return generation === currentLinuxDoAccessGeneration() && access?.cookieHeader
-        ? { cookieHeader: access.cookieHeader, userAgent: linuxDoWebViewUserAgentRef.current || access.userAgent }
-        : undefined;
-    },
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
+    isSourceAuthenticated: (source) => (
+      accountIdentityKeysRef.current[source] !== `${source}:anonymous`
+    ),
+    isSourceIdentityPending: (source) => accountIdentityPendingRef.current[source],
+    linuxDoUserAgent: () => linuxDoWebViewUserAgentRef.current,
     loadXiaoyinsiCredentialsForSource: async (source, options) => {
       const generation = currentXiaoyinsiCredentialGeneration();
       options?.captureGeneration?.(generation);
@@ -713,13 +816,63 @@ export function AppRoot() {
     nodeSeekUserAgent: () => nodeSeekWebViewUserAgentRef.current,
     refreshXiaoyinsiAuthorization: (trace) => refreshXiaoyinsiAuthorizationRef.current?.(trace) ?? Promise.resolve(null)
   }), [
-    currentNodeSeekCredentialGeneration,
-    currentYaohuoCredentialGeneration,
     forumFetchWithWebViewFallback,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
     devAnonymousOverrides
   ]);
+  const xiaoyinsiAuthController = useXiaoyinsiAuthController({
+    sessionEpochs: forumSessionEpochs,
+    dispatchSiteSessionEvent,
+    fetcher: networkProxyFetcher,
+    isIdentityPending: () => accountIdentityPendingRef.current.xiaoyinsi,
+    notify,
+    sourceGateway
+  });
+  useEffect(() => {
+    refreshXiaoyinsiAuthorizationRef.current = xiaoyinsiAuthController.refreshAuthorization;
+    return () => {
+      refreshXiaoyinsiAuthorizationRef.current = null;
+    };
+  }, [xiaoyinsiAuthController.refreshAuthorization]);
+
+  const {
+    accountSessionViewModels,
+    beginAccountIdentityCheck,
+    reconcileAccountStatus,
+    refreshAccountStatus,
+    statusBusy
+  } = useAccountStatusController({
+    sessionEpochs: forumSessionEpochs,
+    fetcher: forumFetchWithWebViewFallback,
+    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    onAccountStatusChanged: (source, recoveryQueryKey) => {
+      commitAccountStatusChange(source, recoveryQueryKey);
+    },
+    readXiaoyinsiAuthorization: xiaoyinsiAuthController.readAuthorization,
+    sessionViewModels: siteSessionViewModels
+  });
+  useCommitRefValue(beginAccountIdentityCheckRef, beginAccountIdentityCheck);
+  useCommitRefValue(reconcileAccountStatusRef, reconcileAccountStatus);
+  const accountIdentityKeys = useMemo<Record<SessionSite, string>>(() => ({
+    linuxdo: accountIdentityKey(accountSessionViewModels.linuxdo),
+    nodeseek: accountIdentityKey(accountSessionViewModels.nodeseek),
+    xiaoyinsi: accountIdentityKey(accountSessionViewModels.xiaoyinsi),
+    yaohuo: accountIdentityKey(accountSessionViewModels.yaohuo)
+  }), [accountSessionViewModels]);
+  useCommitRefValue(accountIdentityKeysRef, accountIdentityKeys);
+  const accountIdentityPending = useMemo<Record<SessionSite, boolean>>(() => ({
+    linuxdo: accountSessionViewModels.linuxdo.identityTrust === 'pending',
+    nodeseek: accountSessionViewModels.nodeseek.identityTrust === 'pending',
+    xiaoyinsi: accountSessionViewModels.xiaoyinsi.identityTrust === 'pending',
+    yaohuo: accountSessionViewModels.yaohuo.identityTrust === 'pending'
+  }), [accountSessionViewModels]);
+  useCommitRefValue(accountIdentityPendingRef, accountIdentityPending);
+  const accountIdentityBarriers = useMemo<ForumIdentityBarrierSource[]>(
+    () => (['linuxdo', 'nodeseek', 'xiaoyinsi', 'yaohuo'] as const)
+      .filter((source) => accountIdentityPending[source]),
+    [accountIdentityPending]
+  );
   const {
     cancelTopicQueries,
     loadMoreReplies,
@@ -741,7 +894,8 @@ export function AppRoot() {
   } = useTopicController({
     changeScreen,
     commitReaderData,
-    credentialScope: forumCredentialScope,
+    identityBarriers: accountIdentityBarriers,
+    sessionEpochs: forumSessionEpochs,
     getCurrentScreen,
     notify,
     onNodeSeekTopicVerificationRequired: nodeSeekTopicVerificationRequired,
@@ -758,6 +912,10 @@ export function AppRoot() {
   });
   useCommitRefValue(cancelTopicQueriesRef, cancelTopicQueries);
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
+  const mediaSessionIdentity = mediaSessionIdentityForSource(
+    selectedTopic?.source,
+    forumSessionEpochs
+  );
   const libraryRecords = useMemo(
     () => sortedRecords(libraryTab === 'history' ? readerData.history : readerData.favorites),
     [libraryTab, readerData.favorites, readerData.history]
@@ -788,6 +946,7 @@ export function AppRoot() {
     inlineSizedImageUrls,
     topicImageDeriver
   } = useHtmlRenderingController({
+    mediaSessionIdentity,
     onOpenExternalUrl: openExternalUrl,
     onOpenImagePreview: openImagePreviewFromRenderer,
     onOpenTopic: openTopicFromHtml,
@@ -856,17 +1015,11 @@ export function AppRoot() {
   useEffect(() => () => {
     abortTopicReadRequests();
     const resolveNodeImageAuth = nodeImageAuthResolverRef.current;
-    const previousNodeImageApiKey = nodeImageAuthPreviousApiKeyRef.current;
     nodeImageAuthResolverRef.current = null;
     nodeImageAuthPromiseRef.current = null;
     nodeImageAuthGenerationRef.current = null;
-    nodeImageAuthPreviousApiKeyRef.current = undefined;
     if (resolveNodeImageAuth) {
-      if (previousNodeImageApiKey === undefined) {
-        invalidateNodeImageApiKeyAuthorization();
-      } else {
-        void restoreNodeImageApiKeyAfterCanceledAuthorization(previousNodeImageApiKey).catch(() => undefined);
-      }
+      invalidateNodeImageApiKeyAuthorization();
     }
     resolveNodeImageAuth?.(null);
     cancelDeferredNavigationTask();
@@ -876,36 +1029,68 @@ export function AppRoot() {
     readerData.history,
     readerData.settings.listDensity
   ]);
-  const closeYaohuoLoginPanel = useCallback(() => {
+  const closeYaohuoLoginPanel = useCallback((
+    reason: AuthSurfaceCloseReason = 'close-button'
+  ) => {
+    if (!showYaohuoLoginPanelRef.current) {
+      return;
+    }
+    showYaohuoLoginPanelRef.current = false;
     handleClearCredentialLoginIntent('yaohuo');
     yaohuoLoginPanelRequestRef.current += 1;
     yaohuoWebViewRef.current?.stopLoading();
     setShowYaohuoLoginPanel(false);
     setYaohuoLoginPrompt('');
     setLoadingYaohuoLoginPage(false);
-  }, [handleClearCredentialLoginIntent]);
+    finishAuthSurfaceTicket('yaohuo-login', reason);
+  }, [finishAuthSurfaceTicket, handleClearCredentialLoginIntent]);
 
-  const changeYaohuoLoginPanel = useCallback((visible: boolean) => {
+  const changeYaohuoLoginPanel = useCallback((
+    visible: boolean,
+    closeReason: AuthSurfaceCloseReason = 'close-button'
+  ) => {
     if (visible) {
+      if (showYaohuoLoginPanelRef.current) {
+        return;
+      }
+      prepareAuthSurfaceOpenRef.current('yaohuo-login');
+      showYaohuoLoginPanelRef.current = true;
+      beginAuthSurfaceTicket('yaohuo-login', 'yaohuo');
       yaohuoLoginPanelRequestRef.current += 1;
       setLoadingYaohuoLoginPage(true);
       setShowYaohuoLoginPanel(true);
       yaohuoWebViewRef.current?.reload();
       return;
     }
-    closeYaohuoLoginPanel();
-  }, [closeYaohuoLoginPanel]);
+    closeYaohuoLoginPanel(closeReason);
+  }, [beginAuthSurfaceTicket, closeYaohuoLoginPanel]);
 
-  const changeNodeSeekLoginPanel = useCallback((visible: boolean) => {
+  const changeNodeSeekLoginPanel = useCallback((
+    visible: boolean,
+    closeReason: AuthSurfaceCloseReason = 'close-button'
+  ) => {
+    const wasVisible = showLoginPanelRef.current;
+    if (visible === wasVisible) {
+      return;
+    }
+    if (visible) {
+      prepareAuthSurfaceOpenRef.current('nodeseek-login');
+    }
+    showLoginPanelRef.current = visible;
     nodeSeekLoginPanelRequestRef.current += 1;
-    if (!visible) {
+    if (visible) {
+      beginAuthSurfaceTicket('nodeseek-login', 'nodeseek');
+    } else {
       handleClearCredentialLoginIntent('nodeseek');
       pendingNodeSeekVerificationRetryRef.current = null;
     }
     webViewRef.current?.stopLoading();
     setLoadingLoginPage(visible);
     setShowLoginPanel(visible);
-  }, [handleClearCredentialLoginIntent]);
+    if (!visible) {
+      finishAuthSurfaceTicket('nodeseek-login', closeReason);
+    }
+  }, [beginAuthSurfaceTicket, finishAuthSurfaceTicket, handleClearCredentialLoginIntent]);
 
   const showYaohuoLogin = useCallback((message = '请先登录妖火。') => {
     changeScreen('more');
@@ -933,15 +1118,26 @@ export function AppRoot() {
     closeYaohuoLoginPanel,
     linuxDoPanelClosingSessionRef,
     linuxDoPanelCloseSettleTimerRef,
-    linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
-    linuxDoWebViewUserAgent,
     linuxDoWebViewUserAgentRef,
     notify,
+    onBeforeLinuxDoSurfaceOpened: () => {
+      prepareAuthSurfaceOpenRef.current('linuxdo-login');
+    },
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
+    onLinuxDoSurfaceClosed: ({ authoritativeResult, reason }) => {
+      finishAuthSurfaceTicket(
+        'linuxdo-login',
+        authoritativeResult ? 'authoritative-recovery' : reason
+      );
+    },
+    onLinuxDoSurfaceOpened: () => {
+      beginAuthSurfaceTicket('linuxdo-login', 'linuxdo');
+    },
     openTopicRef,
+    reconcileAccountStatus: (source) => reconcileAccountStatusRef.current(source),
     selectedTopic,
     setChecking,
     setLinuxDoWebViewError,
@@ -957,6 +1153,20 @@ export function AppRoot() {
     updateLinuxDoSession,
     updateNodeSeekSession
   });
+  const prepareAuthSurfaceOpen = useCallback((openingSurface: AuthSurface) => {
+    closeOtherAuthSurfaces(openingSurface, {
+      'linuxdo-login': (reason) => closeLinuxDoPanel(true, reason),
+      'nodeimage-auth': closeNodeImageAuthPanel,
+      'nodeseek-login': (reason) => changeNodeSeekLoginPanel(false, reason),
+      'yaohuo-login': closeYaohuoLoginPanel
+    });
+  }, [
+    changeNodeSeekLoginPanel,
+    closeLinuxDoPanel,
+    closeNodeImageAuthPanel,
+    closeYaohuoLoginPanel
+  ]);
+  useCommitRefValue(prepareAuthSurfaceOpenRef, prepareAuthSurfaceOpen);
   useCommitRefValue(showLinuxDoVerificationForTopicRef, showLinuxDoVerification);
   const previousLinuxDoPanelVisibleRef = useRef(showLinuxDoPanel);
   useEffect(() => {
@@ -995,35 +1205,26 @@ export function AppRoot() {
     refreshLinuxDoLevel
   } = useAccountController({
     checkingRequestIdRef,
+    clearLinuxDoLoginState,
     clearNodeSeekLoginState,
     clearYaohuoLoginState,
-    credentialScope: forumCredentialScope,
-    currentNodeSeekCredentialGeneration,
-    currentYaohuoCredentialGeneration,
-    forumFetchWithWebViewFallback,
+    sessionEpochs: forumSessionEpochs,
     nodeSeekLoginPanelRequestRef,
-    nodeSeekCurrentUserId: siteSessionViewModels.nodeseek.currentUser?.id ?? null,
-    nodeSeekWebViewCookieHeaderRef,
     nodeSeekWebViewUserAgentRef,
     notify,
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     linuxDoVerificationActive: showLinuxDoPanel,
+    linuxDoIdentityPending: accountIdentityPending.linuxdo,
     resetLinuxDoLevelState,
     resetLinuxDoWebView,
-    saveNodeSeekCookieHeader,
-    saveYaohuoCookieHeader,
+    reconcileAccountStatus: (source) => reconcileAccountStatusRef.current(source),
     setChecking,
     setNodeSeekWebViewUserAgent,
-    setWebLoginUserId,
     screen,
     showLinuxDoVerification,
     sourceGateway,
     showLoginPanelRef,
     showYaohuoLoginPanel,
-    updateNodeSeekSession,
-    updateLinuxDoSession,
-    updateYaohuoSession,
-    webLoginDetectedRef,
     webViewRef,
     yaohuoLoginPanelRequestRef,
     yaohuoWebViewRef
@@ -1049,52 +1250,14 @@ export function AppRoot() {
   }, [stopLinuxDoVerificationForInactiveApp]);
 
   const closeMorePanels = useCallback(() => {
-    changeNodeSeekLoginPanel(false);
-    closeNodeImageAuthPanel();
-    closeYaohuoLoginPanel();
-    closeLinuxDoPanel();
+    changeNodeSeekLoginPanel(false, 'navigation-away');
+    closeNodeImageAuthPanel('navigation-away');
+    closeYaohuoLoginPanel('navigation-away');
+    closeLinuxDoPanel(true, 'navigation-away');
     setShowNetworkProxyPanel(false);
     setShowSettingsPanel(false);
   }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
 
-  const xiaoyinsiAuthController = useXiaoyinsiAuthController({
-    credentialScope: forumCredentialScope,
-    dispatchSiteSessionEvent,
-    fetcher: networkProxyFetcher,
-    notify,
-    sourceGateway
-  });
-  useEffect(() => {
-    refreshXiaoyinsiAuthorizationRef.current = xiaoyinsiAuthController.refreshAuthorization;
-    return () => {
-      refreshXiaoyinsiAuthorizationRef.current = null;
-    };
-  }, [xiaoyinsiAuthController.refreshAuthorization]);
-
-  const {
-    accountSessionViewModels,
-    refreshAccountStatus,
-    statusBusy
-  } = useAccountStatusController({
-    credentialScope: forumCredentialScope,
-    currentNodeSeekCredentialGeneration,
-    currentYaohuoCredentialGeneration,
-    fetcher: forumFetchWithWebViewFallback,
-    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
-    loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
-    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
-    notify,
-    onAccountStatusExpired: commitAccountStatusExpiry,
-    onLinuxDoExpired: (message, recoveryQueryKey) => updateLinuxDoSession({
-      type: 'login-expired',
-      message,
-      ...(recoveryQueryKey ? { recoveryQueryKey } : {})
-    }),
-    readXiaoyinsiAuthorization: xiaoyinsiAuthController.readAuthorization,
-    resetLinuxDoLevelState,
-    saveNodeSeekCookieHeader,
-    sessionViewModels: siteSessionViewModels
-  });
   const effectiveAccountSessionViewModels = useMemo(() => (
     __DEV__ ? applyDevAnonymousViewModelOverrides(accountSessionViewModels, devAnonymousOverrides) : accountSessionViewModels
   ), [accountSessionViewModels, devAnonymousOverrides]);
@@ -1103,6 +1266,36 @@ export function AppRoot() {
     webLoginUserId
   );
   const nodeSeekCurrentUserForTopicActions = effectiveAccountSessionViewModels.nodeseek.currentUser;
+  const readWritableSessionSnapshot = useCallback((source: SessionSite): WritableSessionSnapshot => ({
+    source,
+    authenticated: accountIdentityKeysRef.current[source] !== `${source}:anonymous`,
+    authSurfaceOpen: hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source),
+    identityKey: accountIdentityKeysRef.current[source],
+    identityTrust: accountIdentityPendingRef.current[source]
+      ? 'pending'
+      : accountIdentityKeysRef.current[source] === `${source}:anonymous`
+        ? 'none'
+        : 'confirmed',
+    sessionEpoch: forumSessionEpochsRef.current[source]
+  }), []);
+  const reconcileWritableSession = useCallback(async (source: SessionSite) => {
+    beginAccountIdentityCheckRef.current(source);
+    accountIdentityPendingRef.current[source] = true;
+    const result = await reconcileAccountStatusRef.current(source);
+    if (result.status === 'same') {
+      accountIdentityPendingRef.current[source] = false;
+    }
+    return result;
+  }, []);
+  const ensureWritableSession = useCallback((source: SessionSite) => (
+    ensureWritableSessionTicket(
+      () => readWritableSessionSnapshot(source),
+      () => reconcileWritableSession(source)
+    )
+  ), [readWritableSessionSnapshot, reconcileWritableSession]);
+  const isWritableSessionTicketCurrent = useCallback((ticket: WritableSessionTicket) => (
+    validateWritableSessionTicket(ticket, readWritableSessionSnapshot(ticket.source))
+  ), [readWritableSessionSnapshot]);
   const displayReplies = useMemo(
     () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, nodeSeekCurrentUserForTopicActions, effectiveNodeSeekUserId),
     [effectiveNodeSeekUserId, filteredReplies, nodeSeekCurrentUserForTopicActions]
@@ -1132,7 +1325,8 @@ export function AppRoot() {
     setReadingFilter,
     shownFeedItems
   } = useFeedController({
-    credentialScope: forumCredentialScope,
+    identityBarriers: accountIdentityBarriers,
+    sessionEpochs: forumSessionEpochs,
     linuxDoVerificationActive: showLinuxDoPanel,
     notify,
     readerData,
@@ -1168,7 +1362,7 @@ export function AppRoot() {
     toggleLinuxDoAiSearch
   } = useSearchController({
     categories,
-    credentialScope: forumCredentialScope,
+    sessionEpochs: forumSessionEpochs,
     linuxDoVerificationActive: showLinuxDoPanel,
     notify,
     onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
@@ -1307,7 +1501,7 @@ export function AppRoot() {
         notify('NodeSeek 验证仍未生效，请继续验证后再次检测。');
         return false;
       }
-      changeNodeSeekLoginPanel(false);
+      changeNodeSeekLoginPanel(false, 'authoritative-recovery');
       changeScreen(retry.type);
     }
     return true;
@@ -1347,7 +1541,8 @@ export function AppRoot() {
     userLoadingMoreTopics,
     userProfile
   } = useUserController({
-    credentialScope: forumCredentialScope,
+    identityBarriers: accountIdentityBarriers,
+    sessionEpochs: forumSessionEpochs,
     notify,
     onOpenUserScreen: prepareUserNavigation,
     readerData,
@@ -1361,21 +1556,28 @@ export function AppRoot() {
 
   const showLinuxDoLogin = useCallback((message = '匿名可阅读，登录后才能互动。') => {
     changeScreen('more');
-    changeNodeSeekLoginPanel(false);
-    closeYaohuoLoginPanel();
     setShowSettingsPanel(false);
     notify(message);
     changeLinuxDoPanel(true);
-  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, notify]);
+  }, [changeLinuxDoPanel, changeScreen, notify]);
   const showXiaoyinsiLogin = useCallback((message = '匿名可阅读，授权后才能互动。') => {
     changeScreen('more');
-    changeNodeSeekLoginPanel(false);
-    closeYaohuoLoginPanel();
-    changeLinuxDoPanel(false);
+    changeNodeSeekLoginPanel(false, 'switch-surface');
+    closeNodeImageAuthPanel('switch-surface');
+    closeYaohuoLoginPanel('switch-surface');
+    closeLinuxDoPanel(true, 'switch-surface');
     setShowSettingsPanel(false);
     notify(message);
     void xiaoyinsiAuthController.beginAuthorization();
-  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, notify, xiaoyinsiAuthController]);
+  }, [
+    changeNodeSeekLoginPanel,
+    changeScreen,
+    closeLinuxDoPanel,
+    closeNodeImageAuthPanel,
+    closeYaohuoLoginPanel,
+    notify,
+    xiaoyinsiAuthController
+  ]);
 
   useCommitRefValue(openTopicRef, openTopic);
 
@@ -1430,19 +1632,17 @@ export function AppRoot() {
     uploadReplyImage,
     votePoll
   } = useTopicActionsController({
-    credentialScope: forumCredentialScope,
-    currentNodeSeekCredentialGeneration,
-    currentYaohuoCredentialGeneration,
-    dispatchSiteSessionEvent,
+    sessionEpochs: forumSessionEpochs,
     discourseActionRuntimeDependencies,
     discourseLoginPrompts,
+    ensureWritableSession,
     fetcher: networkProxyFetcher,
-    loadYaohuoCookieForSource,
+    isWritableSessionTicketCurrent,
     nodeSeekWebViewUserAgentRef,
     ensureNodeImageApiKey,
     notify,
+    reconcileWritableSession,
     refreshTopicReplies,
-    showYaohuoLogin,
     siteSessionViewModels: effectiveAccountSessionViewModels,
     topicDetail,
     topicReplies,
@@ -1654,9 +1854,9 @@ export function AppRoot() {
   });
 
   const openReadingSettingsFromTopic = useCallback(() => {
-    changeNodeSeekLoginPanel(false);
-    closeYaohuoLoginPanel();
-    closeLinuxDoPanel();
+    changeNodeSeekLoginPanel(false, 'navigation-away');
+    closeYaohuoLoginPanel('navigation-away');
+    closeLinuxDoPanel(true, 'navigation-away');
     openReadingSettingsFromCurrentTopic(saveTopicRoute);
   }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeYaohuoLoginPanel, saveTopicRoute]);
 
@@ -1674,19 +1874,19 @@ export function AppRoot() {
         return handled('image-preview-closed');
       }
       if (showLoginPanel) {
-        changeNodeSeekLoginPanel(false);
+        changeNodeSeekLoginPanel(false, 'hardware-back');
         return handled('login-panel-closed');
       }
       if (showNodeImageAuthPanel) {
-        closeNodeImageAuthPanel();
+        closeNodeImageAuthPanel('hardware-back');
         return handled('image-auth-panel-closed');
       }
       if (showYaohuoLoginPanel) {
-        closeYaohuoLoginPanel();
+        closeYaohuoLoginPanel('hardware-back');
         return handled('yaohuo-panel-closed');
       }
       if (showLinuxDoPanel) {
-        closeLinuxDoPanel();
+        closeLinuxDoPanel(true, 'hardware-back');
         return handled('linuxdo-panel-closed');
       }
       if (isReadingSettingsScreen()) {
@@ -1846,8 +2046,14 @@ export function AppRoot() {
   const searchProps = useMemo(() => ({
       busy: searchBusy,
       categories,
-      credentialScope: forumCredentialScope,
-      requestsEnabled: screen === 'search' && !showLinuxDoPanel,
+      sessionEpochs: forumSessionEpochs,
+      requestsEnabled: screen === 'search'
+        && !showLinuxDoPanel
+        && (
+          searchSource === 'all'
+          || searchSource === 'v2ex'
+          || !accountIdentityPending[searchSource]
+        ),
       query: searchQuery,
       topicStateIndex,
       recentSearches,
@@ -1875,8 +2081,9 @@ export function AppRoot() {
       onToggleLinuxDoAiSearch: toggleLinuxDoAiSearch
   }), [
     applySearchFilter,
+    accountIdentityPending,
     categories,
-    forumCredentialScope,
+    forumSessionEpochs,
     loadMoreSearchSource,
     openTopic,
     recentSearches,
@@ -2133,6 +2340,7 @@ export function AppRoot() {
       loadedQuotedReplies,
       loadingMoreReplies,
       loadingQuotedFloors,
+      mediaSessionIdentity,
       commentQuery,
       replyHighlightQuery: debouncedCommentQuery,
       quoteStateVersion,
@@ -2205,6 +2413,7 @@ export function AppRoot() {
     loadedQuotedReplies,
     loadingMoreReplies,
     loadingQuotedFloors,
+    mediaSessionIdentity,
     openExternalUrl,
     openReadingSettingsFromTopic,
     optimisticTopicActions,
@@ -2324,7 +2533,8 @@ export function AppRoot() {
   }, [changeScreen, requestTabScrollToTop, screen]);
 
   return (
-    <GestureHandlerRootView style={styles.screen}>
+    <ForumSessionEpochProvider sessionEpochs={forumSessionEpochs}>
+      <GestureHandlerRootView style={styles.screen}>
       <SafeAreaProvider>
         <KeyboardAvoidingView style={styles.screen}>
           <SafeAreaView edges={['left', 'right']} style={styles.screen}>
@@ -2365,6 +2575,7 @@ export function AppRoot() {
               handleNodeImageAuthMessage={handleNodeImageAuthMessage}
               handleNodeImageAuthNavigation={handleNodeImageAuthNavigation}
               imagePreview={imagePreview}
+              mediaSessionIdentity={mediaSessionIdentity}
               linuxDoCredentialSaved={credentialSummaries.linuxdo.hasCredential}
               linuxDoLoginFormMode={credentialLoginSite === 'linuxdo'}
               linuxDoSession={siteSessionViewModels.linuxdo}
@@ -2426,6 +2637,7 @@ export function AppRoot() {
           </SafeAreaView>
         </KeyboardAvoidingView>
       </SafeAreaProvider>
-    </GestureHandlerRootView>
+      </GestureHandlerRootView>
+    </ForumSessionEpochProvider>
   );
 }

@@ -39,7 +39,6 @@ describe('linux.do level profile', () => {
     });
 
     await expect(getLinuxDoLevelProfile({
-      cookieHeader: '_t=old',
       fetcher,
       signal: controller.signal
     })).rejects.toThrow('请求已取消');
@@ -206,7 +205,6 @@ describe('linux.do level profile', () => {
     });
 
     const profile = await getLinuxDoLevelProfile({
-      cookieHeader: '_t=login',
       fetcher
     });
 
@@ -260,7 +258,6 @@ describe('linux.do level profile', () => {
     });
 
     const profile = await getLinuxDoLevelProfile({
-      cookieHeader: '_t=login',
       fetcher
     });
 
@@ -307,7 +304,6 @@ describe('linux.do level profile', () => {
     });
 
     const profile = await getLinuxDoLevelProfile({
-      cookieHeader: '_t=login',
       userAgent: 'Mozilla/5.0',
       fetcher
     });
@@ -358,7 +354,6 @@ describe('linux.do level profile', () => {
     });
 
     const profile = await getLinuxDoLevelProfile({
-      cookieHeader: '_t=login',
       fetcher
     });
 
@@ -381,7 +376,6 @@ describe('linux.do level profile', () => {
     }));
 
     const error = await getLinuxDoLevelProfile({
-      cookieHeader: '_t=login',
       fetcher
     }).catch((caught) => caught);
 
@@ -423,7 +417,6 @@ describe('linux.do level profile', () => {
     });
 
     const profile = await getLinuxDoLevelProfile({
-      cookieHeader: '_t=login',
       fetcher
     });
 
@@ -476,7 +469,6 @@ describe('linux.do level profile', () => {
     });
 
     const profile = await getLinuxDoLevelProfile({
-      cookieHeader: '_t=login',
       fetcher
     });
 
@@ -517,7 +509,6 @@ describe('linux.do level profile', () => {
     });
 
     const profile = await getLinuxDoLevelProfile({
-      cookieHeader: '_t=login',
       fetcher
     });
 

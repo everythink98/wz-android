@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image as RNImage, Modal, Pressable, ScrollView, Text, useWindowDimensions, View, type ImageURISource } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, useWindowDimensions, View, type ImageURISource } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
-import { imageRequestHeadersForUrl, imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
+import { imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
 import { createStyles, type ReaderTheme } from '../theme';
 import { cachedCompatibleImageSource, compatibleImageRequestIdentity, recoverCompatibleSvgImageSource } from '../compatibleImageSources';
 
@@ -12,16 +12,23 @@ const EMPTY_PREVIEW_URLS: string[] = [];
 
 function CompatiblePreviewThumbnail({
   url,
+  mediaSessionIdentity,
   nodeSeekUserAgent,
   styles
 }: {
   url: string;
+  mediaSessionIdentity: string;
   nodeSeekUserAgent?: string;
   styles: ReturnType<typeof createStyles>;
 }) {
   const originalSource = useMemo(
-    () => imageSourceFromUrl(url, undefined, nodeSeekUserAgent) as ImageURISource,
-    [nodeSeekUserAgent, url]
+    () => imageSourceFromUrl(
+      url,
+      undefined,
+      nodeSeekUserAgent,
+      mediaSessionIdentity
+    ) as ImageURISource,
+    [mediaSessionIdentity, nodeSeekUserAgent, url]
   );
   const requestIdentity = compatibleImageRequestIdentity(originalSource);
   const requestIdentityRef = useRef(requestIdentity);
@@ -41,7 +48,7 @@ function CompatiblePreviewThumbnail({
       source={activeFallbackSource || originalSource}
       style={styles.imagePreviewThumbnailImage}
       contentFit="cover"
-      recyclingKey={`thumbnail:${url}:${activeFallbackSource ? 'compatible' : 'native'}`}
+      recyclingKey={`thumbnail:${mediaSessionIdentity}:${url}:${activeFallbackSource ? 'compatible' : 'native'}`}
       onError={() => {
         if (activeFallbackSource || recoveryIdentityRef.current === requestIdentity) {
           return;
@@ -59,6 +66,7 @@ function CompatiblePreviewThumbnail({
 
 export function ImagePreviewModal({
   preview,
+  mediaSessionIdentity,
   nodeSeekMediaUserAgent,
   styles,
   theme,
@@ -69,6 +77,7 @@ export function ImagePreviewModal({
   onSelect
 }: {
   preview: ImagePreviewList | null;
+  mediaSessionIdentity: string;
   nodeSeekMediaUserAgent?: string;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
@@ -86,12 +95,13 @@ export function ImagePreviewModal({
   const previewCount = previewUrls.length;
   const activeIndex = preview?.index ?? 0;
   const activeUri = previewUrls[activeIndex] || '';
-  const previewKey = `${activeIndex}:${activeUri}`;
+  const previewKey = `${mediaSessionIdentity}:${activeIndex}:${activeUri}`;
   const originalImageSource = useMemo(() => imageSourceFromUrl(
     activeUri,
     undefined,
-    nodeSeekMediaUserAgent
-  ) as ImageURISource, [activeUri, nodeSeekMediaUserAgent]);
+    nodeSeekMediaUserAgent,
+    mediaSessionIdentity
+  ) as ImageURISource, [activeUri, mediaSessionIdentity, nodeSeekMediaUserAgent]);
   const imageRequestIdentity = compatibleImageRequestIdentity(originalImageSource);
   const imageRequestIdentityRef = useRef(imageRequestIdentity);
   const recoveryIdentityRef = useRef('');
@@ -109,32 +119,6 @@ export function ImagePreviewModal({
     setImagePreviewFailed(false);
     setImagePreviewResolution(null);
   }, [imageRequestIdentity, previewCount]);
-
-  useEffect(() => {
-    if (!activeUri) {
-      return;
-    }
-    let canceled = false;
-    const headers = imageRequestHeadersForUrl(activeUri, nodeSeekMediaUserAgent);
-    const onSuccess = (nextWidth: number, nextHeight: number) => {
-      if (!canceled) {
-        setImagePreviewResolution({ width: nextWidth, height: nextHeight });
-      }
-    };
-    const onFailure = () => {
-      if (!canceled) {
-        setImagePreviewResolution({ width, height });
-      }
-    };
-    if (headers) {
-      RNImage.getSizeWithHeaders(activeUri, headers, onSuccess, onFailure);
-    } else {
-      RNImage.getSize(activeUri, onSuccess, onFailure);
-    }
-    return () => {
-      canceled = true;
-    };
-  }, [activeUri, height, nodeSeekMediaUserAgent, width]);
 
   const imagePreviewSize = useMemo(() => {
     if (!imagePreviewResolution?.width || !imagePreviewResolution.height) {
@@ -179,7 +163,7 @@ export function ImagePreviewModal({
           >
             <ExpoImage
               contentFit="contain"
-              recyclingKey={`${activeUri}:${activeFallbackSource ? 'compatible' : 'native'}`}
+              recyclingKey={`${mediaSessionIdentity}:${activeUri}:${activeFallbackSource ? 'compatible' : 'native'}`}
               source={activeImageSource}
               style={[styles.imagePreviewImage, imagePreviewSize]}
               onLoadStart={() => {
@@ -252,6 +236,7 @@ export function ImagePreviewModal({
               <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === activeIndex && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
                 <CompatiblePreviewThumbnail
                   url={url}
+                  mediaSessionIdentity={mediaSessionIdentity}
                   nodeSeekUserAgent={nodeSeekMediaUserAgent}
                   styles={styles}
                 />

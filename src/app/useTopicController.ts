@@ -53,9 +53,10 @@ import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerific
 import { isDiscourseSource } from '../sourceCatalog';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import {
-  emptyForumCredentialScope,
+  initialForumSessionEpochs,
   forumQueryKeys,
-  type ForumCredentialScope
+  type ForumIdentityBarrierSource,
+  type ForumSessionEpochs
 } from './serverState';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
@@ -138,7 +139,8 @@ export function hasNextReplyPage({
 export function useTopicController({
   changeScreen,
   commitReaderData,
-  credentialScope = emptyForumCredentialScope,
+  identityBarriers = [],
+  sessionEpochs = initialForumSessionEpochs,
   getCurrentScreen,
   notify,
   onNodeSeekTopicVerificationRequired,
@@ -158,7 +160,8 @@ export function useTopicController({
     mutationReason: ReaderDataMutationReason,
     updater: (current: ReaderData) => ReaderData
   ) => void;
-  credentialScope?: ForumCredentialScope;
+  identityBarriers?: readonly ForumIdentityBarrierSource[];
+  sessionEpochs?: ForumSessionEpochs;
   getCurrentScreen: () => Screen;
   notify: (message: string) => void;
   onNodeSeekTopicVerificationRequired: (message: string, recovery: LinuxDoReadRecovery) => void;
@@ -198,16 +201,21 @@ export function useTopicController({
   const selectedSource = selectedTopic?.source || 'v2ex';
   const selectedTopicId = selectedTopic?.id || '';
   const selectedTopicKey = selectedTopic ? topicKey(selectedTopic) : '';
-  const enabled = Boolean(selectedTopic && screen === 'topic');
+  const selectedIdentityPending = Boolean(
+    selectedTopic
+    && selectedTopic.source !== 'v2ex'
+    && identityBarriers.includes(selectedTopic.source)
+  );
+  const enabled = Boolean(selectedTopic && screen === 'topic' && !selectedIdentityPending);
   const topicQueryKey = useMemo(() => forumQueryKeys.topic({
     source: selectedSource,
     topicId: selectedTopicId,
-    scope: credentialScope
+    scope: sessionEpochs
   }), [
-    credentialScope.linuxdo,
-    credentialScope.nodeseek,
-    credentialScope.xiaoyinsi,
-    credentialScope.yaohuo,
+    sessionEpochs.linuxdo,
+    sessionEpochs.nodeseek,
+    sessionEpochs.xiaoyinsi,
+    sessionEpochs.yaohuo,
     selectedSource,
     selectedTopicId
   ]);
@@ -453,9 +461,11 @@ export function useTopicController({
         source: reference.source,
         topicId: reference.topicId,
         postNumber: reference.postNumber,
-        scope: credentialScope
+        scope: sessionEpochs
       }),
-      enabled: enabled && isDiscourseSource(reference.source),
+      enabled: enabled
+        && isDiscourseSource(reference.source)
+        && !identityBarriers.includes(reference.source),
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const trace = beginDiagnosticTrace(
           'reply',
@@ -519,7 +529,7 @@ export function useTopicController({
         source: reference.source,
         topicId: reference.topicId,
         postNumber: reference.postNumber,
-        scope: credentialScope
+        scope: sessionEpochs
       });
       handleReadError(reference.source, result.error, {
         queryKey,
@@ -533,11 +543,11 @@ export function useTopicController({
         }
       });
     });
-  }, [credentialScope, handleReadError, interactiveQuoteReferenceKeys, queryClient, quoteQueries, quoteReferences, selectedTopicKey, topicCommands]);
+  }, [sessionEpochs, handleReadError, interactiveQuoteReferenceKeys, queryClient, quoteQueries, quoteReferences, selectedTopicKey, topicCommands]);
 
   const cancelTopicQueries = useCallback((topic: Topic | null = selectedTopic) => {
     if (topic) {
-      const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: credentialScope });
+      const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: sessionEpochs });
       void queryClient.cancelQueries({ queryKey: key });
     }
     Object.values(quoteRequests).forEach(({ reference }) => {
@@ -546,12 +556,12 @@ export function useTopicController({
           source: reference.source,
           topicId: reference.topicId,
           postNumber: reference.postNumber,
-          scope: credentialScope
+          scope: sessionEpochs
         }),
         exact: true
       });
     });
-  }, [credentialScope, queryClient, quoteRequests, selectedTopic]);
+  }, [sessionEpochs, queryClient, quoteRequests, selectedTopic]);
 
   const openTopic = useCallback(async (topic: Topic, refresh = false): Promise<LinuxDoReadResumeOutcome> => {
     const currentScreen = getCurrentScreen();
@@ -573,7 +583,7 @@ export function useTopicController({
     topicCommands.select(topic);
     if (currentScreen !== 'topic' || !reopenExistingTopicScreen) changeScreen('topic');
     if (refresh) {
-      const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: credentialScope });
+      const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: sessionEpochs });
       await queryClient.invalidateQueries({ queryKey: key, exact: true });
       await queryClient.invalidateQueries({ queryKey: forumQueryKeys.replies(key), exact: true });
     }
@@ -581,7 +591,7 @@ export function useTopicController({
   }, [
     cancelTopicQueries,
     changeScreen,
-    credentialScope,
+    sessionEpochs,
     getCurrentScreen,
     pushTopicScreen,
     queryClient,
@@ -595,7 +605,7 @@ export function useTopicController({
   ]);
 
   const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!selectedTopic) return 'stale';
+    if (!selectedTopic || selectedIdentityPending) return 'stale';
     const result = await detailQuery.refetch();
     if (result.error) return readOutcome(selectedTopic.source, result.error);
     if (result.data) {
@@ -606,12 +616,12 @@ export function useTopicController({
     }
     notify('主题已更新');
     return 'completed';
-  }, [detailQuery.refetch, notify, queryClient, repliesQueryKey, selectedTopic]);
+  }, [detailQuery.refetch, notify, queryClient, repliesQueryKey, selectedIdentityPending, selectedTopic]);
 
   const refreshTopicReplies = useCallback(async (
     options: TopicRepliesRefreshOptions = {}
   ): Promise<LinuxDoReadResumeOutcome> => {
-    if (!selectedTopic || !topicDetail) return 'stale';
+    if (!selectedTopic || !topicDetail || selectedIdentityPending) return 'stale';
     if (selectedTopic.source === 'v2ex') {
       const trace = beginDiagnosticTrace('reply', 'refresh', { source: 'v2ex' });
       const outcome = await refreshWholeTopic();
@@ -780,6 +790,7 @@ export function useTopicController({
     repliesQueryKey,
     replyNextOffset,
     replyNextPage,
+    selectedIdentityPending,
     selectedTopic,
     sourceGateway,
     topicDetail,
@@ -788,14 +799,14 @@ export function useTopicController({
   ]);
 
   const loadMoreReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!selectedTopic) return 'stale';
+    if (!selectedTopic || selectedIdentityPending) return 'stale';
     if (!repliesQuery.hasNextPage || repliesQuery.isFetchingNextPage) return 'completed';
     const result = await repliesQuery.fetchNextPage();
     if (result.error) return readOutcome(selectedTopic.source, result.error);
     const loaded = result.data?.pages.at(-1)?.items.length || 0;
     notify(`已加载 ${loaded} 条回复`);
     return 'completed';
-  }, [notify, repliesQuery.fetchNextPage, repliesQuery.hasNextPage, repliesQuery.isFetchingNextPage, selectedTopic]);
+  }, [notify, repliesQuery.fetchNextPage, repliesQuery.hasNextPage, repliesQuery.isFetchingNextPage, selectedIdentityPending, selectedTopic]);
 
   const toggleLoadedQuotedPost = useCallback(async ({
     instanceKey,
@@ -803,6 +814,9 @@ export function useTopicController({
     quotedPost,
     reference
   }: ToggleTopicBodyQuoteOptions): Promise<LinuxDoReadResumeOutcome> => {
+    if (reference.source !== 'v2ex' && identityBarriers.includes(reference.source)) {
+      return 'stale';
+    }
     if (!prefetch && topicQuotes.isExpanded(instanceKey)) {
       topicQuotes.changeExpanded(instanceKey, false);
       return 'completed';
@@ -818,7 +832,7 @@ export function useTopicController({
       source: reference.source,
       topicId: reference.topicId,
       postNumber: reference.postNumber,
-      scope: credentialScope
+      scope: sessionEpochs
     });
     const queryState = queryClient.getQueryState(queryKey);
     if (!quotedPost && queryState?.status === 'error') {
@@ -831,7 +845,7 @@ export function useTopicController({
       topicQuotes.changeExpanded(instanceKey, true);
     }
     return 'completed';
-  }, [credentialScope, notify, queryClient, topicQuotes]);
+  }, [identityBarriers, sessionEpochs, notify, queryClient, topicQuotes]);
 
   const toggleTopicBodyQuote = useCallback((options: ToggleTopicBodyQuoteOptions) => (
     toggleLoadedQuotedPost(options)
@@ -876,7 +890,7 @@ export function useTopicController({
     replyNextPage,
     toggleReplyQuote,
     toggleTopicBodyQuote,
-    topicBusy: detailQuery.isPending || (!topicDetail && detailQuery.isFetching),
+    topicBusy: enabled && (detailQuery.isPending || (!topicDetail && detailQuery.isFetching)),
     topicDetail,
     topicError,
     topicFavorite,

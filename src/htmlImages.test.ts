@@ -116,6 +116,19 @@ describe('Android HTML image preview helpers', () => {
     expect(imageRequestHeadersForUrl('data:image/png;base64,abc')).toBeUndefined();
   });
 
+  it('[REG-ACCOUNT-031] namespaces Expo image cache entries by session epoch', () => {
+    const url = 'https://www.nodeseek.com/uploads/private.png';
+
+    expect(imageSourceFromUrl(url, undefined, 'Node UA', 'nodeseek:4')).toMatchObject({
+      cacheKey: `nodeseek:4:${url}`,
+      uri: url
+    });
+    expect(imageSourceFromUrl(url, undefined, 'Node UA', 'nodeseek:5')).toMatchObject({
+      cacheKey: `nodeseek:5:${url}`,
+      uri: url
+    });
+  });
+
   it('keeps Imgur topic images on their original URL', () => {
     expect(imageSourceFromUrl('https://i.imgur.com/hKWwFrX.jpeg')).toEqual({
       uri: 'https://i.imgur.com/hKWwFrX.jpeg'

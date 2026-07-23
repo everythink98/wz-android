@@ -11,7 +11,10 @@ import {
   beginNodeImageApiKeyAuthorization,
   clearNodeImageApiKey,
   loadNodeImageApiKey,
+  loadNodeImageApiKeyCredential,
+  nodeImageApiKeyUseStatus,
   NODEIMAGE_API_KEY_STORAGE_KEY,
+  confirmNodeImageApiKeyOwnership,
   restoreNodeImageApiKeyAfterCanceledAuthorization,
   saveNodeImageApiKeyForGeneration,
   saveNodeImageApiKey
@@ -62,13 +65,21 @@ describe('NodeImage credential persistence', () => {
     });
 
     const generation = beginNodeImageApiKeyAuthorization();
-    const saving = saveNodeImageApiKeyForGeneration(generation, 'late-authorized-key');
+    const saving = saveNodeImageApiKeyForGeneration(
+      generation,
+      'late-authorized-key',
+      'nodeseek:alice'
+    );
     await authSaveStarted.promise;
     const restoring = restoreNodeImageApiKeyAfterCanceledAuthorization('previous-key');
     allowAuthSave.resolve();
     await Promise.all([saving, restoring]);
 
-    expect(values.get(NODEIMAGE_API_KEY_STORAGE_KEY)).toBe('previous-key');
+    expect(JSON.parse(values.get(NODEIMAGE_API_KEY_STORAGE_KEY) || '')).toEqual({
+      apiKey: 'previous-key',
+      ownership: { kind: 'unverified' },
+      version: 1
+    });
   });
 
   it('REG-ACCOUNT-010 retries an old read after a newer key is saved', async () => {
@@ -97,5 +108,50 @@ describe('NodeImage credential persistence', () => {
 
     await expect(loading).resolves.toBe('new-key');
     expect(readCount).toBe(2);
+  });
+
+  it('[REG-WRITE-023] treats a legacy plain-text or manually entered key as unverified', async () => {
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue('legacy-key');
+
+    const credential = await loadNodeImageApiKeyCredential();
+
+    expect(credential).toEqual({
+      apiKey: 'legacy-key',
+      ownership: { kind: 'unverified' },
+      version: 1
+    });
+    expect(nodeImageApiKeyUseStatus(credential, 'nodeseek:alice')).toBe('confirmation-required');
+  });
+
+  it('[REG-WRITE-023] binds an automatically authorized key to the confirmed NodeSeek identity', async () => {
+    const values = new Map<string, string>();
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      values.set(key, value);
+    });
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
+    const generation = beginNodeImageApiKeyAuthorization();
+
+    await saveNodeImageApiKeyForGeneration(generation, 'owned-key', 'nodeseek:alice');
+    const credential = await loadNodeImageApiKeyCredential();
+
+    expect(nodeImageApiKeyUseStatus(credential, 'nodeseek:alice')).toBe('usable');
+    expect(nodeImageApiKeyUseStatus(credential, 'nodeseek:bob')).toBe('identity-mismatch');
+  });
+
+  it('[REG-WRITE-023] records explicit confirmation without exposing or replacing the key', async () => {
+    const values = new Map<string, string>([[NODEIMAGE_API_KEY_STORAGE_KEY, 'legacy-key']]);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      values.set(key, value);
+    });
+
+    await confirmNodeImageApiKeyOwnership('nodeseek:alice');
+    const credential = await loadNodeImageApiKeyCredential();
+
+    expect(credential).toEqual({
+      apiKey: 'legacy-key',
+      ownership: { kind: 'verified', identityKey: 'nodeseek:alice' },
+      version: 1
+    });
   });
 });

@@ -270,6 +270,7 @@ function HtmlRendererIdentityHarness({
   topicDetail: TopicDetail;
 }) {
   const rendering = useHtmlRenderingController({
+    mediaSessionIdentity: `${topicDetail.source}:0`,
     onOpenExternalUrl: noop,
     onOpenImagePreview: noop,
     onOpenTopic: noop,
@@ -387,6 +388,7 @@ function TopicFilterHarness({
         htmlTagsStyles={htmlStyles.htmlTagsStyles}
         getDiscourseEmojiUrls={getDiscourseEmojiUrls}
         inlineSizedImageUrls={{}}
+        mediaSessionIdentity={`${topicDetail?.source || 'public'}:0`}
         loadedQuotedReplies={loadedQuotedReplies}
         loadingMoreReplies={loadingMoreReplies}
         loadingQuotedFloors={loadingQuotedFloors}

@@ -29,7 +29,7 @@ import {
   XiaoyinsiAuthError,
   type XiaoyinsiPendingAuthorization
 } from '../xiaoyinsiAuth';
-import { appQueryClient, forumQueryKeys, type ForumCredentialScope } from './serverState';
+import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
 
 export type XiaoyinsiAuthPhase =
   | 'idle'
@@ -126,15 +126,17 @@ async function checkXiaoyinsiAuthorization({
 }
 
 export function useXiaoyinsiAuthController({
-  credentialScope,
+  sessionEpochs,
   dispatchSiteSessionEvent,
   fetcher,
+  isIdentityPending,
   notify,
   sourceGateway
 }: {
-  credentialScope: ForumCredentialScope;
+  sessionEpochs: ForumSessionEpochs;
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   fetcher: Fetcher;
+  isIdentityPending?: () => boolean;
   notify: (message: string) => void;
   sourceGateway: Pick<SourceGateway, 'getLevelProfile'>;
 }) {
@@ -154,7 +156,7 @@ export function useXiaoyinsiAuthController({
 
   const levelQuery = useQuery({
     enabled: false,
-    queryKey: forumQueryKeys.levelProfile({ credentialScope, source: 'xiaoyinsi' }),
+    queryKey: forumQueryKeys.levelProfile({ sessionEpochs, source: 'xiaoyinsi' }),
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
       markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
@@ -393,6 +395,9 @@ export function useXiaoyinsiAuthController({
   }, [refreshAuthorization]);
 
   const refreshLevel = useCallback(async () => {
+    if (isIdentityPending?.()) {
+      return false;
+    }
     const result = await levelQuery.refetch({ cancelRefetch: false });
     if (result.error) return false;
     if (result.data) {
@@ -400,7 +405,7 @@ export function useXiaoyinsiAuthController({
       return true;
     }
     return false;
-  }, [levelQuery.refetch, notify]);
+  }, [isIdentityPending, levelQuery.refetch, notify]);
 
   useEffect(() => {
     mountedRef.current = true;

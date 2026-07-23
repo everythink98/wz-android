@@ -176,23 +176,16 @@ async function fetchYaohuoActionHtml({
 }
 
 export async function runYaohuoAction({
-  cookieHeader,
   request,
   fetcher = fetch,
   signal,
   timeoutMs
 }: {
-  cookieHeader: string;
   request: YaohuoActionRequest;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<YaohuoActionResult> {
-  const cleanCookie = cookieHeader.trim();
-  if (!cleanCookie) {
-    throw yaohuoLoginRequiredError('expired');
-  }
-
   let { html, responseUrl } = await fetchYaohuoActionHtml({
     request,
     fetcher,

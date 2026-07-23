@@ -24,10 +24,8 @@ import {
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
 import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from './googleSearchFallback';
 import {
-  canStoreLinuxDoLogin,
-  DEFAULT_LINUXDO_ANDROID_USER_AGENT,
-  parseLinuxDoDocumentCookie
-} from './linuxdoCookieBridge';
+  DEFAULT_LINUXDO_ANDROID_USER_AGENT
+} from './linuxdoSession';
 import {
   LINUXDO_BASE_URL as BASE_URL,
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
@@ -53,7 +51,7 @@ interface LinuxDoOptions {
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
-  linuxDoAccess?: { cookieHeader?: string; userAgent?: string };
+  linuxDoAccess?: { authenticated?: boolean; userAgent?: string };
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -79,7 +77,6 @@ type LinuxDoSearchOptions = LinuxDoOptions & {
 };
 
 interface LinuxDoCurrentUserOptions extends LinuxDoOptions {
-  linuxDoCookie?: string;
   linuxDoUserAgent?: string;
 }
 
@@ -460,7 +457,7 @@ function linuxDoHeaders(
   referer = `${BASE_URL}/latest`,
   csrfToken?: string
 ) {
-  const loggedIn = canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(access?.cookieHeader));
+  const loggedIn = access?.authenticated === true;
   return {
     Accept: 'application/json, text/javascript, */*; q=0.01',
     Referer: referer,
@@ -980,7 +977,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   const page = options.page || 1;
   const cleanQuery = query.trim();
   const access = options.linuxDoAccess;
-  if (!options.authenticated || !canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(access?.cookieHeader))) {
+  if (!options.authenticated || access?.authenticated !== true) {
     return searchLinuxDoGoogle(cleanQuery, options);
   }
   const searchReferer = `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}`;
@@ -1145,10 +1142,6 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
 
 export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOptions = {}): Promise<UserProfile> {
   options = linuxDoOptionsWithBrowserIntent(options, 'account', 'background');
-  const cookieHeader = options.linuxDoCookie?.trim();
-  if (!cookieHeader) {
-    throw new Error('请先登录 linux.do');
-  }
   const response = await fetchWithTimeout(`${BASE_URL}/session/current.json`, withBrowserFetchIntent({
     headers: {
       Accept: 'application/json, text/javascript, */*; q=0.01',

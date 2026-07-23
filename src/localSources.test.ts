@@ -1,23 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@react-native-cookies/cookies', () => ({
-  default: {
-    flush: vi.fn(async () => undefined),
-    get: vi.fn(async () => ({})),
-    clearByName: vi.fn(async () => true)
-  }
-}));
-
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn(async () => undefined),
   deleteItemAsync: vi.fn(async () => undefined)
-}));
-
-vi.mock('react-native', () => ({
-  NativeModules: {
-    LinuxDoCookieModule: {}
-  }
 }));
 
 import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
@@ -114,12 +100,12 @@ function html(value: string) {
   });
 }
 
-function testLinuxDoAccess(cookieHeader = 'cf_clearance=clearance; _t=login; _forum_session=session') {
-  return { cookieHeader, userAgent: 'LinuxDo WebView UA' };
+function testLinuxDoAccess() {
+  return { authenticated: true, userAgent: 'LinuxDo WebView UA' };
 }
 
-function testLinuxDoDiscourseAuth(cookieHeader?: string) {
-  return { linuxdo: testLinuxDoAccess(cookieHeader) };
+function testLinuxDoDiscourseAuth() {
+  return { linuxdo: testLinuxDoAccess() };
 }
 
 describe('Android local sources', () => {
@@ -2395,7 +2381,7 @@ describe('Android local sources', () => {
       return html('<ul class="post-list"><li><a href="/post-101-1">latest only</a></li></ul>');
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekCookie: 'session=login' });
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items).toHaveLength(1);
     expect(search.items[0]).toMatchObject({
@@ -2436,7 +2422,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekCookie: 'session=login' });
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['606']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -2459,7 +2445,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'AI', fetcher, nodeSeekCookie: 'session=login' });
+    const search = await searchTopics({ source: 'nodeseek', query: 'AI', fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['808']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -2485,7 +2471,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: '安卓手机免', fetcher, nodeSeekCookie: 'session=login' });
+    const search = await searchTopics({ source: 'nodeseek', query: '安卓手机免', fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['701', '702']);
   });
@@ -2597,7 +2583,7 @@ describe('Android local sources', () => {
       return html(`<script>${latestPayload}</script>`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'xyz', fetcher, nodeSeekCookie: 'session=login' });
+    const search = await searchTopics({ source: 'nodeseek', query: 'xyz', fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items).toEqual([]);
     const callUrls = fetcher.mock.calls.map((call) => call[0]);
@@ -2622,7 +2608,7 @@ describe('Android local sources', () => {
       <div class="empty-state">没有找到相关内容</div>
     `));
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekCookie: 'session=login' });
+    const search = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items).toEqual([]);
   });
@@ -2635,7 +2621,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(searchTopics({ source: 'nodeseek', query: 'retry', fetcher, nodeSeekCookie: 'session=login' })).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
+    await expect(searchTopics({ source: 'nodeseek', query: 'retry', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
   });
 
   it('surfaces NodeSeek site search failures instead of filtering the latest feed', async () => {
@@ -2655,7 +2641,7 @@ describe('Android local sources', () => {
       return html(`<script>${latestPayload}</script>`);
     });
 
-    await expect(searchTopics({ source: 'nodeseek', query: 'failure', fetcher, nodeSeekCookie: 'session=login' })).rejects.toThrow('NodeSeek search failed');
+    await expect(searchTopics({ source: 'nodeseek', query: 'failure', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow('NodeSeek search failed');
     const callUrls = fetcher.mock.calls.map((call) => call[0]);
     expect(callUrls).toContain('https://www.nodeseek.com/search?q=failure');
     expect(callUrls).not.toContain('https://www.nodeseek.com/');
@@ -2685,7 +2671,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekCookie: 'session=login' });
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['202']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -2716,8 +2702,8 @@ describe('Android local sources', () => {
       `);
     });
 
-    const first = await searchTopics({ source: 'nodeseek', query: 'GPT', limit: 1, fetcher, nodeSeekCookie: 'session=login' });
-    const second = await searchTopics({ source: 'nodeseek', query: 'GPT', page: first.nextPage ?? 2, limit: 1, fetcher, nodeSeekCookie: 'session=login' });
+    const first = await searchTopics({ source: 'nodeseek', query: 'GPT', limit: 1, fetcher, nodeSeekAuthenticated: true });
+    const second = await searchTopics({ source: 'nodeseek', query: 'GPT', page: first.nextPage ?? 2, limit: 1, fetcher, nodeSeekAuthenticated: true });
 
     expect(first.items.map((item) => item.id)).toEqual(['202']);
     expect(first.hasMore).toBe(true);
@@ -2753,7 +2739,7 @@ describe('Android local sources', () => {
       </ul>
     `));
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', page: 2, limit: 2, fetcher, nodeSeekCookie: 'session=login' });
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', page: 2, limit: 2, fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items.map((item) => item.id)).toEqual(['199', '198']);
   });
@@ -3271,7 +3257,6 @@ describe('Android local sources', () => {
     await getFeed({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'cf_clearance=clearance',
       nodeSeekUserAgent: 'NodeSeek WebView UA'
     });
 
@@ -3331,10 +3316,7 @@ describe('Android local sources', () => {
 
     await getFeed({ source: 'linuxdo', fetcher: visibleFetcher });
     await getCategories({ source: 'linuxdo', fetcher: visibleFetcher });
-    await getLinuxDoCurrentUserProfile({
-      fetcher: accountFetcher,
-      linuxDoCookie: '_t=login'
-    });
+    await getLinuxDoCurrentUserProfile({ fetcher: accountFetcher });
 
     const visibleIntents = (visibleFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)
       .map(([, init]) => browserFetchIntentFromInit(init));
@@ -3932,8 +3914,8 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const aiSearch = await searchTopics({ source: 'nodeseek', query: 'ai', fetcher, nodeSeekCookie: 'session=login' });
-    const codexSearch = await searchTopics({ source: 'nodeseek', query: 'codex', fetcher, nodeSeekCookie: 'session=login' });
+    const aiSearch = await searchTopics({ source: 'nodeseek', query: 'ai', fetcher, nodeSeekAuthenticated: true });
+    const codexSearch = await searchTopics({ source: 'nodeseek', query: 'codex', fetcher, nodeSeekAuthenticated: true });
 
     expect(aiSearch.items.map((item) => item.id)).toEqual(['809']);
     expect(codexSearch.items.map((item) => item.id)).toEqual(['810']);
@@ -3964,7 +3946,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const result = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekCookie: 'session=login' });
+    const result = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekAuthenticated: true });
 
     expect(result.items).toEqual([]);
     expect(webViewFetcher).not.toHaveBeenCalled();
@@ -3985,7 +3967,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const result = await searchTopics({ source: 'nodeseek', query: 'soft', fetcher, nodeSeekCookie: 'session=login' });
+    const result = await searchTopics({ source: 'nodeseek', query: 'soft', fetcher, nodeSeekAuthenticated: true });
 
     expect(result.items.map((item) => item.id)).toEqual(['743018']);
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
@@ -4009,7 +3991,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const result = await searchTopics({ source: 'nodeseek', query: 'cf', fetcher, nodeSeekCookie: 'session=login' });
+    const result = await searchTopics({ source: 'nodeseek', query: 'cf', fetcher, nodeSeekAuthenticated: true });
 
     expect(result.items.map((item) => item.id)).toEqual(['811']);
     expect(normalFetcher).toHaveBeenCalledTimes(1);
@@ -5160,7 +5142,7 @@ describe('Android local sources', () => {
         sort: 'postTime'
       },
       fetcher,
-      nodeSeekCookie: 'session=login'
+      nodeSeekAuthenticated: true
     });
 
     expect(fetcher.mock.calls.length).toBeGreaterThan(0);

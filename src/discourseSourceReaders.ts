@@ -43,7 +43,7 @@ import type {
 
 export interface DiscourseReadAuthMap {
   linuxdo: {
-    cookieHeader?: string;
+    authenticated?: boolean;
     userAgent?: string;
   };
   xiaoyinsi: XiaoyinsiApiCredentials;
@@ -140,7 +140,6 @@ const discourseSourceReaders = {
       const linuxDoAuth = auth?.linuxdo;
       return getLinuxDoCurrentUserProfile({
         ...options,
-        linuxDoCookie: linuxDoAuth?.cookieHeader,
         linuxDoUserAgent: linuxDoAuth?.userAgent
       });
     },

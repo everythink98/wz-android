@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Image as RNImage } from 'react-native';
 import { ImagePreviewModal } from '../../src/components/ImagePreviewModal';
 import { createEmptyReaderData } from '../../src/readerData';
 import { createStyles, createTheme } from '../../src/theme';
@@ -48,19 +47,6 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
 describe('Image preview', () => {
-  beforeEach(() => {
-    jest.spyOn(RNImage, 'getSize').mockImplementation(((...args: unknown[]) => {
-      const success = args[1];
-      if (typeof success === 'function') {
-        success(1200, 800);
-      }
-    }) as typeof RNImage.getSize);
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
   it('navigates a multi-image preview and exposes save, select and close actions', async () => {
     const onClose = jest.fn<() => void>();
     const onNext = jest.fn<() => void>();
@@ -77,6 +63,7 @@ describe('Image preview', () => {
           ],
           index: 1
         }}
+        mediaSessionIdentity="public:0"
         styles={styles}
         theme={theme}
         onClose={onClose}
@@ -110,6 +97,7 @@ describe('Image preview', () => {
       const view = await render(
         <ImagePreviewModal
           preview={{ urls: ['https://example.com/broken.png'], index: 0 }}
+          mediaSessionIdentity="public:0"
           styles={styles}
           theme={theme}
           onClose={jest.fn()}
@@ -142,6 +130,7 @@ describe('Image preview', () => {
       const view = await render(
         <ImagePreviewModal
           preview={{ urls: [imageUrl], index: 0 }}
+          mediaSessionIdentity="public:0"
           styles={styles}
           theme={theme}
           onClose={jest.fn()}
@@ -167,12 +156,10 @@ describe('Image preview', () => {
 
   it('REG-TOPIC-019 keeps NodeSeek media credentials in the full-screen preview request', async () => {
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
-    const sizeWithHeaders = jest.spyOn(RNImage, 'getSizeWithHeaders').mockImplementation(((_uri, _headers, success) => {
-      success(1200, 800);
-    }) as typeof RNImage.getSizeWithHeaders);
     const view = await render(
       <ImagePreviewModal
         preview={{ urls: [imageUrl], index: 0 }}
+        mediaSessionIdentity="nodeseek:4"
         nodeSeekMediaUserAgent="WZ-Preview-Test"
         styles={styles}
         theme={theme}
@@ -184,11 +171,8 @@ describe('Image preview', () => {
       />
     );
 
-    expect(sizeWithHeaders).toHaveBeenCalledWith(imageUrl, expect.objectContaining({
-      'User-Agent': 'WZ-Preview-Test'
-    }), expect.any(Function), expect.any(Function));
-    expect(sizeWithHeaders.mock.calls[0]?.[1]).not.toHaveProperty('Cookie');
     expect(view.getByTestId('active-preview-image').props.source).toEqual(expect.objectContaining({
+      cacheKey: `nodeseek:4:${imageUrl}`,
       headers: expect.objectContaining({
         'User-Agent': 'WZ-Preview-Test'
       })
@@ -210,6 +194,7 @@ describe('Image preview', () => {
       const view = await render(
         <ImagePreviewModal
           preview={{ urls: [firstUrl, secondUrl], index: 0 }}
+          mediaSessionIdentity="public:0"
           styles={styles}
           theme={theme}
           onClose={jest.fn()}

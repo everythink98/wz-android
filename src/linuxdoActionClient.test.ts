@@ -1,23 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@react-native-cookies/cookies', () => ({
-  default: {
-    flush: vi.fn(async () => undefined),
-    get: vi.fn(async () => ({})),
-    clearByName: vi.fn(async () => true)
-  }
-}));
-
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn(async () => undefined),
   deleteItemAsync: vi.fn(async () => undefined)
-}));
-
-vi.mock('react-native', () => ({
-  NativeModules: {
-    LinuxDoCookieModule: {}
-  }
 }));
 
 import { checkLinuxDoLoginAccess, runLinuxDoAction } from './linuxdoActionClient';
@@ -41,7 +27,6 @@ describe('linux.do action client', () => {
     });
 
     await runLinuxDoAction({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       userAgent: 'LinuxDo WebView UA',
       request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher
@@ -72,15 +57,17 @@ describe('linux.do action client', () => {
     });
   });
 
-  it('requires a linux.do login cookie for write actions', async () => {
+  it('lets the server classify an unavailable managed linux.do session', async () => {
+    const fetcher = vi.fn(async () => new Response('{}', { status: 401 }));
+
     await expect(runLinuxDoAction({
-      cookieHeader: 'cf_clearance=clearance',
       request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
-      fetcher: vi.fn()
+      fetcher
     })).rejects.toMatchObject({
       source: 'linuxdo',
       loginRequired: true
     });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('does not treat ordinary permission failures as expired login', async () => {
@@ -92,7 +79,6 @@ describe('linux.do action client', () => {
     });
 
     await expect(runLinuxDoAction({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher
     })).rejects.toMatchObject({
@@ -109,7 +95,6 @@ describe('linux.do action client', () => {
     }));
 
     const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       userAgent: 'LinuxDo WebView UA',
       fetcher
     });
@@ -135,21 +120,19 @@ describe('linux.do action client', () => {
     expect((fetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
-  it('REG-LINUXDO-004 rejects stale login cookies when the current session is anonymous', async () => {
+  it('[REG-ACCOUNT-031] keeps an uncontracted 200/null current-session payload unknown', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       csrf: 'anonymous-csrf-token',
       current_user: null
     }), { status: 200 }));
 
     const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=expired; _forum_session=anonymous',
       fetcher
     });
 
     expect(result).toEqual({
       ok: false,
-      loginRequired: true,
-      message: 'linux.do 登录已失效，请重新登录'
+      message: 'linux.do 状态暂时无法确认'
     });
   });
 
@@ -157,7 +140,6 @@ describe('linux.do action client', () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ csrf: 'present-but-no-user-field' }), { status: 200 }));
 
     const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       fetcher
     });
 
@@ -171,7 +153,6 @@ describe('linux.do action client', () => {
     const fetcher = vi.fn(async () => new Response('', { status: 404 }));
 
     const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=expired; _forum_session=anonymous',
       fetcher
     });
 
@@ -189,7 +170,6 @@ describe('linux.do action client', () => {
     }));
 
     const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=expired; _forum_session=anonymous',
       fetcher
     });
 
@@ -203,7 +183,6 @@ describe('linux.do action client', () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['请求过于频繁'] }), { status: 429 }));
 
     const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       fetcher
     });
 
@@ -220,7 +199,6 @@ describe('linux.do action client', () => {
     }));
 
     const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       fetcher
     });
 
@@ -234,7 +212,6 @@ describe('linux.do action client', () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['请先登录'] }), { status: 401 }));
 
     const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       fetcher
     });
 

@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import {
   appQueryClient,
-  emptyForumCredentialScope,
-  type ForumCredentialScope
+  initialForumSessionEpochs,
+  type ForumIdentityBarrierSource,
+  type ForumSessionEpochs
 } from '../../src/app/serverState';
 import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
 import { useUserController } from '../../src/app/useUserController';
@@ -29,16 +30,19 @@ const user: UserProfile = {
 };
 
 function renderUserController({
-  getCredentialScope = () => emptyForumCredentialScope,
+  getIdentityBarriers = () => [],
+  getSessionEpochs = () => initialForumSessionEpochs,
   getUserProfile,
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
 }: {
-  getCredentialScope?: () => ForumCredentialScope;
+  getIdentityBarriers?: () => ForumIdentityBarrierSource[];
+  getSessionEpochs?: () => ForumSessionEpochs;
   getUserProfile: SourceGateway['getUserProfile'];
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
 }) {
   return renderHook(() => useUserController({
-    credentialScope: getCredentialScope(),
+    identityBarriers: getIdentityBarriers(),
+    sessionEpochs: getSessionEpochs(),
     notify: jest.fn(),
     onOpenUserScreen: jest.fn(),
     readerData: createEmptyReaderData(),
@@ -77,6 +81,41 @@ describe('user query controller', () => {
 
     expect(getUserProfile).toHaveBeenCalledTimes(1);
     expect(getUserProfile.mock.calls[0]?.[0]).not.toHaveProperty('cursorType');
+  });
+
+  it('[REG-ACCOUNT-031] keeps a loaded user profile read-only while its identity is pending', async () => {
+    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => user);
+    const hook = await renderUserController({
+      getIdentityBarriers: () => identityBarriers,
+      getUserProfile
+    });
+
+    await act(async () => { await hook.result.current.openUser(user); });
+    await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({
+      source: user.source,
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName
+    }));
+
+    identityBarriers = ['nodeseek'];
+    await act(async () => {
+      hook.rerender(undefined);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await hook.result.current.openUser(user, true);
+      await hook.result.current.loadMoreUserTopics();
+    });
+
+    expect(getUserProfile).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.userProfile).toMatchObject({
+      source: user.source,
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName
+    });
   });
 
   it('REG-USER-001 keeps topic and reply cursors independent', async () => {
@@ -208,26 +247,49 @@ describe('user query controller', () => {
 
   it('isolates a replacement credential scope from the previous cached profile', async () => {
     const replacement = Promise.withResolvers<UserProfile>();
+    const oldRouteProfile: UserProfile = {
+      ...user,
+      avatar: 'https://www.nodeseek.com/avatar/alice-old.png',
+      bio: '账号 A 的个人简介',
+      displayName: '账号 A 看到的 Alice',
+      levelLabel: 'LV99',
+      topics: [{
+        source: 'nodeseek',
+        id: 'old-topic',
+        title: '账号 A 的旧主题',
+        author: 'alice',
+        url: 'https://www.nodeseek.com/post-old-1',
+        createdAt: '2026-07-20T00:00:00.000Z',
+        replyCount: 0
+      }]
+    };
     const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
-      .mockResolvedValueOnce(user)
+      .mockResolvedValueOnce(oldRouteProfile)
       .mockImplementationOnce(async () => replacement.promise);
-    let credentialScope = emptyForumCredentialScope;
-    const hook = await renderUserController({ getCredentialScope: () => credentialScope, getUserProfile });
+    let sessionEpochs = initialForumSessionEpochs;
+    const hook = await renderUserController({ getSessionEpochs: () => sessionEpochs, getUserProfile });
 
-    await act(async () => { void hook.result.current.openUser(user); });
+    await act(async () => { void hook.result.current.openUser(oldRouteProfile); });
     await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({
       source: 'nodeseek',
       id: '1',
       username: 'alice',
-      displayName: 'Alice'
+      displayName: '账号 A 看到的 Alice'
     }));
 
     await act(async () => {
       resetForumSourceQueries('nodeseek', appQueryClient);
-      credentialScope = { ...credentialScope, nodeseek: credentialScope.nodeseek + 1 };
+      sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
       hook.rerender(undefined);
     });
     expect(hook.result.current.userProfile).toBeNull();
+    expect(hook.result.current.selectedUser).toEqual({
+      source: 'nodeseek',
+      id: '1',
+      username: 'alice',
+      url: 'https://www.nodeseek.com/space/1',
+      topics: []
+    });
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
 
     await act(async () => {

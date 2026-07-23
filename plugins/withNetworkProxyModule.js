@@ -10,7 +10,10 @@ function networkProxyRuntimeSource(packageName) {
   return `package ${packageName}
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.webkit.CookieManager
+import android.webkit.WebSettings
 import com.bumptech.glide.Glide
 import com.bumptech.glide.integration.okhttp3.OkHttpUrlLoader
 import com.bumptech.glide.load.model.GlideUrl
@@ -44,6 +47,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import android.util.Log
@@ -158,6 +162,15 @@ private fun isManagedCookieHost(host: String?): Boolean {
     || normalizedHost.endsWith(".yaohuo.me")
 }
 
+private fun isManagedCookieUrl(url: String): Boolean = try {
+  val uri = URI(url)
+  uri.scheme.equals("https", ignoreCase = true)
+    && uri.rawUserInfo == null
+    && isManagedCookieHost(uri.host)
+} catch (_: Exception) {
+  false
+}
+
 object NetworkProxyRuntime {
   private val lock = Any()
   private val selector = NetworkProxySelector()
@@ -215,6 +228,71 @@ object NetworkProxyRuntime {
 
   internal fun managedCookieHeaderForUrl(url: String): String? =
     cookieHandler.readCookieHeader(url)
+
+  internal fun supportsManagedCookieUrl(url: String): Boolean =
+    isManagedCookieUrl(url)
+
+  internal fun clearManagedLoginCookies(source: String): Boolean {
+    val specification = when (source) {
+      "nodeseek" -> Triple(
+        listOf("https://www.nodeseek.com/", "https://nodeseek.com/"),
+        "nodeseek.com",
+        listOf("session", "connect.sid", "sid")
+      )
+      "linuxdo" -> Triple(
+        listOf("https://linux.do/", "https://www.linux.do/"),
+        "linux.do",
+        listOf("_t", "_forum_session")
+      )
+      "yaohuo" -> Triple(
+        listOf("https://www.yaohuo.me/", "https://yaohuo.me/"),
+        "yaohuo.me",
+        listOf("sidyaohuo", "ASP.NET_SessionId", "GUID")
+      )
+      else -> throw IllegalArgumentException("不支持的 Cookie 来源")
+    }
+    val (urls, domain, names) = specification
+    val cookieManager = CookieManager.getInstance()
+    val expirations = mutableListOf<Pair<String, String>>()
+    for (url in urls) {
+      for (name in names) {
+        val expired = "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
+        expirations += url to expired
+        expirations += url to "$expired; Domain=$domain"
+      }
+    }
+    val completion = CountDownLatch(expirations.size)
+    val callbackFailure = AtomicReference<Throwable?>(null)
+    val posted = Handler(Looper.getMainLooper()).post {
+      for ((url, value) in expirations) {
+        try {
+          cookieManager.setCookie(url, value) { _ ->
+            completion.countDown()
+          }
+        } catch (error: Throwable) {
+          callbackFailure.compareAndSet(null, error)
+          completion.countDown()
+        }
+      }
+    }
+    if (!posted || !completion.await(5, TimeUnit.SECONDS)) {
+      throw IllegalStateException("等待 Cookie 删除完成超时")
+    }
+    callbackFailure.get()?.let { error ->
+      throw IllegalStateException("Cookie 删除回调失败", error)
+    }
+    cookieManager.flush()
+    return urls.all { url ->
+      val currentNames = cookieManager.getCookie(url).orEmpty()
+        .split(";")
+        .mapNotNull { part ->
+          val separator = part.indexOf("=")
+          if (separator <= 0) null else part.substring(0, separator).trim()
+        }
+        .toSet()
+      names.none { currentNames.contains(it) }
+    }
+  }
 
   fun currentLocalProxy(): Proxy? = localProxy
 
@@ -820,6 +898,7 @@ private fun isLocalDevHost(host: String): Boolean {
 function networkProxyModuleSource(packageName) {
   return `package ${packageName}
 
+import android.webkit.WebSettings
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
@@ -992,6 +1071,12 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   override fun getName(): String = "NetworkProxyModule"
 
+  override fun getConstants(): MutableMap<String, Any> = mutableMapOf(
+    "defaultWebViewUserAgent" to runCatching {
+      WebSettings.getDefaultUserAgent(reactContext)
+    }.getOrDefault("")
+  )
+
   @ReactMethod
   fun applyProxy(profile: ReadableMap?, promise: Promise) {
     worker.execute {
@@ -1035,11 +1120,31 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
-  fun getManagedCookieHeaderForUrl(url: String, promise: Promise) {
+  fun readManagedCookieHeader(exactUrl: String, promise: Promise) {
     try {
-      promise.resolve(NetworkProxyRuntime.managedCookieHeaderForUrl(url))
+      if (!NetworkProxyRuntime.supportsManagedCookieUrl(exactUrl)) {
+        promise.resolve(Arguments.createMap().apply {
+          putString("status", "unsupported")
+        })
+        return
+      }
+      promise.resolve(Arguments.createMap().apply {
+        putString("status", "ok")
+        putString("header", NetworkProxyRuntime.managedCookieHeaderForUrl(exactUrl).orEmpty())
+      })
     } catch (error: Exception) {
       promise.reject("cookie_read_failed", "无法读取当前 WebView Cookie", error)
+    }
+  }
+
+  @ReactMethod
+  fun clearManagedLoginCookies(source: String, promise: Promise) {
+    worker.execute {
+      try {
+        promise.resolve(NetworkProxyRuntime.clearManagedLoginCookies(source))
+      } catch (error: Exception) {
+        promise.reject("cookie_clear_failed", "无法清除登录 Cookie", error)
+      }
     }
   }
 

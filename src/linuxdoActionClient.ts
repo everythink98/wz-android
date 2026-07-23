@@ -3,10 +3,8 @@ import { withBrowserFetchIntent } from './browserFetchIntent';
 import type { DiscourseActionRequest } from './discourseActions';
 import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import {
-  DEFAULT_LINUXDO_ANDROID_USER_AGENT,
-  canStoreLinuxDoLogin,
-  parseLinuxDoDocumentCookie
-} from './linuxdoCookieBridge';
+  DEFAULT_LINUXDO_ANDROID_USER_AGENT
+} from './linuxdoSession';
 import { linuxDoAvatarUrl, linuxDoUserUrl } from './localLinuxdoHelpers';
 import type { UserProfile } from './types';
 
@@ -142,24 +140,18 @@ async function getCsrfToken({
 }
 
 export async function runLinuxDoAction({
-  cookieHeader,
   request,
   fetcher = fetch,
   signal,
   timeoutMs,
   userAgent
 }: {
-  cookieHeader: string;
   request: DiscourseActionRequest;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
   userAgent?: string;
 }) {
-  const cleanCookie = cookieHeader.trim();
-  if (!cleanCookie || !canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(cleanCookie))) {
-    throw linuxDoLoginRequiredError();
-  }
   const csrfToken = await getCsrfToken({ fetcher, signal, timeoutMs, userAgent });
   const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}${request.path}`, withBrowserFetchIntent({
     method: request.method,
@@ -179,26 +171,16 @@ export async function runLinuxDoAction({
 }
 
 export async function checkLinuxDoLoginAccess({
-  cookieHeader,
   fetcher = fetch,
   signal,
   timeoutMs,
   userAgent
 }: {
-  cookieHeader: string;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
   userAgent?: string;
 }) {
-  const cleanCookie = cookieHeader.trim();
-  if (!cleanCookie || !canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(cleanCookie))) {
-    return {
-      ok: false,
-      loginRequired: true,
-      message: 'linux.do 登录已失效，请重新登录'
-    };
-  }
   try {
     const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}/session/current.json`, {
       headers: {
@@ -212,9 +194,6 @@ export async function checkLinuxDoLoginAccess({
         throw linuxDoLoginRequiredError();
       }
       throw new Error(linuxDoResponseMessage(data, `linux.do 请求失败：HTTP ${response.status}`));
-    }
-    if (data.current_user === null || data.user === null) {
-      throw linuxDoLoginRequiredError();
     }
     const currentUser = linuxDoCurrentUserProfile(data);
     if (!currentUser) {

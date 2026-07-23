@@ -33,7 +33,7 @@ import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
-import type { ForumCredentialScope } from '../app/serverState';
+import type { ForumSessionEpochs } from '../app/serverState';
 import { useSearchCandidateQueries } from '../app/useSearchController';
 
 const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
@@ -203,7 +203,7 @@ function FilterTextField({
 
 function SearchFilterSheet({
   categories,
-  credentialScope,
+  sessionEpochs,
   requestsEnabled,
   source,
   searchFilters,
@@ -216,7 +216,7 @@ function SearchFilterSheet({
   onClose
 }: {
   categories: Category[];
-  credentialScope: ForumCredentialScope;
+  sessionEpochs: ForumSessionEpochs;
   requestsEnabled: boolean;
   source: Source;
   searchFilters: SearchFilterState;
@@ -313,7 +313,7 @@ function SearchFilterSheet({
 
   const normalizedUserQuery = userQuery.trim();
   const candidates = useSearchCandidateQueries({
-    credentialScope,
+    sessionEpochs,
     enabled: requestsEnabled,
     searchDiscourseTags: onSearchDiscourseTags,
     searchDiscourseUsers: onSearchDiscourseUsers,
@@ -1041,7 +1041,7 @@ function LinuxDoAiControl({
 export const SearchScreen = memo(function SearchScreen({
   busy,
   categories,
-  credentialScope,
+  sessionEpochs,
   requestsEnabled,
   query,
   recentSearches,
@@ -1071,7 +1071,7 @@ export const SearchScreen = memo(function SearchScreen({
 }: {
   busy: boolean;
   categories: Category[];
-  credentialScope: ForumCredentialScope;
+  sessionEpochs: ForumSessionEpochs;
   requestsEnabled: boolean;
   query: string;
   recentSearches: string[];
@@ -1607,7 +1607,7 @@ export const SearchScreen = memo(function SearchScreen({
       {searchSource !== 'all' ? (
         <SearchFilterSheet
           categories={categories}
-          credentialScope={credentialScope}
+          sessionEpochs={sessionEpochs}
           requestsEnabled={requestsEnabled}
           source={searchSource as Source}
           searchFilters={searchFilters}

@@ -20,7 +20,6 @@ describe('Android direct yaohuo API', () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
 
     const result = await getYaohuoFeedDirect({
-      yaohuoCookie: 'sidyaohuo=secret',
       category: '177',
       page: 2,
       limit: 30,
@@ -50,7 +49,6 @@ describe('Android direct yaohuo API', () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
 
     await getYaohuoFeedDirect({
-      yaohuoCookie: 'sidyaohuo=secret',
       category: '',
       page: 1,
       yaohuoFetcher
@@ -66,7 +64,6 @@ describe('Android direct yaohuo API', () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
 
     await getYaohuoFeedDirect({
-      yaohuoCookie: 'sidyaohuo=secret',
       page: 2,
       yaohuoFetcher
     });
@@ -99,7 +96,6 @@ describe('Android direct yaohuo API', () => {
 
     const result = await searchYaohuoDirect({
       query: '安卓手机免',
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -114,7 +110,6 @@ describe('Android direct yaohuo API', () => {
     const result = await searchYaohuoDirect({
       query: '茶馆',
       category: '177',
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -153,7 +148,6 @@ describe('Android direct yaohuo API', () => {
     const result = await searchYaohuoDirect({
       query: '免流',
       page: 2,
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -437,11 +431,17 @@ describe('Android direct yaohuo API', () => {
     });
   });
 
-  it('checks login with Android-fetched HTML and does not send the cookie to a server', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<div class="top">欢迎 <a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>'));
+  it('checks login from the exact top2 self-account navigation without sending Cookie to a server', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response(`
+      <div class="top2">
+        <a href="/myfile.aspx">我的地盘</a>
+        <a href="/bbs/userinfo.aspx?touserid=7">火友</a>
+        <a href="/bbs/book_list_search.aspx">帖子</a>
+        <a href="/bbs/messagelist.aspx">信箱</a>
+      </div>
+    `));
 
     const result = await checkYaohuoLoginDirect({
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -461,7 +461,6 @@ describe('Android direct yaohuo API', () => {
     `));
 
     const result = await checkYaohuoLoginDirect({
-      yaohuoCookie: 'sidyaohuo=stale',
       yaohuoFetcher
     });
 
@@ -485,7 +484,6 @@ describe('Android direct yaohuo API', () => {
     `));
 
     const result = await checkYaohuoLoginDirect({
-      yaohuoCookie: 'sidyaohuo=active',
       yaohuoFetcher
     });
 
@@ -514,7 +512,6 @@ describe('Android direct yaohuo API', () => {
     }));
 
     await expect(checkYaohuoLoginDirect({
-      yaohuoCookie: 'sidyaohuo=stale',
       yaohuoFetcher
     })).resolves.toMatchObject({
       ok: false,
@@ -529,7 +526,6 @@ describe('Android direct yaohuo API', () => {
 
     try {
       await checkYaohuoLoginDirect({
-        yaohuoCookie: 'sidyaohuo=candidate',
         yaohuoFetcher
       });
     } catch (error) {
@@ -572,18 +568,12 @@ describe('Android direct yaohuo API', () => {
     expect(currentUser).toBeNull();
   });
 
-  it('does not treat yaohuo navigation text as the current username', () => {
+  it('[REG-ACCOUNT-031] does not accept legacy top welcome or logout text as identity proof', () => {
     const currentUser = parseYaohuoCurrentUserHtml('<div class="top">火友的<a href="/bbs/userinfo.aspx?touserid=7">空间</a> <a href="/bbs/logout.aspx">退出</a></div>');
     const fallbackUser = parseYaohuoCurrentUserHtml('<div class="top"><a href="/bbs/userinfo.aspx?touserid=8">我的地盘</a> <a href="/bbs/logout.aspx">退出</a></div>');
 
-    expect(currentUser).toMatchObject({
-      id: '7',
-      username: '火友'
-    });
-    expect(fallbackUser).toMatchObject({
-      id: '8',
-      username: '8'
-    });
+    expect(currentUser).toBeNull();
+    expect(fallbackUser).toBeNull();
   });
 
   it('passes cancellation signals through direct yaohuo fetches', async () => {
@@ -591,7 +581,6 @@ describe('Android direct yaohuo API', () => {
     const yaohuoFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response('<div class="listdata"></div>'));
 
     await getYaohuoFeedDirect({
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher,
       signal: controller.signal
     });
@@ -605,7 +594,6 @@ describe('Android direct yaohuo API', () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
 
     await getYaohuoFeedDirect({
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -642,7 +630,6 @@ describe('Android direct yaohuo API', () => {
 
     const detail = await getYaohuoTopicDirect({
       topic,
-      yaohuoCookie: 'sidyaohuo=secret',
       replyLimit: 30,
       yaohuoFetcher
     });
@@ -681,7 +668,6 @@ describe('Android direct yaohuo API', () => {
 
     const detail = await getYaohuoTopicDirect({
       topic,
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -716,7 +702,6 @@ describe('Android direct yaohuo API', () => {
 
     const detail = await getYaohuoTopicDirect({
       topic,
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -758,7 +743,6 @@ describe('Android direct yaohuo API', () => {
 
     await expect(getYaohuoTopicDirect({
       topic,
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     })).rejects.toThrow('妖火链接不属于 www.yaohuo.me');
 
@@ -786,7 +770,6 @@ describe('Android direct yaohuo API', () => {
 
     const detail = await getYaohuoTopicDirect({
       topic,
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -1050,7 +1033,6 @@ describe('Android direct yaohuo API', () => {
       categoryId: '177',
       page: 3,
       limit: 30,
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     });
 
@@ -1122,7 +1104,6 @@ describe('Android direct yaohuo API', () => {
 
     await expect(searchYaohuoDirect({
       query: '测试',
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     })).rejects.toMatchObject({
       loginRequired: true,
@@ -1136,7 +1117,6 @@ describe('Android direct yaohuo API', () => {
     }));
 
     await expect(getYaohuoFeedDirect({
-      yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     })).rejects.toMatchObject({
       message: 'HTTP 403',

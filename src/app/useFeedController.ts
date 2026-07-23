@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import type { Screen } from '../appTypes';
 import type { SourceGateway } from '../sources/sourceGateway';
@@ -34,9 +34,10 @@ import type {
   Topic
 } from '../types';
 import {
-  emptyForumCredentialScope,
+  initialForumSessionEpochs,
   forumQueryKeys,
-  type ForumCredentialScope
+  type ForumIdentityBarrierSource,
+  type ForumSessionEpochs
 } from './serverState';
 
 type FeedPageParam = { cursor?: string; page: number };
@@ -118,6 +119,40 @@ function mergeFeedPages(pages: FeedPage[]) {
   });
 }
 
+type FeedQueryKeyState = {
+  category?: unknown;
+  feedFilter?: unknown;
+  identityBarriers?: unknown;
+  sessionEpoch?: unknown;
+};
+
+function feedQueryKeyState(queryKey: readonly unknown[]): FeedQueryKeyState | null {
+  if (
+    queryKey[0] !== 'forum'
+    || queryKey[1] !== 'all'
+    || queryKey[2] !== 'feed'
+    || !queryKey[3]
+    || typeof queryKey[3] !== 'object'
+  ) {
+    return null;
+  }
+  return queryKey[3] as FeedQueryKeyState;
+}
+
+export function canUseTrustedFeedAsIdentityBarrierPlaceholder(
+  previousQueryKey: readonly unknown[] | undefined,
+  currentQueryKey: readonly unknown[]
+) {
+  const previous = previousQueryKey ? feedQueryKeyState(previousQueryKey) : null;
+  const current = feedQueryKeyState(currentQueryKey);
+  if (!previous || !current || !Array.isArray(current.identityBarriers) || !current.identityBarriers.length) {
+    return false;
+  }
+  return Object.is(previous.category, current.category)
+    && Object.is(previous.feedFilter, current.feedFilter)
+    && JSON.stringify(previous.sessionEpoch) === JSON.stringify(current.sessionEpoch);
+}
+
 function sourceErrorsFromFeedError(source: FeedSource, error: unknown): SourceErrors {
   if (error instanceof FeedQueryError && Object.keys(error.sourceErrors).length) {
     return error.sourceErrors;
@@ -131,7 +166,8 @@ function firstSourceError(errors: SourceErrors): SourceErrorInfo | undefined {
 }
 
 export function useFeedController({
-  credentialScope = emptyForumCredentialScope,
+  identityBarriers = [],
+  sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
   notify,
   readerData,
@@ -142,7 +178,8 @@ export function useFeedController({
   showYaohuoLogin,
   sourceGateway
 }: {
-  credentialScope?: ForumCredentialScope;
+  identityBarriers?: readonly ForumIdentityBarrierSource[];
+  sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
   readerData: ReaderData;
@@ -164,17 +201,22 @@ export function useFeedController({
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const handledFeedErrorRef = useRef<unknown>(undefined);
+  const feedSourceIdentityPending = feedSource !== 'all'
+    && feedSource !== 'v2ex'
+    && identityBarriers.includes(feedSource);
   const feedFilter = feedFilterForRequest(feedSource, categoryFilter, feedFilters);
   const feedQueryKey = forumQueryKeys.feed({
     category: categoryFilter || undefined,
     feedFilter,
-    scope: credentialScope,
+    identityBarriers,
+    scope: sessionEpochs,
     source: feedSource
   });
-  const feedEnabled = readerDataLoaded || !shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter);
+  const feedEnabled = !feedSourceIdentityPending
+    && (readerDataLoaded || !shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter));
 
   const allCategoriesQuery = useQuery({
-    queryKey: forumQueryKeys.categories('all', credentialScope),
+    queryKey: forumQueryKeys.categories('all', sessionEpochs, identityBarriers),
     enabled: categoriesActive,
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: 'all' });
@@ -198,8 +240,11 @@ export function useFeedController({
   const allCategories = allCategoriesQuery.data?.items || [];
   const needsSourceCategories = feedSource !== 'all' && shouldLoadCategoriesForSource(allCategories, feedSource);
   const sourceCategoriesQuery = useQuery({
-    queryKey: forumQueryKeys.categories(feedSource === 'all' ? 'v2ex' : feedSource, credentialScope),
-    enabled: feedActive && !linuxDoVerificationActive && needsSourceCategories,
+    queryKey: forumQueryKeys.categories(feedSource === 'all' ? 'v2ex' : feedSource, sessionEpochs),
+    enabled: feedActive
+      && !linuxDoVerificationActive
+      && !feedSourceIdentityPending
+      && needsSourceCategories,
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: feedSource });
       try {
@@ -228,6 +273,11 @@ export function useFeedController({
     queryKey: feedQueryKey,
     enabled: feedActive && feedEnabled,
     initialPageParam: { page: 1 } satisfies FeedPageParam,
+    placeholderData: (previousData, previousQuery) => (
+      canUseTrustedFeedAsIdentityBarrierPlaceholder(previousQuery?.queryKey, feedQueryKey)
+        ? previousData
+        : undefined
+    ),
     queryFn: async ({ pageParam, signal }) => {
       const trace = beginDiagnosticTrace('feed', 'load', {
         source: feedSource,
@@ -280,7 +330,33 @@ export function useFeedController({
   });
 
   const pages = feedQuery.data?.pages || [];
-  const mergedFeed = useMemo(() => mergeFeedPages(pages), [pages]);
+  const trustedAggregatePages = feedSource === 'all' && identityBarriers.length
+    ? queryClient.getQueryData<InfiniteData<FeedPage, FeedPageParam>>(forumQueryKeys.feed({
+        category: categoryFilter || undefined,
+        feedFilter,
+        identityBarriers: [],
+        scope: sessionEpochs,
+        source: 'all'
+      }))?.pages
+    : undefined;
+  const mergedFeed = useMemo(() => {
+    const current = mergeFeedPages(pages);
+    if (!trustedAggregatePages?.length || !identityBarriers.length) {
+      return current;
+    }
+    const pendingSources = new Set<ForumIdentityBarrierSource>(identityBarriers);
+    const trustedPendingItems = mergeFeedPages(trustedAggregatePages).items.filter(
+      (topic) => topic.source !== 'v2ex' && pendingSources.has(topic.source)
+    );
+    return trustedPendingItems.length
+      ? mergeFeedResponses(current, {
+          errors: {},
+          hasMore: false,
+          items: trustedPendingItems,
+          nextPage: null
+        })
+      : current;
+  }, [identityBarriers, pages, trustedAggregatePages]);
   const lastPage = pages.at(-1);
   const nextPage = lastPage ? nextFeedPage(lastPage) : undefined;
   const loadMoreError = feedQuery.isFetchNextPageError;
@@ -403,15 +479,15 @@ export function useFeedController({
   }, [feedActive, feedQuery.dataUpdatedAt, feedSource, lastPage?.errors, notify, showNodeSeekVerification]);
 
   const loadFeed = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!feedActive || !nextPage || feedQuery.isFetchingNextPage) {
+    if (!feedActive || feedSourceIdentityPending || !nextPage || feedQuery.isFetchingNextPage) {
       return 'stale';
     }
     const result = await feedQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [feedActive, feedQuery.fetchNextPage, feedQuery.isFetchingNextPage, nextPage]);
+  }, [feedActive, feedQuery.fetchNextPage, feedQuery.isFetchingNextPage, feedSourceIdentityPending, nextPage]);
 
   const refreshFeed = useCallback(async () => {
-    if (!feedActive) {
+    if (!feedActive || feedSourceIdentityPending) {
       return;
     }
     if (feedQuery.isFetching) {
@@ -423,7 +499,7 @@ export function useFeedController({
     if (!result.isError) {
       notify('列表已更新');
     }
-  }, [feedActive, feedQuery.isFetching, feedQuery.refetch, notify]);
+  }, [feedActive, feedQuery.isFetching, feedQuery.refetch, feedSourceIdentityPending, notify]);
 
   const changeFeedSource = useCallback((source: FeedSource) => {
     setFeedSource(source);
@@ -466,7 +542,7 @@ export function useFeedController({
     categoryFilter,
     changeFeedSource,
     feedAllowsRemotePagination,
-    feedBusy: feedActive && feedQuery.isPending,
+    feedBusy: feedActive && feedEnabled && feedQuery.isPending,
     feedFilter,
     feedSource,
     loadFeed,

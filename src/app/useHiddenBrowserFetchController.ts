@@ -156,8 +156,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       title: document.title || "",
       challenge: true,
       error: 'NodeSeek 页面内容过大，已停止读取',
-      userAgent: navigator.userAgent || "",
-      cookie: document.cookie || ""
+      userAgent: navigator.userAgent || ""
     }));
   };
   const postError = (error) => {
@@ -168,8 +167,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       title: document.title || "",
       challenge: isChallengePage(),
       error,
-      userAgent: navigator.userAgent || "",
-      cookie: document.cookie || ""
+      userAgent: navigator.userAgent || ""
     });
     try {
       window.stop();
@@ -186,8 +184,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       title: document.title || "",
       challenge,
       html: challenge ? "" : (json || compactHtml || (document.documentElement ? document.documentElement.outerHTML : "")),
-      userAgent: navigator.userAgent || "",
-      cookie: document.cookie || ""
+      userAgent: navigator.userAgent || ""
     });
     try {
       window.stop();
@@ -273,8 +270,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
       challenge: false,
       failureReason: 'content-too-large',
       error: 'linux.do 页面内容过大，已停止读取',
-      userAgent: navigator.userAgent || "",
-      cookie: document.cookie || ""
+      userAgent: navigator.userAgent || ""
     }));
   };
   const postResult = () => {
@@ -287,8 +283,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
       title: document.title || "",
       challenge,
       body: challenge ? "" : (json || pageHtml()),
-      userAgent: navigator.userAgent || "",
-      cookie: document.cookie || ""
+      userAgent: navigator.userAgent || ""
     });
   };
   const deadline = Date.now() + 8000;
@@ -323,7 +318,6 @@ export function useHiddenBrowserFetchController({
     id?: number;
     url?: string;
     body?: string;
-    cookie?: string;
     userAgent?: string;
     challenge?: boolean;
     error?: string;
@@ -335,7 +329,6 @@ export function useHiddenBrowserFetchController({
     id?: number;
     url?: string;
     html?: string;
-    cookie?: string;
     userAgent?: string;
     challenge?: boolean;
     error?: string;
@@ -348,7 +341,6 @@ export function useHiddenBrowserFetchController({
         id?: number;
         url?: string;
         html?: string;
-        cookie?: string;
         userAgent?: string;
         challenge?: boolean;
         error?: string;
@@ -373,7 +365,6 @@ export function useHiddenBrowserFetchController({
         id?: number;
         url?: string;
         body?: string;
-        cookie?: string;
         userAgent?: string;
         challenge?: boolean;
         error?: string;

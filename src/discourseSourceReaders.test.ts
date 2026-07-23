@@ -87,9 +87,9 @@ describe('Discourse source reader registration', () => {
     });
   });
 
-  it('[REG-SOURCE-004] forwards the gateway-owned linux.do access into the adapter request', async () => {
+  it('[REG-SOURCE-004] forwards the gateway-owned linux.do identity proof without a Cookie header', async () => {
     readers.getLinuxDoFeed.mockResolvedValueOnce({ items: [] });
-    const access = { cookieHeader: '_t=session', userAgent: 'android' };
+    const access = { authenticated: true, userAgent: 'android' };
 
     await getDiscourseSourceFeed('linuxdo', {
       auth: { linuxdo: access },
@@ -108,7 +108,7 @@ describe('Discourse source reader registration', () => {
     readers.getLinuxDoCurrentUserProfile.mockResolvedValueOnce({ source: 'linuxdo' });
     readers.getXiaoyinsiReply.mockResolvedValueOnce({ floor: 2 });
     const auth = {
-      linuxdo: { cookieHeader: '_t=session', userAgent: 'android' },
+      linuxdo: { authenticated: true, userAgent: 'android' },
       xiaoyinsi: { apiKey: 'key', clientId: 'client' }
     };
 
@@ -116,7 +116,6 @@ describe('Discourse source reader registration', () => {
     await getDiscourseSourceReply('xiaoyinsi', '42', 2, { auth });
 
     expect(readers.getLinuxDoCurrentUserProfile).toHaveBeenCalledWith({
-      linuxDoCookie: '_t=session',
       linuxDoUserAgent: 'android'
     });
     expect(readers.getXiaoyinsiReply).toHaveBeenCalledWith('42', 2, {

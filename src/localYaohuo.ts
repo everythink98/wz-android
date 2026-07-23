@@ -244,38 +244,33 @@ function safeYaohuoCurrentUserName(value: unknown) {
   return text && !/^(我的|个人|空间|资料|消息|退出|用户中心|个人中心|我的地盘)$/.test(text) ? text : '';
 }
 
-function yaohuoCurrentUserNameFromContext(context: string) {
-  const normalized = context.replace(/\s+/g, ' ').trim();
-  const beforeSpace = normalized.match(/([^\s，,、:：<>]{1,32})\s*的?\s*(?:空间|资料|个人中心|用户中心)/)?.[1]?.replace(/的$/, '');
-  const welcomed = yaohuoWelcomedCurrentUserNameFromContext(normalized);
-  return safeYaohuoCurrentUserName(beforeSpace) || safeYaohuoCurrentUserName(welcomed);
-}
-
-function yaohuoWelcomedCurrentUserNameFromContext(context: string) {
-  const normalized = context.replace(/\s+/g, ' ').trim();
-  return safeYaohuoCurrentUserName(
-    normalized.match(/(?:欢迎|你好|您好)\s*([^\s，,、:：<>]{1,32})/)?.[1]
-  );
-}
-
 function hasYaohuoSelfAccountNavigation(contextNode: HTMLElement) {
   const links = contextNode.querySelectorAll('a[href]').map((link) => {
     const href = link.getAttribute('href') || '';
     try {
       return {
         path: new URL(href.replace(/&amp;/gi, '&'), BASE_URL).pathname.toLowerCase(),
-        text: elementText(link)
+        text: elementText(link),
+        userId: extractUserIdFromHref(href)
       };
     } catch {
-      return { path: '', text: elementText(link) };
+      return { path: '', text: elementText(link), userId: undefined };
     }
   });
-  return [
+  const fixedDestinations = [
     ['/myfile.aspx', '我的地盘'],
-    ['/bbs/userinfo.aspx', '空间'],
     ['/bbs/book_list_search.aspx', '帖子'],
     ['/bbs/messagelist.aspx', '信箱']
-  ].every(([path, text]) => links.some((link) => link.path === path && link.text === text));
+  ];
+  const hasFixedDestinations = fixedDestinations.every(([path, text]) => (
+    links.some((link) => link.path === path && link.text === text)
+  ));
+  const hasSelfProfile = links.some((link) => (
+    link.path === '/bbs/userinfo.aspx'
+    && Boolean(link.userId)
+    && (link.text === '空间' || Boolean(safeYaohuoCurrentUserName(link.text)))
+  ));
+  return hasFixedDestinations && hasSelfProfile;
 }
 
 function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
@@ -1020,31 +1015,15 @@ export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProf
     return null;
   }
   const root = parseHtml(html);
-  for (const link of root.querySelectorAll('a[href*="userinfo"], a[href*="touserid"]')) {
-    const id = extractUserIdFromHref(link.getAttribute('href'));
-    const parentNode = link.parentNode as unknown;
-    const contextNode = parentNode && typeof parentNode === 'object' && 'rawTagName' in parentNode
-      ? parentNode as HTMLElement
-      : link;
-    const context = elementText(contextNode);
-    const linkUsername = safeYaohuoCurrentUserName(elementText(link));
-    const welcomedUsername = yaohuoWelcomedCurrentUserNameFromContext(context);
-    const hasLogoutControl = Boolean(contextNode.querySelector('a[href*="logout"], a[href*="signout"], a[href*="sign-out"]'));
-    const contextTag = String(contextNode.rawTagName || '').toLowerCase();
-    const contextClasses = String(contextNode.getAttribute('class') || '').toLowerCase().split(/\s+/).filter(Boolean);
-    const isAccountControlContainer = contextTag === 'header'
-      || contextTag === 'nav'
-      || contextClasses.some((name) => ['top', 'header', 'navbar', 'userbar', 'account'].includes(name));
-    const hasRelatedWelcome = Boolean(
-      isAccountControlContainer
-      && welcomedUsername
-      && (!linkUsername || welcomedUsername === linkUsername)
-    );
-    const username = linkUsername || (hasLogoutControl ? yaohuoCurrentUserNameFromContext(context) : welcomedUsername) || id;
-    const hasExplicitSelfMarker = hasLogoutControl
-      || hasRelatedWelcome
-      || hasYaohuoSelfAccountNavigation(contextNode);
-    if (!id || !username || !hasExplicitSelfMarker) {
+  const accountContainers = root.querySelectorAll('div.top2')
+    .filter(hasYaohuoSelfAccountNavigation);
+  for (const contextNode of accountContainers) {
+    const link = contextNode.querySelectorAll('a[href*="userinfo"], a[href*="touserid"]')
+      .find((candidate) => Boolean(extractUserIdFromHref(candidate.getAttribute('href'))));
+    const id = extractUserIdFromHref(link?.getAttribute('href'));
+    const linkUsername = safeYaohuoCurrentUserName(link ? elementText(link) : '');
+    const username = linkUsername || id;
+    if (!id || !username) {
       continue;
     }
     return {

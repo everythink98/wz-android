@@ -13,6 +13,34 @@ function emptyCredentialSummaries(): CredentialSummaries {
 }
 
 describe('site session prompts', () => {
+  it('[REG-ACCOUNT-031] never presents a pending trusted identity as confirmed', () => {
+    const confirmed = createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: ['session'],
+        isVerifying: false
+      }
+    }));
+    const sessions = {
+      ...confirmed,
+      nodeseek: {
+        ...confirmed.nodeseek,
+        canWrite: false,
+        identityTrust: 'pending' as const,
+        summaryLabel: '登录状态待确认'
+      }
+    };
+
+    expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
+      kind: 'verification-required',
+      message: 'NodeSeek 登录状态待确认，已暂停新请求和写入。',
+      tone: 'warning'
+    });
+    expect(searchSessionNoticeLightTone(authNoticeForSource('nodeseek', sessions, 'search')!))
+      .toBe('warning');
+  });
+
   it('[REG-ACCOUNT-019] explains the NodeSeek Google fallback without showing a logged-in notice', () => {
     const sessions = createSiteSessionViewModels(createSiteSessionStates());
     const prompt = authNoticeForSource('nodeseek', sessions, 'search');

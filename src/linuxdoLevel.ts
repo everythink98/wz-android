@@ -29,7 +29,6 @@ type LinuxDoCurrentUser = {
   user: Record<string, unknown>;
 };
 type LinuxDoRequestOptions = {
-  cookieHeader: string;
   userAgent?: string;
   fetcher: Fetcher;
   signal?: AbortSignal;
@@ -355,13 +354,11 @@ function hasUsername(summary: LinuxDoSummaryInput) {
 }
 
 export async function getLinuxDoLevelProfile({
-  cookieHeader,
   userAgent,
   fetcher = fetch,
   signal,
   timeoutMs
 }: {
-  cookieHeader: string;
   userAgent?: string;
   fetcher?: Fetcher;
   signal?: AbortSignal;
@@ -379,12 +376,7 @@ export async function getLinuxDoLevelProfile({
     }
   };
   assertNotAborted();
-  const cleanCookie = cookieHeader.trim();
-  if (!cleanCookie) {
-    throw new Error('请先登录 linux.do');
-  }
   const requestOptions: LinuxDoRequestOptions = {
-    cookieHeader: cleanCookie,
     userAgent,
     fetcher,
     signal,

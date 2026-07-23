@@ -166,6 +166,19 @@ describe('NodeSeek login WebView probe script', () => {
     expect(payload.loggedIn).toBeUndefined();
   });
 
+  it('[REG-ACCOUNT-031] keeps a login-path error or half-loaded page unknown', async () => {
+    const payload = await runNodeSeekLoginProbe('/signIn.html', `
+      <main>安全检查暂时无法完成，请稍后重试</main>
+    `);
+
+    expect(payload).toMatchObject({
+      type: 'nodeseek-login',
+      status: 'unknown',
+      userId: null
+    });
+    expect(payload.loggedIn).toBeUndefined();
+  });
+
   it('[REG-ACCOUNT-019] does not treat exact NodeSeek login links inside ordinary content as guest controls', async () => {
     const payload = await runNodeSeekLoginProbe('/', `
       <article>
@@ -238,14 +251,14 @@ describe('linux.do login WebView probe script', () => {
     });
   });
 
-  it('[REG-ACCOUNT-019] returns one manual probe id with its document identity', async () => {
+  it('[REG-ACCOUNT-031] returns one manual probe id without treating its path as logout evidence', async () => {
     const payload = await runNodeSeekLoginProbe('/login', '<a href="/login">登录</a>', undefined, 17);
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
       probeId: 17,
       documentKey: expect.stringContaining('https://www.nodeimage.com/login:'),
-      status: 'logged-out'
+      status: 'unknown'
     });
     expect((window as typeof window & { __WZ_NODESEEK_LOGIN_PROBE_ID__?: number }).__WZ_NODESEEK_LOGIN_PROBE_ID__).toBeUndefined();
   });

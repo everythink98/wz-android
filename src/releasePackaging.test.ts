@@ -102,7 +102,7 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('GET_SIGNING_CERTIFICATES');
   });
 
-  it('keeps the Android network proxy module enabled', () => {
+  it('keeps the Android network proxy and narrow managed-Cookie boundary enabled', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
 
@@ -116,7 +116,34 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('ReadOnlyWebViewCookieHandler');
     expect(plugin).toContain('JavaNetCookieJar');
     expect(plugin).toContain('configureManagedClient');
-    expect(plugin).toContain('getManagedCookieHeaderForUrl');
+    expect(plugin).toContain('fun readManagedCookieHeader(exactUrl: String, promise: Promise)');
+    expect(plugin).toContain('fun clearManagedLoginCookies(source: String, promise: Promise)');
+    expect(plugin).toContain('fun managedCookieHeaderForUrl(url: String)');
+    expect(plugin).toContain('WebSettings.getDefaultUserAgent(reactContext)');
+    const moduleSource = plugin.slice(
+      plugin.indexOf('function networkProxyModuleSource'),
+      plugin.indexOf('function networkProxyPackageSource')
+    );
+    expect(moduleSource).toContain('import android.webkit.WebSettings');
+    expect(moduleSource).toContain('WebSettings.getDefaultUserAgent(reactContext)');
+    expect(app.expo.plugins).not.toContain('./plugins/withLinuxDoCookieModule');
+    expect(plugin.slice(
+      plugin.indexOf('fun readManagedCookieHeader(exactUrl: String, promise: Promise)'),
+      plugin.indexOf('fun clearManagedLoginCookies(source: String, promise: Promise)')
+    )).not.toContain('flush()');
+    const clearCookieFlow = plugin.slice(
+      plugin.indexOf('internal fun clearManagedLoginCookies(source: String): Boolean'),
+      plugin.indexOf('fun currentLocalProxy(): Proxy?')
+    );
+    expect(clearCookieFlow).toContain('Handler(Looper.getMainLooper())');
+    expect(clearCookieFlow).toContain('CountDownLatch');
+    expect(clearCookieFlow).toContain('await(5, TimeUnit.SECONDS)');
+    expect(clearCookieFlow).toContain('expirations += url to "$expired; Domain=$domain"');
+    expect(clearCookieFlow).not.toContain('Domain=.$domain');
+    expect(clearCookieFlow.indexOf('await(5, TimeUnit.SECONDS)'))
+      .toBeLessThan(clearCookieFlow.indexOf('cookieManager.flush()'));
+    expect(clearCookieFlow.indexOf('cookieManager.flush()'))
+      .toBeLessThan(clearCookieFlow.indexOf('cookieManager.getCookie(url)'));
     expect(plugin).toContain('installExpoImageClient');
     expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory { client }');
     expect(plugin).toContain('installExpoImageClient(appContext, client)');

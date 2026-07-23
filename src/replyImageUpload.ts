@@ -175,18 +175,7 @@ export async function uploadNodeSeekReplyImageWithApiKey({
   if (!apiKey) {
     return '';
   }
-  try {
-    return await uploadNodeSeekReplyImage({ apiKey, file, fetcher, signal, timeoutMs });
-  } catch (error) {
-    if (!isNodeImageApiKeyExpiredError(error)) {
-      throw error;
-    }
-    const refreshedApiKey = await ensureApiKey({ forceRefresh: true });
-    if (!refreshedApiKey) {
-      throw error;
-    }
-    return uploadNodeSeekReplyImage({ apiKey: refreshedApiKey, file, fetcher, signal, timeoutMs });
-  }
+  return uploadNodeSeekReplyImage({ apiKey, file, fetcher, signal, timeoutMs });
 }
 
 export async function uploadYaohuoReplyImage({
