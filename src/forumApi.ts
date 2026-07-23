@@ -1,4 +1,4 @@
-import { getNodeSeekBasicUserProfile, getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
+import { getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
 import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
@@ -629,7 +629,6 @@ export function getUserProfile({
       };
       const headers = {
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        Cookie: yaohuoCookie,
         Referer: YAOHUO_BBS_REFERER
       };
       const readHtml = async (pageUrl: string) => {
@@ -795,7 +794,6 @@ export function getCurrentUserProfile({
   fetcher,
   discourseAuth,
   nodeSeekCookie,
-  nodeSeekUserId,
   nodeSeekUserAgent,
   yaohuoCookie,
   signal,
@@ -805,7 +803,6 @@ export function getCurrentUserProfile({
   fetcher?: Fetcher;
   discourseAuth?: DiscourseReadAuth;
   nodeSeekCookie?: string;
-  nodeSeekUserId?: string | number | null;
   nodeSeekUserAgent?: string;
   yaohuoCookie?: string;
   signal?: AbortSignal;
@@ -820,16 +817,7 @@ export function getCurrentUserProfile({
     });
   }
   return pickSource(source, {
-    nodeseek: async () => {
-      try {
-        return await getNodeSeekCurrentUserProfile({ fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs });
-      } catch (error) {
-        if (!nodeSeekUserId) {
-          throw error;
-        }
-        return getNodeSeekBasicUserProfile(String(nodeSeekUserId), { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs });
-      }
-    },
+    nodeseek: () => getNodeSeekCurrentUserProfile({ fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs }),
     v2ex: () => {
       throw new Error('V2EX 不支持当前登录身份读取');
     },
@@ -840,7 +828,6 @@ export function getCurrentUserProfile({
       const response = await fetchWithTimeout(`${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`, {
         headers: {
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          Cookie: yaohuoCookie,
           Referer: YAOHUO_BBS_REFERER
         }
       }, { fetcher, signal, timeoutMs });
@@ -850,16 +837,23 @@ export function getCurrentUserProfile({
       }
       const check = checkYaohuoLoginHtml(html, response.url);
       if (check.currentUser) {
-        const profile = await getUserProfile({
-          source: 'yaohuo',
-          id: check.currentUser.id,
-          username: check.currentUser.username,
-          fetcher,
-          yaohuoCookie,
-          signal,
-          timeoutMs
-        });
-        return copySourceDiagnosticSummary({ ...profile, topics: [] }, profile);
+        try {
+          const profile = await getUserProfile({
+            source: 'yaohuo',
+            id: check.currentUser.id,
+            username: check.currentUser.username,
+            fetcher,
+            yaohuoCookie,
+            signal,
+            timeoutMs
+          });
+          return copySourceDiagnosticSummary({ ...profile, topics: [] }, profile);
+        } catch (error) {
+          if (signal?.aborted) {
+            throw error;
+          }
+          return check.currentUser;
+        }
       }
       if (check.loginRequired) {
         throw new Error(check.message || '妖火登录已失效，请重新登录。');

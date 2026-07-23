@@ -2,7 +2,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT, NODEIMAGE_API_KEY_PROBE_SCRIPT, NODESEEK_LOGIN_PROBE_SCRIPT, nodeImageApiKeyProbeScript } from './loginWebViewScripts';
 
-async function runNodeSeekLoginProbe(url: string, html: string, fetchMock: typeof fetch = vi.fn(async () => new Response('{}')) as unknown as typeof fetch) {
+async function runNodeSeekLoginProbe(
+  url: string,
+  html: string,
+  fetchMock: typeof fetch = vi.fn(async () => new Response('{}')) as unknown as typeof fetch,
+  probeId?: number
+) {
   window.history.pushState(null, '', url);
   document.body.innerHTML = html;
   Object.defineProperty(document.body, 'innerText', {
@@ -15,6 +20,9 @@ async function runNodeSeekLoginProbe(url: string, html: string, fetchMock: typeo
     value: { postMessage }
   });
   vi.stubGlobal('fetch', fetchMock);
+  if (probeId) {
+    (window as typeof window & { __WZ_NODESEEK_LOGIN_PROBE_ID__?: number }).__WZ_NODESEEK_LOGIN_PROBE_ID__ = probeId;
+  }
 
   window.eval(NODESEEK_LOGIN_PROBE_SCRIPT);
 
@@ -25,6 +33,7 @@ async function runNodeSeekLoginProbe(url: string, html: string, fetchMock: typeo
 describe('NodeSeek login WebView probe script', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+    delete (window as typeof window & { __config__?: unknown }).__config__;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -85,10 +94,10 @@ describe('NodeSeek login WebView probe script', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('marks explicit NodeSeek guest pages as logged out', async () => {
-    const payload = await runNodeSeekLoginProbe('/login', `
-      <a href="/login">登录</a>
-      <a href="/register">注册</a>
+  it('[REG-ACCOUNT-019] marks the real NodeSeek .html guest controls as logged out', async () => {
+    const payload = await runNodeSeekLoginProbe('/', `
+      <a class="btn" href="/signIn.html">登录</a>
+      <a class="btn" href="/register.html">注册</a>
     `);
 
     expect(payload).toMatchObject({
@@ -99,6 +108,39 @@ describe('NodeSeek login WebView probe script', () => {
     });
   });
 
+  it('[REG-ACCOUNT-019] gives explicit NodeSeek guest controls priority over stale self markers', async () => {
+    const payload = await runNodeSeekLoginProbe('/', `
+      <a class="Username" href="/space/48872">旧账号</a>
+      <a class="btn" href="/signIn.html">登录</a>
+      <a class="btn" href="/register.html">注册</a>
+    `);
+
+    expect(payload).toMatchObject({
+      status: 'logged-out',
+      loggedIn: false,
+      userId: null
+    });
+  });
+
+  it('[REG-ACCOUNT-026] gives the proven NodeSeek current-user config priority over coexisting guest controls', async () => {
+    (window as typeof window & { __config__?: unknown }).__config__ = {
+      user: {
+        member_id: 48872,
+        member_name: '当前账号'
+      }
+    };
+    const payload = await runNodeSeekLoginProbe('/', `
+      <a class="btn" href="/signIn.html">登录</a>
+      <a class="btn" href="/register.html">注册</a>
+    `);
+
+    expect(payload).toMatchObject({
+      status: 'logged-in',
+      loggedIn: true,
+      userId: 48872
+    });
+  });
+
   it('keeps ambiguous NodeSeek pages unknown instead of expired', async () => {
     const payload = await runNodeSeekLoginProbe('/', '<main>普通页面</main>');
 
@@ -106,6 +148,59 @@ describe('NodeSeek login WebView probe script', () => {
       type: 'nodeseek-login',
       status: 'unknown',
       userId: null
+    });
+    expect(payload.loggedIn).toBeUndefined();
+  });
+
+  it('[REG-ACCOUNT-019] does not treat login text or related content links as an explicit guest page', async () => {
+    const payload = await runNodeSeekLoginProbe('/', `
+      <article>登录</article>
+      <a href="/topics/login-help">登录问题讨论</a>
+    `);
+
+    expect(payload).toMatchObject({
+      type: 'nodeseek-login',
+      status: 'unknown',
+      userId: null
+    });
+    expect(payload.loggedIn).toBeUndefined();
+  });
+
+  it('[REG-ACCOUNT-019] does not treat exact NodeSeek login links inside ordinary content as guest controls', async () => {
+    const payload = await runNodeSeekLoginProbe('/', `
+      <article>
+        <a href="/signIn.html">登录教程</a>
+        <a href="/register.html">注册教程</a>
+      </article>
+    `);
+
+    expect(payload).toMatchObject({ status: 'unknown', userId: null });
+    expect(payload.loggedIn).toBeUndefined();
+  });
+
+  it('[REG-ACCOUNT-019] does not treat public account-navigation links as current-user proof', async () => {
+    const payload = await runNodeSeekLoginProbe('/', `
+      <a href="/setting">设置</a>
+      <a href="/notification">通知</a>
+    `);
+
+    expect(payload).toMatchObject({
+      type: 'nodeseek-login',
+      status: 'unknown',
+      userId: null
+    });
+    expect(payload.loggedIn).toBeUndefined();
+  });
+
+  it('[REG-ACCOUNT-019] does not infer self identity from UID text beside an ordinary author link', async () => {
+    const payload = await runNodeSeekLoginProbe('/', `
+      <article>如何查看 UID: 4706</article>
+      <a href="/space/4706">帖子作者</a>
+    `);
+
+    expect(payload).toMatchObject({
+      type: 'nodeseek-login',
+      status: 'unknown'
     });
     expect(payload.loggedIn).toBeUndefined();
   });
@@ -141,6 +236,18 @@ describe('linux.do login WebView probe script', () => {
       status,
       ...(status === 'unknown' ? {} : { loggedIn: status === 'logged-in' })
     });
+  });
+
+  it('[REG-ACCOUNT-019] returns one manual probe id with its document identity', async () => {
+    const payload = await runNodeSeekLoginProbe('/login', '<a href="/login">登录</a>', undefined, 17);
+
+    expect(payload).toMatchObject({
+      type: 'nodeseek-login',
+      probeId: 17,
+      documentKey: expect.stringContaining('https://www.nodeimage.com/login:'),
+      status: 'logged-out'
+    });
+    expect((window as typeof window & { __WZ_NODESEEK_LOGIN_PROBE_ID__?: number }).__WZ_NODESEEK_LOGIN_PROBE_ID__).toBeUndefined();
   });
 });
 

@@ -173,7 +173,6 @@ describe('Image preview', () => {
     const view = await render(
       <ImagePreviewModal
         preview={{ urls: [imageUrl], index: 0 }}
-        nodeSeekMediaCookieHeader="session=preview-test"
         nodeSeekMediaUserAgent="WZ-Preview-Test"
         styles={styles}
         theme={theme}
@@ -186,15 +185,15 @@ describe('Image preview', () => {
     );
 
     expect(sizeWithHeaders).toHaveBeenCalledWith(imageUrl, expect.objectContaining({
-      Cookie: 'session=preview-test',
       'User-Agent': 'WZ-Preview-Test'
     }), expect.any(Function), expect.any(Function));
+    expect(sizeWithHeaders.mock.calls[0]?.[1]).not.toHaveProperty('Cookie');
     expect(view.getByTestId('active-preview-image').props.source).toEqual(expect.objectContaining({
       headers: expect.objectContaining({
-        Cookie: 'session=preview-test',
         'User-Agent': 'WZ-Preview-Test'
       })
     }));
+    expect(view.getByTestId('active-preview-image').props.source.headers).not.toHaveProperty('Cookie');
   });
 
   it('REG-TOPIC-020 recovers incompatible SVG thumbnails before they are selected', async () => {

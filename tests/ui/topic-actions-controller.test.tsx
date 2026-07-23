@@ -64,6 +64,7 @@ import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics
 import {
   createSiteSessionStates,
   createSiteSessionViewModels,
+  type ScopedSiteSessionEvent,
   type SiteSessionStates,
   type SiteSessionViewModels
 } from '../../src/siteSessionState';
@@ -132,11 +133,10 @@ function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): Topi
 }
 
 async function renderActions({
-  clearNodeSeekLoginCookiesOnly = jest.fn(async () => undefined),
-  clearYaohuoLoginState = jest.fn(async () => true),
   credentialScope = emptyForumCredentialScope,
   currentNodeSeekCredentialGeneration,
   currentYaohuoCredentialGeneration,
+  dispatchSiteSessionEvent = jest.fn(),
   discourseLoginPrompts = { linuxdo: jest.fn(), xiaoyinsi: jest.fn() },
   ensureNodeImageApiKey = jest.fn(async () => null),
   loadYaohuoCookieForSource = jest.fn(async () => 'sidyaohuo=test'),
@@ -148,11 +148,10 @@ async function renderActions({
   topicDetail = detail,
   topicReplies = []
 }: {
-  clearNodeSeekLoginCookiesOnly?: () => Promise<void>;
-  clearYaohuoLoginState?: () => Promise<boolean>;
   credentialScope?: ForumCredentialScope;
   currentNodeSeekCredentialGeneration?: () => number;
   currentYaohuoCredentialGeneration?: () => number;
+  dispatchSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
   discourseLoginPrompts?: { linuxdo: (message?: string) => void; xiaoyinsi: (message?: string) => void };
   ensureNodeImageApiKey?: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
   loadYaohuoCookieForSource?: () => Promise<string | undefined>;
@@ -167,13 +166,12 @@ async function renderActions({
   const hook = await renderNativeHook((props: { credentialScope: ForumCredentialScope }) => {
     const topicSession = useTopicSessionController({ notify });
     const actions = useTopicActionsController({
-      clearNodeSeekLoginCookiesOnly,
-      clearYaohuoLoginState,
       credentialScope: props.credentialScope,
       currentNodeSeekCredentialGeneration: currentNodeSeekCredentialGeneration
         || (() => props.credentialScope.nodeseek),
       currentYaohuoCredentialGeneration: currentYaohuoCredentialGeneration
         || (() => props.credentialScope.yaohuo),
+      dispatchSiteSessionEvent,
       discourseActionRuntimeDependencies: {
         linuxDoUserAgent: () => 'safe-agent',
         refreshXiaoyinsiAuthorization: async () => true,
@@ -840,39 +838,39 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith('没有权限执行该操作');
   });
 
-  it('REG-ACCOUNT-007 reports incomplete Yaohuo cleanup without rejecting the action', async () => {
+  it('[REG-ACCOUNT-026][REG-WRITE-022] projects confirmed Yaohuo expiry without invoking a logout command', async () => {
     mockRunYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
       loginRequired: true,
       reason: 'expired',
       source: 'yaohuo'
     }));
-    const clearYaohuoLoginState = jest.fn(async () => {
-      throw new Error('WebView cookie cleanup failed');
-    });
+    const dispatchSiteSessionEvent = jest.fn();
     const showYaohuoLogin = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
     seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({ clearYaohuoLoginState, showYaohuoLogin, topicDetail: yaohuoDetail });
+    const hook = await renderActions({ dispatchSiteSessionEvent, showYaohuoLogin, topicDetail: yaohuoDetail });
 
     await act(async () => {
       await expect(hook.result.current.actions.favoriteOnYaohuoSite()).resolves.toBeUndefined();
     });
 
-    expect(clearYaohuoLoginState).toHaveBeenCalledWith(expect.objectContaining({ generation: 0 }));
-    expect(showYaohuoLogin).toHaveBeenCalledWith(expect.stringContaining('清理未完成'));
+    expect(dispatchSiteSessionEvent).toHaveBeenCalledWith({
+      site: 'yaohuo',
+      type: 'login-expired',
+      message: '妖火登录已失效'
+    });
+    expect(showYaohuoLogin).toHaveBeenCalledWith('妖火登录已失效');
   });
 
-  it('REG-ACCOUNT-007 reports incomplete NodeSeek cleanup without rejecting the action', async () => {
+  it('[REG-ACCOUNT-026][REG-WRITE-022] projects confirmed NodeSeek expiry without deleting the original-site login', async () => {
     mockRunNodeSeekAction.mockRejectedValueOnce(Object.assign(new Error('NodeSeek 登录已失效'), {
       loginRequired: true,
       source: 'nodeseek'
     }));
-    const clearNodeSeekLoginCookiesOnly = jest.fn(async () => {
-      throw new Error('SecureStore cleanup failed');
-    });
+    const dispatchSiteSessionEvent = jest.fn();
     const notify = jest.fn();
     seedTopicCache();
-    const hook = await renderActions({ clearNodeSeekLoginCookiesOnly, notify });
+    const hook = await renderActions({ dispatchSiteSessionEvent, notify });
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('reply body');
     });
@@ -881,8 +879,58 @@ describe('topic action query mutations', () => {
       await expect(hook.result.current.actions.submitReply()).resolves.toBeUndefined();
     });
 
-    expect(clearNodeSeekLoginCookiesOnly).toHaveBeenCalledWith(expect.objectContaining({ generation: 0 }));
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('清理未完成'));
+    expect(dispatchSiteSessionEvent).toHaveBeenCalledWith({
+      site: 'nodeseek',
+      type: 'login-expired',
+      message: 'NodeSeek 登录已失效'
+    });
+    expect(notify).toHaveBeenCalledWith('NodeSeek 登录已失效');
+  });
+
+  it('[REG-WRITE-022] keeps Yaohuo verification failures distinct from confirmed expiry', async () => {
+    mockRunYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('请回到妖火原站完成登录确认'), {
+      loginRequired: true,
+      reason: 'verification',
+      source: 'yaohuo'
+    }));
+    const dispatchSiteSessionEvent = jest.fn();
+    const showYaohuoLogin = jest.fn();
+    const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
+    seedTopicCache(yaohuoDetail);
+    const hook = await renderActions({ dispatchSiteSessionEvent, showYaohuoLogin, topicDetail: yaohuoDetail });
+
+    await act(async () => {
+      await expect(hook.result.current.actions.favoriteOnYaohuoSite()).resolves.toBeUndefined();
+    });
+
+    expect(dispatchSiteSessionEvent).toHaveBeenCalledWith({
+      site: 'yaohuo',
+      type: 'verification-required',
+      message: '请回到妖火原站完成登录确认'
+    });
+    expect(dispatchSiteSessionEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'login-expired'
+    }));
+    expect(showYaohuoLogin).toHaveBeenCalledWith('请回到妖火原站完成登录确认');
+  });
+
+  it('[REG-WRITE-022] leaves identity unchanged for an ordinary NodeSeek action failure', async () => {
+    mockRunNodeSeekAction.mockRejectedValueOnce(new Error('没有权限执行该操作'));
+    const dispatchSiteSessionEvent = jest.fn();
+    const notify = jest.fn();
+    seedTopicCache();
+    const hook = await renderActions({ dispatchSiteSessionEvent, notify });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('reply body');
+    });
+
+    await act(async () => {
+      await expect(hook.result.current.actions.submitReply()).resolves.toBeUndefined();
+    });
+
+    expect(dispatchSiteSessionEvent).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith('没有权限执行该操作');
   });
 
   it('REG-ACCOUNT-007 opens linux.do login with the retained cleanup warning', async () => {
@@ -913,19 +961,16 @@ describe('topic action query mutations', () => {
     expect(showLinuxDoLogin).toHaveBeenCalledWith(expect.stringContaining('清理未完成'));
   });
 
-  it('REG-ACCOUNT-009 suppresses a NodeSeek failure after a newer login takes ownership', async () => {
+  it('[REG-ACCOUNT-009][REG-WRITE-022] suppresses a NodeSeek failure after a newer login takes ownership', async () => {
     let generation = 0;
-    const cleanup = Promise.withResolvers<void>();
-    mockRunNodeSeekAction.mockRejectedValueOnce(Object.assign(new Error('旧 NodeSeek 登录已失效'), {
-      loginRequired: true,
-      source: 'nodeseek'
-    }));
-    const clearNodeSeekLoginCookiesOnly = jest.fn(async () => cleanup.promise);
+    const transport = Promise.withResolvers<unknown>();
+    mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise as never);
+    const dispatchSiteSessionEvent = jest.fn();
     const notify = jest.fn();
     seedTopicCache();
     const hook = await renderActions({
-      clearNodeSeekLoginCookiesOnly,
       currentNodeSeekCredentialGeneration: () => generation,
+      dispatchSiteSessionEvent,
       notify
     });
     await act(async () => {
@@ -937,31 +982,31 @@ describe('topic action query mutations', () => {
       action = hook.result.current.actions.submitReply();
       await Promise.resolve();
     });
-    await waitFor(() => expect(clearNodeSeekLoginCookiesOnly).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
     generation += 1;
     await act(async () => {
-      cleanup.resolve();
+      transport.reject(Object.assign(new Error('旧 NodeSeek 登录已失效'), {
+        loginRequired: true,
+        source: 'nodeseek'
+      }));
       await action;
     });
 
+    expect(dispatchSiteSessionEvent).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it('REG-ACCOUNT-009 suppresses a Yaohuo failure after a newer login takes ownership', async () => {
+  it('[REG-ACCOUNT-009][REG-WRITE-022] suppresses a Yaohuo failure after a newer login takes ownership', async () => {
     let generation = 0;
-    const cleanup = Promise.withResolvers<boolean>();
-    mockRunYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('旧妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
-    const clearYaohuoLoginState = jest.fn(async () => cleanup.promise);
+    const transport = Promise.withResolvers<unknown>();
+    mockRunYaohuoAction.mockImplementationOnce(async () => transport.promise as never);
+    const dispatchSiteSessionEvent = jest.fn();
     const showYaohuoLogin = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
     seedTopicCache(yaohuoDetail);
     const hook = await renderActions({
-      clearYaohuoLoginState,
       currentYaohuoCredentialGeneration: () => generation,
+      dispatchSiteSessionEvent,
       showYaohuoLogin,
       topicDetail: yaohuoDetail
     });
@@ -971,13 +1016,18 @@ describe('topic action query mutations', () => {
       action = hook.result.current.actions.favoriteOnYaohuoSite();
       await Promise.resolve();
     });
-    await waitFor(() => expect(clearYaohuoLoginState).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1));
     generation += 1;
     await act(async () => {
-      cleanup.resolve(true);
+      transport.reject(Object.assign(new Error('旧妖火登录已失效'), {
+        loginRequired: true,
+        reason: 'expired',
+        source: 'yaohuo'
+      }));
       await action;
     });
 
+    expect(dispatchSiteSessionEvent).not.toHaveBeenCalled();
     expect(showYaohuoLogin).not.toHaveBeenCalled();
   });
 

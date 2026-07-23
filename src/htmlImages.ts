@@ -212,7 +212,7 @@ export function normalizeImagePreviewUrl(url: string): string {
   return clean;
 }
 
-export function imageRequestHeadersForUrl(url: unknown, nodeSeekCookieHeader = '', nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT): Record<string, string> | undefined {
+export function imageRequestHeadersForUrl(url: unknown, nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT): Record<string, string> | undefined {
   const clean = normalizeImagePreviewUrl(decodeHtmlAttribute(url));
   try {
     const parsed = new URL(clean);
@@ -228,10 +228,6 @@ export function imageRequestHeadersForUrl(url: unknown, nodeSeekCookieHeader = '
       if (userAgent) {
         headers['User-Agent'] = userAgent;
       }
-      const cookieHeader = String(nodeSeekCookieHeader || '').trim();
-      if (cookieHeader && !isPublicNodeSeekStaticMedia(parsed)) {
-        headers.Cookie = cookieHeader;
-      }
     }
     return headers;
   } catch {
@@ -239,12 +235,12 @@ export function imageRequestHeadersForUrl(url: unknown, nodeSeekCookieHeader = '
   }
 }
 
-export function imageSourceFromUrl(url: string, source?: unknown, nodeSeekCookieHeader = '', nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT) {
+export function imageSourceFromUrl(url: string, source?: unknown, nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT) {
   const clean = normalizeImagePreviewUrl(url);
   const base: Record<string, unknown> = source && typeof source === 'object' && !Array.isArray(source)
     ? { ...(source as Record<string, unknown>), uri: clean }
     : { uri: clean };
-  const headers = imageRequestHeadersForUrl(clean, nodeSeekCookieHeader, nodeSeekUserAgent);
+  const headers = imageRequestHeadersForUrl(clean, nodeSeekUserAgent);
   if (!headers) {
     return base;
   }
@@ -963,8 +959,4 @@ function isKnownForumImageHost(hostname: string) {
 function isNodeSeekHost(hostname: string) {
   const normalized = hostname.toLowerCase();
   return normalized === 'nodeseek.com' || normalized.endsWith('.nodeseek.com');
-}
-
-function isPublicNodeSeekStaticMedia(url: URL) {
-  return isNodeSeekHost(url.hostname) && /^\/static\/image\//i.test(url.pathname);
 }

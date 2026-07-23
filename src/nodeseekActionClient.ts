@@ -64,10 +64,9 @@ export async function fetchNodeSeekVoteInfo({
     headers: {
       ...NODESEEK_ACTION_HEADERS,
       ...NODESEEK_VOTE_API_HEADERS,
-      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {}),
-      cookie: cleanCookie
+      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {})
     }
-  }, { owner: 'write', priority: 'write', cancelable: false }), {
+  }, { owner: 'write', priority: 'write' }), {
     fetcher,
     signal,
     timeoutMs
@@ -114,11 +113,10 @@ export async function runNodeSeekAction({
     headers: {
       ...NODESEEK_ACTION_HEADERS,
       ...request.headers,
-      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {}),
-      cookie: cleanCookie
+      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {})
     },
     body: request.body
-  }, { owner: 'write', priority: 'write', cancelable: false }), {
+  }, { owner: 'write', priority: 'write' }), {
     fetcher,
     signal,
     timeoutMs

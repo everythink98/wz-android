@@ -11,7 +11,6 @@ import type { SiteSessionEvent } from '../siteSessionState';
 import { runXiaoyinsiAction } from '../xiaoyinsiActionClient';
 import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
 import { errorMessage } from '../appUtils';
-import { clearExpiredLinuxDoLogin } from './topicActionHelpers';
 
 export type DiscourseActionRuntimeDependencies = {
   linuxDoUserAgent: () => string;
@@ -82,29 +81,10 @@ const discourseActionRuntimes = {
           if (!hasFlag(error, 'loginRequired')) {
             return { loginRequired: false, phase: 'transport' as const };
           }
-          let recovered: boolean | undefined;
-          try {
-            recovered = await clearExpiredLinuxDoLogin({
-              error,
-              generation,
-              cookieHeader: access?.cookieHeader,
-              resetLinuxDoLevelState: context.resetLinuxDoLevelState,
-              updateLinuxDoSession: context.updateLinuxDoSession
-            });
-          } catch {
-            if (!isCredentialCurrent()) {
-              return { loginRequired: false, phase: 'credential' as const, stale: true };
-            }
-            return {
-              loginRequired: true,
-              message: `${errorMessage(error)} 本机 Cookie 清理未完成，请重试。`,
-              phase: 'credential' as const
-            };
-          }
-          if (!recovered || !isCredentialCurrent()) {
-            return { loginRequired: false, phase: 'credential' as const, stale: true };
-          }
-          return { loginRequired: true, phase: 'credential' as const };
+          const message = errorMessage(error);
+          context.updateLinuxDoSession({ type: 'login-expired', message });
+          context.resetLinuxDoLevelState();
+          return { loginRequired: true, message, phase: 'credential' as const };
         }
       };
     }

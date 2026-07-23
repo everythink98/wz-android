@@ -163,7 +163,6 @@ type SourceGatewayCredentialLoadOptions = {
 };
 
 type SourceGatewayDependencies = {
-  clearYaohuoLoginState: (options?: { generation?: number; expiredMessage?: string }) => Promise<boolean>;
   currentLinuxDoCredentialGeneration?: () => number;
   currentNodeSeekCredentialGeneration?: () => number;
   currentYaohuoCredentialGeneration?: () => number;
@@ -447,24 +446,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
       const sourceError = sourceErrorFromUnknown(source, error);
-      let credentialCleanupSuperseded = false;
-      if (source === 'yaohuo' && sourceError.kind === 'login-expired' && credentialGenerationsAreCurrent()) {
-        try {
-          const cleared = await dependencies.clearYaohuoLoginState({
-            generation: yaohuoGeneration,
-            expiredMessage: sourceError.message
-          });
-          credentialCleanupSuperseded = !cleared;
-        } catch (cleanupError) {
-          markDiagnosticStage(trace, 'persist', {
-            source: 'yaohuo',
-            store: 'multi-store',
-            state: 'partial',
-            reason: normalizeDiagnosticReason(cleanupError)
-          });
-        }
-      }
-      if (credentialCleanupSuperseded || !readIsCurrent()) {
+      if (!readIsCurrent()) {
         if (ownsTrace) {
           finishDiagnosticTrace(trace, 'stale', { source, reason: 'superseded' });
         }

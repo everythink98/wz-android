@@ -140,6 +140,12 @@ export function NodeSeekLoginPanel({
     return () => clearTimeout(timeout);
   }, [credentialAttempt, loadingLoginPage, onSetLoadingLoginPage, onWebViewState, showLoginPanel, webViewBlockMessage, webViewRef]);
 
+  useEffect(() => {
+    if (showLoginPanel && loginFormMode && !loadingLoginPage && credentialAttempt > 0) {
+      webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.nodeseek.probeScript(credentialAttempt));
+    }
+  }, [credentialAttempt, loadingLoginPage, loginFormMode, showLoginPanel, webViewRef]);
+
   const refreshWebView = () => {
     setWebViewError('');
     setWebViewReadyForReplay(false);
@@ -243,7 +249,7 @@ export function NodeSeekLoginPanel({
       >
         {showLoginPanel && accountExpanded && !webViewBlockMessage ? (
             <WebView
-              key={`nodeseek-login-${webViewKey}-${credentialAttempt}`}
+              key={`nodeseek-login-${webViewKey}`}
               ref={webViewRef}
               source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.nodeseek.loginUrl : NODESEEK_URL }}
               javaScriptCanOpenWindowsAutomatically={false}
@@ -381,6 +387,12 @@ export function YaohuoLoginPanel({
     return () => clearTimeout(timeout);
   }, [credentialAttempt, loadingYaohuoLoginPage, onSetLoadingYaohuoLoginPage, onWebViewState, showYaohuoLoginPanel, webViewBlockMessage]);
 
+  useEffect(() => {
+    if (showYaohuoLoginPanel && loginFormMode && !loadingYaohuoLoginPage && credentialAttempt > 0) {
+      yaohuoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.yaohuo.probeScript(credentialAttempt));
+    }
+  }, [credentialAttempt, loadingYaohuoLoginPage, loginFormMode, showYaohuoLoginPanel, yaohuoWebViewRef]);
+
   const refreshWebView = () => {
     setWebViewError('');
     onSetLoadingYaohuoLoginPage(true);
@@ -418,7 +430,7 @@ export function YaohuoLoginPanel({
             {yaohuoLoginPrompt ? <Text style={styles.meta}>{yaohuoLoginPrompt}</Text> : null}
             <WebView
               style={styles.flex}
-              key={`yaohuo-login-${webViewKey}-${credentialAttempt}`}
+              key={`yaohuo-login-${webViewKey}`}
               ref={yaohuoWebViewRef}
               source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.yaohuo.loginUrl : yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
               javaScriptCanOpenWindowsAutomatically={false}

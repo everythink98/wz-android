@@ -115,7 +115,14 @@ async function fetchXiaoyinsiJson<T>(
   }
   if (!response.ok) {
     const error = new Error(errorText(data, `HTTP ${response.status}`));
-    Object.assign(error, { source: 'xiaoyinsi', status: response.status });
+    Object.assign(error, {
+      source: 'xiaoyinsi',
+      status: response.status,
+      responseFormat: 'json',
+      responseErrorType: isRecord(data) && typeof data.error_type === 'string'
+        ? data.error_type
+        : undefined
+    });
     throw error;
   }
   return data as T;
@@ -684,7 +691,33 @@ export async function getXiaoyinsiCurrentUserProfile(options: XiaoyinsiOptions =
   if (!cleanCredentials(options.credentials)) {
     throw new Error('请先授权小隐寺');
   }
-  const data = await fetchXiaoyinsiJson<Record<string, unknown>>('/session/current.json', undefined, options);
+  let data: Record<string, unknown>;
+  try {
+    data = await fetchXiaoyinsiJson<Record<string, unknown>>('/session/current.json', undefined, options);
+  } catch (error) {
+    const candidate = error && typeof error === 'object'
+      ? error as { responseErrorType?: unknown; responseFormat?: unknown; status?: unknown }
+      : {};
+    if (candidate.status === 403
+      && candidate.responseFormat === 'json'
+      && candidate.responseErrorType === 'invalid_access') {
+      throw Object.assign(new Error('小隐寺授权已失效，请重新授权。'), {
+        source: 'xiaoyinsi' as const,
+        kind: 'login-expired' as const,
+        loginRequired: true,
+        reason: 'expired' as const
+      });
+    }
+    throw error;
+  }
+  if (data.current_user === null || data.user === null) {
+    throw Object.assign(new Error('小隐寺授权已失效，请重新授权。'), {
+      source: 'xiaoyinsi' as const,
+      kind: 'login-expired' as const,
+      loginRequired: true,
+      reason: 'expired' as const
+    });
+  }
   const currentUser = isRecord(data.current_user) ? data.current_user : isRecord(data.user) ? data.user : {};
   const username = String(currentUser.username || '').trim();
   if (!username) {

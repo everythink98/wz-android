@@ -1,12 +1,11 @@
 import { useCallback } from 'react';
 import { isCancelledError, useQueries } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
-import { checkLinuxDoLoginAccess, checkYaohuoLogin, getCurrentUserProfile } from '../sources/sourceGateway';
+import { checkLinuxDoLoginAccess, checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '../sources/sourceGateway';
 import { errorMessage, isCanceledRequest } from '../appUtils';
 import { summarizeYaohuoCookies, yaohuoCookieMapFromHeader } from '../yaohuoCookies';
 import { parseNodeSeekDocumentCookie, summarizeNodeSeekCookies } from '../nodeseekCookies';
 import {
-  clearLinuxDoAccessForGeneration,
   currentLinuxDoAccessGeneration,
   linuxDoAccessSummary,
   loadLinuxDoAccess,
@@ -24,7 +23,8 @@ import {
 } from '../siteSessionState';
 import type { FeedSource, Source } from '../types';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
-import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
+import { sourceErrorFromUnknown } from '../sourceErrors';
+import type { CredentialLoadOptions } from './sessionControllerHelpers';
 import type { XiaoyinsiAuthorizationReadResult } from './useXiaoyinsiAuthController';
 import { isLinuxDoLoginCheckUnknown } from './accountStatusHelpers';
 import { appQueryClient, forumQueryKeys, type ForumCredentialScope } from './serverState';
@@ -85,34 +85,31 @@ function accountStatusViewModel(
 }
 
 export function useAccountStatusController({
-  clearYaohuoLoginState,
   credentialScope,
   currentNodeSeekCredentialGeneration,
   currentYaohuoCredentialGeneration,
-  linuxDoWebViewCookieHeaderRef,
   linuxDoUserAgentRef,
   loadNodeSeekCookieForSource,
   fetcher,
   nodeSeekUserAgentRef,
   notify,
+  onAccountStatusExpired,
   onLinuxDoExpired,
   readXiaoyinsiAuthorization,
   resetLinuxDoLevelState,
   saveNodeSeekCookieHeader,
-  sessionViewModels,
-  setLinuxDoWebViewCookieHeader
+  sessionViewModels
 }: {
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<boolean>;
   credentialScope: ForumCredentialScope;
   currentNodeSeekCredentialGeneration: () => number;
   currentYaohuoCredentialGeneration: () => number;
-  linuxDoWebViewCookieHeaderRef: { current: string };
   linuxDoUserAgentRef: { current: string };
   loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
-  onLinuxDoExpired: (message: string) => void;
+  onAccountStatusExpired: (source: StatusSource, recoveryQueryKey: readonly unknown[]) => void;
+  onLinuxDoExpired: (message: string, recoveryQueryKey?: readonly unknown[]) => void;
   readXiaoyinsiAuthorization: (
     trace?: DiagnosticTrace,
     options?: { signal?: AbortSignal }
@@ -123,22 +120,23 @@ export function useAccountStatusController({
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
     options?: { generation?: number; userId?: number | null; diagnosticTrace?: DiagnosticTrace }
   ) => Promise<string>;
-  setLinuxDoWebViewCookieHeader: (cookieHeader: string) => void;
 }) {
+  const nodeSeekStatusQueryKey = forumQueryKeys.accountStatus({ credentialScope, source: 'nodeseek' });
+  const linuxDoStatusQueryKey = forumQueryKeys.accountStatus({ credentialScope, source: 'linuxdo' });
+  const yaohuoStatusQueryKey = forumQueryKeys.accountStatus({ credentialScope, source: 'yaohuo' });
+  const xiaoyinsiStatusQueryKey = forumQueryKeys.accountStatus({ credentialScope, source: 'xiaoyinsi' });
   const statusQueries = useQueries({
     queries: [
       {
         enabled: false,
-        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'nodeseek' }),
+        queryKey: nodeSeekStatusQueryKey,
         queryFn: async ({ signal }): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'nodeseek' });
           let generation = currentNodeSeekCredentialGeneration();
-          let nodeSeekCredentialUserId: number | null = null;
           try {
             const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
             const cookieHeader = await loadNodeSeekCookieForSource('nodeseek', {
               captureGeneration: (nextGeneration) => { generation = nextGeneration; },
-              captureNodeSeekUserId: (nextUserId) => { nodeSeekCredentialUserId = nextUserId; },
               diagnosticTrace: trace
             });
             if (signal.aborted || currentNodeSeekCredentialGeneration() !== generation) {
@@ -151,12 +149,11 @@ export function useAccountStatusController({
               generation,
               hasCredential: summary.count > 0
             });
-            const currentUser = summary.loggedIn
+            const currentUser = cookieHeader
               ? await getCurrentUserProfile({
                 source: 'nodeseek',
                 fetcher: diagnosticFetcher,
                 nodeSeekCookie: cookieHeader,
-                nodeSeekUserId: nodeSeekCredentialUserId,
                 nodeSeekUserAgent: nodeSeekUserAgentRef.current,
                 signal
               })
@@ -194,7 +191,7 @@ export function useAccountStatusController({
                 type: 'cookie-loaded',
                 cookieSummary: summary.names,
                 hasVerification: summary.count > 0,
-                loggedIn: summary.loggedIn,
+                loggedIn: Boolean(currentUser),
                 currentUser,
                 at: checkedAt
               }, ...(persistenceError ? [{
@@ -206,6 +203,24 @@ export function useAccountStatusController({
             };
           } catch (error) {
             const canceled = signal.aborted || isCanceledStatusQuery(error);
+            const sourceError = canceled ? undefined : sourceErrorFromUnknown('nodeseek', error);
+            if (sourceError?.kind === 'login-expired') {
+              if (signal.aborted || currentNodeSeekCredentialGeneration() !== generation) {
+                finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
+                return canceledStatusQuery();
+              }
+              finishDiagnosticTrace(trace, 'success', {
+                source: 'nodeseek',
+                reason: 'expired'
+              });
+              return {
+                session: sessionFromEvents('nodeseek', [{
+                  site: 'nodeseek',
+                  type: 'login-expired',
+                  message: sourceError.message
+                }])
+              };
+            }
             finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
               source: 'nodeseek',
               reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
@@ -216,18 +231,18 @@ export function useAccountStatusController({
       },
       {
         enabled: false,
-        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'linuxdo' }),
+        queryKey: linuxDoStatusQueryKey,
         queryFn: async ({ signal }): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'linuxdo' });
           const generation = currentLinuxDoAccessGeneration();
           try {
             const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
-            let access = await loadLinuxDoAccess();
+            const access = await loadLinuxDoAccess();
             if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
               finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
               return canceledStatusQuery();
             }
-            let summary = linuxDoAccessSummary(access);
+            const summary = linuxDoAccessSummary(access);
             const cookieHeader = access?.cookieHeader || '';
             const userAgent = linuxDoUserAgentRef.current || access?.userAgent;
             markDiagnosticStage(trace, 'credential', {
@@ -235,7 +250,7 @@ export function useAccountStatusController({
               generation,
               hasCredential: Boolean(cookieHeader)
             });
-            if (!cookieHeader || !summary.loggedIn) {
+            if (!cookieHeader) {
               finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
               return {
                 session: sessionFromEvents('linuxdo', [{
@@ -259,33 +274,15 @@ export function useAccountStatusController({
               throw new Error(login?.message || 'linux.do 状态暂时无法确认');
             }
             if (login?.loginRequired) {
-              let cleanupError: unknown;
-              try {
-                access = await clearLinuxDoAccessForGeneration(generation, cookieHeader);
-              } catch (error) {
-                cleanupError = error;
-              }
               if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
                 finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
                 return canceledStatusQuery();
               }
-              summary = linuxDoAccessSummary(access);
-              if (!cleanupError) {
-                const nextCookieHeader = access?.cookieHeader || '';
-                linuxDoWebViewCookieHeaderRef.current = nextCookieHeader;
-                setLinuxDoWebViewCookieHeader(nextCookieHeader);
-              }
               resetLinuxDoLevelState();
-              const expiryMessage = cleanupError
-                ? 'linux.do 登录已失效，本机 Cookie 清理未完成，请重试。'
-                : login.message || 'linux.do 登录已失效';
-              onLinuxDoExpired(expiryMessage);
-              finishDiagnosticTrace(trace, cleanupError ? 'partial' : 'success', {
-                source: 'linuxdo',
-                ...(cleanupError ? { reason: normalizeDiagnosticReason(cleanupError) } : {})
-              });
+              const expiryMessage = login.message || 'linux.do 登录已失效';
+              onLinuxDoExpired(expiryMessage, linuxDoStatusQueryKey);
+              finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
               return {
-                failed: Boolean(cleanupError),
                 session: sessionFromEvents('linuxdo', [{
                   site: 'linuxdo',
                   type: 'login-expired',
@@ -293,12 +290,10 @@ export function useAccountStatusController({
                 }])
               };
             }
-            const currentUser = await getCurrentUserProfile({
-              source: 'linuxdo',
-              fetcher: diagnosticFetcher,
-              discourseAuth: { linuxdo: { cookieHeader, userAgent } },
-              signal
-            });
+            const currentUser = login?.currentUser;
+            if (!currentUser) {
+              throw new Error('linux.do 状态暂时无法确认');
+            }
             if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
               finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
               return canceledStatusQuery();
@@ -310,7 +305,7 @@ export function useAccountStatusController({
                 type: 'cookie-loaded',
                 cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(cookieHeader)).names,
                 hasVerification: summary.hasClearance,
-                loggedIn: Boolean(login?.ok),
+                loggedIn: true,
                 currentUser,
                 at: new Date().toISOString()
               }])
@@ -327,7 +322,7 @@ export function useAccountStatusController({
       },
       {
         enabled: false,
-        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'yaohuo' }),
+        queryKey: yaohuoStatusQueryKey,
         queryFn: async ({ signal }): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'yaohuo' });
           const generation = currentYaohuoCredentialGeneration();
@@ -364,59 +359,71 @@ export function useAccountStatusController({
               signal
             });
             const expired = 'reason' in check && check.reason === 'expired';
+            if (!check.ok && !expired) {
+              throw new Error(check.message || '妖火登录状态暂时无法确认。');
+            }
             if (expired) {
-              let cleanupError: unknown;
-              try {
-                await clearYaohuoLoginState({
-                  generation,
-                  expiredMessage: '妖火登录已失效'
-                });
-              } catch (error) {
-                cleanupError = error;
-              }
               if (signal.aborted || currentYaohuoCredentialGeneration() !== generation) {
                 finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
                 return canceledStatusQuery();
               }
-              finishDiagnosticTrace(trace, cleanupError ? 'partial' : 'success', {
-                source: 'yaohuo',
-                ...(cleanupError ? { reason: normalizeDiagnosticReason(cleanupError) } : {})
-              });
+              finishDiagnosticTrace(trace, 'success', { source: 'yaohuo' });
               return {
-                failed: Boolean(cleanupError),
                 session: sessionFromEvents('yaohuo', [{
                   site: 'yaohuo',
                   type: 'login-expired',
-                  message: cleanupError ? '妖火登录已失效，本机 Cookie 清理未完成，请重试。' : '妖火登录已失效'
+                  message: '妖火登录已失效'
                 }])
               };
             }
-            const loggedIn = check.ok && !check.loginRequired;
-            const currentUser = loggedIn
-              ? ('currentUser' in check && check.currentUser
-                ? check.currentUser
-                : await getCurrentUserProfile({
-                  source: 'yaohuo',
-                  fetcher: diagnosticFetcher,
-                  yaohuoCookie: cookieHeader,
-                  signal
-                }))
-              : null;
+            const verifiedUser = 'currentUser' in check ? check.currentUser : undefined;
+            if (!verifiedUser) {
+              throw new Error('妖火登录状态暂时无法确认。');
+            }
+            let currentUser = verifiedUser;
+            let profileError: unknown;
+            try {
+              currentUser = await getUserProfile({
+                source: 'yaohuo',
+                id: verifiedUser.id,
+                username: verifiedUser.username,
+                fetcher: diagnosticFetcher,
+                yaohuoCookie: cookieHeader,
+                signal
+              });
+            } catch (error) {
+              if (signal.aborted || isCanceledStatusQuery(error)) {
+                throw error;
+              }
+              profileError = error;
+            }
             if (signal.aborted || currentYaohuoCredentialGeneration() !== generation) {
               finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
               return canceledStatusQuery();
             }
-            finishDiagnosticTrace(trace, 'success', { source: 'yaohuo' });
-            return {
-              session: sessionFromEvents('yaohuo', [{
+            finishDiagnosticTrace(trace, profileError ? 'partial' : 'success', {
+              source: 'yaohuo',
+              ...(profileError ? { reason: normalizeDiagnosticReason(profileError) } : {})
+            });
+            const events: ScopedSiteSessionEvent[] = [{
+              site: 'yaohuo',
+              type: 'cookie-loaded',
+              cookieSummary,
+              hasVerification: false,
+              loggedIn: true,
+              currentUser,
+              at: new Date().toISOString()
+            }];
+            if (profileError) {
+              events.push({
                 site: 'yaohuo',
-                type: 'cookie-loaded',
-                cookieSummary,
-                hasVerification: false,
-                loggedIn,
-                currentUser,
-                at: new Date().toISOString()
-              }])
+                type: 'check-failed',
+                message: errorMessage(profileError)
+              });
+            }
+            return {
+              failed: Boolean(profileError),
+              session: sessionFromEvents('yaohuo', events)
             };
           } catch (error) {
             const canceled = signal.aborted || isCanceledStatusQuery(error);
@@ -430,7 +437,7 @@ export function useAccountStatusController({
       },
       {
         enabled: false,
-        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'xiaoyinsi' }),
+        queryKey: xiaoyinsiStatusQueryKey,
         queryFn: async ({ signal }): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
           try {
@@ -480,6 +487,17 @@ export function useAccountStatusController({
       return;
     }
     const results = await Promise.all(statusQueries.map((query) => query.refetch({ cancelRefetch: false })));
+    const statusQueryKeys = [
+      nodeSeekStatusQueryKey,
+      linuxDoStatusQueryKey,
+      yaohuoStatusQueryKey,
+      xiaoyinsiStatusQueryKey
+    ] as const;
+    results.forEach((result, index) => {
+      if (!result.error && result.data?.session?.status === 'expired') {
+        onAccountStatusExpired(STATUS_SOURCES[index], statusQueryKeys[index]);
+      }
+    });
     if (options.silent) {
       return;
     }
@@ -488,7 +506,7 @@ export function useAccountStatusController({
       return failed ? [STATUS_LABELS[STATUS_SOURCES[index]]] : [];
     });
     notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
-  }, [notify, statusQueries]);
+  }, [linuxDoStatusQueryKey, nodeSeekStatusQueryKey, notify, onAccountStatusExpired, statusQueries, xiaoyinsiStatusQueryKey, yaohuoStatusQueryKey]);
 
   return {
     accountSessionViewModels,

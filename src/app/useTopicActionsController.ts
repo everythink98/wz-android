@@ -67,7 +67,7 @@ import {
   uploadYaohuoReplyImage
 } from '../replyImageUpload';
 import { currentNodeImageApiKeyGeneration } from '../nodeimageCredentials';
-import type { SiteSessionViewModels } from '../siteSessionState';
+import type { ScopedSiteSessionEvent, SiteSessionViewModels } from '../siteSessionState';
 import { authActionMessageForSource } from '../siteSessionPrompts';
 import { useCommittedRef } from './useCommittedRef';
 import {
@@ -79,9 +79,8 @@ import {
   withDiagnosticFetcher,
   type DiagnosticTrace
 } from '../diagnostics';
-import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
+import type { CredentialLoadOptions } from './sessionControllerHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
-import { isNodeSeekLoginRequiredError } from './topicActionHelpers';
 import {
   forumMutationKeys,
   forumQueryKeys,
@@ -175,11 +174,10 @@ function updateReplyCache(
 }
 
 export function useTopicActionsController({
-  clearNodeSeekLoginCookiesOnly,
-  clearYaohuoLoginState,
   credentialScope,
   currentNodeSeekCredentialGeneration,
   currentYaohuoCredentialGeneration,
+  dispatchSiteSessionEvent,
   discourseActionRuntimeDependencies,
   discourseLoginPrompts,
   ensureNodeImageApiKey,
@@ -194,11 +192,10 @@ export function useTopicActionsController({
   topicReplies,
   topicSession
 }: {
-  clearNodeSeekLoginCookiesOnly: (options?: CredentialClearOptions) => Promise<void>;
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<boolean>;
   credentialScope: ForumCredentialScope;
   currentNodeSeekCredentialGeneration: () => number;
   currentYaohuoCredentialGeneration: () => number;
+  dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   discourseActionRuntimeDependencies: DiscourseActionRuntimeDependencies;
   discourseLoginPrompts: Record<DiscourseSource, (message?: string) => void>;
   ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
@@ -384,16 +381,13 @@ export function useTopicActionsController({
       if (generation !== currentNodeSeekCredentialGeneration()) {
         throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      let message = errorMessage(error);
-      if (isNodeSeekLoginRequiredError(error)) {
-        try {
-          await clearNodeSeekLoginCookiesOnly({ generation, expiredMessage: message });
-        } catch {
-          message = `${message} 本机 Cookie 清理未完成，请重试。`;
-        }
-      }
+      const loginRequired = Boolean(error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired);
+      const message = errorMessage(error);
       if (generation !== currentNodeSeekCredentialGeneration()) {
         throw new HandledMutationError('凭据已变化', 'stale', 'stale');
+      }
+      if (loginRequired) {
+        dispatchSiteSessionEvent({ site: 'nodeseek', type: 'login-expired', message });
       }
       notify(message);
       throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
@@ -403,7 +397,7 @@ export function useTopicActionsController({
     }
     markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
     return true;
-  }, [clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, fetcher, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, sourceActionAvailability.nodeseek]);
+  }, [currentNodeSeekCredentialGeneration, dispatchSiteSessionEvent, fetcher, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, sourceActionAvailability.nodeseek]);
 
   const attendanceMutation = useMutation<unknown, unknown, AttendanceMutationVariables>({
     mutationKey: forumMutationKeys.topic('nodeseek', 'global'),
@@ -473,25 +467,27 @@ export function useTopicActionsController({
       if (generation !== currentYaohuoCredentialGeneration()) {
         throw new HandledMutationError('凭据已变化', 'stale', 'stale');
       }
-      const loginRequired = Boolean(error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired);
-      let message = errorMessage(error);
+      const failure = error && typeof error === 'object'
+        ? error as { loginRequired?: unknown; reason?: unknown }
+        : {};
+      const loginRequired = Boolean(failure.loginRequired);
+      const message = errorMessage(error);
       if (loginRequired) {
-        if ((error as { reason?: unknown }).reason === 'expired') {
-          const cleared = await clearYaohuoLoginState({ generation, expiredMessage: message }).catch(() => false);
-          if (generation !== currentYaohuoCredentialGeneration()) {
-            throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-          }
-          if (!cleared) {
-            message = `${message} 本机登录信息清理未完成，请重试。`;
-          }
+        if (generation !== currentYaohuoCredentialGeneration()) {
+          throw new HandledMutationError('凭据已变化', 'stale', 'stale');
         }
+        dispatchSiteSessionEvent({
+          site: 'yaohuo',
+          type: failure.reason === 'verification' ? 'verification-required' : 'login-expired',
+          message
+        });
         showYaohuoLogin(message);
         throw new HandledMutationError(message, 'blocked', 'login_required');
       }
       notify(message);
       throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
-  }, [clearYaohuoLoginState, currentYaohuoCredentialGeneration, fetcher, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, sourceActionAvailability.yaohuo]);
+  }, [currentYaohuoCredentialGeneration, dispatchSiteSessionEvent, fetcher, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, sourceActionAvailability.yaohuo]);
 
   const runDiscourseRequest = useCallback(async (
     source: DiscourseSource,

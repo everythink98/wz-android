@@ -51,8 +51,12 @@ type XiaoyinsiAuthorizationCheckResult = XiaoyinsiAuthorizationReadResult & {
   reason?: string;
 };
 
-function statusFromError(error: unknown) {
-  return Number(error && typeof error === 'object' ? (error as { status?: unknown }).status : 0) || 0;
+function isXiaoyinsiLoginExpiredError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const candidate = error as { kind?: unknown; loginRequired?: unknown };
+  return candidate.loginRequired === true || candidate.kind === 'login-expired';
 }
 
 async function checkXiaoyinsiAuthorization({
@@ -106,7 +110,7 @@ async function checkXiaoyinsiAuthorization({
     if (signal?.aborted || isCancelledError(error) || isCanceledRequest(error)) {
       throw error;
     }
-    if (statusFromError(error) === 401 || statusFromError(error) === 403) {
+    if (isXiaoyinsiLoginExpiredError(error)) {
       return {
         authenticated: false,
         reason: 'login_required',
@@ -315,7 +319,7 @@ export function useXiaoyinsiAuthController({
       if (stopIfStale() || isCancelledError(error) || isCanceledRequest(error)) {
         return false;
       }
-      if (statusFromError(error) === 401 || statusFromError(error) === 403) {
+      if (isXiaoyinsiLoginExpiredError(error)) {
         publishSessionEvent({ type: 'login-expired', message: '小隐寺授权已失效' });
         setPhase('expired');
         setMessage('授权已失效，请重新授权。');

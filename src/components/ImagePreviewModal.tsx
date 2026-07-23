@@ -12,18 +12,16 @@ const EMPTY_PREVIEW_URLS: string[] = [];
 
 function CompatiblePreviewThumbnail({
   url,
-  nodeSeekCookieHeader,
   nodeSeekUserAgent,
   styles
 }: {
   url: string;
-  nodeSeekCookieHeader?: string;
   nodeSeekUserAgent?: string;
   styles: ReturnType<typeof createStyles>;
 }) {
   const originalSource = useMemo(
-    () => imageSourceFromUrl(url, undefined, nodeSeekCookieHeader, nodeSeekUserAgent) as ImageURISource,
-    [nodeSeekCookieHeader, nodeSeekUserAgent, url]
+    () => imageSourceFromUrl(url, undefined, nodeSeekUserAgent) as ImageURISource,
+    [nodeSeekUserAgent, url]
   );
   const requestIdentity = compatibleImageRequestIdentity(originalSource);
   const requestIdentityRef = useRef(requestIdentity);
@@ -61,7 +59,6 @@ function CompatiblePreviewThumbnail({
 
 export function ImagePreviewModal({
   preview,
-  nodeSeekMediaCookieHeader,
   nodeSeekMediaUserAgent,
   styles,
   theme,
@@ -72,7 +69,6 @@ export function ImagePreviewModal({
   onSelect
 }: {
   preview: ImagePreviewList | null;
-  nodeSeekMediaCookieHeader?: string;
   nodeSeekMediaUserAgent?: string;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
@@ -94,9 +90,8 @@ export function ImagePreviewModal({
   const originalImageSource = useMemo(() => imageSourceFromUrl(
     activeUri,
     undefined,
-    nodeSeekMediaCookieHeader,
     nodeSeekMediaUserAgent
-  ) as ImageURISource, [activeUri, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent]);
+  ) as ImageURISource, [activeUri, nodeSeekMediaUserAgent]);
   const imageRequestIdentity = compatibleImageRequestIdentity(originalImageSource);
   const imageRequestIdentityRef = useRef(imageRequestIdentity);
   const recoveryIdentityRef = useRef('');
@@ -120,7 +115,7 @@ export function ImagePreviewModal({
       return;
     }
     let canceled = false;
-    const headers = imageRequestHeadersForUrl(activeUri, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent);
+    const headers = imageRequestHeadersForUrl(activeUri, nodeSeekMediaUserAgent);
     const onSuccess = (nextWidth: number, nextHeight: number) => {
       if (!canceled) {
         setImagePreviewResolution({ width: nextWidth, height: nextHeight });
@@ -139,7 +134,7 @@ export function ImagePreviewModal({
     return () => {
       canceled = true;
     };
-  }, [activeUri, height, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent, width]);
+  }, [activeUri, height, nodeSeekMediaUserAgent, width]);
 
   const imagePreviewSize = useMemo(() => {
     if (!imagePreviewResolution?.width || !imagePreviewResolution.height) {
@@ -257,7 +252,6 @@ export function ImagePreviewModal({
               <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === activeIndex && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
                 <CompatiblePreviewThumbnail
                   url={url}
-                  nodeSeekCookieHeader={nodeSeekMediaCookieHeader}
                   nodeSeekUserAgent={nodeSeekMediaUserAgent}
                   styles={styles}
                 />

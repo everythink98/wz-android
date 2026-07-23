@@ -74,7 +74,6 @@ describe('source gateway read contract', () => {
       return { heart: 'https://linux.do/heart.png' };
     });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher,
       loadLinuxDoAccessForSource,
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -103,7 +102,6 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => { lines.push(line); });
     const loadNodeSeekCookieForSource = vi.fn(async () => 'session=diagnostic-secret');
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource,
@@ -159,7 +157,6 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => { lines.push(line); });
     const loadLinuxDoAccessForSource = vi.fn(async () => ({ cookieHeader: '_t=safe' }));
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource,
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -191,7 +188,6 @@ describe('source gateway read contract', () => {
       return { cookieHeader: '_t=safe', userAgent: 'safe-agent' };
     });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       currentLinuxDoCredentialGeneration: () => generation,
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource,
@@ -223,7 +219,6 @@ describe('source gateway read contract', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => {
         throw new Error('storage read failed');
@@ -273,7 +268,6 @@ describe('source gateway read contract', () => {
       nextPage: null
     });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => { throw new Error('LinuxDo credential store failed'); }),
       loadNodeSeekCookieForSource: vi.fn(async () => { throw new Error('NodeSeek credential store failed'); }),
@@ -307,7 +301,6 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => { lines.push(line); });
     const trace = beginDiagnosticTrace('feed', 'refresh', { source: 'v2ex' });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -331,7 +324,6 @@ describe('source gateway read contract', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -366,7 +358,6 @@ describe('source gateway read contract', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -396,7 +387,6 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => { lines.push(line); });
     const trace = beginDiagnosticTrace('feed', 'load', { source: 'nodeseek' });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -431,7 +421,6 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => { lines.push(line); });
     const trace = beginDiagnosticTrace('user', 'open', { source: 'v2ex' });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -471,7 +460,6 @@ describe('source gateway read contract', () => {
       replyCount: 0
     };
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -517,7 +505,6 @@ describe('source gateway read contract', () => {
 
   it('[REG-LINUXDO-005] preserves the confirmed-auth decision through the managed gateway', async () => {
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => ({
         cookieHeader: 'cf_clearance=verification; _t=stale-session',
@@ -552,7 +539,6 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => { lines.push(line); });
     const fetcher = vi.fn();
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher,
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -590,9 +576,7 @@ describe('source gateway read contract', () => {
     const fetcher = vi.fn();
     const loadNodeSeekCookieForSource = vi.fn(async () => 'session=node');
     const loadYaohuoCookieForSource = vi.fn(async () => undefined);
-    const clearYaohuoLoginState = vi.fn(async () => true);
     const gateway = createSourceGateway({
-      clearYaohuoLoginState,
       fetcher,
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource,
@@ -639,7 +623,6 @@ describe('source gateway read contract', () => {
       }>();
       forumMocks.getUserProfile.mockReturnValueOnce(response.promise);
       const gateway = createSourceGateway({
-        clearYaohuoLoginState: vi.fn(async () => true),
         currentLinuxDoCredentialGeneration: () => generation,
         currentNodeSeekCredentialGeneration: () => generation,
         currentYaohuoCredentialGeneration: () => generation,
@@ -673,8 +656,7 @@ describe('source gateway read contract', () => {
     }
   );
 
-  it('clears only the Yaohuo credential generation used by an expired user profile read', async () => {
-    const clearYaohuoLoginState = vi.fn(async () => true);
+  it('[REG-ACCOUNT-026] returns typed Yaohuo expiry without invoking a logout command', async () => {
     const loadYaohuoCookieForSource = vi.fn(async (
       _source: FeedSource,
       options?: { captureGeneration?: (generation: number) => void }
@@ -683,7 +665,6 @@ describe('source gateway read contract', () => {
       return 'sidyaohuo=expired';
     });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState,
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -700,16 +681,13 @@ describe('source gateway read contract', () => {
       kind: 'login-expired',
       message: '妖火登录已失效'
     });
-    expect(clearYaohuoLoginState).toHaveBeenCalledWith({
-      generation: 7,
-      expiredMessage: '妖火登录已失效'
-    });
   });
 
-  it('REG-ACCOUNT-009 cancels an expired Yaohuo read when its credential cleanup was superseded', async () => {
-    const clearYaohuoLoginState = vi.fn(async () => false);
+  it('REG-ACCOUNT-009 cancels an expired Yaohuo read when a newer credential takes ownership', async () => {
+    let generation = 7;
+    const response = Promise.withResolvers<never>();
     const gateway = createSourceGateway({
-      clearYaohuoLoginState,
+      currentYaohuoCredentialGeneration: () => generation,
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -717,30 +695,27 @@ describe('source gateway read contract', () => {
         _source: FeedSource,
         options?: { captureGeneration?: (generation: number) => void }
       ) => {
-        options?.captureGeneration?.(7);
+        options?.captureGeneration?.(generation);
         return 'sidyaohuo=old-session';
       }),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockRejectedValueOnce(Object.assign(new Error('旧妖火登录已失效'), {
+    forumMocks.getUserProfile.mockReturnValueOnce(response.promise);
+
+    const read = gateway.getUserProfile({ source: 'yaohuo', id: '7' });
+    await vi.waitFor(() => expect(forumMocks.getUserProfile).toHaveBeenCalledTimes(1));
+    generation += 1;
+    response.reject(Object.assign(new Error('旧妖火登录已失效'), {
       loginRequired: true,
       reason: 'expired',
       source: 'yaohuo'
     }));
 
-    await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toThrow('请求已取消');
-    expect(clearYaohuoLoginState).toHaveBeenCalledWith({
-      generation: 7,
-      expiredMessage: '旧妖火登录已失效'
-    });
+    await expect(read).rejects.toThrow('请求已取消');
   });
 
-  it('[REG-ACCOUNT-007] preserves the typed Yaohuo expiry when credential cleanup fails', async () => {
-    const clearYaohuoLoginState = vi.fn(async () => {
-      throw new Error('WebView cookie cleanup failed');
-    });
+  it('[REG-ACCOUNT-026] cannot invoke a failing Yaohuo logout command during a read', async () => {
     const gateway = createSourceGateway({
-      clearYaohuoLoginState,
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -757,13 +732,10 @@ describe('source gateway read contract', () => {
       kind: 'login-expired',
       message: '妖火登录已失效'
     });
-    expect(clearYaohuoLoginState).toHaveBeenCalledTimes(1);
   });
 
   it('keeps Yaohuo credentials while surfacing a verification-required user profile error', async () => {
-    const clearYaohuoLoginState = vi.fn(async () => true);
     const gateway = createSourceGateway({
-      clearYaohuoLoginState,
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -781,13 +753,11 @@ describe('source gateway read contract', () => {
       kind: 'verification-required',
       message: '妖火需要完成访问验证'
     });
-    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
   });
 
   it('routes 小隐寺 search candidates with its independent User API credentials', async () => {
     const credentials = { apiKey: 'secret-key', clientId: 'install-client' };
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -811,7 +781,6 @@ describe('source gateway read contract', () => {
   it('[REG-XIAOYINSI-007] rechecks 小隐寺 authorization after an authenticated read returns 403', async () => {
     const refreshXiaoyinsiAuthorization = vi.fn(async () => true);
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -838,7 +807,6 @@ describe('source gateway read contract', () => {
       return true;
     });
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       currentXiaoyinsiCredentialGeneration: () => generation,
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
@@ -864,7 +832,6 @@ describe('source gateway read contract', () => {
     const refreshXiaoyinsiAuthorization = vi.fn(async () => false);
     const credentials = { apiKey: 'api-key', clientId: 'client-id' };
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -889,7 +856,6 @@ describe('source gateway read contract', () => {
   it('[REG-XIAOYINSI-007] rechecks aggregate 小隐寺 read failures once', async () => {
     const refreshXiaoyinsiAuthorization = vi.fn(async () => true);
     const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => true),
       fetcher: vi.fn(),
       loadLinuxDoAccessForSource: vi.fn(async () => undefined),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),

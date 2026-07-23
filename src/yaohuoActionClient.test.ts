@@ -17,7 +17,7 @@ function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/b
 }
 
 describe('runYaohuoAction', () => {
-  it('sends yaohuo write requests directly with Android browser-like headers', async () => {
+  it('[REG-ACCOUNT-029] sends yaohuo writes through the native read-only cookie jar', async () => {
     const fetcher = vi.fn(async () => htmlResponse('<div class="tip">评论成功</div>'));
 
     const result = await runYaohuoAction({
@@ -33,11 +33,11 @@ describe('runYaohuoAction', () => {
 
     expect(fetcher).toHaveBeenCalledWith('https://www.yaohuo.me/bbs/book_re.aspx', expect.objectContaining({
       method: 'POST',
+      credentials: 'include',
       headers: expect.objectContaining({
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'content-type': 'application/x-www-form-urlencoded',
-        cookie: 'sidyaohuo=secret',
         origin: 'https://www.yaohuo.me',
         referer: 'https://www.yaohuo.me/bbs/',
         'sec-fetch-site': 'same-origin',
@@ -46,6 +46,7 @@ describe('runYaohuoAction', () => {
       body: expect.any(String),
       signal: expect.any(AbortSignal)
     }));
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('cookie');
     expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       headers: expect.not.objectContaining({
         'sec-ch-ua': expect.anything(),

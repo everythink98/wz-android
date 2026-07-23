@@ -29,13 +29,18 @@ describe('cookie cleanup helpers', () => {
   });
 
   it('can expire only named cookies while preserving verification cookies', async () => {
+    const cookies = {
+      cf_clearance: { name: 'cf_clearance', value: 'keep' },
+      session: { name: 'session', value: 'delete' },
+      sid: { name: 'sid', value: 'delete' }
+    };
     const store = {
-      get: vi.fn(async () => ({
-        cf_clearance: { name: 'cf_clearance', value: 'keep' },
-        session: { name: 'session', value: 'delete' },
-        sid: { name: 'sid', value: 'delete' }
-      })),
-      setFromResponse: vi.fn(async () => true),
+      get: vi.fn(async () => cookies),
+      setFromResponse: vi.fn(async (_url: string, header: string) => {
+        const name = header.slice(0, header.indexOf('='));
+        delete cookies[name as keyof typeof cookies];
+        return true;
+      }),
       flush: vi.fn(async () => undefined)
     };
 
@@ -45,6 +50,43 @@ describe('cookie cleanup helpers', () => {
     expect(store.setFromResponse).toHaveBeenCalledWith('https://www.nodeseek.com', expect.stringMatching(/^session=;/));
     expect(store.setFromResponse).toHaveBeenCalledWith('https://www.nodeseek.com', expect.stringMatching(/^sid=;/));
     expect(store.setFromResponse).not.toHaveBeenCalledWith('https://www.nodeseek.com', expect.stringMatching(/^cf_clearance=;/));
+  });
+
+  it('[REG-ACCOUNT-022] expires host-only and domain-scoped variants of a named login cookie', async () => {
+    const store = {
+      get: vi.fn(async () => ({})),
+      setFromResponse: vi.fn(async () => true),
+      flush: vi.fn(async () => undefined)
+    };
+
+    await clearCookieUrls(
+      store,
+      ['https://nodeseek.com'],
+      ['session'],
+      () => true,
+      { domains: ['nodeseek.com'] }
+    );
+
+    expect(store.setFromResponse.mock.calls).toEqual([
+      ['https://nodeseek.com', expect.stringMatching(/^session=; .*Path=\/$/)],
+      ['https://nodeseek.com', expect.stringMatching(/^session=; Domain=nodeseek\.com; .*Path=\/$/)]
+    ]);
+  });
+
+  it('[REG-ACCOUNT-022] rejects a targeted cleanup when the cookie is still visible after flush', async () => {
+    const store = {
+      get: vi.fn(async () => ({ session: { name: 'session', value: 'still-present' } })),
+      setFromResponse: vi.fn(async () => true),
+      flush: vi.fn(async () => undefined)
+    };
+
+    await expect(clearCookieUrls(
+      store,
+      ['https://nodeseek.com'],
+      ['session'],
+      () => true,
+      { domains: ['nodeseek.com'] }
+    )).rejects.toThrow('Cookie 删除未确认');
   });
 
   it('[REG-ACCOUNT-015] clears cookies from reachable urls even when another cookie store read fails', async () => {
@@ -100,6 +142,7 @@ describe('cookie cleanup helpers', () => {
     };
 
     await expect(clearCookieUrls(store, ['https://www.nodeseek.com'])).rejects.toThrow('Cookie 删除未确认');
+    expect(store.setFromResponse).toHaveBeenCalledTimes(1);
     expect(store.flush).toHaveBeenCalledTimes(1);
   });
 });

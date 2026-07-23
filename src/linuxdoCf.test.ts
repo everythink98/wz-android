@@ -3,8 +3,7 @@ import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 
 const linuxDoCookieModuleMock = vi.hoisted(() => ({
-  clearLinuxDoLoginCookies: vi.fn(async () => true),
-  clearLinuxDoClearanceCookies: vi.fn(async () => true)
+  clearLinuxDoLoginCookies: vi.fn(async () => true)
 }));
 
 vi.mock('@react-native-cookies/cookies', () => ({
@@ -34,9 +33,6 @@ import {
   canStoreLinuxDoClearance,
   canStoreLinuxDoLogin,
   clearLinuxDoAccess,
-  clearLinuxDoAccessForGeneration,
-  clearLinuxDoClearance,
-  clearLinuxDoWebViewClearance,
   clearLinuxDoSavedAccess,
   currentLinuxDoAccessGeneration,
   hasFreshLinuxDoClearance,
@@ -266,63 +262,6 @@ describe('linux.do Cloudflare helpers', () => {
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
   });
 
-  it('serializes WebView clearance removal before a newer linux.do access save', async () => {
-    let releaseClearance: () => void = () => undefined;
-    const clearanceBarrier = new Promise<void>((resolve) => {
-      releaseClearance = resolve;
-    });
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify({
-      cookieHeader: 'cf_clearance=old; _t=login; _forum_session=session',
-      userAgent: 'LinuxDo UA'
-    }));
-    vi.mocked(SecureStore.setItemAsync).mockClear();
-    vi.mocked(CookieManager.clearByName).mockClear();
-    vi.mocked(CookieManager.clearByName).mockImplementation(async () => {
-      await clearanceBarrier;
-      return true;
-    });
-
-    try {
-      const clear = clearLinuxDoClearance();
-      await vi.waitFor(() => expect(CookieManager.clearByName).toHaveBeenCalled());
-      const save = saveLinuxDoAccess('cf_clearance=new; _t=login; _forum_session=session', 'LinuxDo UA');
-      releaseClearance();
-      await Promise.all([clear, save]);
-
-      const savedCalls = vi.mocked(SecureStore.setItemAsync).mock.calls;
-      const newSaveIndex = savedCalls.findIndex(([, value]) => String(value).includes('cf_clearance=new'));
-      expect(newSaveIndex).toBeGreaterThanOrEqual(0);
-      const newSaveOrder = vi.mocked(SecureStore.setItemAsync).mock.invocationCallOrder[newSaveIndex];
-      expect(vi.mocked(CookieManager.clearByName).mock.invocationCallOrder.every((order) => order < newSaveOrder)).toBe(true);
-    } finally {
-      releaseClearance();
-      vi.mocked(CookieManager.clearByName).mockImplementation(async () => true);
-    }
-  });
-
-  it('skips stale linux.do login clears captured before a newer access generation exists', async () => {
-    const staleGeneration = currentLinuxDoAccessGeneration();
-    await clearLinuxDoSavedAccess();
-    vi.mocked(CookieManager.clearByName).mockClear();
-    vi.mocked(SecureStore.deleteItemAsync).mockClear();
-
-    await clearLinuxDoAccessForGeneration(staleGeneration);
-
-    expect(CookieManager.clearByName).not.toHaveBeenCalled();
-    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
-  });
-
-  it('can clear stale WebView linux.do clearance without clearing login cookies', async () => {
-    vi.mocked(CookieManager.clearByName).mockClear();
-
-    await clearLinuxDoWebViewClearance();
-
-    expect(CookieManager.clearByName).toHaveBeenCalledWith('https://linux.do/latest', 'cf_clearance');
-    expect(CookieManager.clearByName).toHaveBeenCalledWith('https://www.linux.do/latest', 'cf_clearance');
-    expect(CookieManager.clearByName).not.toHaveBeenCalledWith(expect.any(String), '_t');
-    expect(CookieManager.clearByName).not.toHaveBeenCalledWith(expect.any(String), '_forum_session');
-  });
-
   it('flushes CookieManager after clearing linux.do login cookies', async () => {
     vi.mocked(CookieManager.flush).mockClear();
     vi.mocked(CookieManager.clearByName).mockClear();
@@ -335,21 +274,13 @@ describe('linux.do Cloudflare helpers', () => {
     expect(CookieManager.flush).toHaveBeenCalled();
   });
 
-  it('skips conditional linux.do clears when saved login cookies changed', async () => {
-    const generation = currentLinuxDoAccessGeneration();
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify({
-      cookieHeader: 'cf_clearance=clear; _t=new-login; _forum_session=new-session',
-      userAgent: 'LinuxDo UA'
-    }));
-    vi.mocked(SecureStore.setItemAsync).mockClear();
-    vi.mocked(SecureStore.deleteItemAsync).mockClear();
-    linuxDoCookieModuleMock.clearLinuxDoLoginCookies.mockClear();
+  it('[REG-ACCOUNT-007] rejects linux.do clear when native Cookie removal is not confirmed', async () => {
+    vi.mocked(CookieManager.flush).mockClear();
+    linuxDoCookieModuleMock.clearLinuxDoLoginCookies.mockResolvedValueOnce(false);
 
-    await clearLinuxDoAccessForGeneration(generation, 'cf_clearance=clear; _t=old-login; _forum_session=old-session');
+    await expect(clearLinuxDoAccess()).rejects.toThrow('linux.do Cookie 删除未确认');
 
-    expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
-    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
-    expect(linuxDoCookieModuleMock.clearLinuxDoLoginCookies).not.toHaveBeenCalled();
+    expect(CookieManager.flush).not.toHaveBeenCalled();
   });
 
   it('generates native CookieManager login clearing guarded by expected cookie values', () => {
@@ -357,6 +288,17 @@ describe('linux.do Cloudflare helpers', () => {
 
     expect(pluginSource).toContain('expectedValues[name]');
     expect(pluginSource).toContain('cookieManager.getCookie(url)');
+    expect(pluginSource).toContain('linuxDoCookieUrls.all');
+  });
+
+  it('[REG-ACCOUNT-026] generates a CookieManager-only bridge without private WebView database access', () => {
+    const pluginSource = fs.readFileSync('plugins/withLinuxDoCookieModule.js', 'utf8');
+
+    expect(pluginSource).toContain('CookieManager.getInstance()');
+    expect(pluginSource).not.toContain('SQLiteDatabase');
+    expect(pluginSource).not.toContain('app_webview/');
+    expect(pluginSource).not.toContain('openDatabase');
+    expect(pluginSource).not.toContain('clearLinuxDoClearanceCookies');
   });
 
   it('[REG-VERIFICATION-003] exports the Android WebView provider user agent from the native bridge', () => {

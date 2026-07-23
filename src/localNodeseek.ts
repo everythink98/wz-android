@@ -60,7 +60,7 @@ function nodeSeekOptionsWithBrowserIntent<T extends NodeSeekOptions>(
   }
   return {
     ...options,
-    browserFetchIntent: { owner, priority, cancelable: true }
+    browserFetchIntent: { owner, priority }
   };
 }
 
@@ -442,22 +442,11 @@ function nodeSeekCurrentUserFromRecord(user: Record<string, unknown>): UserProfi
   };
 }
 
-function findNodeSeekCurrentUser(value: unknown, seen = new Set<unknown>()): UserProfile | null {
-  if (!isRecord(value) || seen.has(value)) {
+function nodeSeekCurrentUserFromConfig(value: unknown): UserProfile | null {
+  if (!isRecord(value) || !isRecord(value.user)) {
     return null;
   }
-  seen.add(value);
-  const direct = nodeSeekCurrentUserFromRecord(value);
-  if (direct) {
-    return direct;
-  }
-  for (const key of ['user', 'currentUser', 'current_user', 'account', 'detail', 'member', 'profile']) {
-    const found = findNodeSeekCurrentUser(value[key], seen);
-    if (found) {
-      return found;
-    }
-  }
-  return null;
+  return nodeSeekCurrentUserFromRecord(value.user);
 }
 
 function integerFromElement(element: ReturnType<ReturnType<typeof parseHtml>['querySelector']>) {
@@ -754,19 +743,15 @@ async function fetchNodeSeekText(
   requestHeaders: Record<string, string> = {}
 ) {
   const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
-  const cookie = options.nodeSeekCookie?.trim();
   const headers: HeadersInit = {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
     Referer: BASE_URL,
     'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT,
     ...requestHeaders
   };
-  if (cookie) {
-    headers.cookie = cookie;
-  }
   const response = await fetchWithTimeout(`${BASE_URL}${path}`, withBrowserFetchIntent({
     headers
-  }, requestOptions.browserFetchIntent || { owner: 'feed', priority: 'background', cancelable: true }), requestOptions);
+  }, requestOptions.browserFetchIntent || { owner: 'feed', priority: 'foreground' }), requestOptions);
   const text = await response.text();
   if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`)) {
     throw nodeSeekCloudflareError();
@@ -791,7 +776,7 @@ async function fetchNodeSeekGoogleSearchText(query: string, page: number, option
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
       'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
     }
-  }, requestOptions.browserFetchIntent || { owner: 'search', priority: 'foreground', cancelable: true }), requestOptions);
+  }, requestOptions.browserFetchIntent || { owner: 'search', priority: 'foreground' }), requestOptions);
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -887,7 +872,7 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
   category?: string;
   feedFilter?: NodeSeekFeedFilter;
 } = {}): Promise<FeedResponse> {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'background');
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
   const feedFilter = options.category ? 'postTime' : options.feedFilter || 'postTime';
@@ -926,7 +911,7 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
 }
 
 export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'background');
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'foreground');
   const html = await fetchNodeSeekText('/', requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
   const embeddedCategories = embedded ? normalizeCategories(embedded) : [] as Category[];
@@ -1398,7 +1383,6 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   const html = await fetchTopicHtml(id, 1, requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
-  const currentUser = embedded ? findNodeSeekCurrentUser(embedded) : null;
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
   if (rendered) {
     const embeddedTopic = postData ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30) : undefined;
@@ -1408,8 +1392,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const result = withNodeSeekReplyPagination({
       ...topic,
       contentHtml: stripLoadedNodeSeekVoteMarkers(topic.contentHtml, (polls || []).map((poll) => poll.id)),
-      ...(polls ? { polls } : {}),
-      ...(currentUser ? { currentUser } : {})
+      ...(polls ? { polls } : {})
     }, html, id, 1);
     const comments = postData ? arrayField(postData.comments) : [];
     return annotateSourceDiagnosticSummary(result, {
@@ -1430,8 +1413,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const result = withNodeSeekReplyPagination({
       ...topic,
       contentHtml: stripLoadedNodeSeekVoteMarkers(topic.contentHtml, (polls || []).map((poll) => poll.id)),
-      ...(polls ? { polls } : {}),
-      ...(currentUser ? { currentUser } : {})
+      ...(polls ? { polls } : {})
     }, html, id, 1);
     const replyCandidates = Math.max(0, comments.length - 1);
     const missingFloorCount = comments.slice(1).filter((comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined).length;
@@ -1700,46 +1682,21 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   });
 }
 
-export async function getNodeSeekBasicUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
-  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
-  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(id)}?readme=1`, requestOptions);
-  if (!isRecord(userData) || userData.success === false || !isRecord(userData.detail)) {
-    throw new Error('NodeSeek 用户身份读取失败');
-  }
-  const user = userData.detail;
-  const userId = String(user.member_id || user.id || id).trim() || id;
-  const username = String(user.member_name || user.username || user.name || userId).trim() || userId;
-  return annotateSourceDiagnosticSummary({
-    source: 'nodeseek',
-    id: userId,
-    username,
-    displayName: username,
-    avatar: absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(userId)}.png`, BASE_URL),
-    url: nodeSeekSpaceUrl(userId),
-    topics: []
-  }, {
-    parserVariant: 'api-user-basic',
-    candidateCount: 1,
-    validCount: 1,
-    droppedCount: 0
-  });
-}
-
-function parseNodeSeekCurrentUserHtml(html: string) {
-  const embeddedUser = findNodeSeekCurrentUser(extractNodeSeekEmbeddedData(html));
+function parseNodeSeekCurrentUserHtml(html: string, { allowUidText = false }: { allowUidText?: boolean } = {}) {
+  const embeddedUser = nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html));
   if (embeddedUser) {
     return embeddedUser;
   }
   const root = parseHtml(html);
   const text = elementText(root);
-  const uid = text.match(/UID\s*[:：]\s*(\d+)/i)?.[1] || '';
+  const uid = allowUidText ? text.match(/UID\s*[:：]\s*(\d+)/i)?.[1] || '' : '';
   const explicitUserLink = root.querySelector('a.Username[href*="/space/"]') || root.querySelector('.Username a[href*="/space/"]');
   const explicitUserId = explicitUserLink?.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] || '';
   const spaceLinks = root.querySelectorAll('a[href*="/space/"]').filter((link) => /\/space\/\d+/i.test(link.getAttribute('href') || ''));
   const spaceLink = uid
     ? spaceLinks.find((link) => link.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] === uid)
     : explicitUserLink;
-  const id = uid || explicitUserId;
+  const id = (uid && spaceLink ? uid : '') || explicitUserId;
   if (!id) {
     return null;
   }
@@ -1756,25 +1713,59 @@ function parseNodeSeekCurrentUserHtml(html: string) {
   };
 }
 
+function isNodeSeekLoggedOutHtml(html: string) {
+  const root = parseHtml(html);
+  const controls = root.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]');
+  const kinds = new Set(controls.flatMap((link) => {
+    const href = link.getAttribute('href') || '';
+    const label = elementText(link).trim();
+    if (/^\/(?:login|signin|sign-in)(?:\.html?)?(?:[/?#]|$)/i.test(href) && /^(?:登录|sign in|log in)$/i.test(label)) {
+      return ['login'];
+    }
+    if (/^\/(?:register|signup|sign-up)(?:\.html?)?(?:[/?#]|$)/i.test(href) && /^(?:注册|sign up|register)$/i.test(label)) {
+      return ['register'];
+    }
+    return [];
+  }));
+  return kinds.has('login') && kinds.has('register');
+}
+
+function nodeSeekLoginExpiredError() {
+  return Object.assign(new Error('NodeSeek 登录已失效'), {
+    source: 'nodeseek' as const,
+    kind: 'login-expired' as const,
+    loginRequired: true,
+    reason: 'expired' as const
+  });
+}
+
+function isNodeSeekLoginExpiredError(error: unknown) {
+  return isRecord(error) && error.kind === 'login-expired';
+}
+
 export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {}): Promise<UserProfile> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
-  try {
-    const data = await fetchNodeSeekJson('/api/account/getInfo?readme=1', requestOptions);
-    const user = findNodeSeekCurrentUser(data);
-    if (user) {
-      return user;
-    }
-  } catch {
-    // Fall back to the rendered home page below.
-  }
   let lastError: unknown;
   for (const path of ['/', '/setting']) {
     try {
-      const user = parseNodeSeekCurrentUserHtml(await fetchNodeSeekText(path, requestOptions));
+      const html = await fetchNodeSeekText(path, requestOptions);
+      const embeddedUser = nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html));
+      if (embeddedUser) {
+        return embeddedUser;
+      }
+      if (isNodeSeekLoggedOutHtml(html)) {
+        throw nodeSeekLoginExpiredError();
+      }
+      const user = parseNodeSeekCurrentUserHtml(html, { allowUidText: path === '/setting' });
       if (user) {
         return user;
       }
     } catch (error) {
+      if (isNodeSeekCloudflareError(error)
+        || isNodeSeekLoginExpiredError(error)
+        || requestOptions.signal?.aborted) {
+        throw error;
+      }
       lastError = error;
     }
   }

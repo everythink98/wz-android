@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const getManagedCookieHeaderForUrl = vi.hoisted(() => vi.fn());
+const networkProxyModule = vi.hoisted(() => ({
+  getManagedCookieHeaderForUrl
+}));
+
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
   Image: 'Image',
+  NativeModules: {
+    NetworkProxyModule: networkProxyModule
+  },
   PixelRatio: { get: () => 1 },
   Pressable: 'Pressable',
   StyleSheet: {
@@ -48,7 +56,11 @@ vi.mock('react-native-render-html', () => ({
   useIMGElementStateWithCache: vi.fn()
 }));
 
-import { shouldShowVideoStickerLoading } from './useHtmlRenderingController';
+import {
+  isManagedVideoCookieReady,
+  readManagedWebViewCookieHeader,
+  shouldShowVideoStickerLoading
+} from './useHtmlRenderingController';
 
 describe('HTML topic media loading state', () => {
   it('keeps video sticker loading visible until the first rendered frame', () => {
@@ -56,5 +68,35 @@ describe('HTML topic media loading state', () => {
     expect(shouldShowVideoStickerLoading(false, false, 'readyToPlay')).toBe(true);
     expect(shouldShowVideoStickerLoading(true, false, 'readyToPlay')).toBe(false);
     expect(shouldShowVideoStickerLoading(false, true, 'error')).toBe(false);
+  });
+
+  it('[REG-ACCOUNT-029] reads the live Cookie header for the exact video URL before playback', async () => {
+    getManagedCookieHeaderForUrl.mockResolvedValueOnce('future_cookie=future');
+
+    await expect(readManagedWebViewCookieHeader(
+      'https://www.nodeseek.com/uploads/private/video.webm?version=2'
+    )).resolves.toBe('future_cookie=future');
+    expect(getManagedCookieHeaderForUrl).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/uploads/private/video.webm?version=2'
+    );
+  });
+
+  it('[REG-ACCOUNT-029] does not treat a failed managed Cookie read as an anonymous-ready video', () => {
+    expect(isManagedVideoCookieReady({
+      url: 'https://www.nodeseek.com/uploads/private/video.webm',
+      status: 'failed'
+    }, 'https://www.nodeseek.com/uploads/private/video.webm')).toBe(false);
+  });
+
+  it('[REG-ACCOUNT-029] fails closed when the managed Cookie reader is unavailable', async () => {
+    const reader = networkProxyModule.getManagedCookieHeaderForUrl;
+    networkProxyModule.getManagedCookieHeaderForUrl = undefined as never;
+    try {
+      await expect(readManagedWebViewCookieHeader(
+        'https://www.nodeseek.com/uploads/private/video.webm'
+      )).rejects.toThrow('原生 Cookie 读取能力不可用');
+    } finally {
+      networkProxyModule.getManagedCookieHeaderForUrl = reader;
+    }
   });
 });

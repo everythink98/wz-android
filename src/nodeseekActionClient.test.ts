@@ -68,7 +68,6 @@ describe('runNodeSeekAction', () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           accept: 'application/json, text/plain, */*',
-          cookie: 'session=abc',
           'user-agent': 'current-webview-ua',
           'x-dynamic-sign': 'a'.repeat(40)
         }),
@@ -76,10 +75,10 @@ describe('runNodeSeekAction', () => {
       })
     );
     const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(calls[0]?.[1]?.headers).not.toHaveProperty('cookie');
     expect(browserFetchIntentFromInit(calls[0]?.[1])).toEqual({
       owner: 'write',
-      priority: 'write',
-      cancelable: false
+      priority: 'write'
     });
   });
 
@@ -99,7 +98,6 @@ describe('runNodeSeekAction', () => {
         accept: 'application/json, text/plain, */*',
         'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'content-type': 'application/json',
-        cookie: 'session=abc',
         origin: 'https://www.nodeseek.com',
         referer: 'https://www.nodeseek.com/',
         'sec-fetch-dest': 'empty',
@@ -120,10 +118,10 @@ describe('runNodeSeekAction', () => {
       })
     }));
     const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(calls[0]?.[1]?.headers).not.toHaveProperty('cookie');
     expect(browserFetchIntentFromInit(calls[0]?.[1])).toEqual({
       owner: 'write',
-      priority: 'write',
-      cancelable: false
+      priority: 'write'
     });
   });
 

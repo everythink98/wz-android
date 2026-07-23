@@ -247,8 +247,35 @@ function safeYaohuoCurrentUserName(value: unknown) {
 function yaohuoCurrentUserNameFromContext(context: string) {
   const normalized = context.replace(/\s+/g, ' ').trim();
   const beforeSpace = normalized.match(/([^\s，,、:：<>]{1,32})\s*的?\s*(?:空间|资料|个人中心|用户中心)/)?.[1]?.replace(/的$/, '');
-  const welcomed = normalized.match(/(?:欢迎|你好|您好)\s*([^\s，,、:：<>]{1,32})/)?.[1];
+  const welcomed = yaohuoWelcomedCurrentUserNameFromContext(normalized);
   return safeYaohuoCurrentUserName(beforeSpace) || safeYaohuoCurrentUserName(welcomed);
+}
+
+function yaohuoWelcomedCurrentUserNameFromContext(context: string) {
+  const normalized = context.replace(/\s+/g, ' ').trim();
+  return safeYaohuoCurrentUserName(
+    normalized.match(/(?:欢迎|你好|您好)\s*([^\s，,、:：<>]{1,32})/)?.[1]
+  );
+}
+
+function hasYaohuoSelfAccountNavigation(contextNode: HTMLElement) {
+  const links = contextNode.querySelectorAll('a[href]').map((link) => {
+    const href = link.getAttribute('href') || '';
+    try {
+      return {
+        path: new URL(href.replace(/&amp;/gi, '&'), BASE_URL).pathname.toLowerCase(),
+        text: elementText(link)
+      };
+    } catch {
+      return { path: '', text: elementText(link) };
+    }
+  });
+  return [
+    ['/myfile.aspx', '我的地盘'],
+    ['/bbs/userinfo.aspx', '空间'],
+    ['/bbs/book_list_search.aspx', '帖子'],
+    ['/bbs/messagelist.aspx', '信箱']
+  ].every(([path, text]) => links.some((link) => link.path === path && link.text === text));
 }
 
 function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
@@ -890,7 +917,7 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
   const result: UserProfile = {
     source: 'yaohuo',
     id,
-    username: username || displayName,
+    username: displayName,
     displayName,
     ...(levelLabel ? { levelLabel } : {}),
     url: userUrl(id),
@@ -1000,8 +1027,24 @@ export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProf
       ? parentNode as HTMLElement
       : link;
     const context = elementText(contextNode);
-    const username = safeYaohuoCurrentUserName(elementText(link)) || yaohuoCurrentUserNameFromContext(context) || id;
-    if (!id || !username || !/欢迎|我的|个人|空间|资料|退出|消息|用户中心/.test(context)) {
+    const linkUsername = safeYaohuoCurrentUserName(elementText(link));
+    const welcomedUsername = yaohuoWelcomedCurrentUserNameFromContext(context);
+    const hasLogoutControl = Boolean(contextNode.querySelector('a[href*="logout"], a[href*="signout"], a[href*="sign-out"]'));
+    const contextTag = String(contextNode.rawTagName || '').toLowerCase();
+    const contextClasses = String(contextNode.getAttribute('class') || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const isAccountControlContainer = contextTag === 'header'
+      || contextTag === 'nav'
+      || contextClasses.some((name) => ['top', 'header', 'navbar', 'userbar', 'account'].includes(name));
+    const hasRelatedWelcome = Boolean(
+      isAccountControlContainer
+      && welcomedUsername
+      && (!linkUsername || welcomedUsername === linkUsername)
+    );
+    const username = linkUsername || (hasLogoutControl ? yaohuoCurrentUserNameFromContext(context) : welcomedUsername) || id;
+    const hasExplicitSelfMarker = hasLogoutControl
+      || hasRelatedWelcome
+      || hasYaohuoSelfAccountNavigation(contextNode);
+    if (!id || !username || !hasExplicitSelfMarker) {
       continue;
     }
     return {
@@ -1042,14 +1085,18 @@ export function parseYaohuoSearchHtml(html: string, options: { classId?: string;
 export function checkYaohuoLoginHtml(html: string, url?: string) {
   const loginRequired = isYaohuoLoginRequiredHtml(html, url);
   const currentUser = loginRequired ? null : parseYaohuoCurrentUserHtml(html, url);
+  const verificationRequired = loginRequired && isYaohuoVerificationRequiredHtml(html);
+  const reason = loginRequired ? (verificationRequired ? 'verification' : 'expired') : currentUser ? undefined : 'unknown';
   return {
     source: 'yaohuo' as const,
-    ok: !loginRequired,
+    ok: Boolean(currentUser),
     loginRequired,
-    reason: loginRequired ? (isYaohuoVerificationRequiredHtml(html) ? 'verification' : 'expired') : undefined,
+    reason,
     ...(currentUser ? { currentUser } : {}),
     loginUrl: YAOHUO_LOGIN_URL,
-    message: loginRequired ? (isYaohuoVerificationRequiredHtml(html) ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录。') : undefined
+    message: loginRequired
+      ? (verificationRequired ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录。')
+      : currentUser ? undefined : '妖火登录状态暂时无法确认。'
   };
 }
 

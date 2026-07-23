@@ -5,7 +5,10 @@ import {
   emptyForumCredentialScope,
   forumQueryKeys
 } from './serverState';
-import { resetForumSourceQueries } from './sessionControllerHelpers';
+import {
+  commitExpiredAccountStatusQuery,
+  resetForumSourceQueries
+} from './sessionControllerHelpers';
 
 describe('forum server state', () => {
   it('deduplicates concurrent reads and keeps the successful value for the same structured key', async () => {
@@ -73,6 +76,36 @@ describe('forum server state', () => {
     expect(client.getQueryData(linuxDoKey)).toBe('private linux.do topic');
   });
 
+  it('[REG-ACCOUNT-019] resets only the changed site active account projection', () => {
+    const sources = ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const;
+    for (const changedSource of sources) {
+      const client = createAppQueryClient();
+      const observers = sources.map((source) => {
+        const queryKey = forumQueryKeys.accountStatus({
+          credentialScope: emptyForumCredentialScope,
+          source
+        });
+        client.setQueryData(queryKey, `${source} logged-in`);
+        const observer = new QueryObserver(client, { enabled: false, queryKey });
+        const unsubscribe = observer.subscribe(() => undefined);
+        return { observer, source, unsubscribe };
+      });
+      resetForumSourceQueries(changedSource, client);
+
+      for (const { observer, source } of observers) {
+        if (source === changedSource) {
+          expect(observer.getCurrentResult()).toMatchObject({
+            data: undefined,
+            status: 'pending'
+          });
+        } else {
+          expect(observer.getCurrentResult().data).toBe(`${source} logged-in`);
+        }
+      }
+      observers.forEach(({ unsubscribe }) => unsubscribe());
+    }
+  });
+
   it('preserves only the exact active structured recovery query key', () => {
     const client = createAppQueryClient();
     const preserved = forumQueryKeys.topic({ source: 'linuxdo', topicId: '123', scope: emptyForumCredentialScope });
@@ -86,6 +119,43 @@ describe('forum server state', () => {
 
     expect(client.getQueryData(preserved)).toBe('preserved');
     expect(client.getQueryData(removed)).toBeUndefined();
+    unsubscribe();
+  });
+
+  it('[REG-ACCOUNT-019] migrates only a committed expired Account result to the next credential scope', async () => {
+    const client = createAppQueryClient();
+    const accountKey = forumQueryKeys.accountStatus({
+      credentialScope: emptyForumCredentialScope,
+      source: 'nodeseek'
+    });
+    const feedKey = forumQueryKeys.feed({ source: 'nodeseek', scope: emptyForumCredentialScope });
+    client.setQueryData(feedKey, 'private feed');
+    const observer = new QueryObserver(client, {
+      enabled: false,
+      queryKey: accountKey,
+      queryFn: async () => ({
+        failed: true,
+        session: { site: 'nodeseek', status: 'expired' }
+      })
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+
+    const result = await observer.refetch();
+    const nextScope = commitExpiredAccountStatusQuery(
+      'nodeseek',
+      emptyForumCredentialScope,
+      accountKey,
+      client
+    );
+    const nextAccountKey = forumQueryKeys.accountStatus({
+      credentialScope: nextScope,
+      source: 'nodeseek'
+    });
+    observer.setOptions({ enabled: false, queryKey: nextAccountKey });
+
+    expect(result.data).toMatchObject({ session: { status: 'expired' } });
+    expect(observer.getCurrentResult().data).toMatchObject({ session: { status: 'expired' } });
+    expect(client.getQueryData(feedKey)).toBeUndefined();
     unsubscribe();
   });
 

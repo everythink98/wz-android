@@ -22,12 +22,19 @@ vi.mock('react-native', () => ({
 
 import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
+import { browserFetchIntentFromInit } from './browserFetchIntent';
 import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from './linuxdoFetchFallback';
-import { getLinuxDoUserProfile, searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from './localLinuxdo';
+import {
+  getLinuxDoCurrentUserProfile,
+  getLinuxDoUserProfile,
+  searchLinuxDoSemantic,
+  searchLinuxDoTags,
+  searchLinuxDoUsers
+} from './localLinuxdo';
 import { splitDiscourseContentHtml } from './discourseContent';
 import { textContentFromHtml } from './localHtml';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
-import { getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile } from './localNodeseek';
+import { getNodeSeekCurrentUserProfile, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile } from './localNodeseek';
 import { setRequestTimeoutsActive } from './request';
 import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { DEFAULT_SEARCH_FILTERS } from './searchFilters';
@@ -265,12 +272,7 @@ describe('Android local sources', () => {
     });
     expect(topic.authorId).toBe('9891');
     expect(topic.authorLevelLabel).toBe('管理');
-    expect(topic.currentUser).toMatchObject({
-      source: 'nodeseek',
-      id: '48872',
-      username: '凡想世界',
-      url: 'https://www.nodeseek.com/space/48872'
-    });
+    expect(topic).not.toHaveProperty('currentUser');
     expect(topic.replies[0]).toMatchObject({
       author: 'bob',
       authorId: '42',
@@ -3253,7 +3255,6 @@ describe('Android local sources', () => {
     expect(url.searchParams.has('type_filter')).toBe(false);
     expect(init).toEqual(expect.objectContaining({
       headers: expect.objectContaining({
-        Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
         'Discourse-Logged-In': 'true',
         Referer: 'https://linux.do/search?expanded=true&q=keyword',
         'User-Agent': 'LinuxDo WebView UA',
@@ -3261,9 +3262,10 @@ describe('Android local sources', () => {
         'X-Requested-With': 'XMLHttpRequest'
       })
     }));
+    expect(init?.headers).not.toHaveProperty('Cookie');
   });
 
-  it('sends saved NodeSeek verification cookies when reading the Android feed', async () => {
+  it('[REG-ACCOUNT-029] lets the native jar attach NodeSeek cookies when reading the Android feed', async () => {
     const fetcher = vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`));
 
     await getFeed({
@@ -3275,10 +3277,10 @@ describe('Android local sources', () => {
 
     expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=postTime', expect.objectContaining({
       headers: expect.objectContaining({
-        cookie: 'cf_clearance=clearance',
         'User-Agent': 'NodeSeek WebView UA'
       })
     }));
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('cookie');
   });
 
   it('reads the NodeSeek feed by latest replies when requested', async () => {
@@ -3291,6 +3293,60 @@ describe('Android local sources', () => {
     });
 
     expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=replyTime', expect.any(Object));
+  });
+
+  it('[REG-SOURCE-005] marks visible NodeSeek reads ahead of background account refresh', async () => {
+    const accountPayload = Buffer.from(JSON.stringify({
+      user: { uid: 42, username: 'alice' }
+    })).toString('base64');
+    const visibleFetcher = vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`));
+    const accountFetcher = vi.fn(async () => html(`<script>${accountPayload}</script>`));
+
+    await getFeed({ source: 'nodeseek', fetcher: visibleFetcher });
+    await getCategories({ source: 'nodeseek', fetcher: visibleFetcher });
+    await getNodeSeekCurrentUserProfile({ fetcher: accountFetcher });
+
+    const visibleIntents = (visibleFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)
+      .map(([, init]) => browserFetchIntentFromInit(init));
+    const accountIntent = browserFetchIntentFromInit(
+      (accountFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]
+    );
+
+    expect(visibleIntents).toEqual([
+      { owner: 'feed', priority: 'foreground' },
+      { owner: 'feed', priority: 'foreground' }
+    ]);
+    expect(accountIntent).toEqual({ owner: 'account', priority: 'background' });
+  });
+
+  it('[REG-SOURCE-005] marks visible linux.do reads ahead of background account refresh', async () => {
+    const visibleFetcher = vi.fn(async (input: string) => (
+      new URL(input).pathname === '/site.json'
+        ? json({ categories: [] })
+        : json({ topic_list: { topics: [] } })
+    ));
+    const accountFetcher = vi.fn(async () => json({
+      current_user: { id: 42, username: 'alice', name: 'Alice' }
+    }));
+
+    await getFeed({ source: 'linuxdo', fetcher: visibleFetcher });
+    await getCategories({ source: 'linuxdo', fetcher: visibleFetcher });
+    await getLinuxDoCurrentUserProfile({
+      fetcher: accountFetcher,
+      linuxDoCookie: '_t=login'
+    });
+
+    const visibleIntents = (visibleFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)
+      .map(([, init]) => browserFetchIntentFromInit(init));
+    const accountIntent = browserFetchIntentFromInit(
+      (accountFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]
+    );
+
+    expect(visibleIntents).toEqual([
+      { owner: 'feed', priority: 'foreground' },
+      { owner: 'feed', priority: 'foreground' }
+    ]);
+    expect(accountIntent).toEqual({ owner: 'account', priority: 'background' });
   });
 
   it('reports NodeSeek Cloudflare HTML as a verification requirement', async () => {
@@ -3518,6 +3574,53 @@ describe('Android local sources', () => {
     expect(JSON.stringify(events)).not.toMatch(/743011|post-|https?:|cf-turnstile/);
   });
 
+  it('[REG-SOURCE-006] starts the caller timeout handoff when NodeSeek enters the WebView fallback', async () => {
+    vi.useFakeTimers();
+    let resolveFallback: ((response: Response) => void) | undefined;
+    try {
+      const normalFetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
+        status: 403,
+        headers: { 'cf-mitigated': 'challenge' }
+      }));
+      const webViewFetcher = vi.fn(() => new Promise<Response>((resolve) => {
+        resolveFallback = resolve;
+      }));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
+
+      const topicPromise = getTopic({
+        source: 'nodeseek',
+        id: '743023',
+        fetcher,
+        timeoutMs: 100
+      });
+      let outcome: { topic?: Awaited<typeof topicPromise>; error?: unknown } | undefined;
+      void topicPromise.then(
+        (topic) => { outcome = { topic }; },
+        (error) => { outcome = { error }; }
+      );
+
+      await vi.advanceTimersByTimeAsync(200);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+      expect(outcome).toBeUndefined();
+
+      resolveFallback?.(html(`
+        <a class="post-title" href="/post-743023-1">NodeSeek queued fallback detail</a>
+        <div class="content-item">
+          <article class="post-content"><p>fallback timeout starts after dispatch</p></article>
+        </div>
+      `));
+      await expect(topicPromise).resolves.toMatchObject({
+        title: 'NodeSeek queued fallback detail'
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps NodeSeek direct and WebView fallback stages on the caller trace', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
@@ -3714,10 +3817,20 @@ describe('Android local sources', () => {
     }
   });
 
-  it('recovers the NodeSeek direct channel after repeated direct timeouts with successful WebView fallbacks', async () => {
+  it('[REG-PROXY-006] keeps repeated NodeSeek direct failures isolated from shared proxy state', async () => {
     vi.useFakeTimers();
     try {
-      const normalFetcher = vi.fn(() => new Promise<Response>(() => undefined));
+      const linuxDoPending = Promise.withResolvers<Response>();
+      const sharedDefaultFetcher = vi.fn((input: string | URL | Request) => (
+        String(input).startsWith('https://linux.do/')
+          ? linuxDoPending.promise
+          : new Promise<Response>(() => undefined)
+      ));
+      const linuxDoRequest = sharedDefaultFetcher('https://linux.do/latest.json')
+        .then((response) => response.text());
+      const legacyGlobalRecovery = vi.fn(() => {
+        linuxDoPending.reject(new Error('shared OkHttp dispatcher was cancelled'));
+      });
       const webViewFetcher = vi.fn(async (input: string) => {
         const url = new URL(input);
         if (url.pathname === '/') {
@@ -3737,34 +3850,37 @@ describe('Android local sources', () => {
           </div>
         `);
       });
-      const recoverNodeSeekNetwork = vi.fn(async () => undefined);
-      const fetcher = createNodeSeekWebViewFallbackFetcher({
-        defaultFetcher: normalFetcher,
+      const options = {
+        defaultFetcher: sharedDefaultFetcher,
         webViewFetcher,
-        recoverNodeSeekNetwork
-      });
+        recoverNodeSeekNetwork: legacyGlobalRecovery
+      } as Parameters<typeof createNodeSeekWebViewFallbackFetcher>[0] & {
+        recoverNodeSeekNetwork: () => void;
+      };
+      const fetcher = createNodeSeekWebViewFallbackFetcher(options);
 
       const feedPromise = getFeed({ source: 'nodeseek', fetcher });
       await vi.advanceTimersByTimeAsync(8_000);
       await expect(feedPromise).resolves.toMatchObject({
         items: [expect.objectContaining({ title: 'NodeSeek first slow fallback' })]
       });
-      expect(recoverNodeSeekNetwork).not.toHaveBeenCalled();
-
       const topicPromise = getTopic({ source: 'nodeseek', id: '743020', fetcher });
       await vi.advanceTimersByTimeAsync(8_000);
       await expect(topicPromise).resolves.toMatchObject({
         title: 'NodeSeek second slow fallback'
       });
+      expect(webViewFetcher).toHaveBeenCalledTimes(2);
+      expect(legacyGlobalRecovery).not.toHaveBeenCalled();
 
-      expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1);
+      linuxDoPending.resolve(json({ topic_list: { topics: [] } }));
+      await expect(linuxDoRequest).resolves.toBe('{"topic_list":{"topics":[]}}');
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
   });
 
-  it('does not recover the NodeSeek direct channel when Cloudflare causes the WebView fallback', async () => {
+  it('falls back independently for repeated NodeSeek Cloudflare challenge responses', async () => {
     const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
       status: 403,
       headers: { 'cf-mitigated': 'challenge' }
@@ -3775,18 +3891,15 @@ describe('Android local sources', () => {
         <article class="post-content"><p>cloudflare fallback body</p></article>
       </div>
     `));
-    const recoverNodeSeekNetwork = vi.fn(async () => undefined);
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
-      webViewFetcher,
-      recoverNodeSeekNetwork
+      webViewFetcher
     });
 
     await getTopic({ source: 'nodeseek', id: '743021', fetcher });
     await getTopic({ source: 'nodeseek', id: '743021', fetcher });
 
     expect(webViewFetcher).toHaveBeenCalledTimes(2);
-    expect(recoverNodeSeekNetwork).not.toHaveBeenCalled();
   });
 
   it('uses direct fetch for readable NodeSeek search pages', async () => {
@@ -5304,11 +5417,11 @@ describe('Android local sources', () => {
     expect(url.searchParams.has('filterForInput')).toBe(false);
     expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]).toEqual(expect.objectContaining({
       headers: expect.objectContaining({
-        Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
         'Discourse-Logged-In': 'true',
         'User-Agent': 'LinuxDo WebView UA'
       })
     }));
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('loads selectable linux.do authors without groups', async () => {

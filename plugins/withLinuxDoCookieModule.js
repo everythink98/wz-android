@@ -9,7 +9,6 @@ function packagePath(packageName) {
 function linuxDoCookieModuleSource(packageName) {
   return `package ${packageName}
 
-import android.database.sqlite.SQLiteDatabase
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import com.facebook.react.bridge.Promise
@@ -17,7 +16,6 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
-import java.io.File
 
 class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
   private val linuxDoCookieUrls = listOf(
@@ -29,6 +27,10 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
   private val nodeSeekCookieUrls = listOf(
     "https://www.nodeseek.com",
     "https://nodeseek.com"
+  )
+  private val yaohuoCookieUrls = listOf(
+    "https://www.yaohuo.me",
+    "https://yaohuo.me"
   )
 
   override fun getName(): String = "LinuxDoCookieModule"
@@ -56,15 +58,6 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
   }
 
   @ReactMethod
-  fun clearLinuxDoClearanceCookies(promise: Promise) {
-    try {
-      promise.resolve(clearLinuxDoClearanceCookies())
-    } catch (_: Exception) {
-      promise.resolve(false)
-    }
-  }
-
-  @ReactMethod
   fun getNodeSeekCookieHeader(promise: Promise) {
     try {
       promise.resolve(readNodeSeekCookieHeader())
@@ -73,113 +66,33 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
     }
   }
 
-  private fun readLinuxDoCookieHeader(): String? {
-    val cookieHeaders = mutableListOf<String>()
-    val cookieManagerValue = readLinuxDoCookieHeaderFromCookieManager()
-    if (!cookieManagerValue.isNullOrBlank()) {
-      cookieHeaders.add(cookieManagerValue)
-    }
-
-    val dataDir = File(reactContext.applicationInfo.dataDir)
-    val candidates = listOf(
-      File(dataDir, "app_webview/Default/Cookies"),
-      File(dataDir, "app_webview/Cookies")
-    )
-    for (candidate in candidates) {
-      val value = readLinuxDoCookieHeaderFrom(candidate)
-      if (!value.isNullOrBlank()) {
-        cookieHeaders.add(value)
-      }
-    }
-    return mergeCookieHeaders(cookieHeaders)
-  }
-
-  private fun readLinuxDoCookieHeaderFromCookieManager(): String? {
-    return try {
+  @ReactMethod
+  fun getYaohuoCookieHeader(promise: Promise) {
+    try {
       val cookieManager = CookieManager.getInstance()
       cookieManager.flush()
-      for (url in linuxDoCookieUrls) {
-        val value = cookieManager.getCookie(url)
-        if (!value.isNullOrBlank()) {
-          return value
-        }
-      }
-      null
+      promise.resolve(yaohuoCookieUrls.firstNotNullOfOrNull { url ->
+        cookieManager.getCookie(url)?.takeIf { it.isNotBlank() }
+      })
     } catch (_: Exception) {
-      null
+      promise.resolve(null)
     }
+  }
+
+  private fun readLinuxDoCookieHeader(): String? {
+    return readCookieHeader(linuxDoCookieUrls, setOf("cf_clearance", "_t", "_forum_session"))
   }
 
   private fun readClearance(): String? {
-    val cookieManagerValue = readClearanceFromCookieManager()
-    if (!cookieManagerValue.isNullOrBlank()) {
-      return cookieManagerValue
-    }
-
-    val dataDir = File(reactContext.applicationInfo.dataDir)
-    val candidates = listOf(
-      File(dataDir, "app_webview/Default/Cookies"),
-      File(dataDir, "app_webview/Cookies")
-    )
-    for (candidate in candidates) {
-      val value = readClearanceFrom(candidate)
-      if (!value.isNullOrBlank()) {
-        return value
-      }
-    }
-    return null
-  }
-
-  private fun readClearanceFromCookieManager(): String? {
-    return try {
-      val cookieManager = CookieManager.getInstance()
-      cookieManager.flush()
-      for (url in linuxDoCookieUrls) {
-        val value = clearanceFromCookieHeader(cookieManager.getCookie(url))
-        if (!value.isNullOrBlank()) {
-          return value
-        }
-      }
-      null
-    } catch (_: Exception) {
-      null
-    }
+    return cookieValueFromHeader(readLinuxDoCookieHeader(), "cf_clearance")
   }
 
   private fun readNodeSeekCookieHeader(): String? {
-    val cookieManagerValue = readNodeSeekCookieHeaderFromCookieManager()
-    if (!cookieManagerValue.isNullOrBlank()) {
-      return cookieManagerValue
-    }
-
-    val dataDir = File(reactContext.applicationInfo.dataDir)
-    val candidates = listOf(
-      File(dataDir, "app_webview/Default/Cookies"),
-      File(dataDir, "app_webview/Cookies")
+    return readCookieHeader(
+      nodeSeekCookieUrls,
+      setOf("cf_clearance", "session", "connect.sid", "sid"),
+      true
     )
-    for (candidate in candidates) {
-      val value = readNodeSeekCookieHeaderFrom(candidate)
-      if (!value.isNullOrBlank()) {
-        return value
-      }
-    }
-    return null
-  }
-
-  private fun readNodeSeekCookieHeaderFromCookieManager(): String? {
-    return try {
-      val cookieManager = CookieManager.getInstance()
-      cookieManager.flush()
-      for (url in nodeSeekCookieUrls) {
-        val value = nodeSeekAccessCookieHeader(cookieManager.getCookie(url))
-        if (!value.isNullOrBlank()) {
-          return value
-        }
-      }
-      null
-    } catch (_: Exception) {
-      null
-    }
   }
 
   @ReactMethod
@@ -189,42 +102,6 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
     } catch (_: Exception) {
       promise.resolve(false)
     }
-  }
-
-  private fun isNodeSeekWantedCookieName(name: String): Boolean {
-    val clean = name.lowercase()
-    return clean == "cf_clearance" || clean == "session" || clean == "connect.sid" || clean == "sid"
-  }
-
-  private fun nodeSeekAccessCookieHeader(cookieHeader: String?): String? {
-    val parts = mutableListOf<String>()
-    val seen = mutableSetOf<String>()
-    for (part in cookieHeader.orEmpty().split(";")) {
-      val clean = part.trim()
-      val separator = clean.indexOf("=")
-      if (separator <= 0) {
-        continue
-      }
-      val name = clean.substring(0, separator).trim()
-      val value = clean.substring(separator + 1).trim()
-      if (name.isNotBlank() && value.isNotBlank() && isNodeSeekWantedCookieName(name) && seen.add(name)) {
-        parts.add("$name=$value")
-      }
-    }
-    return parts.joinToString("; ").takeIf { it.isNotBlank() }
-  }
-
-  private fun clearLinuxDoClearanceCookies(): Boolean {
-    val dataDir = File(reactContext.applicationInfo.dataDir)
-    val candidates = listOf(
-      File(dataDir, "app_webview/Default/Cookies"),
-      File(dataDir, "app_webview/Cookies")
-    )
-    var cleared = false
-    for (candidate in candidates) {
-      cleared = clearLinuxDoClearanceFrom(candidate) || cleared
-    }
-    return cleared
   }
 
   private fun clearLinuxDoLoginCookies(expected: ReadableMap?): Boolean {
@@ -238,90 +115,33 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
         }
       }
     }
-    var cleared = false
-    try {
+    return try {
       val cookieManager = CookieManager.getInstance()
-      for (url in linuxDoCookieUrls) {
-        for (name in names) {
+      val expectedValueChanged = linuxDoCookieUrls.any { url ->
+        names.any { name ->
           val expectedValue = expectedValues[name]
-          if (expectedValue != null && cookieValueFromHeader(cookieManager.getCookie(url), name) != expectedValue) {
-            continue
+          val currentValue = cookieValueFromHeader(cookieManager.getCookie(url), name)
+          expectedValue != null && currentValue != null && currentValue != expectedValue
+        }
+      }
+      if (expectedValueChanged) {
+        false
+      } else {
+        for (url in linuxDoCookieUrls) {
+          for (name in names) {
+            cookieManager.setCookie(url, "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
+            cookieManager.setCookie(url, "$name=; Domain=linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
+            cookieManager.setCookie(url, "$name=; Domain=.linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
           }
-          cookieManager.setCookie(url, "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
-          cookieManager.setCookie(url, "$name=; Domain=linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
-          cookieManager.setCookie(url, "$name=; Domain=.linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
+        }
+        cookieManager.flush()
+        linuxDoCookieUrls.all { url ->
+          names.all { name -> cookieValueFromHeader(cookieManager.getCookie(url), name) == null }
         }
       }
-      cookieManager.flush()
-      cleared = true
-    } catch (_: Exception) {
-      cleared = false
-    }
-
-    val dataDir = File(reactContext.applicationInfo.dataDir)
-    val candidates = listOf(
-      File(dataDir, "app_webview/Default/Cookies"),
-      File(dataDir, "app_webview/Cookies")
-    )
-    for (candidate in candidates) {
-      cleared = clearLinuxDoLoginCookiesFrom(candidate, expectedValues) || cleared
-    }
-    return cleared
-  }
-
-  private fun clearLinuxDoLoginCookiesFrom(cookieDb: File, expectedValues: Map<String, String>): Boolean {
-    if (!cookieDb.exists()) {
-      return false
-    }
-    var database: SQLiteDatabase? = null
-    return try {
-      database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
-      var deleted = 0
-      for (name in listOf("_t", "_forum_session")) {
-        val expected = expectedValues[name]
-        val selection = if (expected.isNullOrBlank()) {
-          "name = ? AND (host_key = 'linux.do' OR host_key = '.linux.do')"
-        } else {
-          "name = ? AND value = ? AND (host_key = 'linux.do' OR host_key = '.linux.do')"
-        }
-        val args = if (expected.isNullOrBlank()) arrayOf(name) else arrayOf(name, expected)
-        deleted += database.delete("cookies", selection, args)
-      }
-      deleted > 0
     } catch (_: Exception) {
       false
-    } finally {
-      database?.close()
     }
-  }
-
-  private fun clearLinuxDoClearanceFrom(cookieDb: File): Boolean {
-    if (!cookieDb.exists()) {
-      return false
-    }
-    var database: SQLiteDatabase? = null
-    return try {
-      database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
-      database.delete(
-        "cookies",
-        "name = ? AND (host_key = 'linux.do' OR host_key = '.linux.do')",
-        arrayOf("cf_clearance")
-      ) > 0
-    } catch (_: Exception) {
-      false
-    } finally {
-      database?.close()
-    }
-  }
-
-  private fun clearanceFromCookieHeader(cookieHeader: String?): String? {
-    for (part in cookieHeader.orEmpty().split(";")) {
-      val clean = part.trim()
-      if (clean.startsWith("cf_clearance=")) {
-        return clean.removePrefix("cf_clearance=").takeIf { it.isNotBlank() }
-      }
-    }
-    return null
   }
 
   private fun cookieValueFromHeader(cookieHeader: String?, cookieName: String): String? {
@@ -334,135 +154,35 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
     return null
   }
 
-  private fun mergeCookieHeaders(cookieHeaders: List<String>): String? {
-    val wantedNames = setOf("cf_clearance", "_t", "_forum_session")
+  private fun readCookieHeader(
+    cookieUrls: List<String>,
+    wantedNames: Set<String>,
+    ignoreNameCase: Boolean = false
+  ): String? {
     val parts = mutableListOf<String>()
     val seen = mutableSetOf<String>()
-    for (cookieHeader in cookieHeaders) {
-      for (part in cookieHeader.split(";")) {
-        val clean = part.trim()
-        val separator = clean.indexOf("=")
-        if (separator <= 0) {
-          continue
-        }
-        val name = clean.substring(0, separator).trim()
-        val value = clean.substring(separator + 1).trim()
-        if (wantedNames.contains(name) && value.isNotBlank() && seen.add(name)) {
-          parts.add("$name=$value")
-        }
-      }
-    }
-    return parts.joinToString("; ").takeIf { it.isNotBlank() }
-  }
-
-  private fun readLinuxDoCookieHeaderFrom(cookieDb: File): String? {
-    if (!cookieDb.exists()) {
-      return null
-    }
-    var database: SQLiteDatabase? = null
+    val normalizedWantedNames = if (ignoreNameCase) wantedNames.map { it.lowercase() }.toSet() else wantedNames
     return try {
-      database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-      database.rawQuery(
-        """
-        SELECT name, value
-        FROM cookies
-        WHERE value != ''
-          AND name IN ('cf_clearance', '_t', '_forum_session')
-          AND (host_key = 'linux.do' OR host_key = '.linux.do')
-          AND (path IS NULL OR path = '' OR path = '/')
-          AND (expires_utc = 0 OR expires_utc > ((strftime('%s', 'now') + 11644473600) * 1000000))
-        ORDER BY last_update_utc DESC
-        """.trimIndent(),
-        emptyArray()
-      ).use { cursor ->
-        val parts = mutableListOf<String>()
-        val seen = mutableSetOf<String>()
-        while (cursor.moveToNext()) {
-          val name = cursor.getString(0)
-          val value = cursor.getString(1)
-          if (!name.isNullOrBlank() && !value.isNullOrBlank() && seen.add(name)) {
+      val cookieManager = CookieManager.getInstance()
+      cookieManager.flush()
+      for (url in cookieUrls) {
+        for (part in cookieManager.getCookie(url).orEmpty().split(";")) {
+          val clean = part.trim()
+          val separator = clean.indexOf("=")
+          if (separator <= 0) {
+            continue
+          }
+          val name = clean.substring(0, separator).trim()
+          val value = clean.substring(separator + 1).trim()
+          val normalizedName = if (ignoreNameCase) name.lowercase() else name
+          if (normalizedWantedNames.contains(normalizedName) && value.isNotBlank() && seen.add(normalizedName)) {
             parts.add("$name=$value")
           }
         }
-        parts.joinToString("; ").takeIf { it.isNotBlank() }
       }
+      parts.joinToString("; ").takeIf { it.isNotBlank() }
     } catch (_: Exception) {
       null
-    } finally {
-      database?.close()
-    }
-  }
-
-  private fun readClearanceFrom(cookieDb: File): String? {
-    if (!cookieDb.exists()) {
-      return null
-    }
-    var database: SQLiteDatabase? = null
-    return try {
-      database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-      database.rawQuery(
-        """
-        SELECT value
-        FROM cookies
-        WHERE name = ?
-          AND value != ''
-          AND (host_key = 'linux.do' OR host_key = '.linux.do')
-          AND (path IS NULL OR path = '' OR path = '/')
-          AND (expires_utc = 0 OR expires_utc > ((strftime('%s', 'now') + 11644473600) * 1000000))
-        ORDER BY last_update_utc DESC
-        LIMIT 1
-        """.trimIndent(),
-        arrayOf("cf_clearance")
-      ).use { cursor ->
-        if (cursor.moveToFirst()) cursor.getString(0) else null
-      }
-    } catch (_: Exception) {
-      null
-    } finally {
-      database?.close()
-    }
-  }
-
-  private fun readNodeSeekCookieHeaderFrom(cookieDb: File): String? {
-    if (!cookieDb.exists()) {
-      return null
-    }
-    var database: SQLiteDatabase? = null
-    return try {
-      database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-      database.rawQuery(
-        """
-        SELECT name, value
-        FROM cookies
-        WHERE value != ''
-          AND (
-            lower(name) = 'cf_clearance'
-            OR lower(name) = 'session'
-            OR lower(name) = 'connect.sid'
-            OR lower(name) = 'sid'
-          )
-          AND (host_key = 'nodeseek.com' OR host_key = '.nodeseek.com')
-          AND (path IS NULL OR path = '' OR path = '/')
-          AND (expires_utc = 0 OR expires_utc > ((strftime('%s', 'now') + 11644473600) * 1000000))
-        ORDER BY last_update_utc DESC
-        """.trimIndent(),
-        emptyArray()
-      ).use { cursor ->
-        val parts = mutableListOf<String>()
-        val seen = mutableSetOf<String>()
-        while (cursor.moveToNext()) {
-          val name = cursor.getString(0)
-          val value = cursor.getString(1)
-          if (!name.isNullOrBlank() && !value.isNullOrBlank() && isNodeSeekWantedCookieName(name) && seen.add(name)) {
-            parts.add("$name=$value")
-          }
-        }
-        parts.joinToString("; ").takeIf { it.isNotBlank() }
-      }
-    } catch (_: Exception) {
-      null
-    } finally {
-      database?.close()
     }
   }
 }

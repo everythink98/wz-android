@@ -1,6 +1,6 @@
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
 import { isGoogleSiteSearchUrl } from './googleSearchFallback';
-import type { Fetcher } from './request';
+import { cancelRequestTimeoutForFallback, type Fetcher } from './request';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -58,6 +58,7 @@ async function fetchLinuxDoThroughWebView(
     status: directStatus
   });
   try {
+    cancelRequestTimeoutForFallback(init);
     const response = await webViewFetcher(url, init);
     markDiagnosticStage(trace, 'transport', {
       source: 'linuxdo',
@@ -108,6 +109,7 @@ async function fetchLinuxDoWebViewOnly(webViewFetcher: Fetcher, url: string, ini
   });
   markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'start' });
   try {
+    cancelRequestTimeoutForFallback(init);
     const response = await webViewFetcher(url, init);
     markDiagnosticStage(trace, 'transport', {
       source: 'linuxdo',

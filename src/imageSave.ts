@@ -14,7 +14,6 @@ import {
 } from './diagnostics';
 
 export interface ImageSaveRequestOptions {
-  nodeSeekCookieHeader?: string;
   nodeSeekUserAgent?: string;
 }
 
@@ -87,7 +86,7 @@ async function downloadImageWithFetcher(
   trace: DiagnosticTrace,
   requestOptions: ImageSaveRequestOptions
 ) {
-  const headers = imageRequestHeadersForUrl(uri, requestOptions.nodeSeekCookieHeader, requestOptions.nodeSeekUserAgent);
+  const headers = imageRequestHeadersForUrl(uri, requestOptions.nodeSeekUserAgent);
   const response = await fetchWithTimeout(uri, headers ? { headers } : {}, {
     fetcher: withDiagnosticFetcher(trace, fetcher)
   });

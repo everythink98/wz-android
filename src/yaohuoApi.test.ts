@@ -16,7 +16,7 @@ import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
-  it('fetches yaohuo feed from the Android device and parses HTML locally', async () => {
+  it('[REG-ACCOUNT-029] fetches yaohuo through the native read-only cookie jar', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
 
     const result = await getYaohuoFeedDirect({
@@ -31,11 +31,11 @@ describe('Android direct yaohuo API', () => {
       'https://www.yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=2&siteid=1000',
       expect.objectContaining({
         headers: expect.objectContaining({
-          Cookie: 'sidyaohuo=secret',
           'User-Agent': 'native-provider-user-agent'
         })
       })
     );
+    expect((yaohuoFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
     expect(yaohuoFetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       headers: expect.not.objectContaining({
         'Sec-CH-UA': expect.anything(),
@@ -455,6 +455,123 @@ describe('Android direct yaohuo API', () => {
     expect(yaohuoFetcher).toHaveBeenCalledWith('https://www.yaohuo.me/wapindex.aspx?sid=-2', expect.any(Object));
   });
 
+  it('[REG-ACCOUNT-019] keeps an ordinary Yaohuo content page unknown without current-user proof', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response(`
+      <div class="listdata"><a href="/bbs-123.html">公开主题</a>/访客/阅1/05-20 10:00</div>
+    `));
+
+    const result = await checkYaohuoLoginDirect({
+      yaohuoCookie: 'sidyaohuo=stale',
+      yaohuoFetcher
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      loginRequired: false,
+      reason: 'unknown',
+      message: '妖火登录状态暂时无法确认。'
+    });
+    expect(result.currentUser).toBeUndefined();
+  });
+
+  it('[REG-ACCOUNT-020] recognizes the complete Yaohuo self-account navigation returned to a logged-in WebView', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response(`
+      <div class="top2">
+        <a href="/myfile.aspx">我的地盘</a>
+        <a href="/bbs/userinfo.aspx?touserid=42">空间</a>
+        <a href="/bbs/book_list_search.aspx">帖子</a>
+        <a href="/bbs/messagelist.aspx">信箱</a>
+      </div>
+    `));
+
+    const result = await checkYaohuoLoginDirect({
+      yaohuoCookie: 'sidyaohuo=active',
+      yaohuoFetcher
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      loginRequired: false,
+      currentUser: {
+        source: 'yaohuo',
+        id: '42'
+      }
+    });
+  });
+
+  it('[REG-ACCOUNT-020] keeps a partial top2 user link unknown', () => {
+    expect(parseYaohuoCurrentUserHtml(`
+      <div class="top2">
+        <a href="/bbs/userinfo.aspx?touserid=42">空间</a>
+        <a href="/bbs-123.html">公开主题</a>
+      </div>
+    `)).toBeNull();
+  });
+
+  it('[REG-ACCOUNT-019] returns an explicit Yaohuo guest page as expired instead of throwing', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response('请先登录网站 <a href="/waplogin.aspx">登录</a>', {
+      status: 200
+    }));
+
+    await expect(checkYaohuoLoginDirect({
+      yaohuoCookie: 'sidyaohuo=stale',
+      yaohuoFetcher
+    })).resolves.toMatchObject({
+      ok: false,
+      loginRequired: true,
+      reason: 'expired'
+    });
+  });
+
+  it.each([401, 403, 404])('[REG-ACCOUNT-025] keeps Yaohuo HTTP %i unknown instead of clearing login state', async (status) => {
+    const yaohuoFetcher = vi.fn(async () => new Response('', { status }));
+    let failure: unknown;
+
+    try {
+      await checkYaohuoLoginDirect({
+        yaohuoCookie: 'sidyaohuo=candidate',
+        yaohuoFetcher
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).toMatchObject({ message: `HTTP ${status}` });
+    expect(failure).not.toMatchObject({ loginRequired: true });
+  });
+
+  it('[REG-ACCOUNT-019] does not infer the current Yaohuo user from a public profile card', () => {
+    const currentUser = parseYaohuoCurrentUserHtml(`
+      <div class="line1">个人资料：<a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>
+      <div class="listdata"><a href="/bbs-123.html">公开主题</a></div>
+    `);
+
+    expect(currentUser).toBeNull();
+  });
+
+  it('[REG-ACCOUNT-019] does not infer the current Yaohuo user from a public row whose title contains 我的', () => {
+    const currentUser = parseYaohuoCurrentUserHtml(`
+      <div class="listdata">
+        <a href="/bbs/userinfo.aspx?touserid=7">发帖人</a>
+        <a href="/bbs-123.html">我的一天</a>
+      </div>
+    `);
+
+    expect(currentUser).toBeNull();
+  });
+
+  it('[REG-ACCOUNT-019] does not infer the current Yaohuo user from welcome text in a public row', () => {
+    const currentUser = parseYaohuoCurrentUserHtml(`
+      <div class="listdata">
+        <a href="/bbs/userinfo.aspx?touserid=7">alice</a>
+        <a href="/bbs-123.html">欢迎 alice 加入</a>
+      </div>
+    `);
+
+    expect(currentUser).toBeNull();
+  });
+
   it('does not treat yaohuo navigation text as the current username', () => {
     const currentUser = parseYaohuoCurrentUserHtml('<div class="top">火友的<a href="/bbs/userinfo.aspx?touserid=7">空间</a> <a href="/bbs/logout.aspx">退出</a></div>');
     const fallbackUser = parseYaohuoCurrentUserHtml('<div class="top"><a href="/bbs/userinfo.aspx?touserid=8">我的地盘</a> <a href="/bbs/logout.aspx">退出</a></div>');
@@ -497,12 +614,12 @@ describe('Android direct yaohuo API', () => {
       redirect: 'follow',
       headers: expect.objectContaining({
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        Cookie: 'sidyaohuo=secret',
         Referer: 'https://www.yaohuo.me/bbs/',
         'Sec-Fetch-Site': 'same-origin',
         'User-Agent': 'native-provider-user-agent'
       })
     }));
+    expect((yaohuoFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('fetches yaohuo topic and replies from Android before local parsing', async () => {

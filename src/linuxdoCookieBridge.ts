@@ -32,7 +32,6 @@ type LinuxDoCookieModule = {
   getClearance?: () => Promise<string | null>;
   getLinuxDoCookieHeader?: () => Promise<string | null>;
   clearLinuxDoLoginCookies?: (expected?: Partial<Record<typeof LINUXDO_LOGIN_COOKIE_NAMES[number], string>>) => Promise<boolean>;
-  clearLinuxDoClearanceCookies?: () => Promise<boolean>;
 };
 type LinuxDoCookieStoreReader = () => Promise<Record<string, LinuxDoNativeCookie>>;
 
@@ -126,10 +125,6 @@ export function buildLinuxDoCookieHeader(cookies: Record<string, LinuxDoNativeCo
 export function removeLinuxDoLoginCookies(cookies: Record<string, LinuxDoNativeCookie>) {
   const loginNames = new Set<string>(LINUXDO_LOGIN_COOKIE_NAMES);
   return Object.fromEntries(Object.entries(cookies).filter(([name]) => !loginNames.has(name)));
-}
-
-function removeLinuxDoClearanceCookie(cookies: Record<string, LinuxDoNativeCookie>) {
-  return Object.fromEntries(Object.entries(cookies).filter(([name]) => name !== 'cf_clearance'));
 }
 
 export function summarizeLinuxDoCookies(cookies: Record<string, LinuxDoNativeCookie>) {
@@ -315,10 +310,14 @@ function linuxDoLoginCookiesMatch(currentHeader: string | undefined, expectedHea
 
 async function clearLinuxDoLoginCookiesFromWebView(expectedHeader?: string) {
   const module = await linuxDoAndroidCookieModule();
-  if (module?.clearLinuxDoLoginCookies) {
-    await module.clearLinuxDoLoginCookies(linuxDoLoginCookieValues(expectedHeader)).catch(() => false);
+  if (typeof module?.clearLinuxDoLoginCookies !== 'function') {
+    throw new Error('linux.do Cookie 清理能力不可用');
   }
-  await CookieManager.flush().catch(() => undefined);
+  const cleared = await module.clearLinuxDoLoginCookies(linuxDoLoginCookieValues(expectedHeader));
+  if (!cleared) {
+    throw new Error('linux.do Cookie 删除未确认');
+  }
+  await CookieManager.flush();
 }
 
 async function saveLinuxDoAccessWithGate(cookieHeader: string, userAgent?: string) {
@@ -395,42 +394,8 @@ export async function clearLinuxDoAccess() {
   );
 }
 
-export async function clearLinuxDoAccessForGeneration(generation: number, expectedHeader?: string) {
-  return clearLinuxDoAccessWithWriter(
-    (task) => enqueueCredentialWriteForGeneration(linuxDoAccessWriteGate, generation, task),
-    expectedHeader
-  );
-}
-
 export async function clearLinuxDoSavedAccess() {
   await replaceCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY));
-}
-
-export async function clearLinuxDoWebViewClearance() {
-  await Promise.all(LINUXDO_COOKIE_URLS.map((url) => CookieManager.clearByName(url, 'cf_clearance').catch(() => false)));
-  const module = await linuxDoAndroidCookieModule();
-  if (module?.clearLinuxDoClearanceCookies) {
-    await module.clearLinuxDoClearanceCookies().catch(() => false);
-  }
-  await CookieManager.flush().catch(() => undefined);
-}
-
-export async function clearLinuxDoClearance() {
-  return replaceCredentialWrite(linuxDoAccessWriteGate, async ({ isCurrent }) => {
-    const savedAccess = await readStoredLinuxDoAccess();
-    if (!isCurrent()) {
-      return null;
-    }
-    const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoClearanceCookie(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
-    let access: LinuxDoAccess | null = null;
-    if (remainingHeader) {
-      access = await writeLinuxDoAccess(linuxDoAccessFromHeader(remainingHeader, savedAccess?.userAgent), isCurrent);
-    } else {
-      await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
-    }
-    await clearLinuxDoWebViewClearance();
-    return isCurrent() ? access : null;
-  });
 }
 
 export function linuxDoAccessSummary(access: LinuxDoAccess | null) {

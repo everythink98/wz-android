@@ -100,10 +100,7 @@ export function HiddenBrowserHost({
           <WebView
             key={`nodeseek-browser-fetch-${nodeSeekWebViewGeneration}-${nodeSeekBrowserFetchRequest.id}`}
             ref={nodeSeekBrowserWebViewRef}
-            source={{
-              uri: nodeSeekBrowserFetchRequest.url,
-              headers: nodeSeekBrowserFetchRequest.cookie ? { Cookie: nodeSeekBrowserFetchRequest.cookie } : undefined
-            }}
+            source={{ uri: nodeSeekBrowserFetchRequest.url }}
             javaScriptEnabled
             javaScriptCanOpenWindowsAutomatically={false}
             sharedCookiesEnabled
@@ -146,10 +143,7 @@ export function HiddenBrowserHost({
           <WebView
             key={`linuxdo-browser-fetch-${linuxDoWebViewGeneration}-${linuxDoBrowserFetchRequest.id}`}
             ref={linuxDoBrowserWebViewRef}
-            source={{
-              uri: linuxDoBrowserFetchRequest.url,
-              headers: linuxDoBrowserFetchRequest.cookie ? { Cookie: linuxDoBrowserFetchRequest.cookie } : undefined
-            }}
+            source={{ uri: linuxDoBrowserFetchRequest.url }}
             javaScriptEnabled
             javaScriptCanOpenWindowsAutomatically={false}
             sharedCookiesEnabled

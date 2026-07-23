@@ -51,8 +51,7 @@ describe('Android local forum facade', () => {
       .find(([input]) => input.includes('nodeseek.com/categories/tech/page-2'));
     expect(browserFetchIntentFromInit(nodeSeekFeedCall?.[1])).toMatchObject({
       owner: 'feed',
-      priority: 'background',
-      cancelable: true
+      priority: 'foreground'
     });
   });
 
@@ -76,8 +75,7 @@ describe('Android local forum facade', () => {
     for (const [, init] of calls) {
       expect(browserFetchIntentFromInit(init)).toMatchObject({
         owner: 'topic',
-        priority: 'foreground',
-        cancelable: true
+        priority: 'foreground'
       });
     }
   });
@@ -447,13 +445,17 @@ describe('Android local forum facade', () => {
     });
   });
 
-  it('reads current logged-in users for account status without V2EX', async () => {
-    const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
-        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872, avatar: '/avatar/48872.png' } }));
+  it('[REG-ACCOUNT-025] reads all four current identities only from their proven session seams', async () => {
+    const nodeSeekCurrentUserPayload = Buffer.from(JSON.stringify({
+      user: {
+        member_id: 48872,
+        member_name: '我是ikun',
+        avatar: '/avatar/48872.png'
       }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/') {
-        return new Response('<a href="/space/48872"><img src="/avatar/48872.png" alt="我是ikun" /></a>');
+        return new Response(`<script id="temp-script">${nodeSeekCurrentUserPayload}</script>`);
       }
       if (input === 'https://linux.do/session/current.json') {
         return new Response(JSON.stringify({
@@ -466,10 +468,27 @@ describe('Android local forum facade', () => {
         }));
       }
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
-        return new Response('<div class="top">欢迎 <a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>');
+        return new Response(`
+          <div class="top2">
+            <a href="/myfile.aspx">我的地盘</a>
+            <a href="/bbs/userinfo.aspx?touserid=7">空间</a>
+            <a href="/bbs/book_list_search.aspx">帖子</a>
+            <a href="/bbs/messagelist.aspx">信箱</a>
+          </div>
+        `);
       }
       if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
-        return new Response('<div>昵称：火友</div><div>主题 0 回复 0</div>');
+        return new Response('<div class="content">昵称:火友<br/>贴子(0).回复(0)</div>');
+      }
+      if (input === 'https://forum.xiaoyinsi.com/session/current.json') {
+        return new Response(JSON.stringify({
+          current_user: {
+            username: 'carol',
+            name: 'Carol',
+            avatar_template: '/user_avatar/forum.xiaoyinsi.com/carol/{size}/1_2.png',
+            trust_level: 1
+          }
+        }));
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -481,6 +500,11 @@ describe('Android local forum facade', () => {
       discourseAuth: { linuxdo: { cookieHeader: '_t=ok' } }
     });
     const yaohuo = await getCurrentUserProfile({ source: 'yaohuo', fetcher, yaohuoCookie: 'sidyaohuo=ok' });
+    const xiaoyinsi = await getCurrentUserProfile({
+      source: 'xiaoyinsi',
+      fetcher,
+      discourseAuth: { xiaoyinsi: { apiKey: 'user-api-key', clientId: 'install-client' } }
+    });
 
     expect(nodeseek).toMatchObject({
       source: 'nodeseek',
@@ -504,14 +528,70 @@ describe('Android local forum facade', () => {
       url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
       topics: []
     });
+    expect(xiaoyinsi).toMatchObject({
+      source: 'xiaoyinsi',
+      id: 'carol',
+      username: 'carol',
+      displayName: 'Carol',
+      levelLabel: 'Lv1',
+      topics: []
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://forum.xiaoyinsi.com/session/current.json',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'User-Api-Key': 'user-api-key',
+          'User-Api-Client-Id': 'install-client'
+        })
+      })
+    );
     expect(() => getCurrentUserProfile({ source: 'v2ex', fetcher })).toThrow('V2EX 不支持当前登录身份读取');
   });
 
-  it('falls back to the latest dynamic NodeSeek login id only when current account reading fails', async () => {
+  it('[REG-ACCOUNT-019] classifies the documented anonymous linux.do current-session 404 as an expired login', async () => {
+    const fetcher = vi.fn(async () => new Response('<html>login required</html>', {
+      status: 404,
+      headers: { 'content-type': 'text/html' }
+    }));
+
+    await expect(getCurrentUserProfile({
+      source: 'linuxdo',
+      fetcher,
+      discourseAuth: { linuxdo: { cookieHeader: '_t=expired' } }
+    })).rejects.toMatchObject({
+      source: 'linuxdo',
+      kind: 'login-expired',
+      loginRequired: true,
+      reason: 'expired'
+    });
+  });
+
+  it.each([401, 403])('[REG-ACCOUNT-025] keeps non-contract linux.do current-session HTTP %s unknown', async (status) => {
+    const fetcher = vi.fn(async () => new Response('<html>request rejected</html>', {
+      status,
+      headers: { 'content-type': 'text/html' }
+    }));
+    let failure: unknown;
+
+    try {
+      await getCurrentUserProfile({
+        source: 'linuxdo',
+        fetcher,
+        discourseAuth: { linuxdo: { cookieHeader: '_t=candidate' } }
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toMatchObject({
+      loginRequired: true,
+      reason: 'expired'
+    });
+  });
+
+  it('[REG-ACCOUNT-019] does not use a public NodeSeek profile as current-session proof', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
-        return new Response('{}');
-      }
       if (input === 'https://www.nodeseek.com/') {
         return new Response('<div>NodeSeek</div>');
       }
@@ -522,21 +602,20 @@ describe('Android local forum facade', () => {
     });
 
     await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
-    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok', nodeSeekUserId: 15105 })).resolves.toMatchObject({
-      source: 'nodeseek',
-      id: '15105',
-      username: '备用用户',
-      topics: []
-    });
+    expect(fetcher).not.toHaveBeenCalledWith('https://www.nodeseek.com/api/account/getInfo/15105?readme=1', expect.anything());
   });
 
-  it('does not read the fallback NodeSeek id when the current account endpoint succeeds', async () => {
-    const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
-        return new Response(JSON.stringify({ success: true, detail: { member_name: '当前账号', member_id: 48872 } }));
+  it('[REG-ACCOUNT-025] does not treat unrelated embedded profile data as the current NodeSeek account', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: { postId: 123 },
+      profile: {
+        member_id: 15105,
+        member_name: '公开资料用户'
       }
-      if (input === 'https://www.nodeseek.com/api/account/getInfo/15105?readme=1') {
-        throw new Error('stale fallback id should not be requested');
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/' || input === 'https://www.nodeseek.com/setting') {
+        return new Response(`<script id="temp-script">${payload}</script>`);
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -544,23 +623,123 @@ describe('Android local forum facade', () => {
     await expect(getCurrentUserProfile({
       source: 'nodeseek',
       fetcher,
-      nodeSeekCookie: 'session=ok',
-      nodeSeekUserId: 15105
+      nodeSeekCookie: 'session=unknown'
+    })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
+  });
+
+  it('[REG-ACCOUNT-019] classifies an explicit NodeSeek guest page as an expired login', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/' || input === 'https://www.nodeseek.com/setting') {
+        return new Response('<a class="Username" href="/space/48872">旧账号</a><a class="btn" href="/signIn.html">登录</a><a class="btn" href="/register.html">注册</a>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=expired'
+    })).rejects.toMatchObject({
+      source: 'nodeseek',
+      loginRequired: true,
+      reason: 'expired'
+    });
+  });
+
+  it('[REG-ACCOUNT-024] reads the current NodeSeek identity from the current page without probing a user-id profile route', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      user: {
+        member_id: 48872,
+        member_name: '当前账号',
+        avatar: '/avatar/48872.png'
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response(`<script id="temp-script">${payload}</script>`);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=current'
     })).resolves.toMatchObject({
       source: 'nodeseek',
       id: '48872',
-      username: '当前账号',
-      topics: []
+      username: '当前账号'
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/', expect.anything());
+  });
+
+  it('[REG-ACCOUNT-026] keeps the proven NodeSeek current user when guest controls coexist in the document', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      user: {
+        member_id: 48872,
+        member_name: '当前账号',
+        avatar: '/avatar/48872.png'
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response(`
+          <script id="temp-script">${payload}</script>
+          <a class="btn" href="/signIn.html">登录</a>
+          <a class="btn" href="/register.html">注册</a>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
     });
 
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=current'
+    })).resolves.toMatchObject({
+      source: 'nodeseek',
+      id: '48872',
+      username: '当前账号'
+    });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-ACCOUNT-019] keeps ambiguous NodeSeek page text as an ordinary identity failure', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/' || input === 'https://www.nodeseek.com/setting') {
+        return new Response('<article>登录</article>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=unknown'
+    })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
+  });
+
+  it('[REG-ACCOUNT-019] keeps ordinary content with exact NodeSeek login links unknown', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response('<article><a href="/signIn.html">登录教程</a><a href="/register.html">注册教程</a></article>');
+      }
+      if (input === 'https://www.nodeseek.com/setting') {
+        return new Response('<main>设置页面暂时无法读取</main>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=unknown'
+    })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
   it('reads the current NodeSeek account from settings when the home page has no user link', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
-        return new Response('{}');
-      }
       if (input === 'https://www.nodeseek.com/') {
         return new Response('<div>NodeSeek</div>');
       }
@@ -578,37 +757,8 @@ describe('Android local forum facade', () => {
     });
   });
 
-  it('reads the current NodeSeek account from embedded page config', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      user: {
-        member_id: 48872,
-        member_name: '凡想世界',
-        avatar: '/avatar/48872.png'
-      }
-    })).toString('base64');
-    const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
-        return new Response('{}');
-      }
-      if (input === 'https://www.nodeseek.com/') {
-        return new Response(`<script id="temp-script">${payload}</script>`);
-      }
-      throw new Error(`unexpected ${input}`);
-    });
-
-    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).resolves.toMatchObject({
-      source: 'nodeseek',
-      id: '48872',
-      username: '凡想世界',
-      topics: []
-    });
-  });
-
   it('does not read the current NodeSeek account from sign-out-adjacent post author links', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
-        return new Response('{}');
-      }
       if (input === 'https://www.nodeseek.com/') {
         return new Response(`
           <a href="/space/4706">帖子作者</a>
@@ -623,6 +773,24 @@ describe('Android local forum facade', () => {
     });
 
     await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
+  });
+
+  it('[REG-ACCOUNT-019] does not use UID text beside a homepage author link as current-session proof', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response('<article>如何查看 UID: 4706</article><a href="/space/4706">帖子作者</a>');
+      }
+      if (input === 'https://www.nodeseek.com/setting') {
+        return new Response('<main>设置页面</main>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=stale'
+    })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
   it('reads the current yaohuo account name from the signed-in user topic list when the profile only exposes an id', async () => {
@@ -661,6 +829,29 @@ describe('Android local forum facade', () => {
         excerpt: '阿根廷没问题。',
         displayTimeText: '2026-07-03 13:45'
       }]
+    });
+  });
+
+  it('[REG-ACCOUNT-025] preserves a proven Yaohuo identity when optional profile enrichment fails', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
+        return new Response('<div class="top">欢迎 <a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>');
+      }
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
+        return new Response('temporarily unavailable', { status: 503 });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'yaohuo',
+      fetcher,
+      yaohuoCookie: 'sidyaohuo=ok'
+    })).resolves.toMatchObject({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友',
+      topics: []
     });
   });
 

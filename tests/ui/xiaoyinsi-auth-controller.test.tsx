@@ -366,6 +366,48 @@ describe('小隐寺授权 controller', () => {
     }).toEqual(workflowBeforeRead);
   });
 
+  it.each([401, 403, 404])('[REG-ACCOUNT-025] keeps raw Xiaoyinsi transport HTTP %i unknown', async (status) => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'candidate-key', clientId: 'client' });
+    mockVerify.mockRejectedValue(Object.assign(new Error(`HTTP ${status}`), { status }));
+    const { hook } = await renderController();
+
+    let result: XiaoyinsiAuthorizationReadResult | undefined;
+    await act(async () => {
+      result = await hook.result.current.readAuthorization(undefined, {
+        signal: { aborted: false } as AbortSignal
+      });
+    });
+
+    expect(result).toMatchObject({
+      authenticated: null,
+      sessionEvent: { type: 'check-failed', message: `HTTP ${status}` }
+    });
+  });
+
+  it('[REG-ACCOUNT-025] accepts only a typed invalid User API key result as expired', async () => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'expired-key', clientId: 'client' });
+    mockVerify.mockRejectedValue(Object.assign(new Error('invalid access'), {
+      source: 'xiaoyinsi',
+      kind: 'login-expired',
+      loginRequired: true,
+      reason: 'expired'
+    }));
+    const { hook } = await renderController();
+
+    let result: XiaoyinsiAuthorizationReadResult | undefined;
+    await act(async () => {
+      result = await hook.result.current.readAuthorization(undefined, {
+        signal: { aborted: false } as AbortSignal
+      });
+    });
+
+    expect(result).toEqual({
+      authenticated: false,
+      reason: 'login_required',
+      sessionEvent: { type: 'login-expired', message: '小隐寺授权已失效' }
+    });
+  });
+
   const terminalCases: Array<[
     'access_denied' | 'expired_token',
     'denied' | 'expired',

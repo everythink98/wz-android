@@ -41,8 +41,9 @@ describe('source gateway reads', () => {
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
     expect(fetcher).toHaveBeenCalledWith(
       'https://www.yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=2&siteid=1000',
-      expect.objectContaining({ headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' }) })
+      expect.objectContaining({ credentials: 'include' })
     );
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('searches yaohuo through the shared searchTopics interface', async () => {
@@ -63,8 +64,9 @@ describe('source gateway reads', () => {
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '321', categoryId: '177' });
     expect(fetcher).toHaveBeenCalledWith(
       expect.stringContaining('classid=177'),
-      expect.objectContaining({ headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' }) })
+      expect.objectContaining({ credentials: 'include' })
     );
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('reads a yaohuo topic through the shared getTopic interface', async () => {
@@ -112,8 +114,9 @@ describe('source gateway reads', () => {
     expect(result.items[0]).toMatchObject({ author: 'bob', floor: 61 });
     expect(fetcher).toHaveBeenCalledWith(
       'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3',
-      expect.objectContaining({ headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' }) })
+      expect.objectContaining({ credentials: 'include' })
     );
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('reads a yaohuo user through the shared getUserProfile interface', async () => {
@@ -132,8 +135,9 @@ describe('source gateway reads', () => {
     expect(profile).toMatchObject({ source: 'yaohuo', id: '7', username: '火友', levelLabel: '2级' });
     expect(fetcher).toHaveBeenCalledWith(
       'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000',
-      expect.objectContaining({ headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' }) })
+      expect.objectContaining({ credentials: 'include' })
     );
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('classifies a missing yaohuo credential before reading a user profile', async () => {

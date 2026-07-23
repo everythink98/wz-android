@@ -133,4 +133,12 @@ describe('yaohuo reply parsing', () => {
 
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
+
+  it('[REG-ACCOUNT-025] replaces a current-account id placeholder with the profile nickname', () => {
+    const profile = parseYaohuoUserProfileHtml(`
+      <div class="content">昵称:火友<br/>贴子(0).回复(0)</div>
+    `, { id: '7', username: '7' });
+
+    expect(profile).toMatchObject({ id: '7', username: '火友', displayName: '火友' });
+  });
 });

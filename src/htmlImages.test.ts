@@ -131,15 +131,15 @@ describe('Android HTML image preview helpers', () => {
   });
 
   it('does not send NodeSeek login cookies to public static sticker media', () => {
-    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/static/image/sticker/emoji/00.webm', 'uid=1')).toEqual({
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/static/image/sticker/emoji/00.webm')).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       Referer: 'https://www.nodeseek.com',
       'User-Agent': 'native-provider-user-agent'
     });
   });
 
-  it('keeps NodeSeek cookies for media URLs that may require login', () => {
-    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', 'uid=1')?.Cookie).toBe('uid=1');
+  it('[REG-ACCOUNT-029] leaves NodeSeek media Cookie attachment to the native read-only jar', () => {
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', 'WZ-Media-Test')).not.toHaveProperty('Cookie');
   });
 
   it('builds a de-duplicated preview list and keeps tapped image position', () => {

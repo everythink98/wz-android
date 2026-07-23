@@ -1,4 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
+import { withBrowserFetchIntent } from './browserFetchIntent';
 import type { DiscourseActionRequest } from './discourseActions';
 import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import {
@@ -6,6 +7,8 @@ import {
   canStoreLinuxDoLogin,
   parseLinuxDoDocumentCookie
 } from './linuxdoCookieBridge';
+import { linuxDoAvatarUrl, linuxDoUserUrl } from './localLinuxdoHelpers';
+import type { UserProfile } from './types';
 
 const LINUXDO_BASE_URL = 'https://linux.do';
 const LINUXDO_ACTION_HEADERS = {
@@ -56,7 +59,35 @@ function linuxDoActionError(data: Record<string, unknown>, status: number) {
   return error;
 }
 
-async function readJsonResponse(response: Response) {
+function linuxDoCurrentUserProfile(data: Record<string, unknown>): UserProfile | null {
+  const currentUser = data.current_user && typeof data.current_user === 'object'
+    ? data.current_user as Record<string, unknown>
+    : {};
+  const user = data.user && typeof data.user === 'object'
+    ? data.user as Record<string, unknown>
+    : {};
+  const merged = { ...user, ...currentUser };
+  const username = typeof merged.username === 'string' ? merged.username.trim() : '';
+  if (!username) {
+    return null;
+  }
+  const trustLevel = typeof merged.trust_level === 'number'
+    ? merged.trust_level
+    : typeof merged.trust_level === 'string' && merged.trust_level.trim() ? Number(merged.trust_level) : NaN;
+  const levelLabel = Number.isInteger(trustLevel) && trustLevel >= 0 ? `Lv${trustLevel}` : undefined;
+  return {
+    source: 'linuxdo',
+    id: username,
+    username,
+    displayName: typeof merged.name === 'string' && merged.name.trim() ? merged.name.trim() : username,
+    avatar: linuxDoAvatarUrl(merged.avatar_template),
+    url: linuxDoUserUrl(username),
+    ...(levelLabel ? { levelLabel } : {}),
+    topics: []
+  };
+}
+
+async function readJsonResponse(response: Response, { allowNonJsonError = false }: { allowNonJsonError?: boolean } = {}) {
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     const error = new Error('linux.do 需要完成 Cloudflare 验证');
@@ -72,6 +103,9 @@ async function readJsonResponse(response: Response) {
   try {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
+    if (!response.ok && allowNonJsonError) {
+      return {};
+    }
     if (!response.ok) {
       throw new Error(`linux.do 请求失败：HTTP ${response.status}`);
     }
@@ -80,25 +114,22 @@ async function readJsonResponse(response: Response) {
 }
 
 async function getCsrfToken({
-  cookieHeader,
   fetcher,
   signal,
   timeoutMs,
   userAgent
 }: {
-  cookieHeader: string;
   fetcher: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
   userAgent?: string;
 }) {
-  const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}/session/csrf`, {
+  const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}/session/csrf`, withBrowserFetchIntent({
     headers: {
       ...LINUXDO_ACTION_HEADERS,
-      Cookie: cookieHeader,
       'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT
     }
-  }, { fetcher, signal, timeoutMs });
+  }, { owner: 'write', priority: 'write' }), { fetcher, signal, timeoutMs });
   const data = await readJsonResponse(response);
   if (!response.ok) {
     throw response.status === 401 || response.status === 403 ? linuxDoLoginRequiredError() : new Error(`linux.do 请求失败：HTTP ${response.status}`);
@@ -129,18 +160,17 @@ export async function runLinuxDoAction({
   if (!cleanCookie || !canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(cleanCookie))) {
     throw linuxDoLoginRequiredError();
   }
-  const csrfToken = await getCsrfToken({ cookieHeader: cleanCookie, fetcher, signal, timeoutMs, userAgent });
-  const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}${request.path}`, {
+  const csrfToken = await getCsrfToken({ fetcher, signal, timeoutMs, userAgent });
+  const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}${request.path}`, withBrowserFetchIntent({
     method: request.method,
     headers: {
       ...LINUXDO_ACTION_HEADERS,
       ...request.headers,
-      Cookie: cleanCookie,
       'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
       'X-CSRF-Token': csrfToken
     },
     body: request.body
-  }, { fetcher, signal, timeoutMs });
+  }, { owner: 'write', priority: 'write' }), { fetcher, signal, timeoutMs });
   const data = await readJsonResponse(response);
   if (!response.ok) {
     throw linuxDoActionError(data, response.status);
@@ -173,28 +203,28 @@ export async function checkLinuxDoLoginAccess({
     const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}/session/current.json`, {
       headers: {
         ...LINUXDO_ACTION_HEADERS,
-        Cookie: cleanCookie,
         'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT
       }
     }, { fetcher, signal, timeoutMs });
-    const data = await readJsonResponse(response);
+    const data = await readJsonResponse(response, { allowNonJsonError: true });
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 404) {
         throw linuxDoLoginRequiredError();
       }
       throw new Error(linuxDoResponseMessage(data, `linux.do 请求失败：HTTP ${response.status}`));
     }
-    const user = data.current_user && typeof data.current_user === 'object'
-      ? data.current_user as Record<string, unknown>
-      : data.user && typeof data.user === 'object'
-        ? data.user as Record<string, unknown>
-        : null;
-    if (typeof user?.username !== 'string' || !user.username.trim()) {
+    if (data.current_user === null || data.user === null) {
       throw linuxDoLoginRequiredError();
+    }
+    const currentUser = linuxDoCurrentUserProfile(data);
+    if (!currentUser) {
+      throw new Error('linux.do 状态暂时无法确认');
     }
     return {
       ok: true,
-      message: '登录可用'
+      loginRequired: false,
+      message: '登录可用',
+      currentUser
     };
   } catch (error) {
     if (signal?.aborted) {

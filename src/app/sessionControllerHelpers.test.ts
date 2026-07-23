@@ -34,21 +34,17 @@ import * as SecureStore from 'expo-secure-store';
 import CookieManager from '@react-native-cookies/cookies';
 import {
   advanceCredentialWriteGeneration,
+  enqueueBrowserFetchRequest,
   createCredentialWriteGate,
   enqueueCredentialWriteForGeneration,
   enqueueCredentialWrite,
-  enqueueLatestBrowserFetchRequest,
   isCredentialWriteCurrent,
-  nodeSeekMediaCookieHeaderAfterCredentialLoad,
   nodeSeekBrowserResponse,
-  preemptActiveBrowserFetchRequest,
   replaceCredentialWrite,
   rejectBrowserFetchRequest,
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
   shouldHandleBrowserHttpError,
-  shouldKeepQueuedBrowserFetchRequest,
-  shouldPreemptBrowserFetchRequest,
   siteSessionEventInvalidatesForumQueries,
   startNextBrowserFetchRequest,
   takeNodeSeekVerificationRetry,
@@ -65,6 +61,8 @@ import {
 import type { Fetcher } from '../request';
 import { useSessionController } from './useSessionController';
 import { saveLinuxDoAccess } from '../linuxdoCookieBridge';
+import { appQueryClient } from './serverState';
+import { withBrowserFetchIntent } from '../browserFetchIntent';
 
 afterEach(() => {
   setDiagnosticWriter(null);
@@ -79,16 +77,13 @@ function createTestSessionController(
   return useSessionController({
     defaultFetcher,
     linuxDoBrowserWebViewRef: { current: null },
-    linuxDoClearanceBeforeVerifyRef: { current: null },
     linuxDoWebViewCookieHeaderRef: { current: '' },
     linuxDoWebViewUserAgentRef: { current: '' },
     nodeSeekBrowserWebViewRef: { current: null },
     nodeSeekWebViewCookieHeaderRef: { current: '' },
     nodeSeekWebViewUserAgentRef: { current: '' },
     notify,
-    setLinuxDoWebViewCookieHeader: vi.fn(),
     setLinuxDoWebViewUserAgent: vi.fn(),
-    setNodeSeekMediaCookieHeader: vi.fn(),
     setNodeSeekWebViewUserAgent: vi.fn(),
     setWebLoginUserId,
     webLoginDetectedRef: { current: false },
@@ -97,7 +92,7 @@ function createTestSessionController(
 }
 
 describe('session controller helpers', () => {
-  it('invalidates source queries only when session credentials can have changed', () => {
+  it('[REG-WRITE-022] invalidates source queries only when session credentials can have changed', () => {
     expect(siteSessionEventInvalidatesForumQueries({
       type: 'cookie-loaded',
       cookieSummary: ['session'],
@@ -133,9 +128,185 @@ describe('session controller helpers', () => {
     expect(lines.map((line) => JSON.parse(line))).toContainEqual(expect.objectContaining({
       area: 'session',
       operation: 'state-transition',
-      eventType: 'session-updated'
+      eventType: 'session-updated',
+      nextState: 'verified'
     }));
   });
+
+  it('[REG-ACCOUNT-019] treats stored NodeSeek and Yaohuo login-cookie names only as candidate credentials', async () => {
+    const lines: string[] = [];
+    const getItemAsync = vi.mocked(SecureStore.getItemAsync);
+    getItemAsync.mockImplementation(async (key) => {
+      if (key === 'nodeseek-access') {
+        return JSON.stringify({
+          cookieHeader: 'session=stale-login',
+          savedAt: '2026-07-23T00:00:00.000Z',
+          source: 'webview',
+          userId: 48872
+        });
+      }
+      if (key === 'yaohuo-cookie-header') {
+        return 'sidyaohuo=stale-login';
+      }
+      return null;
+    });
+    vi.mocked(CookieManager.get).mockResolvedValue({});
+    setDiagnosticWriter((line) => { lines.push(line); });
+
+    createTestSessionController();
+
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'apply');
+    expect(transitions.find(({ source }) => source === 'nodeseek')).toMatchObject({
+      eventType: 'cookie-loaded',
+      nextState: 'verified'
+    });
+    expect(transitions.find(({ source }) => source === 'yaohuo')).toMatchObject({
+      eventType: 'cookie-loaded',
+      nextState: 'anonymous'
+    });
+
+    getItemAsync.mockResolvedValue(null);
+  });
+
+  it('[REG-ACCOUNT-023] keeps confirmed NodeSeek and Yaohuo identities during ordinary credential loads', async () => {
+    const lines: string[] = [];
+    const getItemAsync = vi.mocked(SecureStore.getItemAsync);
+    const setWebLoginUserId = vi.fn();
+    getItemAsync.mockResolvedValue(null);
+    vi.mocked(CookieManager.get).mockResolvedValue({});
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(), setWebLoginUserId);
+
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    controller.dispatchSiteSessionEvent({
+      site: 'nodeseek',
+      type: 'verification-succeeded',
+      loggedIn: true,
+      at: '2026-07-23T01:00:00.000Z'
+    });
+    controller.dispatchSiteSessionEvent({
+      site: 'yaohuo',
+      type: 'verification-succeeded',
+      loggedIn: true,
+      at: '2026-07-23T01:00:00.000Z'
+    });
+    getItemAsync.mockImplementation(async (key) => {
+      if (key === 'nodeseek-access') {
+        return JSON.stringify({
+          cookieHeader: 'session=current-login',
+          savedAt: '2026-07-23T01:00:00.000Z',
+          source: 'webview',
+          userId: 54874
+        });
+      }
+      if (key === 'yaohuo-cookie-header') {
+        return 'sidyaohuo=current-login';
+      }
+      return null;
+    });
+    lines.length = 0;
+    setWebLoginUserId.mockClear();
+
+    await controller.loadNodeSeekCookieForSource('nodeseek');
+    await controller.loadYaohuoCookieForSource('yaohuo');
+
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase, eventType }) => (
+        operation === 'state-transition'
+        && phase === 'apply'
+        && eventType === 'cookie-loaded'
+      ));
+    expect(transitions.find(({ source }) => source === 'nodeseek')).toMatchObject({
+      previousState: 'logged-in',
+      nextState: 'logged-in'
+    });
+    expect(transitions.find(({ source }) => source === 'yaohuo')).toMatchObject({
+      previousState: 'logged-in',
+      nextState: 'logged-in'
+    });
+    expect(setWebLoginUserId).toHaveBeenLastCalledWith(54874);
+
+    getItemAsync.mockResolvedValue(null);
+  });
+
+  it.each(['logged-in', 'expired', 'verification-required'] as const)(
+    '[REG-ACCOUNT-028] keeps the %s NodeSeek projection when a passive credential load is empty',
+    async (expectedStatus) => {
+      const lines: string[] = [];
+      const getItemAsync = vi.mocked(SecureStore.getItemAsync);
+      const setWebLoginUserId = vi.fn();
+      getItemAsync.mockResolvedValue(null);
+      vi.mocked(CookieManager.get).mockResolvedValue({});
+      setDiagnosticWriter((line) => { lines.push(line); });
+      const removeQueries = vi.spyOn(appQueryClient, 'removeQueries');
+      const controller = createTestSessionController(vi.fn(), setWebLoginUserId);
+
+      await vi.waitFor(() => expect(lines.some((line) => {
+        const event = JSON.parse(line);
+        return event.operation === 'load-stored' && event.phase === 'finish';
+      })).toBe(true));
+      controller.dispatchSiteSessionEvent({
+        site: 'nodeseek',
+        type: 'verification-succeeded',
+        loggedIn: true,
+        currentUser: {
+          source: 'nodeseek',
+          id: '54874',
+          username: 'current-user',
+          displayName: 'Current User',
+          url: 'https://www.nodeseek.com/space/54874',
+          topics: []
+        },
+        at: '2026-07-23T01:00:00.000Z'
+      });
+      if (expectedStatus === 'expired') {
+        controller.dispatchSiteSessionEvent({
+          site: 'nodeseek',
+          type: 'login-expired',
+          message: 'NodeSeek 登录已失效'
+        });
+      } else if (expectedStatus === 'verification-required') {
+        controller.dispatchSiteSessionEvent({
+          site: 'nodeseek',
+          type: 'verification-required',
+          message: '请完成验证'
+        });
+      }
+      lines.length = 0;
+      setWebLoginUserId.mockClear();
+      removeQueries.mockClear();
+
+      await expect(controller.loadNodeSeekCookieForSource('nodeseek')).resolves.toBeUndefined();
+
+      const transitions = lines
+        .map((line) => JSON.parse(line))
+        .filter(({ operation, phase, source }) => (
+          operation === 'state-transition'
+          && phase === 'apply'
+          && source === 'nodeseek'
+        ));
+      expect(transitions).toEqual([
+        expect.objectContaining({
+          eventType: 'cookie-loaded',
+          previousState: expectedStatus,
+          nextState: expectedStatus
+        })
+      ]);
+      expect(setWebLoginUserId).not.toHaveBeenCalled();
+      expect(removeQueries).not.toHaveBeenCalled();
+      removeQueries.mockRestore();
+    }
+  );
 
   it('[REG-LINUXDO-005] does not treat stored linux.do login cookies as a confirmed session', async () => {
     const lines: string[] = [];
@@ -253,15 +424,53 @@ describe('session controller helpers', () => {
       return event.operation === 'load-stored' && event.phase === 'finish';
     })).toBe(true));
     lines.length = 0;
-    getCookies.mockClear();
+    getCookies.mockReset();
+    getCookies
+      .mockResolvedValueOnce({ sidyaohuo: { name: 'sidyaohuo', value: 'saved' } })
+      .mockResolvedValue({});
 
     await controller.clearYaohuoLoginState();
 
     expect(getCookies).toHaveBeenCalledWith('https://www.yaohuo.me');
+    expect(getCookies).toHaveBeenCalledWith('https://yaohuo.me');
+    expect(CookieManager.setFromResponse).toHaveBeenCalledWith(
+      'https://www.yaohuo.me',
+      expect.stringMatching(/^sidyaohuo=;/)
+    );
+    expect(CookieManager.setFromResponse).toHaveBeenCalledWith(
+      'https://yaohuo.me',
+      expect.stringMatching(/^sidyaohuo=;/)
+    );
+    expect(CookieManager.setFromResponse).toHaveBeenCalledWith(
+      'https://www.yaohuo.me',
+      expect.stringMatching(/^sidyaohuo=; Domain=yaohuo\.me;/)
+    );
     const transitions = lines
       .map((line) => JSON.parse(line))
       .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
     expect(transitions.at(-1)).toMatchObject({ source: 'yaohuo', eventType: 'cleared' });
+  });
+
+  it('REG-ACCOUNT-007 does not report Yaohuo cleared while a target Cookie remains visible', async () => {
+    const lines: string[] = [];
+    const getCookies = vi.mocked(CookieManager.get);
+    getCookies.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'still-present' } });
+    vi.mocked(CookieManager.setFromResponse).mockResolvedValue(true);
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+
+    await expect(controller.clearYaohuoLoginState()).rejects.toThrow('Cookie 清理未完成，请重试。');
+
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+    expect(transitions.map(({ eventType }) => eventType)).not.toContain('cleared');
+    expect(transitions.at(-1)).toMatchObject({ source: 'yaohuo', eventType: 'check-failed' });
   });
 
   it('REG-ACCOUNT-009 stops a stale NodeSeek clear before WebView cleanup and session commit', async () => {
@@ -295,14 +504,6 @@ describe('session controller helpers', () => {
       .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
     expect(transitions.map(({ eventType }) => eventType)).not.toContain('cleared');
     expect(vi.mocked(CookieManager.get)).not.toHaveBeenCalled();
-  });
-
-  it('REG-ACCOUNT-009 preserves the newer NodeSeek media credential when an old load returns empty', () => {
-    expect(nodeSeekMediaCookieHeaderAfterCredentialLoad({
-      currentHeader: 'session=new-login-cookie',
-      loadedHeader: undefined,
-      generationIsCurrent: false
-    })).toBe('session=new-login-cookie');
   });
 
   it('REG-ACCOUNT-009 reports a superseded Yaohuo clear and leaves the newer WebView session alone', async () => {
@@ -460,33 +661,6 @@ describe('session controller helpers', () => {
     expect(SecureStore.deleteItemAsync).not.toHaveBeenCalledWith('nodeseek-access');
   });
 
-  it('REG-ACCOUNT-007 keeps NodeSeek expired when login-cookie cleanup cannot read the store', async () => {
-    const lines: string[] = [];
-    const getItemAsync = vi.mocked(SecureStore.getItemAsync);
-    getItemAsync.mockResolvedValue(null);
-    vi.mocked(CookieManager.get).mockResolvedValue({});
-    setDiagnosticWriter((line) => { lines.push(line); });
-    const controller = createTestSessionController();
-    await vi.waitFor(() => expect(lines.some((line) => {
-      const event = JSON.parse(line);
-      return event.operation === 'load-stored' && event.phase === 'finish';
-    })).toBe(true));
-    lines.length = 0;
-    getItemAsync.mockRejectedValueOnce(new Error('SecureStore unavailable'));
-
-    await expect(controller.clearNodeSeekLoginCookiesOnly({
-      expiredMessage: 'NodeSeek 登录已失效'
-    })).rejects.toThrow('SecureStore unavailable');
-
-    const transitions = lines
-      .map((line) => JSON.parse(line))
-      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
-    expect(transitions.at(-1)).toMatchObject({
-      source: 'nodeseek',
-      eventType: 'login-expired'
-    });
-  });
-
   it('REG-ACCOUNT-003 restores unaffected sessions when one startup credential read fails', async () => {
     const lines: string[] = [];
     const notify = vi.fn();
@@ -584,23 +758,57 @@ describe('session controller helpers', () => {
     expect(JSON.stringify(events)).not.toMatch(/private-cookie-value|session=/);
   });
 
-  it('records WebView credential restore and clear with one terminal event each', async () => {
+  it('[REG-ACCOUNT-026] exposes no command that can restore an App credential into the original-site WebView', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const controller = createTestSessionController();
 
-    await controller.restoreSavedYaohuoCookiesToWebView();
+    expect(controller).not.toHaveProperty('restoreSavedYaohuoCookiesToWebView');
+    vi.mocked(CookieManager.setFromResponse).mockClear();
+    await controller.saveYaohuoCookieHeader('sidyaohuo=app-snapshot');
+    expect(CookieManager.setFromResponse).not.toHaveBeenCalled();
+
     await controller.clearNodeSeekLoginState();
 
     const events = lines.map((line) => JSON.parse(line));
-    for (const operation of ['restore-webview', 'clear']) {
-      const operationEvents = events.filter((event) => event.operation === operation);
-      expect(operationEvents[0]).toMatchObject({ phase: 'intent' });
-      expect(operationEvents.filter((event) => event.phase === 'finish')).toHaveLength(1);
-      expect(operationEvents.at(-1)).toMatchObject({ outcome: 'success' });
-    }
-    expect(JSON.stringify(events.filter((event) => ['restore-webview', 'clear'].includes(event.operation))))
+    const clearEvents = events.filter((event) => event.operation === 'clear');
+    expect(clearEvents[0]).toMatchObject({ phase: 'intent' });
+    expect(clearEvents.filter((event) => event.phase === 'finish')).toHaveLength(1);
+    expect(clearEvents.at(-1)).toMatchObject({ outcome: 'success' });
+    expect(events).toContainEqual(expect.objectContaining({
+      operation: 'state-transition',
+      phase: 'intent',
+      source: 'nodeseek',
+      eventType: 'cleared'
+    }));
+    expect(JSON.stringify(events.filter((event) => event.operation === 'clear')))
       .not.toMatch(/cookieHeader|private|session=/);
+  });
+
+  it('[REG-ACCOUNT-026] preserves NodeSeek Cloudflare clearance during explicit login removal', async () => {
+    const webViewCookies: Record<string, { name: string; value: string }> = {
+      cf_clearance: { name: 'cf_clearance', value: 'verification' },
+      session: { name: 'session', value: 'login' }
+    };
+    vi.mocked(CookieManager.get).mockImplementation(async () => ({ ...webViewCookies }));
+    vi.mocked(CookieManager.setFromResponse).mockImplementation(async (_url, header) => {
+      if (header.startsWith('session=;')) {
+        delete webViewCookies.session;
+      }
+      return true;
+    });
+    const controller = createTestSessionController();
+
+    await controller.clearNodeSeekLoginState();
+
+    expect(CookieManager.setFromResponse).toHaveBeenCalledWith(
+      expect.stringContaining('nodeseek.com'),
+      expect.stringMatching(/^session=;/)
+    );
+    expect(CookieManager.setFromResponse).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringMatching(/^cf_clearance=;/)
+    );
   });
 
   it('keeps a hidden WebView request trace safe from URL, HTML, and cookie data', async () => {
@@ -639,6 +847,61 @@ describe('session controller helpers', () => {
     });
     expect(events.at(-1)).toMatchObject({ outcome: 'success' });
     expect(JSON.stringify(events)).not.toMatch(/private-query|rendered body|private-cookie|google\.com|nodeseek\.com|session=/);
+  });
+
+  it('[REG-ACCOUNT-026] waits for the shared NodeSeek CookieManager before mounting the hidden WebView', async () => {
+    const flush = Promise.withResolvers<void>();
+    const flushCookieManager = vi.mocked(CookieManager.flush);
+    flushCookieManager.mockClear();
+    flushCookieManager
+      .mockImplementationOnce(() => flush.promise)
+      .mockResolvedValue(undefined);
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const url = 'https://www.nodeseek.com/post-cookie-barrier-1';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(flushCookieManager).toHaveBeenCalledTimes(1));
+    expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(false);
+
+    flush.resolve();
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await controller.completeNodeSeekBrowserFetch({ id: 1, url, html: '<html>rendered</html>' });
+    await expect(responsePromise).resolves.toBeInstanceOf(Response);
+  });
+
+  it('[REG-ACCOUNT-026] waits for the shared linux.do CookieManager before mounting the hidden WebView', async () => {
+    const flush = Promise.withResolvers<void>();
+    const flushCookieManager = vi.mocked(CookieManager.flush);
+    flushCookieManager.mockClear();
+    flushCookieManager
+      .mockImplementationOnce(() => flush.promise)
+      .mockResolvedValue(undefined);
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 429, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const url = 'https://linux.do/latest.json';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(flushCookieManager).toHaveBeenCalledTimes(1));
+    expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(false);
+
+    flush.resolve();
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await controller.completeLinuxDoBrowserFetch({
+      id: 1,
+      url,
+      body: '{"topic_list":{"topics":[]}}',
+      challenge: false
+    });
+    await expect(responsePromise).resolves.toBeInstanceOf(Response);
   });
 
   it('keeps the hidden WebView queue on its caller trace without an early terminal event', async () => {
@@ -717,13 +980,11 @@ describe('session controller helpers', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const nodeSeekWebViewCookieHeaderRef = { current: 'session=current-session' };
-    const setNodeSeekMediaCookieHeader = vi.fn();
     const controller = createTestSessionController(vi.fn(async () => new Response(
       '<html><div class="cf-turnstile"></div></html>',
       { status: 403, headers: { 'cf-mitigated': 'challenge' } }
     )), vi.fn(), vi.fn(), {
-      nodeSeekWebViewCookieHeaderRef,
-      setNodeSeekMediaCookieHeader
+      nodeSeekWebViewCookieHeaderRef
     });
     const url = 'https://www.nodeseek.com/post-document-cookie-merge-1';
 
@@ -739,37 +1000,29 @@ describe('session controller helpers', () => {
 
     expect(nodeSeekWebViewCookieHeaderRef.current).toContain('session=current-session');
     expect(nodeSeekWebViewCookieHeaderRef.current).toContain('cf_clearance=fresh-clearance');
-    expect(setNodeSeekMediaCookieHeader).toHaveBeenCalledWith(expect.stringContaining('session=current-session'));
-    expect(setNodeSeekMediaCookieHeader).toHaveBeenCalledWith(expect.stringContaining('cf_clearance=fresh-clearance'));
   });
 
-  it('REG-ACCOUNT-012 clears the NodeSeek media credential with the stored session', async () => {
+  it('REG-ACCOUNT-012 clears the in-memory NodeSeek credential with the stored session', async () => {
     const nodeSeekWebViewCookieHeaderRef = { current: 'session=current-session' };
-    const setNodeSeekMediaCookieHeader = vi.fn();
     const controller = createTestSessionController(vi.fn(), vi.fn(), vi.fn(), {
-      nodeSeekWebViewCookieHeaderRef,
-      setNodeSeekMediaCookieHeader
+      nodeSeekWebViewCookieHeaderRef
     });
-    setNodeSeekMediaCookieHeader.mockClear();
 
     await controller.clearStoredNodeSeekLoginState();
 
     expect(nodeSeekWebViewCookieHeaderRef.current).toBe('');
-    expect(setNodeSeekMediaCookieHeader).toHaveBeenCalledWith('');
   });
 
   it('REG-ACCOUNT-009 does not let an old linux.do hidden read replace a newer in-memory session', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const linuxDoWebViewCookieHeaderRef = { current: '' };
-    const setLinuxDoWebViewCookieHeader = vi.fn();
     const setLinuxDoWebViewUserAgent = vi.fn();
     const controller = createTestSessionController(vi.fn(async () => new Response(
       '<html><div class="cf-turnstile"></div></html>',
       { status: 429, headers: { 'cf-mitigated': 'challenge' } }
     )), vi.fn(), vi.fn(), {
       linuxDoWebViewCookieHeaderRef,
-      setLinuxDoWebViewCookieHeader,
       setLinuxDoWebViewUserAgent
     });
     const url = 'https://linux.do/latest.json';
@@ -778,7 +1031,6 @@ describe('session controller helpers', () => {
     await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
     await saveLinuxDoAccess('cf_clearance=new-clearance; _t=new-session', 'new-user-agent');
     linuxDoWebViewCookieHeaderRef.current = 'cf_clearance=new-clearance; _t=new-session';
-    setLinuxDoWebViewCookieHeader.mockClear();
     setLinuxDoWebViewUserAgent.mockClear();
 
     await controller.completeLinuxDoBrowserFetch({
@@ -792,7 +1044,6 @@ describe('session controller helpers', () => {
     await expect(responsePromise).rejects.toThrow('请求已取消');
 
     expect(linuxDoWebViewCookieHeaderRef.current).toBe('cf_clearance=new-clearance; _t=new-session');
-    expect(setLinuxDoWebViewCookieHeader).not.toHaveBeenCalledWith('cf_clearance=old-clearance; _t=old-session');
     expect(setLinuxDoWebViewUserAgent).not.toHaveBeenCalledWith('old-user-agent');
   });
 
@@ -800,13 +1051,11 @@ describe('session controller helpers', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const linuxDoWebViewCookieHeaderRef = { current: '_t=current-session; cf_clearance=old-clearance' };
-    const setLinuxDoWebViewCookieHeader = vi.fn();
     const controller = createTestSessionController(vi.fn(async () => new Response(
       '<html><div class="cf-turnstile"></div></html>',
       { status: 429, headers: { 'cf-mitigated': 'challenge' } }
     )), vi.fn(), vi.fn(), {
-      linuxDoWebViewCookieHeaderRef,
-      setLinuxDoWebViewCookieHeader
+      linuxDoWebViewCookieHeaderRef
     });
     const url = 'https://linux.do/latest.json';
 
@@ -823,7 +1072,6 @@ describe('session controller helpers', () => {
 
     expect(linuxDoWebViewCookieHeaderRef.current).toContain('_t=current-session');
     expect(linuxDoWebViewCookieHeaderRef.current).toContain('cf_clearance=fresh-clearance');
-    expect(setLinuxDoWebViewCookieHeader).toHaveBeenCalledWith(expect.stringContaining('_t=current-session'));
   });
 
   it('REG-ACCOUNT-009 does not activate a queued NodeSeek hidden read after credentials change', async () => {
@@ -930,7 +1178,7 @@ describe('session controller helpers', () => {
     });
   });
 
-  it('records hidden linux.do cookie persistence as cookie-loaded, not verification success', async () => {
+  it('[REG-ACCOUNT-019] records hidden linux.do cookies without promoting them to a confirmed login', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const controller = createTestSessionController(vi.fn(async () => new Response('challenge', {
@@ -946,18 +1194,61 @@ describe('session controller helpers', () => {
       url,
       body: '{"topic_list":{"topics":[]}}',
       challenge: false,
-      cookie: 'cf_clearance=private-value'
+      cookie: 'cf_clearance=private-value; _t=stale-login'
     });
     await expect(responsePromise).resolves.toMatchObject({ status: 200 });
 
     await vi.waitFor(() => expect(lines.some((line) => {
       const event = JSON.parse(line);
-      return event.operation === 'state-transition' && event.eventType === 'cookie-loaded';
+      return event.operation === 'state-transition'
+        && event.eventType === 'cookie-loaded'
+        && event.nextState === 'verified';
     })).toBe(true));
     expect(lines.some((line) => {
       const event = JSON.parse(line);
       return event.operation === 'state-transition' && event.eventType === 'verification-succeeded';
     })).toBe(false);
+  });
+
+  it('[REG-ACCOUNT-023] keeps a confirmed linux.do identity when a hidden read refreshes cookies', async () => {
+    const lines: string[] = [];
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response('challenge', {
+      status: 429,
+      headers: { 'cf-mitigated': 'challenge' }
+    })));
+    const url = 'https://linux.do/latest.json';
+
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    controller.dispatchSiteSessionEvent({
+      site: 'linuxdo',
+      type: 'verification-succeeded',
+      loggedIn: true,
+      at: '2026-07-23T01:00:00.000Z'
+    });
+    lines.length = 0;
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await controller.completeLinuxDoBrowserFetch({
+      id: 1,
+      url,
+      body: '{"topic_list":{"topics":[]}}',
+      challenge: false,
+      cookie: 'cf_clearance=private-value; _t=current-login'
+    });
+    await expect(responsePromise).resolves.toMatchObject({ status: 200 });
+
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'state-transition'
+        && event.eventType === 'cookie-loaded'
+        && event.previousState === 'logged-in'
+        && event.nextState === 'logged-in';
+    })).toBe(true));
   });
 
   it('settles a browser fetch request only once', () => {
@@ -1107,6 +1398,7 @@ describe('session controller helpers', () => {
     const active = {
       id: 2,
       url: 'https://linux.do/t/1',
+      cookie: 'app-snapshot-secret',
       reject: vi.fn()
     };
     const currentRef = { current: null };
@@ -1137,7 +1429,6 @@ describe('session controller helpers', () => {
     expect(setActiveRequest).toHaveBeenCalledWith({
       id: 2,
       url: 'https://linux.do/t/1',
-      cookie: undefined,
       userAgent: undefined
     });
   });
@@ -1169,11 +1460,10 @@ describe('session controller helpers', () => {
 
       expect(currentRef.current).toBe(queued);
       expect(queued.reject).not.toHaveBeenCalled();
-      expect(setActiveRequest).toHaveBeenCalledWith({
-        id: 1,
-        url: 'https://www.nodeseek.com/post-1-1',
-        cookie: undefined,
-        userAgent: undefined
+    expect(setActiveRequest).toHaveBeenCalledWith({
+      id: 1,
+      url: 'https://www.nodeseek.com/post-1-1',
+      userAgent: undefined
       });
 
       await vi.advanceTimersByTimeAsync(14_999);
@@ -1250,151 +1540,276 @@ describe('session controller helpers', () => {
     expect(startNext).toHaveBeenCalledTimes(1);
   });
 
-  it('preempts an active background browser fetch with a foreground request', () => {
+  it('[REG-SOURCE-005] never preempts an active request when a foreground request arrives', () => {
     const active: BrowserFetchQueueRequest = {
       id: 1,
       url: 'https://www.nodeseek.com/',
-      browserFetchIntent: { owner: 'feed', priority: 'background', cancelable: true },
+      browserFetchIntent: { owner: 'feed', priority: 'background' },
       reject: vi.fn()
     };
-    const incoming: BrowserFetchQueueRequest = {
-      id: 2,
-      url: 'https://www.nodeseek.com/post-2-1',
-      browserFetchIntent: { owner: 'topic', priority: 'foreground', cancelable: true },
-      reject: vi.fn()
-    };
-    const currentRef: { current: BrowserFetchQueueRequest | null } = { current: active };
-    const rejectCurrent = vi.fn((request: BrowserFetchQueueRequest) => {
-      if (currentRef.current?.id === request.id) {
-        currentRef.current = null;
-      }
-    });
-
-    const preempted = preemptActiveBrowserFetchRequest({
-      currentRef,
-      request: incoming,
-      message: '请求已被新的前台读取替换',
-      rejectCurrent
-    });
-
-    expect(preempted).toBe(true);
-    expect(rejectCurrent).toHaveBeenCalledWith(active, '请求已被新的前台读取替换');
-    expect(currentRef.current).toBeNull();
-  });
-
-  it('starts the incoming foreground request instead of a stale queued read after preemption', () => {
-    const active: BrowserFetchQueueRequest = {
-      id: 1,
-      url: 'https://www.nodeseek.com/',
-      browserFetchIntent: { owner: 'feed', priority: 'background', cancelable: true },
-      reject: vi.fn()
-    };
-    const staleQueuedRead: BrowserFetchQueueRequest = {
+    const queuedBackground: BrowserFetchQueueRequest = {
       id: 2,
       url: 'https://www.nodeseek.com/page-2',
-      browserFetchIntent: { owner: 'feed', priority: 'background', cancelable: true },
+      browserFetchIntent: { owner: 'feed', priority: 'background' },
       reject: vi.fn()
     };
     const incoming: BrowserFetchQueueRequest = {
       id: 3,
       url: 'https://www.nodeseek.com/post-3-1',
-      browserFetchIntent: { owner: 'topic', priority: 'foreground', cancelable: true },
+      browserFetchIntent: { owner: 'topic', priority: 'foreground' },
       reject: vi.fn()
     };
     const currentRef = { current: active };
-    const queueRef = { current: [staleQueuedRead] };
-    const setActiveRequest = vi.fn();
-    const rejectCurrent = (request: BrowserFetchQueueRequest, message: string) => {
-      rejectBrowserFetchRequest({
-        request,
-        message,
+    const queueRef = { current: [queuedBackground] };
+
+    enqueueBrowserFetchRequest({ queueRef, request: incoming });
+
+    expect(currentRef.current).toBe(active);
+    expect(queueRef.current).toEqual([incoming, queuedBackground]);
+    expect(active.reject).not.toHaveBeenCalled();
+    expect(queuedBackground.reject).not.toHaveBeenCalled();
+    expect(incoming.reject).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-005] settles simultaneous Feed, Categories, and Account fallbacks without cancellation', async () => {
+    const lines: string[] = [];
+    const directFetcher = vi.fn(async () => new Response(
+      '<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>',
+      {
+        status: 403,
+        headers: {
+          'cf-mitigated': 'challenge',
+          'content-type': 'text/html'
+        }
+      }
+    ));
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(directFetcher);
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+
+    const requests = [
+      {
+        url: 'https://www.nodeseek.com/?sortBy=postTime',
+        promise: controller.forumFetchWithWebViewFallback(
+          'https://www.nodeseek.com/?sortBy=postTime',
+          withBrowserFetchIntent({}, { owner: 'feed', priority: 'foreground' })
+        )
+      },
+      {
+        url: 'https://www.nodeseek.com/categories',
+        promise: controller.forumFetchWithWebViewFallback(
+          'https://www.nodeseek.com/categories',
+          withBrowserFetchIntent({}, { owner: 'feed', priority: 'foreground' })
+        )
+      },
+      {
+        url: 'https://www.nodeseek.com/account',
+        promise: controller.forumFetchWithWebViewFallback(
+          'https://www.nodeseek.com/account',
+          withBrowserFetchIntent({}, { owner: 'account', priority: 'background' })
+        )
+      }
+    ];
+    await vi.waitFor(() => expect(lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, state }) => operation === 'browser-fetch' && state === 'queued')).toHaveLength(3));
+
+    for (const [index, request] of requests.entries()) {
+      await controller.completeNodeSeekBrowserFetch({
+        id: index + 1,
+        url: request.url,
+        html: `fallback-${index + 1}`
+      });
+    }
+
+    const responses = await Promise.all(requests.map(({ promise }) => promise));
+    await expect(Promise.all(responses.map((response) => response.text()))).resolves.toEqual([
+      'fallback-1',
+      'fallback-2',
+      'fallback-3'
+    ]);
+    expect(directFetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it('[REG-SOURCE-006] aborts only one queued fallback and lets the others settle', async () => {
+    const lines: string[] = [];
+    const directFetcher = vi.fn(async () => new Response(
+      '<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' } }
+    ));
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(directFetcher);
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    const firstAbort = new AbortController();
+    const queuedAbort = new AbortController();
+    const lastAbort = new AbortController();
+
+    const first = controller.forumFetchWithWebViewFallback(
+      'https://www.nodeseek.com/feed',
+      withBrowserFetchIntent({ signal: firstAbort.signal }, { owner: 'feed', priority: 'foreground' })
+    );
+    const queued = controller.forumFetchWithWebViewFallback(
+      'https://www.nodeseek.com/categories',
+      withBrowserFetchIntent({ signal: queuedAbort.signal }, { owner: 'feed', priority: 'foreground' })
+    );
+    const last = controller.forumFetchWithWebViewFallback(
+      'https://www.nodeseek.com/account',
+      withBrowserFetchIntent({ signal: lastAbort.signal }, { owner: 'account', priority: 'background' })
+    );
+    const queuedOutcome = expect(queued).rejects.toThrow('请求已取消');
+    await vi.waitFor(() => expect(lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, state }) => operation === 'browser-fetch' && state === 'queued')).toHaveLength(3));
+
+    queuedAbort.abort();
+    await queuedOutcome;
+    await controller.completeNodeSeekBrowserFetch({
+      id: 1,
+      url: 'https://www.nodeseek.com/feed',
+      html: 'feed-fallback'
+    });
+    await controller.completeNodeSeekBrowserFetch({
+      id: 3,
+      url: 'https://www.nodeseek.com/account',
+      html: 'account-fallback'
+    });
+
+    await expect(first.then((response) => response.text())).resolves.toBe('feed-fallback');
+    await expect(last.then((response) => response.text())).resolves.toBe('account-fallback');
+    expect(firstAbort.signal.aborted).toBe(false);
+    expect(lastAbort.signal.aborted).toBe(false);
+  });
+
+  it('[REG-SOURCE-006] aborts only the active fallback and releases the next request', async () => {
+    const lines: string[] = [];
+    const directFetcher = vi.fn(async () => new Response(
+      '<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' } }
+    ));
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(directFetcher);
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    const activeAbort = new AbortController();
+    const nextAbort = new AbortController();
+
+    const active = controller.forumFetchWithWebViewFallback(
+      'https://www.nodeseek.com/feed',
+      withBrowserFetchIntent({ signal: activeAbort.signal }, { owner: 'feed', priority: 'foreground' })
+    );
+    const next = controller.forumFetchWithWebViewFallback(
+      'https://www.nodeseek.com/account',
+      withBrowserFetchIntent({ signal: nextAbort.signal }, { owner: 'account', priority: 'background' })
+    );
+    const activeOutcome = expect(active).rejects.toThrow('请求已取消');
+    await vi.waitFor(() => expect(lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, state }) => operation === 'browser-fetch' && state === 'queued')).toHaveLength(2));
+
+    activeAbort.abort();
+    await activeOutcome;
+    await controller.completeNodeSeekBrowserFetch({
+      id: 2,
+      url: 'https://www.nodeseek.com/account',
+      html: 'next-fallback'
+    });
+
+    await expect(next.then((response) => response.text())).resolves.toBe('next-fallback');
+    expect(nextAbort.signal.aborted).toBe(false);
+  });
+
+  it('[REG-SOURCE-006] starts each 15 second timeout only after more than 15 seconds of queueing', async () => {
+    vi.useFakeTimers();
+    try {
+      const requests = [1, 2, 3].map((id): BrowserFetchQueueRequest => ({
+        id,
+        url: `https://www.nodeseek.com/queued-${id}`,
+        reject: vi.fn()
+      }));
+      const currentRef: { current: BrowserFetchQueueRequest | null } = { current: null };
+      const queueRef = { current: [...requests] };
+      const setActiveRequest = vi.fn();
+      const rejectCurrent = vi.fn();
+      const startNext = () => startNextBrowserFetchRequest({
         currentRef,
         queueRef,
         setActiveRequest,
-        startNext: () => startNextBrowserFetchRequest({
-          currentRef,
-          queueRef,
-          setActiveRequest,
-          timeoutMs: 15000,
-          timeoutMessage: 'timeout',
-          rejectCurrent: vi.fn()
-        })
+        timeoutMs: 15_000,
+        timeoutMessage: 'timeout',
+        rejectCurrent
       });
-    };
+      const finishCurrent = () => {
+        const current = currentRef.current;
+        expect(current).not.toBeNull();
+        currentRef.current = null;
+        settleBrowserFetchRequestOnce(current!, vi.fn());
+        startNext();
+      };
 
-    enqueueLatestBrowserFetchRequest({
-      queueRef,
-      request: incoming,
-      message: '请求已取消',
-      shouldKeepQueuedRequest: shouldKeepQueuedBrowserFetchRequest
-    });
-    preemptActiveBrowserFetchRequest({
-      currentRef,
-      request: incoming,
-      message: '请求已被新的前台读取替换',
-      rejectCurrent
-    });
+      startNext();
+      await vi.advanceTimersByTimeAsync(10_000);
+      finishCurrent();
+      await vi.advanceTimersByTimeAsync(10_000);
+      finishCurrent();
 
-    expect(staleQueuedRead.reject).toHaveBeenCalledWith(new Error('请求已取消'));
-    expect(active.reject).toHaveBeenCalledWith(new Error('请求已被新的前台读取替换'));
-    expect(currentRef.current).toBe(incoming);
-    expect(setActiveRequest).toHaveBeenLastCalledWith({
-      id: 3,
-      url: 'https://www.nodeseek.com/post-3-1',
-      cookie: undefined,
-      userAgent: undefined
-    });
+      expect(currentRef.current).toBe(requests[2]);
+      expect(rejectCurrent).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(rejectCurrent).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(rejectCurrent).toHaveBeenCalledWith(requests[2], 'timeout');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('does not let ordinary reads preempt a NodeSeek write request', () => {
-    const writeRequest: BrowserFetchQueueRequest = {
+  it('[REG-PROXY-006] keeps a linux.do fallback alive when NodeSeek fails', async () => {
+    const lines: string[] = [];
+    const directFetcher = vi.fn(async () => new Response(
+      '<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' } }
+    ));
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(directFetcher);
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+
+    const nodeSeek = controller.forumFetchWithWebViewFallback(
+      'https://www.nodeseek.com/feed',
+      withBrowserFetchIntent({}, { owner: 'feed', priority: 'foreground' })
+    );
+    const linuxDo = controller.forumFetchWithWebViewFallback(
+      'https://linux.do/latest',
+      withBrowserFetchIntent({}, { owner: 'feed', priority: 'foreground' })
+    );
+    const nodeSeekOutcome = expect(nodeSeek).rejects.toThrow('NodeSeek fallback failed');
+    await vi.waitFor(() => expect(lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, state }) => operation === 'browser-fetch' && state === 'queued')).toHaveLength(2));
+
+    controller.failNodeSeekBrowserFetchById(1, 'NodeSeek fallback failed');
+    await nodeSeekOutcome;
+    await controller.completeLinuxDoBrowserFetch({
       id: 1,
-      url: 'https://www.nodeseek.com/api/comment/reply',
-      browserFetchIntent: { owner: 'write', priority: 'write', cancelable: false },
-      reject: vi.fn()
-    };
-    const foregroundRead: BrowserFetchQueueRequest = {
-      id: 2,
-      url: 'https://www.nodeseek.com/post-2-1',
-      browserFetchIntent: { owner: 'topic', priority: 'foreground', cancelable: true },
-      reject: vi.fn()
-    };
-
-    expect(shouldPreemptBrowserFetchRequest(writeRequest, foregroundRead)).toBe(false);
-  });
-
-  it('keeps queued NodeSeek writes when a newer read request replaces stale reads', () => {
-    const queuedWrite: BrowserFetchQueueRequest = {
-      id: 1,
-      url: 'https://www.nodeseek.com/api/comment/reply',
-      browserFetchIntent: { owner: 'write', priority: 'write', cancelable: false },
-      reject: vi.fn()
-    };
-    const staleRead: BrowserFetchQueueRequest = {
-      id: 2,
-      url: 'https://www.nodeseek.com/',
-      browserFetchIntent: { owner: 'feed', priority: 'background', cancelable: true },
-      reject: vi.fn()
-    };
-    const latestRead: BrowserFetchQueueRequest = {
-      id: 3,
-      url: 'https://www.nodeseek.com/post-3-1',
-      browserFetchIntent: { owner: 'topic', priority: 'foreground', cancelable: true },
-      reject: vi.fn()
-    };
-    const queueRef = { current: [queuedWrite, staleRead] };
-
-    enqueueLatestBrowserFetchRequest({
-      queueRef,
-      request: latestRead,
-      message: '请求已取消',
-      shouldKeepQueuedRequest: shouldKeepQueuedBrowserFetchRequest
+      url: 'https://linux.do/latest',
+      body: '{"topic_list":{"topics":[]}}'
     });
 
-    expect(queueRef.current).toEqual([queuedWrite, latestRead]);
-    expect(queuedWrite.reject).not.toHaveBeenCalled();
-    expect(staleRead.reject).toHaveBeenCalledWith(new Error('请求已取消'));
-    expect(latestRead.reject).not.toHaveBeenCalled();
+    await expect(linuxDo.then((response) => response.text())).resolves.toBe('{"topic_list":{"topics":[]}}');
   });
 
   it('releases the queued browser fetch after a renderer crash rejects the active one', () => {
@@ -1444,42 +1859,11 @@ describe('session controller helpers', () => {
       expect(setActiveRequest).toHaveBeenLastCalledWith({
         id: 2,
         url: 'https://www.nodeseek.com/post-2-1',
-        cookie: undefined,
         userAgent: undefined
       });
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it('keeps only the latest queued browser fetch request', () => {
-    const first = {
-      id: 1,
-      url: 'https://linux.do/t/1',
-      reject: vi.fn()
-    };
-    const second = {
-      id: 2,
-      url: 'https://linux.do/t/2',
-      reject: vi.fn()
-    };
-    const latest = {
-      id: 3,
-      url: 'https://linux.do/t/3',
-      reject: vi.fn()
-    };
-    const queueRef = { current: [first, second] };
-
-    enqueueLatestBrowserFetchRequest({
-      queueRef,
-      request: latest,
-      message: '请求已取消'
-    });
-
-    expect(queueRef.current).toEqual([latest]);
-    expect(first.reject).toHaveBeenCalledWith(new Error('请求已取消'));
-    expect(second.reject).toHaveBeenCalledWith(new Error('请求已取消'));
-    expect(latest.reject).not.toHaveBeenCalled();
   });
 
   it('clears browser challenge response bodies even if a script sends page HTML', async () => {
@@ -1550,13 +1934,64 @@ describe('session controller helpers', () => {
     expect(source).not.toContain('restoreNodeSeekIdentityForAccess');
   });
 
-  it('starts account refresh silently without using stale NodeSeek page state', () => {
+  it('starts account refresh silently without using a saved NodeSeek id as session proof', () => {
     const appRootSource = readFileSync(path.join(process.cwd(), 'src/app/AppRoot.tsx'), 'utf8');
     const refreshSource = readFileSync(path.join(process.cwd(), 'src/app/useAccountStatusController.ts'), 'utf8');
 
     expect(appRootSource).toContain('refreshAccountStatus({ silent: true })');
     expect(appRootSource).not.toContain('nodeSeekUserId: webLoginUserId');
-    expect(refreshSource).toContain('captureNodeSeekUserId');
-    expect(refreshSource).toContain('nodeSeekUserId: nodeSeekCredentialUserId');
+    expect(refreshSource).not.toContain('captureNodeSeekUserId');
+    expect(refreshSource).not.toContain('nodeSeekUserId:');
+  });
+
+  it('[REG-SOURCE-005] keeps every queued browser request in priority and FIFO order', () => {
+    const backgroundOne: BrowserFetchQueueRequest = {
+      id: 1,
+      url: 'https://www.nodeseek.com/',
+      browserFetchIntent: { owner: 'feed', priority: 'background' },
+      reject: vi.fn()
+    };
+    const backgroundTwo: BrowserFetchQueueRequest = {
+      id: 2,
+      url: 'https://www.nodeseek.com/page-2',
+      browserFetchIntent: { owner: 'account', priority: 'background' },
+      reject: vi.fn()
+    };
+    const foregroundOne: BrowserFetchQueueRequest = {
+      id: 3,
+      url: 'https://www.nodeseek.com/post-3-1',
+      browserFetchIntent: { owner: 'topic', priority: 'foreground' },
+      reject: vi.fn()
+    };
+    const foregroundTwo: BrowserFetchQueueRequest = {
+      id: 4,
+      url: 'https://www.nodeseek.com/search?q=test',
+      browserFetchIntent: { owner: 'search', priority: 'foreground' },
+      reject: vi.fn()
+    };
+    const write: BrowserFetchQueueRequest = {
+      id: 5,
+      url: 'https://www.nodeseek.com/api/comment/reply',
+      browserFetchIntent: { owner: 'write', priority: 'write' },
+      reject: vi.fn()
+    };
+    const queueRef = { current: [backgroundOne, backgroundTwo] };
+
+    enqueueBrowserFetchRequest({ queueRef, request: foregroundOne });
+    enqueueBrowserFetchRequest({ queueRef, request: foregroundTwo });
+    enqueueBrowserFetchRequest({ queueRef, request: write });
+
+    expect(queueRef.current).toEqual([write, foregroundOne, foregroundTwo, backgroundOne, backgroundTwo]);
+    for (const request of queueRef.current) {
+      expect(request.reject).not.toHaveBeenCalled();
+    }
+  });
+
+  it('[REG-ACCOUNT-016] does not route Xiaoyinsi Account expiry through the authorization workflow dispatcher', () => {
+    const appRootSource = readFileSync(path.join(process.cwd(), 'src/app/AppRoot.tsx'), 'utf8');
+
+    expect(appRootSource).not.toContain(
+      'onXiaoyinsiExpired: (message, recoveryQueryKey) => dispatchSiteSessionEvent'
+    );
   });
 });

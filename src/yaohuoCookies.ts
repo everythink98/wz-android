@@ -8,6 +8,22 @@ export interface YaohuoNativeCookie {
 const loginCookieName = 'sidyaohuo';
 const keptCookieNames = new Set(['sidyaohuo', 'ASP.NET_SessionId', 'GUID']);
 
+export function sanitizeYaohuoCookieHeader(cookieHeader?: string | null) {
+  return String(cookieHeader || '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => {
+      const separatorIndex = part.indexOf('=');
+      if (separatorIndex <= 0) {
+        return false;
+      }
+      const name = part.slice(0, separatorIndex).trim();
+      const value = part.slice(separatorIndex + 1).trim();
+      return keptCookieNames.has(name) && Boolean(value);
+    })
+    .join('; ');
+}
+
 function isYaohuoDomain(domain?: string) {
   if (!domain) {
     return true;
@@ -43,30 +59,9 @@ export function buildYaohuoCookieHeader(cookies: Record<string, YaohuoNativeCook
     .join('; ');
 }
 
-export function buildYaohuoSetCookieHeaders(cookieHeader: string) {
-  const cookies = new Map<string, string>();
-
-  for (const part of cookieHeader.split(';')) {
-    const separatorIndex = part.indexOf('=');
-    if (separatorIndex <= 0) {
-      continue;
-    }
-    const name = part.slice(0, separatorIndex).trim();
-    const value = part.slice(separatorIndex + 1).trim();
-    if (keptCookieNames.has(name) && value) {
-      cookies.set(name, value);
-    }
-  }
-
-  return Array.from(cookies.entries())
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => `${name}=${value}; Domain=www.yaohuo.me; Path=/; Secure; HttpOnly; SameSite=Lax`);
-}
-
 export function yaohuoCookieMapFromHeader(cookieHeader: string) {
   const cookies: Record<string, YaohuoNativeCookie> = {};
-  for (const setCookieHeader of buildYaohuoSetCookieHeaders(cookieHeader)) {
-    const cookiePart = setCookieHeader.split(';', 1)[0] || '';
+  for (const cookiePart of sanitizeYaohuoCookieHeader(cookieHeader).split(';')) {
     const separatorIndex = cookiePart.indexOf('=');
     if (separatorIndex <= 0) {
       continue;

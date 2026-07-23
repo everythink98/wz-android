@@ -27,6 +27,10 @@ interface DirectRequestOptions {
   timeoutMs?: number;
 }
 
+type YaohuoHtmlRequestOptions = DirectRequestOptions & {
+  validateLogin?: boolean;
+};
+
 const DEFAULT_CLASS_ID = '177';
 
 function yaohuoLoginRequiredError(reason = 'missing_cookie') {
@@ -54,15 +58,13 @@ function yaohuoUrl(path: string, params: Record<string, string | number>) {
   return `${YAOHUO_BASE_URL}${path}?${query.toString()}`;
 }
 
-function yaohuoRequestInit(cookie: string): RequestInit {
+function yaohuoRequestInit(): RequestInit {
   return {
-    credentials: 'include',
     redirect: 'follow',
     headers: {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       'Cache-Control': 'no-cache',
-      Cookie: cookie,
       Pragma: 'no-cache',
       Referer: YAOHUO_BBS_REFERER,
       'Sec-Fetch-Dest': 'document',
@@ -76,9 +78,10 @@ function yaohuoRequestInit(cookie: string): RequestInit {
   };
 }
 
-async function fetchYaohuoHtml(url: string, cookie: string, fetcher: Fetcher = fetch, options: DirectRequestOptions = {}) {
+async function fetchYaohuoHtml(url: string, fetcher: Fetcher = fetch, options: YaohuoHtmlRequestOptions = {}) {
+  const { validateLogin = true, ...requestOptions } = options;
   const safeUrl = requireYaohuoRequestUrl(url);
-  const response = await fetchWithTimeout(safeUrl, yaohuoRequestInit(cookie), { fetcher, ...options });
+  const response = await fetchWithTimeout(safeUrl, yaohuoRequestInit(), { fetcher, ...requestOptions });
   const html = await response.text();
   const responseUrl = requireYaohuoRequestUrl(response.url || safeUrl, safeUrl);
   if (!response.ok) {
@@ -89,7 +92,9 @@ async function fetchYaohuoHtml(url: string, cookie: string, fetcher: Fetcher = f
     });
     throw error;
   }
-  ensureYaohuoHtmlLoggedIn(html, responseUrl);
+  if (validateLogin) {
+    ensureYaohuoHtmlLoggedIn(html, responseUrl);
+  }
   return {
     html,
     url: responseUrl
@@ -117,7 +122,7 @@ export async function getYaohuoFeedDirect({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
-  const cookie = requireYaohuoCookie(yaohuoCookie);
+  requireYaohuoCookie(yaohuoCookie);
   const classId = category?.trim();
   const pageResult = await fetchYaohuoHtml(classId
     ? yaohuoUrl('/bbs/book_list.aspx', {
@@ -130,7 +135,7 @@ export async function getYaohuoFeedDirect({
       gettotal: '2025',
       action: 'new',
       ...(page > 1 ? { page } : {})
-    }), cookie, yaohuoFetcher, { signal, timeoutMs });
+    }), yaohuoFetcher, { signal, timeoutMs });
 
   return parseYaohuoListHtml(pageResult.html, {
     url: pageResult.url,
@@ -159,7 +164,7 @@ export async function searchYaohuoDirect({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SearchResponse> {
-  const cookie = requireYaohuoCookie(yaohuoCookie);
+  requireYaohuoCookie(yaohuoCookie);
   const searchPath = page > 1 ? '/bbs/book_list_search.aspx' : '/bbs/book_list.aspx';
   const pageResult = await fetchYaohuoHtml(yaohuoUrl(searchPath, {
     action: 'search',
@@ -169,7 +174,7 @@ export async function searchYaohuoDirect({
     page,
     siteid: '1000',
     getTotal: '2021'
-  }), cookie, yaohuoFetcher, { signal, timeoutMs });
+    }), yaohuoFetcher, { signal, timeoutMs });
 
   return parseYaohuoSearchHtml(pageResult.html, {
     classId: category,
@@ -194,10 +199,10 @@ export async function getYaohuoTopicDirect({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
-  const cookie = requireYaohuoCookie(yaohuoCookie);
+  requireYaohuoCookie(yaohuoCookie);
   const id = topicIdValue(topic.id);
   const topicUrl = topic.url || `${YAOHUO_BASE_URL}/bbs-${id}.html`;
-  const topicPage = await fetchYaohuoHtml(topicUrl, cookie, yaohuoFetcher, { signal, timeoutMs });
+  const topicPage = await fetchYaohuoHtml(topicUrl, yaohuoFetcher, { signal, timeoutMs });
   const detail = parseYaohuoTopicHtml(topicPage.html, {
     id,
     url: topicPage.url
@@ -216,7 +221,7 @@ export async function getYaohuoTopicDirect({
     }),
     fetchYaohuoHtml(yaohuoUrl('/bbs/favlist.aspx', {
       key: detail.title || topic.title
-    }), cookie, yaohuoFetcher, { signal, timeoutMs }).catch((error) => {
+    }), yaohuoFetcher, { signal, timeoutMs }).catch((error) => {
       if (signal?.aborted) {
         throw error;
       }
@@ -273,12 +278,12 @@ export async function getYaohuoRepliesDirect({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
-  const cookie = requireYaohuoCookie(yaohuoCookie);
+  requireYaohuoCookie(yaohuoCookie);
   const pageResult = await fetchYaohuoHtml(yaohuoUrl('/bbs/book_re.aspx', {
     id: topicIdValue(id),
     classid: categoryId || DEFAULT_CLASS_ID,
     page
-  }), cookie, yaohuoFetcher, { signal, timeoutMs });
+  }), yaohuoFetcher, { signal, timeoutMs });
 
   return parseYaohuoRepliesHtml(pageResult.html, {
     url: pageResult.url,
@@ -298,7 +303,11 @@ export async function checkYaohuoLoginDirect({
   signal?: AbortSignal;
   timeoutMs?: number;
 }) {
-  const cookie = requireYaohuoCookie(yaohuoCookie);
-  const page = await fetchYaohuoHtml(`${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`, cookie, yaohuoFetcher, { signal, timeoutMs });
+  requireYaohuoCookie(yaohuoCookie);
+  const page = await fetchYaohuoHtml(`${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`, yaohuoFetcher, {
+    signal,
+    timeoutMs,
+    validateLogin: false
+  });
   return checkYaohuoLoginHtml(page.html, page.url);
 }

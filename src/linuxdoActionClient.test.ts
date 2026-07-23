@@ -22,9 +22,10 @@ vi.mock('react-native', () => ({
 
 import { checkLinuxDoLoginAccess, runLinuxDoAction } from './linuxdoActionClient';
 import { buildDiscourseActionRequest } from './discourseActions';
+import { browserFetchIntentFromInit } from './browserFetchIntent';
 
 describe('linux.do action client', () => {
-  it('gets a CSRF token and sends login cookies with Discourse actions', async () => {
+  it('gets a CSRF token through the read-only cookie jar and preserves write priority', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://linux.do/session/csrf') {
         return new Response(JSON.stringify({ csrf: 'csrf-token' }), {
@@ -48,7 +49,6 @@ describe('linux.do action client', () => {
 
     expect(fetcher).toHaveBeenNthCalledWith(1, 'https://linux.do/session/csrf', expect.objectContaining({
       headers: expect.objectContaining({
-        Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
         'User-Agent': 'LinuxDo WebView UA'
       })
     }));
@@ -56,10 +56,20 @@ describe('linux.do action client', () => {
       method: 'POST',
       body: 'id=101&post_action_type_id=2',
       headers: expect.objectContaining({
-        Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
         'X-CSRF-Token': 'csrf-token'
       })
     }));
+    const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(calls[0]?.[1]?.headers).not.toHaveProperty('Cookie');
+    expect(calls[1]?.[1]?.headers).not.toHaveProperty('Cookie');
+    expect(browserFetchIntentFromInit(calls[0]?.[1])).toEqual({
+      owner: 'write',
+      priority: 'write'
+    });
+    expect(browserFetchIntentFromInit(calls[1]?.[1])).toEqual({
+      owner: 'write',
+      priority: 'write'
+    });
   });
 
   it('requires a linux.do login cookie for write actions', async () => {
@@ -91,7 +101,7 @@ describe('linux.do action client', () => {
     });
   });
 
-  it('checks linux.do login access with the saved login cookies', async () => {
+  it('[REG-ACCOUNT-029] checks linux.do login through the native read-only cookie jar', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       current_user: { username: 'alice' }
     }), {
@@ -104,13 +114,25 @@ describe('linux.do action client', () => {
       fetcher
     });
 
-    expect(result).toEqual({ ok: true, message: '登录可用' });
+    expect(result).toEqual({
+      ok: true,
+      loginRequired: false,
+      message: '登录可用',
+      currentUser: {
+        source: 'linuxdo',
+        id: 'alice',
+        username: 'alice',
+        displayName: 'alice',
+        url: 'https://linux.do/u/alice',
+        topics: []
+      }
+    });
     expect(fetcher).toHaveBeenCalledWith('https://linux.do/session/current.json', expect.objectContaining({
       headers: expect.objectContaining({
-        Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
         'User-Agent': 'LinuxDo WebView UA'
       })
     }));
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('REG-LINUXDO-004 rejects stale login cookies when the current session is anonymous', async () => {
@@ -128,6 +150,52 @@ describe('linux.do action client', () => {
       ok: false,
       loginRequired: true,
       message: 'linux.do 登录已失效，请重新登录'
+    });
+  });
+
+  it('[REG-ACCOUNT-019] keeps a malformed successful current-session payload unknown', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ csrf: 'present-but-no-user-field' }), { status: 200 }));
+
+    const result = await checkLinuxDoLoginAccess({
+      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+      fetcher
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: 'linux.do 状态暂时无法确认'
+    });
+  });
+
+  it('[REG-ACCOUNT-019] treats Discourse current-session 404 as explicit logout', async () => {
+    const fetcher = vi.fn(async () => new Response('', { status: 404 }));
+
+    const result = await checkLinuxDoLoginAccess({
+      cookieHeader: 'cf_clearance=clearance; _t=expired; _forum_session=anonymous',
+      fetcher
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      loginRequired: true,
+      message: 'linux.do 登录已失效，请重新登录'
+    });
+  });
+
+  it.each([401, 403])('[REG-ACCOUNT-025] keeps non-contract current-session HTTP %i unknown', async (status) => {
+    const fetcher = vi.fn(async () => new Response('<html>login required</html>', {
+      status,
+      headers: { 'content-type': 'text/html' }
+    }));
+
+    const result = await checkLinuxDoLoginAccess({
+      cookieHeader: 'cf_clearance=clearance; _t=expired; _forum_session=anonymous',
+      fetcher
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: `linux.do 请求失败：HTTP ${status}`
     });
   });
 
@@ -162,7 +230,7 @@ describe('linux.do action client', () => {
     });
   });
 
-  it('marks linux.do login expired when current-session access is unauthorized', async () => {
+  it('[REG-ACCOUNT-025] does not turn an uncontracted 401 body into destructive expiry authority', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['请先登录'] }), { status: 401 }));
 
     const result = await checkLinuxDoLoginAccess({
@@ -172,8 +240,7 @@ describe('linux.do action client', () => {
 
     expect(result).toEqual({
       ok: false,
-      loginRequired: true,
-      message: 'linux.do 登录已失效，请重新登录'
+      message: '请先登录'
     });
   });
 });

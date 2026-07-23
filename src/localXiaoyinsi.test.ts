@@ -526,6 +526,81 @@ describe('xiaoyinsi adapter', () => {
     await expect(getXiaoyinsiCurrentUserProfile({ credentials: { apiKey: 'key', clientId: '' } })).rejects.toThrow('请先授权小隐寺');
   });
 
+  it('[REG-ACCOUNT-019] distinguishes an explicit anonymous Xiaoyinsi session from malformed success data', async () => {
+    const credentials = { apiKey: 'key', clientId: 'client' };
+    await expect(getXiaoyinsiCurrentUserProfile({
+      credentials,
+      fetcher: async () => json({ current_user: null })
+    })).rejects.toMatchObject({
+      source: 'xiaoyinsi',
+      kind: 'login-expired',
+      loginRequired: true,
+      reason: 'expired'
+    });
+
+    for (const payload of [{}, { current_user: {} }]) {
+      const error = await getXiaoyinsiCurrentUserProfile({
+        credentials,
+        fetcher: async () => json(payload)
+      }).catch((caught) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toMatchObject({ loginRequired: true });
+    }
+  });
+
+  it('[REG-ACCOUNT-025] types only a Discourse JSON invalid-access response as expired User API authorization', async () => {
+    const credentials = { apiKey: 'expired-key', clientId: 'client' };
+
+    await expect(getXiaoyinsiCurrentUserProfile({
+      credentials,
+      fetcher: async () => json({
+        errors: ['Invalid Access'],
+        error_type: 'invalid_access'
+      }, 403)
+    })).rejects.toMatchObject({
+      source: 'xiaoyinsi',
+      kind: 'login-expired',
+      loginRequired: true,
+      reason: 'expired'
+    });
+  });
+
+  it.each([401, 404])('[REG-ACCOUNT-025] keeps Xiaoyinsi current-session HTTP %i unknown', async (status) => {
+    const failure = await getXiaoyinsiCurrentUserProfile({
+      credentials: { apiKey: 'candidate-key', clientId: 'client' },
+      fetcher: async () => json({ errors: [`HTTP ${status}`] }, status)
+    }).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toMatchObject({ loginRequired: true });
+  });
+
+  it('[REG-ACCOUNT-025] keeps a non-JSON Xiaoyinsi 403 unknown', async () => {
+    const failure = await getXiaoyinsiCurrentUserProfile({
+      credentials: { apiKey: 'candidate-key', clientId: 'client' },
+      fetcher: async () => new Response('<title>request rejected</title>', {
+        status: 403,
+        headers: { 'content-type': 'text/html' }
+      })
+    }).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toMatchObject({ loginRequired: true });
+  });
+
+  it('[REG-ACCOUNT-025] keeps an unrelated Xiaoyinsi JSON 403 unknown', async () => {
+    const failure = await getXiaoyinsiCurrentUserProfile({
+      credentials: { apiKey: 'candidate-key', clientId: 'client' },
+      fetcher: async () => json({
+        errors: ['request rejected'],
+        error_type: 'custom_rejection'
+      }, 403)
+    }).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toMatchObject({ loginRequired: true });
+  });
+
   it('[REG-XIAOYINSI-013] reads the current account level and activity through the independent User API session', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);

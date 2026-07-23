@@ -136,14 +136,12 @@ function favoriteDeleteMessage(text: string) {
 }
 
 async function fetchYaohuoActionHtml({
-  cookieHeader,
   request,
   path,
   fetcher,
   signal,
   timeoutMs
 }: {
-  cookieHeader: string;
   request: YaohuoActionRequest;
   path: string;
   fetcher: Fetcher;
@@ -154,8 +152,7 @@ async function fetchYaohuoActionHtml({
     method: request.method,
     headers: {
       ...YAOHUO_ACTION_HEADERS,
-      ...request.headers,
-      cookie: cookieHeader
+      ...request.headers
     },
     body: request.method === 'POST' ? request.body : undefined
   }, {
@@ -197,7 +194,6 @@ export async function runYaohuoAction({
   }
 
   let { html, responseUrl } = await fetchYaohuoActionHtml({
-    cookieHeader: cleanCookie,
     request,
     fetcher,
     path: request.path,
@@ -210,7 +206,6 @@ export async function runYaohuoAction({
     const confirmationPath = deleteConfirmationPath(html);
     if (confirmationPath) {
       ({ html, responseUrl } = await fetchYaohuoActionHtml({
-        cookieHeader: cleanCookie,
         request,
         fetcher,
         path: confirmationPath,

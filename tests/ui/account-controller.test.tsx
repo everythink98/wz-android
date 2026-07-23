@@ -23,10 +23,31 @@ jest.mock('../../src/nodeseekCookies', () => ({
 }));
 
 jest.mock('../../src/yaohuoCookies', () => ({
-  buildYaohuoCookieHeader: () => 'sidyaohuo=safe',
-  canStoreYaohuoCookieHeader: () => true,
+  buildYaohuoCookieHeader: (cookies: Record<string, { name?: string; value?: string }>) => Object.values(cookies)
+    .filter((cookie) => cookie.name && cookie.value)
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join('; '),
+  canStoreYaohuoCookieHeader: (cookies: Record<string, unknown>) => Object.keys(cookies).length > 0,
   mergeYaohuoCookies: (...maps: Array<Record<string, unknown>>) => Object.assign({}, ...maps),
-  summarizeYaohuoCookies: () => ({ count: 1, loggedIn: true, names: ['sidyaohuo'] })
+  summarizeYaohuoCookies: (cookies: Record<string, unknown>) => {
+    const names = Object.keys(cookies).sort();
+    return { count: names.length, loggedIn: names.includes('sidyaohuo'), names };
+  },
+  yaohuoCookieMapFromHeader: (header: string) => Object.fromEntries(header
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const separator = part.indexOf('=');
+      const name = separator > 0 ? part.slice(0, separator) : '';
+      const value = separator > 0 ? part.slice(separator + 1) : '';
+      return [name, { name, value, domain: 'www.yaohuo.me' }] as const;
+    })
+    .filter(([name, cookie]) => Boolean(name && cookie.value)))
+}));
+
+jest.mock('../../src/yaohuoCookieBridge', () => ({
+  readYaohuoCookieHeaderFromStores: jest.fn()
 }));
 
 jest.mock('../../src/linuxdoCookieBridge', () => ({
@@ -39,18 +60,20 @@ jest.mock('../../src/linuxdoCookieBridge', () => ({
 }));
 
 jest.mock('../../src/sources/sourceGateway', () => ({
-  checkYaohuoLogin: jest.fn()
+  checkYaohuoLogin: jest.fn(),
+  getUserProfile: jest.fn()
 }));
 
 import CookieManager from '@react-native-cookies/cookies';
 import { readNodeSeekCookiesFromStores } from '../../src/nodeseekCookieBridge';
+import { readYaohuoCookieHeaderFromStores } from '../../src/yaohuoCookieBridge';
 import {
   clearLinuxDoAccess,
   currentLinuxDoAccessGeneration,
   linuxDoAccessSummary,
   loadLinuxDoAccess
 } from '../../src/linuxdoCookieBridge';
-import { checkYaohuoLogin, type LinuxDoLevelProfile, type SourceGateway } from '../../src/sources/sourceGateway';
+import { checkYaohuoLogin, getUserProfile, type LinuxDoLevelProfile, type SourceGateway } from '../../src/sources/sourceGateway';
 import { useAccountController } from '../../src/app/useAccountController';
 import type { Screen } from '../../src/appTypes';
 import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
@@ -62,7 +85,8 @@ const mockCookies = {
   get: jest.mocked(CookieManager.get)
 };
 const mockBridge = {
-  readNodeSeekCookiesFromStores: jest.mocked(readNodeSeekCookiesFromStores)
+  readNodeSeekCookiesFromStores: jest.mocked(readNodeSeekCookiesFromStores),
+  readYaohuoCookieHeaderFromStores: jest.mocked(readYaohuoCookieHeaderFromStores)
 };
 const mockLinux = {
   clearLinuxDoAccess: jest.mocked(clearLinuxDoAccess),
@@ -71,11 +95,21 @@ const mockLinux = {
   loadLinuxDoAccess: jest.mocked(loadLinuxDoAccess)
 };
 const mockGateway = {
-  checkYaohuoLogin: jest.mocked(checkYaohuoLogin)
+  checkYaohuoLogin: jest.mocked(checkYaohuoLogin),
+  getUserProfile: jest.mocked(getUserProfile)
 };
 const mockManagedLinuxDoLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>();
 
 const ref = <T,>(current: T) => ({ current });
+
+function latestNodeSeekProbeId(injectJavaScript: jest.Mock) {
+  const script = String(injectJavaScript.mock.calls.at(-1)?.[0] || '');
+  const id = Number(script.match(/__WZ_NODESEEK_LOGIN_PROBE_ID__\s*=\s*(\d+)/)?.[1]);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error('missing NodeSeek probe id');
+  }
+  return id;
+}
 
 function linuxDoCloudflareError(message = 'linux.do 需要完成 Cloudflare 验证') {
   return Object.assign(new Error(message), {
@@ -112,6 +146,7 @@ async function renderAccountController(overrides: Partial<Parameters<typeof useA
     sourceGateway: { getLinuxDoLevelProfile: mockManagedLinuxDoLevelProfile },
     showLoginPanelRef: ref(true),
     showYaohuoLoginPanel: true,
+    updateNodeSeekSession: jest.fn(),
     updateLinuxDoSession: jest.fn(),
     updateYaohuoSession: jest.fn(),
     webLoginDetectedRef: ref(false),
@@ -130,6 +165,7 @@ describe('account credential workflows with query-backed level state', () => {
     mockCookies.flush.mockResolvedValue(undefined);
     mockCookies.get.mockResolvedValue({});
     mockBridge.readNodeSeekCookiesFromStores.mockResolvedValue({});
+    mockBridge.readYaohuoCookieHeaderFromStores.mockResolvedValue('sidyaohuo=safe');
     mockLinux.clearLinuxDoAccess.mockResolvedValue(null);
     mockLinux.currentLinuxDoAccessGeneration.mockReturnValue(1);
     mockLinux.linuxDoAccessSummary.mockReturnValue({ hasClearance: false, loggedIn: false, savedAt: undefined });
@@ -445,12 +481,31 @@ describe('account credential workflows with query-backed level state', () => {
 
   it('[REG-VERIFICATION-001] performs a fresh NodeSeek read for every settled manual check', async () => {
     jest.useFakeTimers();
+    const injectJavaScript = jest.fn();
     const saveNodeSeekCookieHeader = jest.fn(async () => 'saved');
-    const hook = await renderAccountController({ saveNodeSeekCookieHeader });
+    const hook = await renderAccountController({
+      saveNodeSeekCookieHeader,
+      webViewRef: ref({ injectJavaScript, reload: jest.fn() }) as never
+    } as never);
 
     let first!: ReturnType<typeof hook.result.current.checkLogin>;
     await act(async () => {
       first = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const probeId = latestNodeSeekProbeId(injectJavaScript);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId,
+            documentKey: 'https://www.nodeseek.com/:first',
+            status: 'logged-in',
+            loggedIn: true,
+            cookie: 'session=safe'
+          })
+        }
+      } as never);
       await jest.advanceTimersByTimeAsync(250);
     });
     await expect(first).resolves.toBe(true);
@@ -458,6 +513,21 @@ describe('account credential workflows with query-backed level state', () => {
     let second!: ReturnType<typeof hook.result.current.checkLogin>;
     await act(async () => {
       second = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const probeId = latestNodeSeekProbeId(injectJavaScript);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId,
+            documentKey: 'https://www.nodeseek.com/:second',
+            status: 'logged-in',
+            loggedIn: true,
+            cookie: 'session=safe'
+          })
+        }
+      } as never);
       await jest.advanceTimersByTimeAsync(250);
     });
     await expect(second).resolves.toBe(true);
@@ -467,8 +537,322 @@ describe('account credential workflows with query-backed level state', () => {
     jest.useRealTimers();
   });
 
+  it('[REG-ACCOUNT-026] waits for the current NodeSeek probe instead of reporting unknown after 250ms', async () => {
+    jest.useFakeTimers();
+    const injectJavaScript = jest.fn();
+    const notify = jest.fn();
+    const saveNodeSeekCookieHeader = jest.fn(async () => 'saved');
+    const hook = await renderAccountController({
+      notify,
+      saveNodeSeekCookieHeader,
+      webViewRef: ref({ injectJavaScript, reload: jest.fn() }) as never
+    } as never);
+
+    let check!: ReturnType<typeof hook.result.current.checkLogin>;
+    await act(async () => {
+      check = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const probeId = latestNodeSeekProbeId(injectJavaScript);
+      await jest.advanceTimersByTimeAsync(400);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId,
+            documentKey: 'https://www.nodeseek.com/:slow-current',
+            status: 'logged-in',
+            loggedIn: true,
+            userId: 48872,
+            cookie: 'session=safe'
+          })
+        }
+      } as never);
+      await Promise.resolve();
+    });
+
+    await expect(check).resolves.toBe(true);
+    expect(saveNodeSeekCookieHeader).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalledWith('暂时无法确认 NodeSeek 登录状态，请等待页面加载完成后重试。');
+    jest.useRealTimers();
+  });
+
+  it('[REG-ACCOUNT-026] reports an explicit NodeSeek logged-out page without deleting login cookies', async () => {
+    jest.useFakeTimers();
+    const injectJavaScript = jest.fn();
+    const saveNodeSeekCookieHeader = jest.fn(async () => 'should-not-save');
+    const updateNodeSeekSession = jest.fn();
+    const hook = await renderAccountController({
+      saveNodeSeekCookieHeader,
+      updateNodeSeekSession,
+      webViewRef: ref({ injectJavaScript, reload: jest.fn() }) as never
+    } as never);
+
+    let check!: ReturnType<typeof hook.result.current.checkLogin>;
+    await act(async () => {
+      check = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const probeId = latestNodeSeekProbeId(injectJavaScript);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId,
+            documentKey: 'https://www.nodeseek.com/:logged-out',
+            status: 'logged-out',
+            loggedIn: false,
+            cookie: 'session=stale'
+          })
+        }
+      } as never);
+      await jest.advanceTimersByTimeAsync(250);
+    });
+
+    await expect(check).resolves.toBe(false);
+    expect(updateNodeSeekSession).toHaveBeenCalledWith({
+      type: 'login-expired',
+      message: 'NodeSeek 登录已失效'
+    });
+    expect(saveNodeSeekCookieHeader).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('[REG-ACCOUNT-019] keeps an ambiguous NodeSeek page retryable without changing login state', async () => {
+    jest.useFakeTimers();
+    const injectJavaScript = jest.fn();
+    const saveNodeSeekCookieHeader = jest.fn(async () => 'should-not-save');
+    const hook = await renderAccountController({
+      saveNodeSeekCookieHeader,
+      webViewRef: ref({ injectJavaScript, reload: jest.fn() }) as never
+    } as never);
+
+    let check!: ReturnType<typeof hook.result.current.checkLogin>;
+    await act(async () => {
+      check = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const probeId = latestNodeSeekProbeId(injectJavaScript);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId,
+            documentKey: 'https://www.nodeseek.com/:unknown',
+            status: 'unknown',
+            cookie: 'session=stale'
+          })
+        }
+      } as never);
+      await jest.advanceTimersByTimeAsync(250);
+    });
+
+    await expect(check).resolves.toBe(false);
+    expect(saveNodeSeekCookieHeader).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('[REG-ACCOUNT-019] ignores a stale NodeSeek probe result after a newer manual check starts', async () => {
+    jest.useFakeTimers();
+    const injectJavaScript = jest.fn();
+    const saveNodeSeekCookieHeader = jest.fn(async () => 'saved');
+    const hook = await renderAccountController({
+      saveNodeSeekCookieHeader,
+      webViewRef: ref({ injectJavaScript, reload: jest.fn() }) as never
+    } as never);
+
+    let first!: ReturnType<typeof hook.result.current.checkLogin>;
+    let second!: ReturnType<typeof hook.result.current.checkLogin>;
+    await act(async () => {
+      first = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const firstProbeId = latestNodeSeekProbeId(injectJavaScript);
+      second = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const secondProbeId = latestNodeSeekProbeId(injectJavaScript);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId: secondProbeId,
+            documentKey: 'https://www.nodeseek.com/:new',
+            status: 'logged-in',
+            loggedIn: true,
+            cookie: 'session=new'
+          })
+        }
+      } as never);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/login',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId: firstProbeId,
+            documentKey: 'https://www.nodeseek.com/login:old',
+            status: 'logged-out',
+            loggedIn: false,
+            cookie: 'session=old'
+          })
+        }
+      } as never);
+      await jest.advanceTimersByTimeAsync(250);
+    });
+
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(true);
+    expect(saveNodeSeekCookieHeader).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it('[REG-ACCOUNT-019] rejects a probe result after the WebView moves to another document', async () => {
+    jest.useFakeTimers();
+    const injectJavaScript = jest.fn();
+    const saveNodeSeekCookieHeader = jest.fn(async () => 'saved');
+    const hook = await renderAccountController({
+      saveNodeSeekCookieHeader,
+      webViewRef: ref({ injectJavaScript, reload: jest.fn() }) as never
+    } as never);
+
+    let check!: ReturnType<typeof hook.result.current.checkLogin>;
+    await act(async () => {
+      check = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const probeId = latestNodeSeekProbeId(injectJavaScript);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/login',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId,
+            documentKey: 'https://www.nodeseek.com/login:first',
+            status: 'logged-out',
+            loggedIn: false,
+            cookie: 'session=old'
+          })
+        }
+      } as never);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            documentKey: 'https://www.nodeseek.com/:next',
+            status: 'logged-in',
+            loggedIn: true,
+            cookie: 'session=new'
+          })
+        }
+      } as never);
+      await jest.advanceTimersByTimeAsync(250);
+    });
+
+    await expect(check).resolves.toBe(false);
+    expect(saveNodeSeekCookieHeader).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it('[REG-ACCOUNT-019] invalidates a logged-out probe as soon as WebView navigation starts', async () => {
+    jest.useFakeTimers();
+    const injectJavaScript = jest.fn();
+    const saveNodeSeekCookieHeader = jest.fn(async () => 'saved');
+    const hook = await renderAccountController({
+      saveNodeSeekCookieHeader,
+      webViewRef: ref({ injectJavaScript, reload: jest.fn() }) as never
+    } as never);
+
+    let check!: ReturnType<typeof hook.result.current.checkLogin>;
+    await act(async () => {
+      check = hook.result.current.checkLogin();
+      await Promise.resolve();
+      const probeId = latestNodeSeekProbeId(injectJavaScript);
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          url: 'https://www.nodeseek.com/login',
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            probeId,
+            documentKey: 'https://www.nodeseek.com/login:old',
+            status: 'logged-out',
+            loggedIn: false,
+            cookie: 'session=old'
+          })
+        }
+      } as never);
+      hook.result.current.recordNodeSeekLoginWebViewState('start');
+      await jest.advanceTimersByTimeAsync(250);
+    });
+
+    await expect(check).resolves.toBe(false);
+    expect(saveNodeSeekCookieHeader).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
   it('[REG-VERIFICATION-001] performs a fresh direct Yaohuo check for every settled manual check', async () => {
     mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' } });
+    const currentUser = {
+      source: 'yaohuo' as const,
+      id: '7',
+      username: '火友',
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
+      topics: []
+    };
+    mockGateway.checkYaohuoLogin.mockResolvedValue({
+      source: 'yaohuo',
+      ok: true,
+      loginRequired: false,
+      loginUrl: '',
+      message: undefined,
+      reason: undefined,
+      currentUser
+    });
+    mockGateway.getUserProfile.mockResolvedValue(currentUser);
+    const hook = await renderAccountController();
+
+    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
+    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
+
+    expect(mockBridge.readYaohuoCookieHeaderFromStores).toHaveBeenCalledTimes(2);
+    expect(mockGateway.checkYaohuoLogin).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-ACCOUNT-025] verifies supported Yaohuo session cookies against the current-account page before saving', async () => {
+    const candidateCookie = 'ASP.NET_SessionId=asp-session; GUID=device';
+    const currentUser = {
+      source: 'yaohuo' as const,
+      id: '31',
+      username: '火友',
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31',
+      topics: []
+    };
+    mockBridge.readYaohuoCookieHeaderFromStores.mockResolvedValue(candidateCookie);
+    mockGateway.checkYaohuoLogin.mockResolvedValue({
+      source: 'yaohuo',
+      ok: true,
+      loginRequired: false,
+      loginUrl: '',
+      message: undefined,
+      reason: undefined,
+      currentUser
+    });
+    mockGateway.getUserProfile.mockRejectedValue(new Error('optional profile unavailable'));
+    const saveYaohuoCookieHeader = jest.fn(async () => true);
+    const updateYaohuoSession = jest.fn();
+    const hook = await renderAccountController({ saveYaohuoCookieHeader, updateYaohuoSession });
+
+    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
+
+    expect(mockGateway.checkYaohuoLogin).toHaveBeenCalledWith(expect.objectContaining({
+      yaohuoCookie: candidateCookie
+    }));
+    expect(saveYaohuoCookieHeader).toHaveBeenCalledWith(candidateCookie, expect.any(Object));
+    expect(updateYaohuoSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'login-detected',
+      currentUser
+    }));
+  });
+
+  it('[REG-ACCOUNT-025] does not save Yaohuo credentials when a nominal success has no current identity', async () => {
     mockGateway.checkYaohuoLogin.mockResolvedValue({
       source: 'yaohuo',
       ok: true,
@@ -477,16 +861,95 @@ describe('account credential workflows with query-backed level state', () => {
       message: undefined,
       reason: undefined
     });
-    const hook = await renderAccountController();
+    const saveYaohuoCookieHeader = jest.fn(async () => true);
+    const updateYaohuoSession = jest.fn();
+    const hook = await renderAccountController({ saveYaohuoCookieHeader, updateYaohuoSession });
 
     await act(async () => { await hook.result.current.checkYaohuoCookie(); });
-    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
 
-    expect(mockCookies.flush).toHaveBeenCalledTimes(2);
-    expect(mockGateway.checkYaohuoLogin).toHaveBeenCalledTimes(2);
+    expect(saveYaohuoCookieHeader).not.toHaveBeenCalled();
+    expect(updateYaohuoSession).not.toHaveBeenCalled();
   });
 
-  it('REG-ACCOUNT-004 keeps confirmed Yaohuo expiry as the final event after cleanup', async () => {
+  it('[REG-ACCOUNT-020] projects the verified Yaohuo identity immediately after manual detection', async () => {
+    mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' } });
+    const detectedUser = {
+      source: 'yaohuo' as const,
+      id: '31',
+      username: '31',
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31',
+      topics: []
+    };
+    const hydratedUser = {
+      ...detectedUser,
+      username: 'dave',
+      displayName: 'Dave'
+    };
+    mockGateway.checkYaohuoLogin.mockResolvedValue({
+      source: 'yaohuo',
+      ok: true,
+      loginRequired: false,
+      loginUrl: '',
+      message: undefined,
+      reason: undefined,
+      currentUser: detectedUser
+    });
+    mockGateway.getUserProfile.mockResolvedValue(hydratedUser);
+    mockBridge.readYaohuoCookieHeaderFromStores
+      .mockResolvedValueOnce('sidyaohuo=before-check')
+      .mockResolvedValueOnce('sidyaohuo=after-check');
+    const saveYaohuoCookieHeader = jest.fn(async () => true);
+    const updateYaohuoSession = jest.fn();
+    const hook = await renderAccountController({ saveYaohuoCookieHeader, updateYaohuoSession });
+
+    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
+
+    expect(mockGateway.getUserProfile).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'yaohuo',
+      id: '31',
+      yaohuoCookie: 'sidyaohuo=before-check'
+    }));
+    expect(mockBridge.readYaohuoCookieHeaderFromStores).toHaveBeenCalledTimes(1);
+    expect(mockGateway.checkYaohuoLogin).toHaveBeenCalledWith(expect.objectContaining({
+      yaohuoCookie: 'sidyaohuo=before-check'
+    }));
+    expect(saveYaohuoCookieHeader).toHaveBeenCalledWith('sidyaohuo=before-check', expect.any(Object));
+    expect(updateYaohuoSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'login-detected',
+      currentUser: hydratedUser
+    }));
+  });
+
+  it('[REG-ACCOUNT-019] leaves Yaohuo session and credentials unchanged when login proof is unknown', async () => {
+    mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'stale-session' } });
+    mockGateway.checkYaohuoLogin.mockResolvedValue({
+      source: 'yaohuo',
+      ok: false,
+      loginRequired: false,
+      loginUrl: '',
+      reason: 'unknown',
+      message: '妖火登录状态暂时无法确认。'
+    });
+    const notify = jest.fn();
+    const saveYaohuoCookieHeader = jest.fn(async () => true);
+    const updateYaohuoSession = jest.fn();
+    const clearYaohuoLoginState = jest.fn(async () => true);
+    const hook = await renderAccountController({
+      clearYaohuoLoginState,
+      notify,
+      saveYaohuoCookieHeader,
+      updateYaohuoSession
+    });
+
+    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
+
+    expect(saveYaohuoCookieHeader).not.toHaveBeenCalled();
+    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+    expect(updateYaohuoSession).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('妖火登录状态暂时无法确认。');
+  });
+
+  it('[REG-ACCOUNT-026] keeps confirmed Yaohuo expiry without deleting the original-site login', async () => {
     mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' } });
     mockGateway.checkYaohuoLogin.mockResolvedValue({
       source: 'yaohuo',
@@ -497,25 +960,19 @@ describe('account credential workflows with query-backed level state', () => {
       message: '妖火登录已失效，请重新登录。'
     });
     const updateYaohuoSession = jest.fn();
-    const clearYaohuoLoginState = jest.fn(async () => {
-      updateYaohuoSession({ type: 'cleared' });
-      return true;
-    });
+    const clearYaohuoLoginState = jest.fn(async () => true);
     const hook = await renderAccountController({ clearYaohuoLoginState, updateYaohuoSession });
 
     await act(async () => { await hook.result.current.checkYaohuoCookie(); });
 
-    expect(clearYaohuoLoginState).toHaveBeenCalledWith({
-      generation: 4,
-      expiredMessage: '妖火登录已失效，请重新登录。'
-    });
+    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
     expect(updateYaohuoSession).toHaveBeenLastCalledWith({
       type: 'login-expired',
       message: '妖火登录已失效，请重新登录。'
     });
   });
 
-  it('REG-ACCOUNT-007 preserves the typed expiry when Yaohuo cleanup also fails', async () => {
+  it('[REG-ACCOUNT-026] does not invoke a failing Yaohuo logout command during validation', async () => {
     mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' } });
     mockGateway.checkYaohuoLogin.mockRejectedValue(Object.assign(new Error('妖火登录已失效'), {
       loginRequired: true,
@@ -524,19 +981,21 @@ describe('account credential workflows with query-backed level state', () => {
     }));
     const notify = jest.fn();
     const updateYaohuoSession = jest.fn();
+    const clearYaohuoLoginState = jest.fn(async () => { throw new Error('cleanup failed'); });
     const hook = await renderAccountController({
-      clearYaohuoLoginState: jest.fn(async () => { throw new Error('cleanup failed'); }),
+      clearYaohuoLoginState,
       notify,
       updateYaohuoSession
     });
 
     await act(async () => { await hook.result.current.checkYaohuoCookie(); });
 
-    expect(updateYaohuoSession).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+    expect(updateYaohuoSession).toHaveBeenLastCalledWith({
       type: 'login-expired',
-      message: expect.stringContaining('清理未完成')
-    }));
-    expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('清理未完成'));
+      message: '妖火登录已失效，请重新登录。'
+    });
+    expect(notify).toHaveBeenLastCalledWith('妖火登录已失效，请重新登录。');
   });
 
   it('REG-ACCOUNT-009 ignores stale manual clears and keeps retained linux.do clearance explicit', async () => {
