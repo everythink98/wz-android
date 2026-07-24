@@ -32,7 +32,6 @@ export function useImagePreviewController({
   fetcher,
   htmlParts,
   inlineSizedImageUrls,
-  nodeSeekMediaCookieHeader,
   nodeSeekMediaUserAgent,
   notify,
   topicImageDeriver
@@ -41,7 +40,6 @@ export function useImagePreviewController({
   fetcher?: Fetcher;
   htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
-  nodeSeekMediaCookieHeader?: string;
   nodeSeekMediaUserAgent?: string;
   notify: (message: string) => void;
   topicImageDeriver: TopicImageDeriver;
@@ -111,7 +109,6 @@ export function useImagePreviewController({
       markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
       await saveImageUriToLibrary(uri, fetcher, trace, {
-        nodeSeekCookieHeader: nodeSeekMediaCookieHeader,
         nodeSeekUserAgent: nodeSeekMediaUserAgent
       });
       markDiagnosticStage(trace, 'apply', { state: 'saved' });
@@ -124,7 +121,7 @@ export function useImagePreviewController({
     } finally {
       saveBusyRef.current = false;
     }
-  }, [beforeSave, fetcher, imagePreview, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent, notify]);
+  }, [beforeSave, fetcher, imagePreview, nodeSeekMediaUserAgent, notify]);
 
   return {
     closeImagePreview,

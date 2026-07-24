@@ -1,27 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  clearExpiredLinuxDoLogin: vi.fn(async () => undefined),
   currentXiaoyinsiCredentialGeneration: vi.fn(() => 11),
-  loadLinuxDoAccess: vi.fn(),
   loadXiaoyinsiCredentials: vi.fn(),
   runLinuxDoAction: vi.fn(async () => ({ ok: true })),
   runXiaoyinsiAction: vi.fn(async () => ({ ok: true }))
 }));
 
 vi.mock('../linuxdoActionClient', () => ({ runLinuxDoAction: mocks.runLinuxDoAction }));
-vi.mock('../linuxdoCookieBridge', () => ({
-  currentLinuxDoAccessGeneration: () => 7,
-  linuxDoAccessSummary: () => ({ loggedIn: true }),
-  loadLinuxDoAccess: mocks.loadLinuxDoAccess
-}));
 vi.mock('../xiaoyinsiActionClient', () => ({ runXiaoyinsiAction: mocks.runXiaoyinsiAction }));
 vi.mock('../xiaoyinsiAuth', () => ({
   currentXiaoyinsiCredentialGeneration: mocks.currentXiaoyinsiCredentialGeneration,
   loadXiaoyinsiCredentials: mocks.loadXiaoyinsiCredentials
 }));
-vi.mock('./topicActionHelpers', () => ({ clearExpiredLinuxDoLogin: mocks.clearExpiredLinuxDoLogin }));
-
 import {
   discourseActionRuntimeSources,
   prepareDiscourseActionRuntime,
@@ -40,7 +31,6 @@ function runtimeContext(): DiscourseActionRuntimeContext {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.loadLinuxDoAccess.mockResolvedValue({ cookieHeader: 'sid=test', userAgent: 'saved-agent' });
   mocks.loadXiaoyinsiCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
   mocks.currentXiaoyinsiCredentialGeneration.mockReturnValue(11);
 });
@@ -90,17 +80,18 @@ describe('Discourse action runtime registry', () => {
     expect(context.refreshXiaoyinsiAuthorization).not.toHaveBeenCalled();
   });
 
-  it('REG-ACCOUNT-007 keeps linux.do login-required when credential cleanup fails', async () => {
-    mocks.clearExpiredLinuxDoLogin.mockRejectedValueOnce(new Error('SecureStore cleanup failed'));
-    const runtime = await prepareDiscourseActionRuntime('linuxdo', runtimeContext());
+  it('[REG-ACCOUNT-026] reports linux.do expiry without mutating identity or Cookie state', async () => {
+    const context = runtimeContext();
+    const runtime = await prepareDiscourseActionRuntime('linuxdo', context);
 
     await expect(runtime.recover(Object.assign(new Error('linux.do 登录已失效'), {
       loginRequired: true,
       source: 'linuxdo'
     }))).resolves.toMatchObject({
       loginRequired: true,
-      message: expect.stringContaining('清理未完成'),
       phase: 'credential'
     });
+    expect(context.updateLinuxDoSession).not.toHaveBeenCalled();
+    expect(context.resetLinuxDoLevelState).not.toHaveBeenCalled();
   });
 });

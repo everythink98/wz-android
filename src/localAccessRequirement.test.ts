@@ -1,24 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Buffer } from 'buffer';
 
-vi.mock('@react-native-cookies/cookies', () => ({
-  default: {
-    flush: vi.fn(async () => undefined),
-    get: vi.fn(async () => ({})),
-    clearByName: vi.fn(async () => true)
-  }
-}));
-
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn(async () => undefined),
   deleteItemAsync: vi.fn(async () => undefined)
-}));
-
-vi.mock('react-native', () => ({
-  NativeModules: {
-    LinuxDoCookieModule: {}
-  }
 }));
 
 import { getLinuxDoFeed, getLinuxDoTopic } from './localLinuxdo';

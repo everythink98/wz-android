@@ -20,7 +20,6 @@ import {
   networkProxyWebViewBlockMessage,
   normalizeNetworkProxyState,
   removeNetworkProxyProfile,
-  recoverNodeSeekNetwork,
   saveNetworkProxyState,
   testNetworkProxy,
   validateNetworkProxyProfile,
@@ -167,14 +166,4 @@ describe('network proxy settings', () => {
     expect(testProxy).toHaveBeenCalledWith(socksProfile);
   });
 
-  it('exposes a best-effort NodeSeek network recovery hook from the native module', async () => {
-    const recover = vi.fn().mockResolvedValue({ ok: true });
-    const module = networkProxyModuleFromReactNativeImport({
-      NativeModules: { NetworkProxyModule: { recoverNodeSeekNetwork: recover } }
-    });
-
-    await expect(recoverNodeSeekNetwork(module)).resolves.toEqual({ ok: true });
-
-    expect(recover).toHaveBeenCalledTimes(1);
-  });
 });

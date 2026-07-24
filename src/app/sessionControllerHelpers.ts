@@ -1,9 +1,13 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import type { BrowserFetchIntent } from '../browserFetchIntent';
 import type { DiagnosticTrace } from '../diagnostics';
-import type { SiteSessionEvent } from '../siteSessionState';
+import type { SessionSite, SiteSessionEvent } from '../siteSessionState';
 import type { FeedSource, Source } from '../types';
-import { appQueryClient } from './serverState';
+import {
+  appQueryClient,
+  forumQueryKeys,
+  type ForumSessionEpochs
+} from './serverState';
 
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;
@@ -19,10 +23,14 @@ export type NodeSeekVerificationRetry =
   | { type: 'topic'; retry: () => Promise<boolean> };
 export type CredentialLoadOptions = {
   captureGeneration?: (generation: number) => void;
-  captureNodeSeekUserId?: (userId: number | null) => void;
   diagnosticTrace?: DiagnosticTrace;
 };
-export type CredentialClearOptions = { generation?: number; force?: boolean; expiredMessage?: string };
+export type CredentialClearOptions = {
+  generation?: number;
+  force?: boolean;
+  expiredMessage?: string;
+  recoveryQueryKey?: QueryKey;
+};
 export type CredentialWriteGate = {
   generation: number;
   queue: Promise<void>;
@@ -49,8 +57,13 @@ export function resetForumSourceQueries(
   const preservedQuery = preserveRecoveryQueryKey
     ? client.getQueryCache().find({ queryKey: preserveRecoveryQueryKey, exact: true })
     : undefined;
+  const isObservedAccountStatus = Boolean(
+    preservedQuery?.queryKey[2] === 'account-status'
+    && preservedQuery.getObserversCount() > 0
+  );
   const canPreserve = Boolean(
-    preservedQuery?.isActive()
+    preservedQuery
+    && (preservedQuery.isActive() || isObservedAccountStatus)
     && preservedQuery.queryKey[0] === 'forum'
     && (preservedQuery.queryKey[1] === source || preservedQuery.queryKey[1] === 'all')
   );
@@ -63,16 +76,89 @@ export function resetForumSourceQueries(
         && (!canPreserve || query !== preservedQuery)
       )
     };
+    void client.resetQueries({
+      predicate: (query) => filters.predicate(query)
+        && query.queryKey[2] === 'account-status'
+    });
     void client.cancelQueries(filters);
     client.removeQueries(filters);
   }
   return canPreserve;
 }
 
+export function cancelForumSourceQueries(
+  source: Source,
+  client: QueryClient = appQueryClient
+) {
+  return client.cancelQueries({
+    predicate: ({ queryKey }) => (
+      queryKey[0] === 'forum'
+      && (queryKey[1] === source || queryKey[1] === 'all')
+      && queryKey[2] !== 'account-status'
+      && queryKey[2] !== 'account-status-probe'
+    )
+  });
+}
+
+export function forumSessionEpochsAfterSourceChange(
+  currentEpochs: ForumSessionEpochs,
+  source: SessionSite
+): ForumSessionEpochs {
+  return {
+    ...currentEpochs,
+    [source]: currentEpochs[source] + 1
+  };
+}
+
+export function commitExpiredAccountStatusQuery(
+  source: SessionSite,
+  currentEpochs: ForumSessionEpochs,
+  recoveryQueryKey: QueryKey,
+  client: QueryClient = appQueryClient
+) {
+  const committedData = client.getQueryData(recoveryQueryKey);
+  const isExpiredResult = Boolean(
+    committedData
+    && typeof committedData === 'object'
+    && 'session' in committedData
+    && committedData.session
+    && typeof committedData.session === 'object'
+    && 'status' in committedData.session
+    && committedData.session.status === 'expired'
+  );
+  if (!isExpiredResult) {
+    resetForumSourceQueries(source, client, recoveryQueryKey);
+    return forumSessionEpochsAfterSourceChange(currentEpochs, source);
+  }
+  return commitChangedAccountStatusQuery(
+    source,
+    currentEpochs,
+    recoveryQueryKey,
+    client
+  );
+}
+
+export function commitChangedAccountStatusQuery(
+  source: SessionSite,
+  currentEpochs: ForumSessionEpochs,
+  recoveryQueryKey: QueryKey,
+  client: QueryClient = appQueryClient
+) {
+  const committedData = client.getQueryData(recoveryQueryKey);
+  resetForumSourceQueries(source, client);
+  const nextEpochs = forumSessionEpochsAfterSourceChange(currentEpochs, source);
+  if (committedData !== undefined) {
+    client.setQueryData(forumQueryKeys.accountStatus({
+      sessionEpochs: nextEpochs,
+      source
+    }), committedData);
+  }
+  return nextEpochs;
+}
+
 export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
   id: number;
   url: string;
-  cookie?: string;
   userAgent?: string;
   browserFetchIntent?: BrowserFetchIntent;
   reject: (error: Error) => void;
@@ -81,7 +167,6 @@ export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
 type BrowserFetchRequestView = {
   id: number;
   url: string;
-  cookie?: string;
   userAgent?: string;
 };
 
@@ -211,7 +296,6 @@ function browserFetchRequestView(request: BrowserFetchQueueRequest): BrowserFetc
   return {
     id: request.id,
     url: request.url,
-    cookie: request.cookie,
     userAgent: request.userAgent
   };
 }
@@ -312,67 +396,22 @@ function browserFetchPriorityRank(intent: BrowserFetchIntent | undefined) {
   return 1;
 }
 
-export function shouldPreemptBrowserFetchRequest(
-  active: BrowserFetchQueueRequest | null | undefined,
-  incoming: BrowserFetchQueueRequest
-) {
-  if (!active || active.browserFetchIntent?.cancelable === false) {
-    return false;
-  }
-  return browserFetchPriorityRank(incoming.browserFetchIntent) > browserFetchPriorityRank(active.browserFetchIntent);
-}
-
-export function shouldKeepQueuedBrowserFetchRequest(
-  queued: BrowserFetchQueueRequest,
-  incoming: BrowserFetchQueueRequest
-) {
-  if (queued.browserFetchIntent?.cancelable === false) {
-    return true;
-  }
-  return browserFetchPriorityRank(queued.browserFetchIntent) > browserFetchPriorityRank(incoming.browserFetchIntent);
-}
-
-export function preemptActiveBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
-  currentRef,
-  request,
-  message,
-  rejectCurrent
-}: {
-  currentRef: MutableRef<T | null>;
-  request: T;
-  message: string;
-  rejectCurrent: (request: T, message: string) => void;
-}) {
-  const current = currentRef.current;
-  if (!current || !shouldPreemptBrowserFetchRequest(current, request)) {
-    return false;
-  }
-  rejectCurrent(current, message);
-  return true;
-}
-
-export function enqueueLatestBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
+export function enqueueBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
   queueRef,
-  request,
-  message,
-  shouldKeepQueuedRequest
+  request
 }: {
   queueRef: MutableRef<T[]>;
   request: T;
-  message: string;
-  shouldKeepQueuedRequest?: (queued: T, incoming: T) => boolean;
 }) {
-  const staleRequests = queueRef.current.splice(0);
-  const keptRequests: T[] = [];
-  for (const staleRequest of staleRequests) {
-    if (shouldKeepQueuedRequest?.(staleRequest, request)) {
-      keptRequests.push(staleRequest);
-      continue;
-    }
-    settleBrowserFetchRequestOnce(staleRequest, () => staleRequest.reject(new Error(message)));
+  const requestPriority = browserFetchPriorityRank(request.browserFetchIntent);
+  const insertionIndex = queueRef.current.findIndex(
+    (queued) => browserFetchPriorityRank(queued.browserFetchIntent) < requestPriority
+  );
+  if (insertionIndex < 0) {
+    queueRef.current.push(request);
+    return;
   }
-  queueRef.current.push(...keptRequests);
-  queueRef.current.push(request);
+  queueRef.current.splice(insertionIndex, 0, request);
 }
 
 export async function runBestEffortTask(task: () => Promise<void>, timeoutMs: number) {
@@ -400,18 +439,6 @@ export function createCredentialWriteGate(): CredentialWriteGate {
 
 export function isCredentialWriteCurrent(gate: CredentialWriteGate, generation: number) {
   return gate.generation === generation;
-}
-
-export function nodeSeekMediaCookieHeaderAfterCredentialLoad({
-  currentHeader,
-  loadedHeader,
-  generationIsCurrent
-}: {
-  currentHeader: string;
-  loadedHeader?: string;
-  generationIsCurrent: boolean;
-}) {
-  return generationIsCurrent ? loadedHeader || '' : currentHeader;
 }
 
 export function advanceCredentialWriteGeneration(gate: CredentialWriteGate) {

@@ -1,3 +1,9 @@
+import {
+  withBrowserFetchIntent,
+  type BrowserFetchIntent,
+  type BrowserFetchOwner,
+  type BrowserFetchPriority
+} from './browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from './request';
 import type { CategoriesResponse, DiscourseFeedFilter, DiscourseTagOption, DiscourseUserOption, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, UserProfile, UserReplyActivity } from './types';
 import {
@@ -18,10 +24,8 @@ import {
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
 import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from './googleSearchFallback';
 import {
-  canStoreLinuxDoLogin,
-  DEFAULT_LINUXDO_ANDROID_USER_AGENT,
-  parseLinuxDoDocumentCookie
-} from './linuxdoCookieBridge';
+  DEFAULT_LINUXDO_ANDROID_USER_AGENT
+} from './linuxdoSession';
 import {
   LINUXDO_BASE_URL as BASE_URL,
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
@@ -43,12 +47,27 @@ let csrfTokenCache: string | null = null;
 let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
 
 interface LinuxDoOptions {
+  browserFetchIntent?: BrowserFetchIntent;
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
-  linuxDoAccess?: { cookieHeader?: string; userAgent?: string };
+  linuxDoAccess?: { authenticated?: boolean; userAgent?: string };
   signal?: AbortSignal;
   timeoutMs?: number;
+}
+
+function linuxDoOptionsWithBrowserIntent<T extends LinuxDoOptions>(
+  options: T,
+  owner: BrowserFetchOwner,
+  priority: BrowserFetchPriority
+): T {
+  if (options.browserFetchIntent) {
+    return options;
+  }
+  return {
+    ...options,
+    browserFetchIntent: { owner, priority }
+  };
 }
 
 type LinuxDoSearchOptions = LinuxDoOptions & {
@@ -58,7 +77,6 @@ type LinuxDoSearchOptions = LinuxDoOptions & {
 };
 
 interface LinuxDoCurrentUserOptions extends LinuxDoOptions {
-  linuxDoCookie?: string;
   linuxDoUserAgent?: string;
 }
 
@@ -303,6 +321,7 @@ function nonNegativeNumber(value: unknown) {
 }
 
 export async function getLinuxDoEmojiUrls(options: LinuxDoOptions = {}) {
+  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   if (emojiUrlCache) {
     return emojiUrlCache;
   }
@@ -438,7 +457,7 @@ function linuxDoHeaders(
   referer = `${BASE_URL}/latest`,
   csrfToken?: string
 ) {
-  const loggedIn = canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(access?.cookieHeader));
+  const loggedIn = access?.authenticated === true;
   return {
     Accept: 'application/json, text/javascript, */*; q=0.01',
     Referer: referer,
@@ -447,8 +466,7 @@ function linuxDoHeaders(
     'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
     ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     'X-Requested-With': 'XMLHttpRequest',
-    ...(loggedIn ? { 'Discourse-Logged-In': 'true' } : {}),
-    ...(access?.cookieHeader ? { Cookie: access.cookieHeader } : {})
+    ...(loggedIn ? { 'Discourse-Logged-In': 'true' } : {})
   };
 }
 
@@ -466,9 +484,9 @@ async function fetchLinuxDoJson<T>(
       url.searchParams.set(key, String(value));
     }
   }
-  const response = await fetchWithTimeout(url.toString(), {
+  const response = await fetchWithTimeout(url.toString(), withBrowserFetchIntent({
     headers: linuxDoHeaders(options.linuxDoAccess, requestOptions.referer, requestOptions.csrfToken)
-  }, options);
+  }, options.browserFetchIntent || { owner: 'feed', priority: 'foreground' }), options);
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     throw new LinuxDoCloudflareError();
@@ -518,6 +536,7 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
   category?: string;
   linuxDoFilter?: DiscourseFeedFilter;
 } = {}): Promise<FeedResponse> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'feed', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
   const linuxDoFilter = options.linuxDoFilter || 'latest';
@@ -571,6 +590,7 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
 }
 
 export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promise<CategoriesResponse> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'feed', 'foreground');
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
   const categories = Array.isArray(data.categories) ? data.categories : isRecord(data.category_list) && Array.isArray(data.category_list.categories) ? data.category_list.categories : [];
   const result = {
@@ -592,6 +612,7 @@ export async function searchLinuxDoTags(options: LinuxDoOptions & {
   selectedTags?: string[];
   limit?: number;
 } = {}): Promise<DiscourseTagOption[]> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const limit = Math.min(8, Math.max(1, Math.floor(options.limit || 8)));
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/tags/filter/search', {
     q: options.query?.trim() || '',
@@ -617,6 +638,7 @@ export async function searchLinuxDoUsers(options: LinuxDoOptions & {
   categoryId?: string;
   limit?: number;
 }): Promise<DiscourseUserOption[]> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const term = options.term.trim();
   if (!term) {
     return [];
@@ -647,6 +669,7 @@ async function topicData(id: string, options: LinuxDoOptions) {
 }
 
 export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { replyLimit?: number } = {}): Promise<TopicDetail> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   let data: Record<string, unknown>;
   try {
     data = await topicData(id, options);
@@ -733,6 +756,7 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   limit?: number;
   offset?: number | null;
 } = {}): Promise<RepliesResponse> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
   const streamState = topicStreamState(await topicData(id, options));
@@ -777,6 +801,7 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
 }
 
 export async function getLinuxDoReply(id: string, floor: number, options: LinuxDoOptions = {}): Promise<Reply> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const data = await topicData(id, options);
   const embeddedPosts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const embedded = embeddedPosts.find((post) => isRecord(post) && post.post_number === floor);
@@ -900,12 +925,12 @@ function parseLinuxDoGoogleSearchTopics(html: string) {
 }
 
 async function fetchLinuxDoGoogleSearchText(query: string, page: number, options: LinuxDoOptions = {}) {
-  const response = await fetchWithTimeout(googleSiteSearchUrl('linux.do', query, page), {
+  const response = await fetchWithTimeout(googleSiteSearchUrl('linux.do', query, page), withBrowserFetchIntent({
     headers: {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
       'User-Agent': DEFAULT_LINUXDO_ANDROID_USER_AGENT
     }
-  }, options);
+  }, options.browserFetchIntent || { owner: 'search', priority: 'foreground' }), options);
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -947,11 +972,12 @@ async function searchLinuxDoGoogle(query: string, options: LinuxDoOptions & { li
 }
 
 export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions = {}): Promise<SearchResponse> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const limit = options.limit || 30;
   const page = options.page || 1;
   const cleanQuery = query.trim();
   const access = options.linuxDoAccess;
-  if (!options.authenticated || !canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(access?.cookieHeader))) {
+  if (!options.authenticated || access?.authenticated !== true) {
     return searchLinuxDoGoogle(cleanQuery, options);
   }
   const searchReferer = `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}`;
@@ -1004,6 +1030,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
 }
 
 export async function searchLinuxDoSemantic(query: string, options: LinuxDoOptions = {}): Promise<SearchResponse> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const cleanQuery = query.trim();
   if (!cleanQuery) {
     return annotateSourceDiagnosticSummary({ items: [], errors: {}, hasMore: false, nextPage: null }, {
@@ -1030,6 +1057,7 @@ export async function searchLinuxDoSemantic(query: string, options: LinuxDoOptio
 }
 
 export async function getLinuxDoUserProfile(id: string, username: string, options: LinuxDoOptions = {}): Promise<UserProfile> {
+  options = linuxDoOptionsWithBrowserIntent(options, 'user', 'foreground');
   const name = (username || id).trim();
   if (!name) {
     throw new Error('linux.do 用户信息不完整');
@@ -1113,23 +1141,27 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
 }
 
 export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOptions = {}): Promise<UserProfile> {
-  const cookieHeader = options.linuxDoCookie?.trim();
-  if (!cookieHeader) {
-    throw new Error('请先登录 linux.do');
-  }
-  const response = await fetchWithTimeout(`${BASE_URL}/session/current.json`, {
+  options = linuxDoOptionsWithBrowserIntent(options, 'account', 'background');
+  const response = await fetchWithTimeout(`${BASE_URL}/session/current.json`, withBrowserFetchIntent({
     headers: {
       Accept: 'application/json, text/javascript, */*; q=0.01',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       Referer: BASE_URL,
-      Cookie: cookieHeader,
       'User-Agent': options.linuxDoUserAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
       'X-Requested-With': 'XMLHttpRequest'
     }
-  }, options);
+  }, options.browserFetchIntent || { owner: 'account', priority: 'background' }), options);
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     throw new LinuxDoCloudflareError();
+  }
+  if (response.status === 404) {
+    throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
+      source: 'linuxdo' as const,
+      kind: 'login-expired' as const,
+      loginRequired: true,
+      reason: 'expired' as const
+    });
   }
   let data: unknown = {};
   try {
@@ -1139,6 +1171,14 @@ export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOp
   }
   if (!response.ok) {
     throw new Error(linuxDoErrorText(data, `HTTP ${response.status}`));
+  }
+  if (isRecord(data) && (data.current_user === null || data.user === null)) {
+    throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
+      source: 'linuxdo' as const,
+      kind: 'login-expired' as const,
+      loginRequired: true,
+      reason: 'expired' as const
+    });
   }
   const currentUser = isRecord(data) && isRecord(data.current_user) ? data.current_user : {};
   const user = isRecord(data) && isRecord(data.user) ? data.user : {};

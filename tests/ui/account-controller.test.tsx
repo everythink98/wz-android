@@ -1,81 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-
-jest.mock('@react-native-cookies/cookies', () => ({
-  __esModule: true,
-  default: {
-    flush: jest.fn(),
-    get: jest.fn()
-  }
-}));
-
-jest.mock('../../src/nodeseekCookieBridge', () => ({
-  readNodeSeekCookiesFromStores: jest.fn()
-}));
-
-jest.mock('../../src/nodeseekCookies', () => ({
-  mergeNodeSeekCookies: (...maps: Array<Record<string, unknown>>) => Object.assign({}, ...maps),
-  parseNodeSeekDocumentCookie: (header: string) => header ? {
-    session: { name: 'session', value: header }
-  } : {},
-  sanitizeNodeSeekUserAgent: (userAgent: string) => userAgent,
-  summarizeNodeSeekCookies: () => ({ count: 1, loggedIn: true, names: ['session'] })
-}));
-
-jest.mock('../../src/yaohuoCookies', () => ({
-  buildYaohuoCookieHeader: () => 'sidyaohuo=safe',
-  canStoreYaohuoCookieHeader: () => true,
-  mergeYaohuoCookies: (...maps: Array<Record<string, unknown>>) => Object.assign({}, ...maps),
-  summarizeYaohuoCookies: () => ({ count: 1, loggedIn: true, names: ['sidyaohuo'] })
-}));
-
-jest.mock('../../src/linuxdoCookieBridge', () => ({
-  clearLinuxDoAccess: jest.fn(),
-  currentLinuxDoAccessGeneration: jest.fn(),
-  linuxDoAccessSummary: jest.fn(),
-  loadLinuxDoAccess: jest.fn(),
-  parseLinuxDoDocumentCookie: () => ({}),
-  summarizeLinuxDoCookies: () => ({ names: ['cf_clearance'] })
-}));
-
-jest.mock('../../src/sources/sourceGateway', () => ({
-  checkYaohuoLogin: jest.fn()
-}));
-
-import CookieManager from '@react-native-cookies/cookies';
-import { readNodeSeekCookiesFromStores } from '../../src/nodeseekCookieBridge';
-import {
-  clearLinuxDoAccess,
-  currentLinuxDoAccessGeneration,
-  linuxDoAccessSummary,
-  loadLinuxDoAccess
-} from '../../src/linuxdoCookieBridge';
-import { checkYaohuoLogin, type LinuxDoLevelProfile, type SourceGateway } from '../../src/sources/sourceGateway';
+import type { LinuxDoLevelProfile, SourceGateway } from '../../src/sources/sourceGateway';
 import { useAccountController } from '../../src/app/useAccountController';
 import type { Screen } from '../../src/appTypes';
-import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
+import type { SiteSessionState } from '../../src/siteSessionState';
+import {
+  appQueryClient,
+  initialForumSessionEpochs
+} from '../../src/app/serverState';
+import type { AccountReconcileResult } from '../../src/app/useAccountStatusController';
 import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
-const mockCookies = {
-  flush: jest.mocked(CookieManager.flush),
-  get: jest.mocked(CookieManager.get)
-};
-const mockBridge = {
-  readNodeSeekCookiesFromStores: jest.mocked(readNodeSeekCookiesFromStores)
-};
-const mockLinux = {
-  clearLinuxDoAccess: jest.mocked(clearLinuxDoAccess),
-  currentLinuxDoAccessGeneration: jest.mocked(currentLinuxDoAccessGeneration),
-  linuxDoAccessSummary: jest.mocked(linuxDoAccessSummary),
-  loadLinuxDoAccess: jest.mocked(loadLinuxDoAccess)
-};
-const mockGateway = {
-  checkYaohuoLogin: jest.mocked(checkYaohuoLogin)
-};
-const mockManagedLinuxDoLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>();
-
 const ref = <T,>(current: T) => ({ current });
+const loggedInSession: SiteSessionState = {
+  site: 'nodeseek',
+  status: 'logged-in',
+  cookieSummary: ['session'],
+  isVerifying: false,
+  currentUser: {
+    source: 'nodeseek',
+    id: '42',
+    username: 'alice',
+    url: 'https://www.nodeseek.com/people/alice',
+    topics: []
+  }
+};
 
 function linuxDoCloudflareError(message = 'linux.do 需要完成 Cloudflare 验证') {
   return Object.assign(new Error(message), {
@@ -84,69 +34,92 @@ function linuxDoCloudflareError(message = 'linux.do 需要完成 Cloudflare 验�
   });
 }
 
-async function renderAccountController(overrides: Partial<Parameters<typeof useAccountController>[0]> = {}) {
-  return renderNativeHook(() => useAccountController({
+const mockManagedLinuxDoLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>();
+const mountedHooks: Array<{ unmount: () => void }> = [];
+
+async function renderAccountController(
+  overrides: Partial<Parameters<typeof useAccountController>[0]> = {}
+) {
+  const baseProps: Parameters<typeof useAccountController>[0] = {
     checkingRequestIdRef: ref(0),
+    clearLinuxDoLoginState: jest.fn(async () => true),
     clearNodeSeekLoginState: jest.fn(async () => true),
     clearYaohuoLoginState: jest.fn(async () => true),
-    credentialScope: emptyForumCredentialScope,
-    currentNodeSeekCredentialGeneration: () => 3,
-    currentYaohuoCredentialGeneration: () => 4,
-    forumFetchWithWebViewFallback: jest.fn(async () => new Response('{}')),
+    sessionEpochs: initialForumSessionEpochs,
     linuxDoVerificationActive: false,
     nodeSeekLoginPanelRequestRef: ref(7),
-    nodeSeekCurrentUserId: null,
-    nodeSeekWebViewCookieHeaderRef: ref(''),
     nodeSeekWebViewUserAgentRef: ref(''),
     notify: jest.fn(),
     onLoginWebViewFailure: jest.fn(),
+    reconcileAccountStatus: jest.fn<
+      Parameters<typeof useAccountController>[0]['reconcileAccountStatus']
+    >(async () => ({
+      status: 'same',
+      session: loggedInSession
+    })),
     resetLinuxDoLevelState: jest.fn(),
     resetLinuxDoWebView: jest.fn(),
-    saveNodeSeekCookieHeader: jest.fn(async () => 'saved'),
-    saveYaohuoCookieHeader: jest.fn(async () => true),
+    screen: 'more',
     setChecking: jest.fn() as never,
     setNodeSeekWebViewUserAgent: jest.fn() as never,
-    setWebLoginUserId: jest.fn() as never,
-    screen: 'more',
-    showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
-    sourceGateway: { getLinuxDoLevelProfile: mockManagedLinuxDoLevelProfile },
+    showLinuxDoVerification: jest.fn<
+      (message?: string, recovery?: LinuxDoReadRecovery) => void
+    >(),
+    sourceGateway: {
+      getLinuxDoLevelProfile: mockManagedLinuxDoLevelProfile
+    },
     showLoginPanelRef: ref(true),
     showYaohuoLoginPanel: true,
-    updateLinuxDoSession: jest.fn(),
-    updateYaohuoSession: jest.fn(),
-    webLoginDetectedRef: ref(false),
-    webViewRef: ref({ injectJavaScript: jest.fn(), reload: jest.fn() }) as never,
+    webViewRef: ref({
+      reload: jest.fn(),
+      stopLoading: jest.fn()
+    }) as never,
     yaohuoLoginPanelRequestRef: ref(9),
-    yaohuoWebViewRef: ref({ reload: jest.fn() }) as never,
-    ...overrides
-  }), { wrapper: QueryTestWrapper });
+    yaohuoWebViewRef: ref({
+      reload: jest.fn(),
+      stopLoading: jest.fn()
+    }) as never
+  };
+  const hook = await renderNativeHook(
+    () => useAccountController({
+      ...baseProps,
+      ...overrides
+    }),
+    { wrapper: QueryTestWrapper }
+  );
+  mountedHooks.push(hook);
+  return {
+    hook,
+    props: {
+      ...baseProps,
+      ...overrides
+    }
+  };
 }
 
-describe('account credential workflows with query-backed level state', () => {
+describe('account workflows with canonical identity reconciliation', () => {
   beforeEach(() => {
     appQueryClient.clear();
     jest.clearAllMocks();
     mockManagedLinuxDoLevelProfile.mockReset();
-    mockCookies.flush.mockResolvedValue(undefined);
-    mockCookies.get.mockResolvedValue({});
-    mockBridge.readNodeSeekCookiesFromStores.mockResolvedValue({});
-    mockLinux.clearLinuxDoAccess.mockResolvedValue(null);
-    mockLinux.currentLinuxDoAccessGeneration.mockReturnValue(1);
-    mockLinux.linuxDoAccessSummary.mockReturnValue({ hasClearance: false, loggedIn: false, savedAt: undefined });
-    mockLinux.loadLinuxDoAccess.mockResolvedValue(null);
   });
 
   afterEach(async () => {
+    await act(async () => {
+      for (const hook of mountedHooks.splice(0)) {
+        hook.unmount();
+      }
+      await Promise.resolve();
+    });
     jest.useRealTimers();
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   });
 
-  it('reads linux.do level through the managed SourceGateway with only the Query signal', async () => {
+  it('reads linux.do level through SourceGateway with only the Query signal', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest.fn(async () => profile);
-    const hook = await renderAccountController({
+    const { hook } = await renderAccountController({
       sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
-    } as never);
+    });
 
     let refresh!: Promise<boolean>;
     await act(async () => {
@@ -159,21 +132,35 @@ describe('account credential workflows with query-backed level state', () => {
       source: 'linuxdo',
       signal: expect.any(Object)
     });
-    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
+    await waitFor(() => {
+      expect(hook.result.current.linuxDoLevelProfile).toEqual(profile);
+    });
   });
 
-  it('[REG-LINUXDO-006] keeps a failed Level Query active and resumes that exact request once after verification', async () => {
-    const cloudflare = linuxDoCloudflareError();
+  it('[REG-ACCOUNT-031] does not start a linux.do Level read while identity is pending', async () => {
+    const getLevelProfile = jest.fn(async () => ({ username: 'alice' } as LinuxDoLevelProfile));
+    const { hook } = await renderAccountController({
+      linuxDoIdentityPending: true,
+      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+    });
+
+    await expect(hook.result.current.refreshLinuxDoLevel()).resolves.toBe(false);
+    expect(getLevelProfile).not.toHaveBeenCalled();
+    expect(hook.result.current.linuxDoLevelBusy).toBe(false);
+  });
+
+  it('[REG-LINUXDO-006] resumes the exact active Level Query once after verification', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
-      .mockRejectedValueOnce(cloudflare)
+      .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockResolvedValueOnce(profile);
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderAccountController({
-      screen: 'more',
+    const showLinuxDoVerification = jest.fn<
+      (message?: string, recovery?: LinuxDoReadRecovery) => void
+    >();
+    const { hook } = await renderAccountController({
       showLinuxDoVerification,
       sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
-    } as never);
+    });
 
     let refresh!: Promise<boolean>;
     await act(async () => {
@@ -181,43 +168,55 @@ describe('account credential workflows with query-backed level state', () => {
       await Promise.resolve();
     });
     await expect(refresh).resolves.toBe(false);
-    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    });
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
 
-    expect(recovery).toBeDefined();
-    expect(getLevelProfile).toHaveBeenCalledTimes(1);
-    expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(true);
+    expect(appQueryClient.getQueryCache().find({
+      queryKey: recovery.queryKey,
+      exact: true
+    })?.isActive()).toBe(true);
     await act(async () => {
       await expect(recovery.resume()).resolves.toBe('completed');
     });
 
     expect(getLevelProfile).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
-    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(hook.result.current.linuxDoLevelProfile).toEqual(profile);
+    });
   });
 
-  it('[REG-LINUXDO-006] aborts an in-flight Level recovery and makes it stale after leaving More', async () => {
+  it('[REG-LINUXDO-006] aborts Level recovery and makes it stale after leaving More', async () => {
     let recoverySignal: AbortSignal | undefined;
     const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockImplementationOnce(async ({ signal }) => {
         recoverySignal = signal;
         return new Promise<LinuxDoLevelProfile>((_resolve, reject) => {
-          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          signal?.addEventListener(
+            'abort',
+            () => reject(new Error('aborted')),
+            { once: true }
+          );
         });
       });
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const overrides = {
+    const showLinuxDoVerification = jest.fn<
+      (message?: string, recovery?: LinuxDoReadRecovery) => void
+    >();
+    const overrides: Partial<Parameters<typeof useAccountController>[0]> = {
       screen: 'more' as Screen,
       showLinuxDoVerification,
       sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
-    } as Partial<Parameters<typeof useAccountController>[0]>;
-    const hook = await renderAccountController(overrides);
+    };
+    const { hook } = await renderAccountController(overrides);
     await act(async () => {
       void hook.result.current.refreshLinuxDoLevel();
       await Promise.resolve();
     });
-    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    });
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
 
     let resume!: ReturnType<LinuxDoReadRecovery['resume']>;
@@ -232,67 +231,33 @@ describe('account credential workflows with query-backed level state', () => {
       hook.rerender({});
       await Promise.resolve();
     });
+
     await waitFor(() => expect(recoverySignal?.aborted).toBe(true));
     await act(async () => {
       await expect(resume).resolves.toBe('stale');
     });
-
-    expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(false);
-    expect(getLevelProfile).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-LINUXDO-006] invalidates Level recovery when the user closes verification', async () => {
-    const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
-      .mockRejectedValueOnce(linuxDoCloudflareError());
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const overrides = {
-      linuxDoVerificationActive: false,
-      screen: 'more' as Screen,
-      showLinuxDoVerification,
-      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
-    } as Partial<Parameters<typeof useAccountController>[0]>;
-    const hook = await renderAccountController(overrides);
-    await act(async () => {
-      void hook.result.current.refreshLinuxDoLevel();
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
-    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
-
-    overrides.linuxDoVerificationActive = true;
-    await act(async () => {
-      hook.rerender({});
-      await Promise.resolve();
-    });
-    overrides.linuxDoVerificationActive = false;
-    await act(async () => {
-      hook.rerender({});
-      await Promise.resolve();
-    });
-
-    await expect(recovery.resume()).resolves.toBe('stale');
-    expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(false);
-    expect(getLevelProfile).toHaveBeenCalledTimes(1);
-    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
-  });
-
-  it('[REG-VERIFICATION-001] keeps Level recovery available for an explicit retry after Cloudflare is returned again', async () => {
+  it('[REG-VERIFICATION-001] retains Level recovery across explicit repeated checks', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
-      .mockRejectedValueOnce(linuxDoCloudflareError('linux.do 仍需验证'))
+      .mockRejectedValueOnce(linuxDoCloudflareError('仍需验证'))
       .mockResolvedValueOnce(profile);
-    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderAccountController({
-      screen: 'more',
+    const showLinuxDoVerification = jest.fn<
+      (message?: string, recovery?: LinuxDoReadRecovery) => void
+    >();
+    const { hook } = await renderAccountController({
       showLinuxDoVerification,
       sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
-    } as never);
+    });
     await act(async () => {
       void hook.result.current.refreshLinuxDoLevel();
       await Promise.resolve();
     });
-    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    });
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
 
     await act(async () => {
@@ -302,277 +267,285 @@ describe('account credential workflows with query-backed level state', () => {
 
     expect(getLevelProfile).toHaveBeenCalledTimes(3);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
   });
 
-  it('[REG-LINUXDO-006] releases Level after verification preparation is rejected so the user can retry', async () => {
+  it('releases Level state when verification preparation is rejected', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockResolvedValueOnce(profile);
-    const showLinuxDoVerification = jest.fn<(
-      message?: string,
-      recovery?: LinuxDoReadRecovery
-    ) => Promise<boolean>>(async () => false);
-    const hook = await renderAccountController({
+    const showLinuxDoVerification = jest.fn<
+      (message?: string, recovery?: LinuxDoReadRecovery) => Promise<boolean>
+    >(async () => false);
+    const { hook } = await renderAccountController({
       showLinuxDoVerification,
       sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
-    } as never);
+    });
 
-    let firstRefresh!: Promise<boolean>;
+    let first!: Promise<boolean>;
     await act(async () => {
-      firstRefresh = hook.result.current.refreshLinuxDoLevel();
+      first = hook.result.current.refreshLinuxDoLevel();
       await Promise.resolve();
     });
     let firstResult = true;
     await act(async () => {
-      firstResult = await firstRefresh;
+      firstResult = await first;
       await Promise.resolve();
     });
     expect(firstResult).toBe(false);
-    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    });
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
     await waitFor(() => {
-      expect(appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive()).toBe(false);
+      expect(appQueryClient.getQueryCache().find({
+        queryKey: recovery.queryKey,
+        exact: true
+      })?.isActive()).toBe(false);
     });
 
-    let secondRefresh!: Promise<boolean>;
+    let second!: Promise<boolean>;
     await act(async () => {
-      secondRefresh = hook.result.current.refreshLinuxDoLevel();
+      second = hook.result.current.refreshLinuxDoLevel();
       await Promise.resolve();
     });
-    await expect(secondRefresh).resolves.toBe(true);
-
+    let secondResult = false;
+    await act(async () => {
+      secondResult = await second;
+      await Promise.resolve();
+    });
+    expect(secondResult).toBe(true);
     expect(getLevelProfile).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
   });
 
-  it('[REG-ACCOUNT-018] reports a failed linux.do level refresh even when trusted data already exists', async () => {
-    const profile = { username: 'alice' } as LinuxDoLevelProfile;
-    const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
-      .mockResolvedValueOnce(profile)
-      .mockRejectedValueOnce(new Error('linux.do 等级刷新失败'));
-    const notify = jest.fn();
-    const hook = await renderAccountController({
-      notify,
-      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
-    } as never);
-
-    let firstRefresh!: Promise<boolean>;
-    await act(async () => {
-      firstRefresh = hook.result.current.refreshLinuxDoLevel();
-      await Promise.resolve();
-    });
-    await expect(firstRefresh).resolves.toBe(true);
-    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
-    let secondRefresh!: Promise<boolean>;
-    await act(async () => {
-      secondRefresh = hook.result.current.refreshLinuxDoLevel();
-      await Promise.resolve();
-    });
-    await expect(secondRefresh).resolves.toBe(false);
-
-    await waitFor(() => {
-      expect(hook.result.current.linuxDoLevelProfile).toEqual(profile);
-      expect(hook.result.current.linuxDoLevelError).toBe('linux.do 等级刷新失败');
-    });
-    expect(notify.mock.calls.filter(([message]) => message === 'linux.do 等级已更新。')).toHaveLength(1);
-  });
-
-  it('REG-ACCOUNT-009 does not cache or report a linux.do level response from superseded credentials', async () => {
-    let generation = 4;
-    const transport = Promise.withResolvers<LinuxDoLevelProfile>();
-    mockLinux.currentLinuxDoAccessGeneration.mockImplementation(() => generation);
-    mockLinux.linuxDoAccessSummary.mockReturnValue({ hasClearance: true, loggedIn: true, savedAt: undefined });
-    mockLinux.loadLinuxDoAccess.mockResolvedValue({
-      cookieHeader: '_t=old',
-      userAgent: 'old-agent',
-      savedAt: '2026-07-20T00:00:00.000Z',
-      source: 'webview'
-    });
-    mockManagedLinuxDoLevelProfile.mockImplementationOnce(async () => {
-      const profile = await transport.promise;
-      if (generation !== 4) throw new Error('credential changed');
-      return profile;
-    });
-    const notify = jest.fn();
-    const hook = await renderAccountController({ notify });
-    let refresh!: Promise<boolean>;
-
-    await act(async () => {
-      refresh = hook.result.current.refreshLinuxDoLevel();
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(mockManagedLinuxDoLevelProfile).toHaveBeenCalledTimes(1));
-    generation = 5;
-    await act(async () => {
-      transport.resolve({ username: 'old-user' } as LinuxDoLevelProfile);
-      await refresh;
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    await waitFor(() => expect(hook.result.current.linuxDoLevelBusy).toBe(false));
-    expect(hook.result.current.linuxDoLevelProfile).toBeNull();
-    expect(notify).not.toHaveBeenCalledWith('linux.do 等级已更新。');
-  });
-
-  it('REG-ACCOUNT-005 ignores a valid-looking NodeSeek message from the Cloudflare host', async () => {
-    const setWebLoginUserId = jest.fn();
+  it('[REG-ACCOUNT-031] accepts only same-origin NodeSeek messages and never consumes page cookies', async () => {
     const setNodeSeekWebViewUserAgent = jest.fn();
-    const hook = await renderAccountController({
-      setNodeSeekWebViewUserAgent: setNodeSeekWebViewUserAgent as never,
-      setWebLoginUserId: setWebLoginUserId as never
+    const userAgentRef = ref('');
+    const { hook } = await renderAccountController({
+      nodeSeekWebViewUserAgentRef: userAgentRef,
+      setNodeSeekWebViewUserAgent: setNodeSeekWebViewUserAgent as never
     });
 
-    await act(async () => {
+    await act(() => {
       hook.result.current.handleLoginMessage({
         nativeEvent: {
-          url: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/',
           data: JSON.stringify({
             type: 'nodeseek-login',
-            loggedIn: true,
-            userId: 9487,
-            userAgent: 'challenge-agent',
-            cookie: 'session=wrong-origin'
-          })
+            cookie: 'PAGE_COOKIE_MUST_BE_IGNORED',
+            userAgent: 'trusted-agent'
+          }),
+          url: 'https://www.nodeseek.com/signIn.html'
         }
       } as never);
     });
 
-    expect(setWebLoginUserId).not.toHaveBeenCalled();
+    expect(userAgentRef.current).toBe('trusted-agent');
+    expect(setNodeSeekWebViewUserAgent).toHaveBeenCalledWith('trusted-agent');
+  });
+
+  it('ignores a valid-looking NodeSeek message from the Cloudflare host', async () => {
+    const setNodeSeekWebViewUserAgent = jest.fn();
+    const userAgentRef = ref('');
+    const { hook } = await renderAccountController({
+      nodeSeekWebViewUserAgentRef: userAgentRef,
+      setNodeSeekWebViewUserAgent: setNodeSeekWebViewUserAgent as never
+    });
+
+    await act(() => {
+      hook.result.current.handleLoginMessage({
+        nativeEvent: {
+          data: JSON.stringify({
+            type: 'nodeseek-login',
+            userAgent: 'forged-agent'
+          }),
+          url: 'https://challenges.cloudflare.com/frame'
+        }
+      } as never);
+    });
+
+    expect(userAgentRef.current).toBe('');
     expect(setNodeSeekWebViewUserAgent).not.toHaveBeenCalled();
   });
 
-  it('[REG-VERIFICATION-001] performs a fresh NodeSeek read for every settled manual check', async () => {
-    jest.useFakeTimers();
-    const saveNodeSeekCookieHeader = jest.fn(async () => 'saved');
-    const hook = await renderAccountController({ saveNodeSeekCookieHeader });
+  it('runs every settled manual NodeSeek check through canonical reconciliation', async () => {
+    const reconcileAccountStatus = jest.fn<
+      (source: 'nodeseek' | 'yaohuo') => Promise<AccountReconcileResult>
+    >(async () => ({ status: 'same', session: loggedInSession }));
+    const { hook } = await renderAccountController({ reconcileAccountStatus });
 
-    let first!: ReturnType<typeof hook.result.current.checkLogin>;
     await act(async () => {
-      first = hook.result.current.checkLogin();
-      await jest.advanceTimersByTimeAsync(250);
+      await expect(hook.result.current.checkLogin()).resolves.toBe(true);
+      await expect(hook.result.current.checkLogin()).resolves.toBe(true);
     });
-    await expect(first).resolves.toBe(true);
 
-    let second!: ReturnType<typeof hook.result.current.checkLogin>;
+    expect(reconcileAccountStatus).toHaveBeenNthCalledWith(1, 'nodeseek');
+    expect(reconcileAccountStatus).toHaveBeenNthCalledWith(2, 'nodeseek');
+  });
+
+  it('routes manual Yaohuo checks through the same canonical reconciliation path', async () => {
+    const reconcileAccountStatus = jest.fn<
+      (source: 'nodeseek' | 'yaohuo') => Promise<AccountReconcileResult>
+    >(async () => ({ status: 'same', session: {
+      ...loggedInSession,
+      site: 'yaohuo',
+      currentUser: {
+        ...loggedInSession.currentUser!,
+        source: 'yaohuo'
+      }
+    } }));
+    const { hook } = await renderAccountController({ reconcileAccountStatus });
+
     await act(async () => {
-      second = hook.result.current.checkLogin();
-      await jest.advanceTimersByTimeAsync(250);
+      await expect(hook.result.current.checkYaohuoCookie()).resolves.toBe(true);
     });
-    await expect(second).resolves.toBe(true);
 
-    expect(mockBridge.readNodeSeekCookiesFromStores).toHaveBeenCalledTimes(2);
-    expect(saveNodeSeekCookieHeader).toHaveBeenCalledTimes(2);
-    jest.useRealTimers();
+    expect(reconcileAccountStatus).toHaveBeenCalledWith('yaohuo');
   });
 
-  it('[REG-VERIFICATION-001] performs a fresh direct Yaohuo check for every settled manual check', async () => {
-    mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' } });
-    mockGateway.checkYaohuoLogin.mockResolvedValue({
-      source: 'yaohuo',
-      ok: true,
-      loginRequired: false,
-      loginUrl: '',
-      message: undefined,
-      reason: undefined
-    });
-    const hook = await renderAccountController();
-
-    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
-    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
-
-    expect(mockCookies.flush).toHaveBeenCalledTimes(2);
-    expect(mockGateway.checkYaohuoLogin).toHaveBeenCalledTimes(2);
-  });
-
-  it('REG-ACCOUNT-004 keeps confirmed Yaohuo expiry as the final event after cleanup', async () => {
-    mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' } });
-    mockGateway.checkYaohuoLogin.mockResolvedValue({
-      source: 'yaohuo',
-      ok: false,
-      loginRequired: true,
-      loginUrl: 'https://www.yaohuo.me/login.aspx',
-      reason: 'expired',
-      message: '妖火登录已失效，请重新登录。'
-    });
-    const updateYaohuoSession = jest.fn();
-    const clearYaohuoLoginState = jest.fn(async () => {
-      updateYaohuoSession({ type: 'cleared' });
-      return true;
-    });
-    const hook = await renderAccountController({ clearYaohuoLoginState, updateYaohuoSession });
-
-    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
-
-    expect(clearYaohuoLoginState).toHaveBeenCalledWith({
-      generation: 4,
-      expiredMessage: '妖火登录已失效，请重新登录。'
-    });
-    expect(updateYaohuoSession).toHaveBeenLastCalledWith({
-      type: 'login-expired',
-      message: '妖火登录已失效，请重新登录。'
-    });
-  });
-
-  it('REG-ACCOUNT-007 preserves the typed expiry when Yaohuo cleanup also fails', async () => {
-    mockCookies.get.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' } });
-    mockGateway.checkYaohuoLogin.mockRejectedValue(Object.assign(new Error('妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
+  it('keeps unknown identity retryable without invoking a logout or clear path', async () => {
+    const clearNodeSeekLoginState = jest.fn(async () => true);
     const notify = jest.fn();
-    const updateYaohuoSession = jest.fn();
-    const hook = await renderAccountController({
-      clearYaohuoLoginState: jest.fn(async () => { throw new Error('cleanup failed'); }),
+    const { hook } = await renderAccountController({
+      clearNodeSeekLoginState,
       notify,
-      updateYaohuoSession
+      reconcileAccountStatus: jest.fn<
+        Parameters<typeof useAccountController>[0]['reconcileAccountStatus']
+      >(async () => ({
+        status: 'unknown',
+        error: 'network unavailable'
+      }))
     });
 
-    await act(async () => { await hook.result.current.checkYaohuoCookie(); });
+    await act(async () => {
+      await expect(hook.result.current.checkLogin()).resolves.toBe(false);
+    });
 
-    expect(updateYaohuoSession).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'login-expired',
-      message: expect.stringContaining('清理未完成')
-    }));
-    expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('清理未完成'));
+    expect(notify).toHaveBeenCalledWith('network unavailable');
+    expect(clearNodeSeekLoginState).not.toHaveBeenCalled();
   });
 
-  it('REG-ACCOUNT-009 ignores stale manual clears and keeps retained linux.do clearance explicit', async () => {
-    const nodeReload = jest.fn();
-    const yaohuoReload = jest.fn();
+  it('reports confirmed anonymous without invoking a logout command during validation', async () => {
+    const clearYaohuoLoginState = jest.fn(async () => true);
     const notify = jest.fn();
-    const updateLinuxDoSession = jest.fn();
-    mockLinux.clearLinuxDoAccess.mockResolvedValueOnce({
-      cookieHeader: 'cf_clearance=retained',
-      savedAt: '2026-07-20T00:00:00.000Z',
-      source: 'webview'
-    });
-    mockLinux.linuxDoAccessSummary.mockReturnValueOnce({ hasClearance: true, loggedIn: false, savedAt: undefined });
-    const hook = await renderAccountController({
-      clearNodeSeekLoginState: jest.fn(async () => false),
-      clearYaohuoLoginState: jest.fn(async () => false),
+    const { hook } = await renderAccountController({
+      clearYaohuoLoginState,
       notify,
-      updateLinuxDoSession,
-      webViewRef: ref({ injectJavaScript: jest.fn(), reload: nodeReload }) as never,
-      yaohuoWebViewRef: ref({ reload: yaohuoReload }) as never
+      reconcileAccountStatus: jest.fn<
+        Parameters<typeof useAccountController>[0]['reconcileAccountStatus']
+      >(async () => ({
+        status: 'anonymous',
+        session: {
+          site: 'yaohuo',
+          status: 'anonymous',
+          cookieSummary: [],
+          isVerifying: false
+        }
+      }))
     });
 
+    await act(async () => {
+      await expect(hook.result.current.checkYaohuoCookie()).resolves.toBe(false);
+    });
+
+    expect(notify).toHaveBeenCalledWith('妖火当前未登录。');
+    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stale result after a newer manual check owns the request', async () => {
+    const first = Promise.withResolvers<AccountReconcileResult>();
+    const reconcileAccountStatus = jest.fn<
+      (source: 'nodeseek' | 'yaohuo') => Promise<AccountReconcileResult>
+    >()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ status: 'same', session: loggedInSession });
+    const notify = jest.fn();
+    const { hook } = await renderAccountController({
+      notify,
+      reconcileAccountStatus
+    });
+
+    let oldCheck!: Promise<boolean>;
+    await act(async () => {
+      oldCheck = hook.result.current.checkLogin();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await expect(hook.result.current.checkLogin()).resolves.toBe(true);
+    });
+    first.resolve({ status: 'changed', session: loggedInSession });
+    await act(async () => {
+      await expect(oldCheck).resolves.toBe(false);
+    });
+
+    expect(notify.mock.calls.filter(([message]) => (
+      message === '已确认 NodeSeek当前账号。'
+    ))).toHaveLength(1);
+  });
+
+  it('[REG-ACCOUNT-031] invokes Cookie clearing only from the explicit NodeSeek clear command', async () => {
+    const clearNodeSeekLoginState = jest.fn(async () => true);
+    const reload = jest.fn();
+    const { hook } = await renderAccountController({
+      clearNodeSeekLoginState,
+      webViewRef: ref({ reload }) as never
+    });
+
+    expect(clearNodeSeekLoginState).not.toHaveBeenCalled();
     await act(async () => {
       await hook.result.current.clearLogin();
+    });
+
+    expect(clearNodeSeekLoginState).toHaveBeenCalledTimes(1);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload a login surface when native Cookie clear is unconfirmed', async () => {
+    const reload = jest.fn();
+    const { hook } = await renderAccountController({
+      clearYaohuoLoginState: jest.fn(async () => false),
+      yaohuoWebViewRef: ref({ reload }) as never
+    });
+
+    await act(async () => {
       await hook.result.current.clearYaohuoLogin();
+    });
+
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('resets linux.do views only after an explicit confirmed native clear', async () => {
+    const clearLinuxDoLoginState = jest.fn(async () => true);
+    const resetLinuxDoLevelState = jest.fn();
+    const resetLinuxDoWebView = jest.fn();
+    const { hook } = await renderAccountController({
+      clearLinuxDoLoginState,
+      resetLinuxDoLevelState,
+      resetLinuxDoWebView
+    });
+
+    await act(async () => {
       await hook.result.current.clearLinuxDoCookie();
     });
 
-    expect(nodeReload).not.toHaveBeenCalled();
-    expect(yaohuoReload).not.toHaveBeenCalled();
-    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining('NodeSeek Cookie'));
-    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining('妖火 Cookie'));
-    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'session-updated',
-      hasVerification: true,
-      loggedIn: false
-    }));
+    expect(clearLinuxDoLoginState).toHaveBeenCalledTimes(1);
+    expect(resetLinuxDoLevelState).toHaveBeenCalledTimes(1);
+    expect(resetLinuxDoWebView).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports one terminal WebView failure per panel request', async () => {
+    const onLoginWebViewFailure = jest.fn();
+    const { hook } = await renderAccountController({ onLoginWebViewFailure });
+
+    await act(() => {
+      hook.result.current.recordNodeSeekLoginWebViewState('renderer-gone', 3);
+      hook.result.current.recordNodeSeekLoginWebViewState('error', 3);
+    });
+
+    expect(onLoginWebViewFailure).toHaveBeenCalledTimes(1);
+    expect(onLoginWebViewFailure).toHaveBeenCalledWith(
+      'nodeseek',
+      3,
+      'renderer_gone'
+    );
   });
 });

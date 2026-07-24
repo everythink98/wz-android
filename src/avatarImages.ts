@@ -2,7 +2,10 @@ import { imageRequestHeadersForUrl, normalizeImagePreviewUrl } from './htmlImage
 import { fetchWithTimeout } from './request';
 
 type AvatarFetcher = (input: string, init?: RequestInit) => Promise<Response>;
-type AvatarLoadOptions = { signal?: AbortSignal };
+type AvatarLoadOptions = {
+  cacheIdentity?: string;
+  signal?: AbortSignal;
+};
 const RETRY_LATER_AVATAR_RESULT = Symbol('retry-later-avatar-result');
 const AVATAR_SVG_TEXT_CACHE_LIMIT = 200;
 const AVATAR_SVG_TIMEOUT_MS = 4000;
@@ -32,7 +35,10 @@ export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetche
       return null;
     }
   }
-  const cached = avatarSvgTextCache.get(clean);
+  const cacheKey = options.cacheIdentity
+    ? `${options.cacheIdentity}:${clean}`
+    : clean;
+  const cached = avatarSvgTextCache.get(cacheKey);
   if (cached) {
     return cached;
   }
@@ -40,16 +46,16 @@ export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetche
     .then(() => loadRemoteAvatarSvgTextUncached(clean, fetcher))
     .then((result) => {
       if (result === RETRY_LATER_AVATAR_RESULT) {
-        avatarSvgTextCache.delete(clean);
+        avatarSvgTextCache.delete(cacheKey);
         return null;
       }
       return result;
     })
     .catch(() => {
-      avatarSvgTextCache.delete(clean);
+      avatarSvgTextCache.delete(cacheKey);
       return null;
     });
-  rememberAvatarSvgTextRequest(clean, request);
+  rememberAvatarSvgTextRequest(cacheKey, request);
   return request;
 }
 

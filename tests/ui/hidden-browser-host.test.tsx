@@ -30,6 +30,46 @@ describe('HiddenBrowserHost linux.do transport', () => {
     mockWebViewPropsByUrl.clear();
   });
 
+  it('[REG-ACCOUNT-026] never injects saved app cookies into the shared site WebViews', async () => {
+    await render(
+      <HiddenBrowserHost
+        blockedMessage=""
+        failLinuxDoBrowserFetchById={jest.fn()}
+        failNodeSeekBrowserFetchById={jest.fn()}
+        handleLinuxDoBrowserFetchMessage={jest.fn()}
+        handleNodeSeekBrowserFetchMessage={jest.fn()}
+        linuxDoBrowserWebViewRef={createRef<WebView>()}
+        nodeSeekBrowserWebViewRef={createRef<WebView>()}
+        onLinuxDoHttpErrorStatus={jest.fn()}
+        onNodeSeekHttpErrorStatus={jest.fn()}
+        state={{
+          linuxDo: {
+            request: {
+              id: 2,
+              url: 'https://linux.do/latest.json'
+            },
+            userAgent: 'LinuxDo Agent'
+          },
+          nodeSeek: {
+            request: {
+              id: 1,
+              url: 'https://www.nodeseek.com/post-1-1'
+            },
+            userAgent: 'NodeSeek Agent'
+          }
+        }}
+        styles={{} as never}
+      />
+    );
+
+    expect(mockWebViewPropsByUrl.get('https://www.nodeseek.com/post-1-1')?.source).toEqual({
+      uri: 'https://www.nodeseek.com/post-1-1'
+    });
+    expect(mockWebViewPropsByUrl.get('https://linux.do/latest.json')?.source).toEqual({
+      uri: 'https://linux.do/latest.json'
+    });
+  });
+
   it('inspects a main-document 429 instead of failing before DOM classification', async () => {
     const failLinuxDoBrowserFetchById = jest.fn();
     const onLinuxDoHttpErrorStatus = jest.fn();

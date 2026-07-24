@@ -1,18 +1,10 @@
-import { useCallback } from 'react';
-import { isCancelledError, useQueries } from '@tanstack/react-query';
-import * as SecureStore from 'expo-secure-store';
-import { checkLinuxDoLoginAccess, checkYaohuoLogin, getCurrentUserProfile } from '../sources/sourceGateway';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { isCancelledError, useQuery, type QueryFunctionContext } from '@tanstack/react-query';
+import { checkLinuxDoLoginAccess, checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '../sources/sourceGateway';
 import { errorMessage, isCanceledRequest } from '../appUtils';
-import { summarizeYaohuoCookies, yaohuoCookieMapFromHeader } from '../yaohuoCookies';
-import { parseNodeSeekDocumentCookie, summarizeNodeSeekCookies } from '../nodeseekCookies';
-import {
-  clearLinuxDoAccessForGeneration,
-  currentLinuxDoAccessGeneration,
-  linuxDoAccessSummary,
-  loadLinuxDoAccess,
-  parseLinuxDoDocumentCookie,
-  summarizeLinuxDoCookies
-} from '../linuxdoCookieBridge';
+import { summarizeYaohuoCookieHeader } from '../yaohuoSession';
+import { summarizeNodeSeekCookieHeader } from '../nodeseekSession';
+import { summarizeLinuxDoCookieHeader } from '../linuxdoSession';
 import {
   createSiteSessionStates,
   createSiteSessionViewModel,
@@ -22,12 +14,11 @@ import {
   type SiteSessionViewModel,
   type SiteSessionViewModels
 } from '../siteSessionState';
-import type { FeedSource, Source } from '../types';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
-import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
+import { sourceErrorFromUnknown } from '../sourceErrors';
 import type { XiaoyinsiAuthorizationReadResult } from './useXiaoyinsiAuthController';
 import { isLinuxDoLoginCheckUnknown } from './accountStatusHelpers';
-import { appQueryClient, forumQueryKeys, type ForumCredentialScope } from './serverState';
+import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -36,22 +27,32 @@ import {
   withDiagnosticFetcher,
   type DiagnosticTrace
 } from '../diagnostics';
+import {
+  readManagedCookieHeader as readManagedCookieHeaderFromNative,
+  type ManagedCookieReadResult
+} from '../managedCookies';
+import { cancelForumSourceQueries } from './sessionControllerHelpers';
 
-const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
+const NODESEEK_ACCOUNT_URL = 'https://www.nodeseek.com/';
+const LINUXDO_ACCOUNT_URL = 'https://linux.do/session/current.json';
+const YAOHUO_ACCOUNT_URL = 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
 type RefreshAccountStatusOptions = { silent?: boolean };
 type StatusSource = 'linuxdo' | 'nodeseek' | 'xiaoyinsi' | 'yaohuo';
 type StatusQueryData = {
   failed?: boolean;
   session?: SiteSessionState;
 };
+export type AccountReconcileResult =
+  | { status: 'anonymous' | 'changed' | 'same'; session: SiteSessionState; partial?: boolean }
+  | { status: 'stale' }
+  | { status: 'unknown'; error: string };
 
-const STATUS_SOURCES = ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const satisfies readonly StatusSource[];
-const STATUS_LABELS: Record<StatusSource, string> = {
-  linuxdo: 'linux.do',
-  nodeseek: 'NodeSeek',
-  xiaoyinsi: '小隐寺',
-  yaohuo: '妖火'
-};
+const STATUS_DESCRIPTORS = {
+  nodeseek: { source: 'nodeseek', label: 'NodeSeek' },
+  linuxdo: { source: 'linuxdo', label: 'linux.do' },
+  yaohuo: { source: 'yaohuo', label: '妖火' },
+  xiaoyinsi: { source: 'xiaoyinsi', label: '小隐寺' }
+} as const satisfies Record<StatusSource, { source: StatusSource; label: string }>;
 
 function isCanceledStatusQuery(error: unknown) {
   return isCancelledError(error) || isCanceledRequest(error);
@@ -59,6 +60,15 @@ function isCanceledStatusQuery(error: unknown) {
 
 function canceledStatusQuery(): never {
   throw new Error(REQUEST_CANCELED_MESSAGE);
+}
+
+function managedCookieHeaderOrThrow(result: ManagedCookieReadResult) {
+  if (result.status === 'ok') {
+    return result.header;
+  }
+  throw new Error(result.status === 'unsupported'
+    ? '当前安装包不支持读取 WebView Cookie'
+    : result.message);
 }
 
 function sessionFromEvents(site: StatusSource, events: ScopedSiteSessionEvent[]) {
@@ -71,141 +81,141 @@ function sessionFromEvents(site: StatusSource, events: ScopedSiteSessionEvent[])
 function accountStatusViewModel(
   base: SiteSessionViewModel,
   data: StatusQueryData | undefined,
-  error: unknown
+  error: unknown,
+  identityCheck?: { pending: boolean; error?: string }
 ) {
-  const ownsVisibleWorkflow = base.status === 'verifying'
-    || base.status === 'authorizing'
-    || base.status === 'verification-required';
+  const ownsVisibleWorkflow = base.status === 'verification-required'
+    || ((base.status === 'verifying' || base.status === 'authorizing')
+      && identityCheck?.pending !== false);
   const remote = !ownsVisibleWorkflow && data?.session
     ? createSiteSessionViewModel(data.session)
     : base;
-  return error && !isCanceledStatusQuery(error)
+  const withQueryError = error && !isCanceledStatusQuery(error)
     ? { ...remote, lastError: errorMessage(error) }
     : remote;
+  return identityCheck?.pending
+    ? {
+      ...withQueryError,
+      canWrite: false,
+      identityTrust: 'pending' as const,
+      summaryLabel: '登录状态待确认',
+      ...(identityCheck.error ? { lastError: identityCheck.error } : {})
+    }
+    : withQueryError;
 }
 
 export function useAccountStatusController({
-  clearYaohuoLoginState,
-  credentialScope,
-  currentNodeSeekCredentialGeneration,
-  currentYaohuoCredentialGeneration,
-  linuxDoWebViewCookieHeaderRef,
+  sessionEpochs,
   linuxDoUserAgentRef,
-  loadNodeSeekCookieForSource,
   fetcher,
   nodeSeekUserAgentRef,
   notify,
-  onLinuxDoExpired,
+  onAccountStatusChanged,
+  readManagedCookieHeader = readManagedCookieHeaderFromNative,
   readXiaoyinsiAuthorization,
-  resetLinuxDoLevelState,
-  saveNodeSeekCookieHeader,
-  sessionViewModels,
-  setLinuxDoWebViewCookieHeader
+  sessionViewModels
 }: {
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<boolean>;
-  credentialScope: ForumCredentialScope;
-  currentNodeSeekCredentialGeneration: () => number;
-  currentYaohuoCredentialGeneration: () => number;
-  linuxDoWebViewCookieHeaderRef: { current: string };
+  sessionEpochs: ForumSessionEpochs;
   linuxDoUserAgentRef: { current: string };
-  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
-  onLinuxDoExpired: (message: string) => void;
+  onAccountStatusChanged: (
+    source: StatusSource,
+    recoveryQueryKey: readonly unknown[],
+    session: SiteSessionState
+  ) => void;
+  readManagedCookieHeader?: (exactUrl: string) => Promise<ManagedCookieReadResult>;
   readXiaoyinsiAuthorization: (
     trace?: DiagnosticTrace,
     options?: { signal?: AbortSignal }
   ) => Promise<XiaoyinsiAuthorizationReadResult>;
-  resetLinuxDoLevelState: () => void;
   sessionViewModels: SiteSessionViewModels;
-  saveNodeSeekCookieHeader: (
-    cookies: Record<string, { name?: string; value?: string; domain?: string }>,
-    options?: { generation?: number; userId?: number | null; diagnosticTrace?: DiagnosticTrace }
-  ) => Promise<string>;
-  setLinuxDoWebViewCookieHeader: (cookieHeader: string) => void;
 }) {
-  const statusQueries = useQueries({
-    queries: [
-      {
+  const [identityChecks, setIdentityChecks] = useState<Record<StatusSource, {
+    checking?: boolean;
+    pending: boolean;
+    error?: string;
+  }>>({
+    linuxdo: { pending: false },
+    nodeseek: { pending: false },
+    xiaoyinsi: { pending: false },
+    yaohuo: { pending: false }
+  });
+  const statusQueryDefinitions = useMemo(() => {
+    const nodeSeekStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'nodeseek' });
+    const linuxDoStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'linuxdo' });
+    const yaohuoStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'yaohuo' });
+    const xiaoyinsiStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'xiaoyinsi' });
+    return {
+    nodeseek: {
         enabled: false,
-        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'nodeseek' }),
-        queryFn: async ({ signal }): Promise<StatusQueryData> => {
+        queryKey: nodeSeekStatusQueryKey,
+        queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'nodeseek' });
-          let generation = currentNodeSeekCredentialGeneration();
-          let nodeSeekCredentialUserId: number | null = null;
+          let cookieSummary: string[] = [];
           try {
             const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
-            const cookieHeader = await loadNodeSeekCookieForSource('nodeseek', {
-              captureGeneration: (nextGeneration) => { generation = nextGeneration; },
-              captureNodeSeekUserId: (nextUserId) => { nodeSeekCredentialUserId = nextUserId; },
-              diagnosticTrace: trace
-            });
-            if (signal.aborted || currentNodeSeekCredentialGeneration() !== generation) {
+            const cookieRead = await readManagedCookieHeader(NODESEEK_ACCOUNT_URL);
+            const cookieHeader = managedCookieHeaderOrThrow(cookieRead);
+            if (signal.aborted) {
               finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
               return canceledStatusQuery();
             }
-            const summary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(cookieHeader || ''));
+            const summary = summarizeNodeSeekCookieHeader(cookieHeader);
+            cookieSummary = summary.names;
             markDiagnosticStage(trace, 'credential', {
               source: 'nodeseek',
-              generation,
               hasCredential: summary.count > 0
             });
-            const currentUser = summary.loggedIn
-              ? await getCurrentUserProfile({
+            const currentUser = await getCurrentUserProfile({
                 source: 'nodeseek',
+                nodeSeekAuthenticated: true,
                 fetcher: diagnosticFetcher,
-                nodeSeekCookie: cookieHeader,
-                nodeSeekUserId: nodeSeekCredentialUserId,
                 nodeSeekUserAgent: nodeSeekUserAgentRef.current,
                 signal
-              })
-              : null;
-            if (signal.aborted || currentNodeSeekCredentialGeneration() !== generation) {
-              finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
-              return canceledStatusQuery();
-            }
-            const currentUserId = Number(currentUser?.id);
-            let persistenceError: unknown;
-            if (cookieHeader && Number.isInteger(currentUserId) && currentUserId > 0) {
-              try {
-                await saveNodeSeekCookieHeader(parseNodeSeekDocumentCookie(cookieHeader), {
-                  generation,
-                  userId: currentUserId,
-                  diagnosticTrace: trace
-                });
-              } catch (error) {
-                persistenceError = error;
-              }
-            }
-            if (signal.aborted || currentNodeSeekCredentialGeneration() !== generation) {
+              });
+            if (signal.aborted) {
               finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
               return canceledStatusQuery();
             }
             const checkedAt = new Date().toISOString();
-            finishDiagnosticTrace(trace, persistenceError ? 'partial' : 'success', {
-              source: 'nodeseek',
-              ...(persistenceError ? { reason: normalizeDiagnosticReason(persistenceError) } : {})
-            });
+            finishDiagnosticTrace(trace, 'success', { source: 'nodeseek' });
             return {
-              failed: Boolean(persistenceError),
               session: sessionFromEvents('nodeseek', [{
                 site: 'nodeseek',
                 type: 'cookie-loaded',
                 cookieSummary: summary.names,
                 hasVerification: summary.count > 0,
-                loggedIn: summary.loggedIn,
+                loggedIn: Boolean(currentUser),
                 currentUser,
                 at: checkedAt
-              }, ...(persistenceError ? [{
-                site: 'nodeseek' as const,
-                type: 'check-failed' as const,
-                message: errorMessage(persistenceError),
-                at: checkedAt
-              }] : [])])
+              }])
             };
           } catch (error) {
             const canceled = signal.aborted || isCanceledStatusQuery(error);
+            const sourceError = canceled ? undefined : sourceErrorFromUnknown('nodeseek', error);
+            if (sourceError?.kind === 'login-expired') {
+              if (signal.aborted) {
+                finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
+                return canceledStatusQuery();
+              }
+              finishDiagnosticTrace(trace, 'success', {
+                source: 'nodeseek',
+                reason: 'expired'
+              });
+              return {
+                session: sessionFromEvents('nodeseek', [{
+                  site: 'nodeseek',
+                  type: 'cookie-loaded',
+                  cookieSummary,
+                  hasVerification: cookieSummary.length > 0,
+                  loggedIn: false,
+                  currentUser: null,
+                  at: new Date().toISOString()
+                }])
+              };
+            }
             finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
               source: 'nodeseek',
               reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
@@ -214,43 +224,26 @@ export function useAccountStatusController({
           }
         }
       },
-      {
+    linuxdo: {
         enabled: false,
-        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'linuxdo' }),
-        queryFn: async ({ signal }): Promise<StatusQueryData> => {
+        queryKey: linuxDoStatusQueryKey,
+        queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'linuxdo' });
-          const generation = currentLinuxDoAccessGeneration();
           try {
             const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
-            let access = await loadLinuxDoAccess();
-            if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
+            const cookieRead = await readManagedCookieHeader(LINUXDO_ACCOUNT_URL);
+            const cookieHeader = managedCookieHeaderOrThrow(cookieRead);
+            if (signal.aborted) {
               finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
               return canceledStatusQuery();
             }
-            let summary = linuxDoAccessSummary(access);
-            const cookieHeader = access?.cookieHeader || '';
-            const userAgent = linuxDoUserAgentRef.current || access?.userAgent;
+            const cookieSummary = summarizeLinuxDoCookieHeader(cookieHeader);
+            const userAgent = linuxDoUserAgentRef.current;
             markDiagnosticStage(trace, 'credential', {
               source: 'linuxdo',
-              generation,
               hasCredential: Boolean(cookieHeader)
             });
-            if (!cookieHeader || !summary.loggedIn) {
-              finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
-              return {
-                session: sessionFromEvents('linuxdo', [{
-                  site: 'linuxdo',
-                  type: 'cookie-loaded',
-                  cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(cookieHeader)).names,
-                  hasVerification: summary.hasClearance,
-                  loggedIn: false,
-                  currentUser: null,
-                  at: new Date().toISOString()
-                }])
-              };
-            }
             const login = await checkLinuxDoLoginAccess({
-              cookieHeader,
               fetcher: diagnosticFetcher,
               userAgent,
               signal
@@ -259,47 +252,28 @@ export function useAccountStatusController({
               throw new Error(login?.message || 'linux.do 状态暂时无法确认');
             }
             if (login?.loginRequired) {
-              let cleanupError: unknown;
-              try {
-                access = await clearLinuxDoAccessForGeneration(generation, cookieHeader);
-              } catch (error) {
-                cleanupError = error;
-              }
-              if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
+              if (signal.aborted) {
                 finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
                 return canceledStatusQuery();
               }
-              summary = linuxDoAccessSummary(access);
-              if (!cleanupError) {
-                const nextCookieHeader = access?.cookieHeader || '';
-                linuxDoWebViewCookieHeaderRef.current = nextCookieHeader;
-                setLinuxDoWebViewCookieHeader(nextCookieHeader);
-              }
-              resetLinuxDoLevelState();
-              const expiryMessage = cleanupError
-                ? 'linux.do 登录已失效，本机 Cookie 清理未完成，请重试。'
-                : login.message || 'linux.do 登录已失效';
-              onLinuxDoExpired(expiryMessage);
-              finishDiagnosticTrace(trace, cleanupError ? 'partial' : 'success', {
-                source: 'linuxdo',
-                ...(cleanupError ? { reason: normalizeDiagnosticReason(cleanupError) } : {})
-              });
+              finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
               return {
-                failed: Boolean(cleanupError),
                 session: sessionFromEvents('linuxdo', [{
                   site: 'linuxdo',
-                  type: 'login-expired',
-                  message: expiryMessage
+                  type: 'cookie-loaded',
+                  cookieSummary: cookieSummary.names,
+                  hasVerification: cookieSummary.hasClearance,
+                  loggedIn: false,
+                  currentUser: null,
+                  at: new Date().toISOString()
                 }])
               };
             }
-            const currentUser = await getCurrentUserProfile({
-              source: 'linuxdo',
-              fetcher: diagnosticFetcher,
-              discourseAuth: { linuxdo: { cookieHeader, userAgent } },
-              signal
-            });
-            if (signal.aborted || currentLinuxDoAccessGeneration() !== generation) {
+            const currentUser = login?.currentUser;
+            if (!currentUser) {
+              throw new Error('linux.do 状态暂时无法确认');
+            }
+            if (signal.aborted) {
               finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
               return canceledStatusQuery();
             }
@@ -308,9 +282,9 @@ export function useAccountStatusController({
               session: sessionFromEvents('linuxdo', [{
                 site: 'linuxdo',
                 type: 'cookie-loaded',
-                cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(cookieHeader)).names,
-                hasVerification: summary.hasClearance,
-                loggedIn: Boolean(login?.ok),
+                cookieSummary: cookieSummary.names,
+                hasVerification: cookieSummary.hasClearance,
+                loggedIn: true,
                 currentUser,
                 at: new Date().toISOString()
               }])
@@ -325,26 +299,37 @@ export function useAccountStatusController({
           }
         }
       },
-      {
+    yaohuo: {
         enabled: false,
-        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'yaohuo' }),
-        queryFn: async ({ signal }): Promise<StatusQueryData> => {
+        queryKey: yaohuoStatusQueryKey,
+        queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'yaohuo' });
-          const generation = currentYaohuoCredentialGeneration();
           try {
             const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
-            const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-            if (signal.aborted || currentYaohuoCredentialGeneration() !== generation) {
+            const cookieRead = await readManagedCookieHeader(YAOHUO_ACCOUNT_URL);
+            const cookieHeader = managedCookieHeaderOrThrow(cookieRead);
+            if (signal.aborted) {
               finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
               return canceledStatusQuery();
             }
-            const cookieSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookieHeader || '')).names;
+            const cookieSummary = summarizeYaohuoCookieHeader(cookieHeader).names;
             markDiagnosticStage(trace, 'credential', {
               source: 'yaohuo',
-              generation,
               hasCredential: Boolean(cookieHeader)
             });
-            if (!cookieHeader) {
+            const check = await checkYaohuoLogin({
+              yaohuoFetcher: diagnosticFetcher,
+              signal
+            });
+            const expired = 'reason' in check && check.reason === 'expired';
+            if (!check.ok && !expired) {
+              throw new Error(check.message || '妖火登录状态暂时无法确认。');
+            }
+            if (expired) {
+              if (signal.aborted) {
+                finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
+                return canceledStatusQuery();
+              }
               finishDiagnosticTrace(trace, 'success', { source: 'yaohuo' });
               return {
                 session: sessionFromEvents('yaohuo', [{
@@ -358,65 +343,53 @@ export function useAccountStatusController({
                 }])
               };
             }
-            const check = await checkYaohuoLogin({
-              yaohuoCookie: cookieHeader,
-              yaohuoFetcher: diagnosticFetcher,
-              signal
-            });
-            const expired = 'reason' in check && check.reason === 'expired';
-            if (expired) {
-              let cleanupError: unknown;
-              try {
-                await clearYaohuoLoginState({
-                  generation,
-                  expiredMessage: '妖火登录已失效'
-                });
-              } catch (error) {
-                cleanupError = error;
-              }
-              if (signal.aborted || currentYaohuoCredentialGeneration() !== generation) {
-                finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
-                return canceledStatusQuery();
-              }
-              finishDiagnosticTrace(trace, cleanupError ? 'partial' : 'success', {
-                source: 'yaohuo',
-                ...(cleanupError ? { reason: normalizeDiagnosticReason(cleanupError) } : {})
-              });
-              return {
-                failed: Boolean(cleanupError),
-                session: sessionFromEvents('yaohuo', [{
-                  site: 'yaohuo',
-                  type: 'login-expired',
-                  message: cleanupError ? '妖火登录已失效，本机 Cookie 清理未完成，请重试。' : '妖火登录已失效'
-                }])
-              };
+            const verifiedUser = 'currentUser' in check ? check.currentUser : undefined;
+            if (!verifiedUser) {
+              throw new Error('妖火登录状态暂时无法确认。');
             }
-            const loggedIn = check.ok && !check.loginRequired;
-            const currentUser = loggedIn
-              ? ('currentUser' in check && check.currentUser
-                ? check.currentUser
-                : await getCurrentUserProfile({
-                  source: 'yaohuo',
-                  fetcher: diagnosticFetcher,
-                  yaohuoCookie: cookieHeader,
-                  signal
-                }))
-              : null;
-            if (signal.aborted || currentYaohuoCredentialGeneration() !== generation) {
+            let currentUser = verifiedUser;
+            let profileError: unknown;
+            try {
+              currentUser = await getUserProfile({
+                source: 'yaohuo',
+                id: verifiedUser.id,
+                username: verifiedUser.username,
+                fetcher: diagnosticFetcher,
+                signal
+              });
+            } catch (error) {
+              if (signal.aborted || isCanceledStatusQuery(error)) {
+                throw error;
+              }
+              profileError = error;
+            }
+            if (signal.aborted) {
               finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
               return canceledStatusQuery();
             }
-            finishDiagnosticTrace(trace, 'success', { source: 'yaohuo' });
-            return {
-              session: sessionFromEvents('yaohuo', [{
+            finishDiagnosticTrace(trace, profileError ? 'partial' : 'success', {
+              source: 'yaohuo',
+              ...(profileError ? { reason: normalizeDiagnosticReason(profileError) } : {})
+            });
+            const events: ScopedSiteSessionEvent[] = [{
+              site: 'yaohuo',
+              type: 'cookie-loaded',
+              cookieSummary,
+              hasVerification: false,
+              loggedIn: true,
+              currentUser,
+              at: new Date().toISOString()
+            }];
+            if (profileError) {
+              events.push({
                 site: 'yaohuo',
-                type: 'cookie-loaded',
-                cookieSummary,
-                hasVerification: false,
-                loggedIn,
-                currentUser,
-                at: new Date().toISOString()
-              }])
+                type: 'check-failed',
+                message: errorMessage(profileError)
+              });
+            }
+            return {
+              failed: Boolean(profileError),
+              session: sessionFromEvents('yaohuo', events)
             };
           } catch (error) {
             const canceled = signal.aborted || isCanceledStatusQuery(error);
@@ -428,10 +401,10 @@ export function useAccountStatusController({
           }
         }
       },
-      {
+    xiaoyinsi: {
         enabled: false,
-        queryKey: forumQueryKeys.accountStatus({ credentialScope, source: 'xiaoyinsi' }),
-        queryFn: async ({ signal }): Promise<StatusQueryData> => {
+        queryKey: xiaoyinsiStatusQueryKey,
+        queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
           try {
             const result = await readXiaoyinsiAuthorization(trace, { signal });
@@ -444,9 +417,17 @@ export function useAccountStatusController({
                 : '小隐寺状态暂时无法确认');
             }
             finishDiagnosticTrace(trace, 'success', { source: 'xiaoyinsi' });
+            const sessionEvent = result.authenticated === false
+              ? {
+                type: 'cookie-loaded' as const,
+                loggedIn: false,
+                currentUser: null,
+                at: new Date().toISOString()
+              }
+              : result.sessionEvent;
             return {
               session: sessionFromEvents('xiaoyinsi', [{
-                ...result.sessionEvent,
+                ...sessionEvent,
                 site: 'xiaoyinsi'
               } as ScopedSiteSessionEvent])
             };
@@ -460,39 +441,198 @@ export function useAccountStatusController({
           }
         }
       }
-    ]
-  });
-
-  const [nodeSeekStatus, linuxDoStatus, yaohuoStatus, xiaoyinsiStatus] = statusQueries;
-
-  const accountSessionViewModels: SiteSessionViewModels = {
-    nodeseek: accountStatusViewModel(sessionViewModels.nodeseek, nodeSeekStatus.data, nodeSeekStatus.error),
-    linuxdo: accountStatusViewModel(sessionViewModels.linuxdo, linuxDoStatus.data, linuxDoStatus.error),
-    yaohuo: accountStatusViewModel(sessionViewModels.yaohuo, yaohuoStatus.data, yaohuoStatus.error),
-    xiaoyinsi: accountStatusViewModel(sessionViewModels.xiaoyinsi, xiaoyinsiStatus.data, xiaoyinsiStatus.error)
+    };
+  }, [
+    fetcher,
+    linuxDoUserAgentRef,
+    nodeSeekUserAgentRef,
+    readManagedCookieHeader,
+    readXiaoyinsiAuthorization,
+    sessionEpochs.linuxdo,
+    sessionEpochs.nodeseek,
+    sessionEpochs.xiaoyinsi,
+    sessionEpochs.yaohuo
+  ]);
+  const nodeSeekStatus = useQuery(statusQueryDefinitions.nodeseek);
+  const linuxDoStatus = useQuery(statusQueryDefinitions.linuxdo);
+  const yaohuoStatus = useQuery(statusQueryDefinitions.yaohuo);
+  const xiaoyinsiStatus = useQuery(statusQueryDefinitions.xiaoyinsi);
+  const statusQueries = {
+    linuxdo: linuxDoStatus,
+    nodeseek: nodeSeekStatus,
+    xiaoyinsi: xiaoyinsiStatus,
+    yaohuo: yaohuoStatus
   };
 
-  const statusBusy = statusQueries.some((query) => query.fetchStatus === 'fetching');
-  const refreshAccountStatus = useCallback(async (options: RefreshAccountStatusOptions = {}) => {
-    if (appQueryClient.isFetching({
-      predicate: (query) => query.queryKey[0] === 'forum' && query.queryKey[2] === 'account-status'
-    })) {
-      return;
+  const accountSessionViewModels: SiteSessionViewModels = {
+    nodeseek: accountStatusViewModel(sessionViewModels.nodeseek, nodeSeekStatus.data, nodeSeekStatus.error, identityChecks.nodeseek),
+    linuxdo: accountStatusViewModel(sessionViewModels.linuxdo, linuxDoStatus.data, linuxDoStatus.error, identityChecks.linuxdo),
+    yaohuo: accountStatusViewModel(sessionViewModels.yaohuo, yaohuoStatus.data, yaohuoStatus.error, identityChecks.yaohuo),
+    xiaoyinsi: accountStatusViewModel(sessionViewModels.xiaoyinsi, xiaoyinsiStatus.data, xiaoyinsiStatus.error, identityChecks.xiaoyinsi)
+  };
+
+  const probeGenerationRef = useRef<Record<StatusSource, number>>({
+    linuxdo: 0,
+    nodeseek: 0,
+    xiaoyinsi: 0,
+    yaohuo: 0
+  });
+  const activeProbeRef = useRef<Partial<Record<StatusSource, {
+    generation: number;
+    promise: Promise<AccountReconcileResult>;
+    queryKey: readonly unknown[];
+    surfaceGeneration: number;
+  }>>>({});
+  const beginAccountIdentityCheck = useCallback((
+    source: StatusSource,
+    surfaceGeneration?: number
+  ) => {
+    void cancelForumSourceQueries(source);
+    if (surfaceGeneration !== undefined) {
+      const activeProbe = activeProbeRef.current[source];
+      if (activeProbe && activeProbe.surfaceGeneration < surfaceGeneration) {
+        probeGenerationRef.current[source] = Math.max(
+          probeGenerationRef.current[source] + 1,
+          surfaceGeneration
+        );
+        void appQueryClient.cancelQueries({
+          queryKey: activeProbe.queryKey,
+          exact: true
+        });
+      } else {
+        probeGenerationRef.current[source] = Math.max(
+          probeGenerationRef.current[source],
+          surfaceGeneration
+        );
+      }
     }
-    const results = await Promise.all(statusQueries.map((query) => query.refetch({ cancelRefetch: false })));
+    setIdentityChecks((current) => ({
+      ...current,
+      [source]: { checking: true, pending: true }
+    }));
+  }, []);
+  const reconcileAccountStatus = useCallback((
+    source: StatusSource,
+    options: { surfaceGeneration?: number } = {}
+  ): Promise<AccountReconcileResult> => {
+    const requestedSurfaceGeneration = options.surfaceGeneration || 0;
+    const activeProbe = activeProbeRef.current[source];
+    if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
+      return activeProbe.promise;
+    }
+    if (activeProbe) {
+      void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
+    }
+    beginAccountIdentityCheck(source);
+    const generation = options.surfaceGeneration === undefined
+      ? probeGenerationRef.current[source] + 1
+      : Math.max(probeGenerationRef.current[source] + 1, options.surfaceGeneration);
+    probeGenerationRef.current[source] = generation;
+    const probeQueryKey = forumQueryKeys.accountStatusProbe({
+      sessionEpochs,
+      generation,
+      source
+    });
+    const promise = (async (): Promise<AccountReconcileResult> => {
+      try {
+      const nextData = await appQueryClient.fetchQuery({
+        queryKey: probeQueryKey,
+        queryFn: statusQueryDefinitions[source].queryFn,
+        staleTime: 0
+      });
+      if (probeGenerationRef.current[source] !== generation || !nextData.session) {
+        return { status: 'stale' as const };
+      }
+      const canonicalQueryKey = statusQueryDefinitions[source].queryKey;
+      const previousData = appQueryClient.getQueryData<StatusQueryData>(canonicalQueryKey);
+      const previousIdentity = accountIdentityKey(previousData?.session || sessionViewModels[source]);
+      const nextIdentity = accountIdentityKey(nextData.session);
+      if (previousIdentity !== nextIdentity) {
+        onAccountStatusChanged(source, probeQueryKey, nextData.session);
+        setIdentityChecks((current) => ({
+          ...current,
+          [source]: { checking: false, pending: false }
+        }));
+        return {
+          status: nextIdentity.endsWith(':anonymous') ? 'anonymous' as const : 'changed' as const,
+          session: nextData.session,
+          partial: nextData.failed
+        };
+      }
+      appQueryClient.setQueryData(canonicalQueryKey, nextData);
+      setIdentityChecks((current) => ({
+        ...current,
+        [source]: { checking: false, pending: false }
+      }));
+      return {
+        status: 'same' as const,
+        session: nextData.session,
+        partial: nextData.failed
+      };
+      } catch (error) {
+      if (probeGenerationRef.current[source] !== generation) {
+        return { status: 'stale' as const };
+      }
+      if (isCanceledStatusQuery(error)) {
+        setIdentityChecks((current) => ({
+          ...current,
+          [source]: { checking: false, pending: true }
+        }));
+        return { status: 'stale' as const };
+      }
+      const message = errorMessage(error);
+      setIdentityChecks((current) => ({
+        ...current,
+        [source]: { checking: false, pending: true, error: message }
+      }));
+      return { status: 'unknown' as const, error: message };
+      } finally {
+        if (activeProbeRef.current[source]?.generation === generation) {
+          delete activeProbeRef.current[source];
+        }
+        appQueryClient.removeQueries({ queryKey: probeQueryKey, exact: true });
+      }
+    })();
+    activeProbeRef.current[source] = {
+      generation,
+      promise,
+      queryKey: probeQueryKey,
+      surfaceGeneration: requestedSurfaceGeneration
+    };
+    return promise;
+  }, [beginAccountIdentityCheck, sessionEpochs, onAccountStatusChanged, sessionViewModels, statusQueryDefinitions]);
+  const statusBusy = Object.values(statusQueries).some((query) => query.fetchStatus === 'fetching')
+    || Object.values(identityChecks).some((identityCheck) => identityCheck.checking);
+  const refreshAccountStatus = useCallback(async (options: RefreshAccountStatusOptions = {}) => {
+    const results = await Promise.all(
+      Object.values(STATUS_DESCRIPTORS).map(async (descriptor) => ({
+        descriptor,
+        result: await reconcileAccountStatus(descriptor.source)
+      }))
+    );
     if (options.silent) {
       return;
     }
-    const failedSites = results.flatMap((result, index) => {
-      const failed = Boolean(result.error && !isCanceledStatusQuery(result.error)) || Boolean(result.data?.failed);
-      return failed ? [STATUS_LABELS[STATUS_SOURCES[index]]] : [];
-    });
+    const failedSites = results.flatMap(({ descriptor, result }) => (
+      result.status === 'unknown' || ('partial' in result && result.partial)
+        ? [descriptor.label]
+        : []
+    ));
     notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
-  }, [notify, statusQueries]);
+  }, [notify, reconcileAccountStatus]);
 
   return {
     accountSessionViewModels,
+    beginAccountIdentityCheck,
+    reconcileAccountStatus,
     refreshAccountStatus,
     statusBusy
   };
+}
+
+function accountIdentityKey(session: Pick<SiteSessionState, 'currentUser' | 'site' | 'status'>) {
+  if (session.status === 'logged-in' && session.currentUser?.id) {
+    return `${session.site}:${session.currentUser.id}`;
+  }
+  return `${session.site}:anonymous`;
 }

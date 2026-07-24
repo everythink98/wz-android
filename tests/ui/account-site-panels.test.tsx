@@ -17,6 +17,7 @@ import {
 import { createStyles, createTheme } from '../../src/theme';
 
 let mockLoginWebViewProps: Record<string, any> = {};
+let mockLoginWebViewMountCount = 0;
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
@@ -62,6 +63,9 @@ jest.mock('react-native-webview', () => {
   const mockInjectJavaScript = jest.fn();
   const WebView = ReactModule.forwardRef(function MockWebView(props: Record<string, any>, ref) {
     mockLoginWebViewProps = props;
+    ReactModule.useEffect(() => {
+      mockLoginWebViewMountCount += 1;
+    }, []);
     ReactModule.useImperativeHandle(ref, () => ({
       injectJavaScript: mockInjectJavaScript,
       reload: mockReload
@@ -353,10 +357,59 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
+  it('[REG-ACCOUNT-022] keeps login WebViews mounted while a new credential fill attempt is injected', async () => {
+    mockLoginWebViewMountCount = 0;
+    const nodeSeek = await render(<NodeSeekLoginPanel {...nodeSeekProps({
+      credentialAttempt: 1,
+      loginFormMode: true,
+      showLoginPanel: true
+    })} />);
+    expect(mockLoginWebViewMountCount).toBe(1);
+    const nodeSeekWebViewMock = jest.requireMock('react-native-webview') as { mockInjectJavaScript: jest.Mock };
+    nodeSeekWebViewMock.mockInjectJavaScript.mockClear();
+
+    await nodeSeek.rerender(<NodeSeekLoginPanel {...nodeSeekProps({
+      credentialAttempt: 2,
+      loginFormMode: true,
+      showLoginPanel: true
+    })} />);
+    expect(mockLoginWebViewMountCount).toBe(1);
+    expect(nodeSeekWebViewMock.mockInjectJavaScript).toHaveBeenCalledWith(expect.stringContaining('const attempt = 2;'));
+    await nodeSeek.unmount();
+
+    mockLoginWebViewMountCount = 0;
+    const yaohuo = await render(<YaohuoLoginPanel {...yaohuoProps({
+      credentialAttempt: 1,
+      loginFormMode: true
+    })} />);
+    expect(mockLoginWebViewMountCount).toBe(1);
+    const yaohuoWebViewMock = jest.requireMock('react-native-webview') as { mockInjectJavaScript: jest.Mock };
+    yaohuoWebViewMock.mockInjectJavaScript.mockClear();
+
+    await yaohuo.rerender(<YaohuoLoginPanel {...yaohuoProps({
+      credentialAttempt: 2,
+      loginFormMode: true
+    })} />);
+    expect(mockLoginWebViewMountCount).toBe(1);
+    expect(yaohuoWebViewMock.mockInjectJavaScript).toHaveBeenCalledWith(expect.stringContaining('const attempt = 2;'));
+    await yaohuo.unmount();
+  });
+
   it('[REG-VERIFICATION-003] lets Android choose the linux.do verification WebView user agent', async () => {
     await render(<LinuxDoVerifyModal {...linuxDoVerifyProps()} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
+  });
+
+  it('[REG-ACCOUNT-019] invalidates the linux.do document probe on every navigation after the page was ready', async () => {
+    const onSetLoadingLinuxDoPage = jest.fn();
+    const view = await render(<LinuxDoVerifyModal {...linuxDoVerifyProps({ onSetLoadingLinuxDoPage })} />);
+
+    await fireEvent.press(view.getByLabelText('模拟 WebView 加载完成'));
+    onSetLoadingLinuxDoPage.mockClear();
+    await fireEvent.press(view.getByLabelText('模拟 WebView 开始加载'));
+
+    expect(onSetLoadingLinuxDoPage).toHaveBeenCalledWith(true, 1);
   });
 
   it('[REG-VERIFICATION-003] lets Android choose the Yaohuo login WebView user agent', async () => {

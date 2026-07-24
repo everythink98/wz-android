@@ -17,11 +17,10 @@ function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/b
 }
 
 describe('runYaohuoAction', () => {
-  it('sends yaohuo write requests directly with Android browser-like headers', async () => {
+  it('[REG-ACCOUNT-029] sends yaohuo writes through the native read-only cookie jar', async () => {
     const fetcher = vi.fn(async () => htmlResponse('<div class="tip">评论成功</div>'));
 
     const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoReplyRequest({
         topicId: '123',
         classId: '177',
@@ -33,11 +32,11 @@ describe('runYaohuoAction', () => {
 
     expect(fetcher).toHaveBeenCalledWith('https://www.yaohuo.me/bbs/book_re.aspx', expect.objectContaining({
       method: 'POST',
+      credentials: 'include',
       headers: expect.objectContaining({
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'content-type': 'application/x-www-form-urlencoded',
-        cookie: 'sidyaohuo=secret',
         origin: 'https://www.yaohuo.me',
         referer: 'https://www.yaohuo.me/bbs/',
         'sec-fetch-site': 'same-origin',
@@ -46,6 +45,7 @@ describe('runYaohuoAction', () => {
       body: expect.any(String),
       signal: expect.any(AbortSignal)
     }));
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('cookie');
     expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       headers: expect.not.objectContaining({
         'sec-ch-ua': expect.anything(),
@@ -74,7 +74,6 @@ describe('runYaohuoAction', () => {
     `, 200, 'https://www.yaohuo.me/bbs/favlist.aspx'));
 
     const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher
     });
@@ -97,7 +96,6 @@ describe('runYaohuoAction', () => {
     ));
 
     const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' }),
       fetcher
     });
@@ -117,7 +115,6 @@ describe('runYaohuoAction', () => {
     ));
 
     await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' }),
       fetcher
     })).rejects.toThrow('删除失败');
@@ -139,7 +136,6 @@ describe('runYaohuoAction', () => {
     });
 
     const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoDeleteReplyRequest({
         deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&page=1&reid=32656658&id=1560268'
       }),
@@ -163,7 +159,6 @@ describe('runYaohuoAction', () => {
     `, 200, url));
 
     const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoDeleteReplyRequest({
         deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&page=1&reid=32656658&id=1560268'
       }),
@@ -187,7 +182,6 @@ describe('runYaohuoAction', () => {
     `));
 
     const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher
     });
@@ -205,7 +199,6 @@ describe('runYaohuoAction', () => {
     `, 200, 'https://example.com/bbs/favlist.aspx'));
 
     const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher
     });
@@ -217,7 +210,6 @@ describe('runYaohuoAction', () => {
     const fetcher = vi.fn(async () => htmlResponse('<html>评论成功</html>'));
 
     const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoReplyRequest({
         topicId: '123',
         classId: '177',
@@ -232,7 +224,6 @@ describe('runYaohuoAction', () => {
   it('rejects short yaohuo failure tips', async () => {
     const failedReplyFetcher = vi.fn(async () => htmlResponse('<div class="tip">评论失败</div>'));
     await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoReplyRequest({
         topicId: '123',
         classId: '177',
@@ -244,7 +235,6 @@ describe('runYaohuoAction', () => {
 
     const deniedFavoriteFetcher = vi.fn(async () => htmlResponse('<html>权限不足</html>'));
     await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher: deniedFavoriteFetcher
     })).rejects.toThrow('权限不足');
@@ -259,7 +249,6 @@ describe('runYaohuoAction', () => {
     `));
 
     await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoReplyRequest({
         topicId: '123',
         classId: '177',
@@ -274,7 +263,6 @@ describe('runYaohuoAction', () => {
     const fetcher = vi.fn(async () => htmlResponse('<div class="tip"><span>提示</span>权限不足</div>'));
 
     await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher
     })).rejects.toThrow('权限不足');
@@ -288,7 +276,6 @@ describe('runYaohuoAction', () => {
     }));
 
     await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher: stuckFetcher,
       timeoutMs: 1
@@ -298,7 +285,6 @@ describe('runYaohuoAction', () => {
   it('surfaces login and captcha pages as a relogin flow', async () => {
     const loginFetcher = vi.fn(async () => htmlResponse('<html>请先登录网站</html>', 200, 'https://www.yaohuo.me/waplogin.aspx?siteid=1000'));
     await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher: loginFetcher
     })).rejects.toMatchObject({
@@ -308,7 +294,6 @@ describe('runYaohuoAction', () => {
 
     const captchaFetcher = vi.fn(async () => htmlResponse('<script>window.CAPTCHA_CONFIG={}</script><div>访问验证</div>'));
     await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher: captchaFetcher
     })).rejects.toMatchObject({

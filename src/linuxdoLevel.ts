@@ -29,7 +29,6 @@ type LinuxDoCurrentUser = {
   user: Record<string, unknown>;
 };
 type LinuxDoRequestOptions = {
-  cookieHeader: string;
   userAgent?: string;
   fetcher: Fetcher;
   signal?: AbortSignal;
@@ -247,8 +246,7 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
       Accept: 'application/json,text/plain,*/*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       Referer: `${BASE_URL}/latest`,
-      ...(options.userAgent ? { 'User-Agent': options.userAgent } : {}),
-      Cookie: options.cookieHeader
+      ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
     }
   }, {
     fetcher: options.fetcher,
@@ -282,8 +280,7 @@ async function fetchLinuxDoConnectHtml(options: LinuxDoRequestOptions) {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       Referer: BASE_URL,
-      ...(options.userAgent ? { 'User-Agent': options.userAgent } : {}),
-      Cookie: options.cookieHeader
+      ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
     }
   }, {
     fetcher: options.fetcher,
@@ -357,13 +354,11 @@ function hasUsername(summary: LinuxDoSummaryInput) {
 }
 
 export async function getLinuxDoLevelProfile({
-  cookieHeader,
   userAgent,
   fetcher = fetch,
   signal,
   timeoutMs
 }: {
-  cookieHeader: string;
   userAgent?: string;
   fetcher?: Fetcher;
   signal?: AbortSignal;
@@ -381,12 +376,7 @@ export async function getLinuxDoLevelProfile({
     }
   };
   assertNotAborted();
-  const cleanCookie = cookieHeader.trim();
-  if (!cleanCookie) {
-    throw new Error('请先登录 linux.do');
-  }
   const requestOptions: LinuxDoRequestOptions = {
-    cookieHeader: cleanCookie,
     userAgent,
     fetcher,
     signal,

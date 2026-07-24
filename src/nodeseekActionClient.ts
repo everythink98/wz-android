@@ -2,7 +2,7 @@ import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './nodese
 import { withBrowserFetchIntent } from './browserFetchIntent';
 import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './nodeseekPolls';
 import { fetchWithTimeout, type Fetcher } from './request';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekSession';
 
 const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 const NODESEEK_ACTION_HEADERS = {
@@ -36,24 +36,18 @@ function isFailedActionPayload(data: unknown) {
 }
 
 export async function fetchNodeSeekVoteInfo({
-  cookieHeader,
   pollId,
   fetcher = fetch,
   signal,
   timeoutMs,
   userAgent
 }: {
-  cookieHeader: string;
   pollId: string;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
   userAgent?: string;
 }) {
-  const cleanCookie = cookieHeader.trim();
-  if (!cleanCookie) {
-    throw nodeSeekActionError(null, 401);
-  }
   const cleanPollId = pollId.trim();
   if (!/^\d+$/.test(cleanPollId)) {
     throw new Error('投票 id 不正确');
@@ -64,10 +58,9 @@ export async function fetchNodeSeekVoteInfo({
     headers: {
       ...NODESEEK_ACTION_HEADERS,
       ...NODESEEK_VOTE_API_HEADERS,
-      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {}),
-      cookie: cleanCookie
+      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {})
     }
-  }, { owner: 'write', priority: 'write', cancelable: false }), {
+  }, { owner: 'write', priority: 'write' }), {
     fetcher,
     signal,
     timeoutMs
@@ -89,24 +82,18 @@ export async function fetchNodeSeekVoteInfo({
 }
 
 export async function runNodeSeekAction({
-  cookieHeader,
   request,
   fetcher = fetch,
   signal,
   timeoutMs,
   userAgent
 }: {
-  cookieHeader: string;
   request: NodeSeekActionRequest;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
   userAgent?: string;
 }) {
-  const cleanCookie = cookieHeader.trim();
-  if (!cleanCookie) {
-    throw nodeSeekActionError(null, 401);
-  }
   const cleanUserAgent = (userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT).trim();
 
   const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}${request.path}`, withBrowserFetchIntent({
@@ -114,11 +101,10 @@ export async function runNodeSeekAction({
     headers: {
       ...NODESEEK_ACTION_HEADERS,
       ...request.headers,
-      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {}),
-      cookie: cleanCookie
+      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {})
     },
     body: request.body
-  }, { owner: 'write', priority: 'write', cancelable: false }), {
+  }, { owner: 'write', priority: 'write' }), {
     fetcher,
     signal,
     timeoutMs

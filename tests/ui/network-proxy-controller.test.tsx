@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useNetworkProxyController } from '../../src/app/useNetworkProxyController';
 import type { NetworkProxyProfile, NetworkProxyState } from '../../src/networkProxy';
+import { fetchWithTimeout } from '../../src/request';
 
 const mockLoadNetworkProxyState = jest.fn<() => Promise<NetworkProxyState>>();
 const mockSaveNetworkProxyState = jest.fn<(state: NetworkProxyState) => Promise<NetworkProxyState>>();
@@ -144,6 +145,50 @@ describe('network proxy controller', () => {
       await Promise.all([secondApply.promise, selection]);
     });
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
+  });
+
+  it('[REG-ACCOUNT-029] preserves the proxy readiness gate while using the read-only native cookie jar', async () => {
+    const apply = deferred<unknown>();
+    mockLoadNetworkProxyState.mockResolvedValue({
+      enabled: true,
+      activeId: profileA.id,
+      profiles: [profileA]
+    });
+    mockApplyNetworkProxy.mockImplementationOnce(() => apply.promise);
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    const hook = await renderHook(() => useNetworkProxyController({ notify: jest.fn() }));
+    await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledWith(profileA));
+
+    const request = fetchWithTimeout('https://example.com/private', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { Cookie: 'session=explicit' },
+      body: 'payload'
+    }, {
+      fetcher: hook.result.current.networkProxyFetcher,
+      timeoutMs: 0
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      apply.resolve({ ok: true });
+      await request;
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://example.com/private',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: { Cookie: 'session=explicit' },
+        body: 'payload',
+        signal: expect.any(AbortSignal)
+      })
+    );
+    fetchSpy.mockRestore();
   });
 
   it('[REG-PROXY-002] does not apply a selected profile before its persistence succeeds', async () => {

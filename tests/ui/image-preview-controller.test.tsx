@@ -52,7 +52,6 @@ describe('Image preview controller', () => {
     const hook = await renderHook(() => useImagePreviewController({
       htmlParts: [`<p><img src="${imageUrl}"></p>`],
       inlineSizedImageUrls: {},
-      nodeSeekMediaCookieHeader: 'session=controller-test',
       nodeSeekMediaUserAgent: 'WZ-Controller-Test',
       notify: jest.fn(),
       topicImageDeriver: createTopicImageDeriver()
@@ -70,7 +69,6 @@ describe('Image preview controller', () => {
       undefined,
       expect.anything(),
       {
-        nodeSeekCookieHeader: 'session=controller-test',
         nodeSeekUserAgent: 'WZ-Controller-Test'
       }
     );

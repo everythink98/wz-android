@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Image, PixelRatio, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle, type ImageURISource, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { ActivityIndicator, PixelRatio, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle, type ImageURISource, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
 import { Image as ExpoImage, useImage, type ImageRef } from 'expo-image';
 import { VideoView, useVideoPlayer, type VideoPlayerStatus, type VideoSource } from 'expo-video';
@@ -42,13 +42,45 @@ import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG,
 import { ForumContentVideo } from '../components/ForumContentVideo';
 import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
 import { cachedCompatibleImageSource, compatibleImageRequestIdentity, recoverCompatibleSvgImageSource } from '../compatibleImageSources';
+import {
+  readManagedCookieHeader,
+  readMediaCookieHeader
+} from '../managedCookies';
+
+export async function readManagedWebViewCookieHeader(url: string) {
+  const result = await readManagedCookieHeader(url);
+  if (result.status === 'ok') {
+    return result.header;
+  }
+  throw new Error(result.status === 'unsupported'
+    ? '原生 Cookie 读取能力不可用'
+    : result.message);
+}
+
+type ManagedVideoCookieState =
+  | { mediaSessionIdentity: string; url: string; status: 'ready'; value: string }
+  | { mediaSessionIdentity: string; url: string; status: 'failed' };
+
+export function isManagedVideoCookieReady(
+  state: ManagedVideoCookieState | null,
+  url: string,
+  mediaSessionIdentity: string
+): state is Extract<ManagedVideoCookieState, { status: 'ready' }> {
+  return state?.url === url
+    && state.mediaSessionIdentity === mediaSessionIdentity
+    && state.status === 'ready';
+}
+
+export async function readExactVideoCookieHeader(url: string) {
+  return readMediaCookieHeader(url);
+}
 
 function isVideoStickerUrl(url: string) {
   return /\.(?:webm|mp4|mov)(?:[?#].*)?$/i.test(url);
 }
 
-function videoStickerRequestHeaders(url: string, cookieHeader?: string, userAgent?: string): Record<string, string> | undefined {
-  const headers = imageRequestHeadersForUrl(url, cookieHeader, userAgent);
+function videoStickerRequestHeaders(url: string, userAgent?: string): Record<string, string> | undefined {
+  const headers = imageRequestHeadersForUrl(url, userAgent);
   return headers ? {
     ...headers,
     Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8'
@@ -133,22 +165,29 @@ function ForumVideoStickerVideo({
   fallbackSrc,
   headers,
   loadingColor,
+  mediaSessionIdentity,
   src,
   videoStyle
 }: {
   fallbackSrc: string;
   headers?: Record<string, string>;
   loadingColor: string;
+  mediaSessionIdentity: string;
   src: string;
   videoStyle: StyleProp<ViewStyle>;
 }) {
   const [firstFrameRendered, setFirstFrameRendered] = useState(false);
+  const [liveCookie, setLiveCookie] = useState<ManagedVideoCookieState | null>(null);
   const headerAccept = headers?.Accept || '';
-  const headerCookie = headers?.Cookie || '';
   const headerReferer = headers?.Referer || '';
   const headerUserAgent = headers?.['User-Agent'] || '';
-  const hasHeaders = Boolean(headers);
-  const source = useMemo<VideoSource>(() => ({
+  const cookieReady = isManagedVideoCookieReady(liveCookie, src, mediaSessionIdentity);
+  const cookieReadFailed = liveCookie?.url === src
+    && liveCookie.mediaSessionIdentity === mediaSessionIdentity
+    && liveCookie.status === 'failed';
+  const headerCookie = cookieReady ? liveCookie.value : '';
+  const hasHeaders = Boolean(headers || headerCookie);
+  const source = useMemo<VideoSource>(() => cookieReady ? ({
     uri: src,
     ...(hasHeaders ? {
       headers: {
@@ -159,7 +198,7 @@ function ForumVideoStickerVideo({
       }
     } : {}),
     contentType: 'progressive'
-  }), [hasHeaders, headerAccept, headerCookie, headerReferer, headerUserAgent, src]);
+  }) : null, [cookieReady, hasHeaders, headerAccept, headerCookie, headerReferer, headerUserAgent, src]);
   const player = useVideoPlayer(source, (nextPlayer) => {
     nextPlayer.loop = true;
     nextPlayer.muted = true;
@@ -168,14 +207,33 @@ function ForumVideoStickerVideo({
   });
   const status = useEvent(player, 'statusChange', { status: player.status }).status;
   useEffect(() => {
+    let active = true;
+    setLiveCookie(null);
+    void readExactVideoCookieHeader(src).then(
+      (value) => {
+        if (active) {
+          setLiveCookie({ mediaSessionIdentity, url: src, status: 'ready', value });
+        }
+      },
+      () => {
+        if (active) {
+          setLiveCookie({ mediaSessionIdentity, url: src, status: 'failed' });
+        }
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, [mediaSessionIdentity, src]);
+  useEffect(() => {
     setFirstFrameRendered(false);
-  }, [headerAccept, headerCookie, headerReferer, headerUserAgent, src]);
-  const loadFailed = status === 'error';
+  }, [headerAccept, headerCookie, headerReferer, headerUserAgent, mediaSessionIdentity, src]);
+  const loadFailed = cookieReadFailed || status === 'error';
   const showLoading = shouldShowVideoStickerLoading(firstFrameRendered, loadFailed, status);
   const showFallback = fallbackSrc && (!firstFrameRendered || loadFailed);
   return (
     <View pointerEvents="none" style={videoStyle}>
-      {!loadFailed ? (
+      {cookieReady && !loadFailed ? (
         <VideoView
           allowsVideoFrameAnalysis={false}
           contentFit="contain"
@@ -191,9 +249,15 @@ function ForumVideoStickerVideo({
         />
       ) : null}
       {showFallback ? (
-        <Image
-          resizeMode="contain"
-          source={imageSourceFromUrl(fallbackSrc, undefined, headers?.Cookie, headers?.['User-Agent'])}
+        <ExpoImage
+          contentFit="contain"
+          recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
+          source={imageSourceFromUrl(
+            fallbackSrc,
+            undefined,
+            headers?.['User-Agent'],
+            mediaSessionIdentity
+          )}
           style={embedStyles.stickerVideoFallback}
         />
       ) : null}
@@ -219,6 +283,7 @@ function PreviewImageBlock({
   imageSource,
   loadingColor,
   markInlineSizedImageUrl,
+  mediaSessionIdentity,
   onOpenImagePreview,
   src
 }: {
@@ -230,6 +295,7 @@ function PreviewImageBlock({
   imageSource: ImageURISource;
   loadingColor: string;
   markInlineSizedImageUrl: (url: string) => void;
+  mediaSessionIdentity: string;
   onOpenImagePreview: (url: string) => void;
   src: string;
 }) {
@@ -291,7 +357,7 @@ function PreviewImageBlock({
   }, [imageRef]);
   const activeImageRef = resolvedImage?.requestIdentity === requestIdentity ? resolvedImage.image : null;
   const loadFailed = failedRequestIdentity === requestIdentity;
-  const cacheKey = normalizeImagePreviewUrl(src).trim();
+  const cacheKey = `${mediaSessionIdentity}:${normalizeImagePreviewUrl(src).trim()}`;
   const cachedDimensions = previewImageDimensionsByUrl.get(cacheKey);
   const naturalDimensions = activeImageRef
     ? { height: activeImageRef.height, width: activeImageRef.width }
@@ -337,7 +403,7 @@ function PreviewImageBlock({
         {activeImageRef ? (
           <ExpoImage
             contentFit="contain"
-            recyclingKey={src}
+            recyclingKey={cacheKey}
             source={activeImageRef}
             style={[imageState.dimensions, imageState.type === 'success' ? imageState.imageStyle : null]}
           />
@@ -357,11 +423,11 @@ function PreviewImageBlock({
 }
 
 export function useHtmlRenderingController({
+  mediaSessionIdentity,
   onOpenExternalUrl,
   onOpenImagePreview,
   onOpenTopic,
   onOpenUser,
-  nodeSeekMediaCookieHeader,
   nodeSeekMediaUserAgent,
   selectedTopic,
   settings,
@@ -372,11 +438,11 @@ export function useHtmlRenderingController({
   webViewBlockMessage
 }: {
   onOpenExternalUrl: (url: string) => void;
+  mediaSessionIdentity: string;
   onOpenImagePreview: (url: string) => void;
   onOpenTopic: (topic: Topic) => void | Promise<void>;
   onOpenUser: (user: UserProfile) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
-  nodeSeekMediaCookieHeader?: string;
   selectedTopic: Topic | null;
   settings: ReaderSettings;
   styles: {
@@ -538,18 +604,43 @@ export function useHtmlRenderingController({
       const contentWidth = useContentWidth();
       const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth);
       if (!src) {
-        return fallbackSrc ? <Image source={imageSourceFromUrl(fallbackSrc, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, size]} /> : null;
+        return fallbackSrc ? (
+          <ExpoImage
+            contentFit="contain"
+            recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
+            source={imageSourceFromUrl(
+              fallbackSrc,
+              undefined,
+              nodeSeekMediaUserAgent,
+              mediaSessionIdentity
+            )}
+            style={[styles.inlineForumImage, size]}
+          />
+        ) : null;
       }
       if (!isVideoStickerUrl(src)) {
-        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, size]} />;
+        return (
+          <ExpoImage
+            contentFit="contain"
+            recyclingKey={`${mediaSessionIdentity}:${src}`}
+            source={imageSourceFromUrl(
+              src,
+              undefined,
+              nodeSeekMediaUserAgent,
+              mediaSessionIdentity
+            )}
+            style={[styles.inlineForumImage, size]}
+          />
+        );
       }
-      const headers = videoStickerRequestHeaders(src, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent);
+      const headers = videoStickerRequestHeaders(src, nodeSeekMediaUserAgent);
       return (
         <ForumVideoStickerVideo
-          key={`${src}:${headers?.Cookie ? 'auth' : 'anonymous'}`}
+          key={`${mediaSessionIdentity}:${src}`}
           fallbackSrc={fallbackSrc}
           headers={headers}
           loadingColor={theme.primary}
+          mediaSessionIdentity={mediaSessionIdentity}
           src={src}
           videoStyle={[size, embedStyles.inlineVideoSticker, embedStyles.stickerVideoFrame]}
         />
@@ -561,7 +652,15 @@ export function useHtmlRenderingController({
       if (!src) {
         return null;
       }
-      return <ForumContentVideo src={src} theme={theme} />;
+      return (
+        <ForumContentVideo
+          key={`${mediaSessionIdentity}:${src}`}
+          headers={videoStickerRequestHeaders(src, nodeSeekMediaUserAgent)}
+          mediaSessionIdentity={mediaSessionIdentity}
+          src={src}
+          theme={theme}
+        />
+      );
     };
     const ForumStickerRenderer: CustomMixedRenderer = (props) => {
       const attributes = props.tnode.attributes || {};
@@ -571,7 +670,19 @@ export function useHtmlRenderingController({
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
       }
-      return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, size]} />;
+      return (
+        <ExpoImage
+          contentFit="contain"
+          recyclingKey={`${mediaSessionIdentity}:${src}`}
+          source={imageSourceFromUrl(
+            src,
+            undefined,
+            nodeSeekMediaUserAgent,
+            mediaSessionIdentity
+          )}
+          style={[styles.inlineForumImage, size]}
+        />
+      );
     };
     const ForumStickerRowRenderer: CustomBlockRenderer = (props) => {
       return (
@@ -611,12 +722,12 @@ export function useHtmlRenderingController({
         >
           {site || iconSrc ? (
             <View style={embedStyles.linkCardHeader}>
-              {iconSrc ? <ExpoImage contentFit="contain" source={imageSourceFromUrl(iconSrc, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={embedStyles.linkCardIcon} /> : null}
+              {iconSrc ? <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${iconSrc}`} source={imageSourceFromUrl(iconSrc, undefined, nodeSeekMediaUserAgent, mediaSessionIdentity)} style={embedStyles.linkCardIcon} /> : null}
               {site ? <Text numberOfLines={1} style={[embedStyles.linkCardSite, { color: theme.muted }]}>{site}</Text> : null}
             </View>
           ) : null}
           <View style={embedStyles.linkCardBody}>
-            {imageSrc ? <ExpoImage contentFit="cover" source={imageSourceFromUrl(imageSrc, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]} /> : null}
+            {imageSrc ? <ExpoImage contentFit="cover" recyclingKey={`${mediaSessionIdentity}:${imageSrc}`} source={imageSourceFromUrl(imageSrc, undefined, nodeSeekMediaUserAgent, mediaSessionIdentity)} style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]} /> : null}
             <View style={embedStyles.linkCardText}>
               <Text numberOfLines={3} style={[embedStyles.linkCardTitle, { color: theme.primaryStrong }]}>{title}</Text>
               {description ? <Text numberOfLines={3} style={[embedStyles.linkCardDescription, { color: theme.ink }]}>{description}</Text> : null}
@@ -698,16 +809,21 @@ export function useHtmlRenderingController({
       const contentWidth = useContentWidth();
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
-      const imageSource = imageSourceFromUrl(src, imageProps.source, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent);
+      const imageSource = imageSourceFromUrl(
+        src,
+        imageProps.source,
+        nodeSeekMediaUserAgent,
+        mediaSessionIdentity
+      );
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
       }
       if (isInlineForumImage(props.tnode.attributes)) {
-        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${src}`} source={imageSourceFromUrl(src, undefined, nodeSeekMediaUserAgent, mediaSessionIdentity)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       return (
         <PreviewImageBlock
-          key={src}
+          key={`${mediaSessionIdentity}:${src}`}
           attributes={props.tnode.attributes}
           errorTextStyle={styles.inlineForumImageText}
           frameBackgroundColor={theme.surface2}
@@ -716,6 +832,7 @@ export function useHtmlRenderingController({
           imageSource={imageSource as ImageURISource}
           loadingColor={theme.primary}
           markInlineSizedImageUrl={markInlineSizedImageUrl}
+          mediaSessionIdentity={mediaSessionIdentity}
           onOpenImagePreview={onOpenImagePreview}
           src={src}
         />
@@ -731,7 +848,7 @@ export function useHtmlRenderingController({
       }
       const isInlineImage = isInlineForumImage(attributes);
       if (isInlineImage) {
-        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${src}`} source={imageSourceFromUrl(src, undefined, nodeSeekMediaUserAgent, mediaSessionIdentity)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
@@ -752,7 +869,7 @@ export function useHtmlRenderingController({
     };
   }, [
     htmlBaseStyle.lineHeight,
-    nodeSeekMediaCookieHeader,
+    mediaSessionIdentity,
     nodeSeekMediaUserAgent,
     onOpenImagePreview,
     openHtmlLink,

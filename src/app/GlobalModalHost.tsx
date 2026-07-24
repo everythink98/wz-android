@@ -19,6 +19,7 @@ export function GlobalModalHost({
   handleLinuxDoMessage,
   handleLinuxDoNavigation,
   imagePreview,
+  mediaSessionIdentity,
   linuxDoCredentialSaved,
   linuxDoLoginFormMode,
   linuxDoSession,
@@ -32,7 +33,6 @@ export function GlobalModalHost({
   nodeImageAuthPayload,
   nodeImageAuthUrl,
   nodeImageAuthWebViewRef,
-  nodeSeekMediaCookieHeader,
   nodeSeekMediaUserAgent,
   resetLinuxDoWebView,
   checkLinuxDoCookie,
@@ -64,6 +64,7 @@ export function GlobalModalHost({
   handleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
   imagePreview: ImagePreviewList | null;
+  mediaSessionIdentity: string;
   linuxDoCredentialSaved: boolean;
   linuxDoLoginFormMode: boolean;
   linuxDoSession: SiteSessionViewModel;
@@ -77,7 +78,6 @@ export function GlobalModalHost({
   nodeImageAuthPayload: NodeImageAuthPayload | null;
   nodeImageAuthUrl: string;
   nodeImageAuthWebViewRef: RefObject<WebView | null>;
-  nodeSeekMediaCookieHeader?: string;
   nodeSeekMediaUserAgent?: string;
   resetLinuxDoWebView: () => void;
   checkLinuxDoCookie: () => void;
@@ -187,7 +187,7 @@ export function GlobalModalHost({
       </LoginWebViewModal>
       <ImagePreviewModal
         preview={imagePreview}
-        nodeSeekMediaCookieHeader={nodeSeekMediaCookieHeader}
+        mediaSessionIdentity={mediaSessionIdentity}
         nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
         styles={styles}
         theme={theme}

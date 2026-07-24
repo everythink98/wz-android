@@ -1,9 +1,28 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE } from './request';
+import { cancelRequestTimeoutForFallback, fetchWithTimeout, REQUEST_CANCELED_MESSAGE } from './request';
 
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 
 describe('Android request helpers', () => {
+  it('[REG-ACCOUNT-029] always enables the native read-only cookie jar without changing the request', async () => {
+    const fetcher = vi.fn(async () => new Response('{}'));
+
+    await fetchWithTimeout('https://example.com/account', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { Cookie: 'session=explicit' },
+      body: 'payload'
+    }, { fetcher });
+
+    expect(fetcher).toHaveBeenCalledWith('https://example.com/account', expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+      headers: { Cookie: 'session=explicit' },
+      body: 'payload',
+      signal: expect.any(AbortSignal)
+    }));
+  });
+
   it('passes an abort signal to the fetcher', async () => {
     const fetcher = vi.fn(async () => new Response('{}'));
 
@@ -48,6 +67,33 @@ describe('Android request helpers', () => {
 
       expect(rejectedMessage).toBe(REQUEST_TIMEOUT_MESSAGE);
       await expect(request).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('[REG-SOURCE-006] lets fallback scheduling replace the outer request timeout', async () => {
+    vi.useFakeTimers();
+    let resolveFallback!: (response: Response) => void;
+    const fetcher = vi.fn((_input: string, init?: RequestInit) => {
+      cancelRequestTimeoutForFallback(init);
+      return new Promise<Response>((resolve) => {
+        resolveFallback = resolve;
+      });
+    });
+
+    try {
+      const request = fetchWithTimeout('https://example.com/feed', {}, { fetcher, timeoutMs: 1000 });
+      let settled = false;
+      void request.finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(settled).toBe(false);
+
+      resolveFallback(new Response('ok'));
+      await expect(request).resolves.toMatchObject({ ok: true });
     } finally {
       vi.useRealTimers();
     }

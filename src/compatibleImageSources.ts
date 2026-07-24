@@ -12,10 +12,13 @@ const compatibleImageSourceRequests = new Map<string, Promise<ImageURISource | n
 
 export function compatibleImageRequestIdentity(source: ImageURISource) {
   const uri = normalizeImagePreviewUrl(source.uri || '');
+  const cacheKey = typeof (source as ImageURISource & { cacheKey?: unknown }).cacheKey === 'string'
+    ? String((source as ImageURISource & { cacheKey?: string }).cacheKey)
+    : '';
   const headers = Object.entries(source.headers || {})
     .map(([name, value]) => [name.toLowerCase(), String(value)] as const)
     .sort(([left], [right]) => left.localeCompare(right));
-  return [uri, ...headers.map(([name, value]) => `${name}:${value}`)].join('\u0000');
+  return [uri, cacheKey, ...headers.map(([name, value]) => `${name}:${value}`)].join('\u0000');
 }
 
 export function cachedCompatibleImageSource(source: ImageURISource) {

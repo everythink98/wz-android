@@ -29,7 +29,7 @@ import {
   XiaoyinsiAuthError,
   type XiaoyinsiPendingAuthorization
 } from '../xiaoyinsiAuth';
-import { appQueryClient, forumQueryKeys, type ForumCredentialScope } from './serverState';
+import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
 
 export type XiaoyinsiAuthPhase =
   | 'idle'
@@ -51,8 +51,12 @@ type XiaoyinsiAuthorizationCheckResult = XiaoyinsiAuthorizationReadResult & {
   reason?: string;
 };
 
-function statusFromError(error: unknown) {
-  return Number(error && typeof error === 'object' ? (error as { status?: unknown }).status : 0) || 0;
+function isXiaoyinsiLoginExpiredError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const candidate = error as { kind?: unknown; loginRequired?: unknown };
+  return candidate.loginRequired === true || candidate.kind === 'login-expired';
 }
 
 async function checkXiaoyinsiAuthorization({
@@ -106,7 +110,7 @@ async function checkXiaoyinsiAuthorization({
     if (signal?.aborted || isCancelledError(error) || isCanceledRequest(error)) {
       throw error;
     }
-    if (statusFromError(error) === 401 || statusFromError(error) === 403) {
+    if (isXiaoyinsiLoginExpiredError(error)) {
       return {
         authenticated: false,
         reason: 'login_required',
@@ -122,15 +126,17 @@ async function checkXiaoyinsiAuthorization({
 }
 
 export function useXiaoyinsiAuthController({
-  credentialScope,
+  sessionEpochs,
   dispatchSiteSessionEvent,
   fetcher,
+  isIdentityPending,
   notify,
   sourceGateway
 }: {
-  credentialScope: ForumCredentialScope;
+  sessionEpochs: ForumSessionEpochs;
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   fetcher: Fetcher;
+  isIdentityPending?: () => boolean;
   notify: (message: string) => void;
   sourceGateway: Pick<SourceGateway, 'getLevelProfile'>;
 }) {
@@ -150,7 +156,7 @@ export function useXiaoyinsiAuthController({
 
   const levelQuery = useQuery({
     enabled: false,
-    queryKey: forumQueryKeys.levelProfile({ credentialScope, source: 'xiaoyinsi' }),
+    queryKey: forumQueryKeys.levelProfile({ sessionEpochs, source: 'xiaoyinsi' }),
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
       markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
@@ -315,7 +321,7 @@ export function useXiaoyinsiAuthController({
       if (stopIfStale() || isCancelledError(error) || isCanceledRequest(error)) {
         return false;
       }
-      if (statusFromError(error) === 401 || statusFromError(error) === 403) {
+      if (isXiaoyinsiLoginExpiredError(error)) {
         publishSessionEvent({ type: 'login-expired', message: '小隐寺授权已失效' });
         setPhase('expired');
         setMessage('授权已失效，请重新授权。');
@@ -389,6 +395,9 @@ export function useXiaoyinsiAuthController({
   }, [refreshAuthorization]);
 
   const refreshLevel = useCallback(async () => {
+    if (isIdentityPending?.()) {
+      return false;
+    }
     const result = await levelQuery.refetch({ cancelRefetch: false });
     if (result.error) return false;
     if (result.data) {
@@ -396,7 +405,7 @@ export function useXiaoyinsiAuthController({
       return true;
     }
     return false;
-  }, [levelQuery.refetch, notify]);
+  }, [isIdentityPending, levelQuery.refetch, notify]);
 
   useEffect(() => {
     mountedRef.current = true;

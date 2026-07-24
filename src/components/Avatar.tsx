@@ -4,6 +4,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { SvgXml } from 'react-native-svg';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
 import { imageSourceFromUrl } from '../htmlImages';
+import { useManagedMediaSessionIdentity } from '../mediaSessionEpoch';
 import type { createStyles } from '../theme';
 
 const MAX_IMAGE_RETRY_COUNT = 1;
@@ -40,6 +41,7 @@ export function Avatar({
   const [imageFailed, setImageFailed] = useState(false);
   const [imageRetryCount, setImageRetryCount] = useState(0);
   const [svgXml, setSvgXml] = useState<string | null>(null);
+  const mediaSessionIdentity = useManagedMediaSessionIdentity(uri);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,7 +53,9 @@ export function Avatar({
         cancelled = true;
       };
     }
-    loadRemoteAvatarSvgText(uri).then((xml) => {
+    loadRemoteAvatarSvgText(uri, undefined, {
+      cacheIdentity: mediaSessionIdentity
+    }).then((xml) => {
       if (!cancelled) {
         setSvgXml(xml);
       }
@@ -59,7 +63,7 @@ export function Avatar({
     return () => {
       cancelled = true;
     };
-  }, [uri]);
+  }, [mediaSessionIdentity, uri]);
 
   const retryOrFailImage = useCallback(() => {
     if (imageRetryCount < MAX_IMAGE_RETRY_COUNT) {
@@ -82,11 +86,11 @@ export function Avatar({
         </View>
       ) : uri && !imageFailed ? (
         <ExpoImage
-          key={`${uri}:${imageRetryCount}`}
-          source={imageSourceFromUrl(uri)}
+          key={`${mediaSessionIdentity}:${uri}:${imageRetryCount}`}
+          source={imageSourceFromUrl(uri, undefined, undefined, mediaSessionIdentity)}
           style={[styles.replyAvatarImage, StyleSheet.absoluteFillObject]}
           contentFit="cover"
-          recyclingKey={`${uri}:${imageRetryCount}`}
+          recyclingKey={`${mediaSessionIdentity}:${uri}:${imageRetryCount}`}
           cachePolicy={imageRetryCount > 0 ? 'none' : undefined}
           onError={retryOrFailImage}
         />

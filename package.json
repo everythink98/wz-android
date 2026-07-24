@@ -26,7 +26,6 @@
     "@gorhom/bottom-sheet": "^5.2.14",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
-    "@react-native-cookies/cookies": "^6.2.1",
     "@react-navigation/bottom-tabs": "^7.16.1",
     "@react-navigation/native": "^7.2.4",
     "@react-navigation/native-stack": "^7.15.1",
@@ -83,14 +82,5 @@
   },
   "overrides": {
     "postcss": "8.5.15"
-  },
-  "expo": {
-    "doctor": {
-      "reactNativeDirectoryCheck": {
-        "exclude": [
-          "@react-native-cookies/cookies"
-        ]
-      }
-    }
   }
 }

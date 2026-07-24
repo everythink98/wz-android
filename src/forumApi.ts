@@ -1,4 +1,4 @@
-import { getNodeSeekBasicUserProfile, getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
+import { getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
 import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
@@ -218,10 +218,9 @@ export async function getFeed({
   category,
   feedFilter,
   fetcher,
-  nodeSeekCookie,
+  nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
-  yaohuoCookie,
   unavailableSources,
   signal,
   timeoutMs
@@ -233,15 +232,14 @@ export async function getFeed({
   category?: string;
   feedFilter?: SourceFeedFilter;
   fetcher?: Fetcher;
-  nodeSeekCookie?: string;
+  nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
-  yaohuoCookie?: string;
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
-  const options = { page, limit, cursor, category, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { authenticated: nodeSeekAuthenticated, page, limit, cursor, category, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const unavailableSourceSet = new Set(unavailableSources);
     const cursorState = decodeAllFeedCursor(cursor);
@@ -289,17 +287,14 @@ export async function getFeed({
         });
       }
       if (item === 'yaohuo') {
-        return yaohuoCookie?.trim()
-          ? getYaohuoFeedDirect({
-            yaohuoCookie,
-            category,
-            page: requestedPages[item],
-            limit: adapterLimit,
-            yaohuoFetcher: fetcher,
-            signal,
-            timeoutMs
-          })
-          : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null, nextCursor: null });
+        return getYaohuoFeedDirect({
+          category,
+          page: requestedPages[item],
+          limit: adapterLimit,
+          yaohuoFetcher: fetcher,
+          signal,
+          timeoutMs
+        });
       }
       throw new Error(`${item} 未注册聚合首页读取 adapter`);
     }));
@@ -373,7 +368,7 @@ export async function getFeed({
 export async function getCategories({
   source = 'all',
   fetcher,
-  nodeSeekCookie,
+  nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
   unavailableSources,
@@ -382,14 +377,14 @@ export async function getCategories({
 }: {
   source?: FeedSource;
   fetcher?: Fetcher;
-  nodeSeekCookie?: string;
+  nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
   timeoutMs?: number;
 } = {}): Promise<CategoriesResponse> {
-  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const sources = sourceValues;
     const results = await Promise.allSettled(sources.map((item) => {
@@ -450,7 +445,7 @@ export function getTopic({
   source,
   id,
   fetcher,
-  nodeSeekCookie,
+  nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
   signal,
@@ -459,13 +454,13 @@ export function getTopic({
   source: Source;
   id: string;
   fetcher?: Fetcher;
-  nodeSeekCookie?: string;
+  nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
-  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   if (isDiscourseSource(source)) {
     return getDiscourseSourceTopic(source, id, {
       auth: discourseAuth,
@@ -487,7 +482,7 @@ export function getReplies({
   limit = 20,
   offset,
   fetcher,
-  nodeSeekCookie,
+  nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
   fillPages,
@@ -500,14 +495,14 @@ export function getReplies({
   limit?: number;
   offset?: number | null;
   fetcher?: Fetcher;
-  nodeSeekCookie?: string;
+  nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   fillPages?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
-  const options = { page, limit, offset, fetcher, nodeSeekCookie, nodeSeekUserAgent, fillPages, signal, timeoutMs };
+  const options = { authenticated: nodeSeekAuthenticated, page, limit, offset, fetcher, nodeSeekUserAgent, fillPages, signal, timeoutMs };
   if (isDiscourseSource(source)) {
     return getDiscourseSourceReplies(source, id, {
       auth: discourseAuth,
@@ -564,9 +559,8 @@ export function getUserProfile({
   id,
   username,
   fetcher,
-  nodeSeekCookie,
+  nodeSeekAuthenticated,
   nodeSeekUserAgent,
-  yaohuoCookie,
   discourseAuth,
   cursor,
   cursorType,
@@ -577,16 +571,15 @@ export function getUserProfile({
   id: string;
   username?: string;
   fetcher?: Fetcher;
-  nodeSeekCookie?: string;
+  nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
-  yaohuoCookie?: string;
   discourseAuth?: DiscourseReadAuth;
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<UserProfile> {
-  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, cursor, cursorType, signal, timeoutMs };
+  const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, cursor, cursorType, signal, timeoutMs };
   if (isDiscourseSource(source)) {
     return getDiscourseSourceUserProfile(source, id, username || id, {
       auth: discourseAuth,
@@ -601,9 +594,6 @@ export function getUserProfile({
     nodeseek: () => getNodeSeekUserProfile(id || username || '', options),
     v2ex: () => getV2exUserProfile(id, username || id, { fetcher, cursor, cursorType, signal, timeoutMs }),
     yaohuo: async () => {
-      if (!yaohuoCookie) {
-        throw new Error('请先登录妖火');
-      }
       const targetId = id || username || '';
       const url = `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(targetId)}&siteid=1000`;
       const diagnosticSources: unknown[] = [];
@@ -629,7 +619,6 @@ export function getUserProfile({
       };
       const headers = {
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        Cookie: yaohuoCookie,
         Referer: YAOHUO_BBS_REFERER
       };
       const readHtml = async (pageUrl: string) => {
@@ -794,20 +783,16 @@ export function getCurrentUserProfile({
   source,
   fetcher,
   discourseAuth,
-  nodeSeekCookie,
-  nodeSeekUserId,
+  nodeSeekAuthenticated,
   nodeSeekUserAgent,
-  yaohuoCookie,
   signal,
   timeoutMs
 }: {
   source: Source;
   fetcher?: Fetcher;
   discourseAuth?: DiscourseReadAuth;
-  nodeSeekCookie?: string;
-  nodeSeekUserId?: string | number | null;
+  nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
-  yaohuoCookie?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<UserProfile> {
@@ -820,27 +805,20 @@ export function getCurrentUserProfile({
     });
   }
   return pickSource(source, {
-    nodeseek: async () => {
-      try {
-        return await getNodeSeekCurrentUserProfile({ fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs });
-      } catch (error) {
-        if (!nodeSeekUserId) {
-          throw error;
-        }
-        return getNodeSeekBasicUserProfile(String(nodeSeekUserId), { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs });
-      }
-    },
+    nodeseek: () => getNodeSeekCurrentUserProfile({
+      authenticated: nodeSeekAuthenticated,
+      fetcher,
+      nodeSeekUserAgent,
+      signal,
+      timeoutMs
+    }),
     v2ex: () => {
       throw new Error('V2EX 不支持当前登录身份读取');
     },
     yaohuo: async () => {
-      if (!yaohuoCookie?.trim()) {
-        throw new Error('请先登录妖火');
-      }
       const response = await fetchWithTimeout(`${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`, {
         headers: {
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          Cookie: yaohuoCookie,
           Referer: YAOHUO_BBS_REFERER
         }
       }, { fetcher, signal, timeoutMs });
@@ -850,16 +828,22 @@ export function getCurrentUserProfile({
       }
       const check = checkYaohuoLoginHtml(html, response.url);
       if (check.currentUser) {
-        const profile = await getUserProfile({
-          source: 'yaohuo',
-          id: check.currentUser.id,
-          username: check.currentUser.username,
-          fetcher,
-          yaohuoCookie,
-          signal,
-          timeoutMs
-        });
-        return copySourceDiagnosticSummary({ ...profile, topics: [] }, profile);
+        try {
+          const profile = await getUserProfile({
+            source: 'yaohuo',
+            id: check.currentUser.id,
+            username: check.currentUser.username,
+            fetcher,
+            signal,
+            timeoutMs
+          });
+          return copySourceDiagnosticSummary({ ...profile, topics: [] }, profile);
+        } catch (error) {
+          if (signal?.aborted) {
+            throw error;
+          }
+          return check.currentUser;
+        }
       }
       if (check.loginRequired) {
         throw new Error(check.message || '妖火登录已失效，请重新登录。');
@@ -876,11 +860,10 @@ export async function searchTopics({
   page = 1,
   categories = [],
   fetcher,
-  nodeSeekCookie,
+  nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
   linuxDoAuthenticated,
-  yaohuoCookie,
   unavailableSources,
   sort = 'relevance',
   filter,
@@ -893,11 +876,10 @@ export async function searchTopics({
   page?: number;
   categories?: Category[];
   fetcher?: Fetcher;
-  nodeSeekCookie?: string;
+  nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   linuxDoAuthenticated?: boolean;
-  yaohuoCookie?: string;
   unavailableSources?: readonly Source[];
   sort?: SearchSort;
   filter?: SourceSearchFilter;
@@ -906,7 +888,7 @@ export async function searchTopics({
 }): Promise<SearchResponse> {
   const adapterQuery = positiveSearchQuery(query);
   const adapterLimit = parseSearchExpression(query).exclude.length ? Math.min(100, limit * 3) : limit;
-  const options = { limit: adapterLimit, page, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { authenticated: nodeSeekAuthenticated, limit: adapterLimit, page, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const sources = aggregateSearchSources;
     const results = await Promise.allSettled(sources.map((item) => {
@@ -931,17 +913,14 @@ export async function searchTopics({
         return searchV2ex(adapterQuery, options);
       }
       if (item === 'yaohuo') {
-        return yaohuoCookie?.trim()
-          ? searchYaohuoDirect({
-            yaohuoCookie,
-            query: adapterQuery,
-            page,
-            limit: adapterLimit,
-            yaohuoFetcher: fetcher,
-            signal,
-            timeoutMs
-          })
-          : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
+        return searchYaohuoDirect({
+          query: adapterQuery,
+          page,
+          limit: adapterLimit,
+          yaohuoFetcher: fetcher,
+          signal,
+          timeoutMs
+        });
       }
       throw new Error(`${item} 未注册聚合搜索 adapter`);
     }));

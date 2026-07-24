@@ -13,26 +13,17 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('runNodeSeekAction', () => {
-  it('[REG-ACCOUNT-013] classifies a missing stored cookie as an expired NodeSeek session', async () => {
-    const fetcher = vi.fn();
+  it('[REG-ACCOUNT-029] delegates NodeSeek write authentication to the native exact-url cookie jar', async () => {
+    const fetcher = vi.fn(async () => jsonResponse({ success: true }));
 
-    await expect(runNodeSeekAction({
-      cookieHeader: '',
+    await runNodeSeekAction({
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher
-    })).rejects.toMatchObject({
-      source: 'nodeseek',
-      loginRequired: true
     });
-    await expect(fetchNodeSeekVoteInfo({
-      cookieHeader: '',
-      pollId: '2443',
-      fetcher
-    })).rejects.toMatchObject({
-      source: 'nodeseek',
-      loginRequired: true
-    });
-    expect(fetcher).not.toHaveBeenCalled();
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(calls[0]?.[1]?.headers).not.toHaveProperty('cookie');
   });
 
   it('[REG-WRITE-007] reads the authoritative NodeSeek poll snapshot with vote headers', async () => {
@@ -48,7 +39,6 @@ describe('runNodeSeekAction', () => {
     }));
 
     const poll = await fetchNodeSeekVoteInfo({
-      cookieHeader: 'session=abc',
       pollId: '2443',
       fetcher,
       userAgent: 'current-webview-ua'
@@ -68,7 +58,6 @@ describe('runNodeSeekAction', () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           accept: 'application/json, text/plain, */*',
-          cookie: 'session=abc',
           'user-agent': 'current-webview-ua',
           'x-dynamic-sign': 'a'.repeat(40)
         }),
@@ -76,10 +65,10 @@ describe('runNodeSeekAction', () => {
       })
     );
     const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(calls[0]?.[1]?.headers).not.toHaveProperty('cookie');
     expect(browserFetchIntentFromInit(calls[0]?.[1])).toEqual({
       owner: 'write',
-      priority: 'write',
-      cancelable: false
+      priority: 'write'
     });
   });
 
@@ -87,7 +76,6 @@ describe('runNodeSeekAction', () => {
     const fetcher = vi.fn(async () => jsonResponse({ success: true }));
 
     await runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher,
       userAgent: 'native-provider-user-agent'
@@ -99,7 +87,6 @@ describe('runNodeSeekAction', () => {
         accept: 'application/json, text/plain, */*',
         'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'content-type': 'application/json',
-        cookie: 'session=abc',
         origin: 'https://www.nodeseek.com',
         referer: 'https://www.nodeseek.com/',
         'sec-fetch-dest': 'empty',
@@ -120,10 +107,10 @@ describe('runNodeSeekAction', () => {
       })
     }));
     const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(calls[0]?.[1]?.headers).not.toHaveProperty('cookie');
     expect(browserFetchIntentFromInit(calls[0]?.[1])).toEqual({
       owner: 'write',
-      priority: 'write',
-      cancelable: false
+      priority: 'write'
     });
   });
 
@@ -132,7 +119,6 @@ describe('runNodeSeekAction', () => {
     const userAgent = 'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36';
 
     await runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher,
       userAgent
@@ -149,7 +135,6 @@ describe('runNodeSeekAction', () => {
     const fetcher = vi.fn(async () => jsonResponse({ success: true }));
 
     await runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekReplyRequest({ postId: 801061, content: '测试回复', csrfToken: 'fixed-csrf-token' }),
       fetcher
     });
@@ -172,7 +157,6 @@ describe('runNodeSeekAction', () => {
     const fetcher = vi.fn(async () => jsonResponse({ message: 'high risk action' }, 403));
 
     await expect(runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher
     })).rejects.toThrow('high risk action');
@@ -183,7 +167,6 @@ describe('runNodeSeekAction', () => {
   it('marks rejected login cookies and times out stuck write requests', async () => {
     const rejectedFetcher = vi.fn(async () => jsonResponse({}, 401));
     await expect(runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher: rejectedFetcher
     })).rejects.toMatchObject({
@@ -197,7 +180,6 @@ describe('runNodeSeekAction', () => {
       });
     }));
     await expect(runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher: stuckFetcher,
       timeoutMs: 1
@@ -208,7 +190,6 @@ describe('runNodeSeekAction', () => {
     const rejectedFetcher = vi.fn(async () => jsonResponse({}, 403));
 
     await expect(runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher: rejectedFetcher
     })).rejects.not.toMatchObject({
@@ -225,21 +206,18 @@ describe('runNodeSeekAction', () => {
     }));
 
     await expect(runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher: failedSuccessFetcher
     })).rejects.toThrow('今日已签到');
 
     const errorFetcher = vi.fn(async () => jsonResponse({ error: 'csrf invalid' }));
     await expect(runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher: errorFetcher
     })).rejects.toThrow('csrf invalid');
 
     const messageFetcher = vi.fn(async () => jsonResponse({ message: 'high risk action' }));
     await expect(runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher: messageFetcher
     })).rejects.toThrow('high risk action');
@@ -254,7 +232,6 @@ describe('runNodeSeekAction', () => {
     }));
 
     await expect(runNodeSeekAction({
-      cookieHeader: 'session=abc',
       request: buildNodeSeekAttendanceRequest({ random: false }),
       fetcher
     })).rejects.toThrow('NodeSeek 返回内容格式不正确');

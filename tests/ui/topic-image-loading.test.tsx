@@ -87,6 +87,7 @@ const topic: TopicDetail = {
 
 function TopicImageHarness({ attributes = { alt: '测试图片', src: imageUrl } }: { attributes?: Record<string, string> }) {
   const { htmlRenderers } = useHtmlRenderingController({
+    mediaSessionIdentity: 'yaohuo:2',
     onOpenExternalUrl: noop,
     onOpenImagePreview: noop,
     onOpenTopic: noop,

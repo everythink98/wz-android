@@ -116,6 +116,19 @@ describe('Android HTML image preview helpers', () => {
     expect(imageRequestHeadersForUrl('data:image/png;base64,abc')).toBeUndefined();
   });
 
+  it('[REG-ACCOUNT-031] namespaces Expo image cache entries by session epoch', () => {
+    const url = 'https://www.nodeseek.com/uploads/private.png';
+
+    expect(imageSourceFromUrl(url, undefined, 'Node UA', 'nodeseek:4')).toMatchObject({
+      cacheKey: `nodeseek:4:${url}`,
+      uri: url
+    });
+    expect(imageSourceFromUrl(url, undefined, 'Node UA', 'nodeseek:5')).toMatchObject({
+      cacheKey: `nodeseek:5:${url}`,
+      uri: url
+    });
+  });
+
   it('keeps Imgur topic images on their original URL', () => {
     expect(imageSourceFromUrl('https://i.imgur.com/hKWwFrX.jpeg')).toEqual({
       uri: 'https://i.imgur.com/hKWwFrX.jpeg'
@@ -131,15 +144,15 @@ describe('Android HTML image preview helpers', () => {
   });
 
   it('does not send NodeSeek login cookies to public static sticker media', () => {
-    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/static/image/sticker/emoji/00.webm', 'uid=1')).toEqual({
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/static/image/sticker/emoji/00.webm')).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       Referer: 'https://www.nodeseek.com',
       'User-Agent': 'native-provider-user-agent'
     });
   });
 
-  it('keeps NodeSeek cookies for media URLs that may require login', () => {
-    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', 'uid=1')?.Cookie).toBe('uid=1');
+  it('[REG-ACCOUNT-029] leaves NodeSeek media Cookie attachment to the native read-only jar', () => {
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', 'WZ-Media-Test')).not.toHaveProperty('Cookie');
   });
 
   it('builds a de-duplicated preview list and keeps tapped image position', () => {

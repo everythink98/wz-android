@@ -1,8 +1,100 @@
 import { describe, expect, it } from 'vitest';
+import type { CredentialSummaries } from './credentialVault';
+import { createSiteAccountViews } from './screens/more/accountCenter';
 import { authActionMessageForSource, authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems, searchSessionNoticeLightTone } from './siteSessionPrompts';
 import { createSiteSessionViewModels, createSiteSessionStates } from './siteSessionState';
 
+function emptyCredentialSummaries(): CredentialSummaries {
+  return {
+    nodeseek: { site: 'nodeseek', state: 'missing', hasCredential: false, protection: null },
+    linuxdo: { site: 'linuxdo', state: 'missing', hasCredential: false, protection: null },
+    yaohuo: { site: 'yaohuo', state: 'missing', hasCredential: false, protection: null }
+  };
+}
+
 describe('site session prompts', () => {
+  it('[REG-ACCOUNT-031] never presents a pending trusted identity as confirmed', () => {
+    const confirmed = createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: ['session'],
+        isVerifying: false
+      }
+    }));
+    const sessions = {
+      ...confirmed,
+      nodeseek: {
+        ...confirmed.nodeseek,
+        canWrite: false,
+        identityTrust: 'pending' as const,
+        summaryLabel: '登录状态待确认'
+      }
+    };
+
+    expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
+      kind: 'verification-required',
+      message: 'NodeSeek 登录状态待确认，已暂停新请求和写入。',
+      tone: 'warning'
+    });
+    expect(searchSessionNoticeLightTone(authNoticeForSource('nodeseek', sessions, 'search')!))
+      .toBe('warning');
+  });
+
+  it('[REG-ACCOUNT-019] explains the NodeSeek Google fallback without showing a logged-in notice', () => {
+    const sessions = createSiteSessionViewModels(createSiteSessionStates());
+    const prompt = authNoticeForSource('nodeseek', sessions, 'search');
+
+    expect(prompt).toEqual({
+      kind: 'login-required',
+      message: '未登录搜索使用 Google，结果可能不完整。',
+      tone: 'warning'
+    });
+    expect(searchSessionNoticeLightTone(prompt!)).not.toBe('success');
+  });
+
+  it('[REG-ACCOUNT-019] projects one expired NodeSeek session consistently into More, Search, and Topic permissions', () => {
+    const sessions = createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'expired',
+        cookieSummary: ['cf_clearance'],
+        isVerifying: false
+      },
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'logged-in',
+        cookieSummary: ['_t'],
+        isVerifying: false
+      },
+      yaohuo: {
+        site: 'yaohuo',
+        status: 'logged-in',
+        cookieSummary: ['sid'],
+        isVerifying: false
+      },
+      xiaoyinsi: {
+        site: 'xiaoyinsi',
+        status: 'logged-in',
+        cookieSummary: [],
+        isVerifying: false
+      }
+    }));
+    const nodeSeekAccount = createSiteAccountViews(sessions, emptyCredentialSummaries())
+      .find((view) => view.site === 'nodeseek');
+    const searchNotice = authNoticeForSource('nodeseek', sessions, 'search');
+
+    expect(nodeSeekAccount).toMatchObject({ isLoggedIn: false, statusLabel: '已失效' });
+    expect(searchNotice).toEqual({
+      kind: 'login-expired',
+      message: 'NodeSeek 登录已失效；未登录搜索使用 Google，结果可能不完整。',
+      tone: 'danger'
+    });
+    expect(searchSessionNoticeLightTone(searchNotice!)).not.toBe('success');
+    expect(sessions.nodeseek.canWrite).toBe(false);
+    expect([sessions.linuxdo.canWrite, sessions.yaohuo.canWrite, sessions.xiaoyinsi.canWrite]).toEqual([true, true, true]);
+  });
+
   it('uses site-specific search hints instead of one generic login prompt', () => {
     const sessions = createSiteSessionViewModels(createSiteSessionStates({
       nodeseek: {
@@ -27,7 +119,7 @@ describe('site session prompts', () => {
 
     expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
       kind: 'verified',
-      message: '已通过访问验证，登录后可使用完整能力。',
+      message: '未登录搜索使用 Google，结果可能不完整。',
       tone: 'neutral'
     });
     expect(authNoticeForSource('linuxdo', sessions, 'search')).toEqual({

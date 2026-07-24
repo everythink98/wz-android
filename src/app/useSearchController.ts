@@ -39,9 +39,9 @@ import {
 } from '../searchControllerResults';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import {
-  emptyForumCredentialScope,
+  initialForumSessionEpochs,
   forumQueryKeys,
-  type ForumCredentialScope
+  type ForumSessionEpochs
 } from './serverState';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
@@ -105,6 +105,10 @@ function mergeSearchPages(pages: RemoteSearchSourceResult[], error: unknown): Se
   return merged;
 }
 
+function isSourceIdentityPending(source: Source, sessions: SiteSessionViewModels) {
+  return source !== 'v2ex' && sessions[source].identityTrust === 'pending';
+}
+
 type SearchTagCandidatesRequest = {
   categoryId?: string;
   query: string;
@@ -119,14 +123,14 @@ type SearchUserCandidatesRequest = {
 };
 
 export function useSearchCandidateQueries({
-  credentialScope,
+  sessionEpochs,
   enabled,
   searchDiscourseTags,
   searchDiscourseUsers,
   tagRequest,
   userRequest
 }: {
-  credentialScope: ForumCredentialScope;
+  sessionEpochs: ForumSessionEpochs;
   enabled: boolean;
   searchDiscourseTags: (options: SearchTagCandidatesRequest & { signal?: AbortSignal }) => Promise<DiscourseTagOption[]>;
   searchDiscourseUsers: (options: SearchUserCandidatesRequest & { signal?: AbortSignal }) => Promise<DiscourseUserOption[]>;
@@ -138,12 +142,11 @@ export function useSearchCandidateQueries({
     queryKey: forumQueryKeys.searchTags({
       categoryId: tagRequest?.categoryId,
       query: tagRequest?.query || '',
-      scope: credentialScope,
+      scope: sessionEpochs,
       selectedTags: tagRequest?.selectedTags || [],
       source: tagRequest?.source || 'linuxdo'
     }),
     enabled: Boolean(enabled && tagRequest),
-    placeholderData: (previousData) => previousData,
     queryFn: ({ signal }) => tagRequest
       ? searchDiscourseTags({ ...tagRequest, signal })
       : Promise.resolve([])
@@ -152,7 +155,7 @@ export function useSearchCandidateQueries({
   const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
     queryKey: forumQueryKeys.searchUsers({
       categoryId: userRequest?.categoryId,
-      scope: credentialScope,
+      scope: sessionEpochs,
       source: userRequest?.source || 'linuxdo',
       term: userRequest?.term || ''
     }),
@@ -173,7 +176,7 @@ export function useSearchCandidateQueries({
     tags: {
       error: tagCandidatesQuery.isError,
       loading: tagCandidatesQuery.isFetching,
-      options: tagCandidatesQuery.isPlaceholderData ? [] : tagCandidatesQuery.data || [],
+      options: tagCandidatesQuery.data || [],
       retry: tagCandidatesQuery.refetch
     },
     users: {
@@ -187,7 +190,7 @@ export function useSearchCandidateQueries({
 
 export function useSearchController({
   categories,
-  credentialScope = emptyForumCredentialScope,
+  sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
   notify,
   onNodeSeekSearchVerificationRequired,
@@ -199,7 +202,7 @@ export function useSearchController({
   sourceGateway
 }: {
   categories: Category[];
-  credentialScope?: ForumCredentialScope;
+  sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, retry: () => Promise<boolean>) => void;
@@ -326,7 +329,6 @@ export function useSearchController({
         page,
         limit: source === 'linuxdo' ? 50 : 30,
         categories,
-        linuxDoAuthenticated,
         sort: source === 'v2ex' ? sort : 'relevance',
         filter: activeFilter,
         signal
@@ -401,7 +403,7 @@ export function useSearchController({
     query: submittedSearch?.query || '',
     sort: submittedSort,
     filter: submittedFilter,
-    scope: credentialScope
+    scope: sessionEpochs
   });
 
   const aggregateKeys = aggregateSearchSources.map((source) => forumQueryKeys.search({
@@ -409,12 +411,17 @@ export function useSearchController({
     source,
     query: submittedSearch?.query || '',
     sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
-    scope: credentialScope
+    scope: sessionEpochs
   }));
   const aggregateQueries = useQueries({
     queries: aggregateSearchSources.map((source, index) => ({
       queryKey: aggregateKeys[index],
-      enabled: Boolean(searchActive && submittedSearch?.query && submittedSearch.source === 'all'),
+      enabled: Boolean(
+        searchActive
+        && submittedSearch?.query
+        && submittedSearch.source === 'all'
+        && !isSourceIdentityPending(source, sessionViewModels)
+      ),
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const result = await runRemoteSearchSource(
           source,
@@ -433,7 +440,12 @@ export function useSearchController({
 
   const singleSearchQuery = useInfiniteQuery({
     queryKey: singleSearchKey,
-    enabled: Boolean(searchActive && submittedSearch?.query && submittedSearch.source !== 'all'),
+    enabled: Boolean(
+      searchActive
+      && submittedSearch?.query
+      && submittedSearch.source !== 'all'
+      && !isSourceIdentityPending(submittedSource, sessionViewModels)
+    ),
     initialPageParam: 1,
     queryFn: async ({ pageParam, signal }) => {
       const result = await runRemoteSearchSource(
@@ -481,7 +493,12 @@ export function useSearchController({
       label: sourceLabel(source),
       items: [],
       authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined,
-      loading: Boolean(searchActive && submittedSearch?.query && submittedSearch.source === 'all')
+      loading: Boolean(
+        searchActive
+        && submittedSearch?.query
+        && submittedSearch.source === 'all'
+        && !isSourceIdentityPending(source, sessionViewModels)
+      )
     };
   }), [aggregateQueries, searchActive, sessionViewModels, submittedSearch?.query, submittedSearch?.source]);
   const singleGroup = useMemo(() => {
@@ -515,8 +532,13 @@ export function useSearchController({
     ? buildDiscourseSearchQuery(submittedSearch.query, submittedSearch.filters.linuxdo, categories)
     : '';
   const linuxDoAiQuery = useQuery({
-    queryKey: forumQueryKeys.semanticSearch(linuxDoAiFullQuery, credentialScope),
-    enabled: Boolean(searchActive && !linuxDoVerificationActive && linuxDoAiFullQuery),
+    queryKey: forumQueryKeys.semanticSearch(linuxDoAiFullQuery, sessionEpochs),
+    enabled: Boolean(
+      searchActive
+      && !linuxDoVerificationActive
+      && linuxDoAiFullQuery
+      && !isSourceIdentityPending('linuxdo', sessionViewModels)
+    ),
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
       try {
@@ -547,13 +569,19 @@ export function useSearchController({
   }, [linuxDoVerificationActive, queryClient]);
   const linuxDoAiState = useMemo<LinuxDoAiSearchState>(() => {
     if (!linuxDoAiVisible) return { status: 'idle', enabled: false, count: 0 };
+    if (
+      isSourceIdentityPending('linuxdo', sessionViewModels)
+      && !linuxDoAiQuery.data
+    ) {
+      return { status: 'idle', enabled: false, count: 0 };
+    }
     if (linuxDoAiQuery.isPending) return { status: 'loading', enabled: false, count: 0 };
     if (linuxDoAiQuery.isError) return linuxDoAiFailureState(linuxDoAiQuery.error);
     const count = linuxDoAiQuery.data?.items.length || 0;
     return count
       ? { status: 'ready', enabled: linuxDoAiEnabled, count }
       : { status: 'empty', enabled: false, count: 0, message: '未找到 AI 结果' };
-  }, [linuxDoAiEnabled, linuxDoAiQuery.data?.items.length, linuxDoAiQuery.error, linuxDoAiQuery.isError, linuxDoAiQuery.isPending, linuxDoAiVisible]);
+  }, [linuxDoAiEnabled, linuxDoAiQuery.data, linuxDoAiQuery.data?.items.length, linuxDoAiQuery.error, linuxDoAiQuery.isError, linuxDoAiQuery.isPending, linuxDoAiVisible, sessionViewModels]);
   const searchGroups = useMemo(() => linuxDoAiState.enabled
     ? baseSearchGroups.map((group) => group.source === 'linuxdo'
       ? { ...group, items: mergeLinuxDoAiTopics(group.items, linuxDoAiQuery.data?.items || [], true) }
@@ -570,7 +598,7 @@ export function useSearchController({
   }, [onNodeSeekSearchVerificationRequired, showNodeSeekVerification]);
 
   const retrySearchSource = useCallback((source: Source) => {
-    if (!searchActive) return;
+    if (!searchActive || isSourceIdentityPending(source, sessionViewModels)) return;
     if (submittedSearch?.source === 'all') {
       const index = aggregateSearchSources.indexOf(source);
       if (index >= 0) void aggregateQueries[index].refetch({ cancelRefetch: false });
@@ -582,10 +610,16 @@ export function useSearchController({
     } else {
       void singleSearchQuery.refetch({ cancelRefetch: false });
     }
-  }, [aggregateQueries, searchActive, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.refetch, submittedSearch?.source, submittedSource]);
+  }, [aggregateQueries, searchActive, sessionViewModels, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.refetch, submittedSearch?.source, submittedSource]);
 
   const loadMoreSearchSource = useCallback(async (source: Source, page: number): Promise<LinuxDoReadResumeOutcome> => {
-    if (!searchActive || submittedSearch?.source === 'all' || source !== submittedSource || singleSearchQuery.isFetchingNextPage) {
+    if (
+      !searchActive
+      || submittedSearch?.source === 'all'
+      || source !== submittedSource
+      || singleSearchQuery.isFetchingNextPage
+      || isSourceIdentityPending(source, sessionViewModels)
+    ) {
       return 'stale';
     }
     const last = singleSearchQuery.data?.pages.at(-1);
@@ -596,7 +630,7 @@ export function useSearchController({
     if (retryPage !== page) return 'stale';
     const result = await singleSearchQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [searchActive, singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.isFetchingNextPage, submittedSearch?.source, submittedSource]);
+  }, [searchActive, sessionViewModels, singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.isFetchingNextPage, submittedSearch?.source, submittedSource]);
 
   useEffect(() => {
     if (
@@ -701,15 +735,19 @@ export function useSearchController({
       && JSON.stringify(submittedSearch.filters) === JSON.stringify(filters);
     if (same) {
       if (source === 'all') {
-        aggregateQueries.forEach((result) => { void result.refetch({ cancelRefetch: false }); });
-      } else {
+        aggregateQueries.forEach((result, index) => {
+          if (!isSourceIdentityPending(aggregateSearchSources[index], sessionViewModels)) {
+            void result.refetch({ cancelRefetch: false });
+          }
+        });
+      } else if (!isSourceIdentityPending(source, sessionViewModels)) {
         void singleSearchQuery.refetch({ cancelRefetch: false });
       }
     } else {
       setSubmittedSearch(next);
     }
     return 'completed';
-  }, [addRecentSearch, aggregateQueries, notify, retrySearchSource, searchActive, searchFilters, searchQuery, searchSource, singleSearchQuery.refetch, submittedSearch]);
+  }, [addRecentSearch, aggregateQueries, notify, retrySearchSource, searchActive, searchFilters, searchQuery, searchSource, sessionViewModels, singleSearchQuery.refetch, submittedSearch]);
 
   useEffect(() => {
     if (submittedSearch && searchQuery.trim() !== submittedSearch.query) {
@@ -788,10 +826,15 @@ export function useSearchController({
     if (linuxDoAiState.status === 'ready') setLinuxDoAiEnabled((current) => !current);
   }, [linuxDoAiState.status]);
   const retryLinuxDoAiSearch = useCallback(() => {
-    if (searchActive && !linuxDoVerificationActive && linuxDoAiQuery.isError) {
+    if (
+      searchActive
+      && !linuxDoVerificationActive
+      && !isSourceIdentityPending('linuxdo', sessionViewModels)
+      && linuxDoAiQuery.isError
+    ) {
       void linuxDoAiQuery.refetch({ cancelRefetch: false });
     }
-  }, [linuxDoAiQuery.isError, linuxDoAiQuery.refetch, linuxDoVerificationActive, searchActive]);
+  }, [linuxDoAiQuery.isError, linuxDoAiQuery.refetch, linuxDoVerificationActive, searchActive, sessionViewModels]);
   const abortSearchRequests = useCallback(() => {
     void queryClient.cancelQueries({
       predicate: ({ queryKey }) => queryKey[0] === 'forum'
@@ -816,7 +859,10 @@ export function useSearchController({
     searchBusy: !searchActive || !submittedSearch
       ? false
       : submittedSearch.source === 'all'
-        ? aggregateQueries.some((query) => query.isPending)
+        ? aggregateQueries.some((query, index) => (
+          !isSourceIdentityPending(aggregateSearchSources[index], sessionViewModels)
+          && query.isPending
+        ))
         : singleSearchQuery.isFetching,
     searchFilters,
     searchGroups,

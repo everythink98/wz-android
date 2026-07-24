@@ -10,14 +10,25 @@ function networkProxyRuntimeSource(packageName) {
   return `package ${packageName}
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
+import android.webkit.WebSettings
+import com.bumptech.glide.Glide
+import com.bumptech.glide.integration.okhttp3.OkHttpUrlLoader
+import com.bumptech.glide.load.model.GlideUrl
+import com.facebook.react.modules.network.CookieJarContainer
 import com.facebook.react.modules.network.NetworkingModule
 import com.facebook.react.modules.network.OkHttpClientProvider
+import expo.modules.image.okhttp.GlideUrlWrapper
+import expo.modules.image.okhttp.GlideUrlWrapperLoader
 import java.io.EOFException
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.IDN
+import java.net.CookieHandler
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -36,12 +47,17 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import android.util.Log
 import android.util.Base64
 import okhttp3.ConnectionPool
+import okhttp3.Cookie
+import okhttp3.CookieJar
 import okhttp3.Dispatcher
+import okhttp3.HttpUrl
+import okhttp3.JavaNetCookieJar
 import okhttp3.OkHttpClient
 
 data class NetworkProxyProfile(
@@ -100,6 +116,61 @@ private fun createPlatformProxyTlsConnection(
     .createSocket(tunnel, host, port, true) as SSLSocket
 )
 
+internal class ReadOnlyWebViewCookieHandler(
+  private val cookieReader: (String) -> String? = { CookieManager.getInstance().getCookie(it) }
+) : CookieHandler() {
+  override fun get(uri: URI, headers: Map<String, List<String>>): Map<String, List<String>> {
+    val cookieHeader = readCookieHeader(uri)
+    return if (cookieHeader.isNullOrBlank()) emptyMap() else mapOf("Cookie" to listOf(cookieHeader))
+  }
+
+  override fun put(uri: URI, headers: Map<String, List<String>>) = Unit
+
+  fun readCookieHeader(url: String): String? = readCookieHeader(URI(url))
+
+  private fun readCookieHeader(uri: URI): String? {
+    if (!uri.scheme.equals("https", ignoreCase = true)
+      || uri.rawUserInfo != null
+      || !isManagedCookieHost(uri.host)) {
+      return null
+    }
+    return cookieReader(uri.toString())
+  }
+}
+
+internal class ReadOnlyCookieJarContainer(
+  private val delegate: CookieJar
+) : CookieJarContainer {
+  override fun setCookieJar(cookieJar: CookieJar) = Unit
+
+  override fun removeCookieJar() = Unit
+
+  override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) =
+    delegate.saveFromResponse(url, cookies)
+
+  override fun loadForRequest(url: HttpUrl): List<Cookie> =
+    delegate.loadForRequest(url)
+}
+
+private fun isManagedCookieHost(host: String?): Boolean {
+  val normalizedHost = host?.lowercase(Locale.US) ?: return false
+  return normalizedHost == "nodeseek.com"
+    || normalizedHost.endsWith(".nodeseek.com")
+    || normalizedHost == "linux.do"
+    || normalizedHost.endsWith(".linux.do")
+    || normalizedHost == "yaohuo.me"
+    || normalizedHost.endsWith(".yaohuo.me")
+}
+
+private fun isManagedCookieUrl(url: String): Boolean = try {
+  val uri = URI(url)
+  uri.scheme.equals("https", ignoreCase = true)
+    && uri.rawUserInfo == null
+    && isManagedCookieHost(uri.host)
+} catch (_: Exception) {
+  false
+}
+
 object NetworkProxyRuntime {
   private val lock = Any()
   private val selector = NetworkProxySelector()
@@ -107,6 +178,8 @@ object NetworkProxyRuntime {
   @Volatile private var localProxy: Proxy? = blockedProxy
   private val connectionPool = ConnectionPool()
   private val dispatcher = Dispatcher()
+  private val cookieHandler = ReadOnlyWebViewCookieHandler()
+  private val cookieJar = ReadOnlyCookieJarContainer(JavaNetCookieJar(cookieHandler))
   private var installed = false
 
   fun install(context: Context) {
@@ -117,12 +190,12 @@ object NetworkProxyRuntime {
       val appContext = context.applicationContext
       selector.setDelegate(ProxySelector.getDefault())
       ProxySelector.setDefault(selector)
-      OkHttpClientProvider.setOkHttpClientFactory {
-        OkHttpClientProvider.createClientBuilder(appContext).also { applyClientState(it) }.build()
-      }
+      val client = configureManagedClient(OkHttpClientProvider.createClientBuilder(appContext)).build()
+      OkHttpClientProvider.setOkHttpClientFactory { client }
       NetworkingModule.setCustomClientBuilder { builder ->
-        applyClientState(builder)
+        configureManagedClient(builder)
       }
+      installExpoImageClient(appContext, client)
       installed = true
       Log.i(LOG_TAG, "installed app proxy selector")
     }
@@ -145,22 +218,100 @@ object NetworkProxyRuntime {
     Log.i(LOG_TAG, "blocked app requests while proxy switches")
   }
 
-  fun recoverNodeSeekNetwork() {
-    dispatcher.cancelAll()
-    connectionPool.evictAll()
-    Log.i(LOG_TAG, "recovered managed network connections")
-  }
-
-  private fun applyClientState(builder: OkHttpClient.Builder) {
+  internal fun configureManagedClient(builder: OkHttpClient.Builder): OkHttpClient.Builder {
+    builder.cookieJar(cookieJar)
     builder.proxySelector(selector)
     builder.connectionPool(connectionPool)
     builder.dispatcher(dispatcher)
+    return builder
+  }
+
+  internal fun managedCookieHeaderForUrl(url: String): String? =
+    cookieHandler.readCookieHeader(url)
+
+  internal fun supportsManagedCookieUrl(url: String): Boolean =
+    isManagedCookieUrl(url)
+
+  internal fun clearManagedLoginCookies(source: String): Boolean {
+    val specification = when (source) {
+      "nodeseek" -> Triple(
+        listOf("https://www.nodeseek.com/", "https://nodeseek.com/"),
+        "nodeseek.com",
+        listOf("session", "connect.sid", "sid")
+      )
+      "linuxdo" -> Triple(
+        listOf("https://linux.do/", "https://www.linux.do/"),
+        "linux.do",
+        listOf("_t", "_forum_session")
+      )
+      "yaohuo" -> Triple(
+        listOf("https://www.yaohuo.me/", "https://yaohuo.me/"),
+        "yaohuo.me",
+        listOf("sidyaohuo", "ASP.NET_SessionId", "GUID")
+      )
+      else -> throw IllegalArgumentException("不支持的 Cookie 来源")
+    }
+    val (urls, domain, names) = specification
+    val cookieManager = CookieManager.getInstance()
+    val expirations = mutableListOf<Pair<String, String>>()
+    for (url in urls) {
+      for (name in names) {
+        val expired = "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
+        expirations += url to expired
+        expirations += url to "$expired; Domain=$domain"
+      }
+    }
+    val completion = CountDownLatch(expirations.size)
+    val callbackFailure = AtomicReference<Throwable?>(null)
+    val posted = Handler(Looper.getMainLooper()).post {
+      for ((url, value) in expirations) {
+        try {
+          cookieManager.setCookie(url, value) { _ ->
+            completion.countDown()
+          }
+        } catch (error: Throwable) {
+          callbackFailure.compareAndSet(null, error)
+          completion.countDown()
+        }
+      }
+    }
+    if (!posted || !completion.await(5, TimeUnit.SECONDS)) {
+      throw IllegalStateException("等待 Cookie 删除完成超时")
+    }
+    callbackFailure.get()?.let { error ->
+      throw IllegalStateException("Cookie 删除回调失败", error)
+    }
+    cookieManager.flush()
+    return urls.all { url ->
+      val currentNames = cookieManager.getCookie(url).orEmpty()
+        .split(";")
+        .mapNotNull { part ->
+          val separator = part.indexOf("=")
+          if (separator <= 0) null else part.substring(0, separator).trim()
+        }
+        .toSet()
+      names.none { currentNames.contains(it) }
+    }
   }
 
   fun currentLocalProxy(): Proxy? = localProxy
 
   fun currentLocalProxyPort(): Int? =
     (localProxy?.address() as? InetSocketAddress)?.port
+}
+
+private fun installExpoImageClient(context: Context, client: OkHttpClient) {
+  val registry = Glide.get(context).registry
+  registry.replace(
+    GlideUrl::class.java,
+    InputStream::class.java,
+    OkHttpUrlLoader.Factory(client)
+  )
+  registry.replace(
+    GlideUrlWrapper::class.java,
+    InputStream::class.java,
+    GlideUrlWrapperLoader.Factory(client)
+  )
 }
 
 class NetworkProxySelector : ProxySelector() {
@@ -747,6 +898,7 @@ private fun isLocalDevHost(host: String): Boolean {
 function networkProxyModuleSource(packageName) {
   return `package ${packageName}
 
+import android.webkit.WebSettings
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
@@ -919,6 +1071,12 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 
   override fun getName(): String = "NetworkProxyModule"
 
+  override fun getConstants(): MutableMap<String, Any> = mutableMapOf(
+    "defaultWebViewUserAgent" to runCatching {
+      WebSettings.getDefaultUserAgent(reactContext)
+    }.getOrDefault("")
+  )
+
   @ReactMethod
   fun applyProxy(profile: ReadableMap?, promise: Promise) {
     worker.execute {
@@ -962,6 +1120,35 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
+  fun readManagedCookieHeader(exactUrl: String, promise: Promise) {
+    try {
+      if (!NetworkProxyRuntime.supportsManagedCookieUrl(exactUrl)) {
+        promise.resolve(Arguments.createMap().apply {
+          putString("status", "unsupported")
+        })
+        return
+      }
+      promise.resolve(Arguments.createMap().apply {
+        putString("status", "ok")
+        putString("header", NetworkProxyRuntime.managedCookieHeaderForUrl(exactUrl).orEmpty())
+      })
+    } catch (error: Exception) {
+      promise.reject("cookie_read_failed", "无法读取当前 WebView Cookie", error)
+    }
+  }
+
+  @ReactMethod
+  fun clearManagedLoginCookies(source: String, promise: Promise) {
+    worker.execute {
+      try {
+        promise.resolve(NetworkProxyRuntime.clearManagedLoginCookies(source))
+      } catch (error: Exception) {
+        promise.reject("cookie_clear_failed", "无法清除登录 Cookie", error)
+      }
+    }
+  }
+
+  @ReactMethod
   fun testProxy(profile: ReadableMap, promise: Promise) {
     worker.execute {
       try {
@@ -978,19 +1165,6 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
         promise.resolve(statusMap(true, null))
       } catch (error: Exception) {
         promise.reject("proxy_test_failed", error.message ?: "代理测试失败", error)
-      }
-    }
-  }
-
-  @ReactMethod
-  fun recoverNodeSeekNetwork(promise: Promise) {
-    worker.execute {
-      try {
-        NetworkProxyRuntime.install(reactContext)
-        NetworkProxyRuntime.recoverNodeSeekNetwork()
-        promise.resolve(statusMap(true, null))
-      } catch (error: Exception) {
-        promise.reject("network_recover_failed", error.message ?: "请求通道恢复失败", error)
       }
     }
   }
@@ -1208,6 +1382,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import okhttp3.Cookie
+import okhttp3.JavaNetCookieJar
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -1218,6 +1395,88 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NetworkProxyRuntimeTest {
+  @Test
+  fun readOnlyCookieJarLoadsTheExactManagedUrlWithoutPersistingResponses() {
+    val reads = mutableListOf<String>()
+    val handler = ReadOnlyWebViewCookieHandler { url ->
+      reads.add(url)
+      "cf_clearance=clearance; _cfuvid=visitor; future_cookie=future"
+    }
+    val jar = JavaNetCookieJar(handler)
+    val url = "https://www.nodeseek.com/post-1-1?mode=latest".toHttpUrl()
+
+    assertEquals(
+      listOf("cf_clearance", "_cfuvid", "future_cookie"),
+      jar.loadForRequest(url).map { it.name }
+    )
+
+    jar.saveFromResponse(
+      url,
+      listOf(Cookie.Builder()
+        .name("response_cookie")
+        .value("must-not-persist")
+        .hostOnlyDomain("www.nodeseek.com")
+        .build())
+    )
+
+    assertEquals(
+      listOf("cf_clearance", "_cfuvid", "future_cookie"),
+      jar.loadForRequest(url).map { it.name }
+    )
+    assertEquals(listOf(url.toString(), url.toString()), reads)
+  }
+
+  @Test
+  fun readOnlyCookieJarDoesNotReadCookiesForUnmanagedHosts() {
+    var readCount = 0
+    val jar = JavaNetCookieJar(ReadOnlyWebViewCookieHandler {
+      readCount += 1
+      "session=must-not-leak"
+    })
+
+    assertTrue(jar.loadForRequest("https://example.com/private".toHttpUrl()).isEmpty())
+    assertTrue(jar.loadForRequest("https://evilnodeseek.com/private".toHttpUrl()).isEmpty())
+    assertTrue(jar.loadForRequest("http://www.nodeseek.com/private".toHttpUrl()).isEmpty())
+    assertTrue(jar.loadForRequest("https://user:pass@www.nodeseek.com/private".toHttpUrl()).isEmpty())
+    assertEquals(0, readCount)
+  }
+
+  @Test
+  fun readOnlyCookieJarPropagatesManagedCookieReadFailures() {
+    val jar = JavaNetCookieJar(ReadOnlyWebViewCookieHandler {
+      throw IllegalStateException("cookie reader unavailable")
+    })
+
+    assertThrows(IllegalStateException::class.java) {
+      jar.loadForRequest("https://www.nodeseek.com/private".toHttpUrl())
+    }
+  }
+
+  @Test
+  fun managedClientsShareCookieProxyDispatcherAndConnectionPoolState() {
+    val first = NetworkProxyRuntime.configureManagedClient(okhttp3.OkHttpClient.Builder()).build()
+    val second = NetworkProxyRuntime.configureManagedClient(okhttp3.OkHttpClient.Builder()).build()
+
+    assertTrue(first.cookieJar is com.facebook.react.modules.network.CookieJarContainer)
+    assertSame(first.cookieJar, second.cookieJar)
+    assertSame(first.proxySelector, second.proxySelector)
+    assertSame(first.dispatcher, second.dispatcher)
+    assertSame(first.connectionPool, second.connectionPool)
+  }
+
+  @Test
+  fun reactNativeCannotReplaceOrRemoveTheReadOnlyCookieJar() {
+    val url = "https://www.nodeseek.com/private".toHttpUrl()
+    val container = ReadOnlyCookieJarContainer(
+      JavaNetCookieJar(ReadOnlyWebViewCookieHandler { "session=live" })
+    )
+
+    container.setCookieJar(okhttp3.CookieJar.NO_COOKIES)
+    container.removeCookieJar()
+
+    assertEquals(listOf("session"), container.loadForRequest(url).map { it.name })
+  }
+
   @Test
   fun startsBlockedUntilPersistedProxyStateIsApplied() {
     val proxy = NetworkProxyRuntime.currentLocalProxy()

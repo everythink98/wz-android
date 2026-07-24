@@ -429,6 +429,7 @@ export const TopicScreen = memo(function TopicScreen({
   loadedQuotedReplies,
   loadingMoreReplies,
   loadingQuotedFloors,
+  mediaSessionIdentity,
   commentQuery,
   replyHighlightQuery,
   quoteStateVersion,
@@ -499,6 +500,7 @@ export const TopicScreen = memo(function TopicScreen({
   loadedQuotedReplies: Record<string, Reply>;
   loadingMoreReplies: boolean;
   loadingQuotedFloors: Record<string, boolean>;
+  mediaSessionIdentity: string;
   commentQuery: string;
   replyHighlightQuery: string;
   quoteStateVersion: number;
@@ -1073,7 +1075,12 @@ export const TopicScreen = memo(function TopicScreen({
     return renderTopicListItemFrame(
       <View style={[styles.replyListItem, topicColumnStyle]}>
         <View style={styles.articleBody}>
-          <ForumContentVideo src={contentItem.src} theme={theme} />
+          <ForumContentVideo
+            key={`${mediaSessionIdentity}:${contentItem.src}`}
+            mediaSessionIdentity={mediaSessionIdentity}
+            src={contentItem.src}
+            theme={theme}
+          />
         </View>
       </View>,
       contentItem.key

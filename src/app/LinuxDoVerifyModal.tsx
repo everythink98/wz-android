@@ -136,10 +136,9 @@ export function LinuxDoVerifyModal({
             }
           }}
           onLoadStart={() => {
+            linuxDoWebViewReadyRef.current = false;
             onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
-            if (!linuxDoWebViewReadyRef.current) {
-              onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
-            }
+            onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
           }}
           onMessage={(event) => {
             if (!onLoginFormMessage(event)) {

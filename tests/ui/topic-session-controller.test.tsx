@@ -3,9 +3,10 @@ import { useRef, useState } from 'react';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import {
   appQueryClient,
-  emptyForumCredentialScope,
+  initialForumSessionEpochs,
   forumQueryKeys,
-  type ForumCredentialScope
+  type ForumIdentityBarrierSource,
+  type ForumSessionEpochs
 } from '../../src/app/serverState';
 import { useTopicController } from '../../src/app/useTopicController';
 import { useTopicSessionController } from '../../src/app/useTopicSessionController';
@@ -33,12 +34,14 @@ const firstDetail: TopicDetail = {
 };
 
 function renderTopicController({
-  getCredentialScope = () => emptyForumCredentialScope,
+  getIdentityBarriers = () => [],
+  getSessionEpochs = () => initialForumSessionEpochs,
   notify = jest.fn(),
   sourceGateway,
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
 }: {
-  getCredentialScope?: () => ForumCredentialScope;
+  getIdentityBarriers?: () => ForumIdentityBarrierSource[];
+  getSessionEpochs?: () => ForumSessionEpochs;
   notify?: (message: string) => void;
   sourceGateway: Partial<SourceGateway>;
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
@@ -52,7 +55,8 @@ function renderTopicController({
     const controller = useTopicController({
       changeScreen: setScreen,
       commitReaderData: jest.fn(),
-      credentialScope: getCredentialScope(),
+      identityBarriers: getIdentityBarriers(),
+      sessionEpochs: getSessionEpochs(),
       getCurrentScreen: () => screenRef.current,
       notify,
       onNodeSeekTopicVerificationRequired: jest.fn(),
@@ -116,22 +120,55 @@ describe('topic query controller', () => {
   });
 
   it('isolates cached detail when the credential scope changes', async () => {
-    let scope = emptyForumCredentialScope;
+    let scope = initialForumSessionEpochs;
     const replacement = Promise.withResolvers<TopicDetail>();
     const getTopic = jest.fn<SourceGateway['getTopic']>()
       .mockResolvedValueOnce(firstDetail)
       .mockImplementationOnce(async () => replacement.promise);
-    const hook = await renderTopicController({ getCredentialScope: () => scope, sourceGateway: { getTopic } });
+    const hook = await renderTopicController({ getSessionEpochs: () => scope, sourceGateway: { getTopic } });
 
     await act(async () => { await hook.result.current.controller.openTopic(firstTopic); });
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(firstDetail));
+    await act(async () => {
+      hook.result.current.session.commands.composer.changeContent('保留的本地草稿');
+      hook.result.current.session.commands.view.changeReplyFilter('author');
+      hook.result.current.session.commands.view.rememberScrollY(280);
+    });
     scope = { ...scope, nodeseek: 1 };
     await act(async () => { await hook.rerender(undefined); });
 
     await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(2));
     expect(hook.result.current.controller.topicDetail).toBeNull();
+    expect(hook.result.current.session.snapshot()).toMatchObject({
+      selectedTopic: firstTopic,
+      replyContent: '保留的本地草稿',
+      replyFilter: 'author',
+      scrollY: 280
+    });
     await act(async () => { replacement.resolve({ ...firstDetail, title: 'New account' }); await replacement.promise; });
     await waitFor(() => expect(hook.result.current.controller.topicDetail?.title).toBe('New account'));
+  });
+
+  it('[REG-ACCOUNT-031] keeps a loaded topic read-only while its identity is pending', async () => {
+    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    const getTopic = jest.fn<SourceGateway['getTopic']>(async () => firstDetail);
+    const hook = await renderTopicController({
+      getIdentityBarriers: () => identityBarriers,
+      sourceGateway: { getTopic }
+    });
+
+    await act(async () => { await hook.result.current.controller.openTopic(firstTopic); });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(firstDetail));
+
+    identityBarriers = ['nodeseek'];
+    await act(async () => {
+      hook.rerender(undefined);
+      await Promise.resolve();
+    });
+
+    await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('stale');
+    expect(getTopic).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.controller.topicDetail).toEqual(firstDetail);
   });
 
   it('[REG-SOURCE-002] does not cache parse-empty topic data', async () => {
@@ -144,7 +181,7 @@ describe('topic query controller', () => {
 
     await act(async () => { await hook.result.current.controller.openTopic(firstTopic); });
     await waitFor(() => expect(hook.result.current.controller.topicError?.message).toContain('解析为空'));
-    const key = forumQueryKeys.topic({ source: 'nodeseek', topicId: '1', scope: emptyForumCredentialScope });
+    const key = forumQueryKeys.topic({ source: 'nodeseek', topicId: '1', scope: initialForumSessionEpochs });
     expect(appQueryClient.getQueryData(key)).toBeUndefined();
   });
 
@@ -401,7 +438,7 @@ describe('topic query controller', () => {
       'forum',
       'linuxdo',
       'topic',
-      { credential: 0, topicId: '1' }
+      { sessionEpoch: 0, topicId: '1' }
     ]);
     await act(async () => { await recovery?.resume(); });
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(linuxDetail));
@@ -635,7 +672,7 @@ describe('topic query controller', () => {
     const unrelatedKey = forumQueryKeys.topic({
       source: 'nodeseek',
       topicId: '99',
-      scope: emptyForumCredentialScope
+      scope: initialForumSessionEpochs
     });
     void appQueryClient.fetchQuery({
       queryKey: unrelatedKey,

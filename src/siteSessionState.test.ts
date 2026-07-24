@@ -214,6 +214,26 @@ describe('site session state', () => {
     expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates()).nodeseek, 123)).toBeNull();
   });
 
+  it('[REG-ACCOUNT-019] uses the verified NodeSeek account projection for topic ownership after a remote refresh', () => {
+    const view = createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: ['session'],
+        isVerifying: false,
+        currentUser: {
+          source: 'nodeseek',
+          id: '48872',
+          username: '当前账号',
+          url: 'https://www.nodeseek.com/space/48872',
+          topics: []
+        }
+      }
+    })).nodeseek;
+
+    expect(nodeSeekUserIdForSession(view, null)).toBe(48872);
+  });
+
   it('moves login detection, verification success, expiry, and clearing through one reducer', () => {
     const initial = createSiteSessionStates();
     const loggedIn = {
@@ -292,7 +312,66 @@ describe('site session state', () => {
     });
   });
 
-  it('attaches current user identity only while the site is logged in', () => {
+  it.each(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const)(
+    '[REG-ACCOUNT-023] keeps the confirmed %s identity when a read path only observes credentials',
+    (site) => {
+      const currentUser: UserProfile = {
+        source: site,
+        id: `${site}-user-id`,
+        username: `${site}-user`,
+        displayName: `${site} user`,
+        url: `https://example.com/${site}`,
+        topics: []
+      };
+      const loggedIn = reduceSiteSessionState(createSiteSessionStates()[site], {
+        type: 'verification-succeeded',
+        cookieSummary: ['confirmed-credential'],
+        loggedIn: true,
+        currentUser,
+        at: '2026-07-23T01:00:00.000Z'
+      });
+
+      const observed = reduceSiteSessionState(loggedIn, {
+        type: 'cookie-loaded',
+        cookieSummary: ['refreshed-credential'],
+        hasVerification: site === 'nodeseek' || site === 'linuxdo',
+        at: '2026-07-23T01:05:00.000Z'
+      });
+
+      expect(observed).toMatchObject({
+        status: 'logged-in',
+        cookieSummary: ['refreshed-credential'],
+        currentUser,
+        lastVerifiedAt: '2026-07-23T01:00:00.000Z'
+      });
+    }
+  );
+
+  it.each(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const)(
+    '[REG-ACCOUNT-019] keeps %s explicitly expired when only unverified credentials are reloaded',
+    (site) => {
+      const expired = reduceSiteSessionState(createSiteSessionStates()[site], {
+        type: 'login-expired',
+        message: `${site} expired`
+      });
+
+      const reloaded = reduceSiteSessionState(expired, {
+        type: 'cookie-loaded',
+        cookieSummary: ['stale-credential'],
+        hasVerification: site === 'nodeseek' || site === 'linuxdo',
+        loggedIn: false,
+        at: '2026-07-23T00:00:00.000Z'
+      });
+
+      expect(reloaded).toMatchObject({
+        status: 'expired',
+        lastError: `${site} expired`
+      });
+      expect(reloaded.currentUser).toBeUndefined();
+    }
+  );
+
+  it('[REG-WRITE-022] removes write capability and current user after confirmed expiry', () => {
     const currentUser: UserProfile = {
       source: 'yaohuo',
       id: '7',
@@ -337,6 +416,10 @@ describe('site session state', () => {
     });
     expect(cleared.currentUser).toBeUndefined();
     expect(expired.currentUser).toBeUndefined();
+    expect(createSiteSessionViewModels(createSiteSessionStates({ yaohuo: expired })).yaohuo).toMatchObject({
+      status: 'expired',
+      canWrite: false
+    });
   });
 
   it('applies temporary anonymous overrides without mutating saved session state', () => {

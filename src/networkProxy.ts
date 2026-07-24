@@ -33,7 +33,9 @@ export type NetworkProxyStatus = {
 
 export type NativeNetworkProxyModule = {
   applyProxy?: (profile: NetworkProxyProfile | null) => Promise<NetworkProxyStatus>;
-  recoverNodeSeekNetwork?: () => Promise<NetworkProxyStatus>;
+  clearManagedLoginCookies?: (source: string) => Promise<unknown>;
+  defaultWebViewUserAgent?: string;
+  readManagedCookieHeader?: (exactUrl: string) => Promise<unknown>;
   testProxy?: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
 };
 
@@ -231,17 +233,6 @@ export async function applyNetworkProxy(profile: NetworkProxyProfile | null, mod
   const result = await module.applyProxy(profile);
   if (!result?.ok) {
     throw new Error(result?.message || '代理启动失败');
-  }
-  return result;
-}
-
-export async function recoverNodeSeekNetwork(module = networkProxyNativeModule()) {
-  if (!module?.recoverNodeSeekNetwork) {
-    return { ok: true } satisfies NetworkProxyStatus;
-  }
-  const result = await module.recoverNodeSeekNetwork();
-  if (!result?.ok) {
-    throw new Error(result?.message || '请求通道恢复失败');
   }
   return result;
 }

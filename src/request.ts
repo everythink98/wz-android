@@ -3,6 +3,11 @@ export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 export const REQUEST_CANCELED_MESSAGE = '请求已取消';
+const REQUEST_TIMEOUT_CANCEL = Symbol.for('wz.requestTimeoutCancel');
+
+type RequestInitWithTimeoutCancel = RequestInit & {
+  [REQUEST_TIMEOUT_CANCEL]?: () => void;
+};
 
 export interface FetchWithTimeoutOptions {
   fetcher?: Fetcher;
@@ -66,6 +71,10 @@ export function scheduleRequestTimeout(callback: () => void, timeoutMs: number) 
   };
 }
 
+export function cancelRequestTimeoutForFallback(init: RequestInit | undefined) {
+  (init as RequestInitWithTimeoutCancel | undefined)?.[REQUEST_TIMEOUT_CANCEL]?.();
+}
+
 export async function fetchWithTimeout(
   input: string,
   init: RequestInit = {},
@@ -107,7 +116,18 @@ export async function fetchWithTimeout(
     : undefined;
   try {
     const fetchPromise = Promise.resolve()
-      .then(() => fetcher(input, { ...init, signal: controller.signal }))
+      .then(() => {
+        const requestInit: RequestInitWithTimeoutCancel = {
+          ...init,
+          credentials: 'include',
+          signal: controller.signal,
+          [REQUEST_TIMEOUT_CANCEL]: () => {
+            cancelTimeout?.();
+            cancelTimeout = undefined;
+          }
+        };
+        return fetcher(input, requestInit);
+      })
       .catch((error) => {
         if (isAbortLikeError(error) || controller.signal.aborted) {
           throw new Error(timedOut ? REQUEST_TIMEOUT_MESSAGE : REQUEST_CANCELED_MESSAGE);

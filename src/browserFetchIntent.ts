@@ -4,7 +4,6 @@ export type BrowserFetchPriority = 'background' | 'foreground' | 'write';
 export type BrowserFetchIntent = {
   owner: BrowserFetchOwner;
   priority: BrowserFetchPriority;
-  cancelable: boolean;
 };
 
 const BROWSER_FETCH_INTENT = Symbol.for('wz.browserFetchIntent');

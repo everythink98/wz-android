@@ -29,7 +29,6 @@
     "plugins": [
       "./plugins/withAndroidReleaseDefaults",
       "./plugins/withApkInstaller",
-      "./plugins/withLinuxDoCookieModule",
       "./plugins/withXiaoyinsiAuthModule",
       "./plugins/withNetworkProxyModule",
       [

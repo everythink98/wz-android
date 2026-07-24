@@ -54,7 +54,7 @@ import {
   useXiaoyinsiAuthController,
   type XiaoyinsiAuthorizationReadResult
 } from '../../src/app/useXiaoyinsiAuthController';
-import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
+import { appQueryClient, initialForumSessionEpochs } from '../../src/app/serverState';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
 
@@ -119,7 +119,11 @@ const pending = {
   intervalMs: 5_000
 };
 
-async function renderController(dispatchSiteSessionEvent = jest.fn(), notify = jest.fn()) {
+async function renderController(
+  dispatchSiteSessionEvent = jest.fn(),
+  notify = jest.fn(),
+  isIdentityPending = () => false
+) {
   const fetcher = jest.fn(async () => new Response('{}'));
   const sourceGateway = {
     getLevelProfile: jest.fn(async () => levelProfile)
@@ -128,9 +132,10 @@ async function renderController(dispatchSiteSessionEvent = jest.fn(), notify = j
     dispatchSiteSessionEvent,
     hook: await (async () => {
       const hook = await renderHook(() => useXiaoyinsiAuthController({
-        credentialScope: emptyForumCredentialScope,
+        sessionEpochs: initialForumSessionEpochs,
         dispatchSiteSessionEvent,
         fetcher,
+        isIdentityPending,
         notify,
         sourceGateway
       }), {
@@ -308,6 +313,20 @@ describe('小隐寺授权 controller', () => {
     expect(events.at(-1)).toMatchObject({ area: 'session', operation: 'refresh', outcome: 'success' });
   });
 
+  it('[REG-ACCOUNT-031] does not refresh the Xiaoyinsi level while identity is pending', async () => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
+    const { hook, sourceGateway } = await renderController(
+      jest.fn(),
+      jest.fn(),
+      () => true
+    );
+    await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
+
+    await expect(hook.result.current.refreshLevel()).resolves.toBe(false);
+    expect(sourceGateway.getLevelProfile).not.toHaveBeenCalled();
+    expect(hook.result.current.levelBusy).toBe(false);
+  });
+
   it('[REG-ACCOUNT-018] reports a failed Xiaoyinsi level refresh while retaining trusted data', async () => {
     mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
     const { hook, notify, sourceGateway } = await renderController();
@@ -364,6 +383,48 @@ describe('小隐寺授权 controller', () => {
       pending: hook.result.current.pending,
       phase: hook.result.current.phase
     }).toEqual(workflowBeforeRead);
+  });
+
+  it.each([401, 403, 404])('[REG-ACCOUNT-025] keeps raw Xiaoyinsi transport HTTP %i unknown', async (status) => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'candidate-key', clientId: 'client' });
+    mockVerify.mockRejectedValue(Object.assign(new Error(`HTTP ${status}`), { status }));
+    const { hook } = await renderController();
+
+    let result: XiaoyinsiAuthorizationReadResult | undefined;
+    await act(async () => {
+      result = await hook.result.current.readAuthorization(undefined, {
+        signal: { aborted: false } as AbortSignal
+      });
+    });
+
+    expect(result).toMatchObject({
+      authenticated: null,
+      sessionEvent: { type: 'check-failed', message: `HTTP ${status}` }
+    });
+  });
+
+  it('[REG-ACCOUNT-025] accepts only a typed invalid User API key result as expired', async () => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'expired-key', clientId: 'client' });
+    mockVerify.mockRejectedValue(Object.assign(new Error('invalid access'), {
+      source: 'xiaoyinsi',
+      kind: 'login-expired',
+      loginRequired: true,
+      reason: 'expired'
+    }));
+    const { hook } = await renderController();
+
+    let result: XiaoyinsiAuthorizationReadResult | undefined;
+    await act(async () => {
+      result = await hook.result.current.readAuthorization(undefined, {
+        signal: { aborted: false } as AbortSignal
+      });
+    });
+
+    expect(result).toEqual({
+      authenticated: false,
+      reason: 'login_required',
+      sessionEvent: { type: 'login-expired', message: '小隐寺授权已失效' }
+    });
   });
 
   const terminalCases: Array<[

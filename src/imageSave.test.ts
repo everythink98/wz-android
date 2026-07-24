@@ -143,7 +143,6 @@ describe('image library saving', () => {
       fetcher,
       undefined,
       {
-        nodeSeekCookieHeader: 'session=save-test',
         nodeSeekUserAgent: 'WZ-Save-Test'
       }
     );
@@ -152,12 +151,12 @@ describe('image library saving', () => {
       'https://www.nodeseek.com/uploads/private-topic.png',
       expect.objectContaining({
         headers: expect.objectContaining({
-          Cookie: 'session=save-test',
           'User-Agent': 'WZ-Save-Test'
         }),
         signal: expect.any(AbortSignal)
       })
     );
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('REG-TOPIC-015 preserves modern remote image extensions when saving', async () => {

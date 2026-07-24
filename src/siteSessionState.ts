@@ -27,6 +27,7 @@ export type SiteSessionViewModel = {
   isLoggedIn: boolean;
   isVerifying: boolean;
   canWrite: boolean;
+  identityTrust: 'confirmed' | 'pending' | 'none';
   currentUser?: UserProfile;
   lastVerifiedAt?: string;
   lastError?: string;
@@ -41,7 +42,7 @@ export type SiteSessionEvent =
   | { type: 'verification-started'; at?: string }
   | { type: 'authorization-started'; at?: string }
   | { type: 'verification-succeeded'; cookieSummary?: string[]; loggedIn?: boolean; currentUser?: UserProfile | null; at: string }
-  | { type: 'login-expired'; message?: string; at?: string }
+  | { type: 'login-expired'; message?: string; recoveryQueryKey?: readonly unknown[]; at?: string }
   | { type: 'check-failed'; message: string; at?: string }
   | { type: 'cleared'; recoveryQueryKey?: readonly unknown[]; at?: string };
 export type ScopedSiteSessionEvent = SiteSessionEvent & { site: SessionSite };
@@ -110,7 +111,11 @@ function stateWithCookieFacts(state: SiteSessionState, event: {
 }) {
   const { cookieSummary, hasVerification, loggedIn, currentUser, at } = event;
   const nextCookieSummary = cleanCookieSummary(cookieSummary || state.cookieSummary);
-  const status: SiteSessionStatus = loggedIn ? 'logged-in' : (hasVerification ?? nextCookieSummary.length > 0) ? 'verified' : 'anonymous';
+  const status: SiteSessionStatus = loggedIn
+    ? 'logged-in'
+    : state.status === 'expired'
+      ? 'expired'
+      : (hasVerification ?? nextCookieSummary.length > 0) ? 'verified' : 'anonymous';
   const currentUserProvided = Object.prototype.hasOwnProperty.call(event, 'currentUser');
   const nextCurrentUser = currentUserProvided ? currentUserForSite(state.site, currentUser, loggedIn) : loggedIn ? state.currentUser : undefined;
   return {
@@ -119,12 +124,32 @@ function stateWithCookieFacts(state: SiteSessionState, event: {
     cookieSummary: nextCookieSummary,
     isVerifying: false,
     currentUser: nextCurrentUser,
-    lastVerifiedAt: status === 'anonymous' ? state.lastVerifiedAt : at || state.lastVerifiedAt,
-    lastError: undefined
+    lastVerifiedAt: status === 'anonymous' || status === 'expired' ? state.lastVerifiedAt : at || state.lastVerifiedAt,
+    ...(status === 'expired' ? { lastError: state.lastError } : { lastError: undefined })
   };
 }
 
+function stateWithObservedCredentials(state: SiteSessionState, event: {
+  cookieSummary?: string[];
+  hasVerification?: boolean;
+  at?: string;
+}) {
+  if (state.status !== 'anonymous' && state.status !== 'verified') {
+    return {
+      ...state,
+      cookieSummary: cleanCookieSummary(event.cookieSummary || state.cookieSummary)
+    };
+  }
+  return stateWithCookieFacts(state, {
+    ...event,
+    loggedIn: false
+  });
+}
+
 export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessionEvent): SiteSessionState {
+  if (event.type === 'cookie-loaded' && event.loggedIn === undefined) {
+    return stateWithObservedCredentials(state, event);
+  }
   if (event.type === 'cookie-loaded' || event.type === 'session-updated') {
     return stateWithCookieFacts(state, event);
   }
@@ -256,6 +281,7 @@ export function createSiteSessionViewModel(state: SiteSessionState): SiteSession
     isLoggedIn,
     isVerifying: state.isVerifying,
     canWrite: isLoggedIn,
+    identityTrust: isLoggedIn ? 'confirmed' : 'none',
     ...(state.currentUser ? { currentUser: state.currentUser } : {}),
     ...(state.lastVerifiedAt ? { lastVerifiedAt: state.lastVerifiedAt } : {}),
     ...(state.lastError ? { lastError: state.lastError } : {})
@@ -263,7 +289,11 @@ export function createSiteSessionViewModel(state: SiteSessionState): SiteSession
 }
 
 export function nodeSeekUserIdForSession(state: SiteSessionViewModel, webLoginUserId: number | null) {
-  return state.isLoggedIn ? webLoginUserId : null;
+  if (!state.isLoggedIn) {
+    return null;
+  }
+  const currentUserId = Number(state.currentUser?.id);
+  return Number.isInteger(currentUserId) && currentUserId > 0 ? currentUserId : webLoginUserId;
 }
 
 export function createSiteSessionViewModels(states: SiteSessionStates): SiteSessionViewModels {

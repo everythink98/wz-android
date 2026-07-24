@@ -5,7 +5,11 @@ import type { Screen } from '../../src/appTypes';
 import { createEmptyReaderData } from '../../src/readerData';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
-import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
+import {
+  appQueryClient,
+  initialForumSessionEpochs,
+  type ForumIdentityBarrierSource
+} from '../../src/app/serverState';
 import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
 import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
 import { QueryTestWrapper } from './QueryTestWrapper';
@@ -46,10 +50,10 @@ describe('小隐寺 Feed controller', () => {
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as SourceGateway;
-    let credentialScope = emptyForumCredentialScope;
+    let sessionEpochs = initialForumSessionEpochs;
     let screen: Screen = 'feed';
     const hook = await renderHook(() => useFeedController({
-      credentialScope,
+      sessionEpochs,
       linuxDoVerificationActive: false,
       notify: jest.fn(),
       readerData: createEmptyReaderData(),
@@ -69,7 +73,7 @@ describe('小隐寺 Feed controller', () => {
     });
     await waitFor(() => expect(feedSignals[0]?.aborted).toBe(true));
 
-    credentialScope = { ...emptyForumCredentialScope, linuxdo: 1 };
+    sessionEpochs = { ...initialForumSessionEpochs, linuxdo: 1 };
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
@@ -346,9 +350,9 @@ describe('小隐寺 Feed controller', () => {
     const showLinuxDoVerification = jest.fn();
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
-    let credentialScope = emptyForumCredentialScope;
+    let sessionEpochs = initialForumSessionEpochs;
     const hook = await renderHook(() => useFeedController({
-      credentialScope,
+      sessionEpochs,
       linuxDoVerificationActive: false,
       notify,
       readerData,
@@ -365,12 +369,153 @@ describe('小隐寺 Feed controller', () => {
 
     await act(async () => {
       resetForumSourceQueries('nodeseek', appQueryClient);
-      credentialScope = { ...credentialScope, nodeseek: credentialScope.nodeseek + 1 };
+      sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
       hook.rerender({});
     });
 
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([newTopic]));
     expect(nodeSeekReads).toBe(2);
+  });
+
+  it('[REG-ACCOUNT-031] uses the trusted aggregate as a dirty placeholder but drops it across an epoch change', async () => {
+    const oldTopic = {
+      source: 'nodeseek' as const,
+      id: 'old-account',
+      title: '旧账号聚合主题',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-old-account-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const newTopic = {
+      ...oldTopic,
+      source: 'v2ex' as const,
+      id: 'new-epoch',
+      title: '新世代公开主题',
+      url: 'https://www.v2ex.com/t/new-epoch'
+    };
+    const dirtyPublicTopic = {
+      ...newTopic,
+      id: 'dirty-public',
+      title: '待对账期间刷新的公开主题',
+      url: 'https://www.v2ex.com/t/dirty-public'
+    };
+    const dirtyRead = Promise.withResolvers<{
+      items: Array<typeof oldTopic | typeof dirtyPublicTopic>;
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const newEpochRead = Promise.withResolvers<{
+      items: typeof newTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    let readCount = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async () => {
+        readCount += 1;
+        if (readCount === 1) {
+          return { items: [oldTopic], errors: {}, hasMore: false, nextPage: null };
+        }
+        return readCount === 2 ? dirtyRead.promise : newEpochRead.promise;
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    let sessionEpochs = initialForumSessionEpochs;
+    const hook = await renderHook(() => useFeedController({
+      identityBarriers,
+      sessionEpochs,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([oldTopic]));
+
+    identityBarriers = ['nodeseek'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.activeFeedState.items).toEqual([oldTopic]);
+
+    await act(async () => {
+      dirtyRead.resolve({ items: [dirtyPublicTopic], errors: {}, hasMore: false, nextPage: null });
+      await dirtyRead.promise;
+    });
+    await waitFor(() => {
+      expect(hook.result.current.activeFeedState.items).toHaveLength(2);
+      expect(hook.result.current.activeFeedState.items).toEqual(expect.arrayContaining([oldTopic, dirtyPublicTopic]));
+    });
+
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient);
+      sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+      identityBarriers = [];
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(3));
+    expect(hook.result.current.activeFeedState.items).toEqual([]);
+
+    await act(async () => {
+      newEpochRead.resolve({ items: [newTopic], errors: {}, hasMore: false, nextPage: null });
+      await newEpochRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([newTopic]));
+  });
+
+  it('[REG-ACCOUNT-031] does not start or manually refresh a dirty single-source feed', async () => {
+    const getFeed = jest.fn(async (_options: Parameters<SourceGateway['getFeed']>[0]) => ({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const hook = await renderHook(() => useFeedController({
+      identityBarriers: ['nodeseek'],
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+    await waitFor(() => expect(getFeed).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'all' }),
+      expect.any(Object)
+    ));
+
+    await act(async () => {
+      hook.result.current.changeFeedSource('nodeseek');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await hook.result.current.refreshFeed();
+    });
+
+    expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(false);
+    expect(hook.result.current.feedBusy).toBe(false);
   });
 
   it('REG-LINUXDO-002 preserves the loaded feed page across session reset before resuming pagination', async () => {

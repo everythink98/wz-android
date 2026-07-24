@@ -10,8 +10,87 @@ export const NODEIMAGE_API_KEY_STORAGE_KEY = 'nodeimage-api-key';
 
 const nodeImageApiKeyWriteGate = createCredentialWriteGate();
 
+export type NodeImageApiKeyCredential = Readonly<{
+  version: 1;
+  apiKey: string;
+  ownership:
+    | Readonly<{ kind: 'unverified' }>
+    | Readonly<{ kind: 'verified'; identityKey: string }>;
+}>;
+
+export type NodeImageApiKeyUseStatus =
+  | 'confirmation-required'
+  | 'identity-mismatch'
+  | 'missing'
+  | 'usable';
+
 export function normalizeNodeImageApiKey(value: string) {
   return String(value || '').trim();
+}
+
+function unverifiedNodeImageCredential(apiKey: string): NodeImageApiKeyCredential {
+  return {
+    apiKey,
+    ownership: { kind: 'unverified' },
+    version: 1
+  };
+}
+
+function verifiedNodeImageCredential(
+  apiKey: string,
+  identityKey: string
+): NodeImageApiKeyCredential {
+  return {
+    apiKey,
+    ownership: { kind: 'verified', identityKey },
+    version: 1
+  };
+}
+
+function parseNodeImageCredential(rawValue: string | null): NodeImageApiKeyCredential | null {
+  const raw = normalizeNodeImageApiKey(rawValue || '');
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<NodeImageApiKeyCredential>;
+    const apiKey = normalizeNodeImageApiKey(parsed.apiKey || '');
+    if (parsed.version === 1 && apiKey && parsed.ownership?.kind === 'unverified') {
+      return unverifiedNodeImageCredential(apiKey);
+    }
+    if (
+      parsed.version === 1
+      && apiKey
+      && parsed.ownership?.kind === 'verified'
+      && normalizeNodeImageApiKey(parsed.ownership.identityKey)
+    ) {
+      return verifiedNodeImageCredential(
+        apiKey,
+        normalizeNodeImageApiKey(parsed.ownership.identityKey)
+      );
+    }
+  } catch {
+    // Legacy versions stored the API key as a plain string.
+  }
+  return unverifiedNodeImageCredential(raw);
+}
+
+function serializeNodeImageCredential(credential: NodeImageApiKeyCredential) {
+  return JSON.stringify(credential);
+}
+
+async function writeNodeImageCredential(credential: NodeImageApiKeyCredential) {
+  await SecureStore.setItemAsync(
+    NODEIMAGE_API_KEY_STORAGE_KEY,
+    serializeNodeImageCredential(credential)
+  );
+}
+
+export function nodeImageApiKeyUseStatus(
+  credential: NodeImageApiKeyCredential | null,
+  identityKey: string
+): NodeImageApiKeyUseStatus {
+  if (!credential) return 'missing';
+  if (credential.ownership.kind === 'unverified') return 'confirmation-required';
+  return credential.ownership.identityKey === identityKey ? 'usable' : 'identity-mismatch';
 }
 
 export function currentNodeImageApiKeyGeneration() {
@@ -26,12 +105,12 @@ export function invalidateNodeImageApiKeyAuthorization() {
   advanceCredentialWriteGeneration(nodeImageApiKeyWriteGate);
 }
 
-export async function loadNodeImageApiKey() {
+export async function loadNodeImageApiKeyCredential() {
   for (;;) {
     const generation = currentNodeImageApiKeyGeneration();
-    let value: string | null;
+    let rawValue: string | null;
     try {
-      value = await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
+      rawValue = await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
     } catch (error) {
       if (generation !== currentNodeImageApiKeyGeneration()) {
         continue;
@@ -39,9 +118,13 @@ export async function loadNodeImageApiKey() {
       throw error;
     }
     if (generation === currentNodeImageApiKeyGeneration()) {
-      return normalizeNodeImageApiKey(value || '');
+      return parseNodeImageCredential(rawValue);
     }
   }
+}
+
+export async function loadNodeImageApiKey() {
+  return (await loadNodeImageApiKeyCredential())?.apiKey || '';
 }
 
 export async function saveNodeImageApiKey(value: string) {
@@ -50,31 +133,59 @@ export async function saveNodeImageApiKey(value: string) {
     throw new Error('请输入 NodeImage API Key');
   }
   return replaceCredentialWrite(nodeImageApiKeyWriteGate, async () => {
-    await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, apiKey);
+    await writeNodeImageCredential(unverifiedNodeImageCredential(apiKey));
     return apiKey;
   });
 }
 
-export async function saveNodeImageApiKeyForGeneration(generation: number, value: string) {
+export async function saveNodeImageApiKeyForGeneration(
+  generation: number,
+  value: string,
+  identityKey: string
+) {
   const apiKey = normalizeNodeImageApiKey(value);
   if (!apiKey) {
     throw new Error('请输入 NodeImage API Key');
   }
+  const ownerIdentityKey = normalizeNodeImageApiKey(identityKey);
+  if (!ownerIdentityKey || ownerIdentityKey.endsWith(':anonymous')) {
+    throw new Error('NodeSeek 身份尚未确认，无法保存自动授权的 NodeImage API Key');
+  }
   return enqueueCredentialWriteForGeneration(nodeImageApiKeyWriteGate, generation, async () => {
-    await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, apiKey);
+    await writeNodeImageCredential(verifiedNodeImageCredential(apiKey, ownerIdentityKey));
     return apiKey;
   });
 }
 
-export async function restoreNodeImageApiKeyAfterCanceledAuthorization(value: string) {
-  const apiKey = normalizeNodeImageApiKey(value);
+export async function restoreNodeImageApiKeyAfterCanceledAuthorization(
+  value: NodeImageApiKeyCredential | string | null
+) {
+  const credential = typeof value === 'string'
+    ? parseNodeImageCredential(value)
+    : value;
   return replaceCredentialWrite(nodeImageApiKeyWriteGate, async () => {
-    if (apiKey) {
-      await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, apiKey);
+    if (credential) {
+      await writeNodeImageCredential(credential);
     } else {
       await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
     }
-    return apiKey;
+    return credential?.apiKey || '';
+  });
+}
+
+export async function confirmNodeImageApiKeyOwnership(identityKey: string) {
+  const ownerIdentityKey = normalizeNodeImageApiKey(identityKey);
+  if (!ownerIdentityKey || ownerIdentityKey.endsWith(':anonymous')) {
+    throw new Error('请先确认 NodeSeek 登录身份');
+  }
+  return replaceCredentialWrite(nodeImageApiKeyWriteGate, async () => {
+    const current = parseNodeImageCredential(
+      await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY)
+    );
+    if (!current) return null;
+    const confirmed = verifiedNodeImageCredential(current.apiKey, ownerIdentityKey);
+    await writeNodeImageCredential(confirmed);
+    return confirmed;
   });
 }
 
