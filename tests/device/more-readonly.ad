@@ -18,7 +18,7 @@ wait "id=\"account-site-yaohuo\" label=\"妖火，已登录，已选择\"" 60000
 press id="account-site-xiaoyinsi"
 wait "id=\"account-site-xiaoyinsi\" label=\"小隐寺，已登录，已选择\"" 60000
 wait "label=\"查看等级, 点击读取\"" 60000
-find "查看等级" click
+press "label=\"查看等级, 点击读取\""
 wait text="等级进度" 60000
 press id="account-site-nodeseek"
 wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000
