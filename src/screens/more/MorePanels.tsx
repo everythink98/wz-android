@@ -432,7 +432,7 @@ export function YaohuoLoginPanel({
               style={styles.flex}
               key={`yaohuo-login-${webViewKey}`}
               ref={yaohuoWebViewRef}
-              source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.yaohuo.loginUrl : yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
+              source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.yaohuo.loginUrl : yaohuoSession.isLoggedIn ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
               javaScriptCanOpenWindowsAutomatically={false}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled

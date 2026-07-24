@@ -171,6 +171,57 @@ private fun isManagedCookieUrl(url: String): Boolean = try {
   false
 }
 
+internal fun hasActiveYaohuoLoginCookie(cookieHeader: String?): Boolean =
+  cookieHeader.orEmpty()
+    .split(";")
+    .any { part ->
+      val entry = part.trim().split("=", limit = 2)
+      entry.size == 2 &&
+        entry[0].equals("sidyaohuo", ignoreCase = true) &&
+        entry[1].trim().let { it.isNotEmpty() && it != "-2" }
+    }
+
+internal data class ManagedLoginCookieClearPlan(
+  val urls: List<String>,
+  val names: List<String>,
+  val expirations: List<Pair<String, String>>
+)
+
+internal fun managedLoginCookieClearPlan(source: String): ManagedLoginCookieClearPlan {
+  val specification = when (source) {
+    "nodeseek" -> Triple(
+      listOf("https://www.nodeseek.com/", "https://nodeseek.com/"),
+      listOf("nodeseek.com"),
+      listOf("session", "connect.sid", "sid")
+    )
+    "linuxdo" -> Triple(
+      listOf("https://linux.do/", "https://www.linux.do/"),
+      listOf("linux.do"),
+      listOf("_t", "_forum_session")
+    )
+    "yaohuo" -> Triple(
+      listOf("https://www.yaohuo.me/", "https://yaohuo.me/"),
+      listOf("yaohuo.me", "www.yaohuo.me"),
+      listOf("sidyaohuo", "ASP.NET_SessionId", "GUID")
+    )
+    else -> throw IllegalArgumentException("不支持的 Cookie 来源")
+  }
+  val (urls, domains, names) = specification
+  val expirations = buildList {
+    for (url in urls) {
+      for (name in names) {
+        val expired = "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
+        add(url to expired)
+        val host = URI(url).host
+        domains
+          .filter { domain -> host == domain || host.endsWith(".$domain") }
+          .forEach { domain -> add(url to "$expired; Domain=$domain") }
+      }
+    }
+  }
+  return ManagedLoginCookieClearPlan(urls, names, expirations)
+}
+
 object NetworkProxyRuntime {
   private val lock = Any()
   private val selector = NetworkProxySelector()
@@ -233,38 +284,12 @@ object NetworkProxyRuntime {
     isManagedCookieUrl(url)
 
   internal fun clearManagedLoginCookies(source: String): Boolean {
-    val specification = when (source) {
-      "nodeseek" -> Triple(
-        listOf("https://www.nodeseek.com/", "https://nodeseek.com/"),
-        "nodeseek.com",
-        listOf("session", "connect.sid", "sid")
-      )
-      "linuxdo" -> Triple(
-        listOf("https://linux.do/", "https://www.linux.do/"),
-        "linux.do",
-        listOf("_t", "_forum_session")
-      )
-      "yaohuo" -> Triple(
-        listOf("https://www.yaohuo.me/", "https://yaohuo.me/"),
-        "yaohuo.me",
-        listOf("sidyaohuo", "ASP.NET_SessionId", "GUID")
-      )
-      else -> throw IllegalArgumentException("不支持的 Cookie 来源")
-    }
-    val (urls, domain, names) = specification
+    val plan = managedLoginCookieClearPlan(source)
     val cookieManager = CookieManager.getInstance()
-    val expirations = mutableListOf<Pair<String, String>>()
-    for (url in urls) {
-      for (name in names) {
-        val expired = "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
-        expirations += url to expired
-        expirations += url to "$expired; Domain=$domain"
-      }
-    }
-    val completion = CountDownLatch(expirations.size)
+    val completion = CountDownLatch(plan.expirations.size)
     val callbackFailure = AtomicReference<Throwable?>(null)
     val posted = Handler(Looper.getMainLooper()).post {
-      for ((url, value) in expirations) {
+      for ((url, value) in plan.expirations) {
         try {
           cookieManager.setCookie(url, value) { _ ->
             completion.countDown()
@@ -282,15 +307,19 @@ object NetworkProxyRuntime {
       throw IllegalStateException("Cookie 删除回调失败", error)
     }
     cookieManager.flush()
-    return urls.all { url ->
-      val currentNames = cookieManager.getCookie(url).orEmpty()
+    return plan.urls.all { url ->
+      val currentHeader = cookieManager.getCookie(url)
+      if (source == "yaohuo") {
+        return@all !hasActiveYaohuoLoginCookie(currentHeader)
+      }
+      val currentNames = currentHeader.orEmpty()
         .split(";")
         .mapNotNull { part ->
           val separator = part.indexOf("=")
           if (separator <= 0) null else part.substring(0, separator).trim()
         }
         .toSet()
-      names.none { currentNames.contains(it) }
+      plan.names.none { currentNames.contains(it) }
     }
   }
 
@@ -1395,6 +1424,31 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NetworkProxyRuntimeTest {
+  @Test
+  fun regAccount033YaohuoAnonymousCookiesDoNotBlockLoginCookieCleanup() {
+    assertFalse(hasActiveYaohuoLoginCookie("ASP.NET_SessionId=anonymous; GUID=visitor"))
+    assertFalse(hasActiveYaohuoLoginCookie("ASP.NET_SessionId=anonymous; GUID=visitor; sidyaohuo=-2"))
+    assertTrue(hasActiveYaohuoLoginCookie("sidyaohuo=logged-in-session"))
+    assertTrue(hasActiveYaohuoLoginCookie("sidyaohuo=-2; sidyaohuo=logged-in-session"))
+  }
+
+  @Test
+  fun regAccount034YaohuoClearCoversLegacyWwwDomainCookies() {
+    val expirations = managedLoginCookieClearPlan("yaohuo").expirations
+    assertTrue(
+      expirations.contains(
+        "https://www.yaohuo.me/" to
+          "sidyaohuo=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Domain=www.yaohuo.me"
+      )
+    )
+    assertFalse(
+      expirations.contains(
+        "https://yaohuo.me/" to
+          "sidyaohuo=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Domain=www.yaohuo.me"
+      )
+    )
+  }
+
   @Test
   fun readOnlyCookieJarLoadsTheExactManagedUrlWithoutPersistingResponses() {
     val reads = mutableListOf<String>()

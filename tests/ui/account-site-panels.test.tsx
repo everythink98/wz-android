@@ -418,6 +418,21 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
+  it('[REG-ACCOUNT-032] keeps a confirmed Yaohuo session page open while identity reconciliation is pending', async () => {
+    const confirmed = session('yaohuo', 'logged-in');
+    const view = await render(<YaohuoLoginPanel {...yaohuoProps({
+      yaohuoSession: {
+        ...confirmed,
+        canWrite: false,
+        identityTrust: 'pending',
+        summaryLabel: '登录状态待确认'
+      }
+    })} />);
+
+    expect(view.getByTestId('mock-login-webview-uri').props.children)
+      .toBe('https://www.yaohuo.me/wapindex.aspx?sid=-2');
+  });
+
   it('[REG-NODESEEK-002] does not expose Replay readiness after the WebView enters an error state', async () => {
     const view = await render(<NodeSeekLoginPanel {...nodeSeekProps({ loadingLoginPage: true, showLoginPanel: true })} />);
 

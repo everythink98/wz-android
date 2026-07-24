@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DiscourseTagOption, DiscourseUserOption, FeedResponse, Source, Topic } from '../types';
+import type { Category, DiscourseTagOption, DiscourseUserOption, FeedResponse, SearchResponse, Source, Topic } from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { getYaohuoTopicDirect } from '../yaohuoApi';
@@ -12,7 +12,7 @@ const forumMocks = vi.hoisted(() => ({
   getReply: vi.fn(),
   getTopic: vi.fn(async ({ id, source }) => ({ source, id, title: '', author: '', url: '', createdAt: '', replyCount: 0, contentHtml: '', replies: [] })),
   getUserProfile: vi.fn(async ({ id, source }) => ({ source, id, username: id, displayName: id, url: '', topics: [] })),
-  searchTopics: vi.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }))
+  searchTopics: vi.fn(async (): Promise<SearchResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null }))
 }));
 const linuxDoMocks = vi.hoisted(() => ({
   getLinuxDoEmojiUrls: vi.fn(),
@@ -58,7 +58,7 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter(null);
   });
 
-  it('[REG-ACCOUNT-031] blocks a pending site before transport and isolates it from aggregate reads', async () => {
+  it('[REG-ACCOUNT-031][REG-SOURCE-007] blocks a pending site before transport and isolates it from aggregate reads', async () => {
     const pendingSources = new Set<Source>(['nodeseek']);
     const publicTopic: Topic = {
       source: 'v2ex',
@@ -75,9 +75,26 @@ describe('source gateway read contract', () => {
       id: 'stale-private',
       url: 'https://www.nodeseek.com/post-stale-private-1'
     };
+    const publicCategory: Category = {
+      source: 'v2ex',
+      id: 'public',
+      name: '公开分类'
+    };
+    const stalePrivateCategory: Category = {
+      ...publicCategory,
+      source: 'nodeseek',
+      id: 'stale-private'
+    };
+    const pendingError = {
+      nodeseek: {
+        kind: 'ordinary' as const,
+        message: 'NodeSeek 暂时不可用',
+        retryable: true
+      }
+    };
     forumMocks.getFeed.mockResolvedValueOnce({
       items: [publicTopic, stalePrivateTopic],
-      errors: {},
+      errors: pendingError,
       hasMore: false,
       nextPage: null
     });
@@ -92,13 +109,35 @@ describe('source gateway read contract', () => {
     await expect(gateway.getFeed({ source: 'nodeseek' })).rejects.toThrow('登录状态待确认');
     expect(forumMocks.getFeed).not.toHaveBeenCalled();
 
-    await expect(gateway.getFeed({ source: 'all' })).resolves.toMatchObject({
-      items: [publicTopic]
-    });
+    const aggregate = await gateway.getFeed({ source: 'all' });
+    expect(aggregate.items).toEqual([publicTopic]);
+    expect(aggregate.errors).toEqual({});
     expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({
       source: 'all',
       unavailableSources: ['nodeseek']
     }));
+
+    forumMocks.getCategories.mockResolvedValueOnce({
+      items: [publicCategory, stalePrivateCategory],
+      errors: pendingError
+    });
+    await expect(gateway.getCategories({ source: 'all' })).resolves.toEqual({
+      items: [publicCategory],
+      errors: {}
+    });
+
+    forumMocks.searchTopics.mockResolvedValueOnce({
+      items: [publicTopic, stalePrivateTopic],
+      errors: pendingError,
+      hasMore: false,
+      nextPage: null
+    });
+    await expect(gateway.searchTopics({ source: 'all', query: '公开' })).resolves.toEqual({
+      items: [publicTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
   });
 
   it('[REG-TOPIC-027] routes emoji reads through managed credentials, fetcher, diagnostics, and cancellation', async () => {

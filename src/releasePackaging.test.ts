@@ -131,15 +131,22 @@ describe('Android release packaging guards', () => {
       plugin.indexOf('fun readManagedCookieHeader(exactUrl: String, promise: Promise)'),
       plugin.indexOf('fun clearManagedLoginCookies(source: String, promise: Promise)')
     )).not.toContain('flush()');
+    const clearCookiePlan = plugin.slice(
+      plugin.indexOf('internal data class ManagedLoginCookieClearPlan'),
+      plugin.indexOf('object NetworkProxyRuntime')
+    );
     const clearCookieFlow = plugin.slice(
       plugin.indexOf('internal fun clearManagedLoginCookies(source: String): Boolean'),
       plugin.indexOf('fun currentLocalProxy(): Proxy?')
     );
+    expect(clearCookiePlan).toContain('listOf("yaohuo.me", "www.yaohuo.me")');
+    expect(clearCookiePlan).toContain('add(url to "$expired; Domain=$domain")');
+    expect(clearCookiePlan).not.toContain('Domain=.$domain');
+    expect(clearCookieFlow).toContain('managedLoginCookieClearPlan(source)');
+    expect(clearCookieFlow).toContain('for ((url, value) in plan.expirations)');
     expect(clearCookieFlow).toContain('Handler(Looper.getMainLooper())');
     expect(clearCookieFlow).toContain('CountDownLatch');
     expect(clearCookieFlow).toContain('await(5, TimeUnit.SECONDS)');
-    expect(clearCookieFlow).toContain('expirations += url to "$expired; Domain=$domain"');
-    expect(clearCookieFlow).not.toContain('Domain=.$domain');
     expect(clearCookieFlow.indexOf('await(5, TimeUnit.SECONDS)'))
       .toBeLessThan(clearCookieFlow.indexOf('cookieManager.flush()'));
     expect(clearCookieFlow.indexOf('cookieManager.flush()'))

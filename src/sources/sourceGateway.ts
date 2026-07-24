@@ -352,7 +352,11 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
             || !unavailableSourceSet.has((item as { source?: Source }).source as Source)
           ));
         }
-        aggregateResult.errors = { ...aggregateResult.errors, ...credentialErrors };
+        const aggregateErrors = { ...aggregateResult.errors };
+        pendingIdentitySources.forEach((pendingSource) => {
+          delete aggregateErrors[pendingSource];
+        });
+        aggregateResult.errors = { ...aggregateErrors, ...credentialErrors };
       }
       const resultRecord = result && typeof result === 'object' ? result as Record<string, unknown> : {};
       const resultErrors = resultRecord.errors && typeof resultRecord.errors === 'object'

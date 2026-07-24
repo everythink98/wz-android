@@ -2217,6 +2217,53 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 在任一 surface open 分支调用 clear/flush/写 Cookie，关闭时省略 reconciliation，把 unknown 提交成 anonymous，让 hidden close 重复 probe，或让旧 generation 覆盖新 Account key；编号测试必须分别观察到清理调用、错误身份、重复请求或跨 epoch 缓存。 |
 | 明确不覆盖范围 | 不改变小隐寺 Device Code 协议，不把账号密码自动填入当作 Cookie，不跨应用同步 Cookie，不自动退出/换号，也不执行真实论坛写入。 |
 
+## `REG-ACCOUNT-032` 妖火已登录会话在身份核对时打开登录页
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02` |
+| 用户症状 | 账号中心仍显示妖火用户名和已登录状态，点入后却先打开登录页；点击“检测登录状态”后页面立即恢复为“我的地盘”。 |
+| 触发条件 | 已确认的妖火账号打开登录 surface；surface ticket 将 `identityTrust` 置为 `pending` 并临时关闭写权限。 |
+| 根因 seam | `YaohuoLoginPanel` 用 `canWrite` 选择登录页或会话页，把“身份核对期间禁止写入”误当成“已经退出”。 |
+| 必须保持的行为 | `pending` 期间继续显示上次确认身份并打开妖火会话页，但所有写操作和新的单站私有请求仍由 identity barrier 暂停；明确匿名或失效才打开登录页，用户选择账号密码填入时仍进入登录表单。 |
+| 精确失败 oracle | `tests/ui/account-site-panels.test.tsx` 的 `REG-ACCOUNT-032` 构造 `isLoggedIn=true`、`canWrite=false`、`identityTrust=pending` 的妖火会话，要求 WebView 首个 URL 为 `/wapindex.aspx?sid=-2`；旧实现得到 `/waplogin.aspx`。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要渲染真实 panel 并读取 WebView source，纯 view-model 测试不能证明页面选址。 |
+| Replay 或真实验收路径 | 保留自然妖火登录态，从账号中心点入妖火；首屏应直接进入会话页，点击检测仍保持同一账号。不得为了验收清 Cookie。 |
+| 负向验证方式 | 恢复用 `canWrite` 选择 URL，编号测试会在 pending 时重新收到登录页 URL。 |
+| 明确不覆盖范围 | 不放开 pending 期间的写权限，不把旧身份当作本次远端核对结果，也不改变明确退出后的登录页。 |
+
+## `REG-ACCOUNT-033` 妖火匿名 Cookie 被误判为清理失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02` |
+| 用户症状 | 用户点击“清除登录”后收到“登录 Cookie 删除未确认”，但妖火匿名页面会继续保留或重建会话辅助 Cookie。 |
+| 触发条件 | 定向过期妖火 Cookie 后，`CookieManager.getCookie()` 仍返回 `ASP.NET_SessionId`、`GUID`，或匿名值 `sidyaohuo=-2`。 |
+| 根因 seam | 原生清理事务把三个目标 Cookie 名“全部消失”当作退出 oracle，没有区分认证标记与匿名会话辅助 Cookie。 |
+| 必须保持的行为 | 继续在 `www`/apex、host-only/domain、`Path=/` 上定向过期 `sidyaohuo`、`ASP.NET_SessionId`、`GUID`，等待异步回调并 `flush()`；回读时只有非空且不为 `-2` 的 `sidyaohuo` 仍存在才判定未清除。不得清理其他站点 Cookie，也不得使用 WebView 私有数据库。 |
+| 来源证据 | Android [`CookieManager.setCookie`](https://developer.android.com/reference/android/webkit/CookieManager#setCookie(java.lang.String,java.lang.String,android.webkit.ValueCallback%3Cjava.lang.Boolean%3E))、[`getCookie`](https://developer.android.com/reference/android/webkit/CookieManager#getCookie(java.lang.String)) 与 [`flush`](https://developer.android.com/reference/android/webkit/CookieManager#flush()) 给出公开能力边界；[`react-native-cookies`](https://github.com/react-native-cookies/cookies/blob/a845ae2e8af8a0dbfed316562fd54b624ac4869a/android/src/main/java/com/reactnativecommunity/cookies/CookieManagerModule.java) 也明确 Android 不提供按名称删除单个 Cookie 的 API。妖火匿名响应实测会设置 `ASP.NET_SessionId`、`GUID`，`sid=-2` 会设置 `sidyaohuo=-2`。 |
+| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.regAccount033YaohuoAnonymousCookiesDoNotBlockLoginCookieCleanup` 要求只有辅助 Cookie、或再带 `sidyaohuo=-2` 时均为未登录；非 `-2` 的 `sidyaohuo` 必须继续阻止成功。旧实现没有该认证标记判定，并会因任一辅助 Cookie 名存在而失败。 |
+| 最低可靠自动测试层 | 原生 Debug JUnit/Kotlin compile + fresh prebuild；最终覆盖安装后另做用户授权的真实清理才是 `LIVE_PASS`。 |
+| Replay 或真实验收路径 | 仅在用户明确同意清除妖火登录态时点击“清除登录”，确认提示成功、账号投影转匿名、重新进入妖火显示登录页；NodeSeek 与 linux.do 登录保持不变。未授权时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 让 `ASP.NET_SessionId`、`GUID` 或 `sidyaohuo=-2` 任一名称阻止成功，原生编号测试或真实匿名回读会再次失败；让非 `-2` 的 `sidyaohuo` 通过则测试反向失败。 |
+| 明确不覆盖范围 | 不保证网站未来永不更换认证协议；若非 `sidyaohuo` 也能独立证明当前账号，必须先取得原站协议证据并升级 verifier，不能继续按 Cookie 名猜测。 |
+
+## `REG-ACCOUNT-034` 妖火旧版 www domain Cookie 未被清除
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02` |
+| 用户症状 | 点击“清除登录”后提示删除未确认；随后点击“检测登录”，远端页面立即恢复为原登录账号。 |
+| 触发条件 | WebView Cookie 库保留由旧页面写入的 `.www.yaohuo.me` domain Cookie；清理函数只写 host-only 过期 Cookie和 `Domain=yaohuo.me`。 |
+| 根因 seam | `clearManagedLoginCookies` 没有为 `Domain=www.yaohuo.me` 写同名过期 Cookie，因此有效 `sidyaohuo` 继续随 `www.yaohuo.me` 请求发送。 |
+| 必须保持的行为 | 妖火清理同时覆盖 `www`/apex 的 host-only Cookie、`Domain=yaohuo.me` 以及仅在 `www` URL 上合法的 `Domain=www.yaohuo.me`；仍然只清理妖火的登录 Cookie，不使用 `removeAllCookies()`，不影响其他站点。 |
+| 来源证据 | 用户两份诊断中妖火清理共七次均失败；09:19:06 清理后本地会话先转 anonymous，09:19:10–11 远端检测成功，诊断最终状态仍为 logged-in。模拟器只读 Cookie 元数据显示 `sidyaohuo` 同时存在 `.www.yaohuo.me`、`.yaohuo.me`、`www.yaohuo.me`、`yaohuo.me` 四种作用域，旧清理计划唯一遗漏 `.www.yaohuo.me`；全程未读取或记录 Cookie 值。 |
+| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.regAccount034YaohuoClearCoversLegacyWwwDomainCookies` 要求清理计划包含 `https://www.yaohuo.me/` + `Domain=www.yaohuo.me` 的 `sidyaohuo` 过期写入，同时不得从 apex URL 写入不合法的 `www` domain。旧实现测试失败。 |
+| 最低可靠自动测试层 | 原生 Debug JUnit/Kotlin compile + fresh prebuild；真实手机清理仍需安装包含修复的 Debug 包后复现才是 `LIVE_PASS`。 |
+| Replay 或真实验收路径 | 在可复现手机安装修复包，点击一次“清除登录”，再点“检测登录”；必须保持匿名并打开登录页。该操作会真实退出妖火，需用户明确执行；不清其他站点。 |
+| 负向验证方式 | 从清理计划移除 `www.yaohuo.me` domain，编号测试立即失败；若补齐后真机仍恢复登录，则转而验证是否有第二认证 Cookie 或站点存储重新签发，不得继续猜名称。 |
+| 明确不覆盖范围 | 当前证据没有证明 `GET45245` 等其他 Cookie 是认证标记，因此不扩大删除名单；不操作 WebView 私有数据库，不全量清 Cookie。 |
+
 ## `REG-FEED-006` 多页 Feed 刷新失败后跳过失败页
 
 | 字段 | 内容 |
@@ -2351,6 +2398,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 只在自然出现多个 fallback 时记录 enqueue/start/settle 脱敏诊断，确认较晚任务的执行预算从 start 计算；不为制造队列反复触发 Cloudflare。 |
 | 负向验证方式 | 把执行 timer 移回 enqueue、保留 outer timer、共用 controller 或取消整队；编号测试会看到未开始任务超时或无关 Promise 被 reject。 |
 | 明确不覆盖范围 | 不延长单个已执行 WebView 的 15 秒预算，不自动重试超时，不隐藏真实用户取消，也不改变 TanStack 相同 Query key 的去重。 |
+
+## `REG-SOURCE-007` 身份核对中的四站被误报暂不可用
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`SEARCH-01`、`SEARCH-04`、`ACCOUNT-01`、`ACCOUNT-02` |
+| 用户症状 | App 偶发进入时四个可登录站点同时显示“暂不可用”，但 V2EX 等公开列表已经正常刷出；数秒后四个错误又自行消失。 |
+| 触发条件 | 冷启动账号 Query 正在核对四站身份时，聚合 Feed、Categories 或 Search 同时开始读取。 |
+| 根因 seam | `SourceGateway` 为了暂停 pending 来源把它们传入 `unavailableSources`；聚合 adapter 正确跳过请求，却生成与真实凭据故障相同的来源错误，Gateway 返回时没有移除这些内部 barrier 错误。 |
+| 必须保持的行为 | 身份 pending 的来源不得发起新私有请求，旧私有条目也不得混入当前聚合结果，但 pending 本身不显示为来源故障；V2EX 等已成功来源立即可用。真实凭据存储错误仍按来源显示；单站 pending 读取仍明确被 barrier 拒绝。 |
+| 精确失败 oracle | `src/sources/sourceGatewayContract.test.ts` 的 `REG-SOURCE-007` 让 NodeSeek pending，并让 Feed、Categories、Search adapter 同时返回公开项、NodeSeek 陈旧项和 NodeSeek error；三个聚合结果都必须只保留公开项且 `errors={}`，同时仍向 adapter 传入 `unavailableSources=['nodeseek']`。`REG-SOURCE-001` 继续证明真实凭据错误没有被吞掉。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：共享 Gateway 边界可确定性证明请求暂停、条目过滤与错误投影三者同时成立。 |
+| Replay 或真实验收路径 | 保留当前登录态，连续三次 force-stop 冷启动到“全部”；列表可渐进出现，但身份核对期间不得闪现四站“暂不可用”。再进入聚合搜索确认同一行为；不得清数据制造状态。 |
+| 负向验证方式 | 返回 adapter 的原始 `errors` 而不删除 pending source，编号测试会重新看到 NodeSeek 错误；删除 `unavailableSources` 则会看到 pending 站点被实际读取或陈旧条目泄漏。 |
+| 明确不覆盖范围 | 不隐藏真实网络、解析、凭据存储或站点错误，不自动重试第三方站点，也不允许 pending 身份读取私有数据。 |
 
 ## `REG-TOPIC-024` linux.do 回复页复用模块全局旧 stream
 
