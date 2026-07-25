@@ -1,8 +1,8 @@
 import { getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
-import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
+import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
-import { getYaohuoFeedDirect, searchYaohuoDirect } from './yaohuoApi';
+import { checkYaohuoLoginDirect, getYaohuoFeedDirect, searchYaohuoDirect } from './yaohuoApi';
 import {
   getDiscourseSourceCategories,
   getDiscourseSourceCurrentUserProfile,
@@ -816,17 +816,11 @@ export function getCurrentUserProfile({
       throw new Error('V2EX 不支持当前登录身份读取');
     },
     yaohuo: async () => {
-      const response = await fetchWithTimeout(`${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`, {
-        headers: {
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          Referer: YAOHUO_BBS_REFERER
-        }
-      }, { fetcher, signal, timeoutMs });
-      const html = await response.text();
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const check = checkYaohuoLoginHtml(html, response.url);
+      const check = await checkYaohuoLoginDirect({
+        yaohuoFetcher: fetcher,
+        signal,
+        timeoutMs
+      });
       if (check.currentUser) {
         try {
           const profile = await getUserProfile({
@@ -846,7 +840,12 @@ export function getCurrentUserProfile({
         }
       }
       if (check.loginRequired) {
-        throw new Error(check.message || '妖火登录已失效，请重新登录。');
+        throw Object.assign(new Error(check.message || '妖火登录已失效，请重新登录。'), {
+          source: 'yaohuo',
+          loginRequired: true,
+          reason: check.reason,
+          loginUrl: check.loginUrl
+        });
       }
       throw new Error('无法读取当前妖火用户身份，请重新检测妖火登录状态。');
     }

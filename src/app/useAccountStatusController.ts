@@ -46,6 +46,10 @@ export type AccountReconcileResult =
   | { status: 'anonymous' | 'changed' | 'same'; session: SiteSessionState; partial?: boolean }
   | { status: 'stale' }
   | { status: 'unknown'; error: string };
+export type AccountIdentityRuntimeUpdate = {
+  identityKey?: string;
+  pending: boolean;
+};
 
 const STATUS_DESCRIPTORS = {
   nodeseek: { source: 'nodeseek', label: 'NodeSeek' },
@@ -84,9 +88,10 @@ function accountStatusViewModel(
   error: unknown,
   identityCheck?: { pending: boolean; error?: string }
 ) {
-  const ownsVisibleWorkflow = base.status === 'verification-required'
-    || ((base.status === 'verifying' || base.status === 'authorizing')
-      && identityCheck?.pending !== false);
+  const ownsVisibleWorkflow = identityCheck?.pending === true
+    && (base.status === 'verification-required'
+      || base.status === 'verifying'
+      || base.status === 'authorizing');
   const remote = !ownsVisibleWorkflow && data?.session
     ? createSiteSessionViewModel(data.session)
     : base;
@@ -110,6 +115,7 @@ export function useAccountStatusController({
   fetcher,
   nodeSeekUserAgentRef,
   notify,
+  onAccountIdentityRuntimeChanged,
   onAccountStatusChanged,
   readManagedCookieHeader = readManagedCookieHeaderFromNative,
   readXiaoyinsiAuthorization,
@@ -120,6 +126,10 @@ export function useAccountStatusController({
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
+  onAccountIdentityRuntimeChanged: (
+    source: StatusSource,
+    update: AccountIdentityRuntimeUpdate
+  ) => void;
   onAccountStatusChanged: (
     source: StatusSource,
     recoveryQueryKey: readonly unknown[],
@@ -510,7 +520,8 @@ export function useAccountStatusController({
       ...current,
       [source]: { checking: true, pending: true }
     }));
-  }, []);
+    onAccountIdentityRuntimeChanged(source, { pending: true });
+  }, [onAccountIdentityRuntimeChanged]);
   const reconcileAccountStatus = useCallback((
     source: StatusSource,
     options: { surfaceGeneration?: number } = {}
@@ -549,6 +560,10 @@ export function useAccountStatusController({
       const nextIdentity = accountIdentityKey(nextData.session);
       if (previousIdentity !== nextIdentity) {
         onAccountStatusChanged(source, probeQueryKey, nextData.session);
+        onAccountIdentityRuntimeChanged(source, {
+          identityKey: nextIdentity,
+          pending: false
+        });
         setIdentityChecks((current) => ({
           ...current,
           [source]: { checking: false, pending: false }
@@ -560,6 +575,10 @@ export function useAccountStatusController({
         };
       }
       appQueryClient.setQueryData(canonicalQueryKey, nextData);
+      onAccountIdentityRuntimeChanged(source, {
+        identityKey: nextIdentity,
+        pending: false
+      });
       setIdentityChecks((current) => ({
         ...current,
         [source]: { checking: false, pending: false }
@@ -600,7 +619,14 @@ export function useAccountStatusController({
       surfaceGeneration: requestedSurfaceGeneration
     };
     return promise;
-  }, [beginAccountIdentityCheck, sessionEpochs, onAccountStatusChanged, sessionViewModels, statusQueryDefinitions]);
+  }, [
+    beginAccountIdentityCheck,
+    onAccountIdentityRuntimeChanged,
+    onAccountStatusChanged,
+    sessionEpochs,
+    sessionViewModels,
+    statusQueryDefinitions
+  ]);
   const statusBusy = Object.values(statusQueries).some((query) => query.fetchStatus === 'fetching')
     || Object.values(identityChecks).some((identityCheck) => identityCheck.checking);
   const refreshAccountStatus = useCallback(async (options: RefreshAccountStatusOptions = {}) => {

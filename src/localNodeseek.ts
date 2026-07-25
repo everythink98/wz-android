@@ -1718,6 +1718,9 @@ function parseNodeSeekCurrentUserHtml(html: string, { allowUidText = false }: { 
 
 function isNodeSeekLoggedOutHtml(html: string) {
   const root = parseHtml(html);
+  if (root.querySelector('meta[name="nodeseekAccountState"][content="anonymous"]')) {
+    return true;
+  }
   const controls = root.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]');
   const kinds = new Set(controls.flatMap((link) => {
     const href = link.getAttribute('href') || '';
@@ -1731,6 +1734,19 @@ function isNodeSeekLoggedOutHtml(html: string) {
     return [];
   }));
   return kinds.has('login') && kinds.has('register');
+}
+
+export function hasNodeSeekAccountEvidenceHtml(html: string, url = BASE_URL) {
+  let allowUidText = false;
+  try {
+    allowUidText = new URL(url, BASE_URL).pathname === '/setting';
+  } catch {
+    // Keep ambiguous URLs on the stricter path.
+  }
+  return Boolean(
+    parseNodeSeekCurrentUserHtml(html, { allowUidText })
+    || isNodeSeekLoggedOutHtml(html)
+  );
 }
 
 function nodeSeekLoginExpiredError() {

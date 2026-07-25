@@ -26,9 +26,13 @@ function requireMethod<K extends keyof NativeXiaoyinsiAuthModule>(name: K) {
   return method.bind(nativeModule()) as NonNullable<NativeXiaoyinsiAuthModule[K]>;
 }
 
+export function nativeSecureRandomHex(byteCount: number) {
+  return requireMethod('randomHex')(byteCount);
+}
+
 export const xiaoyinsiKeystore: XiaoyinsiKeystore = {
   getPublicKey: () => requireMethod('getPublicKey')(),
-  randomHex: (byteCount) => requireMethod('randomHex')(byteCount),
+  randomHex: nativeSecureRandomHex,
   decrypt: (payload) => requireMethod('decrypt')(payload),
   deleteKey: () => requireMethod('deleteKey')()
 };

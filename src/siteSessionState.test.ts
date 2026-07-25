@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyDevAnonymousViewModelOverrides,
   createSiteSessionViewModels,
-  applyDevAnonymousOverrides,
   nodeSeekUserIdForSession,
   reduceSiteSessionState,
   createSiteSessionStates,
-  isDevAnonymousSource,
   isSiteLoggedIn,
   isSiteVerificationReady,
   type SiteSessionState
@@ -422,67 +419,4 @@ describe('site session state', () => {
     });
   });
 
-  it('applies temporary anonymous overrides without mutating saved session state', () => {
-    const states = createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'logged-in',
-        cookieSummary: ['session'],
-        isVerifying: false
-      },
-      linuxdo: {
-        site: 'linuxdo',
-        status: 'logged-in',
-        cookieSummary: ['cf_clearance', '_t'],
-        isVerifying: false
-      },
-      yaohuo: {
-        site: 'yaohuo',
-        status: 'logged-in',
-        cookieSummary: ['sidyaohuo'],
-        isVerifying: false
-      }
-    });
-
-    const effective = applyDevAnonymousOverrides(states, { nodeseek: true, linuxdo: true });
-
-    expect(effective.nodeseek).toMatchObject({ status: 'anonymous', cookieSummary: [] });
-    expect(effective.linuxdo).toMatchObject({ status: 'anonymous', cookieSummary: [] });
-    expect(effective.yaohuo).toBe(states.yaohuo);
-    expect(states.nodeseek).toMatchObject({ status: 'logged-in', cookieSummary: ['session'] });
-    expect(createSiteSessionViewModels(effective).linuxdo).toMatchObject({
-      summaryLabel: '匿名可用',
-      canWrite: false
-    });
-  });
-
-  it('[REG-TEST-003] keeps temporary anonymous state after account status refreshes', () => {
-    const refreshed = createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'logged-in',
-        cookieSummary: ['session'],
-        isVerifying: false
-      },
-      linuxdo: {
-        site: 'linuxdo',
-        status: 'logged-in',
-        cookieSummary: ['_t'],
-        isVerifying: false
-      }
-    }));
-
-    const effective = applyDevAnonymousViewModelOverrides(refreshed, { nodeseek: true });
-
-    expect(effective.nodeseek).toMatchObject({ status: 'anonymous', canWrite: false });
-    expect(effective.linuxdo).toBe(refreshed.linuxdo);
-    expect(refreshed.nodeseek.status).toBe('logged-in');
-  });
-
-  it('matches temporary anonymous overrides only for all or the selected source', () => {
-    expect(isDevAnonymousSource('all', 'nodeseek', { nodeseek: true })).toBe(true);
-    expect(isDevAnonymousSource('nodeseek', 'nodeseek', { nodeseek: true })).toBe(true);
-    expect(isDevAnonymousSource('yaohuo', 'nodeseek', { nodeseek: true })).toBe(false);
-    expect(isDevAnonymousSource('nodeseek', 'nodeseek', { nodeseek: false })).toBe(false);
-  });
 });

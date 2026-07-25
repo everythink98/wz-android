@@ -68,12 +68,21 @@ export function normalizeYaohuoReplyDeletePath(deletePath: string) {
 }
 
 export function extractYaohuoSid(cookieHeader: string) {
-  const cookie = String(cookieHeader || '');
-  const pair = cookie.split(';').map((part) => part.trim()).find((part) => /^sidyaohuo=/i.test(part));
-  if (!pair) {
-    return '';
+  const activeSids = new Set<string>();
+  for (const part of String(cookieHeader || '').split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0 || part.slice(0, separator).trim().toLowerCase() !== 'sidyaohuo') {
+      continue;
+    }
+    const value = part.slice(separator + 1).trim();
+    if (value && value !== '-2') {
+      activeSids.add(value);
+    }
   }
-  return pair.slice(pair.indexOf('=') + 1).trim();
+  if (activeSids.size > 1) {
+    throw new Error('妖火登录状态存在冲突，请重新检测登录状态');
+  }
+  return activeSids.values().next().value || '';
 }
 
 export function buildYaohuoReplyRequest({

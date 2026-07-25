@@ -8,6 +8,7 @@ import {
   forumQueryKeys,
   type ForumSessionEpochs
 } from './serverState';
+import type { LinuxDoReadRecovery } from './useVerificationController';
 
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;
@@ -19,8 +20,8 @@ export type BrowserFetchRequestCleanupTarget = {
 type MutableRef<T> = { current: T };
 type WebViewStopRef = { current: { stopLoading: () => void } | null };
 export type NodeSeekVerificationRetry =
-  | { type: 'search'; retry: () => Promise<boolean> }
-  | { type: 'topic'; retry: () => Promise<boolean> };
+  | { type: 'search'; recovery: LinuxDoReadRecovery }
+  | { type: 'topic'; recovery: LinuxDoReadRecovery };
 export type CredentialLoadOptions = {
   captureGeneration?: (generation: number) => void;
   diagnosticTrace?: DiagnosticTrace;
@@ -168,6 +169,7 @@ type BrowserFetchRequestView = {
   id: number;
   url: string;
   userAgent?: string;
+  owner?: BrowserFetchIntent['owner'];
 };
 
 export function requestHeaderValue(headers: HeadersInit | undefined, name: string) {
@@ -296,7 +298,8 @@ function browserFetchRequestView(request: BrowserFetchQueueRequest): BrowserFetc
   return {
     id: request.id,
     url: request.url,
-    userAgent: request.userAgent
+    userAgent: request.userAgent,
+    ...(request.browserFetchIntent ? { owner: request.browserFetchIntent.owner } : {})
   };
 }
 

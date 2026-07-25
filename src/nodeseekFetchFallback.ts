@@ -1,5 +1,9 @@
 import { cancelRequestTimeoutForFallback, scheduleRequestTimeout, type Fetcher } from './request';
-import { isGoogleSiteSearchUrl } from './googleSearchFallback';
+import {
+  isGoogleSiteSearchNavigationUrl,
+  isGoogleSiteSearchUrl,
+  isSameGoogleSiteSearchUrl
+} from './googleSearchFallback';
 import { isNodeSeekChallengeResponse } from './localNodeseekHelpers';
 import {
   beginDiagnosticTrace,
@@ -10,6 +14,8 @@ import {
   registerDiagnosticContextFetcher,
   type DiagnosticReason
 } from './diagnostics';
+import { browserFetchIntentFromInit } from './browserFetchIntent';
+import { hasNodeSeekAccountEvidenceHtml } from './localNodeseek';
 
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE = 'NodeSeek direct fetch timeout';
@@ -33,6 +39,18 @@ function isNodeSeekGoogleSearchUrl(input: string) {
 
 export function isNodeSeekBrowserFetchUrl(input: string) {
   return isNodeSeekRequestUrl(input) || isNodeSeekGoogleSearchUrl(input);
+}
+
+export function isNodeSeekBrowserNavigationUrl(input: string, initialRequestUrl: string) {
+  return isNodeSeekRequestUrl(initialRequestUrl)
+    ? isNodeSeekRequestUrl(input)
+    : isGoogleSiteSearchNavigationUrl(input, 'nodeseek.com', initialRequestUrl);
+}
+
+export function isNodeSeekBrowserResultUrl(input: string, initialRequestUrl: string) {
+  return isNodeSeekRequestUrl(initialRequestUrl)
+    ? isNodeSeekRequestUrl(input)
+    : isSameGoogleSiteSearchUrl(input, 'nodeseek.com', initialRequestUrl);
 }
 
 async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, init?: RequestInit) {
@@ -155,14 +173,17 @@ async function fetchNodeSeekWebViewOnly(webViewFetcher: Fetcher, url: string, in
 }
 
 export function createNodeSeekWebViewFallbackFetcher({
+  allowWebViewFallback = () => true,
   defaultFetcher = fetch,
   webViewFetcher
 }: {
+  allowWebViewFallback?: (url: string) => boolean;
   defaultFetcher?: Fetcher;
   webViewFetcher: Fetcher;
 }): Fetcher {
   return registerDiagnosticContextFetcher(async (input, init) => {
     const url = String(input);
+    const accountProbe = browserFetchIntentFromInit(init)?.owner === 'account';
     if (isNodeSeekGoogleSearchUrl(url)) {
       return fetchNodeSeekWebViewOnly(webViewFetcher, url, init);
     }
@@ -173,7 +194,7 @@ export function createNodeSeekWebViewFallbackFetcher({
     try {
       response = await fetchNodeSeekDirectly(defaultFetcher, url, init);
     } catch (error) {
-      if (!init?.signal?.aborted) {
+      if (!init?.signal?.aborted && allowWebViewFallback(url)) {
         const diagnosticReason = normalizeDiagnosticReason(error);
         return fetchNodeSeekThroughWebView(
           webViewFetcher,
@@ -186,7 +207,12 @@ export function createNodeSeekWebViewFallbackFetcher({
     }
     const text = await response.clone().text();
     if (isNodeSeekChallengeResponse(response, text, url)) {
-      return fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'verification_required', response.status);
+      return allowWebViewFallback(url)
+        ? fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'verification_required', response.status)
+        : response;
+    }
+    if (accountProbe && !hasNodeSeekAccountEvidenceHtml(text, url) && allowWebViewFallback(url)) {
+      return fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'invalid_response', response.status);
     }
     return response;
   });

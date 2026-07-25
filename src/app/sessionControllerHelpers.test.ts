@@ -132,7 +132,6 @@ describe('session controller helpers', () => {
     expect(client.getQueryData(otherKey)).toBe('trusted linux.do topic');
     await client.cancelQueries();
   });
-
   it('preserves only the exact active recovery query when requested', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } }
@@ -154,7 +153,6 @@ describe('session controller helpers', () => {
       unsubscribe();
     }
   });
-
   it('atomically seeds the changed account result under the incremented epoch', () => {
     const client = new QueryClient();
     const probeKey = [
@@ -234,7 +232,13 @@ describe('session controller helpers', () => {
   });
 
   it('takes a pending NodeSeek recovery owner exactly once', () => {
-    const retry = { type: 'search' as const, retry: vi.fn(async () => true) };
+    const retry = {
+      type: 'search' as const,
+      recovery: {
+        queryKey: ['search', 'nodeseek'],
+        resume: vi.fn(async () => 'completed' as const)
+      }
+    };
     const retryRef = ref<typeof retry | null>(retry);
 
     expect(takeNodeSeekVerificationRetry(retryRef)).toBe(retry);
@@ -284,6 +288,31 @@ describe('session controller helpers', () => {
     enqueueBrowserFetchRequest({ queueRef, request: write });
 
     expect(queueRef.current.map(({ id }) => id)).toEqual([4, 2, 3, 1]);
+  });
+
+  it('[REG-ACCOUNT-037] exposes the active browser request owner without leaking queue internals', () => {
+    vi.useFakeTimers();
+    const request = createRequest(1, {
+      browserFetchIntent: { owner: 'account', priority: 'background' }
+    });
+    const setActiveRequest = vi.fn();
+
+    startNextBrowserFetchRequest({
+      currentRef: ref<BrowserFetchQueueRequest | null>(null),
+      queueRef: ref([request]),
+      setActiveRequest,
+      timeoutMs: 1000,
+      timeoutMessage: 'timeout',
+      rejectCurrent: vi.fn()
+    });
+
+    expect(setActiveRequest).toHaveBeenCalledWith({
+      id: 1,
+      url: request.url,
+      userAgent: undefined,
+      owner: 'account'
+    });
+    expect(setActiveRequest.mock.calls[0][0]).not.toHaveProperty('browserFetchIntent');
   });
 
   it('never preempts an active browser request when higher priority work arrives', () => {

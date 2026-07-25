@@ -174,7 +174,7 @@ function resolveExpectedApkPath(value = process.argv[2] || process.env.WZ_ANDROI
   return apkPath;
 }
 
-function normalizedAndroidDeviceName(value) {
+export function normalizedAndroidDeviceName(value) {
   return String(value).trim().toLowerCase().replace(/[\s_]+/g, ' ');
 }
 
@@ -250,13 +250,9 @@ function gitIdentity() {
   };
 }
 
-export function listReplayFiles(
-  deviceDir = path.join(rootDir, 'tests', 'device'),
-  excludedReplayFileNames = []
-) {
-  const excluded = new Set(excludedReplayFileNames);
+export function listReplayFiles(deviceDir = path.join(rootDir, 'tests', 'device')) {
   return readdirSync(deviceDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.ad') && !excluded.has(entry.name))
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.ad'))
     .map((entry) => path.join(deviceDir, entry.name))
     .sort((left, right) => left.localeCompare(right));
 }
@@ -297,7 +293,7 @@ export async function runReplayBatch(replayFiles, executeReplay) {
 export async function runDeviceReplay({
   apkPath: apkValue,
   selectedDevice: selectedValue,
-  excludedReplayFileNames = []
+  replayDirectory = path.join(rootDir, 'tests', 'device')
 } = {}) {
   const apkPath = resolveExpectedApkPath(apkValue);
   const selectedDevice = selectedDeviceName(selectedValue);
@@ -307,9 +303,9 @@ export async function runDeviceReplay({
   assertNoExistingAgentDeviceRecording(device.id);
   const artifactsDir = path.join(rootDir, 'tmp', 'agent-device');
   mkdirSync(artifactsDir, { recursive: true });
-  const replayFiles = listReplayFiles(undefined, excludedReplayFileNames);
+  const replayFiles = listReplayFiles(replayDirectory);
   if (replayFiles.length === 0) {
-    throw new Error('tests/device 中没有可执行的 .ad Replay。');
+    throw new Error(`${path.relative(rootDir, replayDirectory)} 中没有可执行的 .ad Replay。`);
   }
 
   const git = gitIdentity();

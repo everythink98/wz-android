@@ -141,18 +141,40 @@ export async function saveNodeImageApiKey(value: string) {
 export async function saveNodeImageApiKeyForGeneration(
   generation: number,
   value: string,
-  identityKey: string
+  authorizationOwner: string,
+  settledOwner: string,
+  isAuthorizationCurrent: () => boolean = () => true
 ) {
+  const authorizedIdentityKey = confirmedNodeSeekOwner(authorizationOwner);
+  const settledIdentityKey = confirmedNodeSeekOwner(settledOwner);
+  if (
+    !authorizedIdentityKey
+    || !settledIdentityKey
+    || authorizedIdentityKey !== settledIdentityKey
+  ) {
+    return undefined;
+  }
   const apiKey = normalizeNodeImageApiKey(value);
   if (!apiKey) {
     throw new Error('请输入 NodeImage API Key');
   }
-  const ownerIdentityKey = normalizeNodeImageApiKey(identityKey);
-  if (!ownerIdentityKey || ownerIdentityKey.endsWith(':anonymous')) {
-    throw new Error('NodeSeek 身份尚未确认，无法保存自动授权的 NodeImage API Key');
-  }
-  return enqueueCredentialWriteForGeneration(nodeImageApiKeyWriteGate, generation, async () => {
-    await writeNodeImageCredential(verifiedNodeImageCredential(apiKey, ownerIdentityKey));
+  return enqueueCredentialWriteForGeneration(nodeImageApiKeyWriteGate, generation, async ({ isCurrent }) => {
+    if (!isAuthorizationCurrent()) {
+      return undefined;
+    }
+    const previousValue = await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
+    if (!isCurrent() || !isAuthorizationCurrent()) {
+      return undefined;
+    }
+    await writeNodeImageCredential(verifiedNodeImageCredential(apiKey, settledIdentityKey));
+    if (!isCurrent() || !isAuthorizationCurrent()) {
+      if (previousValue === null) {
+        await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
+      } else {
+        await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, previousValue);
+      }
+      return undefined;
+    }
     return apiKey;
   });
 }
@@ -194,4 +216,13 @@ export async function clearNodeImageApiKey() {
     await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
     return true;
   });
+}
+
+function confirmedNodeSeekOwner(identityKey: string | undefined) {
+  const value = normalizeNodeImageApiKey(identityKey || '');
+  if (!value.startsWith('nodeseek:')) {
+    return '';
+  }
+  const owner = value.slice('nodeseek:'.length);
+  return owner && owner !== 'anonymous' ? value : '';
 }

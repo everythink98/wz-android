@@ -60,7 +60,6 @@ jest.mock('lucide-react-native', () => {
     Settings: Icon,
     Trash2: Icon,
     User: Icon,
-    Wrench: Icon,
     X: Icon
   };
 });
@@ -82,8 +81,6 @@ function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): 
     credentialFillAttempt: null,
     credentialLoginSite: null,
     credentialSummaries: emptyCredentialSummaries(),
-    devAnonymousAvailable: false,
-    devAnonymousOverrides: {},
     diagnosticBusy: false,
     handleNodeSeekLoginNavigation: () => true,
     handleYaohuoLoginNavigation: () => true,
@@ -132,7 +129,6 @@ function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): 
     onShowSettingsPanelChange: jest.fn(),
     onShowYaohuoLoginPanelChange: jest.fn(),
     onTestNetworkProxyProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
-    onToggleDevAnonymousOverride: jest.fn(),
     onUpdateSettings: jest.fn(),
     onUpsertNetworkProxyProfile: jest.fn(async () => undefined),
     onYaohuoLoginWebViewState: jest.fn(),
@@ -265,29 +261,10 @@ describe('More screen state and actions', () => {
     expect(view.getByLabelText('选择备份文件恢复').props.accessibilityState.disabled).toBe(true);
   });
 
-  it('keeps development-only anonymous overrides hidden in production and locally reversible in development', async () => {
-    const onToggleDevAnonymousOverride = jest.fn();
-    const view = await render(<MoreScreen {...moreProps({ onToggleDevAnonymousOverride })} />);
+  it('[REG-TEST-003] never exposes an in-app anonymous simulation', async () => {
+    const view = await render(<MoreScreen {...moreProps()} />);
 
     expect(view.queryByLabelText('展开测试工具')).toBeNull();
-    await view.rerender(<MoreScreen {...moreProps({
-      devAnonymousAvailable: true,
-      devAnonymousOverrides: { linuxdo: true },
-      onToggleDevAnonymousOverride
-    })} />);
-    expect(view.getByText('已开启 1 项')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('展开测试工具'));
-    expect(view.getByText('只影响本次运行，不删除 Cookie。重启后恢复。')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('NodeSeek'));
-    await fireEvent.press(view.getByLabelText('妖火'));
-    await fireEvent.press(view.getByLabelText('linux.do'));
-    await fireEvent.press(view.getByLabelText('小隐寺'));
-    expect(onToggleDevAnonymousOverride.mock.calls).toEqual([
-      ['nodeseek'],
-      ['yaohuo'],
-      ['linuxdo'],
-      ['xiaoyinsi']
-    ]);
   });
 
   it('shows the 小隐寺 Device Code, countdown and browser/cancel actions without credential fields', async () => {

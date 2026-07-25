@@ -205,7 +205,7 @@ export function useSearchController({
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
-  onNodeSeekSearchVerificationRequired?: (message: string, retry: () => Promise<boolean>) => void;
+  onNodeSeekSearchVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
   screen: Screen;
   sessionViewModels: SiteSessionViewModels;
   showLinuxDoVerification: (
@@ -589,9 +589,9 @@ export function useSearchController({
     : baseSearchGroups,
   [baseSearchGroups, linuxDoAiQuery.data?.items, linuxDoAiState.enabled]);
 
-  const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => Promise<boolean>) => {
+  const requireNodeSeekSearchVerification = useCallback((message: string, recovery: LinuxDoReadRecovery) => {
     if (onNodeSeekSearchVerificationRequired) {
-      onNodeSeekSearchVerificationRequired(message, retry);
+      onNodeSeekSearchVerificationRequired(message, recovery);
     } else {
       showNodeSeekVerification(message);
     }
@@ -673,22 +673,26 @@ export function useSearchController({
         void showLinuxDoVerification(result.action.message, recovery);
       } else if (result.action.type === 'nodeseek-verification') {
         const loadMore = singleSearchQuery.isFetchNextPageError;
-        requireNodeSeekSearchVerification(result.action.message, async () => {
-          const resumed = loadMore
-            ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
-            : await singleSearchQuery.refetch({ cancelRefetch: false });
-          if (resumed.isError) {
-            if (
-              resumed.error instanceof SearchPageError
-              && resumed.error.result.kind === 'action-required'
-              && resumed.error.result.action.type === 'nodeseek-verification'
-            ) {
-              handledSearchActionsRef.current.add(resumed.error.result);
+        requireNodeSeekSearchVerification(result.action.message, {
+          queryKey: singleSearchKey,
+          resume: async () => {
+            const resumed = loadMore
+              ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
+              : await singleSearchQuery.refetch({ cancelRefetch: false });
+            if (resumed.isError) {
+              if (
+                resumed.error instanceof SearchPageError
+                && resumed.error.result.kind === 'action-required'
+                && resumed.error.result.action.type === 'nodeseek-verification'
+              ) {
+                handledSearchActionsRef.current.add(resumed.error.result);
+                return 'verification-required';
+              }
+              return sourceReadRecoveryOutcome('nodeseek', resumed.error);
             }
-            return false;
+            const resumedResult = loadMore ? resumed.data?.pages.at(-1) : resumed.data?.pages[0];
+            return resumedResult?.kind === 'success' ? 'completed' : 'failed';
           }
-          const resumedResult = loadMore ? resumed.data?.pages.at(-1) : resumed.data?.pages[0];
-          return resumedResult?.kind === 'success';
         });
       } else if (submittedSearch?.source !== 'all') {
         showYaohuoLogin(result.action.message);

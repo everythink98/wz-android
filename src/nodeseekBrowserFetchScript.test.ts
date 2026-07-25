@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './app/useHiddenBrowserFetchController';
 
-function runNodeSeekBrowserFetchScript(url: string, html: string) {
+function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'account') {
   window.history.pushState(null, '', url);
   document.title = '';
   document.body.innerHTML = html;
@@ -16,10 +16,16 @@ function runNodeSeekBrowserFetchScript(url: string, html: string) {
   });
   const stop = vi.spyOn(window, 'stop').mockImplementation(() => undefined);
 
-  const script = NODESEEK_BROWSER_FETCH_SCRIPT.replace('__NODESEEK_BROWSER_FETCH_ID__', '7');
+  const script = NODESEEK_BROWSER_FETCH_SCRIPT
+    .replace('__NODESEEK_BROWSER_FETCH_ID__', '7')
+    .replace('__NODESEEK_BROWSER_FETCH_OWNER__', JSON.stringify(owner ?? null));
   window.eval(script);
 
-  return { postMessage, stop };
+  return {
+    evaluateAgain: () => window.eval(script),
+    postMessage,
+    stop
+  };
 }
 
 function runLinuxDoBrowserFetchScript(url: string, html: string, innerText?: string) {
@@ -50,6 +56,9 @@ describe('hidden browser fetch scripts', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     delete (window as typeof window & { __config__?: unknown }).__config__;
+    delete (window as typeof window & {
+      __wzNodeSeekBrowserFetchRequestId?: number;
+    }).__wzNodeSeekBrowserFetchRequestId;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -72,6 +81,81 @@ describe('hidden browser fetch scripts', () => {
     expect(payload.html).toContain('没有找到相关帖子');
     expect(stop).toHaveBeenCalled();
   });
+
+  it('[REG-ACCOUNT-037] waits for NodeSeek identity evidence during account probes', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage } = runNodeSeekBrowserFetchScript('/', `
+        <ul class="post-list">
+          <li class="post-list-item">Public topic</li>
+        </ul>
+      `, 'account');
+
+      expect(postMessage).not.toHaveBeenCalled();
+
+      document.body.innerHTML += `
+        <header>
+          <a class="btn" href="/signIn.html">登录</a>
+          <a class="btn" href="/register.html">注册</a>
+        </header>
+      `;
+      vi.advanceTimersByTime(500);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+      expect(payload.html).toContain('/signIn.html');
+      expect(payload.html).toContain('/register.html');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('[REG-ACCOUNT-037] settles an explicit null NodeSeek runtime user without waiting for mobile guest controls', () => {
+    Object.defineProperty(window, '__config__', {
+      configurable: true,
+      value: { user: null }
+    });
+
+    const { evaluateAgain, postMessage } = runNodeSeekBrowserFetchScript('/', `
+      <ul class="post-list">
+        <li class="post-list-item">Public topic</li>
+      </ul>
+    `, 'account');
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload.html).toContain('nodeseekAccountState');
+    expect(payload.html).not.toContain('Public topic');
+    expect(payload.html.length).toBeLessThan(1000);
+
+    evaluateAgain();
+    expect(postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, undefined, {}])(
+    '[REG-ACCOUNT-037] keeps an unproven NodeSeek runtime user unknown: %p',
+    (user) => {
+      vi.useFakeTimers();
+      try {
+        Object.defineProperty(window, '__config__', {
+          configurable: true,
+          value: { user }
+        });
+
+        const { postMessage } = runNodeSeekBrowserFetchScript('/', `
+          <ul class="post-list">
+            <li class="post-list-item">Public topic</li>
+          </ul>
+        `, 'account');
+
+        expect(postMessage).not.toHaveBeenCalled();
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    }
+  );
 
   it('waits for NodeSeek search results instead of returning the bare search form', () => {
     vi.useFakeTimers();

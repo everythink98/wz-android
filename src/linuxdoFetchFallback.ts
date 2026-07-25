@@ -1,5 +1,9 @@
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
-import { isGoogleSiteSearchUrl } from './googleSearchFallback';
+import {
+  isGoogleSiteSearchNavigationUrl,
+  isGoogleSiteSearchUrl,
+  isSameGoogleSiteSearchUrl
+} from './googleSearchFallback';
 import { cancelRequestTimeoutForFallback, type Fetcher } from './request';
 import {
   beginDiagnosticTrace,
@@ -37,6 +41,18 @@ export function isLinuxDoGoogleSearchUrl(input: string) {
 
 export function isLinuxDoBrowserFetchUrl(input: string) {
   return isLinuxDoRequestUrl(input) || isLinuxDoGoogleSearchUrl(input);
+}
+
+export function isLinuxDoBrowserNavigationUrl(input: string, initialRequestUrl: string) {
+  return isLinuxDoRequestUrl(initialRequestUrl)
+    ? isLinuxDoRequestUrl(input)
+    : isGoogleSiteSearchNavigationUrl(input, 'linux.do', initialRequestUrl);
+}
+
+export function isLinuxDoBrowserResultUrl(input: string, initialRequestUrl: string) {
+  return isLinuxDoRequestUrl(initialRequestUrl)
+    ? isLinuxDoRequestUrl(input)
+    : isSameGoogleSiteSearchUrl(input, 'linux.do', initialRequestUrl);
 }
 
 async function fetchLinuxDoThroughWebView(
@@ -140,9 +156,11 @@ async function fetchLinuxDoWebViewOnly(webViewFetcher: Fetcher, url: string, ini
 }
 
 export function createLinuxDoWebViewFallbackFetcher({
+  allowWebViewFallback = () => true,
   defaultFetcher = fetch,
   webViewFetcher
 }: {
+  allowWebViewFallback?: (url: string) => boolean;
   defaultFetcher?: Fetcher;
   webViewFetcher: Fetcher;
 }): Fetcher {
@@ -160,7 +178,9 @@ export function createLinuxDoWebViewFallbackFetcher({
       return response;
     }
     if (isCloudflareChallengeResponse(response)) {
-      return fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status);
+      return allowWebViewFallback(url)
+        ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status)
+        : response;
     }
     const contentType = response.headers.get('content-type') || '';
     const shouldInspectBody = !response.ok && /html/i.test(contentType);
@@ -169,7 +189,9 @@ export function createLinuxDoWebViewFallbackFetcher({
       headers: response.headers,
       bodyText: await response.clone().text()
     })) {
-      return fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status);
+      return allowWebViewFallback(url)
+        ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status)
+        : response;
     }
     return response;
   });

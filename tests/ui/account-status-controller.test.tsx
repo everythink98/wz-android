@@ -19,6 +19,7 @@ import { useAccountStatusController } from '../../src/app/useAccountStatusContro
 import type { XiaoyinsiAuthorizationReadResult } from '../../src/app/useXiaoyinsiAuthController';
 import {
   appQueryClient,
+  forumQueryKeys,
   initialForumSessionEpochs,
   type ForumSessionEpochs
 } from '../../src/app/serverState';
@@ -94,6 +95,7 @@ async function renderStatusController({
   readNodeSeekCookieHeader = jest.fn(async () => undefined),
   notify = jest.fn(),
   onAccountStatusChanged = jest.fn(),
+  onAccountIdentityRuntimeChanged = jest.fn(),
   readManagedCookieHeader = async (exactUrl: string) => {
     if (exactUrl.includes('nodeseek.com')) {
       return {
@@ -155,6 +157,7 @@ async function renderStatusController({
       nodeSeekUserAgentRef: { current: 'safe-agent' },
       notify,
       onAccountStatusChanged: commitAccountStatusChange,
+      onAccountIdentityRuntimeChanged,
       readManagedCookieHeader,
       readXiaoyinsiAuthorization,
       sessionViewModels
@@ -163,7 +166,13 @@ async function renderStatusController({
     initialProps: { renderedSessionEpochs: sessionEpochs },
     wrapper: QueryTestWrapper
   });
-  return { hook, notify, onAccountStatusChanged, readXiaoyinsiAuthorization };
+  return {
+    hook,
+    notify,
+    onAccountIdentityRuntimeChanged,
+    onAccountStatusChanged,
+    readXiaoyinsiAuthorization
+  };
 }
 
 describe('account status queries', () => {
@@ -281,6 +290,86 @@ describe('account status queries', () => {
       expect.objectContaining({ currentUser: nextNodeSeekUser, status: 'logged-in' })
     );
     expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser);
+  });
+
+  it('[REG-ACCOUNT-035] commits the runtime identity before reconciliation resolves', async () => {
+    const runtime = {
+      identityKey: 'nodeseek:anonymous',
+      pending: false
+    };
+    mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
+    const onAccountIdentityRuntimeChanged = jest.fn((
+      _source: 'nodeseek' | 'linuxdo' | 'yaohuo' | 'xiaoyinsi',
+      update: { identityKey?: string; pending: boolean }
+    ) => {
+      runtime.pending = update.pending;
+      if (update.identityKey) {
+        runtime.identityKey = update.identityKey;
+      }
+    });
+    const { hook } = await renderStatusController({
+      onAccountIdentityRuntimeChanged,
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
+    });
+
+    const settled = await act(async () => (
+      hook.result.current.reconcileAccountStatus('nodeseek').then((result) => ({
+        result,
+        runtimeAtResolution: { ...runtime }
+      }))
+    ));
+
+    expect(settled.result.status).toBe('changed');
+    expect(settled.runtimeAtResolution).toEqual({
+      identityKey: 'nodeseek:17',
+      pending: false
+    });
+    expect(onAccountIdentityRuntimeChanged).toHaveBeenNthCalledWith(
+      1,
+      'nodeseek',
+      { pending: true }
+    );
+    expect(onAccountIdentityRuntimeChanged).toHaveBeenLastCalledWith(
+      'nodeseek',
+      { identityKey: 'nodeseek:17', pending: false }
+    );
+  });
+
+  it('[REG-ACCOUNT-035] releases stale verification workflow state after canonical identity settles', async () => {
+    appQueryClient.setQueryData(
+      forumQueryKeys.accountStatus({
+        sessionEpochs: initialForumSessionEpochs,
+        source: 'nodeseek'
+      }),
+      {
+        session: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: [],
+          isVerifying: false,
+          currentUser: nodeSeekUser
+        }
+      }
+    );
+    const workflowStates = createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'verification-required',
+        cookieSummary: [],
+        isVerifying: false,
+        lastError: '旧验证流程'
+      }
+    });
+
+    const { hook } = await renderStatusController({
+      sessionViewModels: createSiteSessionViewModels(workflowStates)
+    });
+
+    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+      status: 'logged-in',
+      identityTrust: 'confirmed',
+      currentUser: nodeSeekUser
+    });
   });
 
   it('[REG-ACCOUNT-031] keeps the last confirmed identity read-only while a surface is open or reconciliation is unknown', async () => {

@@ -1,6 +1,6 @@
 import type { SessionSite } from './siteSessionState';
 
-export type WritableSessionSnapshot = {
+export type SessionRuntimeSnapshot = {
   source: SessionSite;
   authenticated: boolean;
   authSurfaceOpen: boolean;
@@ -8,6 +8,7 @@ export type WritableSessionSnapshot = {
   identityTrust: 'confirmed' | 'pending' | 'none';
   sessionEpoch: number;
 };
+export type WritableSessionSnapshot = SessionRuntimeSnapshot;
 
 export type WritableSessionTicket = Pick<
   WritableSessionSnapshot,
@@ -36,7 +37,8 @@ function ticketFromSnapshot(snapshot: WritableSessionSnapshot): WritableSessionT
 }
 
 function canIssueTicket(snapshot: WritableSessionSnapshot) {
-  return snapshot.authenticated && snapshot.identityTrust === 'confirmed';
+  return snapshot.authenticated
+    && snapshot.identityTrust === 'confirmed';
 }
 
 export async function ensureWritableSessionTicket(

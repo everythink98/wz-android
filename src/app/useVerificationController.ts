@@ -68,6 +68,7 @@ export function useVerificationController({
   notify,
   onBeforeLinuxDoSurfaceOpened = () => undefined,
   onLoginWebViewFailure,
+  onLinuxDoRecoveryBarrierChanged = () => undefined,
   onLinuxDoSurfaceClosed = () => undefined,
   onLinuxDoSurfaceOpened = () => undefined,
   openTopicRef,
@@ -99,6 +100,7 @@ export function useVerificationController({
   notify: (message: string) => void;
   onBeforeLinuxDoSurfaceOpened?: () => void;
   onLoginWebViewFailure: (site: 'linuxdo', attempt: number, reason: LoginWebViewFailureReason) => void;
+  onLinuxDoRecoveryBarrierChanged?: (active: boolean) => void;
   onLinuxDoSurfaceClosed?: (options: {
     authoritativeResult: boolean;
     reason: AuthSurfaceCloseReason;
@@ -279,6 +281,7 @@ export function useVerificationController({
       }
       queuedRecovery?.resolve(false);
       queuedLinuxDoVerificationRef.current = null;
+      onLinuxDoRecoveryBarrierChanged(false);
     }
     const trace = linuxDoVerificationTraceRef.current;
     if (trace) {
@@ -286,7 +289,9 @@ export function useVerificationController({
         source: 'linuxdo',
         state: 'linuxdo-panel-closed'
       });
-      finishLinuxDoVerificationTrace(trace, 'canceled', { reason });
+      if (!authoritativeResult) {
+        finishLinuxDoVerificationTrace(trace, 'canceled', { reason });
+      }
     }
     if (linuxDoPanelClosingSessionRef.current !== null) {
       linuxDoWebViewRef.current?.stopLoading();
@@ -333,17 +338,22 @@ export function useVerificationController({
         linuxDoCanceledRecoveriesRef.current.has(queued.recovery)
         || !isActiveRecoveryQuery(queued.recovery)
       )) {
+        onLinuxDoRecoveryBarrierChanged(false);
         queued.resolve(false);
         return;
       }
       const showQueued = showLinuxDoVerificationRef.current;
       if (!showQueued) {
+        onLinuxDoRecoveryBarrierChanged(false);
         queued.resolve(false);
         return;
       }
       void showQueued(queued.message, queued.recovery).then(
         queued.resolve,
-        () => queued.resolve(false)
+        () => {
+          onLinuxDoRecoveryBarrierChanged(false);
+          queued.resolve(false);
+        }
       );
     };
 
@@ -363,6 +373,7 @@ export function useVerificationController({
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     nextLinuxDoWebViewSession,
+    onLinuxDoRecoveryBarrierChanged,
     onLinuxDoSurfaceClosed,
     setLinuxDoWebViewError,
     setLinuxDoWebViewErrorForSession,
@@ -381,6 +392,7 @@ export function useVerificationController({
     setShowSettingsPanel(false);
     updateNodeSeekSession({ type: 'verification-required', message });
     notify(message);
+    return true;
   }, [changeNodeSeekLoginPanel, changeScreen, closeLinuxDoPanel, closeYaohuoLoginPanel, notify, setShowSettingsPanel, updateNodeSeekSession]);
 
   const changeLinuxDoPanel = useCallback((visible: boolean) => {
@@ -409,6 +421,7 @@ export function useVerificationController({
       if (!wasVisible) {
         onLinuxDoSurfaceOpened();
       }
+      onLinuxDoRecoveryBarrierChanged(false);
       linuxDoVerificationPhaseRef.current = 'awaiting-clearance';
       resetLinuxDoWebView();
       return true;
@@ -422,6 +435,7 @@ export function useVerificationController({
     invalidateLinuxDoCheck,
     linuxDoPanelClosingSessionRef,
     onBeforeLinuxDoSurfaceOpened,
+    onLinuxDoRecoveryBarrierChanged,
     onLinuxDoSurfaceOpened,
     resetLinuxDoWebView,
     setShowLinuxDoPanel,
@@ -669,39 +683,52 @@ export function useVerificationController({
           closeLinuxDoPanel(false, 'authoritative-recovery', true);
           return;
         }
+        linuxDoReadRecoveryRef.current = null;
+        closeLinuxDoPanel(false, 'authoritative-recovery', true);
+        const closedGeneration = linuxDoVerificationGenerationRef.current;
         markDiagnosticStage(trace, 'apply', {
           source: 'linuxdo',
           state: 'resuming-read'
         });
         linuxDoVerificationPhaseRef.current = 'resuming-read';
-        const outcome = await recovery.resume();
-        if (!isCurrentLinuxDoCheck() || linuxDoReadRecoveryRef.current !== activeRecovery) {
+        let outcome: LinuxDoReadResumeOutcome;
+        try {
+          outcome = await recovery.resume();
+        } catch (error) {
+          if (linuxDoVerificationGenerationRef.current !== closedGeneration) {
+            finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
+            return;
+          }
+          const message = `登录身份已确认，但原页面恢复失败：${errorMessage(error)}`;
+          updateLinuxDoSession({ type: 'check-failed', message });
+          notify(message);
+          finishLinuxDoVerificationTrace(trace, 'failure', {
+            reason: normalizeDiagnosticReason(error)
+          });
+          return;
+        }
+        if (linuxDoVerificationGenerationRef.current !== closedGeneration) {
           finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
           return;
         }
         if (outcome === 'verification-required') {
-          updateLinuxDoSession({
-            type: 'verification-required',
-            message: '验证仍未生效，请继续完成验证后点击检测状态。'
-          });
-          setLinuxDoWebViewError('验证仍未生效，请继续完成验证后点击检测状态。');
-          notify('linux.do 验证仍未生效，请继续验证后点击检测状态。');
-          linuxDoVerificationPhaseRef.current = 'awaiting-clearance';
+          const message = '验证仍未生效，请继续完成验证后点击检测状态。';
+          updateLinuxDoSession({ type: 'verification-required', message });
           finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'verification_required' });
+          if (isActiveRecoveryQuery(recovery)) {
+            onLinuxDoRecoveryBarrierChanged(true);
+            void showLinuxDoVerification(message, recovery);
+          }
           return;
         }
         if (outcome === 'stale') {
           finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
-          linuxDoReadRecoveryRef.current = null;
-          closeLinuxDoPanel(false, 'authoritative-recovery', true);
           return;
         }
         if (outcome === 'failed') {
-          const message = '登录身份已确认，但原页面恢复失败，请点击检测状态重试。';
-          updateLinuxDoSession({ type: 'verification-required', message });
-          setLinuxDoWebViewError(message);
+          const message = '登录身份已确认，但原页面恢复失败，请返回原页面重试。';
+          updateLinuxDoSession({ type: 'check-failed', message });
           notify(message);
-          linuxDoVerificationPhaseRef.current = 'awaiting-clearance';
           finishLinuxDoVerificationTrace(trace, 'failure', { reason: 'refresh_failed' });
           return;
         }
@@ -714,16 +741,14 @@ export function useVerificationController({
           hasCredential: true,
           isLoggedIn: true
         });
-        linuxDoReadRecoveryRef.current = null;
-        closeLinuxDoPanel(false, 'authoritative-recovery', true);
         return;
       }
+      closeLinuxDoPanel(false, 'authoritative-recovery', true);
       notify('linux.do 登录身份已确认。');
       finishLinuxDoVerificationTrace(trace, 'success', {
         hasCredential: true,
         isLoggedIn: true
       });
-      linuxDoVerificationPhaseRef.current = 'awaiting-clearance';
     } catch (error) {
       if (isCurrentLinuxDoCheck()) {
         notify(errorMessage(error));
@@ -752,9 +777,11 @@ export function useVerificationController({
     finishLinuxDoVerificationTrace,
     linuxDoWebViewSessionRef,
     notify,
+    onLinuxDoRecoveryBarrierChanged,
     reconcileAccountStatus,
     setChecking,
     setLinuxDoWebViewError,
+    showLinuxDoVerification,
     showLinuxDoPanelRef,
     updateLinuxDoSession
   ]);

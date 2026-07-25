@@ -894,6 +894,7 @@ export function useTopicController({
     topicDetail,
     topicError,
     topicFavorite,
+    topicQueryKey,
     topicReplies,
     unreadReplyCount
   };

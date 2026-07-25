@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReplyListItems, hasSameYaohuoTopicLayout, topicOpeningPostAsReply, type TopicListItem } from './topicScreenHelpers';
+import { buildReplyListItems, getReplyKey, hasSameYaohuoTopicLayout, topicOpeningPostAsReply, type TopicListItem } from './topicScreenHelpers';
 import type { Reply, TopicDetail } from '../../types';
 
 const reply: Reply = {
@@ -21,6 +21,35 @@ const listCases: Array<[string, boolean, TopicListItem[], boolean, TopicListItem
 ];
 
 describe('topic screen helpers', () => {
+  it('REG-TOPIC-028 keeps replies with the same display floor as distinct list items', () => {
+    const imageReply: Reply = {
+      ...reply,
+      commentId: 17900145,
+      floor: 68,
+      contentHtml: '<p>image reply</p><img src="https://example.com/tall.jpg" />'
+    };
+    const textReply: Reply = {
+      ...reply,
+      commentId: 17900159,
+      floor: 68,
+      contentHtml: '<p>text reply</p>'
+    };
+
+    expect(getReplyKey(imageReply)).not.toBe(getReplyKey(textReply));
+  });
+
+  it('keeps the same reply identity when its display floor changes', () => {
+    const original: Reply = { ...reply, commentId: 17900159, floor: 68 };
+
+    expect(getReplyKey({ ...original, floor: 69 })).toBe(getReplyKey(original));
+  });
+
+  it('falls back to the display floor when a source has no comment id', () => {
+    const withoutCommentId: Reply = { ...reply, floor: 68 };
+
+    expect(getReplyKey({ ...withoutCommentId, contentHtml: '<p>refreshed</p>' })).toBe(getReplyKey(withoutCommentId));
+  });
+
   it.each(listCases)('builds FlashList data for %s', (_label, canShowReplies, replyItems, topicShowsAccessNotice, expected) => {
     expect(buildReplyListItems({ canShowReplies, replyItems, topicShowsAccessNotice })).toEqual(expected);
   });

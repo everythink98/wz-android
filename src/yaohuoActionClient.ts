@@ -2,7 +2,7 @@ import type { YaohuoActionRequest } from './yaohuoActions';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { elementText, parseHtml, textContentFromHtml } from './localHtml';
-import { isYaohuoLoginRequiredHtml, isYaohuoVerificationRequiredHtml, parseYaohuoFavoriteRecordId } from './localYaohuo';
+import { parseYaohuoFavoriteRecordId, yaohuoLoginRequirementReason } from './localYaohuo';
 import {
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
@@ -22,15 +22,15 @@ const YAOHUO_ACTION_HEADERS = {
     : {})
 };
 const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
+const YAOHUO_ACTION_SUCCESS_PATTERN = /^评论成功$/;
 const YAOHUO_REPLY_DELETE_PATH_PATTERN = /^\/bbs\/book_re_del\.aspx$/i;
 const YAOHUO_FAVORITE_ENTRY_PATH_PATTERN = /^\/bbs\/share\.aspx$/i;
 const YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN = /^\/bbs\/favlist\.aspx$/i;
+const YAOHUO_ACTION_UNKNOWN_MESSAGE = '操作结果无法确认，请刷新原帖核对';
 
-export interface YaohuoActionResult {
-  ok: true;
-  message: string;
-  favoriteId?: number;
-}
+export type YaohuoActionResult =
+  | { status: 'confirmed'; message: string; favoriteId?: number }
+  | { status: 'unknown'; message: string };
 
 function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired') {
   const error = new Error(
@@ -47,20 +47,20 @@ function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired'
   return error;
 }
 
-function actionMessage(html: string) {
+function actionMessage(html: string): YaohuoActionResult {
   const tip = parseHtml(html).querySelector('.tip');
   const text = tip ? elementText(tip) : textContentFromHtml(html);
-  if (tip) {
-    assertYaohuoActionSuccess(text);
-  }
-  if (!tip && text.length > 80) {
-    return '操作结果无法确认，请刷新原帖核对';
+  if (!text || (!tip && text.length > 80)) {
+    return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
   assertYaohuoActionSuccess(text);
-  if (text.length > 80) {
-    return '操作已提交';
+  if (!tip && !YAOHUO_ACTION_SUCCESS_PATTERN.test(text)) {
+    return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
-  return text || '操作已提交';
+  return {
+    status: 'confirmed',
+    message: text.length > 80 ? '操作已提交' : text
+  };
 }
 
 function assertYaohuoActionSuccess(message: string) {
@@ -163,11 +163,9 @@ async function fetchYaohuoActionHtml({
   const html = await response.text();
   const responseUrl = response.url || '';
 
-  if (isYaohuoVerificationRequiredHtml(html)) {
-    throw yaohuoLoginRequiredError('verification');
-  }
-  if (isYaohuoLoginRequiredHtml(html, responseUrl)) {
-    throw yaohuoLoginRequiredError('expired');
+  const loginReason = yaohuoLoginRequirementReason(html, responseUrl);
+  if (loginReason) {
+    throw yaohuoLoginRequiredError(loginReason);
   }
   if (!response.ok) {
     throw new Error(`妖火请求失败：HTTP ${response.status}`);
@@ -206,12 +204,12 @@ export async function runYaohuoAction({
         timeoutMs
       }));
     } else if (requestUrl.searchParams.get('action')?.toLowerCase() !== 'godel') {
-      return { ok: true, message: '操作结果无法确认，请刷新原帖核对' };
+      return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
     }
   }
 
   if (isFavoriteDeleteRequest(request)) {
-    return { ok: true, message: favoriteDeleteMessage(html) };
+    return { status: 'confirmed', message: favoriteDeleteMessage(html) };
   }
 
   if (isFavoriteEntryRequest(request)) {
@@ -220,11 +218,11 @@ export async function runYaohuoAction({
       const topicId = new URL(request.path, YAOHUO_BASE_URL).searchParams.get('id') || '';
       const favoriteId = parseYaohuoFavoriteRecordId(html, topicId);
       if (favoriteId) {
-        return { ok: true, message: '收藏成功', favoriteId };
+        return { status: 'confirmed', message: '收藏成功', favoriteId };
       }
     }
-    return { ok: true, message: '操作结果无法确认，请刷新原帖核对' };
+    return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
 
-  return { ok: true, message: actionMessage(html) };
+  return actionMessage(html);
 }

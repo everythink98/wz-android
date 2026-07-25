@@ -1411,7 +1411,7 @@ describe('linux.do AI search controller', () => {
         hasMore: false,
         nextPage: null
       });
-    const onVerificationRequired = jest.fn<(message: string, retry: () => Promise<boolean>) => void>();
+    const onVerificationRequired = jest.fn<(message: string, recovery: LinuxDoReadRecovery) => void>();
     const gateway = createGateway({
       searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
       searchTopics
@@ -1457,10 +1457,10 @@ describe('linux.do AI search controller', () => {
     });
     await waitFor(() => expect(onVerificationRequired).toHaveBeenCalledTimes(1));
 
-    const retry = onVerificationRequired.mock.calls[0]?.[1];
+    const recovery = onVerificationRequired.mock.calls[0]?.[1];
     await act(async () => {
-      await expect(retry?.()).resolves.toBe(false);
-      await expect(retry?.()).resolves.toBe(true);
+      await expect(recovery?.resume()).resolves.toBe('verification-required');
+      await expect(recovery?.resume()).resolves.toBe('completed');
     });
     await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
 

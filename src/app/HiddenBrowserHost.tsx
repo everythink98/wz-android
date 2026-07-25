@@ -5,8 +5,15 @@ import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 import type { createStyles } from '../theme';
-import { isLinuxDoBrowserFetchUrl } from '../linuxdoFetchFallback';
-import { isNodeSeekBrowserFetchUrl } from '../nodeseekFetchFallback';
+import {
+  isLinuxDoBrowserNavigationUrl,
+  isLinuxDoBrowserResultUrl
+} from '../linuxdoFetchFallback';
+import {
+  isNodeSeekBrowserNavigationUrl,
+  isNodeSeekBrowserResultUrl
+} from '../nodeseekFetchFallback';
+import { isGoogleSiteSearchAccessTroubleUrl } from '../googleSearchFallback';
 
 type HiddenBrowserState = {
   linuxDo: {
@@ -46,6 +53,11 @@ export function HiddenBrowserHost({
 }) {
   const linuxDoBrowserFetchRequest = state.linuxDo.request;
   const nodeSeekBrowserFetchRequest = state.nodeSeek.request;
+  const nodeSeekBrowserFetchScript = nodeSeekBrowserFetchRequest
+    ? NODESEEK_BROWSER_FETCH_SCRIPT
+      .replace('__NODESEEK_BROWSER_FETCH_ID__', String(nodeSeekBrowserFetchRequest.id))
+      .replace('__NODESEEK_BROWSER_FETCH_OWNER__', JSON.stringify(nodeSeekBrowserFetchRequest.owner ?? null))
+    : '';
   const [linuxDoWebViewGeneration, setLinuxDoWebViewGeneration] = useState(0);
   const [nodeSeekWebViewGeneration, setNodeSeekWebViewGeneration] = useState(0);
   useEffect(() => {
@@ -61,21 +73,43 @@ export function HiddenBrowserHost({
   }, [blockedMessage, failLinuxDoBrowserFetchById, failNodeSeekBrowserFetchById, linuxDoBrowserFetchRequest, nodeSeekBrowserFetchRequest]);
   const handleNodeSeekBrowserNavigation = useCallback((request: { url?: string }) => {
     const url = request.url || '';
-    if (!url || isNodeSeekBrowserFetchUrl(url)) {
+    if (
+      !url
+      || (
+        nodeSeekBrowserFetchRequest
+        && isNodeSeekBrowserNavigationUrl(url, nodeSeekBrowserFetchRequest.url)
+      )
+    ) {
       return true;
     }
     if (nodeSeekBrowserFetchRequest) {
-      failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面跳转到外部地址，已停止读取');
+      failNodeSeekBrowserFetchById(
+        nodeSeekBrowserFetchRequest.id,
+        isGoogleSiteSearchAccessTroubleUrl(url, 'nodeseek.com', nodeSeekBrowserFetchRequest.url)
+          ? 'Google 搜索环境验证暂时未通过，请稍后重试'
+          : 'NodeSeek 页面跳转到外部地址，已停止读取'
+      );
     }
     return false;
   }, [failNodeSeekBrowserFetchById, nodeSeekBrowserFetchRequest]);
   const handleLinuxDoBrowserNavigation = useCallback((request: { url?: string }) => {
     const url = request.url || '';
-    if (!url || isLinuxDoBrowserFetchUrl(url)) {
+    if (
+      !url
+      || (
+        linuxDoBrowserFetchRequest
+        && isLinuxDoBrowserNavigationUrl(url, linuxDoBrowserFetchRequest.url)
+      )
+    ) {
       return true;
     }
     if (linuxDoBrowserFetchRequest) {
-      failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面跳转到外部地址，已停止读取');
+      failLinuxDoBrowserFetchById(
+        linuxDoBrowserFetchRequest.id,
+        isGoogleSiteSearchAccessTroubleUrl(url, 'linux.do', linuxDoBrowserFetchRequest.url)
+          ? 'Google 搜索环境验证暂时未通过，请稍后重试'
+          : 'linux.do 页面跳转到外部地址，已停止读取'
+      );
     }
     return false;
   }, [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]);
@@ -108,12 +142,15 @@ export function HiddenBrowserHost({
             thirdPartyCookiesEnabled
             userAgent={nodeSeekBrowserFetchRequest.userAgent || state.nodeSeek.userAgent}
             onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}
+            injectedJavaScriptBeforeContentLoaded={
+              nodeSeekBrowserFetchRequest.owner === 'account'
+                ? nodeSeekBrowserFetchScript
+                : undefined
+            }
             containerStyle={styles.hiddenBrowserWebView}
             style={styles.hiddenBrowserWebView}
             onLoadEnd={() => {
-              nodeSeekBrowserWebViewRef.current?.injectJavaScript(
-                NODESEEK_BROWSER_FETCH_SCRIPT.replace('__NODESEEK_BROWSER_FETCH_ID__', String(nodeSeekBrowserFetchRequest.id))
-              );
+              nodeSeekBrowserWebViewRef.current?.injectJavaScript(nodeSeekBrowserFetchScript);
             }}
             onMessage={handleNodeSeekBrowserFetchMessage}
             onError={(event) => {
@@ -123,7 +160,7 @@ export function HiddenBrowserHost({
               if (!shouldHandleBrowserHttpError(
                 nodeSeekBrowserFetchRequest.url,
                 event.nativeEvent.url,
-                isNodeSeekBrowserFetchUrl
+                (url) => isNodeSeekBrowserResultUrl(url, nodeSeekBrowserFetchRequest.url)
               )) {
                 return;
               }
@@ -169,7 +206,7 @@ export function HiddenBrowserHost({
               if (!shouldHandleBrowserHttpError(
                 linuxDoBrowserFetchRequest.url,
                 event.nativeEvent.url,
-                isLinuxDoBrowserFetchUrl
+                (url) => isLinuxDoBrowserResultUrl(url, linuxDoBrowserFetchRequest.url)
               )) {
                 return;
               }
