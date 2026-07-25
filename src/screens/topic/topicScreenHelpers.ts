@@ -1,5 +1,6 @@
 import type { AccessRequirement, Reply, Topic, TopicDetail } from '../../types';
 import { accessRequirementFromNoticeText, textContentFromHtml } from '../../localHtml';
+import { replyKey } from '../../feedLogic';
 
 export type TopicListItem =
   | { type: 'replyControls'; key: string }
@@ -18,21 +19,7 @@ function slowModeLabel(seconds: number) {
   return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`;
 }
 
-function getReplyKey(reply: Reply) {
-  if (typeof reply.floor === 'number') {
-    return `reply-floor-${reply.floor}`;
-  }
-  if (typeof reply.commentId === 'number') {
-    return `reply-comment-${reply.commentId}`;
-  }
-  const seed = [
-    reply.authorId || '',
-    reply.author || '',
-    reply.createdAt || '',
-    reply.contentHtml || ''
-  ].join('|');
-  return `reply-${stableTextHash(seed || JSON.stringify(reply))}`;
-}
+const getReplyKey = replyKey;
 
 export function topicStatusBadges(item: Pick<Topic, 'acceptedAnswerFloor' | 'archived' | 'closed' | 'pinned' | 'slowModeSeconds' | 'solved'>) {
   const badges: { label: string; tone: 'success' | 'accent' | 'danger' | 'neutral' | 'warning' }[] = [];

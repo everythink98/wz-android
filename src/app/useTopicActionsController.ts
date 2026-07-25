@@ -97,10 +97,12 @@ import {
 } from './topicActionControllerHelpers';
 import {
   WritableSessionBlockedError,
+  type WritableSessionReconcileResult,
   type WritableSessionTicket
 } from '../writableSessionGate';
 import { readManagedCookieHeader } from '../managedCookies';
 import { YAOHUO_BASE_URL } from '../localYaohuoHelpers';
+import { sourceErrorFromUnknown } from '../sourceErrors';
 
 type Ref<T> = { current: T };
 type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unknown>;
@@ -130,7 +132,8 @@ class HandledMutationError extends Error {
   constructor(
     message: string,
     readonly outcome: 'blocked' | 'canceled' | 'failure' | 'stale',
-    readonly reason: string
+    readonly reason: string,
+    readonly serverConfirmed = false
   ) {
     super(message);
   }
@@ -139,6 +142,13 @@ class HandledMutationError extends Error {
 function mutationFailure(error: unknown, outcome: HandledMutationError['outcome'] = 'failure') {
   if (error instanceof HandledMutationError) return error;
   return new HandledMutationError(errorMessage(error), outcome, normalizeDiagnosticReason(error));
+}
+
+function writeFailureRequiresIdentityProbe(source: SessionSite, error: unknown) {
+  const kind = sourceErrorFromUnknown(source, error).kind;
+  return kind === 'login-required'
+    || kind === 'login-expired'
+    || kind === 'verification-required';
 }
 
 function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
@@ -182,9 +192,7 @@ export function useTopicActionsController({
   isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
   nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
-  reconcileWritableSession: (source: SessionSite) => Promise<{
-    status: 'anonymous' | 'changed' | 'same' | 'stale' | 'unknown';
-  }>;
+  reconcileWritableSession: (source: SessionSite) => Promise<WritableSessionReconcileResult>;
   refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
   siteSessionViewModels: SiteSessionViewModels;
   topicDetail: TopicDetail | null;
@@ -244,10 +252,13 @@ export function useTopicActionsController({
         return await variables.task(variables.ticket);
       } catch (error) {
         const failure = mutationFailure(error);
-        const credentialIsCurrent = isWritableSessionTicketCurrent(variables.ticket);
-        if (variables.applyOptimistic && credentialIsCurrent && failure.outcome !== 'stale') {
-          if (previousDetail) queryClient.setQueryData(variables.detailKey, previousDetail);
-          if (previousReplies) queryClient.setQueryData(variables.repliesKey, previousReplies);
+        if (variables.applyOptimistic && !failure.serverConfirmed) {
+          if (previousDetail !== undefined && queryClient.getQueryState(variables.detailKey)) {
+            queryClient.setQueryData(variables.detailKey, previousDetail);
+          }
+          if (previousReplies !== undefined && queryClient.getQueryState(variables.repliesKey)) {
+            queryClient.setQueryData(variables.repliesKey, previousReplies);
+          }
           markDiagnosticStage(variables.trace, 'rollback', { source: variables.source, state: 'local' });
         }
         throw error;
@@ -255,11 +266,23 @@ export function useTopicActionsController({
     },
     onSuccess: async (result, variables) => {
       if (!isWritableSessionTicketCurrent(variables.ticket)) {
-        finishDiagnosticTrace(variables.trace, 'stale', { source: variables.source, reason: 'stale' });
+        finishDiagnosticTrace(variables.trace, 'stale', {
+          source: variables.source,
+          reason: 'stale',
+          serverConfirmed: true
+        });
         return;
       }
       variables.applyResult?.(result);
       const refreshed = await variables.afterSuccess?.(result);
+      if (!isWritableSessionTicketCurrent(variables.ticket)) {
+        finishDiagnosticTrace(variables.trace, 'stale', {
+          source: variables.source,
+          reason: 'stale',
+          serverConfirmed: true
+        });
+        return;
+      }
       const message = typeof variables.successMessage === 'function'
         ? variables.successMessage(result)
         : variables.successMessage;
@@ -276,7 +299,8 @@ export function useTopicActionsController({
       if (credentialIsCurrent && !(error instanceof HandledMutationError)) notify(failure.message);
       finishDiagnosticTrace(variables.trace, credentialIsCurrent ? failure.outcome : 'stale', {
         source: variables.source,
-        reason: credentialIsCurrent ? failure.reason : 'stale'
+        reason: credentialIsCurrent ? failure.reason : 'stale',
+        ...(failure.serverConfirmed ? { serverConfirmed: true } : {})
       });
     }
   });
@@ -368,9 +392,9 @@ export function useTopicActionsController({
     }
   }, [cacheKeys, ensureWritableSession, mutation.mutateAsync, notify, queryClient]);
 
-  const assertWritableTicket = useCallback((ticket: WritableSessionTicket) => {
+  const assertWritableTicket = useCallback((ticket: WritableSessionTicket, serverConfirmed = false) => {
     if (!isWritableSessionTicketCurrent(ticket)) {
-      throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
+      throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale', serverConfirmed);
     }
   }, [isWritableSessionTicketCurrent]);
 
@@ -396,12 +420,14 @@ export function useTopicActionsController({
     } catch (error) {
       assertWritableTicket(ticket);
       const message = errorMessage(error);
-      await reconcileWritableSession('nodeseek').catch(() => ({ status: 'unknown' as const }));
+      if (writeFailureRequiresIdentityProbe('nodeseek', error)) {
+        await reconcileWritableSession('nodeseek').catch(() => ({ status: 'unknown' as const }));
+      }
       notify(message);
       throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
-    assertWritableTicket(ticket);
     markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
+    assertWritableTicket(ticket, true);
     return true;
   }, [assertWritableTicket, fetcher, nodeSeekWebViewUserAgentRef, notify, reconcileWritableSession]);
 
@@ -415,7 +441,11 @@ export function useTopicActionsController({
     ),
     onSuccess: (_result, variables) => {
       if (!isWritableSessionTicketCurrent(variables.ticket)) {
-        finishDiagnosticTrace(variables.trace, 'stale', { source: 'nodeseek', reason: 'stale' });
+        finishDiagnosticTrace(variables.trace, 'stale', {
+          source: 'nodeseek',
+          reason: 'stale',
+          serverConfirmed: true
+        });
         return;
       }
       notify('签到请求已提交');
@@ -427,7 +457,8 @@ export function useTopicActionsController({
       if (current && !(error instanceof HandledMutationError)) notify(failure.message);
       finishDiagnosticTrace(variables.trace, current ? failure.outcome : 'stale', {
         source: 'nodeseek',
-        reason: current ? failure.reason : 'stale'
+        reason: current ? failure.reason : 'stale',
+        ...(failure.serverConfirmed ? { serverConfirmed: true } : {})
       });
     }
   });
@@ -457,18 +488,21 @@ export function useTopicActionsController({
         fetcher: withDiagnosticFetcher(trace, fetcher),
         request: requestFactory(cookieRead.header)
       });
-      assertWritableTicket(ticket);
-      if (result.message === '操作结果无法确认，请刷新原帖核对') {
+      if (result.status === 'unknown') {
+        assertWritableTicket(ticket);
         notify(result.message);
         throw new HandledMutationError(result.message, 'failure', 'invalid_response');
       }
       markDiagnosticStage(trace, 'transport', { source: 'yaohuo', state: 'confirmed', serverConfirmed: true });
+      assertWritableTicket(ticket, true);
       return result;
     } catch (error) {
       if (error instanceof HandledMutationError) throw error;
       assertWritableTicket(ticket);
       const message = errorMessage(error);
-      await reconcileWritableSession('yaohuo').catch(() => ({ status: 'unknown' as const }));
+      if (writeFailureRequiresIdentityProbe('yaohuo', error)) {
+        await reconcileWritableSession('yaohuo').catch(() => ({ status: 'unknown' as const }));
+      }
       notify(message);
       throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
     }
@@ -498,21 +532,16 @@ export function useTopicActionsController({
     try {
       assertWritableTicket(ticket);
       const result = await runtime.execute(buildDiscourseSourceActionRequest(source, action));
-      if (runtime.isCredentialCurrent?.() === false) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
       markDiagnosticStage(trace, 'transport', { source, state: 'confirmed', serverConfirmed: true });
+      if (runtime.isCredentialCurrent?.() === false) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale', true);
+      }
+      assertWritableTicket(ticket, true);
       return result ?? true;
     } catch (error) {
       if (error instanceof HandledMutationError) throw error;
       if (runtime.isCredentialCurrent?.() === false) {
         throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
-      if (source === 'linuxdo') {
-        const message = errorMessage(error);
-        await reconcileWritableSession(source).catch(() => ({ status: 'unknown' as const }));
-        notify(message);
-        throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
       }
       let recovery;
       let recoveryError: unknown;
@@ -532,6 +561,17 @@ export function useTopicActionsController({
           ? recoveryMessage
           : `授权状态复核未完成：${recoveryMessage}`}`
         : originalMessage;
+      if (source === 'linuxdo'
+        && (recovery.loginRequired || writeFailureRequiresIdentityProbe(source, error))) {
+        const promptMessage = recovery.message || message;
+        await reconcileWritableSession(source).catch(() => ({ status: 'unknown' as const }));
+        notify(promptMessage);
+        throw new HandledMutationError(
+          promptMessage,
+          'failure',
+          normalizeDiagnosticReason(error)
+        );
+      }
       if (recovery.loginRequired) {
         const promptMessage = recovery.message || message;
         loginPrompt(promptMessage);
@@ -792,10 +832,10 @@ export function useTopicActionsController({
             );
           }
           if (nodeImageGeneration !== currentNodeImageApiKeyGeneration()) {
-            throw new HandledMutationError('NodeImage 凭据已变化', 'stale', 'stale');
+            throw new HandledMutationError('NodeImage 凭据已变化', 'stale', 'stale', true);
           }
         }
-        assertWritableTicket(ticket);
+        assertWritableTicket(ticket, Boolean(imageUrl));
         if (!imageUrl) throw new HandledMutationError('图片上传结果不正确', 'failure', 'invalid_response');
         return { imageUrl, name: file.name };
       },
@@ -913,7 +953,12 @@ export function useTopicActionsController({
             topicId: actionTopic.id,
             classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID
           }), trace, ticket),
-      applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : (result as YaohuoActionResult).favoriteId),
+      applyResult: (result) => {
+        const yaohuoResult = result as YaohuoActionResult;
+        patch(!bookmarked, bookmarked || yaohuoResult.status === 'unknown'
+          ? undefined
+          : yaohuoResult.favoriteId);
+      },
       successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
     });
   }, [cacheKeys, executeMutation, notify, queryClient, runYaohuoRequest, selectedTopic, topicDetail]);

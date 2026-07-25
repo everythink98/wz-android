@@ -1,13 +1,13 @@
 import { memo, type RefObject, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, Bug, DatabaseBackup, Server, Settings, Wrench } from 'lucide-react-native';
+import { Activity, Bug, DatabaseBackup, Server, Settings } from 'lucide-react-native';
 import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '../networkProxy';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
-import { sessionSources, type DevAnonymousOverrides, type SessionSite, type SiteSessionViewModels } from '../siteSessionState';
+import type { SessionSite, SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, MenuButton } from '../components/AppControls';
 import {
@@ -76,8 +76,6 @@ export const MoreScreen = memo(function MoreScreen({
   yaohuoLoginPrompt,
   yaohuoWebViewRef,
   sessionViewModels,
-  devAnonymousAvailable,
-  devAnonymousOverrides,
   networkProxyActiveProfile,
   networkProxyApplyError,
   networkProxyApplyStatus,
@@ -113,7 +111,6 @@ export const MoreScreen = memo(function MoreScreen({
   onLoginFormMessage,
   onShowNetworkProxyPanelChange,
   onShowSettingsPanelChange,
-  onToggleDevAnonymousOverride,
   onDeleteNetworkProxyProfile,
   onSelectNetworkProxyProfile,
   onSetNetworkProxyEnabled,
@@ -157,8 +154,6 @@ export const MoreScreen = memo(function MoreScreen({
   yaohuoLoginPrompt: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   sessionViewModels: SiteSessionViewModels;
-  devAnonymousAvailable: boolean;
-  devAnonymousOverrides: DevAnonymousOverrides;
   networkProxyActiveProfile: NetworkProxyProfile | null;
   networkProxyApplyError: string;
   networkProxyApplyStatus: string;
@@ -203,7 +198,6 @@ export const MoreScreen = memo(function MoreScreen({
   onLoginFormMessage: (event: WebViewMessageEvent) => boolean;
   onShowNetworkProxyPanelChange: (value: boolean) => void;
   onShowSettingsPanelChange: (value: boolean) => void;
-  onToggleDevAnonymousOverride: (site: SessionSite) => void;
   onDeleteNetworkProxyProfile: (id: string) => Promise<void>;
   onSelectNetworkProxyProfile: (id: string) => Promise<void>;
   onSetNetworkProxyEnabled: (enabled: boolean) => Promise<void>;
@@ -214,7 +208,6 @@ export const MoreScreen = memo(function MoreScreen({
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [diagnosticExpanded, setDiagnosticExpanded] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
-  const [toolsExpanded, setToolsExpanded] = useState(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
   const [xiaoyinsiLevelExpanded, setXiaoyinsiLevelExpanded] = useState(false);
   const nodeSeekSession = sessionViewModels.nodeseek;
@@ -227,8 +220,6 @@ export const MoreScreen = memo(function MoreScreen({
   const appVersionMeta = appUpdateInfo
     ? `当前版本 ${CURRENT_APP_VERSION} · 最新版本 ${appUpdateInfo.version}`
     : `多网站第三方客户端 · 当前版本 ${CURRENT_APP_VERSION}`;
-  const devAnonymousActiveCount = sessionSources.filter((site) => devAnonymousOverrides[site]).length;
-  const devAnonymousMeta = devAnonymousActiveCount ? `已开启 ${devAnonymousActiveCount} 项` : '临时匿名 · 不删除 Cookie';
   const xiaoyinsiAuthForcedOpen = xiaoyinsiAuth.phase === 'requesting'
     || xiaoyinsiAuth.phase === 'waiting'
     || xiaoyinsiAuth.phase === 'cleanup';
@@ -470,28 +461,6 @@ export const MoreScreen = memo(function MoreScreen({
         onTestProfile={onTestNetworkProxyProfile}
         onUpsertProfile={onUpsertNetworkProxyProfile}
       />
-      {devAnonymousAvailable ? (
-        <ExpandablePanel
-          quiet
-          title="测试工具"
-          meta={devAnonymousMeta}
-          icon={Wrench}
-          expanded={toolsExpanded}
-          styles={styles}
-          theme={theme}
-          onExpandedChange={setToolsExpanded}
-        >
-          <View style={styles.stack}>
-            <Text style={styles.meta}>只影响本次运行，不删除 Cookie。重启后恢复。</Text>
-            <View style={styles.actions}>
-              <AppButton tiny variant={devAnonymousOverrides.nodeseek ? 'primary' : 'ghost'} label="NodeSeek" styles={styles} onPress={() => onToggleDevAnonymousOverride('nodeseek')} />
-              <AppButton tiny variant={devAnonymousOverrides.yaohuo ? 'primary' : 'ghost'} label="妖火" styles={styles} onPress={() => onToggleDevAnonymousOverride('yaohuo')} />
-              <AppButton tiny variant={devAnonymousOverrides.linuxdo ? 'primary' : 'ghost'} label="linux.do" styles={styles} onPress={() => onToggleDevAnonymousOverride('linuxdo')} />
-              <AppButton tiny variant={devAnonymousOverrides.xiaoyinsi ? 'primary' : 'ghost'} label="小隐寺" styles={styles} onPress={() => onToggleDevAnonymousOverride('xiaoyinsi')} />
-            </View>
-          </View>
-        </ExpandablePanel>
-      ) : null}
       <ExpandablePanel
         quiet
         title="问题诊断"

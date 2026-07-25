@@ -58,8 +58,8 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter(null);
   });
 
-  it('[REG-ACCOUNT-031][REG-SOURCE-007] blocks a pending site before transport and isolates it from aggregate reads', async () => {
-    const pendingSources = new Set<Source>(['nodeseek']);
+  it('[REG-ACCOUNT-031][REG-SOURCE-007] blocks an identity-barrier site before transport and isolates it from aggregate reads', async () => {
+    const blockedSources = new Set<Source>(['nodeseek']);
     const publicTopic: Topic = {
       source: 'v2ex',
       id: 'public',
@@ -102,7 +102,7 @@ describe('source gateway read contract', () => {
       currentSessionEpoch: () => 7,
       fetcher: vi.fn(),
       isSourceAuthenticated: () => true,
-      isSourceIdentityPending: (source) => pendingSources.has(source),
+      isSourceReadBlocked: (source) => blockedSources.has(source),
       nodeSeekUserAgent: () => 'NodeSeek UA'
     });
 

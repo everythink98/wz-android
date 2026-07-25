@@ -1,6 +1,17 @@
 // @vitest-environment-options {"url":"https://www.nodeimage.com/"}
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LINUXDO_WEBVIEW_PROBE_SCRIPT, NODEIMAGE_API_KEY_PROBE_SCRIPT, NODESEEK_LOGIN_PROBE_SCRIPT, nodeImageApiKeyProbeScript } from './loginWebViewScripts';
+import {
+  LINUXDO_WEBVIEW_PROBE_SCRIPT,
+  NODESEEK_LOGIN_PROBE_SCRIPT,
+  nodeImageAuthPayloadScript
+} from './loginWebViewScripts';
+
+const NODEIMAGE_AUTH_NONCE = '00112233445566778899aabbccddeeff';
+const NODEIMAGE_AUTH_PAYLOAD = {
+  data: 'auth-data',
+  wtf: 'auth-wtf',
+  sign: 'auth-sign'
+};
 
 async function runNodeSeekLoginProbe(
   url: string,
@@ -264,7 +275,7 @@ describe('linux.do login WebView probe script', () => {
   });
 });
 
-function runNodeImageApiKeyProbe(html: string, fetchMock: typeof fetch, script = NODEIMAGE_API_KEY_PROBE_SCRIPT) {
+function runNodeImageApiKeyProbe(html: string, fetchMock: typeof fetch) {
   window.history.pushState(null, '', '/');
   document.body.innerHTML = html;
   const postMessage = vi.fn();
@@ -274,7 +285,10 @@ function runNodeImageApiKeyProbe(html: string, fetchMock: typeof fetch, script =
   });
   vi.stubGlobal('fetch', fetchMock);
 
-  window.eval(script);
+  window.eval(nodeImageAuthPayloadScript(
+    NODEIMAGE_AUTH_NONCE,
+    NODEIMAGE_AUTH_PAYLOAD
+  ));
 
   return postMessage;
 }
@@ -287,7 +301,11 @@ describe('NodeImage API key WebView probe script', () => {
   });
 
   it('posts the current NodeImage API key response from the authorized page', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ api_key: ' secret ' }), { status: 200 })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(async (input) => new Response(JSON.stringify(
+      String(input).endsWith('/api/auth/verify')
+        ? { success: true }
+        : { api_key: ' secret ' }
+    ), { status: 200 })) as unknown as typeof fetch;
     const postMessage = runNodeImageApiKeyProbe('', fetchMock);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
@@ -297,18 +315,22 @@ describe('NodeImage API key WebView probe script', () => {
     }));
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
+      nonce: NODEIMAGE_AUTH_NONCE,
       data: { api_key: ' secret ' }
     });
   });
 
   it('falls back to the API key input already rendered by NodeImage', async () => {
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 401 })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(async (input) => new Response('{}', {
+      status: String(input).endsWith('/api/auth/verify') ? 200 : 401
+    })) as unknown as typeof fetch;
     const postMessage = runNodeImageApiKeyProbe('<input id="apiKeyInput" value="dom-secret">', fetchMock);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
+      nonce: NODEIMAGE_AUTH_NONCE,
       apiKey: 'dom-secret'
     });
   });
@@ -332,18 +354,69 @@ describe('NodeImage API key WebView probe script', () => {
       }
       throw new Error(`Unexpected fetch ${String(input)}`);
     }) as unknown as typeof fetch;
-    const postMessage = runNodeImageApiKeyProbe('', fetchMock, nodeImageApiKeyProbeScript({
-      data: 'auth-data',
-      wtf: 'auth-wtf',
-      sign: 'auth-sign'
-    }));
+    const postMessage = runNodeImageApiKeyProbe('', fetchMock);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
+      nonce: NODEIMAGE_AUTH_NONCE,
       data: { api_key: ' verified-secret ' }
     });
+  });
+
+  it('does nothing outside the exact top-level NodeImage root URL', async () => {
+    window.history.pushState(null, '', '/account');
+    const fetchMock = vi.fn();
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'ReactNativeWebView', {
+      configurable: true,
+      value: { postMessage }
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    window.eval(nodeImageAuthPayloadScript(
+      NODEIMAGE_AUTH_NONCE,
+      NODEIMAGE_AUTH_PAYLOAD
+    ));
+    await Promise.resolve();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the authorization payload lexical and never writes browser storage', async () => {
+    window.history.pushState(null, '', '/');
+    const fetchMock = vi.fn(async (input) => new Response('{}', {
+      status: String(input).endsWith('/api/auth/verify') ? 200 : 401
+    })) as unknown as typeof fetch;
+    const postMessage = vi.fn();
+    const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
+    Object.defineProperty(window, 'ReactNativeWebView', {
+      configurable: true,
+      value: { postMessage }
+    });
+    for (const property of ['__wzNodeImageAuthPayload', '__wzNodeImageAuthVerified']) {
+      Object.defineProperty(window, property, {
+        configurable: true,
+        set: () => {
+          throw new Error('authorization payload must remain lexical');
+        }
+      });
+    }
+    vi.stubGlobal('fetch', fetchMock);
+
+    window.eval(nodeImageAuthPayloadScript(
+      NODEIMAGE_AUTH_NONCE,
+      NODEIMAGE_AUTH_PAYLOAD
+    ));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toMatchObject({
+      type: 'nodeimage-api-key',
+      nonce: NODEIMAGE_AUTH_NONCE
+    });
+    expect(storageWrite).not.toHaveBeenCalled();
   });
 });

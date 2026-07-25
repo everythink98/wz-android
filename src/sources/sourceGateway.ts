@@ -146,7 +146,7 @@ type SourceGatewayDependencies = {
   currentXiaoyinsiCredentialGeneration?: () => number;
   fetcher: Fetcher;
   isSourceAuthenticated?: (source: Exclude<Source, 'v2ex'>) => boolean;
-  isSourceIdentityPending?: (source: Exclude<Source, 'v2ex'>) => boolean;
+  isSourceReadBlocked?: (source: Exclude<Source, 'v2ex'>) => boolean;
   linuxDoUserAgent?: () => string;
   loadXiaoyinsiCredentialsForSource?: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<XiaoyinsiApiCredentials | undefined>;
   nodeSeekUserAgent: () => string;
@@ -283,18 +283,18 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
     try {
       const linuxDoAuthenticated = (source === 'linuxdo' || source === 'all')
         && dependencies.isSourceAuthenticated?.('linuxdo') === true
-        && dependencies.isSourceIdentityPending?.('linuxdo') !== true;
+        && dependencies.isSourceReadBlocked?.('linuxdo') !== true;
       const nodeSeekAuthenticated = (source === 'nodeseek' || source === 'all')
         && dependencies.isSourceAuthenticated?.('nodeseek') === true
-        && dependencies.isSourceIdentityPending?.('nodeseek') !== true;
-      const pendingIdentitySources = identitySources.filter(
-        (identitySource) => dependencies.isSourceIdentityPending?.(identitySource) === true
+        && dependencies.isSourceReadBlocked?.('nodeseek') !== true;
+      const blockedIdentitySources = identitySources.filter(
+        (identitySource) => dependencies.isSourceReadBlocked?.(identitySource) === true
       );
-      if (source !== 'all' && pendingIdentitySources.length) {
+      if (source !== 'all' && blockedIdentitySources.length) {
         throw new Error('登录状态待确认；已暂停该站的新请求');
       }
       const xiaoyinsiCredentials = (source === 'xiaoyinsi' || source === 'all')
-        && !pendingIdentitySources.includes('xiaoyinsi')
+        && !blockedIdentitySources.includes('xiaoyinsi')
         ? await loadCredential('xiaoyinsi', async () => dependencies.loadXiaoyinsiCredentialsForSource?.(source, {
           captureGeneration: (generation) => { xiaoyinsiGeneration = generation; },
           diagnosticTrace: trace
@@ -314,7 +314,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
       const unavailableSources = source === 'all'
         ? [...new Set([
           ...Object.keys(credentialErrors) as Source[],
-          ...pendingIdentitySources
+          ...blockedIdentitySources
         ])]
         : [];
       hasXiaoyinsiCredentials = Boolean(xiaoyinsiCredentials);
@@ -327,7 +327,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
           (source === 'yaohuo' || source === 'all')
           && dependencies.isSourceAuthenticated?.('yaohuo') === true
         ) || xiaoyinsiCredentials),
-        isCredentialKnown: pendingIdentitySources.length === 0
+        isCredentialKnown: blockedIdentitySources.length === 0
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
       const result = await operation({
@@ -353,8 +353,8 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
           ));
         }
         const aggregateErrors = { ...aggregateResult.errors };
-        pendingIdentitySources.forEach((pendingSource) => {
-          delete aggregateErrors[pendingSource];
+        blockedIdentitySources.forEach((blockedSource) => {
+          delete aggregateErrors[blockedSource];
         });
         aggregateResult.errors = { ...aggregateErrors, ...credentialErrors };
       }
@@ -451,7 +451,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
   return {
     async hasYaohuoCredential() {
       return dependencies.isSourceAuthenticated?.('yaohuo') === true
-        && dependencies.isSourceIdentityPending?.('yaohuo') !== true;
+        && dependencies.isSourceReadBlocked?.('yaohuo') !== true;
     },
     getCategories(options: ManagedGetCategoriesOptions = {}, context?: SourceGatewayReadContext) {
       const source = options.source || 'all';

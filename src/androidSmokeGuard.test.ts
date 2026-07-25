@@ -7,6 +7,7 @@ import { runApkSanity } from '../scripts/smoke-android.mjs';
 import {
   listReplayFiles,
   matchingAndroidDevices,
+  normalizedAndroidDeviceName,
   parseAgentDeviceList,
   parseAndroidRecordingScratchPaths,
   parseAndroidPackageInfo,
@@ -15,6 +16,7 @@ import {
   replayDeviceSelectionArgs,
   runReplayBatch
 } from '../scripts/run-device-replay.mjs';
+import { loggedOutDeviceName } from '../scripts/run-logged-out-device-replay.mjs';
 
 const rootDir = path.resolve(__dirname, '..');
 
@@ -23,6 +25,33 @@ function readProjectFile(...parts: string[]) {
 }
 
 describe('Android release evidence guards', () => {
+  it('[REG-TEST-003] keeps logged-out testing outside the App and on an explicit isolated device', () => {
+    const packageJson = JSON.parse(readProjectFile('package.json'));
+    const moreScreen = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+    const nativePlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(moreScreen).not.toContain('devAnonymous');
+    expect(moreScreen).not.toContain('title="测试工具"');
+    expect(nativePlugin).not.toContain('debugAnonymousAvailable');
+    expect(nativePlugin).not.toContain('setManagedAnonymousMode');
+    expect(packageJson.scripts['test:device:logged-out']).toBe(
+      'node scripts/run-logged-out-device-replay.mjs'
+    );
+    expect(readProjectFile('scripts', 'run-logged-out-device-replay.mjs')).toContain(
+      'WZ_ANDROID_LOGGED_OUT_DEVICE'
+    );
+    expect(() => loggedOutDeviceName({})).toThrow('必须设置 WZ_ANDROID_LOGGED_OUT_DEVICE');
+    expect(() => loggedOutDeviceName({
+      WZ_ANDROID_LOGGED_OUT_DEVICE: 'WZ Logged Out API 35',
+      WZ_ANDROID_TEST_DEVICE: 'WZ_Logged_Out_API_35'
+    })).toThrow('必须与主测试/Smoke 设备不同');
+    expect(loggedOutDeviceName({
+      WZ_ANDROID_LOGGED_OUT_DEVICE: 'WZ_Logged_Out_API_35',
+      WZ_ANDROID_TEST_DEVICE: 'WZ_Pixel_API_35'
+    })).toBe('WZ_Logged_Out_API_35');
+    expect(normalizedAndroidDeviceName(' WZ_Pixel_API_35 ')).toBe('wz pixel api 35');
+  });
+
   it('[REG-OPS-008] requires the first agent-device version that supports Replay recording and reporters', () => {
     expect(MIN_AGENT_DEVICE_VERSION).toBe('0.19.0');
     expect(isVersionSupported('0.18.9')).toBe(false);
@@ -123,7 +152,7 @@ describe('Android release evidence guards', () => {
     expect(smokeScript).toContain("['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']");
     expect(smokeScript).toContain("waitFor('id=\"feed-list-ready-all\"', 60_000, runAgentDeviceCommand);");
     expect(smokeScript).toContain("console.log('APK_SANITY');");
-    expect(smokeScript).toContain("excludedReplayFileNames: ['anonymous-readonly.ad']");
+    expect(smokeScript).not.toContain('device-logged-out');
     expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:press|click|fill|type|back|uninstall|reinstall)['"]/);
     expect(smokeScript).not.toContain("'--shutdown'");
     expect(smokeScript).not.toMatch(/['"]pm['"]\s*,\s*['"]clear['"]/);
@@ -182,10 +211,10 @@ describe('Android release evidence guards', () => {
     expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
   });
 
-  it('[REG-OPS-006] keeps the eight tracked Replay journeys deterministic and lets the test harness stop video', () => {
+  it('[REG-OPS-006] keeps normal and logged-out Replay journeys deterministic and isolated', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
+    const loggedOutDeviceDir = path.join(rootDir, 'tests', 'device-logged-out');
     const expected = [
-      'anonymous-readonly.ad',
       'feed-topic-return.ad',
       'four-source-feed.ad',
       'library-return.ad',
@@ -196,9 +225,16 @@ describe('Android release evidence guards', () => {
     ];
     expect(readdirSync(deviceDir).sort()).toEqual(expected);
     expect(listReplayFiles(deviceDir).map((file) => path.basename(file))).toEqual(expected);
+    expect(readdirSync(loggedOutDeviceDir).sort()).toEqual(['logged-out-readonly.ad']);
+    expect(listReplayFiles(loggedOutDeviceDir).map((file) => path.basename(file))).toEqual([
+      'logged-out-readonly.ad'
+    ]);
 
-    for (const file of expected) {
-      const replay = readFileSync(path.join(deviceDir, file), 'utf8');
+    for (const replayPath of [
+      ...expected.map((file) => path.join(deviceDir, file)),
+      path.join(loggedOutDeviceDir, 'logged-out-readonly.ad')
+    ]) {
+      const replay = readFileSync(replayPath, 'utf8');
       expect(replay).toContain('context platform=android');
       expect(replay).toContain('context retries=0');
       expect(replay).toContain('open ${APP_ID} --relaunch');
@@ -208,42 +244,43 @@ describe('Android release evidence guards', () => {
       expect(replay).not.toMatch(/(?:清除登录|退出登录|清空历史|取消收藏|取消关注|删除回复|提交回复|保存 Key|签到)/);
       expect(replay).not.toMatch(/^\s*(?:uninstall|reinstall|settings reset|shutdown)\b/m);
     }
-    const anonymousReadonlyReplay = readFileSync(path.join(deviceDir, 'anonymous-readonly.ad'), 'utf8');
-    expect(anonymousReadonlyReplay.match(/open \$\{APP_ID\} --relaunch/g)).toHaveLength(2);
-    expect(anonymousReadonlyReplay.match(/wait "id=\\"account-site-nodeseek\\" label=\\"NodeSeek，已登录，已选择\\"" 60000/g)).toHaveLength(2);
-    expect(anonymousReadonlyReplay).toContain('press label="展开测试工具"');
-    expect(anonymousReadonlyReplay).toContain('wait "text=\\"只影响本次运行，不删除 Cookie。重启后恢复。\\"" 10000');
-    expect(anonymousReadonlyReplay).toContain('press label="NodeSeek"');
-    expect(anonymousReadonlyReplay).toContain('wait "text=\\"已开启 1 项\\"" 10000');
-    expect(anonymousReadonlyReplay).toContain('press label="linux.do"');
-    expect(anonymousReadonlyReplay).toContain('wait "text=\\"已开启 2 项\\"" 10000');
-    expect(anonymousReadonlyReplay).toContain('press label="小隐寺"');
-    expect(anonymousReadonlyReplay).toContain('wait "text=\\"已开启 3 项\\"" 10000');
-    expect(anonymousReadonlyReplay).toContain('press label="妖火"');
-    expect(anonymousReadonlyReplay).toContain('wait "text=\\"已开启 4 项\\"" 10000');
-    expect(anonymousReadonlyReplay).toContain('press id="search-source-nodeseek"');
-    expect(anonymousReadonlyReplay).toContain('wait "id=\\"search-source-nodeseek\\" label=\\"NodeSeek，已选择\\"" 10000');
-    expect(anonymousReadonlyReplay).toContain('press id="search-source-linuxdo"');
-    expect(anonymousReadonlyReplay).toContain('wait "id=\\"search-source-linuxdo\\" label=\\"linux.do，已选择\\"" 10000');
-    expect(anonymousReadonlyReplay).toContain('press id="search-source-xiaoyinsi"');
-    expect(anonymousReadonlyReplay).toContain('wait "id=\\"search-source-xiaoyinsi\\" label=\\"小隐寺，已选择\\"" 10000');
-    expect(anonymousReadonlyReplay).toContain('press id="search-source-yaohuo"');
-    expect(anonymousReadonlyReplay).toContain('fill id="search-query" codex');
-    expect(anonymousReadonlyReplay).toContain('press id="search-submit"');
-    expect(anonymousReadonlyReplay).toContain('wait label="检测登录" 60000');
-    expect(anonymousReadonlyReplay).toContain('wait label="刷新页面" 10000');
-    expect(anonymousReadonlyReplay.match(/is visible id="search-result-first"/g)).toHaveLength(3);
-    expect(anonymousReadonlyReplay).toContain('press id="main-tab-feed"');
-    expect(anonymousReadonlyReplay).toContain('wait id="feed-list-ready-all" 60000');
-    expect(anonymousReadonlyReplay).toContain('press id="feed-source-nodeseek"');
-    expect(anonymousReadonlyReplay).toContain('wait id="feed-list-ready-nodeseek" 60000');
-    expect(anonymousReadonlyReplay).toContain('press id="feed-source-linuxdo"');
-    expect(anonymousReadonlyReplay).toContain('wait id="feed-list-ready-linuxdo" 60000');
-    expect(anonymousReadonlyReplay).toContain('press id="feed-source-xiaoyinsi"');
-    expect(anonymousReadonlyReplay).toContain('wait id="feed-list-ready-xiaoyinsi" 60000');
-    expect(anonymousReadonlyReplay).toContain('press id="feed-source-yaohuo"');
-    expect(anonymousReadonlyReplay.match(/wait id="feed-topic-first" 10000/g)).toHaveLength(4);
-    expect(anonymousReadonlyReplay.match(/wait label="检测登录" 60000/g)).toHaveLength(2);
+    const loggedOutReplay = readFileSync(path.join(loggedOutDeviceDir, 'logged-out-readonly.ad'), 'utf8');
+    expect(loggedOutReplay.match(/open \$\{APP_ID\} --relaunch/g)).toHaveLength(2);
+    expect(
+      loggedOutReplay.match(/wait "id=\\"account-site-nodeseek\\" label=\\"NodeSeek，未登录，已选择\\" \|\| id=\\"account-site-nodeseek\\" label=\\"NodeSeek，已验证，已选择\\"" 60000/g)
+    ).toHaveLength(2);
+    expect(loggedOutReplay).toContain('wait "id=\\"account-site-linuxdo\\" label=\\"linux.do，匿名可用，已选择\\"" 60000');
+    expect(loggedOutReplay).toContain('wait "id=\\"account-site-yaohuo\\" label=\\"妖火，未登录，已选择\\"" 60000');
+    expect(loggedOutReplay).toContain('wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，未登录，已选择\\"" 60000');
+    expect(loggedOutReplay).not.toContain('测试工具');
+    expect(loggedOutReplay).toContain('press id="search-source-v2ex"');
+    expect(loggedOutReplay).toContain('wait "id=\\"search-source-v2ex\\" label=\\"V2EX，已选择\\"" 10000');
+    expect(loggedOutReplay).toContain('press id="search-source-nodeseek"');
+    expect(loggedOutReplay).toContain('wait "id=\\"search-source-nodeseek\\" label=\\"NodeSeek，已选择\\"" 10000');
+    expect(loggedOutReplay).toContain('press id="search-source-linuxdo"');
+    expect(loggedOutReplay).toContain('wait "id=\\"search-source-linuxdo\\" label=\\"linux.do，已选择\\"" 10000');
+    expect(loggedOutReplay).toContain('press id="search-source-xiaoyinsi"');
+    expect(loggedOutReplay).toContain('wait "id=\\"search-source-xiaoyinsi\\" label=\\"小隐寺，已选择\\"" 10000');
+    expect(loggedOutReplay).toContain('press id="search-source-yaohuo"');
+    expect(loggedOutReplay).toContain('fill id="search-query" codex');
+    expect(loggedOutReplay).toContain('press id="search-submit"');
+    expect(
+      loggedOutReplay.match(/wait "text=\\"妖火需要登录后使用此功能。\\"" 60000/g)
+    ).toHaveLength(2);
+    expect(loggedOutReplay).not.toContain('back --system');
+    expect(loggedOutReplay.match(/is visible id="search-result-first"/g)).toHaveLength(4);
+    expect(loggedOutReplay).toContain('press id="main-tab-feed"');
+    expect(loggedOutReplay).toContain('wait id="feed-list-ready-all" 60000');
+    expect(loggedOutReplay).toContain('press id="feed-source-nodeseek"');
+    expect(loggedOutReplay).toContain('wait id="feed-list-ready-nodeseek" 60000');
+    expect(loggedOutReplay).toContain('press id="feed-source-linuxdo"');
+    expect(loggedOutReplay).toContain('wait id="feed-list-ready-linuxdo" 60000');
+    expect(loggedOutReplay).toContain('press id="feed-source-xiaoyinsi"');
+    expect(loggedOutReplay).toContain('wait id="feed-list-ready-xiaoyinsi" 60000');
+    expect(loggedOutReplay).toContain('press id="feed-source-yaohuo"');
+    expect(loggedOutReplay.match(/wait id="feed-topic-first" 10000/g)).toHaveLength(4);
+    expect(loggedOutReplay).not.toContain('wait label="检测登录"');
+    expect(loggedOutReplay).not.toContain('wait label="刷新页面"');
 
     const nodeSeekReplay = readFileSync(path.join(deviceDir, 'nodeseek-session.ad'), 'utf8');
     expect(nodeSeekReplay).toContain('wait "role=\\"webview\\" label=\\"NodeSeek\\"" 15000');
@@ -282,22 +319,24 @@ describe('Android release evidence guards', () => {
   });
 
   it('[REG-TEST-002] waits for search results instead of a stale completion marker', () => {
-    const anonymousReadonlyReplay = readFileSync(path.join(rootDir, 'tests', 'device', 'anonymous-readonly.ad'), 'utf8');
+    const loggedOutReplay = readFileSync(path.join(rootDir, 'tests', 'device-logged-out', 'logged-out-readonly.ad'), 'utf8');
     const multiSourceSearchReplay = readFileSync(path.join(rootDir, 'tests', 'device', 'search-multi-source.ad'), 'utf8');
     const topicReturnReplay = readFileSync(path.join(rootDir, 'tests', 'device', 'search-topic-user-return.ad'), 'utf8');
 
-    expect(anonymousReadonlyReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(3);
-    expect(anonymousReadonlyReplay).not.toContain('wait id="search-complete" 60000');
-    expect(anonymousReadonlyReplay).toContain('wait text="未登录搜索，结果可能不完整。" 10000');
-    expect(anonymousReadonlyReplay).toContain('wait "text=\\"未登录搜索使用 Google，结果可能不完整。\\"" 10000');
+    expect(loggedOutReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(4);
+    expect(loggedOutReplay).not.toContain('wait id="search-complete" 60000');
+    expect(
+      loggedOutReplay.match(/wait "text=\\"未登录搜索使用 Google，结果可能不完整。\\"" 10000/g) ?? []
+    ).toHaveLength(2);
     expect(multiSourceSearchReplay).toContain('wait "id=\\"search-overview-source-v2ex\\" enabled=true" 60000');
     expect(multiSourceSearchReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(5);
     expect(topicReturnReplay.match(/wait id="search-result-first" 60000/g) ?? []).toHaveLength(1);
   });
 
-  it('[REG-OPS-009] keeps the development-only anonymous Replay out of release APK smoke', () => {
+  it('[REG-OPS-009] keeps true logged-out Replay on its explicit isolated device suite', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
-    const releaseReplayNames = listReplayFiles(deviceDir, ['anonymous-readonly.ad'])
+    const loggedOutDeviceDir = path.join(rootDir, 'tests', 'device-logged-out');
+    const releaseReplayNames = listReplayFiles(deviceDir)
       .map((file) => path.basename(file));
 
     expect(releaseReplayNames).toEqual([
@@ -309,8 +348,12 @@ describe('Android release evidence guards', () => {
       'search-multi-source.ad',
       'search-topic-user-return.ad'
     ]);
-    expect(readProjectFile('scripts', 'smoke-android.mjs')).toContain(
-      "excludedReplayFileNames: ['anonymous-readonly.ad']"
+    expect(listReplayFiles(loggedOutDeviceDir).map((file) => path.basename(file))).toEqual([
+      'logged-out-readonly.ad'
+    ]);
+    expect(readProjectFile('scripts', 'smoke-android.mjs')).not.toContain('device-logged-out');
+    expect(readProjectFile('scripts', 'run-logged-out-device-replay.mjs')).toContain(
+      "path.join(rootDir, 'tests', 'device-logged-out')"
     );
   });
 

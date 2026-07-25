@@ -382,6 +382,19 @@ describe('account workflows with canonical identity reconciliation', () => {
     expect(reconcileAccountStatus).toHaveBeenNthCalledWith(2, 'nodeseek');
   });
 
+  it('[REG-ACCOUNT-035] exposes the authoritative NodeSeek result to recovery orchestration', async () => {
+    const changed = {
+      status: 'changed' as const,
+      session: loggedInSession
+    };
+    const reconcileAccountStatus = jest.fn(async () => changed);
+    const { hook } = await renderAccountController({ reconcileAccountStatus });
+
+    await act(async () => {
+      await expect(hook.result.current.checkNodeSeekAccount()).resolves.toBe(changed);
+    });
+  });
+
   it('routes manual Yaohuo checks through the same canonical reconciliation path', async () => {
     const reconcileAccountStatus = jest.fn<
       (source: 'nodeseek' | 'yaohuo') => Promise<AccountReconcileResult>

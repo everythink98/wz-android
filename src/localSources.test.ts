@@ -3331,6 +3331,80 @@ describe('Android local sources', () => {
     expect(accountIntent).toEqual({ owner: 'account', priority: 'background' });
   });
 
+  it('[REG-ACCOUNT-037] uses rendered NodeSeek guest controls for account probes', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-743010-1">Public topic</a></div>
+        </li>
+      </ul>
+    `));
+    const webViewFetcher = vi.fn(async () => html(`
+      <header>
+        <a class="btn" href="/signIn.html">登录</a>
+        <a class="btn" href="/register.html">注册</a>
+      </header>
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    await expect(getNodeSeekCurrentUserProfile({ fetcher })).rejects.toMatchObject({
+      loginRequired: true,
+      reason: 'expired'
+    });
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-ACCOUNT-037] accepts only the bridged explicit-null NodeSeek account state as anonymous', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-743010-1">Public topic</a></div>
+        </li>
+      </ul>
+    `));
+    const webViewFetcher = vi.fn(async () => html(`
+      <meta name="nodeseekAccountState" content="anonymous">
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    await expect(getNodeSeekCurrentUserProfile({ fetcher })).rejects.toMatchObject({
+      loginRequired: true,
+      reason: 'expired'
+    });
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-ACCOUNT-037] keeps explicit direct NodeSeek account evidence on the fast path', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <header>
+        <a class="btn" href="/signIn.html">登录</a>
+        <a class="btn" href="/register.html">注册</a>
+      </header>
+    `));
+    const webViewFetcher = vi.fn(async () => {
+      throw new Error('WebView should not run for explicit direct identity evidence');
+    });
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    await expect(getNodeSeekCurrentUserProfile({ fetcher })).rejects.toMatchObject({
+      loginRequired: true,
+      reason: 'expired'
+    });
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
   it('reports NodeSeek Cloudflare HTML as a verification requirement', async () => {
     const fetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
       status: 403,
@@ -3373,6 +3447,22 @@ describe('Android local sources', () => {
 
     expect(topic.title).toBe('NodeSeek normal detail');
     expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TEST-003] keeps WebView fallback disabled when the runtime disallows it', async () => {
+    const direct = new Response('<html><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge' }
+    });
+    const webViewFetcher = vi.fn(async () => new Response('private'));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      allowWebViewFallback: () => false,
+      defaultFetcher: vi.fn(async () => direct),
+      webViewFetcher
+    });
+
+    await expect(fetcher('https://www.nodeseek.com/api/topics')).resolves.toBe(direct);
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
@@ -5212,6 +5302,22 @@ describe('Android local sources', () => {
       expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
     ]);
     expect(JSON.stringify(events)).not.toMatch(/\/t\/42|https?:|cf-turnstile/);
+  });
+
+  it('[REG-TEST-003] keeps linux.do WebView fallback disabled when the runtime disallows it', async () => {
+    const direct = new Response('challenge', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge' }
+    });
+    const webViewFetcher = vi.fn(async () => new Response('private'));
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      allowWebViewFallback: () => false,
+      defaultFetcher: vi.fn(async () => direct),
+      webViewFetcher
+    });
+
+    await expect(fetcher('https://linux.do/latest.json')).resolves.toBe(direct);
+    expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
   it('REG-LINUXDO-001 preserves an ordinary linux.do 429 without opening the WebView fallback', async () => {

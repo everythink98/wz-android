@@ -391,6 +391,7 @@ describe('diagnostic traces', () => {
     expect(normalizeDiagnosticReason(new Error('request timeout'))).toBe('timeout');
     expect(normalizeDiagnosticReason(new Error('HTTP 403 forbidden'))).toBe('permission_denied');
     expect(normalizeDiagnosticReason(new Error('HTTP status 500'))).toBe('http_error');
+    expect(normalizeDiagnosticReason(new Error('Google 搜索环境验证暂时未通过，请稍后重试'))).toBe('verification_required');
     expect(normalizeDiagnosticReason(new SyntaxError('Unexpected token in JSON'))).toBe('invalid_response');
     expect(normalizeDiagnosticReason(new TypeError('Network request failed'))).toBe('network_error');
     expect(normalizeDiagnosticReason({

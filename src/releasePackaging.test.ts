@@ -118,6 +118,10 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('configureManagedClient');
     expect(plugin).toContain('fun readManagedCookieHeader(exactUrl: String, promise: Promise)');
     expect(plugin).toContain('fun clearManagedLoginCookies(source: String, promise: Promise)');
+    expect(plugin).not.toContain('debugAnonymousAvailable');
+    expect(plugin).not.toContain('setManagedAnonymousMode');
+    expect(plugin).not.toContain('anonymousCookieSources');
+    expect(plugin).not.toContain('filterAnonymousCookieHeader');
     expect(plugin).toContain('fun managedCookieHeaderForUrl(url: String)');
     expect(plugin).toContain('WebSettings.getDefaultUserAgent(reactContext)');
     const moduleSource = plugin.slice(

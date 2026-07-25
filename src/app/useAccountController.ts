@@ -431,33 +431,34 @@ export function useAccountController({
       const result = await reconcileAccountStatus(source);
       if (requestId !== checkingRequestIdRef.current || result.status === 'stale') {
         finishLoginTrace(source, trace, 'stale', { reason: 'stale' });
-        return false;
+        return { status: 'stale' } as const;
       }
       if (result.status === 'unknown') {
         notify(result.error || `${source === 'nodeseek' ? 'NodeSeek' : '妖火'}登录状态暂时无法确认，请重试。`);
         finishLoginTrace(source, trace, 'failure', { reason: 'unknown' });
-        return false;
+        return result;
       }
       if (result.status === 'anonymous') {
         notify(`${source === 'nodeseek' ? 'NodeSeek' : '妖火'}当前未登录。`);
         finishLoginTrace(source, trace, 'blocked', { reason: 'login_required' });
-        return false;
+        return result;
       }
       notify(`已确认${source === 'nodeseek' ? ' NodeSeek' : '妖火'}当前账号。`);
       finishLoginTrace(source, trace, 'success', {
         identityChanged: result.status === 'changed'
       });
-      return true;
+      return result;
     } catch (error) {
+      const message = errorMessage(error);
       if (requestId === checkingRequestIdRef.current) {
-        notify(errorMessage(error));
+        notify(message);
         finishLoginTrace(source, trace, 'failure', {
           reason: normalizeDiagnosticReason(error)
         });
       } else {
         finishLoginTrace(source, trace, 'stale', { reason: 'stale' });
       }
-      return false;
+      return { status: 'unknown', error: message } as const;
     } finally {
       if (requestId === checkingRequestIdRef.current) {
         setChecking(false);
@@ -473,11 +474,21 @@ export function useAccountController({
   ]);
 
   const checkLogin = useCallback(
+    async () => {
+      const result = await checkAccount('nodeseek');
+      return result.status === 'same' || result.status === 'changed';
+    },
+    [checkAccount]
+  );
+  const checkNodeSeekAccount = useCallback(
     () => checkAccount('nodeseek'),
     [checkAccount]
   );
   const checkYaohuoCookie = useCallback(
-    () => checkAccount('yaohuo'),
+    async () => {
+      const result = await checkAccount('yaohuo');
+      return result.status === 'same' || result.status === 'changed';
+    },
     [checkAccount]
   );
 
@@ -547,6 +558,7 @@ export function useAccountController({
 
   return {
     checkLogin,
+    checkNodeSeekAccount,
     checkYaohuoCookie,
     clearLinuxDoCookie,
     clearLogin,

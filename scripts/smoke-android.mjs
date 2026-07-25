@@ -196,8 +196,7 @@ async function main() {
   console.log('APK_SANITY');
   await runDeviceReplay({
     apkPath,
-    selectedDevice,
-    excludedReplayFileNames: ['anonymous-readonly.ad']
+    selectedDevice
   });
 }
 

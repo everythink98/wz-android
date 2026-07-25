@@ -1,6 +1,6 @@
 {
   "name": "wz-android",
-  "version": "1.3.75",
+  "version": "1.3.76",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -9,6 +9,7 @@
     "test:watch": "vitest",
     "test:ui": "jest --config jest.config.cjs --runInBand",
     "test:device": "node scripts/run-device-replay.mjs",
+    "test:device:logged-out": "node scripts/run-logged-out-device-replay.mjs",
     "test:docs": "node --test scripts/check-docs.test.mjs",
     "check:docs": "node scripts/check-docs.mjs",
     "check:react": "npx --yes react-doctor@0.7.7 . --scope lines --base HEAD --include-untracked --no-telemetry --no-dead-code --no-supply-chain --blocking error",

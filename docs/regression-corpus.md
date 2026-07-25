@@ -439,7 +439,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 必须保持的行为 | 首屏错误继续显示来源级错误并重试整来源；已有结果后的分页错误保留全部旧结果，在单站列表尾部显示错误并只重试原 `nextPage`。自动分页只在单站用户滚动后触发，一次手势最多一页；“全部”只显示每来源最多 2 条预览且不生成分页入口；失败后不自动重试。 |
 | 精确失败 oracle | `src/searchListItems.test.ts` 的 `REG-SEARCH-002` 断言单站分页错误依次生成旧 topic 和尾部 error、没有来源分组标题，同时首屏部分失败仍只走来源错误；`tests/ui/search-screen.test.tsx` 固定两类错误的可见结果和重试路由，并覆盖初始渲染、重复 viewability、忙碌、末页及查询/来源/滚顶变化；同文件另固定“全部”最多 2 条预览且无分页哨兵。`tests/ui/search-controller-ai.test.tsx` 让真实第二页请求失败，断言控制器保留失败页 cursor、普通重试和 NodeSeek 验证回调都再次请求原页。修复前控制器把 `nextPage` 清空，UI 注入的可重试状态无法由真实链路产生。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定概览/单站模式和首屏/分页错误的列表构建顺序；`UI_PASS` 固定真实控制器 cursor、用户可见旧结果、非点击哨兵、滚动触发和两类重试路由。源码字符串或单次 Live 成功不能证明 viewability 回调竞争安全。 |
-| Replay 或真实验收路径 | `tests/device/search-topic-user-return.ad` 与 `tests/device/search-multi-source.ad` 固定“全部”预览进入单站、搜索、详情和返回链；`tests/device/anonymous-readonly.ad` 显式开启不删除 Cookie 的临时匿名并固定 NodeSeek、linux.do、小隐寺 fallback 结果和妖火登录限制；单站自动分页由确定性 RNTL 固定成功、末页、重复可见和失败保留结果。“全部”不得出现分页入口。动态来源不要求当天必须存在第二页，也不强制制造真实分页失败。 |
+| Replay 或真实验收路径 | `tests/device/search-topic-user-return.ad` 与 `tests/device/search-multi-source.ad` 固定“全部”预览进入单站、搜索、详情和返回链；`tests/device-logged-out/logged-out-readonly.ad` 在隔离 AVD 固定 V2EX、NodeSeek、linux.do、小隐寺结果和妖火登录限制；单站自动分页由确定性 RNTL 固定成功、末页、重复可见和失败保留结果。“全部”不得出现分页入口。动态来源不要求当天必须存在第二页，也不强制制造真实分页失败。 |
 | 负向验证方式 | 临时恢复 `group.error` 的无条件提前返回，或让分页错误按钮调用 `onRetrySearchSource`，`REG-SEARCH-002` 的列表/UI 用例必须分别失败；临时移除 arm 或 pending 门禁，重复回调用例必须失败；给“全部”恢复分页哨兵时概览用例必须失败，随后还原。 |
 | 明确不覆盖范围 | 不改四站搜索 API、Cookie Mock、SourceGateway、筛选快照、去重、重复页或 server-state key 归属；不预取整站、不自动重试失败请求，也不固定动态第二页的标题或数量。 |
 
@@ -456,7 +456,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 最低可靠自动测试层 | `UNIT_PASS` 直接覆盖真实 `searchTopics → searchLinuxDo → topicsFromLinuxDoSearchData` 链路；只测 `TopicCard` fallback、源码字符串或详情页作者都不能证明搜索字段已正确转换。 |
 | Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 固定已登录 linux.do 搜索、详情和返回链；Live 只有在能确认结果命中首帖时才要求作者和头像，否则按 `REG-SEARCH-013` 显示未知作者。 |
 | 负向验证方式 | 临时移除明确首帖的作者 fallback，`REG-SEARCH-003` 必须精确失败，随后还原。 |
-| 明确不覆盖范围 | 临时匿名 Google fallback 的结果本来不含可靠作者字段，本条不新增抓取或逐帖补全；不改变 Feed、Topic 或 User 页作者解析。 |
+| 明确不覆盖范围 | 未登录 Google fallback 的结果本来不含可靠作者字段，本条不新增抓取或逐帖补全；不改变 Feed、Topic 或 User 页作者解析。 |
 
 ## `REG-SEARCH-013` Discourse 回复命中被丢弃或冒充楼主
 
@@ -472,6 +472,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 小隐寺搜索 `codex` 当前可命中仅含回复作者的结果，要求展示条目而非解析错误；linux.do 保留当前登录态，只在原站响应自然命中回复时核对 App 显示未知作者，不清 Cookie 制造状态。 |
 | 负向验证方式 | 恢复小隐寺空作者即丢弃，或让 linux.do 再次使用匹配回复/最后回复者作为主题作者，编号测试必须分别失败。 |
 | 明确不覆盖范围 | 不猜测楼主、不逐条读取主题详情，也不新增“命中回复者”字段；若产品以后要展示命中者，应作为明确的独立语义。 |
+
+## `REG-SEARCH-014` Google JavaScript capability gate 被当成外部跳转
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
+| 用户症状 | 真实未登录设备上，NodeSeek 或 linux.do 搜索很快提示“页面跳转到外部地址，已停止读取”；同一关键词在 Android Chrome 可正常显示结果。 |
+| 触发条件 | Google 对 Android WebView 搜索先返回 HTTP 200 的 JavaScript capability bootstrap，并在同一 Google origin 导航到 `/httpservice/retry/enablejs?sei=...`；响应没有 403/429、CAPTCHA 或 unusual-traffic 证据。 |
+| 根因 seam | `src/app/HiddenBrowserHost.tsx` 曾把 hidden WebView 的每一次顶层导航都套用最终结果 URL 白名单；NodeSeek 生产 `webViewFetcher` 又只接收论坛域，导致 scoped Google 请求根本不进入 hidden WebView。后续若用论坛域/Google 的并集白名单代替 initial-task binding，还会让搜索任务跨域并错误结算。 |
+| 必须保持的行为 | 五站匿名搜索按真实协议分流：V2EX 使用 SoV2EX；NodeSeek 与 linux.do 使用各自 `site:` 约束的 Google fallback；小隐寺使用公开 `/search.json`；妖火站内搜索需要会话并收口到登录提示。NodeSeek 与 linux.do 的生产 fetch port 都必须把自身 scoped Google URL排入对应 HiddenBrowserHost。Google capability gate 只在 initial 已是同一来源的受限 Google search、目标仍为 exact `https://www.google.com`、无 userinfo/非默认端口/hash、路径精确且只有一个合法 `sei` 时作为中间导航放行；普通 `/search` 导航和最终 bridge 结果必须保持 initial 的同一 `q/start`。Google flow 不得跨回论坛域，论坛 flow 不得转成 Google；任意子域、双 `site:` token、额外 query、另一搜索、gate 作为结果及外部 host 都拒绝。 |
+| 精确失败 oracle | `src/appSecurity.test.ts` 固定 NodeSeek/linux.do 的 exact origin、唯一同站 token、同一 `q/start`、精确 gate 正例及跨任务/跨类型负例；`tests/ui/hidden-browser-host.test.tsx` 通过真实 WebView props 固定两站 gate 导航不中断、论坛回跳/另一搜索/非精确 gate 立即失败；`tests/ui/session-controller-browser-flow.test.tsx` 固定生产 NodeSeek connector 必须排入 HiddenBrowserHost，并拒绝把论坛页结算成 Google 搜索结果。`src/localSources.test.ts`、`src/localXiaoyinsi.test.ts` 与 `tests/device-logged-out/logged-out-readonly.ad` 分别固定五站 transport 矩阵和用户可见收口。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`；与当前 revision/Debug APK 匹配的 `DEVICE_REPLAY_PASS` 只证明当前真实 Android hidden WebView 能返回用户可见搜索结果。是否实际经过特定 `/enablejs` 中间 URL 只能由可观测 gate canary 证明，不能从最终结果反推。 |
+| Replay 或真实验收路径 | 在不含论坛登录数据的独立 AVD 上，用同一身份 APK 执行 `tests/device-logged-out/logged-out-readonly.ad`；先确认四站 Account Query 均为权威未登录状态（NodeSeek 显示“未登录”或仅访客“已验证”，妖火、小隐寺显示“未登录”，linux.do 显示“匿名可用”），再用同一关键词依次要求 V2EX、NodeSeek、linux.do、小隐寺出现可见结果，妖火出现 App 内登录限制，relaunch 后仍保持该状态。Cloudflare 只允许在 App 内完成访客验证，不登录论坛。 |
+| 负向验证方式 | 删除生产 NodeSeek Google connector、initial-task binding 或 final result binding 时对应 UI/安全测试必须失败；把 gate 并入普通 result URL、放宽到论坛跨跳、另一搜索、任意 `/httpservice`、额外 query 或任意 Google origin 时安全负例必须失败。 |
+| 明确不覆盖范围 | 不绕过 CAPTCHA、`/sorry`、unusual-traffic 或其他真实 Google 风控；一旦出现这些证据，应明确报告受限而不是扩白名单、自动重试或伪造结果。 |
+
+## `REG-SEARCH-015` Google SearchGuard 访问故障被误报为外部链接
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
+| 用户症状 | NodeSeek 未登录搜索提示跳到外部链接；原地“重试”仍显示外部链接，切换来源后再回来却成功，看起来像只有切站才真正重发。 |
+| 触发条件 | 两次失败都建立了新的 hidden WebView transport；Google 对同一 Android WebView UA 返回 HTTP 200 SearchGuard bootstrap，先给出 exact `/httpservice/retry/enablejs?sei=...`，随后给出同一 `q/start` 且仅增加 `sca_esv`、`emsg=SG_REL`、`sei` 的访问故障 URL。第三次新请求在 Google 环境状态就绪后返回普通结果。 |
+| 根因 seam | `src/app/HiddenBrowserHost.tsx` 把 `is*BrowserNavigationUrl=false` 的所有原因压成“外部地址”，混淆了真实外部导航、另一搜索任务与 Google 自己的 SearchGuard 环境验证失败；来源切换并没有特殊恢复语义。 |
+| 必须保持的行为 | Retry 与切站回来都只建立一个新的当前来源 transport，不复用失败缓存，也不自动补发。`https://www.google.com/search` 只有在 exact host/origin、同一 `q/start`、参数恰为 `q`、可选 `start`、`sca_esv`、`emsg=SG_REL`、`sei`，且两个 flow token 合法时才归类为 Google 搜索环境验证受限；该 URL 仍返回 `false`、不得作为结果结算，诊断为 `verification_required`，用户看到“Google 搜索环境验证暂时未通过，请稍后重试”。另一关键词、错误 `emsg`、额外参数、重复参数、其他 host/path 仍按外部或任务不匹配 fail-closed。 |
+| 精确失败 oracle | `src/appSecurity.test.ts` 固定 NodeSeek/linux.do 的 exact `SG_REL` 形状正例及另一关键词、错误 `emsg`、额外参数负例，并要求导航/结果白名单继续拒绝；`tests/ui/hidden-browser-host.test.tsx` 通过两站真实 WebView props 固定该 URL 显示 Google 环境验证文案，而论坛回跳、另一搜索和畸形 gate 仍显示外部地址；`src/diagnostics.test.ts` 固定该文案归一为 `verification_required`，`src/sourceErrors.test.ts` 固定两站仍是 ordinary 来源错误且不会误开论坛验证面板。修复前两次真实 retry 日志已经证明每次都有独立 transport，因此不得以新增重试或切换状态机作为 oracle。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`；URL 形状和用户可见分类可确定性固定，Google 当天是否再次返回 SearchGuard 只能作 Live 环境证据，不能要求 Replay 制造。 |
+| Replay 或真实验收路径 | 只在隔离未登录 AVD 自然出现该回路时确认文案不再声称外部链接，随后可由用户显式重试一次；若当天直接返回结果则只记录成功，不循环请求制造 SearchGuard。 |
+| 负向验证方式 | 删除 access-trouble 分类时 UI 用例必须恢复“外部地址”；把 `SG_REL` URL 加入 navigation/result 成功白名单、允许额外参数或另一 `q/start` 时安全用例必须失败。 |
+| 明确不覆盖范围 | 不绕过 Google SearchGuard、CAPTCHA、`/sorry` 或 unusual traffic，不保证显式重试成功，也不根据来源切换自动重发。 |
 
 ## `REG-LINUXDO-001` linux.do Cloudflare 429 被降级且大响应被截断
 
@@ -542,9 +572,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 本机仍保存 `_t`/`_forum_session`，启动恢复直接把 Cookie 存在等同于登录；随后 `/session/current.json` 因 429、网络或其他未知结果无法确认身份，账号视图保留了这个未经远端确认的猜测，搜索又独立按 Cookie 选择 transport。 |
 | 根因 seam | `useSessionController` 冷启动凭据恢复 → `useAccountStatusController` 的 Query 会话视图 → `AppRoot` 向 Search/Topic 传递的 canonical view model → `useSearchController` 的模式与 Query key → `searchLinuxDo` transport 选择。 |
 | 必须保持的行为 | 冷启动读到登录 Cookie 只建立凭据/clearance 候选，不确认登录。只有远端当前用户或本次 App 内原站明确登录结果才能开放写入口、AI 和登录搜索；未知/限流/网络失败不得猜测已过期，也不得把冷启动候选升级为已登录。账号页、搜索和 Topic 写权限共用同一合并会话视图。linux.do 匿名与已确认登录搜索使用不同结构化 Query key，匿名模式即使存有 `_t` 也不得发送 Cookie 或调用登录搜索。明确失效由 `REG-LINUXDO-004` 更新 App 投影，但保留原站 Cookie。 |
-| 精确失败 oracle | `src/app/sessionControllerHelpers.test.ts` 固定冷启动 `_t` 只进入候选态；`tests/ui/account-status-controller.test.tsx` 固定身份未知时仍非登录；`tests/ui/search-controller-ai.test.tsx` 固定 canonical view model 选择匿名模式并关闭 AI；`src/app/serverState.test.ts` 固定两种模式不共用缓存；`src/sources/sourceGatewayContract.test.ts` 与 `src/localSources.test.ts` 固定匿名决定贯穿 Gateway 且最终不调用 linux.do 登录搜索。`tests/device/anonymous-readonly.ad` 先确认 NodeSeek 已登录，再开启四站临时匿名，固定三站只读结果、妖火登录限制和 relaunch 后 NodeSeek 登录恢复。 |
+| 精确失败 oracle | `src/app/sessionControllerHelpers.test.ts` 固定冷启动 `_t` 只进入候选态；`tests/ui/account-status-controller.test.tsx` 固定身份未知时仍非登录；`tests/ui/search-controller-ai.test.tsx` 固定 canonical view model 选择真实未登录路径并关闭 AI；`src/app/serverState.test.ts` 固定登录与未登录身份不共用缓存；`src/sources/sourceGatewayContract.test.ts` 与 `src/localSources.test.ts` 固定未登录决定贯穿 Gateway 且最终不调用 linux.do 登录搜索。`tests/device-logged-out/logged-out-readonly.ad` 在隔离 AVD 固定四站权威未登录状态（NodeSeek 允许匿名或仅访客已验证，linux.do 显示“匿名可用”）、V2EX/NodeSeek/linux.do/小隐寺四站结果、妖火登录限制和 relaunch 后状态不变。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：启动状态、Account Query 合并、Search Controller、Query key 和真实来源 adapter 必须共同通过；只测 Cookie 解析、错误文案或单个搜索 fallback 不能证明整条状态链一致。 |
-| Replay 或真实验收路径 | `tests/device/anonymous-readonly.ad` 通过开发版测试工具屏蔽四站 credential 视图但不删除 Cookie，验证匿名搜索、首页和 relaunch 恢复；另保留设备自然形成的残留 Cookie 做 Live，若远端身份仍为未知则不得显示 linux.do 已登录或 AI。不得清 App 数据或 Cookie 制造状态。 |
+| Replay 或真实验收路径 | `tests/device-logged-out/logged-out-readonly.ad` 在独立 AVD 通过生产 Account/SourceGateway 路径验证未登录搜索、首页和 relaunch；主设备继续保留自然形成的残留 Cookie 做 Live，若远端身份仍为 unknown 则不得显示 linux.do 已登录或 AI。不得清主设备 App 数据或 Cookie 制造状态。 |
 | 负向验证方式 | 恢复冷启动 `loggedIn = linuxDoAccessSummary(...).loggedIn`，让 Search 读取 workflow view model，删除 `linuxDoAuthenticated` transport 决策或从 Query key 移除模式；对应编号测试必须恢复假登录、错误 transport 或缓存串用并失败。 |
 | 明确不覆盖范围 | 不把 429、网络、CF 或普通来源错误当成失效，不自动清理或重新登录，不保证匿名 Google 当天可达或返回结果。 |
 
@@ -903,8 +933,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | `scripts/run-device-replay.mjs` 同时承担设备发现与 Replay 调用：设备发现接受 ID 或名称，但 agent-device 0.19.0 的 test runner 按显示名称绑定设备。 |
 | 必须保持的行为 | 环境变量仍可显式填写设备 ID 或名称；runner 必须先唯一解析同一台已启动 Android 设备，ADB 身份校验使用 `device.id`，Replay test 使用解析后的 `device.name`，不得自动选择、启动或重置其他设备。 |
 | 精确失败 oracle | `src/androidSmokeGuard.test.ts` 用 `id=emulator-5554`、`name=WZ Pixel API 35` 的真实列表形状断言 Replay 参数为 `--device WZ Pixel API 35`；恢复传原始 ID 时测试先失败，真实 Replay 再精确失败在第一步 `open`。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定 ID → 名称映射，`DEVICE_REPLAY_PASS` 证明 agent-device 实际接受该参数并走完八条旅程；二者缺一不能宣称设备闸门恢复。 |
-| Replay 或真实验收路径 | `npm test -- src/androidSmokeGuard.test.ts`；随后在身份匹配的保留数据设备上执行 `npm run test:device`，八条 tracked Replay 均须 `retries=0`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 ID → 名称映射，`DEVICE_REPLAY_PASS` 证明 agent-device 实际接受该参数并走完七条普通旅程；隔离未登录旅程另行形成独立证据。二者缺一不能宣称对应设备闸门恢复。 |
+| Replay 或真实验收路径 | `npm test -- src/androidSmokeGuard.test.ts`；随后在身份匹配的保留数据设备上执行 `npm run test:device`，七条普通 Replay 均须 `retries=0`；需要未登录证据时另在隔离 AVD 执行 `npm run test:device:logged-out`。 |
 | 负向验证方式 | 在隔离测试中把 Replay 参数临时改回环境变量中的 `emulator-5554`，单元 oracle 必须失败，CLI 单步回放必须报 `No device named emulator-5554`；还原后重新跑完整 Replay。 |
 | 明确不覆盖范围 | 不承诺修复 agent-device 上游的失联 daemon 生命周期，也不通过卸载、清数据、清 Cookie 或切换设备制造通过。 |
 
@@ -919,7 +949,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 必须保持的行为 | 设备 ID 和完全相同的显示名继续精确匹配；AVD 名只把连续下划线/空白视为等价并且仍须唯一匹配；不能模糊选择另一台设备。 |
 | 精确失败 oracle | `src/androidSmokeGuard.test.ts` 以清单设备 `emulator-5554 / WZ Pixel API 35` 断言配置值 `WZ_Pixel_API_35` 唯一映射到同一设备；修复前返回空数组。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定纯设备匹配，`APK_SANITY` 与 `DEVICE_REPLAY_PASS` 证明 release 命令能在同一保留数据设备继续完成。 |
-| Replay 或真实验收路径 | `.env.release.local` 保持 `WZ_ANDROID_SMOKE_DEVICE=WZ_Pixel_API_35`，执行 `npm run release:android`；身份行必须记录解析后的 display name/ID，七条 release-safe Replay 全部零重试通过；开发包另按 `REG-OPS-009` 跑完整八条。 |
+| Replay 或真实验收路径 | `.env.release.local` 保持 `WZ_ANDROID_SMOKE_DEVICE=WZ_Pixel_API_35`，执行 `npm run release:android`；身份行必须记录解析后的 display name/ID，七条普通 Replay 全部零重试通过；真实未登录另按 `REG-OPS-009` 在隔离 AVD 执行。 |
 | 负向验证方式 | 在隔离测试中恢复完全相等比较，AVD 名映射断言必须收到空数组；不改真实 AVD 名、不创建重复设备制造失败。 |
 | 明确不覆盖范围 | 不把连字符、任意标点或部分字符串当成同一设备；归一化后出现多个候选仍必须拒绝，也不自动启动另一台设备。 |
 
@@ -948,8 +978,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | `tests/device/*.ad` 与 agent-device test harness 的录屏收尾顺序，而不是 `scripts/run-device-replay.mjs` 的所有权门禁。 |
 | 必须保持的行为 | tracked Replay 不自行执行 `close`；test harness 先成功停止并拉回视频，再由自身 cleanup 关闭 session。异常路径仍只能按当前 session/device manifest 精确恢复，不能扩大删除或终止范围。 |
 | 精确失败 oracle | `src/androidSmokeGuard.test.ts` 拒绝任何 tracked Replay 中的独立 `close`；完整设备执行后每条 trace 都有成功的 `video_recording_stop`，且 manifest、工具 `screenrecord` 和录屏 scratch 均为 0。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定八条 Replay 的生命周期契约；`DEVICE_REPLAY_PASS` 证明真实 daemon、manifest 和 Android `screenrecord` 连续收口。 |
-| Replay 或真实验收路径 | `npm run test:device` 在空录屏基线上连续执行八条 `--record-video` Replay，并在结束后核对设备与本机任务进程基线。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定七条普通与一条隔离未登录 Replay 的生命周期契约；`DEVICE_REPLAY_PASS` 证明真实 daemon、manifest 和 Android `screenrecord` 连续收口。 |
+| Replay 或真实验收路径 | `npm run test:device` 在空录屏基线上连续执行七条 `--record-video` Replay；未登录套件另在隔离设备执行一条，并分别核对设备与本机任务进程基线。 |
 | 负向验证方式 | 给任一 Replay 恢复末尾 `close`，守卫测试必须失败；隔离设备运行会只有录屏 start/preroll、没有成功 stop。 |
 | 明确不覆盖范围 | 不承诺修复 agent-device 其他 daemon 生命周期问题，也不删除未知历史 scratch；现有所有权安全门禁必须保留。 |
 
@@ -983,20 +1013,20 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把最低版本恢复为 0.14.0，`REG-OPS-008` 必须精确收到旧值并失败。 |
 | 明确不覆盖范围 | 不自动安装或升级全局工具；未来版本若移除参数，需要单独更新兼容契约和测试。 |
 
-## `REG-OPS-009` 开发态匿名 Replay 被错误放进 Release Smoke
+## `REG-OPS-009` 未登录 Replay 与主设备套件混用
 
 | 字段 | 内容 |
 | --- | --- |
-| 能力 ID | `MORE-05`、`RELEASE-02` |
-| 用户症状 | 正式 APK 已构建并通过 APK sanity，但 Release Smoke 在 `anonymous-readonly.ad` 点击“展开测试工具”时失败，发布被一个正式版按设计不存在的入口阻断。 |
-| 触发条件 | `anonymous-readonly.ad` 加入 tracked Replay 后，`scripts/smoke-android.mjs` 未区分开发态旅程，继续把 `tests/device/` 的全部文件交给 Release bundle。 |
-| 根因 seam | `MORE-05` 只在 `__DEV__` 开放临时匿名，而 `runDeviceReplay` 默认文件发现与 Release Smoke 共用同一未筛选列表。 |
-| 必须保持的行为 | 明确开发包执行 `npm run test:device` 时仍跑完整八条；Release Smoke 只跑七条 release-safe Replay。不得为让 Release 通过而暴露测试工具、清 Cookie 或弱化匿名旅程断言。 |
-| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 的 `REG-OPS-009` 断言默认列表包含八条，排除 `anonymous-readonly.ad` 后精确得到七条 release-safe 文件，并固定 `scripts/smoke-android.mjs` 传入该排除项。修复前 Release bundle 精确失败在 Replay 第 8 步找不到“展开测试工具”。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定文件分流；当前 revision 的开发包八条 `DEVICE_REPLAY_PASS` 固定匿名行为，Release APK 的 `APK_SANITY` 与七条 `DEVICE_REPLAY_PASS` 固定正式候选。 |
-| Replay 或真实验收路径 | 先在身份匹配的当前开发包执行完整 `npm run test:device`，再执行 `npm run release:android`；两层都必须零重试通过，且正式 APK 中不得出现测试工具。 |
-| 负向验证方式 | 从 Release Smoke 移除排除项，`REG-OPS-009` 单测必须失败；真实 Release bundle 会再次在“展开测试工具”处失败。 |
-| 明确不覆盖范围 | 不让正式 APK 支持临时匿名，不用未登录设备替代有 Cookie 的匿名屏蔽证据，也不新增第二套 Replay runner。 |
+| 能力 ID | `RELEASE-02`；关联 `ACCOUNT-01`、`FEED-01`、`SEARCH-01`、`SEARCH-04` |
+| 用户症状 | 未登录旅程若在已有账号/Cookie 的主设备或 Release Smoke 上运行，会得到登录态结果或要求清除主设备数据；反过来，主设备基线也可能被未登录测试破坏。 |
+| 触发条件 | 真实未登录 Replay 与普通七条 Replay 共用 `tests/device/`、同一个设备环境变量或自动设备选择。 |
+| 根因 seam | 文件发现目录、设备选择和 APK 身份校验没有把“普通保留数据设备”与“从未登录论坛的隔离 AVD”建模为两个外部环境。 |
+| 必须保持的行为 | `npm run test:device` 与 Release Smoke 只发现 `tests/device/` 七条普通旅程；`npm run test:device:logged-out` 只发现 `tests/device-logged-out/`，且必须显式设置与主测试/Smoke 设备不同的 `WZ_ANDROID_LOGGED_OUT_DEVICE`。两套都核对同一待测 APK 的 version/versionCode/SHA，均不得卸载、清数据或清 Cookie。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 的 `REG-OPS-009` 精确断言两个目录的文件集合、独立 runner、显式设备变量和 Smoke 不引用未登录目录；`logged-out-readonly.ad` 还要求四站 Account Query 在 relaunch 前后都结算为权威未登录状态，其中 NodeSeek 允许“未登录”或仅访客“已验证”，linux.do 显示“匿名可用”。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定目录与设备门禁；七条普通 `DEVICE_REPLAY_PASS` 和一条独立未登录 `DEVICE_REPLAY_PASS` 分别证明两个真实环境，不能互相替代。 |
+| Replay 或真实验收路径 | 主设备按原流程运行 `npm run test:device` / Release Smoke；独立 AVD 安装同一 APK 后设置 `WZ_ANDROID_LOGGED_OUT_DEVICE` 运行 `npm run test:device:logged-out`。Cloudflare 可在 App 内以访客身份验证，不登录论坛。 |
+| 负向验证方式 | 把未登录文件放回 `tests/device/`、让独立 runner读取默认目录、删除显式设备门禁或配置成与主设备同名；`REG-OPS-009` 必须失败。 |
+| 明确不覆盖范围 | 不自动创建、克隆、重置或删除 AVD；首次访客 Cloudflare 验证由用户监督，Google/CF 风控可形成 `BLOCKED_BY_ENV`。 |
 
 ## `REG-OPS-010` agent-device 诊断污染设备清单 JSON
 
@@ -1009,7 +1039,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 必须保持的行为 | capture 只把 stdout 交给调用方解析；stderr 仍在 `echoCapture` 开启时显示，非零退出仍失败，不得吞掉工具错误。 |
 | 精确失败 oracle | `src/androidSmokeGuard.test.ts` 给成功 stdout 配一条 stderr warning，返回值仍能被 `parseAgentDeviceList` 解析。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定流分离；完整开发包与 Release Replay 证明真实 CLI 链路。 |
-| Replay 或真实验收路径 | 当前开发包八条 `npm run test:device`，随后 `npm run release:android` 的七条 release-safe Replay。 |
+| Replay 或真实验收路径 | 当前开发包七条 `npm run test:device`，另在隔离 AVD 运行一条 `npm run test:device:logged-out`，随后执行 `npm run release:android` 的七条普通 Replay。 |
 | 明确不覆盖范围 | 不屏蔽 stdout 中的非法内容，也不终止或替换无法证明归属的共享 daemon。 |
 
 ## `REG-OPS-011` runner 覆盖 Replay 自有超时预算
@@ -1022,7 +1052,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | `scripts/run-device-replay.mjs` 的命令行 timeout 覆盖 tracked Replay 的 `context timeout`。 |
 | 必须保持的行为 | 每条 Replay 自己声明 wall-clock budget；runner 继续固定 `retries=0`、`fail-fast`、录屏和报告器，不覆盖预算。74 步四来源 Feed 使用 240 秒。 |
 | 精确失败 oracle | `src/androidSmokeGuard.test.ts` 断言 runner 不含统一 180 秒覆盖，且 `four-source-feed.ad` 声明 240 秒。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定配置边界；开发包八条与 Release 七条 `DEVICE_REPLAY_PASS` 证明真实 wall-clock 行为。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定配置边界；开发包七条普通、隔离 AVD 一条未登录与 Release 七条普通 `DEVICE_REPLAY_PASS` 分别证明真实 wall-clock 行为。 |
 | Replay 或真实验收路径 | 在身份匹配且保留数据的指定设备上依次执行完整开发包 Replay 与 `npm run release:android`。 |
 | 明确不覆盖范围 | 不增加重试，不延长单步 selector deadline，也不把真实请求、断言或 cleanup 失败改判为通过。 |
 
@@ -1287,13 +1317,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `ACCOUNT-04`、`WRITE-04` |
 | 用户症状 | 用户取消授权或清除 NodeImage API Key 后，较早的保存、读取或上传仍可能迟到，重新写回旧 Key 或把旧上传结果插入当前草稿。 |
-| 触发条件 | SecureStore 操作或上传处于 pending，期间发生新授权、取消或清除；WebView bridge 还可能在错误授权阶段接收另一 host 的消息。 |
-| 根因 seam | `src/nodeimageCredentials.ts` 的凭据 generation、`src/loginWebViewNavigation.ts` 的阶段来源门禁，以及 `src/app/useTopicActionsController.ts` 的上传结果所有权。 |
-| 必须保持的行为 | 每次保存/清除都推进 generation，旧读取需重读当前值，取消中的保存恢复先前 Key；bridge 消息必须来自其阶段 owner；上传完成时 generation 已变化则不得插入 Markdown。 |
-| 精确失败 oracle | `src/nodeimageCredentials.test.ts` 固定旧保存、旧读取和取消恢复竞态；`src/loginWebViewNavigation.test.ts` 固定阶段 host；`tests/ui/topic-actions-controller.test.tsx` 固定清除 Key 后迟到上传不落地。 |
+| 触发条件 | SecureStore 操作或上传处于 pending，期间发生新授权、取消、身份/epoch 变化或清除；WebView bridge 还可能在错误授权阶段、iframe 或另一 host 接收消息。 |
+| 根因 seam | `src/nodeimageAuthFlow.ts` 的 phase/nonce、`AppRoot` 的 NodeSeek preflight/final reconcile、`src/loginWebViewScripts.ts` 的注入边界、`src/nodeimageCredentials.ts` 的 owner/generation，以及 `src/app/useTopicActionsController.ts` 的上传结果所有权。 |
+| 必须保持的行为 | 打开授权前优先以 Web Crypto 生成 128-bit flow nonce；当前 Hermes 没有该 API 时只允许复用现有 Android `SecureRandom` port，两个安全来源都不可用或输出无效即失败关闭，绝不降级 `Math.random`。异步 nonce 初始化必须 single-flight，并发入口共享同一终态；等待 nonce 期间切换 auth surface或关闭流程必须同步取消 pending opening，迟到 continuation 保持零 WebView/transport。完成后才能启动下一次。先做 NodeSeek canonical Account preflight并捕获 `{identityKey, sessionEpoch}`；只给精确 NodeSeek Connect 顶层文档注入无 secret 的 cAuth probe，只在精确 NodeImage 根文档 load 完成后注入局部 IIFE payload，所有结果必须回显 nonce。最终 reconcile 仍为同一 owner、epoch 未变且 credential generation 当前时才保存；SecureStore 写入前后再次核对，写入期间换代必须恢复此前凭据。changed、anonymous、unknown、stale、跨阶段、iframe 和迟到结果均零写入。手工 Key 格式保持不变；上传 generation 变化不得插入 Markdown。 |
+| 精确失败 oracle | `src/nodeimageAuthFlow.test.ts` 固定 Web Crypto 16 bytes、Hermes 缺失时只接受现有 Native `SecureRandom`、全部安全来源失败时 fail-closed、绝不调用 `Math.random`、异步初始化 single-flight，并通过 AppRoot 复用的 opening/close orchestration固定 deferred nonce 关闭后零 open及精确 phase URL；`src/authSurfaceCoordinator.test.ts` 固定切换 surface 必定调用 NodeImage close handler；`src/nodeimageAuthWebViewScripts.test.ts`、`src/loginWebViewScripts.test.ts` 固定 nonce、顶层文档、局部 payload 和零 browser storage；`src/nodeimageCredentials.test.ts` 固定 owner mismatch 零写入、旧保存/读取/取消竞态，以及 SecureStore 写入期间 epoch 变化后恢复此前凭据；`tests/ui/global-modal-host.test.tsx` 固定无全局 `injectedJavaScript`；`tests/ui/topic-actions-controller.test.tsx` 固定清除 Key 后迟到上传不落地。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须控制异步完成顺序并观察 SecureStore、草稿和 bridge 决策。 |
 | Replay 或真实验收路径 | NodeImage 授权和真实上传会产生外部状态，只在逐次授权后验收；只读设备验收仅检查入口和取消。 |
-| 负向验证方式 | 移除任一 generation 或阶段来源检查，编号测试必须观察到旧 Key/旧上传落地或跨阶段消息被接受。 |
+| 负向验证方式 | 降级 `Math.random`、移除 Native 安全随机 fallback、nonce、精确顶层 URL、preflight owner/epoch、持久化前后校验、final reconcile 或 generation 任一门禁，编号测试必须观察到授权无法安全启动、旧 Key/旧上传落地或跨阶段消息被接受。 |
 | 明确不覆盖范围 | 不清除真实 NodeImage 文件，不代表真实上传、删除或授权已获许可。 |
 
 ## `REG-ACCOUNT-011` 隐藏 WebView 接受伪造来源的读取结果
@@ -2264,6 +2294,52 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 从清理计划移除 `www.yaohuo.me` domain，编号测试立即失败；若补齐后真机仍恢复登录，则转而验证是否有第二认证 Cookie 或站点存储重新签发，不得继续猜名称。 |
 | 明确不覆盖范围 | 当前证据没有证明 `GET45245` 等其他 Cookie 是认证标记，因此不扩大删除名单；不操作 WebView 私有数据库，不全量清 Cookie。 |
 
+## `REG-ACCOUNT-035` Account 已结算但请求仍读取旧身份，验证恢复先重试后关闭
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`FEED-01`、`SEARCH-01`、`TOPIC-01`、`USER-01`、`WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04` |
+| 用户症状 | 登录/验证已经确认同一账号或新账号，紧接着恢复的读取或写入仍看到旧 identity/epoch；linux.do/NodeSeek 面板还可能在原 Query 已恢复时继续挂载，使恢复请求再次落入登录 surface。 |
+| 触发条件 | Account probe Promise 完成与 React effect/ref 提交之间发起恢复；或验证成功回调先调用 `refetch/fetchNextPage`，随后才关闭并卸载 WebView。 |
+| 根因 seam | canonical Account Query、runtime identity ref、auth surface registry 和恢复回调分别结算，没有一个同步的请求时刻快照；UI 可见性被误当作事后清理而不是恢复前屏障。 |
+| 必须保持的行为 | `SessionRuntimeSnapshot` 同步包含 identity、epoch、pending、auth surface 和 mode。probe 开始及 canonical same/changed/anonymous commit 必须先同步 runtime，再完成 Promise；verification workflow 只在 pending 时拥有可见状态，结算后 Account Query 恢复为唯一身份事实。NodeSeek、linux.do 都必须先关闭并卸载面板，再恢复原 Query；关闭到 renderer 真正卸载之间继续保持短暂 recovery barrier。changed 只导航到新 epoch，不重放旧身份请求；unknown/stale 保持原错误与只读状态。 |
+| 精确失败 oracle | `tests/ui/account-status-controller.test.tsx` 要求 reconciliation Promise resolve 时 runtime 已是新 identity 且 `pending=false`，并要求旧 verification 状态在 canonical settle 后释放；`tests/ui/account-controller.test.tsx` 返回完整 NodeSeek 对账结果；`src/app/useVerificationController.test.ts` 固定 linux.do close-first 恢复、barrier 和 original Query outcome；Feed/Search/Topic/User consumer 测试用新 epoch canary 要求零旧 scope 落地。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯状态 helper 固定恢复结果，RNTL 固定 Account/验证 hook 的 Promise、卸载和 Query 生命周期。 |
+| Replay 或真实验收路径 | 保留现有登录态，自然遇到或手动打开登录/验证页后只执行账号检测与只读请求；确认面板先消失，随后原页面只恢复一次，A→A 不丢内容，换号/退出须另获授权。 |
+| 负向验证方式 | 把 runtime 更新移回 effect、让 Promise 先 resolve，或恢复回调先于 surface close；编号测试必须观察到旧 identity/epoch、重复请求或面板仍挂载。 |
+| 明确不覆盖范围 | 不自动处理 Cloudflare、不重试非幂等写入、不以关闭 UI 证明登录成功，也不授权换号、退出或真实写操作。 |
+
+## `REG-ACCOUNT-036` 妖火多 scope SID 选择了匿名值或错误账号
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`WRITE-01`、`WRITE-02` |
+| 用户症状 | 妖火 Cookie header 同时含 host/domain scope 的多个 `sidyaohuo` 时，回复或删除可能拿到空值、匿名 `-2`，或任意选择一个冲突的有效 SID。 |
+| 触发条件 | `CookieManager.getCookie(准确 action URL)` 返回重复同值、空值、`-2` 与有效值混合，或两个不同的有效 SID；旧 parser 只取第一个匹配项。 |
+| 根因 seam | `extractYaohuoSid` 没有把匿名辅助值、重复 scope 和冲突身份分开，request builder 在未建立唯一 owner 时继续生成 transport。 |
+| 必须保持的行为 | Cookie 名大小写不敏感；忽略空值和 `-2`，重复的同一有效 SID 合并。恰好一个有效值才可生成请求；两个不同有效值本地失败，回复与删除均保持零 transport。reply body 与 delete URL 使用同一个唯一 SID。 |
+| 精确失败 oracle | `src/yaohuoActions.test.ts` 的 `REG-ACCOUNT-036` 固定空/匿名混合、同值重复、冲突有效 SID，以及回复 body/删除 URL 的唯一 SID 传播；冲突时两个 action client 都不得被调用。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：这是确定性的 Cookie trust-boundary parser 与 request builder，fixture 必须直接覆盖无效输入和零 transport。 |
+| Replay 或真实验收路径 | 默认不执行回复或删除。仅在用户逐次授权真实写入时，从原生准确 action URL 读取当前 Cookie 并记录成功/本地冲突，不输出 SID 值。 |
+| 负向验证方式 | 恢复“取第一个”或接受 `-2`，编号测试会生成错误请求；把冲突降级为空 SID 则零 transport/错误断言失败。 |
+| 明确不覆盖范围 | 不猜测多个不同有效 SID 中哪个更新，不清 Cookie、不自动登录，也不改变妖火服务端会话协议。 |
+
+## `REG-ACCOUNT-037` 可读公开页让真实未登录账号长期停在 unknown
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`WRITE-01`、`WRITE-03` |
+| 用户症状 | 全新隔离 AVD 没有论坛登录数据，NodeSeek 与妖火公开页面都能正常打开，但账号中心长期显示“登录状态待确认”；未登录 Replay 在进入搜索前即失败，NodeSeek 的 Google fallback 和妖火的登录限制均无法按权威匿名态分流。 |
+| 触发条件 | NodeSeek direct SSR 先返回可读帖子列表但不含 hydration 后的登录/注册控件；即使正确进入隐藏 WebView，若只在 `onLoadEnd` 注入身份证据脚本，慢子资源会让外层 15 秒 transport 上限先到，脚本从未开始。脚本开始后若仍复用普通 ready 条件，也可能在 `.post-list-item` 出现时早于身份证据回传，而移动侧栏游客控件的挂载时机不稳定。妖火 `wapindex.aspx?sid=-2` 对游客返回普通公开内容；精确登录页虽有完整 form，却同时加载 Gocaptcha/ImageCaptcha 资源。 |
+| 根因 seam | 内容 transport 把“业务 DOM 已可读”“页面所有资源已结束”和“身份协议已结算”混成 ready 条件；NodeSeek 最初没有桥接渲染 runtime 的精确匿名值，后续虽能识别该值，Account script 仍被 `onLoadEnd` 阻塞。妖火最初没有在首页 unknown 后补读登录 form；补读后又让通用验证码特征覆盖了更强的完整登录 form 退出证据。 |
+| 必须保持的行为 | NodeSeek direct 响应已有 current user 或完整游客控件时保持单请求快路径；只有 Account direct 为 identity unknown 才 handoff 一次 WebView。queue 只向渲染层暴露非敏感 owner；仅 `account` script 在 document 建立后提前轮询，并保留 `onLoadEnd` fallback 与同 request 幂等 guard，普通 Feed/Topic/Search 不改变注入时机。身份脚本等待 current user/self-account、配置对象自有 `user === null` 或准确登录+注册控件；精确 null 立即桥接紧凑标记，`false`、缺字段、空对象、普通内容 ready、超时或半结构页仍为 unknown。妖火首页 `div.top2/touserid` 继续单请求确认登录；首页 unknown 才补读精确 `waplogin.aspx?siteid=1000`，只有准确 POST form 与两个字段齐全才确认退出，即使同页带验证码资源也不得改成 verification；缺字段、错 URL、HTTP/网络错误保持 unknown，独立验证码页仍为 verification。账号检测、普通读取和写错误分类共用这一 reason 规则。两站检测都不得清、写或复制 Cookie。 |
+| 精确失败 oracle | `src/localSources.test.ts` 固定 NodeSeek 模糊 SSR 必须 direct×1→WebView×1、明确 direct 证据必须 WebView×0，并接受只由 bridge 生成的精确匿名标记；`src/app/sessionControllerHelpers.test.ts` 固定只传播 `owner` 不泄漏 queue internals；`src/nodeseekBrowserFetchScript.test.ts` 固定 Account 在帖子列表 ready 后继续等身份证据、精确 `user === null` 立即回传紧凑标记、同 request 重复执行只回传一次、`false/undefined/{}` 不结算；`tests/ui/hidden-browser-host.test.tsx` 固定仅 Account early injection，普通读取仍无该 prop，且 `onLoadEnd` fallback 保留。`src/yaohuoApi.test.ts` 固定公开页→带验证码资源的精确完整 form 为 expired，缺一个字段仍 unknown，已登录本人导航不发第二请求；`src/yaohuoActionClient.test.ts` 与 `src/forumApi.test.ts` 固定其他登录消费者复用同一优先级。 |
+| 来源证据 | 2026-07-25 与 revision `7fdcb94d580a` 匹配的隔离 AVD 中，NodeSeek 渲染完成后 `window.__config__` 自有 `user` 字段且精确为 `null`，刷新后相同；移动侧栏随后出现精确 `/signIn.html` 登录与 `/register.html` 注册按钮。当前 APK 脱敏 trace 进一步证明 direct 200 在约 2.1 秒 handoff WebView，但只等 `onLoadEnd` 时于约 17.1 秒以 `timeout` 结束。React Native WebView 官方 [Reference](https://github.com/react-native-webview/react-native-webview/blob/master/docs/Reference.md#injectedjavascriptbeforecontentloaded) 将 `injectedJavaScriptBeforeContentLoaded` 定义为 document 建立后、子资源完成前执行，同时注明 Android 非 100% 可靠，因此必须保留 load-end fallback。妖火精确登录页出现 `form[name=login][method=post]`、`#logname[name=logname]` 与 `#password[name=logpass]`，同时加载 Gocaptcha/ImageCaptcha 资源；脱敏 transport trace 证明首页和登录页均为 200 HTML，旧终态却为 `verification_required`。成熟实现同样等待身份专属协议而非任意可读内容：Discourse [embed-auth-flow.js](https://github.com/discourse/discourse/blob/86282c50652371e84d2c5bc48c2a6817a1352289/frontend/discourse/app/services/embed-auth-flow.js) 轮询 `/session/current.json`，Forem [initializeBodyData.js](https://github.com/forem/forem/blob/0178bfe3d62984121c07921b3ed6c78d22003471/app/assets/javascripts/initializers/initializeBodyData.js) 等 `/async_info/base_data` 给出明确 user 后才向 React Native 发身份消息；妖火成熟 Android 客户端仍以 `wapindex.aspx?sid=-2` 与 `div.top2/touserid` 作为登录正证据。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯 parser/transport/script 固定三态与性能快路径，RNTL 固定 owner 真正到达 mounted WebView。 |
+| Replay 或真实验收路径 | 在不复制主设备数据、不登录论坛的独立 AVD 上安装与当前 revision 匹配的 APK，执行 `tests/device-logged-out/logged-out-readonly.ad`：NodeSeek 先显示“未登录”或仅访客“已验证”、妖火显示“未登录”，随后才验收 V2EX/NodeSeek/linux.do/小隐寺只读搜索和妖火登录限制，relaunch 后状态不变。保留访客 Cookie；若 Google/CF 自然阻断，按环境失败记录，不绕过。 |
+| 负向验证方式 | 恢复“Account 一律 WebView”会让 direct 快路径测试发现额外成本；恢复“任意可读 DOM ready”会让脚本提前回传；接受 NodeSeek `false`/缺字段会让负向 runtime fixture 误结算；删除 owner 传播会让 host/helper 测试失败；只看妖火登录 URL、放宽任一 form 字段或让验证码特征覆盖完整 form，会分别把不完整页错判退出或把真实游客错判 verification。 |
+| 明确不覆盖范围 | 不证明动态登录、换号或真实写操作，不清 App 数据/Cookie，不承诺 Google/Cloudflare 当天可达，也不把第三方实现当作本站状态码契约。 |
+
 ## `REG-FEED-006` 多页 Feed 刷新失败后跳过失败页
 
 | 字段 | 内容 |
@@ -2555,13 +2631,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `ACCOUNT-01`、`SEARCH-04`、`TOPIC-01`、`MORE-02`、`WRITE-01`、`WRITE-03` |
 | 用户症状 | NodeSeek 或妖火写操作已经由站点协议确认登录失效，用户虽然看到一次错误提示，Topic 写入口和其他读取入口却仍按旧登录态开放；妖火验证页还可能被误报成已退出。 |
-| 触发条件 | 站点 action client 抛出带 `loginRequired` 的 typed error，但 `useTopicActionsController` 只提示并包装错误，没有把结论交给通用 Session dispatcher；妖火的 `reason: expired` 与 `reason: verification` 也未分流。 |
-| 根因 seam | 写操作 transport 的站点错误分类与 `SiteSessionState`/Query scope 更新之间缺少现有 dispatcher 接口，导致错误提示和身份投影各自结算。 |
-| 必须保持的行为 | credential generation 仍为当前值时，NodeSeek typed `loginRequired` 发布目标站 `login-expired`；妖火 `reason: expired` 发布 `login-expired`，`reason: verification` 只发布 `verification-required`。通用 dispatcher 随明确失效关闭 `canWrite`、清除 current user 并失效目标来源与 `all` 私有 Query scope；其他站不变。unknown、权限不足、普通失败和 stale generation 不改变身份。所有路径只更新 App 投影，不删除或覆盖原站 Cookie；提示恰好一次。 |
-| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-022` 分别让 NodeSeek、妖火 action client 返回 typed expired/verification error，要求发布精确站点事件、提示一次且不暴露清理命令；修复前三个 dispatcher spy 均为零调用。`src/siteSessionState.test.ts` 固定 expired view model 的 `canWrite=false`/current user 清除，`src/app/sessionControllerHelpers.test.ts` 固定 `login-expired` 失效 Query scope而 `verification-required` 不失效。 |
-| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：action controller、session reducer 与 Query invalidation 契约必须组合覆盖；只测错误文案或 action client 分类会漏掉投影丢失。 |
+| 触发条件 | 站点 action client 抛出 typed `login-required`、`login-expired` 或 `verification-required`，但 `useTopicActionsController` 只提示并包装错误，没有请求 Account Query 对目标站身份对账。 |
+| 根因 seam | 写操作 transport 的站点错误分类与 `reconcileWritableSession(source)`/Account canonical Query 之间缺少接线，导致动作提示和权威身份各自结算。 |
+| 必须保持的行为 | ticket 仍有效时，只有 typed `login-required`、`login-expired` 或 `verification-required` 请求一次目标站 Account Query 对账；anonymous、changed、same 或 unknown 均由 Account Query 及 writable gate 统一结算 barrier、identity 和 epoch。普通网络错误、权限不足和 stale ticket 不对账、不改变身份。所有路径都不删除或覆盖原站 Cookie，不自动重放非幂等请求，提示恰好一次。 |
+| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-022` 分别让 NodeSeek、妖火 action client 返回 typed expired/verification error，要求恰好调用一次目标站 `reconcileWritableSession`；stale ticket 要求零对账、零提示。`src/writableSessionGate.test.ts` 与 Account controller 测试固定对账的 same/changed/anonymous/unknown、barrier 和 epoch 契约。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：writable gate、Account Query 对账与 action controller 必须组合覆盖；只测错误文案或 action client 分类会漏掉身份投影。 |
 | Replay 或真实验收路径 | 默认不通过真实写操作制造过期。设备自然出现失效时，只读核对 More、Search 与 Topic 已同步关闭目标站写能力且原站 Cookie仍保留；妖火自然验证态只显示验证要求。否则动态证据记 `NOT_VERIFIED`。 |
-| 负向验证方式 | 删除 dispatcher、在 generation 检查前发布事件、把妖火 verification 映射为 expiry，或从错误分支调用 Cookie 清理；编号 UI 测试、stale generation 测试或 Cookie 所有权测试必须失败。 |
+| 负向验证方式 | 删除对账调用、在 ticket 校验前对账、把 verification 当作普通成功，或从错误分支调用 Cookie 清理；编号 UI 测试、stale ticket 测试或 Cookie 所有权测试必须失败。 |
 | 明确不覆盖范围 | 不把单主题权限失败升级为全局退出，不自动重试写操作，不清 Cookie，不执行真实回复/收藏/投票，也不新增统一 verifier 或第二套状态机。 |
 
 ## `REG-WRITE-023` 旧主题或账号在身份待确认、换号后继续写入
@@ -2569,16 +2645,46 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04`、`TOPIC-01`、`TOPIC-03` |
-| 用户症状 | 用户从账号 A 打开旧 Topic 后在 WebView 切到账号 B、退出或身份无法确认，App 仍可能先显示 optimistic 成功、打开文件选择器或发送 A 页面上下文下的回复、编辑、删除、互动、投票、上传和签到；失败后还可能自动重放非幂等请求。 |
-| 触发条件 | 写入开始时 surface 开放/刚关闭/unknown；`ensureWritableSession` 返回后、Query cancellation 或文件选择等待期间 epoch 变化；NodeImage Key 属于另一 NodeSeek identity；action 返回 401/403 或站点 typed expiry。 |
-| 根因 seam | 各 action 自行读取 Cookie/SecureStore 判断登录，身份检查与 optimistic snapshot、文件选择、上传及 transport 之间没有一次性 identity/epoch 所有权；恢复逻辑把写请求当成可自动重试读取。 |
-| 必须保持的行为 | 所有回复、楼层回复、编辑、删除、点赞/鸡腿/反对、收藏/书签、投票、四站上传与 NodeSeek 签到统一先调用 `ensureWritableSession(source)`。已确认且干净的会话不增加网络请求；surface 开放、刚关闭或 unknown 时先走 verifier。同一 identity 可继续当前操作一次；换号、退出、unknown 或 ticket 过期都终止。门禁必须位于用户确认之后且在 Query snapshot、optimistic update、文件选择、上传和 transport 之前；等待 Query cancellation 或文件选择后再次校验，失败为零 optimistic、零上传、零 transport。401/403/action failure 只触发一次 verifier，不自动重放。NodeImage 自动 Key 绑定 NodeSeek identity；旧版或手动 Key 首次在当前身份使用前显式确认但不展示 Key。 |
+| 用户症状 | 用户从账号 A 打开旧 Topic 后在 WebView 切到账号 B、退出或身份无法确认，App 仍可能先显示 optimistic 成功、打开文件选择器或发送 A 页面上下文下的回复、编辑、删除、互动、投票、上传和签到；服务器已确认的操作还可能在写后刷新期间换号，随后对新账号弹出旧账号的成功提示。 |
+| 触发条件 | 写入开始时 surface 开放/刚关闭/unknown；`ensureWritableSession` 返回后、Query cancellation、文件选择或 `afterSuccess` 刷新等待期间 epoch 变化；NodeImage Key 属于另一 NodeSeek identity；action 返回 typed identity evidence。 |
+| 根因 seam | 各 action 自行读取 Cookie/SecureStore 判断登录，身份检查与 optimistic snapshot、文件选择、上传、transport 及成功结算之间没有一次性 identity/epoch 所有权；恢复逻辑把写请求当成可自动重试读取。 |
+| 必须保持的行为 | 所有回复、楼层回复、编辑、删除、点赞/鸡腿/反对、收藏/书签、投票、四站上传与 NodeSeek 签到统一先调用 `ensureWritableSession(source)`。已确认且干净的会话不增加网络请求；surface 开放、刚关闭或 unknown 时先走 verifier。同一 identity 可继续当前操作一次；换号、退出、unknown 或 ticket 过期都终止。门禁必须位于用户确认之后且在 Query snapshot、optimistic update、文件选择、上传和 transport 之前；等待 Query cancellation 或文件选择后再次校验，失败为零 optimistic、零上传、零 transport。只有 typed identity evidence 请求一次 Account Query 对账，不自动重放；普通和权限失败不对账。未确认的 unknown/failure 必须恢复仍存在的旧 scope optimistic snapshot，即使对账已让 ticket pending；已清除的旧 epoch Query 不得被 rollback 重建。服务器确认后在应用结果前及 `afterSuccess` 返回后再次校验 ticket；迟到结算不弹成功提示、不写新 epoch cache，诊断只产生一个 `stale` 终态并保留 `serverConfirmed: true`，不得回滚、撤销或重发服务器操作。NodeImage 自动 Key 绑定 NodeSeek identity；旧版或手动 Key 首次在当前身份使用前显式确认但不展示 Key。 |
 | 来源证据 | OWASP [Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) 建议集中授权并默认拒绝；[Transaction Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Transaction_Authorization_Cheat_Sheet.html) 要求授权与具体操作绑定并在执行前校验。TanStack Query [Optimistic Updates](https://tanstack.com/query/v5/docs/framework/react/guides/optimistic-updates) 把 cancel、snapshot 与 optimistic apply 的顺序视为 mutation 正确性边界。 |
-| 精确失败 oracle | `src/writableSessionGate.test.ts` 固定 clean fast-path、dirty 强制复核、same/changed/anonymous/unknown 与 ticket validation；`tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-023` 固定 unknown 在 optimistic/transport 前阻断、dirty 在文件选择/上传前阻断、Query cancellation 等待期间换代仍为零 optimistic/transport、写失败只 reconcile 一次且不重放、NodeImage rejected authorization 不重放所选上传；现有 action/upload/签到测试共同证明所有入口接线。 |
+| 精确失败 oracle | `src/writableSessionGate.test.ts` 固定 clean fast-path、dirty 强制复核、same/changed/anonymous/unknown 与 ticket validation；`tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-023` 固定 unknown 在 optimistic/transport 前阻断、dirty 在文件选择/上传前阻断、Query cancellation 等待期间换代仍为零 optimistic/transport、typed identity failure 只 reconcile 一次且不重放、NodeImage rejected authorization 不重放所选上传。妖火验证对账进入 pending 仍须恢复现存旧 scope 收藏；unknown 在 ticket 过期后到达同样回滚，旧 epoch 已清除时不得重建。NodeSeek、妖火、Discourse 与签到的 confirmed 结果在应用前或 `afterSuccess` 期间换代，要求零成功提示、新 epoch canary 不变且唯一 finish 为 `stale + serverConfirmed`。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯 gate 单测不足以证明门禁位于 optimistic、picker 和 transport 之前，必须执行真实 controller mutation 时序。 |
-| Replay 或真实验收路径 | 默认只检查入口在 identity pending 时关闭、旧内容保持只读以及重试提示；真实回复、编辑、删除、互动、投票、上传和签到都需逐项授权。自然出现 401/403 时只读核对 More、Search、Topic 投影一致且没有第二次 transport。 |
-| 负向验证方式 | 把 ticket 校验移到 optimistic/picker/transport 之后，删除等待后的复核，让 action 自己拼 Cookie，或在 reconciliation 后自动重放 task；编号测试必须观察到本地状态变化、picker、upload 或 transport 调用。 |
+| Replay 或真实验收路径 | 默认只检查入口在 identity pending 时关闭、旧内容保持只读以及重试提示；真实回复、编辑、删除、互动、投票、上传和签到都需逐项授权。自然出现 typed identity failure 时只读核对 More、Search、Topic 投影一致且没有第二次 transport。 |
+| 负向验证方式 | 把 ticket 校验移到 optimistic/picker/transport 之后，删除任一等待后的复核，让 action 自己拼 Cookie，或在 reconciliation 后自动重放 task；编号测试必须观察到本地状态变化、picker、upload、transport、错误成功提示或错误终态。 |
 | 明确不覆盖范围 | 不保证账号 B 对旧主题拥有相同权限，不自动转换草稿归属，不执行真实写操作制造状态，也不把普通单主题权限不足升级为全局退出。 |
+
+## `REG-WRITE-024` 普通写失败误触发身份 barrier
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`SEARCH-04`、`WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04`、`TOPIC-03` |
+| 用户症状 | NodeSeek、妖火或 linux.do 的普通网络错误、服务端异常或对象权限不足被当成登录失效；一次局部写失败会让目标站进入长期 identity barrier，Topic、Search 和其他私有入口一起关闭。 |
+| 触发条件 | action wrapper 对所有异常无条件调用 `reconcileWritableSession(source)`，或把普通 `403`/权限错误升级为身份失效证据。 |
+| 根因 seam | `sourceErrorFromUnknown(...).kind` 已提供类型化证据，但 Topic action controller 没有在调用 Account Query 前消费该分类；linux.do 还曾绕过站点 runtime 的 recovery 结果。 |
+| 必须保持的行为 | 只有 `login-required`、`login-expired`、`verification-required` 请求一次目标站对账。`ordinary` 和 `permission-denied` 只回滚本次 optimistic state、提示一次并结束；零对账、零 epoch 变化、零 Cookie 清理、零自动重放。linux.do 先由既有 runtime 分类，明确身份失效才对账，且不自动打开登录面板。小隐寺既有明确授权失效流程不变。 |
+| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-024` 对 NodeSeek、妖火、linux.do 分别注入 ordinary 与 typed `permission-denied`，即使对账 mock 返回 unknown 也要求调用次数为零、transport 恰好一次、提示恰好一次；linux.do 仍调用 runtime recovery。独立的 linux.do 删除/上传与 NodeSeek 签到生命周期使用同一 ordinary/permission 矩阵，并分别保持回复、草稿和账号投影。typed linux.do expiry 与 Cloudflare verification 的同编号用例要求各对账恰好一次、零自动重放且不打开登录面板。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要真实 mutation rollback、runtime recovery、Account reconciliation spy 和提示共同证明不会建立 barrier。 |
+| Replay 或真实验收路径 | 默认不制造真实写失败；只读设备验收确认四站账号无 pending、正常 Topic 写入口仍按账号投影启用。自然出现普通失败时只核对该动作收口且其他入口不进入 barrier。 |
+| 负向验证方式 | 恢复任一站无条件对账，或让 linux.do 在 runtime 之前直接对账，编号测试必须观察到对账调用；加入自动重放则 transport 次数失败。 |
+| 明确不覆盖范围 | 不猜测某站是否用普通错误表达真实失效；若出现证据，先在对应 action client 按协议补充 typed kind，不恢复“所有失败都对账”。 |
+
+## `REG-WRITE-025` 妖火结果文案被当作控制协议
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`、`WRITE-02`、`WRITE-03`、`TOPIC-03` |
+| 用户症状 | 妖火返回的操作结果无法确认，但只要提示文案发生同义改写，或普通 200 页面只有空白/任意短文本，App 就把它当作已确认成功，保留 optimistic 状态并弹出成功提示，可能诱导用户重复或误判收藏、回复、删除和投票。 |
+| 触发条件 | `yaohuoActionClient` 只返回 message，Controller 用完整中文字符串等值判断 unknown；parser 又把“没有失败词且不超过 80 字”当作成功，展示文案、长度与控制流被绑成协议。 |
+| 根因 seam | 妖火 action response parser 到 Topic mutation wrapper 的结果类型缺少稳定判别字段和正向成功 oracle。 |
+| 必须保持的行为 | client 只返回 `{ status: 'confirmed', message, favoriteId? }` 或 `{ status: 'unknown', message }`；Controller 只判断 `status`。收藏和取消仍使用各自结构化协议；通用 action 的空文本、任意未识别短文本和长普通页面都为 unknown，无 `.tip` 时只接受已有 fixture 证明的明确成功文案。unknown 必须回滚本次 optimistic state、展示 client message、零身份对账且不自动重试；confirmed 才能进入成功结算。 |
+| 精确失败 oracle | `src/yaohuoActionClient.test.ts` 的 `REG-WRITE-025` 断言缺失删除确认链接、空 200 与任意未识别短文本都得到 `status: unknown`，既有无 `.tip`“评论成功”仍 confirmed；`tests/ui/topic-actions-controller.test.tsx` 使用与生产默认文案不同的 unknown message，要求当前 ticket 下回滚收藏并只提示该文案，ticket 已过期仍回滚现存旧 scope 且零提示，两者都零对账和零成功提示。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：client 固定 parser 判别，Controller 固定 mutation rollback 和文案解耦。 |
+| Replay 或真实验收路径 | 默认不执行真实妖火收藏、回复或删除；只读设备验收确认入口与当前收藏投影可见。只有获逐次授权后才在原帖/收藏页核对动态 unknown 或 confirmed。 |
+| 负向验证方式 | 删除 `status`、恢复完整文案比较、让空/任意短响应 confirmed 或让 unknown 返回成功，编号 client/UI 测试必须失败；仅修改提示文字必须保持测试通过。 |
+| 明确不覆盖范围 | 不扩大 HTML 成功判据、不猜测未知响应、不自动查询或重发可能已成功的非幂等动作。 |
 
 ## `REG-TEST-001` Smoke 绿灯被当成功能完整通过
 
@@ -2602,27 +2708,43 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-01`、`SEARCH-02`、`RELEASE-02` |
 | 用户症状 | 真实搜索仍显示“正在搜索...”，Replay 却已经越过等待并立即报告首条结果不存在；同一路径重跑又可能通过。 |
 | 触发条件 | 新搜索发出后，Android accessibility snapshot 短暂保留上一状态的 `search-complete` 节点；实时请求耗时足以让后续即时结果断言先执行。 |
-| 根因 seam | `tests/device/anonymous-readonly.ad`、`search-multi-source.ad` 与 `search-topic-user-return.ad` 把请求生命周期 marker 当成下一条用户可见成功 oracle 的等待目标。 |
+| 根因 seam | `tests/device-logged-out/logged-out-readonly.ad`、`search-multi-source.ad` 与 `search-topic-user-return.ad` 把请求生命周期 marker 当成下一条用户可见成功 oracle 的等待目标。 |
 | 必须保持的行为 | 预期成功的搜索直接等待可见来源预览或 `search-result-first`，再验证并按旅程打开结果；来源预览还必须等待按钮真实 `enabled` 后才能点击。零重试，真实空结果、错误或超时仍必须失败。`search-complete` 只用于返回搜索页后的状态恢复等不以新结果出现为前提的边界。 |
-| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 的 `REG-TEST-002` 固定匿名三站、登录态五次结果和 V2EX 详情旅程都使用直接结果等待，并固定 V2EX 来源预览等待 `enabled=true`。修复前当前开发 APK 的匿名 Replay 在第 26 步失败，首败视频同时显示 NodeSeek 仍在“正在搜索...”；全量 Replay 还曾在 V2EX 来源按钮已出现但尚不可点击时错误继续。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 的 `REG-TEST-002` 固定未登录四个公开结果、普通会话五次结果和 V2EX 详情旅程都使用直接结果等待，并固定 V2EX 来源预览等待 `enabled=true`。修复前 Replay 在首条结果仍处于“正在搜索...”时提前继续；全量 Replay 还曾在 V2EX 来源按钮已出现但尚不可点击时错误继续。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定 tracked Replay 的等待语义；`DEVICE_REPLAY_PASS` 在真实 Android accessibility 与动态请求时序下证明旅程完成。 |
-| Replay 或真实验收路径 | 在身份匹配的当前开发包执行 `npm run test:device`；匿名旅程必须屏蔽四站 credential 视图后完成 NodeSeek、linux.do、小隐寺搜索和首页，其他两条搜索旅程继续打开结果并返回。 |
+| Replay 或真实验收路径 | 在身份匹配的当前包执行 `npm run test:device`；另在隔离 AVD 执行 `npm run test:device:logged-out`，完成 V2EX、NodeSeek、linux.do、小隐寺搜索、妖火登录限制及公开首页收口，其他两条搜索旅程继续打开结果并返回。 |
 | 负向验证方式 | 把任一预期结果前的直接等待恢复为 `wait id="search-complete"`，或把来源预览等待降回仅检查节点存在，`REG-TEST-002` 必须失败；不靠增加 retries 掩盖竞态。 |
 | 明确不覆盖范围 | 不保证第三方来源永远有结果，也不把真实来源错误降级为通过；动态内容仍只固定可打开性，不固定标题和数量。 |
 
-## `REG-TEST-003` 临时匿名状态被账号刷新结果覆盖
+## `REG-TEST-003` App 内伪匿名不能代表真实未登录环境
 
 | 字段 | 内容 |
 | --- | --- |
-| 用户可见行为 | 开发版开启某站“临时匿名”后，搜索提示和写入权限仍显示该站已登录，导致所谓无 Cookie 回放实际只屏蔽了 credential loader，用户看到的状态与测试前提矛盾。 |
-| 触发条件 | App 启动后的账号状态 Query 已得到登录结果，再从“更多 → 测试工具”开启临时匿名并进入搜索或主题操作。 |
-| 根因 seam | `AppRoot` 已为 workflow state 生成匿名 view model，但搜索、诊断和 Topic action 仍直接消费账号 Query 合并后的 `accountSessionViewModels`；账号远端结果因此越过 dev override。 |
-| 必须保持的行为 | 临时匿名只影响本次运行且不删除 Cookie；被覆盖站点的搜索提示、诊断身份和写入门禁统一使用匿名 view model，未覆盖站点继续使用账号 Query 结果；账号中心仍可证明保存的真实会话存在，relaunch 后恢复正常行为。 |
-| 精确失败 oracle | `src/siteSessionState.test.ts` 的 `REG-TEST-003` 用登录态账号 view model 输入并要求只把指定站投影为 `anonymous/canWrite=false`；`tests/device/anonymous-readonly.ad` 在提交 NodeSeek、linux.do 搜索前分别等待未登录提示，旅程末尾 relaunch 后再次确认 NodeSeek 已登录。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定 view model 合并规则；`DEVICE_REPLAY_PASS` 证明真实账号刷新、临时覆盖、搜索接线与重启恢复共同成立。 |
-| Replay 或真实验收路径 | 当前身份匹配的开发包执行 `tests/device/anonymous-readonly.ad`：账号中心先确认 NodeSeek 已登录，开启四站临时匿名，检查搜索提示、结果与首页，再 relaunch 确认原会话恢复。 |
-| 负向验证方式 | 让搜索或 Topic action 重新直接消费 `accountSessionViewModels`，或删除回放中的匿名提示断言，编号单测或结构守卫必须失败。 |
-| 明确不覆盖范围 | 不删除、改写或导出真实 Cookie；不保证公开搜索永远不受第三方反爬影响，只要求一次真实可打开结果并如实记录外部阻碍。 |
+| 能力 ID | `ACCOUNT-01/02`、`FEED-01`、`SEARCH-01/04`、`RELEASE-02` |
+| 用户可见行为 | App 内切换一个“匿名”布尔值会创造第二套身份事实；要么真实 Cookie 仍参与网络，要么人为过滤全部 Cookie 并触发本不会出现的 Cloudflare 风控。两种结果都不能代表普通用户真实退出论坛但保留访客/clearance Cookie 的状态。 |
+| 触发条件 | 在已有登录数据的主设备上，通过 Debug UI、JS runtime 或 Native Cookie mask 伪造未登录，再据此验收搜索、Feed、媒体或写入门禁。 |
+| 根因 seam | 测试需求被实现成产品运行模式，导致 Account、Gateway、write ticket、媒体和 Native 网络层都要维护额外分支；测试环境事实与产品身份事实混在同一进程。 |
+| 必须保持的行为 | App 内没有匿名测试入口、override state、runtime mode、Account 特殊终态或 Native Cookie mask；Debug/Release 都只运行正常 session 逻辑。真实未登录使用同一 APK 和独立 AVD，四站 Account Query 必须给出权威未登录事实；NodeSeek 可显示“未登录”或仅访客“已验证”，linux.do 的 UI 文案为“匿名可用”。允许访客 Cloudflare Cookie 自然存在，但不得登录论坛或复制主设备数据。主设备登录态与 Cookie 不变。 |
+| 精确失败 oracle | `tests/ui/more-screen.test.tsx`、`src/releasePackaging.test.ts` 和 `src/androidSmokeGuard.test.ts` 固定无 App/Native 模拟入口；`src/androidSmokeGuard.test.ts` 还固定独立 runner、目录与设备变量，`logged-out-readonly.ad` 固定四站在 relaunch 前后均为权威未登录状态及五站搜索矩阵，并按 `REG-TEST-004` 区分 NodeSeek 账号身份与访客验证。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` 固定代码和 runner 边界；真正未登录行为必须由隔离 AVD 的 `DEVICE_REPLAY_PASS` 证明，主设备普通 Replay 不能替代。 |
+| Replay 或真实验收路径 | 安装同一身份 APK 到未登录论坛的独立 AVD，设置 `WZ_ANDROID_LOGGED_OUT_DEVICE` 后运行 `npm run test:device:logged-out`。如需 Cloudflare，在 App 内原站 WebView 只完成访客验证；Google/CF 风控阻断则记 `BLOCKED_BY_ENV`。 |
+| 负向验证方式 | 恢复任一 in-app override、Native Cookie mask、特殊 Account 状态，或让未登录 runner回退主设备/默认目录；对应编号测试必须失败。 |
+| 明确不覆盖范围 | 不自动创建、克隆或清理 AVD，不删除、导出或记录真实 Cookie/token/身份，不执行真实回复、删除、点赞、收藏、投票、上传或签到。 |
+
+## `REG-TEST-004` 未登录 Replay 把访客已验证误判为账号登录
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-01`、`SEARCH-04`、`RELEASE-02` |
+| 用户症状 | 独立未登录 AVD 已正确识别 NodeSeek 游客并可走 Google 搜索，但保留访客 clearance 后账号中心显示“已验证”，Replay 仍等待唯一“未登录”文案并在搜索前失败。 |
+| 触发条件 | 设备没有 NodeSeek 账号会话，但曾完成访客 Cloudflare 验证；Account Query 因此产生 `status=verified`、`isLoggedIn=false`。 |
+| 根因 seam | 设备 oracle 把展示文案当成账号身份谓词，遗漏了现有状态模型中 `verified` 与 `logged-in` 的明确边界。 |
+| 必须保持的行为 | NodeSeek `anonymous` 与访客 `verified` 都是权威未登录终态，网站登录计数不增加、写入保持关闭、搜索走匿名 Google fallback；只有 `logged-in` 才能进入登录协议。Replay 只接受准确的“未登录”或“已验证”两种 NodeSeek 标签，不接受“已登录”、pending、unknown 或 expired。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 要求 `logged-out-readonly.ad` 在首次启动与 relaunch 后都使用同一个两分支 selector；旧单文案脚本使该守卫先失败。真实 AVD 上该 selector 已对“NodeSeek，已验证，已选择”命中，同时账号中心显示“网站登录 0/4”。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 tracked Replay 的身份语义；`DEVICE_REPLAY_PASS` 证明真实 Android Account Query、访客 Cookie 与未登录搜索链路一致。 |
+| Replay 或真实验收路径 | 保留隔离 AVD 的访客 Cookie，不登录 NodeSeek、不清数据，执行 `npm run test:device:logged-out`；NodeSeek 身份断言通过后继续要求未登录 Google 提示与结果，relaunch 后重复同一身份断言。 |
+| 负向验证方式 | 把 selector 改回只接受“未登录”，有 clearance 的隔离 AVD 必须复现失败；把“已登录”加入允许分支或让搜索走登录协议，守卫或后续 Google 提示断言必须失败。 |
+| 明确不覆盖范围 | 不把“已验证”改名为“未登录”，不删除访客 clearance，不放宽账号 parser，也不新增产品运行模式。 |
 
 ## `REG-PROXY-004` 原生代理切换与 bridge 销毁遗留旧连接
 
@@ -2683,6 +2805,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 获得只读网络验收授权后快速切换两站含 reaction 的主题，确认图片始终来自当前站点；本轮不访问论坛，标 `NOT_VERIFIED`。 |
 | 负向验证方式 | 恢复 Topic 对 adapter 的直接 import、丢弃 gateway fetcher/auth/signal、移除 cleanup abort 或取消迟到结果门禁，编号测试必须失败。 |
 | 明确不覆盖范围 | 不新增 Query 架构，不移除站点级 emoji cache，不执行写操作，也不通过真实账号请求制造竞态。 |
+
+## `REG-TOPIC-028` V2EX 重复楼层被当作回复身份导致大片空白
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03` |
+| 用户症状 | App 内打开 V2EX 主题 `1229472` 并滚动到 67～68 楼时，两条正常回复之间出现超过一屏的空白，后续回复像被错误跳过。重启模拟器后仍稳定复现。 |
+| 触发条件 | V2EX API 仍返回网页端未展示的图片/文本回复，HTML 可见楼层压缩后与其合并，两个不同 `commentId` 可能得到相同楼层；其中一条高度较大时更容易暴露。 |
+| 根因 seam | `src/screens/topic/TopicScreenBody.tsx` 通过 `src/screens/topic/topicScreenHelpers.ts` 的 `getReplyKey` 把楼层作为 FlashList 稳定身份，导致不同回复复用同一 key 和历史布局高度；项目已有 `src/feedLogic.ts` 的 `replyKey` 已按 `commentId` 优先表达正确身份。 |
+| 必须保持的行为 | 回复存在 `commentId` 时以其作为稳定列表身份：不同 id 即使显示同一楼层也必须是不同列表项，同一 id 即使楼层变化仍保持身份；只有来源没有 `commentId` 时才回退楼层，再缺失时使用既有内容回退。修复不得过滤 API 回复、重编号楼层或改变 V2EX HTML/API 合并。 |
+| 精确失败 oracle | `src/screens/topic/topicScreenHelpers.test.ts` 的 `REG-TOPIC-028` 使用现场对应的 `commentId=17900145` 与 `17900159`，让图片回复和文本回复同为 68 楼，要求 `getReplyKey` 不同；修复前二者都得到 `reply-floor-68`。同文件另固定同 id 换楼层 key 不变、无 id 时仍按楼层稳定。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：列表身份是确定性纯逻辑；普通 RNTL mock 不实现 FlashList 原生布局复用，不能替代本条 oracle。 |
+| Replay 或真实验收路径 | 使用 App 内部直链直接打开 `https://www.v2ex.com/t/1229472`，不经搜索；滚动到 67～69 楼，确认原空白区域渲染为独立回复内容，后续回复没有消失、重叠或高度串用。全程只读。 |
+| 负向验证方式 | 恢复楼层优先的 `getReplyKey`，或在 Topic 另建不含 `commentId` 的 key；编号测试必须重新得到重复 key，现场可再次出现大片空白。 |
+| 明确不覆盖范围 | 不决定 API 独有回复是否应显示，不校准网页删除状态或楼层编号，不新增依赖动态原帖的 tracked Replay；原帖内容变化导致现场不再具备重复楼层时记 `NOT_VERIFIED`。 |
 
 ## 待确认观察
 

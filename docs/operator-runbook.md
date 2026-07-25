@@ -29,11 +29,12 @@ npm run check:react
 npm run android
 npm run release:android
 npm run smoke:android
+npm run test:device:logged-out
 ```
 
 `npm run verify` 是确定性门禁，统一包含 Vitest、Jest/RNTL UI、文档测试与引用、typecheck、unused 和版本一致性。`npm run test:device` 要求可信安装为 `agent-device >= 0.19.0`，并通过 `WZ_ANDROID_TEST_DEVICE` 和 `WZ_ANDROID_TEST_APK` 明确设备及目标 APK，先比对设备上实际 `base.apk` 的版本与 SHA-256，再执行 `tests/device/` Replay。单个 Replay 使用唯一 session、零重试且不自行执行 `close`，由 test harness 先停止录屏再 cleanup session；普通执行失败由外层继续其他独立文件并最终统一返回，任何录屏隔离或恢复失败则立即停止后续文件。执行前发现既有 manifest、对应 `.tmp`、工具录屏进程或 orphan scratch 时只阻断并保留现场，正式 manifest 即使为空也按文件存在视为占用；执行后仅通过 manifest 中同时匹配本条 session/device 的 session 调用 `record stop`，不终止 daemon、不 wildcard 删除设备文件、不停止 MCP，也不触碰 App 数据或用户文件。只有全部通过才输出 `DEVICE_REPLAY_PASS`。`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它通过 `WZ_ANDROID_SMOKE_DEVICE` 明确唯一登录态设备，覆盖安装后先读取设备 epoch，再在第一次启动前写入包级日志 marker；最终通过 logcat `-T` 只读取该时间之后的有界窗口，先形成 `APK_SANITY`，再把同一 APK 交给 Replay 形成独立的 `DEVICE_REPLAY_PASS`。脚本不会自动选择其他设备，也不会卸载、清数据或清空全局 logcat。`npm run release:android` 仍只上传正式 arm64 APK 和 manifest，开发签名 Smoke APK 不上传。
 
-`anonymous-readonly.ad` 依赖 `__DEV__` 测试工具：当前开发包通过 `npm run test:device` 执行完整八条，Release Smoke 明确排除该文件并执行七条 release-safe Replay；发布前两层必须基于同一 revision 分别通过，不能向正式 APK 暴露测试工具。
+真实未登录旅程不在 App 内模拟。另起一个不含论坛登录数据的 AVD，设置 `WZ_ANDROID_LOGGED_OUT_DEVICE` 和同一待测 `WZ_ANDROID_TEST_APK` 后运行 `npm run test:device:logged-out`；runner 拒绝与 `WZ_ANDROID_TEST_DEVICE` / `WZ_ANDROID_SMOKE_DEVICE` 同名的设备，只执行 `tests/device-logged-out/`。允许在 App 内原站 WebView 完成访客 Cloudflare 验证，但不得登录论坛、克隆主 AVD、卸载或清除主设备数据；因此 NodeSeek 可显示“未登录”或仅访客“已验证”，两者都必须保持网站登录计数为 0 并走未登录搜索。普通 `test:device` 与 Release Smoke 均只执行 `tests/device/` 的七条旅程。
 
 ## Agent Live
 
@@ -69,7 +70,7 @@ npm run smoke:android
 - 首页、搜索、详情、回复和用户页的读取不应直接 import `forumApi`、`yaohuoApi` 或 `local*` 来源文件，应通过 `src/sources/sourceGateway.ts`；已有互动 action client 按触及路径逐项迁移，不改变请求格式。
 - `App.tsx` 应保持入口职责，不承载 WebView、Cookie、来源读取和业务回调。
 - `src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是兼容入口，不应重新塞回大段实现。
-- More 页只有一个 `账号中心`：统一显示四个可登录来源的状态和当前身份；自动填入仍只服务原三站，小隐寺只提供 Device Code 授权 / 重新授权 / 撤销授权，并提供公共 `刷新账号状态`；测试工具、代理、诊断、备份和外观保持独立。
+- More 页只有一个 `账号中心`：统一显示四个可登录来源的状态和当前身份；自动填入仍只服务原三站，小隐寺只提供 Device Code 授权 / 重新授权 / 撤销授权，并提供公共 `刷新账号状态`；App 内没有伪匿名测试入口，代理、诊断、备份和外观保持独立。
 - More 页 `服务器代理` 支持 HTTP / SOCKS5；启用失败时网络请求不应静默直连。
 - 账号状态刷新由 `src/app/useAccountStatusController.ts` 提供，备份 I/O 由 `src/app/useBackupStatusController.ts` 提供；启动后由 `AppRoot` 静默刷新一次，进入 More 页本身不应触发刷新。
 - 模拟器验证最新代码时禁止使用 `adb uninstall`、`adb shell pm clear`、清空模拟器数据或重置 emulator。
@@ -107,7 +108,7 @@ adb shell am start -W -a android.intent.action.VIEW -d "exp+wz-android://open-to
 ## 发布批次与闸门
 
 - 普通版本聚合几个小功能或 bug 后发布；崩溃、数据或隐私风险、核心来源不可用才单独 hotfix。
-- 发布候选先用当前开发包跑完整八条 Replay，再依次通过 `npm run verify`、正式签名构建与 signer 校验，并由同代码的开发签名 x86_64 Release APK 在唯一登录态设备上完成 APK sanity 与七条 release-safe Replay；最后按授权执行 `full` Agent Live。
+- 发布候选先用当前开发包在主设备跑七条普通 Replay，并在隔离 AVD 跑一条真实未登录 Replay；再依次通过 `npm run verify`、正式签名构建与 signer 校验，并由同代码的开发签名 x86_64 Release APK 在唯一登录态设备上完成 APK sanity 与七条普通 Replay；最后按授权执行 `full` Agent Live。
 - `npm run smoke:android` 使用覆盖安装保留 App 数据；其 Smoke 部分在覆盖安装后先读取设备 epoch、再于第一次启动前写入唯一 logcat marker，通过 `logcat -T` 有界读取该时间之后的日志并以包名/PID 裁剪首次启动窗口，继续检查 session relaunch、前台包名、Feed readiness 及日志中的崩溃、ANR、RedBox，输出 `APK_SANITY`。它不清空全局 logcat。Feed/Search/Library/账号与 tracked 来源旅程由 `.ad` 执行并单独输出 `DEVICE_REPLAY_PASS`；任一证据失败都不能宣称完整通过。
 - 实时来源只断言关键字段存在且结果可打开，不固定结果数量；本批次触及某个来源时，再按 `docs/testing-standard.md` 做该来源的登录态或原站专项验收。
 - smoke 不执行回复、编辑、删除、上传、点赞、投票、收藏切换、清除登录或其他真实写操作。

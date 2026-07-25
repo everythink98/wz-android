@@ -1038,6 +1038,14 @@ internal class OwnedProxyServerRegistry {
     }
   }
 
+  fun ifLatestOwner(owner: Long, onLatest: () -> Unit): Boolean = synchronized(lock) {
+    if (owner != latestOwner) {
+      return@synchronized false
+    }
+    onLatest()
+    true
+  }
+
   fun begin(owner: Long, onBegin: () -> Unit): LocalNetworkProxyServer? = synchronized(lock) {
     check(owner == latestOwner) { "代理 bridge 已失效" }
     val previous = server

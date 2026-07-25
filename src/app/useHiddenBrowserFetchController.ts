@@ -5,6 +5,11 @@ import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '../localHtml';
 export const NODESEEK_BROWSER_FETCH_SCRIPT = `
 (() => {
   const requestId = __NODESEEK_BROWSER_FETCH_ID__;
+  const requestOwner = __NODESEEK_BROWSER_FETCH_OWNER__;
+  if (window.__wzNodeSeekBrowserFetchRequestId === requestId) {
+    return;
+  }
+  window.__wzNodeSeekBrowserFetchRequestId = requestId;
   const bridgeMessageLimit = 900000;
   const challengeTitlePattern = /^\s*(?:just a moment|checking your browser|attention required|verify you are human|请稍候|正在进行安全验证|请完成验证)[.!…\s]*$/i;
   const challengeHeadingPattern = challengeTitlePattern;
@@ -29,6 +34,40 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       || /没有找到|没有结果|暂无|未找到|no results|nothing found/i.test(pageText()));
   const hasNodeSeekSearchResultLinks = () => /\\/search\\/?$/i.test(location.pathname || "")
     && Array.from(document.querySelectorAll('a[href*="post-"]')).some((link) => /nodeseek\\.com|post-\\d+-\\d+/i.test(link.href || ""));
+  const hasAccountEvidence = () => {
+    const config = window.__config__ && typeof window.__config__ === "object"
+      ? window.__config__
+      : null;
+    const configUser = config
+      && window.__config__.user && typeof window.__config__.user === "object"
+      ? window.__config__.user
+      : null;
+    const configUserId = Number(configUser && (
+      configUser.member_id || configUser.uid || configUser.id || configUser.userId || configUser.user_id
+    ));
+    const configUsername = String(configUser && (
+      configUser.member_name || configUser.username || configUser.name || configUser.displayName
+    ) || "").trim();
+    if ((Number.isInteger(configUserId) && configUserId > 0 && configUsername)
+      || document.querySelector('a.Username[href*="/space/"], .Username a[href*="/space/"], a[href*="/api/account/signOut"]')) {
+      return true;
+    }
+    if (config && Object.prototype.hasOwnProperty.call(config, "user") && config.user === null) {
+      return true;
+    }
+    const guestKinds = new Set(Array.from(document.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]')).flatMap((link) => {
+      const href = String(link.getAttribute("href") || "").trim();
+      const label = String(link.textContent || "").trim();
+      if (/^\\/(?:login|signin|sign-in)(?:\\.html?)?(?:[/?#]|$)/i.test(href) && /^(?:登录|sign in|log in)$/i.test(label)) {
+        return ["login"];
+      }
+      if (/^\\/(?:register|signup|sign-up)(?:\\.html?)?(?:[/?#]|$)/i.test(href) && /^(?:注册|sign up|register)$/i.test(label)) {
+        return ["register"];
+      }
+      return [];
+    }));
+    return guestKinds.has("login") && guestKinds.has("register");
+  };
   const isNodeSeekPostPage = () => /\\/post-\\d+-\\d+\\/?$/i.test(location.pathname || "");
   const base64Json = (value) => {
     const json = JSON.stringify(value);
@@ -176,7 +215,15 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   const postResult = () => {
     const challenge = !hasReadablePage() && isChallengePage();
     const json = jsonText();
-    const compactHtml = challenge ? "" : embeddedPostDataHtml();
+    const anonymousAccountHtml = !challenge
+      && requestOwner === "account"
+      && window.__config__
+      && typeof window.__config__ === "object"
+      && Object.prototype.hasOwnProperty.call(window.__config__, "user")
+      && window.__config__.user === null
+      ? '<html><head><meta name="nodeseekAccountState" content="anonymous"></head><body></body></html>'
+      : "";
+    const compactHtml = challenge ? "" : (anonymousAccountHtml || embeddedPostDataHtml());
     postBridgeMessage({
       type: 'nodeseek-browser-fetch',
       id: requestId,
@@ -192,6 +239,14 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
+    if (requestOwner === "account") {
+      if (hasAccountEvidence() || isChallengePage() || Date.now() >= deadline) {
+        postResult();
+        return;
+      }
+      setTimeout(waitForReadablePage, 500);
+      return;
+    }
     if (jsonText()) {
       postResult();
       return;

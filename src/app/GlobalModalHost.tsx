@@ -1,4 +1,4 @@
-import { useMemo, type RefObject } from 'react';
+import type { RefObject } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { ImagePreviewModal } from '../components/ImagePreviewModal';
@@ -9,7 +9,6 @@ import type { LoginNavigationRequest } from '../appTypes';
 import { MemoizedLinuxDoVerifyModal } from './LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '../siteSessionState';
 import type { createStyles, ReaderTheme } from '../theme';
-import { nodeImageApiKeyProbeScript, type NodeImageAuthPayload } from '../loginWebViewScripts';
 
 export function GlobalModalHost({
   checking,
@@ -30,7 +29,6 @@ export function GlobalModalHost({
   loadingNodeImageAuthPage,
   mountLinuxDoWebView,
   nodeImageAuthError,
-  nodeImageAuthPayload,
   nodeImageAuthUrl,
   nodeImageAuthWebViewRef,
   nodeSeekMediaUserAgent,
@@ -39,6 +37,8 @@ export function GlobalModalHost({
   clearLinuxDoCookie,
   handleNodeImageAuthMessage,
   handleNodeImageAuthNavigation,
+  handleNodeImageAuthDocumentLoaded,
+  handleNodeImageAuthDocumentStarted,
   handleCredentialLoginFormMessage,
   setLinuxDoWebViewErrorForSession,
   setLoadingLinuxDoPageForSession,
@@ -75,7 +75,6 @@ export function GlobalModalHost({
   loadingNodeImageAuthPage: boolean;
   mountLinuxDoWebView: boolean;
   nodeImageAuthError: string;
-  nodeImageAuthPayload: NodeImageAuthPayload | null;
   nodeImageAuthUrl: string;
   nodeImageAuthWebViewRef: RefObject<WebView | null>;
   nodeSeekMediaUserAgent?: string;
@@ -84,6 +83,8 @@ export function GlobalModalHost({
   clearLinuxDoCookie: () => void;
   handleNodeImageAuthMessage: (event: WebViewMessageEvent) => void;
   handleNodeImageAuthNavigation: (request: LoginNavigationRequest) => boolean;
+  handleNodeImageAuthDocumentLoaded: (url: string) => void;
+  handleNodeImageAuthDocumentStarted: (url: string) => void;
   handleCredentialLoginFormMessage: (event: WebViewMessageEvent) => boolean;
   setLinuxDoWebViewErrorForSession: (value: string, webViewKey?: number, credentialAttempt?: number) => void;
   setLoadingLinuxDoPageForSession: (value: boolean, webViewKey?: number) => void;
@@ -102,10 +103,6 @@ export function GlobalModalHost({
   theme: ReaderTheme;
   webViewBlockMessage: string;
 }) {
-  const nodeImageProbeScript = useMemo(() => (
-    nodeImageApiKeyProbeScript(nodeImageAuthPayload)
-  ), [nodeImageAuthPayload]);
-
   return (
     <>
       <MemoizedLinuxDoVerifyModal
@@ -159,17 +156,17 @@ export function GlobalModalHost({
             sharedCookiesEnabled
             thirdPartyCookiesEnabled
             setSupportMultipleWindows={false}
-            injectedJavaScript={nodeImageProbeScript}
-            onLoadStart={() => {
+            onLoadStart={(event) => {
               setNodeImageAuthError('');
               setLoadingNodeImageAuthPage(true);
+              handleNodeImageAuthDocumentStarted(event.nativeEvent.url);
             }}
             onLoadEnd={(event) => {
               setLoadingNodeImageAuthPage(false);
               if ('code' in event.nativeEvent) {
                 return;
               }
-              nodeImageAuthWebViewRef.current?.injectJavaScript(nodeImageProbeScript);
+              handleNodeImageAuthDocumentLoaded(event.nativeEvent.url);
             }}
             onMessage={handleNodeImageAuthMessage}
             onError={(event) => {

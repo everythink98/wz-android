@@ -10,10 +10,15 @@ import {
 } from '../linuxdoSession';
 import { useCommitRefValue } from './useCommittedRef';
 import type { Fetcher } from '../request';
-import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
+import {
+  createNodeSeekWebViewFallbackFetcher,
+  isNodeSeekBrowserFetchUrl,
+  isNodeSeekBrowserResultUrl
+} from '../nodeseekFetchFallback';
 import {
   createLinuxDoWebViewFallbackFetcher,
   isLinuxDoBrowserFetchUrl,
+  isLinuxDoBrowserResultUrl,
   isLinuxDoRequestUrl,
   LinuxDoHiddenBrowserFailureError,
   type LinuxDoHiddenBrowserFailureReason
@@ -34,7 +39,7 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticTrace
 } from '../diagnostics';
-import { appQueryClient, initialForumSessionEpochs } from './serverState';
+import { appQueryClient, type ForumSessionEpochs } from './serverState';
 import {
   createSiteSessionViewModels,
   createSiteSessionStates,
@@ -67,6 +72,7 @@ export type NodeSeekBrowserFetchRequest = {
   id: number;
   url: string;
   userAgent?: string;
+  owner?: BrowserFetchIntent['owner'];
 };
 
 type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
@@ -88,6 +94,7 @@ export type LinuxDoBrowserFetchRequest = {
   id: number;
   url: string;
   userAgent?: string;
+  owner?: BrowserFetchIntent['owner'];
 };
 
 type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
@@ -164,6 +171,7 @@ function finishBrowserFetchSuccess(
 
 export function useSessionController({
   defaultFetcher = fetch,
+  forumSessionEpochsRef,
   linuxDoBrowserWebViewRef,
   linuxDoWebViewUserAgentRef,
   nodeSeekBrowserWebViewRef,
@@ -175,6 +183,7 @@ export function useSessionController({
   webLoginDetectedRef
 }: {
   defaultFetcher?: Fetcher;
+  forumSessionEpochsRef: MutableRef<ForumSessionEpochs>;
   linuxDoBrowserWebViewRef: WebViewStopRef;
   linuxDoWebViewUserAgentRef: MutableRef<string>;
   nodeSeekBrowserWebViewRef: WebViewStopRef;
@@ -199,8 +208,9 @@ export function useSessionController({
   const linuxDoCredentialGateRef = useRef(createCredentialWriteGate());
   const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
   const [siteSessionStates, setSiteSessionStates] = useState(() => createSiteSessionStates());
-  const [forumSessionEpochs, setForumSessionEpochs] = useState(initialForumSessionEpochs);
-  const forumSessionEpochsRef = useRef(initialForumSessionEpochs);
+  const [forumSessionEpochs, setForumSessionEpochs] = useState(
+    forumSessionEpochsRef.current
+  );
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
 
   const invalidateForumSourceQueryScope = useCallback((
@@ -353,7 +363,7 @@ export function useSessionController({
 
   const nodeSeekFetchWithWebView: Fetcher = useCallback(async (input, init) => {
     const url = String(input);
-    if (!isNodeSeekRequestUrl(url)) {
+    if (!isNodeSeekBrowserFetchUrl(url)) {
       return defaultFetcher(input, init);
     }
     const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
@@ -419,7 +429,7 @@ export function useSessionController({
     if (!current || data.id !== current.id) {
       return;
     }
-    if (!data.url || !isNodeSeekBrowserFetchUrl(data.url)) {
+    if (!data.url || !isNodeSeekBrowserResultUrl(data.url, current.url)) {
       rejectNodeSeekBrowserFetch(current, 'NodeSeek 页面跳转到外部地址，已停止读取');
       return;
     }
@@ -598,7 +608,7 @@ export function useSessionController({
     if (!current || data.id !== current.id) {
       return;
     }
-    if (!data.url || !isLinuxDoBrowserFetchUrl(data.url)) {
+    if (!data.url || !isLinuxDoBrowserResultUrl(data.url, current.url)) {
       rejectLinuxDoBrowserFetch(current, 'linux.do 页面跳转到外部地址，已停止读取');
       return;
     }
@@ -781,6 +791,7 @@ export function useSessionController({
     },
     markLinuxDoBrowserFetchHttpError,
     markNodeSeekBrowserFetchHttpError,
+    invalidateForumSourceQueryScope,
     siteSessionStates,
     siteSessionViewModels,
     updateLinuxDoSession,

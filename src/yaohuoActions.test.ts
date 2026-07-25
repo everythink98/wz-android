@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildYaohuoDeleteFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
@@ -13,9 +13,46 @@ function bodyParams(body?: string) {
 }
 
 describe('yaohuo action request builders', () => {
-  it('extracts sidyaohuo from a saved cookie header', () => {
+  it('[REG-ACCOUNT-036] extracts exactly one active sidyaohuo from duplicate Cookie scopes', () => {
     expect(extractYaohuoSid('ASP.NET_SessionId=session; sidyaohuo=abc123; GUID=guid')).toBe('abc123');
-    expect(extractYaohuoSid('GUID=guid')).toBe('');
+    expect(extractYaohuoSid('sidyaohuo=-2; SIDYAOHUO=abc123; sidyaohuo=abc123')).toBe('abc123');
+    expect(extractYaohuoSid('sidyaohuo= ; sidyaohuo=-2; GUID=guid')).toBe('');
+  });
+
+  it('[REG-ACCOUNT-036] refuses conflicting active sidyaohuo values before reply or delete transport', () => {
+    const cookieHeader = 'sidyaohuo=first-session; SIDYAOHUO=second-session';
+    const transport = vi.fn();
+    const submitReply = () => transport(buildYaohuoReplyRequest({
+      topicId: '123',
+      classId: '177',
+      content: '正文',
+      sid: extractYaohuoSid(cookieHeader)
+    }));
+    const submitDelete = () => transport(buildYaohuoDeleteReplyRequest({
+      deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&lpage=1&page=1&reid=17080475&id=798458',
+      sid: extractYaohuoSid(cookieHeader)
+    }));
+
+    expect(submitReply).toThrow('妖火登录状态存在冲突，请重新检测登录状态');
+    expect(submitDelete).toThrow('妖火登录状态存在冲突，请重新检测登录状态');
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('[REG-ACCOUNT-036] propagates the unique active sid to reply body and delete URL', () => {
+    const sid = extractYaohuoSid('sidyaohuo=-2; SIDYAOHUO=active-session');
+    const reply = buildYaohuoReplyRequest({
+      topicId: '123',
+      classId: '177',
+      content: '正文',
+      sid
+    });
+    const deletion = buildYaohuoDeleteReplyRequest({
+      deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&lpage=1&page=1&reid=17080475&id=798458',
+      sid
+    });
+
+    expect(bodyParams(reply.body).get('sid')).toBe('active-session');
+    expect(new URLSearchParams(deletion.path.split('?')[1] || '').get('sid')).toBe('active-session');
   });
 
   it('builds a topic reply request using yaohuo form fields', () => {

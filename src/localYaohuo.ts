@@ -34,9 +34,29 @@ function hasYaohuoContentSurface(html: string) {
     || /href=["'][^"']*(?:\/bbs-|book_view)/i.test(html);
 }
 
+export function isYaohuoLoginFormHtml(html: string, responseUrl = '') {
+  try {
+    const expected = new URL(YAOHUO_LOGIN_URL);
+    const actual = new URL(responseUrl);
+    if (actual.username
+      || actual.password
+      || actual.origin !== expected.origin
+      || actual.pathname !== expected.pathname
+      || actual.search !== expected.search) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  const form = parseHtml(html).querySelector('form[name="login"]');
+  return String(form?.getAttribute('method') || '').toLowerCase() === 'post'
+    && Boolean(form?.querySelector('#logname[name="logname"]'))
+    && Boolean(form?.querySelector('#password[name="logpass"]'));
+}
+
 export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
   const visibleText = textContentFromHtml(html);
-  return /waplogin\.aspx/i.test(responseUrl)
+  return isYaohuoLoginFormHtml(html, responseUrl)
     || isYaohuoVerificationRequiredHtml(html)
     || (!hasYaohuoContentSurface(html) && (
       /身份失效了，请重新登录网站|请先登录网站/.test(html)
@@ -51,6 +71,15 @@ export function isYaohuoVerificationRequiredHtml(html: string) {
     || /<(?:form|input|img|iframe|div)\b[^>]*(?:id|class|name|src)=["'][^"']*(?:captcha|Gocaptcha|ImageCaptcha)[^"']*["'][^>]*>/i.test(html);
 }
 
+export function yaohuoLoginRequirementReason(html: string, responseUrl = '') {
+  if (!isYaohuoLoginRequiredHtml(html, responseUrl)) {
+    return undefined;
+  }
+  return isYaohuoLoginFormHtml(html, responseUrl) || !isYaohuoVerificationRequiredHtml(html)
+    ? 'expired' as const
+    : 'verification' as const;
+}
+
 function loginRequiredError(reason = 'expired') {
   const error = new Error(reason === 'missing_cookie' ? '请先登录妖火' : reason === 'verification' ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录');
   Object.assign(error, {
@@ -63,8 +92,9 @@ function loginRequiredError(reason = 'expired') {
 }
 
 export function ensureYaohuoHtmlLoggedIn(html: string, responseUrl = '') {
-  if (isYaohuoLoginRequiredHtml(html, responseUrl)) {
-    throw loginRequiredError(isYaohuoVerificationRequiredHtml(html) ? 'verification' : 'expired');
+  const reason = yaohuoLoginRequirementReason(html, responseUrl);
+  if (reason) {
+    throw loginRequiredError(reason);
   }
 }
 
@@ -1062,10 +1092,10 @@ export function parseYaohuoSearchHtml(html: string, options: { classId?: string;
 }
 
 export function checkYaohuoLoginHtml(html: string, url?: string) {
-  const loginRequired = isYaohuoLoginRequiredHtml(html, url);
+  const loginReason = yaohuoLoginRequirementReason(html, url);
+  const loginRequired = Boolean(loginReason);
   const currentUser = loginRequired ? null : parseYaohuoCurrentUserHtml(html, url);
-  const verificationRequired = loginRequired && isYaohuoVerificationRequiredHtml(html);
-  const reason = loginRequired ? (verificationRequired ? 'verification' : 'expired') : currentUser ? undefined : 'unknown';
+  const reason = loginReason || (currentUser ? undefined : 'unknown');
   return {
     source: 'yaohuo' as const,
     ok: Boolean(currentUser),
@@ -1074,7 +1104,7 @@ export function checkYaohuoLoginHtml(html: string, url?: string) {
     ...(currentUser ? { currentUser } : {}),
     loginUrl: YAOHUO_LOGIN_URL,
     message: loginRequired
-      ? (verificationRequired ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录。')
+      ? (loginReason === 'verification' ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录。')
       : currentUser ? undefined : '妖火登录状态暂时无法确认。'
   };
 }

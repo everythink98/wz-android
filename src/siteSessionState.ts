@@ -1,5 +1,5 @@
 import { sessionSources, type SessionSource } from './sourceCatalog';
-import type { FeedSource, UserProfile } from './types';
+import type { UserProfile } from './types';
 
 export type SessionSite = SessionSource;
 export { sessionSources };
@@ -16,7 +16,6 @@ export type SiteSessionState = {
 };
 
 export type SiteSessionStates = Record<SessionSite, SiteSessionState>;
-export type DevAnonymousOverrides = Partial<Record<SessionSite, boolean>>;
 export type SiteSessionViewModel = {
   site: SessionSite;
   status: SiteSessionStatus;
@@ -76,30 +75,6 @@ function currentUserForSite(site: SessionSite, currentUser: UserProfile | null |
     ...currentUser,
     topics: []
   };
-}
-
-export function applyDevAnonymousOverrides(states: SiteSessionStates, overrides: DevAnonymousOverrides = {}): SiteSessionStates {
-  if (!sessionSources.some((site) => overrides[site])) {
-    return states;
-  }
-  return Object.fromEntries(sessionSources.map((site) => [
-    site,
-    overrides[site] ? createSiteState(site, 'anonymous') : states[site]
-  ])) as SiteSessionStates;
-}
-
-export function applyDevAnonymousViewModelOverrides(viewModels: SiteSessionViewModels, overrides: DevAnonymousOverrides = {}): SiteSessionViewModels {
-  if (!sessionSources.some((site) => overrides[site])) {
-    return viewModels;
-  }
-  return Object.fromEntries(sessionSources.map((site) => [
-    site,
-    overrides[site] ? createSiteSessionViewModel(createSiteState(site, 'anonymous')) : viewModels[site]
-  ])) as SiteSessionViewModels;
-}
-
-export function isDevAnonymousSource(source: FeedSource, site: SessionSite, overrides: DevAnonymousOverrides = {}) {
-  return Boolean(overrides[site] && (source === 'all' || source === site));
 }
 
 function stateWithCookieFacts(state: SiteSessionState, event: {

@@ -1,3 +1,5 @@
+import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from './appUrls';
+
 export const NODESEEK_LOGIN_PROBE_SCRIPT = `
 (() => {
   const probeId = Number(window.__WZ_NODESEEK_LOGIN_PROBE_ID__);
@@ -111,6 +113,7 @@ export function linuxDoWebViewProbeScript(probeId: number) {
 }
 
 const NODEIMAGE_API_BASE_URL = 'https://api.nodeimage.com';
+const NODEIMAGE_AUTH_NONCE_PATTERN = /^[0-9a-f]{32}$/;
 
 export type NodeImageAuthPayload = {
   data: unknown;
@@ -118,32 +121,39 @@ export type NodeImageAuthPayload = {
   sign: unknown;
 };
 
-export function nodeImageApiKeyProbeScript(authPayload?: NodeImageAuthPayload | null) {
-  const payloadScript = authPayload
-    ? `window.__wzNodeImageAuthPayload = ${safeInjectedJson(authPayload)};`
-    : '';
-  return `${payloadScript}\n${NODEIMAGE_API_KEY_PROBE_SCRIPT}`;
-}
-
-export const NODEIMAGE_API_KEY_PROBE_SCRIPT = `
+export function nodeSeekNodeImageAuthScript(nonce: string) {
+  const safeNonce = requiredNodeImageAuthNonce(nonce);
+  return `
 (() => {
-  const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify(payload));
-  const nodeImageApiBaseUrl = "${NODEIMAGE_API_BASE_URL}";
-  const host = String(location.hostname || "").toLowerCase();
-  const isNodeSeekConnectPage = () => {
-    if (host !== "nodeseek.com" && host !== "www.nodeseek.com") {
-      return false;
-    }
-    if (!/\\/connect\\b/i.test(location.pathname || "") || !/target=NodeImage/i.test(location.search || "")) {
-      return false;
-    }
-    return true;
-  };
-  const requestNodeSeekAuthData = async () => {
-    if (window.__wzNodeImageAuthDataRequested) {
+  const nonce = ${safeInjectedJson(safeNonce)};
+  const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify({
+    ...payload,
+    nonce
+  }));
+  if (window.top !== window) {
+    return;
+  }
+  let pageUrl;
+  try {
+    pageUrl = new URL(String(location.href || ""));
+  } catch {
+    return;
+  }
+  if (
+    pageUrl.protocol !== "https:"
+    || pageUrl.username
+    || pageUrl.password
+    || pageUrl.port
+    || pageUrl.href !== ${safeInjectedJson(NODEIMAGE_AUTH_URL)}
+  ) {
+    return;
+  }
+  let requested = false;
+  const requestAuthData = async () => {
+    if (requested) {
       return;
     }
-    window.__wzNodeImageAuthDataRequested = true;
+    requested = true;
     try {
       const response = await fetch("/api/cAuth?target=NodeImage", {
         credentials: "include",
@@ -164,31 +174,65 @@ export const NODEIMAGE_API_KEY_PROBE_SCRIPT = `
         sign: data.sign
       });
     } catch (error) {
-      post({ type: "nodeimage-auth-error", error: String(error && error.message || error || "unknown") });
+      post({
+        type: "nodeimage-auth-error",
+        error: String(error && error.message || error || "unknown")
+      });
     }
   };
-  if (isNodeSeekConnectPage()) {
-    void requestNodeSeekAuthData();
+  void requestAuthData();
+})();
+true;
+`;
+}
+
+export function nodeImageAuthPayloadScript(
+  nonce: string,
+  authPayload: NodeImageAuthPayload
+) {
+  const safeNonce = requiredNodeImageAuthNonce(nonce);
+  return `
+(() => {
+  const nonce = ${safeInjectedJson(safeNonce)};
+  const authPayload = ${safeInjectedJson(authPayload)};
+  const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify({
+    ...payload,
+    nonce
+  }));
+  const nodeImageApiBaseUrl = "${NODEIMAGE_API_BASE_URL}";
+  if (window.top !== window) {
     return;
   }
-  if (host !== "nodeimage.com" && host !== "www.nodeimage.com") {
+  let pageUrl;
+  try {
+    pageUrl = new URL(String(location.href || ""));
+  } catch {
+    return;
+  }
+  if (
+    pageUrl.protocol !== "https:"
+    || pageUrl.username
+    || pageUrl.password
+    || pageUrl.port
+    || pageUrl.href !== ${safeInjectedJson(NODEIMAGE_URL)}
+  ) {
     return;
   }
   const readInputKey = () => String(document.querySelector("#apiKeyInput")?.value || "").trim();
+  let verified = false;
   const verifyNodeImageAuth = async () => {
-    const payload = window.__wzNodeImageAuthPayload;
-    if (!payload || window.__wzNodeImageAuthVerified) {
+    if (verified) {
       return true;
     }
-    window.__wzNodeImageAuthVerified = true;
+    verified = true;
     const response = await fetch(nodeImageApiBaseUrl + "/api/auth/verify", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        data: payload.data,
-        wtf: payload.wtf,
-        sign: payload.sign
+        data: authPayload.data,
+        wtf: authPayload.wtf,
+        sign: authPayload.sign
       })
     });
     if (response.ok) {
@@ -235,7 +279,16 @@ export const NODEIMAGE_API_KEY_PROBE_SCRIPT = `
 })();
 true;
 `;
+}
 
 function safeInjectedJson(value: unknown) {
   return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
+function requiredNodeImageAuthNonce(nonce: string) {
+  const value = String(nonce || '').trim();
+  if (!NODEIMAGE_AUTH_NONCE_PATTERN.test(value)) {
+    throw new Error('NodeImage authorization nonce must contain 128 bits');
+  }
+  return value;
 }

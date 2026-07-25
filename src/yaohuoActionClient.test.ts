@@ -53,7 +53,7 @@ describe('runYaohuoAction', () => {
         'sec-ch-ua-platform': expect.anything()
       })
     }));
-    expect(result.message).toBe('评论成功');
+    expect(result).toMatchObject({ status: 'confirmed', message: '评论成功' });
     expect(JSON.stringify(result)).not.toContain('secret');
   });
 
@@ -84,8 +84,11 @@ describe('runYaohuoAction', () => {
       body: undefined,
       signal: expect.any(AbortSignal)
     }));
-    expect(result.message).toBe('收藏成功');
-    expect(result.favoriteId).toBe(987);
+    expect(result).toMatchObject({
+      status: 'confirmed',
+      message: '收藏成功',
+      favoriteId: 987
+    });
   });
 
   it('REG-WRITE-003 confirms original favorite cancellation from the JSON response', async () => {
@@ -104,7 +107,7 @@ describe('runYaohuoAction', () => {
       'https://www.yaohuo.me/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
       expect.objectContaining({ method: 'POST', body: undefined })
     );
-    expect(result).toMatchObject({ ok: true, message: '已取消原站收藏' });
+    expect(result).toMatchObject({ status: 'confirmed', message: '已取消原站收藏' });
   });
 
   it('does not clear the favorite style when original cancellation is rejected', async () => {
@@ -147,10 +150,10 @@ describe('runYaohuoAction', () => {
       method: 'GET',
       body: undefined
     }));
-    expect(result.message).toBe('删除成功');
+    expect(result).toMatchObject({ status: 'confirmed', message: '删除成功' });
   });
 
-  it('[REG-WRITE-012] does not report a reply deleted when its confirmation link is missing', async () => {
+  it('[REG-WRITE-012][REG-WRITE-025] marks a reply deletion unknown when its confirmation link is missing', async () => {
     const fetcher = vi.fn(async (url: string) => htmlResponse(`
       <html><body>
         <div>论坛回复 删除操作</div>
@@ -166,7 +169,10 @@ describe('runYaohuoAction', () => {
     });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
+    expect(result).toMatchObject({
+      status: 'unknown',
+      message: '操作结果无法确认，请刷新原帖核对'
+    });
   });
 
   it('does not report long full pages without a tip as submitted', async () => {
@@ -186,7 +192,10 @@ describe('runYaohuoAction', () => {
       fetcher
     });
 
-    expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
+    expect(result).toMatchObject({
+      status: 'unknown',
+      message: '操作结果无法确认，请刷新原帖核对'
+    });
   });
 
   it('does not treat a cross-origin favorites path as a successful favorite', async () => {
@@ -203,7 +212,10 @@ describe('runYaohuoAction', () => {
       fetcher
     });
 
-    expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
+    expect(result).toMatchObject({
+      status: 'unknown',
+      message: '操作结果无法确认，请刷新原帖核对'
+    });
   });
 
   it('keeps short yaohuo action text when no tip wrapper exists', async () => {
@@ -218,7 +230,29 @@ describe('runYaohuoAction', () => {
       fetcher
     });
 
-    expect(result.message).toBe('评论成功');
+    expect(result).toMatchObject({ status: 'confirmed', message: '评论成功' });
+  });
+
+  it.each([
+    ['empty', '<html></html>'],
+    ['unrecognized short', '<html>请求处理中</html>'],
+    ['ambiguous success wording', '<html>评论成功了吗</html>']
+  ])('[REG-WRITE-025] marks %s action text unknown without a success oracle', async (_kind, html) => {
+    const fetcher = vi.fn(async () => htmlResponse(html));
+
+    const result = await runYaohuoAction({
+      request: buildYaohuoReplyRequest({
+        topicId: '123',
+        classId: '177',
+        content: '谢谢分享'
+      }),
+      fetcher
+    });
+
+    expect(result).toEqual({
+      status: 'unknown',
+      message: '操作结果无法确认，请刷新原帖核对'
+    });
   });
 
   it('rejects short yaohuo failure tips', async () => {
@@ -283,7 +317,13 @@ describe('runYaohuoAction', () => {
   });
 
   it('surfaces login and captcha pages as a relogin flow', async () => {
-    const loginFetcher = vi.fn(async () => htmlResponse('<html>请先登录网站</html>', 200, 'https://www.yaohuo.me/waplogin.aspx?siteid=1000'));
+    const loginFetcher = vi.fn(async () => htmlResponse(`
+      <script src="/NetCSS/CSS/Login/Gocaptcha/gocaptcha.global.js"></script>
+      <form name="login" method="post">
+        <input id="logname" name="logname" />
+        <input id="password" name="logpass" type="password" />
+      </form>
+    `, 200, 'https://www.yaohuo.me/waplogin.aspx?siteid=1000'));
     await expect(runYaohuoAction({
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher: loginFetcher

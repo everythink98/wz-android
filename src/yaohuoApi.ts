@@ -13,6 +13,7 @@ import {
 import {
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
+  YAOHUO_LOGIN_URL,
   requireYaohuoRequestUrl
 } from './localYaohuoHelpers';
 import {
@@ -273,5 +274,14 @@ export async function checkYaohuoLoginDirect({
     timeoutMs,
     validateLogin: false
   });
-  return checkYaohuoLoginHtml(page.html, page.url);
+  const check = checkYaohuoLoginHtml(page.html, page.url);
+  if (check.ok || check.loginRequired) {
+    return check;
+  }
+  const loginPage = await fetchYaohuoHtml(YAOHUO_LOGIN_URL, yaohuoFetcher, {
+    signal,
+    timeoutMs,
+    validateLogin: false
+  });
+  return checkYaohuoLoginHtml(loginPage.html, loginPage.url);
 }

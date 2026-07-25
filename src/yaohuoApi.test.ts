@@ -473,6 +473,53 @@ describe('Android direct yaohuo API', () => {
     expect(result.currentUser).toBeUndefined();
   });
 
+  it('[REG-ACCOUNT-037] confirms a Yaohuo guest from the exact login form after an ambiguous public page', async () => {
+    const yaohuoFetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
+        return new Response('<div class="listdata"><a href="/bbs-123.html">公开主题</a></div>');
+      }
+      if (input === 'https://www.yaohuo.me/waplogin.aspx?siteid=1000') {
+        return new Response(`
+          <script src="/NetCSS/CSS/Login/Gocaptcha/gocaptcha.global.js"></script>
+          <form name="login" method="post">
+            <input id="logname" name="logname" />
+            <input id="password" name="logpass" type="password" />
+          </form>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(checkYaohuoLoginDirect({ yaohuoFetcher })).resolves.toMatchObject({
+      ok: false,
+      loginRequired: true,
+      reason: 'expired'
+    });
+    expect(yaohuoFetcher.mock.calls.map(([input]) => input)).toEqual([
+      'https://www.yaohuo.me/wapindex.aspx?sid=-2',
+      'https://www.yaohuo.me/waplogin.aspx?siteid=1000'
+    ]);
+  });
+
+  it('[REG-ACCOUNT-037] keeps an incomplete Yaohuo login page unknown', async () => {
+    const yaohuoFetcher = vi.fn(async (input: string) => (
+      input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2'
+        ? new Response('<div class="listdata"><a href="/bbs-123.html">公开主题</a></div>')
+        : new Response(`
+          <form name="login" method="post">
+            <input id="logname" name="logname" />
+          </form>
+        `)
+    ));
+
+    await expect(checkYaohuoLoginDirect({ yaohuoFetcher })).resolves.toMatchObject({
+      ok: false,
+      loginRequired: false,
+      reason: 'unknown'
+    });
+    expect(yaohuoFetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('[REG-ACCOUNT-020] recognizes the complete Yaohuo self-account navigation returned to a logged-in WebView', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response(`
       <div class="top2">

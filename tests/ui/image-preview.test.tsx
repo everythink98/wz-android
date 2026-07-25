@@ -180,6 +180,52 @@ describe('Image preview', () => {
     expect(view.getByTestId('active-preview-image').props.source.headers).not.toHaveProperty('Cookie');
   });
 
+  it('[REG-ACCOUNT-029] changes the same preview source and recycling key when the media epoch changes', async () => {
+    const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
+    const callbacks = {
+      onClose: jest.fn(),
+      onNext: jest.fn(),
+      onPrevious: jest.fn(),
+      onSave: jest.fn(),
+      onSelect: jest.fn()
+    };
+    const view = await render(
+      <ImagePreviewModal
+        preview={{ urls: [imageUrl], index: 0 }}
+        mediaSessionIdentity="nodeseek:4"
+        nodeSeekMediaUserAgent="WZ-Preview-Test"
+        styles={styles}
+        theme={theme}
+        {...callbacks}
+      />
+    );
+    const epochFourImage = view.getByTestId('active-preview-image');
+    const epochFourSource = epochFourImage.props.source;
+    expect(epochFourImage.props.recyclingKey).toBe(`nodeseek:4:${imageUrl}:native`);
+    expect(epochFourSource).toEqual(expect.objectContaining({
+      cacheKey: `nodeseek:4:${imageUrl}`
+    }));
+
+    await view.rerender(
+      <ImagePreviewModal
+        preview={{ urls: [imageUrl], index: 0 }}
+        mediaSessionIdentity="nodeseek:5"
+        nodeSeekMediaUserAgent="WZ-Preview-Test"
+        styles={styles}
+        theme={theme}
+        {...callbacks}
+      />
+    );
+
+    const epochFiveImage = view.getByTestId('active-preview-image');
+    expect(epochFiveImage.props.recyclingKey).toBe(`nodeseek:5:${imageUrl}:native`);
+    expect(epochFiveImage.props.source).toEqual(expect.objectContaining({
+      cacheKey: `nodeseek:5:${imageUrl}`
+    }));
+    expect(epochFiveImage.props.source).not.toBe(epochFourSource);
+    expect(epochFiveImage.props.source.headers).not.toHaveProperty('Cookie');
+  });
+
   it('REG-TOPIC-020 recovers incompatible SVG thumbnails before they are selected', async () => {
     const firstUrl = 'https://example.com/dynamic-thumbnail-one.png';
     const secondUrl = 'https://example.com/dynamic-thumbnail-two.png';
