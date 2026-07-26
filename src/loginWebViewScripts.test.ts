@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LINUXDO_WEBVIEW_PROBE_SCRIPT,
   NODESEEK_LOGIN_PROBE_SCRIPT,
-  nodeImageAuthPayloadScript
+  nodeImageAuthPayloadScript,
+  nodeImageSessionScript
 } from './loginWebViewScripts';
 
 const NODEIMAGE_AUTH_NONCE = '00112233445566778899aabbccddeeff';
@@ -292,6 +293,144 @@ function runNodeImageApiKeyProbe(html: string, fetchMock: typeof fetch) {
 
   return postMessage;
 }
+
+function runNodeImageSessionProbe(html: string, fetchMock: typeof fetch) {
+  window.history.pushState(null, '', '/');
+  document.body.innerHTML = html;
+  const postMessage = vi.fn();
+  Object.defineProperty(window, 'ReactNativeWebView', {
+    configurable: true,
+    value: { postMessage }
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  window.eval(nodeImageSessionScript(NODEIMAGE_AUTH_NONCE));
+
+  return postMessage;
+}
+
+describe('NodeImage existing-session probe script', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('[REG-ACCOUNT-038] reuses an authenticated NodeImage session without requesting NodeSeek Connect', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      api_key: ' existing-secret '
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })) as unknown as typeof fetch;
+    const postMessage = runNodeImageSessionProbe('', fetchMock);
+
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nodeimage.com/api/user/api-key',
+      expect.objectContaining({
+        credentials: 'include',
+        headers: { Accept: 'application/json' }
+      })
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/cAuth'),
+      expect.anything()
+    );
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+      type: 'nodeimage-session-key',
+      nonce: NODEIMAGE_AUTH_NONCE,
+      data: { api_key: ' existing-secret ' }
+    });
+  });
+
+  it('[REG-ACCOUNT-038] reports only the verified anonymous JSON contract as an expired session', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      error: '未认证，请先通过NodeSeek授权登录'
+    }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' }
+    })) as unknown as typeof fetch;
+    const postMessage = runNodeImageSessionProbe('', fetchMock);
+
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+      type: 'nodeimage-session-expired',
+      nonce: NODEIMAGE_AUTH_NONCE,
+      status: 401
+    });
+  });
+
+  it('[REG-ACCOUNT-038] keeps the rendered API key input as the existing-session fallback', async () => {
+    const fetchMock = vi.fn() as unknown as typeof fetch;
+    const postMessage = runNodeImageSessionProbe(
+      '<input id="apiKeyInput" value="dom-session-secret">',
+      fetchMock
+    );
+
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+      type: 'nodeimage-session-key',
+      nonce: NODEIMAGE_AUTH_NONCE,
+      apiKey: 'dom-session-secret'
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Cloudflare HTML 403', () => new Response('<html>challenge</html>', {
+      status: 403,
+      headers: { 'Content-Type': 'text/html' }
+    }), 403],
+    ['server JSON 500', () => new Response(JSON.stringify({ error: 'temporary' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    }), 500],
+    ['successful JSON without a key', () => new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    }), 200],
+    ['invalid JSON 401', () => new Response('{', {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    }), 401]
+  ] as const)(
+    '[REG-ACCOUNT-038] does not turn %s into a Connect attempt',
+    async (_label, responseFactory, status) => {
+      const fetchMock = vi.fn(async () => responseFactory()) as unknown as typeof fetch;
+      const postMessage = runNodeImageSessionProbe('', fetchMock);
+
+      await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+      expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+        type: 'nodeimage-session-error',
+        nonce: NODEIMAGE_AUTH_NONCE,
+        status
+      });
+    }
+  );
+
+  it('[REG-ACCOUNT-038] stops on a session-probe network error without Connect', async () => {
+    const fetchMock = vi.fn(async () => {
+      document.body.innerHTML = '<input id="apiKeyInput" value="late-dom-key">';
+      throw new Error('network unavailable');
+    }) as unknown as typeof fetch;
+    const postMessage = runNodeImageSessionProbe('', fetchMock);
+
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toMatchObject({
+      type: 'nodeimage-session-error',
+      nonce: NODEIMAGE_AUTH_NONCE
+    });
+  });
+});
 
 describe('NodeImage API key WebView probe script', () => {
   afterEach(() => {

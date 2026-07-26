@@ -1,6 +1,11 @@
 import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from './appUrls';
+import type { NodeImageAuthPayload } from './loginWebViewScripts';
+import { nodeImageApiKeyFromResponse } from './replyImageUpload';
 
-export type NodeImageAuthPhase = 'nodeseek-cauth' | 'nodeimage-payload';
+export type NodeImageAuthPhase =
+  | 'nodeimage-session'
+  | 'nodeseek-cauth'
+  | 'nodeimage-verify';
 
 const NODEIMAGE_NONCE_BYTES = 16;
 
@@ -92,9 +97,10 @@ export async function createNodeImageAuthNonce(
   return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
-export function nodeImageAuthPhaseForTopLevelUrl(
+export function nodeImageAuthPhaseMatchesTopLevelUrl(
+  phase: NodeImageAuthPhase,
   rawUrl: string
-): NodeImageAuthPhase | null {
+): boolean {
   try {
     const value = String(rawUrl || '');
     if (
@@ -102,7 +108,7 @@ export function nodeImageAuthPhaseForTopLevelUrl(
       || !/^https:\/\//i.test(value)
       || rawAuthorityHasUserinfo(value)
     ) {
-      return null;
+      return false;
     }
     const url = new URL(value);
     if (
@@ -112,20 +118,232 @@ export function nodeImageAuthPhaseForTopLevelUrl(
       || url.port
       || url.hash
     ) {
-      return null;
+      return false;
     }
-    if (
-      url.href === NODEIMAGE_AUTH_URL
-    ) {
-      return 'nodeseek-cauth';
-    }
-    if (
-      url.href === NODEIMAGE_URL
-    ) {
-      return 'nodeimage-payload';
-    }
+    return phase === 'nodeseek-cauth'
+      ? url.href === NODEIMAGE_AUTH_URL
+      : url.href === NODEIMAGE_URL;
   } catch {
-    return null;
+    return false;
+  }
+}
+
+export function nodeImageAuthFlowCanAcceptMessage(
+  flow: {
+    credentialGeneration: number;
+    ownerIdentityKey: string | null;
+    ownerSessionEpoch: number | null;
+    terminal: boolean;
+  },
+  runtime: {
+    identityKey: string;
+    identityTrust: string;
+    sessionEpoch: number;
+  },
+  credentialGeneration: number
+) {
+  return !flow.terminal
+    && Boolean(flow.ownerIdentityKey)
+    && flow.ownerSessionEpoch !== null
+    && runtime.identityTrust === 'confirmed'
+    && runtime.identityKey === flow.ownerIdentityKey
+    && runtime.sessionEpoch === flow.ownerSessionEpoch
+    && credentialGeneration === flow.credentialGeneration;
+}
+
+export function terminateNodeImageAuthFlow(flow: { terminal: boolean }) {
+  if (flow.terminal) {
+    return false;
+  }
+  flow.terminal = true;
+  return true;
+}
+
+export function claimNodeImageConnectAttempt(flow: { connectStarted: boolean }) {
+  if (flow.connectStarted) {
+    return false;
+  }
+  flow.connectStarted = true;
+  return true;
+}
+
+export async function processNodeImageAuthMessage(
+  flow: {
+    connectStarted: boolean;
+    credentialGeneration: number;
+    nonce: string;
+    ownerIdentityKey: string | null;
+    ownerSessionEpoch: number | null;
+    payload: NodeImageAuthPayload | null;
+    phase: NodeImageAuthPhase;
+    terminal: boolean;
+  },
+  message: { data: string; url: string },
+  runtime: {
+    identityKey: string;
+    identityTrust: string;
+    sessionEpoch: number;
+  },
+  credentialGeneration: number,
+  effects: {
+    complete: (apiKey: string) => void | Promise<void>;
+    connectTarget: { postMessage: (message: string) => void } | null;
+    fail: (message: string) => void;
+    mark: (
+      state: 'connect-finished' | 'connect-started' | 'session-expired' | 'session-reused'
+    ) => void;
+    mountCurrentPhase: () => void;
+  }
+) {
+  if (flow.terminal) {
+    return;
+  }
+  const fail = (error: string) => {
+    if (terminateNodeImageAuthFlow(flow)) {
+      effects.fail(error);
+    }
+  };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(message.data);
+  } catch {
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return;
+  }
+  const data = parsed as Record<string, unknown>;
+  if (data.nonce !== flow.nonce) {
+    return;
+  }
+  if (!nodeImageAuthPhaseMatchesTopLevelUrl(flow.phase, message.url)) {
+    return;
+  }
+  const messageType = String(data.type || '');
+  const expectedMessage = flow.phase === 'nodeimage-session'
+    ? [
+        'nodeimage-session-key',
+        'nodeimage-session-expired',
+        'nodeimage-session-error'
+      ].includes(messageType)
+    : flow.phase === 'nodeseek-cauth'
+      ? [
+          'nodeimage-connect-ready',
+          'nodeimage-auth-data',
+          'nodeimage-auth-error'
+        ].includes(messageType)
+      : messageType === 'nodeimage-api-key';
+  if (!expectedMessage) {
+    return;
+  }
+  if (!nodeImageAuthFlowCanAcceptMessage(flow, runtime, credentialGeneration)) {
+    fail('NodeSeek 身份、会话或 NodeImage 凭据已变化，请关闭后重试。');
+    return;
+  }
+  if (flow.phase === 'nodeimage-session') {
+    if (messageType === 'nodeimage-session-key') {
+      const apiKey = nodeImageApiKeyFromResponse(data);
+      if (!apiKey) {
+        fail('NodeImage 登录态已响应，但未返回 API Key；请关闭后重试或手动粘贴。');
+        return;
+      }
+      effects.mark('session-reused');
+      if (terminateNodeImageAuthFlow(flow)) {
+        await effects.complete(apiKey);
+      }
+      return;
+    }
+    if (messageType === 'nodeimage-session-expired') {
+      if (data.status !== 401) {
+        fail('NodeImage 登录态返回了未识别的失效结果，请关闭后重试。');
+        return;
+      }
+      const nextPhase = nextNodeImageAuthPhase(flow.phase, messageType);
+      if (!nextPhase) {
+        return;
+      }
+      effects.mark('session-expired');
+      flow.phase = nextPhase;
+      effects.mountCurrentPhase();
+      return;
+    }
+    if (messageType === 'nodeimage-session-error') {
+      fail('NodeImage 登录态暂时无法确认；请关闭后重试或手动粘贴 API Key。');
+    }
+    return;
+  }
+  if (flow.phase === 'nodeseek-cauth') {
+    if (messageType === 'nodeimage-connect-ready') {
+      if (
+        !effects.connectTarget
+        || !claimNodeImageConnectAttempt(flow)
+      ) {
+        return;
+      }
+      effects.mark('connect-started');
+      effects.connectTarget.postMessage(JSON.stringify({
+        nonce: flow.nonce,
+        type: 'nodeimage-connect-start'
+      }));
+      return;
+    }
+    if (!flow.connectStarted) {
+      return;
+    }
+    if (messageType === 'nodeimage-auth-error') {
+      fail(String(data.error || 'NodeSeek Connect 失败'));
+      return;
+    }
+    if (messageType !== 'nodeimage-auth-data') {
+      return;
+    }
+    const payload = {
+      data: data.data,
+      wtf: data.wtf,
+      sign: data.sign
+    };
+    if (payload.data == null || !payload.wtf || !payload.sign) {
+      fail('NodeSeek Connect 返回缺少必要信息。');
+      return;
+    }
+    const nextPhase = nextNodeImageAuthPhase(flow.phase, messageType);
+    if (!nextPhase) {
+      return;
+    }
+    flow.payload = payload;
+    flow.phase = nextPhase;
+    effects.mark('connect-finished');
+    effects.mountCurrentPhase();
+    return;
+  }
+  if (messageType !== 'nodeimage-api-key' || !flow.payload) {
+    return;
+  }
+  const apiKey = nodeImageApiKeyFromResponse(data);
+  if (!apiKey) {
+    fail(String(data.error || 'NodeImage 授权完成，但未返回 API Key。'));
+    return;
+  }
+  if (terminateNodeImageAuthFlow(flow)) {
+    await effects.complete(apiKey);
+  }
+}
+
+export function nextNodeImageAuthPhase(
+  phase: NodeImageAuthPhase,
+  messageType: string
+): NodeImageAuthPhase | null {
+  if (
+    phase === 'nodeimage-session'
+    && messageType === 'nodeimage-session-expired'
+  ) {
+    return 'nodeseek-cauth';
+  }
+  if (
+    phase === 'nodeseek-cauth'
+    && messageType === 'nodeimage-auth-data'
+  ) {
+    return 'nodeimage-verify';
   }
   return null;
 }

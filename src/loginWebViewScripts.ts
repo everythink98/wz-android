@@ -121,6 +121,81 @@ export type NodeImageAuthPayload = {
   sign: unknown;
 };
 
+export function nodeImageSessionScript(nonce: string) {
+  const safeNonce = requiredNodeImageAuthNonce(nonce);
+  return `
+(() => {
+  const nonce = ${safeInjectedJson(safeNonce)};
+  const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify({
+    ...payload,
+    nonce
+  }));
+  if (window.top !== window) {
+    return;
+  }
+  let pageUrl;
+  try {
+    pageUrl = new URL(String(location.href || ""));
+  } catch {
+    return;
+  }
+  if (
+    pageUrl.protocol !== "https:"
+    || pageUrl.username
+    || pageUrl.password
+    || pageUrl.port
+    || pageUrl.href !== ${safeInjectedJson(NODEIMAGE_URL)}
+  ) {
+    return;
+  }
+  const readInputKey = () => String(document.querySelector("#apiKeyInput")?.value || "").trim();
+  const readResponseKey = (data) => {
+    if (!data || typeof data !== "object") {
+      return "";
+    }
+    const nested = data.data && typeof data.data === "object" ? data.data : {};
+    return String(data.api_key || data.apiKey || nested.api_key || nested.apiKey || "").trim();
+  };
+  const renderedApiKey = readInputKey();
+  if (renderedApiKey) {
+    post({ type: "nodeimage-session-key", apiKey: renderedApiKey });
+    return;
+  }
+  (async () => {
+    try {
+      const response = await fetch("${NODEIMAGE_API_BASE_URL}/api/user/api-key", {
+        credentials: "include",
+        headers: { Accept: "application/json" }
+      });
+      const data = await response.json().catch(() => null);
+      if (response.ok && readResponseKey(data)) {
+        post({ type: "nodeimage-session-key", data });
+        return;
+      }
+      const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+      if (
+        response.status === 401
+        && contentType.includes("application/json")
+        && data
+        && typeof data.error === "string"
+        && data.error.trim()
+      ) {
+        post({ type: "nodeimage-session-expired", status: response.status });
+        return;
+      }
+      post({ type: "nodeimage-session-error", status: response.status });
+    } catch (error) {
+      post({
+        type: "nodeimage-session-error",
+        error: String(error && error.message || error || "unknown")
+      });
+    }
+  })();
+})();
+true;
+`;
+}
+
 export function nodeSeekNodeImageAuthScript(nonce: string) {
   const safeNonce = requiredNodeImageAuthNonce(nonce);
   return `
@@ -149,11 +224,16 @@ export function nodeSeekNodeImageAuthScript(nonce: string) {
     return;
   }
   let requested = false;
+  const removeStartListeners = () => {
+    window.removeEventListener("message", handleStart);
+    document.removeEventListener("message", handleStart);
+  };
   const requestAuthData = async () => {
     if (requested) {
       return;
     }
     requested = true;
+    removeStartListeners();
     try {
       const response = await fetch("/api/cAuth?target=NodeImage", {
         credentials: "include",
@@ -180,7 +260,27 @@ export function nodeSeekNodeImageAuthScript(nonce: string) {
       });
     }
   };
-  void requestAuthData();
+  function handleStart(event) {
+    let message = event && event.data;
+    if (typeof message === "string") {
+      try {
+        message = JSON.parse(message);
+      } catch {
+        return;
+      }
+    }
+    if (
+      !message
+      || message.type !== "nodeimage-connect-start"
+      || message.nonce !== nonce
+    ) {
+      return;
+    }
+    void requestAuthData();
+  }
+  window.addEventListener("message", handleStart);
+  document.addEventListener("message", handleStart);
+  post({ type: "nodeimage-connect-ready" });
 })();
 true;
 `;

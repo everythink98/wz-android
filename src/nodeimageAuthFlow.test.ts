@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  claimNodeImageConnectAttempt,
   closeNodeImageAuthOpening,
   createNodeImageAuthNonce,
-  nodeImageAuthPhaseForTopLevelUrl,
+  nextNodeImageAuthPhase,
+  nodeImageAuthFlowCanAcceptMessage,
+  nodeImageAuthPhaseMatchesTopLevelUrl,
+  processNodeImageAuthMessage,
   runNodeImageAuthOpening,
-  runNodeImageAuthSingleFlight
+  runNodeImageAuthSingleFlight,
+  terminateNodeImageAuthFlow,
+  type NodeImageAuthPhase
 } from './nodeimageAuthFlow';
 
 describe('NodeImage authorization flow', () => {
@@ -117,12 +123,14 @@ describe('NodeImage authorization flow', () => {
   });
 
   it.each([
-    ['https://www.nodeseek.com/connect?target=NodeImage', 'nodeseek-cauth'],
-    ['https://www.nodeseek.com:443/connect?target=NodeImage', 'nodeseek-cauth'],
-    ['https://www.nodeimage.com/', 'nodeimage-payload'],
-    ['https://www.nodeimage.com:443/', 'nodeimage-payload']
-  ] as const)('accepts only an exact top-level phase URL: %s', (url, phase) => {
-    expect(nodeImageAuthPhaseForTopLevelUrl(url)).toBe(phase);
+    ['nodeimage-session', 'https://www.nodeimage.com/'],
+    ['nodeimage-session', 'https://www.nodeimage.com:443/'],
+    ['nodeseek-cauth', 'https://www.nodeseek.com/connect?target=NodeImage'],
+    ['nodeseek-cauth', 'https://www.nodeseek.com:443/connect?target=NodeImage'],
+    ['nodeimage-verify', 'https://www.nodeimage.com/'],
+    ['nodeimage-verify', 'https://www.nodeimage.com:443/']
+  ] as const)('accepts only the exact URL for phase %s: %s', (phase, url) => {
+    expect(nodeImageAuthPhaseMatchesTopLevelUrl(phase, url)).toBe(true);
   });
 
   it.each([
@@ -150,6 +158,231 @@ describe('NodeImage authorization flow', () => {
     'https://www.nodeimage.com/#',
     'not a URL'
   ])('rejects a non-exact or unsafe phase URL: %s', (url) => {
-    expect(nodeImageAuthPhaseForTopLevelUrl(url)).toBeNull();
+    expect(nodeImageAuthPhaseMatchesTopLevelUrl('nodeimage-session', url)).toBe(false);
+    expect(nodeImageAuthPhaseMatchesTopLevelUrl('nodeseek-cauth', url)).toBe(false);
+    expect(nodeImageAuthPhaseMatchesTopLevelUrl('nodeimage-verify', url)).toBe(false);
+  });
+
+  it('REG-ACCOUNT-038 only enters Connect after an explicit expired-session result', () => {
+    expect(nextNodeImageAuthPhase('nodeimage-session', 'nodeimage-session-expired')).toBe(
+      'nodeseek-cauth'
+    );
+    expect(nextNodeImageAuthPhase('nodeimage-session', 'nodeimage-session-key')).toBeNull();
+    expect(nextNodeImageAuthPhase('nodeimage-session', 'nodeimage-session-error')).toBeNull();
+    expect(nextNodeImageAuthPhase('nodeseek-cauth', 'nodeimage-auth-data')).toBe(
+      'nodeimage-verify'
+    );
+    expect(nextNodeImageAuthPhase('nodeseek-cauth', 'nodeimage-auth-error')).toBeNull();
+    expect(nextNodeImageAuthPhase('nodeimage-verify', 'nodeimage-api-key')).toBeNull();
+  });
+
+  it('REG-ACCOUNT-038 rejects late messages after owner, epoch, generation, or terminal changes', () => {
+    const flow = {
+      credentialGeneration: 7,
+      ownerIdentityKey: 'nodeseek:42',
+      ownerSessionEpoch: 3,
+      terminal: false
+    };
+    const runtime = {
+      identityKey: 'nodeseek:42',
+      identityTrust: 'confirmed' as const,
+      sessionEpoch: 3
+    };
+
+    expect(nodeImageAuthFlowCanAcceptMessage(flow, runtime, 7)).toBe(true);
+    expect(nodeImageAuthFlowCanAcceptMessage(
+      flow,
+      { ...runtime, identityKey: 'nodeseek:99' },
+      7
+    )).toBe(false);
+    expect(nodeImageAuthFlowCanAcceptMessage(
+      flow,
+      { ...runtime, sessionEpoch: 4 },
+      7
+    )).toBe(false);
+    expect(nodeImageAuthFlowCanAcceptMessage(
+      flow,
+      { ...runtime, identityTrust: 'pending' },
+      7
+    )).toBe(false);
+    expect(nodeImageAuthFlowCanAcceptMessage(flow, runtime, 8)).toBe(false);
+
+    expect(terminateNodeImageAuthFlow(flow)).toBe(true);
+    expect(terminateNodeImageAuthFlow(flow)).toBe(false);
+    expect(nodeImageAuthFlowCanAcceptMessage(flow, runtime, 7)).toBe(false);
+  });
+
+  it('REG-ACCOUNT-038 grants one native Connect attempt across repeated document readiness', () => {
+    const flow = { connectStarted: false };
+
+    expect(claimNodeImageConnectAttempt(flow)).toBe(true);
+    expect(claimNodeImageConnectAttempt(flow)).toBe(false);
+  });
+
+  it('REG-ACCOUNT-038 completes an existing NodeImage session without Connect and settles once', async () => {
+    const flow = {
+      connectStarted: false,
+      credentialGeneration: 7,
+      nonce: '00112233445566778899aabbccddeeff',
+      ownerIdentityKey: 'nodeseek:42',
+      ownerSessionEpoch: 3,
+      payload: null,
+      phase: 'nodeimage-session' as const,
+      terminal: false
+    };
+    const connectTarget = { postMessage: vi.fn() };
+    const effects = {
+      complete: vi.fn(async () => undefined),
+      connectTarget,
+      fail: vi.fn(),
+      mark: vi.fn(),
+      mountCurrentPhase: vi.fn()
+    };
+    const message = {
+      data: JSON.stringify({
+        api_key: 'session-key',
+        nonce: flow.nonce,
+        type: 'nodeimage-session-key'
+      }),
+      url: 'https://www.nodeimage.com/'
+    };
+    const runtime = {
+      identityKey: 'nodeseek:42',
+      identityTrust: 'confirmed',
+      sessionEpoch: 3
+    };
+
+    await processNodeImageAuthMessage(flow, {
+      data: '{',
+      url: 'https://www.nodeimage.com/'
+    }, runtime, 7, effects);
+    await processNodeImageAuthMessage(flow, {
+      data: 'null',
+      url: 'https://www.nodeimage.com/'
+    }, runtime, 7, effects);
+    await processNodeImageAuthMessage(flow, {
+      data: '[]',
+      url: 'https://www.nodeimage.com/'
+    }, runtime, 7, effects);
+    await processNodeImageAuthMessage(flow, {
+      data: JSON.stringify({
+        api_key: 'untrusted-key',
+        type: 'nodeimage-session-key'
+      }),
+      url: 'https://www.nodeimage.com/'
+    }, runtime, 7, effects);
+    await processNodeImageAuthMessage(flow, message, runtime, 7, effects);
+    await processNodeImageAuthMessage(flow, message, runtime, 7, effects);
+
+    expect(effects.complete).toHaveBeenCalledTimes(1);
+    expect(effects.complete).toHaveBeenCalledWith('session-key');
+    expect(effects.mark).toHaveBeenCalledWith('session-reused');
+    expect(effects.mountCurrentPhase).not.toHaveBeenCalled();
+    expect(connectTarget.postMessage).not.toHaveBeenCalled();
+    expect(effects.fail).not.toHaveBeenCalled();
+    expect(flow.terminal).toBe(true);
+  });
+
+  it('REG-ACCOUNT-038 drives one Connect through verify, then ignores every late result', async () => {
+    const flow = {
+      connectStarted: false,
+      credentialGeneration: 7,
+      nonce: '00112233445566778899aabbccddeeff',
+      ownerIdentityKey: 'nodeseek:42',
+      ownerSessionEpoch: 3,
+      payload: null,
+      phase: 'nodeimage-session' as NodeImageAuthPhase,
+      terminal: false
+    };
+    const connectTarget = { postMessage: vi.fn() };
+    const effects = {
+      complete: vi.fn(async () => undefined),
+      connectTarget,
+      fail: vi.fn(),
+      mark: vi.fn(),
+      mountCurrentPhase: vi.fn()
+    };
+    const runtime = {
+      identityKey: 'nodeseek:42',
+      identityTrust: 'confirmed',
+      sessionEpoch: 3
+    };
+    const send = (type: string, data: Record<string, unknown> = {}) => (
+      processNodeImageAuthMessage(flow, {
+        data: JSON.stringify({ ...data, nonce: flow.nonce, type }),
+        url: flow.phase === 'nodeseek-cauth'
+          ? 'https://www.nodeseek.com/connect?target=NodeImage'
+          : 'https://www.nodeimage.com/'
+      }, runtime, 7, effects)
+    );
+
+    await send('nodeimage-session-expired', { status: 401 });
+    await send('nodeimage-connect-ready');
+    await send('nodeimage-connect-ready');
+    await send('nodeimage-auth-data', {
+      data: 'auth-data',
+      sign: 'auth-sign',
+      wtf: 'auth-wtf'
+    });
+    await send('nodeimage-api-key', { apiKey: 'verified-key' });
+    await send('nodeimage-api-key', { apiKey: 'late-key' });
+
+    expect(connectTarget.postMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(connectTarget.postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+      nonce: flow.nonce,
+      type: 'nodeimage-connect-start'
+    });
+    expect(effects.mountCurrentPhase).toHaveBeenCalledTimes(2);
+    expect(effects.mark.mock.calls.map(([state]) => state)).toEqual([
+      'session-expired',
+      'connect-started',
+      'connect-finished'
+    ]);
+    expect(effects.complete).toHaveBeenCalledTimes(1);
+    expect(effects.complete).toHaveBeenCalledWith('verified-key');
+    expect(effects.fail).not.toHaveBeenCalled();
+    expect(flow.phase).toBe('nodeimage-verify');
+    expect(flow.terminal).toBe(true);
+  });
+
+  it('REG-ACCOUNT-038 terminates an unknown session result before a late expired message', async () => {
+    const flow = {
+      connectStarted: false,
+      credentialGeneration: 7,
+      nonce: '00112233445566778899aabbccddeeff',
+      ownerIdentityKey: 'nodeseek:42',
+      ownerSessionEpoch: 3,
+      payload: null,
+      phase: 'nodeimage-session' as NodeImageAuthPhase,
+      terminal: false
+    };
+    const connectTarget = { postMessage: vi.fn() };
+    const effects = {
+      complete: vi.fn(async () => undefined),
+      connectTarget,
+      fail: vi.fn(),
+      mark: vi.fn(),
+      mountCurrentPhase: vi.fn()
+    };
+    const runtime = {
+      identityKey: 'nodeseek:42',
+      identityTrust: 'confirmed',
+      sessionEpoch: 3
+    };
+    const send = (type: string, data: Record<string, unknown> = {}) => (
+      processNodeImageAuthMessage(flow, {
+        data: JSON.stringify({ ...data, nonce: flow.nonce, type }),
+        url: 'https://www.nodeimage.com/'
+      }, runtime, 7, effects)
+    );
+
+    await send('nodeimage-session-expired', { status: 403 });
+    await send('nodeimage-session-expired', { status: 401 });
+
+    expect(effects.fail).toHaveBeenCalledTimes(1);
+    expect(effects.mountCurrentPhase).not.toHaveBeenCalled();
+    expect(connectTarget.postMessage).not.toHaveBeenCalled();
+    expect(effects.complete).not.toHaveBeenCalled();
+    expect(flow.terminal).toBe(true);
   });
 });

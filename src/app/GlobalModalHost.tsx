@@ -1,14 +1,19 @@
 import type { RefObject } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { ImagePreviewModal } from '../components/ImagePreviewModal';
-import { AppButton } from '../components/AppControls';
 import { LoginWebViewModal } from '../components/LoginWebViewModal';
 import type { ImagePreviewList } from '../htmlImages';
 import type { LoginNavigationRequest } from '../appTypes';
 import { MemoizedLinuxDoVerifyModal } from './LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '../siteSessionState';
 import type { createStyles, ReaderTheme } from '../theme';
+
+export type NodeImageAuthDocument = {
+  injectedJavaScript: string;
+  key: string;
+  url: string;
+};
 
 export function GlobalModalHost({
   checking,
@@ -28,8 +33,8 @@ export function GlobalModalHost({
   loadingLinuxDoPage,
   loadingNodeImageAuthPage,
   mountLinuxDoWebView,
+  nodeImageAuthDocument,
   nodeImageAuthError,
-  nodeImageAuthUrl,
   nodeImageAuthWebViewRef,
   nodeSeekMediaUserAgent,
   resetLinuxDoWebView,
@@ -37,8 +42,6 @@ export function GlobalModalHost({
   clearLinuxDoCookie,
   handleNodeImageAuthMessage,
   handleNodeImageAuthNavigation,
-  handleNodeImageAuthDocumentLoaded,
-  handleNodeImageAuthDocumentStarted,
   handleCredentialLoginFormMessage,
   setLinuxDoWebViewErrorForSession,
   setLoadingLinuxDoPageForSession,
@@ -74,8 +77,8 @@ export function GlobalModalHost({
   loadingLinuxDoPage: boolean;
   loadingNodeImageAuthPage: boolean;
   mountLinuxDoWebView: boolean;
+  nodeImageAuthDocument: NodeImageAuthDocument | null;
   nodeImageAuthError: string;
-  nodeImageAuthUrl: string;
   nodeImageAuthWebViewRef: RefObject<WebView | null>;
   nodeSeekMediaUserAgent?: string;
   resetLinuxDoWebView: () => void;
@@ -83,8 +86,6 @@ export function GlobalModalHost({
   clearLinuxDoCookie: () => void;
   handleNodeImageAuthMessage: (event: WebViewMessageEvent) => void;
   handleNodeImageAuthNavigation: (request: LoginNavigationRequest) => boolean;
-  handleNodeImageAuthDocumentLoaded: (url: string) => void;
-  handleNodeImageAuthDocumentStarted: (url: string) => void;
   handleCredentialLoginFormMessage: (event: WebViewMessageEvent) => boolean;
   setLinuxDoWebViewErrorForSession: (value: string, webViewKey?: number, credentialAttempt?: number) => void;
   setLoadingLinuxDoPageForSession: (value: boolean, webViewKey?: number) => void;
@@ -135,51 +136,53 @@ export function GlobalModalHost({
       <LoginWebViewModal
         visible={showNodeImageAuthPanel}
         title="NodeImage 授权"
-        subtitle="通过 NodeSeek 授权后自动保存 Key"
+        subtitle="优先复用 NodeImage 登录态，失效时自动连接"
         loading={!webViewBlockMessage && loadingNodeImageAuthPage}
         loadingText="正在打开 NodeImage..."
         error={webViewBlockMessage || nodeImageAuthError}
         styles={styles}
         theme={theme}
         onClose={closeNodeImageAuthPanel}
-        actions={(
-          <View style={styles.actions}>
-            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => nodeImageAuthWebViewRef.current?.reload()} />
-          </View>
-        )}
       >
-        {showNodeImageAuthPanel && !webViewBlockMessage ? (
-          <WebView
-            ref={nodeImageAuthWebViewRef}
-            source={{ uri: nodeImageAuthUrl }}
-            javaScriptCanOpenWindowsAutomatically={false}
-            sharedCookiesEnabled
-            thirdPartyCookiesEnabled
-            setSupportMultipleWindows={false}
-            onLoadStart={(event) => {
-              setNodeImageAuthError('');
-              setLoadingNodeImageAuthPage(true);
-              handleNodeImageAuthDocumentStarted(event.nativeEvent.url);
-            }}
-            onLoadEnd={(event) => {
-              setLoadingNodeImageAuthPage(false);
-              if ('code' in event.nativeEvent) {
-                return;
-              }
-              handleNodeImageAuthDocumentLoaded(event.nativeEvent.url);
-            }}
-            onMessage={handleNodeImageAuthMessage}
-            onError={(event) => {
-              setLoadingNodeImageAuthPage(false);
-              setNodeImageAuthError(`NodeImage 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
-            }}
-            renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-            onRenderProcessGone={() => {
-              setLoadingNodeImageAuthPage(false);
-              setNodeImageAuthError('NodeImage 授权页面已停止，请刷新页面重试。');
-            }}
-            onShouldStartLoadWithRequest={handleNodeImageAuthNavigation}
-          />
+        {showNodeImageAuthPanel && nodeImageAuthDocument && !webViewBlockMessage ? (
+          <>
+            <WebView
+              key={nodeImageAuthDocument.key}
+              ref={nodeImageAuthWebViewRef}
+              source={{ uri: nodeImageAuthDocument.url }}
+              injectedJavaScript={nodeImageAuthDocument.injectedJavaScript}
+              javaScriptCanOpenWindowsAutomatically={false}
+              sharedCookiesEnabled
+              thirdPartyCookiesEnabled
+              setSupportMultipleWindows={false}
+              onLoadStart={() => {
+                setLoadingNodeImageAuthPage(true);
+              }}
+              onLoadEnd={() => {
+                setLoadingNodeImageAuthPage(false);
+              }}
+              onMessage={handleNodeImageAuthMessage}
+              onError={(event) => {
+                setLoadingNodeImageAuthPage(false);
+                setNodeImageAuthError(`NodeImage 页面加载失败：${event.nativeEvent.description || '请检查网络后关闭重试。'}`);
+              }}
+              renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+              onRenderProcessGone={() => {
+                setLoadingNodeImageAuthPage(false);
+                setNodeImageAuthError('NodeImage 授权页面已停止，请关闭后重试。');
+              }}
+              onShouldStartLoadWithRequest={handleNodeImageAuthNavigation}
+            />
+            <View
+              testID="nodeimage-auth-touch-shield"
+              accessible={false}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              pointerEvents="auto"
+              style={StyleSheet.absoluteFillObject}
+              onStartShouldSetResponder={() => true}
+            />
+          </>
         ) : null}
       </LoginWebViewModal>
       <ImagePreviewModal

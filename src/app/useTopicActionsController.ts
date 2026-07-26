@@ -128,6 +128,9 @@ type AttendanceMutationVariables = {
   trace: DiagnosticTrace;
 };
 
+const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE =
+  'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
+
 class HandledMutationError extends Error {
   constructor(
     message: string,
@@ -186,7 +189,7 @@ export function useTopicActionsController({
   sessionEpochs: ForumSessionEpochs;
   discourseActionRuntimeDependencies: DiscourseActionRuntimeDependencies;
   discourseLoginPrompts: Record<DiscourseSource, (message?: string) => void>;
-  ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
+  ensureNodeImageApiKey: () => Promise<string | null>;
   ensureWritableSession: (source: SessionSite) => Promise<WritableSessionTicket>;
   fetcher: Fetcher;
   isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
@@ -789,7 +792,14 @@ export function useTopicActionsController({
           nodeSeekApiKey = await ensureNodeImageApiKey();
           assertWritableTicket(ticket);
           nodeImageGeneration = currentNodeImageApiKeyGeneration();
-          if (!nodeSeekApiKey) throw new HandledMutationError('NodeImage 授权不可用', 'blocked', 'missing_credential');
+          if (!nodeSeekApiKey) {
+            notify(NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE);
+            throw new HandledMutationError(
+              NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE,
+              'blocked',
+              'missing_credential'
+            );
+          }
         }
         const picked = await DocumentPicker.getDocumentAsync({
           type: 'image/*', copyToCacheDirectory: true, multiple: false
@@ -816,17 +826,9 @@ export function useTopicActionsController({
             if (!isNodeImageApiKeyExpiredError(error)) {
               throw error;
             }
-            const refreshed = await ensureNodeImageApiKey({
-              forceRefresh: true,
-              clearOnCancel: true
-            });
-            assertWritableTicket(ticket);
-            const message = refreshed
-              ? 'NodeImage 授权已更新，请重新选择图片上传'
-              : 'NodeImage 授权不可用';
-            notify(message);
+            notify(NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE);
             throw new HandledMutationError(
-              message,
+              NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE,
               'blocked',
               'missing_credential'
             );

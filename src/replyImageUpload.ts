@@ -20,7 +20,7 @@ export const MAX_REPLY_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024;
 const YAOHUO_IMAGE_BED_UPLOAD_URL = 'https://tucdn.wpon.cn/api/upload';
 const NODEIMAGE_UPLOAD_URL = 'https://api.nodeimage.com/api/upload';
 type NodeImageUploadError = Error & { nodeImageApiKeyExpired?: boolean };
-type NodeImageApiKeyProvider = (options?: { forceRefresh?: boolean }) => Promise<string | null | undefined>;
+type NodeImageApiKeyProvider = () => Promise<string | null | undefined>;
 
 export function replyImageUploadSupported(source?: Source) {
   return sourceSupportsTopicAction(source, 'upload');

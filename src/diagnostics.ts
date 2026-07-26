@@ -108,7 +108,7 @@ const stringFieldKeys = new Set([
 ]);
 const closedValues = (...values: string[]) => new Set(values);
 const operationValues = closedValues(
-  'apply', 'attendance', 'bookmark', 'browser-fetch', 'categories', 'check', 'collection',
+  'apply', 'attendance', 'auth', 'bookmark', 'browser-fetch', 'categories', 'check', 'collection',
   'cookie-store-read',
   'clear', 'clear-login-only', 'delete', 'download', 'edit', 'export', 'favorite',
   'getCategories', 'getEmojiUrls', 'getFeed', 'getLevelProfile', 'getReplies',
@@ -129,7 +129,8 @@ const sessionStateValues = closedValues(
 const stateValues = closedValues(
   ...sessionStateValues,
   'active', 'applied', 'applying', 'busy', 'cache-unavailable', 'cached-detail-reused',
-  'cached-quote', 'cleared', 'collapsed', 'complete', 'confirmed', 'current', 'disabled',
+  'cached-quote', 'cleared', 'collapsed', 'complete', 'confirmed', 'connect-finished',
+  'connect-started', 'current', 'disabled',
   'document-picker', 'empty', 'empty-preview', 'error', 'failed', 'failure', 'fallback', 'feed-return',
   'file-readable', 'finish', 'image-auth-panel-closed', 'image-preview-closed',
   'incomplete-user', 'initial', 'installer-opened', 'linuxdo-panel-closed', 'load',
@@ -144,12 +145,13 @@ const stateValues = closedValues(
   'refresh-blocked', 'refresh-canceled', 'refresh-failure', 'refresh-noop',
   'refresh-partial', 'refresh-stale', 'refresh-success', 'refreshed', 'reply-composer-closed',
   'reset', 'restored', 'retry', 'return-screen', 'route-restored', 'same-screen',
-  'same-topic', 'saved', 'session-expired', 'settings-panel-closed', 'share-completed',
+  'same-topic', 'saved', 'session-check', 'session-expired', 'session-reused',
+  'settings-panel-closed', 'share-completed',
   'snapshot-restored', 'start', 'started', 'status-updated', 'success', 'summary', 'system-back',
   'temporary-file', 'topic-back', 'topic-refresh-delegated', 'topic-reload-scheduled',
   'topic-restore-scheduled', 'topic-restored', 'topic-route-activated',
   'topic-route-restored', 'unconfirmed',
-  'timeout', 'unsupported-source', 'update-available', 'user-back', 'waiting-for-save',
+  'key-saved', 'timeout', 'unsupported-source', 'update-available', 'user-back', 'waiting-for-save',
   'yaohuo-panel-closed'
 );
 const requestTypeValues = closedValues(
