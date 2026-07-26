@@ -190,7 +190,7 @@ describe('reply image upload helpers', () => {
 
   it('[REG-WRITE-023] never replays the same NodeImage upload after an authorization failure', async () => {
     const headers: string[] = [];
-    const ensureCalls: Array<{ forceRefresh?: boolean } | undefined> = [];
+    let ensureCalls = 0;
     const fetcher = async (_input: string, init?: RequestInit) => {
       headers.push((init?.headers as Record<string, string>)['X-API-Key']);
       if (headers.length === 1) {
@@ -202,9 +202,9 @@ describe('reply image upload helpers', () => {
     };
 
     await expect(uploadNodeSeekReplyImageWithApiKey({
-      ensureApiKey: async (options) => {
-        ensureCalls.push(options);
-        return options?.forceRefresh ? 'new-secret' : 'old-secret';
+      ensureApiKey: async () => {
+        ensureCalls += 1;
+        return 'old-secret';
       },
       file: {
         uri: 'file:///cache/photo.png',
@@ -219,7 +219,7 @@ describe('reply image upload helpers', () => {
     ));
 
     expect(headers).toEqual(['old-secret']);
-    expect(ensureCalls).toEqual([undefined]);
+    expect(ensureCalls).toBe(1);
   });
 
   it('dry-runs a successful NodeSeek image upload into a floor reply payload without posting it', async () => {

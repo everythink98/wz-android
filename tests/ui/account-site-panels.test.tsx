@@ -301,10 +301,16 @@ describe('Account site panels', () => {
   });
 
   it('validates and routes the NodeImage key without opening a real login page', async () => {
+    const onAuthorizeNodeImageApiKey = jest.fn();
     const onSaveNodeImageApiKey = jest.fn();
-    const view = await render(<NodeSeekLoginPanel {...nodeSeekProps({ onSaveNodeImageApiKey })} />);
+    const view = await render(<NodeSeekLoginPanel {...nodeSeekProps({
+      onAuthorizeNodeImageApiKey,
+      onSaveNodeImageApiKey
+    })} />);
 
     await fireEvent.press(view.getByText('NodeImage API Key'));
+    await fireEvent.press(view.getByLabelText('获取 / 恢复授权'));
+    expect(onAuthorizeNodeImageApiKey).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByLabelText('手动粘贴备用'));
     expect(view.getByLabelText('保存 Key').props.accessibilityState.disabled).toBe(true);
     await fireEvent.changeText(view.getByPlaceholderText('NodeImage API Key'), 'local-test-key');

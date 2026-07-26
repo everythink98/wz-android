@@ -11,7 +11,7 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
     vi.restoreAllMocks();
   });
 
-  it('requests official NodeSeek auth data for NodeImage', async () => {
+  it('requests official NodeSeek auth data only after the native one-shot grant', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,
       data: 'auth-data',
@@ -28,11 +28,34 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
     window.eval(nodeSeekNodeImageAuthScript(AUTH_NONCE));
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+      type: 'nodeimage-connect-ready',
+      nonce: AUTH_NONCE
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
 
+    window.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'nodeimage-connect-start',
+        nonce: 'ffeeddccbbaa99887766554433221100'
+      })
+    }));
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'nodeimage-connect-start',
+        nonce: AUTH_NONCE
+      })
+    }));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith('/api/cAuth?target=NodeImage', expect.objectContaining({
       credentials: 'include'
     }));
-    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+    expect(JSON.parse(postMessage.mock.calls[1]?.[0] || '{}')).toEqual({
       type: 'nodeimage-auth-data',
       nonce: AUTH_NONCE,
       data: 'auth-data',
@@ -81,7 +104,18 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
     window.eval(nodeSeekNodeImageAuthScript(AUTH_NONCE));
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
-    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toMatchObject({
+    const startMessage = new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'nodeimage-connect-start',
+        nonce: AUTH_NONCE
+      })
+    });
+    window.dispatchEvent(startMessage);
+    document.dispatchEvent(startMessage);
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(postMessage.mock.calls[1]?.[0] || '{}')).toMatchObject({
       type: 'nodeimage-auth-error',
       nonce: AUTH_NONCE
     });

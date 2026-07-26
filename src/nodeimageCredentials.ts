@@ -127,17 +127,6 @@ export async function loadNodeImageApiKey() {
   return (await loadNodeImageApiKeyCredential())?.apiKey || '';
 }
 
-export async function saveNodeImageApiKey(value: string) {
-  const apiKey = normalizeNodeImageApiKey(value);
-  if (!apiKey) {
-    throw new Error('请输入 NodeImage API Key');
-  }
-  return replaceCredentialWrite(nodeImageApiKeyWriteGate, async () => {
-    await writeNodeImageCredential(unverifiedNodeImageCredential(apiKey));
-    return apiKey;
-  });
-}
-
 export async function saveNodeImageApiKeyForGeneration(
   generation: number,
   value: string,
@@ -176,38 +165,6 @@ export async function saveNodeImageApiKeyForGeneration(
       return undefined;
     }
     return apiKey;
-  });
-}
-
-export async function restoreNodeImageApiKeyAfterCanceledAuthorization(
-  value: NodeImageApiKeyCredential | string | null
-) {
-  const credential = typeof value === 'string'
-    ? parseNodeImageCredential(value)
-    : value;
-  return replaceCredentialWrite(nodeImageApiKeyWriteGate, async () => {
-    if (credential) {
-      await writeNodeImageCredential(credential);
-    } else {
-      await SecureStore.deleteItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY);
-    }
-    return credential?.apiKey || '';
-  });
-}
-
-export async function confirmNodeImageApiKeyOwnership(identityKey: string) {
-  const ownerIdentityKey = normalizeNodeImageApiKey(identityKey);
-  if (!ownerIdentityKey || ownerIdentityKey.endsWith(':anonymous')) {
-    throw new Error('请先确认 NodeSeek 登录身份');
-  }
-  return replaceCredentialWrite(nodeImageApiKeyWriteGate, async () => {
-    const current = parseNodeImageCredential(
-      await SecureStore.getItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY)
-    );
-    if (!current) return null;
-    const confirmed = verifiedNodeImageCredential(current.apiKey, ownerIdentityKey);
-    await writeNodeImageCredential(confirmed);
-    return confirmed;
   });
 }
 

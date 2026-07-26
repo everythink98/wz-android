@@ -173,10 +173,10 @@ export function NodeSeekLoginPanel({
       />
       {showNodeImagePanel ? (
         <View style={styles.stack}>
-          <Text style={styles.meta}>通过 NodeSeek 授权自动保存；手动粘贴只作备用。</Text>
+          <Text style={styles.meta}>优先复用 NodeImage 登录态；明确失效时才连接 NodeSeek。手动粘贴只作备用。</Text>
           <View style={styles.actions}>
             <AppButton
-              label="自动授权 / 重新授权"
+              label="获取 / 恢复授权"
               styles={styles}
               disabled={nodeImageApiKeyBusy}
               onPress={onAuthorizeNodeImageApiKey}
@@ -763,4 +763,3 @@ function FontScaleSetting({
     </View>
   );
 }
-

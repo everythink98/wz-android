@@ -56,6 +56,40 @@ describe('diagnostic traces', () => {
     ]);
   });
 
+  it('REG-ACCOUNT-038 records only sanitized NodeImage authorization stages', () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('credential', 'auth', {
+      credentialSource: 'nodeimage',
+      nonce: 'nonce-secret',
+      state: 'session-check'
+    });
+
+    for (const state of [
+      'session-expired',
+      'connect-started',
+      'connect-finished',
+      'key-saved'
+    ]) {
+      markDiagnosticStage(trace, 'credential', {
+        apiKey: 'api-key-secret',
+        payload: 'payload-secret',
+        state
+      });
+    }
+    finishDiagnosticTrace(trace, 'success');
+
+    expect(events().flatMap((event) => event.state ? [event.state] : [])).toEqual([
+      'session-check',
+      'session-expired',
+      'connect-started',
+      'connect-finished',
+      'key-saved'
+    ]);
+    expect(JSON.stringify(events())).not.toMatch(
+      /nonce-secret|api-key-secret|payload-secret|nonce|apiKey|payload/
+    );
+  });
+
   it('records only classified request metadata around a fetch', async () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('network', 'request');

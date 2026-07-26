@@ -151,7 +151,7 @@ async function renderActions({
   sessionEpochs?: ForumSessionEpochs;
   dispatchSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
   discourseLoginPrompts?: { linuxdo: (message?: string) => void; xiaoyinsi: (message?: string) => void };
-  ensureNodeImageApiKey?: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
+  ensureNodeImageApiKey?: () => Promise<string | null>;
   ensureWritableSession?: (source: ActionSource) => Promise<WritableSessionTicket>;
   isWritableSessionTicketCurrent?: (ticket: WritableSessionTicket) => boolean;
   notify?: (message: string) => void;
@@ -1697,7 +1697,26 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
   });
 
-  it('[REG-WRITE-023] refreshes rejected NodeImage authorization without replaying the selected upload', async () => {
+  it('[REG-WRITE-023] stops before file selection when the saved NodeImage key is unavailable', async () => {
+    const ensureNodeImageApiKey = jest.fn(async () => null);
+    const notify = jest.fn();
+    seedTopicCache();
+    const hook = await renderActions({ ensureNodeImageApiKey, notify });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('existing draft');
+      await hook.result.current.actions.uploadReplyImage();
+    });
+
+    expect(ensureNodeImageApiKey).toHaveBeenCalledTimes(1);
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
+    expect(notify).toHaveBeenCalledWith(
+      'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴'
+    );
+  });
+
+  it('[REG-WRITE-023] reports a rejected NodeImage key without authorizing or replaying the upload', async () => {
     mockCurrentNodeImageGeneration.mockReturnValue(5);
     mockUploadNodeSeekReplyImage.mockRejectedValueOnce(Object.assign(
       new Error('API Key 无效'),
@@ -1707,9 +1726,7 @@ describe('topic action query mutations', () => {
       canceled: false,
       assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
     });
-    const ensureNodeImageApiKey = jest.fn(async (
-      options?: { forceRefresh?: boolean; clearOnCancel?: boolean }
-    ) => options?.forceRefresh ? 'new-key' : 'old-key');
+    const ensureNodeImageApiKey = jest.fn(async () => 'old-key');
     const notify = jest.fn();
     seedTopicCache();
     const hook = await renderActions({ ensureNodeImageApiKey, notify });
@@ -1722,13 +1739,11 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockUploadNodeSeekReplyImage).toHaveBeenCalledTimes(1);
-    expect(ensureNodeImageApiKey).toHaveBeenNthCalledWith(1);
-    expect(ensureNodeImageApiKey).toHaveBeenNthCalledWith(2, {
-      forceRefresh: true,
-      clearOnCancel: true
-    });
+    expect(ensureNodeImageApiKey).toHaveBeenCalledTimes(1);
     expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
-    expect(notify).toHaveBeenCalledWith('NodeImage 授权已更新，请重新选择图片上传');
+    expect(notify).toHaveBeenCalledWith(
+      'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴'
+    );
     expect(notify).not.toHaveBeenCalledWith('图片已插入');
   });
 
