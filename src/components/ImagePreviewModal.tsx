@@ -6,10 +6,11 @@ import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
 import { createStyles, type ReaderTheme } from '../theme';
-import { cachedCompatibleImageSource, compatibleImageRequestIdentity, recoverCompatibleSvgImageSource } from '../compatibleImageSources';
+import { cachedCompatibleSvgArtifact, compatibleImageRequestIdentity, recoverCompatibleSvgArtifact, refreshCompatibleSvgPoster, type CompatibleSvgArtifact } from '../compatibleImageSources';
 import { useForumMediaRequestContext } from '../mediaSessionEpoch';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
 import { beginDiagnosticTrace, finishDiagnosticTrace, type DiagnosticTrace } from '../diagnostics';
+import { CompatibleSvgDocumentView } from './CompatibleSvgDocumentView';
 
 const EMPTY_PREVIEW_URLS: string[] = [];
 
@@ -51,32 +52,55 @@ function CompatiblePreviewThumbnail({
   const requestIdentity = compatibleImageRequestIdentity(originalSource);
   const requestIdentityRef = useRef(requestIdentity);
   const recoveryIdentityRef = useRef('');
-  const [compatibleSource, setCompatibleSource] = useState<{ requestIdentity: string; source: ImageURISource } | null>(null);
-  const activeFallbackSource = compatibleSource?.requestIdentity === requestIdentity
-    ? compatibleSource.source
-    : cachedCompatibleImageSource(originalSource);
+  const posterRefreshIdentityRef = useRef('');
+  const [compatibleArtifact, setCompatibleArtifact] = useState<CompatibleSvgArtifact | null>(null);
+  const activeArtifact = compatibleArtifact?.requestIdentity === requestIdentity
+    ? compatibleArtifact
+    : cachedCompatibleSvgArtifact(originalSource);
 
   useEffect(() => {
     requestIdentityRef.current = requestIdentity;
     recoveryIdentityRef.current = '';
+    posterRefreshIdentityRef.current = '';
   }, [requestIdentity]);
+
+  const recoverThumbnailArtifact = useCallback(() => {
+    if (recoveryIdentityRef.current === requestIdentity) {
+      return Promise.resolve(null);
+    }
+    recoveryIdentityRef.current = requestIdentity;
+    return recoverCompatibleSvgArtifact(originalSource);
+  }, [originalSource, requestIdentity]);
+
+  const refreshThumbnailPoster = useCallback((artifact: CompatibleSvgArtifact) => {
+    if (posterRefreshIdentityRef.current === requestIdentity) {
+      return Promise.resolve(null);
+    }
+    posterRefreshIdentityRef.current = requestIdentity;
+    return refreshCompatibleSvgPoster(artifact);
+  }, [requestIdentity]);
+
+  const recoverThumbnail = useCallback(async () => {
+    try {
+      const artifact = activeArtifact
+        ? await refreshThumbnailPoster(activeArtifact)
+        : await recoverThumbnailArtifact();
+      if (requestIdentityRef.current === requestIdentity && artifact) {
+        setCompatibleArtifact(artifact);
+      }
+    } catch {
+      // A failed thumbnail stays on the existing image error state; the active preview settles separately.
+    }
+  }, [activeArtifact, recoverThumbnailArtifact, refreshThumbnailPoster, requestIdentity]);
 
   return (
     <ExpoImage
-      source={activeFallbackSource || originalSource}
+      source={activeArtifact?.posterSource || originalSource}
       style={styles.imagePreviewThumbnailImage}
       contentFit="cover"
-      recyclingKey={`thumbnail:${mediaContext.sessionIdentity}:${url}:${activeFallbackSource ? 'compatible' : 'native'}`}
+      recyclingKey={`thumbnail:${mediaContext.sessionIdentity}:${url}:${activeArtifact?.posterRevision ?? 'native'}`}
       onError={() => {
-        if (activeFallbackSource || recoveryIdentityRef.current === requestIdentity) {
-          return;
-        }
-        recoveryIdentityRef.current = requestIdentity;
-        void recoverCompatibleSvgImageSource(originalSource).then((fallbackSource) => {
-          if (requestIdentityRef.current === requestIdentity && fallbackSource) {
-            setCompatibleSource({ requestIdentity, source: fallbackSource });
-          }
-        });
+        void recoverThumbnail();
       }}
     />
   );
@@ -128,7 +152,7 @@ function ImagePreviewModalContent({
     requestIdentity: string;
     trace: DiagnosticTrace;
   } | null>(null);
-  const [compatibleImageSource, setCompatibleImageSource] = useState<{ requestIdentity: string; source: ImageURISource } | null>(null);
+  const [compatibleSvgArtifact, setCompatibleSvgArtifact] = useState<CompatibleSvgArtifact | null>(null);
   const [imageState, setImageState] = useState<{
     request: PreviewRequest | null;
     requestIdentity: string;
@@ -138,11 +162,10 @@ function ImagePreviewModalContent({
   const activeImageState = imageState.request === previewRequest
     ? imageState
     : { request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' as const };
-  const cachedFallbackSource = cachedCompatibleImageSource(originalImageSource);
-  const activeFallbackSource = compatibleImageSource?.requestIdentity === imageRequestIdentity
-    ? compatibleImageSource.source
-    : cachedFallbackSource;
-  const activeImageSource = activeFallbackSource || originalImageSource;
+  const cachedArtifact = cachedCompatibleSvgArtifact(originalImageSource);
+  const activeArtifact = compatibleSvgArtifact?.requestIdentity === imageRequestIdentity
+    ? compatibleSvgArtifact
+    : cachedArtifact;
   const thumbnailItems = useMemo(() => (previewCount ? visibleImagePreviewThumbnails(previewUrls, activeIndex) : []), [activeIndex, previewCount, previewUrls]);
   const currentPreviewTrace = useCallback((fallback = false) => {
     const previous = previewDiagnosticRef.current;
@@ -203,20 +226,90 @@ function ImagePreviewModalContent({
     return () => clearTimeout(timeout);
   }, [activeUri, currentPreviewTrace, imageRequestIdentity, previewRequest]);
 
+  const previewResolution = activeImageState.resolution || activeArtifact?.dimensions || null;
   const imagePreviewSize = useMemo(() => {
-    if (!activeImageState.resolution?.width || !activeImageState.resolution.height) {
+    if (!previewResolution?.width || !previewResolution.height) {
       return { width, height };
     }
-    return fitContainer(activeImageState.resolution.width / activeImageState.resolution.height, { width, height });
-  }, [activeImageState.resolution, height, width]);
+    return fitContainer(previewResolution.width / previewResolution.height, { width, height });
+  }, [height, previewResolution, width]);
 
   const imagePreviewMaxScale = useMemo(() => {
-    if (!activeImageState.resolution?.width || !activeImageState.resolution.height || !imagePreviewSize.width || !imagePreviewSize.height) {
+    if (!previewResolution?.width || !previewResolution.height || !imagePreviewSize.width || !imagePreviewSize.height) {
       return 6;
     }
-    const pixelScale = Math.max(activeImageState.resolution.width / imagePreviewSize.width, activeImageState.resolution.height / imagePreviewSize.height);
+    const pixelScale = Math.max(previewResolution.width / imagePreviewSize.width, previewResolution.height / imagePreviewSize.height);
     return Math.max(3, Math.min(8, pixelScale));
-  }, [activeImageState.resolution, imagePreviewSize]);
+  }, [imagePreviewSize, previewResolution]);
+
+  const settlePreviewLoaded = useCallback((resolution: { height: number; width: number } | null, fallback: boolean) => {
+    if (!mountedRef.current || previewRequest.settled) {
+      return;
+    }
+    previewRequest.settled = true;
+    previewRequest.recovering = false;
+    const diagnostic = currentPreviewTrace(fallback);
+    if (diagnostic) {
+      finishDiagnosticTrace(diagnostic.trace, 'success', {
+        fallback: fallback ? 'svg' : 'none',
+        terminalReason: fallback ? 'fallback-loaded' : 'loaded'
+      });
+      previewDiagnosticRef.current = null;
+    }
+    setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution, status: 'loaded' });
+  }, [currentPreviewTrace, imageRequestIdentity, previewRequest]);
+
+  const settlePreviewFailure = useCallback((fallback: boolean, terminalReason: 'fallback-error' | 'native-error') => {
+    if (!mountedRef.current || previewRequest.settled) {
+      return;
+    }
+    previewRequest.settled = true;
+    previewRequest.recovering = false;
+    const diagnostic = currentPreviewTrace(fallback);
+    if (diagnostic) {
+      finishDiagnosticTrace(diagnostic.trace, 'failure', {
+        fallback: fallback ? 'svg' : 'none',
+        terminalReason
+      });
+      previewDiagnosticRef.current = null;
+    }
+    setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
+  }, [currentPreviewTrace, imageRequestIdentity, previewRequest]);
+
+  const recoverSvgArtifact = useCallback(async () => {
+    if (!mountedRef.current || previewRequest.settled) {
+      return;
+    }
+    if (activeArtifact) {
+      settlePreviewFailure(true, 'fallback-error');
+      return;
+    }
+    if (previewRequest.recovering) {
+      return;
+    }
+    previewRequest.recovering = true;
+    currentPreviewTrace(true);
+    setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' });
+    try {
+      const artifact = await recoverCompatibleSvgArtifact(originalImageSource);
+      if (!mountedRef.current || previewRequest.settled) {
+        return;
+      }
+      if (artifact) {
+        setCompatibleSvgArtifact(artifact);
+        setImageState({
+          request: previewRequest,
+          requestIdentity: imageRequestIdentity,
+          resolution: artifact.dimensions,
+          status: 'loading'
+        });
+        return;
+      }
+      settlePreviewFailure(true, 'native-error');
+    } catch {
+      settlePreviewFailure(true, 'fallback-error');
+    }
+  }, [activeArtifact, currentPreviewTrace, imageRequestIdentity, originalImageSource, previewRequest, settlePreviewFailure]);
 
   if (!preview || previewCount === 0) {
     return null;
@@ -239,105 +332,41 @@ function ImagePreviewModalContent({
         </View>
         <View style={styles.imagePreviewScroll}>
           <ResumableZoom
-            key={previewKey}
+            key={`${previewKey}:${activeArtifact ? 'svg-document' : 'native'}`}
             style={styles.imagePreviewScroll}
             maxScale={imagePreviewMaxScale}
             extendGestures
           >
-            <ExpoImage
-              key={`${imageRequestIdentity}:${activeFallbackSource ? 'compatible' : 'native'}`}
-              contentFit="contain"
-              recyclingKey={`${mediaContext.sessionIdentity}:${activeUri}:${activeFallbackSource ? 'compatible' : 'native'}`}
-              source={activeImageSource}
-              style={[styles.imagePreviewImage, imagePreviewSize]}
-              onLoadStart={() => {
-                if (!mountedRef.current || previewRequest.settled) {
-                  return;
-                }
-                currentPreviewTrace(Boolean(activeFallbackSource));
-                setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' });
-              }}
-              onLoad={(event) => {
-                if (!mountedRef.current || previewRequest.settled) {
-                  return;
-                }
-                const source = event.source;
-                previewRequest.settled = true;
-                previewRequest.recovering = false;
-                const diagnostic = currentPreviewTrace(Boolean(activeFallbackSource));
-                if (diagnostic) {
-                  finishDiagnosticTrace(diagnostic.trace, 'success', {
-                    fallback: activeFallbackSource ? 'svg' : 'none',
-                    terminalReason: activeFallbackSource ? 'fallback-loaded' : 'loaded'
-                  });
-                  previewDiagnosticRef.current = null;
-                }
-                setImageState({
-                  request: previewRequest,
-                  requestIdentity: imageRequestIdentity,
-                  resolution: source.width > 0 && source.height > 0
+            {activeArtifact ? (
+              <CompatibleSvgDocumentView
+                artifact={activeArtifact}
+                style={[styles.imagePreviewImage, imagePreviewSize]}
+                onLoad={() => settlePreviewLoaded(activeArtifact.dimensions, true)}
+                onError={() => settlePreviewFailure(true, 'fallback-error')}
+              />
+            ) : (
+              <ExpoImage
+                key={`${imageRequestIdentity}:native`}
+                contentFit="contain"
+                recyclingKey={`${mediaContext.sessionIdentity}:${activeUri}:native`}
+                source={originalImageSource}
+                style={[styles.imagePreviewImage, imagePreviewSize]}
+                onLoadStart={() => {
+                  if (!mountedRef.current || previewRequest.settled) {
+                    return;
+                  }
+                  currentPreviewTrace(false);
+                  setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' });
+                }}
+                onLoad={(event) => {
+                  const source = event.source;
+                  settlePreviewLoaded(source.width > 0 && source.height > 0
                     ? { width: source.width, height: source.height }
-                    : null,
-                  status: 'loaded'
-                });
-              }}
-              onError={() => {
-                if (!mountedRef.current || previewRequest.settled) {
-                  return;
-                }
-                if (activeFallbackSource) {
-                  previewRequest.settled = true;
-                  previewRequest.recovering = false;
-                  const diagnostic = currentPreviewTrace(true);
-                  if (diagnostic) {
-                    finishDiagnosticTrace(diagnostic.trace, 'failure', { fallback: 'svg', terminalReason: 'fallback-error' });
-                    previewDiagnosticRef.current = null;
-                  }
-                  setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
-                  return;
-                }
-                if (previewRequest.recovering) {
-                  return;
-                }
-                previewRequest.recovering = true;
-                currentPreviewTrace(true);
-                setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' });
-                void recoverCompatibleSvgImageSource(originalImageSource).then((fallbackSource) => {
-                  if (
-                    !mountedRef.current
-                    || previewRequest.settled
-                  ) {
-                    return;
-                  }
-                  if (fallbackSource) {
-                    setCompatibleImageSource({ requestIdentity: imageRequestIdentity, source: fallbackSource });
-                    return;
-                  }
-                  previewRequest.settled = true;
-                  previewRequest.recovering = false;
-                  const diagnostic = currentPreviewTrace(true);
-                  if (diagnostic) {
-                    finishDiagnosticTrace(diagnostic.trace, 'failure', { fallback: 'svg', terminalReason: 'native-error' });
-                    previewDiagnosticRef.current = null;
-                  }
-                  setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
-                }, () => {
-                  if (
-                    mountedRef.current
-                    && !previewRequest.settled
-                  ) {
-                    previewRequest.settled = true;
-                    previewRequest.recovering = false;
-                    const diagnostic = currentPreviewTrace(true);
-                    if (diagnostic) {
-                      finishDiagnosticTrace(diagnostic.trace, 'failure', { fallback: 'svg', terminalReason: 'fallback-error' });
-                      previewDiagnosticRef.current = null;
-                    }
-                    setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
-                  }
-                });
-              }}
-            />
+                    : null, false);
+                }}
+                onError={recoverSvgArtifact}
+              />
+            )}
           </ResumableZoom>
         </View>
         {activeImageState.status === 'loading' ? (

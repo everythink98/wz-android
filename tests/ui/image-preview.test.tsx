@@ -1,12 +1,38 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { NativeModules } from 'react-native';
 import { ImagePreviewModal } from '../../src/components/ImagePreviewModal';
 import { createEmptyReaderData } from '../../src/readerData';
 import { createStyles, createTheme } from '../../src/theme';
 import { ForumSessionEpochProvider } from '../../src/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '../../src/app/serverState';
 import { setDiagnosticWriter } from '../../src/diagnostics';
+
+const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
+  documentHeight: 1025,
+  documentWidth: 920,
+  height: 1025,
+  uri: 'file:///cache/complex-svg-poster.png',
+  width: 920
+}));
+
+async function mockFetchSvgDocument(url: string, headers: Record<string, string>) {
+  const response = await fetch(url, { headers });
+  if (!response.ok || !/(?:image|application)\/svg\+xml/i.test(response.headers.get('content-type') || '')) {
+    return null;
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  return bytes.length <= 1024 * 1024 ? { base64: bytes.toString('base64') } : null;
+}
+
+jest.mock('react-native-webview', () => {
+  const ReactModule = require('react') as typeof React;
+  const { View: NativeView } = require('react-native') as typeof import('react-native');
+  return {
+    WebView: (props: Record<string, unknown>) => ReactModule.createElement(NativeView, props)
+  };
+});
 
 jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
@@ -64,6 +90,14 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
 describe('Image preview', () => {
+  beforeEach(() => {
+    mockRenderSvgPoster.mockClear();
+    NativeModules.SvgRendererModule = {
+      fetchSvgDocument: mockFetchSvgDocument,
+      renderPoster: mockRenderSvgPoster
+    };
+  });
+
   it('REG-TOPIC-031 settles an immediate cache hit instead of restoring the spinner', async () => {
     const view = await render(
       <ImagePreviewModal
@@ -338,15 +372,12 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-018 retries an Android-incompatible remote SVG with the compatible source', async () => {
+  it('REG-TOPIC-018 opens an Android-incompatible SVG in the isolated dynamic document view', async () => {
     const imageUrl = 'https://example.com/dynamic-preview.png';
-    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
-      headers: {
-        get: (name: string) => name.toLowerCase() === 'content-type' ? 'image/svg+xml' : null
-      },
-      ok: true,
-      text: async () => '<svg xmlns="http://www.w3.org/2000/svg"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>'
-    } as Response);
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(
+      '<svg xmlns="http://www.w3.org/2000/svg"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>',
+      { headers: { 'content-type': 'image/svg+xml' } }
+    ));
     try {
       const view = await render(
         <ImagePreviewModal
@@ -363,17 +394,17 @@ describe('Image preview', () => {
 
       await fireEvent(view.getByTestId('active-preview-image'), 'error');
 
-      await waitFor(() => expect(view.getByTestId('active-preview-image').props.source).toEqual(
-        expect.objectContaining({ uri: expect.stringMatching(/^data:image\/svg\+xml;base64,/) })
-      ));
+      await waitFor(() => expect(view.getByTestId('compatible-svg-document-view')).toBeTruthy());
+      expect(view.queryByTestId('active-preview-image')).toBeNull();
+      expect(view.getAllByTestId('compatible-svg-document-view')).toHaveLength(1);
       expect(view.queryByText('图片加载失败')).toBeNull();
       expect(view.getByText('图片加载中...')).toBeTruthy();
-      await fireEvent(view.getByTestId('active-preview-image'), 'load', {
-        source: { height: 1025, width: 920 }
-      });
+      await fireEvent(view.getByTestId('compatible-svg-document-view'), 'load');
       expect(view.queryByText('图片加载中...')).toBeNull();
       expect(view.queryByText('图片加载失败')).toBeNull();
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(Buffer.from(String(mockRenderSvgPoster.mock.calls.at(-1)?.[0] || ''), 'base64').toString('utf8'))
+        .toContain('<tspan>report</tspan>');
     } finally {
       fetchSpy.mockRestore();
     }
@@ -458,13 +489,10 @@ describe('Image preview', () => {
   it('REG-TOPIC-020 recovers incompatible SVG thumbnails before they are selected', async () => {
     const firstUrl = 'https://example.com/dynamic-thumbnail-one.png';
     const secondUrl = 'https://example.com/dynamic-thumbnail-two.png';
-    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
-      headers: {
-        get: (name: string) => name.toLowerCase() === 'content-type' ? 'image/svg+xml' : null
-      },
-      ok: true,
-      text: async () => '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>'
-    } as Response);
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>',
+      { headers: { 'content-type': 'image/svg+xml' } }
+    ));
     try {
       const view = await render(
         <ImagePreviewModal
@@ -482,8 +510,9 @@ describe('Image preview', () => {
       await fireEvent(view.getAllByTestId('preview-thumbnail-image')[1], 'error');
 
       await waitFor(() => expect(view.getAllByTestId('preview-thumbnail-image')[1].props.source).toEqual(
-        expect.objectContaining({ uri: expect.stringMatching(/^data:image\/svg\+xml;base64,/) })
+        expect.objectContaining({ uri: 'file:///cache/complex-svg-poster.png' })
       ));
+      expect(view.queryAllByTestId('compatible-svg-document-view')).toHaveLength(0);
       expect(fetchSpy).toHaveBeenCalledWith(secondUrl, expect.objectContaining({
         headers: expect.objectContaining({ Accept: expect.stringContaining('image/svg+xml') })
       }));

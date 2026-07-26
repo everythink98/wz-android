@@ -473,6 +473,7 @@ adb shell monkey -p com.wz.reader -c android.intent.category.LAUNCHER 1
 ```powershell
 adb uninstall com.wz.reader
 adb shell pm clear com.wz.reader
+.\android\gradlew.bat :app:connectedDebugAndroidTest # 保留登录态的模拟器
 ```
 
-确实需要清数据时，必须先得到用户明确同意。
+确实需要清数据时，必须先得到用户明确同意。`connectedDebugAndroidTest` 只可在一次性空白 AVD 上运行；主模拟器如需原生 instrumentation，覆盖安装 target/test APK 后直接执行 runner，结束时只卸载 test package。

@@ -2,13 +2,48 @@ import { Buffer } from 'buffer';
 import type { ImageURISource } from 'react-native';
 import { normalizeImagePreviewUrl } from './htmlImages';
 import { fetchWithTimeout, type Fetcher } from './request';
+import {
+  fetchBoundedSvgDocument,
+  renderSvgPoster,
+  type SvgPosterRenderResult
+} from './svgPosterRenderer';
 
-const COMPATIBLE_IMAGE_CACHE_LIMIT = 32;
+const COMPATIBLE_SVG_ARTIFACT_CACHE_LIMIT = 32;
+const COMPATIBLE_SVG_MAX_WORK_ITEMS = 32;
+const COMPATIBLE_SVG_WORK_CONCURRENCY = 2;
 const MAX_COMPATIBLE_SVG_BYTES = 1024 * 1024;
 const COMPATIBLE_SVG_TIMEOUT_MS = 10_000;
+const COMPATIBLE_SVG_TOTAL_TIMEOUT_MS = 30_000;
 
-const compatibleImageSourceCache = new Map<string, ImageURISource>();
-const compatibleImageSourceRequests = new Map<string, Promise<ImageURISource | null>>();
+const compatibleSvgArtifactCache = new Map<string, CompatibleSvgArtifact>();
+const compatibleSvgArtifactRequests = new Map<string, Promise<CompatibleSvgArtifact | null>>();
+const compatibleSvgPosterRefreshes = new Map<string, Promise<CompatibleSvgArtifact>>();
+const compatibleSvgWorkQueue: CompatibleSvgWorkItem[] = [];
+let activeCompatibleSvgWorkItems = 0;
+let nextPosterRevision = 1;
+
+export type CompatibleSvgArtifact = Readonly<{
+  animated: boolean;
+  dimensions: Readonly<{ height: number; width: number }>;
+  documentDataUri: string;
+  posterRevision: number;
+  posterSource: ImageURISource;
+  requestIdentity: string;
+}>;
+
+type CompatibleSvgArtifactWithoutPoster = Omit<CompatibleSvgArtifact, 'posterRevision' | 'posterSource'>;
+
+export type CompatibleSvgArtifactOptions = Readonly<{
+  fetcher?: Fetcher;
+  renderPoster?: (svgBase64: string, cacheKey: string, timeoutMs: number) => Promise<SvgPosterRenderResult>;
+}>;
+
+type CompatibleSvgWorkItem = Readonly<{
+  deadlineAt: number;
+  reject: (error: unknown) => void;
+  resolve: (artifact: CompatibleSvgArtifact | null) => void;
+  run: (deadlineAt: number) => Promise<CompatibleSvgArtifact | null>;
+}>;
 
 export function compatibleImageRequestIdentity(source: ImageURISource) {
   const uri = normalizeImagePreviewUrl(source.uri || '');
@@ -21,50 +56,139 @@ export function compatibleImageRequestIdentity(source: ImageURISource) {
   return [uri, cacheKey, ...headers.map(([name, value]) => `${name}:${value}`)].join('\u0000');
 }
 
-export function cachedCompatibleImageSource(source: ImageURISource) {
-  return compatibleImageSourceCache.get(compatibleImageRequestIdentity(source)) || null;
+export function cachedCompatibleSvgArtifact(source: ImageURISource) {
+  const identity = compatibleImageRequestIdentity(source);
+  const artifact = compatibleSvgArtifactCache.get(identity);
+  if (!artifact) {
+    return null;
+  }
+  compatibleSvgArtifactCache.delete(identity);
+  compatibleSvgArtifactCache.set(identity, artifact);
+  return artifact;
 }
 
-export function recoverCompatibleSvgImageSource(
+export function recoverCompatibleSvgArtifact(
   source: ImageURISource,
-  fetcher: Fetcher = fetch
-): Promise<ImageURISource | null> {
-  const identity = compatibleImageRequestIdentity(source);
-  const cached = compatibleImageSourceCache.get(identity);
+  options: CompatibleSvgArtifactOptions = {}
+): Promise<CompatibleSvgArtifact | null> {
+  const requestIdentity = compatibleImageRequestIdentity(source);
+  const cached = cachedCompatibleSvgArtifact(source);
   if (cached) {
     return Promise.resolve(cached);
   }
-  const pending = compatibleImageSourceRequests.get(identity);
+  const pending = compatibleSvgArtifactRequests.get(requestIdentity);
   if (pending) {
     return pending;
   }
-  const request = loadCompatibleSvgImageSource(source, fetcher)
-    .then((fallbackSource) => {
-      if (fallbackSource) {
-        rememberCompatibleImageSource(identity, fallbackSource);
+  const request = scheduleCompatibleSvgWork((deadlineAt) =>
+    loadCompatibleSvgArtifact(source, requestIdentity, options, deadlineAt))
+    .then((artifact) => {
+      if (artifact) {
+        rememberCompatibleSvgArtifact(requestIdentity, artifact);
       }
-      return fallbackSource;
+      return artifact;
     })
     .finally(() => {
-      compatibleImageSourceRequests.delete(identity);
+      compatibleSvgArtifactRequests.delete(requestIdentity);
     });
-  compatibleImageSourceRequests.set(identity, request);
+  compatibleSvgArtifactRequests.set(requestIdentity, request);
   return request;
 }
 
-async function loadCompatibleSvgImageSource(source: ImageURISource, fetcher: Fetcher) {
+export function refreshCompatibleSvgPoster(
+  artifact: CompatibleSvgArtifact,
+  options: Pick<CompatibleSvgArtifactOptions, 'renderPoster'> = {}
+): Promise<CompatibleSvgArtifact> {
+  const pending = compatibleSvgPosterRefreshes.get(artifact.requestIdentity);
+  if (pending) {
+    return pending;
+  }
+  const request = scheduleCompatibleSvgWork(async (deadlineAt) => {
+    const svgBase64 = svgBase64FromDocumentDataUri(artifact.documentDataUri);
+    const remainingMs = remainingCompatibleSvgTime(deadlineAt);
+    if (remainingMs <= 0) {
+      return null;
+    }
+    const poster = await (options.renderPoster || renderSvgPoster)(
+      svgBase64,
+      stableSvgPosterKey(artifact.requestIdentity),
+      remainingMs
+    );
+    return artifactWithPoster(artifact, poster);
+  }).then((refreshed) => {
+    if (!refreshed) {
+      throw new Error('SVG 海报重建超时');
+    }
+    rememberCompatibleSvgArtifact(artifact.requestIdentity, refreshed);
+    return refreshed;
+  }).finally(() => {
+    compatibleSvgPosterRefreshes.delete(artifact.requestIdentity);
+  });
+  compatibleSvgPosterRefreshes.set(artifact.requestIdentity, request);
+  return request;
+}
+
+async function loadCompatibleSvgArtifact(
+  source: ImageURISource,
+  requestIdentity: string,
+  options: CompatibleSvgArtifactOptions,
+  deadlineAt: number
+): Promise<CompatibleSvgArtifact | null> {
   const uri = normalizeImagePreviewUrl(source.uri || '');
   if (!/^https?:\/\//i.test(uri)) {
     return null;
   }
-  const response = await fetchWithTimeout(uri, {
-    headers: {
-      ...(source.headers || {}),
-      Accept: 'image/svg+xml,image/*,*/*;q=0.8'
-    }
-  }, {
+  const headers = {
+    ...(source.headers || {}),
+    Accept: 'image/svg+xml,image/*,*/*;q=0.8'
+  };
+  const fetchTimeoutMs = Math.min(
+    COMPATIBLE_SVG_TIMEOUT_MS,
+    remainingCompatibleSvgTime(deadlineAt)
+  );
+  if (fetchTimeoutMs <= 0) {
+    return null;
+  }
+  const nativeDocument = options.fetcher
+    ? undefined
+    : await fetchBoundedSvgDocument(uri, headers, fetchTimeoutMs);
+  const bytes = nativeDocument === undefined
+    ? await fetchCompatibleSvgBytes(uri, headers, options.fetcher || fetch, fetchTimeoutMs)
+    : nativeDocument && Buffer.from(nativeDocument.base64, 'base64');
+  if (!bytes || bytes.length > MAX_COMPATIBLE_SVG_BYTES) {
+    return null;
+  }
+  const svg = bytes.toString('utf8');
+  if (!/<svg[\s>]/i.test(svg)) {
+    return null;
+  }
+  const svgBase64 = bytes.toString('base64');
+  const remainingMs = remainingCompatibleSvgTime(deadlineAt);
+  if (remainingMs <= 0) {
+    return null;
+  }
+  const poster = await (options.renderPoster || renderSvgPoster)(
+    svgBase64,
+    stableSvgPosterKey(requestIdentity),
+    remainingMs
+  );
+  return artifactWithPoster({
+    animated: isAnimatedSvg(svg),
+    dimensions: { height: poster.documentHeight, width: poster.documentWidth },
+    documentDataUri: `data:image/svg+xml;base64,${svgBase64}`,
+    requestIdentity
+  }, poster);
+}
+
+async function fetchCompatibleSvgBytes(
+  uri: string,
+  headers: Record<string, string>,
+  fetcher: Fetcher,
+  timeoutMs: number
+) {
+  const response = await fetchWithTimeout(uri, { headers }, {
     fetcher,
-    timeoutMs: COMPATIBLE_SVG_TIMEOUT_MS
+    timeoutMs
   });
   if (!response.ok || !isSvgContentType(response.headers.get('content-type'))) {
     return null;
@@ -73,104 +197,139 @@ async function loadCompatibleSvgImageSource(source: ImageURISource, fetcher: Fet
   if (contentLength > MAX_COMPATIBLE_SVG_BYTES) {
     return null;
   }
-  const svg = await response.text();
-  if (!/<svg[\s>]/i.test(svg) || Buffer.byteLength(svg, 'utf8') > MAX_COMPATIBLE_SVG_BYTES) {
-    return null;
-  }
-  const compatibleSvg = stripSvgLinkElements(svg);
-  const dimensions = svgIntrinsicDimensions(compatibleSvg);
+  return boundedResponseBytes(response);
+}
+
+function artifactWithPoster(
+  artifact: CompatibleSvgArtifactWithoutPoster | CompatibleSvgArtifact,
+  poster: SvgPosterRenderResult
+): CompatibleSvgArtifact {
+  const posterRevision = nextPosterRevision;
+  nextPosterRevision += 1;
   return {
-    ...(dimensions || {}),
-    uri: `data:image/svg+xml;base64,${Buffer.from(compatibleSvg, 'utf8').toString('base64')}`
-  } satisfies ImageURISource;
+    ...artifact,
+    dimensions: { height: poster.documentHeight, width: poster.documentWidth },
+    posterRevision,
+    posterSource: {
+      cacheKey: `wz-svg-poster:${poster.uri}:${posterRevision}`,
+      height: poster.height,
+      uri: poster.uri,
+      width: poster.width
+    } as ImageURISource
+  };
 }
 
-export function svgIntrinsicDimensions(svg: string) {
-  const match = /<svg(?=[\s>])/i.exec(svg);
-  if (!match) {
-    return null;
+function scheduleCompatibleSvgWork(
+  run: CompatibleSvgWorkItem['run']
+): Promise<CompatibleSvgArtifact | null> {
+  if (activeCompatibleSvgWorkItems + compatibleSvgWorkQueue.length >= COMPATIBLE_SVG_MAX_WORK_ITEMS) {
+    return Promise.reject(new Error('SVG 兼容队列已满'));
   }
-  const end = quotedTagEnd(svg, match.index);
-  if (end < 0) {
-    return null;
-  }
-  const openingTag = svg.slice(match.index, end + 1);
-  let width = positiveSvgDimension(svgAttribute(openingTag, 'width'));
-  let height = positiveSvgDimension(svgAttribute(openingTag, 'height'));
-  const viewBox = (svgAttribute(openingTag, 'viewBox') || '')
-    .trim()
-    .split(/[\s,]+/)
-    .map(Number);
-  if (viewBox.length === 4 && viewBox.every(Number.isFinite) && viewBox[2] > 0 && viewBox[3] > 0) {
-    width ||= viewBox[2];
-    height ||= viewBox[3];
-  }
-  return width > 0 && height > 0 ? { width, height } : null;
+  return new Promise((resolve, reject) => {
+    compatibleSvgWorkQueue.push({
+      deadlineAt: Date.now() + COMPATIBLE_SVG_TOTAL_TIMEOUT_MS,
+      reject,
+      resolve,
+      run
+    });
+    drainCompatibleSvgWorkQueue();
+  });
 }
 
-export function stripSvgLinkElements(svg: string) {
-  const chunks: string[] = [];
-  let cursor = 0;
-  const anchorTag = /<\/?a(?=[\s/>])/gi;
-  let match = anchorTag.exec(svg);
-  while (match) {
-    const end = quotedTagEnd(svg, match.index);
-    if (end < 0) {
-      return svg;
+function drainCompatibleSvgWorkQueue() {
+  while (
+    activeCompatibleSvgWorkItems < COMPATIBLE_SVG_WORK_CONCURRENCY
+    && compatibleSvgWorkQueue.length > 0
+  ) {
+    const item = compatibleSvgWorkQueue.shift();
+    if (!item) {
+      return;
     }
-    chunks.push(svg.slice(cursor, match.index));
-    cursor = end + 1;
-    anchorTag.lastIndex = cursor;
-    match = anchorTag.exec(svg);
+    if (remainingCompatibleSvgTime(item.deadlineAt) <= 0) {
+      item.resolve(null);
+      continue;
+    }
+    activeCompatibleSvgWorkItems += 1;
+    void item.run(item.deadlineAt)
+      .then(item.resolve, item.reject)
+      .finally(() => {
+        activeCompatibleSvgWorkItems -= 1;
+        drainCompatibleSvgWorkQueue();
+      });
   }
-  chunks.push(svg.slice(cursor));
-  return chunks.join('');
 }
 
-function quotedTagEnd(value: string, start: number) {
-  let quote = '';
-  for (let index = start + 1; index < value.length; index += 1) {
-    const character = value[index];
-    if (quote) {
-      if (character === quote) {
-        quote = '';
+function remainingCompatibleSvgTime(deadlineAt: number) {
+  return Math.max(0, deadlineAt - Date.now());
+}
+
+async function boundedResponseBytes(response: Response) {
+  const blob = await response.blob();
+  try {
+    if (blob.size > MAX_COMPATIBLE_SVG_BYTES) {
+      return null;
+    }
+    return Buffer.from(await readBlobArrayBuffer(blob));
+  } finally {
+    (blob as Blob & { close?: () => void }).close?.();
+  }
+}
+
+function readBlobArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  const directReader = (blob as Blob & { arrayBuffer?: () => Promise<ArrayBuffer> }).arrayBuffer;
+  if (typeof directReader === 'function') {
+    return directReader.call(blob);
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (reader.result instanceof ArrayBuffer) {
+        resolve(reader.result);
+      } else {
+        reject(new Error('SVG 响应读取失败'));
       }
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-      continue;
-    }
-    if (character === '>') {
-      return index;
-    }
+    };
+    reader.onerror = () => reject(reader.error || new Error('SVG 响应读取失败'));
+    reader.onabort = () => reject(new Error('SVG 响应读取已取消'));
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
+function svgBase64FromDocumentDataUri(value: string) {
+  const prefix = 'data:image/svg+xml;base64,';
+  const encoded = value.startsWith(prefix) ? value.slice(prefix.length) : '';
+  if (!encoded || !/^[a-z0-9+/]+={0,2}$/i.test(encoded)) {
+    throw new Error('SVG artifact 内容无效');
   }
-  return -1;
+  return encoded;
 }
 
-function svgAttribute(openingTag: string, name: string) {
-  const pattern = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
-  const match = openingTag.match(pattern);
-  return match?.[1] ?? match?.[2] ?? match?.[3] ?? '';
-}
-
-function positiveSvgDimension(value: string) {
-  const normalized = value.trim();
-  if (!/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:px)?$/i.test(normalized)) {
-    return 0;
-  }
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-function rememberCompatibleImageSource(identity: string, source: ImageURISource) {
-  if (compatibleImageSourceCache.size >= COMPATIBLE_IMAGE_CACHE_LIMIT) {
-    const oldestIdentity = compatibleImageSourceCache.keys().next().value;
+function rememberCompatibleSvgArtifact(identity: string, artifact: CompatibleSvgArtifact) {
+  compatibleSvgArtifactCache.delete(identity);
+  if (compatibleSvgArtifactCache.size >= COMPATIBLE_SVG_ARTIFACT_CACHE_LIMIT) {
+    const oldestIdentity = compatibleSvgArtifactCache.keys().next().value;
     if (oldestIdentity) {
-      compatibleImageSourceCache.delete(oldestIdentity);
+      compatibleSvgArtifactCache.delete(oldestIdentity);
     }
   }
-  compatibleImageSourceCache.set(identity, source);
+  compatibleSvgArtifactCache.set(identity, artifact);
+}
+
+function isAnimatedSvg(svg: string) {
+  return /<animate(?:transform|motion)?(?=[\s/>])/i.test(svg)
+    || /@(?:-\w+-)?keyframes\b/i.test(svg)
+    || /(?:^|[{;]\s*)(?:-\w+-)?animation(?:-[a-z-]+)?\s*:/im.test(svg);
+}
+
+function stableSvgPosterKey(value: string) {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
+  }
+  return `svg-${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`;
 }
 
 function isSvgContentType(value: string | null) {

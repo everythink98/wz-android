@@ -175,6 +175,46 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain("fs.writeFileSync(path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt')");
   });
 
+  it('[REG-TOPIC-038] generates the isolated single-WebView SVG poster renderer', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+    const plugin = readProjectFile('plugins', 'withSvgRendererModule.js');
+
+    expect(app.expo.plugins).toContain('./plugins/withSvgRendererModule');
+    expect(plugin).toContain('class SvgRendererModule');
+    expect(plugin).toContain('private var webView: WebView? = null');
+    expect(plugin).toContain('fun renderPoster(svgBase64: String, cacheKey: String, timeoutMs: Double, promise: Promise)');
+    expect(plugin).toContain('fun fetchSvgDocument(url: String, headers: ReadableMap, timeoutMs: Double, promise: Promise)');
+    expect(plugin).toContain('boundedSvgBytes(body.source())');
+    expect(plugin).toContain('postVisualStateCallback');
+    expect(plugin).toContain('blockNetworkLoads = true');
+    expect(plugin).toContain('javaScriptEnabled = false');
+    expect(plugin).toContain('allowFileAccess = false');
+    expect(plugin).toContain('allowContentAccess = false');
+    expect(plugin).toContain("default-src 'none'");
+    expect(plugin).toContain('MAX_SVG_BYTES = 1024 * 1024');
+    expect(plugin).toContain('MAX_POSTER_PIXELS = 4_194_304L');
+    expect(plugin).toContain('MAX_POSTER_CACHE_FILES = 32');
+    expect(plugin).toContain('MAX_RENDER_REQUESTS = 32');
+    expect(plugin).toContain('TOTAL_RENDER_TIMEOUT_MS = 30_000L');
+    expect(plugin).toContain('admittedRequests.compareAndSet(current, current + 1)');
+    expect(plugin).toContain('request.deadlineUptimeMs - SystemClock.uptimeMillis()');
+    expect(plugin).toContain('putDouble("documentWidth", prepared.documentDimensions.width)');
+    expect(plugin).toContain('putDouble("documentHeight", prepared.documentDimensions.height)');
+    expect(plugin).toContain('hasSvgPosterQueueCapacity(active != null, queue.size)');
+    expect(plugin).toContain('isCurrentSvgPageError(current.expectedPageUrl, request.url.toString(), request.isForMainFrame)');
+    expect(plugin).toContain('sha256PosterFileName(request.cacheKey, svg.bytes, dimensions)');
+    expect(plugin).toContain("fs.copyFileSync(");
+    expect(plugin).toContain("'SvgRendererPolicyTest.kt'");
+    expect(plugin).toContain("'SvgRendererInstrumentedTest.kt'");
+    expect(plugin).toContain('testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"');
+    expect(plugin).toContain('androidTestImplementation("androidx.test:runner:1.6.2")');
+    expect(plugin).toContain('fixture must preserve the AndroidSVG 1.4 failure');
+    expect(plugin).toContain('SMIL animation must change pixels');
+    expect(plugin).toContain('untrusted SVG made an external request');
+    expect(plugin).not.toContain('addJavascriptInterface');
+    expect(plugin.match(/val created = WebView\(/g)).toHaveLength(1);
+  });
+
   it('keeps network proxy failures closed instead of falling back to direct network', () => {
     const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
     const applyFlow = plugin.slice(plugin.indexOf('fun applyProxy('), plugin.indexOf('fun testProxy('));

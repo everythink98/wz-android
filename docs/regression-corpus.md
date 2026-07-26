@@ -1796,15 +1796,15 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-01`、`TOPIC-03`、`NAV-03` |
-| 用户症状 | 主题里的报告图片 URL 以 `.png` 结尾、实际返回 `image/svg+xml` 时，Android 正文先显示“图片加载失败”；即使改成 data URI，缺少可靠固有比例还会把图片压成零高或方形，全屏预览也可能空白。 |
-| 触发条件 | SVG 的 `<text>` 内含 `<a>` 包装，AndroidSVG 拒绝“text content 中的 group element”；或根 `<svg>` 使用 `width="100%" height="100%"` 配合非方形 `viewBox`。 |
-| 根因 seam | `src/compatibleImageSources.ts` 的受限 SVG 兼容转换和尺寸解析、`src/app/useHtmlRenderingController.tsx` 的块图 ImageRef/几何、`src/components/ImagePreviewModal.tsx` 的全屏来源切换。 |
-| 必须保持的行为 | 普通位图继续只走原生单次加载；只有原生解码失败后才在 10 秒、1 MiB、明确 SVG `Content-Type` 门禁下复取，保留原请求头并 quote-aware 去除 `<a>` 包装；数值/px 尺寸可直接使用，相对尺寸回退 `viewBox`；按 URL+请求头有界缓存并忽略过期响应，正文和全屏预览都使用正确比例。 |
-| 精确失败 oracle | `src/compatibleImageSources.test.ts` 固定 quoted `>`、SVG 缓存、请求头和百分比尺寸；`tests/ui/topic-image-loading.test.tsx` 与 `tests/ui/image-preview.test.tsx` 固定原生失败后切换兼容来源且不显示失败态。 |
+| 用户症状 | 主题里的报告图片 URL 以 `.png` 结尾、实际返回 `image/svg+xml` 时，Android 正文显示“图片加载失败”；简单改成 data URI 仍使用同一 AndroidSVG decoder，全屏也可能空白。 |
+| 触发条件 | SVG 使用 AndroidSVG 不支持或会崩溃的文档结构，或根 `<svg>` 使用相对尺寸配合非方形 `viewBox`。 |
+| 根因 seam | `src/compatibleImageSources.ts` 的 SVG document artifact、`src/app/useHtmlRenderingController.tsx` 的海报 ImageRef/几何、`src/components/ImagePreviewModal.tsx` 的全屏 renderer 切换。 |
+| 必须保持的行为 | 普通位图继续只走原生单次加载；只有原生解码失败后才在 10 秒、1 MiB、明确 SVG `Content-Type` 门禁下复取并保留原请求字节。共享 artifact 缓存原始 document data URI、原始固有比例与 Chromium PNG 海报；正文使用海报，全屏使用隔离的动态 document view，迟到结果按 request identity 丢弃。数值/px 尺寸可直接使用，相对尺寸回退 `viewBox`。 |
+| 精确失败 oracle | `src/compatibleImageSources.test.ts` 固定原始字节、SVG 缓存、请求头和百分比尺寸；`tests/ui/topic-image-loading.test.tsx` 与 `tests/ui/image-preview.test.tsx` 固定原生失败后分别切换到海报和动态 document view且不显示失败态。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`。 |
 | Replay 或真实验收路径 | 只读打开 NodeSeek `【TQ】Vmiss US.LA.TRI.Basic`，确认 tcpquality 三张动态报告在正文和全屏预览中保持完整比例；只打开预览，不保存。 |
-| 负向验证方式 | 恢复裸 SVG、把百分比解析为数字或不给 fallback 同时约束宽高，编号测试分别得到不可解码 SVG、100×100 尺寸或错误几何。 |
-| 明确不覆盖范围 | 不对普通非 SVG 失败伪造成功，不执行脚本/外部资源，也不承诺任意 SVG 特性均受 Android 解码器支持。 |
+| 负向验证方式 | 把 posterSource 改回 SVG data URI、把百分比解析为数字或不给 fallback 同时约束宽高，编号测试分别重新进入同一 decoder、得到 100×100 尺寸或错误几何。 |
+| 明确不覆盖范围 | 不对普通非 SVG 失败伪造成功，不执行脚本/外部资源；复杂文档能力与安全边界由 `REG-TOPIC-038` 继续固定。 |
 
 ## `REG-TOPIC-019` NodeSeek 私有媒体在预览和保存时丢失实时会话
 
@@ -1829,8 +1829,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 多图预览中当前 SVG 经兼容恢复后可以显示，但其他同类图片的缩略图一直是黑色空框；只有逐张点选、触发主图恢复后才出现缩略图。 |
 | 触发条件 | 全屏主图有原生失败 fallback，缩略图只读取已有兼容缓存，自己的 `onError` 没有启动恢复。 |
 | 根因 seam | `src/components/ImagePreviewModal.tsx` 的每个缩略图加载生命周期与 `src/compatibleImageSources.ts` 的去重缓存。 |
-| 必须保持的行为 | 每个已渲染缩略图在原生解码失败后独立请求同一受限 SVG fallback；并发请求由共享 helper 去重，NodeSeek 请求头保持不变；健康位图不额外 fetch，未渲染图片不主动预取。 |
-| 精确失败 oracle | `tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-020` 在未选择第 2 张图时触发其缩略图错误，要求来源切换为兼容 SVG data URI。 |
+| 必须保持的行为 | 每个已渲染缩略图在原生解码失败后独立请求同一受限 SVG artifact，并只显示其 PNG 海报；并发请求与海报任务由共享 helper 去重，NodeSeek 请求头保持不变；健康位图不额外 fetch，未渲染图片不主动预取，缩略图树中不创建 WebView。 |
+| 精确失败 oracle | `tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-020` 在未选择第 2 张图时触发其缩略图错误，要求来源切换为 file URI 海报且 WebView 数量仍只取决于当前全屏项。 |
 | 最低可靠自动测试层 | `UI_PASS`。 |
 | Replay 或真实验收路径 | 在上述 NodeSeek 三图主题打开预览，保持第 2 张为当前图时确认尚未选择的第 3 张缩略图也自动出现，再打开第 3 张核对完整内容。 |
 | 负向验证方式 | 删除缩略图 `onError` 恢复，编号测试保持原 URL，真机对应缩略图为空框。 |
@@ -3092,20 +3092,20 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复 `&amp;` 后再逐类 replace 的多趟 decoder，编号测试失败。 |
 | 明确不覆盖范围 | 不对 DOM parser 结果做第二次全局 decode，不改变正文文本解码。 |
 
-## `REG-TOPIC-034` 大 SVG 链接清理退化为逐字符全尾扫描
+## `REG-TOPIC-034` 大 SVG 兼容清洗退化为逐字符全尾扫描
 
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `TOPIC-02` |
 | 用户症状 | 图片解码失败后兼容读取接近 1 MiB 的 SVG 时，JS 线程长时间冻结，详情和全屏预览无法操作。 |
-| 触发条件 | SVG 包含普通长文本，`stripSvgLinkElements` 在每个字符位置对剩余字符串执行两次 `slice(...).match(...)`，Hermes 中累计复制量接近 O(n²)。 |
-| 根因 seam | `src/compatibleImageSources.ts` 的 SVG 兼容清洗。 |
-| 必须保持的行为 | 只在 `<a>` 与 `</a>` 标签位置解析带引号的标签结束符，中间文本整段保留；大小写标签、属性中的 `>` 和畸形未闭合标签保持既有语义，整体扫描与输出均为 O(n)。 |
-| 精确失败 oracle | `src/compatibleImageSources.test.ts` 的 `REG-TOPIC-034` 使用可计数 `slice` 的大 SVG，要求链接文字保留、包装标签移除且整尾切片次数保持常数级；旧实现稳定执行两倍于字符数的切片。 |
-| 最低可靠自动测试层 | `UNIT_PASS`：确定性验证输出和操作次数，不使用机器相关的毫秒阈值。 |
+| 触发条件 | 旧兼容链为迁就 AndroidSVG 改写整个 SVG，并在扫描标签时反复复制剩余字符串，Hermes 中累计工作量接近 O(n²)。 |
+| 根因 seam | `src/compatibleImageSources.ts` 把“不可信 SVG 文档”错误建模为“清洗后继续交给 AndroidSVG 的图片字符串”。 |
+| 必须保持的行为 | SVG artifact 保留原始字节，不在 JS 扫描、删除或重写任意元素；只执行大小/MIME/根元素/固有尺寸等有界判断，随后把 base64 文档交给隔离 Chromium renderer。接近 1 MiB 的输入处理保持 O(n)。 |
+| 精确失败 oracle | `src/compatibleImageSources.test.ts` 的 `REG-TOPIC-034` 输入接近上限且含 `<a>`、quoted `>`、动画和嵌套 data SVG，要求 artifact 解码后与输入逐字节相同并只调用一次 renderer；恢复 strip/rewrite 时字节相等断言失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：确定性验证原始字节、输入上限与单次 renderer 调用，不使用机器相关的毫秒阈值。 |
 | Replay 或真实验收路径 | 打开明确返回大 SVG 的只读主题并触发正文或全屏兼容恢复，确认页面可继续操作；没有稳定动态样本时标 `NOT_VERIFIED`。 |
-| 负向验证方式 | 恢复逐字符 `slice(cursor).match(...)` 后，编号测试的切片上限必然失败。 |
-| 明确不覆盖范围 | 不放宽 1 MiB 响应上限，不执行脚本或外链，也不为一般位图新增转换。 |
+| 负向验证方式 | 恢复任何 link strip/rewrite 后，编号测试的原始字节断言失败；恢复无界输入读取时超限 fixture 失败。 |
+| 明确不覆盖范围 | 不放宽 1 MiB 响应上限，不执行脚本或外链，也不为一般位图新增转换；Chromium 安全策略见 `REG-TOPIC-038`。 |
 
 ## `REG-TOPIC-035` Discourse 引用显示名被当作可导航用户名
 
@@ -3151,6 +3151,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 在不清 Cookie、不写论坛的前提下，用两个已授权身份重复读取同一受保护媒体并核对内容与诊断；本轮未获真实换号授权时标 `NOT_VERIFIED`。 |
 | 负向验证方式 | 删除 request `no-store` 后，编号测试会从已种下的共享 cache 得到 `network-1`；若全局禁用 RN cache 或误伤普通 API，模板/普通请求断言失败。 |
 | 明确不覆盖范围 | 不建立按账号分区的 OkHttp client/cache，不要求服务端补 `Vary: Cookie`，不关闭普通 API cache，也不改变 Expo/Glide 上层媒体缓存。 |
+
+## `REG-TOPIC-038` 复杂动态 SVG 被重复交给 AndroidSVG 后仍加载失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` |
+| 用户症状 | NodeSeek `post-841430-1` 的正文图片持续 Spinner 或失败；响应实际是合法 SVG，切到 data URI 后仍无法显示，去掉链接包装也无效。 |
+| 触发条件 | SVG 同时包含 `<tspan>` 的 objectBoundingBox 渐变、CSS 初始透明与 animation、SMIL、filter 和嵌套 data SVG；AndroidSVG 1.4 在渐变文字 bounding box 未建立时 NPE，且不具备完整 CSS/SMIL 语义。 |
+| 根因 seam | `src/compatibleImageSources.ts` 曾把失败 SVG 改写后再次交给 Expo Image 的同一个 AndroidSVG decoder；正文、缩略图和全屏没有共享“SVG 文档 artifact”边界。 |
+| 必须保持的行为 | 位图和 AndroidSVG 可解 SVG 继续走原生快路径。只有原生失败后才由项目受管 OkHttp client 复取；10 秒、明确 SVG MIME 与按流读取 1 MiB + 1 byte 的门禁必须发生在数据过桥前。门禁成功后保留原始 SVG 字节并 single-flight 生成 artifact，固有尺寸只读已验证的真实 XML 根元素；进程内单例 Chromium renderer 串行生成有界 PNG 海报，正文和已渲染缩略图仍由 Expo Image 显示。全屏只为当前复杂 SVG 挂载一个禁脚本、禁网络、禁文件/content 访问且无 bridge 的动态 document view；普通图片不创建 WebView。session epoch 变化使用新 identity，旧海报、事件和 artifact 不得落地；海报文件被原生 LRU 淘汰时从 artifact 原始字节重建一次且不重新发网；海报队列等待也计入 30 秒终态。保存继续下载原 URL 并保留 `.svg` 原始字节。 |
+| 精确失败 oracle | `tests/fixtures/complex-svg-document.svg` 固定本次结构；`src/compatibleImageSources.test.ts` 要求原文档不改写、精确 1 MiB 门禁、海报单飞/缓存与淘汰重建、真实根元素比例，并证明接近 30 秒 deadline 才出队的下载只能使用剩余预算；`tests/ui/topic-image-loading.test.tsx` 固定正文海报、十图正文无 WebView、迟到 epoch 丢弃，`tests/ui/image-preview.test.tsx` 与 `tests/ui/compatible-svg-document-view.test.tsx` 固定缩略图海报、全屏单 WebView 及安全 props。生成的 Kotlin policy test 固定原生流式 `MAX+1` 中止、输入/画布/cache 上限、根元素比例、队列有界和旧页面错误隔离；instrumentation test 用真实 AndroidSVG/Chromium 固定旧 decoder 失败、十张非空海报复用一个 WebView、动画两帧变化和恶意外链零请求。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` + fresh prebuild 后原生 Kotlin JVM/instrumentation tests 与 compile；身份匹配 APK 仍需 `DEVICE_REPLAY_PASS` 固定真实 Topic 集成链。 |
+| Replay 或真实验收路径 | 覆盖安装当前 APK 后用 `exp+wz-android://open-topic` 直达 `https://www.nodeseek.com/post-841430-1`；正文必须出现完整静态海报而非永久 Spinner，点击后当前全屏项播放动态 SVG，退出重进命中海报缓存。全程只读，不清 Cookie/App 数据；保存需单独授权。 |
+| 负向验证方式 | 把 artifact.posterSource 改回 SVG data URI，真实 fixture 会再次进入 AndroidSVG 失败；允许每张正文图创建 WebView时，十图组件测试/原生实例计数失败；开启 JS/文件/网络或允许外部导航时安全 props 与原生策略测试失败。 |
+| 明确不覆盖范围 | 不执行 SVG JavaScript、事件交互或外部子资源，不把整个 Topic 交给 WebView，不新增服务端代理，不用 Coil 或 `react-native-svg` 作为任意 SVG renderer，也不授权真实保存。 |
 
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 

@@ -75,6 +75,7 @@ npm run test:device:logged-out
 - More 页 `服务器代理` 支持 HTTP / SOCKS5；启用失败时网络请求不应静默直连。
 - 账号状态刷新由 `src/app/useAccountStatusController.ts` 提供，备份 I/O 由 `src/app/useBackupStatusController.ts` 提供；启动后由 `AppRoot` 静默刷新一次，进入 More 页本身不应触发刷新。
 - 模拟器验证最新代码时禁止使用 `adb uninstall`、`adb shell pm clear`、清空模拟器数据或重置 emulator。
+- 保留登录态的模拟器禁止运行 Gradle `connectedDebugAndroidTest`：该任务结束时会卸载 target Debug App。原生 instrumentation 只能在一次性空白 AVD 上运行，或手工覆盖安装 target/test APK 后执行 runner，并且只卸载 test package。
 - 默认使用覆盖安装、重启 Metro、`adb shell am force-stop com.wz.reader` 和重新启动 App；这样不会清掉既有登录态。
 
 ## Android 验证

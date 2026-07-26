@@ -41,7 +41,7 @@ import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
 import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
 import { ForumContentVideo } from '../components/ForumContentVideo';
 import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
-import { cachedCompatibleImageSource, compatibleImageRequestIdentity, recoverCompatibleSvgImageSource } from '../compatibleImageSources';
+import { cachedCompatibleSvgArtifact, compatibleImageRequestIdentity, recoverCompatibleSvgArtifact, refreshCompatibleSvgPoster, type CompatibleSvgArtifact } from '../compatibleImageSources';
 import { readManagedCookieHeader } from '../managedCookies';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
 import { beginDiagnosticTrace, finishDiagnosticTrace, type DiagnosticTrace } from '../diagnostics';
@@ -254,6 +254,7 @@ function PreviewImageBlock({
   const requestIdentityRef = useRef(requestIdentity);
   const bodyStartedAtRef = useRef(0);
   const settledRequestIdentityRef = useRef('');
+  const posterRefreshIdentityRef = useRef('');
   const bodyDiagnosticRef = useRef<{ fallback: boolean; requestIdentity: string; trace: DiagnosticTrace } | null>(null);
   const currentBodyTrace = useCallback((fallback = false) => {
     const previous = bodyDiagnosticRef.current;
@@ -286,15 +287,16 @@ function PreviewImageBlock({
     }
   }, [currentBodyTrace]);
   const [resolvedImage, setResolvedImage] = useState<{ image: ImageRef; requestIdentity: string } | null>(null);
-  const [compatibleImageSource, setCompatibleImageSource] = useState<{ requestIdentity: string; source: ImageURISource } | null>(null);
+  const [compatibleSvgArtifact, setCompatibleSvgArtifact] = useState<CompatibleSvgArtifact | null>(null);
   const [failedRequestIdentity, setFailedRequestIdentity] = useState('');
   const contentWidth = Math.max(1, imageProps.contentWidth || 1);
-  const cachedFallbackSource = cachedCompatibleImageSource(imageSource);
-  const activeFallbackSource = compatibleImageSource?.requestIdentity === requestIdentity
-    ? compatibleImageSource.source
-    : cachedFallbackSource;
+  const cachedArtifact = cachedCompatibleSvgArtifact(imageSource);
+  const activeArtifact = compatibleSvgArtifact?.requestIdentity === requestIdentity
+    ? compatibleSvgArtifact
+    : cachedArtifact;
+  const activeFallbackSource = activeArtifact?.posterSource || null;
   const activeImageSource = activeFallbackSource || imageSource;
-  const imageLoadIdentity = `${requestIdentity}:${activeFallbackSource ? 'compatible' : 'native'}`;
+  const imageLoadIdentity = `${requestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
   const maxImageWidth = Math.ceil(contentWidth * PixelRatio.get());
   const compatibleAspectRatio = activeFallbackSource?.width && activeFallbackSource.height
     ? activeFallbackSource.height / activeFallbackSource.width
@@ -303,48 +305,80 @@ function PreviewImageBlock({
     requestIdentityRef.current = requestIdentity;
     bodyStartedAtRef.current = Date.now();
   }, [requestIdentity]);
-  const imageRef = useImage(activeImageSource, {
-    maxWidth: maxImageWidth,
-    ...(compatibleAspectRatio > 0 ? { maxHeight: Math.ceil(maxImageWidth * compatibleAspectRatio) } : {}),
-    onError: () => {
+  const recoverSvgArtifact = useCallback(async () => {
+    try {
+      const artifact = await recoverCompatibleSvgArtifact(imageSource);
       if (
         requestIdentityRef.current !== requestIdentity
         || settledRequestIdentityRef.current === requestIdentity
       ) {
         return;
       }
-      if (activeFallbackSource) {
+      if (artifact) {
+        setCompatibleSvgArtifact(artifact);
+        return;
+      }
+      settledRequestIdentityRef.current = requestIdentity;
+      finishBodyFailure(false);
+      setFailedRequestIdentity(requestIdentity);
+    } catch {
+      if (
+        requestIdentityRef.current === requestIdentity
+        && settledRequestIdentityRef.current !== requestIdentity
+      ) {
+        settledRequestIdentityRef.current = requestIdentity;
+        finishBodyFailure(true);
+        setFailedRequestIdentity(requestIdentity);
+      }
+    }
+  }, [finishBodyFailure, imageSource, requestIdentity]);
+  const refreshSvgPoster = useCallback(async (artifact: CompatibleSvgArtifact) => {
+    try {
+      const refreshed = await refreshCompatibleSvgPoster(artifact);
+      if (
+        requestIdentityRef.current !== requestIdentity
+        || settledRequestIdentityRef.current === requestIdentity
+      ) {
+        return;
+      }
+      setCompatibleSvgArtifact(refreshed);
+    } catch {
+      if (
+        requestIdentityRef.current === requestIdentity
+        && settledRequestIdentityRef.current !== requestIdentity
+      ) {
+        settledRequestIdentityRef.current = requestIdentity;
+        finishBodyFailure(true);
+        setFailedRequestIdentity(requestIdentity);
+      }
+    }
+  }, [finishBodyFailure, requestIdentity]);
+  const handleImageError = useCallback(() => {
+    if (
+      requestIdentityRef.current !== requestIdentity
+      || settledRequestIdentityRef.current === requestIdentity
+    ) {
+      return;
+    }
+    if (activeArtifact) {
+      if (posterRefreshIdentityRef.current === requestIdentity) {
         settledRequestIdentityRef.current = requestIdentity;
         finishBodyFailure(true);
         setFailedRequestIdentity(requestIdentity);
         return;
       }
+      posterRefreshIdentityRef.current = requestIdentity;
       currentBodyTrace(true);
-      void recoverCompatibleSvgImageSource(imageSource).then((fallbackSource) => {
-        if (
-          requestIdentityRef.current !== requestIdentity
-          || settledRequestIdentityRef.current === requestIdentity
-        ) {
-          return;
-        }
-        if (fallbackSource) {
-          setCompatibleImageSource({ requestIdentity, source: fallbackSource });
-          return;
-        }
-        settledRequestIdentityRef.current = requestIdentity;
-        finishBodyFailure(false);
-        setFailedRequestIdentity(requestIdentity);
-      }, () => {
-        if (
-          requestIdentityRef.current === requestIdentity
-          && settledRequestIdentityRef.current !== requestIdentity
-        ) {
-          settledRequestIdentityRef.current = requestIdentity;
-          finishBodyFailure(true);
-          setFailedRequestIdentity(requestIdentity);
-        }
-      });
+      void refreshSvgPoster(activeArtifact);
+      return;
     }
+    currentBodyTrace(true);
+    void recoverSvgArtifact();
+  }, [activeArtifact, currentBodyTrace, finishBodyFailure, recoverSvgArtifact, refreshSvgPoster, requestIdentity]);
+  const imageRef = useImage(activeImageSource, {
+    maxWidth: maxImageWidth,
+    ...(compatibleAspectRatio > 0 ? { maxHeight: Math.ceil(maxImageWidth * compatibleAspectRatio) } : {}),
+    onError: handleImageError
   }, [imageLoadIdentity]);
   useEffect(() => {
     // A request-identity change alone must not relabel the previous ImageRef as the new response.

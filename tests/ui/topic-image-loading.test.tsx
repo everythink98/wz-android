@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { PixelRatio, StyleSheet } from 'react-native';
+import { NativeModules, PixelRatio, StyleSheet } from 'react-native';
 import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
 import { ForumContentVideo } from '../../src/components/ForumContentVideo';
 import { FORUM_VIDEO_TAG } from '../../src/localHtml';
@@ -23,6 +23,23 @@ const mockUseVideoPlayer = jest.fn((source: unknown) => ({
   playing: false,
   source
 }));
+const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
+  documentHeight: 1025,
+  documentWidth: 920,
+  height: 1025,
+  uri: 'file:///cache/complex-svg-poster.png',
+  width: 920
+}));
+const mockWebView = jest.fn((_props: unknown) => null);
+
+async function mockFetchSvgDocument(url: string, headers: Record<string, string>) {
+  const response = await fetch(url, { headers });
+  if (!response.ok || !/(?:image|application)\/svg\+xml/i.test(response.headers.get('content-type') || '')) {
+    return null;
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  return bytes.length <= 1024 * 1024 ? { base64: bytes.toString('base64') } : null;
+}
 
 jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
@@ -45,7 +62,7 @@ jest.mock('expo-video', () => ({
   useVideoPlayer: (source: unknown) => mockUseVideoPlayer(source)
 }));
 
-jest.mock('react-native-webview', () => ({ WebView: () => null }));
+jest.mock('react-native-webview', () => ({ WebView: (props: unknown) => mockWebView(props) }));
 
 jest.mock('../../src/managedCookies', () => ({
   ...jest.requireActual<typeof import('../../src/managedCookies')>('../../src/managedCookies')
@@ -155,6 +172,12 @@ describe('topic block image loading', () => {
     mockExpoImageProps.mockClear();
     mockUseImage.mockClear();
     mockUseVideoPlayer.mockClear();
+    mockRenderSvgPoster.mockClear();
+    mockWebView.mockClear();
+    NativeModules.SvgRendererModule = {
+      fetchSvgDocument: mockFetchSvgDocument,
+      renderPoster: mockRenderSvgPoster
+    };
   });
 
   it('replaces the only loading indicator with the already loaded image reference', async () => {
@@ -391,7 +414,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('REG-TOPIC-018 recovers an SVG response whose png URL the Android decoder rejects', async () => {
+  it('REG-TOPIC-018 renders a Chromium poster after Android rejects an SVG response', async () => {
     const svgImageUrl = 'https://img.example.com/dynamic-report.png';
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>';
     const startedSources: string[] = [];
@@ -403,34 +426,151 @@ describe('topic block image loading', () => {
       }, dependencies);
       return null;
     };
-    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
-      headers: {
-        get: (name: string) => name.toLowerCase() === 'content-type' ? 'image/svg+xml; charset=utf-8' : null
-      },
-      ok: true,
-      text: async () => svg
-    } as Response);
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(svg, {
+      headers: { 'content-type': 'image/svg+xml; charset=utf-8' }
+    }));
     try {
       const screen = await render(<TopicImageHarness attributes={{ alt: '测试图片', src: svgImageUrl }} />);
 
       await act(() => mockImageLoadOptions?.onError?.(new Error('Cannot load SVG from stream'), jest.fn()));
 
       await waitFor(() => expect(mockUseImage).toHaveBeenLastCalledWith(
-        expect.objectContaining({ uri: expect.stringMatching(/^data:image\/svg\+xml;base64,/) }),
+        expect.objectContaining({ uri: 'file:///cache/complex-svg-poster.png' }),
         expect.any(Object),
         expect.any(Array)
       ));
       await waitFor(() => expect(startedSources).toEqual([
         svgImageUrl,
-        expect.stringMatching(/^data:image\/svg\+xml;base64,/)
+        'file:///cache/complex-svg-poster.png'
       ]));
-      const fallbackSource = mockUseImage.mock.calls.at(-1)?.[0];
-      const encodedSvg = String(fallbackSource?.uri || '').split(',')[1] || '';
-      expect(Buffer.from(encodedSvg, 'base64').toString('utf8')).toContain('<tspan>report</tspan>');
-      expect(Buffer.from(encodedSvg, 'base64').toString('utf8')).not.toMatch(/<\/?a\b/i);
+      const encodedSvg = String(mockRenderSvgPoster.mock.calls.at(-1)?.[0] || '');
+      expect(Buffer.from(encodedSvg, 'base64').toString('utf8')).toBe(svg);
+      expect(mockRenderSvgPoster).toHaveBeenCalledTimes(1);
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
       expect(screen.queryByText('测试图片')).toBeNull();
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('REG-TOPIC-038 keeps ten complex body images out of the React WebView tree', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><animate attributeName="opacity" /></svg>';
+    const nativeErrors: Array<NonNullable<typeof mockImageLoadOptions>['onError']> = [];
+    mockUseImageImplementation = (source, options) => {
+      if (!source.uri?.startsWith('file://')) {
+        nativeErrors.push((options as typeof mockImageLoadOptions)?.onError);
+      }
+      return null;
+    };
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async () => new Response(svg, {
+      headers: { 'content-type': 'image/svg+xml' }
+    }));
+    try {
+      await render(<>
+        {Array.from({ length: 10 }, (_, index) => (
+          <TopicImageHarness
+            key={index}
+            attributes={{ alt: `复杂图片 ${index + 1}`, src: `https://img.example.com/complex-${index}.svg` }}
+          />
+        ))}
+      </>);
+      expect(nativeErrors).toHaveLength(10);
+
+      await act(() => {
+        nativeErrors.forEach((onError) => onError?.(new Error('native SVG failure'), jest.fn()));
+      });
+      await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(10));
+
+      expect(mockWebView).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledTimes(10);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('REG-TOPIC-038 rebuilds one evicted poster and then settles if the rebuilt file also fails', async () => {
+    const svgImageUrl = 'https://img.example.com/evicted-complex-report.svg';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><animate attributeName="opacity" /></svg>';
+    mockUseImageImplementation = (_source, options) => {
+      mockImageLoadOptions = options as typeof mockImageLoadOptions;
+      return null;
+    };
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(svg, {
+      headers: { 'content-type': 'image/svg+xml' }
+    }));
+    try {
+      const screen = await render(<TopicImageHarness attributes={{ alt: '测试图片', src: svgImageUrl }} />);
+
+      await act(() => mockImageLoadOptions?.onError?.(new Error('native SVG failure'), jest.fn()));
+      await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockUseImage.mock.calls.filter(([source]) => source.uri?.startsWith('file://'))).toHaveLength(1));
+
+      await act(() => mockImageLoadOptions?.onError?.(new Error('poster file was evicted'), jest.fn()));
+      await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(mockUseImage.mock.calls.filter(([source]) => source.uri?.startsWith('file://'))).toHaveLength(2));
+
+      const posterCalls = mockUseImage.mock.calls.filter(([source]) => source.uri?.startsWith('file://'));
+      expect((posterCalls[0]?.[0] as { cacheKey?: string }).cacheKey)
+        .not.toBe((posterCalls[1]?.[0] as { cacheKey?: string }).cacheKey);
+      expect(posterCalls[0]?.[2]).not.toEqual(posterCalls[1]?.[2]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      await act(() => mockImageLoadOptions?.onError?.(new Error('rebuilt poster still unreadable'), jest.fn()));
+      await waitFor(() => expect(screen.getByText('测试图片')).toBeTruthy());
+      expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2);
+      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('REG-TOPIC-038 ignores a late SVG artifact from the previous media epoch', async () => {
+    const svgImageUrl = 'https://img.example.com/epoch-complex-report.svg';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>';
+    let resolveOldResponse!: (response: Response) => void;
+    const oldResponse = new Promise<Response>((resolve) => {
+      resolveOldResponse = resolve;
+    });
+    mockUseImageImplementation = (_source, options) => {
+      mockImageLoadOptions = options as typeof mockImageLoadOptions;
+      return null;
+    };
+    const fetchSpy = jest.spyOn(global, 'fetch')
+      .mockImplementationOnce(() => oldResponse)
+      .mockResolvedValueOnce(new Response(svg, { headers: { 'content-type': 'image/svg+xml' } }));
+    try {
+      const screen = await render(
+        <TopicImageHarness
+          attributes={{ alt: '测试图片', src: svgImageUrl }}
+          mediaSessionIdentity="yaohuo:1"
+        />
+      );
+      const oldError = mockImageLoadOptions?.onError;
+      await act(() => oldError?.(new Error('old native SVG failure'), jest.fn()));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
+      await screen.rerender(
+        <TopicImageHarness
+          attributes={{ alt: '测试图片', src: svgImageUrl }}
+          mediaSessionIdentity="yaohuo:2"
+        />
+      );
+      await act(() => mockImageLoadOptions?.onError?.(new Error('current native SVG failure'), jest.fn()));
+      await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockUseImage.mock.calls.some(([source, , dependencies]) => (
+        source.uri?.startsWith('file://') && String(dependencies?.[0] || '').includes('yaohuo:2')
+      ))).toBe(true));
+
+      await act(async () => {
+        resolveOldResponse(new Response(svg, { headers: { 'content-type': 'image/svg+xml' } }));
+        await oldResponse;
+      });
+      await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2));
+
+      expect(mockUseImage.mock.calls.some(([source, , dependencies]) => (
+        source.uri?.startsWith('file://') && String(dependencies?.[0] || '').includes('yaohuo:1')
+      ))).toBe(false);
     } finally {
       fetchSpy.mockRestore();
     }
