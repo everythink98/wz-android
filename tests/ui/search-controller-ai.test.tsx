@@ -1714,6 +1714,9 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).not.toHaveBeenCalled();
     expect(searchSemanticTopics).not.toHaveBeenCalled();
     expect(hook.result.current.searchBusy).toBe(false);
+    expect(hook.result.current.searchGroups).toEqual([
+      expect.objectContaining({ source: 'linuxdo', settled: false, loading: false })
+    ]);
     expect(hook.result.current.linuxDoAiState.status).toBe('idle');
   });
 
@@ -1756,7 +1759,8 @@ describe('linux.do AI search controller', () => {
     ]);
     expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')).toMatchObject({
       items: [],
-      loading: false
+      loading: false,
+      settled: false
     });
   });
 

@@ -4,15 +4,14 @@ context retries=0
 env APP_ID=com.wz.reader
 
 open ${APP_ID} --relaunch
-wait id="feed-list-ready-all" 60000
+wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"
 wait id="account-site-nodeseek" 10000
 wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000
 press label="检测或重新登录"
-wait "role=\"webview\" label=\"NodeSeek\"" 15000
-wait "role=\"image\" label=\"logo\"" 15000
-wait label="新帖子" 15000
+wait id="nodeseek-login-webview-settled" 60000
+wait label="刷新页面" 10000
 back --system
 wait label="收起账号中心" 10000

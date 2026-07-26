@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSearchListItems, searchGroupEmptyText, type SearchGroup } from './searchListItems';
+import { buildSearchListItems, searchGroupEmptyText, searchGroupOutcomeKind, type SearchGroup } from './searchListItems';
 import type { Topic } from './types';
 
 function topic(id: string, source: Topic['source'], category = '默认'): Topic {
@@ -17,6 +17,16 @@ function topic(id: string, source: Topic['source'], category = '默认'): Topic 
 }
 
 describe('Android search list items', () => {
+  it('classifies only settled source outcomes', () => {
+    expect(searchGroupOutcomeKind({ source: 'v2ex', label: 'V2EX', items: [topic('1', 'v2ex')] })).toBe('data');
+    expect(searchGroupOutcomeKind({ source: 'v2ex', label: 'V2EX', items: [] })).toBe('empty');
+    expect(searchGroupOutcomeKind({ source: 'v2ex', label: 'V2EX', items: [topic('1', 'v2ex')], error: 'timeout' })).toBe('partial');
+    expect(searchGroupOutcomeKind({ source: 'v2ex', label: 'V2EX', items: [], error: 'timeout' })).toBe('error');
+    expect(searchGroupOutcomeKind({ source: 'linuxdo', label: 'linux.do', items: [], error: '请登录', errorKind: 'login-required' })).toBe('auth');
+    expect(searchGroupOutcomeKind({ source: 'v2ex', label: 'V2EX', items: [], loading: true })).toBeUndefined();
+    expect(searchGroupOutcomeKind({ source: 'v2ex', label: 'V2EX', items: [], settled: false })).toBeUndefined();
+  });
+
   it('uses a two-topic non-paginating preview for the all-source overview', () => {
     const groups: SearchGroup[] = [
       {
@@ -98,6 +108,25 @@ describe('Android search list items', () => {
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice', 'groupEmpty']);
     expect(items[1]).toMatchObject({ type: 'groupAuthNotice', group: { authNotice: { message: '未登录搜索，结果可能不完整。', tone: 'warning' } } });
+  });
+
+  it('shows an unsettled source notice without an empty terminal state', () => {
+    const groups: SearchGroup[] = [{
+      source: 'nodeseek',
+      label: 'NodeSeek',
+      items: [],
+      settled: false,
+      authNotice: {
+        kind: 'verification-required',
+        message: 'NodeSeek 登录状态待确认，已暂停新请求和写入。',
+        tone: 'warning'
+      }
+    }];
+
+    const items = buildSearchListItems({ groups, mode: 'overview' });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '等待账号状态' });
   });
 
   it('keeps neutral auth notices out of source result bodies', () => {

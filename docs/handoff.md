@@ -15,6 +15,7 @@
 
 | 内容 | 事实源 |
 | --- | --- |
+| 品牌、视觉和 accessibility 约束 | `PRODUCT.md` |
 | 产品取舍与新功能准入 | `docs/product-charter.md` |
 | 现有功能、用户入口、能力 ID 和共享回归范围 | `docs/product-map.md` |
 | 历史逃逸问题、精确 oracle 和最低可靠测试层 | `docs/regression-corpus.md` |
@@ -27,11 +28,20 @@
 
 文档或记忆与用户要求、代码或运行结果冲突时，以对应的最新事实为准，并在交付中指出差异。模拟器记录只有在 Git revision、App 版本和 APK 身份与当前对象匹配时才能作为基线；不要把版本号、Release hash 或登录状态复制到稳定文档中长期维护。
 
+## 周期性文档与记忆维护
+
+- 开始时记录 Git revision 与 dirty 状态，用 `git ls-files -- '*.md'` 枚举 tracked Markdown；再从 `memory/MEMORY.md` 索引读取相关本机记忆，并单独检查 ignored 的 `docs/emulator-baseline.md`。不能只审查本轮碰巧打开的文件。
+- 每项事实只在上表指定的唯一事实源写完整版本；README、交接和其他消费者只保留读者需要的摘要与链接。发现重复定义时删除副本，不建立双向同步清单。
+- 逐项用用户最新要求、当前代码、配置和匹配身份的运行结果核对。已失效内容直接删除或替换，不在旧说法后追加“更新说明”留下冲突；证据不足时记录缺口，不把推测升级为事实。
+- `memory/MEMORY.md` 只做索引；`memory/project.md` 只保留跨任务稳定的本机事实与 tracked 文档入口；专项记忆保存不可从仓库直接恢复的取证结论。版本号、timeout、完整能力清单、事故 oracle 和可由代码读出的 schema 不复制进 memory。
+- `docs/emulator-baseline.md` 的历史记录保留；顶部索引只认同时匹配 revision、App 版本和 APK 身份的结果。没有匹配记录就明确写“无当前基线”，不得按日期借用旧结论。
+- 收口时检查事实源及其摘要消费者，删除过时草稿和本轮临时产物，然后运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`。只有运行时文件发生变化才扩大到对应代码验证；不为周期维护引入更新时间机器人或新文档 schema。
+
 ## 当前不可破坏边界
 
 - App 支持 NodeSeek、linux.do、V2EX、妖火和小隐寺；五站共享阅读主干，互动能力按原站真实支持范围提供。
 - App 的读取 controller 统一经 `src/sources/sourceGateway.ts` 进入来源层；写操作目前由 `src/app/useTopicActionsController.ts` 按 capability 调用各站 action client。
-- Cookie、小隐寺 User API Key 和服务器代理配置只保存在 Android 本机安全存储，不进入备份 JSON；小隐寺 RSA 私钥只存在 Android Keystore，代理启用失败不能静默直连。
+- NodeSeek、linux.do、妖火 Cookie 只由网站 WebView 与 Android `CookieManager` 持有；小隐寺 User API Key / Client ID、保存的账号密码和服务器代理配置使用 SecureStore；小隐寺 RSA 私钥只存在 Android Keystore。以上敏感材料都不进入备份 JSON，代理启用失败不能静默直连。
 - `App.tsx`、`src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是稳定入口或兼容 facade。
 - `android/` 是生成目录；长期原生配置只改 `app.json` 与 `plugins/`。
 - 模拟器验收不得卸载 App、清 App 数据、Cookie 或登录态；默认覆盖安装并 force-stop 后重启。

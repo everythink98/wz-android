@@ -74,20 +74,6 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = `
 true;
 `;
 
-export const NODESEEK_REPLAY_READY_MESSAGE = 'wz:nodeseek-webview-ready';
-
-export const NODESEEK_REPLAY_READINESS_SCRIPT = `
-(() => {
-  const host = String(location.hostname || "").toLowerCase();
-  const bodyText = document.body ? String(document.body.innerText || "").trim() : "";
-  const onNodeSeek = host === "nodeseek.com" || host.endsWith(".nodeseek.com");
-  if (onNodeSeek && document.readyState !== "loading" && bodyText.length > 0) {
-    window.ReactNativeWebView.postMessage(${JSON.stringify(NODESEEK_REPLAY_READY_MESSAGE)});
-  }
-})();
-true;
-`;
-
 export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
 (() => {
   const probeId = Number(window.__WZ_LINUXDO_LOGIN_PROBE_ID__);

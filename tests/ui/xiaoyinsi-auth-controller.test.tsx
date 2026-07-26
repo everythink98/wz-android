@@ -348,6 +348,35 @@ describe('小隐寺授权 controller', () => {
     expect(notify.mock.calls.filter(([message]) => message === '小隐寺等级已更新。')).toHaveLength(1);
   });
 
+  it('[REG-TEST-005] retries a transient level failure only after an explicit user refresh', async () => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
+    const { hook, notify, sourceGateway } = await renderController();
+    await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
+    jest.mocked(sourceGateway.getLevelProfile).mockRejectedValueOnce(new Error('限制 10 秒后再试'));
+
+    await act(async () => {
+      await expect(hook.result.current.refreshLevel()).resolves.toBe(false);
+    });
+
+    expect(sourceGateway.getLevelProfile).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(hook.result.current.levelProfile).toBeNull();
+      expect(hook.result.current.levelError).toBe('限制 10 秒后再试');
+    });
+    expect(notify).not.toHaveBeenCalledWith('小隐寺等级已更新。');
+
+    await act(async () => {
+      await expect(hook.result.current.refreshLevel()).resolves.toBe(true);
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.levelProfile).toEqual(levelProfile);
+      expect(hook.result.current.levelError).toBe('');
+    });
+    expect(sourceGateway.getLevelProfile).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenCalledWith('小隐寺等级已更新。');
+  });
+
   it('[REG-ACCOUNT-016] returns a read-only authorization event without publishing it to workflow state', async () => {
     Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background', writable: true });
     mockLoadPending.mockResolvedValue(pending);

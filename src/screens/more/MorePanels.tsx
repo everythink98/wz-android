@@ -17,13 +17,8 @@ import type { SiteSessionViewModel } from '../../siteSessionState';
 import { createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, MenuButton, triggerPressFeedback } from '../../components/AppControls';
 import { LoginWebViewModal } from '../../components/LoginWebViewModal';
-import {
-  NODESEEK_LOGIN_PROBE_SCRIPT,
-  NODESEEK_REPLAY_READINESS_SCRIPT,
-  NODESEEK_REPLAY_READY_MESSAGE
-} from '../../loginWebViewScripts';
+import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../../loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '../../loginFormAdapters';
-import { shouldOpenLoginWebViewUrl } from '../../loginWebViewNavigation';
 import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
 import { useCommittedRef } from '../../app/useCommittedRef';
 
@@ -114,7 +109,7 @@ export function NodeSeekLoginPanel({
   const [webViewError, setWebViewError] = useState('');
   const [webViewKey, setWebViewKey] = useState(0);
   const [webViewNeedsRemount, setWebViewNeedsRemount] = useState(false);
-  const [webViewReadyForReplay, setWebViewReadyForReplay] = useState(false);
+  const [webViewSettledForReplay, setWebViewSettledForReplay] = useState(false);
   const [showNodeImagePanel, setShowNodeImagePanel] = useState(false);
   const [showManualNodeImageKey, setShowManualNodeImageKey] = useState(false);
   const [nodeImageApiKeyDraft, setNodeImageApiKeyDraft] = useState('');
@@ -123,7 +118,7 @@ export function NodeSeekLoginPanel({
     if (!showLoginPanel) {
       setWebViewError('');
       setWebViewNeedsRemount(false);
-      setWebViewReadyForReplay(false);
+      setWebViewSettledForReplay(false);
     }
   }, [showLoginPanel]);
 
@@ -132,7 +127,7 @@ export function NodeSeekLoginPanel({
       return undefined;
     }
     const timeout = setTimeout(() => {
-      setWebViewReadyForReplay(false);
+      setWebViewSettledForReplay(true);
       onWebViewState('timeout', credentialAttempt);
       onSetLoadingLoginPage(false);
       setWebViewError('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。');
@@ -148,7 +143,7 @@ export function NodeSeekLoginPanel({
 
   const refreshWebView = () => {
     setWebViewError('');
-    setWebViewReadyForReplay(false);
+    setWebViewSettledForReplay(false);
     onSetLoadingLoginPage(true);
     if (webViewNeedsRemount) {
       setWebViewNeedsRemount(false);
@@ -236,7 +231,7 @@ export function NodeSeekLoginPanel({
           <View style={styles.actions}>
             {credentialSaved ? <AppButton label="填入已保存登录信息" styles={styles} disabled={credentialFillPending} onPress={onRequestCredentialFill} /> : null}
             <AppButton
-              testID={webViewReadyForReplay && !webViewError && !webViewBlockMessage ? 'nodeseek-login-webview-ready' : undefined}
+              testID={webViewSettledForReplay || webViewBlockMessage ? 'nodeseek-login-webview-settled' : undefined}
               label={checking ? '检测中' : '检测登录'}
               styles={styles}
               disabled={checking}
@@ -259,11 +254,10 @@ export function NodeSeekLoginPanel({
               injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
               onLoadEnd={(event) => {
                 onSetLoadingLoginPage(false);
+                setWebViewSettledForReplay(true);
                 if ('code' in event.nativeEvent) {
-                  setWebViewReadyForReplay(false);
                   return;
                 }
-                webViewRef.current?.injectJavaScript(NODESEEK_REPLAY_READINESS_SCRIPT);
                 onWebViewState('ready', credentialAttempt);
                 setWebViewError('');
                 webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
@@ -275,22 +269,10 @@ export function NodeSeekLoginPanel({
                 onWebViewState('start', credentialAttempt);
                 setWebViewError('');
                 setWebViewNeedsRemount(false);
-                setWebViewReadyForReplay(false);
+                setWebViewSettledForReplay(false);
                 onSetLoadingLoginPage(true);
               }}
-              onLoadProgress={(event) => {
-                if (event.nativeEvent.progress > 0) {
-                  webViewRef.current?.injectJavaScript(NODESEEK_REPLAY_READINESS_SCRIPT);
-                }
-              }}
               onMessage={(event) => {
-                if (
-                  event.nativeEvent.data === NODESEEK_REPLAY_READY_MESSAGE
-                  && shouldOpenLoginWebViewUrl(event.nativeEvent.url, ['nodeseek.com'])
-                ) {
-                  setWebViewReadyForReplay(true);
-                  return;
-                }
                 if (!onLoginFormMessage(event)) {
                   onHandleLoginMessage(event);
                 }
@@ -298,14 +280,14 @@ export function NodeSeekLoginPanel({
               onError={(event) => {
                 onWebViewState('error', credentialAttempt);
                 onSetLoadingLoginPage(false);
-                setWebViewReadyForReplay(false);
+                setWebViewSettledForReplay(true);
                 setWebViewError(`NodeSeek 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {
                 onWebViewState('renderer-gone', credentialAttempt);
                 onSetLoadingLoginPage(false);
-                setWebViewReadyForReplay(false);
+                setWebViewSettledForReplay(true);
                 setWebViewNeedsRemount(true);
                 setWebViewError('NodeSeek 登录页面已停止，请刷新页面重试。');
               }}

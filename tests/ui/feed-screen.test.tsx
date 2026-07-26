@@ -91,6 +91,7 @@ function renderFeed(
       busy={busy}
       categories={[]}
       categoryFilter=""
+      feedOutcomeKind={busy ? undefined : feedItems.length ? 'data' : 'empty'}
       feedHasMore={false}
       feedItems={feedItems}
       feedPage={1}
@@ -137,6 +138,7 @@ function FeedFilterHarness() {
       categories={categories}
       categoryFilter={categoryFilter}
       feedFilter={feedSource === 'v2ex' || feedSource === 'linuxdo' || feedSource === 'nodeseek' || feedSource === 'xiaoyinsi' ? feedFilters[feedSource] : undefined}
+      feedOutcomeKind="data"
       feedHasMore={false}
       feedItems={[topic]}
       feedPage={1}
@@ -161,6 +163,22 @@ function FeedFilterHarness() {
 }
 
 describe('Feed loading', () => {
+  it.each(['data', 'empty', 'partial', 'error', 'auth'] as const)('exposes the settled %s outcome for the active source and filter', async (kind) => {
+    const view = await render(renderFeed(false, kind === 'data' || kind === 'partial' ? [topic] : [], {
+      feedFilter: 'postTime',
+      feedOutcomeKind: kind,
+      feedSource: 'nodeseek'
+    }));
+
+    expect(view.getByTestId(`feed-outcome-${kind}-nodeseek-postTime`)).toBeTruthy();
+  });
+
+  it('does not expose a terminal outcome while loading', async () => {
+    const view = await render(renderFeed(true, [topic], { feedOutcomeKind: 'data' }));
+
+    expect(view.queryByTestId('feed-outcome-data-all-default')).toBeNull();
+  });
+
   it('shows one loading indicator before data and keeps pull-to-refresh after data arrives', async () => {
     const view = await render(renderFeed(true, []));
 
@@ -177,7 +195,7 @@ describe('Feed loading', () => {
     const view = await render(renderFeed(false, [topic]));
 
     await act(async () => {
-      view.getByTestId('feed-list-ready-all').props.onScroll({
+      view.getByTestId('feed-outcome-data-all-default').props.onScroll({
         nativeEvent: {
           contentOffset: { y: 500 },
           contentSize: { height: 3000 },
@@ -213,7 +231,7 @@ describe('Feed loading', () => {
 
     expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
     await act(async () => {
-      fireEvent.scroll(view.getByTestId('feed-list-ready-nodeseek'), {
+      fireEvent.scroll(view.getByTestId('feed-outcome-data-nodeseek-postTime'), {
         nativeEvent: {
           contentOffset: { y: 1200 },
           contentSize: { height: 3000 },
@@ -272,7 +290,7 @@ describe('Feed loading', () => {
       loadMoreFailureSignal: 1,
       onLoadMore
     }));
-    const list = view.getByTestId('feed-list-ready-all');
+    const list = view.getByTestId('feed-outcome-data-all-default');
     const nearEndEvent = {
       nativeEvent: {
         contentOffset: { y: 900 },

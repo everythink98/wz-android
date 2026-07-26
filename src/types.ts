@@ -27,6 +27,7 @@ export type SourceErrorInfo = {
 };
 
 export type SourceErrors = Partial<Record<FeedSource, SourceErrorInfo>>;
+export type SourceLoadOutcomeKind = 'data' | 'empty' | 'partial' | 'error' | 'auth';
 
 export interface SiteExtensionMap {
   linuxdo: {

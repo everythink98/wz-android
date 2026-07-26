@@ -1,16 +1,6 @@
 # Product
 
-## Register
-
-product
-
-## Users
-
-同时使用多个中文社区的 Android 用户。他们希望在一个本地优先的客户端里快速发现、搜索、续读和进行必要互动，同时保留各站独立的账号、权限与社区差异。
-
-## Product Purpose
-
-阅坛聚合多个中文论坛的核心阅读旅程，并在原站真实支持和当前账号允许时提供互动能力。成功意味着跨站阅读一致、状态连续、来源边界清楚，且 Cookie、授权材料和本机资料始终由设备本地安全管理。
+本文只维护品牌、视觉和 accessibility 约束。产品定位与准入标准见 [产品章程](docs/product-charter.md)，现有功能与来源差异见 [产品地图](docs/product-map.md)。
 
 ## Brand Personality
 

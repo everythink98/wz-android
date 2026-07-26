@@ -11,6 +11,7 @@ import { feedSourceItems } from '../feedCategoryRail';
 import {
   buildSearchListItems,
   searchGroupEmptyText,
+  searchGroupOutcomeKind,
   type SearchGroup,
   type SearchListItem
 } from '../searchListItems';
@@ -1240,11 +1241,12 @@ export const SearchScreen = memo(function SearchScreen({
     const pageStatusIndex = insertionIndex >= 0 ? insertionIndex + 1 : items.length;
     return [...items.slice(0, pageStatusIndex), pageStatus, ...items.slice(pageStatusIndex)];
   }, [completedPagination, paginationContext, searchSource, showSearchGroups, visibleSearchGroups]);
-  const firstSearchResultKey = useMemo(() => {
-    const item = listItems.find((candidate) => candidate.type === 'topic');
-    return item?.type === 'topic' ? topicKey(item.topic) : '';
-  }, [listItems]);
-  const completedSearchAccessibilityLabel = visibleSearchGroups.some((group) => group.items.length > 0)
+  const searchGroupsSettled = visibleSearchGroups.length > 0 && visibleSearchGroups.every((group) => (
+    group.settled !== false && !group.loading && !group.loadingMore
+  ));
+  const completedSearchAccessibilityLabel = !searchGroupsSettled
+    ? '搜索结果，等待来源结算'
+    : visibleSearchGroups.some((group) => group.items.length > 0)
     ? '搜索结果，已完成，有可打开结果'
     : visibleSearchGroups.length > 0 && visibleSearchGroups.every((group) => !group.loading)
       ? '搜索结果，已完成，结构化回退'
@@ -1306,7 +1308,7 @@ export const SearchScreen = memo(function SearchScreen({
   }, [query, scrollToTopSignal, searchSource, submittedQuery]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(({ item }) => {
     if (item.type === 'topic') {
-      return renderTopicCard(item.topic, topicKey(item.topic) === firstSearchResultKey ? 'search-result-first' : undefined);
+      return renderTopicCard(item.topic);
     }
     if (item.type === 'groupHeader') {
       const canOpenSource = item.group.items.length > 0;
@@ -1338,7 +1340,7 @@ export const SearchScreen = memo(function SearchScreen({
       const paginationError = Boolean(item.group.nextPage);
       const retryPage = paginationError ? item.group.nextPage : null;
       return (
-        <View testID={`search-outcome-error-${item.group.source}`} style={styles.errorBox}>
+        <View style={styles.errorBox}>
           <Text style={styles.errorText}>{item.group.error}</Text>
           <AppButton
             label={paginationError ? `重试加载 ${item.group.label}` : `重试 ${item.group.label}`}
@@ -1374,7 +1376,7 @@ export const SearchScreen = memo(function SearchScreen({
           ? styles.authNoticeTextWarning
           : styles.authNoticeTextNeutral;
       return (
-        <View testID={`search-outcome-auth-${item.group.source}`} style={[styles.authNoticeBox, noticeBoxStyle]}>
+        <View style={[styles.authNoticeBox, noticeBoxStyle]}>
           <Text style={[styles.authNoticeText, noticeTextStyle]}>{authNotice.message}</Text>
         </View>
       );
@@ -1383,7 +1385,7 @@ export const SearchScreen = memo(function SearchScreen({
       return <LoadingState text={`${item.group.label} 搜索中...`} styles={styles} theme={theme} />;
     }
     if (item.type === 'groupEmpty') {
-      return <View testID={`search-outcome-empty-${item.group.source}`}><EmptyText text={searchGroupEmptyText(item.group)} styles={styles} /></View>;
+      return <View><EmptyText text={searchGroupEmptyText(item.group)} styles={styles} /></View>;
     }
     if (item.type === 'groupLoadMore') {
       return (
@@ -1422,7 +1424,7 @@ export const SearchScreen = memo(function SearchScreen({
       );
     }
     return null;
-  }, [busy, changeSearchSource, firstSearchResultKey, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme]);
+  }, [busy, changeSearchSource, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme]);
   const keySearchListItem = useCallback((item: SearchListItem) => {
     if (item.type === 'topic') {
       return `topic:${item.groupSource || item.topic.source}:${topicKey(item.topic)}`;
@@ -1519,6 +1521,10 @@ export const SearchScreen = memo(function SearchScreen({
           onToggle={onToggleLinuxDoAiSearch}
         />
       ) : null}
+      {showSearchGroups ? visibleSearchGroups.map((group) => {
+        const outcome = searchGroupOutcomeKind(group);
+        return outcome ? <View key={group.source} collapsable={false} testID={`search-outcome-${outcome}-${group.source}`} /> : null;
+      }) : null}
       {showIdleRecentSearches ? (
         <View style={styles.stack}>
           <Text style={styles.meta}>最近搜索</Text>
@@ -1570,10 +1576,12 @@ export const SearchScreen = memo(function SearchScreen({
     searchFilterEntrySummary,
     searchSessionNotices,
     searchSource,
+    showSearchGroups,
     showIdleRecentSearches,
     styles,
     submitSearch,
-    theme
+    theme,
+    visibleSearchGroups
   ]);
 
   return (
@@ -1582,8 +1590,8 @@ export const SearchScreen = memo(function SearchScreen({
         ref={listRef}
         accessibilityLabel={hasSubmittedQuery && !busy ? completedSearchAccessibilityLabel : '搜索结果'}
         accessibilityLiveRegion={hasSubmittedQuery ? 'polite' : 'none'}
-        accessibilityState={{ busy: busy && hasSubmittedQuery }}
-        testID={hasSubmittedQuery && !busy ? 'search-complete' : undefined}
+        accessibilityState={{ busy: hasSubmittedQuery && (busy || !searchGroupsSettled) }}
+        testID={hasSubmittedQuery && !busy && searchGroupsSettled ? 'search-complete' : undefined}
         style={styles.content}
         contentContainerStyle={styles.contentInner}
         data={listItems}

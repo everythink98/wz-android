@@ -5,6 +5,7 @@
 - `docs/product-charter.md` 定义产品目标、核心旅程和取舍标准。
 - `docs/product-map.md` 定义现有能力、用户入口、能力 ID 和共享回归范围。
 - `docs/regression-corpus.md` 记录历史逃逸问题、精确 oracle 和最低可靠测试层。
+- `PRODUCT.md` 只维护品牌、视觉和 accessibility 约束，不作为产品范围或实现事实源。
 - 本文只回答这些能力“怎么实现”：记录当前 module、interface、数据和原生配置边界，不重复完整功能清单，也不维护版本号或登录状态。
 - `docs/testing-standard.md` 定义验收，`docs/operator-runbook.md` 定义开发与发布操作。
 - `memory/` 与 `docs/emulator-baseline.md` 保存本机事实，不进入 Git，也不作为共享架构规范。
@@ -68,6 +69,7 @@
 - 验证状态只能由协议或页面结构证据产生，不能由业务正文关键词产生。Cloudflare 的 `cf-mitigated: challenge` 是权威信号；缺少该 header 时只允许 HTML challenge 的 title、表单、Turnstile/Challenge DOM 或 script 作为 fallback。普通 `403`、`429` 或登录接口 `404` 本身不构成 challenge。明确非 HTML、JSON 形态正文、已识别的可读 NodeSeek 页面和妖火业务正文都先按业务数据处理；隐藏 WebView 同样先提交 JSON/可读页面，再判断 challenge。见 `REG-VERIFICATION-002`。
 - Feed、单站 Search、Topic 回复和 User 两个 lane 使用 Infinite Query；服务端 next page/cursor 与本次 `pageParam` 相同即停止，失败页不追加。User 的 Profile Query 刚显示 next cursor 时，分页命令先确保对应 lane 已用同一 profile seed，再从 Query cache 的最后 page/pageParam 发起准确下一页，不能因 observer 提交稍晚而静默早退，见 `REG-USER-006`。Topic 回复下一页的验证恢复继续调用 `fetchNextPage()` 重试原 page/offset，首屏恢复才使用 `refetch()`。聚合 Search 使用五个独立 `useQueries` 渐进结算，单站失败不能阻断其他来源。
 - Query 的内部状态只有在对应业务请求已经启用后才可投影为页面 busy；未提交 Search 的 disabled Infinite Query 即使 `isPending` 也不能禁用首次提交入口，见 `REG-SEARCH-006`。
+- 动态读取 outcome 是 controller/query 状态的只读投影，不是第二套网络状态：Feed 由 `useFeedController` 按当前 items、来源错误和 fetch 状态给出 `data/empty/partial/error/auth`；Search 直接按每个 group 的 items/error/nextPage/loading 投影同一词汇。Screen 只暴露当前请求 marker，Loading、未提交和旧请求不暴露终态；该层不改变 timeout、去重或重试。
 - Topic 写操作只通过 Topic `useMutation` 入口进入 MutationCache；`scope.id = forum:{source}:topic:{id}` 让同一 Topic 串行、不同 Topic 可并发。所有回复、编辑、删除、互动、投票、上传与 NodeSeek 签到先经 `ensureWritableSession(source)` 取得 `{ identityKey, sessionEpoch }` ticket；dirty 会话先复核，换号、退出或 unknown 均终止且不自动重放。门禁位于用户确认之后、Query snapshot/optimistic update/文件选择/transport 之前，等待取消 Query、文件选择或写后刷新后还要复核 ticket。乐观 apply、rollback 和成功结果只修改 ticket 所属的精确 Topic/Replies cache；未确认的 unknown/failure 即使使 ticket 进入 pending，也恢复仍存在的旧 scope snapshot，但不得重建已清除的旧 epoch Query。服务器已确认后 ticket 失效只记录 `stale + serverConfirmed`，不弹成功提示、不应用迟到结果、不回滚或重发，也不写新 epoch。站点 client/runtime 提供 `SourceErrorKind` 证据，只有 `login-required`、`login-expired`、`verification-required` 请求 Account Query 对账；`ordinary` 和 `permission-denied` 只结算本次 mutation，不建立身份 barrier。非幂等请求发出后不自动重试。见 `REG-WRITE-023/024/025`。
 - Cloudflare/WebView 恢复、小隐寺 Device Code 轮询、凭据存储 transaction 和导航快照是多步 workflow，仍可使用受限 generation 防止过期恢复落地；不得用它们重新实现 Query 已有的 dedupe、cache 或取消所有权。
 
@@ -107,6 +109,7 @@
 - `src/app/useAccountStatusController.ts` 以四个按 source 命名的 canonical Query 负责 `refreshAccountStatus`，并直接从各 Query 的 data/error/fetchStatus 派生账号中心 view model；临时 probe 不先污染旧 canonical key，远端身份、错误或 Loading 也不复制回 workflow state。`src/app/useBackupStatusController.ts` 只负责备份导入导出。`AppRoot` 在本机资料加载完成后静默刷新一次，手动刷新才提示结果。
 - `src/app/useAccountController.ts` 负责 NodeSeek、linux.do、妖火登录页内的显式检测、账号密码填入、用户明确触发的登录清理和 linux.do 等级读取；`authSurfaceCoordinator` 统一页面打开/关闭与自动对账。NodeSeek 与 linux.do 每次手动 probe 只接受当前 WebView 文档的私有 nonce 与 documentKey 三态结果，任何新文档 `onLoadStart` 都先作废旧 probe。
 - 登录 WebView 的组件身份只由 surface ticket 和显式 renderer 恢复 generation 决定；凭据填入 attempt 只用于关联 probe / fill 回执，必须通过已挂载 WebView 的 `injectJavaScript` 发送，不能进入 React key 销毁当前页面。登录 Cookie 的删除只暴露为原生 `clearManagedLoginCookies(source)`，仅由用户明确“清除登录”调用并回读确认；NodeSeek/linux.do 保留 Cloudflare Cookie，其他站不受影响。普通读取不调用 `flush()`。见 `REG-ACCOUNT-022/031`。
+- NodeSeek 登录 WebView 对每个当前 attempt 只暴露 App 自有 `nodeseek-login-webview-settled`：成功、明确错误或代理阻断均可结算，Loading 不结算，并始终保留“刷新页面”。这个 surface 供 Replay 验证 App 流程，不把第三方 DOM 或数据可得性写进产品状态。
 - `src/app/useSessionController.ts` 负责 workflow、本地凭据 generation、按站 epoch 与显式清除事务，不再保存或回灌可传输的 Cookie header。旧版 `nodeseek-access`、`linuxdo-clearance`、`yaohuo-cookie-header` 只在准确原生读取成功后删除一次；迁移不写 WebView Cookie。
 - `SiteSessionState` 只作为登录弹层、凭据 transaction 和验证/授权 workflow 的本地生命周期输入；Account canonical Query 持有远端身份，二者只在 `SiteSessionViewModel` 组合，`identityTrust=pending` 时统一关闭 `canWrite`。WebView userId、Cookie 摘要和授权回调都不能独立覆盖 canonical identity。
 - `SiteSessionState` 不是小隐寺数据读取的授权投影。managed Gateway 直接读取 SecureStore 中的 User API Key / Client ID，并用 credential generation 拒绝迟到结果；不得因为 Account Query 不再回写 workflow session，就把仍有效的凭据当作不存在。

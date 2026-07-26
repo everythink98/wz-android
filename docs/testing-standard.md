@@ -10,17 +10,17 @@
 
 ## 判断原则
 
-- 代码里能固定的数据，用自动测试精确断言数量、字段、顺序和错误状态。
-- 真实网站结果每天会变，不能把实时结果条数写成永久固定值；每次验收要记录同一关键词、同一筛选、同一登录态下的各站结果数和首条可打开结果。
-- 搜索、首页、详情、回复、用户页和互动结果必须按对象检查实际存在且适用的关键字段和状态，具体字段以功能标准为准，不能只看列表有内容。
+- 固定 fixture 中能确定的数据，用自动测试精确断言数量、字段、顺序、成功、空态、局部失败、鉴权、超时、解析失败和显式恢复；不新增录制框架，也不把真实认证响应提交进仓库。
+- 真实网站结果每天会变，不能把实时结果条数、首条内容或第三方 DOM 写成永久固定 oracle。动态读取分别判断 App 是否让当前请求正确结算并可恢复，以及第三方数据当前是否可得；后一轴只由 Agent Live 记录。
+- 搜索、首页、详情、回复、用户页和互动结果必须按对象检查实际存在且适用的关键字段和状态。正确显示错误态可以证明流程，但不能掩盖 App 的请求构造、鉴权、凭据路由或解析缺陷；来源波动也不能被误报为产品失败。
 - 登录、Cookie、验证、备份、发布和安装属于高风险功能；只跑 UI 不算通过。
 - 只打开 App、看首页显示、截图留存，都不算完整测试。
 - 优化代码前只使用与当前 Git revision、App 版本和 APK 身份匹配的 `docs/emulator-baseline.md` 记录；优化后按同一功能、同一关键词、同一来源和同一登录态复测差异，不能以记录日期较新代替身份匹配。
 - 登录和验证网页必须从 App 的 `更多 -> 账号中心` 入口打开；页面包名仍应是 `com.wz.reader`。用 Chrome 打开网页不能算登录 / 验证通过。
-- 用户提供 NodeSeek、linux.do、V2EX 或妖火主题链接用于查看、效果验证或排障时，必须按 `docs/operator-runbook.md` 的“直接打开主题链接”解析来源和主题 id，并直达模拟器 App 内详情页；搜索框、搜索结果、Chrome 或桌面浏览器都不能代替。该内部验证流程不代表产品需要支持外部 HTTPS 链接直达。
+- 用户提供 NodeSeek、linux.do、V2EX、妖火或小隐寺主题链接用于查看、效果验证或排障时，必须按 `docs/operator-runbook.md` 的“直接打开主题链接”解析来源和主题 id，并直达模拟器 App 内详情页；搜索框、搜索结果、Chrome 或桌面浏览器都不能代替。该内部验证流程不代表产品需要支持外部 HTTPS 链接直达。
 - 新增或修改依赖登录态的能力时，必须从 App 内原站同类页面核实字段、权限、入口和请求；未登录页面、桌面浏览器、第三方客户端、作者名或猜测的 API 不能作为依据。必要时可通过 WebView 调试查看 DOM、全局数据、已加载 JS 和 network，但不得输出 Cookie、token 或含敏感信息的截图、UI dump；临时取证文件只能保留在本机且不得提交。
 - 单一账号、页面或当前已加载 JS/API 中没有对应入口或行为，不足以证明原站不支持。证据不足时不得猜测实现或新增入口，也不得据此移除或隐藏已有能力；应说明证据缺口。
-- “全面测试”默认不授权真实发布、回复、编辑、删除、上传、点赞、投票或收藏切换；这些写操作只用自动测试、请求构造、权限显示和只读入口检查覆盖。
+- “全面测试”默认不授权真实发布、回复、编辑、删除、签到、上传、点赞、鸡腿、反对、投票、原站书签或收藏切换；这些写操作只用自动测试、请求构造、权限显示和只读入口检查覆盖。
 - 确实需要真实写操作验收时，必须先得到用户明确同意。发帖、回复、编辑和删除只作用于本次新建、中文且贴合原帖主题的临时内容，完成后清理并刷新确认；点赞和收藏切换完成后恢复原状态；投票等不可逆操作，以及无法清理的上传，必须针对具体对象或残留风险单独取得同意。
 
 ## 证据分层与工具职责
@@ -30,7 +30,7 @@
 | `STATIC_PASS` | 文档、TypeScript、unused、React Doctor changed-lines | 功能在设备上可用 |
 | `UNIT_PASS` | Vitest 行为测试 | React Native 实际渲染或当天原站结果 |
 | `UI_PASS` | Jest/RNTL 通过 role、label、text 或稳定 `testID` 验证的渲染行为 | Native/WebView 和真实网络行为 |
-| `DEVICE_REPLAY_PASS` | `.ad` 在匹配的 App/APK/设备/会话执行成功 | 未包含在脚本里的能力或真实写入 |
+| `DEVICE_REPLAY_PASS` | `.ad` 在匹配的 App/APK/设备/会话执行成功 | 第三方当前健康、当天有数据、未包含的能力或真实写入 |
 | `LIVE_PASS` | App 内真实来源或获授权写操作的可观察结果 | 其他 revision、APK、账号或日期 |
 | `APK_SANITY` | 覆盖安装、启动、日志窗口且无崩溃、ANR、RedBox | 业务功能完整正确 |
 | `NOT_VERIFIED` | 已识别但缺少足够证据 | 不得改写为“应该可用” |
@@ -38,6 +38,7 @@
 
 - MCP 是探索、诊断和录制入口；Replay 是经过审查后进入仓库的稳定旅程，二者不互相替代。
 - tracked Replay 只能使用稳定 `testID`、accessibility label、role 和稳定文案；禁止坐标、临时引用、动态标题和固定实时数量。
+- 动态读取的 Replay 只等待当前请求专属 outcome：Feed 使用 `data/empty/partial/error/auth`，Search 按来源使用同一结果词汇。Loading、未提交或旧请求不能暴露终态；永久 Loading、错误不可见、无恢复入口和来源串扰仍必须失败。一个来源或能力失败不得取消其他独立文件的取证。
 - Replay 默认 retries 为 0；单个 `.ad` 首次失败即停止，普通执行失败由外层继续其他独立文件并在最后汇总，清理失败则立即中止后续文件以避免污染，只有全部通过才输出 `DEVICE_REPLAY_PASS`。带 `--record-video` 的 tracked Replay 不自行执行 `close`：test harness 必须先停止并拉回视频，再由 cleanup 关闭 session。诊断性重跑不能覆盖第一次失败。禁止在 CI 使用 `replay -u`：本机 0.19.0 仍可能重写脚本，而 0.19.1 起该参数已退役为 no-op；统一根据 divergence 建议人工修改并审查 diff。
 - Agent Live 不是 CI。它只在 `npm run verify` 和相关 Replay 之后按 `targeted` 或 `full` Profile 执行；CF、动态目标、授权、恢复、不可逆写入和失败续跑规则以 `tests/live/agent-live.md` 为准。
 - React Doctor 只扫描新增行并阻断新增 error；它是静态建议，不替代任何行为测试。
@@ -108,7 +109,7 @@
 
 `REG-ACCOUNT-021` 补充登录验收：linux.do 手动检测必须由当前 WebView session、唯一 probeId 与合法 linux.do documentKey 的回执驱动结算；React Native 事件 URL 与页面内 URL 不得因同站重定向/History 路径差异而互相否决。固定等待不得提前判定；无回执时有界超时为 `unknown`，导航、关闭或新检查必须取消旧 probe。
 
-`REG-ACCOUNT-022` 补充登录验收：Cookie 删除不能只以 `setCookie` callback 为成功依据；NodeSeek 登录 Cookie 必须按 host-only 与明确 `Domain=nodeseek.com; Path=/` 身份过期，`flush` 后从 `www` 与 apex URL 回读，任一目标名称仍可见都必须失败且不得发布已清理。`Domain=nodeseek.com` 与前导点形式等价，不靠重复前导点调用掩盖身份错误。凭据 attempt 只做消息关联；RNTL 必须证明 attempt 变化时同一 WebView mount 保持且新 probe 注入，设备侧只有 renderer 退出的显式恢复允许 remount。动态 CF 与真实登录由用户手动完成，tracked `nodeseek-session.ad` 只证明当前 APK 的原站页面可达，不替代 Cookie 身份和 mount 生命周期测试。
+`REG-ACCOUNT-022` 补充登录验收：Cookie 删除不能只以 `setCookie` callback 为成功依据；NodeSeek 登录 Cookie 必须按 host-only 与明确 `Domain=nodeseek.com; Path=/` 身份过期，`flush` 后从 `www` 与 apex URL 回读，任一目标名称仍可见都必须失败且不得发布已清理。`Domain=nodeseek.com` 与前导点形式等价，不靠重复前导点调用掩盖身份错误。凭据 attempt 只做消息关联；RNTL 必须证明 attempt 变化时同一 WebView mount 保持且新 probe 注入，设备侧只有 renderer 退出的显式恢复允许 remount。动态 CF 与真实登录由用户手动完成，tracked `nodeseek-session.ad` 只证明当前 APK 的 App-owned settled、刷新和返回链，不证明原站可达，也不替代 Cookie 身份和 mount 生命周期测试。
 
 `REG-ACCOUNT-023` 补充登录验收：四站必须区分被动凭据观察与当前身份验证。普通 Feed、Search、Topic、启动恢复或隐藏 WebView 只读取 Cookie/SecureStore 时，`cookie-loaded` 必须省略 `loggedIn`；它可以更新摘要和匿名候选态，但不得把已确认的 `logged-in`、`expired`、`verification-required`、`verifying` 或 `authorizing` 降级，也不得清除 current user 或改写最后确认时间。只有当前账号协议或可信 self-account probe 明确给出结论时才允许携带 `loggedIn: true/false`；明确 `false` 仍必须按站退出。最低测试同时覆盖四站 reducer、NodeSeek/妖火普通读取和 linux.do 隐藏 WebView 刷新，并在设备上从 More 已登录状态切到 Search/Feed/Topic，确认普通读链不会改变同站投影。
 
@@ -149,14 +150,12 @@
 稳定 Markdown 改动运行：
 
 ```powershell
-npm run verify
-node --test scripts/check-docs.test.mjs
-node scripts/check-docs.mjs
-npm run test:ui
-npm run check:react
+npm run test:docs
+npm run check:docs
+git diff --check
 ```
 
-检查器验证已跟踪 Markdown 与稳定文档中的相对链接、反引号仓库路径、能力 ID、回归语料库引用和用户身份认证术语；本机专用的 `docs/emulator-baseline.md` 不要求在干净 checkout 中存在。
+检查器验证已跟踪 Markdown 与稳定文档中的相对链接、反引号仓库路径、`npm run` 脚本、能力 ID、REG ID 和用户身份认证术语；本机专用的 `docs/emulator-baseline.md` 不要求在干净 checkout 中存在，也不按当前目录检查绑定旧 revision 的历史路径。
 
 在已安装当前目标构建、设备身份明确且不需要覆盖安装时运行只读 Replay；必须同时指定用来核对设备 `base.apk` SHA-256 的目标 APK：
 
@@ -166,7 +165,7 @@ $env:WZ_ANDROID_TEST_APK = 'C:\path\to\current.apk'
 npm run test:device
 ```
 
-`test:device` 要求可信安装为 `agent-device >= 0.19.0`，随后核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。每个 `.ad` 使用唯一 session、独立 relaunch且不自行 `close`，让 test harness 先完成录屏 stop，再执行 session cleanup；单文件内部零重试并在失败处停止。普通执行失败时外层继续其余文件并汇总为非零退出，任何录屏隔离或恢复失败都立即中止。执行前若明确设备存在 active manifest、对应 `.tmp`、工具录屏进程或 orphan scratch，流程按 `BLOCKED_BY_ENV` 停止并保留现场；正式 manifest 即使为空也按文件存在视为占用。执行后只对同时匹配本条唯一 session 与 device 的 manifest 调用 agent-device `record stop`，未知或畸形 manifest、录屏进程和 scratch 一律不终止、不删除。runner 不结束本机 daemon，不使用 wildcard 清设备文件，也不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。动态结果只断言状态、来源和可打开性，不固定主题标题或数量；预期成功的搜索必须直接等待可见结果或来源预览，不得先等待可能残留的 `search-complete` 再做即时断言，见 `REG-TEST-002`。也不把依赖动态对象内容长度、回复组成或权限的交互塞进固定 Replay；这类行为由 RNTL 固定、Agent Live 选择满足前置条件的真实对象核实。
+`test:device` 要求可信安装为 `agent-device >= 0.19.0`，随后核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。每个 `.ad` 使用唯一 session、独立 relaunch且不自行 `close`，让 test harness 先完成录屏 stop，再执行 session cleanup；单文件内部零重试并在失败处停止。普通执行失败时外层继续其余文件并汇总为非零退出，任何录屏隔离或恢复失败都立即中止。执行前若明确设备存在 active manifest、对应 `.tmp`、工具录屏进程或 orphan scratch，流程按 `BLOCKED_BY_ENV` 停止并保留现场；正式 manifest 即使为空也按文件存在视为占用。执行后只对同时匹配本条唯一 session 与 device 的 manifest 调用 agent-device `record stop`，未知或畸形 manifest、录屏进程和 scratch 一律不终止、不删除。runner 不结束本机 daemon，不使用 wildcard 清设备文件，也不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。普通套件固定六个独立失败域：账号与小隐寺等级、聚合 Feed、聚合 Search、Library、本地 More、NodeSeek WebView；账号等级集中在 `account-readonly.ad`，本地 More 不发等级请求。Feed/Search 只断言当前请求进入合法 outcome，不要求实时首条、固定列表长度或动态详情成功；Topic/User 嵌套和 Library 空/非空由固定 RNTL 严格覆盖，真实对象链由 Agent Live 在满足前置条件时核实。NodeSeek Replay 只使用 App 自有 `nodeseek-login-webview-settled` 及刷新/返回流程，不读取第三方 DOM。小隐寺等级点击恰好一次，等待 `xiaoyinsi-level-settled` 和成功/错误共有的“刷新等级”，不等待成功专属内容、不复试，见 `REG-TEST-005/006/007`。
 
 真实未登录验收使用 `tests/device-logged-out/logged-out-readonly.ad` 和独立 AVD：
 
@@ -176,7 +175,7 @@ $env:WZ_ANDROID_TEST_APK = 'C:\path\to\current.apk'
 npm run test:device:logged-out
 ```
 
-该设备必须与 `WZ_ANDROID_TEST_DEVICE` / `WZ_ANDROID_SMOKE_DEVICE` 不同，不得从主 AVD 克隆用户数据，也不得登录四个论坛；使用与当前 revision、version/versionCode 和 SHA-256 匹配的同一 APK。脚本先要求四站 Account Query 都结算为权威未登录状态（NodeSeek 显示“未登录”或仅访客“已验证”，妖火、小隐寺显示“未登录”，linux.do 显示“匿名可用”），再固定五站搜索矩阵（V2EX、NodeSeek、linux.do、小隐寺出现结果，妖火显示登录限制）、公开 Feed 和 relaunch 后仍保持该状态。NodeSeek 的两种允许文案都必须保持 `isLoggedIn=false` 并走 Google fallback；“已登录”、pending、unknown 或 expired 均不能通过。NodeSeek/linux.do 的 Replay 只证明真实 Android hidden WebView 得到最终用户可见结果；gate 的精确 origin/参数/initial-task 仍由 Vitest 与 RNTL 固定。遇到 Cloudflare 时允许在 App 内原站 WebView 完成访客验证而不登录论坛，并自然保留 clearance；遇到 Google CAPTCHA、`/sorry` 或 unusual-traffic 则记录 `BLOCKED_BY_ENV`，不扩白名单、不自动重试。runner 不卸载、不清数据、不清 Cookie，也不触碰主设备。
+该设备必须与 `WZ_ANDROID_TEST_DEVICE` / `WZ_ANDROID_SMOKE_DEVICE` 不同，不得从主 AVD 克隆用户数据，也不得登录四个论坛；使用与当前 revision、version/versionCode 和 SHA-256 匹配的同一 APK。脚本先要求四站 Account Query 都结算为权威未登录状态（NodeSeek 显示“未登录”或仅访客“已验证”，妖火、小隐寺显示“未登录”，linux.do 显示“匿名可用”），再各提交一次聚合 Search 和聚合 Feed；每个来源接受公开数据、合法空态、来源错误、Google/CF 阻碍或妖火登录限制等当前请求专属 outcome，但永久 Loading、旧 marker、错误无恢复入口或错误身份仍失败。NodeSeek 的两种允许文案都必须保持 `isLoggedIn=false` 并走 Google fallback；“已登录”、pending、unknown 或 expired 均不能通过。Google gate 的精确 origin、参数和 initial-task 仍由 Vitest 与 RNTL 固定；各站当天能否返回数据由 Agent Live 分别报告。遇到 Cloudflare 时允许在 App 内原站 WebView 完成访客验证而不登录论坛，并自然保留 clearance；不得绕过 Google CAPTCHA、`/sorry` 或 unusual-traffic，也不得自动重试。runner 不卸载、不清数据、不清 Cookie，也不触碰主设备。
 
 发布脚本分别校验正式 APK 与开发签名 smoke APK 后运行：
 
@@ -184,9 +183,9 @@ npm run test:device:logged-out
 npm run smoke:android
 ```
 
-通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；覆盖安装后先读取设备 epoch、再写唯一 logcat marker 并执行第一次启动，以 `logcat -T` 有界读取该时间之后的日志，按包名与该包 PID 裁剪 marker 后窗口，同时保留 agent-device session 的第二次 relaunch 日志。任一窗口出现崩溃、ANR 或 RedBox，或 marker 丢失，都不能形成 `APK_SANITY`；不得清空设备全局 logcat。随后执行 `tests/device/` 的七条普通 Replay，形成正式候选独立的 `DEVICE_REPLAY_PASS`。真实未登录旅程通过独立设备命令另行执行，不进入 Release Smoke。缺少搜索结果、用户主题、收藏基线、页面 readiness 或 APK 身份均判定失败，不降级为跳过。全程只读，不创建或切换收藏，也不执行其他真实写操作；受影响来源仍要继续执行本文件对应专项验收。
+通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；覆盖安装后先读取设备 epoch、再写唯一 logcat marker 并执行第一次启动，以 `logcat -T` 有界读取该时间之后的日志，按包名与该包 PID 裁剪 marker 后窗口。`APK_SANITY` 只要求 `main-tab-feed` 可见、目标包在前台且该窗口无崩溃、ANR 或 RedBox；marker 丢失同样失败，不得清空设备全局 logcat。随后执行 `tests/device/` 的六条普通 Replay，形成独立的 `DEVICE_REPLAY_PASS`；真实未登录旅程通过独立设备命令另行执行。动态搜索无结果、合法空 Library 或第三方阻碍不构成 APK 产品失败，只有 APK 身份错误、App 自有入口或当前请求无法结算、永久 Loading、错误不可见或无恢复入口才失败。全程只读，不创建或切换收藏，也不执行其他真实写操作；独立能力继续取证。
 
-动态来源、真实账号和已授权写操作按 `tests/live/agent-live.md` 执行。普通改动只跑受影响能力的 `targeted`；集中修复、里程碑或发布前跑 `full`。场景相互独立，CF 由用户手动处理；无人处理记 `BLOCKED_BY_ENV`，不可逆结果不明确时不得重试。
+动态来源、真实账号和已授权写操作按 `tests/live/agent-live.md` 执行。普通改动只跑受影响能力的 `targeted`；集中修复、里程碑或发布前跑 `full`。场景相互独立，CF 由用户手动处理；无人处理记 `BLOCKED_BY_ENV`，不可逆结果不明确时不得重试。动态服务同时报告应用流程和数据读取结果：成功数据，或明确错误可见、可刷新且无自动请求突发，应用流程均可记 `LIVE_PASS`；数据真实出现记 `LIVE_PASS`，明确限流或有诊断证据的外部故障记 `BLOCKED_BY_ENV`，证据不足记 `NOT_VERIFIED`，诊断证明 App 的请求构造、凭据路由、鉴权头或解析契约错误时则记数据读取明确失败，即使错误 UI 流程本身正确。小隐寺等级首次失败时先保留错误和脱敏诊断；只有错误明确给出可执行的限流/冷却时间（时长或截止时刻），才等待至窗口结束再加 2 秒并显式刷新一次。复试成功仍记录首败，再次限流记数据 `BLOCKED_BY_ENV`；其他错误不猜成限流，也不得仅因 App 正确展示错误态就判产品失败。不得重跑整套或增加全局 retry。
 
 ## 搜索验收
 
@@ -208,7 +207,7 @@ npm run typecheck
 - 筛选参数和分页参数进入真实站点请求。
 - linux.do 冷启动残留 Cookie 只形成候选态；身份未知时账号与搜索保持非登录、AI 关闭，匿名/已确认登录搜索的 Query key 和 transport 不串用，见 `REG-LINUXDO-005`。
 
-### 模拟器验收
+### Agent Live / 受监督模拟器验收
 
 在不清 App 数据的前提下执行。推荐关键词：
 
@@ -245,7 +244,7 @@ npm run typecheck
 2. 手动输入关键词后点击 App 内提交按钮；清空输入后点击最近搜索词必须立即发起同一关键词请求，不得要求再次提交。
 3. 在 `全部` 检查五站固定预览和“查看全部”，再分别检查 `V2EX`、`linux.do`、`NodeSeek`、`妖火`、`小隐寺` 的连续单站列表。
 4. 每个来源记录结果数、首条标题、错误文案和是否可继续加载；`全部` 每站最多显示 2 条且不得出现分页入口。
-5. tracked Replay 保持既有 linux.do、NodeSeek、妖火路径；小隐寺在专项设备验收中同样要求首条结果可见、可打开详情并返回。手工验收至少打开每个受影响来源的一条结果，再返回搜索页确认关键词、来源和结果仍保留。
+5. tracked Replay 只提交一次聚合搜索，逐来源等待当前请求的 `data/empty/partial/error/auth` 之一，并在清空关键词后检查来源和筛选 UI；不打开动态首条。Agent Live 才尝试打开每个受影响来源的一条真实结果，再返回搜索页确认关键词、来源和筛选仍保留；没有结果或外部阻碍只影响该来源的数据轴。
 6. 打开搜索筛选，确认筛选项存在；非必要不改变筛选。
 7. 若点到 `linux.do 老帖` 的外部搜索入口，记录为外部跳转检查，不作为登录 / 验证检查。
 
@@ -394,7 +393,7 @@ npm run typecheck
 
 在不卸载、不清数据、不清 Cookie 的前提下执行：
 
-1. 确认 NodeSeek、linux.do、妖火均为可写登录态；如 NodeSeek 触发 Cloudflare，先在 App 内完成验证，无法自动完成时停止并交给用户。
+1. 确认 NodeSeek、linux.do、妖火、小隐寺均为各自协议下的可写登录态；小隐寺必须已完成 Device Code 授权，删除入口仍以逐条 `can_delete` 为准。如 NodeSeek 触发 Cloudflare，先在 App 内完成验证，无法自动完成时停止并交给用户。
 2. 默认只检查已有页面上的删除入口是否只出现在原站允许的回复上；不得为了验收主动发布临时回复，也不得点击已有历史内容的删除入口。
 3. 确认框和取消行为默认由自动测试覆盖；只有用户明确授权并使用本次新建的临时回复时，才在模拟器点击删除入口。
 4. 删除请求、删除后列表立即消失、刷新后不残留，默认通过自动测试覆盖。
@@ -406,17 +405,17 @@ npm run typecheck
 
 | 区域 | 必查 | 不默认点击 |
 | --- | --- | --- |
-| 首页 | 五个来源、分类、阅读筛选、单站排序、打开详情、返回列表 | 无 |
+| 首页 | 五个来源、分类、阅读筛选、单站排序及当前请求的合法 outcome；仅在存在数据前置时打开详情并返回 | 无 |
 | 详情 | 来源、标题、作者、时间、正文、回复数、附件、图片预览、返回；正文引用与评论引用分别检查简介常显、展开完整帖、收起恢复简介，并确认修改一处后另一处样式和交互不变 | 保存图片、回复、点赞、收藏切换 |
-| 搜索 | 关键词、来源分组、结果数、首条、筛选、详情、返回、错误文案 | 外部网页、写操作 |
-| 收藏 | 收藏数、来源筛选、分类筛选、已收藏 / 已读状态 | 取消收藏 |
-| 历史 | 历史数、最近阅读、已读状态 | 删除、清空历史 |
-| 关注用户 | 关注数、用户页、用户主题列表、返回 | 取消关注 |
+| 搜索 | 关键词、逐来源合法 outcome、筛选、清空和错误/空态；仅在存在数据前置时打开详情并返回 | 外部网页、写操作 |
+| 收藏 | ready/empty、来源筛选、分类筛选；有前置数据时检查已收藏 / 已读状态 | 取消收藏 |
+| 历史 | ready/empty；有前置数据时检查最近阅读和已读状态 | 删除、清空历史 |
+| 关注用户 | ready/empty；有前置数据时检查用户页、用户主题列表和返回 | 取消关注 |
 | 账号中心 | 四个可登录来源顺序、单站详情、真实状态、身份、主操作、顶部唯一公共 `刷新账号状态` 和全部原服务入口；原三站显示凭据摘要并从 App 内打开登录 / 验证页，小隐寺只显示 Device Code 授权且打开系统浏览器；测试凭据填入但不提交并在结束前删除 | 清除网站登录、撤销授权、退出登录、手工改 Cookie、提交测试登录、真实签到 |
-| 回复编辑 / 图片上传 | 四个可写来源回复框、失败后可继续编辑、格式按钮、文件选择器打开和取消；只用现有 NodeImage session 验证自动保存、关闭和零 Connect，真实失效兜底及上传由自动测试覆盖 | 真实 Connect、真实上传、真实发送回复、清除 NodeImage Key/Cookie |
+| 回复编辑 / 图片上传 | 四个可写来源回复框、失败后可继续编辑、格式按钮、文件选择器打开和取消；只用现有 NodeImage session 验证自动保存、关闭和零 Connect；失效兜底流程由自动测试固定，真实 Connect / 上传只按 Agent Live 逐次授权 | 真实 Connect、真实上传、真实发送回复、清除 NodeImage Key/Cookie |
 | 回复删除 | 删除入口和权限显示；确认框取消及删除后消失默认由自动测试覆盖 | 点击已有内容的删除入口、真实新发回复、真实删除回复、删除旧回复、删除他人回复、清数据制造状态 |
 | 未登录设备 | 只在独立 AVD 上使用同一 APK，四站结算为权威未登录状态（NodeSeek 可为“未登录”或仅访客“已验证”，linux.do 为“匿名可用”）；可完成访客 CF 验证但不登录论坛；主设备数据、Cookie 和登录态不变 | 克隆主 AVD 数据、登录论坛、清主设备数据或 Cookie |
-| 更多页 | 版本、检查更新、账号中心、linux.do 等级、服务器代理入口、问题诊断入口、备份入口、外观入口；诊断日志验收时打开分享面板后取消，确认 App 可继续使用 | 备份导出、导入、安装更新、切换外观、启用未知代理 |
+| 更多页 | 版本、检查更新、账号中心、linux.do 等级、小隐寺“查看等级”读取、profile/error 结算标记及成功/错误共有的恢复入口、服务器代理入口、问题诊断入口、备份入口、外观入口；小隐寺动态等级数据按 Agent Live 分轴核实；诊断日志验收时打开分享面板后取消，确认 App 可继续使用 | 小隐寺等级复试、备份导出、导入、安装更新、切换外观、启用未知代理 |
 
 ## 改动类型对应验证
 

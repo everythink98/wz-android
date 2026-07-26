@@ -35,10 +35,12 @@
 
 ## 当前来源
 
-- NodeSeek：点赞、反对、加鸡腿、原站收藏、签到、投票和编辑自己的回复。
-- linux.do：回复、点赞、原站收藏、投票、删除自己的回复和等级查看。
-- 妖火：登录后浏览、搜索、回复、楼层回复、原站收藏、投票和删除自己的回复。
-- 小隐寺：公开浏览、搜索和用户主页；通过 Discourse Device Code 获取独立 App 授权，系统浏览器只承载一次性授权确认；授权后支持回复、编辑/删除、点赞、原站书签、投票和图片上传。
+以下仅概括主要差异，完整入口、权限和回归范围以 [产品地图](docs/product-map.md) 为准。
+
+- NodeSeek：回复、楼层回复、编辑自己的回复、点赞、反对、加鸡腿、原站收藏、签到、投票和 NodeImage 图片上传。
+- linux.do：回复、楼层回复、编辑/删除自己的回复、点赞、原站收藏、投票、图片上传和等级查看。
+- 妖火：登录后浏览、搜索、回复、楼层回复、原站收藏、投票、删除自己的回复和图片上传。
+- 小隐寺：公开浏览、搜索和用户主页；通过 Discourse Device Code 获取独立 App 授权，系统浏览器只承载一次性授权确认；授权后支持等级进度与活跃数据、回复、编辑/删除、点赞、原站书签、投票和图片上传。
 - V2EX：公开内容浏览、搜索、用户主页和只读互动信息展示。
 
 ## 下载
@@ -51,10 +53,10 @@
 
 ## 隐私与数据
 
-- App 不上传 Cookie 或本机资料。
-- NodeSeek、linux.do 和妖火 Cookie 只保存在 Android 本机安全存储中。
-- 小隐寺 User API Key 与安装级 Client ID 独立保存在 Android 本机安全存储中，RSA 私钥只存在 Android Keystore；它们不进入 Cookie、诊断日志或备份。
-- 服务器代理配置只保存在 Android 本机安全存储中。
+- Cookie 和本机资料不上传到阅坛自有服务；认证材料只用于对应原站、NodeImage 或用户配置代理的请求，不进入阅坛自有服务。
+- NodeSeek、linux.do 和妖火 Cookie 由网站 WebView 与 Android `CookieManager` 持有，不复制到 SecureStore、ReaderData 或备份。
+- 小隐寺 User API Key 与安装级 Client ID、保存的账号密码和服务器代理配置使用 Android SecureStore；小隐寺 RSA 私钥只存在 Android Keystore。
+- 小隐寺授权材料不进入 Cookie、诊断日志或备份。
 - 本机资料保存在 `AsyncStorage`，通过当前版本 JSON 备份 / 恢复。
 - 备份 JSON 不保存 Cookie、token、password、session、sid、csrf、proxy 等敏感字段。
 

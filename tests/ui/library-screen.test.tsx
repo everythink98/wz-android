@@ -105,27 +105,31 @@ const followedUsers: FollowedUserRecord[] = [
 ];
 
 function LibraryHarness({
+  followedUsers: libraryUsers = followedUsers,
   onClearHistory = jest.fn(),
   onOpenTopic = jest.fn(),
   onOpenUser = jest.fn(),
   onRemove = jest.fn(),
-  onRemoveUser = jest.fn()
+  onRemoveUser = jest.fn(),
+  records: libraryRecords = records
 }: {
+  followedUsers?: FollowedUserRecord[];
   onClearHistory?: () => void;
   onOpenTopic?: (topic: Topic) => void;
   onOpenUser?: (user: UserProfile) => void;
   onRemove?: (topic: Topic) => void;
   onRemoveUser?: (user: UserProfile) => void;
+  records?: TopicRecord[];
 } = {}) {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
   return (
     <View>
       <LibraryScreen
         categories={categories}
-        followedUsers={followedUsers}
+        followedUsers={libraryUsers}
         libraryTab={libraryTab}
         loaded
-        records={records}
+        records={libraryRecords}
         scrollToTopSignal={0}
         styles={styles}
         theme={theme}
@@ -146,6 +150,19 @@ afterEach(() => {
 });
 
 describe('Library filters', () => {
+  it('settles all three tabs with an empty device library', async () => {
+    const view = await render(<LibraryHarness followedUsers={[]} records={[]} />);
+
+    expect(view.getByTestId('library-favorites-ready')).toBeTruthy();
+    expect(view.getByTestId('library-favorites-empty')).toBeTruthy();
+    await fireEvent.press(view.getByTestId('library-tab-users'));
+    expect(view.getByTestId('library-users-ready')).toBeTruthy();
+    expect(view.getByText('这里还没有关注用户')).toBeTruthy();
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    expect(view.getByTestId('library-history-ready')).toBeTruthy();
+    expect(view.getByText('这里还没有内容')).toBeTruthy();
+  });
+
   it('requires destructive confirmation before removing a favorite or clearing history', async () => {
     const onClearHistory = jest.fn<() => void>();
     const onRemove = jest.fn<(topic: Topic) => void>();

@@ -137,7 +137,7 @@ function filesBelow(directory) {
   });
 }
 
-export function findKnowledgeContractErrors(root) {
+export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdownFiles) {
   const errors = [];
   const productMapPath = path.join(root, 'docs', 'product-map.md');
   const regressionCorpusPath = path.join(root, 'docs', 'regression-corpus.md');
@@ -157,13 +157,60 @@ export function findKnowledgeContractErrors(root) {
   const knownRegressionIds = new Set(
     [...regressionCorpus.matchAll(/^## `((?:REG)-[A-Z]+-\d+)`/gm)].map((match) => match[1])
   );
-  const referencedCapabilities = new Set(regressionCorpus.match(/(?<!REG-)\b(?:NAV|FEED|SEARCH|TOPIC|USER|LIBRARY|ACCOUNT|WRITE|DATA|MORE|RELEASE)-\d+\b/g) ?? []);
-  for (const capabilityId of referencedCapabilities) {
-    if (!knownCapabilities.has(capabilityId)) {
-      errors.push(`docs/regression-corpus.md：引用的能力 ${capabilityId} 不存在`);
+  const checkedMarkdown = markdownFiles
+    .filter((file) => existsSync(path.join(root, file)))
+    .map((file) => ({ file, text: readFileSync(path.join(root, file), 'utf8') }));
+  if (capabilityIds.length) {
+    const capabilityFamilies = [...new Set(capabilityIds.map((id) => id.slice(0, id.lastIndexOf('-'))))];
+    const capabilityFamilyPattern = capabilityFamilies.join('|');
+    const capabilityPattern = new RegExp(`(?<![A-Z/-])(${capabilityFamilyPattern})-(\\d+)((?:/(?:(?:${capabilityFamilyPattern})-)?\\d+)*)\\b`, 'g');
+    for (const { file, text } of checkedMarkdown) {
+      for (const match of text.matchAll(capabilityPattern)) {
+        let family = match[1];
+        const references = [`${family}-${match[2]}`];
+        for (const suffix of match[3].split('/').filter(Boolean)) {
+          const parsedSuffix = /^(?:([A-Z]+)-)?(\d+)$/.exec(suffix);
+          family = parsedSuffix?.[1] ?? family;
+          references.push(`${family}-${parsedSuffix?.[2]}`);
+        }
+        for (const capabilityId of references) {
+          if (!knownCapabilities.has(capabilityId)) {
+            errors.push(`${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的能力 ${capabilityId} 不存在`);
+          }
+        }
+      }
     }
   }
-
+  const regressionPattern = /(?<![A-Z/-])REG-([A-Z]+)-(\d+)((?:\/(?:[A-Z]+-)?\d+)*)\b/g;
+  for (const { file, text } of checkedMarkdown) {
+    for (const match of text.matchAll(regressionPattern)) {
+      let family = match[1];
+      const references = [`REG-${family}-${match[2]}`];
+      for (const suffix of match[3].split('/').filter(Boolean)) {
+        const parsedSuffix = /^(?:([A-Z]+)-)?(\d+)$/.exec(suffix);
+        family = parsedSuffix?.[1] ?? family;
+        references.push(`REG-${family}-${parsedSuffix?.[2]}`);
+      }
+      for (const regressionId of references) {
+        if (!knownRegressionIds.has(regressionId)) {
+          errors.push(`${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的回归 ${regressionId} 不存在`);
+        }
+      }
+    }
+  }
+  const packageJsonPath = path.join(root, 'package.json');
+  if (existsSync(packageJsonPath)) {
+    const packageScripts = new Set(Object.keys(JSON.parse(readFileSync(packageJsonPath, 'utf8')).scripts ?? {}));
+    const npmScriptPattern = /\bnpm\s+run\s+([A-Za-z0-9][A-Za-z0-9:._-]*)(?=$|[\s`"'|;&<>()\],，。！？；：])/g;
+    for (const { file, text } of checkedMarkdown) {
+      for (const match of text.matchAll(npmScriptPattern)) {
+        const script = packageScripts.has(match[1]) ? match[1] : match[1].replace(/[.!?;:]+$/, '');
+        if (!packageScripts.has(script)) {
+          errors.push(`${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的 npm script ${script} 不存在`);
+        }
+      }
+    }
+  }
   const expectedFailureFiles = filesBelow(path.join(root, 'tests')).filter((file) => /\.test\.[cm]?[jt]sx?$/.test(file));
   for (const file of expectedFailureFiles) {
     const text = readFileSync(file, 'utf8');
@@ -217,7 +264,7 @@ function main() {
   const markdownFiles = [...new Set([...trackedMarkdownFiles(rootDir), ...stableMarkdownFiles])];
   const errors = [
     ...findBrokenDocReferences(rootDir, markdownFiles),
-    ...findKnowledgeContractErrors(rootDir)
+    ...findKnowledgeContractErrors(rootDir, markdownFiles)
   ];
   if (errors.length) {
     console.error(errors.join('\n'));

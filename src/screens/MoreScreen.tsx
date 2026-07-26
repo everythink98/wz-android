@@ -410,7 +410,10 @@ export const MoreScreen = memo(function MoreScreen({
                 onOpenBrowser={xiaoyinsiAuth.onOpenBrowser}
                 onRevoke={xiaoyinsiAuth.onRevoke}
               />
-              <View style={[moreScreenStyles.accountFooterAction, { borderTopColor: theme.line }]}>
+              <View
+                testID={xiaoyinsiLevelExpanded && xiaoyinsiSession.canWrite && !xiaoyinsiLevelBusy && (xiaoyinsiLevelProfile || xiaoyinsiLevelError) ? 'xiaoyinsi-level-settled' : undefined}
+                style={[moreScreenStyles.accountFooterAction, { borderTopColor: theme.line }]}
+              >
                 <MenuButton nested icon={Activity} label="查看等级" value={xiaoyinsiLevelMeta} expanded={xiaoyinsiLevelExpanded} styles={styles} theme={theme} onPress={() => setXiaoyinsiLevelExpanded((value) => !value)} />
                 {xiaoyinsiLevelExpanded ? (
                   <LinuxDoLevelPanel

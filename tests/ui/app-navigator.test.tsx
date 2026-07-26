@@ -96,6 +96,51 @@ describe('App navigator UI state', () => {
     expect(view.getByLabelText('更多，有可用更新')).toBeTruthy();
   });
 
+  it.each(['feed', 'search'] as const)('keeps the fixed %s → Topic → User → Topic return stack', async (origin) => {
+    const view = await render(
+      <AppNavigator
+        moreHasBadge={false}
+        navigationTheme={DefaultTheme}
+        renderFeedTab={() => <StatefulTab label="首页" />}
+        renderLibraryTab={() => <StatefulTab label="收藏" />}
+        renderMoreTab={() => <StatefulTab label="更多" />}
+        renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
+        renderSearchTab={() => <StatefulTab label="搜索" />}
+        renderTopicScreen={() => <Text>固定主题 topic-42</Text>}
+        renderUserScreen={() => <Text>固定用户 alice</Text>}
+        styles={styles}
+        theme={theme}
+        onReady={jest.fn()}
+        onScreenChange={jest.fn()}
+        onTabPress={jest.fn()}
+        onTopicClosing={jest.fn()}
+        onUserClosing={jest.fn()}
+      />
+    );
+    const originLabel = origin === 'feed' ? '首页' : '搜索';
+
+    await waitFor(() => expect(view.getByText('首页页面')).toBeTruthy());
+    if (origin === 'search') {
+      await fireEvent.press(view.getByTestId('main-tab-search'));
+      await waitFor(() => expect(view.getByText('搜索页面')).toBeTruthy());
+    }
+    await fireEvent.changeText(view.getByLabelText(`${originLabel}状态`), `${origin}-state`);
+
+    await act(async () => { expect(navigateAppScreen('topic')).toBe(true); });
+    await waitFor(() => expect(view.getByText('固定主题 topic-42')).toBeTruthy());
+    await act(async () => { expect(navigateAppScreen('user')).toBe(true); });
+    await waitFor(() => expect(view.getByText('固定用户 alice')).toBeTruthy());
+    await act(async () => { expect(navigateAppScreen('topic')).toBe(true); });
+    await waitFor(() => expect(view.getByText('固定主题 topic-42')).toBeTruthy());
+
+    await act(async () => { navigationRef.goBack(); });
+    await waitFor(() => expect(view.getByText('固定用户 alice')).toBeTruthy());
+    await act(async () => { navigationRef.goBack(); });
+    await waitFor(() => expect(view.getByText('固定主题 topic-42')).toBeTruthy());
+    await act(async () => { navigationRef.goBack(); });
+    await waitFor(() => expect(view.getByLabelText(`${originLabel}状态`).props.value).toBe(`${origin}-state`));
+  });
+
   it('[REG-TOPIC-002] returns from topic reading settings without losing the topic route', async () => {
     const StatefulTopic = () => {
       const [value, setValue] = useState('');

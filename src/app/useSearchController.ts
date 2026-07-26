@@ -477,13 +477,13 @@ export function useSearchController({
           authNotice: failed.authNotice,
           error: failed.error,
           errorKind: failed.errorKind,
-          loading: false
+          loading: query.isFetching
         };
       }
-      return { ...failed, loading: false };
+      return { ...failed, loading: query.isFetching };
     }
     if (query.error) {
-      return searchGroupForUnexpectedError(source, query.error, sessionViewModels);
+      return { ...searchGroupForUnexpectedError(source, query.error, sessionViewModels), loading: query.isFetching };
     }
     if (query.data) {
       return { ...groupFromRemoteSearchResult(query.data), loading: query.isFetching };
@@ -493,6 +493,7 @@ export function useSearchController({
       label: sourceLabel(source),
       items: [],
       authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined,
+      settled: false,
       loading: Boolean(
         searchActive
         && submittedSearch?.query
@@ -511,13 +512,28 @@ export function useSearchController({
       };
     }
     if (singleSearchQuery.error instanceof SearchPageError) {
-      return groupFromRemoteSearchResult(singleSearchQuery.error.result);
+      return { ...groupFromRemoteSearchResult(singleSearchQuery.error.result), loading: singleSearchQuery.isFetching };
     }
     if (singleSearchQuery.error) {
-      return searchGroupForUnexpectedError(submittedSource, singleSearchQuery.error, sessionViewModels);
+      return { ...searchGroupForUnexpectedError(submittedSource, singleSearchQuery.error, sessionViewModels), loading: singleSearchQuery.isFetching };
+    }
+    if (
+      searchActive
+      && submittedSearch?.query
+      && submittedSearch.source !== 'all'
+      && isSourceIdentityPending(submittedSource, sessionViewModels)
+    ) {
+      return {
+        source: submittedSource,
+        label: sourceLabel(submittedSource),
+        items: [],
+        authNotice: authNoticeForSource(submittedSource, sessionViewModels, 'search') || undefined,
+        settled: false,
+        loading: false
+      };
     }
     return null;
-  }, [singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.isFetching, singleSearchQuery.isFetchingNextPage, sessionViewModels, submittedSource]);
+  }, [searchActive, sessionViewModels, singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.isFetching, singleSearchQuery.isFetchingNextPage, submittedSearch?.query, submittedSearch?.source, submittedSource]);
   const baseSearchGroups = submittedSearch?.source === 'all'
     ? aggregateGroups
     : singleGroup ? [singleGroup] : [];

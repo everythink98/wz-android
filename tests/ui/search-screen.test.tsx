@@ -386,6 +386,53 @@ describe('Search state', () => {
     expect(onRetrySearchSource).toHaveBeenCalledWith('linuxdo');
   });
 
+  it('exposes only the settled outcome for each source in the current submitted search', async () => {
+    const view = await renderSearchScreen({
+      searchGroups: [
+        { source: 'v2ex', label: 'V2EX', items: [firstTopic] },
+        {
+          source: 'linuxdo',
+          label: 'linux.do',
+          items: [{ ...firstTopic, source: 'linuxdo', id: 'linux-1' }],
+          error: '第 2 页请求失败',
+          hasMore: true,
+          nextPage: 2
+        },
+        { source: 'nodeseek', label: 'NodeSeek', items: [], loading: true },
+        { source: 'yaohuo', label: '妖火', items: [], settled: false }
+      ]
+    });
+
+    expect(view.getByTestId('search-outcome-data-v2ex')).toBeTruthy();
+    expect(view.getByTestId('search-outcome-partial-linuxdo')).toBeTruthy();
+    expect(view.queryByTestId('search-outcome-error-linuxdo')).toBeNull();
+    expect(view.queryByTestId('search-outcome-empty-nodeseek')).toBeNull();
+    expect(view.queryByTestId('search-outcome-empty-yaohuo')).toBeNull();
+    expect(view.queryByText('妖火 没有匹配结果')).toBeNull();
+    expect(view.queryByTestId('search-complete')).toBeNull();
+    expect(view.getByLabelText('搜索结果，等待来源结算').props.accessibilityState.busy).toBe(true);
+
+    await view.rerender(<SearchScreen {...createSearchScreenProps({
+      busy: true,
+      searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic], loading: true }]
+    })} />);
+
+    expect(view.queryByTestId('search-outcome-data-v2ex')).toBeNull();
+
+    await view.rerender(<SearchScreen {...createSearchScreenProps({
+      searchGroups: [{
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [firstTopic],
+        loadingMore: true,
+        hasMore: true,
+        nextPage: 2
+      }]
+    })} />);
+
+    expect(view.queryByTestId('search-outcome-data-v2ex')).toBeNull();
+  });
+
   it('shows fixed all-source previews and opens the selected source list', async () => {
     const onSearchSourceChange = jest.fn<(source: FeedSource) => void>();
     const thirdTopic: Topic = {
@@ -755,7 +802,7 @@ describe('Search state', () => {
 
     await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
     await fireEvent.press(view.getByLabelText('提交搜索'));
-    expect(view.getByTestId('search-result-first')).toBeTruthy();
+    expect(view.getByTestId('search-outcome-data-v2ex')).toBeTruthy();
     expect(view.getByText('继续下滑加载更多 V2EX')).toBeTruthy();
 
     const v2exGroup: SearchGroup = {
@@ -773,7 +820,7 @@ describe('Search state', () => {
     });
     expect(view.getByText('第二页主题')).toBeTruthy();
 
-    await fireEvent.press(view.getByTestId('search-result-first'));
+    await fireEvent.press(view.getByText('第一页主题'));
     expect(view.getByTestId('topic-placeholder')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('打开作者页'));
     expect(view.getByTestId('user-placeholder')).toBeTruthy();
@@ -1035,7 +1082,7 @@ describe('Search state', () => {
     });
     expect(view.getByText('第二页主题')).toBeTruthy();
 
-    await fireEvent.press(view.getByTestId('search-result-first'));
+    await fireEvent.press(view.getByText('linux.do 主题'));
     await fireEvent.press(view.getByLabelText('返回搜索'));
     expect(view.getByText('第二页主题')).toBeTruthy();
     expect(view.getByLabelText('打开搜索筛选，当前人工智能 · alice')).toBeTruthy();

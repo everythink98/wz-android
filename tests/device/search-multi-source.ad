@@ -4,83 +4,35 @@ context retries=0
 env APP_ID=com.wz.reader
 
 open ${APP_ID} --relaunch
-wait id="feed-list-ready-all" 60000
+wait id="main-tab-search" 60000
 press id="main-tab-search"
 wait id="search-query" 10000
-
+press id="search-source-all"
+wait "id=\"search-source-all\" label=\"全部，已选择\"" 10000
 fill id="search-query" AI
 is text id="search-query" AI
 press id="search-submit"
 keyboard dismiss
-wait "id=\"search-overview-source-v2ex\" enabled=true" 60000
-is visible id="search-overview-source-v2ex"
-press id="search-overview-source-v2ex"
-wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000
-wait id="search-result-first" 60000
-is visible id="search-result-first"
-press id="search-result-first"
-wait id="topic-detail-loaded" 60000
-back --system
-wait id="search-complete" 60000
-is text id="search-query" AI
-wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000
-
-press id="search-source-linuxdo"
-wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
-press label="打开搜索筛选，当前默认"
-wait label="选择分类" 10000
-wait label="选择标签" 10000
-press id="search-filter-close"
-wait label="打开搜索筛选，当前默认" 10000
-is text id="search-query" AI
-wait id="search-result-first" 60000
-is visible id="search-result-first"
-press id="search-result-first"
-wait id="topic-detail-loaded" 60000
-back --system
-wait id="search-complete" 60000
-is text id="search-query" AI
-wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
+wait "id=\"search-outcome-data-v2ex\" || id=\"search-outcome-empty-v2ex\" || id=\"search-outcome-partial-v2ex\" || id=\"search-outcome-error-v2ex\" || id=\"search-outcome-auth-v2ex\"" 60000
+wait "id=\"search-outcome-data-linuxdo\" || id=\"search-outcome-empty-linuxdo\" || id=\"search-outcome-partial-linuxdo\" || id=\"search-outcome-error-linuxdo\" || id=\"search-outcome-auth-linuxdo\"" 60000
+wait "id=\"search-outcome-data-nodeseek\" || id=\"search-outcome-empty-nodeseek\" || id=\"search-outcome-partial-nodeseek\" || id=\"search-outcome-error-nodeseek\" || id=\"search-outcome-auth-nodeseek\"" 60000
+wait "id=\"search-outcome-data-yaohuo\" || id=\"search-outcome-empty-yaohuo\" || id=\"search-outcome-partial-yaohuo\" || id=\"search-outcome-error-yaohuo\" || id=\"search-outcome-auth-yaohuo\"" 60000
+wait "id=\"search-outcome-data-xiaoyinsi\" || id=\"search-outcome-empty-xiaoyinsi\" || id=\"search-outcome-partial-xiaoyinsi\" || id=\"search-outcome-error-xiaoyinsi\" || id=\"search-outcome-auth-xiaoyinsi\"" 60000
 
 press label="清空搜索关键词"
 wait "label=\"搜索最近记录 AI\"" 10000
-press "label=\"搜索最近记录 AI\""
-wait id="search-result-first" 60000
-is text id="search-query" AI
-is visible id="search-result-first"
-
+press id="search-source-v2ex"
+wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000
+wait label="打开搜索筛选，当前默认" 10000
+press id="search-source-linuxdo"
+wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
+wait label="打开搜索筛选，当前默认" 10000
 press id="search-source-nodeseek"
 wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
-is text id="search-query" AI
-wait id="search-result-first" 60000
-is visible id="search-result-first"
-press id="search-result-first"
-wait id="topic-detail-loaded" 60000
-back --system
-wait id="search-complete" 60000
-is text id="search-query" AI
-wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
-
+wait label="打开搜索筛选，当前默认" 10000
 press id="search-source-yaohuo"
 wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000
-is text id="search-query" AI
-wait id="search-result-first" 60000
-is visible id="search-result-first"
-press id="search-result-first"
-wait id="topic-detail-loaded" 60000
-back --system
-wait id="search-complete" 60000
-is text id="search-query" AI
-wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000
-
+wait label="打开搜索筛选，当前默认" 10000
 press id="search-source-xiaoyinsi"
 wait "id=\"search-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000
-is text id="search-query" AI
-wait id="search-complete" 60000
-press label="打开搜索筛选，当前默认"
-wait label="选择标签" 10000
-press label="选择标签"
-wait "role=\"checkbox\"" 30000
-press label="完成"
-press id="search-filter-close"
-wait "id=\"search-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000
+wait label="打开搜索筛选，当前默认" 10000

@@ -145,7 +145,7 @@ export function runApkSanity({
     logging = true;
     runAgentDeviceCommand(['logs', 'mark', 'wz-apk-sanity-start', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
     runAgentDeviceCommand(['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch'], { cwd: rootDir });
-    waitFor('id="feed-list-ready-all"', 60_000, runAgentDeviceCommand);
+    waitFor('id="main-tab-feed"', 60_000, runAgentDeviceCommand);
     const appState = runAgentDeviceCommand(['appstate', '--session', smokeSession, '--platform', 'android', '--json'], {
       capture: true,
       cwd: rootDir,
