@@ -1,9 +1,10 @@
 import { imageRequestHeadersForUrl, normalizeImagePreviewUrl } from './htmlImages';
+import type { ForumMediaRequestContext } from './mediaRequestContext';
 import { fetchWithTimeout } from './request';
 
 type AvatarFetcher = (input: string, init?: RequestInit) => Promise<Response>;
 type AvatarLoadOptions = {
-  cacheIdentity?: string;
+  mediaContext: ForumMediaRequestContext;
   signal?: AbortSignal;
 };
 const RETRY_LATER_AVATAR_RESULT = Symbol('retry-later-avatar-result');
@@ -22,7 +23,7 @@ export function setDefaultAvatarFetcher(fetcher: AvatarFetcher) {
   };
 }
 
-export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetcher = defaultAvatarFetcher, options: AvatarLoadOptions = {}): Promise<string | null> {
+export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetcher = defaultAvatarFetcher, options: AvatarLoadOptions): Promise<string | null> {
   const clean = normalizeImagePreviewUrl(uri);
   if (!isNodeSeekAvatarUrl(clean)) {
     return null;
@@ -35,15 +36,13 @@ export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetche
       return null;
     }
   }
-  const cacheKey = options.cacheIdentity
-    ? `${options.cacheIdentity}:${clean}`
-    : clean;
+  const cacheKey = `${options.mediaContext.sessionIdentity}:${clean}`;
   const cached = avatarSvgTextCache.get(cacheKey);
   if (cached) {
     return cached;
   }
   const request = Promise.resolve()
-    .then(() => loadRemoteAvatarSvgTextUncached(clean, fetcher))
+    .then(() => loadRemoteAvatarSvgTextUncached(clean, fetcher, options))
     .then((result) => {
       if (result === RETRY_LATER_AVATAR_RESULT) {
         avatarSvgTextCache.delete(cacheKey);
@@ -59,8 +58,8 @@ export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetche
   return request;
 }
 
-async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetcher, options: AvatarLoadOptions = {}) {
-  const headers = imageRequestHeadersForUrl(uri);
+async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetcher, options: AvatarLoadOptions) {
+  const headers = imageRequestHeadersForUrl(uri, { mediaContext: options.mediaContext });
   const head = await fetchWithTimeout(uri, {
     method: 'HEAD',
     headers

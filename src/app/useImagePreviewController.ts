@@ -9,6 +9,8 @@ import type { TopicImageDeriver } from '../topicDerivedData';
 import { errorMessage } from '../appUtils';
 import { saveImageUriToLibrary } from '../imageSave';
 import type { Fetcher } from '../request';
+import { useForumMediaRequestContext } from '../mediaSessionEpoch';
+import type { Source } from '../types';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -29,6 +31,7 @@ function htmlPartsFromSource(source: HtmlPartsSource) {
 
 export function useImagePreviewController({
   beforeSave,
+  contentSource,
   fetcher,
   htmlParts,
   inlineSizedImageUrls,
@@ -37,6 +40,7 @@ export function useImagePreviewController({
   topicImageDeriver
 }: {
   beforeSave?: () => Promise<void>;
+  contentSource: Source | null;
   fetcher?: Fetcher;
   htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
@@ -45,6 +49,7 @@ export function useImagePreviewController({
   topicImageDeriver: TopicImageDeriver;
 }) {
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
+  const previewMediaContext = useForumMediaRequestContext(imagePreview?.contentSource);
   const saveBusyRef = useRef(false);
   const inlineSizedImageUrlsRef = useCommittedRef(inlineSizedImageUrls);
   const resolveImagePreview = useMemo(() => {
@@ -55,9 +60,9 @@ export function useImagePreviewController({
           htmlPartsFromSource(htmlParts).map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
         );
       }
-      return imagePreviewListFromCatalog(catalog, tappedUrl);
+      return imagePreviewListFromCatalog(catalog, tappedUrl, contentSource);
     };
-  }, [htmlParts, inlineSizedImageUrls, topicImageDeriver]);
+  }, [contentSource, htmlParts, inlineSizedImageUrls, topicImageDeriver]);
   const resolveImagePreviewRef = useCommittedRef(resolveImagePreview);
 
   const openImagePreview = useCallback((url: string) => {
@@ -108,9 +113,10 @@ export function useImagePreviewController({
       const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
       markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
-      await saveImageUriToLibrary(uri, fetcher, trace, {
+      await saveImageUriToLibrary(uri, {
+        mediaContext: previewMediaContext,
         nodeSeekUserAgent: nodeSeekMediaUserAgent
-      });
+      }, fetcher, trace);
       markDiagnosticStage(trace, 'apply', { state: 'saved' });
       finishDiagnosticTrace(trace, 'success');
       notify('图片已保存');
@@ -121,7 +127,7 @@ export function useImagePreviewController({
     } finally {
       saveBusyRef.current = false;
     }
-  }, [beforeSave, fetcher, imagePreview, nodeSeekMediaUserAgent, notify]);
+  }, [beforeSave, fetcher, imagePreview, nodeSeekMediaUserAgent, notify, previewMediaContext]);
 
   return {
     closeImagePreview,

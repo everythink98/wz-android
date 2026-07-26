@@ -48,7 +48,12 @@ import {
 } from '../diagnostics';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import type { FeedSource, Source, SourceErrors, Topic } from '../types';
-import type { DiscourseSource } from '../sourceCatalog';
+import {
+  isSessionSource,
+  sessionSources,
+  type DiscourseSource,
+  type SessionSource
+} from '../sourceCatalog';
 
 export { getCurrentUserProfile } from '../forumApi';
 export {
@@ -142,11 +147,11 @@ type SourceGatewayCredentialLoadOptions = {
 };
 
 type SourceGatewayDependencies = {
-  currentSessionEpoch?: (source: Exclude<Source, 'v2ex'>) => number;
+  currentSessionEpoch?: (source: SessionSource) => number;
   currentXiaoyinsiCredentialGeneration?: () => number;
   fetcher: Fetcher;
-  isSourceAuthenticated?: (source: Exclude<Source, 'v2ex'>) => boolean;
-  isSourceReadBlocked?: (source: Exclude<Source, 'v2ex'>) => boolean;
+  isSourceAuthenticated?: (source: SessionSource) => boolean;
+  isSourceReadBlocked?: (source: SessionSource) => boolean;
   linuxDoUserAgent?: () => string;
   loadXiaoyinsiCredentialsForSource?: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<XiaoyinsiApiCredentials | undefined>;
   nodeSeekUserAgent: () => string;
@@ -242,15 +247,15 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
   }) => Promise<T>, context?: SourceGatewayReadContext) => {
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
-    const identitySources = (source === 'all'
-      ? ['linuxdo', 'nodeseek', 'xiaoyinsi', 'yaohuo']
-      : source === 'v2ex'
-        ? []
-        : [source]) as Array<Exclude<Source, 'v2ex'>>;
+    const identitySources: readonly SessionSource[] = source === 'all'
+      ? sessionSources
+      : isSessionSource(source)
+        ? [source]
+        : [];
     const sessionEpochs = Object.fromEntries(identitySources.map((identitySource) => [
       identitySource,
       dependencies.currentSessionEpoch?.(identitySource)
-    ])) as Partial<Record<Exclude<Source, 'v2ex'>, number | undefined>>;
+    ])) as Partial<Record<SessionSource, number | undefined>>;
     let xiaoyinsiGeneration: number | undefined;
     let hasXiaoyinsiCredentials = false;
     const credentialGenerationsAreCurrent = () => (

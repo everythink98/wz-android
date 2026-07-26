@@ -39,7 +39,7 @@ import {
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from './discourseReactions';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { discourseCategories, discourseOriginalPoster, discoursePolls, discoursePostFields, discourseTopicFields, discourseUsersById } from './discourseModel';
-import { discoursePollPlaceholder } from './discourseContent';
+import { discoursePollPlaceholder, discourseQuoteMetadata } from './discourseContent';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;
@@ -231,82 +231,6 @@ function linuxDoAccessRequirementFromError(error: unknown): Topic['accessRequire
     : undefined;
 }
 
-function quotedAuthorFromTitle(value: string) {
-  const text = value.replace(/\s+/g, ' ').trim();
-  return text.match(/^([^:：]{1,64})\s*[:：]/)?.[1]?.trim()
-    || text.match(/([^:：\s]{1,64})\s*[:：]\s*$/)?.[1]?.trim()
-    || '';
-}
-
-function quotedAuthorFromAvatarUrl(value: string) {
-  const clean = value.trim();
-  const match = clean.match(/(?:^|\/)user_avatar\/(?:[^/?#]+\/)?([^/?#]+)\/\d+(?:\/|$)/i)
-    || clean.match(/(?:^|\/)letter_avatar\/([^/?#]+)\/\d+(?:\/|$)/i);
-  if (!match) {
-    return '';
-  }
-  try {
-    return decodeURIComponent(match[1]).trim();
-  } catch {
-    return match[1].trim();
-  }
-}
-
-function localQuotedFloorFromAside(node: ReturnType<typeof parseHtml>, topicId?: string) {
-  const className = String(node.getAttribute('class') || '');
-  if (!/\bquote\b/i.test(className)) {
-    return undefined;
-  }
-  const dataTopic = String(node.getAttribute('data-topic') || '');
-  const dataPost = String(node.getAttribute('data-post') || '');
-  if (topicId && dataTopic && dataTopic !== topicId) {
-    return undefined;
-  }
-  const floor = Number(dataPost);
-  return Number.isFinite(floor) && floor > 0 ? floor : undefined;
-}
-
-function quotedReferencesFromHtml(html: string, topicId?: string) {
-  const floors = new Set<number>();
-  const authors: Record<number, string> = {};
-  const previews: Record<number, string> = {};
-  const root = parseHtml(html);
-  root.querySelectorAll('aside').forEach((node) => {
-    const floor = localQuotedFloorFromAside(node, topicId);
-    if (!floor) {
-      return;
-    }
-    floors.add(floor);
-
-    const author = decodeHtml(node.getAttribute('data-username') || node.getAttribute('data-display-name') || '').trim()
-      || quotedAuthorFromAvatarUrl(String(node.querySelector('.title img')?.getAttribute('src') || ''))
-      || quotedAuthorFromTitle(textContentFromHtml(node.querySelector('.title')?.toString() || ''));
-    const preview = textContentFromHtml(node.querySelector('blockquote')?.toString() || '').replace(/\s+/g, ' ').trim();
-    if (author) {
-      authors[floor] = author;
-    }
-    if (preview) {
-      previews[floor] = preview;
-    }
-  });
-  return { floors: [...floors], authors, previews };
-}
-
-function contentHtmlWithoutLocalQuoteAsides(html: string, topicId?: string) {
-  if (!topicId) {
-    return html;
-  }
-  const root = parseHtml(html);
-  let changed = false;
-  root.querySelectorAll('aside').forEach((node) => {
-    if (localQuotedFloorFromAside(node, topicId)) {
-      node.remove();
-      changed = true;
-    }
-  });
-  return changed ? root.toString() : html;
-}
-
 function positiveNumber(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : undefined;
@@ -395,8 +319,7 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
   const { cookedHtml, ...replyFields } = fields;
   const polls = discoursePolls(raw);
   const contentHtml = sanitizeLinuxDoContentHtml(cookedHtml, polls);
-  const quotedReferences = quotedReferencesFromHtml(contentHtml, topicId);
-  const visibleContentHtml = contentHtmlWithoutLocalQuoteAsides(contentHtml, topicId);
+  const quotedReferences = discourseQuoteMetadata(contentHtml, topicId);
   const rawBoostCount = boostCountFromPost(raw);
   const needsApproval = raw.needs_category_expert_approval === true;
   const authorLevelLabel = linuxDoLevelLabel(raw);
@@ -405,7 +328,7 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
     authorId: fields.author,
     authorAvatar: avatarUrl(raw.avatar_template),
     authorUrl: userUrl(fields.author),
-    contentHtml: visibleContentHtml,
+    contentHtml: quotedReferences.html,
     ...(quotedReferences.floors.length ? { quotedFloors: quotedReferences.floors } : {}),
     ...(Object.keys(quotedReferences.authors).length ? { quotedAuthors: quotedReferences.authors } : {}),
     ...(Object.keys(quotedReferences.previews).length ? { quotedPreviews: quotedReferences.previews } : {}),

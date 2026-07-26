@@ -109,23 +109,22 @@ export function svgIntrinsicDimensions(svg: string) {
 }
 
 export function stripSvgLinkElements(svg: string) {
-  let result = '';
+  const chunks: string[] = [];
   let cursor = 0;
-  while (cursor < svg.length) {
-    const opening = svg.slice(cursor).match(/^<a(?=[\s/>])/i);
-    const closing = svg.slice(cursor).match(/^<\/a(?=[\s>])/i);
-    if (!opening && !closing) {
-      result += svg[cursor];
-      cursor += 1;
-      continue;
-    }
-    const end = quotedTagEnd(svg, cursor);
+  const anchorTag = /<\/?a(?=[\s/>])/gi;
+  let match = anchorTag.exec(svg);
+  while (match) {
+    const end = quotedTagEnd(svg, match.index);
     if (end < 0) {
       return svg;
     }
+    chunks.push(svg.slice(cursor, match.index));
     cursor = end + 1;
+    anchorTag.lastIndex = cursor;
+    match = anchorTag.exec(svg);
   }
-  return result;
+  chunks.push(svg.slice(cursor));
+  return chunks.join('');
 }
 
 function quotedTagEnd(value: string, start: number) {

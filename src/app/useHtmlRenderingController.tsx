@@ -42,10 +42,9 @@ import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG,
 import { ForumContentVideo } from '../components/ForumContentVideo';
 import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
 import { cachedCompatibleImageSource, compatibleImageRequestIdentity, recoverCompatibleSvgImageSource } from '../compatibleImageSources';
-import {
-  readManagedCookieHeader,
-  readMediaCookieHeader
-} from '../managedCookies';
+import { readManagedCookieHeader } from '../managedCookies';
+import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
+import { beginDiagnosticTrace, finishDiagnosticTrace, type DiagnosticTrace } from '../diagnostics';
 
 export async function readManagedWebViewCookieHeader(url: string) {
   const result = await readManagedCookieHeader(url);
@@ -57,30 +56,16 @@ export async function readManagedWebViewCookieHeader(url: string) {
     : result.message);
 }
 
-type ManagedVideoCookieState =
-  | { mediaSessionIdentity: string; url: string; status: 'ready'; value: string }
-  | { mediaSessionIdentity: string; url: string; status: 'failed' };
-
-export function isManagedVideoCookieReady(
-  state: ManagedVideoCookieState | null,
-  url: string,
-  mediaSessionIdentity: string
-): state is Extract<ManagedVideoCookieState, { status: 'ready' }> {
-  return state?.url === url
-    && state.mediaSessionIdentity === mediaSessionIdentity
-    && state.status === 'ready';
-}
-
-export async function readExactVideoCookieHeader(url: string) {
-  return readMediaCookieHeader(url);
-}
-
 function isVideoStickerUrl(url: string) {
   return /\.(?:webm|mp4|mov)(?:[?#].*)?$/i.test(url);
 }
 
-function videoStickerRequestHeaders(url: string, userAgent?: string): Record<string, string> | undefined {
-  const headers = imageRequestHeadersForUrl(url, userAgent);
+function videoStickerRequestHeaders(
+  url: string,
+  mediaContext: ForumMediaRequestContext,
+  userAgent?: string
+): Record<string, string> | undefined {
+  const headers = imageRequestHeadersForUrl(url, { mediaContext, nodeSeekUserAgent: userAgent });
   return headers ? {
     ...headers,
     Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8'
@@ -165,6 +150,7 @@ function ForumVideoStickerVideo({
   fallbackSrc,
   headers,
   loadingColor,
+  mediaContext,
   mediaSessionIdentity,
   src,
   videoStyle
@@ -172,33 +158,17 @@ function ForumVideoStickerVideo({
   fallbackSrc: string;
   headers?: Record<string, string>;
   loadingColor: string;
+  mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
   src: string;
   videoStyle: StyleProp<ViewStyle>;
 }) {
   const [firstFrameRendered, setFirstFrameRendered] = useState(false);
-  const [liveCookie, setLiveCookie] = useState<ManagedVideoCookieState | null>(null);
-  const headerAccept = headers?.Accept || '';
-  const headerReferer = headers?.Referer || '';
-  const headerUserAgent = headers?.['User-Agent'] || '';
-  const cookieReady = isManagedVideoCookieReady(liveCookie, src, mediaSessionIdentity);
-  const cookieReadFailed = liveCookie?.url === src
-    && liveCookie.mediaSessionIdentity === mediaSessionIdentity
-    && liveCookie.status === 'failed';
-  const headerCookie = cookieReady ? liveCookie.value : '';
-  const hasHeaders = Boolean(headers || headerCookie);
-  const source = useMemo<VideoSource>(() => cookieReady ? ({
+  const source = useMemo<VideoSource>(() => ({
     uri: src,
-    ...(hasHeaders ? {
-      headers: {
-        ...(headerAccept ? { Accept: headerAccept } : {}),
-        ...(headerCookie ? { Cookie: headerCookie } : {}),
-        ...(headerReferer ? { Referer: headerReferer } : {}),
-        ...(headerUserAgent ? { 'User-Agent': headerUserAgent } : {})
-      }
-    } : {}),
+    ...(headers ? { headers } : {}),
     contentType: 'progressive'
-  }) : null, [cookieReady, hasHeaders, headerAccept, headerCookie, headerReferer, headerUserAgent, src]);
+  }), [headers, src]);
   const player = useVideoPlayer(source, (nextPlayer) => {
     nextPlayer.loop = true;
     nextPlayer.muted = true;
@@ -207,33 +177,14 @@ function ForumVideoStickerVideo({
   });
   const status = useEvent(player, 'statusChange', { status: player.status }).status;
   useEffect(() => {
-    let active = true;
-    setLiveCookie(null);
-    void readExactVideoCookieHeader(src).then(
-      (value) => {
-        if (active) {
-          setLiveCookie({ mediaSessionIdentity, url: src, status: 'ready', value });
-        }
-      },
-      () => {
-        if (active) {
-          setLiveCookie({ mediaSessionIdentity, url: src, status: 'failed' });
-        }
-      }
-    );
-    return () => {
-      active = false;
-    };
-  }, [mediaSessionIdentity, src]);
-  useEffect(() => {
     setFirstFrameRendered(false);
-  }, [headerAccept, headerCookie, headerReferer, headerUserAgent, mediaSessionIdentity, src]);
-  const loadFailed = cookieReadFailed || status === 'error';
+  }, [headers, mediaSessionIdentity, src]);
+  const loadFailed = status === 'error';
   const showLoading = shouldShowVideoStickerLoading(firstFrameRendered, loadFailed, status);
   const showFallback = fallbackSrc && (!firstFrameRendered || loadFailed);
   return (
     <View pointerEvents="none" style={videoStyle}>
-      {cookieReady && !loadFailed ? (
+      {!loadFailed ? (
         <VideoView
           allowsVideoFrameAnalysis={false}
           contentFit="contain"
@@ -254,9 +205,7 @@ function ForumVideoStickerVideo({
           recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
           source={imageSourceFromUrl(
             fallbackSrc,
-            undefined,
-            headers?.['User-Agent'],
-            mediaSessionIdentity
+            { mediaContext, nodeSeekUserAgent: headers?.['User-Agent'] }
           )}
           style={embedStyles.stickerVideoFallback}
         />
@@ -283,6 +232,7 @@ function PreviewImageBlock({
   imageSource,
   loadingColor,
   markInlineSizedImageUrl,
+  mediaContext,
   mediaSessionIdentity,
   onOpenImagePreview,
   src
@@ -295,17 +245,46 @@ function PreviewImageBlock({
   imageSource: ImageURISource;
   loadingColor: string;
   markInlineSizedImageUrl: (url: string) => void;
+  mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
   onOpenImagePreview: (url: string) => void;
   src: string;
 }) {
-  const headers = imageSource.headers;
-  const headerAccept = headers?.Accept || '';
-  const headerCookie = headers?.Cookie || '';
-  const headerReferer = headers?.Referer || '';
-  const headerUserAgent = headers?.['User-Agent'] || '';
   const requestIdentity = compatibleImageRequestIdentity(imageSource);
   const requestIdentityRef = useRef(requestIdentity);
+  const bodyStartedAtRef = useRef(0);
+  const settledRequestIdentityRef = useRef('');
+  const bodyDiagnosticRef = useRef<{ fallback: boolean; requestIdentity: string; trace: DiagnosticTrace } | null>(null);
+  const currentBodyTrace = useCallback((fallback = false) => {
+    const previous = bodyDiagnosticRef.current;
+    if (previous?.requestIdentity !== requestIdentity) {
+      if (previous) {
+        finishDiagnosticTrace(previous.trace, 'stale', { fallback: 'none', terminalReason: 'stale' });
+      }
+      bodyDiagnosticRef.current = {
+        fallback,
+        requestIdentity,
+        trace: beginDiagnosticTrace('media', 'load', {
+          mediaClass: forumMediaTargetClass(src, mediaContext.contentSource),
+          source: mediaContext.contentSource || 'unknown',
+          surface: 'body'
+        }, bodyStartedAtRef.current || Date.now())
+      };
+    } else if (fallback && previous) {
+      previous.fallback = true;
+    }
+    return bodyDiagnosticRef.current;
+  }, [mediaContext.contentSource, requestIdentity, src]);
+  const finishBodyFailure = useCallback((fallback: boolean) => {
+    const diagnostic = currentBodyTrace(fallback);
+    if (diagnostic) {
+      finishDiagnosticTrace(diagnostic.trace, 'failure', {
+        fallback: fallback ? 'svg' : 'none',
+        terminalReason: fallback ? 'fallback-error' : 'native-error'
+      });
+      bodyDiagnosticRef.current = null;
+    }
+  }, [currentBodyTrace]);
   const [resolvedImage, setResolvedImage] = useState<{ image: ImageRef; requestIdentity: string } | null>(null);
   const [compatibleImageSource, setCompatibleImageSource] = useState<{ requestIdentity: string; source: ImageURISource } | null>(null);
   const [failedRequestIdentity, setFailedRequestIdentity] = useState('');
@@ -315,48 +294,119 @@ function PreviewImageBlock({
     ? compatibleImageSource.source
     : cachedFallbackSource;
   const activeImageSource = activeFallbackSource || imageSource;
+  const imageLoadIdentity = `${requestIdentity}:${activeFallbackSource ? 'compatible' : 'native'}`;
   const maxImageWidth = Math.ceil(contentWidth * PixelRatio.get());
   const compatibleAspectRatio = activeFallbackSource?.width && activeFallbackSource.height
     ? activeFallbackSource.height / activeFallbackSource.width
     : 0;
-  useEffect(() => {
+  useLayoutEffect(() => {
     requestIdentityRef.current = requestIdentity;
+    bodyStartedAtRef.current = Date.now();
   }, [requestIdentity]);
   const imageRef = useImage(activeImageSource, {
     maxWidth: maxImageWidth,
     ...(compatibleAspectRatio > 0 ? { maxHeight: Math.ceil(maxImageWidth * compatibleAspectRatio) } : {}),
     onError: () => {
-      if (requestIdentityRef.current !== requestIdentity) {
+      if (
+        requestIdentityRef.current !== requestIdentity
+        || settledRequestIdentityRef.current === requestIdentity
+      ) {
         return;
       }
       if (activeFallbackSource) {
+        settledRequestIdentityRef.current = requestIdentity;
+        finishBodyFailure(true);
         setFailedRequestIdentity(requestIdentity);
         return;
       }
+      currentBodyTrace(true);
       void recoverCompatibleSvgImageSource(imageSource).then((fallbackSource) => {
-        if (requestIdentityRef.current !== requestIdentity) {
+        if (
+          requestIdentityRef.current !== requestIdentity
+          || settledRequestIdentityRef.current === requestIdentity
+        ) {
           return;
         }
         if (fallbackSource) {
           setCompatibleImageSource({ requestIdentity, source: fallbackSource });
           return;
         }
+        settledRequestIdentityRef.current = requestIdentity;
+        finishBodyFailure(false);
         setFailedRequestIdentity(requestIdentity);
       }, () => {
-        if (requestIdentityRef.current === requestIdentity) {
+        if (
+          requestIdentityRef.current === requestIdentity
+          && settledRequestIdentityRef.current !== requestIdentity
+        ) {
+          settledRequestIdentityRef.current = requestIdentity;
+          finishBodyFailure(true);
           setFailedRequestIdentity(requestIdentity);
         }
       });
     }
-  }, [activeImageSource.uri, headerAccept, headerCookie, headerReferer, headerUserAgent]);
+  }, [imageLoadIdentity]);
   useEffect(() => {
     // A request-identity change alone must not relabel the previous ImageRef as the new response.
-    if (imageRef) {
+    if (imageRef && settledRequestIdentityRef.current !== requestIdentity) {
       setResolvedImage({ image: imageRef, requestIdentity });
     }
   }, [imageRef]);
   const activeImageRef = resolvedImage?.requestIdentity === requestIdentity ? resolvedImage.image : null;
   const loadFailed = failedRequestIdentity === requestIdentity;
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (
+        requestIdentityRef.current === requestIdentity
+        && settledRequestIdentityRef.current !== requestIdentity
+      ) {
+        currentBodyTrace();
+      }
+    }, 10_000);
+    return () => {
+      clearTimeout(timeout);
+      const active = bodyDiagnosticRef.current;
+      if (active?.requestIdentity === requestIdentity) {
+        finishDiagnosticTrace(active.trace, 'stale', { fallback: 'none', terminalReason: 'stale' });
+        bodyDiagnosticRef.current = null;
+      }
+    };
+  }, [currentBodyTrace, requestIdentity]);
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (
+        requestIdentityRef.current !== requestIdentity
+        || settledRequestIdentityRef.current === requestIdentity
+      ) {
+        return;
+      }
+      settledRequestIdentityRef.current = requestIdentity;
+      const diagnostic = currentBodyTrace();
+      if (diagnostic) {
+        finishDiagnosticTrace(diagnostic.trace, 'failure', {
+          fallback: diagnostic.fallback ? 'svg' : 'none',
+          terminalReason: 'timeout'
+        });
+        bodyDiagnosticRef.current = null;
+      }
+      setFailedRequestIdentity(requestIdentity);
+    }, 30_000);
+    return () => clearTimeout(timeout);
+  }, [currentBodyTrace, requestIdentity]);
+  useEffect(() => {
+    if (!activeImageRef || settledRequestIdentityRef.current === requestIdentity) {
+      return;
+    }
+    settledRequestIdentityRef.current = requestIdentity;
+    const diagnostic = bodyDiagnosticRef.current;
+    if (diagnostic?.requestIdentity === requestIdentity) {
+      finishDiagnosticTrace(diagnostic.trace, 'success', {
+        fallback: activeFallbackSource ? 'svg' : 'none',
+        terminalReason: activeFallbackSource ? 'fallback-loaded' : 'loaded'
+      });
+      bodyDiagnosticRef.current = null;
+    }
+  }, [activeFallbackSource, activeImageRef, requestIdentity]);
   const cacheKey = `${mediaSessionIdentity}:${normalizeImagePreviewUrl(src).trim()}`;
   const cachedDimensions = previewImageDimensionsByUrl.get(cacheKey);
   const naturalDimensions = activeImageRef
@@ -461,6 +511,10 @@ export function useHtmlRenderingController({
   topicKey: string;
   webViewBlockMessage: string;
 }) {
+  const mediaContext = useMemo<ForumMediaRequestContext>(() => ({
+    contentSource: selectedTopic?.source || null,
+    sessionIdentity: mediaSessionIdentity
+  }), [mediaSessionIdentity, selectedTopic?.source]);
   const htmlTopicDetailRef = useRef(topicDetail);
   const htmlTopicDetail = hasSameYaohuoTopicLayout(htmlTopicDetailRef.current, topicDetail)
     ? htmlTopicDetailRef.current
@@ -610,9 +664,7 @@ export function useHtmlRenderingController({
             recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
             source={imageSourceFromUrl(
               fallbackSrc,
-              undefined,
-              nodeSeekMediaUserAgent,
-              mediaSessionIdentity
+              { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
             )}
             style={[styles.inlineForumImage, size]}
           />
@@ -625,21 +677,20 @@ export function useHtmlRenderingController({
             recyclingKey={`${mediaSessionIdentity}:${src}`}
             source={imageSourceFromUrl(
               src,
-              undefined,
-              nodeSeekMediaUserAgent,
-              mediaSessionIdentity
+              { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
             )}
             style={[styles.inlineForumImage, size]}
           />
         );
       }
-      const headers = videoStickerRequestHeaders(src, nodeSeekMediaUserAgent);
+      const headers = videoStickerRequestHeaders(src, mediaContext, nodeSeekMediaUserAgent);
       return (
         <ForumVideoStickerVideo
           key={`${mediaSessionIdentity}:${src}`}
           fallbackSrc={fallbackSrc}
           headers={headers}
           loadingColor={theme.primary}
+          mediaContext={mediaContext}
           mediaSessionIdentity={mediaSessionIdentity}
           src={src}
           videoStyle={[size, embedStyles.inlineVideoSticker, embedStyles.stickerVideoFrame]}
@@ -655,8 +706,8 @@ export function useHtmlRenderingController({
       return (
         <ForumContentVideo
           key={`${mediaSessionIdentity}:${src}`}
-          headers={videoStickerRequestHeaders(src, nodeSeekMediaUserAgent)}
-          mediaSessionIdentity={mediaSessionIdentity}
+          headers={videoStickerRequestHeaders(src, mediaContext, nodeSeekMediaUserAgent)}
+          mediaContext={mediaContext}
           src={src}
           theme={theme}
         />
@@ -676,9 +727,7 @@ export function useHtmlRenderingController({
           recyclingKey={`${mediaSessionIdentity}:${src}`}
           source={imageSourceFromUrl(
             src,
-            undefined,
-            nodeSeekMediaUserAgent,
-            mediaSessionIdentity
+            { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
           )}
           style={[styles.inlineForumImage, size]}
         />
@@ -722,12 +771,12 @@ export function useHtmlRenderingController({
         >
           {site || iconSrc ? (
             <View style={embedStyles.linkCardHeader}>
-              {iconSrc ? <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${iconSrc}`} source={imageSourceFromUrl(iconSrc, undefined, nodeSeekMediaUserAgent, mediaSessionIdentity)} style={embedStyles.linkCardIcon} /> : null}
+              {iconSrc ? <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${iconSrc}`} source={imageSourceFromUrl(iconSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={embedStyles.linkCardIcon} /> : null}
               {site ? <Text numberOfLines={1} style={[embedStyles.linkCardSite, { color: theme.muted }]}>{site}</Text> : null}
             </View>
           ) : null}
           <View style={embedStyles.linkCardBody}>
-            {imageSrc ? <ExpoImage contentFit="cover" recyclingKey={`${mediaSessionIdentity}:${imageSrc}`} source={imageSourceFromUrl(imageSrc, undefined, nodeSeekMediaUserAgent, mediaSessionIdentity)} style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]} /> : null}
+            {imageSrc ? <ExpoImage contentFit="cover" recyclingKey={`${mediaSessionIdentity}:${imageSrc}`} source={imageSourceFromUrl(imageSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]} /> : null}
             <View style={embedStyles.linkCardText}>
               <Text numberOfLines={3} style={[embedStyles.linkCardTitle, { color: theme.primaryStrong }]}>{title}</Text>
               {description ? <Text numberOfLines={3} style={[embedStyles.linkCardDescription, { color: theme.ink }]}>{description}</Text> : null}
@@ -811,15 +860,13 @@ export function useHtmlRenderingController({
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
       const imageSource = imageSourceFromUrl(
         src,
-        imageProps.source,
-        nodeSeekMediaUserAgent,
-        mediaSessionIdentity
+        { baseSource: imageProps.source, mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
       );
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
       }
       if (isInlineForumImage(props.tnode.attributes)) {
-        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${src}`} source={imageSourceFromUrl(src, undefined, nodeSeekMediaUserAgent, mediaSessionIdentity)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${src}`} source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       return (
         <PreviewImageBlock
@@ -832,6 +879,7 @@ export function useHtmlRenderingController({
           imageSource={imageSource as ImageURISource}
           loadingColor={theme.primary}
           markInlineSizedImageUrl={markInlineSizedImageUrl}
+          mediaContext={mediaContext}
           mediaSessionIdentity={mediaSessionIdentity}
           onOpenImagePreview={onOpenImagePreview}
           src={src}
@@ -848,7 +896,7 @@ export function useHtmlRenderingController({
       }
       const isInlineImage = isInlineForumImage(attributes);
       if (isInlineImage) {
-        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${src}`} source={imageSourceFromUrl(src, undefined, nodeSeekMediaUserAgent, mediaSessionIdentity)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${src}`} source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
@@ -869,6 +917,7 @@ export function useHtmlRenderingController({
     };
   }, [
     htmlBaseStyle.lineHeight,
+    mediaContext,
     mediaSessionIdentity,
     nodeSeekMediaUserAgent,
     onOpenImagePreview,
@@ -884,6 +933,7 @@ export function useHtmlRenderingController({
     styles.htmlReplyReferenceSeparator,
     styles.inlineForumImage,
     styles.inlineForumImageText,
+    theme,
     theme.ink,
     theme.line,
     theme.mist,

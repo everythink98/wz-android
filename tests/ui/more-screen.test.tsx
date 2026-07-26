@@ -68,6 +68,22 @@ const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
+const authorizedXiaoyinsiSessions = createSiteSessionViewModels(createSiteSessionStates({
+  xiaoyinsi: {
+    site: 'xiaoyinsi',
+    status: 'logged-in',
+    cookieSummary: [],
+    isVerifying: false,
+    currentUser: {
+      source: 'xiaoyinsi',
+      id: 'alice',
+      username: 'alice',
+      displayName: 'Alice',
+      url: 'https://forum.xiaoyinsi.com/u/alice',
+      topics: []
+    }
+  }
+}));
 
 function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): ComponentProps<typeof MoreScreen> {
   return {
@@ -304,23 +320,7 @@ describe('More screen state and actions', () => {
 
   it('[REG-XIAOYINSI-013][REG-XIAOYINSI-014] puts the level entry after authorization management for an authorized 小隐寺 account', async () => {
     const onRefreshXiaoyinsiLevel = jest.fn();
-    const authorizedSessions = createSiteSessionViewModels(createSiteSessionStates({
-      xiaoyinsi: {
-        site: 'xiaoyinsi',
-        status: 'logged-in',
-        cookieSummary: [],
-        isVerifying: false,
-        currentUser: {
-          source: 'xiaoyinsi',
-          id: 'alice',
-          username: 'alice',
-          displayName: 'Alice',
-          url: 'https://forum.xiaoyinsi.com/u/alice',
-          topics: []
-        }
-      }
-    }));
-    const view = await render(<MoreScreen {...moreProps({ onRefreshXiaoyinsiLevel, sessionViewModels: authorizedSessions })} />);
+    const view = await render(<MoreScreen {...moreProps({ onRefreshXiaoyinsiLevel, sessionViewModels: authorizedXiaoyinsiSessions })} />);
 
     await fireEvent.press(view.getByLabelText('展开账号中心'));
     await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
@@ -333,6 +333,56 @@ describe('More screen state and actions', () => {
     expect(renderedText.indexOf('撤销授权')).toBeLessThan(renderedText.indexOf('查看等级'));
     await fireEvent.press(view.getByText('查看等级'));
     expect(onRefreshXiaoyinsiLevel).toHaveBeenCalledTimes(1);
+    expect(view.queryByTestId('xiaoyinsi-level-settled')).toBeNull();
+  });
+
+  it('[REG-TEST-005] marks only settled level outcomes and keeps an error visible until refresh', async () => {
+    const onRefreshXiaoyinsiLevel = jest.fn();
+    const levelProfile: NonNullable<ComponentProps<typeof MoreScreen>['xiaoyinsiLevelProfile']> = {
+      username: 'alice',
+      currentLevel: 2,
+      targetLevel: 3,
+      source: 'summary',
+      estimate: false,
+      note: '小隐寺当前账号统计',
+      requirements: [],
+      activity: { daysVisited: 5, topicsEntered: 20, postsReadCount: 120, timeRead: 3660, likesGiven: 8, likesReceived: 9, postCount: 10, topicCount: 2 },
+      achievedCount: 0,
+      totalCount: 0,
+      fetchedAt: '2026-07-26T01:00:00.000Z'
+    };
+    const view = await render(<MoreScreen {...moreProps({
+      onRefreshXiaoyinsiLevel,
+      sessionViewModels: authorizedXiaoyinsiSessions,
+      xiaoyinsiLevelError: '限制 10 秒后再试'
+    })} />);
+
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
+    await fireEvent.press(view.getByText('查看等级'));
+
+    expect(view.getByTestId('xiaoyinsi-level-settled')).toBeTruthy();
+    expect(view.getAllByText('限制 10 秒后再试')).not.toHaveLength(0);
+    expect(onRefreshXiaoyinsiLevel).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('刷新等级'));
+    expect(onRefreshXiaoyinsiLevel).toHaveBeenCalledTimes(1);
+
+    await view.rerender(<MoreScreen {...moreProps({
+      onRefreshXiaoyinsiLevel,
+      sessionViewModels: authorizedXiaoyinsiSessions,
+      xiaoyinsiLevelBusy: true,
+      xiaoyinsiLevelProfile: levelProfile
+    })} />);
+    expect(view.queryByTestId('xiaoyinsi-level-settled')).toBeNull();
+
+    await view.rerender(<MoreScreen {...moreProps({
+      onRefreshXiaoyinsiLevel,
+      sessionViewModels: authorizedXiaoyinsiSessions,
+      xiaoyinsiLevelProfile: levelProfile
+    })} />);
+    expect(view.getByTestId('xiaoyinsi-level-settled')).toBeTruthy();
+    expect(view.queryAllByText('限制 10 秒后再试')).toHaveLength(0);
+    expect(view.getAllByText('LV 2 → LV 3')).not.toHaveLength(0);
   });
 
   it('[REG-XIAOYINSI-005] exposes persisted revocation cleanup before any stale logged-in controls', async () => {

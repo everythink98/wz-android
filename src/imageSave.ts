@@ -4,6 +4,7 @@ import { Buffer } from 'buffer';
 import { safeFileName } from './backupFiles';
 import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './htmlImages';
 import { fetchWithTimeout, type Fetcher } from './request';
+import type { ForumMediaRequestContext } from './mediaRequestContext';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -14,6 +15,7 @@ import {
 } from './diagnostics';
 
 export interface ImageSaveRequestOptions {
+  mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
 }
 
@@ -86,7 +88,10 @@ async function downloadImageWithFetcher(
   trace: DiagnosticTrace,
   requestOptions: ImageSaveRequestOptions
 ) {
-  const headers = imageRequestHeadersForUrl(uri, requestOptions.nodeSeekUserAgent);
+  const headers = imageRequestHeadersForUrl(uri, {
+    mediaContext: requestOptions.mediaContext,
+    nodeSeekUserAgent: requestOptions.nodeSeekUserAgent
+  });
   const response = await fetchWithTimeout(uri, headers ? { headers } : {}, {
     fetcher: withDiagnosticFetcher(trace, fetcher)
   });
@@ -101,9 +106,9 @@ async function downloadImageWithFetcher(
 
 export async function saveImageUriToLibrary(
   uri: string,
+  requestOptions: ImageSaveRequestOptions,
   fetcher: Fetcher = fetch,
-  parentTrace?: DiagnosticTrace,
-  requestOptions: ImageSaveRequestOptions = {}
+  parentTrace?: DiagnosticTrace
 ) {
   const dataImage = dataImageFileFromUrl(uri);
   const trace = parentTrace || beginDiagnosticTrace('media', 'save-image', {

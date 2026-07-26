@@ -27,6 +27,7 @@ export type SourceErrorInfo = {
 };
 
 export type SourceErrors = Partial<Record<FeedSource, SourceErrorInfo>>;
+export type SourceLoadOutcomeKind = 'data' | 'empty' | 'partial' | 'error' | 'auth';
 
 export interface SiteExtensionMap {
   linuxdo: {
@@ -82,6 +83,11 @@ export interface ReactionSummary {
   count: number;
 }
 
+export interface QuotedAuthorReference {
+  label: string;
+  username?: string;
+}
+
 export interface Reply {
   author: string;
   authorId?: string;
@@ -92,7 +98,7 @@ export interface Reply {
   createdAt: string;
   floor?: number;
   quotedFloors?: number[];
-  quotedAuthors?: Record<number, string>;
+  quotedAuthors?: Record<number, QuotedAuthorReference>;
   quotedPreviews?: Record<number, string>;
   commentId?: number;
   upvoteCount?: number;

@@ -154,7 +154,7 @@ export function TopicCard({
         {topic.excerpt && readerState.listDensity === 'loose' ? <HighlightedText style={styles.excerpt} highlightStyle={styles.highlightText} numberOfLines={2} text={topic.excerpt} query={highlightQuery} /> : null}
         <View style={[styles.topicFooterRow, readerState.read && styles.topicCardRead]}>
           <View style={styles.topicAuthorChip}>
-            <Avatar name={topic.author} uri={topic.authorAvatar} tiny styles={styles} />
+            <Avatar contentSource={topic.source} name={topic.author} uri={topic.authorAvatar} tiny styles={styles} />
             <Text style={styles.topicAuthorName} numberOfLines={1}>{authorMeta}</Text>
           </View>
           <View style={styles.topicStatGroup}>

@@ -1,18 +1,35 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { ImagePreviewModal } from '../../src/components/ImagePreviewModal';
 import { createEmptyReaderData } from '../../src/readerData';
 import { createStyles, createTheme } from '../../src/theme';
+import { ForumSessionEpochProvider } from '../../src/mediaSessionEpoch';
+import { initialForumSessionEpochs } from '../../src/app/serverState';
+import { setDiagnosticWriter } from '../../src/diagnostics';
 
 jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    Image: ({ contentFit, ...props }: { contentFit?: string }) => ReactModule.createElement(
-      NativeView,
-      { ...props, testID: contentFit === 'contain' ? 'active-preview-image' : 'preview-thumbnail-image' }
-    )
+    Image: ({ contentFit, ...props }: {
+      contentFit?: string;
+      onError?: () => void;
+      onLoad?: (event: { source: { height: number; width: number } }) => void;
+      source?: { uri?: string };
+    }) => {
+      ReactModule.useLayoutEffect(() => {
+        if (props.source?.uri?.includes('fast-cache')) {
+          props.onLoad?.({ source: { height: 480, width: 640 } });
+        } else if (props.source?.uri?.includes('fast-error')) {
+          props.onError?.();
+        }
+      }, [props.source?.uri]);
+      return ReactModule.createElement(
+        NativeView,
+        { ...props, testID: contentFit === 'contain' ? 'active-preview-image' : 'preview-thumbnail-image' }
+      );
+    }
   };
 });
 
@@ -47,6 +64,164 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
 describe('Image preview', () => {
+  it('REG-TOPIC-031 settles an immediate cache hit instead of restoring the spinner', async () => {
+    const view = await render(
+      <ImagePreviewModal
+        preview={{ contentSource: null, urls: ['https://example.com/fast-cache.png'], index: 0 }}
+        styles={styles}
+        theme={theme}
+        onClose={jest.fn()}
+        onNext={jest.fn()}
+        onPrevious={jest.fn()}
+        onSave={jest.fn()}
+        onSelect={jest.fn()}
+      />
+    );
+
+    expect(view.queryByText('图片加载中...')).toBeNull();
+    expect(view.queryByText('图片加载失败')).toBeNull();
+  });
+
+  it('REG-TOPIC-031 settles an immediate native failure instead of restoring the spinner', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={{ contentSource: null, urls: ['https://example.com/fast-error.png'], index: 0 }}
+          styles={styles}
+          theme={theme}
+          onClose={jest.fn()}
+          onNext={jest.fn()}
+          onPrevious={jest.fn()}
+          onSave={jest.fn()}
+          onSelect={jest.fn()}
+        />
+      );
+
+      await waitFor(() => expect(view.getByText('图片加载失败')).toBeTruthy());
+      expect(view.queryByText('图片加载中...')).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('REG-TOPIC-031 keeps the active request mounted through StrictMode effect replay', async () => {
+    const view = await render(
+      <React.StrictMode>
+        <ImagePreviewModal
+          preview={{ contentSource: null, urls: ['https://example.com/strict.png'], index: 0 }}
+          styles={styles}
+          theme={theme}
+          onClose={jest.fn()}
+          onNext={jest.fn()}
+          onPrevious={jest.fn()}
+          onSave={jest.fn()}
+          onSelect={jest.fn()}
+        />
+      </React.StrictMode>
+    );
+
+    await fireEvent(view.getByTestId('active-preview-image'), 'load', {
+      source: { height: 480, width: 640 }
+    });
+
+    expect(view.queryByText('图片加载中...')).toBeNull();
+    expect(view.queryByText('图片加载失败')).toBeNull();
+  });
+
+  it('[REG-TOPIC-031] starts a fresh settlement when navigation returns to an earlier identity', async () => {
+    const callbacks = {
+      onClose: jest.fn(),
+      onNext: jest.fn(),
+      onPrevious: jest.fn(),
+      onSave: jest.fn(),
+      onSelect: jest.fn()
+    };
+    const modal = (index: number) => (
+      <ImagePreviewModal
+        preview={{
+          contentSource: null,
+          urls: ['https://example.com/a.png', 'https://example.com/b.png'],
+          index
+        }}
+        styles={styles}
+        theme={theme}
+        {...callbacks}
+      />
+    );
+    const view = await render(modal(0));
+
+    await fireEvent(view.getByTestId('active-preview-image'), 'load', {
+      source: { height: 480, width: 640 }
+    });
+    await view.rerender(modal(1));
+    await fireEvent(view.getByTestId('active-preview-image'), 'loadStart');
+    await view.rerender(modal(0));
+
+    expect(view.getByText('图片加载中...')).toBeTruthy();
+
+    await fireEvent(view.getByTestId('active-preview-image'), 'load', {
+      source: { height: 480, width: 640 }
+    });
+
+    expect(view.queryByText('图片加载中...')).toBeNull();
+    expect(view.queryByText('图片加载失败')).toBeNull();
+  });
+
+  it('[REG-TOPIC-031] ignores a late native event from the previous identity', async () => {
+    const callbacks = {
+      onClose: jest.fn(),
+      onNext: jest.fn(),
+      onPrevious: jest.fn(),
+      onSave: jest.fn(),
+      onSelect: jest.fn()
+    };
+    const modal = (index: number) => (
+      <ImagePreviewModal
+        preview={{
+          contentSource: null,
+          urls: ['https://example.com/a.png', 'https://example.com/b.png'],
+          index
+        }}
+        styles={styles}
+        theme={theme}
+        {...callbacks}
+      />
+    );
+    const view = await render(modal(0));
+    const staleImage = view.getByTestId('active-preview-image');
+    const staleEvents = {
+      onError: staleImage.props.onError as () => void,
+      onLoad: staleImage.props.onLoad as (event: { source: { height: number; width: number } }) => void,
+      onLoadStart: staleImage.props.onLoadStart as () => void
+    };
+    const fetchSpy = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('stale request must not recover'));
+
+    try {
+      await view.rerender(modal(1));
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+
+      await act(async () => staleEvents.onError());
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+
+      await act(async () => staleEvents.onLoadStart());
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+
+      await act(async () => staleEvents.onLoad({ source: { height: 480, width: 640 } }));
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+
+      await fireEvent(view.getByTestId('active-preview-image'), 'load', {
+        source: { height: 480, width: 640 }
+      });
+
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(view.queryByText('图片加载失败')).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('navigates a multi-image preview and exposes save, select and close actions', async () => {
     const onClose = jest.fn<() => void>();
     const onNext = jest.fn<() => void>();
@@ -56,6 +231,7 @@ describe('Image preview', () => {
     const view = await render(
       <ImagePreviewModal
         preview={{
+          contentSource: null,
           urls: [
             'https://example.com/one.png',
             'https://example.com/two.png',
@@ -63,7 +239,6 @@ describe('Image preview', () => {
           ],
           index: 1
         }}
-        mediaSessionIdentity="public:0"
         styles={styles}
         theme={theme}
         onClose={onClose}
@@ -96,8 +271,7 @@ describe('Image preview', () => {
     try {
       const view = await render(
         <ImagePreviewModal
-          preview={{ urls: ['https://example.com/broken.png'], index: 0 }}
-          mediaSessionIdentity="public:0"
+          preview={{ contentSource: null, urls: ['https://example.com/broken.png'], index: 0 }}
           styles={styles}
           theme={theme}
           onClose={jest.fn()}
@@ -117,6 +291,53 @@ describe('Image preview', () => {
     }
   });
 
+  it('[REG-TOPIC-032] settles a stalled preview within the 30 second image budget', async () => {
+    const diagnosticLines: string[] = [];
+    setDiagnosticWriter((line) => {
+      diagnosticLines.push(line);
+    });
+    jest.useFakeTimers();
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={{ contentSource: null, urls: ['https://example.com/stalled.png'], index: 0 }}
+          styles={styles}
+          theme={theme}
+          onClose={jest.fn()}
+          onNext={jest.fn()}
+          onPrevious={jest.fn()}
+          onSave={jest.fn()}
+          onSelect={jest.fn()}
+        />
+      );
+
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+      await act(async () => {
+        jest.advanceTimersByTime(30_000);
+      });
+      expect(view.getByText('图片加载失败')).toBeTruthy();
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      await fireEvent(view.getByTestId('active-preview-image'), 'load', {
+        source: { height: 480, width: 640 }
+      });
+      expect(view.getByText('图片加载失败')).toBeTruthy();
+      const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
+      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
+        area: 'media',
+        phase: 'intent',
+        surface: 'preview'
+      }));
+      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
+        area: 'media',
+        outcome: 'failure',
+        terminalReason: 'timeout'
+      }));
+    } finally {
+      setDiagnosticWriter(null);
+      jest.useRealTimers();
+    }
+  });
+
   it('REG-TOPIC-018 retries an Android-incompatible remote SVG with the compatible source', async () => {
     const imageUrl = 'https://example.com/dynamic-preview.png';
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
@@ -129,8 +350,7 @@ describe('Image preview', () => {
     try {
       const view = await render(
         <ImagePreviewModal
-          preview={{ urls: [imageUrl], index: 0 }}
-          mediaSessionIdentity="public:0"
+          preview={{ contentSource: null, urls: [imageUrl], index: 0 }}
           styles={styles}
           theme={theme}
           onClose={jest.fn()}
@@ -148,6 +368,11 @@ describe('Image preview', () => {
       ));
       expect(view.queryByText('图片加载失败')).toBeNull();
       expect(view.getByText('图片加载中...')).toBeTruthy();
+      await fireEvent(view.getByTestId('active-preview-image'), 'load', {
+        source: { height: 1025, width: 920 }
+      });
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(view.queryByText('图片加载失败')).toBeNull();
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     } finally {
       fetchSpy.mockRestore();
@@ -157,24 +382,26 @@ describe('Image preview', () => {
   it('REG-TOPIC-019 keeps NodeSeek media credentials in the full-screen preview request', async () => {
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
     const view = await render(
-      <ImagePreviewModal
-        preview={{ urls: [imageUrl], index: 0 }}
-        mediaSessionIdentity="nodeseek:4"
-        nodeSeekMediaUserAgent="WZ-Preview-Test"
-        styles={styles}
-        theme={theme}
-        onClose={jest.fn()}
-        onNext={jest.fn()}
-        onPrevious={jest.fn()}
-        onSave={jest.fn()}
-        onSelect={jest.fn()}
-      />
+      <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: 4 }}>
+        <ImagePreviewModal
+          preview={{ contentSource: 'nodeseek', urls: [imageUrl], index: 0 }}
+          nodeSeekMediaUserAgent="WZ-Preview-Test"
+          styles={styles}
+          theme={theme}
+          onClose={jest.fn()}
+          onNext={jest.fn()}
+          onPrevious={jest.fn()}
+          onSave={jest.fn()}
+          onSelect={jest.fn()}
+        />
+      </ForumSessionEpochProvider>
     );
 
     expect(view.getByTestId('active-preview-image').props.source).toEqual(expect.objectContaining({
       cacheKey: `nodeseek:4:${imageUrl}`,
       headers: expect.objectContaining({
-        'User-Agent': 'WZ-Preview-Test'
+        'User-Agent': 'WZ-Preview-Test',
+        'X-WZ-Forum-Media-Source': 'nodeseek'
       })
     }));
     expect(view.getByTestId('active-preview-image').props.source.headers).not.toHaveProperty('Cookie');
@@ -190,14 +417,15 @@ describe('Image preview', () => {
       onSelect: jest.fn()
     };
     const view = await render(
-      <ImagePreviewModal
-        preview={{ urls: [imageUrl], index: 0 }}
-        mediaSessionIdentity="nodeseek:4"
-        nodeSeekMediaUserAgent="WZ-Preview-Test"
-        styles={styles}
-        theme={theme}
-        {...callbacks}
-      />
+      <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: 4 }}>
+        <ImagePreviewModal
+          preview={{ contentSource: 'nodeseek', urls: [imageUrl], index: 0 }}
+          nodeSeekMediaUserAgent="WZ-Preview-Test"
+          styles={styles}
+          theme={theme}
+          {...callbacks}
+        />
+      </ForumSessionEpochProvider>
     );
     const epochFourImage = view.getByTestId('active-preview-image');
     const epochFourSource = epochFourImage.props.source;
@@ -207,14 +435,15 @@ describe('Image preview', () => {
     }));
 
     await view.rerender(
-      <ImagePreviewModal
-        preview={{ urls: [imageUrl], index: 0 }}
-        mediaSessionIdentity="nodeseek:5"
-        nodeSeekMediaUserAgent="WZ-Preview-Test"
-        styles={styles}
-        theme={theme}
-        {...callbacks}
-      />
+      <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: 5 }}>
+        <ImagePreviewModal
+          preview={{ contentSource: 'nodeseek', urls: [imageUrl], index: 0 }}
+          nodeSeekMediaUserAgent="WZ-Preview-Test"
+          styles={styles}
+          theme={theme}
+          {...callbacks}
+        />
+      </ForumSessionEpochProvider>
     );
 
     const epochFiveImage = view.getByTestId('active-preview-image');
@@ -239,8 +468,7 @@ describe('Image preview', () => {
     try {
       const view = await render(
         <ImagePreviewModal
-          preview={{ urls: [firstUrl, secondUrl], index: 0 }}
-          mediaSessionIdentity="public:0"
+          preview={{ contentSource: null, urls: [firstUrl, secondUrl], index: 0 }}
           styles={styles}
           theme={theme}
           onClose={jest.fn()}

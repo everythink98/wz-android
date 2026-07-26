@@ -19,7 +19,7 @@ import * as Clipboard from 'expo-clipboard';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import { WebView } from 'react-native-webview';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekSession';
 import { setDefaultAvatarFetcher } from '../avatarImages';
 import type { TopicRecord } from '../readerData';
@@ -53,6 +53,7 @@ import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
 import { useTopicActionsController } from './useTopicActionsController';
 import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
+import { useNodeImageAuthController } from './useNodeImageAuthController';
 import {
   takeNodeSeekVerificationRetry,
   type NodeSeekVerificationRetry
@@ -62,7 +63,7 @@ import { shareTopicWithClipboardFallback } from './topicActionHelpers';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { useCommitRefValue } from './useCommittedRef';
-import { GlobalModalHost, type NodeImageAuthDocument } from './GlobalModalHost';
+import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoSession';
@@ -102,37 +103,12 @@ import {
 import {
   createSiteSessionViewModels,
   nodeSeekUserIdForSession,
+  sessionSources,
   type SessionSite
 } from '../siteSessionState';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import type { CredentialSite } from '../credentialVault';
 import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
-import { nativeSecureRandomHex } from '../xiaoyinsiKeystore';
-import {
-  beginNodeImageApiKeyAuthorization,
-  clearNodeImageApiKey,
-  currentNodeImageApiKeyGeneration,
-  invalidateNodeImageApiKeyAuthorization,
-  loadNodeImageApiKey,
-  loadNodeImageApiKeyCredential,
-  nodeImageApiKeyUseStatus,
-  saveNodeImageApiKeyForGeneration
-} from '../nodeimageCredentials';
-import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '../appUrls';
-import {
-  nodeImageAuthPayloadScript,
-  nodeImageSessionScript,
-  nodeSeekNodeImageAuthScript,
-  type NodeImageAuthPayload
-} from '../loginWebViewScripts';
-import {
-  closeNodeImageAuthOpening,
-  createNodeImageAuthNonce,
-  processNodeImageAuthMessage,
-  runNodeImageAuthOpening,
-  terminateNodeImageAuthFlow,
-  type NodeImageAuthPhase
-} from '../nodeimageAuthFlow';
 import {
   CURRENT_ANDROID_VERSION_CODE,
   CURRENT_APP_VERSION,
@@ -171,48 +147,6 @@ type UserReturnTopic = {
   snapshot: TopicSnapshot;
   backStack: TopicSnapshot[];
 };
-
-type ActiveNodeImageAuthFlow = {
-  connectStarted: boolean;
-  credentialGeneration: number;
-  nonce: string;
-  ownerIdentityKey: string | null;
-  ownerSessionEpoch: number | null;
-  payload: NodeImageAuthPayload | null;
-  phase: NodeImageAuthPhase;
-  promise: Promise<string | null>;
-  resolve: (apiKey: string | null) => void;
-  surfaceGeneration: number;
-  terminal: boolean;
-  trace: DiagnosticTrace;
-};
-
-function nodeImageAuthDocumentForFlow(
-  flow: ActiveNodeImageAuthFlow
-): NodeImageAuthDocument | null {
-  if (flow.phase === 'nodeimage-session') {
-    return {
-      injectedJavaScript: nodeImageSessionScript(flow.nonce),
-      key: `${flow.surfaceGeneration}:${flow.phase}`,
-      url: NODEIMAGE_URL
-    };
-  }
-  if (flow.phase === 'nodeseek-cauth') {
-    return {
-      injectedJavaScript: nodeSeekNodeImageAuthScript(flow.nonce),
-      key: `${flow.surfaceGeneration}:${flow.phase}`,
-      url: NODEIMAGE_AUTH_URL
-    };
-  }
-  if (!flow.payload) {
-    return null;
-  }
-  return {
-    injectedJavaScript: nodeImageAuthPayloadScript(flow.nonce, flow.payload),
-    key: `${flow.surfaceGeneration}:${flow.phase}`,
-    url: NODEIMAGE_URL
-  };
-}
 
 function useStableTopicLayoutDetail(topicDetail: TopicDetail | null) {
   const stableDetailRef = useRef(topicDetail);
@@ -253,15 +187,11 @@ function accountIdentityKey(view: {
 
 export function AppRoot() {
   const webViewRef = useRef<WebView>(null);
-  const nodeImageAuthWebViewRef = useRef<WebView>(null);
   const yaohuoWebViewRef = useRef<WebView>(null);
   const linuxDoWebViewRef = useRef<WebView>(null);
   const nodeSeekBrowserWebViewRef = useRef<WebView>(null);
   const linuxDoBrowserWebViewRef = useRef<WebView>(null);
   const nodeSeekLoginPanelRequestRef = useRef(0);
-  const activeNodeImageAuthRef = useRef<ActiveNodeImageAuthFlow | null>(null);
-  const nodeImageAuthOpeningRef = useRef<Promise<string | null> | null>(null);
-  const nodeImageApiKeyBusyRef = useRef(false);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
   const checkingRequestIdRef = useRef(0);
@@ -439,24 +369,49 @@ export function AppRoot() {
   const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);
   const [checking, setChecking] = useState(false);
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-  const [nodeImageApiKeySaved, setNodeImageApiKeySaved] = useState(false);
-  const [nodeImageApiKeyBusy, setNodeImageApiKeyBusy] = useState(false);
-  const [showNodeImageAuthPanel, setShowNodeImageAuthPanel] = useState(false);
-  const [nodeImageAuthDocument, setNodeImageAuthDocument] = useState<NodeImageAuthDocument | null>(null);
-  const [loadingNodeImageAuthPage, setLoadingNodeImageAuthPage] = useState(false);
-  const [nodeImageAuthError, setNodeImageAuthError] = useState('');
-  const reportNodeImageAuthFailure = useCallback((message: string) => {
-    const flow = activeNodeImageAuthRef.current;
-    if (flow) {
-      terminateNodeImageAuthFlow(flow);
-      nodeImageAuthWebViewRef.current?.stopLoading();
-      setNodeImageAuthDocument(null);
-      markDiagnosticStage(flow.trace, 'guard', { state: 'failed' });
-      finishDiagnosticTrace(flow.trace, 'failure');
-    }
-    setLoadingNodeImageAuthPage(false);
-    setNodeImageAuthError(message);
+  const beginNodeImageAuthSurface = useCallback(() => (
+    beginAuthSurfaceTicket('nodeimage-auth', 'nodeseek', false)
+  ), [beginAuthSurfaceTicket]);
+  const finishNodeImageAuthSurface = useCallback((reason: AuthSurfaceCloseReason) => (
+    finishAuthSurfaceTicket('nodeimage-auth', reason)
+  ), [finishAuthSurfaceTicket]);
+  const prepareNodeImageAuthSurfaceOpen = useCallback(() => {
+    prepareAuthSurfaceOpenRef.current('nodeimage-auth');
   }, []);
+  const readNodeImageRuntime = useCallback(() => (
+    readSessionRuntimeSnapshot('nodeseek')
+  ), [readSessionRuntimeSnapshot]);
+  const reconcileNodeImageAccount = useCallback((surfaceGeneration: number) => (
+    reconcileAccountStatusRef.current('nodeseek', { surfaceGeneration })
+  ), []);
+  const {
+    key: {
+      authorize: authorizeNodeImageApiKey,
+      busy: nodeImageApiKeyBusy,
+      clear: clearNodeImageApiKeyInput,
+      ensure: ensureNodeImageApiKey,
+      save: saveNodeImageApiKeyInput,
+      saved: nodeImageApiKeySaved
+    },
+    panel: {
+      close: closeNodeImageAuthPanel,
+      document: nodeImageAuthDocument,
+      error: nodeImageAuthError,
+      fail: reportNodeImageAuthFailure,
+      handleMessage: handleNodeImageAuthMessage,
+      loading: loadingNodeImageAuthPage,
+      setLoading: setLoadingNodeImageAuthPage,
+      visible: showNodeImageAuthPanel,
+      webViewRef: nodeImageAuthWebViewRef
+    }
+  } = useNodeImageAuthController({
+    beginSurface: beginNodeImageAuthSurface,
+    finishSurface: finishNodeImageAuthSurface,
+    notify,
+    prepareSurfaceOpen: prepareNodeImageAuthSurfaceOpen,
+    readRuntime: readNodeImageRuntime,
+    reconcileAccountStatus: reconcileNodeImageAccount
+  });
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const credentialFailureHandlerRef = useRef<(
     site: CredentialSite,
@@ -508,296 +463,6 @@ export function AppRoot() {
     readerDataRef
   });
   const { updateSettings } = useReaderSettingsController({ commitReaderData });
-  useEffect(() => {
-    let active = true;
-    loadNodeImageApiKey()
-      .then((apiKey) => {
-        if (active) {
-          setNodeImageApiKeySaved(Boolean(apiKey));
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
-  const saveNodeImageApiKeyInput = useCallback(async (value: string) => {
-    if (nodeImageApiKeyBusyRef.current) {
-      return;
-    }
-    nodeImageApiKeyBusyRef.current = true;
-    setNodeImageApiKeyBusy(true);
-    try {
-      const runtime = readSessionRuntimeSnapshot('nodeseek');
-      if (
-        runtime.identityTrust !== 'confirmed'
-        || runtime.identityKey === 'nodeseek:anonymous'
-      ) {
-        notify('请先确认 NodeSeek 登录状态，再手动保存 NodeImage API Key');
-        return;
-      }
-      const generation = beginNodeImageApiKeyAuthorization();
-      const saved = await saveNodeImageApiKeyForGeneration(
-        generation,
-        value,
-        runtime.identityKey,
-        runtime.identityKey,
-        () => {
-          const current = readSessionRuntimeSnapshot('nodeseek');
-          return current.identityTrust === 'confirmed'
-            && current.identityKey === runtime.identityKey
-            && current.sessionEpoch === runtime.sessionEpoch;
-        }
-      );
-      if (!saved) {
-        notify('NodeImage API Key 未保存：NodeSeek 身份或会话已变化');
-        return;
-      }
-      setNodeImageApiKeySaved(true);
-      notify('NodeImage API Key 已保存');
-    } catch (error) {
-      notify(errorMessage(error));
-    } finally {
-      nodeImageApiKeyBusyRef.current = false;
-      setNodeImageApiKeyBusy(false);
-    }
-  }, [notify, readSessionRuntimeSnapshot]);
-  const clearNodeImageApiKeyInput = useCallback(async () => {
-    if (nodeImageApiKeyBusyRef.current) {
-      return;
-    }
-    nodeImageApiKeyBusyRef.current = true;
-    setNodeImageApiKeyBusy(true);
-    try {
-      const cleared = await clearNodeImageApiKey();
-      if (!cleared) {
-        return;
-      }
-      setNodeImageApiKeySaved(false);
-      notify('NodeImage API Key 已清除');
-    } catch (error) {
-      notify(errorMessage(error));
-    } finally {
-      nodeImageApiKeyBusyRef.current = false;
-      setNodeImageApiKeyBusy(false);
-    }
-  }, [notify]);
-  const finishNodeImageAuth = useCallback(async (
-    apiKey: string | null,
-    closeReason: AuthSurfaceCloseReason = 'cancel'
-  ) => {
-    const flow = activeNodeImageAuthRef.current;
-    if (!flow) {
-      return;
-    }
-    activeNodeImageAuthRef.current = null;
-    nodeImageAuthWebViewRef.current?.stopLoading();
-    setNodeImageAuthDocument(null);
-    setShowNodeImageAuthPanel(false);
-    setLoadingNodeImageAuthPage(false);
-    if (apiKey) {
-      setNodeImageAuthError('');
-    } else {
-      invalidateNodeImageApiKeyAuthorization();
-    }
-    const reconciliation = finishAuthSurfaceTicket(
-      'nodeimage-auth',
-      apiKey ? 'success' : closeReason
-    );
-    let usableApiKey: string | null = null;
-    try {
-      const result = reconciliation ? await reconciliation : { status: 'stale' as const };
-      if (
-        apiKey
-        && flow.ownerIdentityKey
-        && flow.ownerSessionEpoch !== null
-        && (result.status === 'same' || result.status === 'changed')
-      ) {
-        const settledIdentityKey = accountIdentityKey(result.session);
-        if (forumSessionEpochsRef.current.nodeseek === flow.ownerSessionEpoch) {
-          const saved = await saveNodeImageApiKeyForGeneration(
-            flow.credentialGeneration,
-            apiKey,
-            flow.ownerIdentityKey,
-            settledIdentityKey,
-            () => {
-              const runtime = readSessionRuntimeSnapshot('nodeseek');
-              return runtime.identityTrust === 'confirmed'
-                && runtime.identityKey === flow.ownerIdentityKey
-                && runtime.sessionEpoch === flow.ownerSessionEpoch;
-            }
-          );
-          if (saved) {
-            usableApiKey = saved;
-            setNodeImageApiKeySaved(true);
-            markDiagnosticStage(flow.trace, 'persist', { state: 'key-saved' });
-            finishDiagnosticTrace(flow.trace, 'success');
-            notify('NodeImage API Key 已保存');
-          }
-        }
-      }
-      if (!usableApiKey) {
-        if (apiKey) {
-          notify('NodeImage 授权结果未保存：NodeSeek 身份或会话已变化');
-          markDiagnosticStage(flow.trace, 'guard', { state: 'failed' });
-          finishDiagnosticTrace(flow.trace, 'failure');
-        } else {
-          finishDiagnosticTrace(flow.trace, 'canceled', { reason: 'canceled' });
-        }
-        setNodeImageApiKeySaved(Boolean(await loadNodeImageApiKey()));
-      }
-    } catch (error) {
-      markDiagnosticStage(flow.trace, 'persist', { state: 'failed' });
-      finishDiagnosticTrace(flow.trace, 'failure', {
-        reason: 'storage_error'
-      });
-      notify(`NodeImage 授权结果未保存：${errorMessage(error)}`);
-    } finally {
-      flow.resolve(usableApiKey);
-    }
-  }, [finishAuthSurfaceTicket, notify, readSessionRuntimeSnapshot]);
-  const closeNodeImageAuthPanel = useCallback((
-    reason: AuthSurfaceCloseReason = 'close-button'
-  ) => {
-    closeNodeImageAuthOpening(
-      nodeImageAuthOpeningRef,
-      () => finishNodeImageAuth(null, reason)
-    );
-  }, [finishNodeImageAuth]);
-  const openNodeImageAuthPanel = useCallback(() => {
-    if (activeNodeImageAuthRef.current) {
-      return activeNodeImageAuthRef.current.promise;
-    }
-    return runNodeImageAuthOpening(nodeImageAuthOpeningRef, {
-      createNonce: () => createNodeImageAuthNonce(nativeSecureRandomHex),
-      onError: (error) => {
-        notify(`NodeImage 授权无法启动：${errorMessage(error)}`);
-      },
-      open: async (nonce) => {
-        prepareAuthSurfaceOpenRef.current('nodeimage-auth');
-        setNodeImageAuthDocument(null);
-        setNodeImageAuthError('');
-        setLoadingNodeImageAuthPage(true);
-        const surfaceTicket = beginAuthSurfaceTicket('nodeimage-auth', 'nodeseek', false);
-        const credentialGeneration = beginNodeImageApiKeyAuthorization();
-        const trace = beginDiagnosticTrace('credential', 'auth', {
-          credentialSource: 'nodeimage',
-          state: 'session-check'
-        });
-        let resolveFlow!: (apiKey: string | null) => void;
-        const promise = new Promise<string | null>((resolve) => {
-          resolveFlow = resolve;
-        });
-        const flow: ActiveNodeImageAuthFlow = {
-          connectStarted: false,
-          credentialGeneration,
-          nonce,
-          ownerIdentityKey: null,
-          ownerSessionEpoch: null,
-          payload: null,
-          phase: 'nodeimage-session',
-          promise,
-          resolve: resolveFlow,
-          surfaceGeneration: surfaceTicket.generation,
-          terminal: false,
-          trace
-        };
-        activeNodeImageAuthRef.current = flow;
-        setShowNodeImageAuthPanel(true);
-        void (async () => {
-          try {
-            const result = await reconcileAccountStatusRef.current('nodeseek', {
-              surfaceGeneration: flow.surfaceGeneration
-            });
-            if (activeNodeImageAuthRef.current !== flow) {
-              return;
-            }
-            if (result.status === 'unknown') {
-              reportNodeImageAuthFailure(`NodeSeek 身份暂时无法确认：${result.error}`);
-              return;
-            }
-            if (
-              result.status === 'stale'
-              || result.status === 'anonymous'
-              || result.session.status !== 'logged-in'
-              || !result.session.currentUser?.id
-            ) {
-              reportNodeImageAuthFailure('请先完成 NodeSeek 登录，再重新打开 NodeImage 授权。');
-              return;
-            }
-            flow.ownerIdentityKey = accountIdentityKey(result.session);
-            flow.ownerSessionEpoch = forumSessionEpochsRef.current.nodeseek;
-            setNodeImageAuthError('');
-            setNodeImageAuthDocument(nodeImageAuthDocumentForFlow(flow));
-          } catch (error) {
-            if (activeNodeImageAuthRef.current === flow) {
-              reportNodeImageAuthFailure(`NodeSeek 身份暂时无法确认：${errorMessage(error)}`);
-            }
-          }
-        })();
-        return promise;
-      }
-    });
-  }, [beginAuthSurfaceTicket, notify, reportNodeImageAuthFailure]);
-  const ensureNodeImageApiKey = useCallback(async () => {
-    const identityKey = accountIdentityKeysRef.current.nodeseek;
-    const credential = await loadNodeImageApiKeyCredential();
-    if (credential && nodeImageApiKeyUseStatus(credential, identityKey) === 'usable') {
-      setNodeImageApiKeySaved(true);
-      return credential.apiKey;
-    }
-    return null;
-  }, []);
-  const authorizeNodeImageApiKey = useCallback(() => {
-    void openNodeImageAuthPanel();
-  }, [openNodeImageAuthPanel]);
-  const handleNodeImageAuthMessage = useCallback((event: WebViewMessageEvent) => {
-    void (async () => {
-      const flow = activeNodeImageAuthRef.current;
-      if (!flow || flow.terminal) {
-        return;
-      }
-      try {
-        await processNodeImageAuthMessage(
-          flow,
-          {
-            data: event.nativeEvent.data,
-            url: event.nativeEvent.url
-          },
-          readSessionRuntimeSnapshot('nodeseek'),
-          currentNodeImageApiKeyGeneration(),
-          {
-            complete: async (apiKey) => {
-              if (activeNodeImageAuthRef.current === flow) {
-                await finishNodeImageAuth(apiKey);
-              }
-            },
-            connectTarget: nodeImageAuthWebViewRef.current,
-            fail: reportNodeImageAuthFailure,
-            mark: (state) => {
-              markDiagnosticStage(
-                flow.trace,
-                state.startsWith('connect-') ? 'transport' : 'credential',
-                { state }
-              );
-            },
-            mountCurrentPhase: () => {
-              if (activeNodeImageAuthRef.current !== flow || flow.terminal) {
-                return;
-              }
-              setNodeImageAuthError('');
-              setLoadingNodeImageAuthPage(true);
-              setNodeImageAuthDocument(nodeImageAuthDocumentForFlow(flow));
-            }
-          }
-        );
-      } catch (error) {
-        if (activeNodeImageAuthRef.current === flow) {
-          reportNodeImageAuthFailure(errorMessage(error));
-        }
-      }
-    })();
-  }, [finishNodeImageAuth, readSessionRuntimeSnapshot, reportNodeImageAuthFailure]);
   const topicSession = useTopicSessionController({ notify });
   const {
     state: {
@@ -1035,11 +700,10 @@ export function AppRoot() {
   }), [accountSessionViewModels]);
   useCommitRefValue(accountIdentityPendingRef, accountIdentityPending);
   const accountIdentityBarriers = useMemo<ForumIdentityBarrierSource[]>(
-    () => (['linuxdo', 'nodeseek', 'xiaoyinsi', 'yaohuo'] as const)
-      .filter((source) => {
-        const runtime = readSessionRuntimeSnapshot(source);
-        return runtime.identityTrust === 'pending' || runtime.authSurfaceOpen;
-      }),
+    () => sessionSources.filter((source) => {
+      const runtime = readSessionRuntimeSnapshot(source);
+      return runtime.identityTrust === 'pending' || runtime.authSurfaceOpen;
+    }),
     [
       accountIdentityPending,
       authBarrierRevision,
@@ -1158,6 +822,7 @@ export function AppRoot() {
     showPreviousImage
   } = useImagePreviewController({
     beforeSave: ensureNetworkProxyReady,
+    contentSource: selectedTopic?.source || null,
     fetcher: networkProxyFetcher,
     htmlParts: getTopicHtmlParts,
     inlineSizedImageUrls,
@@ -1189,13 +854,6 @@ export function AppRoot() {
   ), [handleLoginNavigation]);
   useEffect(() => () => {
     abortTopicReadRequests();
-    nodeImageAuthOpeningRef.current = null;
-    const nodeImageFlow = activeNodeImageAuthRef.current;
-    activeNodeImageAuthRef.current = null;
-    if (nodeImageFlow) {
-      invalidateNodeImageApiKeyAuthorization();
-    }
-    nodeImageFlow?.resolve(null);
     cancelDeferredNavigationTask();
   }, [abortTopicReadRequests, cancelDeferredNavigationTask]);
   const topicStateIndex = useMemo(() => createTopicListItemStateIndex(readerData), [
@@ -1473,6 +1131,7 @@ export function AppRoot() {
     feedAllowsRemotePagination,
     feedBusy,
     feedFilter,
+    feedOutcomeKind,
     feedSource,
     loadFeed,
     readingFilter,
@@ -2201,6 +1860,7 @@ export function AppRoot() {
       categoryFilter,
       feedHasMore: activeFeedState.hasMore && feedAllowsRemotePagination,
       feedItems: shownFeedItems,
+      feedOutcomeKind,
       feedPage: activeFeedState.page,
       feedSource,
       feedFilter,
@@ -2232,6 +1892,7 @@ export function AppRoot() {
     feedAllowsRemotePagination,
     feedBusy,
     feedFilter,
+    feedOutcomeKind,
     feedSource,
     loadMoreActiveFeed,
     openTopic,
@@ -2790,7 +2451,6 @@ export function AppRoot() {
               handleNodeImageAuthMessage={handleNodeImageAuthMessage}
               handleNodeImageAuthNavigation={handleNodeImageAuthNavigation}
               imagePreview={imagePreview}
-              mediaSessionIdentity={mediaSessionIdentity}
               linuxDoCredentialSaved={credentialSummaries.linuxdo.hasCredential}
               linuxDoLoginFormMode={credentialLoginSite === 'linuxdo'}
               linuxDoSession={siteSessionViewModels.linuxdo}

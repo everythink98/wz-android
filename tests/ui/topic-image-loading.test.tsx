@@ -8,6 +8,7 @@ import { FORUM_VIDEO_TAG } from '../../src/localHtml';
 import { createEmptyReaderData } from '../../src/readerData';
 import { createStyles, createTheme } from '../../src/theme';
 import type { TopicDetail } from '../../src/types';
+import { setDiagnosticWriter } from '../../src/diagnostics';
 
 const imageUrl = 'https://img.example.com/topic.png';
 let mockImageRef: { height: number; width: number } | null = null;
@@ -16,7 +17,6 @@ let mockSourceHeaders: Record<string, string> | undefined;
 let mockUseImageImplementation: (source: { uri?: string }, options?: unknown, dependencies?: unknown[]) => typeof mockImageRef;
 const mockExpoImageProps = jest.fn();
 const mockUseImage = jest.fn((source: { uri?: string }, options?: unknown, dependencies?: unknown[]) => mockUseImageImplementation(source, options, dependencies));
-const mockReadMediaCookieHeader = jest.fn<(url: string) => Promise<string>>();
 const mockUseVideoPlayer = jest.fn((source: unknown) => ({
   pause: jest.fn(),
   play: jest.fn(),
@@ -48,8 +48,7 @@ jest.mock('expo-video', () => ({
 jest.mock('react-native-webview', () => ({ WebView: () => null }));
 
 jest.mock('../../src/managedCookies', () => ({
-  ...jest.requireActual<typeof import('../../src/managedCookies')>('../../src/managedCookies'),
-  readMediaCookieHeader: (url: string) => mockReadMediaCookieHeader(url)
+  ...jest.requireActual<typeof import('../../src/managedCookies')>('../../src/managedCookies')
 }));
 
 jest.mock('react-native-render-html', () => ({
@@ -144,16 +143,6 @@ function htmlRenderingControllerProps(mediaSessionIdentity: string) {
   };
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, reject, resolve };
-}
-
 describe('topic block image loading', () => {
   beforeEach(() => {
     mockImageRef = null;
@@ -165,7 +154,6 @@ describe('topic block image loading', () => {
     };
     mockExpoImageProps.mockClear();
     mockUseImage.mockClear();
-    mockReadMediaCookieHeader.mockReset();
     mockUseVideoPlayer.mockClear();
   });
 
@@ -217,17 +205,18 @@ describe('topic block image loading', () => {
   it('[REG-ACCOUNT-029] changes the same image request identity when the media epoch changes', async () => {
     let resolveEpochOne!: (image: typeof mockImageRef) => void;
     let resolveEpochTwo!: (image: typeof mockImageRef) => void;
-    mockUseImageImplementation = (source) => {
+    mockUseImageImplementation = (source, _options, dependencies = []) => {
       const ReactModule = require('react') as typeof React;
       const [image, setImage] = ReactModule.useState(null as typeof mockImageRef);
       const cacheKey = String((source as { cacheKey?: string }).cacheKey || '');
       ReactModule.useEffect(() => {
+        setImage(null);
         if (cacheKey.startsWith('yaohuo:1:')) {
           resolveEpochOne = setImage;
         } else if (cacheKey.startsWith('yaohuo:2:')) {
           resolveEpochTwo = setImage;
         }
-      }, [cacheKey]);
+      }, dependencies);
       return image;
     };
     const screen = await render(<TopicImageHarness mediaSessionIdentity="yaohuo:1" />);
@@ -235,13 +224,13 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(mockUseImage).toHaveBeenLastCalledWith(
       expect.objectContaining({ cacheKey: `yaohuo:1:${imageUrl}`, uri: imageUrl }),
       expect.any(Object),
-      expect.any(Array)
+      [expect.stringContaining(`yaohuo:1:${imageUrl}`)]
     ));
     await screen.rerender(<TopicImageHarness mediaSessionIdentity="yaohuo:2" />);
     await waitFor(() => expect(mockUseImage).toHaveBeenLastCalledWith(
       expect.objectContaining({ cacheKey: `yaohuo:2:${imageUrl}`, uri: imageUrl }),
       expect.any(Object),
-      expect.any(Array)
+      [expect.stringContaining(`yaohuo:2:${imageUrl}`)]
     ));
 
     const epochTwoImage = { height: 300, width: 320 };
@@ -256,13 +245,8 @@ describe('topic block image loading', () => {
     expect(mockExpoImageProps).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-029] ignores an old epoch Cookie result for the same video URL', async () => {
+  it('[REG-ACCOUNT-029] rebuilds the native-managed video source when the media epoch changes', async () => {
     const videoUrl = 'https://yaohuo.me/media/private-topic.mp4';
-    const epochOneCookie = deferred<string>();
-    const epochTwoCookie = deferred<string>();
-    mockReadMediaCookieHeader
-      .mockReturnValueOnce(epochOneCookie.promise)
-      .mockReturnValueOnce(epochTwoCookie.promise);
     const controller = await renderHook(
       (props: { mediaSessionIdentity: string }) => useHtmlRenderingController(
         htmlRenderingControllerProps(props.mediaSessionIdentity)
@@ -277,8 +261,13 @@ describe('topic block image loading', () => {
 
     expect(firstVideo.key).toBe(`yaohuo:1:${videoUrl}`);
     const video = await render(firstVideo);
-    await waitFor(() => expect(mockReadMediaCookieHeader).toHaveBeenCalledTimes(1));
-    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(null);
+    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(expect.objectContaining({
+      headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
+      uri: videoUrl
+    }));
+    expect(mockUseVideoPlayer.mock.calls.at(-1)?.[0]).not.toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ Cookie: expect.any(String) })
+    }));
 
     await controller.rerender({ mediaSessionIdentity: 'yaohuo:2' });
     const secondRenderer = controller.result.current.htmlRenderers[FORUM_VIDEO_TAG] as unknown as (
@@ -287,26 +276,10 @@ describe('topic block image loading', () => {
     const secondVideo = secondRenderer(videoProps);
     expect(secondVideo.key).toBe(`yaohuo:2:${videoUrl}`);
     await video.rerender(secondVideo);
-    await waitFor(() => expect(mockReadMediaCookieHeader).toHaveBeenCalledTimes(2));
-
-    await act(async () => {
-      epochTwoCookie.resolve('session=B');
-      await epochTwoCookie.promise;
-    });
     await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(expect.objectContaining({
-      headers: expect.objectContaining({ Cookie: 'session=B' }),
+      headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
       uri: videoUrl
     })));
-
-    const callsAfterCurrentCookie = mockUseVideoPlayer.mock.calls.length;
-    await act(async () => {
-      epochOneCookie.resolve('session=A');
-      await epochOneCookie.promise;
-    });
-    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(callsAfterCurrentCookie);
-    expect(mockUseVideoPlayer).not.toHaveBeenCalledWith(expect.objectContaining({
-      headers: expect.objectContaining({ Cookie: 'session=A' })
-    }));
   });
 
   it('ignores a stale image failure after the request headers change', async () => {
@@ -348,6 +321,10 @@ describe('topic block image loading', () => {
   });
 
   it('stops loading and shows alt text when decoding fails', async () => {
+    const diagnosticLines: string[] = [];
+    setDiagnosticWriter((line) => {
+      diagnosticLines.push(line);
+    });
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       headers: { get: () => 'image/png' },
       ok: true
@@ -360,14 +337,72 @@ describe('topic block image loading', () => {
       await waitFor(() => expect(screen.getByText('测试图片')).toBeTruthy());
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
       expect(mockExpoImageProps).not.toHaveBeenCalled();
+      const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
+      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
+        area: 'media',
+        phase: 'intent',
+        surface: 'body'
+      }));
+      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
+        area: 'media',
+        outcome: 'failure',
+        terminalReason: 'native-error'
+      }));
+      expect(diagnosticLines.join('')).not.toContain(imageUrl);
     } finally {
+      setDiagnosticWriter(null);
       fetchSpy.mockRestore();
+    }
+  });
+
+  it('[REG-TOPIC-032] settles a stalled body image within the 30 second image budget', async () => {
+    const diagnosticLines: string[] = [];
+    setDiagnosticWriter((line) => {
+      diagnosticLines.push(line);
+    });
+    jest.useFakeTimers();
+    try {
+      const screen = await render(<TopicImageHarness />);
+
+      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+      await act(async () => {
+        jest.advanceTimersByTime(30_000);
+      });
+      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+      expect(screen.getByText('测试图片')).toBeTruthy();
+      mockImageRef = { height: 240, width: 320 };
+      await screen.rerender(<TopicImageHarness />);
+      expect(mockExpoImageProps).not.toHaveBeenCalled();
+      expect(screen.getByText('测试图片')).toBeTruthy();
+      const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
+      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
+        area: 'media',
+        phase: 'intent',
+        surface: 'body'
+      }));
+      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
+        area: 'media',
+        outcome: 'failure',
+        terminalReason: 'timeout'
+      }));
+    } finally {
+      setDiagnosticWriter(null);
+      jest.useRealTimers();
     }
   });
 
   it('REG-TOPIC-018 recovers an SVG response whose png URL the Android decoder rejects', async () => {
     const svgImageUrl = 'https://img.example.com/dynamic-report.png';
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>';
+    const startedSources: string[] = [];
+    mockUseImageImplementation = (source, options, dependencies = []) => {
+      const ReactModule = require('react') as typeof React;
+      mockImageLoadOptions = options as typeof mockImageLoadOptions;
+      ReactModule.useEffect(() => {
+        startedSources.push(String(source.uri || ''));
+      }, dependencies);
+      return null;
+    };
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       headers: {
         get: (name: string) => name.toLowerCase() === 'content-type' ? 'image/svg+xml; charset=utf-8' : null
@@ -385,6 +420,10 @@ describe('topic block image loading', () => {
         expect.any(Object),
         expect.any(Array)
       ));
+      await waitFor(() => expect(startedSources).toEqual([
+        svgImageUrl,
+        expect.stringMatching(/^data:image\/svg\+xml;base64,/)
+      ]));
       const fallbackSource = mockUseImage.mock.calls.at(-1)?.[0];
       const encodedSvg = String(fallbackSource?.uri || '').split(',')[1] || '';
       expect(Buffer.from(encodedSvg, 'base64').toString('utf8')).toContain('<tspan>report</tspan>');

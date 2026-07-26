@@ -379,11 +379,93 @@ describe('Search state', () => {
     const view = await renderSearchScreen({ onRetrySearchSource, searchGroups });
 
     expect(view.getByText('第一页主题')).toBeTruthy();
-    expect(view.getByTestId('search-outcome-error-linuxdo')).toBeTruthy();
     expect(view.getByText('linux.do 暂时不可用')).toBeTruthy();
     fireEvent.press(view.getByText('重试 linux.do'));
     expect(onRetrySearchSource).toHaveBeenCalledTimes(1);
     expect(onRetrySearchSource).toHaveBeenCalledWith('linuxdo');
+  });
+
+  it('[REG-SEARCH-017] keeps loading and pending sources out of terminal search states', async () => {
+    const view = await renderSearchScreen({
+      searchGroups: [
+        { source: 'v2ex', label: 'V2EX', items: [firstTopic] },
+        {
+          source: 'linuxdo',
+          label: 'linux.do',
+          items: [{ ...firstTopic, source: 'linuxdo', id: 'linux-1' }],
+          error: '第 2 页请求失败',
+          hasMore: true,
+          nextPage: 2
+        },
+        { source: 'nodeseek', label: 'NodeSeek', items: [], loading: true },
+        { source: 'yaohuo', label: '妖火', items: [], settled: false }
+      ]
+    });
+
+    expect(view.getAllByText('第一页主题')).toHaveLength(2);
+    expect(view.getByText('第 2 页请求失败')).toBeTruthy();
+    expect(view.getByText('NodeSeek 搜索中...')).toBeTruthy();
+    expect(view.getByText('等待账号状态')).toBeTruthy();
+    expect(view.queryByText('NodeSeek 没有匹配结果')).toBeNull();
+    expect(view.queryByText('妖火 没有匹配结果')).toBeNull();
+    expect(view.queryByTestId('search-all-sources-settled')).toBeNull();
+    expect(view.getByLabelText('搜索结果，等待来源结算').props.accessibilityState.busy).toBe(true);
+
+    await view.rerender(<SearchScreen {...createSearchScreenProps({
+      busy: true,
+      searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic], loading: true }]
+    })} />);
+
+    expect(view.getByText('V2EX 搜索中...')).toBeTruthy();
+    expect(view.queryByText('第一页主题')).toBeNull();
+
+    await view.rerender(<SearchScreen {...createSearchScreenProps({
+      searchSource: 'v2ex',
+      searchGroups: [{
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [firstTopic],
+        loadingMore: true,
+        hasMore: true,
+        nextPage: 2
+      }]
+    })} />);
+
+    expect(view.getByText('正在加载更多 V2EX')).toBeTruthy();
+  });
+
+  it('[REG-SEARCH-016] keeps automation state out of the Search header layout', async () => {
+    const view = await renderSearchScreen({
+      searchGroups: [
+        { source: 'v2ex', label: 'V2EX', items: [] },
+        { source: 'linuxdo', label: 'linux.do', items: [] },
+        { source: 'nodeseek', label: 'NodeSeek', items: [] },
+        { source: 'yaohuo', label: '妖火', items: [] },
+        { source: 'xiaoyinsi', label: '小隐寺', items: [] }
+      ]
+    });
+    const header = view.getByTestId('search-all-sources-settled').children[0];
+
+    expect(typeof header).not.toBe('string');
+    if (typeof header === 'string') return;
+
+    const gap = Number(StyleSheet.flatten(header.props.style)?.gap || 0);
+    const emptyFlowChildren = header.children.filter((child) => (
+      typeof child !== 'string'
+      && child.children.length === 0
+      && StyleSheet.flatten(child.props.style)?.position !== 'absolute'
+    ));
+
+    expect(gap * emptyFlowChildren.length).toBe(0);
+  });
+
+  it('[REG-SEARCH-016] waits for every registered source before aggregate completion', async () => {
+    const view = await renderSearchScreen({
+      searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic] }]
+    });
+
+    expect(view.queryByTestId('search-all-sources-settled')).toBeNull();
+    expect(view.getByLabelText('搜索结果，等待来源结算').props.accessibilityState.busy).toBe(true);
   });
 
   it('shows fixed all-source previews and opens the selected source list', async () => {
@@ -468,9 +550,7 @@ describe('Search state', () => {
       }]
     });
 
-    expect(view.getByTestId('search-outcome-auth-linuxdo')).toBeTruthy();
     expect(view.getByText(message)).toBeTruthy();
-    expect(view.queryByTestId('search-outcome-error-linuxdo')).toBeNull();
     expect(view.queryByText('重试 linux.do')).toBeNull();
   });
 
@@ -518,7 +598,6 @@ describe('Search state', () => {
       searchGroups: [{ source: 'nodeseek', label: 'NodeSeek', items: [] }]
     });
 
-    expect(view.getByTestId('search-outcome-empty-nodeseek')).toBeTruthy();
     expect(view.getByText('NodeSeek 没有匹配结果')).toBeTruthy();
   });
 
@@ -755,7 +834,7 @@ describe('Search state', () => {
 
     await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
     await fireEvent.press(view.getByLabelText('提交搜索'));
-    expect(view.getByTestId('search-result-first')).toBeTruthy();
+    expect(view.getByTestId('search-complete')).toBeTruthy();
     expect(view.getByText('继续下滑加载更多 V2EX')).toBeTruthy();
 
     const v2exGroup: SearchGroup = {
@@ -773,7 +852,7 @@ describe('Search state', () => {
     });
     expect(view.getByText('第二页主题')).toBeTruthy();
 
-    await fireEvent.press(view.getByTestId('search-result-first'));
+    await fireEvent.press(view.getByText('第一页主题'));
     expect(view.getByTestId('topic-placeholder')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('打开作者页'));
     expect(view.getByTestId('user-placeholder')).toBeTruthy();
@@ -1035,7 +1114,7 @@ describe('Search state', () => {
     });
     expect(view.getByText('第二页主题')).toBeTruthy();
 
-    await fireEvent.press(view.getByTestId('search-result-first'));
+    await fireEvent.press(view.getByText('linux.do 主题'));
     await fireEvent.press(view.getByLabelText('返回搜索'));
     expect(view.getByText('第二页主题')).toBeTruthy();
     expect(view.getByLabelText('打开搜索筛选，当前人工智能 · alice')).toBeTruthy();

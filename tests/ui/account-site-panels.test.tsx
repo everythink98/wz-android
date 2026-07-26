@@ -81,8 +81,7 @@ jest.mock('react-native-webview', () => {
       ReactModule.createElement(NativeText, { testID: 'mock-login-webview-uri' }, props.source?.uri || ''),
       button('模拟 WebView 开始加载', () => props.onLoadStart?.()),
       button('模拟 WebView 加载完成', () => props.onLoadEnd?.({ nativeEvent: {} })),
-      button('模拟 Replay readiness', () => props.onMessage?.({ nativeEvent: { data: 'wz:nodeseek-webview-ready', url: 'https://www.nodeseek.com/' } })),
-      button('模拟伪造 Replay readiness', () => props.onMessage?.({ nativeEvent: { data: 'wz:nodeseek-webview-ready', url: 'https://evil.example/frame' } })),
+      button('模拟 WebView 消息', () => props.onMessage?.({ nativeEvent: { data: '{}', url: 'https://evil.example/frame' } })),
       button('模拟 WebView 加载失败', () => props.onError?.({ nativeEvent: { description: '断网' } })),
       button('模拟 WebView 渲染进程退出', () => props.onRenderProcessGone?.())
     );
@@ -320,7 +319,7 @@ describe('Account site panels', () => {
     expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('');
   });
 
-  it('[REG-VERIFICATION-001] keeps NodeSeek WebView readiness passive and detects only after the user asks', async () => {
+  it('[REG-VERIFICATION-001] settles the App-owned NodeSeek WebView flow and detects only after the user asks', async () => {
     const onCheckLogin = jest.fn();
     const onSetLoadingLoginPage = jest.fn();
     const onShowLoginPanelChange = jest.fn();
@@ -336,25 +335,36 @@ describe('Account site panels', () => {
     const view = await render(<NodeSeekLoginPanel {...props} />);
 
     expect(view.getByText('正在打开 NodeSeek...')).toBeTruthy();
+    expect(view.queryByTestId('nodeseek-login-webview-settled')).toBeNull();
+    expect(view.getByLabelText('刷新页面')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载完成'));
     await waitFor(() => {
       expect(onWebViewState).toHaveBeenCalledWith('ready', 3);
     });
+    expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
 
     await fireEvent.press(view.getByLabelText('检测登录'));
     expect(onCheckLogin).toHaveBeenCalledTimes(1);
 
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载失败'));
     expect(view.getByText('NodeSeek 页面加载失败：断网')).toBeTruthy();
+    expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
     expect(onWebViewState).toHaveBeenCalledWith('error', 3);
     expect(onSetLoadingLoginPage).toHaveBeenCalledWith(false);
 
     await fireEvent.press(view.getByLabelText('刷新页面'));
     expect(onSetLoadingLoginPage).toHaveBeenLastCalledWith(true);
+    expect(view.queryByTestId('nodeseek-login-webview-settled')).toBeNull();
     const webViewMock = jest.requireMock('react-native-webview') as { mockReload: jest.Mock };
     expect(webViewMock.mockReload).toHaveBeenCalled();
     await fireEvent.press(view.getByLabelText('关闭'));
     expect(onShowLoginPanelChange).toHaveBeenCalledWith(false);
+
+    await view.rerender(<NodeSeekLoginPanel {...nodeSeekProps({
+      showLoginPanel: true,
+      webViewBlockMessage: '当前环境禁止打开登录页'
+    })} />);
+    expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
   });
 
   it('[REG-VERIFICATION-003] lets Android choose the NodeSeek verification WebView user agent', async () => {
@@ -439,21 +449,23 @@ describe('Account site panels', () => {
       .toBe('https://www.yaohuo.me/wapindex.aspx?sid=-2');
   });
 
-  it('[REG-NODESEEK-002] does not expose Replay readiness after the WebView enters an error state', async () => {
+  it('[REG-NODESEEK-002] settles on an explicit error', async () => {
     const view = await render(<NodeSeekLoginPanel {...nodeSeekProps({ loadingLoginPage: true, showLoginPanel: true })} />);
 
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载失败'));
-    await fireEvent.press(view.getByLabelText('模拟 Replay readiness'));
+    await fireEvent.press(view.getByLabelText('模拟 WebView 消息'));
 
     expect(view.getByText('NodeSeek 页面加载失败：断网')).toBeTruthy();
+    expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
     expect(view.queryByTestId('nodeseek-login-webview-ready')).toBeNull();
   });
 
-  it('does not expose Replay readiness for a forged third-party frame message', async () => {
+  it('does not settle from an arbitrary third-party frame message', async () => {
     const view = await render(<NodeSeekLoginPanel {...nodeSeekProps({ loadingLoginPage: true, showLoginPanel: true })} />);
 
-    await fireEvent.press(view.getByLabelText('模拟伪造 Replay readiness'));
+    await fireEvent.press(view.getByLabelText('模拟 WebView 消息'));
 
+    expect(view.queryByTestId('nodeseek-login-webview-settled')).toBeNull();
     expect(view.queryByTestId('nodeseek-login-webview-ready')).toBeNull();
   });
 

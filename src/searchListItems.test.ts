@@ -100,6 +100,41 @@ describe('Android search list items', () => {
     expect(items[1]).toMatchObject({ type: 'groupAuthNotice', group: { authNotice: { message: '未登录搜索，结果可能不完整。', tone: 'warning' } } });
   });
 
+  it('shows an unsettled source notice without an empty terminal state', () => {
+    const groups: SearchGroup[] = [{
+      source: 'nodeseek',
+      label: 'NodeSeek',
+      items: [],
+      settled: false,
+      authNotice: {
+        kind: 'verification-required',
+        message: 'NodeSeek 登录状态待确认，已暂停新请求和写入。',
+        tone: 'warning'
+      }
+    }];
+
+    const items = buildSearchListItems({ groups, mode: 'overview' });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '等待账号状态' });
+  });
+
+  it('[REG-SEARCH-017] shows an enabled unsettled request as loading', () => {
+    const items = buildSearchListItems({
+      groups: [{
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [],
+        settled: false,
+        loading: true
+      }],
+      mode: 'overview'
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupLoading']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '搜索中' });
+  });
+
   it('keeps neutral auth notices out of source result bodies', () => {
     const groups: SearchGroup[] = [{
       source: 'nodeseek',

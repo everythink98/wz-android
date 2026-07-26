@@ -3,7 +3,7 @@ import { Modal, Pressable, RefreshControl, Text, View, type NativeScrollEvent, t
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { TabView } from 'react-native-tab-view';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import type { Category, FeedSource, SourceFeedFilter, Topic } from '../types';
+import type { Category, FeedSource, SourceFeedFilter, SourceLoadOutcomeKind, Topic } from '../types';
 import { topicKey } from '../readerData';
 import { feedCategoryItems, feedFilterLabel, feedFilterMenuGroupsFor, feedReadingFilterItems, feedSourceItems, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
 import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from '../feedFloatingActions';
@@ -26,6 +26,7 @@ export const FeedScreen = memo(function FeedScreen({
   categoryFilter,
   feedHasMore,
   feedItems,
+  feedOutcomeKind,
   feedPage,
   feedFilter,
   feedSource,
@@ -50,6 +51,7 @@ export const FeedScreen = memo(function FeedScreen({
   categoryFilter: string;
   feedHasMore: boolean;
   feedItems: Topic[];
+  feedOutcomeKind?: SourceLoadOutcomeKind;
   feedPage: number;
   feedFilter?: SourceFeedFilter;
   feedSource: FeedSource;
@@ -276,7 +278,9 @@ export const FeedScreen = memo(function FeedScreen({
     return (
       <FlashList
         key={`${feedSource}|${categoryFilter}|${feedFilter ?? ''}|${readingFilter}`}
-        testID={!busy ? `feed-list-ready-${feedSource}` : undefined}
+        testID={!busy && feedOutcomeKind
+          ? `feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`
+          : undefined}
         ref={listRef}
         style={styles.content}
         contentContainerStyle={styles.feedListContentInner}
@@ -319,6 +323,7 @@ export const FeedScreen = memo(function FeedScreen({
     feedFilter,
     feedHasMore,
     feedItems,
+    feedOutcomeKind,
     feedPage,
     feedSource,
     handleScroll,

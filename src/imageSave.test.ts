@@ -5,6 +5,13 @@ import { saveImageUriToLibrary } from './imageSave';
 import type { Fetcher } from './request';
 import { setDiagnosticWriter } from './diagnostics';
 
+const publicMediaOptions = {
+  mediaContext: {
+    contentSource: null,
+    sessionIdentity: 'public:0'
+  }
+} as const;
+
 vi.mock('expo-file-system/legacy', () => ({
   EncodingType: { Base64: 'base64' },
   cacheDirectory: 'file:///cache/',
@@ -53,7 +60,7 @@ describe('image library saving', () => {
       status: 404
     }));
 
-    await expect(saveImageUriToLibrary('https://cdn.example.com/missing.jpg', fetcher)).rejects.toThrow('图片下载失败');
+    await expect(saveImageUriToLibrary('https://cdn.example.com/missing.jpg', publicMediaOptions, fetcher)).rejects.toThrow('图片下载失败');
 
     expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/missing.jpg', expect.objectContaining({
       signal: expect.any(AbortSignal)
@@ -69,7 +76,7 @@ describe('image library saving', () => {
       status: 200
     }));
 
-    await expect(saveImageUriToLibrary('https://cdn.example.com/file.jpg', fetcher)).rejects.toThrow('下载内容不是图片');
+    await expect(saveImageUriToLibrary('https://cdn.example.com/file.jpg', publicMediaOptions, fetcher)).rejects.toThrow('下载内容不是图片');
 
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
@@ -77,7 +84,7 @@ describe('image library saving', () => {
   });
 
   it('rejects unsupported image URL schemes before downloading', async () => {
-    await expect(saveImageUriToLibrary('javascript:alert(1)')).rejects.toThrow('图片地址不支持保存');
+    await expect(saveImageUriToLibrary('javascript:alert(1)', publicMediaOptions)).rejects.toThrow('图片地址不支持保存');
 
     expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
@@ -92,7 +99,7 @@ describe('image library saving', () => {
     });
     vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({ granted: false } as MediaLibrary.PermissionResponse);
 
-    await expect(saveImageUriToLibrary('https://cdn.example.com/private-title-91827.jpg')).rejects.toThrow('没有图片保存权限');
+    await expect(saveImageUriToLibrary('https://cdn.example.com/private-title-91827.jpg', publicMediaOptions)).rejects.toThrow('没有图片保存权限');
 
     const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(events).toEqual([
@@ -104,7 +111,7 @@ describe('image library saving', () => {
   });
 
   it('saves data images and removes the temporary file afterwards', async () => {
-    await saveImageUriToLibrary('data:image/png;base64,abc123');
+    await saveImageUriToLibrary('data:image/png;base64,abc123', publicMediaOptions);
 
     expect(MediaLibrary.requestPermissionsAsync).toHaveBeenCalledWith(false, ['photo']);
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'abc123', { encoding: FileSystem.EncodingType.Base64 });
@@ -118,7 +125,7 @@ describe('image library saving', () => {
       status: 200
     }));
 
-    await saveImageUriToLibrary('https://cdn.example.com/photo.jpg', fetcher);
+    await saveImageUriToLibrary('https://cdn.example.com/photo.jpg', publicMediaOptions, fetcher);
 
     expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/photo.jpg', expect.objectContaining({
       signal: expect.any(AbortSignal)
@@ -140,18 +147,22 @@ describe('image library saving', () => {
 
     await saveImageUriToLibrary(
       'https://www.nodeseek.com/uploads/private-topic.png',
-      fetcher,
-      undefined,
       {
+        mediaContext: {
+          contentSource: 'nodeseek',
+          sessionIdentity: 'nodeseek:4'
+        },
         nodeSeekUserAgent: 'WZ-Save-Test'
-      }
+      },
+      fetcher
     );
 
     expect(fetcher).toHaveBeenCalledWith(
       'https://www.nodeseek.com/uploads/private-topic.png',
       expect.objectContaining({
         headers: expect.objectContaining({
-          'User-Agent': 'WZ-Save-Test'
+          'User-Agent': 'WZ-Save-Test',
+          'X-WZ-Forum-Media-Source': 'nodeseek'
         }),
         signal: expect.any(AbortSignal)
       })
@@ -165,7 +176,7 @@ describe('image library saving', () => {
       status: 200
     }));
 
-    await saveImageUriToLibrary('https://cdn.example.com/photo.avif#original', fetcher);
+    await saveImageUriToLibrary('https://cdn.example.com/photo.avif#original', publicMediaOptions, fetcher);
 
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
       'file:///cache/forum-image-1234.avif',
@@ -182,7 +193,7 @@ describe('image library saving', () => {
       status: 200
     }));
 
-    await saveImageUriToLibrary('https://cdn.example.com/dynamic-report.png', fetcher);
+    await saveImageUriToLibrary('https://cdn.example.com/dynamic-report.png', publicMediaOptions, fetcher);
 
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
       'file:///cache/forum-image-1234.svg',
@@ -199,7 +210,7 @@ describe('image library saving', () => {
       status: 200
     }));
 
-    await saveImageUriToLibrary('https://cdn.example.com/dynamic-report.png', fetcher);
+    await saveImageUriToLibrary('https://cdn.example.com/dynamic-report.png', publicMediaOptions, fetcher);
 
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
       'file:///cache/forum-image-1234.svg',
@@ -212,7 +223,7 @@ describe('image library saving', () => {
     vi.useFakeTimers();
     const fetcher = vi.fn<Fetcher>(() => new Promise<Response>(() => {}));
     try {
-      const save = saveImageUriToLibrary('https://cdn.example.com/stuck.jpg', fetcher);
+      const save = saveImageUriToLibrary('https://cdn.example.com/stuck.jpg', publicMediaOptions, fetcher);
       const observed = Promise.race([
         save.then(() => 'saved', (error: unknown) => error instanceof Error ? error.message : String(error)),
         new Promise<string>((resolve) => setTimeout(() => resolve('still-pending'), 16_000))

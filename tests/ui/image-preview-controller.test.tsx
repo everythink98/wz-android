@@ -22,6 +22,7 @@ describe('Image preview controller', () => {
     const notify = jest.fn<(message: string) => void>();
     const topicImageDeriver = createTopicImageDeriver();
     const hook = await renderHook(() => useImagePreviewController({
+      contentSource: null,
       htmlParts: ['<p><img src="https://images.example/photo.jpg"></p>'],
       inlineSizedImageUrls: {},
       notify,
@@ -50,6 +51,7 @@ describe('Image preview controller', () => {
     mockSaveImageUriToLibrary.mockResolvedValue();
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
     const hook = await renderHook(() => useImagePreviewController({
+      contentSource: 'nodeseek',
       htmlParts: [`<p><img src="${imageUrl}"></p>`],
       inlineSizedImageUrls: {},
       nodeSeekMediaUserAgent: 'WZ-Controller-Test',
@@ -66,11 +68,15 @@ describe('Image preview controller', () => {
 
     expect(mockSaveImageUriToLibrary).toHaveBeenCalledWith(
       imageUrl,
-      undefined,
-      expect.anything(),
       {
+        mediaContext: {
+          contentSource: 'nodeseek',
+          sessionIdentity: expect.stringMatching(/^nodeseek:/)
+        },
         nodeSeekUserAgent: 'WZ-Controller-Test'
-      }
+      },
+      undefined,
+      expect.anything()
     );
   });
 });

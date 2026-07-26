@@ -107,9 +107,25 @@ jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    Image: ({ source }: { source?: { uri?: string } }) => ReactModule.createElement(
+    Image: ({ source }: { source?: { headers?: Record<string, string>; uri?: string } }) => ReactModule.createElement(
       NativeView,
-      { accessibilityLabel: source?.uri ? `emoji image ${source.uri}` : 'emoji image' }
+      {
+        accessibilityLabel: source?.uri ? `emoji image ${source.uri}` : 'emoji image',
+        testID: source?.headers?.['X-WZ-Forum-Media-Source']
+          ? `media-source-${source.headers['X-WZ-Forum-Media-Source']}`
+          : undefined
+      }
+    )
+  };
+});
+jest.mock('../../src/components/Avatar', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Text: NativeText } = require('react-native') as typeof import('react-native');
+  return {
+    Avatar: ({ contentSource }: { contentSource?: string }) => ReactModule.createElement(
+      NativeText,
+      { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
+      '头像'
     )
   };
 });
@@ -161,7 +177,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     floor: 2,
     isOp: true,
     quotedFloors: [1],
-    quotedAuthors: { 1: 'quoted-user' },
+    quotedAuthors: { 1: { label: 'quoted-user', username: 'quoted-user' } },
     replyTargetAuthor: 'bob',
     upvoteCount: 3,
     likeCount: 4,
@@ -354,6 +370,19 @@ describe('Topic real child components', () => {
     expect(view.getByText('引用简介')).toBeTruthy();
     expect(view.getByText('完整帖子正文')).toBeTruthy();
     expect(view.queryByText('错误主题内容')).toBeNull();
+  });
+
+  it('[REG-TOPIC-035] shows a display-only quoted author without creating a navigable username', async () => {
+    const onOpenUser = jest.fn();
+    const reply: Reply = {
+      ...replyProps().reply,
+      quotedAuthors: { 1: { label: 'Alice Display' } }
+    };
+    const view = await render(<ReplyItem {...replyProps({ onOpenUser, reply, source: 'linuxdo' })} />);
+
+    expect(view.getByText('Alice Display')).toBeTruthy();
+    await fireEvent.press(view.getByText('Alice Display'));
+    expect(onOpenUser).not.toHaveBeenCalled();
   });
 
   it.each(['linuxdo', 'xiaoyinsi'] as const)(
@@ -579,6 +608,8 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('+1 1')).toBeTruthy();
     expect(view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15')).toBeTruthy();
     expect(view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15')).toBeTruthy();
+    expect(view.getAllByTestId('media-source-xiaoyinsi')).toHaveLength(2);
+    expect(view.getAllByLabelText('avatar source xiaoyinsi').length).toBeGreaterThan(0);
   });
 
   it('keeps the composer sheet visibility and close gesture connected to the parent state', async () => {

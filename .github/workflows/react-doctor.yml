@@ -21,4 +21,4 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: millionco/react-doctor@v2
+      - uses: millionco/react-doctor@01820bb4fd4d0a4aebcd8df2b2a143a098649cb2

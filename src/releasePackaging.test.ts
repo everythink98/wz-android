@@ -64,8 +64,7 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('versionName');
     expect(releaseScript).toContain('versionCode');
     expect(releaseScript).toContain('signerSha256');
-    expect(releaseScript).toContain('Signer #1 certificate');
-    expect(releaseScript).toContain('V\\d+(?:\\.\\d+)? Signer: certificate');
+    expect(releaseScript).toContain('singleApkSignerSha256(output)');
   });
 
   it('pins the expected release signer digest before writing the manifest', () => {
@@ -157,8 +156,12 @@ describe('Android release packaging guards', () => {
       .toBeLessThan(clearCookieFlow.indexOf('cookieManager.getCookie(url)'));
     expect(plugin).toContain('installExpoImageClient');
     expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory { client }');
-    expect(plugin).toContain('installExpoImageClient(appContext, client)');
+    expect(plugin).toContain('installExpoImageClient(appContext, expoImageClient(client))');
     expect(plugin).toContain('GlideUrlWrapperLoader.Factory(client)');
+    expect(plugin).toContain('client.newBuilder().callTimeout(30, TimeUnit.SECONDS).build()');
+    expect(plugin).toContain('builder.interceptors().none { it is ForumMediaRequestInterceptor }');
+    expect(plugin).toContain('.removeHeader(FORUM_MEDIA_SOURCE_HEADER)');
+    expect(plugin).toContain('.cacheControl(CacheControl.Builder().noStore().build())');
     expect(plugin).not.toContain('internal fun createManagedClient');
     expect(plugin).not.toContain('recoverNodeSeekNetwork');
     expect(plugin).toContain('private val connectionPool = ConnectionPool()');

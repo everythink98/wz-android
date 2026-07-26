@@ -1,5 +1,6 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { Source } from './types';
+import type { ForumMediaRequestContext } from './mediaRequestContext';
 import {
   initialForumSessionEpochs,
   type ForumSessionEpochs
@@ -8,10 +9,6 @@ import {
 const ForumSessionEpochContext = createContext<ForumSessionEpochs>(
   initialForumSessionEpochs
 );
-
-function isHost(host: string, expected: string) {
-  return host === expected || host.endsWith(`.${expected}`);
-}
 
 export function mediaSessionIdentityForSource(
   source: Source | null | undefined,
@@ -22,40 +19,14 @@ export function mediaSessionIdentityForSource(
     : 'public:0';
 }
 
-export function mediaSourceForUrl(url: string): Exclude<Source, 'v2ex'> | null {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:') {
-      return null;
-    }
-    const host = parsed.hostname.toLowerCase();
-    if (
-      isHost(host, 'nodeseek.com')
-      || isHost(host, 'nodeimage.com')
-      || isHost(host, '111666.best')
-    ) {
-      return 'nodeseek';
-    }
-    if (isHost(host, 'linux.do')) {
-      return 'linuxdo';
-    }
-    if (isHost(host, 'yaohuo.me')) {
-      return 'yaohuo';
-    }
-    if (isHost(host, 'forum.xiaoyinsi.com')) {
-      return 'xiaoyinsi';
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export function managedMediaSessionIdentity(
-  url: string,
+export function mediaRequestContextForSource(
+  source: Source | null | undefined,
   sessionEpochs: ForumSessionEpochs
-) {
-  return mediaSessionIdentityForSource(mediaSourceForUrl(url), sessionEpochs);
+): ForumMediaRequestContext {
+  return {
+    contentSource: source || null,
+    sessionIdentity: mediaSessionIdentityForSource(source, sessionEpochs)
+  };
 }
 
 export function ForumSessionEpochProvider({
@@ -72,12 +43,16 @@ export function ForumSessionEpochProvider({
   );
 }
 
-export function useManagedMediaSessionIdentity(url?: string) {
-  const sessionEpochs = useContext(ForumSessionEpochContext);
-  return managedMediaSessionIdentity(url || '', sessionEpochs);
-}
-
 export function useForumMediaSessionIdentity(source?: Source | null) {
   const sessionEpochs = useContext(ForumSessionEpochContext);
   return mediaSessionIdentityForSource(source, sessionEpochs);
+}
+
+export function useForumMediaRequestContext(source?: Source | null) {
+  const sessionEpochs = useContext(ForumSessionEpochContext);
+  const sessionIdentity = mediaSessionIdentityForSource(source, sessionEpochs);
+  return useMemo(() => ({
+    contentSource: source || null,
+    sessionIdentity
+  }), [sessionIdentity, source]);
 }

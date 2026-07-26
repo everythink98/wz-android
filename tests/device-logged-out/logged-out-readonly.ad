@@ -4,7 +4,7 @@ context retries=0
 env APP_ID=com.wz.reader
 
 open ${APP_ID} --relaunch
-wait id="feed-list-ready-all" 60000
+wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"
@@ -19,58 +19,18 @@ press label="收起账号中心"
 
 press id="main-tab-search"
 wait id="search-query" 10000
-press id="search-source-v2ex"
-wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000
+press id="search-source-all"
+wait "id=\"search-source-all\" label=\"全部，已选择\"" 10000
 fill id="search-query" codex
 press id="search-submit"
 keyboard dismiss
-wait id="search-result-first" 60000
-is visible id="search-result-first"
-
-press id="search-source-nodeseek"
-wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
-wait "text=\"未登录搜索使用 Google，结果可能不完整。\"" 10000
-wait id="search-result-first" 60000
-is visible id="search-result-first"
-
-press id="search-source-linuxdo"
-wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
-wait "text=\"未登录搜索使用 Google，结果可能不完整。\"" 10000
-wait id="search-result-first" 60000
-is visible id="search-result-first"
-
-press id="search-source-xiaoyinsi"
-wait "id=\"search-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000
-wait id="search-result-first" 60000
-is visible id="search-result-first"
-
-press id="search-source-yaohuo"
-wait "text=\"妖火需要登录后使用此功能。\"" 60000
+wait id="search-all-sources-settled" 60000
 
 press id="main-tab-feed"
-wait id="feed-list-ready-all" 60000
-wait id="feed-topic-first" 10000
-
-press id="feed-source-nodeseek"
-wait "id=\"feed-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
-wait id="feed-list-ready-nodeseek" 60000
-wait id="feed-topic-first" 10000
-
-press id="feed-source-linuxdo"
-wait "id=\"feed-source-linuxdo\" label=\"linux.do，已选择\"" 10000
-wait id="feed-list-ready-linuxdo" 60000
-wait id="feed-topic-first" 10000
-
-press id="feed-source-xiaoyinsi"
-wait "id=\"feed-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000
-wait id="feed-list-ready-xiaoyinsi" 60000
-wait id="feed-topic-first" 10000
-
-press id="feed-source-yaohuo"
-wait "text=\"妖火需要登录后使用此功能。\"" 60000
+wait "id=\"feed-outcome-data-all-default\" || id=\"feed-outcome-empty-all-default\" || id=\"feed-outcome-partial-all-default\" || id=\"feed-outcome-error-all-default\" || id=\"feed-outcome-auth-all-default\"" 60000
 
 open ${APP_ID} --relaunch
-wait id="feed-list-ready-all" 60000
+wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"

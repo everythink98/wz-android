@@ -5,6 +5,7 @@ import {
   aggregateSearchSources,
   isFeedFilterSource,
   isDiscourseSource,
+  isSessionSource,
   sessionSources,
   sourceCatalog,
   sourceValues,
@@ -40,5 +41,19 @@ describe('source capability catalog', () => {
     expect(aggregateFeedSources).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi']);
     expect(aggregateSearchSources).toEqual(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi']);
     expect(sessionSources).toEqual(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']);
+  });
+
+  it('[REG-SOURCE-008] derives managed sessions from their own catalog capability', () => {
+    expect(Object.fromEntries(sourceValues.map((source) => [
+      source,
+      sourceCatalog[source].managedSession
+    ]))).toEqual({
+      linuxdo: true,
+      nodeseek: true,
+      v2ex: false,
+      xiaoyinsi: true,
+      yaohuo: true
+    });
+    expect(sourceValues.filter(isSessionSource)).toEqual(sessionSources);
   });
 });

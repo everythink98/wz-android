@@ -940,6 +940,34 @@ describe('Android local sources', () => {
     expect(replies.items.map((item) => item.floor)).toEqual([2, 3]);
   });
 
+  it('[REG-TOPIC-036] continues rendered NodeSeek floors from the page offset when floor markers are missing', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-723704-2">NodeSeek topic</a>
+      <div class="content-item">
+        <a href="/space/1" class="author-name">alice</a>
+        <article class="post-content"><p>正文</p></article>
+      </div>
+      <li data-comment-id="201" class="content-item">
+        <a href="/space/2" class="author-name">bob</a>
+        <article class="post-content"><p>回复 31</p></article>
+      </li>
+      <li data-comment-id="202" class="content-item">
+        <a href="/space/3" class="author-name">carol</a>
+        <article class="post-content"><p>回复 32</p></article>
+      </li>
+    `));
+
+    const replies = await getNodeSeekReplies('723704', {
+      fetcher,
+      page: 2,
+      offset: 30,
+      limit: 30
+    });
+
+    expect(replies.items.map((item) => item.floor)).toEqual([31, 32]);
+    expect(sourceDiagnosticSummary(replies)?.missingFloorCount).toBe(2);
+  });
+
   it('does not fill normal NodeSeek replies from following origin pages', async () => {
     const pageOnePayload = Buffer.from(JSON.stringify({
       postData: {
@@ -2099,7 +2127,7 @@ describe('Android local sources', () => {
 
     expect(topic.replies[0]).toMatchObject({
       quotedFloors: [1],
-      quotedAuthors: { 1: 'alice' },
+      quotedAuthors: { 1: { label: 'alice', username: 'alice' } },
       quotedPreviews: { 1: 'Short preview.' },
       contentHtml: '<p>Reply</p>'
     });
@@ -2130,7 +2158,7 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'linuxdo', id: '911', fetcher });
 
     expect(topic.replies[0].quotedFloors).toEqual([1]);
-    expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
+    expect(topic.replies[0].quotedAuthors).toEqual({ 1: { label: 'alice' } });
   });
 
   it('refreshes linux.do reply stream when reloading the first reply page', async () => {

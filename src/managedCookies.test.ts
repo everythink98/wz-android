@@ -5,7 +5,6 @@ vi.mock('react-native', () => ({ NativeModules: {} }));
 import {
   clearManagedLoginCookies,
   managedCookieSourceForUrl,
-  readMediaCookieHeader,
   readManagedCookieHeader,
   type ManagedCookieNativeModule
 } from './managedCookies';
@@ -19,27 +18,6 @@ describe('managed WebView Cookie boundary', () => {
     expect(managedCookieSourceForUrl('https://user@linux.do/image.png')).toBeNull();
   });
 
-  it('reads managed media exactly and leaves public media anonymous without touching native state', async () => {
-    const module: ManagedCookieNativeModule = {
-      readManagedCookieHeader: vi.fn(async () => ({
-        status: 'ok',
-        header: 'session=private'
-      }))
-    };
-
-    await expect(readMediaCookieHeader(
-      'https://www.nodeseek.com/uploads/video.webm?version=2',
-      module
-    )).resolves.toBe('session=private');
-    await expect(readMediaCookieHeader(
-      'https://cdn.example.com/video.webm',
-      module
-    )).resolves.toBe('');
-    expect(module.readManagedCookieHeader).toHaveBeenCalledTimes(1);
-    expect(module.readManagedCookieHeader).toHaveBeenCalledWith(
-      'https://www.nodeseek.com/uploads/video.webm?version=2'
-    );
-  });
   it('[REG-ACCOUNT-031] preserves the difference between an empty exact-url result and an unsupported bridge', async () => {
     const exactUrl = 'https://linux.do/session/current.json';
     const supported: ManagedCookieNativeModule = {

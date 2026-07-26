@@ -10,6 +10,7 @@ export type SearchGroup = {
   authNotice?: AuthNotice;
   loading?: boolean;
   loadingMore?: boolean;
+  settled?: boolean;
   hasMore?: boolean;
   nextPage?: number | null;
 };
@@ -39,6 +40,9 @@ function errorLooksLikeLogin(group: SearchGroup) {
 export function searchGroupMeta(group: SearchGroup) {
   if (group.loading) {
     return '搜索中';
+  }
+  if (group.settled === false) {
+    return '等待账号状态';
   }
   if (group.error) {
     if (group.nextPage) {
@@ -92,6 +96,9 @@ export function buildSearchListItems({
     }
     if (group.loading) {
       items.push({ type: 'groupLoading', group });
+      continue;
+    }
+    if (group.settled === false) {
       continue;
     }
     const visibleTopics = mode === 'overview' ? group.items.slice(0, 2) : group.items;

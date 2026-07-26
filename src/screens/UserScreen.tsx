@@ -209,7 +209,7 @@ export const UserScreen = memo(function UserScreen({
   const renderProfileHeader = useCallback(() => (
     <View style={styles.userProfileHeader}>
       <View style={styles.topicAuthorRow}>
-        <Avatar name={user?.displayName || user?.username} styles={styles} uri={user?.avatar} />
+        <Avatar contentSource={user?.source || null} name={user?.displayName || user?.username} styles={styles} uri={user?.avatar} />
         <View style={styles.topicAuthorMeta}>
           <Text style={styles.articleTitle}>{user?.displayName || user?.username || '用户'}</Text>
           <Text style={styles.meta}>{user ? `${sourceLabel(user.source)} · ${user.username}` : '用户信息读取中'}</Text>

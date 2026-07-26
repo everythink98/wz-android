@@ -8,12 +8,7 @@ import type { LoginNavigationRequest } from '../appTypes';
 import { MemoizedLinuxDoVerifyModal } from './LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '../siteSessionState';
 import type { createStyles, ReaderTheme } from '../theme';
-
-export type NodeImageAuthDocument = {
-  injectedJavaScript: string;
-  key: string;
-  url: string;
-};
+import type { NodeImageAuthDocument } from './useNodeImageAuthController';
 
 export function GlobalModalHost({
   checking,
@@ -23,7 +18,6 @@ export function GlobalModalHost({
   handleLinuxDoMessage,
   handleLinuxDoNavigation,
   imagePreview,
-  mediaSessionIdentity,
   linuxDoCredentialSaved,
   linuxDoLoginFormMode,
   linuxDoSession,
@@ -67,7 +61,6 @@ export function GlobalModalHost({
   handleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
   imagePreview: ImagePreviewList | null;
-  mediaSessionIdentity: string;
   linuxDoCredentialSaved: boolean;
   linuxDoLoginFormMode: boolean;
   linuxDoSession: SiteSessionViewModel;
@@ -187,7 +180,6 @@ export function GlobalModalHost({
       </LoginWebViewModal>
       <ImagePreviewModal
         preview={imagePreview}
-        mediaSessionIdentity={mediaSessionIdentity}
         nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
         styles={styles}
         theme={theme}

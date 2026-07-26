@@ -31,6 +31,7 @@ import type {
   SourceErrorInfo,
   SourceFeedFilter,
   SourceErrors,
+  SourceLoadOutcomeKind,
   Topic
 } from '../types';
 import {
@@ -165,6 +166,21 @@ function firstSourceError(errors: SourceErrors): SourceErrorInfo | undefined {
   return Object.values(errors).find(Boolean);
 }
 
+export function feedOutcomeKind(itemCount: number, errors: SourceErrors): SourceLoadOutcomeKind {
+  const sourceErrors = Object.values(errors).filter((error): error is SourceErrorInfo => Boolean(error));
+  if (sourceErrors.some((error) => (
+    error.kind === 'login-required'
+    || error.kind === 'login-expired'
+    || error.kind === 'verification-required'
+  ))) {
+    return 'auth';
+  }
+  if (sourceErrors.length) {
+    return itemCount ? 'partial' : 'error';
+  }
+  return itemCount ? 'data' : 'empty';
+}
+
 export function useFeedController({
   identityBarriers = [],
   sessionEpochs = initialForumSessionEpochs,
@@ -201,6 +217,7 @@ export function useFeedController({
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const handledFeedErrorRef = useRef<unknown>(undefined);
+  const handledPartialErrorsRef = useRef<unknown>(undefined);
   const feedSourceIdentityPending = feedSource !== 'all'
     && feedSource !== 'v2ex'
     && identityBarriers.includes(feedSource);
@@ -382,6 +399,12 @@ export function useFeedController({
     () => applyFeedFilter(activeFeedState.items, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
     [activeFeedState.items, feedSource, readerData.favorites, readerData.history, readingFilter]
   );
+  const settledFeedOutcomeKind = feedQuery.isPending || feedQuery.isFetching
+    ? undefined
+    : feedOutcomeKind(
+        mergedFeed.items.length,
+        feedQuery.isError ? sourceErrorsFromFeedError(feedSource, feedQuery.error) : mergedFeed.errors
+      );
 
   useEffect(() => {
     if (!categoriesActive) {
@@ -470,6 +493,10 @@ export function useFeedController({
     if (!Object.keys(errors).length) {
       return;
     }
+    if (handledPartialErrorsRef.current === errors) {
+      return;
+    }
+    handledPartialErrorsRef.current = errors;
     const nodeSeekMessage = nodeSeekVerificationNavigationMessage(feedSource, errors);
     if (nodeSeekMessage) {
       showNodeSeekVerification(nodeSeekMessage);
@@ -544,6 +571,7 @@ export function useFeedController({
     feedAllowsRemotePagination,
     feedBusy: feedActive && feedEnabled && feedQuery.isPending,
     feedFilter,
+    feedOutcomeKind: settledFeedOutcomeKind,
     feedSource,
     loadFeed,
     readingFilter,
