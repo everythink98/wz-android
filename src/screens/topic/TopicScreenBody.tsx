@@ -113,6 +113,7 @@ function YaohuoFavoriteButton({
 }
 
 function AcceptedAnswerPreview({
+  contentSource,
   contentWidth,
   floor,
   inlineSizedImageUrls,
@@ -125,6 +126,7 @@ function AcceptedAnswerPreview({
   topicBaseUrl,
   topicImageDeriver
 }: {
+  contentSource: Source;
   contentWidth: number;
   floor: number;
   inlineSizedImageUrls: Record<string, true>;
@@ -176,7 +178,7 @@ function AcceptedAnswerPreview({
           {reply ? (
             <>
               <View style={styles.topicAcceptedAnswerAuthorRow}>
-                <Avatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
+                <Avatar contentSource={contentSource} small name={reply.author} uri={reply.authorAvatar} styles={styles} />
                 <View style={styles.topicAcceptedAnswerAuthorMeta}>
                   <Text style={styles.topicAcceptedAnswerAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
                   <Text style={styles.topicAcceptedAnswerTime}>{formatDateTime(reply.createdAt)}{floor ? ` · #${floor}` : ''}</Text>
@@ -191,7 +193,7 @@ function AcceptedAnswerPreview({
                           <View style={styles.quoteAuthorSummary}>
                             <View style={styles.quoteAuthorTextBlock}>
                               <Text style={styles.quoteAuthorText} numberOfLines={1}>
-                                {reply.quotedAuthors?.[quotedFloor] || '引用内容'}
+                                {reply.quotedAuthors?.[quotedFloor]?.label || '引用内容'}
                               </Text>
                               <Text style={styles.replyMeta}>引用 #{quotedFloor}</Text>
                             </View>
@@ -555,6 +557,10 @@ export const TopicScreen = memo(function TopicScreen({
   topicImageDeriver: TopicImageDeriver;
 }) {
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
+  const mediaContext = useMemo(() => ({
+    contentSource: item?.source || null,
+    sessionIdentity: mediaSessionIdentity
+  }), [item?.source, mediaSessionIdentity]);
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
   const canUseCurrentSourceActions = Boolean(topic && sourceActionAvailability[topic.source]);
@@ -1077,7 +1083,7 @@ export const TopicScreen = memo(function TopicScreen({
         <View style={styles.articleBody}>
           <ForumContentVideo
             key={`${mediaSessionIdentity}:${contentItem.src}`}
-            mediaSessionIdentity={mediaSessionIdentity}
+            mediaContext={mediaContext}
             src={contentItem.src}
             theme={theme}
           />
@@ -1256,7 +1262,7 @@ export const TopicScreen = memo(function TopicScreen({
               }
             }}
           >
-            <Avatar name={item.author} uri={item.authorAvatar} styles={styles} />
+            <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} styles={styles} />
             <View style={styles.topicAuthorMeta}>
               <View style={styles.replyAuthorNameRow}>
                 <Text style={styles.replyAuthor} numberOfLines={1}>{item.author || '未知作者'}</Text>
@@ -1322,6 +1328,7 @@ export const TopicScreen = memo(function TopicScreen({
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <AcceptedAnswerPreview
             key={acceptedAnswer.instanceKey}
+            contentSource={item.source}
             contentWidth={contentWidth}
             floor={acceptedAnswer.floor}
             inlineSizedImageUrls={inlineSizedImageUrls}
@@ -1362,7 +1369,7 @@ export const TopicScreen = memo(function TopicScreen({
           {isDiscourseSource(topic?.source) && discourseTopicReactionStats.length ? (
             <View style={styles.topicStatRail}>
               {discourseTopicReactionStats.map((stat) => (
-                <DiscourseReactionPill compact key={stat.id} stat={stat} styles={styles} />
+                <DiscourseReactionPill compact contentSource={topic?.source || null} key={stat.id} stat={stat} styles={styles} />
               ))}
             </View>
           ) : null}

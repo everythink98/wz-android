@@ -668,6 +668,13 @@ export function useVerificationController({
         finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'login_required' });
         return;
       }
+      updateLinuxDoSession({
+        type: 'verification-succeeded',
+        loggedIn: true,
+        currentUser: result.session.currentUser,
+        cookieSummary: result.session.cookieSummary,
+        at: new Date().toISOString()
+      });
       setLinuxDoWebViewError('');
       const recovery = activeRecovery?.recovery;
       const recoveryIsCurrent = Boolean(
@@ -732,10 +739,6 @@ export function useVerificationController({
           finishLinuxDoVerificationTrace(trace, 'failure', { reason: 'refresh_failed' });
           return;
         }
-        updateLinuxDoSession({
-          type: 'verification-succeeded',
-          at: new Date().toISOString()
-        });
         notify('linux.do 身份已确认，页面已恢复。');
         finishLinuxDoVerificationTrace(trace, 'success', {
           hasCredential: true,

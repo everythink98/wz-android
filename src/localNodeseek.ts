@@ -1076,11 +1076,15 @@ function matchingEmbeddedNodeSeekReply(reply: Reply, embeddedReplies: Reply[]) {
 }
 
 function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: TopicDetail): TopicDetail {
+  const renderedReplies = rendered.replies.map((reply, index) => ({
+    ...reply,
+    floor: reply.floor ?? index + 1
+  }));
   if (!embedded) {
-    return rendered;
+    return { ...rendered, replies: renderedReplies };
   }
-  const replies = rendered.replies.length
-    ? rendered.replies.map((reply) => mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embedded.replies)))
+  const replies = renderedReplies.length
+    ? renderedReplies.map((reply) => mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embedded.replies)))
     : embedded.replies;
   return {
     ...embedded,
@@ -1142,13 +1146,13 @@ function renderedNodeSeekAvatar(element: HTMLElement | null | undefined) {
   );
 }
 
-function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], fallback: number) {
+function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
   const linkFloor = parsePositiveInteger(elementText(element.querySelector('.floor-link')));
   if (linkFloor) {
     return linkFloor;
   }
   const id = String(element.getAttribute('id') || '');
-  return /^\d+$/.test(id) ? Number(id) : fallback;
+  return /^\d+$/.test(id) ? Number(id) : undefined;
 }
 
 function renderedNodeSeekReactionItem(element: HTMLElement | null | undefined, keywords: string[]) {
@@ -1300,7 +1304,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     return Boolean(replyContent?.innerHTML && row !== firstContentItem);
   });
-  const allReplies = replyRows.map((row, index) => {
+  const allReplies = replyRows.map((row) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
     const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
@@ -1313,7 +1317,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
       ...(authorLevelLabel ? { authorLevelLabel } : {}),
       contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
       createdAt: renderedNodeSeekTime(row.querySelector('time')) || createdAt,
-      floor: renderedNodeSeekFloor(row, index + 1),
+      floor: renderedNodeSeekFloor(row),
       commentId: renderedNodeSeekCommentId(row),
       upvoteCount: renderedNodeSeekReactionCount(row, ['点赞', 'good-one', 'upvote']),
       likeCount: renderedNodeSeekReactionCount(row, ['加鸡腿', 'chicken-leg']),
@@ -1500,9 +1504,9 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
   const offset = hasOffset ? options.offset as number : 0;
   const floorOffset = hasOffset ? offset : ((page - 1) * limit);
   if (rendered && (rendered.replies.length || !postData)) {
-    const renderedSource = page <= 1 ? rendered.replies : rendered.replies.map((reply, index) => ({
+    const renderedSource = rendered.replies.map((reply, index) => ({
       ...reply,
-      floor: reply.floor ?? floorOffset + index + 1
+      floor: reply.floor ?? (page <= 1 ? index + 1 : floorOffset + index + 1)
     }));
     const embeddedReplies = postData
       ? normalizeReplies(arrayField(postData.comments), { skipFirst: page <= 1, floorOffset: page <= 1 ? 0 : floorOffset })

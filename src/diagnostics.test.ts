@@ -152,6 +152,23 @@ describe('diagnostic traces', () => {
     expect(receivedInit).toBeUndefined();
   });
 
+  it('keeps media diagnostics categorical and drops URLs', () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('media', 'load', {
+      source: 'linuxdo',
+      surface: 'preview',
+      mediaClass: 'cross-source',
+      url: 'https://secret.example/private.png?token=secret'
+    });
+    finishDiagnosticTrace(trace, 'failure', { fallback: 'svg', terminalReason: 'fallback-error' });
+
+    expect(events().at(-1)).toEqual(expect.objectContaining({
+      fallback: 'svg',
+      terminalReason: 'fallback-error'
+    }));
+    expect(JSON.stringify(events())).not.toContain('secret.example');
+  });
+
   it('provides a temporary request context when the caller omits init', async () => {
     const trace = beginDiagnosticTrace('topic', 'open');
     let nestedInit: RequestInit | undefined;

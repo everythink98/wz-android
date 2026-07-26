@@ -296,17 +296,13 @@ describe('Android release evidence guards', () => {
     expect(libraryReplay).not.toMatch(/library-user-first|library-history-first|topic-detail-loaded|user-screen-loaded/);
   });
 
-  it('[REG-TEST-002] waits for each current source to reach a legal outcome', () => {
+  it('[REG-TEST-002] waits for the catalog-complete aggregate search outcome', () => {
     const loggedOutReplay = readFileSync(path.join(rootDir, 'tests', 'device-logged-out', 'logged-out-readonly.ad'), 'utf8');
     const multiSourceSearchReplay = readFileSync(path.join(rootDir, 'tests', 'device', 'search-multi-source.ad'), 'utf8');
 
     for (const replay of [loggedOutReplay, multiSourceSearchReplay]) {
-      for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi']) {
-        expect(replay).toContain(
-          `wait "id=\\"search-outcome-data-${source}\\" || id=\\"search-outcome-empty-${source}\\" || id=\\"search-outcome-partial-${source}\\" || id=\\"search-outcome-error-${source}\\" || id=\\"search-outcome-auth-${source}\\"" 60000`
-        );
-      }
-      expect(replay).not.toMatch(/search-result-first|wait id="search-complete"/);
+      expect(replay).toContain('wait id="search-all-sources-settled" 60000');
+      expect(replay).not.toMatch(/search-result-first|search-outcome-/);
       expect(replay.match(/press id="search-submit"/g)).toHaveLength(1);
     }
   });
@@ -477,9 +473,9 @@ describe('Android release evidence guards', () => {
     expect(searchScreen).toContain('search-overview-source-');
     expect(searchScreen).toContain('search-page-loaded-');
     expect(searchScreen).toContain('搜索最近记录');
-    expect(searchScreen).toContain('`search-outcome-${outcome}-${group.source}`');
-    expect(searchScreen).toContain('searchGroupOutcomeKind(group)');
+    expect(searchScreen).not.toContain('search-outcome-');
     expect(searchScreen).not.toContain('search-result-first');
+    expect(searchScreen).toContain("'search-all-sources-settled'");
     expect(searchScreen).toContain("'search-complete'");
     expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain("testID={topic ? 'topic-detail-loaded' : undefined}");
     expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain('testID="topic-author"');

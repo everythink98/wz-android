@@ -1,4 +1,4 @@
-import type { Source, SourceErrorKind, SourceLoadOutcomeKind, Topic } from './types';
+import type { Source, SourceErrorKind, Topic } from './types';
 import type { AuthNotice } from './siteSessionPrompts';
 
 export type SearchGroup = {
@@ -38,11 +38,11 @@ function errorLooksLikeLogin(group: SearchGroup) {
 }
 
 export function searchGroupMeta(group: SearchGroup) {
-  if (group.settled === false) {
-    return '等待账号状态';
-  }
   if (group.loading) {
     return '搜索中';
+  }
+  if (group.settled === false) {
+    return '等待账号状态';
   }
   if (group.error) {
     if (group.nextPage) {
@@ -61,15 +61,6 @@ export function searchGroupMeta(group: SearchGroup) {
 
 export function searchGroupEmptyText(group: SearchGroup) {
   return `${group.label} 没有匹配结果`;
-}
-
-export function searchGroupOutcomeKind(group: SearchGroup): SourceLoadOutcomeKind | undefined {
-  if (group.settled === false || group.loading || group.loadingMore) return undefined;
-  if (group.error) {
-    if (group.items.length) return 'partial';
-    return errorLooksLikeVerification(group) || errorLooksLikeLogin(group) ? 'auth' : 'error';
-  }
-  return group.items.length ? 'data' : 'empty';
 }
 
 export function buildSearchListItems({
@@ -103,11 +94,11 @@ export function buildSearchListItems({
     if (shouldRenderAuthNotice(group)) {
       items.push({ type: 'groupAuthNotice', group });
     }
-    if (group.settled === false) {
-      continue;
-    }
     if (group.loading) {
       items.push({ type: 'groupLoading', group });
+      continue;
+    }
+    if (group.settled === false) {
       continue;
     }
     const visibleTopics = mode === 'overview' ? group.items.slice(0, 2) : group.items;

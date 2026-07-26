@@ -15,6 +15,7 @@ export const sourceCatalog = {
     label: 'V2EX',
     family: 'v2ex',
     feedFilter: 'v2ex',
+    managedSession: false,
     searchFilter: 'v2ex',
     topicActions: [],
     replyPermission: 'session',
@@ -28,6 +29,7 @@ export const sourceCatalog = {
     label: 'linux.do',
     family: 'discourse',
     feedFilter: 'discourse',
+    managedSession: true,
     searchFilter: 'discourse',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
     replyPermission: 'session',
@@ -41,6 +43,7 @@ export const sourceCatalog = {
     label: 'NodeSeek',
     family: 'nodeseek',
     feedFilter: 'nodeseek',
+    managedSession: true,
     searchFilter: 'nodeseek',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'vote', 'upload'],
     replyPermission: 'session',
@@ -54,6 +57,7 @@ export const sourceCatalog = {
     label: '妖火',
     family: 'yaohuo',
     feedFilter: 'none',
+    managedSession: true,
     searchFilter: 'yaohuo',
     topicActions: ['reply', 'bookmark', 'delete', 'vote', 'upload'],
     replyPermission: 'session',
@@ -67,6 +71,7 @@ export const sourceCatalog = {
     label: '小隐寺',
     family: 'discourse',
     feedFilter: 'discourse',
+    managedSession: true,
     searchFilter: 'discourse',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
     replyPermission: 'topic',
@@ -84,7 +89,7 @@ export type FeedFilterSource = {
   [Site in Source]: typeof sourceCatalog[Site]['feedFilter'] extends 'none' ? never : Site
 }[Source];
 export type SessionSource = {
-  [Site in Source]: typeof sourceCatalog[Site]['topicActions']['length'] extends 0 ? never : Site
+  [Site in Source]: typeof sourceCatalog[Site]['managedSession'] extends true ? Site : never
 }[Source];
 
 export const sourceValues = (Object.keys(sourceCatalog) as Source[])
@@ -98,7 +103,7 @@ export const aggregateSearchSources = sourceValues
   .sort((left, right) => sourceCatalog[left].searchOrder - sourceCatalog[right].searchOrder);
 
 export const sessionSources = sourceValues
-  .filter((source): source is SessionSource => sourceCatalog[source].topicActions.length > 0);
+  .filter((source): source is SessionSource => sourceCatalog[source].managedSession);
 
 export function isDiscourseSource(source: Source | null | undefined): source is DiscourseSource {
   return Boolean(source && sourceCatalog[source].family === 'discourse');
@@ -109,7 +114,7 @@ export function isFeedFilterSource(source: Source | null | undefined): source is
 }
 
 export function isSessionSource(source: Source | null | undefined): source is SessionSource {
-  return Boolean(source && sourceCatalog[source].topicActions.length > 0);
+  return Boolean(source && sourceCatalog[source].managedSession);
 }
 
 export function sourceSupportsTopicAction(

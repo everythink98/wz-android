@@ -13,6 +13,7 @@ export const CURRENT_REACT_NATIVE_VERSION = String(packageConfig.dependencies['r
 const GITHUB_RELEASE_APK_HOST = 'github.com';
 const GITHUB_RELEASE_APK_PATH_PREFIX = '/everythink98/wz-android/releases/download/';
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+const PINNED_RELEASE_SIGNER_SHA256 = cleanSha256(appConfig.expo.extra.releaseSignerSha256);
 
 export type AppUpdateInfo = {
   version: string;
@@ -173,6 +174,7 @@ function parseReleaseManifest(value: unknown, version: string): ReleaseManifest 
     || manifest.versionCode <= CURRENT_ANDROID_VERSION_CODE
     || !sha256
     || !signerSha256
+    || signerSha256 !== PINNED_RELEASE_SIGNER_SHA256
   ) {
     throw new Error('Release manifest 内容不可信。');
   }

@@ -29,7 +29,7 @@ import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { stableTextHash } from './topicScreenHelpers';
-import { useManagedMediaSessionIdentity } from '../../mediaSessionEpoch';
+import { useForumMediaRequestContext } from '../../mediaSessionEpoch';
 
 type NodeSeekStat = { label: string; value: number };
 
@@ -75,14 +75,17 @@ export function NodeSeekStatPill({
 
 export function DiscourseReactionPill({
   compact = false,
+  contentSource,
   stat,
   styles
 }: {
   compact?: boolean;
+  contentSource: Source | null;
   stat: DiscourseReactionStat;
   styles: ReturnType<typeof createStyles>;
 }) {
-  const mediaSessionIdentity = useManagedMediaSessionIdentity(stat.imageUrl);
+  const mediaContext = useForumMediaRequestContext(contentSource);
+  const mediaSessionIdentity = mediaContext.sessionIdentity;
   return (
     <View
       accessible
@@ -91,7 +94,7 @@ export function DiscourseReactionPill({
     >
       {stat.imageUrl ? (
         <ExpoImage
-          source={imageSourceFromUrl(stat.imageUrl, undefined, undefined, mediaSessionIdentity)}
+          source={imageSourceFromUrl(stat.imageUrl, { mediaContext })}
           recyclingKey={`${mediaSessionIdentity}:${stat.imageUrl}`}
           style={styles.linuxDoReactionImage}
           contentFit="contain"
@@ -250,7 +253,7 @@ export function ReplyItem({
         accessibilityLabel={`系统事件，${author} 于 ${createdAt} ${actionText}`}
         style={[styles.replyCard, styles.replyHead, styles.replySystemEvent]}
       >
-        <Avatar small name={author} uri={reply.authorAvatar} styles={styles} />
+        <Avatar contentSource={source || null} small name={author} uri={reply.authorAvatar} styles={styles} />
         <View style={styles.replyAuthorBlock}>
           <View style={styles.replyAuthorNameRow}>
             <Text style={styles.replyAuthor} numberOfLines={1}>{author}</Text>
@@ -280,7 +283,7 @@ export function ReplyItem({
           }
         }}
       >
-        <Avatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
+        <Avatar contentSource={source || null} small name={reply.author} uri={reply.authorAvatar} styles={styles} />
         <View style={styles.replyAuthorBlock}>
           <View style={styles.replyAuthorNameRow}>
             <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
@@ -314,12 +317,12 @@ export function ReplyItem({
               const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedPostReferenceKey(reference)];
               const quotedAuthorFromMarkup = reply.quotedAuthors?.[quotedFloor];
               const quotedPreview = reply.quotedPreviews?.[quotedFloor];
-              const quotedAuthorName = quotedReply?.author || quotedAuthorFromMarkup || '未知作者';
-              const quotedUser = quotedReply ? userFromReply(quotedReply, source) : source && quotedAuthorFromMarkup ? {
+              const quotedAuthorName = quotedReply?.author || quotedAuthorFromMarkup?.label || '未知作者';
+              const quotedUser = quotedReply ? userFromReply(quotedReply, source) : source && quotedAuthorFromMarkup?.username ? {
                 source,
-                id: quotedAuthorFromMarkup,
-                username: quotedAuthorFromMarkup,
-                displayName: quotedAuthorFromMarkup,
+                id: quotedAuthorFromMarkup.username,
+                username: quotedAuthorFromMarkup.username,
+                displayName: quotedAuthorFromMarkup.label,
                 url: '',
                 topics: []
               } : null;
@@ -343,7 +346,7 @@ export function ReplyItem({
                         }
                       }}
                     >
-                      {quotedReply ? <Avatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} /> : null}
+                      {quotedReply ? <Avatar contentSource={source || null} small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} /> : null}
                       <View style={styles.quoteAuthorTextBlock}>
                         <Text style={styles.quoteAuthorText} numberOfLines={1}>{quotedAuthorName}</Text>
                         <Text style={styles.replyMeta}>引用 #{quotedFloor}</Text>
@@ -491,7 +494,7 @@ export function ReplyItem({
         {isDiscourse && discourseReplyReactionStats.length ? (
           <View style={styles.replyStatRail}>
             {discourseReplyReactionStats.map((stat, index) => (
-              <DiscourseReactionPill compact key={getMappingKey(stat.id, index)} stat={stat} styles={styles} />
+              <DiscourseReactionPill compact contentSource={source || null} key={getMappingKey(stat.id, index)} stat={stat} styles={styles} />
             ))}
           </View>
         ) : null}

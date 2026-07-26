@@ -4,8 +4,9 @@ import { Image as ExpoImage } from 'expo-image';
 import { SvgXml } from 'react-native-svg';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
 import { imageSourceFromUrl } from '../htmlImages';
-import { useManagedMediaSessionIdentity } from '../mediaSessionEpoch';
+import { useForumMediaRequestContext } from '../mediaSessionEpoch';
 import type { createStyles } from '../theme';
+import type { Source } from '../types';
 
 const MAX_IMAGE_RETRY_COUNT = 1;
 
@@ -26,12 +27,14 @@ export function avatarInitial(name?: string) {
 }
 
 export function Avatar({
+  contentSource,
   name,
   small,
   tiny,
   styles,
   uri
 }: {
+  contentSource: Source | null;
   name?: string;
   small?: boolean;
   tiny?: boolean;
@@ -41,7 +44,8 @@ export function Avatar({
   const [imageFailed, setImageFailed] = useState(false);
   const [imageRetryCount, setImageRetryCount] = useState(0);
   const [svgXml, setSvgXml] = useState<string | null>(null);
-  const mediaSessionIdentity = useManagedMediaSessionIdentity(uri);
+  const mediaContext = useForumMediaRequestContext(contentSource);
+  const mediaSessionIdentity = mediaContext.sessionIdentity;
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +58,7 @@ export function Avatar({
       };
     }
     loadRemoteAvatarSvgText(uri, undefined, {
-      cacheIdentity: mediaSessionIdentity
+      mediaContext
     }).then((xml) => {
       if (!cancelled) {
         setSvgXml(xml);
@@ -63,7 +67,7 @@ export function Avatar({
     return () => {
       cancelled = true;
     };
-  }, [mediaSessionIdentity, uri]);
+  }, [mediaContext, mediaSessionIdentity, uri]);
 
   const retryOrFailImage = useCallback(() => {
     if (imageRetryCount < MAX_IMAGE_RETRY_COUNT) {
@@ -87,7 +91,7 @@ export function Avatar({
       ) : uri && !imageFailed ? (
         <ExpoImage
           key={`${mediaSessionIdentity}:${uri}:${imageRetryCount}`}
-          source={imageSourceFromUrl(uri, undefined, undefined, mediaSessionIdentity)}
+          source={imageSourceFromUrl(uri, { mediaContext })}
           style={[styles.replyAvatarImage, StyleSheet.absoluteFillObject]}
           contentFit="cover"
           recyclingKey={`${mediaSessionIdentity}:${uri}:${imageRetryCount}`}

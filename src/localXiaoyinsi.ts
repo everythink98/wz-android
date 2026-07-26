@@ -21,14 +21,13 @@ import {
   parsePositiveInteger,
   sanitizeContentHtml,
   sortTopicsByCreatedAt,
-  textContentFromHtml,
   textExcerpt,
   toIsoString
 } from './localHtml';
 import { annotateSourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { buildDiscourseLevelProfileFromSummary, type DiscourseLevelProfile } from './discourseLevel';
 import { discourseCategories, discourseOriginalPoster, discoursePolls, discoursePostFields, discourseTopicFields, discourseUsersById } from './discourseModel';
-import { discoursePollPlaceholder } from './discourseContent';
+import { discourseAvatarUrl, discoursePollPlaceholder, discourseQuoteMetadata } from './discourseContent';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from './discourseReactions';
 
 export const XIAOYINSI_BASE_URL = 'https://forum.xiaoyinsi.com';
@@ -147,8 +146,7 @@ function topicId(value: unknown) {
 }
 
 function avatarUrl(value: unknown) {
-  const path = String(value || '').trim();
-  return path ? new URL(path.replace('{size}', '96'), XIAOYINSI_BASE_URL).toString() : undefined;
+  return discourseAvatarUrl(value, XIAOYINSI_BASE_URL);
 }
 
 function userUrl(username: string) {
@@ -250,41 +248,6 @@ export function sanitizeXiaoyinsiContentHtml(html: unknown, polls?: TopicPoll[])
   return sanitizeContentHtml(root.toString(), XIAOYINSI_BASE_URL);
 }
 
-function localQuoteFloor(node: ReturnType<typeof parseHtml>, currentTopicId?: string) {
-  if (!/\bquote\b/i.test(String(node.getAttribute('class') || ''))) {
-    return undefined;
-  }
-  const quoteTopicId = String(node.getAttribute('data-topic') || '');
-  if (currentTopicId && quoteTopicId && quoteTopicId !== currentTopicId) {
-    return undefined;
-  }
-  return positiveNumber(node.getAttribute('data-post'));
-}
-
-function quoteMetadata(html: string, currentTopicId?: string) {
-  const floors = new Set<number>();
-  const authors: Record<number, string> = {};
-  const previews: Record<number, string> = {};
-  const root = parseHtml(html);
-  root.querySelectorAll('aside').forEach((node) => {
-    const floor = localQuoteFloor(node, currentTopicId);
-    if (!floor) {
-      return;
-    }
-    floors.add(floor);
-    const author = decodeHtml(node.getAttribute('data-username') || '').trim();
-    const preview = textContentFromHtml(node.querySelector('blockquote')?.toString() || '').replace(/\s+/g, ' ').trim();
-    if (author) {
-      authors[floor] = author;
-    }
-    if (preview) {
-      previews[floor] = preview;
-    }
-    node.remove();
-  });
-  return { html: root.toString(), floors: [...floors], authors, previews };
-}
-
 function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {
   const fields = discoursePostFields(raw);
   if (!isRecord(raw) || !fields) {
@@ -293,7 +256,7 @@ function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {
   const { cookedHtml, ...replyFields } = fields;
   const polls = discoursePolls(raw, { includeType: true });
   const sanitized = sanitizeXiaoyinsiContentHtml(cookedHtml, polls);
-  const quote = quoteMetadata(sanitized, currentTopicId);
+  const quote = discourseQuoteMetadata(sanitized, currentTopicId);
   const username = String(raw.username || '').trim();
   const authorTrustLevel = levelLabel(raw);
   return {

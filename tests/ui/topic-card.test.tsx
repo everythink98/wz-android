@@ -17,6 +17,17 @@ jest.mock('lucide-react-native', () => {
 });
 
 jest.mock('expo-image', () => ({ Image: () => null }));
+jest.mock('../../src/components/Avatar', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Text: NativeText } = require('react-native') as typeof import('react-native');
+  return {
+    Avatar: ({ contentSource }: { contentSource?: string }) => ReactModule.createElement(
+      NativeText,
+      { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
+      '头像'
+    )
+  };
+});
 
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
@@ -71,6 +82,7 @@ describe('Topic card visible behavior', () => {
     expect(view.getByText('宽松密度下显示的主题摘要')).toBeTruthy();
     expect(view.getByText('23')).toBeTruthy();
     expect(view.getByText('456')).toBeTruthy();
+    expect(view.getByLabelText('avatar source linuxdo')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('real-topic-card'));
     expect(onOpenTopic).toHaveBeenCalledWith(topic);

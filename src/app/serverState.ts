@@ -1,15 +1,11 @@
 import { QueryClient } from '@tanstack/react-query';
 import type { SourceSearchFilter } from '../searchFilters';
+import { isSessionSource, type SessionSource } from '../sourceCatalog';
 import type { FeedSource, Source } from '../types';
 
-export type ForumSessionEpochs = Readonly<{
-  linuxdo: number;
-  nodeseek: number;
-  xiaoyinsi: number;
-  yaohuo: number;
-}>;
+export type ForumSessionEpochs = Readonly<Record<SessionSource, number>>;
 
-export type ForumIdentityBarrierSource = Exclude<Source, 'v2ex'>;
+export type ForumIdentityBarrierSource = SessionSource;
 
 export const initialForumSessionEpochs: ForumSessionEpochs = {
   linuxdo: 0,
@@ -22,7 +18,7 @@ function sessionEpochKey(source: FeedSource, epochs: ForumSessionEpochs) {
   if (source === 'all') {
     return epochs;
   }
-  return source === 'v2ex' ? 0 : epochs[source];
+  return isSessionSource(source) ? epochs[source] : 0;
 }
 
 function identityBarrierKey(

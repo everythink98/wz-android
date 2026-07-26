@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, useWindowDimensions, View, type ImageURISource } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -7,28 +7,46 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
 import { createStyles, type ReaderTheme } from '../theme';
 import { cachedCompatibleImageSource, compatibleImageRequestIdentity, recoverCompatibleSvgImageSource } from '../compatibleImageSources';
+import { useForumMediaRequestContext } from '../mediaSessionEpoch';
+import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
+import { beginDiagnosticTrace, finishDiagnosticTrace, type DiagnosticTrace } from '../diagnostics';
 
 const EMPTY_PREVIEW_URLS: string[] = [];
 
+type PreviewRequest = {
+  recovering: boolean;
+  settled: boolean;
+};
+
+type ImagePreviewModalProps = {
+  preview: ImagePreviewList | null;
+  nodeSeekMediaUserAgent?: string;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onClose: () => void;
+  onNext: () => void;
+  onPrevious: () => void;
+  onSave: () => void;
+  onSelect: (index: number) => void;
+};
+
 function CompatiblePreviewThumbnail({
   url,
-  mediaSessionIdentity,
+  mediaContext,
   nodeSeekUserAgent,
   styles
 }: {
   url: string;
-  mediaSessionIdentity: string;
+  mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
   styles: ReturnType<typeof createStyles>;
 }) {
   const originalSource = useMemo(
     () => imageSourceFromUrl(
       url,
-      undefined,
-      nodeSeekUserAgent,
-      mediaSessionIdentity
+      { mediaContext, nodeSeekUserAgent }
     ) as ImageURISource,
-    [mediaSessionIdentity, nodeSeekUserAgent, url]
+    [mediaContext, nodeSeekUserAgent, url]
   );
   const requestIdentity = compatibleImageRequestIdentity(originalSource);
   const requestIdentityRef = useRef(requestIdentity);
@@ -48,7 +66,7 @@ function CompatiblePreviewThumbnail({
       source={activeFallbackSource || originalSource}
       style={styles.imagePreviewThumbnailImage}
       contentFit="cover"
-      recyclingKey={`thumbnail:${mediaSessionIdentity}:${url}:${activeFallbackSource ? 'compatible' : 'native'}`}
+      recyclingKey={`thumbnail:${mediaContext.sessionIdentity}:${url}:${activeFallbackSource ? 'compatible' : 'native'}`}
       onError={() => {
         if (activeFallbackSource || recoveryIdentityRef.current === requestIdentity) {
           return;
@@ -64,10 +82,23 @@ function CompatiblePreviewThumbnail({
   );
 }
 
-export function ImagePreviewModal({
+export function ImagePreviewModal(props: ImagePreviewModalProps) {
+  const mediaContext = useForumMediaRequestContext(props.preview?.contentSource);
+  const activeIndex = props.preview?.index ?? 0;
+  const activeUri = props.preview?.urls[activeIndex] || '';
+  return (
+    <ImagePreviewModalContent
+      key={`${mediaContext.sessionIdentity}\u0000${activeIndex}\u0000${activeUri}\u0000${props.nodeSeekMediaUserAgent || ''}`}
+      {...props}
+      mediaContext={mediaContext}
+    />
+  );
+}
+
+function ImagePreviewModalContent({
   preview,
-  mediaSessionIdentity,
   nodeSeekMediaUserAgent,
+  mediaContext,
   styles,
   theme,
   onClose,
@@ -75,65 +106,117 @@ export function ImagePreviewModal({
   onPrevious,
   onSave,
   onSelect
-}: {
-  preview: ImagePreviewList | null;
-  mediaSessionIdentity: string;
-  nodeSeekMediaUserAgent?: string;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onClose: () => void;
-  onNext: () => void;
-  onPrevious: () => void;
-  onSave: () => void;
-  onSelect: (index: number) => void;
-}) {
+}: ImagePreviewModalProps & { mediaContext: ForumMediaRequestContext }) {
   const { width, height } = useWindowDimensions();
-  const [imagePreviewLoading, setImagePreviewLoading] = useState(false);
-  const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
-  const [imagePreviewResolution, setImagePreviewResolution] = useState<{ width: number; height: number } | null>(null);
   const previewUrls = preview?.urls || EMPTY_PREVIEW_URLS;
   const previewCount = previewUrls.length;
   const activeIndex = preview?.index ?? 0;
   const activeUri = previewUrls[activeIndex] || '';
-  const previewKey = `${mediaSessionIdentity}:${activeIndex}:${activeUri}`;
+  const previewKey = `${mediaContext.sessionIdentity}:${activeIndex}:${activeUri}`;
   const originalImageSource = useMemo(() => imageSourceFromUrl(
     activeUri,
-    undefined,
-    nodeSeekMediaUserAgent,
-    mediaSessionIdentity
-  ) as ImageURISource, [activeUri, mediaSessionIdentity, nodeSeekMediaUserAgent]);
+    { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
+  ) as ImageURISource, [activeUri, mediaContext, nodeSeekMediaUserAgent]);
   const imageRequestIdentity = compatibleImageRequestIdentity(originalImageSource);
-  const imageRequestIdentityRef = useRef(imageRequestIdentity);
-  const recoveryIdentityRef = useRef('');
+  const previewRequest = useRef<PreviewRequest>({
+    recovering: false,
+    settled: false
+  }).current;
+  const mountedRef = useRef(true);
+  const previewDiagnosticRef = useRef<{
+    fallback: boolean;
+    requestIdentity: string;
+    trace: DiagnosticTrace;
+  } | null>(null);
   const [compatibleImageSource, setCompatibleImageSource] = useState<{ requestIdentity: string; source: ImageURISource } | null>(null);
+  const [imageState, setImageState] = useState<{
+    request: PreviewRequest | null;
+    requestIdentity: string;
+    resolution: { width: number; height: number } | null;
+    status: 'loading' | 'loaded' | 'failed';
+  }>({ request: null, requestIdentity: '', resolution: null, status: 'loading' });
+  const activeImageState = imageState.request === previewRequest
+    ? imageState
+    : { request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' as const };
   const cachedFallbackSource = cachedCompatibleImageSource(originalImageSource);
   const activeFallbackSource = compatibleImageSource?.requestIdentity === imageRequestIdentity
     ? compatibleImageSource.source
     : cachedFallbackSource;
   const activeImageSource = activeFallbackSource || originalImageSource;
   const thumbnailItems = useMemo(() => (previewCount ? visibleImagePreviewThumbnails(previewUrls, activeIndex) : []), [activeIndex, previewCount, previewUrls]);
+  const currentPreviewTrace = useCallback((fallback = false) => {
+    const previous = previewDiagnosticRef.current;
+    if (previous?.requestIdentity !== imageRequestIdentity) {
+      if (previous) {
+        finishDiagnosticTrace(previous.trace, 'stale', { fallback: previous.fallback ? 'svg' : 'none', terminalReason: 'stale' });
+      }
+      previewDiagnosticRef.current = {
+        fallback,
+        requestIdentity: imageRequestIdentity,
+        trace: beginDiagnosticTrace('media', 'load', {
+          mediaClass: forumMediaTargetClass(activeUri, mediaContext.contentSource),
+          source: mediaContext.contentSource || 'unknown',
+          surface: 'preview'
+        })
+      };
+    } else if (fallback && previous) {
+      previous.fallback = true;
+    }
+    return previewDiagnosticRef.current;
+  }, [activeUri, imageRequestIdentity, mediaContext.contentSource]);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  useEffect(() => () => {
+    const active = previewDiagnosticRef.current;
+    if (active?.requestIdentity === imageRequestIdentity) {
+      finishDiagnosticTrace(active.trace, 'stale', { fallback: active.fallback ? 'svg' : 'none', terminalReason: 'stale' });
+      previewDiagnosticRef.current = null;
+    }
+  }, [imageRequestIdentity]);
   useEffect(() => {
-    imageRequestIdentityRef.current = imageRequestIdentity;
-    recoveryIdentityRef.current = '';
-    setImagePreviewLoading(previewCount > 0);
-    setImagePreviewFailed(false);
-    setImagePreviewResolution(null);
-  }, [imageRequestIdentity, previewCount]);
+    if (!activeUri) {
+      return undefined;
+    }
+    const timeout = setTimeout(() => {
+      if (
+        !mountedRef.current
+        || previewRequest.settled
+      ) {
+        return;
+      }
+      previewRequest.settled = true;
+      previewRequest.recovering = false;
+      const diagnostic = currentPreviewTrace();
+      if (diagnostic) {
+        finishDiagnosticTrace(diagnostic.trace, 'failure', {
+          fallback: diagnostic.fallback ? 'svg' : 'none',
+          terminalReason: 'timeout'
+        });
+        previewDiagnosticRef.current = null;
+      }
+      setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
+    }, 30_000);
+    return () => clearTimeout(timeout);
+  }, [activeUri, currentPreviewTrace, imageRequestIdentity, previewRequest]);
 
   const imagePreviewSize = useMemo(() => {
-    if (!imagePreviewResolution?.width || !imagePreviewResolution.height) {
+    if (!activeImageState.resolution?.width || !activeImageState.resolution.height) {
       return { width, height };
     }
-    return fitContainer(imagePreviewResolution.width / imagePreviewResolution.height, { width, height });
-  }, [height, imagePreviewResolution, width]);
+    return fitContainer(activeImageState.resolution.width / activeImageState.resolution.height, { width, height });
+  }, [activeImageState.resolution, height, width]);
 
   const imagePreviewMaxScale = useMemo(() => {
-    if (!imagePreviewResolution?.width || !imagePreviewResolution.height || !imagePreviewSize.width || !imagePreviewSize.height) {
+    if (!activeImageState.resolution?.width || !activeImageState.resolution.height || !imagePreviewSize.width || !imagePreviewSize.height) {
       return 6;
     }
-    const pixelScale = Math.max(imagePreviewResolution.width / imagePreviewSize.width, imagePreviewResolution.height / imagePreviewSize.height);
+    const pixelScale = Math.max(activeImageState.resolution.width / imagePreviewSize.width, activeImageState.resolution.height / imagePreviewSize.height);
     return Math.max(3, Math.min(8, pixelScale));
-  }, [imagePreviewResolution, imagePreviewSize]);
+  }, [activeImageState.resolution, imagePreviewSize]);
 
   if (!preview || previewCount === 0) {
     return null;
@@ -162,70 +245,108 @@ export function ImagePreviewModal({
             extendGestures
           >
             <ExpoImage
+              key={`${imageRequestIdentity}:${activeFallbackSource ? 'compatible' : 'native'}`}
               contentFit="contain"
-              recyclingKey={`${mediaSessionIdentity}:${activeUri}:${activeFallbackSource ? 'compatible' : 'native'}`}
+              recyclingKey={`${mediaContext.sessionIdentity}:${activeUri}:${activeFallbackSource ? 'compatible' : 'native'}`}
               source={activeImageSource}
               style={[styles.imagePreviewImage, imagePreviewSize]}
               onLoadStart={() => {
-                setImagePreviewLoading(true);
-                setImagePreviewFailed(false);
+                if (!mountedRef.current || previewRequest.settled) {
+                  return;
+                }
+                currentPreviewTrace(Boolean(activeFallbackSource));
+                setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' });
               }}
               onLoad={(event) => {
+                if (!mountedRef.current || previewRequest.settled) {
+                  return;
+                }
                 const source = event.source;
-                if (source.width > 0 && source.height > 0) {
-                  setImagePreviewResolution({ width: source.width, height: source.height });
+                previewRequest.settled = true;
+                previewRequest.recovering = false;
+                const diagnostic = currentPreviewTrace(Boolean(activeFallbackSource));
+                if (diagnostic) {
+                  finishDiagnosticTrace(diagnostic.trace, 'success', {
+                    fallback: activeFallbackSource ? 'svg' : 'none',
+                    terminalReason: activeFallbackSource ? 'fallback-loaded' : 'loaded'
+                  });
+                  previewDiagnosticRef.current = null;
                 }
-              }}
-              onLoadEnd={() => {
-                if (activeFallbackSource) {
-                  recoveryIdentityRef.current = '';
-                  setImagePreviewLoading(false);
-                } else if (recoveryIdentityRef.current !== imageRequestIdentity) {
-                  setImagePreviewLoading(false);
-                }
+                setImageState({
+                  request: previewRequest,
+                  requestIdentity: imageRequestIdentity,
+                  resolution: source.width > 0 && source.height > 0
+                    ? { width: source.width, height: source.height }
+                    : null,
+                  status: 'loaded'
+                });
               }}
               onError={() => {
-                if (imageRequestIdentityRef.current !== imageRequestIdentity) {
+                if (!mountedRef.current || previewRequest.settled) {
                   return;
                 }
                 if (activeFallbackSource) {
-                  recoveryIdentityRef.current = '';
-                  setImagePreviewLoading(false);
-                  setImagePreviewFailed(true);
+                  previewRequest.settled = true;
+                  previewRequest.recovering = false;
+                  const diagnostic = currentPreviewTrace(true);
+                  if (diagnostic) {
+                    finishDiagnosticTrace(diagnostic.trace, 'failure', { fallback: 'svg', terminalReason: 'fallback-error' });
+                    previewDiagnosticRef.current = null;
+                  }
+                  setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
                   return;
                 }
-                recoveryIdentityRef.current = imageRequestIdentity;
-                setImagePreviewLoading(true);
-                setImagePreviewFailed(false);
+                if (previewRequest.recovering) {
+                  return;
+                }
+                previewRequest.recovering = true;
+                currentPreviewTrace(true);
+                setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' });
                 void recoverCompatibleSvgImageSource(originalImageSource).then((fallbackSource) => {
-                  if (imageRequestIdentityRef.current !== imageRequestIdentity) {
+                  if (
+                    !mountedRef.current
+                    || previewRequest.settled
+                  ) {
                     return;
                   }
                   if (fallbackSource) {
                     setCompatibleImageSource({ requestIdentity: imageRequestIdentity, source: fallbackSource });
                     return;
                   }
-                  recoveryIdentityRef.current = '';
-                  setImagePreviewLoading(false);
-                  setImagePreviewFailed(true);
+                  previewRequest.settled = true;
+                  previewRequest.recovering = false;
+                  const diagnostic = currentPreviewTrace(true);
+                  if (diagnostic) {
+                    finishDiagnosticTrace(diagnostic.trace, 'failure', { fallback: 'svg', terminalReason: 'native-error' });
+                    previewDiagnosticRef.current = null;
+                  }
+                  setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
                 }, () => {
-                  if (imageRequestIdentityRef.current === imageRequestIdentity) {
-                    recoveryIdentityRef.current = '';
-                    setImagePreviewLoading(false);
-                    setImagePreviewFailed(true);
+                  if (
+                    mountedRef.current
+                    && !previewRequest.settled
+                  ) {
+                    previewRequest.settled = true;
+                    previewRequest.recovering = false;
+                    const diagnostic = currentPreviewTrace(true);
+                    if (diagnostic) {
+                      finishDiagnosticTrace(diagnostic.trace, 'failure', { fallback: 'svg', terminalReason: 'fallback-error' });
+                      previewDiagnosticRef.current = null;
+                    }
+                    setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
                   }
                 });
               }}
             />
           </ResumableZoom>
         </View>
-        {imagePreviewLoading ? (
+        {activeImageState.status === 'loading' ? (
           <View style={styles.imagePreviewState}>
             <ActivityIndicator color={theme.onOverlay} />
             <Text style={styles.imagePreviewStateText}>图片加载中...</Text>
           </View>
         ) : null}
-        {imagePreviewFailed ? (
+        {activeImageState.status === 'failed' ? (
           <View style={styles.imagePreviewState}>
             <Text style={styles.imagePreviewStateText}>图片加载失败</Text>
           </View>
@@ -236,7 +357,7 @@ export function ImagePreviewModal({
               <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === activeIndex && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
                 <CompatiblePreviewThumbnail
                   url={url}
-                  mediaSessionIdentity={mediaSessionIdentity}
+                  mediaContext={mediaContext}
                   nodeSeekUserAgent={nodeSeekMediaUserAgent}
                   styles={styles}
                 />

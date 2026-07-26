@@ -309,6 +309,41 @@ describe('site session state', () => {
     });
   });
 
+  it('[REG-ACCOUNT-039] keeps a confirmed identity while a challenged read recovery is retried', () => {
+    const currentUser: UserProfile = {
+      source: 'linuxdo',
+      id: '42',
+      username: 'alice',
+      url: 'https://linux.do/u/alice',
+      topics: []
+    };
+    const loggedIn = reduceSiteSessionState(createSiteSessionStates().linuxdo, {
+      type: 'verification-succeeded',
+      cookieSummary: ['cf_clearance', '_t'],
+      loggedIn: true,
+      currentUser,
+      at: '2026-07-26T01:00:00.000Z'
+    });
+
+    const required = reduceSiteSessionState(loggedIn, {
+      type: 'verification-required',
+      message: '原页面仍需验证'
+    });
+    const verifying = reduceSiteSessionState(required, { type: 'verification-started' });
+
+    expect(required).toMatchObject({
+      status: 'logged-in',
+      currentUser,
+      isVerifying: false,
+      lastError: '原页面仍需验证'
+    });
+    expect(verifying).toMatchObject({
+      status: 'logged-in',
+      currentUser,
+      isVerifying: true
+    });
+  });
+
   it.each(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const)(
     '[REG-ACCOUNT-023] keeps the confirmed %s identity when a read path only observes credentials',
     (site) => {

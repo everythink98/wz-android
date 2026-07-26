@@ -24,6 +24,57 @@ describe('小隐寺 Feed controller', () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   });
 
+  it('[REG-FEED-007] does not replay a cached partial error after returning to Feed', async () => {
+    const partialErrors = {
+      v2ex: {
+        kind: 'ordinary' as const,
+        message: 'V2EX 暂时不可用'
+      }
+    };
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async () => ({
+        items: [{
+          source: 'linuxdo' as const,
+          id: 'partial-page-topic',
+          title: '可用来源主题',
+          author: 'alice',
+          url: 'https://linux.do/t/partial-page-topic',
+          createdAt: '2026-07-26T00:00:00.000Z',
+          replyCount: 0
+        }],
+        errors: partialErrors,
+        hasMore: false,
+        nextPage: null
+      })),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const notify = jest.fn();
+    let screen: Screen = 'feed';
+    const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
+      notify,
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen,
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+    await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1);
+
+    screen = 'more';
+    await act(async () => hook.rerender({}));
+    screen = 'feed';
+    await act(async () => hook.rerender({}));
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
   it('[REG-LINUXDO-006] aborts the owned Feed request after leaving Feed and ignores later credential changes', async () => {
     const pendingFeed = Promise.withResolvers<{
       items: never[];

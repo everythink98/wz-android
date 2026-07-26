@@ -1,6 +1,7 @@
 import type { DiscourseFeedFilter, Topic } from './types';
-import { absoluteUrl, isRecord } from './localHtml';
+import { isRecord } from './localHtml';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
+import { discourseAvatarUrl } from './discourseContent';
 
 export const LINUXDO_BASE_URL = 'https://linux.do';
 export const LINUXDO_UNCATEGORIZED_CATEGORY_NAME = '未分类';
@@ -23,8 +24,7 @@ export function linuxDoUserUrl(username: string) {
 }
 
 export function linuxDoAvatarUrl(value: unknown) {
-  const text = String(value || '');
-  return text ? absoluteUrl(text.replace('{size}', '96'), LINUXDO_BASE_URL) : undefined;
+  return discourseAvatarUrl(value, LINUXDO_BASE_URL);
 }
 
 export function isLinuxDoUncategorizedCategory(category: unknown) {

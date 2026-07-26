@@ -1,6 +1,53 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { withAppBuildGradle, withDangerousMod, withMainApplication } = require('@expo/config-plugins');
+
+const EXPO_VIDEO_VERSION = '3.0.16';
+const EXPO_VIDEO_DATA_SOURCE_PATH = path.join(
+  'node_modules',
+  'expo-video',
+  'android',
+  'src',
+  'main',
+  'java',
+  'expo',
+  'modules',
+  'video',
+  'utils',
+  'DataSourceUtils.kt'
+);
+const EXPO_VIDEO_OKHTTP_IMPORT = 'import okhttp3.OkHttpClient';
+const EXPO_VIDEO_MANAGED_IMPORT = 'import com.facebook.react.modules.network.OkHttpClientProvider';
+const EXPO_VIDEO_CLIENT = '  val client = OkHttpClient.Builder().build()';
+const EXPO_VIDEO_MANAGED_CLIENT = '  val client = OkHttpClientProvider.createClient()';
+const EXPO_VIDEO_SOURCE_SHA256 = '18a6a000d9da4b16109978156917d98c09c728e12a186a660e7857d488db237a';
+const EXPO_VIDEO_PATCHED_SHA256 = '3e599f363e5be89357f7e97f9b3558a6f772ee151a2c7b43605b6f58791ac595';
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function patchExpoVideoDataSource(projectRoot) {
+  const packageRoot = path.join(projectRoot, 'node_modules', 'expo-video');
+  const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+  const sourcePath = path.join(projectRoot, EXPO_VIDEO_DATA_SOURCE_PATH);
+  const source = fs.readFileSync(sourcePath, 'utf8');
+  const sourceHash = sha256(source);
+  if (packageJson.version === EXPO_VIDEO_VERSION && sourceHash === EXPO_VIDEO_PATCHED_SHA256) {
+    return;
+  }
+  if (packageJson.version !== EXPO_VIDEO_VERSION || sourceHash !== EXPO_VIDEO_SOURCE_SHA256) {
+    throw new Error('Expo Video DataSource 源码与已审核版本不匹配，拒绝生成 Android 工程。');
+  }
+  const patched = source
+    .replace(EXPO_VIDEO_OKHTTP_IMPORT, EXPO_VIDEO_MANAGED_IMPORT)
+    .replace(EXPO_VIDEO_CLIENT, EXPO_VIDEO_MANAGED_CLIENT);
+  if (sha256(patched) !== EXPO_VIDEO_PATCHED_SHA256) {
+    throw new Error('Expo Video DataSource patch 结果不可信，拒绝生成 Android 工程。');
+  }
+  fs.writeFileSync(sourcePath, patched);
+}
 
 function packagePath(packageName) {
   return packageName.split('.').join(path.sep);
@@ -53,10 +100,12 @@ import javax.net.ssl.SSLSocketFactory
 import android.util.Log
 import android.util.Base64
 import okhttp3.ConnectionPool
+import okhttp3.CacheControl
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
 import okhttp3.HttpUrl
+import okhttp3.Interceptor
 import okhttp3.JavaNetCookieJar
 import okhttp3.OkHttpClient
 
@@ -116,7 +165,59 @@ private fun createPlatformProxyTlsConnection(
     .createSocket(tunnel, host, port, true) as SSLSocket
 )
 
+internal const val FORUM_MEDIA_SOURCE_HEADER = "X-WZ-Forum-Media-Source"
+
+private class MediaRequestCookiePolicy(
+  private val credentialSource: String?
+) {
+  private var downgraded = credentialSource == null
+
+  fun allows(source: String?): Boolean {
+    if (source == null || source != credentialSource) {
+      downgraded = true
+      return false
+    }
+    return !downgraded
+  }
+}
+
+private object MediaRequestCookieContext {
+  private val current = ThreadLocal<MediaRequestCookiePolicy?>()
+
+  fun current(): MediaRequestCookiePolicy? = current.get()
+
+  fun <T> withPolicy(policy: MediaRequestCookiePolicy, block: () -> T): T {
+    val previous = current.get()
+    current.set(policy)
+    return try {
+      block()
+    } finally {
+      if (previous == null) current.remove() else current.set(previous)
+    }
+  }
+}
+
+internal class ForumMediaRequestInterceptor(
+  private val sourceForUri: (URI) -> String? = ::managedCookieSource
+) : Interceptor {
+  override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
+    val request = chain.request()
+    val source = request.header(FORUM_MEDIA_SOURCE_HEADER) ?: return chain.proceed(request)
+    val firstTargetSource = sourceForUri(URI(request.url.toString()))
+    val policy = MediaRequestCookiePolicy(source.takeIf { it == firstTargetSource })
+    val sanitized = request.newBuilder()
+      .removeHeader(FORUM_MEDIA_SOURCE_HEADER)
+      .removeHeader("Cookie")
+      .cacheControl(CacheControl.Builder().noStore().build())
+      .build()
+    return MediaRequestCookieContext.withPolicy(policy) {
+      chain.proceed(sanitized)
+    }
+  }
+}
+
 internal class ReadOnlyWebViewCookieHandler(
+  private val sourceForUri: (URI) -> String? = ::managedCookieSource,
   private val cookieReader: (String) -> String? = { CookieManager.getInstance().getCookie(it) }
 ) : CookieHandler() {
   override fun get(uri: URI, headers: Map<String, List<String>>): Map<String, List<String>> {
@@ -129,12 +230,17 @@ internal class ReadOnlyWebViewCookieHandler(
   fun readCookieHeader(url: String): String? = readCookieHeader(URI(url))
 
   private fun readCookieHeader(uri: URI): String? {
-    if (!uri.scheme.equals("https", ignoreCase = true)
-      || uri.rawUserInfo != null
-      || !isManagedCookieHost(uri.host)) {
+    val mediaPolicy = MediaRequestCookieContext.current()
+    val source = sourceForUri(uri)
+    if (mediaPolicy != null && !mediaPolicy.allows(source)) {
       return null
     }
-    return cookieReader(uri.toString())
+    source ?: return null
+    return try {
+      cookieReader(uri.toString())
+    } catch (error: Exception) {
+      if (mediaPolicy == null) throw error else null
+    }
   }
 }
 
@@ -152,21 +258,25 @@ internal class ReadOnlyCookieJarContainer(
     delegate.loadForRequest(url)
 }
 
-private fun isManagedCookieHost(host: String?): Boolean {
-  val normalizedHost = host?.lowercase(Locale.US) ?: return false
-  return normalizedHost == "nodeseek.com"
-    || normalizedHost.endsWith(".nodeseek.com")
-    || normalizedHost == "linux.do"
-    || normalizedHost.endsWith(".linux.do")
-    || normalizedHost == "yaohuo.me"
-    || normalizedHost.endsWith(".yaohuo.me")
+private fun managedCookieSourceForHost(host: String?): String? {
+  val normalizedHost = host?.lowercase(Locale.US) ?: return null
+  return when {
+    normalizedHost == "nodeseek.com" || normalizedHost.endsWith(".nodeseek.com") -> "nodeseek"
+    normalizedHost == "linux.do" || normalizedHost.endsWith(".linux.do") -> "linuxdo"
+    normalizedHost == "yaohuo.me" || normalizedHost.endsWith(".yaohuo.me") -> "yaohuo"
+    else -> null
+  }
 }
 
+private fun managedCookieSource(uri: URI): String? =
+  if (uri.scheme.equals("https", ignoreCase = true) && uri.rawUserInfo == null) {
+    managedCookieSourceForHost(uri.host)
+  } else {
+    null
+  }
+
 private fun isManagedCookieUrl(url: String): Boolean = try {
-  val uri = URI(url)
-  uri.scheme.equals("https", ignoreCase = true)
-    && uri.rawUserInfo == null
-    && isManagedCookieHost(uri.host)
+  managedCookieSource(URI(url)) != null
 } catch (_: Exception) {
   false
 }
@@ -246,7 +356,7 @@ object NetworkProxyRuntime {
       NetworkingModule.setCustomClientBuilder { builder ->
         configureManagedClient(builder)
       }
-      installExpoImageClient(appContext, client)
+      installExpoImageClient(appContext, expoImageClient(client))
       installed = true
       Log.i(LOG_TAG, "installed app proxy selector")
     }
@@ -274,6 +384,9 @@ object NetworkProxyRuntime {
     builder.proxySelector(selector)
     builder.connectionPool(connectionPool)
     builder.dispatcher(dispatcher)
+    if (builder.interceptors().none { it is ForumMediaRequestInterceptor }) {
+      builder.addInterceptor(ForumMediaRequestInterceptor())
+    }
     return builder
   }
 
@@ -328,6 +441,9 @@ object NetworkProxyRuntime {
   fun currentLocalProxyPort(): Int? =
     (localProxy?.address() as? InetSocketAddress)?.port
 }
+
+internal fun expoImageClient(client: OkHttpClient): OkHttpClient =
+  client.newBuilder().callTimeout(30, TimeUnit.SECONDS).build()
 
 private fun installExpoImageClient(context: Context, client: OkHttpClient) {
   val registry = Glide.get(context).registry
@@ -1413,15 +1529,23 @@ import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import okhttp3.Cache
 import okhttp3.Cookie
+import okhttp3.Interceptor
 import okhttp3.JavaNetCookieJar
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -1432,6 +1556,254 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NetworkProxyRuntimeTest {
+  private fun responseFor(request: Request): Response = Response.Builder()
+    .request(request)
+    .protocol(Protocol.HTTP_1_1)
+    .code(200)
+    .message("OK")
+    .body("".toResponseBody())
+    .build()
+
+  @Test
+  fun regTopic029MediaCookiesAreMonotonicallyDowngradedAcrossAnActualRedirectChain() {
+    val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    val requests = mutableListOf<Triple<String, String?, String?>>()
+    val served = CountDownLatch(1)
+    val executor = Executors.newSingleThreadExecutor()
+    executor.execute {
+      try {
+        repeat(3) {
+          server.accept().use { socket ->
+            val reader = socket.getInputStream().bufferedReader()
+            val path = reader.readLine().split(" ")[1]
+            val headers = mutableMapOf<String, String>()
+            while (true) {
+              val line = reader.readLine() ?: break
+              if (line.isEmpty()) break
+              val separator = line.indexOf(':')
+              if (separator > 0) {
+                headers[line.substring(0, separator).lowercase()] = line.substring(separator + 1).trim()
+              }
+            }
+            requests.add(Triple(path, headers[FORUM_MEDIA_SOURCE_HEADER.lowercase()], headers["cookie"]))
+            val response = when (path) {
+              "/start" -> "HTTP/1.1 302 Found\\r\\nLocation: http://external.test:\${server.localPort}/away\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+              "/away" -> "HTTP/1.1 302 Found\\r\\nLocation: http://same.test:\${server.localPort}/final\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+              else -> "HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+            }
+            socket.getOutputStream().apply {
+              write(response.toByteArray(Charsets.US_ASCII))
+              flush()
+            }
+          }
+        }
+      } finally {
+        served.countDown()
+      }
+    }
+    val sourceForUri: (java.net.URI) -> String? = { uri ->
+      if (uri.host == "same.test") "nodeseek" else null
+    }
+    val cookieReads = mutableListOf<String>()
+    val handler = ReadOnlyWebViewCookieHandler(sourceForUri = sourceForUri) { url ->
+      cookieReads.add(url)
+      "session=live"
+    }
+    val client = OkHttpClient.Builder()
+      .dns(object : okhttp3.Dns {
+        override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
+      })
+      .cookieJar(JavaNetCookieJar(handler))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri))
+      .build()
+
+    try {
+      val response = client.newCall(Request.Builder()
+        .url("http://same.test:\${server.localPort}/start")
+        .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+        .header("Cookie", "must-not-be-forwarded")
+        .build()).execute()
+      response.use { assertEquals(200, it.code) }
+      assertTrue(served.await(5, TimeUnit.SECONDS))
+      assertEquals(listOf(
+        Triple("/start", null, "session=live"),
+        Triple("/away", null, null),
+        Triple("/final", null, null)
+      ), requests)
+      assertEquals(1, cookieReads.size)
+    } finally {
+      server.close()
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regTopic029CrossForumAnonymousAndInvalidMediaStillProceedWithoutCookies() {
+    for (source in listOf("linuxdo", "anonymous", "invalid-source")) {
+      var proceeded = false
+      var readCount = 0
+      val handler = ReadOnlyWebViewCookieHandler {
+        readCount += 1
+        "session=must-not-leak"
+      }
+      val client = OkHttpClient.Builder()
+        .addInterceptor(ForumMediaRequestInterceptor())
+        .addInterceptor(Interceptor { chain ->
+          proceeded = true
+          assertTrue(handler.get(java.net.URI("https://www.nodeseek.com/media.png"), emptyMap()).isEmpty())
+          responseFor(chain.request())
+        })
+        .build()
+
+      client.newCall(Request.Builder()
+        .url("https://www.nodeseek.com/media.png")
+        .header(FORUM_MEDIA_SOURCE_HEADER, source)
+        .build()).execute().close()
+
+      assertTrue(proceeded)
+      assertEquals(0, readCount)
+    }
+  }
+
+  @Test
+  fun regTopic029ManagedMediaCookieReadFailuresFailClosed() {
+    val handler = ReadOnlyWebViewCookieHandler {
+      throw IllegalStateException("cookie reader unavailable")
+    }
+    val client = OkHttpClient.Builder()
+      .addInterceptor(ForumMediaRequestInterceptor())
+      .addInterceptor(Interceptor { chain ->
+        assertTrue(handler.get(java.net.URI("https://www.nodeseek.com/media.png"), emptyMap()).isEmpty())
+        responseFor(chain.request())
+      })
+      .build()
+
+    client.newCall(Request.Builder()
+      .url("https://www.nodeseek.com/media.png")
+      .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+      .build()).execute().close()
+  }
+
+  @Test
+  fun regTopic029UnmarkedRequestsKeepOrdinaryCookieBehavior() {
+    var proceeded = false
+    var readCount = 0
+    val handler = ReadOnlyWebViewCookieHandler {
+      readCount += 1
+      "session=ordinary"
+    }
+    val client = OkHttpClient.Builder()
+      .addInterceptor(ForumMediaRequestInterceptor())
+      .addInterceptor(Interceptor { chain ->
+        proceeded = true
+        assertEquals(
+          mapOf("Cookie" to listOf("session=ordinary")),
+          handler.get(java.net.URI(chain.request().url.toString()), emptyMap())
+        )
+        responseFor(chain.request())
+      })
+      .build()
+
+    client.newCall(Request.Builder()
+      .url("https://www.nodeseek.com/api/account")
+      .build()).execute().close()
+
+    assertTrue(proceeded)
+    assertEquals(1, readCount)
+  }
+
+  @Test
+  fun regTopic037MarkedMediaNeverReadsOrWritesSharedHttpCache() {
+    val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    val requests = mutableListOf<Pair<String, String?>>()
+    val served = CountDownLatch(1)
+    val executor = Executors.newSingleThreadExecutor()
+    executor.execute {
+      try {
+        repeat(4) { index ->
+          server.accept().use { socket ->
+            val reader = socket.getInputStream().bufferedReader()
+            val path = reader.readLine().split(" ")[1]
+            val headers = mutableMapOf<String, String>()
+            while (true) {
+              val line = reader.readLine() ?: break
+              if (line.isEmpty()) break
+              val separator = line.indexOf(':')
+              if (separator > 0) {
+                headers[line.substring(0, separator).lowercase()] = line.substring(separator + 1).trim()
+              }
+            }
+            requests.add(path to headers["cookie"])
+            val body = "network-\${index + 1}"
+            socket.getOutputStream().apply {
+              write((
+                "HTTP/1.1 200 OK\\r\\n" +
+                  "Cache-Control: public, max-age=3600\\r\\n" +
+                  "Content-Length: \${body.toByteArray().size}\\r\\n" +
+                  "Connection: close\\r\\n\\r\\n" +
+                  body
+              ).toByteArray(Charsets.US_ASCII))
+              flush()
+            }
+          }
+        }
+      } finally {
+        served.countDown()
+      }
+    }
+    val sourceForUri: (java.net.URI) -> String? = { uri ->
+      if (uri.host == "media.test") "nodeseek" else null
+    }
+    val cacheDirectory = Files.createTempDirectory("wz-media-cache").toFile()
+    val cache = Cache(cacheDirectory, 1024L * 1024L)
+    val handler = ReadOnlyWebViewCookieHandler(sourceForUri = sourceForUri) { "session=live" }
+    val client = OkHttpClient.Builder()
+      .dns(object : okhttp3.Dns {
+        override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
+      })
+      .cache(cache)
+      .cookieJar(JavaNetCookieJar(handler))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri))
+      .build()
+    fun read(path: String, marker: String?): String {
+      val request = Request.Builder().url("http://media.test:\${server.localPort}$path")
+      if (marker != null) request.header(FORUM_MEDIA_SOURCE_HEADER, marker)
+      return client.newCall(request.build()).execute().use { it.body?.string().orEmpty() }
+    }
+
+    try {
+      assertEquals("network-1", read("/legacy", null))
+      assertEquals("network-2", read("/legacy", "linuxdo"))
+      assertEquals("network-3", read("/fresh", "nodeseek"))
+      assertEquals("network-4", read("/fresh", null))
+      assertTrue(served.await(5, TimeUnit.SECONDS))
+      assertEquals(listOf(
+        "/legacy" to "session=live",
+        "/legacy" to null,
+        "/fresh" to "session=live",
+        "/fresh" to "session=live"
+      ), requests)
+    } finally {
+      cache.close()
+      server.close()
+      executor.shutdownNow()
+      cacheDirectory.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun regTopic032ExpoImageHasAFiniteCallTimeoutWithoutChangingTheBaseClient() {
+    val base = OkHttpClient.Builder().build()
+    val image = expoImageClient(base)
+
+    assertEquals(0, base.callTimeoutMillis)
+    assertEquals(30_000, image.callTimeoutMillis)
+    assertSame(base.cookieJar, image.cookieJar)
+    assertSame(base.proxySelector, image.proxySelector)
+    assertSame(base.dispatcher, image.dispatcher)
+    assertSame(base.connectionPool, image.connectionPool)
+  }
+
   @Test
   fun regAccount033YaohuoAnonymousCookiesDoNotBlockLoginCookieCleanup() {
     assertFalse(hasActiveYaohuoLoginCookie("ASP.NET_SessionId=anonymous; GUID=visitor"))
@@ -1518,12 +1890,14 @@ class NetworkProxyRuntimeTest {
   fun managedClientsShareCookieProxyDispatcherAndConnectionPoolState() {
     val first = NetworkProxyRuntime.configureManagedClient(okhttp3.OkHttpClient.Builder()).build()
     val second = NetworkProxyRuntime.configureManagedClient(okhttp3.OkHttpClient.Builder()).build()
+    val reapplied = NetworkProxyRuntime.configureManagedClient(first.newBuilder()).build()
 
     assertTrue(first.cookieJar is com.facebook.react.modules.network.CookieJarContainer)
     assertSame(first.cookieJar, second.cookieJar)
     assertSame(first.proxySelector, second.proxySelector)
     assertSame(first.dispatcher, second.dispatcher)
     assertSame(first.connectionPool, second.connectionPool)
+    assertEquals(1, reapplied.interceptors.count { it is ForumMediaRequestInterceptor })
   }
 
   @Test
@@ -2084,7 +2458,7 @@ function injectNetworkProxyTestSupport(contents) {
   return next;
 }
 
-module.exports = function withNetworkProxyModule(config) {
+function withNetworkProxyModule(config) {
   config = withAppBuildGradle(config, (config) => {
     config.modResults.contents = injectNetworkProxyTestSupport(injectWebkitDependency(config.modResults.contents));
     return config;
@@ -2095,6 +2469,7 @@ module.exports = function withNetworkProxyModule(config) {
     if (!packageName) {
       return config;
     }
+    patchExpoVideoDataSource(config.modRequest.projectRoot);
     const outputDir = path.join(
       config.modRequest.platformProjectRoot,
       'app',
@@ -2124,4 +2499,7 @@ module.exports = function withNetworkProxyModule(config) {
     config.modResults.contents = injectNetworkProxyInstall(injectNetworkProxyPackage(config.modResults.contents));
     return config;
   });
-};
+}
+
+module.exports = withNetworkProxyModule;
+module.exports.patchExpoVideoDataSource = patchExpoVideoDataSource;

@@ -33,7 +33,7 @@ npm run test:device
 npm run test:device:logged-out
 ```
 
-`npm run verify` 是确定性门禁，统一包含 Vitest、Jest/RNTL UI、文档测试与引用、typecheck、unused 和版本一致性。`npm run test:device` 要求可信安装为 `agent-device >= 0.19.0`，并通过 `WZ_ANDROID_TEST_DEVICE` 和 `WZ_ANDROID_TEST_APK` 明确设备及目标 APK，先比对设备上实际 `base.apk` 的版本与 SHA-256，再执行 `tests/device/` Replay。单个 Replay 使用唯一 session、零重试且不自行执行 `close`，由 test harness 先停止录屏再 cleanup session；普通执行失败由外层继续其他独立文件并最终统一返回，任何录屏隔离或恢复失败则立即停止后续文件。执行前发现既有 manifest、对应 `.tmp`、工具录屏进程或 orphan scratch 时只阻断并保留现场，正式 manifest 即使为空也按文件存在视为占用；执行后仅通过 manifest 中同时匹配本条 session/device 的 session 调用 `record stop`，不终止 daemon、不 wildcard 删除设备文件、不停止 MCP，也不触碰 App 数据或用户文件。只有全部通过才输出 `DEVICE_REPLAY_PASS`。`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它通过 `WZ_ANDROID_SMOKE_DEVICE` 明确唯一登录态设备，覆盖安装后先读取设备 epoch，再在第一次启动前写入包级日志 marker；最终通过 logcat `-T` 只读取该时间之后的有界窗口，先形成 `APK_SANITY`，再把同一 APK 交给 Replay 形成独立的 `DEVICE_REPLAY_PASS`。脚本不会自动选择其他设备，也不会卸载、清数据或清空全局 logcat。`npm run release:android` 仍只上传正式 arm64 APK 和 manifest，开发签名 Smoke APK 不上传。
+`npm run verify` 是确定性门禁，统一包含 Vitest、Jest/RNTL UI、文档测试与引用、typecheck、unused 和版本一致性。`npm run test:device` 要求可信安装为 `agent-device >= 0.19.0`，并通过 `WZ_ANDROID_TEST_DEVICE` 和 `WZ_ANDROID_TEST_APK` 明确设备及目标 APK，先比对设备上实际 `base.apk` 的版本与 SHA-256，再执行 `tests/device/` Replay。单个 Replay 使用唯一 session、零重试且不自行执行 `close`，由 test harness 先停止录屏再 cleanup session；普通执行失败由外层继续其他独立文件并最终统一返回，任何录屏隔离或恢复失败则立即停止后续文件。执行前发现既有 manifest、对应 `.tmp`、工具录屏进程或 orphan scratch 时只阻断并保留现场，正式 manifest 即使为空也按文件存在视为占用；执行后仅通过 manifest 中同时匹配本条 session/device 的 session 调用 `record stop`，不终止 daemon、不 wildcard 删除设备文件、不停止 MCP，也不触碰 App 数据或用户文件。只有全部通过才输出 `DEVICE_REPLAY_PASS`。`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它通过 `WZ_ANDROID_SMOKE_DEVICE` 明确唯一登录态设备，覆盖安装后先读取设备 epoch，再在第一次启动前写入包级日志 marker；最终通过 logcat `-T` 只读取该时间之后的有界窗口，先形成 `APK_SANITY`，再把同一 APK 交给 Replay 形成独立的 `DEVICE_REPLAY_PASS`。脚本不会自动选择其他设备，也不会卸载、清数据或清空全局 logcat。`npm run release:android` 只生成并验证正式 arm64 APK、开发签名 Smoke APK 和 manifest，不执行 Git 或 GitHub 上传；Smoke 通过后再单独发布正式 APK 与 manifest，开发签名 Smoke APK 不上传。
 
 真实未登录旅程不在 App 内模拟。另起一个不含论坛登录数据的 AVD，设置 `WZ_ANDROID_LOGGED_OUT_DEVICE` 和同一待测 `WZ_ANDROID_TEST_APK` 后运行 `npm run test:device:logged-out`；runner 拒绝与 `WZ_ANDROID_TEST_DEVICE` / `WZ_ANDROID_SMOKE_DEVICE` 同名的设备，只执行 `tests/device-logged-out/`。允许在 App 内原站 WebView 完成访客 Cloudflare 验证，但不得登录论坛、克隆主 AVD、卸载或清除主设备数据；因此 NodeSeek 可显示“未登录”或仅访客“已验证”，两者都必须保持网站登录计数为 0 并走未登录搜索。普通 `test:device` 与 Release Smoke 均只执行 `tests/device/` 的六条旅程。
 
@@ -59,9 +59,9 @@ npm run test:device:logged-out
 - NodeSeek、linux.do 和妖火 Cookie，以及小隐寺 User API Key、Client ID、nonce 和待授权状态不进入备份 JSON。
 - 服务器代理配置不进入备份 JSON，只保存在 Android 安全存储。
 - `android/` 是生成目录，不作为长期配置来源。
-- 发布版本号以 `app.json` 和 `package*.json` 为准；每次发布递增 `expo.android.versionCode`。
-- `npm run release:android` 会先执行 `npm run verify`，其中包含 UI 测试、文档检查、TypeScript、严格无用代码检查和版本一致性检查。
-- 当前 release APK 必须使用正式签名；本机 `.env.release.local` 需要提供 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`、`WZ_ANDROID_SMOKE_DEVICE` 和 `WZ_ANDROID_SMOKE_ABI=x86_64`。
+- 发布版本号以 `app.json` 和 `package*.json` 为准；versionName 相对上一正式 tag 变化时必须递增 `expo.android.versionCode`。普通无 tag checkout 只 warning，正式发布缺少完整 history/tags 时失败。
+- `npm run release:android` 会先校验签名环境和上一正式版本，再执行 `npm run verify`；后者包含 UI 测试、文档检查、TypeScript、严格无用代码检查和版本一致性检查。
+- 当前 release APK 必须使用 `app.json` 内置摘要对应的正式签名；本机 `.env.release.local` 需要提供 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`、`WZ_ANDROID_SMOKE_DEVICE` 和 `WZ_ANDROID_SMOKE_ABI=x86_64`。keystore 相对路径按仓库根解析，且必须指向普通文件。
 - `WZ_ANDROID_SMOKE_DEVICE` 可以使用 agent-device 的设备 ID、显示名或 AVD 名；AVD 名与 booted device 显示名仅允许下划线/空白等价，并且归一化后仍必须唯一匹配，不能靠部分名称自动选择设备。
 - 正式 APK 不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`；开发签名只用于不上传的 smoke APK。
 - 通过检查后，发布脚本会执行 `expo prebuild --platform android --clean`，再打包，确保 `app.json` 的版本号和原生配置进入 APK。

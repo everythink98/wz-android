@@ -4,14 +4,13 @@ import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } fro
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { ChevronDown, ChevronRight, ChevronUp, History, Search, SlidersHorizontal, X } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source, Topic } from '../types';
-import type { DiscourseSource } from '../sourceCatalog';
+import { aggregateSearchSources, type DiscourseSource } from '../sourceCatalog';
 import { topicKey } from '../readerData';
 import { sourceLabel } from '../appUtils';
 import { feedSourceItems } from '../feedCategoryRail';
 import {
   buildSearchListItems,
   searchGroupEmptyText,
-  searchGroupOutcomeKind,
   type SearchGroup,
   type SearchListItem
 } from '../searchListItems';
@@ -1241,9 +1240,11 @@ export const SearchScreen = memo(function SearchScreen({
     const pageStatusIndex = insertionIndex >= 0 ? insertionIndex + 1 : items.length;
     return [...items.slice(0, pageStatusIndex), pageStatus, ...items.slice(pageStatusIndex)];
   }, [completedPagination, paginationContext, searchSource, showSearchGroups, visibleSearchGroups]);
-  const searchGroupsSettled = visibleSearchGroups.length > 0 && visibleSearchGroups.every((group) => (
-    group.settled !== false && !group.loading && !group.loadingMore
-  ));
+  const expectedSearchSources = searchSource === 'all' ? aggregateSearchSources : [searchSource];
+  const searchGroupsSettled = expectedSearchSources.every((source) => {
+    const group = visibleSearchGroups.find((candidate) => candidate.source === source);
+    return Boolean(group && group.settled !== false && !group.loading && !group.loadingMore);
+  });
   const completedSearchAccessibilityLabel = !searchGroupsSettled
     ? '搜索结果，等待来源结算'
     : visibleSearchGroups.some((group) => group.items.length > 0)
@@ -1521,10 +1522,6 @@ export const SearchScreen = memo(function SearchScreen({
           onToggle={onToggleLinuxDoAiSearch}
         />
       ) : null}
-      {showSearchGroups ? visibleSearchGroups.map((group) => {
-        const outcome = searchGroupOutcomeKind(group);
-        return outcome ? <View key={group.source} collapsable={false} testID={`search-outcome-${outcome}-${group.source}`} /> : null;
-      }) : null}
       {showIdleRecentSearches ? (
         <View style={styles.stack}>
           <Text style={styles.meta}>最近搜索</Text>
@@ -1576,12 +1573,10 @@ export const SearchScreen = memo(function SearchScreen({
     searchFilterEntrySummary,
     searchSessionNotices,
     searchSource,
-    showSearchGroups,
     showIdleRecentSearches,
     styles,
     submitSearch,
-    theme,
-    visibleSearchGroups
+    theme
   ]);
 
   return (
@@ -1591,7 +1586,9 @@ export const SearchScreen = memo(function SearchScreen({
         accessibilityLabel={hasSubmittedQuery && !busy ? completedSearchAccessibilityLabel : '搜索结果'}
         accessibilityLiveRegion={hasSubmittedQuery ? 'polite' : 'none'}
         accessibilityState={{ busy: hasSubmittedQuery && (busy || !searchGroupsSettled) }}
-        testID={hasSubmittedQuery && !busy && searchGroupsSettled ? 'search-complete' : undefined}
+        testID={hasSubmittedQuery && !busy && searchGroupsSettled
+          ? searchSource === 'all' ? 'search-all-sources-settled' : 'search-complete'
+          : undefined}
         style={styles.content}
         contentContainerStyle={styles.contentInner}
         data={listItems}

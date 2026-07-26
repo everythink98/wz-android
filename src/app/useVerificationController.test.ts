@@ -31,7 +31,11 @@ vi.mock('../linuxdoSession', () => ({
   sanitizeLinuxDoUserAgent: (userAgent: string) => userAgent.trim()
 }));
 
-import type { SiteSessionEvent, SiteSessionState } from '../siteSessionState';
+import {
+  reduceSiteSessionState,
+  type SiteSessionEvent,
+  type SiteSessionState
+} from '../siteSessionState';
 import type { AccountReconcileResult } from './useAccountStatusController';
 import { useVerificationController } from './useVerificationController';
 
@@ -201,7 +205,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(setLinuxDoWebViewUserAgent).not.toHaveBeenCalled();
   });
 
-  it('uses the canonical Account verifier as the only manual identity proof and authoritatively closes', async () => {
+  it('[REG-ACCOUNT-039] uses the canonical Account verifier as the only manual identity proof and authoritatively closes', async () => {
     const {
       controller,
       notify,
@@ -218,6 +222,13 @@ describe('linux.do visible verification coordinator', () => {
     expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({
       type: 'session-updated'
     }));
+    expect(updateLinuxDoSession).toHaveBeenCalledWith({
+      type: 'verification-succeeded',
+      loggedIn: true,
+      currentUser: loggedInSession.currentUser,
+      cookieSummary: loggedInSession.cookieSummary,
+      at: expect.any(String)
+    });
     expect(notify).toHaveBeenCalledWith('linux.do 登录身份已确认。');
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
@@ -272,7 +283,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
-  it('reuses the authoritative identity result when an exact read recovery completes', async () => {
+  it('[REG-ACCOUNT-039] reuses the authoritative identity result when an exact read recovery completes', async () => {
     const resume = vi.fn(async () => 'completed' as const);
     const {
       controller,
@@ -294,8 +305,14 @@ describe('linux.do visible verification coordinator', () => {
       resume.mock.invocationCallOrder[0]
     );
     expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'verification-succeeded'
+      type: 'verification-succeeded',
+      loggedIn: true,
+      currentUser: loggedInSession.currentUser,
+      cookieSummary: loggedInSession.cookieSummary
     }));
+    expect(updateLinuxDoSession.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      resume.mock.invocationCallOrder[0]
+    );
     expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
       authoritativeResult: true,
       reason: 'authoritative-recovery'
@@ -364,7 +381,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
-  it('reports a recovery exception after the panel has already closed', async () => {
+  it('[REG-ACCOUNT-039] reports a recovery exception after the panel has already closed', async () => {
     const resume = vi.fn(async () => {
       throw new Error('resume exploded');
     });
@@ -391,6 +408,15 @@ describe('linux.do visible verification coordinator', () => {
     expect(updateLinuxDoSession).toHaveBeenCalledWith({
       type: 'check-failed',
       message: '登录身份已确认，但原页面恢复失败：resume exploded'
+    });
+    const finalSession = updateLinuxDoSession.mock.calls.reduce(
+      (state, [event]) => reduceSiteSessionState(state, event),
+      anonymousSession
+    );
+    expect(finalSession).toMatchObject({
+      status: 'logged-in',
+      currentUser: loggedInSession.currentUser,
+      lastError: '登录身份已确认，但原页面恢复失败：resume exploded'
     });
   });
 

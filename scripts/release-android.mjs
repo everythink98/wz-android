@@ -2,7 +2,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import apkSigning from './apk-signing.cjs';
+
+const { singleApkSignerSha256 } = apkSigning;
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidDir = path.join(rootDir, 'android');
@@ -119,9 +122,9 @@ function verifyReleaseApkSignature(apkPath) {
     process.exit(1);
   }
   const output = runCapture('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', apkPath]);
-  const signerSha256 = /(?:Signer #1 certificate|V\d+(?:\.\d+)? Signer: certificate) SHA-256 digest:\s*([a-fA-F0-9:]+)/.exec(output)?.[1]?.replace(/:/g, '').toLowerCase();
+  const signerSha256 = singleApkSignerSha256(output);
   if (!signerSha256 || !/^[a-f0-9]{64}$/.test(signerSha256)) {
-    console.error('无法从 apksigner 输出读取签名 SHA-256。');
+    console.error('无法从 apksigner 输出读取唯一 APK signer 的 SHA-256。');
     process.exit(1);
   }
   return signerSha256;
@@ -216,6 +219,19 @@ function verifyReleaseSigningEnv() {
     console.error(`正式发布缺少签名环境变量：${missing.join(', ')}`);
     process.exit(1);
   }
+  const keystorePath = path.resolve(rootDir, process.env.WZ_ANDROID_KEYSTORE_PATH);
+  let keystoreIsFile = false;
+  try {
+    keystoreIsFile = statSync(keystorePath).isFile();
+  } catch {
+    console.error(`keystore 不存在：${keystorePath}`);
+    process.exit(1);
+  }
+  if (!keystoreIsFile) {
+    console.error(`keystore 不是普通文件：${keystorePath}`);
+    process.exit(1);
+  }
+  process.env.WZ_ANDROID_KEYSTORE_PATH = keystorePath;
   const debugDefaults = [];
   if (process.env.WZ_ANDROID_KEY_ALIAS === 'androiddebugkey') {
     debugDefaults.push('WZ_ANDROID_KEY_ALIAS=androiddebugkey');
@@ -245,6 +261,7 @@ function verifySmokeEnv() {
 
 loadReleaseEnvFile();
 verifyReleaseSigningEnv();
+run('node', ['scripts/check-version.mjs', '--require-previous-release']);
 verifySmokeEnv();
 const smokeApkAbi = requestedSmokeApkAbi(process.env.WZ_ANDROID_SMOKE_ABI);
 const releaseApkAbis = [...new Set(['arm64-v8a', smokeApkAbi])];

@@ -1,75 +1,40 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
 import { Maximize2, Play } from 'lucide-react-native';
 import type { ReaderTheme } from '../theme';
-import { readMediaCookieHeader } from '../managedCookies';
+import type { ForumMediaRequestContext } from '../mediaRequestContext';
+import { imageRequestHeadersForUrl } from '../htmlImages';
 
 export function ForumContentVideo({
   headers,
-  mediaSessionIdentity,
+  mediaContext,
   src,
   theme
 }: {
   headers?: Record<string, string>;
-  mediaSessionIdentity: string;
+  mediaContext: ForumMediaRequestContext;
   src: string;
   theme: ReaderTheme;
 }) {
   const videoRef = useRef<VideoView>(null);
-  const [cookieState, setCookieState] = useState<
-    | { identity: string; status: 'failed'; url: string }
-    | { identity: string; status: 'ready'; url: string; value: string }
-    | null
-  >(null);
-  const cookieReady = cookieState?.identity === mediaSessionIdentity
-    && cookieState.url === src
-    && cookieState.status === 'ready';
-  const cookieFailed = cookieState?.identity === mediaSessionIdentity
-    && cookieState.url === src
-    && cookieState.status === 'failed';
-  const cookieHeader = cookieReady ? cookieState.value : '';
-  const source = useMemo<VideoSource>(() => cookieReady ? ({
+  const requestHeaders = useMemo(() => ({
+    ...(imageRequestHeadersForUrl(src, { mediaContext }) || {}),
+    ...(headers || {})
+  }), [headers, mediaContext, src]);
+  const source = useMemo<VideoSource>(() => ({
     uri: src,
-    headers: {
-      ...(headers || {}),
-      ...(cookieHeader ? { Cookie: cookieHeader } : {})
-    },
+    ...(Object.keys(requestHeaders).length ? { headers: requestHeaders } : {}),
     contentType: 'progressive'
-  }) : null, [cookieHeader, cookieReady, headers, src]);
+  }), [mediaContext.sessionIdentity, requestHeaders, src]);
   const player = useVideoPlayer(source);
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
-  useEffect(() => {
-    let active = true;
-    setCookieState(null);
-    void readMediaCookieHeader(src).then(
-      (value) => {
-        if (active) {
-          setCookieState({
-            identity: mediaSessionIdentity,
-            status: 'ready',
-            url: src,
-            value
-          });
-        }
-      },
-      () => {
-        if (active) {
-          setCookieState({
-            identity: mediaSessionIdentity,
-            status: 'failed',
-            url: src
-          });
-        }
-      }
-    );
-    return () => {
-      active = false;
-    };
-  }, [mediaSessionIdentity, src]);
+  const status = useEvent(player, 'statusChange', { status: player.status }).status;
+  const loadFailed = status === 'error';
+  const loading = status === 'idle' || status === 'loading';
   const togglePlayback = useCallback(() => {
-    if (!cookieReady) {
+    if (loadFailed) {
       return;
     }
     if (isPlaying) {
@@ -77,45 +42,44 @@ export function ForumContentVideo({
       return;
     }
     player.play();
-  }, [cookieReady, isPlaying, player]);
+  }, [isPlaying, loadFailed, player]);
   const enterFullscreen = useCallback((event: GestureResponderEvent) => {
     event.stopPropagation();
     void videoRef.current?.enterFullscreen();
   }, []);
   return (
     <View style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }]}>
-      {cookieReady ? (
-        <VideoView
-          allowsFullscreen
-          contentFit="contain"
-          nativeControls={false}
-          player={player}
-          ref={videoRef}
-          style={styles.video}
-          surfaceType="textureView"
-        />
-      ) : (
+      <VideoView
+        allowsFullscreen
+        contentFit="contain"
+        nativeControls={false}
+        player={player}
+        ref={videoRef}
+        style={styles.video}
+        surfaceType="textureView"
+      />
+      {loading || loadFailed ? (
         <View style={styles.videoState}>
-          {cookieFailed ? (
+          {loadFailed ? (
             <Text style={{ color: theme.muted }}>视频加载失败</Text>
           ) : (
             <ActivityIndicator color={theme.primary} />
           )}
         </View>
-      )}
+      ) : null}
       <Pressable
         accessibilityLabel={isPlaying ? '暂停视频' : '播放视频'}
         accessibilityRole="button"
         onPress={togglePlayback}
         style={styles.touchLayer}
       >
-        {cookieReady && !isPlaying ? (
+        {!loadFailed && !isPlaying ? (
           <View style={[styles.centerButton, { backgroundColor: theme.surface }]}>
             <Play size={34} color={theme.ink} fill={theme.ink} strokeWidth={1.8} />
           </View>
         ) : null}
       </Pressable>
-      {cookieReady ? (
+      {!loadFailed ? (
         <Pressable
           accessibilityLabel="全屏播放"
           accessibilityRole="button"

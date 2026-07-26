@@ -40,7 +40,17 @@ jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return { ChevronLeft: Icon, ExternalLink: Icon, RefreshCw: Icon, Star: Icon };
 });
-jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
+jest.mock('../../src/components/Avatar', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Text: NativeText } = require('react-native') as typeof import('react-native');
+  return {
+    Avatar: ({ contentSource }: { contentSource?: string }) => ReactModule.createElement(
+      NativeText,
+      { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
+      '头像'
+    )
+  };
+});
 jest.mock('../../src/components/TopicCard', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
@@ -130,6 +140,12 @@ describe('User screen behavior', () => {
     expect(view.getByLabelText('正在加载...').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(view.getByLabelText('正在加载...'));
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the profile avatar bound to the profile source', async () => {
+    const view = await render(userScreen());
+
+    expect(view.getByLabelText('avatar source linuxdo')).toBeTruthy();
   });
 
   it('keeps a failed user source visible and allows refresh', async () => {

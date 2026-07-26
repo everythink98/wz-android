@@ -141,6 +141,13 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
     };
   }
   if (event.type === 'verification-required') {
+    if (state.status === 'logged-in') {
+      return {
+        ...state,
+        isVerifying: false,
+        ...(event.message ? { lastError: event.message } : {})
+      };
+    }
     return {
       ...state,
       status: 'verification-required',
@@ -150,6 +157,12 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
     };
   }
   if (event.type === 'verification-started') {
+    if (state.status === 'logged-in') {
+      return {
+        ...state,
+        isVerifying: true
+      };
+    }
     return {
       ...state,
       status: 'verifying',

@@ -217,6 +217,7 @@ export function useFeedController({
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const handledFeedErrorRef = useRef<unknown>(undefined);
+  const handledPartialErrorsRef = useRef<unknown>(undefined);
   const feedSourceIdentityPending = feedSource !== 'all'
     && feedSource !== 'v2ex'
     && identityBarriers.includes(feedSource);
@@ -492,6 +493,10 @@ export function useFeedController({
     if (!Object.keys(errors).length) {
       return;
     }
+    if (handledPartialErrorsRef.current === errors) {
+      return;
+    }
+    handledPartialErrorsRef.current = errors;
     const nodeSeekMessage = nodeSeekVerificationNavigationMessage(feedSource, errors);
     if (nodeSeekMessage) {
       showNodeSeekVerification(nodeSeekMessage);

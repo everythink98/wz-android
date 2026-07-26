@@ -14,7 +14,7 @@ import {
 import appConfig from '../app.json';
 
 const apkSha256 = 'a'.repeat(64);
-const signerSha256 = 'b'.repeat(64);
+const signerSha256 = appConfig.expo.extra.releaseSignerSha256;
 const [major, minor, patch] = appConfig.expo.version.split('.').map(Number);
 const newerVersion = `${major}.${minor}.${patch + 1}`;
 const newerTag = `v${newerVersion}`;
@@ -111,6 +111,13 @@ describe('app update release parsing', () => {
     expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
       ...manifest(),
       signerSha256: 'not-a-sha'
+    })).toThrow('Release manifest 内容不可信。');
+  });
+
+  it('[REG-UPDATE-003] rejects a well-formed manifest signer that differs from the built-in release signer', () => {
+    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
+      ...manifest(),
+      signerSha256: 'b'.repeat(64)
     })).toThrow('Release manifest 内容不可信。');
   });
 

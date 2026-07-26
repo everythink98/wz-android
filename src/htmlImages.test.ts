@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { sanitizeContentHtml } from './localHtml';
 
 vi.mock('./androidWebViewUserAgent', () => ({
   DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
@@ -20,10 +21,51 @@ import {
   visibleImagePreviewThumbnails
 } from './htmlImages';
 
+const publicMediaContext = {
+  contentSource: null,
+  sessionIdentity: 'public:0'
+} as const;
+
+const nodeSeekMediaContext = {
+  contentSource: 'nodeseek',
+  sessionIdentity: 'nodeseek:4'
+} as const;
+
 describe('Android HTML image preview helpers', () => {
+  it('[REG-TOPIC-030] does not reactivate an unsafe lazy image URL after sanitization', () => {
+    const sanitized = sanitizeContentHtml(
+      '<img src="/safe.png" data-original="javascript:x.png">',
+      'https://linux.do/t/example/1'
+    );
+
+    expect(flowInlineImagesInMixedParagraphs(sanitized)).toContain('src="https://linux.do/safe.png"');
+  });
+
+  it('[REG-TOPIC-030] keeps unsafe lazy candidates out of the active preview catalog', () => {
+    const rendered = flowInlineImagesInMixedParagraphs(sanitizeContentHtml(
+      '<img src="/safe.png" data-original="javascript:x.png">',
+      'https://linux.do/t/example/1'
+    ));
+
+    expect(createImagePreviewCatalog([rendered]).urls).toEqual(['https://linux.do/safe.png']);
+  });
+
+  it('[REG-TOPIC-030] refuses an unsafe or relative tapped URL as an active preview request', () => {
+    const catalog = createImagePreviewCatalog([]);
+
+    expect(imagePreviewListFromCatalog(catalog, 'javascript:x.png', 'linuxdo').urls).toEqual([]);
+    expect(imagePreviewListFromCatalog(catalog, '/api/image-proxy?id=1', 'linuxdo').urls).toEqual([]);
+  });
+
+  it('[REG-TOPIC-033] decodes parsed image attributes exactly once', () => {
+    expect(extractImageUrlsFromHtml(
+      '<img src="https://cdn.example.com/photo.png?label=&amp;lt;">'
+    )).toEqual(['https://cdn.example.com/photo.png?label=&lt;']);
+  });
+
   it('extracts and decodes image URLs from rendered HTML', () => {
-    expect(extractImageUrlsFromHtml('<p><img src="/api/image-proxy?url=https%3A%2F%2Fexample.com%2Fa.jpg&amp;w=1"><img data-src="x"><img src="https://cdn.example.com/b.png"></p>')).toEqual([
-      '/api/image-proxy?url=https%3A%2F%2Fexample.com%2Fa.jpg&w=1',
+    expect(extractImageUrlsFromHtml('<p><img src="https://legacy.example.com/api/image-proxy?url=https%3A%2F%2Fexample.com%2Fa.jpg&amp;w=1"><img data-src="x"><img src="https://cdn.example.com/b.png"></p>')).toEqual([
+      'https://legacy.example.com/api/image-proxy?url=https%3A%2F%2Fexample.com%2Fa.jpg&w=1',
       'https://cdn.example.com/b.png'
     ]);
   });
@@ -32,7 +74,8 @@ describe('Android HTML image preview helpers', () => {
     const html = '<div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img src="https://cdn.example.com/optimized.png" alt="photo"></a></div>';
 
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/original.png']);
-    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://cdn.example.com/optimized.png')).toEqual({
+    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://cdn.example.com/optimized.png', null)).toEqual({
+      contentSource: null,
       urls: ['https://cdn.example.com/original.png'],
       index: 0
     });
@@ -101,67 +144,99 @@ describe('Android HTML image preview helpers', () => {
   });
 
   it('adds browser-like headers for known forum image hosts', () => {
-    expect(imageRequestHeadersForUrl('https://i.111666.best/image/a.webp')).toEqual({
+    expect(imageRequestHeadersForUrl('https://i.111666.best/image/a.webp', { mediaContext: nodeSeekMediaContext })).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-      Referer: 'https://i.111666.best'
+      Referer: 'https://i.111666.best',
+      'X-WZ-Forum-Media-Source': 'nodeseek'
     });
-    expect(imageSourceFromUrl('https://i.111666.best/image/a.webp')).toEqual({
+    expect(imageSourceFromUrl('https://i.111666.best/image/a.webp', { mediaContext: nodeSeekMediaContext })).toEqual({
       uri: 'https://i.111666.best/image/a.webp',
+      cacheKey: 'nodeseek:4:https://i.111666.best/image/a.webp',
       headers: {
         Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-        Referer: 'https://i.111666.best'
+        Referer: 'https://i.111666.best',
+        'X-WZ-Forum-Media-Source': 'nodeseek'
       }
     });
-    expect(imageRequestHeadersForUrl('https://evil111666.best/image/a.webp')).toBeUndefined();
-    expect(imageRequestHeadersForUrl('data:image/png;base64,abc')).toBeUndefined();
+    expect(imageRequestHeadersForUrl('https://evil111666.best/image/a.webp', { mediaContext: nodeSeekMediaContext })).toEqual({
+      'X-WZ-Forum-Media-Source': 'nodeseek'
+    });
+    expect(imageRequestHeadersForUrl('data:image/png;base64,abc', { mediaContext: nodeSeekMediaContext })).toBeUndefined();
+  });
+
+  it('[REG-TOPIC-029] marks every remote media request with its owning forum source', () => {
+    expect(imageRequestHeadersForUrl('https://cdn.example.com/public.png', {
+      mediaContext: {
+        contentSource: 'linuxdo',
+        sessionIdentity: 'linuxdo:4'
+      }
+    })).toEqual({
+      'X-WZ-Forum-Media-Source': 'linuxdo'
+    });
   });
 
   it('[REG-ACCOUNT-031] namespaces Expo image cache entries by session epoch', () => {
     const url = 'https://www.nodeseek.com/uploads/private.png';
 
-    expect(imageSourceFromUrl(url, undefined, 'Node UA', 'nodeseek:4')).toMatchObject({
+    expect(imageSourceFromUrl(url, {
+      mediaContext: { contentSource: 'nodeseek', sessionIdentity: 'nodeseek:4' },
+      nodeSeekUserAgent: 'Node UA'
+    })).toMatchObject({
       cacheKey: `nodeseek:4:${url}`,
       uri: url
     });
-    expect(imageSourceFromUrl(url, undefined, 'Node UA', 'nodeseek:5')).toMatchObject({
+    expect(imageSourceFromUrl(url, {
+      mediaContext: { contentSource: 'nodeseek', sessionIdentity: 'nodeseek:5' },
+      nodeSeekUserAgent: 'Node UA'
+    })).toMatchObject({
       cacheKey: `nodeseek:5:${url}`,
       uri: url
     });
   });
 
   it('keeps Imgur topic images on their original URL', () => {
-    expect(imageSourceFromUrl('https://i.imgur.com/hKWwFrX.jpeg')).toEqual({
-      uri: 'https://i.imgur.com/hKWwFrX.jpeg'
+    expect(imageSourceFromUrl('https://i.imgur.com/hKWwFrX.jpeg', { mediaContext: publicMediaContext })).toEqual({
+      uri: 'https://i.imgur.com/hKWwFrX.jpeg',
+      cacheKey: 'public:0:https://i.imgur.com/hKWwFrX.jpeg',
+      headers: {
+        'X-WZ-Forum-Media-Source': 'anonymous'
+      }
     });
   });
 
   it('adds a browser user agent for NodeSeek avatar images', () => {
-    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/avatar/48872.png')).toEqual({
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/avatar/48872.png', { mediaContext: nodeSeekMediaContext })).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       Referer: 'https://www.nodeseek.com',
-      'User-Agent': 'native-provider-user-agent'
+      'User-Agent': 'native-provider-user-agent',
+      'X-WZ-Forum-Media-Source': 'nodeseek'
     });
   });
 
   it('does not send NodeSeek login cookies to public static sticker media', () => {
-    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/static/image/sticker/emoji/00.webm')).toEqual({
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/static/image/sticker/emoji/00.webm', { mediaContext: nodeSeekMediaContext })).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       Referer: 'https://www.nodeseek.com',
-      'User-Agent': 'native-provider-user-agent'
+      'User-Agent': 'native-provider-user-agent',
+      'X-WZ-Forum-Media-Source': 'nodeseek'
     });
   });
 
   it('[REG-ACCOUNT-029] leaves NodeSeek media Cookie attachment to the native read-only jar', () => {
-    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', 'WZ-Media-Test')).not.toHaveProperty('Cookie');
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', {
+      mediaContext: nodeSeekMediaContext,
+      nodeSeekUserAgent: 'WZ-Media-Test'
+    })).not.toHaveProperty('Cookie');
   });
 
   it('builds a de-duplicated preview list and keeps tapped image position', () => {
     const result = imagePreviewListFromCatalog(createImagePreviewCatalog([
         '<img src="https://cdn.example.com/a.jpg">',
         '<img src="https://cdn.example.com/b.png"><img src="https://cdn.example.com/a.jpg">'
-      ]), 'https://cdn.example.com/b.png');
+      ]), 'https://cdn.example.com/b.png', 'linuxdo');
 
     expect(result).toEqual({
+      contentSource: 'linuxdo',
       urls: ['https://cdn.example.com/a.jpg', 'https://cdn.example.com/b.png'],
       index: 1
     });
@@ -178,7 +253,8 @@ describe('Android HTML image preview helpers', () => {
     const html = '<p>hello <img class="emoji" src="https://linux.do/images/emoji/twitter/slight_smile.png?v=12" alt="🙂" title=":slight_smile:" width="20" height="20"><img src="https://cdn.example.com/photo.jpg"></p>';
 
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/photo.jpg']);
-    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://cdn.example.com/photo.jpg')).toEqual({
+    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://cdn.example.com/photo.jpg', null)).toEqual({
+      contentSource: null,
       urls: ['https://cdn.example.com/photo.jpg'],
       index: 0
     });
@@ -194,7 +270,8 @@ describe('Android HTML image preview helpers', () => {
     const html = '<p>去年是机房火灾 <img src="https://i.imgur.com/agAJ0Rd.png" class="thumbnail" width="20" height="20"></p><p><img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912"></p>';
 
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://i.imgur.com/agAJ0Rd.png', 'https://i.imgur.com/2ejt2Q6.png']);
-    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://i.imgur.com/2ejt2Q6.png')).toEqual({
+    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://i.imgur.com/2ejt2Q6.png', null)).toEqual({
+      contentSource: null,
       urls: ['https://i.imgur.com/agAJ0Rd.png', 'https://i.imgur.com/2ejt2Q6.png'],
       index: 1
     });
@@ -583,9 +660,10 @@ describe('Android HTML image preview helpers', () => {
     const result = imagePreviewListFromCatalog(createImagePreviewCatalog([
         '<p><img src="https://www.nodeseek.com/api/attachments/123" alt="photo"></p>',
         '<p><img class="emoji" src="https://www.nodeseek.com/images/emoji/smile.png" alt=":smile:" width="20" height="20"></p>'
-      ]), 'https://www.nodeseek.com/api/attachments/123');
+      ]), 'https://www.nodeseek.com/api/attachments/123', 'nodeseek');
 
     expect(result).toEqual({
+      contentSource: 'nodeseek',
       urls: ['https://www.nodeseek.com/api/attachments/123'],
       index: 0
     });

@@ -547,7 +547,7 @@ describe('Topic reply filters', () => {
         contentHtml: `<p>后分页采纳答案正文</p>${discoursePollPlaceholder('accepted-answer-poll')}`,
         floor: acceptedFloor,
         polls: [{ ...topicPoll, name: 'accepted-answer-poll' }],
-        quotedAuthors: { 7: 'quoted-user' },
+        quotedAuthors: { 7: { label: 'quoted-user', username: 'quoted-user' } },
         quotedFloors: [7],
         quotedPreviews: { 7: '采纳答案引用摘要' }
       };

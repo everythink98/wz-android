@@ -123,7 +123,7 @@
 
 `REG-ACCOUNT-028` 补充空 Cookie 验收：`readManagedCookieHeader(exactUrl)` 的 `ok(header='')` 是合法无 Cookie 输入，`unsupported/error` 是读取故障，两者不得混淆或回退旧 SecureStore header。空值仍交给三态 verifier，由协议响应决定 anonymous/unknown；读取故障保留上次可信身份并建立 barrier，不得发布 `cleared`。用户明确清除的原生事务只有回读确认后才发布 `cleared`。
 
-`REG-ACCOUNT-029` 补充准确 URL 只读 Cookie bridge 验收：NodeSeek、linux.do、妖火的原生请求必须在发送时调用 `CookieManager.getCookie(准确完整 URL)`，未知或未来新增 Cookie 不得被白名单过滤，Domain、Path、Secure 与重定向选择交给平台；非 HTTPS、带 userinfo 或非受管域不得读取。合法空值按匿名请求发送，读取异常明确失败且不得回退 SecureStore 旧 header。三个站点的 source/action/media 请求不得自行设置 `Cookie` header；CSRF、sid、touserid 等非 Cookie 协议字段继续显式携带。RN Networking、Fresco 与 Expo Image 必须复用同一个 managed client；Expo Video 必须在建立 source 前读取准确媒体 URL 的实时值且不得持久化，读取异常时不得匿名发起视频请求。fresh prebuild 后运行生成的 Kotlin 行为测试与 Release Kotlin compile，源码字符串测试只能固定生成接线，不能替代原生行为。
+`REG-ACCOUNT-029` 补充原生只读 Cookie 验收：NodeSeek、linux.do、妖火的普通 source/action 请求必须在发送时由 `CookieManager.getCookie(准确完整 URL)` 选择 Cookie，未知或未来新增 Cookie 不得被白名单过滤，Domain、Path、Secure 与重定向选择交给平台；非 HTTPS、带 userinfo 或非受管域不得读取。普通请求的合法空值按无 Cookie 发送，读取异常明确失败且不得回退 SecureStore 旧 header。媒体不再使用 JS Cookie bridge：所有 HTTP(S) 媒体只携带内部内容来源 marker，原生在发网前移除 marker 和任何 JS `Cookie` header；只有首跳目标属于内容来源时才可实时读取 Cookie，跨来源、未受管、无效 marker 或媒体 Cookie 读取异常都必须继续匿名加载；重定向一旦离开该来源就永久降权，跳回也不恢复 Cookie。CSRF、sid、touserid 等非 Cookie 协议字段继续显式携带。RN Networking、Fresco、Expo Image 与 Expo Video 必须复用项目配置的 managed client，Expo Video source 只带 marker，不等待或持久化 Cookie。这一媒体契约由 `REG-TOPIC-029` 取代旧的 JS Expo Video Cookie bridge 方案。fresh prebuild 后运行生成的 Kotlin 行为测试与 Release Kotlin compile，源码字符串测试只能固定生成接线，不能替代原生行为。
 
 `REG-ACCOUNT-030` 补充 RN 容器兼容验收：安装到 `OkHttpClientProvider` 的共享 CookieJar 必须实现 `CookieJarContainer`，否则 Fresco 初始化会在 `MainActivity` 启动时 ClassCastException。容器的 `setCookieJar`/`removeCookieJar` 必须保持 App 只读 delegate，不得接受 RN/Fresco 提供的默认 `ForwardingCookieHandler`；生成 Kotlin 测试同时固定类型契约与拒绝替换行为，设备覆盖安装后必须无对应 RedBox。
 
@@ -244,7 +244,7 @@ npm run typecheck
 2. 手动输入关键词后点击 App 内提交按钮；清空输入后点击最近搜索词必须立即发起同一关键词请求，不得要求再次提交。
 3. 在 `全部` 检查五站固定预览和“查看全部”，再分别检查 `V2EX`、`linux.do`、`NodeSeek`、`妖火`、`小隐寺` 的连续单站列表。
 4. 每个来源记录结果数、首条标题、错误文案和是否可继续加载；`全部` 每站最多显示 2 条且不得出现分页入口。
-5. tracked Replay 只提交一次聚合搜索，逐来源等待当前请求的 `data/empty/partial/error/auth` 之一，并在清空关键词后检查来源和筛选 UI；不打开动态首条。Agent Live 才尝试打开每个受影响来源的一条真实结果，再返回搜索页确认关键词、来源和筛选仍保留；没有结果或外部阻碍只影响该来源的数据轴。
+5. tracked Replay 只提交一次聚合搜索，等待由 `aggregateSearchSources` 全部结算后挂在既有列表上的 `search-all-sources-settled`，并在清空关键词后检查来源和筛选 UI；不得为自动化向布局插入空节点，也不打开动态首条。Agent Live 才逐来源记录 `data/empty/partial/error/auth` 并尝试打开有真实结果的来源，再返回搜索页确认关键词、来源和筛选仍保留；没有结果或外部阻碍只影响该来源的数据轴。
 6. 打开搜索筛选，确认筛选项存在；非必要不改变筛选。
 7. 若点到 `linux.do 老帖` 的外部搜索入口，记录为外部跳转检查，不作为登录 / 验证检查。
 

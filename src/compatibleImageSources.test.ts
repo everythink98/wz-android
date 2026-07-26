@@ -23,6 +23,22 @@ describe('compatible remote image sources', () => {
     });
   });
 
+  it('[REG-TOPIC-034] strips link wrappers from a large SVG without slicing the remaining document per character', () => {
+    const payload = 'x'.repeat(1024 * 1024 - 128);
+    const raw = `<svg>${payload}<a href="https://example.com"><text>linked</text></a></svg>`;
+    let sliceCount = 0;
+    const counted = new String(raw) as String & { slice: typeof String.prototype.slice };
+    counted.slice = (start?: number, end?: number) => {
+      sliceCount += 1;
+      return raw.slice(start, end);
+    };
+
+    expect(stripSvgLinkElements(counted as unknown as string)).toBe(
+      `<svg>${payload}<text>linked</text></svg>`
+    );
+    expect(sliceCount).toBeLessThan(10);
+  });
+
   it('REG-TOPIC-018 recovers and reuses an SVG returned by a png URL after native decoding fails', async () => {
     const source = {
       headers: { Referer: 'https://forum.example.com', Cookie: 'session=test-only' },

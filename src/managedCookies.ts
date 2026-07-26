@@ -71,31 +71,6 @@ export async function readManagedCookieHeader(
   }
 }
 
-export async function readExactManagedCookieHeader(
-  exactUrl: string,
-  module?: ManagedCookieNativeModule
-) {
-  const result = await readManagedCookieHeader(
-    exactUrl,
-    module === undefined ? nativeManagedCookieModule() : module
-  );
-  if (result.status === 'ok') {
-    return result.header;
-  }
-  throw new Error(result.status === 'unsupported'
-    ? '原生 Cookie 读取能力不可用'
-    : result.message);
-}
-
-export async function readMediaCookieHeader(
-  exactUrl: string,
-  module?: ManagedCookieNativeModule
-) {
-  return managedCookieSourceForUrl(exactUrl)
-    ? readExactManagedCookieHeader(exactUrl, module)
-    : '';
-}
-
 export async function clearManagedLoginCookies(
   source: ManagedLoginCookieSource,
   module: ManagedCookieNativeModule | undefined = nativeManagedCookieModule()

@@ -1,7 +1,22 @@
-import { escapeQuotedHtmlTagDelimiters, FORUM_VIDEO_STICKER_TAG, isAllowedDataImageUrl, parseHtml, textContentFromHtml } from './localHtml';
+import { decodeHtml, escapeQuotedHtmlTagDelimiters, FORUM_VIDEO_STICKER_TAG, isAllowedDataImageUrl, parseHtml, textContentFromHtml } from './localHtml';
+import {
+  FORUM_MEDIA_SOURCE_HEADER,
+  forumMediaSourceHeaderValue,
+  type ForumMediaRequestContext
+} from './mediaRequestContext';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekSession';
 
+export type ImageRequestOptions = {
+  mediaContext: ForumMediaRequestContext;
+  nodeSeekUserAgent?: string;
+};
+
+export type ImageSourceOptions = ImageRequestOptions & {
+  baseSource?: unknown;
+};
+
 export interface ImagePreviewList {
+  contentSource: ForumMediaRequestContext['contentSource'];
   urls: string[];
   index: number;
 }
@@ -63,7 +78,7 @@ function extractImagePreviewEntriesFromHtml(html: string): ImagePreviewEntry[] {
 }
 
 export function isPreviewableImageUrl(url: unknown): boolean {
-  const clean = decodeHtmlAttribute(url).trim();
+  const clean = typeof url === 'string' ? url.trim() : '';
   if (!clean) {
     return false;
   }
@@ -189,7 +204,7 @@ export function flowInlineImagesInMixedParagraphs(html: string) {
 }
 
 export function isHttpOrHttpsUrl(url: unknown): boolean {
-  const clean = decodeHtmlAttribute(url).trim();
+  const clean = typeof url === 'string' ? url.trim() : '';
   if (!clean) {
     return false;
   }
@@ -202,7 +217,7 @@ export function isHttpOrHttpsUrl(url: unknown): boolean {
 }
 
 export function normalizeImagePreviewUrl(url: string): string {
-  const clean = decodeHtmlAttribute(url).trim();
+  const clean = String(url || '').trim();
   if (/^(?:https?:|data:)/i.test(clean)) {
     return clean;
   }
@@ -212,19 +227,28 @@ export function normalizeImagePreviewUrl(url: string): string {
   return clean;
 }
 
-export function imageRequestHeadersForUrl(url: unknown, nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT): Record<string, string> | undefined {
-  const clean = normalizeImagePreviewUrl(decodeHtmlAttribute(url));
+export function imageRequestHeadersForUrl(
+  url: unknown,
+  options: ImageRequestOptions
+): Record<string, string> | undefined {
+  const clean = normalizeImagePreviewUrl(typeof url === 'string' ? url : '');
   try {
     const parsed = new URL(clean);
-    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !isKnownForumImageHost(parsed.hostname)) {
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return undefined;
     }
     const headers: Record<string, string> = {
+      [FORUM_MEDIA_SOURCE_HEADER]: forumMediaSourceHeaderValue(options?.mediaContext)
+    };
+    if (!isKnownForumImageHost(parsed.hostname)) {
+      return headers;
+    }
+    Object.assign(headers, {
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       Referer: parsed.origin
-    };
+    });
     if (isNodeSeekHost(parsed.hostname)) {
-      const userAgent = String(nodeSeekUserAgent || '').trim() || DEFAULT_NODESEEK_ANDROID_USER_AGENT;
+      const userAgent = String(options?.nodeSeekUserAgent || '').trim() || DEFAULT_NODESEEK_ANDROID_USER_AGENT;
       if (userAgent) {
         headers['User-Agent'] = userAgent;
       }
@@ -237,18 +261,18 @@ export function imageRequestHeadersForUrl(url: unknown, nodeSeekUserAgent = DEFA
 
 export function imageSourceFromUrl(
   url: string,
-  source?: unknown,
-  nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT,
-  mediaSessionIdentity = ''
+  options: ImageSourceOptions
 ) {
   const clean = normalizeImagePreviewUrl(url);
+  const source = options?.baseSource;
   const base: Record<string, unknown> = source && typeof source === 'object' && !Array.isArray(source)
     ? { ...(source as Record<string, unknown>), uri: clean }
     : { uri: clean };
+  const mediaSessionIdentity = options?.mediaContext?.sessionIdentity || '';
   if (mediaSessionIdentity && /^https?:\/\//i.test(clean)) {
     base.cacheKey = `${mediaSessionIdentity}:${clean}`;
   }
-  const headers = imageRequestHeadersForUrl(clean, nodeSeekUserAgent);
+  const headers = imageRequestHeadersForUrl(clean, options);
   if (!headers) {
     return base;
   }
@@ -262,7 +286,7 @@ export function imageSourceFromUrl(
 }
 
 export function dataImageFileFromUrl(url: unknown): { base64: string; extension: string } | null {
-  const clean = decodeHtmlAttribute(url).trim();
+  const clean = typeof url === 'string' ? url.trim() : '';
   const match = clean.match(/^data:image\/(png|jpe?g|gif|webp|avif);base64,([\s\S]+)$/i);
   if (!match) {
     return null;
@@ -289,15 +313,22 @@ export function createImagePreviewCatalog(htmlParts: string[]): ImagePreviewCata
   return { urls, previewUrlBySourceUrl };
 }
 
-export function imagePreviewListFromCatalog(catalog: ImagePreviewCatalog, tappedUrl: string): ImagePreviewList {
+export function imagePreviewListFromCatalog(
+  catalog: ImagePreviewCatalog,
+  tappedUrl: string,
+  contentSource: ForumMediaRequestContext['contentSource']
+): ImagePreviewList {
   const tapped = normalizeImagePreviewUrl(tappedUrl);
-  const tappedPreviewUrl = catalog.previewUrlBySourceUrl[tapped] || tapped;
+  const resolvedTappedPreviewUrl = catalog.previewUrlBySourceUrl[tapped] || tapped;
+  const tappedPreviewUrl = isAllowedActiveImageSource(resolvedTappedPreviewUrl)
+    ? resolvedTappedPreviewUrl
+    : '';
   const urls = uniqueStrings([
     ...catalog.urls,
     ...(tappedPreviewUrl && !isInlineForumImageUrl(tappedPreviewUrl) ? [tappedPreviewUrl] : [])
   ]);
   const index = Math.max(0, urls.findIndex((url) => url === tappedPreviewUrl));
-  return { urls, index };
+  return { contentSource, urls, index };
 }
 
 export function visibleImagePreviewThumbnails(urls: string[], index: number, radius = 6) {
@@ -334,14 +365,21 @@ function imagePreviewEntryFromAttributes(attributes: Record<string, string | und
 }
 
 function isAllowedPreviewImageSource(url: string) {
-  const clean = decodeHtmlAttribute(url).trim();
+  const clean = normalizeImagePreviewUrl(url);
   return Boolean(clean)
     && (isHttpOrHttpsUrl(clean) || clean.startsWith('/') || clean.startsWith('//') || isPreviewableImageUrl(clean))
     && (!/^data:image\//i.test(clean) || isAllowedDataImageUrl(clean));
 }
 
+function isAllowedActiveImageSource(url: string) {
+  const clean = normalizeImagePreviewUrl(url);
+  return isHttpOrHttpsUrl(clean) || isAllowedDataImageUrl(clean);
+}
+
 function firstAllowedPreviewImageSource(urls: string[]) {
-  return urls.map((url) => decodeHtmlAttribute(url).trim()).find(isAllowedPreviewImageSource) || '';
+  return urls
+    .map((url) => normalizeImagePreviewUrl(url))
+    .find(isAllowedActiveImageSource) || '';
 }
 
 function splitSrcsetCandidates(srcset: string) {
@@ -370,7 +408,7 @@ function splitSrcsetCandidates(srcset: string) {
 
 function srcsetImageUrls(srcset: string) {
   return splitSrcsetCandidates(srcset)
-    .map((candidate) => decodeHtmlAttribute(candidate.trim().split(/\s+/)[0] || '').trim())
+    .map((candidate) => (candidate.trim().split(/\s+/)[0] || '').trim())
     .filter(isAllowedPreviewImageSource);
 }
 
@@ -379,7 +417,7 @@ function bestSrcsetImageUrl(srcset: string) {
   let bestScore = -1;
   splitSrcsetCandidates(srcset).forEach((candidate, index) => {
     const parts = candidate.trim().split(/\s+/);
-    const url = decodeHtmlAttribute(parts.shift() || '').trim();
+    const url = String(parts.shift() || '').trim();
     if (!isAllowedPreviewImageSource(url)) {
       return;
     }
@@ -396,18 +434,7 @@ function bestSrcsetImageUrl(srcset: string) {
 }
 
 function decodeHtmlAttribute(value: unknown): string {
-  if (typeof value !== 'string') {
-    return '';
-  }
-  return value
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&apos;/gi, "'")
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
+  return typeof value === 'string' ? decodeHtml(value) : '';
 }
 
 function uniqueStrings(items: string[]): string[] {
@@ -427,7 +454,7 @@ function imageAttributesFromText(value: string): Record<string, string> {
   const pattern = /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
   let match = pattern.exec(value);
   while (match) {
-    attributes[match[1].toLowerCase()] = match[2] || match[3] || match[4] || '';
+    attributes[match[1].toLowerCase()] = decodeHtmlAttribute(match[2] || match[3] || match[4] || '');
     match = pattern.exec(value);
   }
   return attributes;
@@ -769,7 +796,7 @@ function upgradeBlockImageSources(root: { querySelectorAll?: (selector: string) 
       return;
     }
     const entry = imagePreviewEntryFromImage(image);
-    if (entry?.previewUrl) {
+    if (entry?.previewUrl && isAllowedActiveImageSource(entry.previewUrl)) {
       if (typeof image.setAttribute === 'function') {
         image.setAttribute('src', entry.previewUrl);
       } else {
@@ -839,7 +866,7 @@ function safeTagName(value: unknown) {
 }
 
 function attributeValue(attributes: Record<string, string | undefined>, name: string) {
-  return decodeHtmlAttribute(attributes[name] || attributes[name.toLowerCase()] || '').trim();
+  return String(attributes[name] || attributes[name.toLowerCase()] || '').trim();
 }
 
 function isInlineForumImageAttributes(attributes: Record<string, string | undefined>) {

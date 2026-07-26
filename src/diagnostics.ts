@@ -103,7 +103,7 @@ const stringFieldKeys = new Set([
   'state', 'previousState', 'nextState', 'owner', 'priority', 'store', 'provider',
   'route', 'routeKind', 'emptyReason', 'mutationReason', 'action', 'mode', 'flow',
   'requestType', 'credentialSource', 'parserVariant', 'transport', 'kind', 'screen',
-  'section', 'protocol', 'eventType', 'result', 'level', 'queueState', 'csrfSource',
+  'section', 'surface', 'mediaClass', 'fallback', 'terminalReason', 'protocol', 'eventType', 'result', 'level', 'queueState', 'csrfSource',
   'userAgentSource', 'errorName', 'message', 'stack', 'topicRef', 'userRef', 'cursorRef'
 ]);
 const closedValues = (...values: string[]) => new Set(values);
@@ -214,6 +214,10 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   ),
   screen: screenValues,
   section: closedValues('favorites', 'history', 'replies', 'topics', 'users'),
+  surface: closedValues('body', 'preview'),
+  mediaClass: closedValues('same-source', 'cross-source', 'unmanaged', 'data'),
+  fallback: closedValues('none', 'svg'),
+  terminalReason: closedValues('loaded', 'fallback-loaded', 'native-error', 'fallback-error', 'stale', 'timeout'),
   protocol: closedValues('http', 'socks5'),
   eventType: closedValues(
     'authorization-started', 'check-failed', 'cleared', 'cookie-loaded', 'login-detected', 'login-expired', 'session-updated',

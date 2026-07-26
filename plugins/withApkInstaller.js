@@ -12,7 +12,6 @@ function apkInstallerModuleSource(packageName) {
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
-import android.content.pm.Signature
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -26,6 +25,12 @@ import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.Locale
+
+@Suppress("UNUSED_PARAMETER")
+internal fun <T> singleCurrentApkSigner(
+  currentSigners: Array<T>?,
+  signingCertificateHistory: Array<T>?
+): T? = currentSigners?.singleOrNull()
 
 class ApkInstallerModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
   override fun getName(): String = "ApkInstallerModule"
@@ -110,21 +115,14 @@ class ApkInstallerModule(private val reactContext: ReactApplicationContext) : Re
     }
 
   @Suppress("DEPRECATION")
-  private fun apkSignatures(packageInfo: PackageInfo): Array<Signature> {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-      val signingInfo = packageInfo.signingInfo ?: return emptyArray()
-      return if (signingInfo.hasMultipleSigners()) {
-        signingInfo.apkContentsSigners
-      } else {
-        signingInfo.signingCertificateHistory
-      }
-    }
-    return packageInfo.signatures ?: emptyArray()
-  }
-
   private fun apkSignerSha256(packageInfo: PackageInfo): String? {
-    val firstSignature = apkSignatures(packageInfo).firstOrNull() ?: return null
-    return sha256Hex(firstSignature.toByteArray())
+    val signature = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      val signingInfo = packageInfo.signingInfo ?: return null
+      singleCurrentApkSigner(signingInfo.apkContentsSigners, signingInfo.signingCertificateHistory)
+    } else {
+      singleCurrentApkSigner(packageInfo.signatures, null)
+    } ?: return null
+    return sha256Hex(signature.toByteArray())
   }
 
   private fun fileSha256(file: File): String {
@@ -170,6 +168,24 @@ class ApkInstallerPackage : ReactPackage {
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
     emptyList()
+}
+`;
+}
+
+function apkInstallerTestSource(packageName) {
+  return `package ${packageName}
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class ApkInstallerSignerTest {
+  @Test
+  fun acceptsOnlyOneCurrentSigner() {
+    assertEquals("current", singleCurrentApkSigner(arrayOf("current"), arrayOf("old", "current")))
+    assertNull(singleCurrentApkSigner(emptyArray<String>(), arrayOf("old")))
+    assertNull(singleCurrentApkSigner(arrayOf("current", "other"), arrayOf("old")))
+  }
 }
 `;
 }
@@ -253,10 +269,20 @@ module.exports = function withApkInstaller(config) {
       packagePath(packageName)
     );
     const xmlDir = path.join(config.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res', 'xml');
+    const testDir = path.join(
+      config.modRequest.platformProjectRoot,
+      'app',
+      'src',
+      'test',
+      'java',
+      packagePath(packageName)
+    );
     fs.mkdirSync(outputDir, { recursive: true });
     fs.mkdirSync(xmlDir, { recursive: true });
+    fs.mkdirSync(testDir, { recursive: true });
     fs.writeFileSync(path.join(outputDir, 'ApkInstallerModule.kt'), apkInstallerModuleSource(packageName));
     fs.writeFileSync(path.join(outputDir, 'ApkInstallerPackage.kt'), apkInstallerPackageSource(packageName));
+    fs.writeFileSync(path.join(testDir, 'ApkInstallerSignerTest.kt'), apkInstallerTestSource(packageName));
     fs.writeFileSync(path.join(xmlDir, 'apk_installer_paths.xml'), fileProviderPathsSource());
     return config;
   }]);
