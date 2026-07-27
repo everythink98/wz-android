@@ -1116,6 +1116,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 移除文件检查、改回 basename-only 或把预检移到 `npm run verify` 后，编号测试必须收到 ABI 错误或错误顺序。 |
 | 明确不覆盖范围 | 不验证 keystore 密码、alias 或证书内容；这些继续由 apksigner 与固定 signer 门禁验证。 |
 
+## `REG-OPS-014` Android Smoke 自相冲突的设备 session
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `RELEASE-02` |
+| 用户症状 | Release APK 已完成构建、签名与覆盖安装，首次打开却报 `DEVICE_IN_USE`，完整发布流程无法结算。 |
+| 触发条件 | boot 未指定 session 而隐式创建 `default`，后续 open 又显式使用 `wz-apk-sanity` 访问同一设备。 |
+| 根因 seam | `scripts/smoke-android.mjs` 把一次 APK sanity 生命周期拆成了两个互斥的 agent-device session。 |
+| 必须保持的行为 | boot、首次打开、日志和 appstate 统一使用 `wz-apk-sanity`；设备只在 boot/install 时显式选择；sanity 成功或失败后都先关闭该 session，再启动 Replay。 |
+| 精确失败 oracle | `src/androidSmokeGuard.test.ts` 记录 boot、sanity 失败和 close 的命令顺序，要求三者使用同一 session，并断言已绑定 session 的首次 open 不再重复传 device selector。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 session 生命周期；完整 `npm run release:android` 的 `APK_SANITY` 与六条 `DEVICE_REPLAY_PASS` 证明真实 CLI/模拟器链路。 |
+| Replay 或真实验收路径 | 指定保留数据的 `WZ_ANDROID_SMOKE_DEVICE`，运行正式 release；不得卸载或清 App 数据。 |
+| 负向验证方式 | 从 boot 删除显式 session，或在首次 open 恢复新的 session/device 选择，编号测试必须失败。 |
+| 明确不覆盖范围 | 不接管其他 agent-device session，也不关闭无法证明由本次 release 创建的共享进程。 |
+
 ## `REG-TOPIC-001` 回复已筛选但标题仍显示主题总数
 
 | 字段 | 内容 |

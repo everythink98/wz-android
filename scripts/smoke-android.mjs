@@ -111,9 +111,25 @@ function resolveApkPath(value) {
   return apkPath;
 }
 
-function bootSelectedDevice() {
-  const [, selectedDevice] = deviceSelectionArgs();
-  runAgentDevice(['boot', '--platform', 'android', '--device', selectedDevice, '--headless'], { cwd: rootDir });
+export function withSmokeSession({ selectedDevice, runAgentDeviceCommand = runAgentDevice }, action) {
+  const [, deviceName] = deviceSelectionArgs(selectedDevice);
+  runAgentDeviceCommand(['boot', '--session', smokeSession, '--platform', 'android', '--device', deviceName, '--headless'], { cwd: rootDir });
+  let failure;
+  try {
+    return action();
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    try {
+      runAgentDeviceCommand(['close', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
+    } catch (closeError) {
+      if (failure) {
+        throw new AggregateError([failure, closeError], 'Android Smoke session 清理失败');
+      }
+      throw closeError;
+    }
+  }
 }
 
 export function runApkSanity({
@@ -135,12 +151,10 @@ export function runApkSanity({
     throw new Error('无法读取设备 logcat 起始时间，未执行首次启动。');
   }
   runAdbCommand(['-s', device.id, 'shell', 'log', '-p', 'i', '-t', 'WZ_APK_SANITY', marker]);
-  let opened = false;
   let logging = false;
   const errors = [];
   try {
-    runAgentDeviceCommand(['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs(device.name)], { cwd: rootDir });
-    opened = true;
+    runAgentDeviceCommand(['open', appPackage, '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
     runAgentDeviceCommand(['logs', 'clear', '--restart', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
     logging = true;
     runAgentDeviceCommand(['logs', 'mark', 'wz-apk-sanity-start', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
@@ -171,13 +185,6 @@ export function runApkSanity({
         errors.push(error);
       }
     }
-    if (opened) {
-      try {
-        runAgentDeviceCommand(['close', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
-      } catch (error) {
-        errors.push(error);
-      }
-    }
   }
 
   if (errors.length) {
@@ -190,9 +197,11 @@ async function main() {
   const selectedDevice = selectedDeviceName();
   assertAgentDeviceVersion(rootDir);
   runAgentDevice(['doctor', '--platform', 'android'], { cwd: os.tmpdir() });
-  bootSelectedDevice();
-  const device = resolveAndroidDevice(selectedDevice);
-  runApkSanity({ apkPath, device });
+  const device = withSmokeSession({ selectedDevice }, () => {
+    const smokeDevice = resolveAndroidDevice(selectedDevice);
+    runApkSanity({ apkPath, device: smokeDevice });
+    return smokeDevice;
+  });
   console.log('APK_SANITY');
   await runDeviceReplay({
     apkPath,

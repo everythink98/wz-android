@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { capturedAgentDeviceOutput, deviceSelectionArgs, isVersionSupported, MIN_AGENT_DEVICE_VERSION } from '../scripts/agent-device-runtime.mjs';
-import { runApkSanity } from '../scripts/smoke-android.mjs';
+import { runApkSanity, withSmokeSession } from '../scripts/smoke-android.mjs';
 import {
   listReplayFiles,
   matchingAndroidDevices,
@@ -82,6 +82,27 @@ describe('Android release evidence guards', () => {
     expect(fourSourceFeed).toContain('context timeout=240000');
   });
 
+  it('[REG-OPS-014] keeps boot and APK sanity on one session and releases it after failure', () => {
+    const events: string[] = [];
+    const failure = new Error('sanity failed');
+
+    expect(() => withSmokeSession({
+      selectedDevice: 'WZ Pixel API 35',
+      runAgentDeviceCommand: (args: string[]) => {
+        events.push(args.join(' '));
+        return '';
+      }
+    }, () => {
+      events.push('sanity');
+      throw failure;
+    })).toThrow(failure);
+    expect(events).toEqual([
+      'boot --session wz-apk-sanity --platform android --device WZ Pixel API 35 --headless',
+      'sanity',
+      'close --session wz-apk-sanity --platform android'
+    ]);
+  });
+
   it('[REG-OPS-004] maps the configured AVD name to the booted device display name', () => {
     const devices = parseAgentDeviceList(JSON.stringify({
       success: true,
@@ -143,8 +164,8 @@ describe('Android release evidence guards', () => {
     const smokeScript = readProjectFile('scripts', 'smoke-android.mjs');
 
     expect(smokeScript).toContain("['doctor', '--platform', 'android']");
-    const bootIndex = smokeScript.indexOf('bootSelectedDevice();');
-    const sanityIndex = smokeScript.indexOf('runApkSanity({ apkPath, device });');
+    const bootIndex = smokeScript.indexOf('withSmokeSession({ selectedDevice }, () => {');
+    const sanityIndex = smokeScript.indexOf('runApkSanity({ apkPath, device: smokeDevice });');
     expect(bootIndex).toBeGreaterThan(0);
     expect(sanityIndex).toBeGreaterThan(bootIndex);
     expect(smokeScript).toContain("['install', appPackage, apkPath");
@@ -208,6 +229,7 @@ describe('Android release evidence guards', () => {
     expect(timestampIndex).toBeGreaterThan(installIndex);
     expect(markerIndex).toBeGreaterThan(timestampIndex);
     expect(firstOpenIndex).toBeGreaterThan(markerIndex);
+    expect(events[firstOpenIndex]).not.toContain(' --device ');
     expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
   });
 
