@@ -191,6 +191,7 @@ type ManagedLevelProfileOptions = Omit<XiaoyinsiOptions, 'credentials' | 'fetche
   source: 'xiaoyinsi';
 };
 export type SourceGatewayReadContext = {
+  identityBarriers?: readonly SessionSource[];
   trace?: DiagnosticTrace;
 };
 
@@ -286,15 +287,16 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
       }
     };
     try {
-      const linuxDoAuthenticated = (source === 'linuxdo' || source === 'all')
-        && dependencies.isSourceAuthenticated?.('linuxdo') === true
-        && dependencies.isSourceReadBlocked?.('linuxdo') !== true;
-      const nodeSeekAuthenticated = (source === 'nodeseek' || source === 'all')
-        && dependencies.isSourceAuthenticated?.('nodeseek') === true
-        && dependencies.isSourceReadBlocked?.('nodeseek') !== true;
       const blockedIdentitySources = identitySources.filter(
         (identitySource) => dependencies.isSourceReadBlocked?.(identitySource) === true
+          || context?.identityBarriers?.includes(identitySource)
       );
+      const linuxDoAuthenticated = (source === 'linuxdo' || source === 'all')
+        && dependencies.isSourceAuthenticated?.('linuxdo') === true
+        && !blockedIdentitySources.includes('linuxdo');
+      const nodeSeekAuthenticated = (source === 'nodeseek' || source === 'all')
+        && dependencies.isSourceAuthenticated?.('nodeseek') === true
+        && !blockedIdentitySources.includes('nodeseek');
       if (source !== 'all' && blockedIdentitySources.length) {
         throw new Error('登录状态待确认；已暂停该站的新请求');
       }

@@ -31,13 +31,17 @@ import {
   readManagedCookieHeader as readManagedCookieHeaderFromNative,
   type ManagedCookieReadResult
 } from '../managedCookies';
-import { cancelForumSourceQueries } from './sessionControllerHelpers';
+import {
+  cancelForumSourceQueries,
+  removeUnconfirmedForumSourceQueries
+} from './sessionControllerHelpers';
+import { sessionSources, type SessionSource } from '../sourceCatalog';
 
 const NODESEEK_ACCOUNT_URL = 'https://www.nodeseek.com/';
 const LINUXDO_ACCOUNT_URL = 'https://linux.do/session/current.json';
 const YAOHUO_ACCOUNT_URL = 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
 type RefreshAccountStatusOptions = { silent?: boolean };
-type StatusSource = 'linuxdo' | 'nodeseek' | 'xiaoyinsi' | 'yaohuo';
+type StatusSource = SessionSource;
 type StatusQueryData = {
   failed?: boolean;
   session?: SiteSessionState;
@@ -146,12 +150,14 @@ export function useAccountStatusController({
     checking?: boolean;
     pending: boolean;
     error?: string;
-  }>>({
-    linuxdo: { pending: false },
-    nodeseek: { pending: false },
-    xiaoyinsi: { pending: false },
-    yaohuo: { pending: false }
-  });
+  }>>(() => Object.fromEntries(sessionSources.map((source) => [source, { pending: true }])) as Record<StatusSource, {
+    checking?: boolean;
+    pending: boolean;
+    error?: string;
+  }>);
+  const identityPendingRef = useRef<Record<StatusSource, boolean>>(
+    Object.fromEntries(sessionSources.map((source) => [source, true])) as Record<StatusSource, boolean>
+  );
   const statusQueryDefinitions = useMemo(() => {
     const nodeSeekStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'nodeseek' });
     const linuxDoStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'linuxdo' });
@@ -497,7 +503,10 @@ export function useAccountStatusController({
     source: StatusSource,
     surfaceGeneration?: number
   ) => {
-    void cancelForumSourceQueries(source);
+    if (!identityPendingRef.current[source]) {
+      void cancelForumSourceQueries(source);
+    }
+    identityPendingRef.current[source] = true;
     if (surfaceGeneration !== undefined) {
       const activeProbe = activeProbeRef.current[source];
       if (activeProbe && activeProbe.surfaceGeneration < surfaceGeneration) {
@@ -556,10 +565,14 @@ export function useAccountStatusController({
       }
       const canonicalQueryKey = statusQueryDefinitions[source].queryKey;
       const previousData = appQueryClient.getQueryData<StatusQueryData>(canonicalQueryKey);
-      const previousIdentity = accountIdentityKey(previousData?.session || sessionViewModels[source]);
+      const previousSession = previousData?.session || (
+        sessionViewModels[source].identityTrust === 'confirmed' ? sessionViewModels[source] : undefined
+      );
+      const previousIdentity = previousSession ? accountIdentityKey(previousSession) : undefined;
       const nextIdentity = accountIdentityKey(nextData.session);
-      if (previousIdentity !== nextIdentity) {
+      if (previousIdentity && previousIdentity !== nextIdentity) {
         onAccountStatusChanged(source, probeQueryKey, nextData.session);
+        identityPendingRef.current[source] = false;
         onAccountIdentityRuntimeChanged(source, {
           identityKey: nextIdentity,
           pending: false
@@ -574,7 +587,11 @@ export function useAccountStatusController({
           partial: nextData.failed
         };
       }
+      if (!previousIdentity) {
+        removeUnconfirmedForumSourceQueries(source);
+      }
       appQueryClient.setQueryData(canonicalQueryKey, nextData);
+      identityPendingRef.current[source] = false;
       onAccountIdentityRuntimeChanged(source, {
         identityKey: nextIdentity,
         pending: false

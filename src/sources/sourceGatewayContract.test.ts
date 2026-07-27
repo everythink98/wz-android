@@ -140,6 +140,46 @@ describe('source gateway read contract', () => {
     });
   });
 
+  it('[REG-FEED-010] binds an aggregate read to its query identity barriers', async () => {
+    const publicTopic: Topic = {
+      source: 'v2ex',
+      id: 'public-snapshot',
+      title: '公开主题',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/public-snapshot',
+      createdAt: '2026-07-24T00:00:00.000Z',
+      replyCount: 0
+    };
+    const privateTopic: Topic = {
+      ...publicTopic,
+      source: 'nodeseek',
+      id: 'private-snapshot',
+      url: 'https://www.nodeseek.com/post-private-snapshot-1'
+    };
+    forumMocks.getFeed.mockResolvedValueOnce({
+      items: [publicTopic, privateTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    const gateway = createSourceGateway({
+      currentSessionEpoch: () => 7,
+      fetcher: vi.fn(),
+      isSourceAuthenticated: () => true,
+      isSourceReadBlocked: () => false,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+
+    await expect(gateway.getFeed(
+      { source: 'all' },
+      { identityBarriers: ['nodeseek'] }
+    )).resolves.toMatchObject({ items: [publicTopic] });
+    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'all',
+      unavailableSources: ['nodeseek']
+    }));
+  });
+
   it('[REG-TOPIC-027] routes emoji reads through managed credentials, fetcher, diagnostics, and cancellation', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });

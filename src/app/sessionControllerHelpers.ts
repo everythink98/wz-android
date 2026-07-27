@@ -101,6 +101,20 @@ export function cancelForumSourceQueries(
   });
 }
 
+export function removeUnconfirmedForumSourceQueries(
+  source: Source,
+  client: QueryClient = appQueryClient
+) {
+  client.removeQueries({
+    predicate: ({ queryKey }) => (
+      queryKey[0] === 'forum'
+      && queryKey[1] === source
+      && queryKey[2] !== 'account-status'
+      && queryKey[2] !== 'account-status-probe'
+    )
+  });
+}
+
 export function forumSessionEpochsAfterSourceChange(
   currentEpochs: ForumSessionEpochs,
   source: SessionSite

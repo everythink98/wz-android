@@ -1,17 +1,21 @@
 import { afterEach } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
+import { useLayoutEffect } from 'react';
 import { useFeedController } from '../../src/app/useFeedController';
 import type { Screen } from '../../src/appTypes';
-import { createEmptyReaderData } from '../../src/readerData';
+import { createEmptyReaderData, topicKey } from '../../src/readerData';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
 import {
   appQueryClient,
+  forumQueryKeys,
   initialForumSessionEpochs,
   type ForumIdentityBarrierSource
 } from '../../src/app/serverState';
 import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
 import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
+import { sessionSources } from '../../src/sourceCatalog';
+import type { SourceErrors } from '../../src/types';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 function renderHook<Result>(callback: () => Result) {
@@ -225,7 +229,12 @@ describe('小隐寺 Feed controller', () => {
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       });
     });
-    const getFeed = jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }));
+    const getFeed = jest.fn(async (_options: Parameters<SourceGateway['getFeed']>[0]) => ({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
     const sourceGateway = {
       getCategories,
       getFeed,
@@ -428,7 +437,682 @@ describe('小隐寺 Feed controller', () => {
     expect(nodeSeekReads).toBe(2);
   });
 
-  it('[REG-ACCOUNT-031] uses the trusted aggregate as a dirty placeholder but drops it across an epoch change', async () => {
+  it('[REG-FEED-010] never exposes a warm private feed before this runtime confirms its source identity', async () => {
+    const oldPrivateTopic = {
+      source: 'nodeseek' as const,
+      id: 'previous-runtime-private',
+      title: '上次运行的私有主题',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-previous-runtime-private-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const safeTopic = {
+      ...oldPrivateTopic,
+      source: 'v2ex' as const,
+      id: 'current-runtime-public',
+      title: '本次运行的公开主题',
+      url: 'https://www.v2ex.com/t/current-runtime-public'
+    };
+    const safeRead = Promise.withResolvers<{
+      items: typeof safeTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async () => safeRead.promise),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    appQueryClient.clear();
+    appQueryClient.setQueryData(forumQueryKeys.feed({
+      identityBarriers: [],
+      scope: initialForumSessionEpochs,
+      source: 'all'
+    }), {
+      pages: [{
+        items: [oldPrivateTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null,
+        page: 1
+      }],
+      pageParams: [{ page: 1 }]
+    });
+    const renderedKeys: string[][] = [];
+    const hook = await renderNativeHook(() => {
+      const controller = useFeedController({
+        identityBarriers: sessionSources,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        screen: 'feed',
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        sourceGateway
+      });
+      renderedKeys.push(controller.activeFeedState.items.map(topicKey));
+      return controller;
+    }, { wrapper: QueryTestWrapper });
+
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1));
+    expect(renderedKeys.some((keys) => keys.includes(topicKey(oldPrivateTopic)))).toBe(false);
+
+    await act(async () => {
+      safeRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
+      await safeRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]));
+  });
+
+  it('[REG-FEED-010] never exposes warm single-source lists before this runtime confirms their identity', async () => {
+    const oldPrivateTopic = {
+      source: 'nodeseek' as const,
+      id: 'previous-runtime-single-source',
+      title: '上次运行的单站私有主题',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-previous-runtime-single-source-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const getFeed = jest.fn(async (_options: Parameters<SourceGateway['getFeed']>[0]) => ({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    appQueryClient.clear();
+    appQueryClient.setQueryData(forumQueryKeys.feed({
+      feedFilter: 'postTime',
+      scope: initialForumSessionEpochs,
+      source: 'nodeseek'
+    }), {
+      pages: [{
+        items: [oldPrivateTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null,
+        page: 1
+      }],
+      pageParams: [{ page: 1 }]
+    });
+    appQueryClient.setQueryData(
+      forumQueryKeys.categories('nodeseek', initialForumSessionEpochs),
+      { items: [{ source: 'nodeseek', id: 'private', name: '上次运行的私有分类' }], errors: {} }
+    );
+    let retainableIdentityBarriers: ForumIdentityBarrierSource[] = [];
+    const hook = await renderNativeHook(() => useFeedController({
+      identityBarriers: ['nodeseek'],
+      retainableIdentityBarriers,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }), { wrapper: QueryTestWrapper });
+
+    await act(async () => hook.result.current.changeFeedSource('nodeseek'));
+
+    expect(hook.result.current.activeFeedState.items).toEqual([]);
+    expect(hook.result.current.categories).toEqual([]);
+    expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(false);
+
+    retainableIdentityBarriers = ['nodeseek'];
+    await act(async () => hook.rerender({}));
+
+    expect(hook.result.current.activeFeedState.items).toEqual([oldPrivateTopic]);
+    expect(hook.result.current.categories).toEqual([
+      { source: 'nodeseek', id: 'private', name: '上次运行的私有分类' }
+    ]);
+  });
+
+  it('[REG-FEED-010] never projects warm single-source errors while identity is unconfirmed', async () => {
+    const sourceFeedKey = forumQueryKeys.feed({
+      feedFilter: 'postTime',
+      scope: initialForumSessionEpochs,
+      source: 'nodeseek'
+    });
+    const staleError = Object.assign(new Error('上次运行的验证错误'), {
+      kind: 'verification-required' as const,
+      source: 'nodeseek' as const,
+      verificationRequired: true
+    });
+    appQueryClient.clear();
+    await appQueryClient.fetchInfiniteQuery({
+      queryKey: sourceFeedKey,
+      initialPageParam: { page: 1 },
+      queryFn: async () => { throw staleError; }
+    }).catch(() => undefined);
+    await appQueryClient.fetchQuery({
+      queryKey: forumQueryKeys.categories('nodeseek', initialForumSessionEpochs),
+      queryFn: async () => { throw staleError; }
+    }).catch(() => undefined);
+    const notify = jest.fn();
+    const showNodeSeekVerification = jest.fn();
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const hook = await renderNativeHook(() => useFeedController({
+      identityBarriers: ['nodeseek'],
+      linuxDoVerificationActive: false,
+      notify,
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification,
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }), { wrapper: QueryTestWrapper });
+
+    await act(async () => {
+      hook.result.current.changeFeedSource('nodeseek');
+      await Promise.resolve();
+    });
+
+    expect(hook.result.current.feedOutcomeKind).toBeUndefined();
+    expect(notify).not.toHaveBeenCalled();
+    expect(showNodeSeekVerification).not.toHaveBeenCalled();
+  });
+
+  it('[REG-FEED-010] lets an in-flight safe aggregate read settle before applying a narrower startup barrier', async () => {
+    const safeTopic = {
+      source: 'v2ex' as const,
+      id: 'in-flight-bootstrap-safe',
+      title: '启动中的公开主题',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/in-flight-bootstrap-safe',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const safeRead = Promise.withResolvers<{
+      items: typeof safeTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const nextRead = Promise.withResolvers<{
+      items: typeof safeTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const firstAbort = jest.fn();
+    let feedReadCount = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async ({ signal }: { signal?: AbortSignal }) => {
+        feedReadCount += 1;
+        if (feedReadCount === 1) {
+          signal?.addEventListener('abort', firstAbort, { once: true });
+          return safeRead.promise;
+        }
+        return nextRead.promise;
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek', 'linuxdo'];
+    const hook = await renderHook(() => useFeedController({
+      identityBarriers,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1));
+
+    identityBarriers = ['linuxdo'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(firstAbort).not.toHaveBeenCalled();
+    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      safeRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
+      await safeRead.promise;
+    });
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
+
+    await act(async () => {
+      nextRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
+      await nextRead.promise;
+    });
+  });
+
+  it('[REG-FEED-010] does not roll back to older warm aggregate lists when the last startup barrier clears', async () => {
+    const oldSafeTopic = {
+      source: 'v2ex' as const,
+      id: 'warm-safe-old',
+      title: '上次运行的公开主题',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/warm-safe-old',
+      createdAt: '2026-07-19T00:00:00.000Z',
+      replyCount: 0
+    };
+    const safeTopic = {
+      ...oldSafeTopic,
+      id: 'bootstrap-safe-new',
+      title: '本次启动的公开主题',
+      url: 'https://www.v2ex.com/t/bootstrap-safe-new'
+    };
+    const fullTopic = {
+      ...safeTopic,
+      source: 'nodeseek' as const,
+      id: 'bootstrap-full-new',
+      title: '身份确认后的完整主题',
+      url: 'https://www.nodeseek.com/post-bootstrap-full-new-1'
+    };
+    const oldSafeCategory = { source: 'v2ex' as const, id: 'warm-category-old', name: '上次运行的公开分类' };
+    const safeCategory = { source: 'v2ex' as const, id: 'bootstrap-category-new', name: '本次启动的公开分类' };
+    const fullCategory = { source: 'nodeseek' as const, id: 'bootstrap-category-full', name: '身份确认后的完整分类' };
+    const fullRead = Promise.withResolvers<{
+      items: typeof fullTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const fullCategoriesRead = Promise.withResolvers<{
+      items: Array<typeof safeCategory | typeof fullCategory>;
+      errors: Record<string, never>;
+    }>();
+    let feedReadCount = 0;
+    let categoryReadCount = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => {
+        categoryReadCount += 1;
+        return categoryReadCount === 1
+          ? { items: [safeCategory], errors: {} }
+          : fullCategoriesRead.promise;
+      }),
+      getFeed: jest.fn(async () => {
+        feedReadCount += 1;
+        return feedReadCount === 1
+          ? { items: [safeTopic], errors: {}, hasMore: false as const, nextPage: null }
+          : fullRead.promise;
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    appQueryClient.clear();
+    appQueryClient.setQueryData(forumQueryKeys.feed({
+      identityBarriers: [],
+      scope: initialForumSessionEpochs,
+      source: 'all'
+    }), {
+      pages: [{
+        items: [oldSafeTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null,
+        page: 1
+      }],
+      pageParams: [{ page: 1 }]
+    });
+    appQueryClient.setQueryData(
+      forumQueryKeys.categories('all', initialForumSessionEpochs),
+      { items: [oldSafeCategory], errors: {} }
+    );
+    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    const renderedKeys: string[][] = [];
+    const hook = await renderNativeHook(() => {
+      const controller = useFeedController({
+        identityBarriers,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        screen: 'feed',
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        sourceGateway
+      });
+      renderedKeys.push(controller.activeFeedState.items.map(topicKey));
+      return controller;
+    }, { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]));
+    await waitFor(() => expect(hook.result.current.categories).toEqual([safeCategory]));
+    const firstSafeFrame = renderedKeys.length - 1;
+
+    identityBarriers = [];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(sourceGateway.getCategories).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
+    expect(hook.result.current.categories).toEqual([safeCategory]);
+    expect(renderedKeys.slice(firstSafeFrame)).not.toContainEqual([topicKey(oldSafeTopic)]);
+
+    await act(async () => {
+      fullRead.resolve({ items: [fullTopic], errors: {}, hasMore: false, nextPage: null });
+      fullCategoriesRead.resolve({ items: [safeCategory, fullCategory], errors: {} });
+      await Promise.all([fullRead.promise, fullCategoriesRead.promise]);
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([fullTopic]));
+    await waitFor(() => expect(hook.result.current.categories).toEqual([safeCategory, fullCategory]));
+  });
+
+  it('[REG-FEED-010] keeps the safe list and disables old pagination when the last startup barrier clears', async () => {
+    const safeTopic = {
+      source: 'v2ex' as const,
+      id: 'bootstrap-safe',
+      title: '启动期公开主题',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/bootstrap-safe',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const fullTopic = {
+      ...safeTopic,
+      source: 'nodeseek' as const,
+      id: 'bootstrap-complete',
+      title: '身份确认后的主题',
+      url: 'https://www.nodeseek.com/post-bootstrap-complete-1'
+    };
+    const fullRead = Promise.withResolvers<{
+      items: typeof fullTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    let readCount = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async () => {
+        readCount += 1;
+        return readCount === 1
+          ? { items: [safeTopic], errors: {}, hasMore: true as const, nextPage: 2 }
+          : fullRead.promise;
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    const renderedKeys: string[][] = [];
+    const hook = await renderHook(() => {
+      const controller = useFeedController({
+        identityBarriers,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        screen: 'feed',
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        sourceGateway
+      });
+      renderedKeys.push(controller.activeFeedState.items.map(topicKey));
+      return controller;
+    });
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]));
+    identityBarriers = [];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+
+    expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
+    expect(hook.result.current.feedBusy).toBe(false);
+    expect(hook.result.current.activeFeedState.hasMore).toBe(false);
+    await expect(hook.result.current.loadFeed()).resolves.toBe('stale');
+    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2);
+    const firstSafeFrame = renderedKeys.findIndex((keys) => keys.includes(topicKey(safeTopic)));
+    expect(renderedKeys.slice(firstSafeFrame)).not.toContainEqual([]);
+
+    await act(async () => {
+      fullRead.resolve({ items: [fullTopic], errors: {}, hasMore: false, nextPage: null });
+      await fullRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([fullTopic]));
+  });
+
+  it('[REG-FEED-010] returns to Loading when an identity transition has no safe topic to retain', async () => {
+    const fullRead = Promise.withResolvers<{
+      items: never[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    let readCount = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async () => {
+        readCount += 1;
+        return readCount === 1
+          ? { items: [], errors: {}, hasMore: false as const, nextPage: null }
+          : fullRead.promise;
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    const hook = await renderHook(() => useFeedController({
+      identityBarriers,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await waitFor(() => expect(hook.result.current.feedBusy).toBe(false));
+    identityBarriers = [];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.feedBusy).toBe(true);
+
+    await act(async () => {
+      fullRead.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
+      await fullRead.promise;
+    });
+  });
+
+  it('[REG-FEED-010] keeps safe aggregate categories through barrier release and source epoch changes', async () => {
+    const safeCategory = { source: 'v2ex' as const, id: 'v2ex', name: 'V2EX' };
+    const privateCategory = { source: 'nodeseek' as const, id: 'nodeseek', name: 'NodeSeek' };
+    const unchangedCategory = { source: 'linuxdo' as const, id: 'linuxdo', name: 'linux.do' };
+    const fullRead = Promise.withResolvers<{
+      items: Array<typeof safeCategory | typeof privateCategory | typeof unchangedCategory>;
+      errors: Record<string, never>;
+    }>();
+    const pendingRead = Promise.withResolvers<{
+      items: typeof safeCategory[];
+      errors: Record<string, never>;
+    }>();
+    const changedEpochRead = Promise.withResolvers<{
+      items: typeof safeCategory[];
+      errors: Record<string, never>;
+    }>();
+    let categoryReadCount = 0;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => {
+        categoryReadCount += 1;
+        if (categoryReadCount === 1) {
+          return { items: [safeCategory], errors: {} };
+        }
+        if (categoryReadCount === 2) {
+          return fullRead.promise;
+        }
+        return categoryReadCount === 3 ? pendingRead.promise : changedEpochRead.promise;
+      }),
+      getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    let retainableIdentityBarriers: ForumIdentityBarrierSource[] = [];
+    let sessionEpochs = initialForumSessionEpochs;
+    const renderedCategoryKeys: string[][] = [];
+    const hook = await renderHook(() => {
+      const controller = useFeedController({
+        identityBarriers,
+        retainableIdentityBarriers,
+        sessionEpochs,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        screen: 'feed',
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        sourceGateway
+      });
+      renderedCategoryKeys.push(controller.categories.map((category) => `${category.source}:${category.id}`));
+      return controller;
+    });
+
+    await waitFor(() => expect(hook.result.current.categories).toEqual([safeCategory]));
+    identityBarriers = [];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getCategories).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.categories).toEqual([safeCategory]);
+
+    await act(async () => {
+      fullRead.resolve({ items: [safeCategory, privateCategory, unchangedCategory], errors: {} });
+      await fullRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.categories).toEqual([
+      safeCategory,
+      privateCategory,
+      unchangedCategory
+    ]));
+
+    identityBarriers = ['nodeseek', 'linuxdo'];
+    retainableIdentityBarriers = ['nodeseek', 'linuxdo'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getCategories).toHaveBeenCalledTimes(3));
+    expect(hook.result.current.categories).toEqual([safeCategory, privateCategory, unchangedCategory]);
+
+    await act(async () => {
+      pendingRead.resolve({ items: [safeCategory], errors: {} });
+      await pendingRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.categories).toEqual([
+      safeCategory,
+      privateCategory,
+      unchangedCategory
+    ]));
+
+    sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+    identityBarriers = ['linuxdo'];
+    retainableIdentityBarriers = ['linuxdo'];
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient);
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getCategories).toHaveBeenCalledTimes(4));
+    expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
+    const firstSafeFrame = renderedCategoryKeys.findIndex((keys) => keys.includes('v2ex:v2ex'));
+    expect(renderedCategoryKeys.slice(firstSafeFrame)).not.toContainEqual([]);
+
+    await act(async () => {
+      changedEpochRead.resolve({ items: [safeCategory], errors: {} });
+      await changedEpochRead.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
+  });
+
+  it('[REG-FEED-010] keeps unchanged categories across a direct epoch change rerender', async () => {
+    const changedCategory = { source: 'nodeseek' as const, id: 'direct-private', name: '旧账号分类' };
+    const safeCategory = { source: 'v2ex' as const, id: 'direct-safe', name: 'V2EX 分类' };
+    const unchangedCategory = { source: 'linuxdo' as const, id: 'direct-unchanged', name: 'linux.do 分类' };
+    const changedEpochRead = Promise.withResolvers<{
+      items: typeof safeCategory[];
+      errors: Record<string, never>;
+    }>();
+    let changedEpoch = false;
+    let sessionEpochs = initialForumSessionEpochs;
+    const getCategories = jest.fn(async () => changedEpoch
+      ? changedEpochRead.promise
+      : { items: [changedCategory, safeCategory, unchangedCategory], errors: {} });
+    const sourceGateway = {
+      getCategories,
+      getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const hook = await renderHook(() => useFeedController({
+      sessionEpochs,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await waitFor(() => expect(hook.result.current.categories).toEqual([
+      changedCategory,
+      safeCategory,
+      unchangedCategory
+    ]));
+
+    changedEpoch = true;
+    sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient);
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
+
+    await act(async () => {
+      changedEpochRead.resolve({ items: [safeCategory], errors: {} });
+      await changedEpochRead.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
+  });
+
+  it('[REG-ACCOUNT-031][REG-FEED-010] drops the changed source but keeps safe data visible across an epoch change', async () => {
     const oldTopic = {
       source: 'nodeseek' as const,
       id: 'old-account',
@@ -451,9 +1135,16 @@ describe('小隐寺 Feed controller', () => {
       title: '待对账期间刷新的公开主题',
       url: 'https://www.v2ex.com/t/dirty-public'
     };
+    const unchangedManagedTopic = {
+      ...newTopic,
+      source: 'linuxdo' as const,
+      id: 'unchanged-managed',
+      title: '未变化来源主题',
+      url: 'https://linux.do/t/unchanged-managed'
+    };
     const dirtyRead = Promise.withResolvers<{
-      items: Array<typeof oldTopic | typeof dirtyPublicTopic>;
-      errors: Record<string, never>;
+      items: Array<typeof oldTopic | typeof dirtyPublicTopic | typeof unchangedManagedTopic>;
+      errors: SourceErrors;
       hasMore: false;
       nextPage: null;
     }>();
@@ -477,19 +1168,26 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as SourceGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = [];
     let sessionEpochs = initialForumSessionEpochs;
-    const hook = await renderHook(() => useFeedController({
-      identityBarriers,
-      sessionEpochs,
-      linuxDoVerificationActive: false,
-      notify: jest.fn(),
-      readerData: createEmptyReaderData(),
-      readerDataLoaded: true,
-      screen: 'feed',
-      showLinuxDoVerification: jest.fn(),
-      showNodeSeekVerification: jest.fn(),
-      showYaohuoLogin: jest.fn(),
-      sourceGateway
-    }));
+    const notify = jest.fn();
+    const renderedKeys: string[][] = [];
+    const hook = await renderHook(() => {
+      const controller = useFeedController({
+        identityBarriers,
+        retainableIdentityBarriers: identityBarriers,
+        sessionEpochs,
+        linuxDoVerificationActive: false,
+        notify,
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        screen: 'feed',
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        sourceGateway
+      });
+      renderedKeys.push(controller.activeFeedState.items.map(topicKey));
+      return controller;
+    });
 
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([oldTopic]));
 
@@ -502,13 +1200,26 @@ describe('小隐寺 Feed controller', () => {
     expect(hook.result.current.activeFeedState.items).toEqual([oldTopic]);
 
     await act(async () => {
-      dirtyRead.resolve({ items: [dirtyPublicTopic], errors: {}, hasMore: false, nextPage: null });
+      dirtyRead.resolve({
+        items: [dirtyPublicTopic, unchangedManagedTopic],
+        errors: {
+          nodeseek: { kind: 'ordinary', message: 'removed-source-error' },
+          linuxdo: { kind: 'ordinary', message: 'retained-source-error' }
+        },
+        hasMore: false,
+        nextPage: null
+      });
       await dirtyRead.promise;
     });
     await waitFor(() => {
-      expect(hook.result.current.activeFeedState.items).toHaveLength(2);
-      expect(hook.result.current.activeFeedState.items).toEqual(expect.arrayContaining([oldTopic, dirtyPublicTopic]));
+      expect(hook.result.current.activeFeedState.items).toHaveLength(3);
+      expect(hook.result.current.activeFeedState.items).toEqual(expect.arrayContaining([
+        oldTopic,
+        dirtyPublicTopic,
+        unchangedManagedTopic
+      ]));
     });
+    notify.mockClear();
 
     await act(async () => {
       resetForumSourceQueries('nodeseek', appQueryClient);
@@ -519,13 +1230,551 @@ describe('小隐寺 Feed controller', () => {
     });
 
     await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(3));
-    expect(hook.result.current.activeFeedState.items).toEqual([]);
+    expect(hook.result.current.activeFeedState.items).toEqual([dirtyPublicTopic, unchangedManagedTopic]);
+    await waitFor(() => expect(notify).toHaveBeenCalled());
+    const transitionMessages = notify.mock.calls.flat().join(' ');
+    expect(transitionMessages).toContain('retained-source-error');
+    expect(transitionMessages).not.toContain('removed-source-error');
+    const firstSafeFrame = renderedKeys.findIndex((keys) => keys.includes(topicKey(dirtyPublicTopic)));
+    expect(firstSafeFrame).toBeGreaterThanOrEqual(0);
+    expect(renderedKeys.slice(firstSafeFrame)).not.toContainEqual([]);
 
     await act(async () => {
       newEpochRead.resolve({ items: [newTopic], errors: {}, hasMore: false, nextPage: null });
       await newEpochRead.promise;
     });
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([newTopic]));
+  });
+
+  it('[REG-FEED-010] keeps an unchanged second page across a direct epoch change until explicit refresh', async () => {
+    const changedTopic = {
+      source: 'nodeseek' as const,
+      id: 'direct-epoch-private',
+      title: '旧账号主题',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-direct-epoch-private-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const firstSafeTopic = {
+      ...changedTopic,
+      source: 'v2ex' as const,
+      id: 'direct-epoch-safe-first',
+      title: '第一页公开主题',
+      url: 'https://www.v2ex.com/t/direct-epoch-safe-first'
+    };
+    const secondSafeTopic = {
+      ...firstSafeTopic,
+      id: 'direct-epoch-safe-second',
+      title: '第二页公开主题',
+      url: 'https://www.v2ex.com/t/direct-epoch-safe-second'
+    };
+    const newEpochFirstRead = Promise.withResolvers<{
+      items: typeof firstSafeTopic[];
+      errors: Record<string, never>;
+      hasMore: true;
+      nextCursor: string;
+      nextPage: 2;
+    }>();
+    const newEpochSecondRead = Promise.withResolvers<{
+      items: typeof secondSafeTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const canceledRefreshRead = Promise.withResolvers<{
+      items: typeof firstSafeTopic[];
+      errors: Record<string, never>;
+      hasMore: true;
+      nextCursor: string;
+      nextPage: 2;
+    }>();
+    let phase: 'initial' | 'changed-epoch' = 'initial';
+    let changedEpochFirstPageReads = 0;
+    let sessionEpochs = initialForumSessionEpochs;
+    let screen: Screen = 'feed';
+    const canceledRefreshSignals: AbortSignal[] = [];
+    const getFeed = jest.fn(async ({ page = 1, signal }: {
+      page?: number;
+      cursor?: string;
+      signal: AbortSignal;
+    }) => {
+      if (phase === 'initial') {
+        return page === 1
+          ? {
+            items: [changedTopic, firstSafeTopic],
+            errors: {},
+            hasMore: true as const,
+            nextCursor: 'direct-old-cursor',
+            nextPage: 2 as const
+          }
+          : { items: [secondSafeTopic], errors: {}, hasMore: false as const, nextPage: null };
+      }
+      if (page !== 1) {
+        return newEpochSecondRead.promise;
+      }
+      changedEpochFirstPageReads += 1;
+      if (changedEpochFirstPageReads === 2) {
+        canceledRefreshSignals.push(signal);
+        return canceledRefreshRead.promise;
+      }
+      if (changedEpochFirstPageReads === 3) {
+        throw new Error('manual refresh failed');
+      }
+      return newEpochFirstRead.promise;
+    });
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const notify = jest.fn();
+    let settleCanceledRefreshInLayout = false;
+    const hook = await renderHook(() => {
+      const controller = useFeedController({
+        sessionEpochs,
+        linuxDoVerificationActive: false,
+        notify,
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        screen,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        sourceGateway
+      });
+      useLayoutEffect(() => {
+        if (!settleCanceledRefreshInLayout || screen !== 'more') {
+          return;
+        }
+        settleCanceledRefreshInLayout = false;
+        canceledRefreshRead.resolve({
+          items: [firstSafeTopic],
+          errors: {},
+          hasMore: true,
+          nextCursor: 'direct-new-cursor',
+          nextPage: 2
+        });
+      }, [screen]);
+      return controller;
+    });
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([
+      changedTopic,
+      firstSafeTopic
+    ]));
+    await act(async () => { await hook.result.current.loadFeed(); });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([
+      changedTopic,
+      firstSafeTopic,
+      secondSafeTopic
+    ]));
+
+    phase = 'changed-epoch';
+    sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+    const changedEpochCallStart = getFeed.mock.calls.length;
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient);
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getFeed.mock.calls.length).toBeGreaterThan(changedEpochCallStart));
+    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]);
+
+    await act(async () => {
+      newEpochFirstRead.resolve({
+        items: [firstSafeTopic],
+        errors: {},
+        hasMore: true,
+        nextCursor: 'direct-new-cursor',
+        nextPage: 2
+      });
+      await newEpochFirstRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.hasMore).toBe(true));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]);
+
+    notify.mockClear();
+    let canceledRefresh: Promise<void> | undefined;
+    await act(async () => {
+      canceledRefresh = hook.result.current.refreshFeed();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(canceledRefreshSignals).toHaveLength(1));
+    settleCanceledRefreshInLayout = true;
+    screen = 'more';
+    await hook.rerender({});
+    await act(async () => {
+      await canceledRefreshRead.promise;
+      await canceledRefresh;
+    });
+    expect(notify).not.toHaveBeenCalledWith('列表已更新');
+    screen = 'feed';
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]);
+
+    await act(async () => { await hook.result.current.refreshFeed(); });
+    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]);
+    await act(async () => { await hook.result.current.refreshFeed(); });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic]));
+
+    let loadMore: Promise<unknown> | undefined;
+    await act(async () => {
+      loadMore = hook.result.current.loadFeed();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getFeed.mock.calls.slice(changedEpochCallStart)).toContainEqual([
+      expect.objectContaining({ cursor: 'direct-new-cursor', page: 2 }),
+      expect.any(Object)
+    ]));
+    expect(getFeed.mock.calls.slice(changedEpochCallStart).some(
+      ([request]) => request.cursor === 'direct-old-cursor'
+    )).toBe(false);
+    await act(async () => {
+      newEpochSecondRead.resolve({
+        items: [secondSafeTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+      await newEpochSecondRead.promise;
+      await loadMore;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([
+      firstSafeTopic,
+      secondSafeTopic
+    ]));
+  });
+
+  it('[REG-FEED-010] keeps another confirmed pending source when one source epoch changes', async () => {
+    const changedTopic = {
+      source: 'nodeseek' as const,
+      id: 'changed-pending-source',
+      title: '即将换号的来源',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-changed-pending-source-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const retainedTopic = {
+      ...changedTopic,
+      source: 'linuxdo' as const,
+      id: 'retained-pending-source',
+      title: '仍在对账的未变化来源',
+      url: 'https://linux.do/t/retained-pending-source'
+    };
+    const safeTopic = {
+      ...changedTopic,
+      source: 'v2ex' as const,
+      id: 'safe-source',
+      title: '安全来源',
+      url: 'https://www.v2ex.com/t/safe-source'
+    };
+    const secondSafeTopic = {
+      ...safeTopic,
+      id: 'safe-source-page-two',
+      title: '第二页安全来源',
+      url: 'https://www.v2ex.com/t/safe-source-page-two'
+    };
+    const barrierRead = Promise.withResolvers<{
+      items: typeof safeTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const changedEpochFirstRead = Promise.withResolvers<{
+      items: typeof safeTopic[];
+      errors: Record<string, never>;
+      hasMore: true;
+      nextCursor: string;
+      nextPage: 2;
+    }>();
+    const changedEpochSecondRead = Promise.withResolvers<{
+      items: typeof secondSafeTopic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    let phase: 'initial' | 'barrier' | 'changed-epoch' = 'initial';
+    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    let retainableIdentityBarriers: ForumIdentityBarrierSource[] = [];
+    let sessionEpochs = initialForumSessionEpochs;
+    const getFeed = jest.fn(async ({ page = 1 }: { page?: number; cursor?: string }) => {
+      if (phase === 'initial') {
+        return page === 1
+          ? {
+            items: [changedTopic, retainedTopic, safeTopic],
+            errors: {},
+            hasMore: true as const,
+            nextCursor: 'old-account-cursor',
+            nextPage: 2 as const
+          }
+          : { items: [secondSafeTopic], errors: {}, hasMore: false as const, nextPage: null };
+      }
+      if (phase === 'barrier') {
+        return barrierRead.promise;
+      }
+      return page === 1 ? changedEpochFirstRead.promise : changedEpochSecondRead.promise;
+    });
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const hook = await renderHook(() => useFeedController({
+      identityBarriers,
+      retainableIdentityBarriers,
+      sessionEpochs,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([
+      changedTopic,
+      retainedTopic,
+      safeTopic
+    ]));
+    await act(async () => { await hook.result.current.loadFeed(); });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([
+      changedTopic,
+      retainedTopic,
+      safeTopic,
+      secondSafeTopic
+    ]));
+
+    phase = 'barrier';
+    identityBarriers = ['nodeseek', 'linuxdo'];
+    retainableIdentityBarriers = ['nodeseek', 'linuxdo'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(3));
+    await act(async () => {
+      barrierRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
+      await barrierRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([
+      changedTopic,
+      retainedTopic,
+      safeTopic,
+      secondSafeTopic
+    ]));
+
+    phase = 'changed-epoch';
+    sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+    identityBarriers = ['linuxdo'];
+    retainableIdentityBarriers = ['linuxdo'];
+    const changedEpochCallStart = getFeed.mock.calls.length;
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient);
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getFeed.mock.calls.length).toBeGreaterThan(changedEpochCallStart));
+    expect(hook.result.current.activeFeedState.items).toEqual([retainedTopic, safeTopic, secondSafeTopic]);
+
+    await act(async () => {
+      changedEpochFirstRead.resolve({
+        items: [safeTopic],
+        errors: {},
+        hasMore: true,
+        nextCursor: 'new-account-cursor',
+        nextPage: 2
+      });
+      await changedEpochFirstRead.promise;
+    });
+    await waitFor(() => expect(getFeed.mock.calls.slice(changedEpochCallStart)).toContainEqual([
+      expect.objectContaining({ cursor: 'new-account-cursor', page: 2 }),
+      expect.any(Object)
+    ]));
+    expect(getFeed.mock.calls.slice(changedEpochCallStart).some(
+      ([request]) => request.cursor === 'old-account-cursor'
+    )).toBe(false);
+    expect(hook.result.current.activeFeedState.items).toEqual([retainedTopic, safeTopic, secondSafeTopic]);
+
+    await act(async () => {
+      changedEpochSecondRead.resolve({
+        items: [secondSafeTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+      await changedEpochSecondRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([
+      retainedTopic,
+      safeTopic,
+      secondSafeTopic
+    ]));
+  });
+
+  it('[REG-FEED-009] keeps trusted multi-page order while an identity barrier refreshes safe sources', async () => {
+    const firstPage = [{
+      source: 'nodeseek' as const,
+      id: 'barrier-private-first',
+      title: '第一页先出现的待对账主题',
+      author: 'bob',
+      url: 'https://www.nodeseek.com/post-barrier-private-first-1',
+      createdAt: '2026-07-19T00:00:00.000Z',
+      lastReplyAt: '2026-07-19T00:00:00.000Z',
+      replyCount: 0
+    }, {
+      source: 'v2ex' as const,
+      id: 'barrier-public-second',
+      title: '第一页公开主题',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/barrier-public-second',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      lastReplyAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    }];
+    const secondPageTopic = {
+      source: 'nodeseek' as const,
+      id: 'barrier-private-third',
+      title: '第二页高活跃待对账主题',
+      author: 'carol',
+      url: 'https://www.nodeseek.com/post-barrier-private-third-1',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      lastReplyAt: '2026-07-27T00:00:00.000Z',
+      replyCount: 0
+    };
+    const secondPageSafeTopic = {
+      ...secondPageTopic,
+      source: 'v2ex' as const,
+      id: 'barrier-public-third',
+      title: '第二页公开主题',
+      url: 'https://www.v2ex.com/t/barrier-public-third'
+    };
+    const barrierRead = Promise.withResolvers<{
+      items: Array<(typeof firstPage)[number]>;
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const releaseFirstRead = Promise.withResolvers<{
+      items: Array<(typeof firstPage)[number]>;
+      errors: Record<string, never>;
+      hasMore: true;
+      nextPage: 2;
+    }>();
+    const releaseSecondRead = Promise.withResolvers<{
+      items: Array<typeof secondPageSafeTopic | typeof secondPageTopic>;
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    let barrierCycleStarted = false;
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async ({ page = 1 }: { page?: number }) => {
+        if (identityBarriers.length) {
+          barrierCycleStarted = true;
+          return barrierRead.promise;
+        }
+        if (barrierCycleStarted) {
+          return page === 1 ? releaseFirstRead.promise : releaseSecondRead.promise;
+        }
+        return page === 1
+          ? { items: firstPage, errors: {}, hasMore: true, nextPage: 2 }
+          : { items: [secondPageSafeTopic, secondPageTopic], errors: {}, hasMore: false, nextPage: null };
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const hook = await renderHook(() => useFeedController({
+      identityBarriers,
+      retainableIdentityBarriers: identityBarriers,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+    const loadedKeys = [...firstPage, secondPageSafeTopic, secondPageTopic].map(topicKey);
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(firstPage.map(topicKey)));
+    await act(async () => { await hook.result.current.loadFeed(); });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys));
+    appQueryClient.setQueryData(forumQueryKeys.feed({
+      identityBarriers: ['nodeseek'],
+      scope: initialForumSessionEpochs,
+      source: 'all'
+    }), {
+      pages: [{
+        items: [{ ...firstPage[1], id: 'stale-barrier-cache', title: '旧屏障缓存' }],
+        errors: {},
+        hasMore: false,
+        nextPage: null,
+        page: 1
+      }],
+      pageParams: [{ page: 1 }]
+    });
+
+    identityBarriers = ['nodeseek'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(3));
+    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
+
+    await act(async () => {
+      barrierRead.resolve({ items: [firstPage[1]], errors: {}, hasMore: false, nextPage: null });
+      await barrierRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.refreshing).toBe(false));
+    await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys));
+
+    identityBarriers = [];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(4));
+    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
+
+    await act(async () => {
+      releaseFirstRead.resolve({
+        items: firstPage,
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      });
+      await releaseFirstRead.promise;
+    });
+    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(5));
+    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
+
+    await act(async () => {
+      releaseSecondRead.resolve({
+        items: [secondPageSafeTopic, secondPageTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+      await releaseSecondRead.promise;
+    });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys));
   });
 
   it('[REG-ACCOUNT-031] does not start or manually refresh a dirty single-source feed', async () => {
@@ -566,7 +1815,8 @@ describe('小隐寺 Feed controller', () => {
     });
 
     expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(false);
-    expect(hook.result.current.feedBusy).toBe(false);
+    expect(hook.result.current.feedBusy).toBe(true);
+    expect(hook.result.current.feedOutcomeKind).toBeUndefined();
   });
 
   it('REG-LINUXDO-002 preserves the loaded feed page across session reset before resuming pagination', async () => {
@@ -786,6 +2036,77 @@ describe('小隐寺 Feed controller', () => {
       .filter(([request]) => request.source === 'linuxdo')
       .map(([request]) => request.page || 1)).toEqual([1, 2, 1, 2, 1, 2]);
     expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]);
+  });
+
+  it.each(['all', 'nodeseek'] as const)('[REG-FEED-008] keeps loaded topics as a prefix when %s loads another page', async (feedSource) => {
+    const firstSource = feedSource === 'all' ? 'v2ex' as const : 'nodeseek' as const;
+    const secondSource = feedSource === 'all' ? 'linuxdo' as const : 'nodeseek' as const;
+    const firstPage = [{
+      source: firstSource,
+      id: `${feedSource}-first`,
+      title: '第一页首个主题',
+      author: 'alice',
+      url: `https://example.com/${feedSource}-first`,
+      createdAt: '2026-07-20T00:00:00.000Z',
+      lastReplyAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    }, {
+      source: secondSource,
+      id: `${feedSource}-second`,
+      title: '第一页第二个主题',
+      author: 'bob',
+      url: `https://example.com/${feedSource}-second`,
+      createdAt: '2026-07-19T00:00:00.000Z',
+      lastReplyAt: '2026-07-19T00:00:00.000Z',
+      replyCount: 0
+    }];
+    const nextPageTopic = {
+      source: firstSource,
+      id: `${feedSource}-third`,
+      title: '第二页高活跃主题',
+      author: 'carol',
+      url: `https://example.com/${feedSource}-third`,
+      createdAt: '2026-07-18T00:00:00.000Z',
+      lastReplyAt: '2026-07-27T00:00:00.000Z',
+      replyCount: 0
+    };
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed: jest.fn(async ({ source, page = 1 }: { source: string; page?: number }) => {
+        if (source !== feedSource) {
+          return { items: [], errors: {}, hasMore: false, nextPage: null };
+        }
+        return page === 1
+          ? { items: firstPage, errors: {}, hasMore: true, nextPage: 2 }
+          : { items: [nextPageTopic], errors: {}, hasMore: false, nextPage: null };
+      }),
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const hook = await renderHook(() => useFeedController({
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    if (feedSource !== 'all') {
+      await act(async () => hook.result.current.changeFeedSource(feedSource));
+    }
+    await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(firstPage.map(topicKey)));
+
+    await act(async () => {
+      await hook.result.current.loadFeed();
+    });
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual([
+      ...firstPage.map(topicKey),
+      topicKey(nextPageTopic)
+    ]));
   });
 
   it('[REG-FEED-005] reports a single-source category error instead of treating it as an empty category list', async () => {

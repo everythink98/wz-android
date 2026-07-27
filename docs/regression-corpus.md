@@ -3002,6 +3002,51 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 `handledPartialErrorsRef` 引用门禁后，编号测试第二次进入 Feed 会再次通知。 |
 | 明确不覆盖范围 | 不修改分类错误 effect；只有另有红测证明其重放时才处理。 |
 
+## `REG-FEED-008` 分页加载后已浏览主题回跳
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-04` |
+| 用户症状 | 首页或单站列表向下加载下一页后，已经滑过的主题重新出现在顶部，当前阅读位置产生明显回跳。 |
+| 触发条件 | 新分页包含活跃时间晚于旧页的主题；聚合 Feed 还会在新页落地时重新执行跨来源平衡。 |
+| 根因 seam | `src/app/useFeedController.ts` 的 `mergeFeedPages` 把顺序分页交给 `mergeFeedResponses`，混淆了“单页内来源聚合”和“跨页追加”，每次分页都全量按活跃度排序并重新平衡来源。 |
+| 必须保持的行为 | 加载下一页后，加载前的 `topicKey` 序列必须仍是新序列的完整前缀；新页唯一主题只追加到末尾，重复主题保持原位置；错误继续累积，分页元数据使用最新页。显式刷新仍可采用服务端最新顺序。 |
+| 精确失败 oracle | `tests/ui/feed-controller-xiaoyinsi.test.tsx` 的 `REG-FEED-008` 分别建立聚合 Feed 和 NodeSeek 两页数据，让第二页主题拥有更新的 `lastReplyAt`，要求第一页 key 顺序不变且第二页追加；修复前聚合结果变为“第三、第二、第一”，NodeSeek 结果变为“第三、第一、第二”。 |
+| 最低可靠自动测试层 | `UI_PASS`：通过真实 `useFeedController`、Infinite Query 和 `loadFeed` 固定用户可见列表顺序；只测试纯合并函数或 FlashList 配置不能覆盖本次迁移 seam。 |
+| Replay 或真实验收路径 | App 内首页“全部”和 NodeSeek“新帖子”持续单向下滑触发下一页；请求结算后，已滑过主题不得重新出现，静止时同一可见主题及纵向位置保持。再抽查 linux.do 和一个其他单站。全程只读。 |
+| 负向验证方式 | 把 `mergeFeedPages` 恢复为通过 `mergeFeedResponses` 折叠全部页面，编号测试两个参数用例都必须失败。 |
+| 明确不覆盖范围 | 不修改 Search、User 或 Topic 列表，不处理 key 顺序保持时仍存在的动态高度位移；后者若能独立复现应建立新的 UI 回归。 |
+
+## `REG-FEED-009` 身份屏障复用可信多页时再次重排
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-04`、`ACCOUNT-02` |
+| 用户症状 | “全部”已经加载多页后进入登录或验证对账，网络尚未返回，已浏览主题就会换位并带动当前阅读位置回跳。 |
+| 触发条件 | 聚合 Feed 存在可信多页缓存且任一来源进入 identity barrier；第二页主题活跃时间晚于第一页。 |
+| 根因 seam | `src/app/useFeedController.ts` 的可信 identity barrier 合并曾全量重排；改为普通 stable append 后又只从旧页保留 pending 来源，安全响应若只返回第一页会截掉旧第二页的安全来源。解除 barrier 时再把完整展示快照压成一个合成页，真实第一页结算后仍会覆盖旧尾页。 |
+| 必须保持的行为 | identity barrier 开始和安全来源刷新结算时都保持当前 topic key 顺序；本 runtime 可信快照中的安全来源与允许复用的 pending 来源都稳定去重保留，重复主题保持原位置。解除 barrier 时保留原页数供 Infinite Query 逐页重读，但迁移期间关闭旧 `hasMore`/cursor，后续页 cursor 只由新第一页响应重建；真实 epoch 变化后仍停止复用变化来源。 |
+| 精确失败 oracle | `tests/ui/feed-controller-xiaoyinsi.test.tsx` 的 `REG-FEED-009` 先加载两页，其中第二页同时含 V2EX 安全主题和 NodeSeek pending 主题；建立 barrier 后新请求只返回第一页 V2EX，要求旧第二页两项都保持。解除 barrier 后服务端按真实 page 1、page 2 分别结算，要求中途及最终完整 key 序列均不截断，且确实发起第二页读取。旧实现会先丢第二页 V2EX，再因合成单页只重读 page 1。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须通过真实 `useFeedController`、Infinite Query placeholder 和 identity barrier key 变化固定可见顺序。 |
+| Replay 或真实验收路径 | “全部”连续加载至少两页后，仅在自然出现验证或已有安全对账入口时观察 barrier 前后同一可见主题与纵向位置；不清 Cookie、不退出或切换账号制造状态。 |
+| 负向验证方式 | 只保留旧 pending 条目，编号测试会在 barrier 安全响应结算后丢掉第二页 V2EX；把解除 barrier 的快照压成一个合成页，则不会发起 release page 2。 |
+| 明确不覆盖范围 | 显式刷新仍可采用服务端最新顺序；不处理 topic key 不变但内容动态高度变化导致的位移。 |
+
+## `REG-FEED-010` 启动身份对账让 Feed 旧列表闪现后退回 Loading
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`ACCOUNT-01`、`ACCOUNT-02` |
+| 用户症状 | 关闭并重新打开 App 时，首页偶尔先显示上次或首个请求的列表，随后退回全屏 Loading，再显示新列表；分类栏也可能同步闪空。 |
+| 触发条件 | Feed/Categories 与四站 Account bootstrap 并发，旧 Feed 或温缓存先于身份 probe 结算；随后 barrier 或 session epoch 改变 Query key。 |
+| 根因 seam | `AppRoot` 与 `useAccountStatusController` 把“本 runtime 尚未确认身份”初始化成匿名且已结算；首次可信身份建立因而被误判为换号。`useFeedController` 又把所有 pending 来源都当成可复用旧可信数据；TanStack 的 disabled 单站 Query 仍返回温缓存及其错误状态，聚合 observer 在 barrier key 变化时会中止已消费 signal 的旧请求，解除或替换 barrier 后还会直接命中 `staleTime: Infinity` 的旧目标缓存。多个已确认来源同时 pending 时，单站换号清除 aggregate cache 还会连同 presentation-only 的另一站可信条目一起丢失；无 barrier 的直接 epoch 变化在新 Feed 只结算第一页或新 Categories 只返回部分来源后过早覆盖 runtime 可信快照，会在下一次 render 丢掉未变化来源的安全尾页或分类。单站 disabled Query 无数据时若把 `feedBusy` 关掉，会把身份等待误报成空列表。 |
+| 必须保持的行为 | 所有 `managedSession` 来源从 App runtime 首帧起进入按来源身份屏障，V2EX 等安全来源仍立即请求和展示。首次可信身份建立只提交 canonical identity，不触发换号 epoch/reset，并移除该来源尚未受信的服务端 Query；Account canonical/probe、聚合安全投影和其他来源必须保留。在途安全聚合读取必须按自己的 barrier snapshot 结算后再切 key。未在本 runtime 成功确认的来源不得从聚合或单站 Feed/Categories 温缓存回显，也不得投影旧 outcome、通知或验证动作；只有本 runtime 已确认后再次 pending 的来源才能只读复用。Feed/Categories 用本 controller runtime 的安全展示快照承接 Query cache reset，并按新旧 epoch 只过滤变化来源；多个来源同时 pending 时，A 换号不得删除仍可信的 B。barrier 变化但 epoch 不变时保留非空安全结果；解除 barrier 时不得回退旧目标缓存，并必须重新读取完整结果。已有非空安全列表时不得回到空列表或全屏 Loading；没有安全条目时正常显示 Loading，单站身份尚未确认也不得显示“当前筛选没有匹配主题”。占位或 barrier 迁移期间必须关闭 `hasMore`，不得使用旧 cursor 分页。 |
+| 精确失败 oracle | `tests/ui/account-status-controller.test.tsx` 要求四站初始均为 pending，首次身份建立不触发 change/reset、只清除该来源不可信缓存并保留聚合/其他已确认来源，而已确认来源后来再次 pending 必须取消私有读取；`tests/ui/feed-controller-xiaoyinsi.test.tsx` 要求聚合与单站温缓存私有条目零帧可见，单站旧错误不产生 outcome、通知或验证弹层，无可信单站条目时保持 Loading，在途安全读取不因 barrier 缩小而 abort/restart，解除最后 barrier 后不命中旧 Feed/Categories 快照；两个 confirmed 来源同时 pending 时，NodeSeek epoch 变化并清除 aggregate cache 后，Feed 与 Categories 都必须移除 NodeSeek、继续保留 presentation-only 的 linux.do 和安全来源。该 Feed 场景先用 `old-account-cursor` 加载旧第二页，换号后新第一页返回 `new-account-cursor`，断言新第二页只收到新 cursor。另一个无 barrier 场景在旧第二页含 V2EX 条目时直接改变 NodeSeek epoch，要求新第一页结算和普通 rerender 后该安全尾页仍存在，继续分页只使用 `direct-new-cursor`；迁移期间显式刷新失败继续保留尾页，成功则立即采用该次新 epoch 原始结果并退出稳定占位；刷新尚未结算时离开 Feed 必须取消 owner，返回后仍保留尾页且不提示“列表已更新”。对称的 Categories 场景要求相同 rerender 后 NodeSeek 分类消失、linux.do 与 V2EX 分类仍保留。没有安全条目时回到 Loading，且全部迁移期间旧分页禁用。`src/app/sessionControllerHelpers.test.ts` 固定首次确认缓存对目标来源、Account、aggregate 和其他来源的隔离边界；`src/sources/sourceGatewayContract.test.ts` 固定 query barrier snapshot 必须成为本次 aggregate read 的 unavailable sources。旧实现分别会触发 reset/abort、回显私有温缓存或旧错误、回退旧列表且不重读、误删未变化 managed 来源、制造空占位、提交旧账号 cursor 或暴露旧 `hasMore`。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须通过真实 Account/Feed controller、TanStack Query key/placeholder 和逐次 render 记录固定启动竞态；源码字符串、App 能启动或单次 Smoke 不能证明无中间空帧。 |
+| Replay 或真实验收路径 | 在 revision、APK 和设备身份匹配且不清 App 数据/Cookie 的模拟器上连续 force-stop/relaunch 至少 10 次：允许 `Loading → 安全列表 → 完整列表`，禁止非空列表再次退回全屏 Loading，且未确认来源旧条目不得出现。再以同 PID 热恢复确认不重置身份或重复加载；Account unknown 时只屏障该站，其他来源继续可见。 |
+| 负向验证方式 | 把初始 pending 恢复为 false、让首次身份建立走换号事务、保留首次确认前的单站 Query、直接用最新 barrier 更换在途 Query key、去掉单站条目/错误门禁、runtime 安全快照或解除 barrier 前的安全投影/stale 标记，把 disabled pending 单站视为非 busy，或在 placeholder 暴露 next cursor；编号测试必须分别观察到 reset/abort、私有缓存或旧错误泄露、旧列表回退、误报空列表、变化来源残留/未变化来源消失或额外分页。 |
+| 明确不覆盖范围 | 不增加全局 Splash、缓存持久化、FlashList offset/MVCP 补偿或新依赖；如果 topic key 序列无空档且未变化来源顺序稳定后设备仍位移，另立动态高度或布局回归。 |
+
 ## `REG-SOURCE-008` 会话来源清单与 source catalog 漂移
 
 | 字段 | 内容 |

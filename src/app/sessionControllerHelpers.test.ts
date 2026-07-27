@@ -12,6 +12,7 @@ import {
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   rejectBrowserFetchRequest,
+  removeUnconfirmedForumSourceQueries,
   replaceCredentialWrite,
   requestHeaderValue,
   resetForumSourceQueries,
@@ -131,6 +132,27 @@ describe('session controller helpers', () => {
     expect(client.getQueryData(aggregateKey)).toBe('trusted aggregate');
     expect(client.getQueryData(otherKey)).toBe('trusted linux.do topic');
     await client.cancelQueries();
+  });
+  it('[REG-FEED-010] removes unconfirmed source data without touching account or safe aggregate queries', () => {
+    const client = new QueryClient();
+    const sourceFeed = ['forum', 'nodeseek', 'feed'] as const;
+    const account = ['forum', 'nodeseek', 'account-status'] as const;
+    const probe = ['forum', 'nodeseek', 'account-status-probe'] as const;
+    const aggregate = ['forum', 'all', 'feed'] as const;
+    const otherSource = ['forum', 'linuxdo', 'feed'] as const;
+    client.setQueryData(sourceFeed, 'untrusted');
+    client.setQueryData(account, 'canonical');
+    client.setQueryData(probe, 'probe');
+    client.setQueryData(aggregate, 'safe');
+    client.setQueryData(otherSource, 'other');
+
+    removeUnconfirmedForumSourceQueries('nodeseek', client);
+
+    expect(client.getQueryData(sourceFeed)).toBeUndefined();
+    expect(client.getQueryData(account)).toBe('canonical');
+    expect(client.getQueryData(probe)).toBe('probe');
+    expect(client.getQueryData(aggregate)).toBe('safe');
+    expect(client.getQueryData(otherSource)).toBe('other');
   });
   it('preserves only the exact active recovery query when requested', () => {
     const client = new QueryClient({

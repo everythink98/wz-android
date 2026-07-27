@@ -224,11 +224,11 @@ export function AppRoot() {
     yaohuo: 'yaohuo:anonymous'
   });
   const accountIdentityPendingRef = useRef<Record<SessionSite, boolean>>({
-    linuxdo: false,
-    nodeseek: false,
-    xiaoyinsi: false,
-    yaohuo: false
-  });
+    ...Object.fromEntries(sessionSources.map((source) => [source, true]))
+  } as Record<SessionSite, boolean>);
+  const accountIdentityEstablishedRef = useRef<Record<SessionSite, boolean>>({
+    ...Object.fromEntries(sessionSources.map((source) => [source, false]))
+  } as Record<SessionSite, boolean>);
   const commitAccountIdentityRuntime = useCallback((
     source: SessionSite,
     update: { identityKey?: string; pending: boolean }
@@ -236,6 +236,9 @@ export function AppRoot() {
     accountIdentityPendingRef.current[source] = update.pending;
     if (update.identityKey) {
       accountIdentityKeysRef.current[source] = update.identityKey;
+      if (!update.pending) {
+        accountIdentityEstablishedRef.current[source] = true;
+      }
     }
   }, []);
   const readSessionRuntimeSnapshot = useCallback((
@@ -711,6 +714,10 @@ export function AppRoot() {
       readSessionRuntimeSnapshot
     ]
   );
+  const retainableAccountIdentityBarriers = useMemo(
+    () => accountIdentityBarriers.filter((source) => accountIdentityEstablishedRef.current[source]),
+    [accountIdentityBarriers]
+  );
   const {
     cancelTopicQueries,
     loadMoreReplies,
@@ -1142,6 +1149,7 @@ export function AppRoot() {
     shownFeedItems
   } = useFeedController({
     identityBarriers: accountIdentityBarriers,
+    retainableIdentityBarriers: retainableAccountIdentityBarriers,
     sessionEpochs: forumSessionEpochs,
     linuxDoVerificationActive: showLinuxDoPanel,
     notify,

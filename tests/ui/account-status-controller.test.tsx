@@ -200,6 +200,69 @@ describe('account status queries', () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   });
 
+  it('[REG-FEED-010] does not cancel a safe aggregate read when the startup identity probes begin', async () => {
+    mockCheckLinuxDoLogin.mockResolvedValue({
+      ok: false,
+      loginRequired: true,
+      message: '未登录'
+    });
+    const aggregateResult = Promise.withResolvers<string>();
+    const aggregateAbort = jest.fn();
+    const aggregateRequest = appQueryClient.fetchQuery({
+      queryKey: ['forum', 'all', 'feed', { bootstrap: true }],
+      queryFn: async ({ signal }) => {
+        signal.addEventListener('abort', aggregateAbort, { once: true });
+        return aggregateResult.promise;
+      }
+    }).catch(() => undefined);
+    const cookieResult = Promise.withResolvers<string | undefined>();
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => cookieResult.promise)
+    });
+    expect(Object.values(hook.result.current.accountSessionViewModels).every(
+      (session) => session.identityTrust === 'pending'
+    )).toBe(true);
+    let reconciliation!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
+
+    await act(async () => {
+      reconciliation = hook.result.current.refreshAccountStatus({ silent: true });
+      await Promise.resolve();
+    });
+
+    aggregateResult.resolve('safe aggregate');
+    cookieResult.resolve(undefined);
+    await act(async () => { await Promise.all([aggregateRequest, reconciliation]); });
+
+    expect(aggregateAbort).not.toHaveBeenCalled();
+  });
+
+  it('[REG-FEED-010] still cancels private reads when a confirmed source later becomes pending', async () => {
+    mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
+    });
+    await act(async () => { await hook.result.current.reconcileAccountStatus('nodeseek'); });
+    expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed');
+
+    const privateResult = Promise.withResolvers<string>();
+    const privateAbort = jest.fn();
+    const privateRequest = appQueryClient.fetchQuery({
+      queryKey: ['forum', 'nodeseek', 'feed', { settled: true }],
+      queryFn: async ({ signal }) => {
+        signal.addEventListener('abort', privateAbort, { once: true });
+        return privateResult.promise;
+      }
+    }).catch(() => undefined);
+
+    await act(async () => {
+      hook.result.current.beginAccountIdentityCheck('nodeseek');
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(privateAbort).toHaveBeenCalledTimes(1));
+    privateResult.resolve('stale private read');
+    await privateRequest;
+  });
+
   it('REG-ACCOUNT-001 keeps successful sites when one identity query fails', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
     mockGetCurrentUser.mockImplementation(async ({ source }) => {
@@ -307,7 +370,21 @@ describe('account status queries', () => {
         runtime.identityKey = update.identityKey;
       }
     });
-    const { hook } = await renderStatusController({
+    const sourceFeedKey = forumQueryKeys.feed({
+      feedFilter: 'postTime',
+      scope: initialForumSessionEpochs,
+      source: 'nodeseek'
+    });
+    const sourceCategoriesKey = forumQueryKeys.categories('nodeseek', initialForumSessionEpochs);
+    const aggregateFeedKey = forumQueryKeys.feed({
+      identityBarriers: ['nodeseek'],
+      scope: initialForumSessionEpochs,
+      source: 'all'
+    });
+    appQueryClient.setQueryData(sourceFeedKey, { private: true });
+    appQueryClient.setQueryData(sourceCategoriesKey, { private: true });
+    appQueryClient.setQueryData(aggregateFeedKey, { safe: true });
+    const { hook, onAccountStatusChanged } = await renderStatusController({
       onAccountIdentityRuntimeChanged,
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
     });
@@ -319,7 +396,11 @@ describe('account status queries', () => {
       }))
     ));
 
-    expect(settled.result.status).toBe('changed');
+    expect(settled.result.status).toBe('same');
+    expect(onAccountStatusChanged).not.toHaveBeenCalled();
+    expect(appQueryClient.getQueryData(sourceFeedKey)).toBeUndefined();
+    expect(appQueryClient.getQueryData(sourceCategoriesKey)).toBeUndefined();
+    expect(appQueryClient.getQueryData(aggregateFeedKey)).toEqual({ safe: true });
     expect(settled.runtimeAtResolution).toEqual({
       identityKey: 'nodeseek:17',
       pending: false
@@ -361,9 +442,14 @@ describe('account status queries', () => {
       }
     });
 
+    mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
     const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe'),
       sessionViewModels: createSiteSessionViewModels(workflowStates)
     });
+    expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
+
+    await act(async () => { await hook.result.current.reconcileAccountStatus('nodeseek'); });
 
     expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
       status: 'logged-in',
@@ -632,7 +718,7 @@ describe('account status queries', () => {
     });
 
     expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
-    expect(onAccountStatusChanged).toHaveBeenCalledTimes(1);
+    expect(onAccountStatusChanged).not.toHaveBeenCalled();
     expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser);
   });
 
@@ -720,7 +806,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-019] does not clear unrelated caches during initial Xiaoyinsi anonymous bootstrap', async () => {
+  it('[REG-ACCOUNT-019] does not clear an independently confirmed source during Xiaoyinsi logout', async () => {
     mockCheckLinuxDoLogin.mockResolvedValue({
       ok: false,
       loginRequired: true,
@@ -732,6 +818,12 @@ describe('account status queries', () => {
     appQueryClient.setQueryData(xiaoyinsiFeedKey, { private: true });
     appQueryClient.setQueryData(allFeedKey, { mixed: true });
     appQueryClient.setQueryData(linuxDoFeedKey, { untouched: true });
+    appQueryClient.setQueryData(forumQueryKeys.accountStatus({
+      sessionEpochs: initialForumSessionEpochs,
+      source: 'linuxdo'
+    }), {
+      session: createSiteSessionStates().linuxdo
+    });
     const states = createSiteSessionStates({
       xiaoyinsi: {
         site: 'xiaoyinsi',
