@@ -1087,14 +1087,16 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     replyDetailActionButton: {
       justifyContent: 'flex-start',
-      minHeight: 44,
-      paddingHorizontal: 0
+      minHeight: 48,
+      paddingBottom: 0,
+      paddingHorizontal: 0,
+      paddingTop: 12
     },
     replyCompactActionButton: {
       flexBasis: 0,
       flexGrow: 1,
       flexShrink: 1,
-      minHeight: 44,
+      minHeight: 48,
       minWidth: 44,
       justifyContent: 'flex-start',
       gap: 2,
@@ -2613,8 +2615,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: 'transparent',
+      paddingBottom: 4,
       paddingHorizontal: 0,
-      paddingVertical: 18
+      paddingTop: 16
     },
     replyAcceptedNotice: {
       minHeight: 28,
@@ -2845,7 +2848,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     replySignature: {
       borderTopColor: theme.lineStrong,
       borderTopWidth: StyleSheet.hairlineWidth,
-      marginTop: 4,
       paddingBottom: 4,
       paddingTop: 4
     },
@@ -2854,8 +2856,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 6,
-      marginTop: 4
+      gap: 6
     },
     replyThanksText: {
       alignSelf: 'flex-start',
@@ -2869,9 +2870,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       gap: 4,
       justifyContent: 'flex-start',
-      marginBottom: -12,
-      marginTop: -2,
-      minHeight: 44,
+      minHeight: 48,
       paddingTop: 0
     },
     quoteStack: {

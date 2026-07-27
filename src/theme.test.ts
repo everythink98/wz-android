@@ -110,7 +110,7 @@ describe('Android reader theme safety rails', () => {
     expect(styles.replyCompactActionButton.flexGrow).toBe(1);
     expect(styles.replyCompactActionButton.flexShrink).toBe(1);
     expect(styles.replyCompactActionButton.minWidth).toBeGreaterThanOrEqual(44);
-    expect(styles.replyCompactActionButton.minHeight).toBeGreaterThanOrEqual(44);
+    expect(styles.replyCompactActionButton.minHeight).toBeGreaterThanOrEqual(48);
   });
 
   it('keeps replies flat while balancing content, signatures, stats, and the action row', () => {
@@ -121,19 +121,23 @@ describe('Android reader theme safety rails', () => {
       backgroundColor: 'transparent',
       borderBottomWidth: StyleSheet.hairlineWidth,
       gap: 8,
-      paddingVertical: 18
+      paddingBottom: 4,
+      paddingTop: 16
     });
     expect(styles.replyCard.borderRadius).toBeUndefined();
     expect(styles.replyContentArea.gap).toBe(8);
-    expect(styles.replyActionRow).toMatchObject({ marginBottom: -12, marginTop: -2, minHeight: 44 });
+    expect(styles.replyActionRow).toMatchObject({ minHeight: 48 });
+    expect(styles.replyActionRow.marginBottom).toBeUndefined();
+    expect(styles.replyActionRow.marginTop).toBeUndefined();
+    expect(styles.replyDetailActionButton).toMatchObject({ minHeight: 48, paddingBottom: 0, paddingTop: 12 });
     expect(styles.replySignature).toMatchObject({
       borderTopColor: theme.lineStrong,
       borderTopWidth: StyleSheet.hairlineWidth,
-      marginTop: 4,
       paddingBottom: 4,
       paddingTop: 4
     });
-    expect(styles.replyStatRail.marginTop).toBe(4);
+    expect(styles.replySignature.marginTop).toBeUndefined();
+    expect(styles.replyStatRail.marginTop).toBeUndefined();
     expect(styles.replyQuoteBox.backgroundColor).not.toBe(styles.quoteBox.backgroundColor);
   });
 

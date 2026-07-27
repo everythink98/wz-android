@@ -553,6 +553,56 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('删除回复')).toBeNull();
   });
 
+  it('keeps signature, reactions, and available actions independent', async () => {
+    const fullReply: Reply = {
+      ...replyProps().reply,
+      canLike: true,
+      liked: true,
+      quotedFloors: [],
+      reactionSummary: [{ id: 'heart', count: 2 }],
+      replyTargetAuthor: undefined,
+      signatureHtml: '<p>签名内容</p>'
+    };
+    const view = await render(
+      <ReplyItem
+        {...replyProps({
+          canUseDiscourseActions: true,
+          discourseEmojiUrls: {
+            heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15'
+          },
+          reply: fullReply,
+          source: 'xiaoyinsi'
+        })}
+      />
+    );
+
+    expect(view.getByText('签名内容')).toBeTruthy();
+    expect(view.getByLabelText('heart 2')).toBeTruthy();
+    expect(view.getByLabelText('回复')).toBeTruthy();
+    expect(view.getByLabelText('取消赞')).toBeTruthy();
+
+    await view.rerender(
+      <ReplyItem
+        {...replyProps({
+          canUseDiscourseActions: false,
+          canWrite: false,
+          reply: {
+            ...fullReply,
+            canLike: false,
+            liked: false,
+            reactionSummary: undefined,
+            signatureHtml: undefined
+          },
+          source: 'v2ex'
+        })}
+      />
+    );
+    expect(view.queryByText('签名内容')).toBeNull();
+    expect(view.queryByLabelText('heart 2')).toBeNull();
+    expect(view.queryByLabelText('回复')).toBeNull();
+    expect(view.queryByLabelText('取消赞')).toBeNull();
+  });
+
   it('[REG-XIAOYINSI-007] separates 小隐寺 reply permission from per-post interaction permissions', async () => {
     const writableReply: Reply = {
       ...replyProps().reply,
