@@ -43,6 +43,7 @@ import {
   type ForumIdentityBarrierSource,
   type ForumSessionEpochs
 } from './serverState';
+import { useCommittedRef } from './useCommittedRef';
 
 type FeedPageParam = { cursor?: string; page: number };
 type FeedPage = FeedResponse & FeedPageParam;
@@ -194,6 +195,14 @@ function sameIdentityBarriers(
   const normalizedRight = normalizeIdentityBarriers(right);
   return left.length === normalizedRight.length
     && left.every((source, index) => source === normalizedRight[index]);
+}
+
+function sameSessionEpochs(left: ForumSessionEpochs, right: ForumSessionEpochs) {
+  return sessionSources.every((source) => left[source] === right[source]);
+}
+
+function changedSessionSources(left: ForumSessionEpochs, right: ForumSessionEpochs) {
+  return new Set(sessionSources.filter((source) => left[source] !== right[source]));
 }
 
 function identityBarriersOnlyRemoved(
@@ -423,6 +432,7 @@ export function feedOutcomeKind(itemCount: number, errors: SourceErrors): Source
 
 export function useFeedController({
   identityBarriers = [],
+  identityReconciliationPending = false,
   retainableIdentityBarriers = [],
   sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
@@ -436,6 +446,7 @@ export function useFeedController({
   sourceGateway
 }: {
   identityBarriers?: readonly ForumIdentityBarrierSource[];
+  identityReconciliationPending?: boolean;
   retainableIdentityBarriers?: readonly ForumIdentityBarrierSource[];
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
@@ -464,12 +475,14 @@ export function useFeedController({
   const [categoriesQueryRetainableIdentityBarriers, setCategoriesQueryRetainableIdentityBarriers] = useState(
     () => normalizeIdentityBarriers(retainableIdentityBarriers)
   );
+  const [categoriesQuerySessionEpochs, setCategoriesQuerySessionEpochs] = useState(sessionEpochs);
   const [feedQueryIdentityBarriers, setFeedQueryIdentityBarriers] = useState(
     () => normalizeIdentityBarriers(identityBarriers)
   );
   const [feedQueryRetainableIdentityBarriers, setFeedQueryRetainableIdentityBarriers] = useState(
     () => normalizeIdentityBarriers(retainableIdentityBarriers)
   );
+  const [feedQuerySessionEpochs, setFeedQuerySessionEpochs] = useState(sessionEpochs);
   const trustedAggregateCategoriesRef = useRef<{
     data: CategoriesResponse;
     queryKey: readonly unknown[];
@@ -486,9 +499,46 @@ export function useFeedController({
     () => new Set(retainableIdentityBarriers),
     [retainableIdentityBarriers]
   );
+  const categoriesChangedIdentitySources = useMemo(
+    () => changedSessionSources(categoriesQuerySessionEpochs, sessionEpochs),
+    [categoriesQuerySessionEpochs, sessionEpochs]
+  );
+  const feedChangedIdentitySources = useMemo(
+    () => changedSessionSources(feedQuerySessionEpochs, sessionEpochs),
+    [feedQuerySessionEpochs, sessionEpochs]
+  );
+  const categoriesBlockedIdentitySources = useMemo(
+    () => new Set([...blockedIdentitySources, ...categoriesChangedIdentitySources]),
+    [blockedIdentitySources, categoriesChangedIdentitySources]
+  );
+  const categoriesRetainableIdentitySources = useMemo(
+    () => new Set([...retainableIdentitySources].filter(
+      (source) => !categoriesChangedIdentitySources.has(source)
+    )),
+    [categoriesChangedIdentitySources, retainableIdentitySources]
+  );
+  const feedBlockedIdentitySources = useMemo(
+    () => new Set([...blockedIdentitySources, ...feedChangedIdentitySources]),
+    [blockedIdentitySources, feedChangedIdentitySources]
+  );
+  const feedRetainableIdentitySources = useMemo(
+    () => new Set([...retainableIdentitySources].filter(
+      (source) => !feedChangedIdentitySources.has(source)
+    )),
+    [feedChangedIdentitySources, retainableIdentitySources]
+  );
   const feedSourceIdentityPending = feedSource !== 'all'
     && feedSource !== 'v2ex'
     && identityBarriers.includes(feedSource);
+  const feedIdentitySnapshotReady = feedSource !== 'all' || (
+    !identityReconciliationPending
+    && sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers)
+    && sameSessionEpochs(feedQuerySessionEpochs, sessionEpochs)
+  );
+  const categoriesIdentitySnapshotReady = !identityReconciliationPending
+    && sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers)
+    && sameSessionEpochs(categoriesQuerySessionEpochs, sessionEpochs);
+  const aggregateIdentityTransitionPending = feedSource === 'all' && !feedIdentitySnapshotReady;
   const canShowFeedSourceData = !feedSourceIdentityPending
     || isSessionSource(feedSource) && retainableIdentityBarriers.includes(feedSource);
   const feedFilter = feedFilterForRequest(feedSource, categoryFilter, feedFilters);
@@ -496,16 +546,22 @@ export function useFeedController({
     category: categoryFilter || undefined,
     feedFilter,
     identityBarriers: feedQueryIdentityBarriers,
-    scope: sessionEpochs,
+    scope: feedSource === 'all' ? feedQuerySessionEpochs : sessionEpochs,
     source: feedSource
   });
   const feedEnabled = !feedSourceIdentityPending
+    && feedIdentitySnapshotReady
     && (readerDataLoaded || !shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter));
 
-  const allCategoriesQueryKey = forumQueryKeys.categories('all', sessionEpochs, categoriesQueryIdentityBarriers);
+  const allCategoriesQueryKey = forumQueryKeys.categories(
+    'all',
+    categoriesQuerySessionEpochs,
+    categoriesQueryIdentityBarriers
+  );
+  const visibleAllCategoriesQueryKey = forumQueryKeys.categories('all', sessionEpochs, identityBarriers);
   const allCategoriesQuery = useQuery<CategoriesResponse>({
     queryKey: allCategoriesQueryKey,
-    enabled: categoriesActive,
+    enabled: categoriesActive && categoriesIdentitySnapshotReady,
     placeholderData: (previousData, previousQuery) => (
       projectSafeCategoriesPlaceholder(previousData, previousQuery?.queryKey, allCategoriesQueryKey)
     ),
@@ -539,7 +595,7 @@ export function useFeedController({
   const trustedCategoriesChangedSources = trustedCategoriesState
     ? changedSourcesForIdentityTransition(
         trustedCategoriesState.queryKey,
-        allCategoriesQueryKey,
+        visibleAllCategoriesQueryKey,
         'categories'
       )
     : null;
@@ -548,14 +604,14 @@ export function useFeedController({
     ? projectSafeCategoriesPlaceholder(
         trustedCategoriesState.data,
         trustedCategoriesState.queryKey,
-        allCategoriesQueryKey
+        visibleAllCategoriesQueryKey
       )
     : undefined;
   const currentAggregateCategories = (allCategoriesQuery.data?.items || []).filter(
     (category) => canRetainTrustedSource(
       category.source,
-      blockedIdentitySources,
-      retainableIdentitySources
+      categoriesBlockedIdentitySources,
+      categoriesRetainableIdentitySources
     )
   );
   const allCategories = useMemo(() => {
@@ -565,13 +621,13 @@ export function useFeedController({
     return mergeTrustedCategories(
       currentAggregateCategories,
       trustedCategoriesData.items,
-      blockedIdentitySources,
-      retainableIdentitySources
+      categoriesBlockedIdentitySources,
+      categoriesRetainableIdentitySources
     );
   }, [
-    blockedIdentitySources,
+    categoriesBlockedIdentitySources,
+    categoriesRetainableIdentitySources,
     currentAggregateCategories,
-    retainableIdentitySources,
     trustedCategoriesData?.items
   ]);
   useEffect(() => {
@@ -607,8 +663,14 @@ export function useFeedController({
     trustedCategoriesData?.items.length
   ]);
   useEffect(() => {
+    if (identityReconciliationPending) {
+      return;
+    }
     const nextRetainableIdentityBarriers = normalizeIdentityBarriers(retainableIdentityBarriers);
-    if (sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers)) {
+    if (
+      sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers)
+      && sameSessionEpochs(categoriesQuerySessionEpochs, sessionEpochs)
+    ) {
       if (!sameIdentityBarriers(categoriesQueryRetainableIdentityBarriers, nextRetainableIdentityBarriers)) {
         setCategoriesQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
       }
@@ -624,8 +686,8 @@ export function useFeedController({
         queryClient.setQueryData<CategoriesResponse>(targetQueryKey, {
           errors: visibleIdentityErrors(
             allCategoriesQuery.data?.errors,
-            blockedIdentitySources,
-            retainableIdentitySources
+            categoriesBlockedIdentitySources,
+            categoriesRetainableIdentitySources
           ),
           items: allCategories
         });
@@ -638,13 +700,18 @@ export function useFeedController({
     }
     setCategoriesQueryIdentityBarriers(nextIdentityBarriers);
     setCategoriesQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
+    setCategoriesQuerySessionEpochs(sessionEpochs);
   }, [
     allCategories,
     allCategoriesQuery.data,
     allCategoriesQuery.isFetching,
     categoriesQueryIdentityBarriers,
     categoriesQueryRetainableIdentityBarriers,
+    categoriesQuerySessionEpochs,
+    categoriesBlockedIdentitySources,
+    categoriesRetainableIdentitySources,
     identityBarriers,
+    identityReconciliationPending,
     queryClient,
     retainableIdentityBarriers,
     sessionEpochs
@@ -740,14 +807,25 @@ export function useFeedController({
     },
     getNextPageParam: nextFeedPage
   });
+  const visibleFeedQueryKey = feedSource === 'all' ? forumQueryKeys.feed({
+    category: categoryFilter || undefined,
+    feedFilter,
+    identityBarriers,
+    scope: sessionEpochs,
+    source: 'all'
+  }) : feedQueryKey;
   const rawPages = canShowFeedSourceData ? feedQuery.data?.pages || [] : [];
   const pages = feedSource === 'all' ? rawPages.map((page) => ({
     ...page,
-    errors: visibleIdentityErrors(page.errors, blockedIdentitySources, retainableIdentitySources),
+    errors: visibleIdentityErrors(
+      page.errors,
+      feedBlockedIdentitySources,
+      feedRetainableIdentitySources
+    ),
     items: page.items.filter((topic) => canRetainTrustedSource(
       topic.source,
-      blockedIdentitySources,
-      retainableIdentitySources
+      feedBlockedIdentitySources,
+      feedRetainableIdentitySources
     ))
   })) : rawPages;
   const effectiveFeedRetainableIdentityBarriers = sameIdentityBarriers(
@@ -758,14 +836,14 @@ export function useFeedController({
   const trustedFeedChangedSources = feedSource === 'all' && trustedFeedState
     ? changedSourcesForIdentityTransition(
         trustedFeedState.queryKey,
-        feedQueryKey,
+        visibleFeedQueryKey,
         'feed',
         ['category', 'feedFilter']
       )
     : null;
   const trustedFeedData = trustedFeedState
     && (effectiveFeedRetainableIdentityBarriers.length || trustedFeedChangedSources?.size)
-    ? projectSafeFeedPlaceholder(trustedFeedState.data, trustedFeedState.queryKey, feedQueryKey)
+    ? projectSafeFeedPlaceholder(trustedFeedState.data, trustedFeedState.queryKey, visibleFeedQueryKey)
     : undefined;
   const refreshFeedScope = JSON.stringify([
     feedActive,
@@ -791,11 +869,11 @@ export function useFeedController({
       items: mergeTrustedTopics(
         current.items,
         trustedItems,
-        blockedIdentitySources,
-        retainableIdentitySources
+        feedBlockedIdentitySources,
+        feedRetainableIdentitySources
       )
     };
-  }, [blockedIdentitySources, pages, retainableIdentitySources, trustedFeedData?.pages]);
+  }, [feedBlockedIdentitySources, feedRetainableIdentitySources, pages, trustedFeedData?.pages]);
   useEffect(() => {
     if (
       feedSource !== 'all'
@@ -844,8 +922,14 @@ export function useFeedController({
     trustedFeedData?.pages.length
   ]);
   useEffect(() => {
+    if (identityReconciliationPending) {
+      return;
+    }
     const nextRetainableIdentityBarriers = normalizeIdentityBarriers(retainableIdentityBarriers);
-    if (sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers)) {
+    if (
+      sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers)
+      && sameSessionEpochs(feedQuerySessionEpochs, sessionEpochs)
+    ) {
       if (!sameIdentityBarriers(feedQueryRetainableIdentityBarriers, nextRetainableIdentityBarriers)) {
         setFeedQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
       }
@@ -882,14 +966,17 @@ export function useFeedController({
     }
     setFeedQueryIdentityBarriers(nextIdentityBarriers);
     setFeedQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
+    setFeedQuerySessionEpochs(sessionEpochs);
   }, [
     categoryFilter,
     feedFilter,
     feedQuery.isFetching,
     feedQueryIdentityBarriers,
     feedQueryRetainableIdentityBarriers,
+    feedQuerySessionEpochs,
     feedSource,
     identityBarriers,
+    identityReconciliationPending,
     mergedFeed,
     queryClient,
     retainableIdentityBarriers,
@@ -897,7 +984,7 @@ export function useFeedController({
   ]);
   const lastPage = pages.at(-1);
   const nextPage = !feedQuery.isPlaceholderData
-    && sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers)
+    && feedIdentitySnapshotReady
     && lastPage
     ? nextFeedPage(lastPage)
     : undefined;
@@ -924,12 +1011,22 @@ export function useFeedController({
     () => applyFeedFilter(activeFeedState.items, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
     [activeFeedState.items, feedSource, readerData.favorites, readerData.history, readingFilter]
   );
-  const settledFeedOutcomeKind = feedSourceIdentityPending || feedQuery.isPending || feedQuery.isFetching
+  const settledFeedOutcomeKind = aggregateIdentityTransitionPending
+    || feedSourceIdentityPending
+    || feedQuery.isPending
+    || feedQuery.isFetching
     ? undefined
     : feedOutcomeKind(
         mergedFeed.items.length,
         feedQuery.isError ? sourceErrorsFromFeedError(feedSource, feedQuery.error) : mergedFeed.errors
       );
+  const feedRecoveryQueryIdentity = JSON.stringify(feedQueryKey);
+  const feedRecoveryOwnerRef = useCommittedRef({
+    active: feedActive,
+    identityReady: feedIdentitySnapshotReady,
+    queryIdentity: feedRecoveryQueryIdentity,
+    sourceIdentityPending: feedSourceIdentityPending
+  });
 
   useEffect(() => {
     if (!categoriesActive) {
@@ -986,6 +1083,15 @@ export function useFeedController({
       const recovery: LinuxDoReadRecovery = {
         queryKey: feedQueryKey,
         resume: async () => {
+          const owner = feedRecoveryOwnerRef.current;
+          if (
+            !owner.active
+            || !owner.identityReady
+            || owner.queryIdentity !== feedRecoveryQueryIdentity
+            || owner.sourceIdentityPending
+          ) {
+            return 'stale';
+          }
           const result = loadMoreError
             ? await feedQuery.fetchNextPage({ cancelRefetch: false })
             : await feedQuery.refetch({ cancelRefetch: false });
@@ -1011,6 +1117,8 @@ export function useFeedController({
     feedQuery.isError,
     feedQueryKey,
     feedActive,
+    feedRecoveryOwnerRef,
+    feedRecoveryQueryIdentity,
     feedSource,
     feedSourceIdentityPending,
     loadMoreError,
@@ -1052,15 +1160,28 @@ export function useFeedController({
   ]);
 
   const loadFeed = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!feedActive || feedSourceIdentityPending || !nextPage || feedQuery.isFetchingNextPage) {
+    if (
+      !feedActive
+      || !feedIdentitySnapshotReady
+      || feedSourceIdentityPending
+      || !nextPage
+      || feedQuery.isFetchingNextPage
+    ) {
       return 'stale';
     }
     const result = await feedQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [feedActive, feedQuery.fetchNextPage, feedQuery.isFetchingNextPage, feedSourceIdentityPending, nextPage]);
+  }, [
+    feedActive,
+    feedIdentitySnapshotReady,
+    feedQuery.fetchNextPage,
+    feedQuery.isFetchingNextPage,
+    feedSourceIdentityPending,
+    nextPage
+  ]);
 
   const refreshFeed = useCallback(async () => {
-    if (!feedActive || feedSourceIdentityPending) {
+    if (!feedActive || aggregateIdentityTransitionPending || feedSourceIdentityPending) {
       return;
     }
     if (feedQuery.isFetching) {
@@ -1089,6 +1210,7 @@ export function useFeedController({
       notify('列表已更新');
     }
   }, [
+    aggregateIdentityTransitionPending,
     feedActive,
     feedQuery.isFetching,
     feedQuery.refetch,
@@ -1143,7 +1265,8 @@ export function useFeedController({
     changeFeedSource,
     feedAllowsRemotePagination,
     feedBusy: feedActive && (
-      feedSourceIdentityPending && mergedFeed.items.length === 0
+      aggregateIdentityTransitionPending && mergedFeed.items.length === 0
+      || feedSourceIdentityPending && mergedFeed.items.length === 0
       || feedEnabled && feedQuery.isPending
     ),
     feedFilter,

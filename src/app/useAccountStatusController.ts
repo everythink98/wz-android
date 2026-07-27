@@ -155,6 +155,8 @@ export function useAccountStatusController({
     pending: boolean;
     error?: string;
   }>);
+  const activeIdentityReconciliationsRef = useRef(0);
+  const [identityReconciliationPending, setIdentityReconciliationPending] = useState(true);
   const identityPendingRef = useRef<Record<StatusSource, boolean>>(
     Object.fromEntries(sessionSources.map((source) => [source, true])) as Record<StatusSource, boolean>
   );
@@ -647,26 +649,36 @@ export function useAccountStatusController({
   const statusBusy = Object.values(statusQueries).some((query) => query.fetchStatus === 'fetching')
     || Object.values(identityChecks).some((identityCheck) => identityCheck.checking);
   const refreshAccountStatus = useCallback(async (options: RefreshAccountStatusOptions = {}) => {
-    const results = await Promise.all(
-      Object.values(STATUS_DESCRIPTORS).map(async (descriptor) => ({
-        descriptor,
-        result: await reconcileAccountStatus(descriptor.source)
-      }))
-    );
-    if (options.silent) {
-      return;
+    activeIdentityReconciliationsRef.current += 1;
+    setIdentityReconciliationPending(true);
+    try {
+      const results = await Promise.all(
+        Object.values(STATUS_DESCRIPTORS).map(async (descriptor) => ({
+          descriptor,
+          result: await reconcileAccountStatus(descriptor.source)
+        }))
+      );
+      if (options.silent) {
+        return;
+      }
+      const failedSites = results.flatMap(({ descriptor, result }) => (
+        result.status === 'unknown' || ('partial' in result && result.partial)
+          ? [descriptor.label]
+          : []
+      ));
+      notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
+    } finally {
+      activeIdentityReconciliationsRef.current -= 1;
+      if (activeIdentityReconciliationsRef.current === 0) {
+        setIdentityReconciliationPending(false);
+      }
     }
-    const failedSites = results.flatMap(({ descriptor, result }) => (
-      result.status === 'unknown' || ('partial' in result && result.partial)
-        ? [descriptor.label]
-        : []
-    ));
-    notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
   }, [notify, reconcileAccountStatus]);
 
   return {
     accountSessionViewModels,
     beginAccountIdentityCheck,
+    identityReconciliationPending,
     reconcileAccountStatus,
     refreshAccountStatus,
     statusBusy

@@ -236,6 +236,37 @@ describe('account status queries', () => {
     expect(aggregateAbort).not.toHaveBeenCalled();
   });
 
+  it('[REG-FEED-011] keeps aggregate identity bootstrap pending until all four probes settle', async () => {
+    const firstNodeSeekCookie = Promise.withResolvers<string | undefined>();
+    const secondNodeSeekCookie = Promise.withResolvers<string | undefined>();
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn<() => Promise<string | undefined>>()
+        .mockImplementationOnce(async () => firstNodeSeekCookie.promise)
+        .mockImplementationOnce(async () => secondNodeSeekCookie.promise)
+    });
+    expect(hook.result.current.identityReconciliationPending).toBe(true);
+    let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
+
+    await act(async () => {
+      refresh = hook.result.current.refreshAccountStatus({ silent: true });
+      await Promise.resolve();
+    });
+
+    expect(hook.result.current.identityReconciliationPending).toBe(true);
+    firstNodeSeekCookie.resolve(undefined);
+    await act(async () => { await refresh; });
+    expect(hook.result.current.identityReconciliationPending).toBe(false);
+
+    await act(async () => {
+      refresh = hook.result.current.refreshAccountStatus({ silent: true });
+      await Promise.resolve();
+    });
+    expect(hook.result.current.identityReconciliationPending).toBe(true);
+    secondNodeSeekCookie.resolve(undefined);
+    await act(async () => { await refresh; });
+    expect(hook.result.current.identityReconciliationPending).toBe(false);
+  });
+
   it('[REG-FEED-010] still cancels private reads when a confirmed source later becomes pending', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({

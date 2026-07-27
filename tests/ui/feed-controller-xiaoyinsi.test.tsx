@@ -10,7 +10,8 @@ import {
   appQueryClient,
   forumQueryKeys,
   initialForumSessionEpochs,
-  type ForumIdentityBarrierSource
+  type ForumIdentityBarrierSource,
+  type ForumSessionEpochs
 } from '../../src/app/serverState';
 import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
 import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
@@ -219,6 +220,335 @@ describe('小隐寺 Feed controller', () => {
       pendingFeed.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
       await pendingFeed.promise;
     });
+  });
+
+  it('[REG-FEED-011] starts the aggregate Feed and Categories only once after identity bootstrap settles', async () => {
+    const topic = {
+      source: 'v2ex' as const,
+      id: 'single-bootstrap-read',
+      title: '启动只读取一次',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/single-bootstrap-read',
+      createdAt: '2026-07-27T00:00:00.000Z',
+      replyCount: 0
+    };
+    const getCategories = jest.fn(async (
+      _request?: unknown,
+      _context?: { identityBarriers?: readonly ForumIdentityBarrierSource[] }
+    ) => ({ items: [], errors: {} }));
+    const getFeed = jest.fn(async (
+      { page = 1 }: { page?: number },
+      _context?: { identityBarriers?: readonly ForumIdentityBarrierSource[] }
+    ) => page === 1 ? {
+      items: [topic],
+      errors: {},
+      hasMore: true as const,
+      nextCursor: 'bootstrap-cursor',
+      nextPage: 2 as const
+    } : {
+      items: [],
+      errors: {},
+      hasMore: false as const,
+      nextPage: null
+    });
+    const sourceGateway = {
+      getCategories,
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let identityReconciliationPending = true;
+    let identityBarriers: ForumIdentityBarrierSource[] = [...sessionSources];
+    let sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs;
+    const renderedStates: Array<{ busy: boolean; itemCount: number; refreshing: boolean }> = [];
+    const hook = await renderHook(() => {
+      const controller = useFeedController({
+        identityBarriers,
+        identityReconciliationPending,
+        sessionEpochs,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        screen: 'feed',
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        sourceGateway
+      });
+      renderedStates.push({
+        busy: controller.feedBusy,
+        itemCount: controller.activeFeedState.items.length,
+        refreshing: controller.activeFeedState.refreshing
+      });
+      return controller;
+    });
+
+    expect(hook.result.current.feedBusy).toBe(true);
+    expect(getFeed).not.toHaveBeenCalled();
+    expect(getCategories).not.toHaveBeenCalled();
+
+    for (const [barriers, epochs] of [
+      [['linuxdo', 'yaohuo', 'xiaoyinsi'], { ...initialForumSessionEpochs, nodeseek: 1 }],
+      [['yaohuo', 'xiaoyinsi'], { ...initialForumSessionEpochs, nodeseek: 1, linuxdo: 1 }],
+      [['xiaoyinsi'], { ...initialForumSessionEpochs, nodeseek: 1, linuxdo: 1, yaohuo: 1 }]
+    ] satisfies Array<[ForumIdentityBarrierSource[], ForumSessionEpochs]>) {
+      identityBarriers = barriers;
+      sessionEpochs = epochs;
+      await act(async () => {
+        hook.rerender({});
+        await Promise.resolve();
+      });
+    }
+
+    expect(getFeed).not.toHaveBeenCalled();
+    expect(getCategories).not.toHaveBeenCalled();
+    const bootstrapBarrierSnapshots = new Set(appQueryClient.getQueryCache().getAll()
+      .filter((query) => query.queryKey[0] === 'forum'
+        && query.queryKey[1] === 'all'
+        && (query.queryKey[2] === 'feed' || query.queryKey[2] === 'categories'))
+      .map((query) => {
+        const state = query.queryKey[3] as { identityBarriers: unknown; sessionEpoch: unknown };
+        return JSON.stringify({
+          identityBarriers: state.identityBarriers,
+          sessionEpoch: state.sessionEpoch
+        });
+      }));
+    expect([...bootstrapBarrierSnapshots]).toEqual([
+      JSON.stringify({
+        identityBarriers: [...sessionSources].sort(),
+        sessionEpoch: initialForumSessionEpochs
+      })
+    ]);
+
+    identityReconciliationPending = false;
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([topic]));
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(getCategories).toHaveBeenCalledTimes(1);
+    expect(getFeed.mock.calls[0]?.[1]).toMatchObject({ identityBarriers: ['xiaoyinsi'] });
+    expect(getCategories.mock.calls[0]?.[1]).toMatchObject({ identityBarriers: ['xiaoyinsi'] });
+    expect(renderedStates.filter((state) => state.itemCount > 0).every(
+      (state) => !state.busy && !state.refreshing
+    )).toBe(true);
+
+    identityReconciliationPending = true;
+    for (const barriers of [
+      [...sessionSources],
+      ['linuxdo', 'yaohuo', 'xiaoyinsi'],
+      ['yaohuo', 'xiaoyinsi'],
+      ['xiaoyinsi']
+    ] satisfies ForumIdentityBarrierSource[][]) {
+      identityBarriers = barriers;
+      await act(async () => {
+        hook.rerender({});
+        await Promise.resolve();
+      });
+    }
+
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(getCategories).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.activeFeedState.items).toEqual([topic]);
+    expect(hook.result.current.feedBusy).toBe(false);
+    let loadOutcome: Awaited<ReturnType<typeof hook.result.current.loadFeed>> | undefined;
+    await act(async () => { loadOutcome = await hook.result.current.loadFeed(); });
+    expect(loadOutcome).toBe('stale');
+    expect(getFeed).toHaveBeenCalledTimes(1);
+
+    identityReconciliationPending = false;
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(getCategories).toHaveBeenCalledTimes(1);
+    const allBarrierSnapshots = new Set(appQueryClient.getQueryCache().getAll()
+      .filter((query) => query.queryKey[0] === 'forum'
+        && query.queryKey[1] === 'all'
+        && (query.queryKey[2] === 'feed' || query.queryKey[2] === 'categories'))
+      .map((query) => {
+        const state = query.queryKey[3] as { identityBarriers: unknown; sessionEpoch: unknown };
+        return JSON.stringify({
+          identityBarriers: state.identityBarriers,
+          sessionEpoch: state.sessionEpoch
+        });
+      }));
+    expect([...allBarrierSnapshots]).toEqual([
+      JSON.stringify({
+        identityBarriers: [...sessionSources].sort(),
+        sessionEpoch: initialForumSessionEpochs
+      }),
+      JSON.stringify({
+        identityBarriers: ['xiaoyinsi'],
+        sessionEpoch: sessionEpochs
+      })
+    ]);
+    expect(renderedStates.filter((state) => state.itemCount > 0).every(
+      (state) => !state.busy && !state.refreshing
+    )).toBe(true);
+  });
+
+  it('[REG-FEED-011] keeps unrelated single-source pagination active during aggregate reconciliation', async () => {
+    const topics = [1, 2].map((page) => ({
+      source: 'v2ex' as const,
+      id: `single-source-page-${page}`,
+      title: `单站第 ${page} 页`,
+      author: 'alice',
+      url: `https://www.v2ex.com/t/single-source-page-${page}`,
+      createdAt: '2026-07-27T00:00:00.000Z',
+      replyCount: 0
+    }));
+    const getFeed = jest.fn(async ({ page = 1, source }: { page?: number; source: string }) => {
+      if (source !== 'v2ex') {
+        return { items: [], errors: {}, hasMore: false as const, nextPage: null };
+      }
+      return page === 1 ? {
+        items: [topics[0]],
+        errors: {},
+        hasMore: true as const,
+        nextCursor: 'v2ex-next',
+        nextPage: 2 as const
+      } : {
+        items: [topics[1]],
+        errors: {},
+        hasMore: false as const,
+        nextPage: null
+      };
+    });
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    let identityReconciliationPending = false;
+    let sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs;
+    const hook = await renderHook(() => useFeedController({
+      identityBarriers,
+      identityReconciliationPending,
+      sessionEpochs,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification: jest.fn(),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
+    await act(async () => { hook.result.current.changeFeedSource('v2ex'); });
+    await waitFor(() => {
+      expect(hook.result.current.feedSource).toBe('v2ex');
+      expect(hook.result.current.activeFeedState.items).toEqual([topics[0]]);
+    });
+
+    identityReconciliationPending = true;
+    identityBarriers = [...sessionSources];
+    sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    let loadOutcome: Awaited<ReturnType<typeof hook.result.current.loadFeed>> | undefined;
+    await act(async () => { loadOutcome = await hook.result.current.loadFeed(); });
+    expect(loadOutcome).toBe('completed');
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual(topics));
+    expect(getFeed.mock.calls.at(-1)?.[0]).toMatchObject({
+      cursor: 'v2ex-next',
+      page: 2,
+      source: 'v2ex'
+    });
+  });
+
+  it('[REG-FEED-011] blocks a saved source recovery after its identity becomes pending', async () => {
+    const topic = {
+      source: 'v2ex' as const,
+      id: 'saved-recovery-topic',
+      title: '旧恢复命令不可越过新事务',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/saved-recovery-topic',
+      createdAt: '2026-07-27T00:00:00.000Z',
+      replyCount: 0
+    };
+    const verificationError = {
+      linuxdo: {
+        kind: 'verification-required' as const,
+        message: '需要验证',
+        verificationRequired: true
+      }
+    };
+    const getFeed = jest.fn(async ({ page = 1, source }: { page?: number; source: string }) => {
+      if (source !== 'linuxdo') {
+        return { items: [], errors: {}, hasMore: false as const, nextPage: null };
+      }
+      return page === 1 ? {
+        items: [{ ...topic, source: 'linuxdo' as const, url: 'https://linux.do/t/saved-recovery-topic' }],
+        errors: {},
+        hasMore: true as const,
+        nextCursor: 'saved-recovery-cursor',
+        nextPage: 2 as const
+      } : {
+        items: [],
+        errors: verificationError,
+        hasMore: true as const,
+        nextCursor: 'saved-recovery-cursor',
+        nextPage: 2 as const
+      };
+    });
+    const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    let identityReconciliationPending = false;
+    const hook = await renderHook(() => useFeedController({
+      identityBarriers,
+      identityReconciliationPending,
+      linuxDoVerificationActive: false,
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      screen: 'feed',
+      showLinuxDoVerification,
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
+    await act(async () => { hook.result.current.changeFeedSource('linuxdo'); });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([
+      { ...topic, source: 'linuxdo', url: 'https://linux.do/t/saved-recovery-topic' }
+    ]));
+    let loadOutcome: Awaited<ReturnType<typeof hook.result.current.loadFeed>> | undefined;
+    await act(async () => { loadOutcome = await hook.result.current.loadFeed(); });
+    expect(loadOutcome).toBe('failed');
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    expect(recovery).toBeDefined();
+    expect(getFeed.mock.calls.filter(([request]) => request.source === 'linuxdo')).toHaveLength(2);
+
+    identityReconciliationPending = true;
+    identityBarriers = ['linuxdo'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    let recoveryOutcome: Awaited<ReturnType<LinuxDoReadRecovery['resume']>> | undefined;
+    await act(async () => { recoveryOutcome = await recovery!.resume(); });
+    expect(recoveryOutcome).toBe('stale');
+    expect(getFeed.mock.calls.filter(([request]) => request.source === 'linuxdo')).toHaveLength(2);
   });
 
   it('[REG-LINUXDO-006] keeps shared categories on Search without starting Feed and cancels them after leaving both owners', async () => {

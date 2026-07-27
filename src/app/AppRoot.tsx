@@ -670,6 +670,7 @@ export function AppRoot() {
   const {
     accountSessionViewModels,
     beginAccountIdentityCheck,
+    identityReconciliationPending,
     reconcileAccountStatus,
     refreshAccountStatus,
     statusBusy
@@ -1149,6 +1150,7 @@ export function AppRoot() {
     shownFeedItems
   } = useFeedController({
     identityBarriers: accountIdentityBarriers,
+    identityReconciliationPending,
     retainableIdentityBarriers: retainableAccountIdentityBarriers,
     sessionEpochs: forumSessionEpochs,
     linuxDoVerificationActive: showLinuxDoPanel,
