@@ -4,8 +4,8 @@ import {
   closeNodeImageAuthOpening,
   createNodeImageAuthNonce,
   nextNodeImageAuthPhase,
+  nodeImageAuthBridgeEvidenceMatchesPhase,
   nodeImageAuthFlowCanAcceptMessage,
-  nodeImageAuthPhaseMatchesTopLevelUrl,
   processNodeImageAuthMessage,
   runNodeImageAuthOpening,
   runNodeImageAuthSingleFlight,
@@ -123,45 +123,46 @@ describe('NodeImage authorization flow', () => {
   });
 
   it.each([
-    ['nodeimage-session', 'https://www.nodeimage.com/'],
-    ['nodeimage-session', 'https://www.nodeimage.com:443/'],
-    ['nodeseek-cauth', 'https://www.nodeseek.com/connect?target=NodeImage'],
-    ['nodeseek-cauth', 'https://www.nodeseek.com:443/connect?target=NodeImage'],
-    ['nodeimage-verify', 'https://www.nodeimage.com/'],
-    ['nodeimage-verify', 'https://www.nodeimage.com:443/']
-  ] as const)('accepts only the exact URL for phase %s: %s', (phase, url) => {
-    expect(nodeImageAuthPhaseMatchesTopLevelUrl(phase, url)).toBe(true);
-  });
+    ['nodeimage-session', 'https://www.nodeimage.com', 'https://www.nodeimage.com/'],
+    ['nodeimage-session', 'https://www.nodeimage.com/account', 'https://www.nodeimage.com/'],
+    ['nodeseek-cauth', 'https://www.nodeseek.com', 'https://www.nodeseek.com/connect?target=NodeImage'],
+    ['nodeseek-cauth', 'https://www.nodeseek.com/connect?target=NodeImage', 'https://www.nodeseek.com/connect?target=NodeImage'],
+    ['nodeseek-cauth', 'https://www.nodeseek.com:443/connect?target=NodeImage', 'https://www.nodeseek.com:443/connect?target=NodeImage'],
+    ['nodeimage-verify', 'https://www.nodeimage.com', 'https://www.nodeimage.com/']
+  ] as const)(
+    'REG-ACCOUNT-040 accepts source-origin and exact document evidence for phase %s',
+    (phase, sourceUrl, documentUrl) => {
+      expect(nodeImageAuthBridgeEvidenceMatchesPhase(
+        phase,
+        sourceUrl,
+        documentUrl
+      )).toBe(true);
+    }
+  );
 
   it.each([
-    'http://www.nodeseek.com/connect?target=NodeImage',
-    'https://user@www.nodeseek.com/connect?target=NodeImage',
-    'https://@www.nodeseek.com/connect?target=NodeImage',
-    'https://www.nodeseek.com:444/connect?target=NodeImage',
-    'https://nodeseek.com/connect?target=NodeImage',
-    'https://auth.nodeseek.com/connect?target=NodeImage',
-    'https://www.nodeseek.com/connect/?target=NodeImage',
-    'https://www.nodeseek.com/connect?target=nodeimage',
-    'https://www.nodeseek.com/connect?target=NodeImage&next=/',
-    'https://www.nodeseek.com/connect?target=NodeImage#done',
-    'https://www.nodeseek.com/connect?target=NodeImage#',
-    'http://www.nodeimage.com/',
-    'https://user@www.nodeimage.com/',
-    'https://@www.nodeimage.com/',
-    'https://www.nodeimage.com:444/',
-    'https://nodeimage.com/',
-    'https://api.nodeimage.com/',
-    'https://www.nodeimage.com/account',
-    'https://www.nodeimage.com/?next=/',
-    'https://www.nodeimage.com/?',
-    'https://www.nodeimage.com/#done',
-    'https://www.nodeimage.com/#',
-    'not a URL'
-  ])('rejects a non-exact or unsafe phase URL: %s', (url) => {
-    expect(nodeImageAuthPhaseMatchesTopLevelUrl('nodeimage-session', url)).toBe(false);
-    expect(nodeImageAuthPhaseMatchesTopLevelUrl('nodeseek-cauth', url)).toBe(false);
-    expect(nodeImageAuthPhaseMatchesTopLevelUrl('nodeimage-verify', url)).toBe(false);
-  });
+    ['missing document URL', 'https://www.nodeseek.com', ''],
+    ['wrong source origin', 'https://nodeseek.com', 'https://www.nodeseek.com/connect?target=NodeImage'],
+    ['wrong document origin', 'https://www.nodeseek.com', 'https://auth.nodeseek.com/connect?target=NodeImage'],
+    ['wrong document path', 'https://www.nodeseek.com', 'https://www.nodeseek.com/connect/?target=NodeImage'],
+    ['wrong document query', 'https://www.nodeseek.com', 'https://www.nodeseek.com/connect?target=nodeimage'],
+    ['source userinfo', 'https://user@www.nodeseek.com', 'https://www.nodeseek.com/connect?target=NodeImage'],
+    ['document userinfo', 'https://www.nodeseek.com', 'https://user@www.nodeseek.com/connect?target=NodeImage'],
+    ['HTTP source', 'http://www.nodeseek.com', 'https://www.nodeseek.com/connect?target=NodeImage'],
+    ['HTTP document', 'https://www.nodeseek.com', 'http://www.nodeseek.com/connect?target=NodeImage'],
+    ['non-default source port', 'https://www.nodeseek.com:444', 'https://www.nodeseek.com/connect?target=NodeImage'],
+    ['non-default document port', 'https://www.nodeseek.com', 'https://www.nodeseek.com:444/connect?target=NodeImage'],
+    ['document fragment', 'https://www.nodeseek.com', 'https://www.nodeseek.com/connect?target=NodeImage#done']
+  ])(
+    'REG-ACCOUNT-040 rejects %s',
+    (_label, sourceUrl, documentUrl) => {
+      expect(nodeImageAuthBridgeEvidenceMatchesPhase(
+        'nodeseek-cauth',
+        sourceUrl,
+        documentUrl
+      )).toBe(false);
+    }
+  );
 
   it('REG-ACCOUNT-038 only enters Connect after an explicit expired-session result', () => {
     expect(nextNodeImageAuthPhase('nodeimage-session', 'nodeimage-session-expired')).toBe(
@@ -219,6 +220,54 @@ describe('NodeImage authorization flow', () => {
     expect(claimNodeImageConnectAttempt(flow)).toBe(false);
   });
 
+  it('REG-ACCOUNT-040 never starts Connect without both valid bridge proofs', async () => {
+    const flow = {
+      connectStarted: false,
+      credentialGeneration: 7,
+      nonce: '00112233445566778899aabbccddeeff',
+      ownerIdentityKey: 'nodeseek:42',
+      ownerSessionEpoch: 3,
+      payload: null,
+      phase: 'nodeseek-cauth' as const,
+      terminal: false
+    };
+    const connectTarget = { postMessage: vi.fn() };
+    const effects = {
+      complete: vi.fn(),
+      connectTarget,
+      fail: vi.fn(),
+      mark: vi.fn(),
+      mountCurrentPhase: vi.fn()
+    };
+    const runtime = {
+      identityKey: 'nodeseek:42',
+      identityTrust: 'confirmed',
+      sessionEpoch: 3
+    };
+    const invalidEvidence = [
+      ['https://www.nodeseek.com', ''],
+      ['https://nodeseek.com', 'https://www.nodeseek.com/connect?target=NodeImage'],
+      ['https://www.nodeseek.com', 'https://www.nodeseek.com/connect?target=nodeimage'],
+      ['https://www.nodeseek.com', 'https://www.nodeseek.com/connect?target=NodeImage#done']
+    ];
+
+    for (const [sourceUrl, documentUrl] of invalidEvidence) {
+      await processNodeImageAuthMessage(flow, {
+        data: JSON.stringify({
+          documentUrl,
+          nonce: flow.nonce,
+          type: 'nodeimage-connect-ready'
+        }),
+        sourceUrl
+      }, runtime, 7, effects);
+    }
+
+    expect(flow.connectStarted).toBe(false);
+    expect(connectTarget.postMessage).not.toHaveBeenCalled();
+    expect(effects.mark).not.toHaveBeenCalled();
+    expect(effects.fail).not.toHaveBeenCalled();
+  });
+
   it('REG-ACCOUNT-038 completes an existing NodeImage session without Connect and settles once', async () => {
     const flow = {
       connectStarted: false,
@@ -241,10 +290,11 @@ describe('NodeImage authorization flow', () => {
     const message = {
       data: JSON.stringify({
         api_key: 'session-key',
+        documentUrl: 'https://www.nodeimage.com/',
         nonce: flow.nonce,
         type: 'nodeimage-session-key'
       }),
-      url: 'https://www.nodeimage.com/'
+      sourceUrl: 'https://www.nodeimage.com'
     };
     const runtime = {
       identityKey: 'nodeseek:42',
@@ -254,22 +304,22 @@ describe('NodeImage authorization flow', () => {
 
     await processNodeImageAuthMessage(flow, {
       data: '{',
-      url: 'https://www.nodeimage.com/'
+      sourceUrl: 'https://www.nodeimage.com'
     }, runtime, 7, effects);
     await processNodeImageAuthMessage(flow, {
       data: 'null',
-      url: 'https://www.nodeimage.com/'
+      sourceUrl: 'https://www.nodeimage.com'
     }, runtime, 7, effects);
     await processNodeImageAuthMessage(flow, {
       data: '[]',
-      url: 'https://www.nodeimage.com/'
+      sourceUrl: 'https://www.nodeimage.com'
     }, runtime, 7, effects);
     await processNodeImageAuthMessage(flow, {
       data: JSON.stringify({
         api_key: 'untrusted-key',
         type: 'nodeimage-session-key'
       }),
-      url: 'https://www.nodeimage.com/'
+      sourceUrl: 'https://www.nodeimage.com'
     }, runtime, 7, effects);
     await processNodeImageAuthMessage(flow, message, runtime, 7, effects);
     await processNodeImageAuthMessage(flow, message, runtime, 7, effects);
@@ -309,10 +359,17 @@ describe('NodeImage authorization flow', () => {
     };
     const send = (type: string, data: Record<string, unknown> = {}) => (
       processNodeImageAuthMessage(flow, {
-        data: JSON.stringify({ ...data, nonce: flow.nonce, type }),
-        url: flow.phase === 'nodeseek-cauth'
-          ? 'https://www.nodeseek.com/connect?target=NodeImage'
-          : 'https://www.nodeimage.com/'
+        data: JSON.stringify({
+          ...data,
+          documentUrl: flow.phase === 'nodeseek-cauth'
+            ? 'https://www.nodeseek.com/connect?target=NodeImage'
+            : 'https://www.nodeimage.com/',
+          nonce: flow.nonce,
+          type
+        }),
+        sourceUrl: flow.phase === 'nodeseek-cauth'
+          ? 'https://www.nodeseek.com'
+          : 'https://www.nodeimage.com'
       }, runtime, 7, effects)
     );
 
@@ -371,8 +428,13 @@ describe('NodeImage authorization flow', () => {
     };
     const send = (type: string, data: Record<string, unknown> = {}) => (
       processNodeImageAuthMessage(flow, {
-        data: JSON.stringify({ ...data, nonce: flow.nonce, type }),
-        url: 'https://www.nodeimage.com/'
+        data: JSON.stringify({
+          ...data,
+          documentUrl: 'https://www.nodeimage.com/',
+          nonce: flow.nonce,
+          type
+        }),
+        sourceUrl: 'https://www.nodeimage.com'
       }, runtime, 7, effects)
     );
 

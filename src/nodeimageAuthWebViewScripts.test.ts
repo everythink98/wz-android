@@ -3,12 +3,91 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nodeSeekNodeImageAuthScript } from './loginWebViewScripts';
 
 const AUTH_NONCE = '00112233445566778899aabbccddeeff';
+const RETRY_NONCE = 'ffeeddccbbaa99887766554433221100';
+const NAVIGATION_NONCE = '0123456789abcdef0123456789abcdef';
 
 describe('NodeImage auth WebView script on NodeSeek Connect', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+    window.history.replaceState(null, '', '/connect?target=NodeImage');
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it('REG-ACCOUNT-040 retries only the ready handshake and still calls cAuth once', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      data: 'auth-data',
+      wtf: 'auth-wtf',
+      sign: 'auth-sign'
+    }), { status: 200 })) as unknown as typeof fetch;
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'ReactNativeWebView', {
+      configurable: true,
+      value: { postMessage }
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    window.eval(nodeSeekNodeImageAuthScript(RETRY_NONCE));
+    expect(postMessage).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(postMessage).toHaveBeenCalledTimes(3);
+    expect(postMessage.mock.calls.map(([message]) => JSON.parse(message))).toEqual(
+      Array.from({ length: 3 }, () => ({
+        documentUrl: 'https://www.nodeseek.com/connect?target=NodeImage',
+        nonce: RETRY_NONCE,
+        type: 'nodeimage-connect-ready'
+      }))
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const start = new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'nodeimage-connect-start',
+        nonce: RETRY_NONCE
+      })
+    });
+    window.dispatchEvent(start);
+    document.dispatchEvent(start);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(postMessage.mock.calls[3]?.[0] || '{}')).toMatchObject({
+      documentUrl: 'https://www.nodeseek.com/connect?target=NodeImage',
+      nonce: RETRY_NONCE,
+      type: 'nodeimage-auth-data'
+    });
+  });
+
+  it('REG-ACCOUNT-040 rechecks the live document before ready or cAuth', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn();
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'ReactNativeWebView', {
+      configurable: true,
+      value: { postMessage }
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    window.eval(nodeSeekNodeImageAuthScript(NAVIGATION_NONCE));
+    expect(postMessage).toHaveBeenCalledTimes(1);
+
+    window.history.pushState(null, '', '/connect?target=Other');
+    await vi.advanceTimersByTimeAsync(1_000);
+    window.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'nodeimage-connect-start',
+        nonce: NAVIGATION_NONCE
+      })
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('requests official NodeSeek auth data only after the native one-shot grant', async () => {
@@ -29,6 +108,7 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+      documentUrl: 'https://www.nodeseek.com/connect?target=NodeImage',
       type: 'nodeimage-connect-ready',
       nonce: AUTH_NONCE
     });
@@ -56,6 +136,7 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
       credentials: 'include'
     }));
     expect(JSON.parse(postMessage.mock.calls[1]?.[0] || '{}')).toEqual({
+      documentUrl: 'https://www.nodeseek.com/connect?target=NodeImage',
       type: 'nodeimage-auth-data',
       nonce: AUTH_NONCE,
       data: 'auth-data',

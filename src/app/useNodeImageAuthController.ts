@@ -59,6 +59,24 @@ type ActiveNodeImageAuthFlow = {
   trace: DiagnosticTrace;
 };
 
+const NODEIMAGE_AUTH_PHASE_TIMEOUT_MS: Record<NodeImageAuthPhase, number> = {
+  'nodeimage-session': 30_000,
+  'nodeseek-cauth': 60_000,
+  'nodeimage-verify': 30_000
+};
+
+function nodeImageAuthTimeoutMessage(flow: ActiveNodeImageAuthFlow) {
+  if (flow.phase === 'nodeimage-session') {
+    return 'NodeImage 登录态检查超时；本次未发起 NodeSeek Connect。请关闭后重试或手动粘贴 API Key。';
+  }
+  if (flow.phase === 'nodeseek-cauth') {
+    return flow.connectStarted
+      ? 'NodeSeek Connect 结果等待超时；结果未知，本次可能已占用一次连接额度。请勿自动重试。'
+      : 'NodeSeek Connect 握手超时；本次未发起连接。请关闭后重试。';
+  }
+  return 'NodeImage 授权验证超时；Connect 已完成，但 API Key 结果未知。请关闭后稍后确认。';
+}
+
 function nodeImageAuthDocumentForFlow(
   flow: ActiveNodeImageAuthFlow
 ): NodeImageAuthDocument | null {
@@ -122,18 +140,42 @@ export function useNodeImageAuthController({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const reportFailure = useCallback((message: string) => {
+  const reportFailure = useCallback((message: string, reason?: 'timeout') => {
     const flow = activeFlowRef.current;
     if (flow) {
       terminateNodeImageAuthFlow(flow);
       webViewRef.current?.stopLoading();
       setDocument(null);
-      markDiagnosticStage(flow.trace, 'guard', { state: 'failed' });
-      finishDiagnosticTrace(flow.trace, 'failure');
+      markDiagnosticStage(flow.trace, 'guard', {
+        state: reason === 'timeout' ? 'timeout' : 'failed'
+      });
+      finishDiagnosticTrace(
+        flow.trace,
+        'failure',
+        reason === 'timeout' ? { reason } : undefined
+      );
     }
     setLoading(false);
     setError(String(message));
   }, []);
+
+  useEffect(() => {
+    const flow = activeFlowRef.current;
+    if (!document || !flow || flow.terminal) {
+      return;
+    }
+    const phase = flow.phase;
+    const timeout = setTimeout(() => {
+      if (
+        activeFlowRef.current === flow
+        && !flow.terminal
+        && flow.phase === phase
+      ) {
+        reportFailure(nodeImageAuthTimeoutMessage(flow), 'timeout');
+      }
+    }, NODEIMAGE_AUTH_PHASE_TIMEOUT_MS[phase]);
+    return () => clearTimeout(timeout);
+  }, [document, reportFailure]);
 
   useEffect(() => {
     let active = true;
@@ -385,7 +427,7 @@ export function useNodeImageAuthController({
           flow,
           {
             data: event.nativeEvent.data,
-            url: event.nativeEvent.url
+            sourceUrl: event.nativeEvent.url
           },
           readRuntime(),
           currentNodeImageApiKeyGeneration(),

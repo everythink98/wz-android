@@ -341,6 +341,7 @@ describe('NodeImage existing-session probe script', () => {
     );
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-session-key',
+      documentUrl: 'https://www.nodeimage.com/',
       nonce: NODEIMAGE_AUTH_NONCE,
       data: { api_key: ' existing-secret ' }
     });
@@ -360,6 +361,7 @@ describe('NodeImage existing-session probe script', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-session-expired',
+      documentUrl: 'https://www.nodeimage.com/',
       nonce: NODEIMAGE_AUTH_NONCE,
       status: 401
     });
@@ -376,6 +378,7 @@ describe('NodeImage existing-session probe script', () => {
 
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-session-key',
+      documentUrl: 'https://www.nodeimage.com/',
       nonce: NODEIMAGE_AUTH_NONCE,
       apiKey: 'dom-session-secret'
     });
@@ -409,6 +412,7 @@ describe('NodeImage existing-session probe script', () => {
 
       expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
         type: 'nodeimage-session-error',
+        documentUrl: 'https://www.nodeimage.com/',
         nonce: NODEIMAGE_AUTH_NONCE,
         status
       });
@@ -427,8 +431,28 @@ describe('NodeImage existing-session probe script', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toMatchObject({
       type: 'nodeimage-session-error',
+      documentUrl: 'https://www.nodeimage.com/',
       nonce: NODEIMAGE_AUTH_NONCE
     });
+  });
+
+  it('[REG-ACCOUNT-040] does not report a session result after same-document navigation', async () => {
+    const response = Promise.withResolvers<Response>();
+    const json = vi.fn(async () => ({ api_key: 'late-secret' }));
+    const fetchMock = vi.fn(() => response.promise) as unknown as typeof fetch;
+    const postMessage = runNodeImageSessionProbe('', fetchMock);
+
+    window.history.pushState(null, '', '/account');
+    response.resolve({
+      headers: { get: () => 'application/json' },
+      json,
+      ok: true,
+      status: 200
+    } as unknown as Response);
+    await vi.waitFor(() => expect(json).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+
+    expect(postMessage).not.toHaveBeenCalled();
   });
 });
 
@@ -454,6 +478,7 @@ describe('NodeImage API key WebView probe script', () => {
     }));
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
+      documentUrl: 'https://www.nodeimage.com/',
       nonce: NODEIMAGE_AUTH_NONCE,
       data: { api_key: ' secret ' }
     });
@@ -469,6 +494,7 @@ describe('NodeImage API key WebView probe script', () => {
 
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
+      documentUrl: 'https://www.nodeimage.com/',
       nonce: NODEIMAGE_AUTH_NONCE,
       apiKey: 'dom-secret'
     });
@@ -500,6 +526,7 @@ describe('NodeImage API key WebView probe script', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
+      documentUrl: 'https://www.nodeimage.com/',
       nonce: NODEIMAGE_AUTH_NONCE,
       data: { api_key: ' verified-secret ' }
     });
@@ -522,6 +549,23 @@ describe('NodeImage API key WebView probe script', () => {
     await Promise.resolve();
 
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('[REG-ACCOUNT-040] does not report a verify result after same-document navigation', async () => {
+    const verifyResponse = Promise.withResolvers<Response>();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => verifyResponse.promise)
+      .mockImplementationOnce(async () => new Response(JSON.stringify({
+        api_key: 'late-secret'
+      }), { status: 200 })) as unknown as typeof fetch;
+    const postMessage = runNodeImageApiKeyProbe('', fetchMock);
+
+    window.history.pushState(null, '', '/account');
+    verifyResponse.resolve(new Response('{}', { status: 200 }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await Promise.resolve();
+
     expect(postMessage).not.toHaveBeenCalled();
   });
 
@@ -554,6 +598,7 @@ describe('NodeImage API key WebView probe script', () => {
 
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toMatchObject({
       type: 'nodeimage-api-key',
+      documentUrl: 'https://www.nodeimage.com/',
       nonce: NODEIMAGE_AUTH_NONCE
     });
     expect(storageWrite).not.toHaveBeenCalled();

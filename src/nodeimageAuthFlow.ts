@@ -97,32 +97,19 @@ export async function createNodeImageAuthNonce(
   return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
-export function nodeImageAuthPhaseMatchesTopLevelUrl(
+export function nodeImageAuthBridgeEvidenceMatchesPhase(
   phase: NodeImageAuthPhase,
-  rawUrl: string
+  rawSourceUrl: string,
+  rawDocumentUrl: string
 ): boolean {
   try {
-    const value = String(rawUrl || '');
-    if (
-      value !== value.trim()
-      || !/^https:\/\//i.test(value)
-      || rawAuthorityHasUserinfo(value)
-    ) {
-      return false;
-    }
-    const url = new URL(value);
-    if (
-      url.protocol !== 'https:'
-      || url.username
-      || url.password
-      || url.port
-      || url.hash
-    ) {
-      return false;
-    }
-    return phase === 'nodeseek-cauth'
-      ? url.href === NODEIMAGE_AUTH_URL
-      : url.href === NODEIMAGE_URL;
+    const expectedUrl = new URL(
+      phase === 'nodeseek-cauth' ? NODEIMAGE_AUTH_URL : NODEIMAGE_URL
+    );
+    const sourceUrl = secureNodeImageAuthUrl(rawSourceUrl);
+    const documentUrl = secureNodeImageAuthUrl(rawDocumentUrl);
+    return sourceUrl.origin === expectedUrl.origin
+      && documentUrl.href === expectedUrl.href;
   } catch {
     return false;
   }
@@ -178,7 +165,7 @@ export async function processNodeImageAuthMessage(
     phase: NodeImageAuthPhase;
     terminal: boolean;
   },
-  message: { data: string; url: string },
+  message: { data: string; sourceUrl: string },
   runtime: {
     identityKey: string;
     identityTrust: string;
@@ -216,7 +203,11 @@ export async function processNodeImageAuthMessage(
   if (data.nonce !== flow.nonce) {
     return;
   }
-  if (!nodeImageAuthPhaseMatchesTopLevelUrl(flow.phase, message.url)) {
+  if (!nodeImageAuthBridgeEvidenceMatchesPhase(
+    flow.phase,
+    message.sourceUrl,
+    String(data.documentUrl || '')
+  )) {
     return;
   }
   const messageType = String(data.type || '');
@@ -357,4 +348,26 @@ function rawAuthorityHasUserinfo(rawUrl: string) {
     ? rawUrl.slice(authorityStart)
     : rawUrl.slice(authorityStart, authorityStart + authorityEnd);
   return authority.includes('@');
+}
+
+function secureNodeImageAuthUrl(rawUrl: string) {
+  const value = String(rawUrl || '');
+  if (
+    value !== value.trim()
+    || !/^https:\/\//i.test(value)
+    || rawAuthorityHasUserinfo(value)
+    || value.includes('#')
+  ) {
+    throw new Error('unsafe NodeImage authorization URL');
+  }
+  const url = new URL(value);
+  if (
+    url.protocol !== 'https:'
+    || url.username
+    || url.password
+    || url.port
+  ) {
+    throw new Error('unsafe NodeImage authorization URL');
+  }
+  return url;
 }

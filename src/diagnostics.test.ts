@@ -90,6 +90,39 @@ describe('diagnostic traces', () => {
     );
   });
 
+  it('REG-ACCOUNT-040 records only the classified NodeImage timeout result', () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('credential', 'auth', {
+      credentialSource: 'nodeimage',
+      state: 'session-check'
+    });
+
+    markDiagnosticStage(trace, 'guard', {
+      apiKey: 'api-key-secret',
+      nonce: 'nonce-secret',
+      payload: 'payload-secret',
+      state: 'timeout',
+      url: 'https://www.nodeseek.com/connect?target=secret'
+    });
+    finishDiagnosticTrace(trace, 'failure', {
+      documentUrl: 'https://www.nodeimage.com/?secret=1',
+      reason: 'timeout'
+    });
+
+    expect(events()).toEqual([
+      expect.objectContaining({ state: 'session-check' }),
+      expect.objectContaining({ phase: 'guard', state: 'timeout' }),
+      expect.objectContaining({
+        outcome: 'failure',
+        phase: 'finish',
+        reason: 'timeout'
+      })
+    ]);
+    expect(JSON.stringify(events())).not.toMatch(
+      /api-key-secret|nonce-secret|payload-secret|target=secret|secret=1|apiKey|nonce|payload|documentUrl|url/
+    );
+  });
+
   it('records only classified request metadata around a fetch', async () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('network', 'request');
