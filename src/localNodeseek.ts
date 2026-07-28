@@ -4,7 +4,7 @@ import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekSession';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
 import type { NodeSeekSearchFilter } from './searchFilters';
-import type { Category, FeedResponse, NodeSeekFeedFilter, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
+import type { Category, FeedResponse, NodeSeekFeedFilter, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReference, UserReplyActivity } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -1580,15 +1580,66 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
   return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
 }
 
-export async function getNodeSeekUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
+export async function resolveNodeSeekUser(username: string, options: NodeSeekOptions = {}): Promise<UserReference> {
+  const requestedUsername = username.trim();
+  if (!requestedUsername) {
+    throw new Error('NodeSeek 用户名不能为空');
+  }
+  if (options.authenticated === false) {
+    throw Object.assign(new Error('请先登录 NodeSeek 后再打开用户主页'), {
+      source: 'nodeseek' as const,
+      loginRequired: true
+    });
+  }
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground');
-  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(id)}?readme=1`, requestOptions);
+  const data = await fetchNodeSeekJson(
+    `/api/account/find/${encodeURIComponent(requestedUsername)}`,
+    requestOptions
+  );
+  if (!isRecord(data) || data.success === false || !Array.isArray(data.memberList)) {
+    throw new Error('NodeSeek 用户名解析失败');
+  }
+  const candidates = data.memberList.filter(isRecord);
+  const exactMembers = candidates.filter((candidate) => (
+    String(candidate.member_name || '').trim() === requestedUsername
+  ));
+  const foldedMembers = exactMembers.length ? [] : candidates.filter((candidate) => (
+    String(candidate.member_name || '').trim().toLowerCase() === requestedUsername.toLowerCase()
+  ));
+  const member = exactMembers.length === 1
+    ? exactMembers[0]
+    : foldedMembers.length === 1 ? foldedMembers[0] : undefined;
+  const id = member ? String(member.member_id || '').trim() : '';
+  if (!member || !/^\d+$/.test(id)) {
+    throw new Error('NodeSeek 用户名解析失败');
+  }
+  const canonicalUsername = String(member.member_name || '').trim();
+  return {
+    source: 'nodeseek',
+    id,
+    username: canonicalUsername,
+    displayName: canonicalUsername,
+    url: nodeSeekSpaceUrl(id)
+  };
+}
+
+export async function getNodeSeekUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
+  const requestedId = id.trim();
+  if (!/^\d+$/.test(requestedId)) {
+    throw new Error('NodeSeek 用户主页需要数字用户 ID');
+  }
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground');
+  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(requestedId)}?readme=1`, requestOptions);
   if (!isRecord(userData) || userData.success === false || !isRecord(userData.detail)) {
     throw new Error('NodeSeek 用户主页读取失败');
   }
   const user = userData.detail;
-  const username = String(user.member_name || user.username || user.name || id).trim() || id;
-  const userId = String(user.member_id || user.id || id).trim() || id;
+  const responseId = String(user.member_id || user.id || '').trim();
+  if (responseId && (!/^\d+$/.test(responseId) || responseId !== requestedId)) {
+    throw new Error('NodeSeek 用户主页身份不匹配');
+  }
+  const username = String(user.member_name || user.username || user.name || requestedId).trim() || requestedId;
+  const userId = requestedId;
   const avatar = absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(userId)}.png`, BASE_URL);
   const bio = String(user.bio || user.readme || '').trim() || undefined;
   const joinedAt = toIsoString(user.created_at || user.createdAt || user.createdDate);

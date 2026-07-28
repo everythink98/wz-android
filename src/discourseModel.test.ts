@@ -148,6 +148,7 @@ describe('portable Discourse fields', () => {
       contentMarkdown: 'portable Markdown',
       bookmarked: false,
       replyTargetAuthor: 'alice',
+      replyTargetUsername: 'alice',
       acceptedAnswer: true,
       wiki: true,
       hidden: true,
@@ -196,6 +197,32 @@ describe('portable Discourse fields', () => {
       cooked: '<p>body</p>',
       created_at: '2026-01-02T03:04:05Z'
     })).toBeNull();
+  });
+
+  it('[REG-TOPIC-035] keeps a reply target display name separate from its navigable username', () => {
+    const basePost = {
+      id: 23,
+      post_number: 2,
+      username: 'bob',
+      cooked: '<p>portable body</p>',
+      created_at: '2026-01-02T03:04:05Z'
+    };
+
+    expect(discoursePostFields({
+      ...basePost,
+      reply_to_user: { name: 'Alice Display' }
+    })).toMatchObject({ replyTargetAuthor: 'Alice Display' });
+    expect(discoursePostFields({
+      ...basePost,
+      reply_to_user: { name: 'Alice Display' }
+    })).not.toHaveProperty('replyTargetUsername');
+    expect(discoursePostFields({
+      ...basePost,
+      reply_to_user: { name: 'Alice Display', username: 'alice' }
+    })).toMatchObject({
+      replyTargetAuthor: 'Alice Display',
+      replyTargetUsername: 'alice'
+    });
   });
 
   it('[REG-TOPIC-026] keeps an accepted reply separate from an empty Discourse system event', () => {

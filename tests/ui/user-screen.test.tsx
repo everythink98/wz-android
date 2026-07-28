@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
-import type { Topic, UserProfile } from '../../src/types';
+import type { Topic, UserProfile, UserReference } from '../../src/types';
 import { createEmptyReaderData } from '../../src/readerData';
 import { UserScreen } from '../../src/screens/UserScreen';
 import { createStyles, createTheme } from '../../src/theme';
@@ -160,6 +160,28 @@ describe('User screen behavior', () => {
     expect(view.getByText('Alice')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('刷新'));
     expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-039] keeps an unresolved NodeSeek user in the app without exposing follow', async () => {
+    const requestedUser: UserReference = {
+      source: 'nodeseek',
+      username: 'xy',
+      displayName: 'xy',
+      url: 'https://www.nodeseek.com/member?t=xy'
+    };
+    const onOpenOriginal = jest.fn<() => void>();
+    const view = await render(userScreen({
+      busy: true,
+      profile: null,
+      requestedUser,
+      onOpenOriginal
+    }));
+
+    expect(view.getByText('xy')).toBeTruthy();
+    expect(view.queryByLabelText('关注')).toBeNull();
+    expect(view.queryByLabelText('已关注')).toBeNull();
+    await fireEvent.press(view.getByLabelText('原站主页'));
+    expect(onOpenOriginal).toHaveBeenCalledWith(requestedUser.url);
   });
 
   it('distinguishes empty topic and reply tabs for a loaded user', async () => {

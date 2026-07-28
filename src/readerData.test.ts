@@ -327,6 +327,11 @@ describe('Android reader data helpers', () => {
     expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
   });
 
+  it('[REG-TOPIC-039] never creates a NodeSeek followed-user key from a username', () => {
+    expect(() => userKey({ source: 'nodeseek', id: 'xy' })).toThrow('NodeSeek 用户 ID 必须是数字');
+    expect(userKey({ source: 'nodeseek', id: '8052' })).toBe('nodeseek:8052');
+  });
+
   it('keeps followed users created from topic authors even when the profile url is missing', () => {
     const partialProfile: UserProfile = {
       source: 'v2ex',

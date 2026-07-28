@@ -18,6 +18,7 @@ export type DiscoursePostFields = Pick<Reply,
   | 'bookmarkId'
   | 'bookmarked'
   | 'replyTargetAuthor'
+  | 'replyTargetUsername'
   | 'acceptedAnswer'
   | 'wiki'
   | 'hidden'
@@ -225,7 +226,8 @@ export function discoursePostFields(raw: unknown): DiscoursePostFields | null {
   const contentMarkdown = typeof raw.raw === 'string' ? raw.raw : '';
   const bookmarkId = positiveNumber(raw.bookmark_id);
   const replyToUser = isRecord(raw.reply_to_user) ? raw.reply_to_user : undefined;
-  const replyTargetAuthor = String(replyToUser?.username || replyToUser?.name || '').trim();
+  const replyTargetUsername = String(replyToUser?.username || '').trim();
+  const replyTargetAuthor = String(replyToUser?.name || replyTargetUsername).trim();
   const postType = Number(raw.post_type);
   const isSystemAction = Number.isFinite(postType) && postType !== 1;
   const reactions = reactionSummary(raw.reactions);
@@ -243,6 +245,7 @@ export function discoursePostFields(raw: unknown): DiscoursePostFields | null {
     ...(contentMarkdown ? { contentMarkdown } : {}),
     ...(bookmarkId ? { bookmarkId, bookmarked: true } : typeof raw.bookmarked === 'boolean' ? { bookmarked: raw.bookmarked } : {}),
     ...(replyTargetAuthor ? { replyTargetAuthor } : {}),
+    ...(replyTargetUsername ? { replyTargetUsername } : {}),
     ...(raw.accepted_answer === true ? { acceptedAnswer: true } : {}),
     ...(raw.wiki === true ? { wiki: true } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),

@@ -69,7 +69,7 @@ import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoSession';
 import { createSourceGateway } from '../sources/sourceGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '../networkProxy';
-import type { Topic, TopicDetail, UserProfile } from '../types';
+import type { Topic, TopicDetail, UserProfile, UserReference } from '../types';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '../topicListItemState';
@@ -206,7 +206,7 @@ export function AppRoot() {
   const linuxDoWebViewMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openTopicRef = useRef<((topic: Topic, refresh?: boolean) => Promise<unknown>) | null>(null);
-  const openUserRef = useRef<((user: UserProfile, refresh?: boolean) => Promise<unknown>) | null>(null);
+  const openUserRef = useRef<((user: UserReference) => Promise<unknown>) | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
   const pendingNodeSeekVerificationRetryRef = useRef<NodeSeekVerificationRetry | null>(null);
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
@@ -780,7 +780,7 @@ export function AppRoot() {
   const openTopicFromHtml = useCallback((topic: Topic) => {
     void openTopicRef.current?.(topic);
   }, []);
-  const openUserFromHtml = useCallback((user: UserProfile) => {
+  const openUserFromHtml = useCallback((user: UserReference) => {
     void openUserRef.current?.(user);
   }, []);
   const {
@@ -1030,6 +1030,14 @@ export function AppRoot() {
     updateNodeSeekSession({ type: 'verification-required', message });
   }, [updateNodeSeekSession]);
   useCommitRefValue(nodeSeekTopicVerificationRequiredRef, handleNodeSeekTopicVerificationRequired);
+
+  const handleNodeSeekUserVerificationRequired = useCallback((message = 'NodeSeek 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
+    if (recovery) {
+      pendingNodeSeekVerificationRetryRef.current = { type: 'user', recovery };
+    }
+    // react-doctor-disable-next-line react-doctor/no-impure-state-updater
+    showNodeSeekVerification(message);
+  }, [showNodeSeekVerification]);
 
   const {
     checkNodeSeekAccount,
@@ -1400,6 +1408,7 @@ export function AppRoot() {
     loadMoreUserReplies,
     loadMoreUserTopics,
     openUser,
+    refreshUser,
     selectedUser,
     userBusy,
     userError,
@@ -1414,7 +1423,7 @@ export function AppRoot() {
     readerData,
     screen,
     showLinuxDoVerification,
-    showNodeSeekVerification,
+    showNodeSeekVerification: handleNodeSeekUserVerificationRequired,
     sourceGateway,
     showYaohuoLogin
   });
@@ -1828,11 +1837,8 @@ export function AppRoot() {
   }, [runSearch]);
 
   const refreshCurrentUser = useCallback(() => {
-    const user = userProfile || selectedUser;
-    if (user) {
-      void openUser(user, true);
-    }
-  }, [openUser, selectedUser, userProfile]);
+    void refreshUser();
+  }, [refreshUser]);
 
   const {
     clearCredentialLoginIntent,

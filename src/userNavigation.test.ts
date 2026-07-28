@@ -365,7 +365,7 @@ describe('Android user navigation helpers', () => {
     expect(merged?.category).toBe('开发调优');
   });
 
-  it('does not treat a NodeSeek display name as a user ID', () => {
+  it('keeps a NodeSeek username as a non-canonical user reference', () => {
     const topic: Topic = {
       source: 'nodeseek',
       id: '746779',
@@ -381,7 +381,29 @@ describe('Android user navigation helpers', () => {
       createdAt: '2026-05-25T03:35:00.000Z'
     };
 
-    expect(userFromTopic(topic)).toBeNull();
-    expect(userFromReply(reply, 'nodeseek')).toBeNull();
+    expect(userFromTopic(topic)).toMatchObject({ source: 'nodeseek', username: 'Bugs' });
+    expect(userFromTopic(topic)).not.toHaveProperty('id');
+    expect(userFromReply(reply, 'nodeseek')).toMatchObject({ source: 'nodeseek', username: 'Bugs' });
+    expect(userFromReply(reply, 'nodeseek')).not.toHaveProperty('id');
+  });
+
+  it('[REG-TOPIC-035] does not guess a Discourse username from a display label', () => {
+    const displayOnlyReply: Reply = {
+      author: 'Alice Display',
+      contentHtml: '<p>reply</p>',
+      createdAt: '2026-05-25T03:35:00.000Z'
+    };
+    const explicitReply: Reply = {
+      ...displayOnlyReply,
+      authorId: 'alice'
+    };
+
+    expect(userFromReply(displayOnlyReply, 'linuxdo')).toBeNull();
+    expect(userFromReply(explicitReply, 'linuxdo')).toMatchObject({
+      source: 'linuxdo',
+      id: 'alice',
+      username: 'alice',
+      displayName: 'Alice Display'
+    });
   });
 });

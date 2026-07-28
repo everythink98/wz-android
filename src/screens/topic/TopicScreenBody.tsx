@@ -21,7 +21,7 @@ import {
   type TNode
 } from 'react-native-render-html';
 import { BookMarked, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type { Reply, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
+import type { Reply, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserReference } from '../../types';
 import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
@@ -552,7 +552,7 @@ export const TopicScreen = memo(function TopicScreen({
   onToggleReplyQuote: (options: ToggleReplyQuoteOptions) => void;
   onToggleTopicBodyQuote: (options: ToggleTopicBodyQuoteOptions) => void;
   onToggleFavorite: (topic: Topic) => void;
-  onOpenUser: (user: UserProfile) => void;
+  onOpenUser: (user: UserReference) => void;
   inlineSizedImageUrls: Record<string, true>;
   topicImageDeriver: TopicImageDeriver;
 }) {

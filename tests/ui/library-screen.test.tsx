@@ -7,7 +7,7 @@ import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from
 import { LibraryScreen } from '../../src/screens/LibraryScreen';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicListItemStateIndex } from '../../src/topicListItemState';
-import type { Category, Topic, UserProfile } from '../../src/types';
+import type { Category, Topic, UserProfile, UserReference } from '../../src/types';
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -116,7 +116,7 @@ function LibraryHarness({
   followedUsers?: FollowedUserRecord[];
   onClearHistory?: () => void;
   onOpenTopic?: (topic: Topic) => void;
-  onOpenUser?: (user: UserProfile) => void;
+  onOpenUser?: (user: UserReference) => void;
   onRemove?: (topic: Topic) => void;
   onRemoveUser?: (user: UserProfile) => void;
   records?: TopicRecord[];
@@ -203,7 +203,7 @@ describe('Library filters', () => {
 
   it('applies single-item history and follow removals without opening the row', async () => {
     const onOpenTopic = jest.fn<(topic: Topic) => void>();
-    const onOpenUser = jest.fn<(user: UserProfile) => void>();
+    const onOpenUser = jest.fn<(user: UserReference) => void>();
     const onRemove = jest.fn<(topic: Topic) => void>();
     const onRemoveUser = jest.fn<(user: UserProfile) => void>();
     const view = await render(

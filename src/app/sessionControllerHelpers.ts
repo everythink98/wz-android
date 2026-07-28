@@ -21,7 +21,8 @@ type MutableRef<T> = { current: T };
 type WebViewStopRef = { current: { stopLoading: () => void } | null };
 export type NodeSeekVerificationRetry =
   | { type: 'search'; recovery: LinuxDoReadRecovery }
-  | { type: 'topic'; recovery: LinuxDoReadRecovery };
+  | { type: 'topic'; recovery: LinuxDoReadRecovery }
+  | { type: 'user'; recovery: LinuxDoReadRecovery };
 export type CredentialLoadOptions = {
   captureGeneration?: (generation: number) => void;
   diagnosticTrace?: DiagnosticTrace;

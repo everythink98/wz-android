@@ -132,7 +132,8 @@ function isTopic(value: unknown): value is Topic {
 }
 
 function isUserProfile(value: unknown): value is UserProfile {
-  return userProfileShapeSchema.safeParse(value).success;
+  const parsed = userProfileShapeSchema.safeParse(value);
+  return parsed.success && (parsed.data.source !== 'nodeseek' || /^\d+$/.test(parsed.data.id));
 }
 
 function cleanString(value: unknown, fallback = '') {
@@ -329,6 +330,9 @@ export function categoryKey(category: Pick<Category, 'source' | 'id'>) {
 }
 
 export function userKey(user: Pick<UserProfile, 'source' | 'id'>) {
+  if (user.source === 'nodeseek' && !/^\d+$/.test(user.id)) {
+    throw new Error('NodeSeek 用户 ID 必须是数字');
+  }
   return `${user.source}:${user.id}`;
 }
 

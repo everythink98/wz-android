@@ -34,7 +34,7 @@ import {
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
 import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
 import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
-import type { Topic, TopicDetail, UserProfile } from '../types';
+import type { Topic, TopicDetail, UserReference } from '../types';
 import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
 import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
@@ -525,7 +525,7 @@ export function useHtmlRenderingController({
   mediaSessionIdentity: string;
   onOpenImagePreview: (url: string) => void;
   onOpenTopic: (topic: Topic) => void | Promise<void>;
-  onOpenUser: (user: UserProfile) => void | Promise<void>;
+  onOpenUser: (user: UserReference) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
   selectedTopic: Topic | null;
   settings: ReaderSettings;

@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star, Trash2, type LucideIcon } from 'lucide-react-native';
-import type { FeedSource, Topic, UserProfile } from '../types';
+import type { FeedSource, Topic, UserProfile, UserReference } from '../types';
 import { type FollowedUserRecord, type TopicRecord } from '../readerData';
 import { type LibraryTab } from '../feedLogic';
 import { filterLibraryRecords, libraryCategoryFilterItems } from '../androidFeatureHelpers';
@@ -122,7 +122,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   theme: ReaderTheme;
   onClearHistory: () => void;
   onOpenTopic: (topic: Topic) => void;
-  onOpenUser: (user: UserProfile) => void;
+  onOpenUser: (user: UserReference) => void;
   onRemove: (topic: Topic) => void;
   onRemoveUser: (user: UserProfile) => void;
   onTabChange: (tab: LibraryTab) => void;

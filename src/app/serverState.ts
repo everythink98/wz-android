@@ -150,17 +150,24 @@ export const forumQueryKeys = {
   user: ({
     scope,
     source,
-    userId,
-    username
+    userId
   }: {
     scope: ForumSessionEpochs;
     source: Source;
     userId: string;
-    username: string;
   }) => ['forum', source, 'user', {
     sessionEpoch: sessionEpochKey(source, scope),
-    userId,
+    userId
+  }] as const,
+  userResolution: ({
+    scope,
     username
+  }: {
+    scope: ForumSessionEpochs;
+    username: string;
+  }) => ['forum', 'nodeseek', 'user-resolution', {
+    sessionEpoch: scope.nodeseek,
+    username: username.trim()
   }] as const,
   userLane: (userKey: readonly unknown[], lane: 'topics' | 'replies') => [...userKey, lane] as const,
   accountStatus: ({

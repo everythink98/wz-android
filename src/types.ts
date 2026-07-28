@@ -119,6 +119,7 @@ export interface Reply {
   bookmarkId?: number;
   bookmarked?: boolean;
   replyTargetAuthor?: string;
+  replyTargetUsername?: string;
   thanksCount?: number;
   acceptedAnswer?: boolean;
   wiki?: boolean;
@@ -221,14 +222,22 @@ export interface TopicDetail extends Topic {
   reactionSummary?: ReactionSummary[];
 }
 
-export interface UserProfile {
+interface UserReferenceBase {
   source: Source;
-  id: string;
-  username: string;
   displayName?: string;
   avatar?: string;
-  levelLabel?: string;
   url: string;
+}
+
+export type UserReference = UserReferenceBase & (
+  | { id: string; username?: string }
+  | { id?: string; username: string }
+);
+
+export interface UserProfile extends UserReferenceBase {
+  id: string;
+  username: string;
+  levelLabel?: string;
   bio?: string;
   joinedAt?: string;
   topicCount?: number;

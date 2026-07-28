@@ -3258,6 +3258,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把 artifact.posterSource 改回 SVG data URI，真实 fixture 会再次进入 AndroidSVG 失败；允许每张正文图创建 WebView时，十图组件测试/原生实例计数失败；开启 JS/文件/网络或允许外部导航时安全 props 与原生策略测试失败。 |
 | 明确不覆盖范围 | 不执行 SVG JavaScript、事件交互或外部子资源，不把整个 Topic 交给 WebView，不新增服务端代理，不用 Coil 或 `react-native-svg` 作为任意 SVG renderer，也不授权真实保存。 |
 
+## `REG-TOPIC-039` NodeSeek 用户名 mention 被候选 UID 优化误作内部导航门禁
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`TOPIC-03`、`USER-01`、`NAV-02`；共享回归 `USER-02`、`LIBRARY-02`、`NAV-03` |
+| 用户症状 | 同一 NodeSeek Topic 中，有些正文或回复里的 `@用户` 能进入 App 用户页，有些却打开 Google/Chrome；能否内开取决于当前已加载 Topic 数据中是否碰巧带有该用户的数字 UID。 |
+| 触发条件 | `/member?t=username` 点击解析把当前 Topic/detail candidates 中的数字 UID 命中当成内部导航前置条件；候选 miss 返回 `null`，随后被通用链接逻辑当成外部 URL。回复目标、引用作者和签名还可能用 `topics: []` 或 `id=username` 伪造 `UserProfile`，把导航定位与 canonical 用户身份混在一起。 |
+| 根因 seam | `parseForumUserLink` 与 Topic 共享 HTML 点击入口、`UserReference`/`UserProfile` 边界、NodeSeek username resolver、`SourceGateway` 和 User controller 的 Query identity。 |
+| 必须保持的行为 | NodeSeek `/member?t=username` 只要 host/path/query 精确合法就产生内部 `UserReference`；当前 Topic/detail candidates 只做有界数字 UID hint，命中时零 resolver 请求，miss 或非法 hint 仍保留 username reference。`/space/{uid}` 直接使用 canonical 数字 UID，零 resolver。username-only reference 立即进入 App User 页，并在受管 NodeSeek 会话下通过 `/api/account/find/{encodeURIComponent(username)}` 扫描完整 `memberList`：先接受 trim 后大小写敏感完全一致，否则只接受唯一的大小写不敏感完全一致；无匹配、多个冲突、非法 `member_id` 或失败响应均拒绝。已确认未登录和 identity barrier 零 transport。解析成功后 Profile、主题、回复、分页、Query key 和关注只使用 canonical 数字 UID；UserReference 不持久化、不关注。解析中显示 Loading，失败显示错误、刷新和显式原站主页，普通网络/429/登录要求不自动重试、不自动打开浏览器；可信 Cloudflare 验证只恢复原 User Query。切用户、返回或 epoch 变化取消旧请求，迟到结果不能覆盖当前 User。Discourse 继续只用明确 username 导航，不把 display label 猜成 username。诊断只记录脱敏引用，不记录 username、`memberList` 或完整 URL/query。 |
+| 精确失败 oracle | `src/appUtils.test.ts` 的 `REG-TOPIC-039` 固定 candidate hit 返回 UID，而 candidate miss/非法 hint 仍返回 username reference；`src/localSources.test.ts` 固定 exact 结果位于完整 50 条列表后部、Unicode、大小写唯一兼容、冲突、无匹配、非法 UID、失败响应、429 与未登录零 transport；Gateway/Query 测试固定 managed credential、UA、signal、trace、同 username+epoch 去重与换 epoch 重解；Topic/User UI 测试固定正文、回复正文、回复引用和签名共用内部入口，解析前零 Profile/零关注，成功后 Profile/分页/关注只使用 UID；`src/readerData.test.ts` 拒绝 `nodeseek:{username}`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：parser、adapter/Gateway、Query identity、Topic 点击与 User 两阶段渲染使用确定性 fixture；不以源码字符串或动态用户名替代行为 oracle。 |
+| Replay 或真实验收路径 | 条件式 `LIVE-READ-04` 在 revision、版本和 APK 身份匹配且 NodeSeek 登录已确认的设备上，直达指定只读 Topic，逐个检查正文、回复和数字 `/space/{uid}` 用户链接；每个 username 最多一次真实 resolver probe，目标 User 加载后物理返回并保持原 Topic 与回复位置。不得执行真实写操作或用连点制造 429。 |
+| 负向验证方式 | 删除当前 Topic 中该 username 的候选后，parser 仍必须返回内部 reference；让模糊结果排在 exact 前面不得选错；把 Profile key 恢复 username 分叉、解析前显示关注、或把普通 resolver 失败交给 external callback 时，对应编号测试失败。lookalike host、空参数、`/member?q=`、无 href 纯文本 mention 和 Discourse label-only 引用继续不可导航。 |
+| 明确不覆盖范围 | 不解析没有可信 href 的纯文本 `@name`，不扫描分页回复建立全量候选表，不预取全文用户，不建立通用跨站身份服务或持久 username→UID 映射，不自动重试 429，也不改变 ReaderData schema。 |
+
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 
 | 字段 | 内容 |
