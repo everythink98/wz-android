@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import React, { useState } from 'react';
 import { Alert, View } from 'react-native';
 import type { LibraryTab } from '../../src/feedLogic';
@@ -7,27 +7,37 @@ import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from
 import { LibraryScreen } from '../../src/screens/LibraryScreen';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicListItemStateIndex } from '../../src/topicListItemState';
-import type { Category, Topic, UserProfile } from '../../src/types';
+import type { Category, Topic, UserProfile, UserReference } from '../../src/types';
+
+let mockFlashListMountCount = 0;
+const mockFlashListRenders: Array<{ dataLength: number; testID?: string }> = [];
+const mockFlashListScrollToOffset = jest.fn<(options: { animated: boolean; offset: number }) => void>();
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ReactModule.forwardRef(function FlashList(
-      { data = [], keyExtractor, ListEmptyComponent, ListHeaderComponent, renderItem, testID }: {
+      { data = [], keyExtractor, ListEmptyComponent, ListHeaderComponent, maintainVisibleContentPosition, renderItem, testID }: {
         data?: unknown[];
         keyExtractor?: (item: unknown, index: number) => string;
         ListEmptyComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
+        maintainVisibleContentPosition?: { disabled?: boolean };
         renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
         testID?: string;
       },
-      ref: React.ForwardedRef<{ scrollToOffset: () => void }>
+      ref: React.ForwardedRef<{ scrollToOffset: (options: { animated: boolean; offset: number }) => void }>
     ) {
-      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: () => undefined }));
+      ReactModule.useState(() => {
+        mockFlashListMountCount += 1;
+        return undefined;
+      });
+      mockFlashListRenders.push({ dataLength: data.length, testID });
+      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: mockFlashListScrollToOffset }));
       return ReactModule.createElement(
         NativeView,
-        { testID },
+        { maintainVisibleContentPosition, testID } as React.ComponentProps<typeof NativeView>,
         ListHeaderComponent,
         ...data.map((item, index) => ReactModule.createElement(
           NativeView,
@@ -116,7 +126,7 @@ function LibraryHarness({
   followedUsers?: FollowedUserRecord[];
   onClearHistory?: () => void;
   onOpenTopic?: (topic: Topic) => void;
-  onOpenUser?: (user: UserProfile) => void;
+  onOpenUser?: (user: UserReference) => void;
   onRemove?: (topic: Topic) => void;
   onRemoveUser?: (user: UserProfile) => void;
   records?: TopicRecord[];
@@ -150,6 +160,67 @@ afterEach(() => {
 });
 
 describe('Library filters', () => {
+  it('[REG-PERF-001] reuses the list while switching between all three library tabs', async () => {
+    mockFlashListMountCount = 0;
+    const view = await render(<LibraryHarness />);
+
+    expect(mockFlashListMountCount).toBe(1);
+    await fireEvent.press(view.getByTestId('library-tab-users'));
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    await fireEvent.press(view.getByTestId('library-tab-favorites'));
+
+    expect(mockFlashListMountCount).toBe(1);
+  });
+
+  it('[REG-PERF-001] enters the next tab with source and category filters already reset', async () => {
+    const view = await render(<LibraryHarness />);
+    await fireEvent.press(view.getByTestId('library-source-v2ex'));
+    await fireEvent.press(view.getByLabelText('问与答'));
+    mockFlashListRenders.length = 0;
+
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+
+    const historyRenders = mockFlashListRenders.filter((renderState) => renderState.testID === 'library-history-ready');
+    expect(historyRenders).toEqual([{ dataLength: 4, testID: 'library-history-ready' }]);
+  });
+
+  it('[REG-PERF-001] resets the list position before switching tabs without animation', async () => {
+    const frameCallbacks: Array<(time: number) => void> = [];
+    jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    });
+    const view = await render(<LibraryHarness />);
+    mockFlashListScrollToOffset.mockClear();
+
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+
+    expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(1);
+    expect(mockFlashListScrollToOffset).toHaveBeenCalledWith({ offset: 0, animated: false });
+    expect(frameCallbacks).toHaveLength(1);
+    await act(async () => frameCallbacks[0]?.(0));
+    expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-PERF-001] leaves filters and position unchanged when the selected tab is pressed again', async () => {
+    const view = await render(<LibraryHarness />);
+    await fireEvent.press(view.getByTestId('library-source-v2ex'));
+    await fireEvent.press(view.getByLabelText('问与答'));
+    mockFlashListScrollToOffset.mockClear();
+
+    await fireEvent.press(view.getByTestId('library-tab-favorites'));
+
+    expect(view.getByTestId('library-source-v2ex').props.accessibilityState.selected).toBe(true);
+    expect(view.getByText('1 / 3 条')).toBeTruthy();
+    expect(mockFlashListScrollToOffset).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-001] disables visible-position anchoring while library datasets switch', async () => {
+    const view = await render(<LibraryHarness />);
+
+    expect(view.getByTestId('library-favorites-ready').props.maintainVisibleContentPosition).toEqual({ disabled: true });
+  });
+
   it('settles all three tabs with an empty device library', async () => {
     const view = await render(<LibraryHarness followedUsers={[]} records={[]} />);
 
@@ -203,7 +274,7 @@ describe('Library filters', () => {
 
   it('applies single-item history and follow removals without opening the row', async () => {
     const onOpenTopic = jest.fn<(topic: Topic) => void>();
-    const onOpenUser = jest.fn<(user: UserProfile) => void>();
+    const onOpenUser = jest.fn<(user: UserReference) => void>();
     const onRemove = jest.fn<(topic: Topic) => void>();
     const onRemoveUser = jest.fn<(user: UserProfile) => void>();
     const view = await render(

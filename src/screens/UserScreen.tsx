@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native';
-import type { SourceErrorInfo, Topic, UserProfile, UserReplyActivity } from '../types';
+import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '../types';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
@@ -91,7 +91,7 @@ export const UserScreen = memo(function UserScreen({
   error: SourceErrorInfo | null;
   followed: boolean;
   profile: UserProfile | null;
-  requestedUser: UserProfile | null;
+  requestedUser: UserReference | null;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   topicStateIndex: TopicListItemStateIndex;
@@ -109,7 +109,7 @@ export const UserScreen = memo(function UserScreen({
   const topics = profile?.topics || [];
   const replies = profile?.replies || [];
   const [userTab, setUserTab] = useState<UserActivityTab>('topics');
-  const levelLabel = profile?.levelLabel || requestedUser?.levelLabel;
+  const levelLabel = profile?.levelLabel;
   const profileStats = useMemo(() => {
     const stats: { label: string; value: string }[] = [];
     if (levelLabel) {
@@ -134,7 +134,7 @@ export const UserScreen = memo(function UserScreen({
   const listRef = useRef<FlashListRef<UserListItem> | null>(null);
   const autoLoadArmedRef = useRef(false);
   const pendingScrollTopRef = useRef(false);
-  const followTarget = profile || requestedUser;
+  const followTarget = profile;
   const userAuthNotice = error ? authNoticeForSourceError(error) : null;
   const userAuthNoticeBoxStyle = userAuthNotice?.tone === 'danger'
     ? styles.authNoticeBoxDanger
@@ -209,13 +209,13 @@ export const UserScreen = memo(function UserScreen({
   const renderProfileHeader = useCallback(() => (
     <View style={styles.userProfileHeader}>
       <View style={styles.topicAuthorRow}>
-        <Avatar contentSource={user?.source || null} name={user?.displayName || user?.username} styles={styles} uri={user?.avatar} />
+        <Avatar contentSource={user?.source || null} name={user?.displayName || user?.username || user?.id} styles={styles} uri={user?.avatar} />
         <View style={styles.topicAuthorMeta}>
-          <Text style={styles.articleTitle}>{user?.displayName || user?.username || '用户'}</Text>
-          <Text style={styles.meta}>{user ? `${sourceLabel(user.source)} · ${user.username}` : '用户信息读取中'}</Text>
+          <Text style={styles.articleTitle}>{user?.displayName || user?.username || user?.id || '用户'}</Text>
+          <Text style={styles.meta}>{user ? `${sourceLabel(user.source)} · ${user.username || user.id || ''}` : '用户信息读取中'}</Text>
         </View>
       </View>
-      {user?.bio ? <Text style={styles.excerpt}>{user.bio}</Text> : null}
+      {profile?.bio ? <Text style={styles.excerpt}>{profile.bio}</Text> : null}
       {profileStats.length ? (
         <View style={styles.profileStatRail}>
           {profileStats.map((stat) => (
@@ -275,7 +275,7 @@ export const UserScreen = memo(function UserScreen({
     <View style={styles.screen}>
       <View style={styles.topicTopBar}>
         <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
-        <Text style={styles.topicTopHint} numberOfLines={1}>{sourceLabel(user.source)} · {user.displayName || user.username}</Text>
+        <Text style={styles.topicTopHint} numberOfLines={1}>{sourceLabel(user.source)} · {user.displayName || user.username || user.id}</Text>
         <View style={styles.topicTopActions}>
           {followTarget ? <IconButton iconOnly ghost icon={Star} label={followed ? '已关注' : '关注'} active={followed} activeColor={theme.favorite} styles={styles} theme={theme} onPress={() => onToggleFollow(followTarget)} /> : null}
           <IconButton iconOnly ghost icon={RefreshCw} label="刷新" styles={styles} theme={theme} onPress={onRefresh} />

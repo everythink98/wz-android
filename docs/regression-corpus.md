@@ -23,6 +23,36 @@
 
 Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确失败 oracle。Jest 对这类用例显示通过，含义只是“预期中的失败仍然发生”，不得计为该行为的 `UI_PASS`；修复后必须把它改成普通用例并确认真实通过。
 
+## `REG-PERF-001` Library 切换重建列表、集中加载头像及历史写入全量清洗
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-01`、`LIBRARY-01`、`LIBRARY-02`、`LIBRARY-03`、`FEED-01`、`FEED-02`、`FEED-03`、`SEARCH-01`、`SEARCH-02`、`TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`USER-01`、`ACCOUNT-01`、`DATA-01`、`DATA-02`、`DATA-03` |
+| 用户症状 | 收藏帖子、关注用户和历史之间切换时明显卡顿；Debug 基线出现 17%–32% 掉帧，最慢帧约 69–82ms。Topic 旅程中 20 次历史同步提交有 8 次超过 8ms，最慢 22ms。 |
+| 触发条件 | Library 已有数据，切换 tab 时 FlashList 的 `key` 改变；旧实例卸载、新实例挂载并集中创建可见行及头像，同时筛选在切换后的 effect 再重置。Topic 读取完成时 `history-recorded` 对已校验 ReaderData 再做一次全量 sanitize。 |
+| 根因 seam | `src/screens/LibraryScreen.tsx` 的列表 identity、筛选提交、滚顶和 `maintainVisibleContentPosition` 契约；`src/components/Avatar.tsx` 是 Feed、Search、Library、Topic、User 共用的头像加载 seam；`src/readerData.ts` 与 `src/app/useReaderDataController.ts` 共同约束历史写入和持久化。 |
+| 必须保持的行为 | 三个 tab 复用同一个 FlashList；目标 tab 首次可见状态已经是全部来源/全部分类，列表在数据替换前无动画回到顶部且下一帧补偿，重复点击当前 tab 不重置筛选或滚动，Library 不锚定旧数据位置。正常头像先只走原生加载，保留一次原生 retry，第二次失败才走带 session identity 的 SVG fallback，旧 URI/session/unmount 的迟到结果不得显示。`recordHistory` 自身只保留最新 1000 条；只有可信 `history-recorded` 跳过全量 sanitize，加载、导入、合并和其他 mutation 仍完整校验，visitCount、收藏摘要、tombstone、保存队列与失败回滚不变。筛选、删除、清空和 `REG-FEED-002` 的 Feed 独立位置保护保持不变。 |
+| 精确失败 oracle | `tests/ui/library-screen.test.tsx` 依次切换三个 tab，要求列表只挂载一次；History 第一次 render 即得到未筛选数据；真实切换先调用一次 `animated=false` 滚顶、下一帧再补一次，重复点击当前 tab 不滚顶；Library 显式禁用可视位置锚定。`tests/ui/avatar.test.tsx` 要求正常位图零 SVG probe、第二次原生失败才显示 SVG、迟到结果丢弃且 fallback 失败显示文字头像。`src/readerData.test.ts`、`src/app/useReaderDataController.test.ts` 与 `tests/ui/reader-data-controller.test.tsx` 要求 1001 条只留最新 1000 条，可信提交不重建快照且仍进入原保存队列；既有 `REG-DATA-002/003/004` 继续固定排队、失败回滚与恢复写。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须跨真实 React state 更新观察列表实例、目标首帧数据和滚动调用；源码字符串或单独测试筛选 helper 都不能证明没有 remount。ReaderData 以 helper `UNIT_PASS` 和 controller `UI_PASS` 共同固定快路径及数据行为，最终同步耗时仍由设备诊断 trace 复测。 |
+| Replay 或真实验收路径 | 保留 App 数据执行 `tests/device/library-return.ad`；性能验收在身份匹配构建上执行 Favorites ↔ History 20 次并用 FrameTimeline/`gfxinfo` 对照 missed-deadline、p95 和最慢帧；再执行 20 次可落历史的 Topic 旅程，核对 `history-recorded` 同步阶段。 |
+| 负向验证方式 | 恢复 `key={libraryTab}`、把筛选重置移回 `[libraryTab]` effect、移除切换前/下一帧滚顶、让已选 tab 也重置或重新启用位置锚定，Library oracle 必须失败；恢复 mount 时 SVG probe 或接受旧身份结果，Avatar oracle 必须失败；移除 `recordHistory` 上限或让 `history-recorded` 重走全量 sanitize，数据上限或性能契约必须失败。 |
+| 明确不覆盖范围 | 动态头像服务可用性、原生图片解码/上传成本、正文列表滚动和 Release 帧指标分别由动态来源、设备 trace、对应页面回归与设备性能验收负责。 |
+
+## `REG-PERF-002` Topic/User 返回重复恢复同一 Topic session
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-02`、`NAV-03`、`TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`TOPIC-04`、`USER-01`、`USER-02` |
+| 用户症状 | 从 Topic 或 User 返回时偶发卡顿；正常 native pop 已由 route-key 恢复目标 Topic，返回 handler 又同步恢复整份 snapshot，User 路径还再次 `openTopic`。 |
+| 触发条件 | Topic → Topic → 返回，或 Topic → User → Topic；原生栈存在可返回的 Topic route，同时内存中也保留兼容 fallback snapshot。 |
+| 根因 seam | `src/app/AppRoot.tsx` 的 Topic/User 返回策略、`src/app/useTopicSessionController.ts` 的 route 恢复幂等边界，以及 `src/app/backHandlerHelpers.ts` 的返回决策。 |
+| 必须保持的行为 | 正常 native pop 只以目标 route key 恢复可视 Topic；重复报告当前 active route 必须 no-op。User 转场结束后只恢复 return-screen/back stack 元数据；仅缺少可返回 Topic route 或不能 pop 时才执行完整 snapshot fallback 与重新打开。离开 route 时请求取消和 owner 失效仍立即发生。 |
+| 精确失败 oracle | `tests/ui/topic-session-controller.test.tsx` 保存旧 route snapshot 后修改当前草稿，再重复恢复 active route，要求当前草稿不回滚；`src/app/backHandlerHelpers.test.ts` 要求有可 pop Topic route 时即使也有 snapshot 仍选择 route-key 路径，且实际 Topic 分支只 pop、零 snapshot restore，User 分支只排队 metadata restore、零完整 fallback/open；缺 route/不能 pop 才选择 snapshot fallback。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定 session 状态没有二次提交，`UNIT_PASS` 固定返回分支；实际 native 转场和帧时序仍需设备验收。 |
+| Replay 或真实验收路径 | 在匹配构建上分别执行五站列表 → Topic → 返回、Topic → User → Topic、嵌套 Topic 返回；核对筛选、草稿、展开引用、滚动位置和逐层返回，并记录 20 次帧指标。 |
+| 负向验证方式 | 移除 active-route no-op，或让有 returning route 的正常 pop 仍选择 snapshot fallback，编号测试必须分别回滚当前草稿或选错返回策略。 |
+| 明确不覆盖范围 | 第三方请求当天延迟、随机目标是否存在和未经授权的论坛写操作不由该回归固定。 |
+
 ## `REG-FEED-001` 首次加载出现两套 Loading
 
 | 字段 | 内容 |
@@ -3257,6 +3287,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 覆盖安装当前 APK 后用 `exp+wz-android://open-topic` 直达 `https://www.nodeseek.com/post-841430-1`；正文必须出现完整静态海报而非永久 Spinner，点击后当前全屏项播放动态 SVG，退出重进命中海报缓存。全程只读，不清 Cookie/App 数据；保存需单独授权。 |
 | 负向验证方式 | 把 artifact.posterSource 改回 SVG data URI，真实 fixture 会再次进入 AndroidSVG 失败；允许每张正文图创建 WebView时，十图组件测试/原生实例计数失败；开启 JS/文件/网络或允许外部导航时安全 props 与原生策略测试失败。 |
 | 明确不覆盖范围 | 不执行 SVG JavaScript、事件交互或外部子资源，不把整个 Topic 交给 WebView，不新增服务端代理，不用 Coil 或 `react-native-svg` 作为任意 SVG renderer，也不授权真实保存。 |
+
+## `REG-TOPIC-039` NodeSeek 用户名 mention 被候选 UID 优化误作内部导航门禁
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`TOPIC-03`、`USER-01`、`NAV-02`；共享回归 `USER-02`、`LIBRARY-02`、`NAV-03` |
+| 用户症状 | 同一 NodeSeek Topic 中，有些正文或回复里的 `@用户` 能进入 App 用户页，有些却打开 Google/Chrome；能否内开取决于当前已加载 Topic 数据中是否碰巧带有该用户的数字 UID。 |
+| 触发条件 | `/member?t=username` 点击解析把当前 Topic/detail candidates 中的数字 UID 命中当成内部导航前置条件；候选 miss 返回 `null`，随后被通用链接逻辑当成外部 URL。回复目标、引用作者和签名还可能用 `topics: []` 或 `id=username` 伪造 `UserProfile`，把导航定位与 canonical 用户身份混在一起。 |
+| 根因 seam | `parseForumUserLink` 与 Topic 共享 HTML 点击入口、`UserReference`/`UserProfile` 边界、NodeSeek username resolver、`SourceGateway` 和 User controller 的 Query identity。 |
+| 必须保持的行为 | NodeSeek `/member?t=username` 只要 host/path/query 精确合法就产生内部 `UserReference`；当前 Topic/detail candidates 只做有界数字 UID hint，命中时零 resolver 请求，miss 或非法 hint 仍保留 username reference。`/space/{uid}` 直接使用 canonical 数字 UID，零 resolver。username-only reference 立即进入 App User 页，并在受管 NodeSeek 会话下通过 `/api/account/find/{encodeURIComponent(username)}` 扫描完整 `memberList`：先接受 trim 后大小写敏感完全一致，否则只接受唯一的大小写不敏感完全一致；无匹配、多个冲突、非法 `member_id` 或失败响应均拒绝。已确认未登录和 identity barrier 零 transport。解析成功后 Profile、主题、回复、分页、Query key 和关注只使用 canonical 数字 UID；UserReference 不持久化、不关注。解析中显示 Loading，失败显示错误、刷新和显式原站主页，普通网络/429/登录要求不自动重试、不自动打开浏览器；可信 Cloudflare 验证只恢复原 User Query。切用户、返回或 epoch 变化取消旧请求，迟到结果不能覆盖当前 User。Discourse 继续只用明确 username 导航，不把 display label 猜成 username。诊断只记录脱敏引用，不记录 username、`memberList` 或完整 URL/query。 |
+| 精确失败 oracle | `src/appUtils.test.ts` 的 `REG-TOPIC-039` 固定 candidate hit 返回 UID，而 candidate miss/非法 hint 仍返回 username reference；`src/localSources.test.ts` 固定 exact 结果位于完整 50 条列表后部、Unicode、大小写唯一兼容、冲突、无匹配、非法 UID、失败响应、429 与未登录零 transport；Gateway/Query 测试固定 managed credential、UA、signal、trace、同 username+epoch 去重与换 epoch 重解；Topic/User UI 测试固定正文、回复正文、回复引用和签名共用内部入口，解析前零 Profile/零关注，成功后 Profile/分页/关注只使用 UID；`src/readerData.test.ts` 拒绝 `nodeseek:{username}`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：parser、adapter/Gateway、Query identity、Topic 点击与 User 两阶段渲染使用确定性 fixture；不以源码字符串或动态用户名替代行为 oracle。 |
+| Replay 或真实验收路径 | 条件式 `LIVE-READ-04` 在 revision、版本和 APK 身份匹配且 NodeSeek 登录已确认的设备上，直达指定只读 Topic，逐个检查正文、回复和数字 `/space/{uid}` 用户链接；每个 username 最多一次真实 resolver probe，目标 User 加载后物理返回并保持原 Topic 与回复位置。不得执行真实写操作或用连点制造 429。 |
+| 负向验证方式 | 删除当前 Topic 中该 username 的候选后，parser 仍必须返回内部 reference；让模糊结果排在 exact 前面不得选错；把 Profile key 恢复 username 分叉、解析前显示关注、或把普通 resolver 失败交给 external callback 时，对应编号测试失败。lookalike host、空参数、`/member?q=`、无 href 纯文本 mention 和 Discourse label-only 引用继续不可导航。 |
+| 明确不覆盖范围 | 不解析没有可信 href 的纯文本 `@name`，不扫描分页回复建立全量候选表，不预取全文用户，不建立通用跨站身份服务或持久 username→UID 映射，不自动重试 429，也不改变 ReaderData schema。 |
 
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 

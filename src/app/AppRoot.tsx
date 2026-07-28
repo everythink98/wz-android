@@ -65,11 +65,16 @@ import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { useCommitRefValue } from './useCommittedRef';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
-import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
+import {
+  executeTopicReturnStrategy,
+  executeUserReturnStrategy,
+  selectTopicReturnStrategy,
+  shouldCloseReplyComposerOnBack
+} from './backHandlerHelpers';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoSession';
 import { createSourceGateway } from '../sources/sourceGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '../networkProxy';
-import type { Topic, TopicDetail, UserProfile } from '../types';
+import type { Topic, TopicDetail, UserProfile, UserReference } from '../types';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '../topicListItemState';
@@ -175,6 +180,8 @@ function sortedRecords(records: Record<string, TopicRecord>) {
   return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
 }
 
+const EMPTY_LIBRARY_RECORDS: Record<string, TopicRecord> = {};
+
 function accountIdentityKey(view: {
   site: SessionSite;
   status: string;
@@ -206,7 +213,7 @@ export function AppRoot() {
   const linuxDoWebViewMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openTopicRef = useRef<((topic: Topic, refresh?: boolean) => Promise<unknown>) | null>(null);
-  const openUserRef = useRef<((user: UserProfile, refresh?: boolean) => Promise<unknown>) | null>(null);
+  const openUserRef = useRef<((user: UserReference) => Promise<unknown>) | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
   const pendingNodeSeekVerificationRetryRef = useRef<NodeSeekVerificationRetry | null>(null);
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
@@ -763,10 +770,12 @@ export function AppRoot() {
     selectedTopic?.source,
     forumSessionEpochs
   );
-  const libraryRecords = useMemo(
-    () => sortedRecords(libraryTab === 'history' ? readerData.history : readerData.favorites),
-    [libraryTab, readerData.favorites, readerData.history]
-  );
+  const selectedLibraryRecords = libraryTab === 'history'
+    ? readerData.history
+    : libraryTab === 'favorites'
+      ? readerData.favorites
+      : EMPTY_LIBRARY_RECORDS;
+  const libraryRecords = useMemo(() => sortedRecords(selectedLibraryRecords), [selectedLibraryRecords]);
   const openExternalUrl = useCallback((url: string) => {
     if (!isHttpOrHttpsUrl(url)) {
       notify('仅支持打开 http/https 链接。');
@@ -780,7 +789,7 @@ export function AppRoot() {
   const openTopicFromHtml = useCallback((topic: Topic) => {
     void openTopicRef.current?.(topic);
   }, []);
-  const openUserFromHtml = useCallback((user: UserProfile) => {
+  const openUserFromHtml = useCallback((user: UserReference) => {
     void openUserRef.current?.(user);
   }, []);
   const {
@@ -1030,6 +1039,14 @@ export function AppRoot() {
     updateNodeSeekSession({ type: 'verification-required', message });
   }, [updateNodeSeekSession]);
   useCommitRefValue(nodeSeekTopicVerificationRequiredRef, handleNodeSeekTopicVerificationRequired);
+
+  const handleNodeSeekUserVerificationRequired = useCallback((message = 'NodeSeek 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
+    if (recovery) {
+      pendingNodeSeekVerificationRetryRef.current = { type: 'user', recovery };
+    }
+    // react-doctor-disable-next-line react-doctor/no-impure-state-updater
+    showNodeSeekVerification(message);
+  }, [showNodeSeekVerification]);
 
   const {
     checkNodeSeekAccount,
@@ -1400,6 +1417,7 @@ export function AppRoot() {
     loadMoreUserReplies,
     loadMoreUserTopics,
     openUser,
+    refreshUser,
     selectedUser,
     userBusy,
     userError,
@@ -1414,7 +1432,7 @@ export function AppRoot() {
     readerData,
     screen,
     showLinuxDoVerification,
-    showNodeSeekVerification,
+    showNodeSeekVerification: handleNodeSeekUserVerificationRequired,
     sourceGateway,
     showYaohuoLogin
   });
@@ -1621,93 +1639,85 @@ export function AppRoot() {
     const returningRouteKey = previousTopicRouteKey();
     const previousTopic = popTopicBackStack();
     const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
+    const strategy = selectTopicReturnStrategy({
+      canGoBack,
+      hasReturningTopicRoute: Boolean(returningRouteKey),
+      hasSnapshot: Boolean(previousTopic)
+    });
     markDiagnosticStage(trace, 'guard', {
       canGoBack,
       hasRoute: Boolean(returningRouteKey),
-      hasSnapshot: Boolean(previousTopic)
+      hasSnapshot: Boolean(previousTopic),
+      strategy
     });
-    if (returningRouteKey || previousTopic) {
-      abortTopicReadRequests();
-      const restoredByRoute = returningRouteKey ? restoreTopicRoute(returningRouteKey) : false;
-      if (!restoredByRoute && previousTopic) {
-        restoreTopicSnapshot(previousTopic);
-      }
-      if (closingRouteKey) {
-        forgetTopicRoute(closingRouteKey);
-      }
-      if (canGoBack) {
-        navigationRef.goBack();
-      }
-      finishDiagnosticTrace(trace, 'success', {
-        state: restoredByRoute ? 'route-restored' : 'snapshot-restored'
-      });
-      return;
-    }
+    abortTopicReadRequests();
     if (closingRouteKey) {
       forgetTopicRoute(closingRouteKey);
     }
-    if (canGoBack) {
-      navigationRef.goBack();
-      finishDiagnosticTrace(trace, 'success', { state: 'native-back' });
-      return;
-    }
-    changeScreen(topicReturnScreenRef.current);
-    finishDiagnosticTrace(trace, 'success', { state: 'return-screen' });
-  }, [abortTopicReadRequests, cancelDeferredNavigationTask, changeScreen, forgetTopicRoute, popTopicBackStack, restoreTopicRoute, restoreTopicSnapshot]);
+    const state = executeTopicReturnStrategy({
+      canGoBack,
+      strategy,
+      goBack: () => navigationRef.goBack(),
+      restoreSnapshot: () => {
+        if (previousTopic) restoreTopicSnapshot(previousTopic);
+      },
+      returnToScreen: () => changeScreen(topicReturnScreenRef.current)
+    });
+    finishDiagnosticTrace(trace, 'success', { state });
+  }, [abortTopicReadRequests, cancelDeferredNavigationTask, changeScreen, forgetTopicRoute, popTopicBackStack, restoreTopicSnapshot]);
 
   const goBackFromUser = useCallback((parentTrace?: DiagnosticTrace) => {
     const trace = parentTrace || beginDiagnosticTrace('navigation', 'user-back');
     cancelDeferredNavigationTask();
     const returnTopic = userReturnScreenRef.current === 'topic' ? userReturnTopicRef.current : null;
-    const shouldReloadRestoredTopic = Boolean(returnTopic?.snapshot.selectedTopic);
-    const restoreReturnTopic = () => {
+    const returningRouteKey = previousTopicRouteKey();
+    const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
+    const strategy = selectTopicReturnStrategy({
+      canGoBack,
+      hasReturningTopicRoute: Boolean(returningRouteKey),
+      hasSnapshot: Boolean(returnTopic)
+    });
+    const restoreReturnTopicMetadata = () => {
       if (!returnTopic) {
         return;
       }
       topicReturnScreenRef.current = returnTopic.returnScreen;
       replaceTopicBackStack(returnTopic.backStack);
-      restoreTopicSnapshot(returnTopic.snapshot);
       userReturnTopicRef.current = null;
     };
-    const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
+    const restoreReturnTopicFallback = () => {
+      if (!returnTopic) {
+        return;
+      }
+      restoreReturnTopicMetadata();
+      restoreTopicSnapshot(returnTopic.snapshot);
+    };
     markDiagnosticStage(trace, 'guard', {
       canGoBack,
+      hasRoute: Boolean(returningRouteKey),
       hasSnapshot: Boolean(returnTopic),
-      shouldReload: shouldReloadRestoredTopic
+      strategy
     });
-    if (canGoBack) {
-      navigationRef.goBack();
-    } else {
-      changeScreen(userReturnScreenRef.current);
-    }
-    if (returnTopic?.snapshot.selectedTopic && shouldReloadRestoredTopic) {
-      const selectedReturnTopic = returnTopic.snapshot.selectedTopic;
-      const reloadRestoredTopic = () => {
+    const restoreFallback = () => {
+      if (returnTopic) {
+        restoreReturnTopicFallback();
+        const selectedReturnTopic = returnTopic.snapshot.selectedTopic;
+        if (!selectedReturnTopic) return;
         reopenExistingTopicScreenRef.current = true;
         void openTopic(selectedReturnTopic);
-      };
-      if (canGoBack) {
-        runAfterNavigationInteractions(() => {
-          restoreReturnTopic();
-          reloadRestoredTopic();
-        });
-      } else {
-        restoreReturnTopic();
-        reloadRestoredTopic();
       }
-      finishDiagnosticTrace(trace, canGoBack ? 'partial' : 'success', { state: 'topic-reload-scheduled' });
-      return;
-    }
-    if (canGoBack && returnTopic) {
-      runAfterNavigationInteractions(restoreReturnTopic);
-      finishDiagnosticTrace(trace, 'partial', { state: 'topic-restore-scheduled' });
-      return;
-    } else {
-      restoreReturnTopic();
-    }
-    finishDiagnosticTrace(trace, 'success', {
-      state: returnTopic ? 'topic-restored' : 'return-screen'
+    };
+    const state = executeUserReturnStrategy({
+      canGoBack,
+      strategy,
+      goBack: () => navigationRef.goBack(),
+      restoreFallback,
+      returnToScreen: () => changeScreen(userReturnScreenRef.current),
+      scheduleFallbackRestore: () => runAfterNavigationInteractions(restoreFallback),
+      scheduleMetadataRestore: () => runAfterNavigationInteractions(restoreReturnTopicMetadata)
     });
+    const isDeferred = strategy === 'route-pop' || (strategy === 'snapshot-fallback' && canGoBack);
+    finishDiagnosticTrace(trace, isDeferred ? 'partial' : 'success', { state });
   }, [cancelDeferredNavigationTask, changeScreen, openTopic, replaceTopicBackStack, restoreTopicSnapshot, runAfterNavigationInteractions]);
 
   const handleTopicScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -1828,11 +1838,8 @@ export function AppRoot() {
   }, [runSearch]);
 
   const refreshCurrentUser = useCallback(() => {
-    const user = userProfile || selectedUser;
-    if (user) {
-      void openUser(user, true);
-    }
-  }, [openUser, selectedUser, userProfile]);
+    void refreshUser();
+  }, [refreshUser]);
 
   const {
     clearCredentialLoginIntent,

@@ -115,7 +115,7 @@ const operationValues = closedValues(
   'getReply', 'getTopic', 'getUserProfile', 'guard', 'hardware-back', 'image-upload',
   'import', 'interaction', 'js-error', 'load', 'load-more', 'load-more-replies',
   'load-more-topics', 'load-stored', 'load-summary', 'mutate', 'open', 'page-state', 'parse-topic',
-  'recover', 'refresh', 'replace', 'request', 'restore-webview', 'run', 'save',
+  'recover', 'refresh', 'replace', 'request', 'resolveUser', 'restore-webview', 'run', 'save',
   'save-image', 'save-preview',
   'screen-change', 'searchSemanticTopics', 'searchTagOptions', 'searchTopics', 'searchUserOptions', 'set-enabled', 'state-transition', 'submit', 'test',
   'toggle-quote', 'topic-back', 'transport-fallback', 'uncaught-error', 'user-back',

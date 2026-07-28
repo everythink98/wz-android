@@ -40,6 +40,31 @@ describe('forum server state', () => {
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-TOPIC-039] separates username resolution from the canonical user profile key', () => {
+    const resolution = forumQueryKeys.userResolution({
+      scope: initialForumSessionEpochs,
+      username: 'lcy0828'
+    });
+    const profile = forumQueryKeys.user({
+      scope: initialForumSessionEpochs,
+      source: 'nodeseek',
+      userId: '23042'
+    });
+
+    expect(resolution).toEqual([
+      'forum',
+      'nodeseek',
+      'user-resolution',
+      { sessionEpoch: 0, username: 'lcy0828' }
+    ]);
+    expect(profile).toEqual([
+      'forum',
+      'nodeseek',
+      'user',
+      { sessionEpoch: 0, userId: '23042' }
+    ]);
+  });
+
   it('[REG-LINUXDO-005] separates anonymous and confirmed linux.do search caches', () => {
     const anonymous = forumQueryKeys.search({
       authenticated: false,

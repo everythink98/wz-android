@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star, Trash2, type LucideIcon } from 'lucide-react-native';
-import type { FeedSource, Topic, UserProfile } from '../types';
+import type { FeedSource, Topic, UserProfile, UserReference } from '../types';
 import { type FollowedUserRecord, type TopicRecord } from '../readerData';
 import { type LibraryTab } from '../feedLogic';
 import { filterLibraryRecords, libraryCategoryFilterItems } from '../androidFeatureHelpers';
@@ -122,7 +122,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   theme: ReaderTheme;
   onClearHistory: () => void;
   onOpenTopic: (topic: Topic) => void;
-  onOpenUser: (user: UserProfile) => void;
+  onOpenUser: (user: UserReference) => void;
   onRemove: (topic: Topic) => void;
   onRemoveUser: (user: UserProfile) => void;
   onTabChange: (tab: LibraryTab) => void;
@@ -137,16 +137,20 @@ export const LibraryScreen = memo(function LibraryScreen({
     category: categoryFilter
   }), [categoryFilter, records, sourceFilter]);
   const listItems = useMemo<LibraryListItem[]>(() => createLibraryListItems(filteredRecords), [filteredRecords]);
+  const scrollLibraryToTop = useCallback(() => {
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []);
   const changeLibraryTab = useCallback((value: string) => {
+    if (value === libraryTab) return;
+    setSourceFilter('all');
+    setCategoryFilter('all');
+    scrollLibraryToTop();
     onTabChange(value as LibraryTab);
-  }, [onTabChange]);
+    requestAnimationFrame(scrollLibraryToTop);
+  }, [libraryTab, onTabChange, scrollLibraryToTop]);
   const changeSourceFilter = useCallback((value: string) => {
     setSourceFilter(value as FeedSource);
   }, []);
-  useEffect(() => {
-    setSourceFilter('all');
-    setCategoryFilter('all');
-  }, [libraryTab]);
   useEffect(() => {
     if (categoryFilter !== 'all' && !categoryItems.some((item) => item.value === categoryFilter)) {
       setCategoryFilter('all');
@@ -279,7 +283,6 @@ export const LibraryScreen = memo(function LibraryScreen({
       accessibilityLabel={loaded && libraryTab === 'favorites'
         ? filteredRecords.length ? '收藏列表，已加载，有收藏' : '收藏列表，已加载，没有收藏'
         : '收藏列表'}
-      key={libraryTab}
       ref={listRef}
       style={styles.content}
       contentContainerStyle={styles.libraryContentInner}
@@ -287,6 +290,7 @@ export const LibraryScreen = memo(function LibraryScreen({
       keyExtractor={(item) => libraryDataItemKey(item as LibraryDataItem, libraryTab)}
       getItemType={(item) => libraryDataItemType(item as LibraryDataItem, libraryTab)}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
+      maintainVisibleContentPosition={{ disabled: true }}
       ListHeaderComponent={header}
       ListEmptyComponent={(
         <View testID={loaded && libraryTab === 'favorites' && !filteredRecords.length ? 'library-favorites-empty' : undefined}>

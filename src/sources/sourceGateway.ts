@@ -16,6 +16,7 @@ import {
 import {
   searchLinuxDoSemantic as searchLinuxDoSemanticDirect
 } from '../localLinuxdo';
+import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '../localNodeseek';
 import {
   getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile,
   type LinuxDoLevelProfile
@@ -174,6 +175,10 @@ type ManagedGetTopicOptions = Omit<GetTopicOptions, ManagedReadKeys>;
 type ManagedGetRepliesOptions = Omit<GetRepliesOptions, ManagedReadKeys>;
 type ManagedGetReplyOptions = Omit<GetReplyOptions, ManagedReadKeys>;
 type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, ManagedReadKeys>;
+type ManagedResolveNodeSeekUserOptions = {
+  signal?: AbortSignal;
+  username: string;
+};
 type ManagedGetEmojiUrlsOptions = Omit<
   NonNullable<Parameters<typeof getDiscourseSourceEmojiUrls>[1]>,
   'auth' | 'fetcher'
@@ -547,6 +552,16 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         ...options,
         ...credentials
       }), context);
+    },
+    resolveNodeSeekUser(options: ManagedResolveNodeSeekUserOptions, context?: SourceGatewayReadContext) {
+      return read('nodeseek', 'resolveUser', ({ fetcher, nodeSeekAuthenticated, nodeSeekUserAgent }) => (
+        resolveNodeSeekUserDirect(options.username, {
+          authenticated: nodeSeekAuthenticated,
+          fetcher,
+          nodeSeekUserAgent,
+          signal: options.signal
+        })
+      ), context);
     },
     getLevelProfile({ source, ...options }: ManagedLevelProfileOptions, context?: SourceGatewayReadContext): Promise<XiaoyinsiLevelProfile> {
       return read(source, 'getLevelProfile', ({ discourseAuth, fetcher }) => {

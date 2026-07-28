@@ -132,7 +132,8 @@ function isTopic(value: unknown): value is Topic {
 }
 
 function isUserProfile(value: unknown): value is UserProfile {
-  return userProfileShapeSchema.safeParse(value).success;
+  const parsed = userProfileShapeSchema.safeParse(value);
+  return parsed.success && (parsed.data.source !== 'nodeseek' || /^\d+$/.test(parsed.data.id));
 }
 
 function cleanString(value: unknown, fallback = '') {
@@ -329,6 +330,9 @@ export function categoryKey(category: Pick<Category, 'source' | 'id'>) {
 }
 
 export function userKey(user: Pick<UserProfile, 'source' | 'id'>) {
+  if (user.source === 'nodeseek' && !/^\d+$/.test(user.id)) {
+    throw new Error('NodeSeek 用户 ID 必须是数字');
+  }
   return `${user.source}:${user.id}`;
 }
 
@@ -592,17 +596,21 @@ export function recordHistory(data: ReaderData, topic: Topic) {
   const summary = topicSummary(topic);
   const key = topicKey(summary);
   const existing = data.history[key];
+  let history = {
+    ...data.history,
+    [key]: {
+      ...existing,
+      topic: summary,
+      savedAt: nowIso(),
+      visitCount: (existing?.visitCount || 0) + 1
+    }
+  };
+  if (Object.keys(history).length > MAX_HISTORY_RECORDS) {
+    history = limitRecordMap(history, MAX_HISTORY_RECORDS, (record) => record.savedAt);
+  }
   return {
     ...data,
-    history: {
-      ...data.history,
-      [key]: {
-        ...existing,
-        topic: summary,
-        savedAt: nowIso(),
-        visitCount: (existing?.visitCount || 0) + 1
-      }
-    },
+    history,
     deletedRecords: clearDeleted(data.deletedRecords, 'history', key)
   };
 }

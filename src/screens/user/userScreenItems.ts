@@ -1,4 +1,4 @@
-import type { Topic, UserProfile, UserReplyActivity } from '../../types';
+import type { Topic, UserReference, UserReplyActivity } from '../../types';
 
 export type UserActivityTab = 'topics' | 'replies';
 
@@ -28,6 +28,6 @@ export function userListItemType(item: UserListItem) {
   return item.type;
 }
 
-export function userListInstanceKey(user: UserProfile, tab: UserActivityTab) {
+export function userListInstanceKey(user: UserReference, tab: UserActivityTab) {
   return `${user.source}:${user.id || user.username}:${tab}`;
 }

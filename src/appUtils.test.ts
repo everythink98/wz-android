@@ -209,20 +209,18 @@ describe('Android app utils', () => {
     expect(parseForumUserLink('/space/12345', 'https://www.nodeseek.com/post-793572-1')).toMatchObject({
       source: 'nodeseek',
       id: '12345',
-      username: '12345',
       url: 'https://www.nodeseek.com/space/12345'
     });
     expect(parseForumUserLink('https://www.nodeseek.com/space/12345#/discussions')).toMatchObject({
       source: 'nodeseek',
       id: '12345',
-      username: '12345',
       url: 'https://www.nodeseek.com/space/12345'
     });
     expect(parseForumUserLink('https://www.nodeseek.com/space/name')).toBeNull();
     expect(parseForumUserLink('https://github.com/openai/codex', 'https://www.nodeseek.com/post-1-1')).toBeNull();
   });
 
-  it('converts NodeSeek member mention links only when the loaded detail has the numeric user id', () => {
+  it('[REG-TOPIC-039] keeps NodeSeek member mentions internal when the numeric user id hint is absent', () => {
     expect(parseForumUserLink('https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85', 'https://www.nodeseek.com/post-793572-1', [
       {
         author: '电动面包',
@@ -238,10 +236,21 @@ describe('Android app utils', () => {
       avatar: 'https://www.nodeseek.com/avatar/32398.png',
       url: 'https://www.nodeseek.com/space/32398'
     });
-    expect(parseForumUserLink('https://www.nodeseek.com/member?t=jasperwill', 'https://www.nodeseek.com/post-793572-1')).toBeNull();
+    expect(parseForumUserLink('https://www.nodeseek.com/member?t=jasperwill', 'https://www.nodeseek.com/post-793572-1')).toMatchObject({
+      source: 'nodeseek',
+      username: 'jasperwill',
+      displayName: 'jasperwill',
+      url: 'https://www.nodeseek.com/member?t=jasperwill'
+    });
     expect(parseForumUserLink('https://www.nodeseek.com/member?t=missing', 'https://www.nodeseek.com/post-793572-1', [
       { author: 'jasperwill', authorId: '54270', authorUrl: 'https://www.nodeseek.com/space/54270' }
-    ])).toBeNull();
+    ])).toMatchObject({ source: 'nodeseek', username: 'missing' });
+    expect(parseForumUserLink('https://www.nodeseek.com/member?t=broken', 'https://www.nodeseek.com/post-793572-1', [
+      { author: 'broken', authorId: 'not-a-uid', authorUrl: 'https://www.nodeseek.com/space/not-a-uid' }
+    ])).toMatchObject({ source: 'nodeseek', username: 'broken' });
+    expect(parseForumUserLink('https://www.nodeseek.com/member?t=', 'https://www.nodeseek.com/post-793572-1')).toBeNull();
+    expect(parseForumUserLink('https://www.nodeseek.com/member?q=xy', 'https://www.nodeseek.com/post-793572-1')).toBeNull();
+    expect(parseForumUserLink('https://www.nodeseek.com.evil.example/member?t=xy', 'https://www.nodeseek.com/post-793572-1')).toBeNull();
   });
 
   it('recognizes Yaohuo user links as app users', () => {

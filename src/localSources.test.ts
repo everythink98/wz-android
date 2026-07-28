@@ -20,7 +20,7 @@ import {
 import { splitDiscourseContentHtml } from './discourseContent';
 import { textContentFromHtml } from './localHtml';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
-import { getNodeSeekCurrentUserProfile, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile } from './localNodeseek';
+import { getNodeSeekCurrentUserProfile, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, resolveNodeSeekUser } from './localNodeseek';
 import { setRequestTimeoutsActive } from './request';
 import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { DEFAULT_SEARCH_FILTERS } from './searchFilters';
@@ -2004,6 +2004,211 @@ describe('Android local sources', () => {
     const profile = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
 
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
+  });
+
+  it('[REG-TOPIC-039] resolves the exact NodeSeek username from the complete candidate list', async () => {
+    const signal = new AbortController().signal;
+    const memberList = [
+      ...Array.from({ length: 40 }, (_, index) => ({
+        member_id: index + 1,
+        member_name: `xy-${index}`
+      })),
+      { member_id: 8052, member_name: 'xy' }
+    ];
+    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => json({ success: true, memberList }));
+
+    const user = await resolveNodeSeekUser('xy', {
+      authenticated: true,
+      fetcher,
+      nodeSeekUserAgent: 'NodeSeek WebView UA',
+      signal
+    });
+
+    expect(user).toEqual({
+      source: 'nodeseek',
+      id: '8052',
+      username: 'xy',
+      displayName: 'xy',
+      url: 'https://www.nodeseek.com/space/8052'
+    });
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/api/account/find/xy', expect.objectContaining({
+      signal: expect.any(AbortSignal),
+      headers: expect.objectContaining({ 'User-Agent': 'NodeSeek WebView UA' })
+    }));
+    expect(browserFetchIntentFromInit(fetcher.mock.calls[0]?.[1])).toEqual({ owner: 'user', priority: 'foreground' });
+  });
+
+  it('[REG-TOPIC-039] rejects a known logged-out username resolution before transport', async () => {
+    const fetcher = vi.fn();
+
+    await expect(resolveNodeSeekUser('alice', {
+      authenticated: false,
+      fetcher
+    })).rejects.toMatchObject({
+      source: 'nodeseek',
+      loginRequired: true
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-039] accepts one unique case-insensitive NodeSeek username match', async () => {
+    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => json({
+      success: true,
+      memberList: [
+        { member_id: 7, member_name: 'ALIce' },
+        { member_id: 8, member_name: 'alice-other' }
+      ]
+    }));
+
+    await expect(resolveNodeSeekUser('  Alice  ', {
+      authenticated: true,
+      fetcher
+    })).resolves.toMatchObject({
+      id: '7',
+      username: 'ALIce',
+      url: 'https://www.nodeseek.com/space/7'
+    });
+    expect(fetcher.mock.calls[0]?.[0]).toBe('https://www.nodeseek.com/api/account/find/Alice');
+  });
+
+  it('[REG-TOPIC-039] prefers a strict NodeSeek username match over case-insensitive alternatives', async () => {
+    const fetcher = vi.fn(async () => json({
+      success: true,
+      memberList: [
+        { member_id: 7, member_name: 'ALICE' },
+        { member_id: 8, member_name: 'Alice' }
+      ]
+    }));
+
+    await expect(resolveNodeSeekUser('Alice', {
+      authenticated: true,
+      fetcher
+    })).resolves.toMatchObject({ id: '8', username: 'Alice' });
+  });
+
+  it('[REG-TOPIC-039] rejects ambiguous case-insensitive NodeSeek username matches', async () => {
+    const fetcher = vi.fn(async () => json({
+      success: true,
+      memberList: [
+        { member_id: 7, member_name: 'ALICE' },
+        { member_id: 8, member_name: 'alice' }
+      ]
+    }));
+
+    await expect(resolveNodeSeekUser('Alice', {
+      authenticated: true,
+      fetcher
+    })).rejects.toThrow('用户名解析失败');
+  });
+
+  it('[REG-TOPIC-039] rejects conflicting strict NodeSeek username matches', async () => {
+    const fetcher = vi.fn(async () => json({
+      success: true,
+      memberList: [
+        { member_id: 7, member_name: 'Alice' },
+        { member_id: 8, member_name: 'Alice' }
+      ]
+    }));
+
+    await expect(resolveNodeSeekUser('Alice', {
+      authenticated: true,
+      fetcher
+    })).rejects.toThrow('用户名解析失败');
+  });
+
+  it('[REG-TOPIC-039] encodes a Unicode NodeSeek username in the resolver path', async () => {
+    const fetcher = vi.fn(async (_input: string) => json({
+      success: true,
+      memberList: [{ member_id: 1414, member_name: '男朋友' }]
+    }));
+
+    await expect(resolveNodeSeekUser('男朋友', {
+      authenticated: true,
+      fetcher
+    })).resolves.toMatchObject({ id: '1414', username: '男朋友' });
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://www.nodeseek.com/api/account/find/${encodeURIComponent('男朋友')}`);
+  });
+
+  it('[REG-TOPIC-039] rejects a non-numeric NodeSeek profile id before transport', async () => {
+    const fetcher = vi.fn();
+
+    await expect(getNodeSeekUserProfile('alice', { fetcher })).rejects.toThrow('数字用户 ID');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-039] rejects a NodeSeek profile response for a different canonical UID', async () => {
+    const fetcher = vi.fn(async () => json({
+      success: true,
+      detail: { member_id: 8, member_name: 'alice' }
+    }));
+
+    await expect(getNodeSeekUserProfile('7', {
+      cursorType: 'topics',
+      fetcher
+    })).rejects.toThrow('身份不匹配');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-039] rejects an unsuccessful NodeSeek username response even if it contains candidates', async () => {
+    const fetcher = vi.fn(async () => json({
+      success: false,
+      memberList: [{ member_id: 7, member_name: 'alice' }]
+    }));
+
+    await expect(resolveNodeSeekUser('alice', {
+      authenticated: true,
+      fetcher
+    })).rejects.toThrow('用户名解析失败');
+  });
+
+  it('[REG-TOPIC-039] surfaces NodeSeek username lookup rate limiting without selecting a fallback user', async () => {
+    const fetcher = vi.fn(async () => new Response('rate limited', { status: 429 }));
+
+    await expect(resolveNodeSeekUser('alice', {
+      authenticated: true,
+      fetcher
+    })).rejects.toThrow('HTTP 429');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['no exact match', { success: true, memberList: [{ member_id: 7, member_name: 'alice-other' }] }],
+    ['invalid member id', { success: true, memberList: [{ member_id: 'not-numeric', member_name: 'alice' }] }],
+    ['invalid candidate payload', { success: true, memberList: {} }]
+  ])('[REG-TOPIC-039] rejects %s when resolving a NodeSeek username', async (_label, payload) => {
+    const fetcher = vi.fn(async () => json(payload));
+
+    await expect(resolveNodeSeekUser('alice', {
+      authenticated: true,
+      fetcher
+    })).rejects.toThrow('用户名解析失败');
+  });
+
+  it('[REG-TOPIC-039] cancels NodeSeek username resolution through its AbortSignal', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+    }));
+
+    const pending = resolveNodeSeekUser('alice', {
+      authenticated: true,
+      fetcher,
+      signal: controller.signal
+    });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    controller.abort();
+
+    await expect(pending).rejects.toThrow('请求已取消');
+  });
+
+  it('[REG-TOPIC-039] rejects an empty NodeSeek username before transport', async () => {
+    const fetcher = vi.fn();
+
+    await expect(resolveNodeSeekUser('   ', {
+      authenticated: true,
+      fetcher
+    })).rejects.toThrow('用户名不能为空');
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('[REG-TOPIC-024] resolves later linux.do reply pages from the current server stream', async () => {

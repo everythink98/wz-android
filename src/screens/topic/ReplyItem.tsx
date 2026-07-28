@@ -4,7 +4,7 @@ import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 import { CheckCircle, Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
-import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../types';
+import type { Reply, Source, TopicDetail, TopicPoll, UserReference } from '../../types';
 import { highlightHtml, stripHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
 import { imageSourceFromUrl } from '../../htmlImages';
@@ -22,7 +22,7 @@ import {
 import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../theme';
 import { AppButton, triggerPressFeedback } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
-import { userFromReply } from '../../userNavigation';
+import { userFromReply, userReferenceFromUsername } from '../../userNavigation';
 import type { InteractionType, TopicActionStateKind } from '../../topicActionState';
 import { inlineSizedImageSignatureForReply, type TopicImageDeriver } from '../../topicDerivedData';
 import { TopicPolls } from './TopicPolls';
@@ -187,7 +187,7 @@ export function ReplyItem({
   onInteract: (type: InteractionType, commentId?: number) => void;
   onDeleteReply: (reply: Reply) => void;
   onEditReply: (reply: Reply) => void;
-  onOpenUser: (user: UserProfile) => void;
+  onOpenUser: (user: UserReference) => void;
   onReplyToFloor: (reply: Reply) => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onToggleReplyQuote: (options: ToggleReplyQuoteOptions) => void;
@@ -212,14 +212,10 @@ export function ReplyItem({
   const discourseReplyReactionStats = isDiscourse
     ? source === 'linuxdo' ? linuxDoReactionStats(reply, discourseEmojiUrls) : discourseReactionStats(reply, discourseEmojiUrls)
     : [];
-  const replyTargetUser = source && reply.replyTargetAuthor ? {
-    source,
-    id: reply.replyTargetAuthor,
-    username: reply.replyTargetAuthor,
-    displayName: reply.replyTargetAuthor,
-    url: '',
-    topics: []
-  } : null;
+  const replyTargetUsername = isDiscourse ? reply.replyTargetUsername : reply.replyTargetAuthor;
+  const replyTargetUser = source && replyTargetUsername
+    ? userReferenceFromUsername(source, replyTargetUsername)
+    : null;
   const copyReplyTextToClipboard = useCallback(() => {
     const htmlParts = quotedFloors.flatMap((quotedFloor) => {
       const reference = quotedPostReferenceFromReply(source, topicId, quotedFloor);
@@ -318,14 +314,11 @@ export function ReplyItem({
               const quotedAuthorFromMarkup = reply.quotedAuthors?.[quotedFloor];
               const quotedPreview = reply.quotedPreviews?.[quotedFloor];
               const quotedAuthorName = quotedReply?.author || quotedAuthorFromMarkup?.label || '未知作者';
-              const quotedUser = quotedReply ? userFromReply(quotedReply, source) : source && quotedAuthorFromMarkup?.username ? {
-                source,
-                id: quotedAuthorFromMarkup.username,
-                username: quotedAuthorFromMarkup.username,
-                displayName: quotedAuthorFromMarkup.label,
-                url: '',
-                topics: []
-              } : null;
+              const quotedUser = quotedReply
+                ? userFromReply(quotedReply, source)
+                : source && quotedAuthorFromMarkup?.username
+                  ? userReferenceFromUsername(source, quotedAuthorFromMarkup.username, quotedAuthorFromMarkup.label)
+                  : null;
               const expanded = Boolean(expandedQuotes[key]);
               const loading = Boolean(loadingQuotedFloors[key]);
               const completeQuotedPost = expanded ? quotedReply : undefined;

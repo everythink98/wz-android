@@ -2,14 +2,17 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React, { type ComponentProps } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { RenderHTMLConfigProvider } from 'react-native-render-html';
+import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
 import { createEmptyReaderData } from '../../src/readerData';
 import { ReplyComposerSheet } from '../../src/screens/topic/ReplyComposerSheet';
 import { ReplyItem } from '../../src/screens/topic/ReplyItem';
 import { TopicBodyQuoteCard } from '../../src/screens/topic/TopicBodyQuoteCard';
+import { TopicContentBlock } from '../../src/screens/topic/TopicContentBlock';
 import { TopicPolls } from '../../src/screens/topic/TopicPolls';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicImageDeriver } from '../../src/topicDerivedData';
-import type { Reply, TopicPoll } from '../../src/types';
+import type { Reply, TopicDetail, TopicPoll } from '../../src/types';
 
 jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({
@@ -72,15 +75,45 @@ jest.mock('react-native-gesture-handler', () => ({
   ScrollView: require('react-native').ScrollView
 }));
 
+jest.mock('expo-video', () => ({
+  VideoView: () => null,
+  useVideoPlayer: () => ({ pause: jest.fn(), play: jest.fn(), playing: false })
+}));
+
+jest.mock('react-native-webview', () => ({ WebView: () => null }));
+
 jest.mock('react-native-render-html', () => {
   const ReactModule = require('react') as typeof React;
-  const { Text: NativeText } = require('react-native') as typeof import('react-native');
+  const { Pressable: NativePressable, Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
+  const RenderersPropsContext = ReactModule.createContext<Record<string, {
+    onPress?: (event: { stopPropagation: () => void }, href: string) => void;
+  }>>({});
   return {
-    RenderHTMLSource: ({ source }: { source: { html: string } }) => ReactModule.createElement(
-      NativeText,
-      null,
-      source.html.replace(/<[^>]+>/g, '')
-    )
+    RenderHTMLConfigProvider: ({ children, renderersProps = {} }: {
+      children?: React.ReactNode;
+      renderersProps?: Record<string, { onPress?: (event: { stopPropagation: () => void }, href: string) => void }>;
+    }) => ReactModule.createElement(RenderersPropsContext.Provider, { value: renderersProps }, children),
+    RenderHTMLSource: ({ source }: { source: { html: string } }) => {
+      const renderersProps = ReactModule.useContext(RenderersPropsContext);
+      const links = Array.from(source.html.matchAll(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>(.*?)<\/a\s*>/gi));
+      return ReactModule.createElement(
+        NativeView,
+        null,
+        ReactModule.createElement(NativeText, null, source.html.replace(/<[^>]+>/g, '')),
+        ...links.map((link, index) => {
+          const label = link[2].replace(/<[^>]+>/g, '').trim();
+          return ReactModule.createElement(
+            NativePressable,
+            {
+              key: `${label}-${index}`,
+              onPress: () => renderersProps.a?.onPress?.({ stopPropagation: () => undefined }, link[1]),
+              testID: `html-link-${label}`
+            },
+            ReactModule.createElement(NativeText, null, label)
+          );
+        })
+      );
+    }
   };
 });
 
@@ -334,6 +367,94 @@ describe('Topic real child components', () => {
     ]);
   });
 
+  it('[REG-TOPIC-039] routes actual body, reply, quote, and signature links through internal user navigation', async () => {
+    const onOpenExternalUrl = jest.fn<(url: string) => void>();
+    const onOpenUser = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenUser']>();
+    const quotedReply: Reply = {
+      author: 'quoted-source',
+      contentHtml: '<a href="https://www.nodeseek.com/member?t=quote-target">引用用户</a>',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      floor: 1
+    };
+    const reply: Reply = {
+      author: 'reply-source',
+      commentId: 22,
+      contentHtml: '<a href="https://www.nodeseek.com/member?t=reply-target">回复用户</a>',
+      createdAt: '2026-07-28T00:01:00.000Z',
+      floor: 2,
+      quotedFloors: [1],
+      signatureHtml: '<a href="https://www.nodeseek.com/member?t=signature-target">签名用户</a>'
+    };
+    const topic: TopicDetail = {
+      author: 'topic-source',
+      contentHtml: '<a href="https://www.nodeseek.com/member?t=body-target">正文用户</a>',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      id: '832584',
+      replyCount: 1,
+      replies: [reply],
+      source: 'nodeseek',
+      title: '用户链接入口',
+      url: 'https://www.nodeseek.com/post-832584-1'
+    };
+
+    function UserLinkEntryHarness() {
+      const rendering = useHtmlRenderingController({
+        mediaSessionIdentity: 'nodeseek:0',
+        onOpenExternalUrl,
+        onOpenImagePreview: () => undefined,
+        onOpenTopic: () => undefined,
+        onOpenUser,
+        selectedTopic: topic,
+        settings: readerData.settings,
+        styles,
+        theme,
+        topicDetail: topic,
+        topicKey: 'nodeseek:832584',
+        webViewBlockMessage: ''
+      });
+      return (
+        <RenderHTMLConfigProvider renderers={rendering.htmlRenderers} renderersProps={rendering.htmlRenderersProps}>
+          <TopicContentBlock
+            baseUrl={topic.url}
+            contentWidth={720}
+            html={topic.contentHtml}
+            inlineSizedImageUrls={{}}
+            topicImageDeriver={topicImageDeriver}
+          />
+          <ReplyItem
+            {...replyProps({
+              expandedQuotes: { 'reply:2:nodeseek:832584:1': true },
+              loadedQuotedReplies: { 'nodeseek:832584:1': quotedReply },
+              onOpenUser,
+              reply,
+              source: 'nodeseek',
+              topicBaseUrl: topic.url,
+              topicId: topic.id
+            })}
+          />
+        </RenderHTMLConfigProvider>
+      );
+    }
+
+    const view = await render(<UserLinkEntryHarness />);
+    const entries = [
+      ['正文用户', 'body-target'],
+      ['回复用户', 'reply-target'],
+      ['引用用户', 'quote-target'],
+      ['签名用户', 'signature-target']
+    ] as const;
+    for (const [label] of entries) {
+      await fireEvent.press(view.getByTestId(`html-link-${label}`));
+    }
+
+    expect(onOpenUser.mock.calls.map(([reference]) => reference)).toEqual(entries.map(([, username]) => expect.objectContaining({
+      source: 'nodeseek',
+      username
+    })));
+    expect(onOpenUser.mock.calls.every(([reference]) => !reference.id)).toBe(true);
+    expect(onOpenExternalUrl).not.toHaveBeenCalled();
+  });
+
   it('keeps a linux.do quote preview visible and reveals only the matching complete post on expand', async () => {
     const onToggleReplyQuote = jest.fn();
     const quotedReply: Reply = {
@@ -382,6 +503,20 @@ describe('Topic real child components', () => {
 
     expect(view.getByText('Alice Display')).toBeTruthy();
     await fireEvent.press(view.getByText('Alice Display'));
+    expect(onOpenUser).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-035] shows a reply target display name without guessing a Discourse username', async () => {
+    const onOpenUser = jest.fn();
+    const reply: Reply = {
+      ...replyProps().reply,
+      replyTargetAuthor: 'Alice Display',
+      replyTargetUsername: undefined
+    };
+    const view = await render(<ReplyItem {...replyProps({ onOpenUser, reply, source: 'linuxdo' })} />);
+
+    expect(view.getByText('回复 @Alice Display')).toBeTruthy();
+    await fireEvent.press(view.getByText('回复 @Alice Display'));
     expect(onOpenUser).not.toHaveBeenCalled();
   });
 

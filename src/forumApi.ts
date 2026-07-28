@@ -591,7 +591,7 @@ export function getUserProfile({
     });
   }
   return pickSource(source, {
-    nodeseek: () => getNodeSeekUserProfile(id || username || '', options),
+    nodeseek: () => getNodeSeekUserProfile(id, options),
     v2ex: () => getV2exUserProfile(id, username || id, { fetcher, cursor, cursorType, signal, timeoutMs }),
     yaohuo: async () => {
       const targetId = id || username || '';

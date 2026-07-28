@@ -13,7 +13,7 @@ import { LinuxDoCloudflareError } from '../../src/cloudflareChallenge';
 import { createEmptyReaderData } from '../../src/readerData';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
-import type { UserProfile } from '../../src/types';
+import type { UserProfile, UserReference } from '../../src/types';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 function renderHook<Result>(callback: () => Result) {
@@ -33,12 +33,16 @@ function renderUserController({
   getIdentityBarriers = () => [],
   getSessionEpochs = () => initialForumSessionEpochs,
   getUserProfile,
-  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
+  resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(),
+  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+  showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
 }: {
   getIdentityBarriers?: () => ForumIdentityBarrierSource[];
   getSessionEpochs?: () => ForumSessionEpochs;
   getUserProfile: SourceGateway['getUserProfile'];
+  resolveNodeSeekUser?: SourceGateway['resolveNodeSeekUser'];
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
+  showNodeSeekVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
 }) {
   return renderHook(() => useUserController({
     identityBarriers: getIdentityBarriers(),
@@ -48,9 +52,9 @@ function renderUserController({
     readerData: createEmptyReaderData(),
     screen: 'user',
     showLinuxDoVerification,
-    showNodeSeekVerification: jest.fn(),
+    showNodeSeekVerification,
     showYaohuoLogin: jest.fn(),
-    sourceGateway: { getUserProfile } as unknown as SourceGateway
+    sourceGateway: { getUserProfile, resolveNodeSeekUser } as unknown as SourceGateway
   }));
 }
 
@@ -60,7 +64,292 @@ describe('user query controller', () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   });
 
+  it('[REG-TOPIC-039] resolves a username before loading the canonical NodeSeek profile', async () => {
+    const reference: UserReference = {
+      source: 'nodeseek',
+      username: 'xy',
+      url: 'https://www.nodeseek.com/member?t=xy'
+    };
+    const resolution = Promise.withResolvers<UserReference>();
+    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(async () => resolution.promise);
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async ({ cursorType }) => ({
+      ...user,
+      id: '8052',
+      username: 'xy',
+      url: 'https://www.nodeseek.com/space/8052',
+      hasMoreTopics: !cursorType,
+      nextTopicsCursor: cursorType ? null : 'topics-2'
+    }));
+    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
+
+    await act(async () => {
+      void hook.result.current.openUser(reference);
+      void hook.result.current.openUser(reference);
+    });
+    await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1));
+    expect(getUserProfile).not.toHaveBeenCalled();
+    expect(hook.result.current.userBusy).toBe(true);
+    expect(hook.result.current.currentUserFollowed).toBe(false);
+
+    await act(async () => {
+      resolution.resolve({
+        source: 'nodeseek',
+        id: '8052',
+        username: 'xy',
+        url: 'https://www.nodeseek.com/space/8052'
+      });
+      await resolution.promise;
+    });
+
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'nodeseek', id: '8052', username: 'xy' }),
+      expect.anything()
+    ));
+    expect(hook.result.current.userProfile).toMatchObject({ id: '8052', username: 'xy' });
+
+    await act(async () => { await hook.result.current.loadMoreUserTopics(); });
+    expect(getUserProfile.mock.calls.map(([request]) => request.id)).toEqual(['8052', '8052']);
+
+    await act(async () => { await hook.result.current.refreshUser(); });
+    expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
+    expect(getUserProfile).toHaveBeenCalledTimes(3);
+  });
+
+  it('[REG-TOPIC-039] retries a failed resolution only after explicit refresh', async () => {
+    const reference: UserReference = {
+      source: 'nodeseek',
+      username: 'xy',
+      url: 'https://www.nodeseek.com/member?t=xy'
+    };
+    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>()
+      .mockRejectedValueOnce(new Error('429 Too Many Requests'))
+      .mockResolvedValueOnce({
+        source: 'nodeseek',
+        id: '8052',
+        username: 'xy',
+        url: 'https://www.nodeseek.com/space/8052'
+      });
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({ ...user, id: '8052', username: 'xy' }));
+    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
+
+    await act(async () => { void hook.result.current.openUser(reference); });
+    await waitFor(() => expect(hook.result.current.userError).not.toBeNull());
+    expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
+    expect(getUserProfile).not.toHaveBeenCalled();
+
+    await act(async () => { await hook.result.current.refreshUser(); });
+    await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('8052'));
+    expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2);
+    expect(getUserProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-039] preserves the exact resolution query for NodeSeek verification recovery', async () => {
+    const reference: UserReference = {
+      source: 'nodeseek',
+      username: 'xy',
+      url: 'https://www.nodeseek.com/member?t=xy'
+    };
+    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>()
+      .mockRejectedValueOnce(Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
+        source: 'nodeseek',
+        reason: 'cloudflare'
+      }))
+      .mockResolvedValueOnce({
+        source: 'nodeseek',
+        id: '8052',
+        username: 'xy',
+        url: 'https://www.nodeseek.com/space/8052'
+      });
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({ ...user, id: '8052', username: 'xy' }));
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser, showNodeSeekVerification });
+
+    await act(async () => { void hook.result.current.openUser(reference); });
+    await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
+    const recovery = showNodeSeekVerification.mock.calls[0]?.[1];
+    expect(recovery?.queryKey).toEqual(expect.arrayContaining(['forum', 'nodeseek', 'user-resolution']));
+
+    await act(async () => { await expect(recovery?.resume()).resolves.toBe('completed'); });
+    await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('8052'));
+    expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-TOPIC-039] preserves the exact canonical profile query for NodeSeek verification recovery', async () => {
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+      .mockRejectedValueOnce(Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
+        source: 'nodeseek',
+        reason: 'cloudflare'
+      }))
+      .mockResolvedValueOnce({ ...user, id: '1414', username: '男朋友' });
+    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>();
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser, showNodeSeekVerification });
+
+    await act(async () => {
+      void hook.result.current.openUser({
+        source: 'nodeseek',
+        id: '1414',
+        username: '男朋友',
+        url: 'https://www.nodeseek.com/space/1414'
+      });
+    });
+    await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
+    const recovery = showNodeSeekVerification.mock.calls[0]?.[1];
+    expect(recovery?.queryKey).toEqual([
+      'forum',
+      'nodeseek',
+      'user',
+      { sessionEpoch: 0, userId: '1414' }
+    ]);
+
+    await act(async () => { await expect(recovery?.resume()).resolves.toBe('completed'); });
+    await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({ id: '1414', username: '男朋友' }));
+    expect(resolveNodeSeekUser).not.toHaveBeenCalled();
+    expect(getUserProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-TOPIC-039] does not turn a NodeSeek pagination failure into a user-route recovery', async () => {
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+      .mockResolvedValueOnce({
+        ...user,
+        id: '1414',
+        username: '男朋友',
+        hasMoreTopics: true,
+        nextTopicsCursor: '2'
+      })
+      .mockRejectedValueOnce(Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
+        source: 'nodeseek',
+        reason: 'cloudflare'
+      }));
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderUserController({ getUserProfile, showNodeSeekVerification });
+
+    await act(async () => {
+      void hook.result.current.openUser({
+        source: 'nodeseek',
+        id: '1414',
+        username: '男朋友',
+        url: 'https://www.nodeseek.com/space/1414'
+      });
+    });
+    await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('1414'));
+    await act(async () => { await hook.result.current.loadMoreUserTopics(); });
+    await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
+    expect(showNodeSeekVerification.mock.calls[0]?.[1]).toBeUndefined();
+  });
+
+  it('[REG-TOPIC-039] keeps a known logged-out resolution error out of Cloudflare recovery', async () => {
+    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(async () => {
+      throw Object.assign(new Error('请先登录 NodeSeek 后再打开用户主页'), {
+        source: 'nodeseek',
+        loginRequired: true
+      });
+    });
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderUserController({
+      getUserProfile: jest.fn<SourceGateway['getUserProfile']>(),
+      resolveNodeSeekUser,
+      showNodeSeekVerification
+    });
+
+    await act(async () => {
+      void hook.result.current.openUser({
+        source: 'nodeseek',
+        username: 'xy',
+        url: 'https://www.nodeseek.com/member?t=xy'
+      });
+    });
+    await waitFor(() => expect(hook.result.current.userError?.kind).toBe('login-required'));
+    expect(showNodeSeekVerification).not.toHaveBeenCalled();
+  });
+
+  it('[REG-ACCOUNT-031] blocks username resolution at the identity barrier and re-resolves after the epoch changes', async () => {
+    const reference: UserReference = {
+      source: 'nodeseek',
+      username: 'xy',
+      url: 'https://www.nodeseek.com/member?t=xy'
+    };
+    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    let sessionEpochs = initialForumSessionEpochs;
+    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(async () => ({
+      source: 'nodeseek',
+      id: '8052',
+      username: 'xy',
+      url: 'https://www.nodeseek.com/space/8052'
+    }));
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({ ...user, id: '8052', username: 'xy' }));
+    const hook = await renderUserController({
+      getIdentityBarriers: () => identityBarriers,
+      getSessionEpochs: () => sessionEpochs,
+      getUserProfile,
+      resolveNodeSeekUser
+    });
+
+    await act(async () => { void hook.result.current.openUser(reference); });
+    await act(async () => { await Promise.resolve(); });
+    expect(resolveNodeSeekUser).not.toHaveBeenCalled();
+    expect(getUserProfile).not.toHaveBeenCalled();
+
+    identityBarriers = [];
+    await act(async () => { hook.rerender(undefined); });
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
+    expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
+
+    sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
+    await act(async () => { hook.rerender(undefined); });
+    await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
+  });
+
+  it('[REG-TOPIC-039] cancels an old username resolution when the selected user changes', async () => {
+    const oldResolution = Promise.withResolvers<UserReference>();
+    let oldSignal: AbortSignal | undefined;
+    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(async ({ signal, username }) => {
+      if (username === 'old-user') {
+        oldSignal = signal;
+        return oldResolution.promise;
+      }
+      return {
+        source: 'nodeseek',
+        id: '22',
+        username: 'new-user',
+        url: 'https://www.nodeseek.com/space/22'
+      };
+    });
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async ({ id, username }) => ({
+      ...user,
+      id,
+      username: username || id,
+      url: `https://www.nodeseek.com/space/${id}`
+    }));
+    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
+
+    await act(async () => {
+      void hook.result.current.openUser({ source: 'nodeseek', username: 'old-user', url: 'https://www.nodeseek.com/member?t=old-user' });
+    });
+    await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      void hook.result.current.openUser({ source: 'nodeseek', username: 'new-user', url: 'https://www.nodeseek.com/member?t=new-user' });
+    });
+    await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('22'));
+    expect(oldSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      oldResolution.resolve({
+        source: 'nodeseek',
+        id: '11',
+        username: 'old-user',
+        url: 'https://www.nodeseek.com/space/11'
+      });
+      await oldResolution.promise;
+    });
+    expect(hook.result.current.selectedUser?.username).toBe('new-user');
+    expect(hook.result.current.userProfile?.id).toBe('22');
+    expect(getUserProfile.mock.calls.map(([request]) => request.id)).toEqual(['22']);
+  });
+
   it('loads the profile once and seeds both pagination lanes without repeating first-page transport', async () => {
+    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>();
     const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
       ...user,
       topics: [{
@@ -74,12 +363,13 @@ describe('user query controller', () => {
       }],
       replies: []
     }));
-    const hook = await renderUserController({ getUserProfile });
+    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
 
     await act(async () => { void hook.result.current.openUser(user); });
     await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
 
     expect(getUserProfile).toHaveBeenCalledTimes(1);
+    expect(resolveNodeSeekUser).not.toHaveBeenCalled();
     expect(getUserProfile.mock.calls[0]?.[0]).not.toHaveProperty('cursorType');
   });
 
@@ -105,7 +395,7 @@ describe('user query controller', () => {
       await Promise.resolve();
     });
     await act(async () => {
-      await hook.result.current.openUser(user, true);
+      await hook.result.current.refreshUser();
       await hook.result.current.loadMoreUserTopics();
     });
 
@@ -222,11 +512,11 @@ describe('user query controller', () => {
 
     let refreshOpen!: Promise<unknown>;
     await act(async () => {
-      refreshOpen = hook.result.current.openUser(user, true);
+      refreshOpen = hook.result.current.refreshUser();
       await Promise.resolve();
     });
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(3));
-    expect(hook.result.current.userBusy).toBe(true);
+    await waitFor(() => expect(hook.result.current.userBusy).toBe(true));
 
     await act(async () => {
       refresh.resolve({
@@ -287,8 +577,9 @@ describe('user query controller', () => {
       source: 'nodeseek',
       id: '1',
       username: 'alice',
+      displayName: '账号 A 看到的 Alice',
+      avatar: 'https://www.nodeseek.com/avatar/alice-old.png',
       url: 'https://www.nodeseek.com/space/1',
-      topics: []
     });
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
 

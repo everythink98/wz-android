@@ -19,7 +19,8 @@ import {
   toggleFollowedUser,
   topicKey,
   updateFavoriteTopic,
-  userKey
+  userKey,
+  type ReaderData
 } from './readerData';
 import type { Topic, UserProfile } from './types';
 
@@ -103,12 +104,44 @@ describe('Android reader data helpers', () => {
       contentHtml: '<p>body</p>',
       replies: []
     };
-    const data = recordHistory(createEmptyReaderData(), detail);
+    const key = topicKey(topic);
+    const empty = createEmptyReaderData();
+    const first = recordHistory({
+      ...empty,
+      deletedRecords: {
+        ...empty.deletedRecords,
+        history: { [key]: '2026-05-17T00:00:00.000Z' }
+      }
+    }, detail);
+    const data = recordHistory(first, { ...detail, title: 'Updated topic' });
 
-    expect(data.history[topicKey(topic)].topic).toEqual(topic);
-    expect(data.history[topicKey(topic)].visitCount).toBe(1);
-    expect(data.history[topicKey(topic)]).not.toHaveProperty('tags');
-    expect(data.history[topicKey(topic)]).not.toHaveProperty('note');
+    expect(data.history[key].topic).toEqual({ ...topic, title: 'Updated topic' });
+    expect(data.history[key].visitCount).toBe(2);
+    expect(data.deletedRecords.history[key]).toBeUndefined();
+    expect(data.history[key]).not.toHaveProperty('tags');
+    expect(data.history[key]).not.toHaveProperty('note');
+  });
+
+  it('[REG-PERF-001] keeps direct history writes capped at the newest 1000 records', () => {
+    const history: ReaderData['history'] = {};
+    for (let index = 0; index < MAX_HISTORY_RECORDS; index += 1) {
+      const item = { ...topic, id: String(index), title: `Topic ${index}` };
+      history[topicKey(item)] = {
+        topic: item,
+        savedAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString()
+      };
+    }
+    const current: ReaderData = {
+      ...createEmptyReaderData(),
+      history
+    };
+    const newest = { ...topic, id: 'newest', title: 'Newest topic' };
+
+    const data = recordHistory(current, newest);
+
+    expect(Object.keys(data.history)).toHaveLength(MAX_HISTORY_RECORDS);
+    expect(data.history[topicKey(newest)]?.topic.title).toBe('Newest topic');
+    expect(data.history['nodeseek:0']).toBeUndefined();
   });
 
   it('does not persist source-provided display time text when recording history', () => {
@@ -325,6 +358,11 @@ describe('Android reader data helpers', () => {
 
     expect(isUserFollowed(data, profile)).toBe(false);
     expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
+  });
+
+  it('[REG-TOPIC-039] never creates a NodeSeek followed-user key from a username', () => {
+    expect(() => userKey({ source: 'nodeseek', id: 'xy' })).toThrow('NodeSeek 用户 ID 必须是数字');
+    expect(userKey({ source: 'nodeseek', id: '8052' })).toBe('nodeseek:8052');
   });
 
   it('keeps followed users created from topic authors even when the profile url is missing', () => {

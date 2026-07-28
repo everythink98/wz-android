@@ -1,5 +1,5 @@
-import type { Reply, Source, Topic, TopicDetail, UserProfile } from './types';
-import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
+import type { Reply, Source, Topic, TopicDetail, UserReference } from './types';
+import { accessRequirementLevelValue, accessRequirementSpecificity, parseForumUserLink } from './appUtils';
 import { accessRequirementFromNoticeText, textContentFromHtml } from './localHtml';
 
 export function nodeSeekUserIdFromValue(value?: string) {
@@ -10,6 +10,43 @@ export function nodeSeekUserIdFromValue(value?: string) {
 
 function nodeSeekAuthorId(authorId?: string, authorUrl?: string) {
   return nodeSeekUserIdFromValue(authorId) || nodeSeekUserIdFromValue(authorUrl);
+}
+
+export function userReferenceFromUsername(source: Source, value: string, displayName = value): UserReference | null {
+  const username = value.trim();
+  if (!username) {
+    return null;
+  }
+  const baseUrls: Partial<Record<Source, string>> = {
+    linuxdo: 'https://linux.do/u/',
+    nodeseek: 'https://www.nodeseek.com/member?t=',
+    v2ex: 'https://www.v2ex.com/member/',
+    xiaoyinsi: 'https://forum.xiaoyinsi.com/u/'
+  };
+  return {
+    source,
+    ...(source === 'nodeseek' ? {} : { id: username }),
+    username,
+    displayName,
+    url: `${baseUrls[source] || ''}${encodeURIComponent(username)}`
+  };
+}
+
+function discourseUserReference(
+  source: 'linuxdo' | 'xiaoyinsi',
+  authorId?: string,
+  authorUrl?: string,
+  displayName?: string,
+  avatar?: string
+): UserReference | null {
+  const linked = authorUrl ? parseForumUserLink(authorUrl) : null;
+  const username = authorId?.trim() || (linked?.source === source ? linked.username : undefined);
+  const reference = username ? userReferenceFromUsername(source, username, displayName || username) : null;
+  return reference ? {
+    ...reference,
+    avatar,
+    url: linked?.source === source ? linked.url : reference.url
+  } : null;
 }
 
 function detailContentLooksRestricted(topic: Topic | TopicDetail) {
@@ -88,45 +125,49 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(topic: T 
   };
 }
 
-export function userFromTopic(topic: Topic | TopicDetail): UserProfile | null {
+export function userFromTopic(topic: Topic | TopicDetail): UserReference | null {
+  if (topic.source === 'linuxdo' || topic.source === 'xiaoyinsi') {
+    return discourseUserReference(topic.source, topic.authorId, topic.authorUrl, topic.author, topic.authorAvatar);
+  }
   const nodeSeekId = topic.source === 'nodeseek' ? nodeSeekAuthorId(topic.authorId, topic.authorUrl) : '';
-  const id = nodeSeekId || topic.authorId || topic.author;
-  if (!id && !topic.authorUrl) {
+  const username = topic.author?.trim() || undefined;
+  const id = nodeSeekId || (topic.source === 'nodeseek' ? '' : topic.authorId || username);
+  if (!id && !username) {
     return null;
   }
-  if (topic.source === 'nodeseek' && !nodeSeekId) {
-    return null;
-  }
+  const identity = id ? { id, ...(username ? { username } : {}) } : { username: username! };
   return {
     source: topic.source,
-    id,
-    username: topic.author || id,
-    displayName: topic.author || undefined,
+    ...identity,
+    displayName: username,
     avatar: topic.authorAvatar,
-    url: topic.authorUrl || '',
-    topics: []
+    url: topic.authorUrl || (topic.source === 'nodeseek'
+      ? id ? `https://www.nodeseek.com/space/${id}` : `https://www.nodeseek.com/member?t=${encodeURIComponent(username || '')}`
+      : '')
   };
 }
 
-export function userFromReply(reply: Reply, source?: Source): UserProfile | null {
+export function userFromReply(reply: Reply, source?: Source): UserReference | null {
   if (!source) {
     return null;
   }
+  if (source === 'linuxdo' || source === 'xiaoyinsi') {
+    return discourseUserReference(source, reply.authorId, reply.authorUrl, reply.author, reply.authorAvatar);
+  }
   const nodeSeekId = source === 'nodeseek' ? nodeSeekAuthorId(reply.authorId, reply.authorUrl) : '';
-  const id = nodeSeekId || reply.authorId || reply.author;
-  if (!id && !reply.authorUrl) {
+  const username = reply.author?.trim() || undefined;
+  const id = nodeSeekId || (source === 'nodeseek' ? '' : reply.authorId || username);
+  if (!id && !username) {
     return null;
   }
-  if (source === 'nodeseek' && !nodeSeekId) {
-    return null;
-  }
+  const identity = id ? { id, ...(username ? { username } : {}) } : { username: username! };
   return {
     source,
-    id,
-    username: reply.author || id,
-    displayName: reply.author || undefined,
+    ...identity,
+    displayName: username,
     avatar: reply.authorAvatar,
-    url: reply.authorUrl || '',
-    topics: []
+    url: reply.authorUrl || (source === 'nodeseek'
+      ? id ? `https://www.nodeseek.com/space/${id}` : `https://www.nodeseek.com/member?t=${encodeURIComponent(username || '')}`
+      : '')
   };
 }

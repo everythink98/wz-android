@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createEmptyReaderData, toggleFavorite, topicKey } from '../readerData';
+import {
+  createEmptyReaderData,
+  recordHistory,
+  toggleFavorite,
+  topicKey,
+  updateFavoriteTopic
+} from '../readerData';
 import { setDiagnosticWriter } from '../diagnostics';
 import type { Topic } from '../types';
 import { loadInitialReaderData, prepareReaderDataCommit, rollbackFailedReaderDataSave } from './useReaderDataController';
@@ -43,6 +49,20 @@ describe('reader data controller helpers', () => {
     const next = prepareReaderDataCommit(current, (value) => toggleFavorite(value, topic));
 
     expect(next?.favorites[topicKey(topic)]?.topic).toEqual(topic);
+  });
+
+  it('[REG-PERF-001] trusts only bounded history-recorded mutations without rebuilding the snapshot', () => {
+    const current = toggleFavorite(createEmptyReaderData(), topic);
+    const refreshedTopic = { ...topic, title: 'Updated topic' };
+    const updated = updateFavoriteTopic(recordHistory(current, refreshedTopic), refreshedTopic);
+
+    const historyCommit = prepareReaderDataCommit(current, () => updated, 'history-recorded');
+    const regularCommit = prepareReaderDataCommit(current, () => updated, 'favorite-toggled');
+
+    expect(historyCommit).toBe(updated);
+    expect(historyCommit?.favorites[topicKey(topic)]?.topic.title).toBe('Updated topic');
+    expect(regularCommit).not.toBe(updated);
+    expect(regularCommit?.history[topicKey(topic)]?.visitCount).toBe(1);
   });
 
   it('keeps record maps untouched when only settings change', () => {

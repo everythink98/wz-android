@@ -20,6 +20,9 @@ const linuxDoMocks = vi.hoisted(() => ({
   searchLinuxDoTags: vi.fn(async (): Promise<DiscourseTagOption[]> => []),
   searchLinuxDoUsers: vi.fn(async (): Promise<DiscourseUserOption[]> => [])
 }));
+const nodeSeekMocks = vi.hoisted(() => ({
+  resolveNodeSeekUser: vi.fn()
+}));
 const linuxDoLevelMocks = vi.hoisted(() => ({
   getLinuxDoLevelProfile: vi.fn()
 }));
@@ -37,6 +40,7 @@ vi.mock('expo-secure-store', () => ({
 }));
 vi.mock('../forumApi', () => forumMocks);
 vi.mock('../localLinuxdo', () => linuxDoMocks);
+vi.mock('../localNodeseek', () => nodeSeekMocks);
 vi.mock('../linuxdoLevel', () => linuxDoLevelMocks);
 vi.mock('../localXiaoyinsi', () => xiaoyinsiMocks);
 vi.mock('../yaohuoApi', () => ({
@@ -138,6 +142,107 @@ describe('source gateway read contract', () => {
       hasMore: false,
       nextPage: null
     });
+  });
+
+  it('[REG-TOPIC-039] resolves a NodeSeek username through managed session transport', async () => {
+    const signal = new AbortController().signal;
+    const fetcher = vi.fn();
+    nodeSeekMocks.resolveNodeSeekUser.mockResolvedValueOnce({
+      source: 'nodeseek',
+      id: '23042',
+      username: 'lcy0828',
+      displayName: 'lcy0828',
+      url: 'https://www.nodeseek.com/space/23042'
+    });
+    const gateway = createSourceGateway({
+      currentSessionEpoch: () => 4,
+      fetcher,
+      isSourceAuthenticated: (source) => source === 'nodeseek',
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+
+    await expect(gateway.resolveNodeSeekUser({ username: 'lcy0828', signal })).resolves.toMatchObject({
+      id: '23042',
+      username: 'lcy0828'
+    });
+    expect(nodeSeekMocks.resolveNodeSeekUser).toHaveBeenCalledWith('lcy0828', {
+      authenticated: true,
+      fetcher: expect.any(Function),
+      nodeSeekUserAgent: 'NodeSeek UA',
+      signal
+    });
+  });
+
+  it('[REG-TOPIC-039] blocks NodeSeek username resolution at the identity barrier', async () => {
+    const gateway = createSourceGateway({
+      fetcher: vi.fn(),
+      isSourceAuthenticated: () => true,
+      isSourceReadBlocked: (source) => source === 'nodeseek',
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+
+    await expect(gateway.resolveNodeSeekUser({ username: 'alice' })).rejects.toThrow('登录状态待确认');
+    expect(nodeSeekMocks.resolveNodeSeekUser).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-039] records safe diagnostics for NodeSeek username resolution', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const privateUsername = 'private-resolver-user';
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ memberList: [privateUsername] }), {
+      headers: { 'content-type': 'application/json' }
+    }));
+    nodeSeekMocks.resolveNodeSeekUser.mockImplementationOnce(async (username, options) => {
+      await options.fetcher(`https://www.nodeseek.com/api/account/find/${encodeURIComponent(username)}`, {
+        signal: options.signal
+      });
+      return {
+        source: 'nodeseek',
+        id: '7',
+        username,
+        url: 'https://www.nodeseek.com/space/7'
+      };
+    });
+    const gateway = createSourceGateway({
+      fetcher,
+      isSourceAuthenticated: () => true,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+
+    await gateway.resolveNodeSeekUser({ username: privateUsername });
+
+    const serialized = lines.join('');
+    expect(lines.map((line) => JSON.parse(line).operation)).toEqual(expect.arrayContaining(['resolveUser']));
+    expect(serialized).not.toMatch(/private-resolver-user|account\/find|memberList/i);
+  });
+
+  it('[REG-ACCOUNT-009][REG-TOPIC-039] drops a resolved username from an old NodeSeek session epoch', async () => {
+    let epoch = 4;
+    const pending = Promise.withResolvers<{
+      source: 'nodeseek';
+      id: string;
+      username: string;
+      url: string;
+    }>();
+    nodeSeekMocks.resolveNodeSeekUser.mockReturnValueOnce(pending.promise);
+    const gateway = createSourceGateway({
+      currentSessionEpoch: () => epoch,
+      fetcher: vi.fn(),
+      isSourceAuthenticated: () => true,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+
+    const resolution = gateway.resolveNodeSeekUser({ username: 'alice' });
+    await vi.waitFor(() => expect(nodeSeekMocks.resolveNodeSeekUser).toHaveBeenCalledTimes(1));
+    epoch += 1;
+    pending.resolve({
+      source: 'nodeseek',
+      id: '7',
+      username: 'alice',
+      url: 'https://www.nodeseek.com/space/7'
+    });
+
+    await expect(resolution).rejects.toThrow('请求已取消');
   });
 
   it('[REG-FEED-010] binds an aggregate read to its query identity barriers', async () => {

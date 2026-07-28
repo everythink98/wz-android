@@ -33,6 +33,34 @@ const firstDetail: TopicDetail = {
   replies: [firstReply]
 };
 
+describe('topic route sessions', () => {
+  it('[REG-PERF-002] keeps the active route state when navigation reports the same route again', async () => {
+    const hook = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn() }));
+
+    await act(async () => {
+      hook.result.current.commands.topic.select(firstTopic);
+      hook.result.current.commands.navigation.activateRoute('topic-route-1');
+    });
+    await act(async () => {
+      hook.result.current.commands.composer.changeContent('saved draft');
+    });
+    await act(async () => {
+      hook.result.current.commands.navigation.saveRoute('topic-route-1');
+    });
+    await act(async () => {
+      hook.result.current.commands.composer.changeContent('current draft');
+    });
+
+    let routeHandled = false;
+    await act(async () => {
+      routeHandled = hook.result.current.commands.navigation.restoreRoute('topic-route-1');
+    });
+
+    expect(routeHandled).toBe(true);
+    expect(hook.result.current.state.replyContent).toBe('current draft');
+  });
+});
+
 function renderTopicController({
   getIdentityBarriers = () => [],
   getSessionEpochs = () => initialForumSessionEpochs,

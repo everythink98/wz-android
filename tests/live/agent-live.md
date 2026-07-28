@@ -70,6 +70,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 | 五站 × Feed / Feed → Topic | `LIVE-READ-01` |
 | 五站 × Search / Search → Topic | `LIVE-READ-02` |
 | V2EX × Topic 筛选 / Topic → User → Topic | `LIVE-READ-03` |
+| NodeSeek × Topic 用户链接 → User → Topic | `LIVE-READ-04` |
 | NodeSeek、linux.do、妖火、小隐寺 × 账号状态 | `LIVE-ACCOUNT-01` |
 | 小隐寺 × 等级与活跃数据 | `LIVE-ACCOUNT-04` |
 
@@ -95,6 +96,13 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 用户返回目标独立从同一 Feed 自上而下检查前 5 个 Topic，选择第一个作者 User 页至少有一个可打开主题的 Topic；执行 Topic → 作者 → User → 首个主题 → 逐层返回。5 个均不满足则本段记 `NOT_VERIFIED`，不得借用前一场景残留页面。
 - 在筛选目标依次检查全部、只看楼主、只看带图、倒序和既定 ASCII 评论查找词；每次同时核对可见列表与数量，清空查找后恢复全部。
 - oracle：每层返回到正确页面，筛选后的列表和数量一致；另从筛选目标打开“阅读设置”并返回，必须仍是同一个 Topic、同一筛选和阅读位置，固定回归见 `REG-TOPIC-002`。
+
+### LIVE-READ-04 NodeSeek 用户名内导航与 UID 归一
+
+- 能力：`TOPIC-02`、`TOPIC-03`、`USER-01`、`NAV-02`；共享 `USER-02`、`LIBRARY-02`、`NAV-03`。仅当当前 revision、version/versionCode、APK SHA 匹配，NodeSeek Account Query 已确认登录，且目标链接仍存在对应可信 href 时执行；否则按证据轴记 `BLOCKED_BY_ENV` 或 `NOT_VERIFIED`，不改用搜索、相似主题或纯文本 `@name`。
+- 用 App 内主题链接直达 `https://www.nodeseek.com/post-832584-1`，依次检查正文 `@lcy0828`、正文 `@xy`、回复 `@Tokin`，以及 `/space/1414` 的 `@男朋友`。每个 username 最多触发一次真实 resolver probe；`/space/1414` 必须零 resolver。不得连点、预取全文用户或用重复请求制造 429。
+- 每次点击后 `com.wz.reader` 必须保持前台并进入 `user-screen-loaded`；不得启动 Chrome/Google。`@xy` 必须归一到 exact canonical 用户（UID `8052`），不能选择排在前面的模糊结果；Profile、主题/回复分页和可见关注目标只使用 canonical 数字 UID。解析中不显示关注；无匹配、非法响应、网络或 429 必须留在 App 并显示可刷新错误与显式“原站主页”，零自动重试、零自动外开。
+- 每个 User 检查完成后使用 Android 物理返回，必须回到同一 Topic 并保持原回复位置，再检查下一个目标。全程只读，不切换关注、不执行任何真实写操作；Cloudflare/Turnstile 仍按人工边界暂停，完成后只恢复原 User Query。
 
 ## 账号、验证与签到
 

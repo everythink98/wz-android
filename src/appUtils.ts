@@ -1,6 +1,6 @@
 import { REQUEST_CANCELED_MESSAGE } from './request';
 import { sourceCatalog } from './sourceCatalog';
-import type { AccessRequirement, FeedSource, Source, Topic, UserProfile } from './types';
+import type { AccessRequirement, FeedSource, Source, Topic, UserReference } from './types';
 
 export function sourceLabel(source: Source | FeedSource) {
   if (source === 'all') {
@@ -153,7 +153,7 @@ export function parseInternalTopicOpenLink(value: string) {
     : null;
 }
 
-export function parseForumUserLink(href: string, baseUrl?: string, candidates: ForumUserLinkCandidate[] = []): UserProfile | null {
+export function parseForumUserLink(href: string, baseUrl?: string, candidates: ForumUserLinkCandidate[] = []): UserReference | null {
   const url = forumLinkUrl(href, baseUrl);
   if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
     return null;
@@ -170,8 +170,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
         id: username,
         username,
         displayName: username,
-        url: `https://linux.do/u/${encodeURIComponent(username)}`,
-        topics: []
+        url: `https://linux.do/u/${encodeURIComponent(username)}`
       } : null;
     } catch {
       return null;
@@ -183,9 +182,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       return {
         source: 'nodeseek',
         id,
-        username: id,
-        url: `https://www.nodeseek.com/space/${id}`,
-        topics: []
+        url: `https://www.nodeseek.com/space/${id}`
       };
     }
     if (!/^\/member\/?$/i.test(url.pathname)) {
@@ -195,7 +192,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
     if (!username) {
       return null;
     }
-    const candidate = candidates.find((item) => item.author === username);
+    const candidate = candidates.slice(0, 32).find((item) => item.author === username);
     const candidateId = candidate?.authorId?.match(/^\d+$/)?.[0]
       || candidate?.authorUrl?.match(/(?:^|\/)space\/(\d+)(?:[/?#]|$)/)?.[1];
     return candidateId ? {
@@ -204,9 +201,13 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       username,
       displayName: username,
       avatar: candidate?.authorAvatar,
-      url: `https://www.nodeseek.com/space/${candidateId}`,
-      topics: []
-    } : null;
+      url: `https://www.nodeseek.com/space/${candidateId}`
+    } : {
+      source: 'nodeseek',
+      username,
+      displayName: username,
+      url: `https://www.nodeseek.com/member?t=${encodeURIComponent(username)}`
+    };
   }
   if (isYaohuoContentHost(url.hostname)) {
     if (!/^\/(?:bbs\/)?userinfo\.aspx$/i.test(url.pathname)) {
@@ -219,8 +220,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       source: 'yaohuo',
       id,
       username: id,
-      url: `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`,
-      topics: []
+      url: `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`
     } : null;
   }
   if (isForumHost(url.hostname, 'forum.xiaoyinsi.com')) {
@@ -235,8 +235,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
         id: username,
         username,
         displayName: username,
-        url: `https://forum.xiaoyinsi.com/u/${encodeURIComponent(username)}`,
-        topics: []
+        url: `https://forum.xiaoyinsi.com/u/${encodeURIComponent(username)}`
       } : null;
     } catch {
       return null;
@@ -256,8 +255,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       id: username,
       username,
       displayName: username,
-      url: `https://www.v2ex.com/member/${encodeURIComponent(username)}`,
-      topics: []
+      url: `https://www.v2ex.com/member/${encodeURIComponent(username)}`
     } : null;
   } catch {
     return null;
