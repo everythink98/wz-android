@@ -199,7 +199,7 @@ export function ReplyItem({
   const discourseContentParts = useMemo(() => (
     isDiscourse ? splitDiscourseContentHtml(highlightedHtml, reply.polls) : []
   ), [highlightedHtml, isDiscourse, reply.polls]);
-  const replyContentWidth = Math.max(220, contentWidth - 42);
+  const replyContentWidth = Math.max(220, contentWidth);
   const replyUser = userFromReply(reply, source);
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
@@ -386,6 +386,7 @@ export function ReplyItem({
                         <Pressable key={`quote-html-${stableTextHash(part.html)}`} delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
                           <MemoizedTopicContentBlock
                             baseUrl={topicBaseUrl}
+                            compact
                             contentWidth={Math.max(220, replyContentWidth - 24)}
                             inlineSizedImageUrls={inlineSizedImageUrls}
                             html={part.html}
@@ -434,6 +435,7 @@ export function ReplyItem({
               <Pressable key={`html-${stableTextHash(part.html)}`} delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
                 <MemoizedTopicContentBlock
                   baseUrl={topicBaseUrl}
+                  compact
                   contentWidth={replyContentWidth}
                   inlineSizedImageUrls={inlineSizedImageUrls}
                   html={part.html}
@@ -448,6 +450,7 @@ export function ReplyItem({
             <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
               <MemoizedTopicContentBlock
                 baseUrl={topicBaseUrl}
+                compact
                 contentWidth={replyContentWidth}
                 inlineSizedImageUrls={inlineSizedImageUrls}
                 html={highlightedHtml}
@@ -473,6 +476,7 @@ export function ReplyItem({
           <View style={styles.replySignature}>
             <MemoizedTopicContentBlock
               baseUrl={topicBaseUrl}
+              compact
               contentWidth={replyContentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
               html={reply.signatureHtml}
@@ -500,7 +504,7 @@ export function ReplyItem({
         {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (
           <View style={styles.replyStatRail}>
             {nodeSeekReplyReactionStats.map((stat, index) => (
-              <NodeSeekStatPill key={getMappingKey(stat.label, index)} label={stat.label} value={stat.value} styles={styles} />
+              <NodeSeekStatPill compact key={getMappingKey(stat.label, index)} label={stat.label} value={stat.value} styles={styles} />
             ))}
           </View>
         ) : null}

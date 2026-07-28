@@ -1,9 +1,26 @@
 import { StyleSheet } from 'react-native';
+import type { TNode } from 'react-native-render-html';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlTagsStyles } from './appTypes';
 import type { ReaderSettings } from './readerData';
 import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from './theme';
 
 export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['color', 'fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
+export const HTML_REPLY_CONTENT_CLASS = 'forum-reply-content';
+export const TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE = 'data-trim-trailing-block-spacing';
+
+export function trimsTrailingBlockSpacing(tnode: TNode) {
+  let child = tnode;
+  for (let parent = child.parent; parent; parent = parent.parent) {
+    if (child.nodeIndex !== parent.children.length - 1) {
+      return false;
+    }
+    if (parent.attributes[TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE] === 'true') {
+      return true;
+    }
+    child = parent;
+  }
+  return false;
+}
 
 export function buildHtmlRenderingStyles({
   settings,
@@ -14,6 +31,7 @@ export function buildHtmlRenderingStyles({
 }) {
   const baseFontSize = Math.round(16 * settings.fontScale);
   const baseLineHeight = Math.round(baseFontSize * lineHeightMultiplier(settings.lineHeight));
+  const replyFontSize = Math.round(15 * settings.fontScale);
   const linkColor = theme.dark ? theme.primary : LINK_COLOR;
   const htmlBaseStyle: HtmlBaseStyle = {
     color: theme.ink,
@@ -122,6 +140,10 @@ export function buildHtmlRenderingStyles({
     }
   };
   const htmlClassesStyles: HtmlClassesStyles = {
+    [HTML_REPLY_CONTENT_CLASS]: {
+      fontSize: replyFontSize,
+      lineHeight: Math.round(replyFontSize * lineHeightMultiplier(settings.lineHeight))
+    },
     'forum-user-mention': {
       backgroundColor: alphaColor(linkColor, theme.dark ? 0.2 : 0.12),
       borderColor: alphaColor(linkColor, theme.dark ? 0.38 : 0.26),

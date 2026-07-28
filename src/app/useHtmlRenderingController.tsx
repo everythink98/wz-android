@@ -36,7 +36,7 @@ import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
 import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
 import type { Topic, TopicDetail, UserReference } from '../types';
 import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
-import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
+import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from '../htmlRenderingStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
 import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
 import { ForumContentVideo } from '../components/ForumContentVideo';
@@ -235,7 +235,8 @@ function PreviewImageBlock({
   mediaContext,
   mediaSessionIdentity,
   onOpenImagePreview,
-  src
+  src,
+  trimTrailingBlockSpacing
 }: {
   attributes: Record<string, string | undefined>;
   errorTextStyle: StyleProp<TextStyle>;
@@ -249,6 +250,7 @@ function PreviewImageBlock({
   mediaSessionIdentity: string;
   onOpenImagePreview: (url: string) => void;
   src: string;
+  trimTrailingBlockSpacing: boolean;
 }) {
   const requestIdentity = compatibleImageRequestIdentity(imageSource);
   const requestIdentityRef = useRef(requestIdentity);
@@ -463,7 +465,11 @@ function PreviewImageBlock({
     }
   }, [activeImageRef, attributes, cacheKey, markInlineSizedImageUrl, src]);
   const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
-  const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
+  const sharedContainerStyle = [
+    { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const },
+    containerStyle,
+    trimTrailingBlockSpacing ? { marginBottom: -4 } : null
+  ];
   const imageStateFrameStyle = [{
     alignItems: 'center' as const,
     backgroundColor: frameBackgroundColor,
@@ -769,7 +775,7 @@ export function useHtmlRenderingController({
     };
     const ForumStickerRowRenderer: CustomBlockRenderer = (props) => {
       return (
-        <View style={embedStyles.stickerRow}>
+        <View style={[embedStyles.stickerRow, trimsTrailingBlockSpacing(props.tnode) ? { marginBottom: -4 } : null]}>
           <TChildrenRenderer tchildren={props.tnode.children} />
         </View>
       );
@@ -917,6 +923,7 @@ export function useHtmlRenderingController({
           mediaSessionIdentity={mediaSessionIdentity}
           onOpenImagePreview={onOpenImagePreview}
           src={src}
+          trimTrailingBlockSpacing={trimsTrailingBlockSpacing(props.tnode)}
         />
       );
     };

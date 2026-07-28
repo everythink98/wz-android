@@ -1,13 +1,13 @@
 import { memo, useMemo } from 'react';
 import { RenderHTMLSource } from 'react-native-render-html';
 import { flowInlineImagesInMixedParagraphs } from '../../htmlImages';
+import { HTML_REPLY_CONTENT_CLASS, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from '../../htmlRenderingStyles';
 import { markNodeSeekReplyReferenceLinks, normalizeRenderableHtml } from '../../topicContentHtml';
 import { inlineSizedImageSignatureForHtml, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../../topicDerivedData';
 
-export const TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE = 'data-trim-trailing-block-spacing';
-
 export function TopicContentBlock({
   baseUrl,
+  compact = false,
   contentWidth,
   html,
   inlineSizedImageUrls,
@@ -15,6 +15,7 @@ export function TopicContentBlock({
   topicImageDeriver
 }: {
   baseUrl?: string;
+  compact?: boolean;
   contentWidth: number;
   html: string | undefined;
   inlineSizedImageUrls: InlineSizedImageUrlMap;
@@ -25,12 +26,16 @@ export function TopicContentBlock({
     const replyReferenceHtml = markNodeSeekReplyReferenceLinks(normalizeRenderableHtml(html), baseUrl);
     const markedHtml = topicImageDeriver.markInlineSizedImages(replyReferenceHtml, inlineSizedImageUrls);
     const renderableHtml = flowInlineImagesInMixedParagraphs(markedHtml);
+    const wrapperAttributes = [
+      compact ? `class="${HTML_REPLY_CONTENT_CLASS}"` : '',
+      trimTrailingBlockSpacing ? `${TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE}="true"` : ''
+    ].filter(Boolean).join(' ');
     return {
-      html: trimTrailingBlockSpacing
-        ? `<div ${TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE}="true">${renderableHtml}</div>`
+      html: wrapperAttributes
+        ? `<div ${wrapperAttributes}>${renderableHtml}</div>`
         : renderableHtml
     };
-  }, [baseUrl, html, inlineSizedImageUrls, topicImageDeriver, trimTrailingBlockSpacing]);
+  }, [baseUrl, compact, html, inlineSizedImageUrls, topicImageDeriver, trimTrailingBlockSpacing]);
   return (
     <RenderHTMLSource
       contentWidth={contentWidth}
@@ -41,6 +46,7 @@ export function TopicContentBlock({
 
 export const MemoizedTopicContentBlock = memo(TopicContentBlock, (previous, next) => (
   previous.baseUrl === next.baseUrl
+  && previous.compact === next.compact
   && previous.contentWidth === next.contentWidth
   && previous.html === next.html
   && previous.trimTrailingBlockSpacing === next.trimTrailingBlockSpacing

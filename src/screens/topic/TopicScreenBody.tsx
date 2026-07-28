@@ -17,14 +17,13 @@ import {
   TRenderEngineProvider,
   defaultHTMLElementModels,
   useTNodeChildrenProps,
-  type CustomBlockRenderer,
-  type TNode
+  type CustomBlockRenderer
 } from 'react-native-render-html';
 import { BookMarked, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { Reply, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserReference } from '../../types';
 import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
-import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
+import { HTML_ALLOWED_INLINE_STYLES, trimsTrailingBlockSpacing } from '../../htmlRenderingStyles';
 import { FORUM_INLINE_MEDIA_LINE_TAG, FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
 import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../../localHtml';
 import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
@@ -56,7 +55,7 @@ import { isDiscourseSource, sourceSupportsTopicAction, sourceUsesTopicCreatePerm
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
-import { MemoizedTopicContentBlock, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from './TopicContentBlock';
+import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposerSheet } from './ReplyComposerSheet';
 import { TopicMenu } from './TopicMenu';
@@ -224,6 +223,7 @@ function AcceptedAnswerPreview({
                   <MemoizedTopicContentBlock
                     key={`accepted-html-${stableTextHash(part.html)}`}
                     baseUrl={topicBaseUrl}
+                    compact
                     contentWidth={Math.max(220, contentWidth - 24)}
                     inlineSizedImageUrls={inlineSizedImageUrls}
                     html={part.html}
@@ -288,20 +288,6 @@ export type { TopicListItem };
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
 const EMPTY_TOPIC_POLLS: TopicPoll[] = [];
 const EMPTY_DISCOURSE_EMOJI_URLS: DiscourseEmojiUrlMap = {};
-
-function trimsTrailingBlockSpacing(tnode: TNode) {
-  let child = tnode;
-  for (let parent = child.parent; parent; parent = parent.parent) {
-    if (child.nodeIndex !== parent.children.length - 1) {
-      return false;
-    }
-    if (parent.attributes[TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE] === 'true') {
-      return true;
-    }
-    child = parent;
-  }
-  return false;
-}
 
 const TrimTrailingBlockSpacingRenderer: CustomBlockRenderer = ({ InternalRenderer, ...props }) => (
   <InternalRenderer

@@ -1090,7 +1090,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minHeight: 48,
       paddingBottom: 0,
       paddingHorizontal: 0,
-      paddingTop: 12
+      paddingTop: 0
     },
     replyCompactActionButton: {
       flexBasis: 0,
@@ -2615,7 +2615,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: 'transparent',
-      paddingBottom: 4,
+      paddingBottom: 8,
       paddingHorizontal: 0,
       paddingTop: 16
     },
@@ -2645,7 +2645,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
       gap: 5,
-      paddingTop: 9
+      marginTop: 4,
+      paddingTop: 8
     },
     replyAcceptedSolutionText: {
       color: theme.primary,
@@ -2766,7 +2767,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     replyContentArea: {
       gap: 8,
-      paddingLeft: 42,
+      paddingLeft: 0,
       paddingRight: 0
     },
     replyTargetPill: {
@@ -2848,28 +2849,32 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     replySignature: {
       borderTopColor: theme.lineStrong,
       borderTopWidth: StyleSheet.hairlineWidth,
-      paddingBottom: 4,
-      paddingTop: 4
+      marginTop: 4,
+      paddingBottom: 0,
+      paddingTop: 8
     },
     replyStatRail: {
       alignSelf: 'flex-start',
       alignItems: 'center',
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 6
+      gap: 6,
+      marginTop: 4
     },
     replyThanksText: {
       alignSelf: 'flex-start',
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 12,
-      lineHeight: 16
+      lineHeight: 16,
+      marginTop: 4
     },
     replyActionRow: {
       alignItems: 'center',
       flexDirection: 'row',
       gap: 4,
       justifyContent: 'flex-start',
+      marginTop: -4,
       minHeight: 48,
       paddingTop: 0
     },

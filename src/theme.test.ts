@@ -121,23 +121,24 @@ describe('Android reader theme safety rails', () => {
       backgroundColor: 'transparent',
       borderBottomWidth: StyleSheet.hairlineWidth,
       gap: 8,
-      paddingBottom: 4,
+      paddingBottom: 8,
       paddingTop: 16
     });
     expect(styles.replyCard.borderRadius).toBeUndefined();
-    expect(styles.replyContentArea.gap).toBe(8);
-    expect(styles.replyActionRow).toMatchObject({ minHeight: 48 });
+    expect(styles.replyContentArea).toMatchObject({ gap: 8, paddingLeft: 0 });
+    expect(styles.replyActionRow).toMatchObject({ marginTop: -4, minHeight: 48 });
     expect(styles.replyActionRow.marginBottom).toBeUndefined();
-    expect(styles.replyActionRow.marginTop).toBeUndefined();
-    expect(styles.replyDetailActionButton).toMatchObject({ minHeight: 48, paddingBottom: 0, paddingTop: 12 });
+    expect(styles.replyDetailActionButton).toMatchObject({ minHeight: 48, paddingBottom: 0, paddingTop: 0 });
     expect(styles.replySignature).toMatchObject({
       borderTopColor: theme.lineStrong,
       borderTopWidth: StyleSheet.hairlineWidth,
-      paddingBottom: 4,
-      paddingTop: 4
+      marginTop: 4,
+      paddingBottom: 0,
+      paddingTop: 8
     });
-    expect(styles.replySignature.marginTop).toBeUndefined();
-    expect(styles.replyStatRail.marginTop).toBeUndefined();
+    expect(styles.replyStatRail.marginTop).toBe(4);
+    expect(styles.replyThanksText.marginTop).toBe(4);
+    expect(styles.replyAcceptedSolution).toMatchObject({ marginTop: 4, paddingTop: 8 });
     expect(styles.replyQuoteBox.backgroundColor).not.toBe(styles.quoteBox.backgroundColor);
   });
 

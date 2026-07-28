@@ -4,6 +4,7 @@ import React, { type ComponentProps } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
+import { HTML_REPLY_CONTENT_CLASS } from '../../src/htmlRenderingStyles';
 import { createEmptyReaderData } from '../../src/readerData';
 import { ReplyComposerSheet } from '../../src/screens/topic/ReplyComposerSheet';
 import { ReplyItem } from '../../src/screens/topic/ReplyItem';
@@ -93,12 +94,12 @@ jest.mock('react-native-render-html', () => {
       children?: React.ReactNode;
       renderersProps?: Record<string, { onPress?: (event: { stopPropagation: () => void }, href: string) => void }>;
     }) => ReactModule.createElement(RenderersPropsContext.Provider, { value: renderersProps }, children),
-    RenderHTMLSource: ({ source }: { source: { html: string } }) => {
+    RenderHTMLSource: ({ contentWidth, source }: { contentWidth: number; source: { html: string } }) => {
       const renderersProps = ReactModule.useContext(RenderersPropsContext);
       const links = Array.from(source.html.matchAll(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>(.*?)<\/a\s*>/gi));
       return ReactModule.createElement(
         NativeView,
-        null,
+        { accessibilityHint: source.html, style: { width: contentWidth }, testID: 'html-source' },
         ReactModule.createElement(NativeText, null, source.html.replace(/<[^>]+>/g, '')),
         ...links.map((link, index) => {
           const label = link[2].replace(/<[^>]+>/g, '').trim();
@@ -365,6 +366,38 @@ describe('Topic real child components', () => {
       ['like', 22],
       ['dislike', 22]
     ]);
+  });
+
+  it('[REG-TOPIC-003] gives reply prose the full column and keeps article density separate', async () => {
+    const reply: Reply = {
+      ...replyProps().reply,
+      contentHtml: '<p>短评论</p>',
+      quotedFloors: [],
+      replyTargetAuthor: undefined,
+      signatureHtml: '<p>签名内容</p>'
+    };
+    const replyView = await render(
+      <ReplyItem
+        {...replyProps({ canWrite: false, contentWidth: 360, reply, source: 'v2ex' })}
+      />
+    );
+
+    const replySources = replyView.getAllByTestId('html-source');
+    expect(replySources).toHaveLength(2);
+    for (const source of replySources) {
+      expect(source.props.style).toEqual({ width: 360 });
+      expect(source.props.accessibilityHint).toContain(`class="${HTML_REPLY_CONTENT_CLASS}"`);
+    }
+
+    const articleView = await render(
+      <TopicContentBlock
+        contentWidth={360}
+        html="<p>主楼正文</p>"
+        inlineSizedImageUrls={{}}
+        topicImageDeriver={topicImageDeriver}
+      />
+    );
+    expect(articleView.getByTestId('html-source').props.accessibilityHint).not.toContain(HTML_REPLY_CONTENT_CLASS);
   });
 
   it('[REG-TOPIC-039] routes actual body, reply, quote, and signature links through internal user navigation', async () => {

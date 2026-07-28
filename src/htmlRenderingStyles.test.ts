@@ -45,4 +45,28 @@ describe('Android HTML rendering styles', () => {
     expect(htmlTagsStyles.p?.marginTop).toBe(0);
     expect(htmlTagsStyles.p?.marginBottom).toBe(10);
   });
+
+  it('keeps reply prose denser than article prose while honoring reader scaling', () => {
+    const theme = createTheme(settings);
+    const { htmlBaseStyle, htmlClassesStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+    const replyStyle = htmlClassesStyles[htmlRenderingStyles.HTML_REPLY_CONTENT_CLASS];
+
+    expect(htmlBaseStyle).toMatchObject({ fontSize: 16, lineHeight: 26 });
+    expect(replyStyle).toMatchObject({ fontSize: 15, lineHeight: 24 });
+  });
+
+  it('trims only the last visible block inside a marked reply fragment', () => {
+    const markedParent = {
+      attributes: { [htmlRenderingStyles.TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE]: 'true' },
+      children: [] as unknown[],
+      parent: null
+    };
+    const trailingChild = { nodeIndex: 0, parent: markedParent };
+    markedParent.children.push(trailingChild);
+
+    expect(htmlRenderingStyles.trimsTrailingBlockSpacing(trailingChild as never)).toBe(true);
+
+    const firstChild = { nodeIndex: 0, parent: { ...markedParent, children: [{}, {}] } };
+    expect(htmlRenderingStyles.trimsTrailingBlockSpacing(firstChild as never)).toBe(false);
+  });
 });
