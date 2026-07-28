@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { createEmptyReaderData, toggleFavorite, type ReaderData } from '../../src/readerData';
+import { createEmptyReaderData, recordHistory, toggleFavorite, type ReaderData } from '../../src/readerData';
 import type { Topic } from '../../src/types';
 
 const mockLoadReaderData = jest.fn<() => Promise<ReaderData>>();
@@ -38,6 +38,23 @@ describe('reader data controller persistence', () => {
     mockLoadReaderData.mockResolvedValue(createEmptyReaderData());
     mockSaveCleanReaderData.mockImplementation(async (data) => data);
     mockSaveReaderSettings.mockResolvedValue(undefined);
+  });
+
+  it('[REG-PERF-001] persists the bounded history snapshot through the existing save queue', async () => {
+    const hook = await renderHook(() => useReaderDataController({ notify: jest.fn() }));
+    await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
+
+    await act(async () => {
+      hook.result.current.commitReaderData('history-recorded', (current) => recordHistory(current, topic));
+    });
+    await act(async () => {
+      await hook.result.current.waitForReaderDataSave();
+    });
+
+    expect(mockSaveCleanReaderData).toHaveBeenCalledTimes(1);
+    expect(
+      mockSaveCleanReaderData.mock.calls[0]?.[0].history['nodeseek:reader-data-race']?.visitCount
+    ).toBe(1);
   });
 
   it('[REG-DATA-002] persists a full snapshot after an older record save fails before a settings change', async () => {

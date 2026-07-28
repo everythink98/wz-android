@@ -61,10 +61,17 @@ function readerDataRecordCount(value: ReaderData) {
     + Object.keys(value.followedUsers).length;
 }
 
-export function prepareReaderDataCommit(current: ReaderData, updater: (current: ReaderData) => ReaderData) {
+export function prepareReaderDataCommit(
+  current: ReaderData,
+  updater: (current: ReaderData) => ReaderData,
+  mutationReason?: ReaderDataMutationReason
+) {
   const updated = updater(current);
   if (updated === current) {
     return null;
+  }
+  if (mutationReason === 'history-recorded') {
+    return updated;
   }
   const settingsOnly = prepareSettingsOnlyCommit(current, updated);
   if (settingsOnly) {
@@ -251,7 +258,7 @@ export function useReaderDataController({
       return;
     }
     const previous = readerDataRef.current;
-    const next = prepareReaderDataCommit(previous, updater);
+    const next = prepareReaderDataCommit(previous, updater, mutationReason);
     if (!next) {
       finishDiagnosticTrace(trace, 'noop');
       return;

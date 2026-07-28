@@ -205,6 +205,7 @@ export function useTopicSessionController({ notify }: { notify: (message: string
     if (routeKey) saveTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey, snapshot());
   }, [snapshot]);
   const restoreRoute = useCallback((routeKey: string) => {
+    if (activeTopicRouteKeyRef.current === routeKey) return true;
     const saved = readTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey);
     if (!saved) return false;
     activeTopicRouteKeyRef.current = routeKey;

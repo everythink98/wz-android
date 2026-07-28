@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { SvgXml } from 'react-native-svg';
@@ -46,28 +46,28 @@ export function Avatar({
   const [svgXml, setSvgXml] = useState<string | null>(null);
   const mediaContext = useForumMediaRequestContext(contentSource);
   const mediaSessionIdentity = mediaContext.sessionIdentity;
+  const fallbackIdentity = `${mediaSessionIdentity}:${uri || ''}`;
+  const fallbackIdentityRef = useRef(fallbackIdentity);
 
-  useEffect(() => {
-    let cancelled = false;
+  useLayoutEffect(() => {
+    fallbackIdentityRef.current = fallbackIdentity;
     setImageFailed(false);
     setImageRetryCount(0);
     setSvgXml(null);
-    if (!uri) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    loadRemoteAvatarSvgText(uri, undefined, {
-      mediaContext
-    }).then((xml) => {
-      if (!cancelled) {
-        setSvgXml(xml);
-      }
-    });
     return () => {
-      cancelled = true;
+      fallbackIdentityRef.current = '';
     };
-  }, [mediaContext, mediaSessionIdentity, uri]);
+  }, [fallbackIdentity, mediaContext]);
+
+  const loadSvgFallback = useCallback(async (requestedUri: string) => {
+    const requestedFallbackIdentity = fallbackIdentity;
+    const xml = await loadRemoteAvatarSvgText(requestedUri, undefined, {
+      mediaContext
+    });
+    if (fallbackIdentityRef.current === requestedFallbackIdentity) {
+      setSvgXml(xml);
+    }
+  }, [fallbackIdentity, mediaContext]);
 
   const retryOrFailImage = useCallback(() => {
     if (imageRetryCount < MAX_IMAGE_RETRY_COUNT) {
@@ -75,7 +75,10 @@ export function Avatar({
       return;
     }
     setImageFailed(true);
-  }, [imageRetryCount]);
+    if (uri) {
+      void loadSvgFallback(uri);
+    }
+  }, [imageRetryCount, loadSvgFallback, uri]);
 
   return (
     <View style={[styles.replyAvatar, tiny ? styles.feedAvatarTiny : small ? styles.replyAvatarSmall : styles.topicAvatar]}>
