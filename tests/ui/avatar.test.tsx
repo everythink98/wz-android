@@ -3,7 +3,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { initialForumSessionEpochs } from '../../src/app/serverState';
 import { Avatar } from '../../src/components/Avatar';
-import { ForumSessionEpochProvider } from '../../src/mediaSessionEpoch';
+import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '../../src/mediaSessionEpoch';
 import { createEmptyReaderData } from '../../src/readerData';
 import { createStyles, createTheme } from '../../src/theme';
 
@@ -75,10 +75,10 @@ describe('Avatar image fallback', () => {
     expect(view.getByLabelText('<svg><path /></svg>')).toBeTruthy();
     expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(1);
     expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledWith(uri, undefined, {
-      mediaContext: {
-        contentSource: 'nodeseek',
-        sessionIdentity: 'nodeseek:0'
-      }
+        mediaContext: {
+          contentSource: 'nodeseek',
+          sessionIdentity: mediaSessionIdentityForSource('nodeseek', initialForumSessionEpochs)
+        }
     });
   });
 

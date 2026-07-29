@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
+import { PixelRatio } from 'react-native';
 import { createTopicImageDeriver } from '../../src/topicDerivedData';
 import { useImagePreviewController } from '../../src/app/useImagePreviewController';
 
@@ -23,6 +24,7 @@ describe('Image preview controller', () => {
     const topicImageDeriver = createTopicImageDeriver();
     const hook = await renderHook(() => useImagePreviewController({
       contentSource: null,
+      contentWidth: 360,
       htmlParts: ['<p><img src="https://images.example/photo.jpg"></p>'],
       inlineSizedImageUrls: {},
       notify,
@@ -50,9 +52,11 @@ describe('Image preview controller', () => {
   it('REG-TOPIC-019 forwards NodeSeek media credentials to the save request', async () => {
     mockSaveImageUriToLibrary.mockResolvedValue();
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
+    const displayUrl = 'https://www.nodeseek.com/uploads/private-topic-640.png';
     const hook = await renderHook(() => useImagePreviewController({
       contentSource: 'nodeseek',
-      htmlParts: [`<p><img src="${imageUrl}"></p>`],
+      contentWidth: 360,
+      htmlParts: [`<p><a class="lightbox" href="${imageUrl}"><img src="${displayUrl}"></a></p>`],
       inlineSizedImageUrls: {},
       nodeSeekMediaUserAgent: 'WZ-Controller-Test',
       notify: jest.fn(),
@@ -60,7 +64,12 @@ describe('Image preview controller', () => {
     }));
 
     await act(() => {
-      hook.result.current.openImagePreview(imageUrl);
+      hook.result.current.openImagePreview(displayUrl, { width: 640, height: 360 });
+    });
+    expect(hook.result.current.imagePreview?.items[0]).toEqual({
+      displayUri: displayUrl,
+      originalUri: imageUrl,
+      displaySize: { width: 640, height: 360 }
     });
     await act(async () => {
       await hook.result.current.savePreviewImage();
@@ -78,5 +87,55 @@ describe('Image preview controller', () => {
       undefined,
       expect.anything()
     );
+  });
+
+  it('keeps the exact body-rendered image as the preview continuity frame', async () => {
+    const originalUrl = 'https://images.example/original.svg';
+    const displayUrl = 'https://images.example/display.svg';
+    const renderedPoster = 'file:///cache/svg-posters/body-visible.png';
+    const hook = await renderHook(() => useImagePreviewController({
+      contentSource: null,
+      contentWidth: 360,
+      htmlParts: [`<a class="lightbox" href="${originalUrl}"><img src="${displayUrl}"></a>`],
+      inlineSizedImageUrls: {},
+      notify: jest.fn(),
+      topicImageDeriver: createTopicImageDeriver()
+    }));
+
+    await act(() => {
+      hook.result.current.openImagePreview(displayUrl, { width: 640, height: 360 }, renderedPoster);
+    });
+
+    expect(hook.result.current.imagePreview?.items[0]).toEqual({
+      displayUri: renderedPoster,
+      originalUri: originalUrl,
+      displaySize: { width: 640, height: 360 }
+    });
+  });
+
+  it('[REG-TOPIC-040] prepares adjacent preview placeholders with the body width and DPR', async () => {
+    const pixelRatioSpy = jest.spyOn(PixelRatio, 'get').mockReturnValue(2);
+    const firstDisplayUrl = 'https://images.example/a-640.jpg';
+    const hook = await renderHook(() => useImagePreviewController({
+      contentSource: null,
+      contentWidth: 300,
+      htmlParts: [[
+        '<img src="https://images.example/a-fallback.jpg" data-original="https://images.example/a-original.jpg" srcset="https://images.example/a-320.jpg 320w, https://images.example/a-640.jpg 640w, https://images.example/a-1280.jpg 1280w">',
+        '<img src="https://images.example/b-fallback.jpg" data-original="https://images.example/b-original.jpg" srcset="https://images.example/b-360.jpg 360w, https://images.example/b-720.jpg 720w, https://images.example/b-1440.jpg 1440w">'
+      ].join('')],
+      inlineSizedImageUrls: {},
+      notify: jest.fn(),
+      topicImageDeriver: createTopicImageDeriver()
+    }));
+
+    await act(() => {
+      hook.result.current.openImagePreview(firstDisplayUrl);
+    });
+
+    expect(hook.result.current.imagePreview?.items).toEqual([
+      { displayUri: firstDisplayUrl, originalUri: 'https://images.example/a-original.jpg' },
+      { displayUri: 'https://images.example/b-720.jpg', originalUri: 'https://images.example/b-original.jpg' }
+    ]);
+    pixelRatioSpy.mockRestore();
   });
 });

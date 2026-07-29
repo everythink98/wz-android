@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { PixelRatio } from 'react-native';
 import {
   createImagePreviewCatalog,
   imagePreviewListFromCatalog,
   normalizeImagePreviewUrl,
+  type ImageDisplaySize,
   type ImagePreviewList
 } from '../htmlImages';
 import type { TopicImageDeriver } from '../topicDerivedData';
@@ -32,6 +34,7 @@ function htmlPartsFromSource(source: HtmlPartsSource) {
 export function useImagePreviewController({
   beforeSave,
   contentSource,
+  contentWidth,
   fetcher,
   htmlParts,
   inlineSizedImageUrls,
@@ -41,6 +44,7 @@ export function useImagePreviewController({
 }: {
   beforeSave?: () => Promise<void>;
   contentSource: Source | null;
+  contentWidth: number;
   fetcher?: Fetcher;
   htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
@@ -54,51 +58,48 @@ export function useImagePreviewController({
   const inlineSizedImageUrlsRef = useCommittedRef(inlineSizedImageUrls);
   const resolveImagePreview = useMemo(() => {
     let catalog: ReturnType<typeof createImagePreviewCatalog> | null = null;
-    return (tappedUrl: string) => {
+    return (tappedUrl: string, tappedDisplaySize?: ImageDisplaySize) => {
       if (!catalog) {
         catalog = createImagePreviewCatalog(
-          htmlPartsFromSource(htmlParts).map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
+          htmlPartsFromSource(htmlParts).map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls)),
+          contentWidth,
+          PixelRatio.get()
         );
       }
-      return imagePreviewListFromCatalog(catalog, tappedUrl, contentSource);
+      return imagePreviewListFromCatalog(catalog, tappedUrl, contentSource, tappedDisplaySize);
     };
-  }, [contentSource, htmlParts, inlineSizedImageUrls, topicImageDeriver]);
+  }, [contentSource, contentWidth, htmlParts, inlineSizedImageUrls, topicImageDeriver]);
   const resolveImagePreviewRef = useCommittedRef(resolveImagePreview);
 
-  const openImagePreview = useCallback((url: string) => {
+  const openImagePreview = useCallback((url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => {
     const clean = normalizeImageCacheKey(url);
     if (clean && inlineSizedImageUrlsRef.current[clean]) {
       return;
     }
-    const nextPreview = resolveImagePreviewRef.current(url);
-    if (nextPreview.urls.length > 0) {
+    const nextPreview = resolveImagePreviewRef.current(url, displaySize);
+    const posterUri = normalizeImagePreviewUrl(renderedPosterUri || '');
+    if (posterUri.startsWith('file://') && nextPreview.items[nextPreview.index]) {
+      nextPreview.items[nextPreview.index] = {
+        ...nextPreview.items[nextPreview.index],
+        displayUri: posterUri
+      };
+    }
+    if (nextPreview.items.length > 0) {
       setImagePreview(nextPreview);
     }
   }, []);
   const closeImagePreview = useCallback(() => setImagePreview(null), []);
-  const showPreviousImage = useCallback(() => {
-    setImagePreview((current) => current && current.urls.length > 1 ? {
-      ...current,
-      index: (current.index + current.urls.length - 1) % current.urls.length
-    } : current);
-  }, []);
-  const showNextImage = useCallback(() => {
-    setImagePreview((current) => current && current.urls.length > 1 ? {
-      ...current,
-      index: (current.index + 1) % current.urls.length
-    } : current);
-  }, []);
   const selectPreviewImage = useCallback((index: number) => {
     setImagePreview((current) => current ? {
       ...current,
-      index: Math.max(0, Math.min(index, current.urls.length - 1))
+      index: Math.max(0, Math.min(index, current.items.length - 1))
     } : current);
   }, []);
   const savePreviewImage = useCallback(async () => {
     const trace = beginDiagnosticTrace('media', 'save-preview', {
-      itemCount: imagePreview?.urls.length || 0
+      itemCount: imagePreview?.items.length || 0
     });
-    if (!imagePreview?.urls.length) {
+    if (!imagePreview?.items.length) {
       markDiagnosticStage(trace, 'guard', { state: 'empty-preview' });
       finishDiagnosticTrace(trace, 'noop', { reason: 'not_ready' });
       return;
@@ -110,7 +111,8 @@ export function useImagePreviewController({
     }
     saveBusyRef.current = true;
     try {
-      const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
+      const item = imagePreview.items[imagePreview.index] || imagePreview.items[0];
+      const uri = item.originalUri;
       markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
       await saveImageUriToLibrary(uri, {
@@ -134,8 +136,6 @@ export function useImagePreviewController({
     imagePreview,
     openImagePreview,
     savePreviewImage,
-    selectPreviewImage,
-    showNextImage,
-    showPreviousImage
+    selectPreviewImage
   };
 }

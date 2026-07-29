@@ -75,7 +75,7 @@ import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoSession';
 import { createSourceGateway } from '../sources/sourceGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '../networkProxy';
 import type { Topic, TopicDetail, UserProfile, UserReference } from '../types';
-import { isHttpOrHttpsUrl } from '../htmlImages';
+import { isHttpOrHttpsUrl, type ImageDisplaySize } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '../topicListItemState';
 import { replyHtmlWithSignature } from '../topicDerivedData';
@@ -214,7 +214,7 @@ export function AppRoot() {
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openTopicRef = useRef<((topic: Topic, refresh?: boolean) => Promise<unknown>) | null>(null);
   const openUserRef = useRef<((user: UserReference) => Promise<unknown>) | null>(null);
-  const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
+  const openImagePreviewRef = useRef<(url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void>(() => undefined);
   const pendingNodeSeekVerificationRetryRef = useRef<NodeSeekVerificationRetry | null>(null);
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
@@ -783,8 +783,8 @@ export function AppRoot() {
     }
     void Linking.openURL(url).catch((error) => notify(errorMessage(error)));
   }, [notify]);
-  const openImagePreviewFromRenderer = useCallback((url: string) => {
-    openImagePreviewRef.current(url);
+  const openImagePreviewFromRenderer = useCallback((url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => {
+    openImagePreviewRef.current(url, displaySize, renderedPosterUri);
   }, []);
   const openTopicFromHtml = useCallback((topic: Topic) => {
     void openTopicRef.current?.(topic);
@@ -834,12 +834,11 @@ export function AppRoot() {
     imagePreview,
     openImagePreview,
     savePreviewImage,
-    selectPreviewImage,
-    showNextImage,
-    showPreviousImage
+    selectPreviewImage
   } = useImagePreviewController({
     beforeSave: ensureNetworkProxyReady,
     contentSource: selectedTopic?.source || null,
+    contentWidth,
     fetcher: networkProxyFetcher,
     htmlParts: getTopicHtmlParts,
     inlineSizedImageUrls,
@@ -2490,8 +2489,6 @@ export function AppRoot() {
               setNodeImageAuthError={reportNodeImageAuthFailure}
               showLinuxDoPanel={showLinuxDoPanel}
               showNodeImageAuthPanel={showNodeImageAuthPanel}
-              showNextImage={showNextImage}
-              showPreviousImage={showPreviousImage}
               styles={styles}
               theme={theme}
               webViewBlockMessage={networkProxyWebViewBlockMessage}

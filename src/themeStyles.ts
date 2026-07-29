@@ -3036,11 +3036,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       justifyContent: 'space-between'
     },
-    imagePreviewTopActions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 10
-    },
     imagePreviewCount: {
       color: theme.onOverlay,
       fontFamily: appFontFamily,
@@ -3073,22 +3068,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flex: 1,
       width: '100%'
     },
-    imagePreviewScrollContent: {
-      minHeight: '100%',
-      alignItems: 'center',
-      justifyContent: 'center'
-    },
-    imagePreviewVerticalScroll: {
-      maxHeight: '100%'
-    },
-    imagePreviewVerticalContent: {
-      alignItems: 'center',
-      justifyContent: 'center'
-    },
-    imagePreviewImage: {
-      width: '100%',
-      height: '100%'
-    },
     imagePreviewState: {
       position: 'absolute',
       alignSelf: 'center',
@@ -3106,49 +3085,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 13,
       fontWeight: '600'
-    },
-    imagePreviewControls: {
-      position: 'absolute',
-      right: 18,
-      bottom: 30,
-      left: 18,
-      flexDirection: 'row',
-      justifyContent: 'space-between'
-    },
-    imagePreviewControl: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 46,
-      height: 46,
-      borderRadius: 23,
-      backgroundColor: 'rgba(255, 255, 255, 0.14)'
-    },
-    imagePreviewThumbnailRail: {
-      position: 'absolute',
-      right: 78,
-      bottom: 30,
-      left: 78,
-      maxHeight: 58
-    },
-    imagePreviewThumbnailContent: {
-      gap: 8,
-      alignItems: 'center'
-    },
-    imagePreviewThumbnail: {
-      width: 52,
-      height: 52,
-      overflow: 'hidden',
-      borderColor: alphaColor(theme.onOverlay, 0.28),
-      borderRadius: 8,
-      borderWidth: 1
-    },
-    imagePreviewThumbnailActive: {
-      borderColor: theme.onOverlay,
-      borderWidth: 2
-    },
-    imagePreviewThumbnailImage: {
-      width: '100%',
-      height: '100%'
     }
   });
   return Object.assign(

@@ -166,6 +166,7 @@ private fun createPlatformProxyTlsConnection(
 )
 
 internal const val FORUM_MEDIA_SOURCE_HEADER = "X-WZ-Forum-Media-Source"
+internal const val FORUM_MEDIA_IDENTITY_HEADER = "X-WZ-Forum-Media-Identity"
 
 private class MediaRequestCookiePolicy(
   private val credentialSource: String?
@@ -202,11 +203,17 @@ internal class ForumMediaRequestInterceptor(
 ) : Interceptor {
   override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
     val request = chain.request()
-    val source = request.header(FORUM_MEDIA_SOURCE_HEADER) ?: return chain.proceed(request)
+    val source = request.header(FORUM_MEDIA_SOURCE_HEADER)
+      ?: return chain.proceed(
+        if (request.header(FORUM_MEDIA_IDENTITY_HEADER) == null) request else request.newBuilder()
+          .removeHeader(FORUM_MEDIA_IDENTITY_HEADER)
+          .build()
+      )
     val firstTargetSource = sourceForUri(URI(request.url.toString()))
     val policy = MediaRequestCookiePolicy(source.takeIf { it == firstTargetSource })
     val sanitized = request.newBuilder()
       .removeHeader(FORUM_MEDIA_SOURCE_HEADER)
+      .removeHeader(FORUM_MEDIA_IDENTITY_HEADER)
       .removeHeader("Cookie")
       .cacheControl(CacheControl.Builder().noStore().build())
       .build()
@@ -1536,6 +1543,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import com.bumptech.glide.load.model.Headers
+import expo.modules.image.okhttp.GlideUrlWithCustomCacheKey
 import okhttp3.Cache
 import okhttp3.Cookie
 import okhttp3.Interceptor
@@ -1549,6 +1558,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
@@ -1563,6 +1573,98 @@ class NetworkProxyRuntimeTest {
     .message("OK")
     .body("".toResponseBody())
     .build()
+
+  @Test
+  fun regTopic041MediaIdentityMarkerIsInternalOnlyWhileSourcePolicyStillApplies() {
+    val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    val receivedHeaders = mutableListOf<Map<String, String>>()
+    val served = CountDownLatch(1)
+    val executor = Executors.newSingleThreadExecutor()
+    executor.execute {
+      try {
+        repeat(2) {
+          server.accept().use { socket ->
+            val reader = socket.getInputStream().bufferedReader()
+            reader.readLine()
+            val headers = mutableMapOf<String, String>()
+            while (true) {
+              val line = reader.readLine() ?: break
+              if (line.isEmpty()) break
+              val separator = line.indexOf(':')
+              if (separator > 0) {
+                headers[line.substring(0, separator).lowercase()] = line.substring(separator + 1).trim()
+              }
+            }
+            receivedHeaders.add(headers)
+            socket.getOutputStream().apply {
+              write("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n".toByteArray(Charsets.US_ASCII))
+              flush()
+            }
+          }
+        }
+      } finally {
+        served.countDown()
+      }
+    }
+    val sourceForUri: (java.net.URI) -> String? = { uri ->
+      if (uri.host == "media.test") "nodeseek" else null
+    }
+    val handler = ReadOnlyWebViewCookieHandler(sourceForUri = sourceForUri) { "session=live" }
+    val client = OkHttpClient.Builder()
+      .dns(object : okhttp3.Dns {
+        override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
+      })
+      .cookieJar(JavaNetCookieJar(handler))
+      .addInterceptor(ForumMediaRequestInterceptor(sourceForUri))
+      .build()
+
+    try {
+      client.newCall(Request.Builder()
+        .url("http://media.test:\${server.localPort}/private.png")
+        .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+        .header("X-WZ-Forum-Media-Identity", "nodeseek:41")
+        .header("Cookie", "must-not-be-forwarded")
+        .build()).execute().close()
+      client.newCall(Request.Builder()
+        .url("http://media.test:\${server.localPort}/ordinary.png")
+        .header("X-WZ-Forum-Media-Identity", "orphaned-identity")
+        .build()).execute().close()
+
+      assertTrue(served.await(5, TimeUnit.SECONDS))
+      val markedHeaders = receivedHeaders[0]
+      assertNull(markedHeaders[FORUM_MEDIA_SOURCE_HEADER.lowercase()])
+      assertNull(markedHeaders["x-wz-forum-media-identity"])
+      assertEquals("session=live", markedHeaders["cookie"])
+      assertEquals("no-store", markedHeaders["cache-control"])
+      val ordinaryHeaders = receivedHeaders[1]
+      assertNull(ordinaryHeaders["x-wz-forum-media-identity"])
+      assertEquals("session=live", ordinaryHeaders["cookie"])
+      assertNull(ordinaryHeaders["cache-control"])
+    } finally {
+      server.close()
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regTopic041SessionEpochParticipatesInExpoImageModelEquality() {
+    fun model(identity: String): GlideUrlWithCustomCacheKey {
+      val headers = object : Headers {
+        override fun getHeaders() = mapOf(
+          FORUM_MEDIA_SOURCE_HEADER to "nodeseek",
+          FORUM_MEDIA_IDENTITY_HEADER to identity
+        )
+      }
+      return GlideUrlWithCustomCacheKey(
+        "https://www.nodeseek.com/uploads/private.png",
+        headers,
+        "\${identity}:https://www.nodeseek.com/uploads/private.png"
+      )
+    }
+
+    assertEquals(model("nodeseek:41"), model("nodeseek:41"))
+    assertNotEquals(model("nodeseek:41"), model("nodeseek:42"))
+  }
 
   @Test
   fun regTopic029MediaCookiesAreMonotonicallyDowngradedAcrossAnActualRedirectChain() {

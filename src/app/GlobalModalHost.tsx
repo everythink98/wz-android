@@ -43,8 +43,6 @@ export function GlobalModalHost({
   setNodeImageAuthError,
   showNodeImageAuthPanel,
   showLinuxDoPanel,
-  showNextImage,
-  showPreviousImage,
   savePreviewImage,
   selectPreviewImage,
   changeLinuxDoPanel,
@@ -86,8 +84,6 @@ export function GlobalModalHost({
   setNodeImageAuthError: (value: string) => void;
   showNodeImageAuthPanel: boolean;
   showLinuxDoPanel: boolean;
-  showNextImage: () => void;
-  showPreviousImage: () => void;
   savePreviewImage: () => void;
   selectPreviewImage: (index: number) => void;
   changeLinuxDoPanel: (value: boolean) => void;
@@ -184,8 +180,6 @@ export function GlobalModalHost({
         styles={styles}
         theme={theme}
         onClose={closeImagePreview}
-        onNext={showNextImage}
-        onPrevious={showPreviousImage}
         onSave={savePreviewImage}
         onSelect={selectPreviewImage}
       />

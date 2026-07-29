@@ -1,22 +1,62 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, useWindowDimensions, View, type ImageURISource } from 'react-native';
-import { Image as ExpoImage } from 'expo-image';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
-import { imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+  type AccessibilityActionEvent,
+  type ImageURISource
+} from 'react-native';
+import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
+import PagerView, { type PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-native-zoom-toolkit';
+import { X } from 'lucide-react-native';
+import { imageSourceFromUrl, type ImagePreviewItem, type ImagePreviewList } from '../htmlImages';
 import { createStyles, type ReaderTheme } from '../theme';
-import { cachedCompatibleSvgArtifact, compatibleImageRequestIdentity, recoverCompatibleSvgArtifact, refreshCompatibleSvgPoster, type CompatibleSvgArtifact } from '../compatibleImageSources';
+import {
+  cachedCompatibleSvgArtifact,
+  compatibleImageRequestIdentity,
+  recoverCompatibleSvgArtifact,
+  refreshCompatibleSvgPoster,
+  type CompatibleSvgArtifact
+} from '../compatibleImageSources';
 import { useForumMediaRequestContext } from '../mediaSessionEpoch';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
-import { beginDiagnosticTrace, finishDiagnosticTrace, type DiagnosticTrace } from '../diagnostics';
+import {
+  beginDiagnosticTrace,
+  diagnosticRef,
+  finishDiagnosticTrace,
+  type DiagnosticFields,
+  type DiagnosticTrace
+} from '../diagnostics';
 import { CompatibleSvgDocumentView } from './CompatibleSvgDocumentView';
 
-const EMPTY_PREVIEW_URLS: string[] = [];
+const EMPTY_PREVIEW_ITEMS: ImagePreviewItem[] = [];
+const IMAGE_LOAD_TIMEOUT_MS = 30_000;
+const PAGE_SWIPE_DISTANCE_RATIO = 0.18;
+const PAGE_SWIPE_VELOCITY = 800;
+const PULL_CLOSE_DISTANCE_RATIO = 0.25;
+const PULL_CLOSE_VELOCITY = 1_200;
 
-type PreviewRequest = {
-  recovering: boolean;
-  settled: boolean;
+type PreviewStatus = 'failed' | 'loaded' | 'loading';
+type PreviewResolution = { height: number; width: number };
+type PreviewImageLoadMetrics = {
+  cacheType?: ImageLoadEventData['cacheType'];
+  firstProgressAt?: number;
+  loadedAt?: number;
+  loadedBytes?: number;
+  sourceHeight?: number;
+  sourceIdentity: string;
+  sourceWidth?: number;
+  startedAt: number;
+  totalBytes?: number;
 };
 
 type ImagePreviewModalProps = {
@@ -25,98 +65,39 @@ type ImagePreviewModalProps = {
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onClose: () => void;
-  onNext: () => void;
-  onPrevious: () => void;
   onSave: () => void;
   onSelect: (index: number) => void;
 };
 
-function CompatiblePreviewThumbnail({
-  url,
-  mediaContext,
-  nodeSeekUserAgent,
-  styles
-}: {
-  url: string;
+type PreviewPageProps = {
+  active: boolean;
+  activeZoomed: boolean;
+  animatedSvgZoomSuspended: boolean;
+  height: number;
+  index: number;
+  item: ImagePreviewItem;
+  maxScale: number;
   mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
+  onRegisterZoom: (index: number, reference: ResumableZoomRefType | null) => void;
+  onResolution: (requestIdentity: string, resolution: PreviewResolution) => void;
+  onToggleChrome: () => void;
+  onZoomGestureSettled: (index: number, scale: number) => void;
+  onZoomGestureStart: (index: number) => void;
   styles: ReturnType<typeof createStyles>;
-}) {
-  const originalSource = useMemo(
-    () => imageSourceFromUrl(
-      url,
-      { mediaContext, nodeSeekUserAgent }
-    ) as ImageURISource,
-    [mediaContext, nodeSeekUserAgent, url]
-  );
-  const requestIdentity = compatibleImageRequestIdentity(originalSource);
-  const requestIdentityRef = useRef(requestIdentity);
-  const recoveryIdentityRef = useRef('');
-  const posterRefreshIdentityRef = useRef('');
-  const [compatibleArtifact, setCompatibleArtifact] = useState<CompatibleSvgArtifact | null>(null);
-  const activeArtifact = compatibleArtifact?.requestIdentity === requestIdentity
-    ? compatibleArtifact
-    : cachedCompatibleSvgArtifact(originalSource);
+  theme: ReaderTheme;
+  width: number;
+};
 
-  useEffect(() => {
-    requestIdentityRef.current = requestIdentity;
-    recoveryIdentityRef.current = '';
-    posterRefreshIdentityRef.current = '';
-  }, [requestIdentity]);
-
-  const recoverThumbnailArtifact = useCallback(() => {
-    if (recoveryIdentityRef.current === requestIdentity) {
-      return Promise.resolve(null);
-    }
-    recoveryIdentityRef.current = requestIdentity;
-    return recoverCompatibleSvgArtifact(originalSource);
-  }, [originalSource, requestIdentity]);
-
-  const refreshThumbnailPoster = useCallback((artifact: CompatibleSvgArtifact) => {
-    if (posterRefreshIdentityRef.current === requestIdentity) {
-      return Promise.resolve(null);
-    }
-    posterRefreshIdentityRef.current = requestIdentity;
-    return refreshCompatibleSvgPoster(artifact);
-  }, [requestIdentity]);
-
-  const recoverThumbnail = useCallback(async () => {
-    try {
-      const artifact = activeArtifact
-        ? await refreshThumbnailPoster(activeArtifact)
-        : await recoverThumbnailArtifact();
-      if (requestIdentityRef.current === requestIdentity && artifact) {
-        setCompatibleArtifact(artifact);
-      }
-    } catch {
-      // A failed thumbnail stays on the existing image error state; the active preview settles separately.
-    }
-  }, [activeArtifact, recoverThumbnailArtifact, refreshThumbnailPoster, requestIdentity]);
-
-  return (
-    <ExpoImage
-      source={activeArtifact?.posterSource || originalSource}
-      style={styles.imagePreviewThumbnailImage}
-      contentFit="cover"
-      recyclingKey={`thumbnail:${mediaContext.sessionIdentity}:${url}:${activeArtifact?.posterRevision ?? 'native'}`}
-      onError={() => {
-        void recoverThumbnail();
-      }}
-    />
-  );
-}
+type VerticalPullState = {
+  released: boolean;
+  translateY: number;
+  velocityY: number;
+};
 
 export function ImagePreviewModal(props: ImagePreviewModalProps) {
   const mediaContext = useForumMediaRequestContext(props.preview?.contentSource);
-  const activeIndex = props.preview?.index ?? 0;
-  const activeUri = props.preview?.urls[activeIndex] || '';
-  return (
-    <ImagePreviewModalContent
-      key={`${mediaContext.sessionIdentity}\u0000${activeIndex}\u0000${activeUri}\u0000${props.nodeSeekMediaUserAgent || ''}`}
-      {...props}
-      mediaContext={mediaContext}
-    />
-  );
+  return <ImagePreviewModalContent key={mediaContext.sessionIdentity} {...props} mediaContext={mediaContext} />;
 }
 
 function ImagePreviewModalContent({
@@ -126,285 +107,953 @@ function ImagePreviewModalContent({
   styles,
   theme,
   onClose,
-  onNext,
-  onPrevious,
   onSave,
   onSelect
 }: ImagePreviewModalProps & { mediaContext: ForumMediaRequestContext }) {
   const { width, height } = useWindowDimensions();
-  const previewUrls = preview?.urls || EMPTY_PREVIEW_URLS;
-  const previewCount = previewUrls.length;
-  const activeIndex = preview?.index ?? 0;
-  const activeUri = previewUrls[activeIndex] || '';
-  const previewKey = `${mediaContext.sessionIdentity}:${activeIndex}:${activeUri}`;
-  const originalImageSource = useMemo(() => imageSourceFromUrl(
-    activeUri,
-    { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
-  ) as ImageURISource, [activeUri, mediaContext, nodeSeekMediaUserAgent]);
-  const imageRequestIdentity = compatibleImageRequestIdentity(originalImageSource);
-  const previewRequest = useRef<PreviewRequest>({
-    recovering: false,
-    settled: false
-  }).current;
+  const insets = useSafeAreaInsets();
+  const previewItems = preview?.items || EMPTY_PREVIEW_ITEMS;
+  const previewCount = previewItems.length;
+  const requestedIndex = clampIndex(preview?.index ?? 0, previewCount);
+  const [activeIndex, setActiveIndex] = useState(requestedIndex);
+  const [activeZoomed, setActiveZoomed] = useState(false);
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const [pagerScrollEnabled, setPagerScrollEnabled] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [animatedSvgZoomSuspended, setAnimatedSvgZoomSuspended] = useState(false);
+  const [resolutions, setResolutions] = useState<Record<string, PreviewResolution>>({});
+  const pagerRef = useRef<PagerView>(null);
+  const zoomRefs = useRef(new Map<number, ResumableZoomRefType>());
+  const activeIndexRef = useRef(requestedIndex);
+  const requestedIndexRef = useRef(requestedIndex);
+  const previewOpenRef = useRef(Boolean(preview));
   const mountedRef = useRef(true);
-  const previewDiagnosticRef = useRef<{
-    fallback: boolean;
-    requestIdentity: string;
-    trace: DiagnosticTrace;
-  } | null>(null);
-  const [compatibleSvgArtifact, setCompatibleSvgArtifact] = useState<CompatibleSvgArtifact | null>(null);
-  const [imageState, setImageState] = useState<{
-    request: PreviewRequest | null;
-    requestIdentity: string;
-    resolution: { width: number; height: number } | null;
-    status: 'loading' | 'loaded' | 'failed';
-  }>({ request: null, requestIdentity: '', resolution: null, status: 'loading' });
-  const activeImageState = imageState.request === previewRequest
-    ? imageState
-    : { request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' as const };
-  const cachedArtifact = cachedCompatibleSvgArtifact(originalImageSource);
-  const activeArtifact = compatibleSvgArtifact?.requestIdentity === imageRequestIdentity
-    ? compatibleSvgArtifact
-    : cachedArtifact;
-  const thumbnailItems = useMemo(() => (previewCount ? visibleImagePreviewThumbnails(previewUrls, activeIndex) : []), [activeIndex, previewCount, previewUrls]);
-  const currentPreviewTrace = useCallback((fallback = false) => {
-    const previous = previewDiagnosticRef.current;
-    if (previous?.requestIdentity !== imageRequestIdentity) {
-      if (previous) {
-        finishDiagnosticTrace(previous.trace, 'stale', { fallback: previous.fallback ? 'svg' : 'none', terminalReason: 'stale' });
-      }
-      previewDiagnosticRef.current = {
-        fallback,
-        requestIdentity: imageRequestIdentity,
-        trace: beginDiagnosticTrace('media', 'load', {
-          mediaClass: forumMediaTargetClass(activeUri, mediaContext.contentSource),
-          source: mediaContext.contentSource || 'unknown',
-          surface: 'preview'
-        })
-      };
-    } else if (fallback && previous) {
-      previous.fallback = true;
-    }
-    return previewDiagnosticRef.current;
-  }, [activeUri, imageRequestIdentity, mediaContext.contentSource]);
+  const overlayOpacity = useSharedValue(1);
+  const pullTranslateY = useSharedValue(0);
+  const closing = useSharedValue(false);
+
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
   }, []);
-  useEffect(() => () => {
-    const active = previewDiagnosticRef.current;
-    if (active?.requestIdentity === imageRequestIdentity) {
-      finishDiagnosticTrace(active.trace, 'stale', { fallback: active.fallback ? 'svg' : 'none', terminalReason: 'stale' });
-      previewDiagnosticRef.current = null;
-    }
-  }, [imageRequestIdentity]);
+
   useEffect(() => {
-    if (!activeUri) {
-      return undefined;
+    if (requestedIndexRef.current === requestedIndex) {
+      return;
     }
-    const timeout = setTimeout(() => {
+    requestedIndexRef.current = requestedIndex;
+    zoomRefs.current.get(activeIndexRef.current)?.reset(false);
+    activeIndexRef.current = requestedIndex;
+    setActiveZoomed(false);
+    setAnimatedSvgZoomSuspended(false);
+    setPagerScrollEnabled(true);
+    setActiveIndex(requestedIndex);
+    pagerRef.current?.setScrollEnabled(true);
+    pagerRef.current?.setPageWithoutAnimation(requestedIndex);
+  }, [requestedIndex]);
+
+  useEffect(() => {
+    const previewOpen = Boolean(preview);
+    if (previewOpen && !previewOpenRef.current) {
+      setChromeVisible(true);
+      setActiveZoomed(false);
+      setAnimatedSvgZoomSuspended(false);
+      setPagerScrollEnabled(true);
+      pagerRef.current?.setScrollEnabled(true);
+    }
+    previewOpenRef.current = previewOpen;
+    closing.value = false;
+    overlayOpacity.value = 1;
+    pullTranslateY.value = 0;
+  }, [closing, overlayOpacity, preview, pullTranslateY]);
+
+  const activeItem = previewItems[activeIndex];
+  const activeRequestIdentity = activeItem
+    ? previewResolutionIdentity(mediaContext.sessionIdentity, activeItem.originalUri)
+    : '';
+  const activeResolution = resolutions[activeRequestIdentity] || activeItem?.displaySize || null;
+  const imagePreviewMaxScale = useMemo(() => {
+    if (!activeResolution?.width || !activeResolution.height) {
+      return 6;
+    }
+    const fitted = fitContainer(activeResolution.width / activeResolution.height, { width, height });
+    if (!fitted.width || !fitted.height) {
+      return 6;
+    }
+    const pixelScale = Math.max(activeResolution.width / fitted.width, activeResolution.height / fitted.height);
+    return Math.max(3, Math.min(8, pixelScale));
+  }, [activeResolution, height, width]);
+
+  const handleResolution = useCallback((requestIdentity: string, resolution: PreviewResolution) => {
+    setResolutions((current) => {
+      const previous = current[requestIdentity];
+      if (previous?.width === resolution.width && previous.height === resolution.height) {
+        return current;
+      }
+      return { ...current, [requestIdentity]: resolution };
+    });
+  }, []);
+
+  const handleIndexChange = useCallback((index: number) => {
+    if (!mountedRef.current) {
+      return;
+    }
+    const nextIndex = clampIndex(index, previewCount);
+    const previousIndex = activeIndexRef.current;
+    if (nextIndex === previousIndex) {
+      return;
+    }
+    zoomRefs.current.get(previousIndex)?.reset(false);
+    requestedIndexRef.current = nextIndex;
+    activeIndexRef.current = nextIndex;
+    setActiveZoomed(false);
+    setAnimatedSvgZoomSuspended(false);
+    setPagerScrollEnabled(true);
+    pagerRef.current?.setScrollEnabled(true);
+    setActiveIndex(nextIndex);
+    onSelect(nextIndex);
+  }, [onSelect, previewCount]);
+
+  const handlePageSelected = useCallback((event: PagerViewOnPageSelectedEvent) => {
+    handleIndexChange(event.nativeEvent.position);
+  }, [handleIndexChange]);
+
+  const moveToIndex = useCallback((index: number) => {
+    const nextIndex = clampIndex(index, previewCount);
+    if (nextIndex === activeIndexRef.current) {
+      return;
+    }
+    zoomRefs.current.get(activeIndexRef.current)?.reset(false);
+    setActiveZoomed(false);
+    setAnimatedSvgZoomSuspended(false);
+    setPagerScrollEnabled(true);
+    pagerRef.current?.setScrollEnabled(true);
+    pagerRef.current?.setPage(nextIndex);
+  }, [previewCount]);
+
+  const moveFromIndex = useCallback((startIndex: number, delta: number) => {
+    if (activeIndexRef.current !== startIndex) {
+      return;
+    }
+    moveToIndex(startIndex + delta);
+  }, [moveToIndex]);
+
+  const handleAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === 'increment') {
+      moveToIndex(activeIndex + 1);
+    } else if (event.nativeEvent.actionName === 'decrement') {
+      moveToIndex(activeIndex - 1);
+    }
+  }, [activeIndex, moveToIndex]);
+
+  const handleSave = useCallback(async () => {
+    if (saving) {
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave();
+    } finally {
+      if (mountedRef.current) {
+        setSaving(false);
+      }
+    }
+  }, [onSave, saving]);
+
+  const registerZoom = useCallback((index: number, reference: ResumableZoomRefType | null) => {
+    if (reference) {
+      zoomRefs.current.set(index, reference);
+    } else {
+      zoomRefs.current.delete(index);
+    }
+  }, []);
+  const handleZoomGestureStart = useCallback((index: number) => {
+    if (activeIndexRef.current !== index) {
+      return;
+    }
+    setPagerScrollEnabled(false);
+    pagerRef.current?.setScrollEnabled(false);
+    setAnimatedSvgZoomSuspended(true);
+  }, []);
+  const handleZoomGestureSettled = useCallback((index: number, scale: number) => {
+    if (activeIndexRef.current !== index) {
+      return;
+    }
+    const zoomed = Math.abs(scale - 1) > 0.001;
+    setActiveZoomed(zoomed);
+    setPagerScrollEnabled(!zoomed);
+    pagerRef.current?.setScrollEnabled(!zoomed);
+    setAnimatedSvgZoomSuspended(zoomed);
+  }, []);
+
+  const handleVerticalPull = useCallback(({ released, translateY, velocityY }: VerticalPullState) => {
+    'worklet';
+    const distance = Math.max(0, translateY);
+    pullTranslateY.value = distance;
+    overlayOpacity.value = Math.max(0.2, 1 - distance / Math.max(1, height * 0.5));
+    if (!released) {
+      return;
+    }
+    if (distance >= height * PULL_CLOSE_DISTANCE_RATIO || velocityY >= PULL_CLOSE_VELOCITY) {
+      if (!closing.value) {
+        closing.value = true;
+        scheduleOnRN(onClose);
+      }
+      return;
+    }
+    pullTranslateY.value = withTiming(0);
+    overlayOpacity.value = withTiming(1);
+  }, [closing, height, onClose, overlayOpacity, pullTranslateY]);
+
+  const pullToCloseGesture = useMemo(() => Gesture.Pan()
+    .enabled(pagerScrollEnabled)
+    .maxPointers(1)
+    .activeOffsetY(12)
+    .failOffsetX([-12, 12])
+    .onUpdate((event) => {
+      'worklet';
+      handleVerticalPull({
+        released: false,
+        translateY: Math.max(0, event.translationY),
+        velocityY: event.velocityY
+      });
+    })
+    .onEnd((event) => {
+      'worklet';
+      handleVerticalPull({
+        released: true,
+        translateY: Math.max(0, event.translationY),
+        velocityY: event.velocityY
+      });
+    })
+    .onFinalize((_event, success) => {
+      'worklet';
+      if (!success) {
+        pullTranslateY.value = withTiming(0);
+        overlayOpacity.value = withTiming(1);
+      }
+    }), [handleVerticalPull, overlayOpacity, pagerScrollEnabled, pullTranslateY]);
+  const horizontalPageGesture = useMemo(() => Gesture.Pan()
+    .enabled(pagerScrollEnabled)
+    .maxPointers(1)
+    .activeOffsetX([-12, 12])
+    .failOffsetY([-12, 12])
+    .onEnd((event) => {
+      'worklet';
+      const horizontalDistance = Math.abs(event.translationX);
+      const verticalDistance = Math.abs(event.translationY);
+      const horizontalVelocity = Math.abs(event.velocityX);
+      const verticalVelocity = Math.abs(event.velocityY);
       if (
-        !mountedRef.current
-        || previewRequest.settled
+        horizontalDistance <= verticalDistance
+        || (
+          horizontalDistance < width * PAGE_SWIPE_DISTANCE_RATIO
+          && (horizontalVelocity < PAGE_SWIPE_VELOCITY || horizontalVelocity <= verticalVelocity)
+        )
       ) {
         return;
       }
-      previewRequest.settled = true;
-      previewRequest.recovering = false;
-      const diagnostic = currentPreviewTrace();
-      if (diagnostic) {
-        finishDiagnosticTrace(diagnostic.trace, 'failure', {
-          fallback: diagnostic.fallback ? 'svg' : 'none',
-          terminalReason: 'timeout'
-        });
-        previewDiagnosticRef.current = null;
+      const signedMovement = horizontalDistance > 1 ? event.translationX : event.velocityX;
+      if (signedMovement !== 0) {
+        scheduleOnRN(moveFromIndex, activeIndex, signedMovement < 0 ? 1 : -1);
       }
-      setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
-    }, 30_000);
-    return () => clearTimeout(timeout);
-  }, [activeUri, currentPreviewTrace, imageRequestIdentity, previewRequest]);
+    }), [activeIndex, moveFromIndex, pagerScrollEnabled, width]);
+  const pagerGesture = useMemo(
+    () => Gesture.Simultaneous(pullToCloseGesture, horizontalPageGesture, Gesture.Native()),
+    [horizontalPageGesture, pullToCloseGesture]
+  );
 
-  const previewResolution = activeImageState.resolution || activeArtifact?.dimensions || null;
-  const imagePreviewSize = useMemo(() => {
-    if (!previewResolution?.width || !previewResolution.height) {
-      return { width, height };
-    }
-    return fitContainer(previewResolution.width / previewResolution.height, { width, height });
-  }, [height, previewResolution, width]);
-
-  const imagePreviewMaxScale = useMemo(() => {
-    if (!previewResolution?.width || !previewResolution.height || !imagePreviewSize.width || !imagePreviewSize.height) {
-      return 6;
-    }
-    const pixelScale = Math.max(previewResolution.width / imagePreviewSize.width, previewResolution.height / imagePreviewSize.height);
-    return Math.max(3, Math.min(8, pixelScale));
-  }, [imagePreviewSize, previewResolution]);
-
-  const settlePreviewLoaded = useCallback((resolution: { height: number; width: number } | null, fallback: boolean) => {
-    if (!mountedRef.current || previewRequest.settled) {
-      return;
-    }
-    previewRequest.settled = true;
-    previewRequest.recovering = false;
-    const diagnostic = currentPreviewTrace(fallback);
-    if (diagnostic) {
-      finishDiagnosticTrace(diagnostic.trace, 'success', {
-        fallback: fallback ? 'svg' : 'none',
-        terminalReason: fallback ? 'fallback-loaded' : 'loaded'
-      });
-      previewDiagnosticRef.current = null;
-    }
-    setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution, status: 'loaded' });
-  }, [currentPreviewTrace, imageRequestIdentity, previewRequest]);
-
-  const settlePreviewFailure = useCallback((fallback: boolean, terminalReason: 'fallback-error' | 'native-error') => {
-    if (!mountedRef.current || previewRequest.settled) {
-      return;
-    }
-    previewRequest.settled = true;
-    previewRequest.recovering = false;
-    const diagnostic = currentPreviewTrace(fallback);
-    if (diagnostic) {
-      finishDiagnosticTrace(diagnostic.trace, 'failure', {
-        fallback: fallback ? 'svg' : 'none',
-        terminalReason
-      });
-      previewDiagnosticRef.current = null;
-    }
-    setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'failed' });
-  }, [currentPreviewTrace, imageRequestIdentity, previewRequest]);
-
-  const recoverSvgArtifact = useCallback(async () => {
-    if (!mountedRef.current || previewRequest.settled) {
-      return;
-    }
-    if (activeArtifact) {
-      settlePreviewFailure(true, 'fallback-error');
-      return;
-    }
-    if (previewRequest.recovering) {
-      return;
-    }
-    previewRequest.recovering = true;
-    currentPreviewTrace(true);
-    setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' });
-    try {
-      const artifact = await recoverCompatibleSvgArtifact(originalImageSource);
-      if (!mountedRef.current || previewRequest.settled) {
-        return;
-      }
-      if (artifact) {
-        setCompatibleSvgArtifact(artifact);
-        setImageState({
-          request: previewRequest,
-          requestIdentity: imageRequestIdentity,
-          resolution: artifact.dimensions,
-          status: 'loading'
-        });
-        return;
-      }
-      settlePreviewFailure(true, 'native-error');
-    } catch {
-      settlePreviewFailure(true, 'fallback-error');
-    }
-  }, [activeArtifact, currentPreviewTrace, imageRequestIdentity, originalImageSource, previewRequest, settlePreviewFailure]);
+  const backgroundStyle = useAnimatedStyle(() => ({ opacity: overlayOpacity.value }), [overlayOpacity]);
+  const pagerPullStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: pullTranslateY.value }]
+  }), [pullTranslateY]);
 
   if (!preview || previewCount === 0) {
     return null;
   }
-  const hasMany = previewCount > 1;
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <GestureHandlerRootView style={styles.imagePreviewOverlay}>
-        <View style={styles.imagePreviewTopBar}>
-          <Text style={styles.imagePreviewCount}>{activeIndex + 1} / {previewCount}</Text>
-          <View style={styles.imagePreviewTopActions}>
-            <Pressable accessibilityRole="button" accessibilityLabel="保存图片" style={styles.imagePreviewTextButton} onPress={onSave}>
-              <Text style={styles.imagePreviewButtonText}>保存</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="关闭图片预览" style={styles.imagePreviewClose} onPress={onClose}>
-              <X size={22} color={theme.onOverlay} strokeWidth={1.8} />
-            </Pressable>
-          </View>
-        </View>
-        <View style={styles.imagePreviewScroll}>
-          <ResumableZoom
-            key={`${previewKey}:${activeArtifact ? 'svg-document' : 'native'}`}
-            style={styles.imagePreviewScroll}
-            maxScale={imagePreviewMaxScale}
-            extendGestures
-          >
-            {activeArtifact ? (
-              <CompatibleSvgDocumentView
-                artifact={activeArtifact}
-                style={[styles.imagePreviewImage, imagePreviewSize]}
-                onLoad={() => settlePreviewLoaded(activeArtifact.dimensions, true)}
-                onError={() => settlePreviewFailure(true, 'fallback-error')}
-              />
-            ) : (
-              <ExpoImage
-                key={`${imageRequestIdentity}:native`}
-                contentFit="contain"
-                recyclingKey={`${mediaContext.sessionIdentity}:${activeUri}:native`}
-                source={originalImageSource}
-                style={[styles.imagePreviewImage, imagePreviewSize]}
-                onLoadStart={() => {
-                  if (!mountedRef.current || previewRequest.settled) {
-                    return;
-                  }
-                  currentPreviewTrace(false);
-                  setImageState({ request: previewRequest, requestIdentity: imageRequestIdentity, resolution: null, status: 'loading' });
-                }}
-                onLoad={(event) => {
-                  const source = event.source;
-                  settlePreviewLoaded(source.width > 0 && source.height > 0
-                    ? { width: source.width, height: source.height }
-                    : null, false);
-                }}
-                onError={recoverSvgArtifact}
-              />
-            )}
-          </ResumableZoom>
-        </View>
-        {activeImageState.status === 'loading' ? (
-          <View style={styles.imagePreviewState}>
-            <ActivityIndicator color={theme.onOverlay} />
-            <Text style={styles.imagePreviewStateText}>图片加载中...</Text>
-          </View>
-        ) : null}
-        {activeImageState.status === 'failed' ? (
-          <View style={styles.imagePreviewState}>
-            <Text style={styles.imagePreviewStateText}>图片加载失败</Text>
-          </View>
-        ) : null}
-        {hasMany ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewThumbnailRail} contentContainerStyle={styles.imagePreviewThumbnailContent}>
-            {thumbnailItems.map(({ url, index }) => (
-              <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === activeIndex && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
-                <CompatiblePreviewThumbnail
-                  url={url}
-                  mediaContext={mediaContext}
-                  nodeSeekUserAgent={nodeSeekMediaUserAgent}
-                  styles={styles}
-                />
+      <GestureHandlerRootView style={[styles.imagePreviewOverlay, componentStyles.transparentOverlay]}>
+        <Animated.View pointerEvents="none" style={[componentStyles.overlayBackground, backgroundStyle]} />
+        <GestureDetector gesture={pagerGesture}>
+          <Animated.View style={[styles.imagePreviewScroll, pagerPullStyle]}>
+            <PagerView
+              ref={pagerRef}
+              testID="image-preview-pager"
+              initialPage={requestedIndex}
+              offscreenPageLimit={1}
+              orientation="horizontal"
+              overScrollMode="never"
+              overdrag={false}
+              scrollEnabled={pagerScrollEnabled}
+              style={componentStyles.pagerPage}
+              onPageSelected={handlePageSelected}
+            >
+              {previewItems.map((item, index) => (
+                <View
+                  key={`${index}\u0000${mediaContext.sessionIdentity}\u0000${item.originalUri}\u0000${nodeSeekMediaUserAgent || ''}`}
+                  collapsable={false}
+                  style={componentStyles.pagerPage}
+                >
+                  {Math.abs(index - activeIndex) <= 1 ? (
+                    <PreviewPagerPage
+                      active={index === activeIndex}
+                      activeZoomed={index === activeIndex && activeZoomed}
+                      animatedSvgZoomSuspended={index === activeIndex && animatedSvgZoomSuspended}
+                      height={height}
+                      index={index}
+                      item={item}
+                      maxScale={imagePreviewMaxScale}
+                      mediaContext={mediaContext}
+                      nodeSeekUserAgent={nodeSeekMediaUserAgent}
+                      onRegisterZoom={registerZoom}
+                      onResolution={handleResolution}
+                      onToggleChrome={() => setChromeVisible((current) => !current)}
+                      onZoomGestureSettled={handleZoomGestureSettled}
+                      onZoomGestureStart={handleZoomGestureStart}
+                      styles={styles}
+                      theme={theme}
+                      width={width}
+                    />
+                  ) : null}
+                </View>
+              ))}
+            </PagerView>
+          </Animated.View>
+        </GestureDetector>
+        <View
+          accessible
+          accessibilityActions={[
+            { name: 'decrement', label: '上一张图片' },
+            { name: 'increment', label: '下一张图片' }
+          ]}
+          accessibilityLabel={`图片预览，第 ${activeIndex + 1} 张，共 ${previewCount} 张`}
+          accessibilityRole="adjustable"
+          accessibilityValue={{
+            min: 1,
+            max: previewCount,
+            now: activeIndex + 1,
+            text: `第 ${activeIndex + 1} 张，共 ${previewCount} 张`
+          }}
+          pointerEvents="none"
+          style={componentStyles.accessibilityPager}
+          onAccessibilityAction={handleAccessibilityAction}
+        />
+        {chromeVisible ? (
+          <>
+            <View pointerEvents="box-none" style={[styles.imagePreviewTopBar, { top: Math.max(insets.top, 12) }]}>
+              <Pressable accessibilityRole="button" accessibilityLabel="关闭图片预览" style={styles.imagePreviewClose} onPress={onClose}>
+                <X size={22} color={theme.onOverlay} strokeWidth={1.8} />
               </Pressable>
-            ))}
-          </ScrollView>
-        ) : null}
-        {hasMany ? (
-          <View style={styles.imagePreviewControls}>
-            <Pressable accessibilityRole="button" accessibilityLabel="上一张图片" style={styles.imagePreviewControl} onPress={onPrevious}>
-              <ChevronLeft size={25} color={theme.onOverlay} strokeWidth={1.8} />
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="下一张图片" style={styles.imagePreviewControl} onPress={onNext}>
-              <ChevronRight size={25} color={theme.onOverlay} strokeWidth={1.8} />
-            </Pressable>
-          </View>
+              <Text accessibilityLiveRegion="polite" style={styles.imagePreviewCount}>{activeIndex + 1}/{previewCount}</Text>
+              <View style={componentStyles.chromeSpacer} />
+            </View>
+            <View pointerEvents="box-none" style={[componentStyles.bottomBar, { bottom: Math.max(insets.bottom, 16) }]}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="保存图片"
+                accessibilityState={{ busy: saving, disabled: saving }}
+                disabled={saving}
+                style={[styles.imagePreviewTextButton, saving && componentStyles.disabledButton]}
+                onPress={() => {
+                  void handleSave();
+                }}
+              >
+                <Text style={styles.imagePreviewButtonText}>{saving ? '保存中…' : '保存'}</Text>
+              </Pressable>
+            </View>
+          </>
         ) : null}
       </GestureHandlerRootView>
     </Modal>
   );
 }
+
+function PreviewPagerPage({
+  active,
+  activeZoomed,
+  animatedSvgZoomSuspended,
+  height,
+  index,
+  item,
+  maxScale,
+  mediaContext,
+  nodeSeekUserAgent,
+  onRegisterZoom,
+  onResolution,
+  onToggleChrome,
+  onZoomGestureSettled,
+  onZoomGestureStart,
+  styles,
+  theme,
+  width
+}: PreviewPageProps) {
+  const originalSource = useMemo(() => imageSourceFromUrl(
+    item.originalUri,
+    { mediaContext, nodeSeekUserAgent }
+  ) as ImageURISource, [item.originalUri, mediaContext, nodeSeekUserAgent]);
+  const displaySource = useMemo(() => imageSourceFromUrl(
+    item.displayUri,
+    { mediaContext, nodeSeekUserAgent }
+  ) as ImageURISource, [item.displayUri, mediaContext, nodeSeekUserAgent]);
+  const requestIdentity = compatibleImageRequestIdentity(originalSource);
+  const resolutionIdentity = previewResolutionIdentity(mediaContext.sessionIdentity, item.originalUri);
+  const [retryVersion, setRetryVersion] = useState(0);
+  const [fullQuality, setFullQuality] = useState(active);
+  const [resolution, setResolution] = useState<PreviewResolution | null>(item.displaySize || null);
+  const [compatibleSvgArtifact, setCompatibleSvgArtifact] = useState<CompatibleSvgArtifact | null>(null);
+  const zoomRef = useRef<ResumableZoomRefType>(null);
+  const mountedRef = useRef(true);
+  const activeRef = useRef(active);
+  const settledRef = useRef(false);
+  const recoveringRef = useRef(false);
+  const nativeFailedRef = useRef(false);
+  const posterRefreshRef = useRef({ attempted: false, inFlight: false, sourceIdentity: '' });
+  const requestGenerationRef = useRef(0);
+  const cachedArtifact = useMemo(() => cachedCompatibleSvgArtifact(originalSource), [originalSource]);
+  const knownArtifact = compatibleSvgArtifact?.requestIdentity === requestIdentity
+    ? compatibleSvgArtifact
+    : cachedArtifact;
+  const activeArtifact = active ? knownArtifact : null;
+  const activeAnimatedArtifact = activeArtifact?.animated ? activeArtifact : null;
+  const sourceIdentity = `${requestIdentity}\u0000${retryVersion}`;
+  const svgViewIdentity = activeAnimatedArtifact
+    ? `${sourceIdentity}\u0000${activeAnimatedArtifact.requestIdentity}`
+    : '';
+  const [readySvgViewIdentity, setReadySvgViewIdentity] = useState('');
+  const [displayedSvgPosterIdentity, setDisplayedSvgPosterIdentity] = useState('');
+  const svgPosterIdentity = activeAnimatedArtifact
+    ? `${svgViewIdentity}\u0000${activeAnimatedArtifact.posterRevision}`
+    : '';
+  const animatedSvgPosterReady = displayedSvgPosterIdentity === svgPosterIdentity;
+  const sourceIdentityRef = useRef(sourceIdentity);
+  const loadMetricsRef = useRef<PreviewImageLoadMetrics>({
+    sourceIdentity,
+    startedAt: Date.now()
+  });
+  const previewDiagnosticRef = useRef<{ fallback: boolean; trace: DiagnosticTrace } | null>(null);
+  const [imageState, setImageState] = useState<{ sourceIdentity: string; status: PreviewStatus }>({
+    sourceIdentity,
+    status: 'loading'
+  });
+  activeRef.current = active;
+  const status = imageState.sourceIdentity === sourceIdentity ? imageState.status : 'loading';
+  const setCurrentStatus = useCallback((nextStatus: PreviewStatus) => {
+    setImageState({ sourceIdentity, status: nextStatus });
+  }, [sourceIdentity]);
+  const attachZoomRef = useCallback((reference: ResumableZoomRefType | null) => {
+    zoomRef.current = reference;
+    onRegisterZoom(index, reference);
+  }, [index, onRegisterZoom]);
+  const settleZoomGesture = useCallback(() => {
+    onZoomGestureSettled(index, zoomRef.current?.getState().scale ?? 1);
+  }, [index, onZoomGestureSettled]);
+
+  const finishActiveDiagnostic = useCallback((
+    outcome: 'failure' | 'stale' | 'success',
+    fallback: boolean,
+    terminalReason: string,
+    fields: DiagnosticFields = {},
+    finishedAt = Date.now()
+  ) => {
+    const diagnostic = previewDiagnosticRef.current;
+    if (!diagnostic) {
+      return;
+    }
+    finishDiagnosticTrace(diagnostic.trace, outcome, {
+      ...fields,
+      fallback: fallback || diagnostic.fallback ? 'svg' : 'none',
+      terminalReason
+    }, finishedAt);
+    previewDiagnosticRef.current = null;
+  }, []);
+
+  const currentDiagnostic = useCallback((fallback = false) => {
+    if (!activeRef.current) {
+      return null;
+    }
+    if (!previewDiagnosticRef.current) {
+      previewDiagnosticRef.current = {
+        fallback,
+        trace: beginDiagnosticTrace('media', 'load', {
+          candidateKind: 'lightbox',
+          mediaClass: forumMediaTargetClass(item.originalUri, mediaContext.contentSource),
+          mediaRef: diagnosticRef('media', item.originalUri),
+          mediaRole: 'preview-active',
+          source: mediaContext.contentSource || 'unknown',
+          surface: 'preview'
+        }, loadMetricsRef.current.startedAt)
+      };
+    } else if (fallback) {
+      previewDiagnosticRef.current.fallback = true;
+    }
+    return previewDiagnosticRef.current;
+  }, [item.originalUri, mediaContext.contentSource]);
+
+  const settleLoaded = useCallback((fallback: boolean) => {
+    if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+      return;
+    }
+    settledRef.current = true;
+    recoveringRef.current = false;
+    if (activeRef.current) {
+      const displayedAt = Date.now();
+      finishActiveDiagnostic(
+        'success',
+        fallback,
+        fallback ? 'fallback-loaded' : 'loaded',
+        previewImageMetricFields(loadMetricsRef.current, displayedAt, true),
+        displayedAt
+      );
+    }
+    setCurrentStatus('loaded');
+  }, [finishActiveDiagnostic, setCurrentStatus, sourceIdentity]);
+
+  const settleFailure = useCallback((fallback: boolean, terminalReason: 'fallback-error' | 'native-error' | 'timeout') => {
+    if (
+      !mountedRef.current
+      || !activeRef.current
+      || sourceIdentityRef.current !== sourceIdentity
+    ) {
+      return;
+    }
+    nativeFailedRef.current = true;
+    settledRef.current = true;
+    recoveringRef.current = false;
+    finishActiveDiagnostic(
+      'failure',
+      fallback,
+      terminalReason,
+      previewImageMetricFields(loadMetricsRef.current)
+    );
+    setCurrentStatus('failed');
+  }, [finishActiveDiagnostic, setCurrentStatus, sourceIdentity]);
+
+  const recoverSvgArtifact = useCallback(async () => {
+    if (
+      !mountedRef.current
+      || !activeRef.current
+      || sourceIdentityRef.current !== sourceIdentity
+      || settledRef.current
+      || recoveringRef.current
+    ) {
+      return;
+    }
+    recoveringRef.current = true;
+    currentDiagnostic(true);
+    setCurrentStatus('loading');
+    const generation = requestGenerationRef.current;
+    try {
+      const artifact = await recoverCompatibleSvgArtifact(originalSource);
+      if (
+        !mountedRef.current
+        || !activeRef.current
+        || sourceIdentityRef.current !== sourceIdentity
+        || settledRef.current
+        || generation !== requestGenerationRef.current
+      ) {
+        return;
+      }
+      recoveringRef.current = false;
+      if (!artifact) {
+        settleFailure(true, 'native-error');
+        return;
+      }
+      setCompatibleSvgArtifact(artifact);
+      setResolution(artifact.dimensions);
+      loadMetricsRef.current = {
+        ...loadMetricsRef.current,
+        loadedAt: Date.now(),
+        sourceHeight: artifact.dimensions.height,
+        sourceWidth: artifact.dimensions.width
+      };
+      onResolution(resolutionIdentity, artifact.dimensions);
+    } catch {
+      if (generation === requestGenerationRef.current) {
+        settleFailure(true, 'fallback-error');
+      }
+    }
+  }, [currentDiagnostic, onResolution, originalSource, resolutionIdentity, setCurrentStatus, settleFailure, sourceIdentity]);
+
+  const refreshSvgPoster = useCallback(async (artifact: CompatibleSvgArtifact, terminalOnFailure: boolean) => {
+    if (
+      !mountedRef.current
+      || !activeRef.current
+      || sourceIdentityRef.current !== sourceIdentity
+    ) {
+      return;
+    }
+    if (posterRefreshRef.current.sourceIdentity !== sourceIdentity) {
+      posterRefreshRef.current = { attempted: false, inFlight: false, sourceIdentity };
+    }
+    if (posterRefreshRef.current.inFlight) {
+      return;
+    }
+    if (posterRefreshRef.current.attempted) {
+      if (terminalOnFailure) {
+        settleFailure(true, 'fallback-error');
+      }
+      return;
+    }
+    posterRefreshRef.current.attempted = true;
+    posterRefreshRef.current.inFlight = true;
+    if (settledRef.current) {
+      settledRef.current = false;
+      loadMetricsRef.current = { sourceIdentity, startedAt: Date.now() };
+    }
+    currentDiagnostic(true);
+    setCurrentStatus('loading');
+    try {
+      const refreshed = await refreshCompatibleSvgPoster(artifact);
+      if (
+        !mountedRef.current
+        || sourceIdentityRef.current !== sourceIdentity
+      ) {
+        return;
+      }
+      setCompatibleSvgArtifact(refreshed);
+      setResolution(refreshed.dimensions);
+      onResolution(resolutionIdentity, refreshed.dimensions);
+    } catch {
+      if (terminalOnFailure) {
+        settleFailure(true, 'fallback-error');
+      }
+    } finally {
+      if (posterRefreshRef.current.sourceIdentity === sourceIdentity) {
+        posterRefreshRef.current.inFlight = false;
+      }
+    }
+  }, [currentDiagnostic, onResolution, resolutionIdentity, setCurrentStatus, settleFailure, sourceIdentity]);
+
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestGenerationRef.current += 1;
+      finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
+    };
+  }, [finishActiveDiagnostic]);
+
+  useEffect(() => {
+    if (!activeArtifact) {
+      return;
+    }
+    setResolution(activeArtifact.dimensions);
+    onResolution(resolutionIdentity, activeArtifact.dimensions);
+  }, [activeArtifact, onResolution, resolutionIdentity]);
+
+  useEffect(() => {
+    if (!active) {
+      if (!nativeFailedRef.current) {
+        setFullQuality(false);
+      }
+      setReadySvgViewIdentity('');
+      setDisplayedSvgPosterIdentity('');
+      requestGenerationRef.current += 1;
+      recoveringRef.current = false;
+      finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
+      return;
+    }
+    if (!settledRef.current) {
+      if (!previewDiagnosticRef.current) {
+        loadMetricsRef.current = {
+          sourceIdentity,
+          startedAt: Date.now()
+        };
+      }
+      currentDiagnostic(false);
+    }
+    if (!nativeFailedRef.current) {
+      setFullQuality(true);
+    }
+    if (nativeFailedRef.current && !settledRef.current) {
+      void recoverSvgArtifact();
+    }
+  }, [active, currentDiagnostic, finishActiveDiagnostic, recoverSvgArtifact, sourceIdentity]);
+
+  useEffect(() => {
+    if (!active || settledRef.current || status !== 'loading') {
+      return undefined;
+    }
+    const timeout = setTimeout(() => settleFailure(false, 'timeout'), IMAGE_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [active, retryVersion, settleFailure, status]);
+
+  const imageSize = useMemo(() => {
+    const layoutResolution = knownArtifact?.dimensions || resolution || item.displaySize;
+    if (!layoutResolution?.width || !layoutResolution.height) {
+      return { width, height };
+    }
+    return fitContainer(layoutResolution.width / layoutResolution.height, { width, height });
+  }, [height, item.displaySize, knownArtifact?.dimensions, resolution, width]);
+
+  const retry = useCallback(() => {
+    if (!activeRef.current) {
+      return;
+    }
+    requestGenerationRef.current += 1;
+    settledRef.current = false;
+    recoveringRef.current = false;
+    nativeFailedRef.current = false;
+    setFullQuality(true);
+    finishActiveDiagnostic('stale', false, 'stale', previewImageMetricFields(loadMetricsRef.current));
+    setCurrentStatus('loading');
+    const nextRetryVersion = retryVersion + 1;
+    const nextSourceIdentity = `${requestIdentity}\u0000${nextRetryVersion}`;
+    sourceIdentityRef.current = nextSourceIdentity;
+    loadMetricsRef.current = {
+      sourceIdentity: nextSourceIdentity,
+      startedAt: Date.now()
+    };
+    setRetryVersion(nextRetryVersion);
+  }, [finishActiveDiagnostic, requestIdentity, retryVersion, setCurrentStatus]);
+
+  return (
+    <View testID={`preview-page-${index}`} style={componentStyles.pagerPage}>
+      <ResumableZoom
+        ref={attachZoomRef}
+        extendGestures
+        maxScale={maxScale}
+        panEnabled={active && activeZoomed}
+        pinchEnabled={active}
+        style={componentStyles.pagerPage}
+        tapsEnabled={active}
+        onDoubleTapStart={() => onZoomGestureStart(index)}
+        onGestureEnd={settleZoomGesture}
+        onPanStart={() => onZoomGestureStart(index)}
+        onPinchStart={() => onZoomGestureStart(index)}
+        onTap={onToggleChrome}
+      >
+        <View testID={`preview-zoom-content-${index}`} style={[componentStyles.previewPage, imageSize]}>
+          {activeAnimatedArtifact ? (
+          <ExpoImage
+            key={`${sourceIdentity}:${activeAnimatedArtifact.posterRevision}:continuity`}
+            testID={animatedSvgZoomSuspended || readySvgViewIdentity !== svgViewIdentity
+              ? `preview-continuity-${index}`
+              : undefined}
+            cachePolicy="memory-disk"
+            contentFit="contain"
+            pointerEvents="none"
+            priority="high"
+            recyclingKey={`${mediaContext.sessionIdentity}:${sourceIdentity}:${activeAnimatedArtifact.posterRevision}:continuity`}
+            source={activeAnimatedArtifact.posterSource}
+            style={[
+              StyleSheet.absoluteFill,
+              readySvgViewIdentity === svgViewIdentity
+                && (!animatedSvgZoomSuspended || !animatedSvgPosterReady)
+                ? componentStyles.hiddenMedia
+                : null
+            ]}
+            onDisplay={() => {
+              if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                return;
+              }
+              setDisplayedSvgPosterIdentity(svgPosterIdentity);
+            }}
+            onError={() => {
+              setDisplayedSvgPosterIdentity((identity) => identity === svgPosterIdentity ? '' : identity);
+              void refreshSvgPoster(activeAnimatedArtifact, false);
+            }}
+          />
+          ) : knownArtifact ? (
+            <ExpoImage
+              key={`${sourceIdentity}:${knownArtifact.posterRevision}:${active ? 'active' : 'warm'}:poster`}
+              allowDownscaling={!active}
+              testID={`preview-svg-poster-${index}`}
+              cachePolicy="memory-disk"
+              contentFit="contain"
+              priority={active ? 'high' : 'low'}
+              recyclingKey={`${mediaContext.sessionIdentity}:${sourceIdentity}:${knownArtifact.posterRevision}:poster`}
+              source={knownArtifact.posterSource}
+              style={StyleSheet.absoluteFill}
+              onDisplay={() => settleLoaded(true)}
+              onError={() => {
+                void refreshSvgPoster(knownArtifact, true);
+              }}
+            />
+          ) : (
+            <ExpoImage
+              allowDownscaling={!fullQuality}
+              key={sourceIdentity}
+              testID={`preview-image-${index}`}
+              cachePolicy="memory-disk"
+              contentFit="contain"
+              placeholder={displaySource}
+              placeholderContentFit="contain"
+              priority={active ? 'high' : 'low'}
+              recyclingKey={`${mediaContext.sessionIdentity}:${item.originalUri}:${retryVersion}:native`}
+              source={originalSource}
+              style={StyleSheet.absoluteFill}
+              transition={150}
+              onDisplay={() => settleLoaded(false)}
+              onError={() => {
+                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                  return;
+                }
+                nativeFailedRef.current = true;
+                if (activeRef.current) {
+                  void recoverSvgArtifact();
+                }
+              }}
+              onLoad={(event) => {
+                const source = event.source;
+                if (source.width > 0 && source.height > 0) {
+                  const nextResolution = { width: source.width, height: source.height };
+                  if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                    return;
+                  }
+                  loadMetricsRef.current = {
+                    ...loadMetricsRef.current,
+                    cacheType: event.cacheType,
+                    loadedAt: Date.now(),
+                    sourceHeight: source.height,
+                    sourceWidth: source.width
+                  };
+                  setResolution(nextResolution);
+                  onResolution(resolutionIdentity, nextResolution);
+                }
+              }}
+              onLoadStart={() => {
+                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+                  return;
+                }
+                if (!previewDiagnosticRef.current) {
+                  loadMetricsRef.current = {
+                    sourceIdentity,
+                    startedAt: Date.now()
+                  };
+                }
+                if (activeRef.current) {
+                  currentDiagnostic(false);
+                }
+                setCurrentStatus('loading');
+              }}
+              onProgress={(event: ImageProgressEventData) => {
+                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+                  return;
+                }
+                const loadedBytes = Number(event.loaded);
+                const totalBytes = Number(event.total);
+                loadMetricsRef.current = {
+                  ...loadMetricsRef.current,
+                  ...(loadMetricsRef.current.firstProgressAt === undefined ? { firstProgressAt: Date.now() } : {}),
+                  ...(Number.isFinite(loadedBytes) && loadedBytes >= 0 ? { loadedBytes } : {}),
+                  ...(Number.isFinite(totalBytes) && totalBytes >= 0 ? { totalBytes } : {})
+                };
+              }}
+            />
+          )}
+        </View>
+      </ResumableZoom>
+      {activeAnimatedArtifact ? (
+        <View pointerEvents="none" style={componentStyles.documentOverlay}>
+          <View style={[componentStyles.previewPage, imageSize]}>
+            <CompatibleSvgDocumentView
+              key={`${activeAnimatedArtifact.requestIdentity}:${retryVersion}`}
+              artifact={activeAnimatedArtifact}
+              style={[
+                StyleSheet.absoluteFill,
+                readySvgViewIdentity === svgViewIdentity
+                  && (!animatedSvgZoomSuspended || !animatedSvgPosterReady)
+                  ? null
+                  : componentStyles.hiddenMedia
+              ]}
+              onLoad={() => {
+                if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                  return;
+                }
+                setReadySvgViewIdentity(svgViewIdentity);
+                settleLoaded(true);
+              }}
+              onError={() => settleFailure(true, 'fallback-error')}
+            />
+          </View>
+        </View>
+      ) : null}
+      {active && status === 'loading' ? (
+        <View accessibilityLiveRegion="polite" pointerEvents="none" style={styles.imagePreviewState}>
+          <ActivityIndicator color={theme.onOverlay} />
+          <Text style={styles.imagePreviewStateText}>图片加载中...</Text>
+        </View>
+      ) : null}
+      {active && status === 'failed' ? (
+        <View accessibilityRole="alert" style={styles.imagePreviewState}>
+          <Text style={styles.imagePreviewStateText}>图片加载失败</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="重试加载图片" style={styles.imagePreviewTextButton} onPress={retry}>
+            <Text style={styles.imagePreviewButtonText}>重试</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function clampIndex(index: number, count: number) {
+  return Math.max(0, Math.min(index, Math.max(0, count - 1)));
+}
+
+function previewResolutionIdentity(sessionIdentity: string, originalUri: string) {
+  return `${sessionIdentity}\u0000${originalUri}`;
+}
+
+function previewImageMetricFields(
+  metrics: PreviewImageLoadMetrics,
+  finishedAt = Date.now(),
+  includeDisplayTime = false
+): DiagnosticFields {
+  return {
+    ...(metrics.cacheType ? { cacheType: metrics.cacheType } : {}),
+    ...(metrics.firstProgressAt === undefined ? {} : { firstProgressMs: Math.max(0, metrics.firstProgressAt - metrics.startedAt) }),
+    ...(metrics.loadedAt === undefined ? {} : { loadMs: Math.max(0, metrics.loadedAt - metrics.startedAt) }),
+    ...(metrics.loadedBytes === undefined ? {} : { loadedBytes: metrics.loadedBytes }),
+    ...(metrics.sourceHeight === undefined ? {} : { sourceHeight: metrics.sourceHeight }),
+    ...(metrics.sourceWidth === undefined ? {} : { sourceWidth: metrics.sourceWidth }),
+    ...(metrics.totalBytes === undefined ? {} : { totalBytes: metrics.totalBytes }),
+    ...(includeDisplayTime ? { displayMs: Math.max(0, finishedAt - metrics.startedAt) } : {})
+  };
+}
+
+const componentStyles = StyleSheet.create({
+  accessibilityPager: {
+    ...StyleSheet.absoluteFillObject
+  },
+  bottomBar: {
+    alignItems: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    zIndex: 2
+  },
+  chromeSpacer: {
+    height: 44,
+    width: 44
+  },
+  disabledButton: {
+    opacity: 0.55
+  },
+  documentOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  hiddenMedia: {
+    opacity: 0
+  },
+  overlayBackground: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000000'
+  },
+  pagerPage: {
+    flex: 1
+  },
+  previewPage: {
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  transparentOverlay: {
+    backgroundColor: 'transparent'
+  }
+});

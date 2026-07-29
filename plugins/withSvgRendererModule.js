@@ -591,8 +591,16 @@ private object SvgPosterRendererRuntime {
   private var active: RenderRequest? = null
   private var webView: WebView? = null
   private val webViewCreations = AtomicInteger(0)
+  private val webViewDestructions = AtomicInteger(0)
 
   fun webViewCreationCount(): Int = webViewCreations.get()
+
+  fun webViewDestructionCount(): Int = webViewDestructions.get()
+
+  fun hasRetainedWebView(): Boolean {
+    check(Looper.myLooper() == Looper.getMainLooper())
+    return webView != null
+  }
 
   fun enqueue(
     context: Context,
@@ -751,11 +759,10 @@ private object SvgPosterRendererRuntime {
 
       override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
         if (webView !== view) {
-          view.destroy()
+          destroyRenderer(view)
           return true
         }
-        webView = null
-        view.destroy()
+        destroyRenderer(view)
         active?.let {
           fail(it, "svg_renderer_gone", "Chromium SVG 渲染进程已退出。", null)
         }
@@ -873,7 +880,7 @@ private object SvgPosterRendererRuntime {
     if (!settle(request)) {
       return
     }
-    stopAndBlankRenderer()
+    releaseRendererAfterSettle()
     val result = Arguments.createMap()
     result.putString("uri", Uri.fromFile(prepared.outputFile).toString())
     result.putDouble("documentWidth", prepared.documentDimensions.width)
@@ -890,7 +897,7 @@ private object SvgPosterRendererRuntime {
       return
     }
     if (wasActive) {
-      stopAndBlankRenderer()
+      releaseRendererAfterSettle()
     }
     if (error == null) {
       request.promise.reject(code, message)
@@ -900,14 +907,32 @@ private object SvgPosterRendererRuntime {
     startNext()
   }
 
-  private fun stopAndBlankRenderer() {
+  private fun releaseRendererAfterSettle() {
+    val view = webView ?: return
+    if (queue.isEmpty()) {
+      destroyRenderer(view)
+      return
+    }
     try {
-      webView?.let { view ->
-        view.stopLoading()
-        view.loadUrl("about:blank")
-      }
+      view.stopLoading()
+      view.loadUrl("about:blank")
     } catch (_: Exception) {
-      // The request has already reached a terminal state. A dead renderer is recreated on demand.
+      destroyRenderer(view)
+    }
+  }
+
+  private fun destroyRenderer(view: WebView) {
+    if (webView === view) {
+      webView = null
+    }
+    try {
+      view.stopLoading()
+    } catch (_: Exception) {
+    }
+    try {
+      view.destroy()
+      webViewDestructions.incrementAndGet()
+    } catch (_: Exception) {
     }
   }
 
@@ -932,6 +957,12 @@ private object SvgPosterRendererRuntime {
 
 internal fun svgPosterWebViewCreationCount(): Int =
   SvgPosterRendererRuntime.webViewCreationCount()
+
+internal fun svgPosterWebViewDestructionCount(): Int =
+  SvgPosterRendererRuntime.webViewDestructionCount()
+
+internal fun hasRetainedSvgPosterWebView(): Boolean =
+  SvgPosterRendererRuntime.hasRetainedWebView()
 
 internal fun enqueueSvgPosterForTest(
   context: Context,
@@ -1002,6 +1033,7 @@ import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -1017,18 +1049,22 @@ class SvgRendererInstrumentedTest {
       .bufferedReader()
       .use { it.readText() }
 
-  private fun renderPoster(svg: String, cacheKey: String): ReadableMap {
+  private class PendingPoster {
     val settled = CountDownLatch(1)
     var result: ReadableMap? = null
     var failure: AssertionError? = null
+  }
+
+  private fun enqueuePoster(svg: String, cacheKey: String): PendingPoster {
+    val pending = PendingPoster()
     val promise = PromiseImpl(
       { arguments ->
-        result = arguments.firstOrNull() as? ReadableMap
-        settled.countDown()
+        pending.result = arguments.firstOrNull() as? ReadableMap
+        pending.settled.countDown()
       },
       { arguments ->
-        failure = AssertionError("SVG poster rejected: " + arguments.joinToString())
-        settled.countDown()
+        pending.failure = AssertionError("SVG poster rejected: " + arguments.joinToString())
+        pending.settled.countDown()
       }
     )
     enqueueSvgPosterForTest(
@@ -1037,9 +1073,21 @@ class SvgRendererInstrumentedTest {
       cacheKey,
       promise
     )
-    assertTrue("SVG poster did not settle", settled.await(35, TimeUnit.SECONDS))
-    failure?.let { throw it }
-    return checkNotNull(result)
+    return pending
+  }
+
+  private fun awaitPoster(pending: PendingPoster): ReadableMap {
+    assertTrue("SVG poster did not settle", pending.settled.await(35, TimeUnit.SECONDS))
+    pending.failure?.let { throw it }
+    return checkNotNull(pending.result)
+  }
+
+  private fun hasRetainedRenderer(): Boolean {
+    var retained = true
+    instrumentation.runOnMainSync {
+      retained = hasRetainedSvgPosterWebView()
+    }
+    return retained
   }
 
   private fun draw(view: WebView, width: Int, height: Int): Bitmap {
@@ -1049,7 +1097,7 @@ class SvgRendererInstrumentedTest {
   }
 
   @Test
-  fun currentAndroidSvgFailsButChromiumPosterIsNonEmptyAndSingleton() {
+  fun currentAndroidSvgFailsButChromiumPosterIsNonEmptyAndReleasesAfterQueuedWork() {
     val svg = fixture()
     val legacyBitmap = Bitmap.createBitmap(320, 180, Bitmap.Config.ARGB_8888)
     var legacyFailure: Throwable? = null
@@ -1062,13 +1110,30 @@ class SvgRendererInstrumentedTest {
     }
     assertTrue("fixture must preserve the AndroidSVG 1.4 failure", legacyFailure is NullPointerException)
 
-    val before = svgPosterWebViewCreationCount()
+    val creationsBefore = svgPosterWebViewCreationCount()
+    val destructionsBefore = svgPosterWebViewDestructionCount()
     val nonce = System.nanoTime().toString()
-    val posters = (0 until 10).map { index ->
-      renderPoster(svg, "instrumented-" + nonce + "-" + index)
+    val pending = (0 until 10).map { index ->
+      enqueuePoster(svg, "instrumented-" + nonce + "-" + index)
     }
-    val after = svgPosterWebViewCreationCount()
-    assertEquals("poster queue must reuse one WebView", 1, after - before)
+    val posters = pending.map(::awaitPoster)
+    assertEquals(
+      "poster queue must reuse one WebView while work remains",
+      1,
+      svgPosterWebViewCreationCount() - creationsBefore
+    )
+    assertEquals(
+      "idle poster renderer must destroy its WebView",
+      1,
+      svgPosterWebViewDestructionCount() - destructionsBefore
+    )
+    assertFalse("idle poster renderer must not retain its WebView", hasRetainedRenderer())
+    val creationsAfterBatch = svgPosterWebViewCreationCount()
+    val destructionsAfterBatch = svgPosterWebViewDestructionCount()
+    awaitPoster(enqueuePoster(svg, "instrumented-" + nonce + "-0"))
+    assertEquals("poster cache hit must not create a WebView", creationsAfterBatch, svgPosterWebViewCreationCount())
+    assertEquals("poster cache hit must not destroy a WebView", destructionsAfterBatch, svgPosterWebViewDestructionCount())
+    assertFalse("poster cache hit must not retain a WebView", hasRetainedRenderer())
     posters.forEach { poster ->
       val bitmap = checkNotNull(BitmapFactory.decodeFile(checkNotNull(Uri.parse(poster.getString("uri")).path)))
       try {

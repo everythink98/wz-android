@@ -316,10 +316,46 @@ function rememberCompatibleSvgArtifact(identity: string, artifact: CompatibleSvg
 }
 
 function isAnimatedSvg(svg: string) {
-  return /<animate(?:transform|motion)?(?=[\s/>])/i.test(svg)
-    || /@(?:-\w+-)?keyframes\b/i.test(svg)
-    || /(?:^|[{;]\s*)(?:-\w+-)?animation(?:-[a-z-]+)?\s*:/im.test(svg);
+  const animationSource = svg
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  if (/<(?:[A-Za-z_][\w.-]*:)?(?:animate(?:color|motion|transform)?|discard|set)(?=[\s/>])/i.test(animationSource)) {
+    return true;
+  }
+  const cssAnimation = /(?:^|[;{"'])\s*(?:-\w+-)?(animation(?:-name)?)\s*:\s*([^;}"']*)/gim;
+  for (const declaration of animationSource.matchAll(cssAnimation)) {
+    const property = declaration[1].toLowerCase();
+    const value = declaration[2].trim().replace(/\s*!important\s*$/i, '');
+    if (property.endsWith('-name')) {
+      if (value.split(',').some((name) => !CSS_ANIMATION_NAME_RESET_TOKENS.has(name.trim().toLowerCase()))) {
+        return true;
+      }
+      continue;
+    }
+    const withoutTimingFunctions = value.replace(/\b(?:cubic-bezier|linear|scroll|steps|view)\([^)]*\)/gi, ' ');
+    const withoutNumbers = withoutTimingFunctions.replace(
+      /(^|[\s,(])[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?(?:ms|s)?(?=$|[\s,)])/gi,
+      '$1'
+    );
+    const identifiers = withoutNumbers.match(/-?[A-Za-z_][\w-]*/g) || [];
+    if (identifiers.some((identifier) => !CSS_ANIMATION_NON_NAME_TOKENS.has(identifier.toLowerCase()))) {
+      return true;
+    }
+  }
+  return false;
 }
+
+const CSS_ANIMATION_NAME_RESET_TOKENS = new Set([
+  'inherit', 'initial', 'none', 'revert', 'revert-layer', 'unset'
+]);
+
+const CSS_ANIMATION_NON_NAME_TOKENS = new Set([
+  'accumulate', 'add', 'alternate', 'alternate-reverse', 'auto', 'backwards', 'both',
+  'ease', 'ease-in', 'ease-in-out', 'ease-out', 'forwards',
+  'infinite', 'inherit', 'initial',
+  'linear', 'none', 'normal', 'paused', 'replace', 'reverse', 'revert', 'revert-layer',
+  'running', 'step-end', 'step-start', 'unset'
+]);
 
 function stableSvgPosterKey(value: string) {
   let first = 0x811c9dc5;

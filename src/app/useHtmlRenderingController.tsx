@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, PixelRatio, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle, type ImageURISource, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
-import { Image as ExpoImage, useImage, type ImageRef } from 'expo-image';
+import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
 import { VideoView, useVideoPlayer, type VideoPlayerStatus, type VideoSource } from 'expo-video';
 import { WebView } from 'react-native-webview';
 import {
@@ -29,7 +29,10 @@ import {
   isInlineForumImage,
   isPreviewableImageUrl,
   normalizeImagePreviewUrl,
-  shouldMarkLoadedImageInline
+  selectImageDisplaySource,
+  shouldMarkLoadedImageInline,
+  type ImageDisplayCandidateKind,
+  type ImageDisplaySize
 } from '../htmlImages';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
 import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
@@ -44,7 +47,7 @@ import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
 import { cachedCompatibleSvgArtifact, compatibleImageRequestIdentity, recoverCompatibleSvgArtifact, refreshCompatibleSvgPoster, type CompatibleSvgArtifact } from '../compatibleImageSources';
 import { readManagedCookieHeader } from '../managedCookies';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
-import { beginDiagnosticTrace, finishDiagnosticTrace, type DiagnosticTrace } from '../diagnostics';
+import { beginDiagnosticTrace, diagnosticRef, finishDiagnosticTrace, type DiagnosticFields, type DiagnosticTrace } from '../diagnostics';
 
 export async function readManagedWebViewCookieHeader(url: string) {
   const result = await readManagedCookieHeader(url);
@@ -221,10 +224,40 @@ function ForumVideoStickerVideo({
 
 type PreviewImageDimensions = { height: number; width: number };
 
+type BodyImageLoadMetrics = {
+  cacheType?: ImageLoadEventData['cacheType'];
+  firstProgressAt?: number;
+  loadedAt?: number;
+  loadedBytes?: number;
+  requestIdentity: string;
+  sourceHeight?: number;
+  sourceWidth?: number;
+  startedAt: number;
+  totalBytes?: number;
+};
+
 const previewImageDimensionsByUrl = new Map<string, PreviewImageDimensions>();
+
+function bodyImageMetricFields(
+  metrics: BodyImageLoadMetrics,
+  finishedAt = Date.now(),
+  includeDisplayTime = false
+): DiagnosticFields {
+  return {
+    ...(metrics.cacheType ? { cacheType: metrics.cacheType } : {}),
+    ...(metrics.firstProgressAt === undefined ? {} : { firstProgressMs: Math.max(0, metrics.firstProgressAt - metrics.startedAt) }),
+    ...(metrics.loadedAt === undefined ? {} : { loadMs: Math.max(0, metrics.loadedAt - metrics.startedAt) }),
+    ...(metrics.loadedBytes === undefined ? {} : { loadedBytes: metrics.loadedBytes }),
+    ...(metrics.sourceHeight === undefined ? {} : { sourceHeight: metrics.sourceHeight }),
+    ...(metrics.sourceWidth === undefined ? {} : { sourceWidth: metrics.sourceWidth }),
+    ...(metrics.totalBytes === undefined ? {} : { totalBytes: metrics.totalBytes }),
+    ...(includeDisplayTime ? { displayMs: Math.max(0, finishedAt - metrics.startedAt) } : {})
+  };
+}
 
 function PreviewImageBlock({
   attributes,
+  candidateKind,
   errorTextStyle,
   frameBackgroundColor,
   frameBorderColor,
@@ -239,6 +272,7 @@ function PreviewImageBlock({
   trimTrailingBlockSpacing
 }: {
   attributes: Record<string, string | undefined>;
+  candidateKind: ImageDisplayCandidateKind;
   errorTextStyle: StyleProp<TextStyle>;
   frameBackgroundColor: string;
   frameBorderColor: string;
@@ -248,17 +282,25 @@ function PreviewImageBlock({
   markInlineSizedImageUrl: (url: string) => void;
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
-  onOpenImagePreview: (url: string) => void;
+  onOpenImagePreview: (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void;
   src: string;
   trimTrailingBlockSpacing: boolean;
 }) {
   const requestIdentity = compatibleImageRequestIdentity(imageSource);
+  const mountedRef = useRef(true);
   const requestIdentityRef = useRef(requestIdentity);
   const bodyStartedAtRef = useRef(0);
   const settledRequestIdentityRef = useRef('');
   const posterRefreshIdentityRef = useRef('');
+  const bodyMetricsRef = useRef<BodyImageLoadMetrics>({
+    requestIdentity,
+    startedAt: Date.now()
+  });
   const bodyDiagnosticRef = useRef<{ fallback: boolean; requestIdentity: string; trace: DiagnosticTrace } | null>(null);
   const currentBodyTrace = useCallback((fallback = false) => {
+    if (!mountedRef.current) {
+      return null;
+    }
     const previous = bodyDiagnosticRef.current;
     if (previous?.requestIdentity !== requestIdentity) {
       if (previous) {
@@ -268,7 +310,10 @@ function PreviewImageBlock({
         fallback,
         requestIdentity,
         trace: beginDiagnosticTrace('media', 'load', {
+          candidateKind,
           mediaClass: forumMediaTargetClass(src, mediaContext.contentSource),
+          mediaRef: diagnosticRef('media', src),
+          mediaRole: 'body',
           source: mediaContext.contentSource || 'unknown',
           surface: 'body'
         }, bodyStartedAtRef.current || Date.now())
@@ -277,18 +322,25 @@ function PreviewImageBlock({
       previous.fallback = true;
     }
     return bodyDiagnosticRef.current;
-  }, [mediaContext.contentSource, requestIdentity, src]);
+  }, [candidateKind, mediaContext.contentSource, requestIdentity, src]);
   const finishBodyFailure = useCallback((fallback: boolean) => {
     const diagnostic = currentBodyTrace(fallback);
     if (diagnostic) {
       finishDiagnosticTrace(diagnostic.trace, 'failure', {
+        ...bodyImageMetricFields(bodyMetricsRef.current),
         fallback: fallback ? 'svg' : 'none',
         terminalReason: fallback ? 'fallback-error' : 'native-error'
       });
       bodyDiagnosticRef.current = null;
     }
   }, [currentBodyTrace]);
-  const [resolvedImage, setResolvedImage] = useState<{ image: ImageRef; requestIdentity: string } | null>(null);
+  const [loadedImage, setLoadedImage] = useState<{
+    cacheType: ImageLoadEventData['cacheType'];
+    dimensions: PreviewImageDimensions;
+    imageLoadIdentity: string;
+    requestIdentity: string;
+  } | null>(null);
+  const [displayedImageLoadIdentity, setDisplayedImageLoadIdentity] = useState('');
   const [compatibleSvgArtifact, setCompatibleSvgArtifact] = useState<CompatibleSvgArtifact | null>(null);
   const [failedRequestIdentity, setFailedRequestIdentity] = useState('');
   const contentWidth = Math.max(1, imageProps.contentWidth || 1);
@@ -299,19 +351,24 @@ function PreviewImageBlock({
   const activeFallbackSource = activeArtifact?.posterSource || null;
   const activeImageSource = activeFallbackSource || imageSource;
   const imageLoadIdentity = `${requestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
-  const maxImageWidth = Math.ceil(contentWidth * PixelRatio.get());
-  const compatibleAspectRatio = activeFallbackSource?.width && activeFallbackSource.height
-    ? activeFallbackSource.height / activeFallbackSource.width
-    : 0;
   useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const startedAt = Date.now();
     requestIdentityRef.current = requestIdentity;
-    bodyStartedAtRef.current = Date.now();
+    bodyStartedAtRef.current = startedAt;
+    bodyMetricsRef.current = { requestIdentity, startedAt };
   }, [requestIdentity]);
   const recoverSvgArtifact = useCallback(async () => {
     try {
       const artifact = await recoverCompatibleSvgArtifact(imageSource);
       if (
-        requestIdentityRef.current !== requestIdentity
+        !mountedRef.current
+        || requestIdentityRef.current !== requestIdentity
         || settledRequestIdentityRef.current === requestIdentity
       ) {
         return;
@@ -325,7 +382,8 @@ function PreviewImageBlock({
       setFailedRequestIdentity(requestIdentity);
     } catch {
       if (
-        requestIdentityRef.current === requestIdentity
+        mountedRef.current
+        && requestIdentityRef.current === requestIdentity
         && settledRequestIdentityRef.current !== requestIdentity
       ) {
         settledRequestIdentityRef.current = requestIdentity;
@@ -338,7 +396,8 @@ function PreviewImageBlock({
     try {
       const refreshed = await refreshCompatibleSvgPoster(artifact);
       if (
-        requestIdentityRef.current !== requestIdentity
+        !mountedRef.current
+        || requestIdentityRef.current !== requestIdentity
         || settledRequestIdentityRef.current === requestIdentity
       ) {
         return;
@@ -346,7 +405,8 @@ function PreviewImageBlock({
       setCompatibleSvgArtifact(refreshed);
     } catch {
       if (
-        requestIdentityRef.current === requestIdentity
+        mountedRef.current
+        && requestIdentityRef.current === requestIdentity
         && settledRequestIdentityRef.current !== requestIdentity
       ) {
         settledRequestIdentityRef.current = requestIdentity;
@@ -357,7 +417,8 @@ function PreviewImageBlock({
   }, [finishBodyFailure, requestIdentity]);
   const handleImageError = useCallback(() => {
     if (
-      requestIdentityRef.current !== requestIdentity
+      !mountedRef.current
+      || requestIdentityRef.current !== requestIdentity
       || settledRequestIdentityRef.current === requestIdentity
     ) {
       return;
@@ -377,18 +438,66 @@ function PreviewImageBlock({
     currentBodyTrace(true);
     void recoverSvgArtifact();
   }, [activeArtifact, currentBodyTrace, finishBodyFailure, recoverSvgArtifact, refreshSvgPoster, requestIdentity]);
-  const imageRef = useImage(activeImageSource, {
-    maxWidth: maxImageWidth,
-    ...(compatibleAspectRatio > 0 ? { maxHeight: Math.ceil(maxImageWidth * compatibleAspectRatio) } : {}),
-    onError: handleImageError
-  }, [imageLoadIdentity]);
-  useEffect(() => {
-    // A request-identity change alone must not relabel the previous ImageRef as the new response.
-    if (imageRef && settledRequestIdentityRef.current !== requestIdentity) {
-      setResolvedImage({ image: imageRef, requestIdentity });
+  const handleImageLoadStart = useCallback(() => {
+    if (mountedRef.current && requestIdentityRef.current === requestIdentity && settledRequestIdentityRef.current !== requestIdentity) {
+      if (bodyMetricsRef.current.requestIdentity !== requestIdentity) {
+        const startedAt = Date.now();
+        bodyStartedAtRef.current = startedAt;
+        bodyMetricsRef.current = { requestIdentity, startedAt };
+      }
+      currentBodyTrace(Boolean(activeFallbackSource));
     }
-  }, [imageRef]);
-  const activeImageRef = resolvedImage?.requestIdentity === requestIdentity ? resolvedImage.image : null;
+  }, [activeFallbackSource, currentBodyTrace, requestIdentity]);
+  const handleImageLoad = useCallback((event: ImageLoadEventData) => {
+    if (
+      !mountedRef.current
+      || requestIdentityRef.current !== requestIdentity
+      || settledRequestIdentityRef.current === requestIdentity
+    ) {
+      return;
+    }
+    const width = Number(event.source.width);
+    const height = Number(event.source.height);
+    if (!(width > 0 && height > 0)) {
+      return;
+    }
+    bodyMetricsRef.current = {
+      ...bodyMetricsRef.current,
+      cacheType: event.cacheType,
+      loadedAt: Date.now(),
+      sourceHeight: height,
+      sourceWidth: width
+    };
+    setLoadedImage({
+      cacheType: event.cacheType,
+      dimensions: { height, width },
+      imageLoadIdentity,
+      requestIdentity
+    });
+  }, [imageLoadIdentity, requestIdentity]);
+  const handleImageDisplay = useCallback(() => {
+    if (
+      !mountedRef.current
+      || requestIdentityRef.current !== requestIdentity
+      || settledRequestIdentityRef.current === requestIdentity
+    ) {
+      return;
+    }
+    setDisplayedImageLoadIdentity(imageLoadIdentity);
+  }, [imageLoadIdentity, requestIdentity]);
+  const handleImageProgress = useCallback((event: ImageProgressEventData) => {
+    if (!mountedRef.current || requestIdentityRef.current !== requestIdentity || settledRequestIdentityRef.current === requestIdentity) {
+      return;
+    }
+    const loadedBytes = Number(event.loaded);
+    const totalBytes = Number(event.total);
+    bodyMetricsRef.current = {
+      ...bodyMetricsRef.current,
+      ...(bodyMetricsRef.current.firstProgressAt === undefined ? { firstProgressAt: Date.now() } : {}),
+      ...(Number.isFinite(loadedBytes) && loadedBytes >= 0 ? { loadedBytes } : {}),
+      ...(Number.isFinite(totalBytes) && totalBytes >= 0 ? { totalBytes } : {})
+    };
+  }, [requestIdentity]);
   const loadFailed = failedRequestIdentity === requestIdentity;
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -403,7 +512,11 @@ function PreviewImageBlock({
       clearTimeout(timeout);
       const active = bodyDiagnosticRef.current;
       if (active?.requestIdentity === requestIdentity) {
-        finishDiagnosticTrace(active.trace, 'stale', { fallback: 'none', terminalReason: 'stale' });
+        finishDiagnosticTrace(active.trace, 'stale', {
+          ...bodyImageMetricFields(bodyMetricsRef.current),
+          fallback: active.fallback ? 'svg' : 'none',
+          terminalReason: 'stale'
+        });
         bodyDiagnosticRef.current = null;
       }
     };
@@ -420,6 +533,7 @@ function PreviewImageBlock({
       const diagnostic = currentBodyTrace();
       if (diagnostic) {
         finishDiagnosticTrace(diagnostic.trace, 'failure', {
+          ...bodyImageMetricFields(bodyMetricsRef.current),
           fallback: diagnostic.fallback ? 'svg' : 'none',
           terminalReason: 'timeout'
         });
@@ -429,41 +543,38 @@ function PreviewImageBlock({
     }, 30_000);
     return () => clearTimeout(timeout);
   }, [currentBodyTrace, requestIdentity]);
-  useEffect(() => {
-    if (!activeImageRef || settledRequestIdentityRef.current === requestIdentity) {
-      return;
-    }
-    settledRequestIdentityRef.current = requestIdentity;
-    const diagnostic = bodyDiagnosticRef.current;
-    if (diagnostic?.requestIdentity === requestIdentity) {
-      finishDiagnosticTrace(diagnostic.trace, 'success', {
-        fallback: activeFallbackSource ? 'svg' : 'none',
-        terminalReason: activeFallbackSource ? 'fallback-loaded' : 'loaded'
-      });
-      bodyDiagnosticRef.current = null;
-    }
-  }, [activeFallbackSource, activeImageRef, requestIdentity]);
   const cacheKey = `${mediaSessionIdentity}:${normalizeImagePreviewUrl(src).trim()}`;
   const cachedDimensions = previewImageDimensionsByUrl.get(cacheKey);
-  const naturalDimensions = activeImageRef
-    ? { height: activeImageRef.height, width: activeImageRef.width }
+  const activeLoadedImage = loadedImage?.requestIdentity === requestIdentity
+    && loadedImage.imageLoadIdentity === imageLoadIdentity
+    ? loadedImage
+    : null;
+  const naturalDimensions = activeLoadedImage
+    ? activeLoadedImage.dimensions
     : cachedDimensions || { height: Math.round(contentWidth * 0.75), width: contentWidth };
+  const {
+    height: _specifiedStyleHeight,
+    width: _specifiedStyleWidth,
+    ...naturalImageStyle
+  } = StyleSheet.flatten(imageProps.style) || {};
   const imageState = useIMGElementStateWithCache({
     ...imageProps,
     cachedNaturalDimensions: naturalDimensions,
+    height: undefined,
     source: imageSource,
-    style: [imageProps.style, { resizeMode: 'contain' }]
+    style: [naturalImageStyle, { resizeMode: 'contain' }],
+    width: undefined
   });
   useEffect(() => {
-    if (!activeImageRef || !cacheKey) {
+    if (!activeLoadedImage || !cacheKey) {
       return;
     }
-    const dimensions = { height: activeImageRef.height, width: activeImageRef.width };
+    const dimensions = activeLoadedImage.dimensions;
     previewImageDimensionsByUrl.set(cacheKey, dimensions);
     if (shouldMarkLoadedImageInline(attributes, dimensions.width, dimensions.height)) {
       markInlineSizedImageUrl(src);
     }
-  }, [activeImageRef, attributes, cacheKey, markInlineSizedImageUrl, src]);
+  }, [activeLoadedImage, attributes, cacheKey, markInlineSizedImageUrl, src]);
   const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
   const sharedContainerStyle = [
     { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const },
@@ -479,6 +590,24 @@ function PreviewImageBlock({
     overflow: 'hidden' as const
   }, imageState.dimensions];
   const imageLoadingOverlayStyle = [StyleSheet.absoluteFillObject, imageStateFrameStyle];
+  const imageDisplayed = Boolean(activeLoadedImage)
+    && displayedImageLoadIdentity === imageLoadIdentity;
+  useEffect(() => {
+    if (!imageDisplayed || settledRequestIdentityRef.current === requestIdentity) {
+      return;
+    }
+    settledRequestIdentityRef.current = requestIdentity;
+    const diagnostic = bodyDiagnosticRef.current;
+    if (diagnostic?.requestIdentity === requestIdentity) {
+      const displayedAt = Date.now();
+      finishDiagnosticTrace(diagnostic.trace, 'success', {
+        ...bodyImageMetricFields(bodyMetricsRef.current, displayedAt, true),
+        fallback: activeFallbackSource ? 'svg' : 'none',
+        terminalReason: activeFallbackSource ? 'fallback-loaded' : 'loaded'
+      }, displayedAt);
+      bodyDiagnosticRef.current = null;
+    }
+  }, [activeFallbackSource, imageDisplayed, requestIdentity]);
   return (
     <Pressable
       accessibilityLabel={imageState.alt || '查看图片'}
@@ -486,19 +615,30 @@ function PreviewImageBlock({
       style={sharedContainerStyle}
       onPress={(event) => {
         event.stopPropagation?.();
-        onOpenImagePreview(src);
+        onOpenImagePreview(
+          src,
+          activeLoadedImage?.dimensions || cachedDimensions,
+          activeArtifact?.posterSource.uri
+        );
       }}
     >
       <View testID="topic-image-frame" style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
-        {activeImageRef ? (
+        {!loadFailed ? (
           <ExpoImage
+            cachePolicy="memory-disk"
             contentFit="contain"
-            recyclingKey={cacheKey}
-            source={activeImageRef}
+            priority="normal"
+            recyclingKey={imageLoadIdentity}
+            source={activeImageSource}
             style={[imageState.dimensions, imageState.type === 'success' ? imageState.imageStyle : null]}
+            onDisplay={handleImageDisplay}
+            onError={handleImageError}
+            onLoad={handleImageLoad}
+            onLoadStart={handleImageLoadStart}
+            onProgress={handleImageProgress}
           />
         ) : null}
-        {!activeImageRef && !loadFailed ? (
+        {!imageDisplayed && !loadFailed ? (
           <View style={imageLoadingOverlayStyle}>
             <ActivityIndicator color={loadingColor} size="small" />
           </View>
@@ -529,7 +669,7 @@ export function useHtmlRenderingController({
 }: {
   onOpenExternalUrl: (url: string) => void;
   mediaSessionIdentity: string;
-  onOpenImagePreview: (url: string) => void;
+  onOpenImagePreview: (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void;
   onOpenTopic: (topic: Topic) => void | Promise<void>;
   onOpenUser: (user: UserReference) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
@@ -897,21 +1037,28 @@ export function useHtmlRenderingController({
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const contentWidth = useContentWidth();
       const imageProps = useIMGElementProps(props);
-      const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
+      const attributes = props.tnode.attributes;
+      const inlineSrc = attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
+      if (isInlineForumImage(attributes)) {
+        if (!inlineSrc) {
+          return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
+        }
+        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${inlineSrc}`} source={imageSourceFromUrl(inlineSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+      }
+      const displaySource = selectImageDisplaySource(attributes, contentWidth, PixelRatio.get());
+      if (!displaySource) {
+        return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
+      }
+      const src = displaySource.uri;
       const imageSource = imageSourceFromUrl(
         src,
         { baseSource: imageProps.source, mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
       );
-      if (!src) {
-        return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
-      }
-      if (isInlineForumImage(props.tnode.attributes)) {
-        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${src}`} source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
-      }
       return (
         <PreviewImageBlock
           key={`${mediaSessionIdentity}:${src}`}
-          attributes={props.tnode.attributes}
+          attributes={attributes}
+          candidateKind={displaySource.candidateKind}
           errorTextStyle={styles.inlineForumImageText}
           frameBackgroundColor={theme.surface2}
           frameBorderColor={theme.line}
