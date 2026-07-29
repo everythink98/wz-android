@@ -539,7 +539,6 @@ function PreviewPagerPage({
     sourceIdentity,
     status: 'loading'
   });
-  activeRef.current = active;
   const status = imageState.sourceIdentity === sourceIdentity ? imageState.status : 'loading';
   const setCurrentStatus = useCallback((nextStatus: PreviewStatus) => {
     setImageState({ sourceIdentity, status: nextStatus });
@@ -727,6 +726,10 @@ function PreviewPagerPage({
       }
     }
   }, [currentDiagnostic, onResolution, resolutionIdentity, setCurrentStatus, settleFailure, sourceIdentity]);
+
+  useLayoutEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   useLayoutEffect(() => {
     mountedRef.current = true;
