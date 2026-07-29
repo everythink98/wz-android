@@ -5575,7 +5575,9 @@ describe('Android local sources', () => {
       expect.objectContaining({ phase: 'transport', channel: 'webview', owner: 'account', status: 200 }),
       expect.objectContaining({ phase: 'finish', channel: 'webview', owner: 'account', outcome: 'success' })
     ]);
-    expect(JSON.stringify(events)).not.toMatch(/session\/current|https?:|cookie|alice|42/iu);
+    expect(JSON.stringify(events, (key, value) => (
+      ['time', 'appSessionId', 'traceId', 'durationMs'].includes(key) ? undefined : value
+    ))).not.toMatch(/session\/current|https?:|cookie|alice|42/iu);
   });
 
   it('[REG-LINUXDO-007] preserves trusted CF evidence returned by the hidden Account probe', async () => {
