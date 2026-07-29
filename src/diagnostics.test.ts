@@ -7,6 +7,7 @@ import {
   finishDiagnosticTrace,
   hintDiagnosticOutcome,
   markDiagnosticStage,
+  linkDiagnosticRefs,
   normalizeDiagnosticReason,
   recordDiagnosticError,
   registerDiagnosticContextFetcher,
@@ -200,6 +201,46 @@ describe('diagnostic traces', () => {
       terminalReason: 'fallback-error'
     }));
     expect(JSON.stringify(events())).not.toContain('secret.example');
+  });
+
+  it('keeps privacy-safe media timing, cache and rendition summaries', () => {
+    const events = captureEvents();
+    const privateUrl = 'https://secret.example/private.png?token=ULTRA_FAKE_SECRET_9';
+    const mediaRef = diagnosticRef('media', privateUrl);
+    const trace = beginDiagnosticTrace('media', 'load', {
+      candidateKind: 'srcset',
+      mediaRef,
+      mediaRole: 'body'
+    });
+
+    finishDiagnosticTrace(trace, 'success', {
+      cacheType: 'memory',
+      displayMs: 41,
+      firstProgressMs: 7,
+      loadedBytes: 8192,
+      loadMs: 35,
+      sourceHeight: 720,
+      sourceWidth: 1280,
+      totalBytes: 8192
+    });
+
+    expect(events()[0]).toEqual(expect.objectContaining({
+      candidateKind: 'srcset',
+      mediaRef,
+      mediaRole: 'body'
+    }));
+    expect(events().at(-1)).toEqual(expect.objectContaining({
+      cacheType: 'memory',
+      displayMs: 41,
+      firstProgressMs: 7,
+      loadedBytes: 8192,
+      loadMs: 35,
+      sourceHeight: 720,
+      sourceWidth: 1280,
+      totalBytes: 8192
+    }));
+    expect(mediaRef).toMatch(/^media-\d+$/);
+    expect(JSON.stringify(events())).not.toMatch(/secret\.example|ULTRA_FAKE_SECRET_9/);
   });
 
   it('provides a temporary request context when the caller omits init', async () => {
@@ -468,6 +509,16 @@ describe('diagnostic traces', () => {
     expect(diagnosticRef('user', 'real-topic-id-91827')).toMatch(/^user-\d+$/);
     expect(firstTopic).toMatch(/^topic-\d+$/);
     expect(firstTopic).not.toContain('91827');
+  });
+
+  it('links optimized and original media aliases to one process-local reference', () => {
+    const displayUrl = 'https://img.example.com/diagnostic-display-640.webp';
+    const originalUrl = 'https://img.example.com/diagnostic-original.png';
+    const bodyRef = diagnosticRef('media', displayUrl);
+
+    linkDiagnosticRefs('media', [displayUrl, originalUrl]);
+
+    expect(diagnosticRef('media', originalUrl)).toBe(bodyRef);
   });
 
   it('normalizes failures without reading arbitrary object properties', () => {

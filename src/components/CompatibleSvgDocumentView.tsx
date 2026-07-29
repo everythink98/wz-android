@@ -15,8 +15,14 @@ type CompatibleSvgNavigationRequest = Readonly<{
   url: string;
 }>;
 
+type CompatibleSvgMessageEvent = Readonly<{
+  nativeEvent: Readonly<{ data?: string }>;
+}>;
+
 const EMPTY_SVG_DATA_URI = 'data:image/svg+xml;base64,PHN2Zy8+';
 const GUARDED_DOCUMENT_ORIGINS = ['*'];
+const SVG_READY_MESSAGE = 'wz-svg-ready';
+const SVG_ERROR_MESSAGE = 'wz-svg-error';
 
 export function CompatibleSvgDocumentView({
   artifact,
@@ -63,23 +69,30 @@ export function CompatibleSvgDocumentView({
   const handleNavigation = useCallback((request: CompatibleSvgNavigationRequest) => (
     request.isTopFrame !== false && isLocalBootstrapDocumentUrl(request.url)
   ), []);
-  const handleLoad = useCallback(() => settle('load'), [settle]);
+  const handleMessage = useCallback((event: CompatibleSvgMessageEvent) => {
+    if (event.nativeEvent.data === SVG_READY_MESSAGE) {
+      settle('load');
+    } else if (event.nativeEvent.data === SVG_ERROR_MESSAGE) {
+      settle('error');
+    }
+  }, [settle]);
   const handleError = useCallback(() => settle('error'), [settle]);
 
   return (
     <WebView
       testID="compatible-svg-document-view"
       source={source}
+      containerStyle={style}
       style={[componentStyles.webView, style]}
       pointerEvents="none"
       originWhitelist={GUARDED_DOCUMENT_ORIGINS}
       onShouldStartLoadWithRequest={handleNavigation}
-      onLoad={handleLoad}
+      onMessage={handleMessage}
       onError={handleError}
       onHttpError={handleError}
       onRenderProcessGone={handleError}
       onContentProcessDidTerminate={handleError}
-      javaScriptEnabled={false}
+      javaScriptEnabled
       javaScriptCanOpenWindowsAutomatically={false}
       domStorageEnabled={false}
       geolocationEnabled={false}
@@ -106,14 +119,34 @@ function compatibleSvgDocumentHtml(documentDataUri: string) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; connect-src 'none'; font-src 'none'; form-action 'none'; frame-src 'none'; media-src 'none'; object-src 'none'; script-src 'none'; worker-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; connect-src 'none'; font-src 'none'; form-action 'none'; frame-src 'none'; media-src 'none'; object-src 'none'; script-src 'nonce-wz-svg-ready'; worker-src 'none'">
 <style>
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
 body { display: flex; align-items: center; justify-content: center; }
 img { display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; }
 </style>
 </head>
-<body><img alt="" src="${escapeHtmlAttribute(documentDataUri)}"></body>
+<body>
+<img alt="" src="${escapeHtmlAttribute(documentDataUri)}">
+<script nonce="wz-svg-ready">
+(() => {
+  const image = document.querySelector('img');
+  let settled = false;
+  const post = (message) => {
+    if (settled) return;
+    settled = true;
+    window.ReactNativeWebView.postMessage(message);
+  };
+  const ready = () => requestAnimationFrame(() => requestAnimationFrame(() => post('${SVG_READY_MESSAGE}')));
+  if (image.complete) {
+    image.naturalWidth > 0 ? ready() : post('${SVG_ERROR_MESSAGE}');
+  } else {
+    image.addEventListener('load', ready, { once: true });
+    image.addEventListener('error', () => post('${SVG_ERROR_MESSAGE}'), { once: true });
+  }
+})();
+</script>
+</body>
 </html>`;
 }
 

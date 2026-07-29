@@ -9,13 +9,14 @@ import {
 const ForumSessionEpochContext = createContext<ForumSessionEpochs>(
   initialForumSessionEpochs
 );
+const mediaProcessIdentity = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 export function mediaSessionIdentityForSource(
   source: Source | null | undefined,
   sessionEpochs: ForumSessionEpochs
 ) {
   return source && source !== 'v2ex'
-    ? `${source}:${sessionEpochs[source]}`
+    ? `${source}:${mediaProcessIdentity}:${sessionEpochs[source]}`
     : 'public:0';
 }
 

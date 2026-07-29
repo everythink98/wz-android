@@ -385,6 +385,40 @@ describe('Search state', () => {
     expect(onRetrySearchSource).toHaveBeenCalledWith('linuxdo');
   });
 
+  it('[REG-LINUXDO-007] shows the terminal Account error and identity actions for a single linux.do search', async () => {
+    const onRetryIdentity = jest.fn();
+    const onCheckLinuxDoStatus = jest.fn();
+    const view = await renderSearchScreen({
+      identityError: { kind: 'ordinary', message: 'Network request failed' },
+      onCheckLinuxDoStatus,
+      onRetryIdentity,
+      requestsEnabled: false,
+      searchSource: 'linuxdo',
+      searchSessionNotices: []
+    });
+
+    expect(view.getByText('Network request failed')).toBeTruthy();
+    expect(view.queryByText('正在搜索...')).toBeNull();
+    expect(view.queryByText('暂无搜索结果')).toBeNull();
+    expect(view.getByTestId('search-complete').props.accessibilityState).toEqual({ busy: false });
+    expect(view.getByTestId('search-complete').props.accessibilityLabel).toBe('搜索结果，L 站访问状态检查失败');
+    await fireEvent.press(view.getByLabelText('重试检测'));
+    await fireEvent.press(view.getByLabelText('检查 L 站状态'));
+    expect(onRetryIdentity).toHaveBeenCalledTimes(1);
+    expect(onCheckLinuxDoStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-LINUXDO-007] labels an active single-source Search identity probe', async () => {
+    const view = await renderSearchScreen({
+      identityChecking: true,
+      requestsEnabled: false,
+      searchSource: 'linuxdo',
+      searchSessionNotices: []
+    });
+
+    expect(view.getByText('正在确认 L 站访问状态')).toBeTruthy();
+  });
+
   it('[REG-SEARCH-017] keeps loading and pending sources out of terminal search states', async () => {
     const view = await renderSearchScreen({
       searchGroups: [

@@ -3,7 +3,7 @@ import { Modal, Pressable, RefreshControl, Text, View, type NativeScrollEvent, t
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { TabView } from 'react-native-tab-view';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import type { Category, FeedSource, SourceFeedFilter, SourceLoadOutcomeKind, Topic } from '../types';
+import type { Category, FeedSource, SourceErrorInfo, SourceFeedFilter, SourceLoadOutcomeKind, Topic } from '../types';
 import { topicKey } from '../readerData';
 import { feedCategoryItems, feedFilterLabel, feedFilterMenuGroupsFor, feedReadingFilterItems, feedSourceItems, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
 import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from '../feedFloatingActions';
@@ -30,6 +30,8 @@ export const FeedScreen = memo(function FeedScreen({
   feedPage,
   feedFilter,
   feedSource,
+  identityChecking = false,
+  identityError,
   loadMoreFailureSignal,
   loadingMore,
   topicStateIndex,
@@ -43,6 +45,8 @@ export const FeedScreen = memo(function FeedScreen({
   onFeedSourceChange,
   onLoadMore,
   onOpenTopic,
+  onCheckLinuxDoStatus,
+  onRetryIdentity,
   onReadingFilterChange,
   onRefresh
 }: {
@@ -55,6 +59,8 @@ export const FeedScreen = memo(function FeedScreen({
   feedPage: number;
   feedFilter?: SourceFeedFilter;
   feedSource: FeedSource;
+  identityChecking?: boolean;
+  identityError?: SourceErrorInfo;
   loadMoreFailureSignal: number;
   loadingMore: boolean;
   topicStateIndex: TopicListItemStateIndex;
@@ -68,6 +74,8 @@ export const FeedScreen = memo(function FeedScreen({
   onFeedSourceChange: (source: FeedSource) => void;
   onLoadMore: () => void;
   onOpenTopic: (topic: Topic) => void;
+  onCheckLinuxDoStatus?: () => void;
+  onRetryIdentity?: () => void;
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
 }) {
@@ -275,6 +283,19 @@ export const FeedScreen = memo(function FeedScreen({
         </View>
       );
     }
+    const identityNotice = identityError ? (
+      <View style={styles.errorBox}>
+        <Text style={styles.errorText}>{identityError.message}</Text>
+        <View style={styles.actions}>
+          <AppButton label="重试检测" styles={styles} onPress={onRetryIdentity || onRefresh} />
+          {feedSource === 'linuxdo' && onCheckLinuxDoStatus
+            ? <AppButton label="检查 L 站状态" variant="ghost" styles={styles} onPress={onCheckLinuxDoStatus} />
+            : null}
+        </View>
+      </View>
+    ) : identityChecking ? (
+      <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} />
+    ) : null;
     return (
       <FlashList
         key={`${feedSource}|${categoryFilter}|${feedFilter ?? ''}|${readingFilter}`}
@@ -300,7 +321,10 @@ export const FeedScreen = memo(function FeedScreen({
         scrollEventThrottle={64}
         onContentSizeChange={completePendingFeedScrollReset}
         {...FEED_LIST_PERFORMANCE_PROPS}
-        ListEmptyComponent={busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text={feedEmptyText} styles={styles} />}
+        ListHeaderComponent={identityNotice}
+        ListEmptyComponent={identityNotice ? null : busy
+          ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} />
+          : <EmptyText text={feedEmptyText} styles={styles} />}
         ListFooterComponent={feedHasMore ? (
           <AppButton
             label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
@@ -326,10 +350,14 @@ export const FeedScreen = memo(function FeedScreen({
     feedOutcomeKind,
     feedPage,
     feedSource,
+    identityChecking,
+    identityError,
     handleScroll,
     handleScrollBeginDrag,
     loadingMore,
+    onCheckLinuxDoStatus,
     onRefresh,
+    onRetryIdentity,
     pagerIndex,
     refreshing,
     readingFilter,

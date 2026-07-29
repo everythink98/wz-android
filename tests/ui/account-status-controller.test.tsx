@@ -3,19 +3,18 @@ import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/r
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 jest.mock('../../src/sources/sourceGateway', () => ({
-  checkLinuxDoLoginAccess: jest.fn(),
   checkYaohuoLogin: jest.fn(),
   getCurrentUserProfile: jest.fn(),
   getUserProfile: jest.fn()
 }));
 
 import {
-  checkLinuxDoLoginAccess,
   checkYaohuoLogin,
   getCurrentUserProfile,
   getUserProfile
 } from '../../src/sources/sourceGateway';
 import { useAccountStatusController } from '../../src/app/useAccountStatusController';
+import { useLinuxDoIdentityVerificationPrompt } from '../../src/app/useVerificationController';
 import type { XiaoyinsiAuthorizationReadResult } from '../../src/app/useXiaoyinsiAuthController';
 import {
   appQueryClient,
@@ -30,7 +29,6 @@ import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/
 import type { UserProfile } from '../../src/types';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
-const mockCheckLinuxDoLogin = jest.mocked(checkLinuxDoLoginAccess);
 const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLogin);
 const mockGetCurrentUser = jest.mocked(getCurrentUserProfile);
 const mockGetUserProfile = jest.mocked(getUserProfile);
@@ -181,7 +179,6 @@ describe('account status queries', () => {
     jest.clearAllMocks();
     mockReadLinuxDoCookieHeader.mockResolvedValue(undefined);
     mockReadYaohuoCookieHeader.mockResolvedValue(undefined);
-    mockCheckLinuxDoLogin.mockResolvedValue({ ok: true, loginRequired: false, message: '', currentUser: linuxUser });
     mockCheckYaohuoLogin.mockResolvedValue({
       source: 'yaohuo',
       ok: false,
@@ -201,11 +198,6 @@ describe('account status queries', () => {
   });
 
   it('[REG-FEED-010] does not cancel a safe aggregate read when the startup identity probes begin', async () => {
-    mockCheckLinuxDoLogin.mockResolvedValue({
-      ok: false,
-      loginRequired: true,
-      message: '未登录'
-    });
     const aggregateResult = Promise.withResolvers<string>();
     const aggregateAbort = jest.fn();
     const aggregateRequest = appQueryClient.fetchQuery({
@@ -318,10 +310,9 @@ describe('account status queries', () => {
 
   it('[REG-LINUXDO-005] keeps a cold-start Cookie candidate non-authenticated when identity is unknown', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('cf_clearance=verification; _t=stale-session');
-    mockCheckLinuxDoLogin.mockResolvedValue({
-      ok: false,
-      loginRequired: false,
-      message: 'linux.do 状态暂时无法确认'
+    mockGetCurrentUser.mockImplementation(async ({ source }) => {
+      if (source === 'linuxdo') throw new Error('linux.do 状态暂时无法确认');
+      return null as never;
     });
     const states = createSiteSessionStates({
       linuxdo: {
@@ -342,17 +333,55 @@ describe('account status queries', () => {
       isLoggedIn: false,
       lastError: 'linux.do 状态暂时无法确认'
     }));
+    expect(hook.result.current.accountIdentityChecks.linuxdo).toEqual({
+      checking: false,
+      pending: true,
+      error: {
+        kind: 'ordinary',
+        message: 'linux.do 状态暂时无法确认'
+      }
+    });
+  });
+
+  it('[REG-LINUXDO-007] exposes a typed Account challenge without settling the identity barrier', async () => {
+    mockGetCurrentUser.mockImplementation(async ({ source }) => {
+      if (source === 'linuxdo') {
+        throw Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
+          source: 'linuxdo',
+          kind: 'verification-required',
+          reason: 'cloudflare',
+          verificationRequired: true
+        });
+      }
+      return null as never;
+    });
+    const { hook } = await renderStatusController();
+    let result: Awaited<ReturnType<typeof hook.result.current.reconcileAccountStatus>> | undefined;
+
+    await act(async () => {
+      result = await hook.result.current.reconcileAccountStatus('linuxdo');
+    });
+
+    expect(result).toMatchObject({
+      status: 'unknown',
+      errorInfo: {
+        kind: 'verification-required',
+        verificationRequired: true
+      }
+    });
+    expect(hook.result.current.accountIdentityChecks.linuxdo).toMatchObject({
+      checking: false,
+      pending: true,
+      error: {
+        kind: 'verification-required',
+        verificationRequired: true
+      }
+    });
   });
 
   it('[REG-ACCOUNT-019] projects the linux.do current user from one authoritative session response', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('cf_clearance=verification; _t=active-session');
-    mockCheckLinuxDoLogin.mockResolvedValue({
-      ok: true,
-      loginRequired: false,
-      message: '登录可用',
-      currentUser: linuxUser
-    });
-    mockGetCurrentUser.mockRejectedValue(new Error('second current-session request must not run'));
+    mockGetCurrentUser.mockImplementation(async ({ source }) => source === 'linuxdo' ? linuxUser : null as never);
     const { hook } = await renderStatusController();
 
     await act(async () => { await hook.result.current.refreshAccountStatus(); });
@@ -361,7 +390,11 @@ describe('account status queries', () => {
       status: 'logged-in',
       currentUser: linuxUser
     }));
-    expect(mockGetCurrentUser).not.toHaveBeenCalledWith(expect.objectContaining({ source: 'linuxdo' }));
+    expect(mockGetCurrentUser).toHaveBeenCalledTimes(2);
+    expect(mockGetCurrentUser).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'linuxdo',
+      discourseAuth: { linuxdo: { userAgent: 'safe-agent' } }
+    }));
   });
 
   it('[REG-ACCOUNT-031] stages a changed identity until the source scope transaction commits it', async () => {
@@ -551,12 +584,7 @@ describe('account status queries', () => {
       status: 'ok' as const,
       header: '_forum_session=current-session'
     }));
-    mockCheckLinuxDoLogin.mockResolvedValue({
-      ok: true,
-      loginRequired: false,
-      message: '登录可用',
-      currentUser: linuxUser
-    });
+    mockGetCurrentUser.mockImplementation(async ({ source }) => source === 'linuxdo' ? linuxUser : null as never);
     const { hook } = await renderStatusController({ readManagedCookieHeader });
 
     await act(async () => { await hook.result.current.refreshAccountStatus(); });
@@ -566,7 +594,7 @@ describe('account status queries', () => {
       currentUser: linuxUser
     }));
     expect(readManagedCookieHeader).toHaveBeenCalledWith('https://linux.do/session/current.json');
-    expect(mockCheckLinuxDoLogin).toHaveBeenCalledWith(expect.not.objectContaining({
+    expect(mockGetCurrentUser).toHaveBeenCalledWith(expect.not.objectContaining({
       cookieHeader: expect.anything()
     }));
   });
@@ -717,7 +745,17 @@ describe('account status queries', () => {
 
   it('REG-ACCOUNT-008 projects a linux.do anonymous response without mutating workflow state', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
-    mockCheckLinuxDoLogin.mockResolvedValue({ ok: false, loginRequired: true, message: '会话已失效' });
+    mockGetCurrentUser.mockImplementation(async ({ source }) => {
+      if (source === 'linuxdo') {
+        throw Object.assign(new Error('会话已失效'), {
+          source: 'linuxdo',
+          kind: 'login-expired',
+          loginRequired: true,
+          reason: 'expired'
+        });
+      }
+      return null as never;
+    });
     const { hook } = await renderStatusController();
 
     await act(async () => { await hook.result.current.refreshAccountStatus(); });
@@ -838,10 +876,16 @@ describe('account status queries', () => {
   });
 
   it('[REG-ACCOUNT-019] does not clear an independently confirmed source during Xiaoyinsi logout', async () => {
-    mockCheckLinuxDoLogin.mockResolvedValue({
-      ok: false,
-      loginRequired: true,
-      message: '未登录'
+    mockGetCurrentUser.mockImplementation(async ({ source }) => {
+      if (source === 'linuxdo') {
+        throw Object.assign(new Error('未登录'), {
+          source: 'linuxdo',
+          kind: 'login-expired',
+          loginRequired: true,
+          reason: 'expired'
+        });
+      }
+      return null as never;
     });
     const xiaoyinsiFeedKey = ['forum', 'xiaoyinsi', 'feed'] as const;
     const allFeedKey = ['forum', 'all', 'feed'] as const;
@@ -1043,11 +1087,9 @@ describe('account status queries', () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
     mockGetCurrentUser.mockImplementation(async ({ source }) => {
       if (failing && source === 'nodeseek') throw new Error('NodeSeek offline');
+      if (failing && source === 'linuxdo') throw new Error('linux.do offline');
       return source === 'nodeseek' ? nodeSeekUser : linuxUser;
     });
-    mockCheckLinuxDoLogin.mockImplementation(async () => failing
-      ? { ok: false, loginRequired: false, message: 'linux.do offline' }
-      : { ok: true, loginRequired: false, message: '', currentUser: linuxUser });
     mockCheckYaohuoLogin.mockImplementation(async () => {
       if (failing) return {
         source: 'yaohuo',
@@ -1132,4 +1174,113 @@ describe('account status queries', () => {
       lastError: 'HTTP 404'
     }));
   });
+});
+
+describe('linux.do foreground identity prompt', () => {
+  it('[REG-LINUXDO-007] opens once for typed CF and does not reopen after the user closes the same intent', async () => {
+    const showLinuxDoVerification = jest.fn();
+    const challenge = {
+      kind: 'verification-required' as const,
+      message: 'linux.do 需要完成 Cloudflare 验证',
+      verificationRequired: true
+    };
+    const hook = await renderNativeHook((props: {
+      error?: typeof challenge;
+      identityPending: boolean;
+      intentKey: string | null;
+    }) => useLinuxDoIdentityVerificationPrompt({
+      ...props,
+      showLinuxDoVerification
+    }), {
+      initialProps: {
+        error: challenge,
+        identityPending: true,
+        intentKey: 'topic:linuxdo:42'
+      }
+    });
+
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      hook.rerender({ error: undefined, identityPending: true, intentKey: 'topic:linuxdo:42' });
+    });
+    await act(async () => {
+      hook.rerender({ error: challenge, identityPending: true, intentKey: 'topic:linuxdo:42' });
+    });
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      hook.rerender({ error: undefined, identityPending: false, intentKey: null });
+    });
+    await act(async () => {
+      hook.rerender({ error: challenge, identityPending: true, intentKey: 'feed:linuxdo' });
+    });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(2));
+  });
+
+  it('[REG-LINUXDO-007] ignores ordinary Account failures and absent foreground intents', async () => {
+    const showLinuxDoVerification = jest.fn();
+    const hook = await renderNativeHook((props: {
+      error?: { kind: 'ordinary'; message: string };
+      intentKey: string | null;
+    }) => useLinuxDoIdentityVerificationPrompt({
+      error: props.error,
+      identityPending: true,
+      intentKey: props.intentKey,
+      showLinuxDoVerification
+    }), {
+      initialProps: {
+        error: { kind: 'ordinary', message: 'Network request failed' },
+        intentKey: 'topic:linuxdo:42'
+      }
+    });
+
+    await act(async () => {
+      hook.rerender({
+        error: undefined,
+        intentKey: null
+      });
+    });
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
+  });
+
+  it.each(['write', 'AI', 'background'])(
+    '[REG-LINUXDO-007] does not auto-open for a %s Account result',
+    async (reason) => {
+      const showLinuxDoVerification = jest.fn();
+      const challenge = {
+        kind: 'verification-required' as const,
+        message: 'linux.do 需要完成 Cloudflare 验证',
+        verificationRequired: true
+      };
+      const hook = await renderNativeHook((props: {
+        enabled: boolean;
+        error?: typeof challenge;
+        intentKey: string | null;
+      }) => (
+        useLinuxDoIdentityVerificationPrompt({
+          enabled: props.enabled,
+          error: props.error,
+          identityPending: true,
+          intentKey: props.intentKey,
+          showLinuxDoVerification
+        })
+      ), {
+        initialProps: {
+          enabled: false,
+          error: undefined,
+          intentKey: `topic:linuxdo:blocked-${reason}`
+        }
+      });
+
+      await waitFor(() => expect(showLinuxDoVerification).not.toHaveBeenCalled());
+      await act(async () => {
+        hook.rerender({
+          enabled: true,
+          error: challenge,
+          intentKey: `topic:linuxdo:blocked-${reason}`
+        });
+      });
+      expect(showLinuxDoVerification).not.toHaveBeenCalled();
+    }
+  );
 });

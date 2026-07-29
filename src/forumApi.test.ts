@@ -551,7 +551,41 @@ describe('Android local forum facade', () => {
     });
   });
 
-  it.each([401, 403])('[REG-ACCOUNT-025] keeps non-contract linux.do current-session HTTP %s unknown', async (status) => {
+  it('[REG-LINUXDO-007] treats an explicit anonymous linux.do current-session body as logged out', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ current_user: null }), {
+      headers: { 'content-type': 'application/json' }
+    }));
+
+    await expect(getCurrentUserProfile({
+      source: 'linuxdo',
+      fetcher,
+      discourseAuth: { linuxdo: { authenticated: true } }
+    })).rejects.toMatchObject({
+      source: 'linuxdo',
+      kind: 'login-expired',
+      loginRequired: true,
+      reason: 'expired'
+    });
+  });
+
+  it('[REG-LINUXDO-007] keeps a malformed successful linux.do current-session body unknown', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ csrf: 'present-without-user' }), {
+      headers: { 'content-type': 'application/json' }
+    }));
+    const failure = await getCurrentUserProfile({
+      source: 'linuxdo',
+      fetcher,
+      discourseAuth: { linuxdo: { authenticated: true } }
+    }).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toMatchObject({
+      loginRequired: true,
+      verificationRequired: true
+    });
+  });
+
+  it.each([401, 403, 429])('[REG-ACCOUNT-025] keeps non-contract linux.do current-session HTTP %s unknown', async (status) => {
     const fetcher = vi.fn(async () => new Response('<html>request rejected</html>', {
       status,
       headers: { 'content-type': 'text/html' }

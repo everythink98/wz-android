@@ -28,14 +28,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `NAV-01`、`LIBRARY-01`、`LIBRARY-02`、`LIBRARY-03`、`FEED-01`、`FEED-02`、`FEED-03`、`SEARCH-01`、`SEARCH-02`、`TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`USER-01`、`ACCOUNT-01`、`DATA-01`、`DATA-02`、`DATA-03` |
-| 用户症状 | 收藏帖子、关注用户和历史之间切换时明显卡顿；Debug 基线出现 17%–32% 掉帧，最慢帧约 69–82ms。Topic 旅程中 20 次历史同步提交有 8 次超过 8ms，最慢 22ms。 |
-| 触发条件 | Library 已有数据，切换 tab 时 FlashList 的 `key` 改变；旧实例卸载、新实例挂载并集中创建可见行及头像，同时筛选在切换后的 effect 再重置。Topic 读取完成时 `history-recorded` 对已校验 ReaderData 再做一次全量 sanitize。 |
-| 根因 seam | `src/screens/LibraryScreen.tsx` 的列表 identity、筛选提交、滚顶和 `maintainVisibleContentPosition` 契约；`src/components/Avatar.tsx` 是 Feed、Search、Library、Topic、User 共用的头像加载 seam；`src/readerData.ts` 与 `src/app/useReaderDataController.ts` 共同约束历史写入和持久化。 |
-| 必须保持的行为 | 三个 tab 复用同一个 FlashList；目标 tab 首次可见状态已经是全部来源/全部分类，列表在数据替换前无动画回到顶部且下一帧补偿，重复点击当前 tab 不重置筛选或滚动，Library 不锚定旧数据位置。正常头像先只走原生加载，保留一次原生 retry，第二次失败才走带 session identity 的 SVG fallback，旧 URI/session/unmount 的迟到结果不得显示。`recordHistory` 自身只保留最新 1000 条；只有可信 `history-recorded` 跳过全量 sanitize，加载、导入、合并和其他 mutation 仍完整校验，visitCount、收藏摘要、tombstone、保存队列与失败回滚不变。筛选、删除、清空和 `REG-FEED-002` 的 Feed 独立位置保护保持不变。 |
-| 精确失败 oracle | `tests/ui/library-screen.test.tsx` 依次切换三个 tab，要求列表只挂载一次；History 第一次 render 即得到未筛选数据；真实切换先调用一次 `animated=false` 滚顶、下一帧再补一次，重复点击当前 tab 不滚顶；Library 显式禁用可视位置锚定。`tests/ui/avatar.test.tsx` 要求正常位图零 SVG probe、第二次原生失败才显示 SVG、迟到结果丢弃且 fallback 失败显示文字头像。`src/readerData.test.ts`、`src/app/useReaderDataController.test.ts` 与 `tests/ui/reader-data-controller.test.tsx` 要求 1001 条只留最新 1000 条，可信提交不重建快照且仍进入原保存队列；既有 `REG-DATA-002/003/004` 继续固定排队、失败回滚与恢复写。 |
+| 用户症状 | 收藏帖子、关注用户和历史之间切换时明显卡顿；Debug 基线出现 17%–32% 掉帧，最慢帧约 69–82ms。1000 条历史的 x86_64 Release 基线两批最慢帧中位数为 55.45ms / 51.9ms，History 就绪中位数为 702.5ms / 708ms。Topic 旅程中 20 次历史同步提交有 8 次超过 8ms，最慢 22ms。 |
+| 触发条件 | Library 已有数据，切换 tab 时 FlashList 的 `key` 改变；旧实例卸载、新实例挂载并集中创建可见行及头像，同时筛选在切换后的 effect 再重置。即使复用列表，继承共享列表的 900px 预绘制窗口仍会在 1000 条 History 数据切入时提前创建屏外行并触发头像解码与原生绘制。Topic 读取完成时 `history-recorded` 对已校验 ReaderData 再做一次全量 sanitize。 |
+| 根因 seam | `src/screens/LibraryScreen.tsx` 的列表 identity、筛选提交、滚顶、Library 专属 `drawDistance` 和 `maintainVisibleContentPosition` 契约；`src/components/Avatar.tsx` 是 Feed、Search、Library、Topic、User 共用的头像加载 seam；`src/readerData.ts` 与 `src/app/useReaderDataController.ts` 共同约束历史写入和持久化。 |
+| 必须保持的行为 | 三个 tab 复用同一个 FlashList；目标 tab 首次可见状态已经是全部来源/全部分类，列表在数据替换前无动画回到顶部且下一帧补偿，重复点击当前 tab 不重置筛选或滚动，Library 不锚定旧数据位置，并把预绘制距离限制为 250px；Feed、Search 等共享列表继续使用各自配置。正常头像先只走原生加载，保留一次原生 retry，第二次失败才走带 session identity 的 SVG fallback，旧 URI/session/unmount 的迟到结果不得显示。`recordHistory` 自身只保留最新 1000 条；只有可信 `history-recorded` 跳过全量 sanitize，加载、导入、合并和其他 mutation 仍完整校验，visitCount、收藏摘要、tombstone、保存队列与失败回滚不变。筛选、删除、清空和 `REG-FEED-002` 的 Feed 独立位置保护保持不变。 |
+| 精确失败 oracle | `tests/ui/library-screen.test.tsx` 依次切换三个 tab，要求列表只挂载一次；History 第一次 render 即得到未筛选数据；真实切换先调用一次 `animated=false` 滚顶、下一帧再补一次，重复点击当前 tab 不滚顶；Library 显式禁用可视位置锚定并固定 `drawDistance=250`。`tests/ui/avatar.test.tsx` 要求正常位图零 SVG probe、第二次原生失败才显示 SVG、迟到结果丢弃且 fallback 失败显示文字头像。`src/readerData.test.ts`、`src/app/useReaderDataController.test.ts` 与 `tests/ui/reader-data-controller.test.tsx` 要求 1001 条只留最新 1000 条，可信提交不重建快照且仍进入原保存队列；既有 `REG-DATA-002/003/004` 继续固定排队、失败回滚与恢复写。 |
 | 最低可靠自动测试层 | `UI_PASS`：必须跨真实 React state 更新观察列表实例、目标首帧数据和滚动调用；源码字符串或单独测试筛选 helper 都不能证明没有 remount。ReaderData 以 helper `UNIT_PASS` 和 controller `UI_PASS` 共同固定快路径及数据行为，最终同步耗时仍由设备诊断 trace 复测。 |
-| Replay 或真实验收路径 | 保留 App 数据执行 `tests/device/library-return.ad`；性能验收在身份匹配构建上执行 Favorites ↔ History 20 次并用 FrameTimeline/`gfxinfo` 对照 missed-deadline、p95 和最慢帧；再执行 20 次可落历史的 Topic 旅程，核对 `history-recorded` 同步阶段。 |
-| 负向验证方式 | 恢复 `key={libraryTab}`、把筛选重置移回 `[libraryTab]` effect、移除切换前/下一帧滚顶、让已选 tab 也重置或重新启用位置锚定，Library oracle 必须失败；恢复 mount 时 SVG probe 或接受旧身份结果，Avatar oracle 必须失败；移除 `recordHistory` 上限或让 `history-recorded` 重走全量 sanitize，数据上限或性能契约必须失败。 |
+| Replay 或真实验收路径 | 保留 App 数据执行 `tests/device/library-return.ad`；性能验收在身份匹配构建上执行 Favorites ↔ History 20 次并用 FrameTimeline/`gfxinfo` 对照 missed-deadline、p95 和最慢帧；在可精确恢复的 1000 条 History 数据上再执行快速向下 20 次、向上 20 次，要求全程存在完整可见行且没有空白或抖动；最后执行 20 次可落历史的 Topic 旅程，核对 `history-recorded` 同步阶段。 |
+| 负向验证方式 | 恢复 `key={libraryTab}`、把筛选重置移回 `[libraryTab]` effect、移除切换前/下一帧滚顶、让已选 tab 也重置、重新启用位置锚定或让 Library 重新继承 900px 预绘制距离，Library oracle 必须失败；恢复 mount 时 SVG probe 或接受旧身份结果，Avatar oracle 必须失败；移除 `recordHistory` 上限或让 `history-recorded` 重走全量 sanitize，数据上限或性能契约必须失败。 |
 | 明确不覆盖范围 | 动态头像服务可用性、原生图片解码/上传成本、正文列表滚动和 Release 帧指标分别由动态来源、设备 trace、对应页面回归与设备性能验收负责。 |
 
 ## `REG-PERF-002` Topic/User 返回重复恢复同一 Topic session
@@ -615,9 +615,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`WRITE-01`、`WRITE-03` |
 | 用户症状 | linux.do 原站已经显示“登录”，App 账号中心仍显示已登录；搜索继续调用登录接口并报限流，匿名 Google fallback 没有启用，写入口也可能继续按旧 Cookie 展示。 |
 | 触发条件 | 服务端会话已失效，但本机仍保存 `_t`/`_forum_session`；账号刷新用匿名也可访问的 `/session/csrf` 判定登录，前台 WebView 只回传 Cookie、不回传明确登录标记。 |
-| 根因 seam | `checkLinuxDoLoginAccess` 的服务端身份 oracle、`LINUXDO_WEBVIEW_PROBE_SCRIPT` 的页面登录探针，以及 `useVerificationController` 的 generation-safe 过期态提交。 |
+| 根因 seam | canonical `getCurrentUserProfile` 的服务端身份 oracle、`LINUXDO_WEBVIEW_PROBE_SCRIPT` 的页面登录探针，以及 `useVerificationController` 的 generation-safe 过期态提交。 |
 | 必须保持的行为 | 只有 `/session/current.json` 返回带用户名的当前用户才确认登录；官方 controller 的匿名 `404` 与显式匿名字段判定失效，非 CF 的 `401/403`、429、网络错误和 CF 保持 unknown。WebView 明确出现 Discourse 登录按钮时只提交 App 内 `login-expired`；模糊页面不得猜测。检测、刷新和写操作失败都不得删除原站 Cookie，只有用户明确点击“清除登录”才定向删除登录 Cookie并保留 clearance。搜索随后走既有匿名 fallback，写入口按 canonical session 关闭。 |
-| 精确失败 oracle | `src/linuxdoActionClient.test.ts` 固定匿名 200、登录用户、429 与 CF；`src/loginWebViewScripts.test.ts` 固定 logged-in/logged-out/unknown 三态；`src/app/useVerificationController.test.ts` 固定明确退出只发布失效、不调用清理，且 unknown 不改变可信状态。修复前匿名响应得到 `ok:true`，后续版本又曾把正确或错误的退出判断升级为原站 Cookie 删除权限。 |
+| 精确失败 oracle | `src/forumApi.test.ts` 固定显式匿名、官方匿名 404、登录用户、畸形成功响应与非契约 401/403/429；`src/localSources.test.ts` 固定可信 CF 与 Account-only hidden WebView fallback；`src/loginWebViewScripts.test.ts` 固定 logged-in/logged-out/unknown 三态；`src/app/useVerificationController.test.ts` 固定明确退出只发布失效、不调用清理，且 unknown 不改变可信状态。修复前匿名响应得到 `ok:true`，后续版本又曾把正确或错误的退出判断升级为原站 Cookie 删除权限。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：请求契约、页面脚本和 controller 状态提交必须一起通过；仅检查 `_t`、CSRF、搜索错误文案或 App 启动都不能证明真实登录。 |
 | Replay 或真实验收路径 | 仅在当前设备自然处于失效态时验收：覆盖安装并冷启动；若服务端身份检查已有明确结论，账号中心直接显示失效，否则进入账号中心 → linux.do → 检测或重新登录，在 App 内原站明确显示登录按钮后点“检测状态”。随后账号中心应显示 linux.do 已失效，搜索不再进入登录专属路径。不得清 App 数据、Cookie 或重置模拟器制造状态；动态登录态不写入 Replay。 |
 | 负向验证方式 | 把账号探针恢复为 `/session/csrf`、删除 WebView `status` 上报/过期分支，或在 `logged-out` 分支调用原站 Cookie 清理；编号测试必须分别恢复假登录、漏掉失效或触发未经用户授权的删除。 |
@@ -652,6 +652,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 在不清 App 数据、Cookie 或登录态的前提下，仅于自然 challenge 出现时验收：Search 触发 CF 后只出现一次 overlay、原请求只恢复一次；保留搜索后进入 More 查看等级，诊断中不得出现后台 Search/Feed，Level 应落地且 overlay 关闭；验证期间手动关闭后 recovery 失效且不重开。无法自然触发 CF 时记 `NOT_VERIFIED`。 |
 | 负向验证方式 | 临时移除 controller 的 `screen` 门禁/显式 cancel，恢复 Search 直接读取实时 `isLoggedIn`，让 AI/categories 在 overlay 内继续执行，删除 Level recovery 或重新在 verification controller 中 reset Level cache；对应 `REG-LINUXDO-006` 用例必须出现后台调用、inactive key、第三次 Level 请求或面板回调并失败。 |
 | 明确不覆盖范围 | 不新增全局 WebView/Query 优先级调度器，不重构完整 session 状态机，不改变外部 API、持久化 schema、原生配置或写权限契约；不人为制造 Cloudflare challenge。 |
+
+## `REG-LINUXDO-007` Account 网络探测失败后前台读取永久 Loading
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`TOPIC-01`、`TOPIC-03`；共享回归 `FEED-01`、`FEED-02`、`FEED-04`、`SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`USER-01` |
+| 用户症状 | 打开 linux.do Topic 后页面一直 Loading，既不请求 Topic，也不出现验证窗口；用户手动进入 linux.do 验证、保存状态并再次打开后才正常加载。 |
+| 触发条件 | canonical Account probe 在收到 HTTP Response 前以 `network_error` 结束；身份 barrier 长期保持 pending，Topic Query 被禁用，而 UI 把“无数据、无 Query 错误”误解释为 Loading。现有 CF response 检测器没有运行，因此现场不能把底层 transport 错误直接认定为 Cloudflare。 |
+| 根因 seam | exact `/session/current.json` 的 canonical Account reader → direct/hidden WebView transport → 结构化身份检查终态 → AppRoot 前台单站 intent → Feed/Search/Topic/User Query barrier 与验证面板。 |
+| 必须保持的行为 | linux.do Account 只走 canonical `getCurrentUserProfile`，当前用户为登录、404 或明确匿名字段为退出，其余为 unknown。只有 exact GET、`owner=account`、`priority=background` 的 direct `network_error` 可进入一次 hidden WebView；timeout、cancel、HTTP、其他 URL/owner/priority 和写操作不得进入。hidden 成功提交权威身份，可信 challenge 保持 `verification-required`，普通失败保持 ordinary。身份 checking 显示“正在确认 L 站访问状态”；unknown 终态停止无限 Loading，在前台单站 Feed/Search/Topic/User 显示真实错误、重试 Account probe 和“检查 L 站状态”，旧可信内容保持只读。typed challenge 每个前台 intent 最多自动打开一次，用户关闭后同 intent 不重开；聚合、后台、AI、预取、Level 和写操作不自动弹窗。用户显式检测成功先提交 canonical identity 再关闭，barrier 释放后未启动的原 Query 自然启动一次；已启动 Query 的 exact recovery 协议不变。 |
+| 精确失败 oracle | `src/localSources.test.ts` 固定 direct network error 后 hidden success、可信 challenge、普通失败三终态以及 timeout/cancel/foreground Account/其他 owner/URL/POST 零 fallback；`src/forumApi.test.ts` 固定 current user、404、明确匿名字段和普通 401/403/429 语义；`tests/ui/account-status-controller.test.tsx` 固定结构化 error、同 intent 单弹和 ordinary/无前台 intent 零弹；`tests/ui/topic-session-controller.test.tsx` 固定 route 已激活而 Topic request=0、auto panel=0；`src/app/useVerificationController.test.ts` 固定 barrier 内状态入口只开面板、不重试未启动 Query；Feed/Search/Topic/User 组件测试固定 checking、terminal error、重试与检查入口。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：transport、canonical 身份语义、intent latch、Query 次数和用户可见终态必须共同固定；App 能启动、源码字符串或只看到 Modal 都不足以证明恢复链路。 |
+| Replay 或真实验收路径 | 基于当前 revision 构建 x86_64 Release 并覆盖安装，保留 App 数据、Cookie 和登录态；正常 linux.do Topic 不误弹，返回和状态保持正确。只有自然再次出现 challenge 时才验自动弹一次、用户检测成功后原页自然加载；否则 CF 专项记 `NOT_VERIFIED`，不得清数据制造 challenge。 |
+| 负向验证方式 | 恢复重复 Account client、让普通 `network_error` 直接保持永久 pending、放宽 fallback URL/intent/reason、把 hidden 普通失败升级成 CF、让 UI 在 terminal unknown 继续 Loading，或清空 intent latch 后同页重弹；对应编号测试必须失败。 |
+| 明确不覆盖范围 | 不证明现场 direct `network_error` 的底层原因就是 Cloudflare，不绕过验证、不自动登录、不清 Cookie、不增加全局重试器或状态平台，也不改变持久化 schema、原生配置、外部 API 和写权限。 |
 
 ## `REG-VERIFICATION-001` WebView 页面事件取代用户检测
 
@@ -826,7 +841,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 用户点击刷新账号状态或发起写操作后在站点登录完成，先启动的旧请求仍可能把 NodeSeek、linux.do 或妖火的新会话覆盖成未登录、检查失败或登录已失效，并为新会话弹出错误登录入口。 |
 | 触发条件 | 账号刷新和写操作只把 credential generation 传给条件清理/保存，没有在网络检查、action 响应和最终 session/UI 提交前再次核对同站 generation。 |
 | 根因 seam | `useAccountStatusController`、`useTopicActionsController` 与 `discourseActionRuntime` 的站点 credential snapshot、异步请求、过期清理和 SiteSessionState/动作结果提交边界。 |
-| 必须保持的行为 | 三站分别捕获请求开始时的 generation；检查、action、清理或身份持久化结束后只允许仍属当前 generation 的结果更新 UI、清理 SecureStore/WebView Cookie、更新 App 凭据候选或登录投影、弹登录入口或重置等级。媒体不存在独立 Cookie 状态；JS 只携带内容来源 marker，原生再按首跳与重定向链决定是否从 WebView CookieJar 实时读取，不从媒体目标 URL 推断身份。某站变 stale 不影响其他站、小隐寺或新会话继续完成。 |
+| 必须保持的行为 | 三站分别捕获请求开始时的 generation；检查、action、清理或身份持久化结束后只允许仍属当前 generation 的结果更新 UI、清理 SecureStore/WebView Cookie、更新 App 凭据候选或登录投影、弹登录入口或重置等级。媒体不存在独立 Cookie 状态；JS 只携带内容来源 marker 与 opaque identity，原生再按首跳与重定向链决定是否从 WebView CookieJar 实时读取，不从媒体目标 URL 推断身份。某站变 stale 不影响其他站、小隐寺或新会话继续完成。 |
 | 精确失败 oracle | `tests/ui/account-status-controller.test.tsx` 在旧刷新等待凭据读取时推进 generation，要求旧请求不执行远端身份读取、不写 Query data 或显示旧错误；`src/sources/sourceGatewayContract.test.ts` 固定 linux.do 等级等 managed read 在 transport 结算前换 generation 时拒绝且不落 cache；`src/app/sessionControllerHelpers.test.ts` 在 NodeSeek 删除进行中排队新登录保存，要求旧清理不再进入 WebView Cookie 和 `cleared` 提交；`tests/ui/topic-actions-controller.test.tsx` 分别让三站旧 action 等待后推进 generation，要求不清新凭据、不改 session、不提示或打开登录。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须用 pending Promise 穿过真实 controller 的读取、网络和提交阶段；只测 generation queue helper 不能证明最终 session dispatch 受保护。 |
 | Replay 或真实验收路径 | 正常账号中心刷新、App 内登录与只读动作入口分别覆盖成功行为；不通过自动化真实提交登录、写操作，也不清现有 Cookie 制造竞态。 |
@@ -1212,13 +1227,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-03`、`NAV-03` |
 | 用户症状 | 完整刷新含块级正文图片的主题时，图片先在约 100×100 的小框里转圈，容器放大后又转一次圈，最后才显示图片；同一图片重进也会发生明显尺寸跳变。 |
-| 触发条件 | 正文 `<img>` 没有可直接使用的完整宽高，HTML renderer 先请求图片尺寸，尺寸就绪后最终图片组件再按 URL 发起自己的加载与解码。 |
+| 触发条件 | 正文 `<img>` 没有可直接使用的完整宽高，HTML renderer 先请求图片尺寸，尺寸就绪后最终图片组件再按 URL 发起自己的加载与解码；或块图携带缩略展示用 `width/height`，renderer 把它误当成真实尺寸上限。 |
 | 根因 seam | `src/app/useHtmlRenderingController.tsx` 曾同时使用 `react-native-render-html` 的 `useIMGElementState`（内部 `Image.getSize`）和按 URL 加载的 `ExpoImage`，把同一图片拆成“尺寸探测”和“最终显示”两个生命周期；RNRH 未知尺寸默认 100×100，因而产生小框、放大和第二个 Spinner。 |
-| 必须保持的行为 | 块级正文图片只由 `expo-image` 的 `useImage` 下载并解码一次，保留既有 Cookie、Referer、User-Agent，并把解码宽度限制到正文物理像素宽度；同一个 `ImageRef` 同时提供自然宽高并直接交给最终 `ExpoImage`。首次未知尺寸使用全正文宽度 4:3 灰底和一个连续 Spinner，最多按真实比例校正一次；当前进程按规范化 URL 复用真实宽高，尺寸缓存不持久化也不包含 Cookie。URL 或请求头变化时旧 ImageRef/失败状态立即失效；错误态停止 Spinner 并显示 alt/失败文案。inline 图片、emoji、sticker、图片预览、页面级读取状态、文本与投票正文树保持原行为。 |
-| 精确失败 oracle | `tests/ui/topic-image-loading.test.tsx` 固定冷首帧 4:3 和唯一 Spinner、物理像素解码上限、ImageRef 就绪后零 Spinner且最终 source 为同一引用、同 URL 重进首帧复用真实比例、请求头变化期间不显示旧图、错误态停止加载，以及 inline emoji 不调用块图 loader。 |
+| 必须保持的行为 | 块级正文图片只挂载一个直接接收适屏 URL 的 `ExpoImage` native view，保留既有媒体来源、会话身份、Referer 与 User-Agent。首次未知尺寸使用全正文宽度 4:3 灰底和一个连续 Spinner；同一次 native 请求的 `onLoad` 提供真实宽高并完成最终布局，Spinner 遮罩必须等 `onLoad` 与 `onDisplay` 都到达后才撤下，两者在 Android 上无论谁先到都不能先露出错误比例再跳大。块图在 inline 分类完成后不得让 HTML 缩略 `width/height` 覆盖这次请求返回的真实比例。当前进程按 session-scoped 规范化 URL 复用真实宽高，尺寸缓存不持久化也不包含 Cookie。URL、内容来源或 session epoch 变化时旧事件、失败状态与尺寸不能进入新页面；错误态停止 Spinner 并显示 alt/失败文案。inline 图片、emoji、sticker、图片预览、页面级读取状态、文本与投票正文树保持原行为。 |
+| 精确失败 oracle | `tests/ui/topic-image-loading.test.tsx` 固定冷首帧 4:3 和唯一 Spinner、带小 `width/height` 的块图在 `onLoad` 后改用真实比例但仍保留 Spinner、常规 `onLoad → onDisplay` 和 Android `onDisplay → onLoad` 两种顺序都只在真实比例就绪后撤下遮罩、同 URL 同会话重进首帧复用真实比例、session epoch 变化期间不显示旧图、超时终态后的迟到 `onLoad` 不改变错误框或污染尺寸、卸载后旧 callback/artifact 不更新页面或新建终态诊断、错误态停止加载，以及 inline emoji 不进入块图 loader。 |
 | 最低可靠自动测试层 | `UI_PASS`：只有渲染测试能同时证明占位几何、Spinner 数量、最终 source 身份、错误文案和 inline 分支隔离；`npm run typecheck` 固定 Expo/RNRH 图片源类型边界。动态缓存命中和真实帧序列再由只读 `LIVE_PASS` 核对。 |
 | Replay 或真实验收路径 | 在当前妖火含图主题用右上菜单“完整刷新”分别观察冷、热路径：冷路径只能看到一个全宽 4:3 占位和一个连续 Spinner，热路径保持最终几何尺寸，不再出现“小圈 → 大圈 → 图片”。再直达 `https://www.nodeseek.com/post-819647-1` 核对投票位置、分隔线和后文/sticker；四站各打开一个含图主题和普通文本主题，并检查图片预览与返回。全程只读，不清 App 数据、Cookie 或图片缓存。 |
-| 负向验证方式 | 恢复 `useIMGElementState` 尺寸请求或让最终 `ExpoImage` 重新接收 URL 时，ImageRef source 身份和唯一 Spinner 断言必须失败；删除进程内尺寸缓存时，同 URL 重进首帧比例断言必须失败；让 inline 分支经过 `useImage` 时隔离断言必须失败。 |
+| 负向验证方式 | 恢复额外的 `Image.getSize`/`useImage` 尺寸请求、在 `onLoad` 前撤掉遮罩或等到 `onDisplay` 后才调整真实尺寸时，单次请求和“小图不露出”断言必须失败；删除进程内尺寸缓存时，同 URL 同会话重进首帧比例断言必须失败；让 inline 分支经过块图 loader 时隔离断言必须失败。 |
 | 明确不覆盖范围 | 不改变页面级“正在读取主题”、inline 图片和 sticker 自身加载策略，不持久化图片尺寸，不制造最短 Loading 时长，不执行保存图片、投票或其他写操作。 |
 
 ## `REG-TOPIC-005` V2EX 评论刷新失败却记录成功
@@ -1843,9 +1858,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-01`、`TOPIC-03`、`NAV-03` |
 | 用户症状 | 主题里的报告图片 URL 以 `.png` 结尾、实际返回 `image/svg+xml` 时，Android 正文显示“图片加载失败”；简单改成 data URI 仍使用同一 AndroidSVG decoder，全屏也可能空白。 |
 | 触发条件 | SVG 使用 AndroidSVG 不支持或会崩溃的文档结构，或根 `<svg>` 使用相对尺寸配合非方形 `viewBox`。 |
-| 根因 seam | `src/compatibleImageSources.ts` 的 SVG document artifact、`src/app/useHtmlRenderingController.tsx` 的海报 ImageRef/几何、`src/components/ImagePreviewModal.tsx` 的全屏 renderer 切换。 |
-| 必须保持的行为 | 普通位图继续只走原生单次加载；只有原生解码失败后才在 10 秒、1 MiB、明确 SVG `Content-Type` 门禁下复取并保留原请求字节。共享 artifact 缓存原始 document data URI、原始固有比例与 Chromium PNG 海报；正文使用海报，全屏使用隔离的动态 document view，迟到结果按 request identity 丢弃。数值/px 尺寸可直接使用，相对尺寸回退 `viewBox`。 |
-| 精确失败 oracle | `src/compatibleImageSources.test.ts` 固定原始字节、SVG 缓存、请求头和百分比尺寸；`tests/ui/topic-image-loading.test.tsx` 与 `tests/ui/image-preview.test.tsx` 固定原生失败后分别切换到海报和动态 document view且不显示失败态。 |
+| 根因 seam | `src/compatibleImageSources.ts` 的 SVG document artifact、`src/app/useHtmlRenderingController.tsx` 的海报 native view/几何、`src/components/ImagePreviewModal.tsx` 的全屏 renderer 切换。 |
+| 必须保持的行为 | 普通位图继续只走原生单次加载；只有原生解码失败后才在 10 秒、1 MiB、明确 SVG `Content-Type` 门禁下复取并保留原请求字节。共享 artifact 缓存原始 document data URI、原始固有比例、动画能力与 Chromium PNG 海报；正文与静态全屏使用海报，只有动画全屏当前页使用隔离 document view，迟到结果按 request identity 丢弃。数值/px 尺寸可直接使用，相对尺寸回退 `viewBox`。 |
+| 精确失败 oracle | `src/compatibleImageSources.test.ts` 固定原始字节、SVG 缓存、请求头、百分比尺寸与真实动画分类；`tests/ui/topic-image-loading.test.tsx` 与 `tests/ui/image-preview.test.tsx` 固定原生失败后正文切换海报、静态全屏保持海报、动画全屏当前页切换 document view且不显示失败态。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`。 |
 | Replay 或真实验收路径 | 只读打开 NodeSeek `【TQ】Vmiss US.LA.TRI.Basic`，确认 tcpquality 三张动态报告在正文和全屏预览中保持完整比例；只打开预览，不保存。 |
 | 负向验证方式 | 把 posterSource 改回 SVG data URI、把百分比解析为数字或不给 fallback 同时约束宽高，编号测试分别重新进入同一 decoder、得到 100×100 尺寸或错误几何。 |
@@ -1859,27 +1874,27 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | NodeSeek 受保护图片可在正文中显示，点开全屏、播放视频或保存时却重新发起匿名请求，或继续使用持久化旧 Cookie，得到登录页、403 或加载失败。 |
 | 触发条件 | RN/Fresco、Expo Image、Expo Video 和保存下载分别拥有 transport；其中任一路没有接入准确 URL 的当前 WebView Cookie，或从 App 快照手工拼接旧 `Cookie` header。 |
 | 根因 seam | 原生 managed OkHttp client、Expo Image loader、`src/app/useHtmlRenderingController.tsx` 的 Expo Video source、图片预览与 `src/imageSave.ts`。 |
-| 必须保持的行为 | 本条保留“NodeSeek 同来源受保护媒体不丢当前会话、不使用 Cookie 快照、响应不回写”的历史语义；旧 JS Expo Video Cookie bridge 由 `REG-TOPIC-029` 的统一媒体契约取代。正文、全屏图、尺寸探测、缩略图、SVG fallback、保存下载和视频都只在 JS 携带内部内容来源 marker，原生在发网前移除 marker 和任何 JS `Cookie` header。首跳目标属于内容来源时可按准确 URL 从 WebView CookieJar 实时读取；跨来源、未受管、无效 marker 或媒体 Cookie 读取失败都继续匿名加载，重定向一旦离开内容来源就永久降权。RN Networking、Fresco、Expo Image 与 Expo Video 使用项目配置的 managed OkHttp client；响应不得写回 WebView，Cookie 值不得进入 URL、持久化文件或诊断日志。 |
-| 精确失败 oracle | 生成的 `NetworkProxyRuntimeTest` 固定内部 marker 在发网前移除、同来源首跳可读 Cookie、跨来源/无效 marker 匿名继续、Cookie 读取异常 fail-closed，以及离源后跳回仍不恢复。`src/releasePackaging.test.ts` 与 `src/networkProxyPlugin.test.ts` 固定 Expo Image/Video 使用 managed client 且视频不继承图片总时限；`src/htmlImages.test.ts`、`tests/ui/topic-image-loading.test.tsx`、`tests/ui/image-preview.test.tsx`、`tests/ui/image-preview-controller.test.tsx` 与 `src/imageSave.test.ts` 固定各入口只传 marker、不在 JS 传输 Cookie 快照。 |
+| 必须保持的行为 | 本条保留“NodeSeek 同来源受保护媒体不丢当前会话、不使用 Cookie 快照、响应不回写”的历史语义；旧 JS Expo Video Cookie bridge 由 `REG-TOPIC-029` 的统一媒体契约取代。正文、全屏图、SVG fallback、保存下载和视频都在 JS 携带内部内容来源 marker 与 opaque session identity，原生在发网前移除两个内部头和任何 JS `Cookie` header。首跳目标属于内容来源时可按准确 URL 从 WebView CookieJar 实时读取；跨来源、未受管、无效 marker 或媒体 Cookie 读取失败都继续匿名加载，重定向一旦离开内容来源就永久降权。RN Networking、Fresco、Expo Image 与 Expo Video 使用项目配置的 managed OkHttp client；响应不得写回 WebView，Cookie 值不得进入 URL、持久化文件或诊断日志。 |
+| 精确失败 oracle | 生成的 `NetworkProxyRuntimeTest` 固定两个内部头在发网前移除、同来源首跳可读 Cookie、跨来源/无效 marker 匿名继续、Cookie 读取异常 fail-closed，以及离源后跳回仍不恢复。`src/releasePackaging.test.ts` 与 `src/networkProxyPlugin.test.ts` 固定 Expo Image/Video 使用 managed client 且视频不继承图片总时限；`src/htmlImages.test.ts`、`tests/ui/topic-image-loading.test.tsx`、`tests/ui/image-preview.test.tsx`、`tests/ui/image-preview-controller.test.tsx` 与 `src/imageSave.test.ts` 固定各入口只传内部来源与 identity 头、不在 JS 传输 Cookie 快照。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` + 原生生成/编译。 |
 | Replay 或真实验收路径 | 只有当前登录态自然出现受保护媒体时做只读预览；真实保存会写系统媒体库，须另获授权。 |
 | 负向验证方式 | 恢复媒体 Cookie state/参数、按媒体目标 host 推断身份、向 JS source 写入 `Cookie`、让重定向离源后重新获得 Cookie、让 Expo Image/Video 使用独立 client，或允许响应保存 Cookie；对应测试必须失败。 |
 | 明确不覆盖范围 | 不清理或伪造登录态来制造私有对象，不把 Cookie 发往非 NodeSeek host，也不执行未经授权的相册写入。 |
 
-## `REG-TOPIC-020` Android 不兼容 SVG 的未选中缩略图保持空白
+## `REG-TOPIC-020` Android 不兼容 SVG 在非当前预览页抢占昂贵恢复
 
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `TOPIC-02` |
-| 用户症状 | 多图预览中当前 SVG 经兼容恢复后可以显示，但其他同类图片的缩略图一直是黑色空框；只有逐张点选、触发主图恢复后才出现缩略图。 |
-| 触发条件 | 全屏主图有原生失败 fallback，缩略图只读取已有兼容缓存，自己的 `onError` 没有启动恢复。 |
-| 根因 seam | `src/components/ImagePreviewModal.tsx` 的每个缩略图加载生命周期与 `src/compatibleImageSources.ts` 的去重缓存。 |
-| 必须保持的行为 | 每个已渲染缩略图在原生解码失败后独立请求同一受限 SVG artifact，并只显示其 PNG 海报；并发请求与海报任务由共享 helper 去重，NodeSeek 请求头保持不变；健康位图不额外 fetch，未渲染图片不主动预取，缩略图树中不创建 WebView。 |
-| 精确失败 oracle | `tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-020` 在未选择第 2 张图时触发其缩略图错误，要求来源切换为 file URI 海报且 WebView 数量仍只取决于当前全屏项。 |
+| 用户症状 | 多图预览会让当前原图与相邻复杂 SVG 同时启动 Chromium/海报兼容恢复，导致当前图片继续等待、手势掉帧或出现多份昂贵渲染。 |
+| 触发条件 | 虚拟窗口会挂载相邻页；若相邻页的原生解码失败立即启动 SVG fallback，就把“低优先级占位预热”误升级成昂贵网络复取与 Chromium 工作。 |
+| 根因 seam | `src/components/ImagePreviewModal.tsx` 的页面 active 状态与 `src/compatibleImageSources.ts` 的兼容恢复入口。 |
+| 必须保持的行为 | 当前页原生失败后可启动受限 SVG artifact 恢复；静态 artifact 显示海报，动画 artifact 才显示单个隔离 document view。相邻页只允许低优先级原生请求和 display placeholder，原生失败时仅记住失败，不启动 fetch、海报或 WebView。该页成为当前页后才允许恢复；离开当前页取消其未结算的 UI 所有权。健康位图不额外 fetch，远页不挂载，图库不恢复缩略图栏。 |
+| 精确失败 oracle | `tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-020` 先让相邻页原生失败，要求 SVG fetch/renderer 与 WebView 均为零；切换该页为当前页后才允许一次共享恢复，并且只有动画 artifact 的当前页挂载 document view。 |
 | 最低可靠自动测试层 | `UI_PASS`。 |
-| Replay 或真实验收路径 | 在上述 NodeSeek 三图主题打开预览，保持第 2 张为当前图时确认尚未选择的第 3 张缩略图也自动出现，再打开第 3 张核对完整内容。 |
-| 负向验证方式 | 删除缩略图 `onError` 恢复，编号测试保持原 URL，真机对应缩略图为空框。 |
-| 明确不覆盖范围 | 不预抓取图库外图片，不为普通非 SVG 错误隐藏空态，也不执行保存。 |
+| Replay 或真实验收路径 | 在上述 NodeSeek 三图主题打开预览，保持第 2 张为当前页时确认只显示当前动态 SVG、滑动与缩放正常；再滑到第 3 张，届时才启动其兼容恢复并显示完整内容。 |
+| 负向验证方式 | 让相邻页 `onError` 直接调用兼容恢复时，编号测试会在切页前观察到 fetch/renderer；禁用当前页恢复时，切页后的成功断言失败。 |
+| 明确不覆盖范围 | 不预抓取图库外图片，不恢复原图缩略图栏，不为普通非 SVG 错误隐藏空态，也不执行保存。 |
 
 ## `REG-TOPIC-021` NodeSeek 短后台恢复被超时抢先判失败
 
@@ -2190,7 +2205,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | NodeSeek 保存过 userId 且公开资料仍可读取，当前响应同时含明确游客与残留用户字段，真实游客页使用 `/signIn.html`、`/register.html` 而旧 probe 未识别，或弱设置/通知/UID 内容被当当前用户；linux.do 新文档仍收到旧 probe 消息；妖火公开卡片含“我的/欢迎”但没有可信 self-account 结构；站点协议明确返回匿名字段/结构，或成功响应缺少 current user；目标站旧 `account-status` Query 仍有活跃 disabled observer。 |
 | 根因 seam | 当前凭据验证与按 ID 公开资料、Topic 身份或 Cookie 候选混用；WebView probe 缺少文档所有权；妖火把业务文字或“未识别为退出”当成功；Discourse reader 没有完整区分明确匿名与协议不确定；Account Query 与 session epoch 更新时序既可能擦掉刚提交的身份结果，也可能通过全局 previous data 保留旧登录。 |
 | 必须保持的行为 | 四站 Credential、generation、Account Query 和验证协议继续按站隔离，但遵守同一证据边界：只有当前凭据端点返回当前用户，或站点专属可信账号容器给出明确 self-account 结构，才是 `logged-in`；只有该站协议明确约定的匿名字段、状态或准确游客结构才是 `logged-out`；其他 HTTP 状态、成功但缺字段、普通业务页、CF、超时、网络与解析不确定都是 `unknown`。Cookie、旧 ID、Topic 作者、公开资料和普通“我的/欢迎”文案不是登录证明；明确游客证据优先于同一响应残留 self 字段。NodeSeek 与 linux.do 手动 probe 使用当前文档私有 nonce/documentKey，新文档先作废旧结果；明确 `logged-out` 只更新 App 为失效，不删除原站 Cookie；四站 unknown 均不清理并保留上次可信身份。外部会话变化 reset 目标站 Account Query；查询自身确认失效则先提交 exact expired，再只 seed 该结果到新 scope，普通新 scope 不继承旧登录；小隐寺只读 Account 失效不发布授权 workflow。其他三站 data/error/busy 不变。各站精确状态契约由 `REG-ACCOUNT-025/026` 固定。 |
-| 精确失败 oracle | `src/forumApi.test.ts`、`src/loginWebViewScripts.test.ts` 与 `tests/ui/account-site-panels.test.tsx` 固定 NodeSeek 公开资料禁用、真实 `.html` 游客结构、明确游客优先级及两站 probe 文档所有权；`src/yaohuoApi.test.ts` 固定公开卡片/业务文案 unknown；`src/linuxdoActionClient.test.ts`、`src/localXiaoyinsi.test.ts` 固定 current user、显式匿名与畸形 200 分界；`tests/ui/xiaoyinsi-auth-controller.test.tsx` 固定只读检查不发布 workflow；`src/app/sessionControllerHelpers.test.ts`、`src/app/serverState.test.ts` 固定 active disabled Query reset 与 exact expired 新 scope seed；`tests/ui/account-status-controller.test.tsx` 固定确认失效提交时序、普通新 scope 不继承旧登录、清理失败和四站 unknown 保留身份；`src/siteSessionPrompts.test.ts` 同时固定 More 非登录、Search 灯非绿色/Google 文案和 Topic 不可写。 |
+| 精确失败 oracle | `src/forumApi.test.ts`、`src/loginWebViewScripts.test.ts` 与 `tests/ui/account-site-panels.test.tsx` 固定 NodeSeek 公开资料禁用、真实 `.html` 游客结构、明确游客优先级及两站 probe 文档所有权；`src/yaohuoApi.test.ts` 固定公开卡片/业务文案 unknown；`src/forumApi.test.ts`、`src/localXiaoyinsi.test.ts` 固定 current user、显式匿名与畸形 200 分界；`tests/ui/xiaoyinsi-auth-controller.test.tsx` 固定只读检查不发布 workflow；`src/app/sessionControllerHelpers.test.ts`、`src/app/serverState.test.ts` 固定 active disabled Query reset 与 exact expired 新 scope seed；`tests/ui/account-status-controller.test.tsx` 固定确认失效提交时序、普通新 scope 不继承旧登录、清理失败和四站 unknown 保留身份；`src/siteSessionPrompts.test.ts` 同时固定 More 非登录、Search 灯非绿色/Google 文案和 Topic 不可写。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Query observer reset、controller 异步结算和三个消费面的同一投影都必须被观察。 |
 | Replay 或真实验收路径 | 保留当前 App 数据，在 NodeSeek 自然掉线时于账号中心刷新；确认 More 未登录/失效、NodeSeek 搜索使用 Google 且灯非绿色、Topic 写入口关闭。另三站只读核对状态不变；不得清 App 数据、主动退出、撤销授权或用写操作制造场景。 |
 | 负向验证方式 | 恢复公开资料/Topic/Cookie 兜底、把业务文案或畸形 200 当登录、漏掉各站精确匿名契约、让残留 self/Cookie 覆盖明确游客、跨文档接受旧 probe、让 Account Query 回写小隐寺 workflow、用全局 previous data 保留旧身份、移除精确 reset/seed 或把 reset 扩到全部来源时，对应编号测试分别失败。 |
@@ -2281,7 +2296,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | 当前身份 endpoint 的来源门禁、每站登录/退出证据与破坏性清理权限，以及“验证当前凭据”和“读取公开资料”的边界。 |
 | 必须保持的行为 | 生产 endpoint 必须能追溯到官方源码/文档、当前站点实际调用或成熟客户端，测试 mock 不能作为接口存在的证据。NodeSeek 当前页只从 `__config__.user` 或专属 self-account 结构证明登录，不递归接受无关嵌入 profile；准确游客控件证明退出，普通 HTTP 状态 unknown。linux.do Cookie 会话只以 `/session/current.json` 的 current user 证明登录，以 Discourse `SessionController#current` 的匿名 404/显式匿名字段证明退出，401/403 unknown。小隐寺 User API 会话以同一端点的 current user 证明登录，只以 Discourse JSON 403 且 `error_type=invalid_access` 或显式匿名字段证明退出；原始 401/403/404、非 JSON 和其他 JSON 错误 unknown，Controller 不能直接解释 transport status。妖火的已支持 Cookie 只作候选，不要求检测前必须存在 `sidyaohuo`；必须由成熟客户端使用的 `wapindex.aspx?sid=-2` 中 `div.top2` 本人导航及 `touserid` 证明登录，adapter 成功却无 current user 仍为 unknown；准确游客 DOM/登录重定向证明退出，401/403/404 unknown。公开资料只做可选补全，站点昵称替换数字 ID 占位，失败保留已证明的最小 current user、报告 partial，且不得调用登录清理。 |
 | 来源证据 | Discourse 官方 [`routes.rb`](https://github.com/discourse/discourse/blob/main/config/routes.rb) 声明 `session/current` 与 User API Device Code 路由；[`SessionController#current`](https://github.com/discourse/discourse/blob/main/app/controllers/session_controller.rb) 在无 current user 时返回 404；[`DefaultCurrentUserProvider`](https://github.com/discourse/discourse/blob/main/lib/auth/default_current_user_provider.rb) 对无效 User API Key 抛 `InvalidAccess`；[`api_keys_spec.rb`](https://github.com/discourse/discourse/blob/main/spec/integration/api_keys_spec.rb) 证明 User API Key header 可读取当前 session。妖火成熟 Android 客户端 [`Api.kt`](https://github.com/Townwang/yaohuo/blob/7cda306fb948ea7ba1bedccff0e5c516e4761991/yaohuoApi/src/main/java/com/townwang/yaohuoapi/Api.kt) 使用 `wapindex.aspx?sid=-2` 和 `bbs/userinfo.aspx`，[`LoginModel.kt`](https://github.com/Townwang/yaohuo/blob/7cda306fb948ea7ba1bedccff0e5c516e4761991/app/src/main/java/com/townwang/yaohuo/ui/fragment/login/LoginModel.kt) 从 `div.top2` 的本人链接读取 `touserid`。NodeSeek 当前静态前端 bundle 从 `__config__.user` 读取当前用户，带 ID 的 `getInfo` 只用于公开用户资料。 |
-| 精确失败 oracle | `src/forumApi.test.ts` 用四站真实协议形状固定正向 current identity，拒绝 NodeSeek 无关嵌入 profile，并让 linux.do 401/403 保持 unknown、妖火资料 503 时仍返回已证明用户；`src/linuxdoActionClient.test.ts` 固定官方匿名 404 与非契约 401/403 的权限差异；`src/yaohuoApi.test.ts` 固定妖火 401/403/404 不产生 `loginRequired`；`tests/ui/account-controller.test.tsx` 固定任一已支持妖火会话 Cookie 都进入当前账号验证、无 current user 不保存；`src/localYaohuo.test.ts` 固定资料昵称替换数字 ID 占位；`src/localXiaoyinsi.test.ts` 固定 `invalid_access` JSON 403 才产生 typed expiry，原始 401/403/404、HTML 403 与其他 JSON 403 均 unknown，`tests/ui/xiaoyinsi-auth-controller.test.tsx` 固定 Controller 只信 typed expiry；`tests/ui/account-status-controller.test.tsx` 固定妖火资料补全失败仍为 logged-in、只提示单站 partial 且零清理调用。 |
+| 精确失败 oracle | `src/forumApi.test.ts` 用四站真实协议形状固定正向 current identity，拒绝 NodeSeek 无关嵌入 profile，并让 linux.do 官方匿名 404 与非契约 401/403 保持正确分界、妖火资料 503 时仍返回已证明用户；`src/yaohuoApi.test.ts` 固定妖火 401/403/404 不产生 `loginRequired`；`tests/ui/account-controller.test.tsx` 固定任一已支持妖火会话 Cookie 都进入当前账号验证、无 current user 不保存；`src/localYaohuo.test.ts` 固定资料昵称替换数字 ID 占位；`src/localXiaoyinsi.test.ts` 固定 `invalid_access` JSON 403 才产生 typed expiry，原始 401/403/404、HTML 403 与其他 JSON 403 均 unknown，`tests/ui/xiaoyinsi-auth-controller.test.tsx` 固定 Controller 只信 typed expiry；`tests/ui/account-status-controller.test.tsx` 固定妖火资料补全失败仍为 logged-in、只提示单站 partial 且零清理调用。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：adapter 固定接口/响应分类，Controller 固定清理权限和可信身份保留。源码 URL 字符串、测试 mock 成功、Cookie 名称或 App 可启动均不能证明当前登录。 |
 | Replay 或真实验收路径 | 保留当前 App 数据，在账号中心只读刷新四站：已登录站必须显示服务端/当前页证明的本人身份，普通失败保留上次可信身份并显示错误；More、Search 灯与 Topic 写权限使用同一按站投影。NodeSeek/妖火登录页若需要用户操作，由用户手动完成；不得清 Cookie、撤销授权或执行真实写入制造状态。 |
 | 负向验证方式 | 给任一测试虚构 endpoint 并据此改生产实现、递归接受 NodeSeek 无关 profile、把四站状态码统一成 expiry、用 Cookie/公开资料补登录、用 `sidyaohuo` 名称阻止真实验证、允许无 current user 落盘，或让妖火 profile failure 推翻 current identity；对应编号测试必须分别暴露多余请求、错误 `loginRequired`、漏检、假登录或错误清理。 |
@@ -2342,7 +2357,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | App 冷启动后 Feed、Categories 或账号读取明明处于原站登录会话，却更频繁收到 403/Cloudflare 并进入缓慢 WebView fallback；去 More 刷新后表面恢复，但 direct request 仍可能失败。受保护图片、视频或保存下载也可能因另一份旧 Cookie header 表现不同。 |
 | 触发条件 | React Native 关闭环境 CookieJar 后，由 JavaScript 根据已知名称手工拼接持久化 Cookie；新 Cookie、HttpOnly、Domain、Path、Secure、子域与重定向选择无法等价于 WebView 针对当前 URL 实际会发送的 header，实时为空时还可能回退旧值。 |
 | 根因 seam | `fetchWithTimeout`、NodeSeek/linux.do/妖火 source/action clients、媒体 transport 与 Android `CookieManager` 之间存在多份 Cookie 传输所有者。 |
-| 必须保持的行为 | WebView CookieJar 仍是三站请求 Cookie 的唯一事实来源。普通 source/action 请求由 `ReadOnlyWebViewCookieHandler` 调用 `CookieManager.getCookie(准确完整 URL)`；不按名称过滤、清洗、重组或缓存，由平台处理 Domain、Path、Secure 和重定向。只允许 HTTPS 且无 userinfo 的 `nodeseek.com`、`linux.do`、`yaohuo.me` 及子域；合法空值按无 Cookie 请求，读取异常明确失败且不得回退历史快照。响应保存为 no-op。RN source/action clients 不设置 `Cookie` header；CSRF、sid、touserid 等非 Cookie 协议字段保留。Xiaoyinsi 继续使用 API key/Auth，不注入 WebView Cookie。媒体延续本条“零 JS Cookie header/零快照”的历史保证，但具体授权已由 `REG-TOPIC-029` 取代旧 Expo Video bridge：HTTP(S) 媒体只携带内部内容来源 marker，原生在发网前移除；同来源首跳才可实时读 Cookie，跨来源、未受管、无效 marker 或媒体 Cookie 读取异常继续匿名加载，重定向离源后永久降权。RN Networking、Fresco、Expo Image 与 Expo Video 复用项目配置的 managed client。 |
+| 必须保持的行为 | WebView CookieJar 仍是三站请求 Cookie 的唯一事实来源。普通 source/action 请求由 `ReadOnlyWebViewCookieHandler` 调用 `CookieManager.getCookie(准确完整 URL)`；不按名称过滤、清洗、重组或缓存，由平台处理 Domain、Path、Secure 和重定向。只允许 HTTPS 且无 userinfo 的 `nodeseek.com`、`linux.do`、`yaohuo.me` 及子域；合法空值按无 Cookie 请求，读取异常明确失败且不得回退历史快照。响应保存为 no-op。RN source/action clients 不设置 `Cookie` header；CSRF、sid、touserid 等非 Cookie 协议字段保留。Xiaoyinsi 继续使用 API key/Auth，不注入 WebView Cookie。媒体延续本条“零 JS Cookie header/零快照”的历史保证，但具体授权已由 `REG-TOPIC-029` 取代旧 Expo Video bridge：HTTP(S) 受管媒体携带内部内容来源 marker 与 opaque identity，原生在发网前移除两个内部头；同来源首跳才可实时读 Cookie，跨来源、未受管、无效 marker 或媒体 Cookie 读取异常继续匿名加载，重定向离源后永久降权。RN Networking、Fresco、Expo Image 与 Expo Video 复用项目配置的 managed client。 |
 | 来源证据 | Android [`CookieManager.getCookie(url)`](https://developer.android.com/reference/android/webkit/CookieManager#getCookie(java.lang.String)) 提供按 URL 的平台选择；React Native [`NetworkingModule`](https://github.com/facebook/react-native/blob/v0.81.5/packages/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/network/NetworkingModule.kt) 只有在 credentials 开启时才沿用 client CookieJar；OkHttp [`JavaNetCookieJar`](https://square.github.io/okhttp/5.x/okhttp-java-net-cookiejar/okhttp3.java.net.cookie-jar/-java-net-cookie-jar/) 可把单向 `CookieHandler` 接入同一 client。 |
 | 精确失败 oracle | 生成的 `NetworkProxyRuntimeTest` 传入带 path/query 的准确 URL 和未知 Cookie 名，要求完整返回；固定 HTTP、userinfo、相似域与非受管域不读取，普通请求的 reader 异常向请求传播，响应不写入，并证明 managed client 与代理共用 selector/dispatcher/pool。同一原生测试另固定媒体 marker 在发网前移除、跨来源/无效 marker/Cookie 读取异常时匿名继续、离源后跳回仍不恢复。`src/request.test.ts` 要求最终 `credentials: include`；NodeSeek/linux.do/妖火 source/action 测试要求零手工 Cookie header；`src/releasePackaging.test.ts`、`src/networkProxyPlugin.test.ts` 和 `tests/ui/topic-image-loading.test.tsx` 固定 Expo Image/Video managed client 接线、内部 marker 与 JS 零 Cookie。修复前分别表现为 `credentials: omit`、白名单 header 或独立媒体 client。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` + 原生 Release JUnit/Kotlin compile + fresh prebuild；逐调用方源码搜索只作为补充门禁。 |
@@ -3280,9 +3295,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` |
 | 用户症状 | NodeSeek `post-841430-1` 的正文图片持续 Spinner 或失败；响应实际是合法 SVG，切到 data URI 后仍无法显示，去掉链接包装也无效。 |
 | 触发条件 | SVG 同时包含 `<tspan>` 的 objectBoundingBox 渐变、CSS 初始透明与 animation、SMIL、filter 和嵌套 data SVG；AndroidSVG 1.4 在渐变文字 bounding box 未建立时 NPE，且不具备完整 CSS/SMIL 语义。 |
-| 根因 seam | `src/compatibleImageSources.ts` 曾把失败 SVG 改写后再次交给 Expo Image 的同一个 AndroidSVG decoder；正文、缩略图和全屏没有共享“SVG 文档 artifact”边界。 |
-| 必须保持的行为 | 位图和 AndroidSVG 可解 SVG 继续走原生快路径。只有原生失败后才由项目受管 OkHttp client 复取；10 秒、明确 SVG MIME 与按流读取 1 MiB + 1 byte 的门禁必须发生在数据过桥前。门禁成功后保留原始 SVG 字节并 single-flight 生成 artifact，固有尺寸只读已验证的真实 XML 根元素；进程内单例 Chromium renderer 串行生成有界 PNG 海报，正文和已渲染缩略图仍由 Expo Image 显示。全屏只为当前复杂 SVG 挂载一个禁脚本、禁网络、禁文件/content 访问且无 bridge 的动态 document view；普通图片不创建 WebView。session epoch 变化使用新 identity，旧海报、事件和 artifact 不得落地；海报文件被原生 LRU 淘汰时从 artifact 原始字节重建一次且不重新发网；海报队列等待也计入 30 秒终态。保存继续下载原 URL 并保留 `.svg` 原始字节。 |
-| 精确失败 oracle | `tests/fixtures/complex-svg-document.svg` 固定本次结构；`src/compatibleImageSources.test.ts` 要求原文档不改写、精确 1 MiB 门禁、海报单飞/缓存与淘汰重建、真实根元素比例，并证明接近 30 秒 deadline 才出队的下载只能使用剩余预算；`tests/ui/topic-image-loading.test.tsx` 固定正文海报、十图正文无 WebView、迟到 epoch 丢弃，`tests/ui/image-preview.test.tsx` 与 `tests/ui/compatible-svg-document-view.test.tsx` 固定缩略图海报、全屏单 WebView 及安全 props。生成的 Kotlin policy test 固定原生流式 `MAX+1` 中止、输入/画布/cache 上限、根元素比例、队列有界和旧页面错误隔离；instrumentation test 用真实 AndroidSVG/Chromium 固定旧 decoder 失败、十张非空海报复用一个 WebView、动画两帧变化和恶意外链零请求。 |
+| 根因 seam | `src/compatibleImageSources.ts` 曾把失败 SVG 改写后再次交给 Expo Image 的同一个 AndroidSVG decoder；正文与全屏没有共享“SVG 文档 artifact”边界。 |
+| 必须保持的行为 | 位图和 AndroidSVG 可解 SVG 继续走原生快路径。只有原生失败后才由项目受管 OkHttp client 复取；10 秒、明确 SVG MIME 与按流读取 1 MiB + 1 byte 的门禁必须发生在数据过桥前。门禁成功后保留原始 SVG 字节并 single-flight 生成 artifact，固有尺寸只读已验证的真实 XML 根元素；进程内单例 Chromium renderer 串行生成有界 PNG 海报，正文仍由 Expo Image 显示。静态 artifact 的全屏继续使用海报；只有当前动画 artifact 挂载一个禁网络、禁文件/content 访问且不可执行原始 SVG 脚本的 document view，并先按 artifact 固有尺寸显示正文海报。固定 nonce 的本地 readiness bridge 只能回报内层 data image 就绪/失败，Android 动态 document view 使用平台默认合成层，且按 `REG-TOPIC-045` 永不进入缩放树。相邻 Pager 页不得启动昂贵恢复；普通图片和静态 artifact 不创建全屏 WebView。session epoch 变化使用新 identity，旧海报、事件和 artifact 不得落地；海报文件被原生 LRU 淘汰时从 artifact 原始字节重建一次且不重新发网；海报队列等待也计入 30 秒终态。保存继续下载原 URL 并保留 `.svg` 原始字节。 |
+| 精确失败 oracle | `tests/fixtures/complex-svg-document.svg` 固定本次结构；`src/compatibleImageSources.test.ts` 要求原文档不改写、精确 1 MiB 门禁、海报单飞/缓存与淘汰重建、真实根元素比例，并证明接近 30 秒 deadline 才出队的下载只能使用剩余预算；`tests/ui/topic-image-loading.test.tsx` 固定正文海报、十图正文无 WebView、迟到 epoch 丢弃，`tests/ui/image-preview.test.tsx` 与 `tests/ui/compatible-svg-document-view.test.tsx` 固定相邻页零兼容恢复、缓存 artifact 固有尺寸、正文海报首帧、当前页单 WebView、平台默认合成层、nonce readiness bridge 及其余安全 props。生成的 Kotlin policy test 固定原生流式 `MAX+1` 中止、输入/画布/cache 上限、根元素比例、队列有界和旧页面错误隔离；instrumentation test 用真实 AndroidSVG/Chromium 固定旧 decoder 失败、十张非空海报复用一个 WebView、动画两帧变化和恶意外链零请求。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` + fresh prebuild 后原生 Kotlin JVM/instrumentation tests 与 compile；身份匹配 APK 仍需 `DEVICE_REPLAY_PASS` 固定真实 Topic 集成链。 |
 | Replay 或真实验收路径 | 覆盖安装当前 APK 后用 `exp+wz-android://open-topic` 直达 `https://www.nodeseek.com/post-841430-1`；正文必须出现完整静态海报而非永久 Spinner，点击后当前全屏项播放动态 SVG，退出重进命中海报缓存。全程只读，不清 Cookie/App 数据；保存需单独授权。 |
 | 负向验证方式 | 把 artifact.posterSource 改回 SVG data URI，真实 fixture 会再次进入 AndroidSVG 失败；允许每张正文图创建 WebView时，十图组件测试/原生实例计数失败；开启 JS/文件/网络或允许外部导航时安全 props 与原生策略测试失败。 |
@@ -3302,6 +3317,111 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 条件式 `LIVE-READ-04` 在 revision、版本和 APK 身份匹配且 NodeSeek 登录已确认的设备上，直达指定只读 Topic，逐个检查正文、回复和数字 `/space/{uid}` 用户链接；每个 username 最多一次真实 resolver probe，目标 User 加载后物理返回并保持原 Topic 与回复位置。不得执行真实写操作或用连点制造 429。 |
 | 负向验证方式 | 删除当前 Topic 中该 username 的候选后，parser 仍必须返回内部 reference；让模糊结果排在 exact 前面不得选错；把 Profile key 恢复 username 分叉、解析前显示关注、或把普通 resolver 失败交给 external callback 时，对应编号测试失败。lookalike host、空参数、`/member?q=`、无 href 纯文本 mention 和 Discourse label-only 引用继续不可导航。 |
 | 明确不覆盖范围 | 不解析没有可信 href 的纯文本 `@name`，不扫描分页回复建立全量候选表，不预取全文用户，不建立通用跨站身份服务或持久 username→UID 映射，不自动重试 429，也不改变 ReaderData schema。 |
+
+## `REG-TOPIC-040` 正文误把预览原图当作适屏图片下载
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` |
+| 用户症状 | 浏览器中秒开的论坛图片在 App 正文等待十几秒甚至离页仍未完成；窄屏正文实际下载了灯箱原图或 `srcset` 最大候选，耗时和字节数远大于展示所需。 |
+| 触发条件 | HTML 预处理把 `<a href>` 灯箱 URL 或最大 `srcset` 候选覆盖进正文 `src`，并让一个 URL 同时承担正文展示、全屏预览和保存。 |
+| 根因 seam | `src/htmlImages.ts` 的图片候选解析、正文 source 选择与预览 alias catalog，以及 `src/app/useHtmlRenderingController.tsx` 的最终 native source。 |
+| 必须保持的行为 | 每张 HTML 图片形成最小双层模型：`displayUri` 只用于正文适屏交付，`originalUri` 只用于全屏和保存。`w` 候选选择首个满足 `contentWidth × DPR` 的宽度，否则最大；`x` 候选选择首个不低于 DPR 的倍率，否则最大。安全且非占位的 `src` 在候选不完整时优先；灯箱原图不得覆盖正文。所有 alias 仍结算到同一预览项，主动 URL 继续遵守 `REG-TOPIC-030`。 |
+| 精确失败 oracle | `src/htmlImages.test.ts` 的 `REG-TOPIC-040` 固定 `w/x srcset` 临界点、DPR、无描述符回退、占位 src、非法候选、alias 去重和 display/original 分离；`tests/ui/topic-image-loading.test.tsx` 用含小适屏图与大灯箱图的真实 renderer props 断言正文 native source 只收到适屏 URL，点击后预览仍指向原图。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：解析器固定候选算法，RNTL 固定最终 native source；源码字符串或仅验证 catalog 不足以证明正文没有下载原图。 |
+| Replay 或真实验收路径 | 用“大原图 + 小适屏图 + 可暂停响应”的受控只读端点打开 Topic，核对正文命中的候选、最终字节数和预览原图。今日日志没有保存图片 URL；重新取得原帖/图片入口前，幺火该资源专项标 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复灯箱 URL 覆盖正文、无条件取最大候选或让正文直接使用 `originalUri`，编号测试会收到大图 URL；放宽危险候选会同时触发 `REG-TOPIC-030`。 |
+| 明确不覆盖范围 | 不新增全局请求队列、ImageManager、OkHttp 响应缓存或后台全量预取，不猜测 CDN 变体，也不把原图降质后保存。 |
+
+## `REG-TOPIC-041` 不同会话 epoch 的同 URL 图片请求被 Glide 合并
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`USER-01`、`ACCOUNT-01`、`ACCOUNT-02`、`MORE-02` |
+| 用户症状 | 账号切换、退出或登录更新时，新会话请求与旧会话尚未结束的同 URL 图片可能共用旧 Glide 在途结果，造成旧私有图片进入新页面或新请求无法独立结算；预览保持打开时还可能继承旧会话的放大状态，导致新页无法横滑或动画层继续隐藏。 |
+| 触发条件 | session epoch 只进入 Expo `cacheKey`/`recyclingKey`，没有进入 Glide request model equality；Glide 会按模型相等性复用正在进行的 EngineJob。预览页虽然按 identity 重建，请求树外的缩放与 Pager state 若不跨 epoch 重置，仍会灌给新的 1 倍页面。 |
+| 根因 seam | `src/mediaRequestContext.ts` 的远程图片 source、`plugins/withNetworkProxyModule.js` 的出网拦截器、Expo `GlideUrlWithCustomCacheKey` 模型相等性，以及 `src/components/ImagePreviewModal.tsx` 的 session identity 边界。 |
+| 必须保持的行为 | 每个远程论坛图片 source 同时携带内容来源 marker 与 opaque `X-WZ-Forum-Media-Identity`；identity 使用不含账号凭据的现有 sessionIdentity，使同 epoch、同 URL、同尺寸模型仍相等，不同 epoch 模型必不相等。预览仍打开时，identity 变化必须重建内容状态，使新会话从 1 倍、Pager 可横滑且动画 document 可见开始。两个内部头和任何 JS Cookie 都必须在发网前移除；Cookie 同源/重定向策略与 request `Cache-Control: no-store` 不回退，孤立 identity 头也不得泄露到普通网络。 |
+| 精确失败 oracle | `src/mediaRequestContext.test.ts` 固定同 URL 不同 epoch 产生不同 identity header；`tests/ui/image-preview.test.tsx` 先在 epoch 4 放大并锁住 Pager，再切到 epoch 5，要求 source/recycling key 更新、Pager/Zoom mount token 更换且交互状态立即回到 1 倍初始值，旧 Pager 排队的 `onPageSelected` 不能再调用新会话的 `onSelect`；fresh prebuild 生成的 `NetworkProxyRuntimeTest.kt` 用真实本地 HTTP 请求证明两个内部头均未出网、Cookie/no-store 保留，并直接断言 Expo `GlideUrlWithCustomCacheKey` 同 epoch 相等、不同 epoch 不相等。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + fresh prebuild 后原生 Kotlin `UNIT_PASS`/compile；JS cacheKey 断言或源码字符串不能证明 Glide EngineJob 不合并。 |
+| Replay 或真实验收路径 | 用可暂停的同 URL 受控图片端点，在请求在途时推进同来源 epoch，要求新 native target 独立发起且旧页面不收到完成回调。没有安全端点或未获真实换号授权时设备专项标 `NOT_VERIFIED`。 |
+| 负向验证方式 | 移除 identity header、固定其值或让原生在模型构造前删掉它，会使不同 epoch 模型重新相等；停止出网前移除则本地服务器会收到内部头。 |
+| 明确不覆盖范围 | 不清空全局图片缓存、不为每个账号创建 OkHttp client/cache、不把 Cookie、账号名或 token 放进 identity，也不改变普通无标记 API。 |
+
+## `REG-TOPIC-042` App 重启后私有图片磁盘缓存命名空间复用
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`USER-01`、`ACCOUNT-01`、`ACCOUNT-02`、`MORE-02` |
+| 用户症状 | App 重启后切到不同账号或匿名状态，同一 URL 可能直接显示上一进程写入的私有图片磁盘缓存。 |
+| 触发条件 | 私有媒体 `cacheKey` 只包含来源和从 0 重新开始的 session epoch；新进程会重新生成相同 key。 |
+| 根因 seam | `src/mediaSessionEpoch.tsx` 的媒体 session identity 与 Expo/Glide `memory-disk` cache namespace。 |
+| 必须保持的行为 | 私有来源 identity 同时包含不含凭据的进程 nonce 和当前 epoch：同进程同 epoch 可复用，换 epoch 或重启后不可命中旧私有磁盘条目；V2EX 等 public 媒体继续使用稳定公共 namespace。nonce 只参与内部 model/cache key，并随内部头在出网前移除。 |
+| 精确失败 oracle | `src/mediaSessionEpoch.test.ts` 以两个重新加载的模块实例模拟进程重启，固定同来源同 epoch，要求私有 identity 不同、公共 identity 不变；`tests/ui/image-preview.test.tsx` 与 `tests/ui/avatar.test.tsx` 固定生成 identity 进入 source/cache/recycling key。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`；仅验证 epoch 递增不能覆盖跨进程 key 重用。 |
+| Replay 或真实验收路径 | 保留登录态 replace-install/force-stop 后重开同一含私有图页面，确认当前会话重新授权并加载；真实换账号/退出仍需用户授权，没有授权时标 `NOT_VERIFIED`。 |
+| 负向验证方式 | 移除进程 nonce 或固定其值，跨模块实例测试会重新得到同一私有 identity。 |
+| 明确不覆盖范围 | 不清空全局图片缓存、不持久化账号标识、不把 Cookie/token 写进 key，也不牺牲公共图片跨进程磁盘复用。 |
+
+## `REG-TOPIC-043` 复杂静态 SVG 全屏误启 Chromium 导致掉帧与缺层
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02` |
+| 用户症状 | 复杂静态 SVG 在正文已完整显示，进入全屏后却出现掉帧、局部图层缺失；设备日志反复出现 Chromium tile memory 超限，严重时 App 进程退出。 |
+| 触发条件 | 原生 SVG 解码失败后的兼容 artifact 无论是否包含动画，都在当前预览页挂载完整 Chromium document view。 |
+| 根因 seam | `src/components/ImagePreviewModal.tsx` 对 `CompatibleSvgArtifact.animated` 的消费边界。 |
+| 必须保持的行为 | 静态 artifact 在正文、当前预览页和相邻预热页都只显示已经生成的 PNG poster，不再挂载第二个 Chromium renderer；当前静态页使用高优先级且禁用下采样，`onDisplay` 才结算可见成功。只有 `animated` artifact 的当前页可挂载隔离 document view，并以同一 poster 保持首帧连续；相邻页仍不得启动 WebView。保存始终重新读取原始 SVG。 |
+| 精确失败 oracle | `src/compatibleImageSources.test.ts` 固定 `<set>`、inline/CSS animation 为动态，而 `animation:none`、无动画名 shorthand/list、未使用 keyframes 与注释保持静态；`tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-043` 让带相对单位的静态 SVG 进入兼容恢复，要求当前页显示 artifact poster、无 `compatible-svg-document-view`、`onDisplay` 前 Spinner 保留；已显示的缓存 poster 失效后只从 artifact 重建且不复取 SVG，重建失败时显式重试仍可恢复。deferred 动画用例让 document 先 ready、页面切到邻页后才完成 poster 重建，要求回访使用新 revision；`REG-TOPIC-018/020` 同时固定动画当前页 document view 与相邻页零恢复。 |
+| 最低可靠自动测试层 | `UI_PASS`：组件消费真实 artifact 分类；设备只读验收补充 Chromium 进程/日志与视觉稳定性。 |
+| Replay 或真实验收路径 | 打开一个已确认不含 SMIL/CSS animation 的复杂静态 SVG：正文和点击后的全屏首帧均立即可见，CDP 只有海报生成期的离屏 renderer，预览本身不新增 document view。没有稳定受控端点时设备专项标 `NOT_VERIFIED`。 |
+| 负向验证方式 | 删除 `artifact.animated` 门禁并让任意 active artifact 挂载 document view，编号 UI 测试立即发现静态 fixture 出现 WebView，设备重新出现 tile memory 告警。 |
+| 明确不覆盖范围 | 不移除动画 SVG 的当前页 document view，不改变 poster 生成门禁和缓存，不把 poster 当保存源，也不新增渲染库。 |
+
+## `REG-TOPIC-044` SVG 海报 renderer 空闲后仍占用 Chromium 内存
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02` |
+| 用户症状 | 正文海报已经生成且可见，打开真实动画 SVG 预览并缩放后仍会持续掉帧、缺层；日志反复出现 Chromium tile memory 超限，严重时 App 或模拟器退出。 |
+| 触发条件 | 离屏海报 renderer 已完成请求、加载 `about:blank`，但进程级 runtime 仍永久持有一个保持原 measure/layout 的可见 WebView；动画预览又挂载第二个 Chromium document view。 |
+| 根因 seam | `plugins/withSvgRendererModule.js` 生成的 `SvgPosterRendererRuntime` 队列结算与 WebView 所有权。 |
+| 必须保持的行为 | 同一批已排队的 cache-miss 共用一个串行离屏 WebView；队列最后一个请求成功、失败或 renderer gone 后必须先断开 runtime 引用并销毁该 WebView。队列仍有任务时只 blank 后继续复用；纯 cache hit 不创建 WebView。真正动画 SVG 的当前预览页仍可挂载自己的隔离 document view，正文海报、首帧连续、保存原始字节和相邻页零 Chromium 均不回退。 |
+| 精确失败 oracle | fresh prebuild 生成的 `SvgRendererInstrumentedTest.kt` 预先排队十个 cache-miss，要求 creation delta 为 1、全部结算后的 destruction delta 为 1 且 retained=false；随后同 key cache hit 保持 creation/destruction 计数不变且 retained=false。`src/releasePackaging.test.ts` 固定生成模板包含 idle destroy 而不是永久 `about:blank`。 |
+| 最低可靠自动测试层 | fresh prebuild 后 Android instrumentation/native policy tests + compile；JS mock、Promise 已 resolve 或页面可见不能证明 Chromium 资源已释放。 |
+| Replay 或真实验收路径 | 只读打开 NodeSeek `post-841430-1` 的 “VPS Remaining Value”；CDP 确认原文档含 SMIL `<animate>` 与 CSS `animation`。正文海报生成后不得残留 `never_attached` 的 renderer target；点击预览必须立即显示海报并在 1 倍状态继续播放动画，CDP 仅有当前 attached document target，关闭后该 target 消失。缩放专项见 `REG-TOPIC-045`。 |
+| 负向验证方式 | 恢复只 `stopLoading()+loadUrl("about:blank")` 的空闲处理，instrumentation retained/destruction 断言失败；设备 CDP 重新同时看到离屏空白 target 与动画预览 target。 |
+| 明确不覆盖范围 | 不全局终止共享 WebView renderer process，不销毁仍有排队工作的 WebView，不移除动画预览、不新增图片库或 renderer manager，也不改变 Cookie、代理和保存链路。 |
+
+## `REG-TOPIC-045` 动画 SVG document view 进入缩放树后耗尽 Chromium tile 内存
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02` |
+| 用户症状 | 动画 SVG 正文和全屏首帧都能立即显示，但双击放大、平移或停留时日志持续出现 Chromium `tile memory limits exceeded`，严重时预览缺层、App 或模拟器退出。 |
+| 触发条件 | 当前页唯一的隔离 WebView 是 Gallery/zoom child；UI thread 已把 scale 应用给 child 后才异步通知 JS，React state、Fabric commit 与原生 WebView destroy 必然更晚。早期强制的 software layer 在静止时也持续申请 tile，放大后更严重；即使离屏海报 renderer 已按 `REG-TOPIC-044` 销毁，单个预览 WebView 也会触发。 |
+| 根因 seam | `src/components/ImagePreviewModal.tsx` 的分页、缩放树与动态 `CompatibleSvgDocumentView` 挂载边界。 |
+| 必须保持的行为 | 非循环 PagerView 只给当前与相邻页挂媒体；每页 ResumableZoom 的唯一媒体 child 只能包含 raster 或 SVG poster，动画 document view 必须是同一 page 内、缩放树外的绝对定位 sibling，任何 scale 都不能传递给 Chromium。动画 SVG 在当前页使用平台默认合成层的隔离 document view；同尺寸 artifact poster 始终挂载并以 `onDisplay` 单独记录 native 像素 readiness。poster 未显示时，缩放 intent 继续保留固定 1 倍 document view；poster 已显示后把同一个 document view 透明隐藏，放大和平移只变换 poster。回到 1 倍直接显示同一个 document view，不能黑屏、闪空白、销毁 Chromium 或重新发网。缩放时 Pager 禁用，回到 1 倍才恢复横滑和下拉关闭。静态 SVG、普通图片、原图保存、真实尺寸和相邻页零 Chromium 不改变。 |
+| 精确失败 oracle | `tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-045` 首先断言 `CompatibleSvgDocumentView` 永远不是 `preview-zoom-*` 的后代；WebView mount token 与 mount/unmount 计数固定双击、平移和回到 1 倍全过程为同一实例且零卸载；`tests/ui/compatible-svg-document-view.test.tsx` 固定不强制 Android layer。poster 尚未 `onDisplay` 时触发 ResumableZoom 的真实 double-tap start，document view 保持可见但 Pager 禁用。poster `onDisplay` 后同一个 document view 只变为透明且 recycling identity 不变；scale 仍大于 1 的 gesture end 保持 poster/禁 Pager，回到 1 后直接显示同一个 document view 并恢复 Pager，整个过程 SVG fetch 与 poster render 都只发生一次。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定挂载边界与连续帧；`DEVICE_REPLAY_PASS`/只读设备日志固定真实 Chromium 资源行为。 |
+| Replay 或真实验收路径 | 只读打开 NodeSeek `post-841430-1` 的动画 SVG：1 倍静止时 CDP 只有一个 attached preview target 且不产生 tile memory 告警；双击放大或双指缩放后 target 仍是同一个固定尺寸 sibling、海报视觉连续，平移、停留期间也无新增告警或 renderer process 重启；回到 1 倍后动画立即继续，Android Back/下拉关闭仍有效，App 与设备存活。 |
+| 负向验证方式 | 把 `CompatibleSvgDocumentView` 移回 ResumableZoom child；结构断言立即失败，设备重新出现 tile memory 告警。仅延迟 JS 回调或卸载不能通过该 oracle。 |
+| 明确不覆盖范围 | 不把动画永久降级为静态图，不修改 zoom toolkit，不新增 renderer/图片库，不用海报作为保存来源，也不改变普通 raster 图片缩放。 |
+
+## `REG-TOPIC-046` 多图预览被缩放手势截获后无法横滑
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02` |
+| 用户症状 | 三图主题打开后稳定显示 `1/3`，但在图片上向左滑动仍停留在第一张，用户无法进入后两张。 |
+| 触发条件 | PagerView 页面内同时挂载 ResumableZoom 的 tap/pinch 手势；原生 Pager 手势竞争失败，而既有 UI 用例直接调用 mock Pager 的“下一页”，没有经过真实横向手势。上游维护者也明确说明裸 ResumableZoom 与可滚动列表会发生手势冲突：[react-native-zoom-toolkit#59](https://github.com/Glazzes/react-native-zoom-toolkit/issues/59#issuecomment-2359494785)。 |
+| 根因 seam | `src/components/ImagePreviewModal.tsx` 的父级方向手势与 PagerView/ResumableZoom 协调。 |
+| 必须保持的行为 | 1 倍缩放时，父级单指横向手势按距离或速度把 Pager 推进一页；慢拖和快速甩动都可用，首尾不循环。纵向手势继续只负责下拉关闭；放大后 Pager 和父级翻页保持禁用，图片平移、双击、控制层、动态 SVG 固定 sibling 与 Android Back 均不回退。 |
+| 精确失败 oracle | `tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-046` 从第 2/3 张向左触发真实父级横向 `onEnd`，要求 `onSelect(2)` 且显示 `3/3`；在末页重复相同手势不得再次调用。修复前调用数为 `0`。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定方向门禁、Pager 推进和非循环边界；真实 Android 多图主题补充 native 手势竞争证据。 |
+| Replay 或真实验收路径 | App 内小隐寺搜索 `SAAS`，打开“有关SAAS和储存的几张图”；点击首图后应立即显示 `1/3`，依次横滑至 `2/3`、`3/3`，末页继续左滑仍为 `3/3`，再右滑可返回。全程只读，不保存图片。 |
+| 负向验证方式 | 删除父级方向受限的横向 Pan、让真实手势只依赖 PagerView 与 ResumableZoom 竞争，编号 UI 用例回到零次选页，设备重新停在 `1/3`。 |
+| 明确不覆盖范围 | 不修改 zoom toolkit、不增加手势库、不恢复缩略图栏或左右箭头，也不改变保存、媒体请求和 SVG 恢复链路。 |
 
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 

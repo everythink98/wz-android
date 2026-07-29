@@ -45,6 +45,7 @@ import { useTopicController } from './useTopicController';
 import { filterTopicSessionReplies, useTopicSessionController } from './useTopicSessionController';
 import { useUserController } from './useUserController';
 import {
+  useLinuxDoIdentityVerificationPrompt,
   useVerificationController,
   type LinuxDoReadRecovery,
   type LinuxDoReadResumeOutcome
@@ -72,10 +73,11 @@ import {
   shouldCloseReplyComposerOnBack
 } from './backHandlerHelpers';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoSession';
+import { sourceErrorFromUnknown } from '../sourceErrors';
 import { createSourceGateway } from '../sources/sourceGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '../networkProxy';
 import type { Topic, TopicDetail, UserProfile, UserReference } from '../types';
-import { isHttpOrHttpsUrl } from '../htmlImages';
+import { isHttpOrHttpsUrl, type ImageDisplaySize } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '../topicListItemState';
 import { replyHtmlWithSignature } from '../topicDerivedData';
@@ -214,7 +216,7 @@ export function AppRoot() {
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openTopicRef = useRef<((topic: Topic, refresh?: boolean) => Promise<unknown>) | null>(null);
   const openUserRef = useRef<((user: UserReference) => Promise<unknown>) | null>(null);
-  const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
+  const openImagePreviewRef = useRef<(url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void>(() => undefined);
   const pendingNodeSeekVerificationRetryRef = useRef<NodeSeekVerificationRetry | null>(null);
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
@@ -300,6 +302,9 @@ export function AppRoot() {
   } = useDeferredNavigationTask();
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
+  const [appActive, setAppActive] = useState(
+    () => AppState.currentState !== 'background' && AppState.currentState !== 'inactive'
+  );
   const screenRef = useRef<Screen>('feed');
   const getCurrentScreen = useCallback(() => screenRef.current, []);
   const changeScreen = useCallback((nextScreen: Screen) => {
@@ -354,7 +359,8 @@ export function AppRoot() {
       surfaceGeneration: ticket.generation
     }).catch((error): AccountReconcileResult => ({
       status: 'unknown',
-      error: errorMessage(error)
+      error: errorMessage(error),
+      errorInfo: sourceErrorFromUnknown(ticket.source, error)
     }));
     void reconciliation.then((result) => {
       if (result.status === 'changed') {
@@ -675,6 +681,7 @@ export function AppRoot() {
   }, [xiaoyinsiAuthController.refreshAuthorization]);
 
   const {
+    accountIdentityChecks,
     accountSessionViewModels,
     beginAccountIdentityCheck,
     identityReconciliationPending,
@@ -764,6 +771,12 @@ export function AppRoot() {
     topicReturnScreenRef,
     topicSession
   });
+  const selectedTopicIdentityCheck = selectedTopic?.source === 'linuxdo'
+    ? accountIdentityChecks.linuxdo
+    : undefined;
+  const topicIdentityError = selectedTopicIdentityCheck?.pending
+    ? selectedTopicIdentityCheck.error
+    : undefined;
   useCommitRefValue(cancelTopicQueriesRef, cancelTopicQueries);
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const mediaSessionIdentity = mediaSessionIdentityForSource(
@@ -783,8 +796,8 @@ export function AppRoot() {
     }
     void Linking.openURL(url).catch((error) => notify(errorMessage(error)));
   }, [notify]);
-  const openImagePreviewFromRenderer = useCallback((url: string) => {
-    openImagePreviewRef.current(url);
+  const openImagePreviewFromRenderer = useCallback((url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => {
+    openImagePreviewRef.current(url, displaySize, renderedPosterUri);
   }, []);
   const openTopicFromHtml = useCallback((topic: Topic) => {
     void openTopicRef.current?.(topic);
@@ -834,12 +847,11 @@ export function AppRoot() {
     imagePreview,
     openImagePreview,
     savePreviewImage,
-    selectPreviewImage,
-    showNextImage,
-    showPreviousImage
+    selectPreviewImage
   } = useImagePreviewController({
     beforeSave: ensureNetworkProxyReady,
     contentSource: selectedTopic?.source || null,
+    contentWidth,
     fetcher: networkProxyFetcher,
     htmlParts: getTopicHtmlParts,
     inlineSizedImageUrls,
@@ -971,6 +983,7 @@ export function AppRoot() {
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
+    linuxDoIdentityPending: accountIdentityChecks.linuxdo.pending,
     notify,
     onBeforeLinuxDoSurfaceOpened: () => {
       prepareAuthSurfaceOpenRef.current('linuxdo-login');
@@ -1094,6 +1107,7 @@ export function AppRoot() {
     focusManager.setFocused(initialActive);
     const subscription = AppState.addEventListener('change', (next) => {
       const active = next === 'active';
+      setAppActive(active);
       setRequestTimeoutsActive(active);
       focusManager.setFocused(active);
       if (next !== 'active') {
@@ -1180,6 +1194,10 @@ export function AppRoot() {
     showYaohuoLogin,
     sourceGateway
   });
+  const feedIdentityCheck = feedSource === 'linuxdo'
+    ? accountIdentityChecks.linuxdo
+    : undefined;
+  const feedIdentityError = feedIdentityCheck?.pending ? feedIdentityCheck.error : undefined;
 
   const {
     applySearchFilter,
@@ -1216,6 +1234,10 @@ export function AppRoot() {
     showYaohuoLogin,
     sourceGateway
   });
+  const searchIdentityCheck = searchSource === 'linuxdo'
+    ? accountIdentityChecks.linuxdo
+    : undefined;
+  const searchIdentityError = searchIdentityCheck?.pending ? searchIdentityCheck.error : undefined;
 
   const {
     backupBusy,
@@ -1436,6 +1458,36 @@ export function AppRoot() {
     sourceGateway,
     showYaohuoLogin
   });
+  const selectedUserIdentityCheck = selectedUser?.source === 'linuxdo'
+    ? accountIdentityChecks.linuxdo
+    : undefined;
+  const userIdentityError = selectedUserIdentityCheck?.pending
+    ? selectedUserIdentityCheck.error
+    : undefined;
+  const linuxDoForegroundReadIntent = useMemo(() => {
+    if (screen === 'topic' && selectedTopic?.source === 'linuxdo') {
+      return `topic:${selectedTopic.id}`;
+    }
+    if (screen === 'feed' && feedSource === 'linuxdo') {
+      return `feed:${categoryFilter}:${feedFilter || ''}`;
+    }
+    if (screen === 'search' && searchSource === 'linuxdo' && submittedSearchQuery) {
+      return `search:${submittedSearchQuery}:${JSON.stringify(searchFilters.linuxdo)}`;
+    }
+    if (screen === 'user' && selectedUser?.source === 'linuxdo') {
+      return `user:${selectedUser.id || selectedUser.username || ''}`;
+    }
+    return null;
+  }, [categoryFilter, feedFilter, feedSource, screen, searchFilters.linuxdo, searchSource, selectedTopic, selectedUser, submittedSearchQuery]);
+  const linuxDoForegroundReadBlocked = screen === 'topic'
+    ? !(topicDetail?.source === 'linuxdo' && topicDetail.id === selectedTopic?.id)
+    : screen === 'feed'
+      ? shownFeedItems.length === 0
+      : screen === 'search'
+        ? !searchGroups.some((group) => group.source === 'linuxdo' && group.items.length > 0)
+        : screen === 'user'
+          ? !userProfile
+          : false;
   useCommitRefValue(openUserRef, openUser);
 
   const showLinuxDoLogin = useCallback((message = '匿名可阅读，登录后才能互动。') => {
@@ -1534,6 +1586,13 @@ export function AppRoot() {
     topicDetail,
     topicReplies,
     topicSession
+  });
+  useLinuxDoIdentityVerificationPrompt({
+    enabled: appActive && !actionBusy && !linuxDoAiVisible && linuxDoForegroundReadBlocked,
+    error: accountIdentityChecks.linuxdo.error,
+    identityPending: accountIdentityChecks.linuxdo.pending,
+    intentKey: linuxDoForegroundReadIntent,
+    showLinuxDoVerification
   });
 
   const pageDiagnosticStateRef = useRef('');
@@ -1837,9 +1896,33 @@ export function AppRoot() {
     void runSearch(queryOverride === undefined ? undefined : { query: queryOverride });
   }, [runSearch]);
 
+  const checkLinuxDoStatus = useCallback(() => {
+    void showLinuxDoVerification();
+  }, [showLinuxDoVerification]);
+  const retryFeedIdentity = useCallback(() => {
+    if (feedSource === 'linuxdo') {
+      void reconcileAccountStatus('linuxdo');
+    }
+  }, [feedSource, reconcileAccountStatus]);
+  const retrySearchIdentity = useCallback(() => {
+    if (searchSource === 'linuxdo') {
+      void reconcileAccountStatus('linuxdo');
+    }
+  }, [reconcileAccountStatus, searchSource]);
+  const refreshCurrentTopic = useCallback(() => {
+    if (topicIdentityError && selectedTopic?.source === 'linuxdo') {
+      void reconcileAccountStatus('linuxdo');
+      return;
+    }
+    void refreshWholeTopic();
+  }, [reconcileAccountStatus, refreshWholeTopic, selectedTopic, topicIdentityError]);
   const refreshCurrentUser = useCallback(() => {
+    if (userIdentityError && selectedUser?.source === 'linuxdo') {
+      void reconcileAccountStatus('linuxdo');
+      return;
+    }
     void refreshUser();
-  }, [refreshUser]);
+  }, [reconcileAccountStatus, refreshUser, selectedUser, userIdentityError]);
 
   const {
     clearCredentialLoginIntent,
@@ -1872,15 +1955,19 @@ export function AppRoot() {
   useCommitRefValue(credentialClearIntentHandlerRef, clearCredentialLoginIntent);
 
   const feedProps = useMemo(() => ({
-      busy: feedBusy || actionBusy,
+      busy: (feedBusy && !feedIdentityError) || actionBusy,
       categories,
       categoryFilter,
       feedHasMore: activeFeedState.hasMore && feedAllowsRemotePagination,
       feedItems: shownFeedItems,
-      feedOutcomeKind,
+      feedOutcomeKind: feedIdentityError
+        ? feedIdentityError.kind === 'ordinary' ? 'error' as const : 'auth' as const
+        : feedOutcomeKind,
       feedPage: activeFeedState.page,
       feedSource,
       feedFilter,
+      identityChecking: Boolean(feedIdentityCheck?.checking),
+      identityError: feedIdentityError,
       loadMoreFailureSignal: activeFeedState.loadMoreFailureSignal,
       loadingMore: activeFeedState.loadingMore,
       topicStateIndex,
@@ -1893,9 +1980,11 @@ export function AppRoot() {
       onFeedSourceChange: changeFeedSource,
       onFeedFilterChange: setFeedFilter,
       onLoadMore: loadMoreActiveFeed,
+      onCheckLinuxDoStatus: checkLinuxDoStatus,
       onOpenTopic: openTopic,
+      onRetryIdentity: retryFeedIdentity,
       onReadingFilterChange: setReadingFilter,
-      onRefresh: refreshFeed
+      onRefresh: feedIdentityError ? retryFeedIdentity : refreshFeed
   }), [
     actionBusy,
     activeFeedState.hasMore,
@@ -1909,13 +1998,19 @@ export function AppRoot() {
     feedAllowsRemotePagination,
     feedBusy,
     feedFilter,
+    feedIdentityCheck?.checking,
+    feedIdentityError,
     feedOutcomeKind,
     feedSource,
     loadMoreActiveFeed,
+    checkLinuxDoStatus,
     openTopic,
     readingFilter,
     refreshFeed,
+    retryFeedIdentity,
+    setCategoryFilter,
     setFeedFilter,
+    setReadingFilter,
     shownFeedItems,
     styles,
     tabScrollToTopSignals.feed,
@@ -1941,17 +2036,21 @@ export function AppRoot() {
       searchGroups,
       linuxDoAiState,
       linuxDoAiVisible,
-      searchSessionNotices,
+      identityChecking: Boolean(searchIdentityCheck?.checking),
+      identityError: searchIdentityError,
+      searchSessionNotices: searchIdentityCheck?.pending ? [] : searchSessionNotices,
       searchSource,
       submittedQuery: submittedSearchQuery,
       scrollToTopSignal: tabScrollToTopSignals.search,
       styles,
       theme,
       onLoadMoreSearchSource: loadMoreSearchSource,
+      onCheckLinuxDoStatus: checkLinuxDoStatus,
       onOpenTopic: openTopic,
       onRemoveRecentSearch: removeRecentSearch,
       onQueryChange: setSearchQuery,
       onRetryLinuxDoAiSearch: retryLinuxDoAiSearch,
+      onRetryIdentity: retrySearchIdentity,
       onSearch: runCurrentSearch,
       onSearchFilterApply: applySearchFilter,
       onSearchDiscourseTags: searchDiscourseTags,
@@ -1963,12 +2062,14 @@ export function AppRoot() {
     applySearchFilter,
     accountIdentityPending,
     categories,
+    checkLinuxDoStatus,
     forumSessionEpochs,
     loadMoreSearchSource,
     openTopic,
     recentSearches,
     removeRecentSearch,
     retryLinuxDoAiSearch,
+    retrySearchIdentity,
     retrySearchSource,
     runCurrentSearch,
     searchBusy,
@@ -1980,8 +2081,13 @@ export function AppRoot() {
     linuxDoAiVisible,
     searchQuery,
     searchSessionNotices,
+    searchIdentityCheck?.checking,
+    searchIdentityCheck?.pending,
+    searchIdentityError,
     searchSource,
     screen,
+    setSearchQuery,
+    setSearchSource,
     showLinuxDoPanel,
     styles,
     submittedSearchQuery,
@@ -2205,7 +2311,7 @@ export function AppRoot() {
   const stableLoadMoreReplies = useLatestCallback(loadMoreReplies);
   const stableOpenUser = useLatestCallback(openUser);
   const stableRefreshTopicReplies = useLatestCallback(refreshTopicReplies);
-  const stableRefreshWholeTopic = useLatestCallback(refreshWholeTopic);
+  const stableRefreshWholeTopic = useLatestCallback(refreshCurrentTopic);
   const stableShareTopic = useLatestCallback(shareTopic);
   const stableSubmitReply = useLatestCallback(submitReply);
   const stableToggleReplyQuote = useLatestCallback(toggleReplyQuote);
@@ -2249,8 +2355,10 @@ export function AppRoot() {
       styles,
       theme,
       topic: topicLayoutDetail,
-      topicBusy,
-      topicError,
+      topicBusy: topicBusy && !topicIdentityError,
+      topicError: topicIdentityError || topicError || null,
+      identityBlocked: Boolean(selectedTopicIdentityCheck?.pending),
+      identityChecking: Boolean(selectedTopicIdentityCheck?.checking),
       topicScrollRef,
       unreadReplyCount,
       onBack: goBackFromTopic,
@@ -2345,6 +2453,9 @@ export function AppRoot() {
     topicBusy,
     topicLayoutDetail,
     topicError,
+    topicIdentityError,
+    selectedTopicIdentityCheck?.checking,
+    selectedTopicIdentityCheck?.pending,
     topicFavorite,
     topicImageDeriver,
     topicReplies,
@@ -2353,9 +2464,11 @@ export function AppRoot() {
   ]);
 
   const userProps = useMemo(() => ({
-      busy: userBusy,
-      error: userError,
+      busy: (userBusy && !userIdentityError) || Boolean(selectedUserIdentityCheck?.checking),
+      error: userIdentityError || userError || null,
       followed: currentUserFollowed,
+      identityBlocked: Boolean(selectedUserIdentityCheck?.pending),
+      identityChecking: Boolean(selectedUserIdentityCheck?.checking),
       profile: userProfile,
       requestedUser: selectedUser,
       styles,
@@ -2366,11 +2479,13 @@ export function AppRoot() {
       onBack: goBackFromUser,
       onLoadMoreReplies: loadMoreUserReplies,
       onLoadMoreTopics: loadMoreUserTopics,
+      onCheckLinuxDoStatus: checkLinuxDoStatus,
       onOpenOriginal: openExternalUrl,
       onOpenTopic: openTopic,
       onRefresh: refreshCurrentUser,
       onToggleFollow: toggleUserFollow
   }), [
+    checkLinuxDoStatus,
     currentUserFollowed,
     goBackFromUser,
     loadMoreUserReplies,
@@ -2379,12 +2494,15 @@ export function AppRoot() {
     openTopic,
     refreshCurrentUser,
     selectedUser,
+    selectedUserIdentityCheck?.checking,
+    selectedUserIdentityCheck?.pending,
     styles,
     theme,
     toggleUserFollow,
     topicStateIndex,
     userBusy,
     userError,
+    userIdentityError,
     userLoadingMoreReplies,
     userLoadingMoreTopics,
     userProfile
@@ -2490,8 +2608,6 @@ export function AppRoot() {
               setNodeImageAuthError={reportNodeImageAuthFailure}
               showLinuxDoPanel={showLinuxDoPanel}
               showNodeImageAuthPanel={showNodeImageAuthPanel}
-              showNextImage={showNextImage}
-              showPreviousImage={showPreviousImage}
               styles={styles}
               theme={theme}
               webViewBlockMessage={networkProxyWebViewBlockMessage}

@@ -58,9 +58,6 @@ import {
 
 export { getCurrentUserProfile } from '../forumApi';
 export {
-  checkLinuxDoLoginAccess
-} from '../linuxdoActionClient';
-export {
   getLinuxDoLevelProfile,
   type LinuxDoLevelProfile
 } from '../linuxdoLevel';

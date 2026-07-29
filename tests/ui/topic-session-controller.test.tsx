@@ -199,6 +199,41 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicDetail).toEqual(firstDetail);
   });
 
+  it('[REG-LINUXDO-007] starts a blocked linux.do Topic exactly once when identity settles', async () => {
+    const linuxTopic: Topic = {
+      ...firstTopic,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/first/1'
+    };
+    const linuxDetail: TopicDetail = {
+      ...firstDetail,
+      ...linuxTopic
+    };
+    let identityBarriers: ForumIdentityBarrierSource[] = ['linuxdo'];
+    const getTopic = jest.fn<SourceGateway['getTopic']>(async () => linuxDetail);
+    const showLinuxDoVerification = jest.fn();
+    const hook = await renderTopicController({
+      getIdentityBarriers: () => identityBarriers,
+      showLinuxDoVerification,
+      sourceGateway: { getTopic }
+    });
+
+    await act(async () => { await hook.result.current.controller.openTopic(linuxTopic); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(hook.result.current.screen).toBe('topic');
+    expect(getTopic).not.toHaveBeenCalled();
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
+    expect(hook.result.current.controller.topicBusy).toBe(false);
+
+    identityBarriers = [];
+    await act(async () => { hook.rerender(undefined); });
+
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(linuxDetail));
+    expect(getTopic).toHaveBeenCalledTimes(1);
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
+  });
+
   it('[REG-SOURCE-002] does not cache parse-empty topic data', async () => {
     const parsedEmpty = annotateSourceDiagnosticSummary({ ...firstDetail, contentHtml: '', replies: [] }, {
       parserVariant: 'test', candidateCount: 1, validCount: 0, isParseEmpty: true

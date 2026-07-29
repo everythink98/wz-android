@@ -203,12 +203,20 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('hasSvgPosterQueueCapacity(active != null, queue.size)');
     expect(plugin).toContain('isCurrentSvgPageError(current.expectedPageUrl, request.url.toString(), request.isForMainFrame)');
     expect(plugin).toContain('sha256PosterFileName(request.cacheKey, svg.bytes, dimensions)');
+    const rendererRelease = plugin.slice(
+      plugin.indexOf('private fun releaseRendererAfterSettle()'),
+      plugin.indexOf('private fun settle(request: RenderRequest)')
+    );
+    expect(rendererRelease).toContain('if (queue.isEmpty())');
+    expect(rendererRelease).toContain('view.loadUrl("about:blank")');
+    expect(rendererRelease.indexOf('webView = null')).toBeLessThan(rendererRelease.indexOf('view.destroy()'));
     expect(plugin).toContain("fs.copyFileSync(");
     expect(plugin).toContain("'SvgRendererPolicyTest.kt'");
     expect(plugin).toContain("'SvgRendererInstrumentedTest.kt'");
     expect(plugin).toContain('testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"');
     expect(plugin).toContain('androidTestImplementation("androidx.test:runner:1.6.2")');
     expect(plugin).toContain('fixture must preserve the AndroidSVG 1.4 failure');
+    expect(plugin).toContain('idle poster renderer must not retain its WebView');
     expect(plugin).toContain('SMIL animation must change pixels');
     expect(plugin).toContain('untrusted SVG made an external request');
     expect(plugin).not.toContain('addJavascriptInterface');

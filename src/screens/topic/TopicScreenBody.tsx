@@ -436,6 +436,8 @@ export const TopicScreen = memo(function TopicScreen({
   topic,
   topicBusy,
   topicError,
+  identityBlocked = false,
+  identityChecking = false,
   topicFavorite,
   topicScrollRef,
   unreadReplyCount,
@@ -507,6 +509,8 @@ export const TopicScreen = memo(function TopicScreen({
   topic: TopicDetail | null;
   topicBusy: boolean;
   topicError: SourceErrorInfo | null;
+  identityBlocked?: boolean;
+  identityChecking?: boolean;
   topicFavorite: boolean;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
   unreadReplyCount: number;
@@ -1281,13 +1285,15 @@ export const TopicScreen = memo(function TopicScreen({
           <View style={topicAuthNotice ? [styles.authNoticeBox, topicAuthNoticeBoxStyle] : styles.errorBox}>
             <Text style={topicAuthNotice ? [styles.authNoticeText, topicAuthNoticeTextStyle] : styles.errorText}>{topicAuthNotice?.message || topicReadableError}</Text>
             <View style={styles.actions}>
-              {item.source === 'linuxdo' && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
+              {item.source === 'linuxdo' && identityBlocked ? <AppButton label="检查 L 站状态" styles={styles} onPress={onVerifyLinuxDo} /> : null}
+              {item.source === 'linuxdo' && !identityBlocked && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
               {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyNodeSeek} /> : null}
-              <AppButton label="重试" styles={styles} onPress={onRefreshWholeTopic} />
+              <AppButton label={identityBlocked ? '重试检测' : '重试'} styles={styles} onPress={onRefreshWholeTopic} />
             </View>
           </View>
         ) : null}
-        {!topic && !topicError ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : null}
+        {topic && identityChecking ? <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} /> : null}
+        {!topic && !topicError ? <LoadingState text={identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'} styles={styles} theme={theme} /> : null}
       </View>
       {topicContentItems.map(renderTopicContentItem)}
       {topic && !isDiscourseSource(topic.source) && topic.source !== 'nodeseek' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
+  useEffect: (effect: () => void) => effect(),
   useLayoutEffect: (effect: () => void) => effect(),
   useRef: <T,>(value: T) => ({ current: value })
 }));
@@ -36,6 +37,7 @@ import {
   type SiteSessionEvent,
   type SiteSessionState
 } from '../siteSessionState';
+import type { Topic } from '../types';
 import type { AccountReconcileResult } from './useAccountStatusController';
 import { useVerificationController } from './useVerificationController';
 
@@ -64,9 +66,11 @@ const anonymousSession: SiteSessionState = {
 };
 
 function createController(options: {
+  linuxDoIdentityPending?: boolean;
   onBeforeLinuxDoSurfaceOpened?: () => void;
   onLinuxDoRecoveryBarrierChanged?: (active: boolean) => void;
   reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
+  selectedTopic?: Topic | null;
 } = {}) {
   const showLinuxDoPanelRef = ref(false);
   const linuxDoWebViewSessionRef = ref(0);
@@ -88,6 +92,7 @@ function createController(options: {
   const setLinuxDoWebViewError = vi.fn();
   const setLinuxDoWebViewUserAgent = vi.fn();
   const updateLinuxDoSession = vi.fn<(event: SiteSessionEvent) => void>();
+  const openTopic = vi.fn(async () => undefined);
   const controller = useVerificationController({
     changeNodeSeekLoginPanel: vi.fn(),
     changeScreen: vi.fn(),
@@ -99,15 +104,16 @@ function createController(options: {
     linuxDoWebViewRef: linuxDoWebViewRef as never,
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
+    linuxDoIdentityPending: options.linuxDoIdentityPending,
     notify,
     onBeforeLinuxDoSurfaceOpened: options.onBeforeLinuxDoSurfaceOpened,
     onLoginWebViewFailure,
     onLinuxDoRecoveryBarrierChanged,
     onLinuxDoSurfaceClosed,
     onLinuxDoSurfaceOpened,
-    openTopicRef: ref(null),
+    openTopicRef: ref(openTopic),
     reconcileAccountStatus,
-    selectedTopic: null,
+    selectedTopic: options.selectedTopic || null,
     setChecking: vi.fn(),
     setLinuxDoWebViewError,
     setLinuxDoWebViewKey: vi.fn(),
@@ -139,6 +145,7 @@ function createController(options: {
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
     notify,
+    openTopic,
     onLoginWebViewFailure,
     onLinuxDoRecoveryBarrierChanged,
     onLinuxDoSurfaceClosed,
@@ -267,7 +274,8 @@ describe('linux.do visible verification coordinator', () => {
     } = createController({
       reconcileAccountStatus: async () => ({
         status: 'unknown',
-        error: 'network unavailable'
+        error: 'network unavailable',
+        errorInfo: { kind: 'ordinary', message: 'network unavailable' }
       })
     });
     await controller.showLinuxDoVerification();
@@ -280,6 +288,27 @@ describe('linux.do visible verification coordinator', () => {
     expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({
       type: expect.stringMatching(/^(?:cleared|login-expired|session-updated)$/)
     }));
+    expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it('[REG-LINUXDO-007] opens identity verification instead of retrying a Topic query that has not started', async () => {
+    const selectedTopic: Topic = {
+      source: 'linuxdo',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://linux.do/t/42',
+      createdAt: '2026-07-29T00:00:00.000Z',
+      replyCount: 0
+    };
+    const { controller, openTopic, showLinuxDoPanelRef } = createController({
+      linuxDoIdentityPending: true,
+      selectedTopic
+    });
+
+    await controller.verifyLinuxDoFromTopic();
+
+    expect(openTopic).not.toHaveBeenCalled();
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 

@@ -5,8 +5,6 @@ import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT
 } from './linuxdoSession';
-import { linuxDoAvatarUrl, linuxDoUserUrl } from './localLinuxdoHelpers';
-import type { UserProfile } from './types';
 
 const LINUXDO_BASE_URL = 'https://linux.do';
 const LINUXDO_ACTION_HEADERS = {
@@ -57,35 +55,7 @@ function linuxDoActionError(data: Record<string, unknown>, status: number) {
   return error;
 }
 
-function linuxDoCurrentUserProfile(data: Record<string, unknown>): UserProfile | null {
-  const currentUser = data.current_user && typeof data.current_user === 'object'
-    ? data.current_user as Record<string, unknown>
-    : {};
-  const user = data.user && typeof data.user === 'object'
-    ? data.user as Record<string, unknown>
-    : {};
-  const merged = { ...user, ...currentUser };
-  const username = typeof merged.username === 'string' ? merged.username.trim() : '';
-  if (!username) {
-    return null;
-  }
-  const trustLevel = typeof merged.trust_level === 'number'
-    ? merged.trust_level
-    : typeof merged.trust_level === 'string' && merged.trust_level.trim() ? Number(merged.trust_level) : NaN;
-  const levelLabel = Number.isInteger(trustLevel) && trustLevel >= 0 ? `Lv${trustLevel}` : undefined;
-  return {
-    source: 'linuxdo',
-    id: username,
-    username,
-    displayName: typeof merged.name === 'string' && merged.name.trim() ? merged.name.trim() : username,
-    avatar: linuxDoAvatarUrl(merged.avatar_template),
-    url: linuxDoUserUrl(username),
-    ...(levelLabel ? { levelLabel } : {}),
-    topics: []
-  };
-}
-
-async function readJsonResponse(response: Response, { allowNonJsonError = false }: { allowNonJsonError?: boolean } = {}) {
+async function readJsonResponse(response: Response) {
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     const error = new Error('linux.do 需要完成 Cloudflare 验证');
@@ -101,9 +71,6 @@ async function readJsonResponse(response: Response, { allowNonJsonError = false 
   try {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
-    if (!response.ok && allowNonJsonError) {
-      return {};
-    }
     if (!response.ok) {
       throw new Error(`linux.do 请求失败：HTTP ${response.status}`);
     }
@@ -168,57 +135,4 @@ export async function runLinuxDoAction({
     throw linuxDoActionError(data, response.status);
   }
   return data;
-}
-
-export async function checkLinuxDoLoginAccess({
-  fetcher = fetch,
-  signal,
-  timeoutMs,
-  userAgent
-}: {
-  fetcher?: Fetcher;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-  userAgent?: string;
-}) {
-  try {
-    const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}/session/current.json`, {
-      headers: {
-        ...LINUXDO_ACTION_HEADERS,
-        'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT
-      }
-    }, { fetcher, signal, timeoutMs });
-    const data = await readJsonResponse(response, { allowNonJsonError: true });
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw linuxDoLoginRequiredError();
-      }
-      throw new Error(linuxDoResponseMessage(data, `linux.do 请求失败：HTTP ${response.status}`));
-    }
-    const currentUser = linuxDoCurrentUserProfile(data);
-    if (!currentUser) {
-      throw new Error('linux.do 状态暂时无法确认');
-    }
-    return {
-      ok: true,
-      loginRequired: false,
-      message: '登录可用',
-      currentUser
-    };
-  } catch (error) {
-    if (signal?.aborted) {
-      throw error;
-    }
-    if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-      return {
-        ok: false,
-        loginRequired: true,
-        message: 'linux.do 登录已失效，请重新登录'
-      };
-    }
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : 'linux.do 登录检查失败'
-    };
-  }
 }

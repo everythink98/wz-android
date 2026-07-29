@@ -104,7 +104,8 @@ const stringFieldKeys = new Set([
   'route', 'routeKind', 'emptyReason', 'mutationReason', 'action', 'mode', 'flow',
   'requestType', 'credentialSource', 'parserVariant', 'transport', 'kind', 'screen',
   'section', 'surface', 'mediaClass', 'fallback', 'terminalReason', 'protocol', 'eventType', 'result', 'level', 'queueState', 'csrfSource',
-  'userAgentSource', 'errorName', 'message', 'stack', 'topicRef', 'userRef', 'cursorRef'
+  'userAgentSource', 'errorName', 'message', 'stack', 'topicRef', 'userRef', 'cursorRef',
+  'mediaRef', 'mediaRole', 'candidateKind', 'cacheType'
 ]);
 const closedValues = (...values: string[]) => new Set(values);
 const operationValues = closedValues(
@@ -215,6 +216,9 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   screen: screenValues,
   section: closedValues('favorites', 'history', 'replies', 'topics', 'users'),
   surface: closedValues('body', 'preview'),
+  mediaRole: closedValues('body', 'preview-active', 'preview-adjacent'),
+  candidateKind: closedValues('src', 'srcset', 'data-src', 'data-original', 'lightbox'),
+  cacheType: closedValues('none', 'disk', 'memory'),
   mediaClass: closedValues('same-source', 'cross-source', 'unmanaged', 'data'),
   fallback: closedValues('none', 'svg'),
   terminalReason: closedValues('loaded', 'fallback-loaded', 'native-error', 'fallback-error', 'stale', 'timeout'),
@@ -249,7 +253,8 @@ const numberFieldKeys = new Set([
   'selectedCount', 'selectedOptionCount', 'contentLength', 'page', 'generation',
   'iteration', 'queueLength', 'replyCount', 'topicCount', 'floor', 'attempt',
   'latencyMs', 'timeoutMs', 'transportDurationMs', 'screenWidth', 'screenHeight',
-  'fontScale'
+  'fontScale', 'firstProgressMs', 'loadMs', 'displayMs', 'loadedBytes', 'totalBytes',
+  'sourceWidth', 'sourceHeight'
 ]);
 const reservedFieldKeys = new Set([
   'schemaVersion', 'time', 'appSessionId', 'traceId', 'area', 'operation', 'phase',
@@ -386,6 +391,30 @@ export function diagnosticRef(kind: string, raw: unknown) {
   return referenceFor(kind, raw);
 }
 
+export function linkDiagnosticRefs(kind: string, rawValues: readonly unknown[]) {
+  const safeKind = kind === 'topic' || kind === 'user' || kind === 'cursor' || kind === 'media' ? kind : 'ref';
+  const values = [...new Set(rawValues.filter((raw): raw is string | number | boolean | null => (
+    raw === null || ['string', 'number', 'boolean'].includes(typeof raw)
+  )))];
+  if (values.length === 0) {
+    return `${safeKind}-0`;
+  }
+  let refs = referenceMaps.get(safeKind);
+  if (!refs) {
+    refs = new Map();
+    referenceMaps.set(safeKind, refs);
+  }
+  const linkedRef = values.map((value) => refs?.get(value)).find(Boolean) || `${safeKind}-${refs.size + 1}`;
+  values.forEach((value) => refs?.set(value, linkedRef));
+  let issued = issuedReferences.get(safeKind);
+  if (!issued) {
+    issued = new Set();
+    issuedReferences.set(safeKind, issued);
+  }
+  issued.add(linkedRef);
+  return linkedRef;
+}
+
 export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
   const text = error instanceof Error
     ? `${error.name} ${error.message}`.toLowerCase()
@@ -503,7 +532,7 @@ function createTrace(area: DiagnosticArea, operation: string, startedAt: number)
 }
 
 function referenceFor(kind: string, raw: unknown) {
-  const safeKind = kind === 'topic' || kind === 'user' || kind === 'cursor' ? kind : 'ref';
+  const safeKind = kind === 'topic' || kind === 'user' || kind === 'cursor' || kind === 'media' ? kind : 'ref';
   if (raw !== null && !['string', 'number', 'boolean'].includes(typeof raw)) {
     return `${safeKind}-0`;
   }
@@ -536,6 +565,7 @@ function safeStringField(key: string, value: string) {
   if (key === 'topicRef') return safeReference(value, 'topic');
   if (key === 'userRef') return safeReference(value, 'user');
   if (key === 'cursorRef') return safeReference(value, 'cursor');
+  if (key === 'mediaRef') return safeReference(value, 'media');
   return categoricalFieldValues[key]?.has(value) ? value : 'redacted';
 }
 
@@ -556,7 +586,7 @@ function safeStack(value: string) {
   return value;
 }
 
-function safeReference(value: string, kind: 'topic' | 'user' | 'cursor') {
+function safeReference(value: string, kind: 'topic' | 'user' | 'cursor' | 'media') {
   return issuedReferences.get(kind)?.has(value)
     ? value
     : 'redacted';

@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { forumMediaTargetClass } from './mediaRequestContext';
+import {
+  FORUM_MEDIA_IDENTITY_HEADER,
+  forumMediaIdentityHeaderValue,
+  forumMediaTargetClass
+} from './mediaRequestContext';
+
+describe('forum media request identity', () => {
+  it('[REG-TOPIC-041] carries the opaque session epoch in a dedicated Glide model header', () => {
+    expect(FORUM_MEDIA_IDENTITY_HEADER).toBe('X-WZ-Forum-Media-Identity');
+    expect(forumMediaIdentityHeaderValue({
+      contentSource: 'nodeseek',
+      sessionIdentity: 'nodeseek:41'
+    })).toBe('nodeseek:41');
+    expect(forumMediaIdentityHeaderValue(null)).toBe('public:0');
+  });
+});
 
 describe('forum media diagnostics classification', () => {
   it('classifies targets without exposing their URLs', () => {

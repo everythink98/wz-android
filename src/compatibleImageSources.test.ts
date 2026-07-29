@@ -110,8 +110,9 @@ describe('compatible remote image sources', () => {
     ['SMIL animate', '<svg><animate attributeName="opacity" from="0" to="1" /></svg>'],
     ['SMIL animateTransform', '<svg><animateTransform attributeName="transform" type="rotate" /></svg>'],
     ['SMIL animateMotion', '<svg><animateMotion path="M0,0 L1,1" /></svg>'],
-    ['CSS keyframes', '<svg><style>@keyframes reveal { from { opacity: 0 } to { opacity: 1 } }</style></svg>'],
-    ['CSS animation property', '<svg><style>.panel { animation: reveal 1s linear; }</style></svg>']
+    ['SMIL set', '<svg><set attributeName="opacity" to="1" begin="1s" /></svg>'],
+    ['inline CSS animation', '<svg><rect style="animation: reveal 1s linear" /></svg>'],
+    ['CSS animation property', '<svg><style>@keyframes reveal { from { opacity: 0 } to { opacity: 1 } }.panel { animation-name: reveal; }</style></svg>']
   ])('detects %s as an animated SVG', async (_label, svg) => {
     const source = { uri: `https://images.example.com/animated-${encodeURIComponent(_label)}.svg` };
     const artifact = await recoverCompatibleSvgArtifact(source, {
@@ -122,10 +123,19 @@ describe('compatible remote image sources', () => {
     expect(artifact?.animated).toBe(true);
   });
 
-  it('keeps a static SVG marked as non-animated', async () => {
-    const source = { uri: 'https://images.example.com/static.svg' };
+  it.each([
+    ['plain markup', '<svg><rect width="1" height="1" /></svg>'],
+    ['disabled animation', '<svg><rect style="animation: none" /></svg>'],
+    ['disabled shorthand animation', '<svg><rect style="animation: 1s none" /></svg>'],
+    ['duration-only animation', '<svg><rect style="animation: 0s" /></svg>'],
+    ['disabled animation-name list', '<svg><style>.x { animation-name: none, none }</style></svg>'],
+    ['global animation-name resets', '<svg><style>.x { animation-name: initial }.y { animation-name: unset }</style></svg>'],
+    ['unused keyframes', '<svg><style>@keyframes reveal { from { opacity: 0 } to { opacity: 1 } }</style></svg>'],
+    ['commented animation', '<svg><!-- <animate attributeName="opacity" /> --><style>/* .x { animation: reveal 1s } */</style></svg>']
+  ])('keeps %s marked as a static SVG', async (label, svg) => {
+    const source = { uri: `https://images.example.com/static-${encodeURIComponent(label)}.svg` };
     const artifact = await recoverCompatibleSvgArtifact(source, {
-      fetcher: async () => new Response('<svg><rect width="1" height="1" /></svg>', {
+      fetcher: async () => new Response(svg, {
         headers: { 'content-type': 'image/svg+xml' }
       }),
       renderPoster: async () => poster(1, 1, 'file:///cache/static.png')

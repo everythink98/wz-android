@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { isCancelledError, useQuery, type QueryFunctionContext } from '@tanstack/react-query';
-import { checkLinuxDoLoginAccess, checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '../sources/sourceGateway';
+import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '../sources/sourceGateway';
 import { errorMessage, isCanceledRequest } from '../appUtils';
 import { summarizeYaohuoCookieHeader } from '../yaohuoSession';
 import { summarizeNodeSeekCookieHeader } from '../nodeseekSession';
@@ -17,7 +17,6 @@ import {
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
 import { sourceErrorFromUnknown } from '../sourceErrors';
 import type { XiaoyinsiAuthorizationReadResult } from './useXiaoyinsiAuthController';
-import { isLinuxDoLoginCheckUnknown } from './accountStatusHelpers';
 import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
 import {
   beginDiagnosticTrace,
@@ -36,6 +35,7 @@ import {
   removeUnconfirmedForumSourceQueries
 } from './sessionControllerHelpers';
 import { sessionSources, type SessionSource } from '../sourceCatalog';
+import type { SourceErrorInfo } from '../types';
 
 const NODESEEK_ACCOUNT_URL = 'https://www.nodeseek.com/';
 const LINUXDO_ACCOUNT_URL = 'https://linux.do/session/current.json';
@@ -49,10 +49,15 @@ type StatusQueryData = {
 export type AccountReconcileResult =
   | { status: 'anonymous' | 'changed' | 'same'; session: SiteSessionState; partial?: boolean }
   | { status: 'stale' }
-  | { status: 'unknown'; error: string };
+  | { status: 'unknown'; error: string; errorInfo: SourceErrorInfo };
 export type AccountIdentityRuntimeUpdate = {
   identityKey?: string;
   pending: boolean;
+};
+export type AccountIdentityCheck = {
+  checking: boolean;
+  pending: boolean;
+  error?: SourceErrorInfo;
 };
 
 const STATUS_DESCRIPTORS = {
@@ -90,7 +95,7 @@ function accountStatusViewModel(
   base: SiteSessionViewModel,
   data: StatusQueryData | undefined,
   error: unknown,
-  identityCheck?: { pending: boolean; error?: string }
+  identityCheck?: AccountIdentityCheck
 ) {
   const ownsVisibleWorkflow = identityCheck?.pending === true
     && (base.status === 'verification-required'
@@ -108,7 +113,7 @@ function accountStatusViewModel(
       canWrite: false,
       identityTrust: 'pending' as const,
       summaryLabel: '登录状态待确认',
-      ...(identityCheck.error ? { lastError: identityCheck.error } : {})
+      ...(identityCheck.error ? { lastError: identityCheck.error.message } : {})
     }
     : withQueryError;
 }
@@ -146,15 +151,12 @@ export function useAccountStatusController({
   ) => Promise<XiaoyinsiAuthorizationReadResult>;
   sessionViewModels: SiteSessionViewModels;
 }) {
-  const [identityChecks, setIdentityChecks] = useState<Record<StatusSource, {
-    checking?: boolean;
-    pending: boolean;
-    error?: string;
-  }>>(() => Object.fromEntries(sessionSources.map((source) => [source, { pending: true }])) as Record<StatusSource, {
-    checking?: boolean;
-    pending: boolean;
-    error?: string;
-  }>);
+  const [identityChecks, setIdentityChecks] = useState<Record<StatusSource, AccountIdentityCheck>>(
+    () => Object.fromEntries(sessionSources.map((source) => [source, {
+      checking: false,
+      pending: true
+    }])) as Record<StatusSource, AccountIdentityCheck>
+  );
   const activeIdentityReconciliationsRef = useRef(0);
   const [identityReconciliationPending, setIdentityReconciliationPending] = useState(true);
   const identityPendingRef = useRef<Record<StatusSource, boolean>>(
@@ -247,6 +249,11 @@ export function useAccountStatusController({
         queryKey: linuxDoStatusQueryKey,
         queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
           const trace = beginDiagnosticTrace('session', 'refresh', { source: 'linuxdo' });
+          let cookieSummary: ReturnType<typeof summarizeLinuxDoCookieHeader> = {
+            hasClearance: false,
+            hasSessionCandidate: false,
+            names: []
+          };
           try {
             const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
             const cookieRead = await readManagedCookieHeader(LINUXDO_ACCOUNT_URL);
@@ -255,42 +262,18 @@ export function useAccountStatusController({
               finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
               return canceledStatusQuery();
             }
-            const cookieSummary = summarizeLinuxDoCookieHeader(cookieHeader);
+            cookieSummary = summarizeLinuxDoCookieHeader(cookieHeader);
             const userAgent = linuxDoUserAgentRef.current;
             markDiagnosticStage(trace, 'credential', {
               source: 'linuxdo',
               hasCredential: Boolean(cookieHeader)
             });
-            const login = await checkLinuxDoLoginAccess({
+            const currentUser = await getCurrentUserProfile({
+              source: 'linuxdo',
               fetcher: diagnosticFetcher,
-              userAgent,
+              discourseAuth: { linuxdo: { userAgent } },
               signal
             });
-            if (isLinuxDoLoginCheckUnknown(login)) {
-              throw new Error(login?.message || 'linux.do 状态暂时无法确认');
-            }
-            if (login?.loginRequired) {
-              if (signal.aborted) {
-                finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
-                return canceledStatusQuery();
-              }
-              finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
-              return {
-                session: sessionFromEvents('linuxdo', [{
-                  site: 'linuxdo',
-                  type: 'cookie-loaded',
-                  cookieSummary: cookieSummary.names,
-                  hasVerification: cookieSummary.hasClearance,
-                  loggedIn: false,
-                  currentUser: null,
-                  at: new Date().toISOString()
-                }])
-              };
-            }
-            const currentUser = login?.currentUser;
-            if (!currentUser) {
-              throw new Error('linux.do 状态暂时无法确认');
-            }
             if (signal.aborted) {
               finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
               return canceledStatusQuery();
@@ -309,6 +292,24 @@ export function useAccountStatusController({
             };
           } catch (error) {
             const canceled = signal.aborted || isCanceledStatusQuery(error);
+            const sourceError = canceled ? undefined : sourceErrorFromUnknown('linuxdo', error);
+            if (sourceError?.kind === 'login-expired') {
+              finishDiagnosticTrace(trace, 'success', {
+                source: 'linuxdo',
+                reason: 'expired'
+              });
+              return {
+                session: sessionFromEvents('linuxdo', [{
+                  site: 'linuxdo',
+                  type: 'cookie-loaded',
+                  cookieSummary: cookieSummary.names,
+                  hasVerification: cookieSummary.hasClearance,
+                  loggedIn: false,
+                  currentUser: null,
+                  at: new Date().toISOString()
+                }])
+              };
+            }
             finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
               source: 'linuxdo',
               reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
@@ -619,11 +620,12 @@ export function useAccountStatusController({
         return { status: 'stale' as const };
       }
       const message = errorMessage(error);
+      const errorInfo = sourceErrorFromUnknown(source, error);
       setIdentityChecks((current) => ({
         ...current,
-        [source]: { checking: false, pending: true, error: message }
+        [source]: { checking: false, pending: true, error: errorInfo }
       }));
-      return { status: 'unknown' as const, error: message };
+      return { status: 'unknown' as const, error: message, errorInfo };
       } finally {
         if (activeProbeRef.current[source]?.generation === generation) {
           delete activeProbeRef.current[source];
@@ -676,6 +678,7 @@ export function useAccountStatusController({
   }, [notify, reconcileAccountStatus]);
 
   return {
+    accountIdentityChecks: identityChecks,
     accountSessionViewModels,
     beginAccountIdentityCheck,
     identityReconciliationPending,

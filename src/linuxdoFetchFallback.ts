@@ -4,6 +4,7 @@ import {
   isGoogleSiteSearchUrl,
   isSameGoogleSiteSearchUrl
 } from './googleSearchFallback';
+import { browserFetchIntentFromInit } from './browserFetchIntent';
 import { cancelRequestTimeoutForFallback, type Fetcher } from './request';
 import {
   beginDiagnosticTrace,
@@ -15,6 +16,8 @@ import {
 } from './diagnostics';
 
 export type LinuxDoHiddenBrowserFailureReason = 'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
+
+const LINUXDO_CURRENT_SESSION_URL = 'https://linux.do/session/current.json';
 
 export class LinuxDoHiddenBrowserFailureError extends Error {
   constructor(public readonly reason: LinuxDoHiddenBrowserFailureReason, message: string) {
@@ -117,13 +120,32 @@ async function fetchLinuxDoThroughWebView(
   }
 }
 
-async function fetchLinuxDoWebViewOnly(webViewFetcher: Fetcher, url: string, init?: RequestInit) {
+async function fetchLinuxDoWebViewOnly(
+  webViewFetcher: Fetcher,
+  url: string,
+  init?: RequestInit,
+  directFailure?: { owner: 'account'; reason: 'network_error' }
+) {
   const inheritedTrace = diagnosticTraceForRequest(init);
-  const trace = inheritedTrace || beginDiagnosticTrace('source', 'webview-transport', {
+  const trace = inheritedTrace || beginDiagnosticTrace('source', directFailure ? 'transport-fallback' : 'webview-transport', {
     source: 'linuxdo',
-    channel: 'webview'
+    channel: directFailure ? 'direct' : 'webview',
+    ...directFailure
   });
-  markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'start' });
+  if (directFailure) {
+    markDiagnosticStage(trace, 'transport', {
+      source: 'linuxdo',
+      channel: 'direct',
+      state: 'fallback',
+      ...directFailure
+    });
+  }
+  markDiagnosticStage(trace, 'transport', {
+    source: 'linuxdo',
+    channel: 'webview',
+    state: 'start',
+    ...(directFailure ? { owner: directFailure.owner } : {})
+  });
   try {
     cancelRequestTimeoutForFallback(init);
     const response = await webViewFetcher(url, init);
@@ -131,24 +153,33 @@ async function fetchLinuxDoWebViewOnly(webViewFetcher: Fetcher, url: string, ini
       source: 'linuxdo',
       channel: 'webview',
       state: 'finish',
+      ...(directFailure ? { owner: directFailure.owner } : {}),
       status: response.status
     });
     if (!inheritedTrace) {
       finishDiagnosticTrace(trace, response.ok ? 'success' : 'failure', {
         source: 'linuxdo',
         channel: 'webview',
+        ...(directFailure ? { owner: directFailure.owner } : {}),
         ...(response.ok ? {} : { reason: 'http_error' })
       });
     }
     return response;
   } catch (error) {
     const reason = normalizeDiagnosticReason(error);
-    markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'failure', reason });
+    markDiagnosticStage(trace, 'transport', {
+      source: 'linuxdo',
+      channel: 'webview',
+      state: 'failure',
+      reason,
+      ...(directFailure ? { owner: directFailure.owner } : {})
+    });
     if (!inheritedTrace) {
       finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : 'failure', {
         source: 'linuxdo',
         channel: 'webview',
-        reason
+        reason,
+        ...(directFailure ? { owner: directFailure.owner } : {})
       });
     }
     throw error;
@@ -173,7 +204,26 @@ export function createLinuxDoWebViewFallbackFetcher({
       }
       return fetchLinuxDoWebViewOnly(webViewFetcher, url, init);
     }
-    const response = await defaultFetcher(input, init);
+    let response: Response;
+    try {
+      response = await defaultFetcher(input, init);
+    } catch (error) {
+      const intent = browserFetchIntentFromInit(init);
+      if (
+        url === LINUXDO_CURRENT_SESSION_URL
+        && method === 'GET'
+        && intent?.owner === 'account'
+        && intent.priority === 'background'
+        && normalizeDiagnosticReason(error) === 'network_error'
+        && allowWebViewFallback(url)
+      ) {
+        return fetchLinuxDoWebViewOnly(webViewFetcher, url, init, {
+          owner: 'account',
+          reason: 'network_error'
+        });
+      }
+      throw error;
+    }
     if (!isLinuxDoRequestUrl(url) || method !== 'GET') {
       return response;
     }

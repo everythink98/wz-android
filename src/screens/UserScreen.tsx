@@ -72,6 +72,8 @@ export const UserScreen = memo(function UserScreen({
   busy,
   error,
   followed,
+  identityBlocked = false,
+  identityChecking = false,
   profile,
   requestedUser,
   styles,
@@ -82,6 +84,7 @@ export const UserScreen = memo(function UserScreen({
   onBack,
   onLoadMoreReplies,
   onLoadMoreTopics,
+  onCheckLinuxDoStatus,
   onOpenOriginal,
   onOpenTopic,
   onRefresh,
@@ -90,6 +93,8 @@ export const UserScreen = memo(function UserScreen({
   busy: boolean;
   error: SourceErrorInfo | null;
   followed: boolean;
+  identityBlocked?: boolean;
+  identityChecking?: boolean;
   profile: UserProfile | null;
   requestedUser: UserReference | null;
   styles: ReturnType<typeof createStyles>;
@@ -100,6 +105,7 @@ export const UserScreen = memo(function UserScreen({
   onBack: () => void;
   onLoadMoreReplies: () => void;
   onLoadMoreTopics: () => void;
+  onCheckLinuxDoStatus?: () => void;
   onOpenOriginal: (url: string) => void;
   onOpenTopic: (topic: Topic) => void;
   onRefresh: () => void;
@@ -229,9 +235,17 @@ export const UserScreen = memo(function UserScreen({
       {error ? (
         <View style={userAuthNotice ? [styles.authNoticeBox, userAuthNoticeBoxStyle] : styles.errorBox}>
           <Text style={userAuthNotice ? [styles.authNoticeText, userAuthNoticeTextStyle] : styles.errorText}>{userAuthNotice?.message || error.message}</Text>
+          {identityBlocked ? (
+            <View style={styles.actions}>
+              <AppButton label="重试检测" styles={styles} onPress={onRefresh} />
+              {user?.source === 'linuxdo' && onCheckLinuxDoStatus
+                ? <AppButton label="检查 L 站状态" variant="ghost" styles={styles} onPress={onCheckLinuxDoStatus} />
+                : null}
+            </View>
+          ) : null}
         </View>
       ) : null}
-      {busy ? <LoadingState text="正在读取用户主页..." styles={styles} theme={theme} /> : null}
+      {busy ? <LoadingState text={identityChecking ? '正在确认 L 站访问状态' : '正在读取用户主页...'} styles={styles} theme={theme} /> : null}
       <View style={styles.actions}>
         {followTarget ? <AppButton label={followed ? '取消关注' : '关注'} variant={followed ? 'danger' : undefined} styles={styles} onPress={() => onToggleFollow(followTarget)} /> : null}
         {user?.url ? <AppButton label="原站主页" variant="ghost" styles={styles} onPress={() => onOpenOriginal(user.url)} /> : null}
@@ -248,7 +262,7 @@ export const UserScreen = memo(function UserScreen({
       {profile && userTab === 'topics' && !topics.length && !busy ? <EmptyText text="这个用户暂时没有可显示的主题" styles={styles} /> : null}
       {profile && userTab === 'replies' && !replies.length && !busy ? <EmptyText text="这个用户暂时没有可显示的回复" styles={styles} /> : null}
     </View>
-  ), [busy, changeUserTab, error, followTarget, followed, onOpenOriginal, onToggleFollow, profile, profileStats, replies.length, styles, theme, topics.length, user, userAuthNotice, userAuthNoticeBoxStyle, userAuthNoticeTextStyle, userTab]);
+  ), [busy, changeUserTab, error, followTarget, followed, identityBlocked, identityChecking, onCheckLinuxDoStatus, onOpenOriginal, onRefresh, onToggleFollow, profile, profileStats, replies.length, styles, theme, topics.length, user, userAuthNotice, userAuthNoticeBoxStyle, userAuthNoticeTextStyle, userTab]);
 
   const renderItem = useCallback<ListRenderItem<UserListItem>>(({ item, index }) => {
     if (item.type === 'reply') {

@@ -20,8 +20,9 @@ function navigation(url: string) {
 }
 
 describe('CompatibleSvgDocumentView', () => {
-  it('[REG-TOPIC-038] renders one isolated local document without executable or remote capabilities', async () => {
-    const view = await render(<CompatibleSvgDocumentView artifact={artifact()} />);
+  it('[REG-TOPIC-038] renders one isolated local document with only a nonce-bound readiness bridge', async () => {
+    const containerStyle = { bottom: 0, left: 0, position: 'absolute' as const, right: 0, top: 0 };
+    const view = await render(<CompatibleSvgDocumentView artifact={artifact()} style={containerStyle} />);
     const webViews = view.getAllByTestId('compatible-svg-document-view');
 
     expect(webViews).toHaveLength(1);
@@ -32,15 +33,19 @@ describe('CompatibleSvgDocumentView', () => {
     expect(source.baseUrl).toBe('about:blank');
     expect(html).toContain("default-src 'none'");
     expect(html).toContain('img-src data:');
+    expect(html).toContain("script-src 'nonce-wz-svg-ready'");
     expect(html).toContain("style-src 'unsafe-inline'");
     expect(html).toContain('object-fit: contain');
     expect(html).toContain('background: transparent');
     expect(html).toContain('<img');
     expect(html).toContain('src="data:image/svg+xml;base64,PHN2Zy8+"');
-    expect(html).not.toMatch(/<script\b/i);
-    expect(html).not.toContain('ReactNativeWebView');
+    expect(html).toContain('<script nonce="wz-svg-ready">');
+    expect(html).toContain('ReactNativeWebView.postMessage(message)');
+    expect(html).toContain("post('wz-svg-ready')");
+    expect(html).not.toMatch(/\b(?:eval|fetch|XMLHttpRequest)\s*\(/i);
     expect(html).not.toMatch(/https?:\/\//i);
 
+    expect(props.androidLayerType).toBeUndefined();
     expect(props).toEqual(expect.objectContaining({
       allowFileAccess: false,
       allowFileAccessFromFileURLs: false,
@@ -50,17 +55,18 @@ describe('CompatibleSvgDocumentView', () => {
       geolocationEnabled: false,
       incognito: false,
       javaScriptCanOpenWindowsAutomatically: false,
-      javaScriptEnabled: false,
+      javaScriptEnabled: true,
       mixedContentMode: 'never',
       pointerEvents: 'none',
       setSupportMultipleWindows: false,
       sharedCookiesEnabled: false,
       thirdPartyCookiesEnabled: false
     }));
+    expect(props.containerStyle).toBe(containerStyle);
     expect(props.originWhitelist).toEqual(['*']);
     expect(props.injectedJavaScript).toBeUndefined();
     expect(props.injectedJavaScriptBeforeContentLoaded).toBeUndefined();
-    expect(props.onMessage).toBeUndefined();
+    expect(props.onMessage).toEqual(expect.any(Function));
   });
 
   it('[REG-TOPIC-038] permits only the local bootstrap document and rejects every external navigation scheme', async () => {
@@ -109,10 +115,10 @@ describe('CompatibleSvgDocumentView', () => {
       />
     );
     const firstView = view.getByTestId('compatible-svg-document-view');
-    const staleLoad = firstView.props.onLoad as () => void;
+    const staleLoad = firstView.props.onMessage as (event: { nativeEvent: { data: string } }) => void;
     const staleError = firstView.props.onError as () => void;
 
-    await fireEvent(firstView, 'load');
+    await fireEvent(firstView, 'message', { nativeEvent: { data: 'wz-svg-ready' } });
     await fireEvent(firstView, 'error');
     await fireEvent(firstView, 'httpError');
     expect(firstLoad).toHaveBeenCalledTimes(1);
@@ -125,7 +131,7 @@ describe('CompatibleSvgDocumentView', () => {
         onLoad={nextLoad}
       />
     );
-    staleLoad();
+    staleLoad({ nativeEvent: { data: 'wz-svg-ready' } });
     staleError();
     expect(firstLoad).toHaveBeenCalledTimes(1);
     expect(firstError).not.toHaveBeenCalled();
@@ -134,7 +140,7 @@ describe('CompatibleSvgDocumentView', () => {
 
     const nextView = view.getByTestId('compatible-svg-document-view');
     await fireEvent(nextView, 'error');
-    await fireEvent(nextView, 'load');
+    await fireEvent(nextView, 'message', { nativeEvent: { data: 'wz-svg-ready' } });
     expect(nextError).toHaveBeenCalledTimes(1);
     expect(nextLoad).not.toHaveBeenCalled();
   });
