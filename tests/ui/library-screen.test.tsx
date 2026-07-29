@@ -18,8 +18,9 @@ jest.mock('@shopify/flash-list', () => {
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ReactModule.forwardRef(function FlashList(
-      { data = [], keyExtractor, ListEmptyComponent, ListHeaderComponent, maintainVisibleContentPosition, renderItem, testID }: {
+      { data = [], drawDistance, keyExtractor, ListEmptyComponent, ListHeaderComponent, maintainVisibleContentPosition, renderItem, testID }: {
         data?: unknown[];
+        drawDistance?: number;
         keyExtractor?: (item: unknown, index: number) => string;
         ListEmptyComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
@@ -37,7 +38,7 @@ jest.mock('@shopify/flash-list', () => {
       ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: mockFlashListScrollToOffset }));
       return ReactModule.createElement(
         NativeView,
-        { maintainVisibleContentPosition, testID } as React.ComponentProps<typeof NativeView>,
+        { drawDistance, maintainVisibleContentPosition, testID } as React.ComponentProps<typeof NativeView>,
         ListHeaderComponent,
         ...data.map((item, index) => ReactModule.createElement(
           NativeView,
@@ -219,6 +220,7 @@ describe('Library filters', () => {
     const view = await render(<LibraryHarness />);
 
     expect(view.getByTestId('library-favorites-ready').props.maintainVisibleContentPosition).toEqual({ disabled: true });
+    expect(view.getByTestId('library-favorites-ready').props.drawDistance).toBe(250);
   });
 
   it('settles all three tabs with an empty device library', async () => {

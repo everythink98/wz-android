@@ -425,7 +425,8 @@ describe('account workflows with canonical identity reconciliation', () => {
         Parameters<typeof useAccountController>[0]['reconcileAccountStatus']
       >(async () => ({
         status: 'unknown',
-        error: 'network unavailable'
+        error: 'network unavailable',
+        errorInfo: { kind: 'ordinary', message: 'network unavailable' }
       }))
     });
 

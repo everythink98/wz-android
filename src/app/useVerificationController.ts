@@ -1,10 +1,10 @@
-import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { QueryKey } from '@tanstack/react-query';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import {
   sanitizeLinuxDoUserAgent
 } from '../linuxdoSession';
-import type { Topic, TopicDetail } from '../types';
+import type { SourceErrorInfo, Topic, TopicDetail } from '../types';
 import { errorMessage } from '../appUtils';
 import type { Screen } from '../appTypes';
 import type { SiteSessionEvent } from '../siteSessionState';
@@ -36,6 +36,37 @@ export type LinuxDoReadRecovery = {
   resume: () => Promise<LinuxDoReadResumeOutcome>;
 };
 
+export function useLinuxDoIdentityVerificationPrompt({
+  enabled = true,
+  error,
+  identityPending,
+  intentKey,
+  showLinuxDoVerification
+}: {
+  enabled?: boolean;
+  error?: SourceErrorInfo;
+  identityPending: boolean;
+  intentKey: string | null;
+  showLinuxDoVerification: (message?: string) => unknown;
+}) {
+  const handledIntentRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!identityPending || !intentKey) {
+      handledIntentRef.current = null;
+      return;
+    }
+    if (!enabled) {
+      handledIntentRef.current = intentKey;
+      return;
+    }
+    if (error?.kind !== 'verification-required' || handledIntentRef.current === intentKey) {
+      return;
+    }
+    handledIntentRef.current = intentKey;
+    void showLinuxDoVerification(error.message);
+  }, [enabled, error, identityPending, intentKey, showLinuxDoVerification]);
+}
+
 type ActiveLinuxDoReadRecovery = {
   generation: number;
   recovery: LinuxDoReadRecovery;
@@ -65,6 +96,7 @@ export function useVerificationController({
   linuxDoWebViewRef,
   linuxDoWebViewSessionRef,
   linuxDoWebViewUserAgentRef,
+  linuxDoIdentityPending = false,
   notify,
   onBeforeLinuxDoSurfaceOpened = () => undefined,
   onLoginWebViewFailure,
@@ -97,6 +129,7 @@ export function useVerificationController({
   linuxDoWebViewRef: Ref<WebView | null>;
   linuxDoWebViewSessionRef: Ref<number>;
   linuxDoWebViewUserAgentRef: Ref<string>;
+  linuxDoIdentityPending?: boolean;
   notify: (message: string) => void;
   onBeforeLinuxDoSurfaceOpened?: () => void;
   onLoginWebViewFailure: (site: 'linuxdo', attempt: number, reason: LoginWebViewFailureReason) => void;
@@ -522,13 +555,14 @@ export function useVerificationController({
 
   const verifyLinuxDoFromTopic = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
-    if (detail?.source === 'linuxdo') {
+    if (detail?.source === 'linuxdo' && !linuxDoIdentityPending) {
       await openTopicRef.current?.(detail, true);
       return;
     }
     await showLinuxDoVerification();
   }, [
     openTopicRef,
+    linuxDoIdentityPending,
     selectedTopic,
     showLinuxDoVerification,
     topicDetail

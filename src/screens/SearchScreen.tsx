@@ -3,7 +3,7 @@ import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Pressable, Sc
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { ChevronDown, ChevronRight, ChevronUp, History, Search, SlidersHorizontal, X } from 'lucide-react-native';
-import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source, Topic } from '../types';
+import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source, SourceErrorInfo, Topic } from '../types';
 import { aggregateSearchSources, type DiscourseSource } from '../sourceCatalog';
 import { topicKey } from '../readerData';
 import { sourceLabel } from '../appUtils';
@@ -1050,6 +1050,8 @@ export const SearchScreen = memo(function SearchScreen({
   searchGroups,
   linuxDoAiState,
   linuxDoAiVisible,
+  identityChecking = false,
+  identityError,
   searchSessionNotices,
   searchSource,
   submittedQuery,
@@ -1058,9 +1060,11 @@ export const SearchScreen = memo(function SearchScreen({
   theme,
   onOpenTopic,
   onLoadMoreSearchSource,
+  onCheckLinuxDoStatus,
   onRemoveRecentSearch,
   onQueryChange,
   onRetrySearchSource,
+  onRetryIdentity,
   onRetryLinuxDoAiSearch,
   onSearch,
   onSearchFilterApply,
@@ -1080,6 +1084,8 @@ export const SearchScreen = memo(function SearchScreen({
   searchGroups: SearchGroup[];
   linuxDoAiState: LinuxDoAiSearchState;
   linuxDoAiVisible: boolean;
+  identityChecking?: boolean;
+  identityError?: SourceErrorInfo;
   searchSessionNotices: SearchSessionNoticeItem[];
   searchSource: FeedSource;
   submittedQuery: string;
@@ -1088,9 +1094,11 @@ export const SearchScreen = memo(function SearchScreen({
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
   onLoadMoreSearchSource: (source: Source, page: number) => void;
+  onCheckLinuxDoStatus?: () => void;
   onRemoveRecentSearch: (query: string) => void;
   onQueryChange: (value: string) => void;
   onRetrySearchSource: (source: Source) => void;
+  onRetryIdentity?: () => void;
   onRetryLinuxDoAiSearch: () => void;
   onSearch: (queryOverride?: string) => void;
   onSearchFilterApply: (source: Source, filter: SourceSearchFilter) => void;
@@ -1245,7 +1253,11 @@ export const SearchScreen = memo(function SearchScreen({
     const group = visibleSearchGroups.find((candidate) => candidate.source === source);
     return Boolean(group && group.settled !== false && !group.loading && !group.loadingMore);
   });
-  const completedSearchAccessibilityLabel = !searchGroupsSettled
+  const searchSettled = Boolean(identityError) || searchGroupsSettled;
+  const searchBusy = !identityError && busy;
+  const completedSearchAccessibilityLabel = identityError
+    ? '搜索结果，L 站访问状态检查失败'
+    : !searchGroupsSettled
     ? '搜索结果，等待来源结算'
     : visibleSearchGroups.some((group) => group.items.length > 0)
     ? '搜索结果，已完成，有可打开结果'
@@ -1469,6 +1481,18 @@ export const SearchScreen = memo(function SearchScreen({
         styles={styles}
         onChange={changeSearchSource}
       />
+      {identityChecking ? <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} /> : null}
+      {identityError ? (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>{identityError.message}</Text>
+          <View style={styles.actions}>
+            {onRetryIdentity ? <AppButton label="重试检测" styles={styles} onPress={onRetryIdentity} /> : null}
+            {searchSource === 'linuxdo' && onCheckLinuxDoStatus
+              ? <AppButton label="检查 L 站状态" variant="ghost" styles={styles} onPress={onCheckLinuxDoStatus} />
+              : null}
+          </View>
+        </View>
+      ) : null}
       {searchSessionNotices.length ? (
         <View style={styles.searchSessionStatusBar}>
           {searchSessionNotices.map((item) => {
@@ -1563,9 +1587,13 @@ export const SearchScreen = memo(function SearchScreen({
     hasSubmittedQuery,
     linuxDoAiState,
     linuxDoAiVisible,
+    identityChecking,
+    identityError,
+    onCheckLinuxDoStatus,
     onQueryChange,
     onRemoveRecentSearch,
     onRetryLinuxDoAiSearch,
+    onRetryIdentity,
     onToggleLinuxDoAiSearch,
     openFilterSheet,
     query,
@@ -1583,10 +1611,10 @@ export const SearchScreen = memo(function SearchScreen({
     <View style={styles.content}>
       <FlashList
         ref={listRef}
-        accessibilityLabel={hasSubmittedQuery && !busy ? completedSearchAccessibilityLabel : '搜索结果'}
+        accessibilityLabel={hasSubmittedQuery && !searchBusy ? completedSearchAccessibilityLabel : '搜索结果'}
         accessibilityLiveRegion={hasSubmittedQuery ? 'polite' : 'none'}
-        accessibilityState={{ busy: hasSubmittedQuery && (busy || !searchGroupsSettled) }}
-        testID={hasSubmittedQuery && !busy && searchGroupsSettled
+        accessibilityState={{ busy: hasSubmittedQuery && (searchBusy || !searchSettled) }}
+        testID={hasSubmittedQuery && !searchBusy && searchSettled
           ? searchSource === 'all' ? 'search-all-sources-settled' : 'search-complete'
           : undefined}
         style={styles.content}
@@ -1601,7 +1629,7 @@ export const SearchScreen = memo(function SearchScreen({
         viewabilityConfig={SEARCH_PAGINATION_VIEWABILITY_CONFIG}
         ListHeaderComponent={header}
         ListFooterComponent={null}
-        ListEmptyComponent={showSearchGroups ? null : busy && hasSubmittedQuery
+        ListEmptyComponent={showSearchGroups || identityError ? null : searchBusy && hasSubmittedQuery
           ? <LoadingState text="正在搜索..." styles={styles} theme={theme} />
           : !hasInputValue ? (showIdleRecentSearches ? null : <EmptyText text="输入关键词后开始搜索" styles={styles} />)
             : !hasSearchTerm ? <EmptyText text="输入关键词后开始搜索" styles={styles} />

@@ -14,10 +14,11 @@ jest.mock('@shopify/flash-list', () => {
   const { ScrollView: NativeScrollView, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ReactModule.forwardRef(function FlashList(
-      { data, ListEmptyComponent, ListFooterComponent, onScroll, onScrollBeginDrag, refreshControl, testID }: {
+      { data, ListEmptyComponent, ListFooterComponent, ListHeaderComponent, onScroll, onScrollBeginDrag, refreshControl, testID }: {
         data: unknown[];
         ListEmptyComponent?: React.ReactNode;
         ListFooterComponent?: React.ReactNode;
+        ListHeaderComponent?: React.ReactNode;
         onScroll?: React.ComponentProps<typeof NativeScrollView>['onScroll'];
         onScrollBeginDrag?: () => void;
         refreshControl?: React.ReactNode;
@@ -40,6 +41,7 @@ jest.mock('@shopify/flash-list', () => {
           testID
         },
         refreshControl,
+        ListHeaderComponent,
         data.length > 0 && offsetY === 0 ? ReactModule.createElement(NativeView, { testID: 'mock-feed-first-visible' }) : null,
         data.length === 0 ? ListEmptyComponent : null,
         ListFooterComponent
@@ -189,6 +191,36 @@ describe('Feed loading', () => {
 
     expect(view.queryByText('正在读取主题...')).toBeNull();
     expect(view.getByLabelText('列表，支持下拉刷新')).toBeTruthy();
+  });
+
+  it('[REG-LINUXDO-007] replaces infinite Feed loading with Account recovery while retaining trusted items', async () => {
+    const onRetryIdentity = jest.fn();
+    const onCheckLinuxDoStatus = jest.fn();
+    const view = await render(renderFeed(false, [{ ...topic, source: 'linuxdo' }], {
+      feedSource: 'linuxdo',
+      identityError: { kind: 'ordinary', message: 'Network request failed' },
+      onCheckLinuxDoStatus,
+      onRetryIdentity
+    }));
+
+    expect(view.queryByText('正在读取主题...')).toBeNull();
+    expect(view.getByText('Network request failed')).toBeTruthy();
+    expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('重试检测'));
+    await fireEvent.press(view.getByLabelText('检查 L 站状态'));
+    expect(onRetryIdentity).toHaveBeenCalledTimes(1);
+    expect(onCheckLinuxDoStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-LINUXDO-007] labels an active Feed identity probe', async () => {
+    const view = await render(renderFeed(true, [{ ...topic, source: 'linuxdo' }], {
+      feedSource: 'linuxdo',
+      identityChecking: true
+    }));
+
+    expect(view.getByText('正在确认 L 站访问状态')).toBeTruthy();
+    expect(view.queryByText('正在读取主题...')).toBeNull();
+    expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
   });
 
   it('keeps the scrolled-list state when the same Feed screen is revisited', async () => {

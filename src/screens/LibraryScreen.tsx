@@ -290,6 +290,7 @@ export const LibraryScreen = memo(function LibraryScreen({
       keyExtractor={(item) => libraryDataItemKey(item as LibraryDataItem, libraryTab)}
       getItemType={(item) => libraryDataItemType(item as LibraryDataItem, libraryTab)}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
+      drawDistance={250}
       maintainVisibleContentPosition={{ disabled: true }}
       ListHeaderComponent={header}
       ListEmptyComponent={(

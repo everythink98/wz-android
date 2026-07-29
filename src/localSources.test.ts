@@ -8,7 +8,7 @@ vi.mock('expo-secure-store', () => ({
 
 import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
-import { browserFetchIntentFromInit } from './browserFetchIntent';
+import { browserFetchIntentFromInit, withBrowserFetchIntent } from './browserFetchIntent';
 import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from './linuxdoFetchFallback';
 import {
   getLinuxDoCurrentUserProfile,
@@ -5535,6 +5535,95 @@ describe('Android local sources', () => {
       expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
     ]);
     expect(JSON.stringify(events)).not.toMatch(/\/t\/42|https?:|cf-turnstile/);
+  });
+
+  it('[REG-LINUXDO-007] settles the canonical Account probe through one hidden read after a direct network error', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const normalFetcher = vi.fn(async () => {
+      throw new TypeError('Network request failed');
+    });
+    const webViewFetcher = vi.fn(async () => json({
+      current_user: {
+        id: 42,
+        username: 'alice',
+        name: 'Alice'
+      }
+    }));
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const currentUser = await getLinuxDoCurrentUserProfile({ fetcher });
+
+    expect(currentUser).toMatchObject({ source: 'linuxdo', username: 'alice' });
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+    const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(browserFetchIntentFromInit(webViewCalls[0]?.[1])).toEqual({
+      owner: 'account',
+      priority: 'background'
+    });
+    const events = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation }) => operation === 'transport-fallback');
+    expect(events).toEqual([
+      expect.objectContaining({ phase: 'intent', channel: 'direct', owner: 'account', reason: 'network_error' }),
+      expect.objectContaining({ phase: 'transport', channel: 'direct', owner: 'account', reason: 'network_error' }),
+      expect.objectContaining({ phase: 'transport', channel: 'webview', owner: 'account', state: 'start' }),
+      expect.objectContaining({ phase: 'transport', channel: 'webview', owner: 'account', status: 200 }),
+      expect.objectContaining({ phase: 'finish', channel: 'webview', owner: 'account', outcome: 'success' })
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/session\/current|https?:|cookie|alice|42/iu);
+  });
+
+  it('[REG-LINUXDO-007] preserves trusted CF evidence returned by the hidden Account probe', async () => {
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => new Response('<div class="cf-turnstile"></div>', {
+        status: 403,
+        headers: { 'cf-mitigated': 'challenge' }
+      }))
+    });
+
+    const error = await getLinuxDoCurrentUserProfile({ fetcher }).catch((caught) => caught);
+
+    expect(isLinuxDoCloudflareError(error)).toBe(true);
+  });
+
+  it('[REG-LINUXDO-007] keeps an ordinary hidden Account failure ordinary', async () => {
+    const hiddenError = new Error('hidden renderer unavailable');
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => {
+        throw hiddenError;
+      })
+    });
+
+    await expect(getLinuxDoCurrentUserProfile({ fetcher })).rejects.toBe(hiddenError);
+  });
+
+  it.each([
+    ['timeout', 'https://linux.do/session/current.json', { owner: 'account', priority: 'background' } as const, new Error('请求超时'), 'GET'],
+    ['cancel', 'https://linux.do/session/current.json', { owner: 'account', priority: 'background' } as const, new Error('请求已取消'), 'GET'],
+    ['foreground Account', 'https://linux.do/session/current.json', { owner: 'account', priority: 'foreground' } as const, new TypeError('Network request failed'), 'GET'],
+    ['topic owner', 'https://linux.do/session/current.json', { owner: 'topic', priority: 'foreground' } as const, new TypeError('Network request failed'), 'GET'],
+    ['other URL', 'https://linux.do/latest.json', { owner: 'account', priority: 'background' } as const, new TypeError('Network request failed'), 'GET'],
+    ['write', 'https://linux.do/session/current.json', { owner: 'account', priority: 'background' } as const, new TypeError('Network request failed'), 'POST']
+  ])('[REG-LINUXDO-007] does not use Account fallback for %s', async (_case, url, intent, directError, method) => {
+    const webViewFetcher = vi.fn();
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => { throw directError; }),
+      webViewFetcher: webViewFetcher as never
+    });
+
+    await expect(fetcher(url, withBrowserFetchIntent({ method }, intent))).rejects.toBe(directError);
+    expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
   it('[REG-TEST-003] keeps linux.do WebView fallback disabled when the runtime disallows it', async () => {

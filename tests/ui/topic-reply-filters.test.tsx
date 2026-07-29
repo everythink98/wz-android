@@ -307,6 +307,7 @@ function TopicFilterHarness({
   onToggleFavorite = jest.fn(),
   onYaohuoFavorite = jest.fn(),
   onVerifyNodeSeek = jest.fn(),
+  onVerifyLinuxDo = jest.fn(),
   onVotePoll = jest.fn(),
   onDiscourseBookmark = jest.fn(),
   onToggleTopicBodyQuote = jest.fn(),
@@ -317,6 +318,8 @@ function TopicFilterHarness({
   topicError = null,
   topicFavorite = false,
   topicBusy = false,
+  identityBlocked = false,
+  identityChecking = false,
   yaohuoVisualBookmarked
 }: {
   canUseLinuxDoActions?: boolean;
@@ -336,6 +339,7 @@ function TopicFilterHarness({
   onToggleFavorite?: (topic: Topic) => void;
   onYaohuoFavorite?: () => void;
   onVerifyNodeSeek?: () => void;
+  onVerifyLinuxDo?: () => void;
   onVotePoll?: (poll: TopicPoll, optionIds: string[]) => void;
   onDiscourseBookmark?: () => void;
   onToggleTopicBodyQuote?: React.ComponentProps<typeof TopicScreen>['onToggleTopicBodyQuote'];
@@ -346,6 +350,8 @@ function TopicFilterHarness({
   topicError?: SourceErrorInfo | null;
   topicFavorite?: boolean;
   topicBusy?: boolean;
+  identityBlocked?: boolean;
+  identityChecking?: boolean;
   yaohuoVisualBookmarked?: boolean;
 } = {}) {
   const [commentQuery, setCommentQuery] = useState('');
@@ -410,6 +416,8 @@ function TopicFilterHarness({
         topic={topicDetail}
         topicBusy={topicBusy}
         topicError={topicError}
+        identityBlocked={identityBlocked}
+        identityChecking={identityChecking}
         topicFavorite={topicFavorite}
         topicImageDeriver={topicImageDeriver}
         topicScrollRef={topicScrollRef}
@@ -439,7 +447,7 @@ function TopicFilterHarness({
         onToggleTopicBodyQuote={onToggleTopicBodyQuote}
         onTopicScroll={jest.fn()}
         onUploadReplyImage={jest.fn()}
-        onVerifyLinuxDo={jest.fn()}
+        onVerifyLinuxDo={onVerifyLinuxDo}
         onVerifyNodeSeek={onVerifyNodeSeek}
         onVotePoll={onVotePoll}
       />
@@ -919,6 +927,54 @@ describe('Topic reply filters', () => {
     await fireEvent.press(view.getByLabelText('重试'));
     expect(onVerifyNodeSeek).toHaveBeenCalledTimes(1);
     expect(onRefreshWholeTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-LINUXDO-007] ends Topic loading and offers Account recovery after an ordinary identity probe failure', async () => {
+    const onRefreshWholeTopic = jest.fn<() => void>();
+    const onVerifyLinuxDo = jest.fn<() => void>();
+    const selectedTopic: Topic = {
+      ...topic,
+      source: 'linuxdo',
+      id: 'linuxdo-topic-1',
+      url: 'https://linux.do/t/topic/1'
+    };
+    const view = await render(
+      <TopicFilterHarness
+        identityBlocked
+        selectedTopic={selectedTopic}
+        topicDetail={null}
+        topicError={{ kind: 'ordinary', message: 'Network request failed' }}
+        onRefreshWholeTopic={onRefreshWholeTopic}
+        onVerifyLinuxDo={onVerifyLinuxDo}
+      />
+    );
+
+    expect(view.queryByText('正在读取主题...')).toBeNull();
+    expect(view.getByText('Network request failed')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('重试检测'));
+    await fireEvent.press(view.getByLabelText('检查 L 站状态'));
+    expect(onRefreshWholeTopic).toHaveBeenCalledTimes(1);
+    expect(onVerifyLinuxDo).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-LINUXDO-007] identifies an active Account probe instead of showing Topic loading', async () => {
+    const selectedTopic: Topic = {
+      ...topic,
+      source: 'linuxdo',
+      id: 'linuxdo-topic-2',
+      url: 'https://linux.do/t/topic/2'
+    };
+    const view = await render(
+      <TopicFilterHarness
+        identityBlocked
+        identityChecking
+        selectedTopic={selectedTopic}
+        topicDetail={{ ...topic, ...selectedTopic }}
+      />
+    );
+
+    expect(view.getByText('正在确认 L 站访问状态')).toBeTruthy();
+    expect(view.queryByText('正在读取主题...')).toBeNull();
   });
 
   it('disables reply pagination while the next page is loading', async () => {
