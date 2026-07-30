@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { notifyManager, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import type { Screen } from '../appTypes';
 import type { SourceGateway } from '../sources/sourceGateway';
@@ -47,7 +47,6 @@ import { useCommittedRef } from './useCommittedRef';
 
 type FeedPageParam = { cursor?: string; page: number };
 type FeedPage = FeedResponse & FeedPageParam;
-type FeedScenePreviews = Partial<Record<FeedSource, Topic[]>>;
 
 type FeedSourceState = {
   hasMore: boolean;
@@ -470,7 +469,6 @@ export function useFeedController({
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
-  const [feedPreviewCacheRevision, setFeedPreviewCacheRevision] = useState(0);
   const [categoriesQueryIdentityBarriers, setCategoriesQueryIdentityBarriers] = useState(
     () => normalizeIdentityBarriers(identityBarriers)
   );
@@ -485,22 +483,6 @@ export function useFeedController({
     () => normalizeIdentityBarriers(retainableIdentityBarriers)
   );
   const [feedQuerySessionEpochs, setFeedQuerySessionEpochs] = useState(sessionEpochs);
-  useEffect(() => {
-    const updatePreviews = notifyManager.batchCalls(
-      () => setFeedPreviewCacheRevision((current) => current + 1)
-    );
-    return queryClient.getQueryCache().subscribe((event) => {
-      const key = event.query.queryKey;
-      if (
-        (event.type === 'added' || event.type === 'removed' || event.type === 'updated')
-        && key[0] === 'forum'
-        && key[2] === 'feed'
-        && key[1] !== feedSource
-      ) {
-        updatePreviews();
-      }
-    });
-  }, [feedSource, queryClient]);
   const trustedAggregateCategoriesRef = useRef<{
     data: CategoriesResponse;
     queryKey: readonly unknown[];
@@ -764,6 +746,25 @@ export function useFeedController({
     () => mergeCategories(allCategories, canShowFeedSourceData ? sourceCategoriesQuery.data?.items || [] : []),
     [allCategories, canShowFeedSourceData, sourceCategoriesQuery.data?.items]
   );
+  const feedCategories = useMemo(() => sourceValues.reduce((current, source) => {
+    const cached = queryClient.getQueryData<CategoriesResponse>(
+      forumQueryKeys.categories(source, sessionEpochs)
+    );
+    return cached?.items.length
+      ? mergeTrustedCategories(
+          current,
+          cached.items,
+          categoriesBlockedIdentitySources,
+          categoriesRetainableIdentitySources
+        )
+      : current;
+  }, categories), [
+    categories,
+    categoriesBlockedIdentitySources,
+    categoriesRetainableIdentitySources,
+    queryClient,
+    sessionEpochs
+  ]);
 
   const feedQuery = useInfiniteQuery({
     queryKey: feedQueryKey,
@@ -1029,54 +1030,6 @@ export function useFeedController({
     () => applyFeedFilter(activeFeedState.items, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
     [activeFeedState.items, feedSource, readerData.favorites, readerData.history, readingFilter]
   );
-  const feedScenePreviews = useMemo<FeedScenePreviews>(() => {
-    const previews: FeedScenePreviews = {};
-    if (!readerDataLoaded) {
-      return previews;
-    }
-    for (const source of ['all', ...sourceValues] satisfies FeedSource[]) {
-      if (
-        source === 'all'
-          ? identityReconciliationPending
-          : isSessionSource(source) && identityBarriers.includes(source)
-      ) {
-        continue;
-      }
-      const cached = queryClient.getQueryData<InfiniteData<FeedPage, FeedPageParam>>(
-        forumQueryKeys.feed({
-          feedFilter: feedFilterForRequest(source, '', feedFilters),
-          identityBarriers,
-          scope: sessionEpochs,
-          source
-        })
-      );
-      if (!cached) {
-        continue;
-      }
-      const items = mergeFeedPages(cached.pages).items.filter(
-        (topic) => source === 'all' || topic.source === source
-      );
-      previews[source] = applyFeedFilter(
-        items,
-        readerData,
-        shouldUseReadingFilter(source) ? readingFilter : 'all'
-      );
-    }
-    return previews;
-  }, [
-    feedFilters,
-    feedPreviewCacheRevision,
-    feedQuery.dataUpdatedAt,
-    feedSource,
-    identityBarriers,
-    identityReconciliationPending,
-    queryClient,
-    readerData.favorites,
-    readerData.history,
-    readerDataLoaded,
-    readingFilter,
-    sessionEpochs
-  ]);
   const settledFeedOutcomeKind = aggregateIdentityTransitionPending
     || feedSourceIdentityPending
     || feedQuery.isPending
@@ -1290,9 +1243,17 @@ export function useFeedController({
   ]);
 
   const changeFeedSource = useCallback((source: FeedSource) => {
+    if (source === feedSource) {
+      return;
+    }
+    queryClient.removeQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum'
+        && queryKey[1] === source
+        && queryKey[2] === 'feed'
+    });
     setFeedSource(source);
     setCategoryFilter('');
-  }, []);
+  }, [feedSource, queryClient]);
 
   const setFeedFilter = useCallback((filter: SourceFeedFilter) => {
     setFeedFilters((current) => feedSource !== 'all' && isFeedFilterSource(feedSource)
@@ -1335,9 +1296,10 @@ export function useFeedController({
       || feedSourceIdentityPending && mergedFeed.items.length === 0
       || feedEnabled && feedQuery.isPending
     ),
+    feedCategories,
     feedFilter,
+    feedFilters,
     feedOutcomeKind: settledFeedOutcomeKind,
-    feedScenePreviews,
     feedSource,
     loadFeed,
     readingFilter,

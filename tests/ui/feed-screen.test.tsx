@@ -17,6 +17,7 @@ let mockTabViewProps: {
   navigationState: { index: number; routes: Array<{ key: string }> };
   onIndexChange: (index: number) => void;
   onSwipeEnd?: () => void;
+  renderLazyPlaceholder?: (input: { route: { key: string } }) => React.ReactNode;
   renderScene: (input: { route: { key: string } }) => React.ReactNode;
 } | null = null;
 let mockFlashListMountCount = 0;
@@ -108,6 +109,7 @@ jest.mock('react-native-tab-view', () => {
     navigationState: { index: number; routes: Array<{ key: string }> };
     onIndexChange: (index: number) => void;
     onSwipeEnd?: () => void;
+      renderLazyPlaceholder?: (input: { route: { key: string } }) => React.ReactNode;
       renderScene: (input: { route: { key: string } }) => React.ReactNode;
     }) => {
       mockTabViewProps = props;
@@ -182,6 +184,7 @@ function renderFeed(
       feedHasMore={false}
       feedItems={feedItems}
       feedPage={1}
+      feedFilters={defaultFeedFilters}
       feedSource="all"
       loadMoreFailureSignal={0}
       loadingMore={false}
@@ -210,7 +213,6 @@ async function settlePager() {
 function FeedSourceHarness({ onSourceChange }: { onSourceChange?: (source: FeedSource) => void }) {
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   return renderFeed(false, [topic], {
-    feedScenePreviews: { all: [topic], v2ex: [topic] },
     feedSource,
     onFeedSourceChange: (source) => {
       onSourceChange?.(source);
@@ -245,6 +247,7 @@ function FeedFilterHarness() {
       feedHasMore={false}
       feedItems={[topic]}
       feedPage={1}
+      feedFilters={feedFilters}
       feedSource={feedSource}
       loadMoreFailureSignal={0}
       loadingMore={false}
@@ -278,6 +281,60 @@ function FeedSortHarness({ onFilterChange }: { onFilterChange: (filter: SourceFe
 }
 
 describe('Feed loading', () => {
+  it('[REG-PERF-006] updates both Feed rails when the native pager selects the target', async () => {
+    const onFeedSourceChange = jest.fn();
+    const view = await render(renderFeed(false, [topic], {
+      categories,
+      onFeedSourceChange
+    }));
+
+    expect(view.getByTestId('feed-source-all').props.accessibilityState).toMatchObject({ selected: true });
+    expect(view.getByText('未读')).toBeTruthy();
+
+    await act(async () => mockTabViewProps?.onIndexChange(1));
+
+    expect(view.getByTestId('feed-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
+    expect(view.queryByText('未读')).toBeNull();
+    expect(view.getByText('问与答')).toBeTruthy();
+    expect(onFeedSourceChange).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-006] shows the target source saved sort before the active source commits', async () => {
+    const view = await render(renderFeed(false, [topic], {
+      categories,
+      feedFilters: { ...defaultFeedFilters, v2ex: 'latest' }
+    }));
+
+    await act(async () => mockTabViewProps?.onIndexChange(1));
+
+    expect(view.getByLabelText('列表筛选')).toBeTruthy();
+    expect(view.getByText('最新')).toBeTruthy();
+  });
+
+  it('[REG-PERF-006] keeps the target secondary rail read-only until the source commits', async () => {
+    const onCategoryChange = jest.fn();
+    const onFeedSourceChange = jest.fn();
+    const view = await render(renderFeed(false, [topic], {
+      categories,
+      onCategoryChange,
+      onFeedSourceChange
+    }));
+
+    await act(async () => mockTabViewProps?.onIndexChange(1));
+    expect(view.getByText('问与答').parent?.props.accessibilityState).toMatchObject({ selected: false, disabled: true });
+    expect(view.getByLabelText('列表筛选').props.accessibilityState).toMatchObject({ expanded: false, disabled: true });
+    await fireEvent.press(view.getByText('问与答'));
+
+    expect(onCategoryChange).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByTestId('feed-source-linuxdo'));
+    expect(view.getByTestId('feed-source-linuxdo').props.accessibilityState).toMatchObject({ selected: true });
+    expect(onFeedSourceChange).not.toHaveBeenCalled();
+
+    await settlePager();
+
+    expect(onFeedSourceChange).toHaveBeenCalledWith('linuxdo');
+  });
+
   it('[REG-PERF-003] activates a selected source only after the native pager becomes idle', async () => {
     const onFeedSourceChange = jest.fn();
     await render(renderFeed(false, [topic], { onFeedSourceChange }));
@@ -311,49 +368,38 @@ describe('Feed loading', () => {
     expect(incomingScene().getByText('正在读取主题...')).toBeTruthy();
   });
 
-  it('[REG-PERF-003][REG-PERF-004] prelays only the adjacent source cache without remounting during settling', async () => {
-    const onOpenTopic = jest.fn();
+  it('[REG-PERF-003][REG-PERF-004][REG-PERF-006] keeps inactive sources lightweight and mounts one rich list', async () => {
     const onFeedSourceChange = jest.fn();
-    const v2exTopic: Topic = {
+    const freshV2exTopic: Topic = {
       ...topic,
       source: 'v2ex',
-      id: 'v2ex-preview',
-      title: 'V2EX 缓存主题',
-      url: 'https://www.v2ex.com/t/v2ex-preview'
+      id: 'v2ex-fresh',
+      title: 'V2EX 新请求主题',
+      url: 'https://www.v2ex.com/t/v2ex-fresh'
     };
     mockFlashListMountCount = 0;
     const view = await render(renderFeed(false, [topic], {
-      feedScenePreviews: { v2ex: [v2exTopic] },
-      onFeedSourceChange,
-      onOpenTopic
+      onFeedSourceChange
     }));
     const incomingScene = within(view.getByTestId('mock-feed-scene-v2ex'));
 
-    expect(incomingScene.getByText('V2EX 缓存主题', { includeHiddenElements: true })).toBeTruthy();
-    expect(incomingScene.getByText('author', { includeHiddenElements: true })).toBeTruthy();
-    expect(incomingScene.queryByText('topic', { includeHiddenElements: true })).toBeNull();
-    expect(incomingScene.getByTestId('feed-preview-v2ex', { includeHiddenElements: true })).toHaveProp('pointerEvents', 'none');
-    expect(incomingScene.getByTestId('feed-preview-v2ex', { includeHiddenElements: true })).toHaveProp('accessibilityElementsHidden', true);
-    expect(incomingScene.getByTestId('feed-preview-v2ex', { includeHiddenElements: true })).toHaveProp('importantForAccessibility', 'no-hide-descendants');
-    const incomingRenderItem = mockFlashListRenderItemByTopicId.get(v2exTopic.id);
-    const mountsBeforeSettling = mockFlashListMountCount;
+    expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
+    expect(incomingScene.queryByText('V2EX 新请求主题', { includeHiddenElements: true })).toBeNull();
+    expect(mockFlashListMountCount).toBe(1);
 
     await act(async () => mockTabViewProps?.onIndexChange(1));
 
-    expect(mockFlashListMountCount).toBe(mountsBeforeSettling);
-    expect(incomingScene.getByText('V2EX 缓存主题', { includeHiddenElements: true })).toBeTruthy();
+    expect(mockFlashListMountCount).toBe(1);
+    expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
 
     await settlePager();
-    await view.rerender(renderFeed(false, [v2exTopic], {
-      feedScenePreviews: { v2ex: [v2exTopic] },
+    await view.rerender(renderFeed(false, [freshV2exTopic], {
       feedSource: 'v2ex',
-      onFeedSourceChange,
-      onOpenTopic
+      onFeedSourceChange
     }));
 
-    expect(mockFlashListMountCount).toBe(mountsBeforeSettling);
-    expect(mockFlashListRenderItemByTopicId.get(v2exTopic.id)).toBe(incomingRenderItem);
-    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 缓存主题')).toBeTruthy();
+    expect(mockFlashListMountCount).toBe(2);
+    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 新请求主题')).toBeTruthy();
   });
 
   it('[REG-PERF-005] keeps the complete rich TopicCard presentation in Feed', async () => {
@@ -412,24 +458,20 @@ describe('Feed loading', () => {
 
   it('[REG-PERF-003] keeps a distant source-bar target lightweight until pager idle', async () => {
     const onFeedSourceChange = jest.fn();
-    const previewTopic = (source: Topic['source'], id: string, title: string): Topic => ({
+    const sourceTopic = (source: Topic['source'], id: string, title: string): Topic => ({
       ...topic,
       source,
       id,
       title,
       url: `https://example.com/${id}`
     });
-    const view = await render(renderFeed(false, [previewTopic('nodeseek', 'node-live', 'NodeSeek 当前主题')], {
-      feedScenePreviews: {
-        all: [previewTopic('v2ex', 'all-preview', '全部缓存主题')],
-        linuxdo: [previewTopic('linuxdo', 'linux-preview', 'linux.do 缓存主题')],
-        yaohuo: [previewTopic('yaohuo', 'yaohuo-preview', '妖火缓存主题')]
-      },
+    mockFlashListMountCount = 0;
+    const view = await render(renderFeed(false, [sourceTopic('nodeseek', 'node-live', 'NodeSeek 当前主题')], {
       feedSource: 'nodeseek',
       onFeedSourceChange
     }));
 
-    expect(view.getAllByTestId(/^feed-(?:outcome|preview)-/, { includeHiddenElements: true })).toHaveLength(3);
+    expect(view.getAllByTestId(/^feed-outcome-/, { includeHiddenElements: true })).toHaveLength(1);
     const mountsBeforeSelection = mockFlashListMountCount;
 
     await fireEvent.press(view.getByTestId('feed-source-all'));
@@ -442,62 +484,48 @@ describe('Feed loading', () => {
 
     expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
     expect(onFeedSourceChange).toHaveBeenCalledWith('all');
-    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('全部缓存主题', { includeHiddenElements: true })).toBeTruthy();
+    await view.rerender(renderFeed(false, [sourceTopic('v2ex', 'all-fresh', '全部新请求主题')], {
+      feedSource: 'all',
+      onFeedSourceChange
+    }));
+    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('全部新请求主题')).toBeTruthy();
+    expect(mockFlashListMountCount).toBe(mountsBeforeSelection + 1);
   });
 
-  it('[REG-PERF-003] ignores a canceled swipe, commits only the final source, and resets the old list after the settled frame', async () => {
-    const frameCallbacks: Array<(time: number) => void> = [];
-    jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
-      frameCallbacks.push(callback);
-      return frameCallbacks.length;
-    });
+  it('[REG-PERF-003] renders the existing Loading state while a lazy scene materializes', async () => {
+    await render(renderFeed(false, [topic]));
+
+    const placeholder = mockTabViewProps?.renderLazyPlaceholder?.({ route: { key: 'xiaoyinsi' } });
+    expect(placeholder).toBeDefined();
+    const placeholderView = await render(<>{placeholder}</>);
+
+    expect(placeholderView.getByText('正在读取主题...')).toBeTruthy();
+  });
+
+  it('[REG-PERF-003] ignores a canceled swipe and commits only the final source', async () => {
     const onFeedSourceChange = jest.fn();
-    await render(<FeedSourceHarness onSourceChange={onFeedSourceChange} />);
-    mockFlashListScrollToOffset.mockClear();
+    const view = await render(<FeedSourceHarness onSourceChange={onFeedSourceChange} />);
 
     await settlePager();
 
     expect(onFeedSourceChange).not.toHaveBeenCalled();
-    expect(mockFlashListScrollToOffset).not.toHaveBeenCalled();
+
+    await act(async () => mockTabViewProps?.onIndexChange(1));
+    await act(async () => mockTabViewProps?.onIndexChange(0));
+    await settlePager();
+
+    expect(onFeedSourceChange).not.toHaveBeenCalled();
 
     await act(async () => mockTabViewProps?.onIndexChange(3));
     await act(async () => mockTabViewProps?.onIndexChange(1));
 
     expect(onFeedSourceChange).not.toHaveBeenCalled();
-    expect(mockFlashListScrollToOffset).not.toHaveBeenCalled();
 
     await settlePager();
 
     expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
     expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
-    expect(mockFlashListScrollToOffset).not.toHaveBeenCalled();
-    expect(frameCallbacks).toHaveLength(1);
-
-    await act(async () => frameCallbacks.shift()?.(16));
-
-    expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(1);
-    expect(mockFlashListScrollToOffset).toHaveBeenCalledWith({ offset: 0, animated: false });
-  });
-
-  it('[REG-PERF-004] does not reset a source that becomes active again before its settled-frame reset', async () => {
-    const frameCallbacks: Array<(time: number) => void> = [];
-    jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
-      frameCallbacks.push(callback);
-      return frameCallbacks.length;
-    });
-    await render(<FeedSourceHarness />);
-    mockFlashListScrollToOffset.mockClear();
-
-    await act(async () => mockTabViewProps?.onIndexChange(1));
-    await settlePager();
-    await act(async () => mockTabViewProps?.onIndexChange(0));
-    await settlePager();
-
-    expect(frameCallbacks).toHaveLength(2);
-    await act(async () => frameCallbacks.splice(0).forEach((callback) => callback(16)));
-
-    expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(1);
-    expect(mockFlashListScrollToOffset).toHaveBeenCalledWith({ offset: 0, animated: false });
+    expect(view.getAllByTestId(/^feed-outcome-/, { includeHiddenElements: true })).toHaveLength(1);
   });
 
   it.each(['data', 'empty', 'partial', 'error', 'auth'] as const)('exposes the settled %s outcome for the active source and filter', async (kind) => {
