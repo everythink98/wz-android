@@ -1171,6 +1171,7 @@ export function AppRoot() {
     feedBusy,
     feedFilter,
     feedOutcomeKind,
+    feedScenePreviews,
     feedSource,
     loadFeed,
     readingFilter,
@@ -1964,6 +1965,7 @@ export function AppRoot() {
         ? feedIdentityError.kind === 'ordinary' ? 'error' as const : 'auth' as const
         : feedOutcomeKind,
       feedPage: activeFeedState.page,
+      feedScenePreviews,
       feedSource,
       feedFilter,
       identityChecking: Boolean(feedIdentityCheck?.checking),
@@ -2001,6 +2003,7 @@ export function AppRoot() {
     feedIdentityCheck?.checking,
     feedIdentityError,
     feedOutcomeKind,
+    feedScenePreviews,
     feedSource,
     loadMoreActiveFeed,
     checkLinuxDoStatus,

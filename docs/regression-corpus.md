@@ -53,6 +53,37 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 移除 active-route no-op，或让有 returning route 的正常 pop 仍选择 snapshot fallback，编号测试必须分别回滚当前草稿或选错返回策略。 |
 | 明确不覆盖范围 | 第三方请求当天延迟、随机目标是否存在和未经授权的论坛写操作不由该回归固定。 |
 
+## `REG-PERF-003` Feed 来源切换把列表工作压进 Pager 收尾帧
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-03`、`FEED-04` |
+| 用户症状 | 首页左右切换来源时有明显停顿，高刷新率场景尤其容易看出；网络即使异步，目标来源的 React 提交、FlashList/TopicCard 创建和布局仍会与 Pager 收尾帧重叠。 |
+| 触发条件 | native Pager 的 `onIndexChange` 在完全 idle 前同步提交 `feedSource`，目标页此时才挂列表或显示“正在切换来源”；分类、排序或阅读筛选再通过组合 `key` 重建整棵 FlashList。 |
+| 根因 seam | `src/screens/FeedScreen.tsx` 的 Pager 结算时序、scene 物化窗口和列表 identity；`src/app/useFeedController.ts` 的安全 Query cache 投影；`src/app/AppRoot.tsx` 只负责透传该投影。 |
+| 必须保持的行为 | 当前页及相邻页在手势前已经是各自 exact-key 缓存或稳定 Loading；`onIndexChange` 只更新 Pager 选择，真正 idle 后才提交最终来源并启动既有 Query，取消滑动不提交、不请求、不滚顶。任意时刻最多三个真实列表；远距离来源栏目标在跳转期只显示轻量 Loading，idle 后才物化目标列表。inactive scene 不得读取当前来源 live data，也不得拥有点击、刷新、分页、错误恢复或滚动事件。预览只同步读取 TanStack Query 当前 epoch、目标来源默认分类与该站排序的 exact key；inactive cache 的新增、删除或 GC 必须立即使投影在 warm/Loading 间切换。旧 epoch、单站 identity barrier、聚合 reconciliation 或 ReaderData 未就绪时 fail-closed，不预取、不建立 Query observer。来源离开后在首个 settled frame 后重置旧列表；若该来源在 frame 前重新 active 则禁止误重置。分类、排序和阅读筛选在提交前及下一帧无动画滚顶，不再 remount。 |
+| 精确失败 oracle | `tests/ui/feed-screen.test.tsx` 要求 TabView 使用相邻页 lazy preload，cold/warm incoming scene 在选择前已布局、零“正在切换来源”、settling 期间零来源提交和零列表 mount、取消滑动零副作用、连续选择只在 idle 提交最终来源、旧来源只在 settled 后下一帧重置且快速反向不误重置、远距离来源栏目标在 idle 前不挂列表；inactive scene 同时关闭 hit-testing 和 accessibility，warm preview 切为 live 后列表 identity 不变。`tests/ui/feed-controller-xiaoyinsi.test.tsx` 要求 exact sort/epoch/barrier/reconciliation/ReaderData 投影正确，inactive exact key 的 remove/add 立即撤下/恢复 preview，V2EX 不受其他站 barrier 污染，warm/cold 请求次数及迟到结果隔离正确，本地阅读筛选与 preview 读取均不产生额外 Feed transport。`REG-FEED-002` 继续固定稳定列表滚顶。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须通过真实 React state 和 TabView/FlashList 边界观察 idle 前后提交、scene 内容、列表 mount 与滚动；controller RNTL 固定 Query cache 和 transport 契约。源码字符串、单测 Query key helper 或 Debug 主观体验均不足以证明该行为。 |
+| Replay 或真实验收路径 | 在同 revision、版本、APK、登录态和刷新率的 Release 构建上，对温缓存 A↔B 20 次、冷来源、取消滑动、连续切换和六来源正反向做 before/after FrameTimeline/`gfxinfo`；要求零白屏、零错站、零新增请求，PSS 平台化且 p95/missed-deadline 不比基线恶化超过 10%。90Hz 模拟器证据必须确认 guest/SF cadence、主机承载刷新率和 exact APK；物理 90/120Hz 仍需真机补测，60Hz 结果不得冒充高刷通过。 |
+| 负向验证方式 | 恢复 `onIndexChange` 直接提交来源、恢复“正在切换来源”或组合筛选 `key`、让 inactive scene 使用 live data/交互、移除 lazy preload、exact-key/identity 门禁、在 settling 移动物化窗口或挂载远距离目标列表，编号 UI/controller oracle 至少一项必须失败。 |
+| 明确不覆盖范围 | 不证明第三方当天响应速度，不调整 Gateway、adapter、Query key、依赖、原生配置或 Feed `drawDistance`；90Hz 模拟器通过不替代物理 90/120Hz 真机的 GPU、触控和主观证据。 |
+
+## `REG-PERF-004` 双温缓存 Feed 横滑触发过量 native 绘制
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-03`、`FEED-04` |
+| 用户症状 | 相邻来源都有数据且已经预布局时，左右横滑仍有明显顿挫；请求时序正确也不能消除卡顿。 |
+| 当前状态 | `FRAME_TIMELINE_PASS_AT_60HZ / EMULATOR_90HZ_FRAME_TIMELINE_PASS / RAW_RT_60HZ_BLOCKED_BY_ENV`。60Hz 同 APK 三组 drag 与 inferred settling 均通过 FrameTimeline miss、FT p95、`>50ms` 和连续 miss 门槛；第三组 drag raw RT p95 为 `17.93ms`，其慢 burst 由 `dequeueBuffer` 睡眠主导。90Hz 模拟器使用同一 exact APK，三组各 20 次 swipe 的 drag miss 为 `0% / 0% / 0.234%`、FT p95 为 `6.65 / 6.68 / 6.40ms`，settling 均 `0%` miss、FT p95 为 `5.55 / 5.54 / 5.31ms`，两阶段均无 `>50ms` 或连续两帧 miss。快速纵滑相对基线、完整 Graphics memory 及物理 90/120Hz 真机仍为 `NOT_VERIFIED`。 |
+| 触发条件 | Android Pager 同时移动两棵 populated FlashList；旧 Feed TopicCard 每帧叠加圆角 badge/tag、Avatar 圆形裁剪与纹理、统计 SVG、分散文字、整行 alpha 和 ripple，RenderThread 主要耗在 Skia command flush。网络、Query 激活和持续 JS 阻塞均不是该路径主因。clipping 没减少视口绘制 op，临时整页 hardware layer 又把成本转成 buffer dequeue 与 layer flush。 |
+| 根因 seam | `src/components/TopicCard.tsx` 的 Feed presentation 与 `src/screens/FeedScreen.tsx` 的 active/preview renderer identity；Query、Gateway、Feed transport、其他页面的 rich TopicCard 和 Pager 原生配置不在修复 seam。 |
+| 必须保持的行为 | Feed flat presentation 以文本保留来源、AI、分类、时间、标题、访问要求、标签、摘要、作者、等级、已读、收藏、同链来源、回复和浏览；只移除 Feed 的 Avatar、统计 icon、badge/tag 背景、整行 alpha 与 ripple。Search、Library 和 User 继续使用原 rich TopicCard。active/preview 使用同一 renderer，`REG-PERF-003` 的预布局、身份隔离、最多三个真实列表、idle 后来源激活和零 inactive transport 全部保持；筛选滚顶、Topic 返回位置、刷新、分页和错站防护不得降级。 |
+| 精确失败 oracle | `tests/ui/topic-card.test.tsx` 固定 Feed flat presentation 的全部文本元数据不做单行截断，并要求无 Avatar 子树；`tests/ui/feed-screen.test.tsx` 以两个 populated scene 固定 preview/live 的 `renderItem` identity、settling 前后零列表 remount、取消滑动零副作用和连续选择只提交最终来源。同 revision、同 APK、60Hz 模式三组 Release Perfetto 分开统计 drag、抬手后连续 RenderThread burst（inferred settling）和 idle。同设备因果 A/B 中，修复前 final-structural 的 drag 中位 miss / FT p95 / RT p95 为 `9.62% / 35.65ms / 20.57ms`，settling 为 `5.41% / 31.03ms / 20.12ms`；Feed flat 后分别为 `0.69% / 10.21ms / 8.32ms` 与 `0% / 8.43ms / 7.32ms`。最终精确 APK 三组 60Hz drag miss 为 `1.42% / 0.68% / 1.39%`，FT p95 为 `13.36 / 13.11 / 13.96ms`，RT p95 为 `16.34 / 16.11 / 17.93ms`；settling 三组 miss 均为 `0%`，FT/RT p95 中位为 `10.73/9.56ms`。同 APK 的 90Hz 模拟器三组 drag miss 为 `0% / 0% / 0.234%`、FT/RT wall p95 中位为 `6.65/4.91ms`；settling 均 `0%` miss、FT/RT wall p95 中位为 `5.54/4.73ms`。60/90Hz 两阶段均零 `>50ms`、零连续两帧 miss。drag 的 Ganesh execute 均值从 `9.61ms` 降至 `1.94ms`，`CircularRRect/Circle` 每帧归零，Texture 从 `8.28` 降至 `1.00`；这固定 flat layout 整体因果，不把收益归给单个装饰。 |
+| 最低可靠自动测试层 | `UI_PASS` 只能固定 React/native 边界行为；绝对帧门槛只能由匹配 revision、APK 和刷新模式的 Release trace 证明，Debug、源码检查或主观改善不能替代。 |
+| Replay 或真实验收路径 | 固定双温缓存 A↔B 20 次并采集三组 before/after Perfetto，分别统计 drag、inferred settling 与 idle；候选中位 FrameTimeline miss 不高于 5% 且相对基线至少下降 50%，任一组不高于 7.5%，每组 RenderThread `DrawFrames` p95 不高于 16.7ms，drag/settling 无超过 50ms 帧或连续两帧 miss。另做冷页、取消、连续切换、六来源正反向和快速纵滑，要求零白屏、错站、额外请求或内存持续增长，纵滑不恶化超过 10%。 |
+| 负向验证方式 | 任何候选只要存在白屏、错站、额外请求、PSS/Graphics 增长超过 20MB、纵滑恶化超过 10%，或上述三组帧门槛任一失败，都必须回退；不能用相对改善掩盖绝对门槛失败。环境明确造成的 raw wall-clock 背压不得伪装成产品代码修复，需由用户决定是否改用排除 `dequeueBuffer` 等待的 CPU 绘制口径。 |
+| 明确不覆盖范围 | 两次自动手势之间的 idle 仍可出现 Main `animation`/GC 长帧，但三组 trace 中这些长帧均不在 drag 或 settling，不能冒充横滑失败，也不能据现有无 CPU stack sample 的证据猜测式修改。raw PagerView、Query、Gateway、adapter、依赖和原生配置不变；90Hz 模拟器已形成 FrameTimeline 证据，但物理 90/120Hz 真机 GPU、触控和主观验收仍为 `NOT_VERIFIED`。 |
+
 ## `REG-FEED-001` 首次加载出现两套 Loading
 
 | 字段 | 内容 |
@@ -74,13 +105,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `FEED-02`、`FEED-04` |
 | 用户症状 | NodeSeek 从“新帖子”切到“新评论”后已有主题却看不到新列表首项，Replay 曾被误判为动态 Feed 无结果。 |
-| 触发条件 | 旧列表已离开顶部，来源、分类、排序或阅读筛选变化后替换数据；FlashList 的旧实例继续持有滚动位置，而筛选 effect 的即时 `scrollToOffset` 早于新数据布局完成。 |
-| 根因 seam | `src/screens/FeedScreen.tsx` 的筛选列表 identity 与滚顶契约，以及 `src/components/listPerformance.ts` 的 Feed FlashList 位置策略。 |
+| 触发条件 | 旧列表已离开顶部，来源、分类、排序或阅读筛选变化后替换数据；稳定 FlashList 继续持有滚动位置，单次 effect 滚顶可能早于新数据布局完成。 |
+| 根因 seam | `src/screens/FeedScreen.tsx` 的按来源列表 ref 与显式滚顶契约，以及 `src/components/listPerformance.ts` 的 Feed FlashList 位置策略。 |
 | 必须保持的行为 | Feed 的来源、分类、排序或阅读筛选变化后从目标列表首项开始展示，不保留上一组合的可视锚点。 |
-| 精确失败 oracle | `tests/ui/feed-screen.test.tsx` 复用同一份主题数组和全部 callback，模拟原生即时滚顶未生效时只改变筛选，要求列表 identity 随之改变且首项重新可见；`src/components/listPerformance.test.ts` 要求 Feed 禁用 `maintainVisibleContentPosition`。 |
-| 最低可靠自动测试层 | `UI_PASS` 固定筛选变化后的列表重建行为，`UNIT_PASS` 固定 FlashList 配置；动态列表当天是否非空不能作为设备级固定前置。 |
+| 精确失败 oracle | `tests/ui/feed-screen.test.tsx` 把稳定列表滚离顶部后分别切换排序、分类和阅读筛选，要求提交 callback 前先执行一次 `animated=false` 滚顶、下一帧再补一次，首项重新可见且 FlashList mount 数不增加；`src/components/listPerformance.test.ts` 要求 Feed 禁用 `maintainVisibleContentPosition`。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定筛选变化前后的滚顶时序、首项和稳定列表实例，`UNIT_PASS` 固定 FlashList 配置；动态列表当天是否非空不能作为设备级固定前置。 |
 | Replay 或真实验收路径 | `tests/device/four-source-feed.ad` 只确认五站入口和聚合 Feed outcome；真实 Android 上的来源/排序滚顶由 Agent Live 在找到非空目标时核对，缺少动态目标记该项 `NOT_VERIFIED`。 |
-| 负向验证方式 | 从 `renderFeedScene` 依赖中移除分类、排序或阅读筛选，或者移除 Feed FlashList 的筛选 identity `key`，RNTL 必须保留错误滚动位置并失败；移除 `maintainVisibleContentPosition: { disabled: true }`，Vitest 必须失败。 |
+| 负向验证方式 | 移除提交前或下一帧任一滚顶、恢复筛选组合 `key` 造成 remount，或移除 `maintainVisibleContentPosition: { disabled: true }`，对应 RNTL/Vitest 必须失败。 |
 | 明确不覆盖范围 | 不固定动态主题标题、数量或来源当天可用性；这些仍按 Replay 动态结果规则与 Live 验收。 |
 
 ## `REG-FEED-003` 小隐寺排序菜单为空

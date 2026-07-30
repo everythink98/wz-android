@@ -12,6 +12,7 @@ import { Avatar } from './Avatar';
 const TOPIC_CARD_TAG_LIMIT = 3;
 
 type TopicCardProps = {
+  feedLayout?: boolean;
   highlightQuery?: string;
   hideReplyCount?: boolean;
   renderTrailingAction?: (topic: Topic) => ReactNode;
@@ -61,7 +62,8 @@ function sameTopicCardTopic(left: Topic, right: Topic) {
 }
 
 export function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) {
-  return previous.highlightQuery === next.highlightQuery
+  return previous.feedLayout === next.feedLayout
+    && previous.highlightQuery === next.highlightQuery
     && previous.hideReplyCount === next.hideReplyCount
     && previous.renderTrailingAction === next.renderTrailingAction
     && previous.onOpenTopic === next.onOpenTopic
@@ -98,6 +100,7 @@ function HighlightedText({
 }
 
 export function TopicCard({
+  feedLayout = false,
   highlightQuery = '',
   hideReplyCount = false,
   renderTrailingAction,
@@ -121,6 +124,44 @@ export function TopicCard({
   const visibleTopicTags = (topic.tags || []).slice(0, TOPIC_CARD_TAG_LIMIT);
   const hiddenTopicTagCount = Math.max((topic.tags?.length || 0) - visibleTopicTags.length, 0);
   const accessRequirementText = forumAccessRequirementText(topic.accessRequirement);
+  if (feedLayout) {
+    const sourceMeta = [
+      sourceLabel(topic.source),
+      topic.isAiGenerated ? '✦ AI' : '',
+      topic.category || ''
+    ].filter(Boolean).join(' · ');
+    const tagMeta = [
+      ...visibleTopicTags,
+      hiddenTopicTagCount ? `+${hiddenTopicTagCount}` : ''
+    ].filter(Boolean).join(' · ');
+    const footerMeta = [
+      topic.author || '未知作者',
+      topic.authorLevelLabel || '',
+      readerState.read ? '已读' : '',
+      readerState.favorite ? '已收藏' : '',
+      topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : '',
+      hideReplyCount ? '' : `回复 ${topic.replyCount}`,
+      topic.viewCount ? `浏览 ${topic.viewCount}` : ''
+    ].filter(Boolean).join(' · ');
+    return (
+      <View style={styles.topicRowShell}>
+        <Pressable testID={testID} accessibilityRole="button" style={styles.topicCardPressable} onPress={openTopicPress}>
+          <View style={styles.topicCardHead}>
+            <Text style={styles.feedTopicSourceMeta} numberOfLines={1}>{sourceMeta}</Text>
+            <View style={styles.topicCardHeadMeta}>
+              <Text style={styles.timeText} numberOfLines={1}>{topicListDisplayTimeText(topic)}</Text>
+              {renderTrailingAction ? renderTrailingAction(topic) : null}
+            </View>
+          </View>
+          <HighlightedText style={[styles.cardTitle, readerState.read && styles.feedTopicCardReadTitle]} highlightStyle={styles.highlightText} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2} text={topic.title || '无标题'} query={highlightQuery} />
+          {accessRequirementText ? <Text style={styles.feedTopicAccessText}>{accessRequirementText}</Text> : null}
+          {tagMeta ? <Text style={styles.feedTopicTagText} numberOfLines={1}>{tagMeta}</Text> : null}
+          {topic.excerpt && readerState.listDensity === 'loose' ? <HighlightedText style={styles.excerpt} highlightStyle={styles.highlightText} numberOfLines={2} text={topic.excerpt} query={highlightQuery} /> : null}
+          <Text style={styles.feedTopicFooterText}>{footerMeta}</Text>
+        </Pressable>
+      </View>
+    );
+  }
   return (
     <View style={styles.topicRowShell}>
       <Pressable testID={testID} accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]} onPress={openTopicPress}>
