@@ -26,6 +26,9 @@ describe('NodeSeek video embeds', () => {
   it('allows only Bilibili player navigation inside the embedded WebView', () => {
     expect(shouldAllowBilibiliWebViewNavigation('about:blank')).toBe(true);
     expect(shouldAllowBilibiliWebViewNavigation('https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz')).toBe(true);
+    expect(shouldAllowBilibiliWebViewNavigation(
+      'https://www.bilibili.com/blackboard/webplayer/mbplayer.html?autoplay=0&high_quality=1&bvid=BV1TE411h7vY&page=1'
+    )).toBe(true);
     expect(shouldAllowBilibiliWebViewNavigation('https://www.bilibili.com/video/BV1GUdgBdESz')).toBe(false);
     expect(shouldAllowBilibiliWebViewNavigation('https://example.com/ad')).toBe(false);
     expect(shouldAllowBilibiliWebViewNavigation('javascript:alert(1)')).toBe(false);

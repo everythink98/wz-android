@@ -3544,6 +3544,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 让原图在适屏图 `onDisplay` 前、主楼 `720px` 范围外或旧 session ready 后挂载，移除绝对覆盖/placeholder，原图失败时替换成错误态，或在后台 SVG 失败时调用 Chromium 恢复，编号 unit/UI 用例必须失败。 |
 | 明确不覆盖范围 | 不改变适屏图既有加载方式，不重构主楼为列表，不增加全局下载队列、设置或依赖；inline emoji、sticker、reaction、视频封面和保存原图链路不进入渐进升级。 |
 
+## `REG-TOPIC-049` Bilibili 移动播放器跳转被导航白名单拦截
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`TOPIC-03` |
+| 用户症状 | NodeSeek 主题已把 Bilibili 视频识别成 16:9 播放器区域，但评论里只显示空白卡片，没有封面、控制层或视频。 |
+| 触发条件 | Bilibili 外链页在 Android WebView 的 Mobile UA 下用页面脚本跳转到 `https://www.bilibili.com/blackboard/webplayer/mbplayer.html`；App 的 `onShouldStartLoadWithRequest` 只允许 `player.bilibili.com/player.html`，因此拦截跳转，原文档只剩 `<head>` 且没有 `document.body`。 |
+| 根因 seam | `src/nsVideoEmbeds.ts` 的 Bilibili WebView 导航白名单，以及 `src/app/useHtmlRenderingController.tsx` 对该白名单的共享调用。 |
+| 必须保持的行为 | 保留 `about:blank`；仅允许 HTTPS 的 `player.bilibili.com/player.html` 和 `www.bilibili.com/blackboard/webplayer/mbplayer.html`，且 URL 必须携带合法 `bvid` 或数字 `aid`。普通 Bilibili 页面、其他 host、其他 path 与危险协议继续拒绝；主楼和评论共用同一规则。 |
+| 精确失败 oracle | `src/nsVideoEmbeds.test.ts` 使用事故视频 `BV1TE411h7vY` 的真实移动播放器跳转 URL，要求导航判定为 `true`；修复前收到 `false`。同组负向用例继续要求普通 Bilibili 视频页、外站和 `javascript:` 为 `false`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定确定性的导航安全边界；真实 Android WebView 只读验收补充第三方页面实际跳转与像素显示证据。 |
+| Replay 或真实验收路径 | App 内直达 `https://www.nodeseek.com/post-849411-1`，滚到第 `#6` 楼；Bilibili 播放器应显示封面或控制层而不是空白。CDP 应显示移动播放器 target 且文档存在正文；全程不播放、不登录、不执行论坛写操作。 |
+| 负向验证方式 | 删除移动播放器端点白名单后，编号 unit 用例恢复为 `false`，设备页面再次停在只有 `<head>` 的桌面外链页并显示空白卡片。 |
+| 明确不覆盖范围 | 不放开 Bilibili 全站导航，不增加通用 WebView allowlist、依赖或 fallback；不保证第三方视频在下架、地域限制、网络或解码失败时仍可播放。 |
+
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 
 | 字段 | 内容 |
