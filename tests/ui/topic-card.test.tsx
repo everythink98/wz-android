@@ -116,25 +116,4 @@ describe('Topic card visible behavior', () => {
     expect(onOpenTopic).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-004] keeps all Feed metadata in a flat text presentation without avatar or stat icon trees', async () => {
-    const view = await render(
-      <TopicCard
-        feedLayout
-        highlightQuery="自动化"
-        readerState={{ favorite: true, listDensity: 'loose', read: true }}
-        styles={styles}
-        testID="feed-topic-card"
-        theme={theme}
-        topic={topic}
-        onOpenTopic={jest.fn()}
-      />
-    );
-
-    expect(view.getByText('linux.do · 开发调优')).toBeTruthy();
-    expect(view.getByText('Android · 测试 · 回归 · +1')).toBeTruthy();
-    expect(view.getByText('alice · LV 2 · 已读 · 已收藏 · 同链：V2EX、NodeSeek · 回复 23 · 浏览 456').props.numberOfLines).toBeUndefined();
-    expect(view.getByText('需 Lv2')).toBeTruthy();
-    expect(view.getByText('宽松密度下显示的主题摘要')).toBeTruthy();
-    expect(view.queryByLabelText('avatar source linuxdo')).toBeNull();
-  });
 });

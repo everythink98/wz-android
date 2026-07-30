@@ -293,7 +293,6 @@ export const FeedScreen = memo(function FeedScreen({
 
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ index, item: topic }) => (
     <MemoizedTopicCard
-      feedLayout
       readerState={getTopicListItemStateFromIndex(topicStateIndex, topic)}
       styles={styles}
       testID={index === 0 ? 'feed-topic-first' : undefined}

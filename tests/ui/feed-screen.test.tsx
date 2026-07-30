@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React, { useState } from 'react';
+import { Platform } from 'react-native';
 import { createEmptyReaderData } from '../../src/readerData';
 import { FeedScreen } from '../../src/screens/FeedScreen';
 import { createStyles, createTheme } from '../../src/theme';
@@ -123,12 +124,28 @@ jest.mock('react-native-tab-view', () => {
   };
 });
 
-jest.mock('lucide-react-native', () => ({
-  ChevronDown: () => null,
-  ChevronUp: () => null,
-  Eye: () => null,
-  MessageCircle: () => null
-}));
+jest.mock('lucide-react-native', () => {
+  const ReactModule = require('react') as typeof React;
+  const { View: NativeView } = require('react-native') as typeof import('react-native');
+  return {
+    ChevronDown: () => null,
+    ChevronUp: () => null,
+    Eye: () => ReactModule.createElement(NativeView, { accessibilityLabel: '浏览统计图标' }),
+    MessageCircle: () => ReactModule.createElement(NativeView, { accessibilityLabel: '回复统计图标' })
+  };
+});
+
+jest.mock('../../src/components/Avatar', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Text: NativeText } = require('react-native') as typeof import('react-native');
+  return {
+    Avatar: ({ contentSource }: { contentSource?: string }) => ReactModule.createElement(
+      NativeText,
+      { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
+      '头像'
+    )
+  };
+});
 
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
@@ -313,7 +330,7 @@ describe('Feed loading', () => {
     const incomingScene = within(view.getByTestId('mock-feed-scene-v2ex'));
 
     expect(incomingScene.getByText('V2EX 缓存主题', { includeHiddenElements: true })).toBeTruthy();
-    expect(incomingScene.getByText('author · 回复 0', { includeHiddenElements: true })).toBeTruthy();
+    expect(incomingScene.getByText('author', { includeHiddenElements: true })).toBeTruthy();
     expect(incomingScene.queryByText('topic', { includeHiddenElements: true })).toBeNull();
     expect(incomingScene.getByTestId('feed-preview-v2ex', { includeHiddenElements: true })).toHaveProp('pointerEvents', 'none');
     expect(incomingScene.getByTestId('feed-preview-v2ex', { includeHiddenElements: true })).toHaveProp('accessibilityElementsHidden', true);
@@ -337,6 +354,60 @@ describe('Feed loading', () => {
     expect(mockFlashListMountCount).toBe(mountsBeforeSettling);
     expect(mockFlashListRenderItemByTopicId.get(v2exTopic.id)).toBe(incomingRenderItem);
     expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 缓存主题')).toBeTruthy();
+  });
+
+  it('[REG-PERF-005] keeps the complete rich TopicCard presentation in Feed', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    const richTopic: Topic = {
+      source: 'linuxdo',
+      id: 'rich-feed-topic',
+      title: '完整列表样式',
+      author: 'Q',
+      authorLevelLabel: 'LV 2',
+      category: '开发调优',
+      url: 'https://linux.do/t/rich-feed-topic',
+      createdAt: '2026-07-14T00:00:00.000Z',
+      displayTimeText: '今天 08:00',
+      replyCount: 23,
+      viewCount: 456,
+      excerpt: '宽松密度下显示的主题摘要',
+      tags: ['Android', '测试', '回归', '第四个标签'],
+      duplicateSources: ['V2EX', 'NodeSeek'],
+      accessRequirement: {
+        type: 'level',
+        label: '等级限制',
+        detail: '需要等级达到 2 才能查看'
+      }
+    };
+    const view = await render(renderFeed(false, [richTopic], {
+      topicStateIndex: {
+        favorites: new Set(['linuxdo:rich-feed-topic']),
+        history: new Set(['linuxdo:rich-feed-topic']),
+        listDensity: 'loose'
+      }
+    }));
+    const activeScene = within(view.getByTestId('mock-feed-scene-all'));
+
+    const source = activeScene.getByText('linux.do');
+    expect(source.props.style).toEqual(expect.arrayContaining([styles.topicSourceBadge]));
+    expect(activeScene.getByText('开发调优')).toHaveStyle(styles.topicCategoryBadge);
+    expect(activeScene.getByText('需 Lv2')).toHaveStyle(styles.topicAccessBadge);
+    expect(activeScene.getByText('Android').props.style).toEqual(expect.arrayContaining([styles.topicTagText]));
+    expect(activeScene.getByText('Android').parent?.props.style).toEqual(expect.arrayContaining([styles.topicTagPill]));
+    expect(activeScene.getByText('测试')).toBeTruthy();
+    expect(activeScene.getByText('回归')).toBeTruthy();
+    expect(activeScene.queryByText('第四个标签')).toBeNull();
+    expect(activeScene.getByText('+1')).toBeTruthy();
+    expect(activeScene.getByText('Q · LV 2 · 已收藏 · 同链：V2EX、NodeSeek')).toBeTruthy();
+    expect(activeScene.getByLabelText('avatar source linuxdo')).toBeTruthy();
+    expect(activeScene.getByLabelText('回复统计图标')).toBeTruthy();
+    expect(activeScene.getByLabelText('浏览统计图标')).toBeTruthy();
+    expect(activeScene.getByText('23')).toBeTruthy();
+    expect(activeScene.getByText('456')).toBeTruthy();
+    expect(activeScene.getByText('宽松密度下显示的主题摘要')).toBeTruthy();
+    const card = activeScene.getByTestId('feed-topic-first');
+    expect(card.props.style).toEqual(expect.arrayContaining([styles.topicCardPressable, styles.topicCardRead]));
+    expect(card.props.nativeBackgroundAndroid).toBeDefined();
   });
 
   it('[REG-PERF-003] keeps a distant source-bar target lightweight until pager idle', async () => {
