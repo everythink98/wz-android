@@ -667,15 +667,36 @@ function parseNodeSeekSearchTopics(html: string) {
   const renderedItems = parseHtmlTopics(html);
   const root = parseHtml(html);
   const hasSearchSurface = Boolean(root.querySelector('form[action*="/search"], input[name="q"], .post-list, .empty-state, .notice, .alert'));
+  const useRenderedSearch = renderedItems.length > 0 || hasSearchSurface;
+  const hasPostList = Boolean(root.querySelector('.post-list'));
+  const renderedCandidateCount = hasPostList
+    ? Math.max(
+        root.querySelectorAll('.post-list li.post-list-item').length,
+        root.querySelectorAll('.post-list a[href*="post-"]').length
+      )
+    : renderedItems.length > 0
+      ? Math.max(
+          (html.match(/<li\b[^>]*\bpost-list-item\b/gi) || []).length,
+          (html.match(/<a\b[^>]*href=["'][^"']*post-/gi) || []).length
+        )
+      : 0;
+  const candidateCount = useRenderedSearch
+    ? renderedCandidateCount
+    : embedded
+      ? arrayField(embedded.rotateTopics).length + arrayField(embedded.topicList).length + arrayField(embedded.posts).length
+      : 0;
   const seen = new Set<string>();
-  const items = renderedItems.length || hasSearchSurface ? renderedItems : (embedded ? embeddedTopics(embedded) : []);
-  return items.filter((topic) => {
-    if (!topic.id || seen.has(topic.id)) {
-      return false;
-    }
-    seen.add(topic.id);
-    return true;
-  });
+  const items = useRenderedSearch ? renderedItems : (embedded ? embeddedTopics(embedded) : []);
+  return {
+    candidateCount,
+    items: items.filter((topic) => {
+      if (!topic.id || seen.has(topic.id)) {
+        return false;
+      }
+      seen.add(topic.id);
+      return true;
+    })
+  };
 }
 
 function isIncompleteNodeSeekSearchPage(html: string, items: Topic[]) {
@@ -1857,13 +1878,9 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
       ? await fetchNodeSeekGoogleSearchText(trimmedQuery, page, requestOptions)
       : await fetchNodeSeekText(searchPath(trimmedQuery, page, requestOptions.filter), requestOptions);
     parserVariant = useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com') ? 'google-search' : 'rendered-search';
-    const embedded = extractNodeSeekEmbeddedData(html);
-    candidateCount = Math.max(
-      (html.match(/<li\b[^>]*\bpost-list-item\b/gi) || []).length,
-      (html.match(/<a\b[^>]*href=["'][^"']*post-/gi) || []).length,
-      embedded ? arrayField(embedded.rotateTopics).length + arrayField(embedded.topicList).length + arrayField(embedded.posts).length : 0
-    );
-    items = parseNodeSeekSearchTopics(html);
+    const parsedSearch = parseNodeSeekSearchTopics(html);
+    candidateCount = parsedSearch.candidateCount;
+    items = parsedSearch.items;
     if (isIncompleteNodeSeekSearchPage(html, items)) {
       throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
     }

@@ -2824,7 +2824,7 @@ describe('Android local sources', () => {
     expect(callUrls).not.toContain('https://www.nodeseek.com/');
   });
 
-  it('keeps empty NodeSeek search pages empty when they include stale embedded shell topics', async () => {
+  it('REG-SEARCH-018 keeps empty NodeSeek search pages empty when shell links and embedded topics remain', async () => {
     const stalePayload = Buffer.from(JSON.stringify({
       rotateTopics: [{
         postId: 305,
@@ -2838,12 +2838,24 @@ describe('Android local sources', () => {
       <script>${stalePayload}</script>
       <form action="/search"><input name="q" value="missing" /></form>
       <ul class="post-list"></ul>
-      <div class="empty-state">没有找到相关内容</div>
+      <footer>
+        <a href="/post-301-1">shell link one</a>
+        <a href="/post-302-1">shell link two</a>
+        <a href="/post-303-1">shell link three</a>
+      </footer>
     `));
 
     const search = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekAuthenticated: true });
 
     expect(search.items).toEqual([]);
+    expect(sourceDiagnosticSummary(search)).toMatchObject({
+      parserVariant: 'rendered-search',
+      candidateCount: 0,
+      validCount: 0,
+      droppedCount: 0,
+      isExpectedEmpty: true,
+      isParseEmpty: false
+    });
   });
 
   it('surfaces incomplete NodeSeek search pages as a retryable failure', async () => {

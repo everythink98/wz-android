@@ -51,6 +51,7 @@ const FORUM_STICKER_MEDIA_PATTERN = new RegExp(`<${FORUM_STICKER_TAG}\\b|<${FORU
 const FORUM_VIDEO_STICKER_ELEMENT_PATTERN = new RegExp(`<${FORUM_VIDEO_STICKER_TAG}\\b([^>]*)>[\\s\\S]*?<\\/${FORUM_VIDEO_STICKER_TAG}>`, 'gi');
 const FORUM_VIDEO_STICKER_OPEN_PATTERN = new RegExp(`<${FORUM_VIDEO_STICKER_TAG}\\b([^>]*)>`, 'gi');
 const DISPLAY_CANDIDATE_KIND_ATTR = 'data-forum-display-candidate-kind';
+const ORIGINAL_IMAGE_SOURCE_ATTR = 'data-forum-original-src';
 const STICKER_ROW_ATTR = 'data-forum-sticker-row';
 const INLINE_EMOJI_MAX_SIZE = 24;
 const INLINE_STICKER_DEFAULT_SIZE = 48;
@@ -448,6 +449,16 @@ export function selectImageDisplaySource(
     return { uri: srcsetUri, candidateKind: 'srcset', ...(displaySize ? { displaySize } : {}) };
   }
   return fallbackBodyImageSource(attributes);
+}
+
+export function selectImageOriginalSource(attributes: Record<string, string | undefined>) {
+  return firstAllowedPreviewImageSource([
+    attributeValue(attributes, ORIGINAL_IMAGE_SOURCE_ATTR),
+    attributeValue(attributes, 'data-original'),
+    bestSrcsetImageUrl(attributeValue(attributes, 'srcset')),
+    attributeValue(attributes, 'data-src'),
+    attributeValue(attributes, 'src')
+  ]);
 }
 
 function fallbackBodyImageSource(
@@ -963,6 +974,14 @@ function upgradeBlockImageSources(root: { querySelectorAll?: (selector: string) 
       return;
     }
     const displaySource = fallbackBodyImageSource(image.attributes);
+    const originalUri = imagePreviewEntryFromImage(image)?.item.originalUri;
+    if (originalUri && originalUri !== displaySource?.uri) {
+      if (typeof image.setAttribute === 'function') {
+        image.setAttribute(ORIGINAL_IMAGE_SOURCE_ATTR, originalUri);
+      } else {
+        image.attributes[ORIGINAL_IMAGE_SOURCE_ATTR] = originalUri;
+      }
+    }
     if (displaySource?.uri && attributeValue(image.attributes, 'src') !== displaySource.uri) {
       if (typeof image.setAttribute === 'function') {
         image.setAttribute(DISPLAY_CANDIDATE_KIND_ATTR, displaySource.candidateKind);

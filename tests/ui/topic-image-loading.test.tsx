@@ -9,6 +9,11 @@ import { createEmptyReaderData } from '../../src/readerData';
 import { createStyles, createTheme } from '../../src/theme';
 import type { TopicDetail } from '../../src/types';
 import { setDiagnosticWriter } from '../../src/diagnostics';
+import { imageSourceFromUrl } from '../../src/htmlImages';
+import {
+  markOriginalImageDisplayed,
+  OriginalImageUpgradeBoundary
+} from '../../src/originalImageLoading';
 
 const imageUrl = 'https://img.example.com/topic.png';
 let mockSourceHeaders: Record<string, string> | undefined;
@@ -38,8 +43,12 @@ type MockExpoImageProps = {
   }) => void;
   onLoadStart?: () => void;
   onProgress?: (event: { loaded: number; total: number }) => void;
+  placeholder?: { uri?: string };
+  priority?: 'high' | 'low' | 'normal';
   recyclingKey?: string;
   source?: { cacheKey?: string; headers?: Record<string, string>; uri?: string };
+  testID?: string;
+  transition?: number;
 };
 
 function latestImageProps(uri?: string) {
@@ -80,7 +89,9 @@ jest.mock('expo-image', () => {
   return {
     Image: (props: Record<string, unknown>) => {
       mockExpoImageProps(props);
-      return ReactModule.createElement(View, { testID: 'expo-image' });
+      return ReactModule.createElement(View, {
+        testID: typeof props.testID === 'string' ? props.testID : 'expo-image'
+      });
     },
     useImage: (source: { uri?: string }, options?: unknown, dependencies?: unknown[]) => mockUseImage(source, options, dependencies)
   };
@@ -157,11 +168,13 @@ const topic: TopicDetail = {
 function TopicImageHarness({
   attributes = { alt: '测试图片', src: imageUrl },
   mediaSessionIdentity = 'yaohuo:2',
-  onOpenImagePreview = noop
+  onOpenImagePreview = noop,
+  originalImageUpgradeEnabled = true
 }: {
   attributes?: Record<string, string>;
   mediaSessionIdentity?: string;
   onOpenImagePreview?: (url: string, displaySize?: { height: number; width: number }, displayedUri?: string) => void;
+  originalImageUpgradeEnabled?: boolean;
 }) {
   const { htmlRenderers } = useHtmlRenderingController({
     mediaSessionIdentity,
@@ -178,11 +191,15 @@ function TopicImageHarness({
     webViewBlockMessage: ''
   });
   const ImageRenderer = htmlRenderers.img as unknown as React.ComponentType<Record<string, unknown>> | undefined;
-  return ImageRenderer ? React.createElement(ImageRenderer, {
-    tnode: {
-      attributes
-    }
-  } as never) : null;
+  return ImageRenderer ? (
+    <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
+      {React.createElement(ImageRenderer, {
+        tnode: {
+          attributes
+        }
+      } as never)}
+    </OriginalImageUpgradeBoundary>
+  ) : null;
 }
 
 function htmlRenderingControllerProps(mediaSessionIdentity: string) {
@@ -239,6 +256,112 @@ describe('topic block image loading', () => {
     expect(mockExpoImageProps.mock.calls.some(([props]) => (
       (props as MockExpoImageProps).source?.uri === 'https://img.example.com/original-2000.png'
     ))).toBe(false);
+  });
+
+  it('[REG-TOPIC-048] starts the low-priority original only after the display image is shown', async () => {
+    const displayUrl = 'https://img.example.com/progressive-display.png';
+    const originalUrl = 'https://img.example.com/progressive-original.png';
+    mockSourceHeaders = { Referer: 'https://img.example.com/topic' };
+    const screen = await render(<TopicImageHarness attributes={{
+      alt: '渐进图片',
+      'data-original': originalUrl,
+      src: displayUrl
+    }} />);
+    const displayProps = latestImageProps(displayUrl);
+
+    expect(mockExpoImageProps.mock.calls.some(([props]) => (
+      (props as MockExpoImageProps).source?.uri === originalUrl
+    ))).toBe(false);
+    await act(() => displayProps.onLoad?.({
+      cacheType: 'none',
+      source: { height: 600, mediaType: 'image/png', url: displayUrl, width: 400 }
+    }));
+    expect(mockExpoImageProps.mock.calls.some(([props]) => (
+      (props as MockExpoImageProps).source?.uri === originalUrl
+    ))).toBe(false);
+
+    await act(() => displayProps.onDisplay?.());
+    const originalProps = latestImageProps(originalUrl);
+    expect(originalProps).toEqual(expect.objectContaining({
+      placeholder: expect.objectContaining({ uri: displayUrl }),
+      priority: 'low',
+      source: expect.objectContaining({
+        headers: expect.objectContaining({ Referer: 'https://img.example.com/topic' }),
+        uri: originalUrl
+      }),
+      testID: 'topic-image-original',
+      transition: 150
+    }));
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    const dimensionsBeforeUpgrade = StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style);
+
+    await act(() => originalProps.onDisplay?.());
+
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject(dimensionsBeforeUpgrade);
+    expect(screen.getByTestId('topic-image-original')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-048] does not duplicate a request when display and original URLs match', async () => {
+    const sharedUrl = 'https://img.example.com/already-original.png';
+    const screen = await render(<TopicImageHarness attributes={{
+      'data-original': sharedUrl,
+      src: sharedUrl
+    }} />);
+
+    await loadAndDisplayImage(latestImageProps(sharedUrl));
+
+    expect(screen.queryByTestId('topic-image-original')).toBeNull();
+  });
+
+  it('[REG-TOPIC-048] honors the nearby gate and isolates fullscreen readiness by media epoch', async () => {
+    const displayUrl = 'https://img.example.com/gated-display.png';
+    const originalUrl = 'https://img.example.com/gated-original.png';
+    const screen = await render(<TopicImageHarness
+      attributes={{ 'data-original': originalUrl, src: displayUrl }}
+      originalImageUpgradeEnabled={false}
+    />);
+
+    await loadAndDisplayImage(latestImageProps(displayUrl));
+    expect(screen.queryByTestId('topic-image-original')).toBeNull();
+
+    await act(() => markOriginalImageDisplayed(imageSourceFromUrl(originalUrl, {
+      mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:1' }
+    })));
+    expect(screen.queryByTestId('topic-image-original')).toBeNull();
+
+    await act(() => markOriginalImageDisplayed(imageSourceFromUrl(originalUrl, {
+      mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
+    })));
+    await waitFor(() => expect(screen.getByTestId('topic-image-original')).toBeTruthy());
+    expect(latestImageProps(originalUrl).source).toEqual(expect.objectContaining({
+      cacheKey: `yaohuo:2:${originalUrl}`
+    }));
+  });
+
+  it('[REG-TOPIC-048] raises a tapped original to high priority and keeps the display image on background failure', async () => {
+    const displayUrl = 'https://img.example.com/failure-display.png';
+    const originalUrl = 'https://img.example.com/failure-original.png';
+    const onOpenImagePreview = jest.fn();
+    const screen = await render(<TopicImageHarness
+      attributes={{ alt: '渐进失败图片', 'data-original': originalUrl, src: displayUrl }}
+      originalImageUpgradeEnabled={false}
+      onOpenImagePreview={onOpenImagePreview}
+    />);
+
+    await fireEvent.press(screen.getByLabelText('测试图片'));
+    expect(latestImageProps(originalUrl).priority).toBe('high');
+    expect(onOpenImagePreview).toHaveBeenCalledWith(displayUrl, undefined, undefined);
+    await loadAndDisplayImage(latestImageProps(displayUrl));
+    await act(() => latestImageProps(originalUrl).onError?.({ error: 'background failed' }));
+
+    expect(screen.queryByTestId('topic-image-original')).toBeNull();
+    expect(screen.queryByText('测试图片')).toBeNull();
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+
+    await act(() => markOriginalImageDisplayed(imageSourceFromUrl(originalUrl, {
+      mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
+    })));
+    await waitFor(() => expect(screen.getByTestId('topic-image-original')).toBeTruthy());
   });
 
   it('keeps one loading indicator until the native image is displayed', async () => {
