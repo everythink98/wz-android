@@ -16,6 +16,7 @@ export function triggerPressFeedback() {
 }
 
 export function PillRail({
+  disabled = false,
   items,
   variant = 'pills',
   value,
@@ -24,6 +25,7 @@ export function PillRail({
   styles,
   onChange
 }: {
+  disabled?: boolean;
   items: Array<{ value: string; label: string }>;
   variant?: 'pills' | 'tabs' | 'subtabs';
   value: string;
@@ -49,7 +51,10 @@ export function PillRail({
           key={`${item.value}-${item.label}`}
           accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}
           accessibilityRole="button"
-          accessibilityState={{ selected: value === item.value }}
+          accessibilityState={disabled
+            ? { disabled: true, selected: value === item.value }
+            : { selected: value === item.value }}
+          disabled={disabled || undefined}
           style={isTabs ? [styles.tab, value === item.value && styles.tabActive] : isSubtabs ? [styles.subtab, value === item.value && styles.subtabActive] : [styles.pill, value === item.value && styles.pillActive]}
           onPress={() => pressWithFeedback(() => onChange(item.value))}
         >
