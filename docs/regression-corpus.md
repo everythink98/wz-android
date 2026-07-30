@@ -74,15 +74,30 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-03`、`FEED-04` |
 | 用户症状 | 相邻来源都有数据且已经预布局时，左右横滑仍有明显顿挫；请求时序正确也不能消除卡顿。 |
-| 当前状态 | `FRAME_TIMELINE_PASS_AT_60HZ / EMULATOR_90HZ_FRAME_TIMELINE_PASS / RAW_RT_60HZ_BLOCKED_BY_ENV`。60Hz 同 APK 三组 drag 与 inferred settling 均通过 FrameTimeline miss、FT p95、`>50ms` 和连续 miss 门槛；第三组 drag raw RT p95 为 `17.93ms`，其慢 burst 由 `dequeueBuffer` 睡眠主导。90Hz 模拟器使用同一 exact APK，三组各 20 次 swipe 的 drag miss 为 `0% / 0% / 0.234%`、FT p95 为 `6.65 / 6.68 / 6.40ms`，settling 均 `0%` miss、FT p95 为 `5.55 / 5.54 / 5.31ms`，两阶段均无 `>50ms` 或连续两帧 miss。快速纵滑相对基线、完整 Graphics memory 及物理 90/120Hz 真机仍为 `NOT_VERIFIED`。 |
+| 当前状态 | `RICH_PRESENTATION_RESTORED / FRAME_TIMELINE_NOT_VERIFIED`。此前 60/90Hz 通过数据属于已否决的 flat-card 实验；恢复完整 TopicCard 后不能沿用。历史 rich 候选（`drawDistance=250`、clipping、稳定 renderer、整页 hardware layer）均未通过既定绝对门槛，需以新候选、同 revision Release APK 重新取证；物理 90/120Hz 真机仍为 `NOT_VERIFIED`。 |
 | 触发条件 | Android Pager 同时移动两棵 populated FlashList；旧 Feed TopicCard 每帧叠加圆角 badge/tag、Avatar 圆形裁剪与纹理、统计 SVG、分散文字、整行 alpha 和 ripple，RenderThread 主要耗在 Skia command flush。网络、Query 激活和持续 JS 阻塞均不是该路径主因。clipping 没减少视口绘制 op，临时整页 hardware layer 又把成本转成 buffer dequeue 与 layer flush。 |
-| 根因 seam | `src/components/TopicCard.tsx` 的 Feed presentation 与 `src/screens/FeedScreen.tsx` 的 active/preview renderer identity；Query、Gateway、Feed transport、其他页面的 rich TopicCard 和 Pager 原生配置不在修复 seam。 |
-| 必须保持的行为 | Feed flat presentation 以文本保留来源、AI、分类、时间、标题、访问要求、标签、摘要、作者、等级、已读、收藏、同链来源、回复和浏览；只移除 Feed 的 Avatar、统计 icon、badge/tag 背景、整行 alpha 与 ripple。Search、Library 和 User 继续使用原 rich TopicCard。active/preview 使用同一 renderer，`REG-PERF-003` 的预布局、身份隔离、最多三个真实列表、idle 后来源激活和零 inactive transport 全部保持；筛选滚顶、Topic 返回位置、刷新、分页和错站防护不得降级。 |
-| 精确失败 oracle | `tests/ui/topic-card.test.tsx` 固定 Feed flat presentation 的全部文本元数据不做单行截断，并要求无 Avatar 子树；`tests/ui/feed-screen.test.tsx` 以两个 populated scene 固定 preview/live 的 `renderItem` identity、settling 前后零列表 remount、取消滑动零副作用和连续选择只提交最终来源。同 revision、同 APK、60Hz 模式三组 Release Perfetto 分开统计 drag、抬手后连续 RenderThread burst（inferred settling）和 idle。同设备因果 A/B 中，修复前 final-structural 的 drag 中位 miss / FT p95 / RT p95 为 `9.62% / 35.65ms / 20.57ms`，settling 为 `5.41% / 31.03ms / 20.12ms`；Feed flat 后分别为 `0.69% / 10.21ms / 8.32ms` 与 `0% / 8.43ms / 7.32ms`。最终精确 APK 三组 60Hz drag miss 为 `1.42% / 0.68% / 1.39%`，FT p95 为 `13.36 / 13.11 / 13.96ms`，RT p95 为 `16.34 / 16.11 / 17.93ms`；settling 三组 miss 均为 `0%`，FT/RT p95 中位为 `10.73/9.56ms`。同 APK 的 90Hz 模拟器三组 drag miss 为 `0% / 0% / 0.234%`、FT/RT wall p95 中位为 `6.65/4.91ms`；settling 均 `0%` miss、FT/RT wall p95 中位为 `5.54/4.73ms`。60/90Hz 两阶段均零 `>50ms`、零连续两帧 miss。drag 的 Ganesh execute 均值从 `9.61ms` 降至 `1.94ms`，`CircularRRect/Circle` 每帧归零，Texture 从 `8.28` 降至 `1.00`；这固定 flat layout 整体因果，不把收益归给单个装饰。 |
+| 根因 seam | `src/components/TopicCard.tsx` 的像素等价绘制实现与 `src/screens/FeedScreen.tsx` 的 active/preview renderer identity；完整 rich presentation、Query、Gateway、Feed transport 和身份屏障不属于可削减变量。 |
+| 必须保持的行为 | Feed、Search、Library 和 User 使用同一个完整 rich TopicCard：来源/分类/访问徽章、彩色标签、标题、摘要、作者头像与等级、时间、收藏/已读、同链来源、回复/浏览图标和统计、整卡点击反馈均保留。active/preview 使用同一 renderer，`REG-PERF-003` 的预布局、身份隔离、最多三个真实列表、idle 后来源激活和零 inactive transport全部保持；筛选滚顶、Topic 返回位置、刷新、分页和错站防护不得降级。 |
+| 精确失败 oracle | `tests/ui/feed-screen.test.tsx` 的 `REG-PERF-005` 固定 Feed 内独立徽章/标签、Avatar、摘要、作者元数据、统计、已读样式和 Android ripple，同时以两个 populated scene 固定 preview/live renderer identity、settling 前后零列表 remount、取消滑动零副作用和连续选择只提交最终来源。同 revision、同 APK 的 Release Perfetto 分开统计 drag、settling 与 idle。按本轮 token-linked gesture 重新归属后，历史 final-structural rich 基线的 drag 中位 miss / FT p95 / RT p95 为 `10.24% / 36.07ms / 20.81ms`，settling 为 `5.42% / 32.53ms / 20.14ms`；旧基线中的 `9.62% / 35.65ms / 20.57ms` 是时间窗统计，两种口径不混算且 FAIL 结论一致。flat 实验曾显著降低绘制，但违反 `REG-PERF-005`，只能作为根因证据，不能作为可发布候选。 |
 | 最低可靠自动测试层 | `UI_PASS` 只能固定 React/native 边界行为；绝对帧门槛只能由匹配 revision、APK 和刷新模式的 Release trace 证明，Debug、源码检查或主观改善不能替代。 |
 | Replay 或真实验收路径 | 固定双温缓存 A↔B 20 次并采集三组 before/after Perfetto，分别统计 drag、inferred settling 与 idle；候选中位 FrameTimeline miss 不高于 5% 且相对基线至少下降 50%，任一组不高于 7.5%，每组 RenderThread `DrawFrames` p95 不高于 16.7ms，drag/settling 无超过 50ms 帧或连续两帧 miss。另做冷页、取消、连续切换、六来源正反向和快速纵滑，要求零白屏、错站、额外请求或内存持续增长，纵滑不恶化超过 10%。 |
 | 负向验证方式 | 任何候选只要存在白屏、错站、额外请求、PSS/Graphics 增长超过 20MB、纵滑恶化超过 10%，或上述三组帧门槛任一失败，都必须回退；不能用相对改善掩盖绝对门槛失败。环境明确造成的 raw wall-clock 背压不得伪装成产品代码修复，需由用户决定是否改用排除 `dequeueBuffer` 等待的 CPU 绘制口径。 |
-| 明确不覆盖范围 | 两次自动手势之间的 idle 仍可出现 Main `animation`/GC 长帧，但三组 trace 中这些长帧均不在 drag 或 settling，不能冒充横滑失败，也不能据现有无 CPU stack sample 的证据猜测式修改。raw PagerView、Query、Gateway、adapter、依赖和原生配置不变；90Hz 模拟器已形成 FrameTimeline 证据，但物理 90/120Hz 真机 GPU、触控和主观验收仍为 `NOT_VERIFIED`。 |
+| 明确不覆盖范围 | 两次自动手势之间的 idle 长帧不能冒充横滑失败，也不能据无 CPU stack sample 的证据猜测式修改。flat-card 的 60/90Hz 数据不代表 rich 实现；物理 90/120Hz 真机 GPU、触控和主观验收仍为 `NOT_VERIFIED`。 |
+
+## `REG-PERF-005` Feed 性能优化不得删减列表信息或视觉层级
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-03`、`FEED-04` |
+| 用户症状 | 横滑优化后 Feed 条目省略头像、图标、徽章背景、标签层级和点击/已读效果，并把多类信息压成单行；内容虽仍在字符串里，实际列表已不是优化前的样式。 |
+| 触发条件 | Feed 给共享 `TopicCard` 传入 `feedLayout`，走一棵专用 flat render tree；对应测试只验证合并文本，反而把产品回退固化为性能契约。 |
+| 根因 seam | `src/screens/FeedScreen.tsx` 到 `src/components/TopicCard.tsx` 的 presentation 分叉，以及 `src/themeStyles.ts` 的 Feed 专用扁平样式。 |
+| 必须保持的行为 | Feed 与其他 Topic 列表复用同一完整 rich TopicCard；性能实现只能改变用户不可见的调度、缓存或绘制方式，不得合并、隐藏、截断或重排既有信息，也不得删除 Avatar、徽章/标签背景、统计 icon、整卡已读状态和 ripple。 |
+| 精确失败 oracle | `tests/ui/feed-screen.test.tsx` 用真实 Feed scene 同时断言独立来源/分类/访问徽章、前三个标签与 `+N`、摘要、作者头像/等级/收藏/同链、回复/浏览统计及整卡已读样式。该测试在 flat 分支上必须失败，并在完整 TopicCard 上通过。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须经过 FeedScreen 到 TopicCard 的真实渲染边界；TopicCard 单独通过或 DTO 字段仍存在都不能证明 Feed 没有选用另一套 presentation。 |
+| Replay 或真实验收路径 | Release APK 在首页逐站检查普通、已读、收藏、带标签、带访问限制和有头像条目；与 v1.3.85 的同主题截图逐项对照，再执行 `REG-PERF-004` 横滑 trace。 |
+| 负向验证方式 | 恢复 `feedLayout` 或任一 Feed 专用信息合并分支，`REG-PERF-005` UI oracle 必须失败。 |
+| 明确不覆盖范围 | 该回归固定内容和视觉合同，不单独证明帧性能；性能仍由 `REG-PERF-004` 的 Release trace 判断。 |
 
 ## `REG-FEED-001` 首次加载出现两套 Loading
 
