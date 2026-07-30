@@ -265,6 +265,44 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     topicCardRead: {
       opacity: 0.72
     },
+    feedTopicCardReadTitle: {
+      color: theme.muted
+    },
+    feedTopicSourceMeta: {
+      flex: 1,
+      minWidth: 0,
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 18
+    },
+    feedTopicAccessText: {
+      alignSelf: 'flex-start',
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    feedTopicTagText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    feedTopicFooterText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '500',
+      includeFontPadding: false,
+      lineHeight: 20
+    },
     topicCardHead: {
       alignItems: 'center',
       flexDirection: 'row',
