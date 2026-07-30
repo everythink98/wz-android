@@ -214,6 +214,7 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 | 关联 `TOPIC-02` | `REG-TOPIC-044` | fresh prebuild 原生 instrumentation 与只读设备验收：海报 Chromium 只在排队批次内复用，队列空闲立即销毁；动画预览不得与残留离屏 renderer 叠加导致 tile 内存耗尽。 |
 | 关联 `TOPIC-02` | `REG-TOPIC-045` | image-preview UI 与只读设备验收：动画 SVG 只在当前页挂载同一个缩放树外 document view；poster ready 后缩放仅透明隐藏 document，回到 1 倍直接恢复同一 target，不销毁或重新读取。 |
 | 关联 `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` | `REG-TOPIC-047` | `src/theme.test.ts` 固定评论正文容器 `42px` 左缩进与既有纵向几何；`tests/ui/topic-components.test.tsx` 固定真实 ReplyItem 的正文/签名宽度扣减，而主楼保持完整列宽；Release 设备按五站评论末尾分支矩阵只读复核，并确认 Topic 返回后恢复原列表位置。 |
+| 关联 `TOPIC-02`、`TOPIC-03` | `REG-TOPIC-049` | `src/nsVideoEmbeds.test.ts`：Bilibili 外链页在 Mobile UA 下跳转到准确 HTTPS 移动播放器端点且携带合法 `bvid`/`aid` 时放行；普通 Bilibili 页面、其他 host 和危险协议仍拒绝。设备只读打开事故帖第 `#6` 楼，播放器不得为空白。 |
 | 关联 `TOPIC-02`、`ACCOUNT-01` | `REG-TOPIC-019`；媒体授权现由 `REG-TOPIC-029` 取代旧 JS bridge | 原生 Cookie policy、RN/Fresco/Expo Image/Expo Video managed client、preview/modal/controller/save 测试：同来源首跳可按准确 URL 实时读取，跨来源/失败匿名仍加载，重定向离源后永久降权；JS 只传内部来源与 identity 头，响应不写回且不保留 Cookie 快照。 |
 | 关联 `USER-01` | `REG-USER-001`、`REG-USER-003`、`REG-USER-004`、`REG-USER-005`、`REG-USER-006` | `src/app/useUserController.test.ts`、`tests/ui/user-controller-session.test.tsx` 与四站来源测试：两 Tab cursor 所有权、Profile/Infinite Query seed 时序、站内用户路由和显式零统计。 |
 | 关联 `USER-02`、`LIBRARY-02`、`DATA-01` | `REG-USER-002`、`REG-DATA-005` | `src/readerData.test.ts`：来源 URL 恢复和关注用户统计清洗。 |
@@ -483,6 +484,7 @@ More → useNetworkProxyController → networkProxy + Android generated module
 | [Android 不兼容 SVG 在非当前预览页抢占昂贵恢复](regression-corpus.md#reg-topic-020-android-不兼容-svg-在非当前预览页抢占昂贵恢复) | `TOPIC-02` | 相邻页只允许低优先级原生请求与 display placeholder；原生失败后等成为当前页才启动一次受限 SVG 恢复，远页不挂载且不恢复缩略图栏。 |
 | [正文误把预览原图当作适屏图片下载](regression-corpus.md#reg-topic-040-正文误把预览原图当作适屏图片下载) | `TOPIC-02`；共享 `TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` | `w/x srcset`、占位 src、安全候选与 alias catalog 统一产出 display/original 双层模型；正文首个请求只取最小足够候选，原图仅在预览、保存或 `REG-TOPIC-048` 的第二阶段升级中使用。 |
 | [适屏图显示后不渐进升级且全屏返回仍模糊](regression-corpus.md#reg-topic-048-适屏图显示后不渐进升级且全屏返回仍模糊) | `TOPIC-02`；共享 `TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` | 适屏图显示后仅在评论 render window 或主楼 `720px` 附近分块低优先级升级；点击升高优先级，稳定 frame、失败保底、同 URL 去重，完整 session identity 的全屏 `onDisplay` 使外层复用清晰缓存或 SVG poster。 |
+| [Bilibili 移动播放器跳转被导航白名单拦截](regression-corpus.md#reg-topic-049-bilibili-移动播放器跳转被导航白名单拦截) | `TOPIC-02`、`TOPIC-03` | 外链播放器只放行带合法 `bvid`/`aid` 的准确桌面与移动播放器端点；Mobile UA 跳转后必须出现播放器正文，普通 Bilibili 页面和外站导航继续拒绝。 |
 | [不同会话 epoch 的同 URL 图片请求被 Glide 合并](regression-corpus.md#reg-topic-041-不同会话-epoch-的同-url-图片请求被-glide-合并) | `TOPIC-02`、`USER-01`、`ACCOUNT-01`、`ACCOUNT-02`、`MORE-02` | opaque identity 进入 Expo/Glide request model 且出网前移除；同 epoch 可共享，不同 epoch 不相等，Cookie/no-store 与普通请求边界不回退。 |
 | [App 重启后私有图片磁盘缓存命名空间复用](regression-corpus.md#reg-topic-042-app-重启后私有图片磁盘缓存命名空间复用) | `TOPIC-02`、`USER-01`、`ACCOUNT-01`、`ACCOUNT-02`、`MORE-02` | 私有媒体 identity 使用进程 namespace + epoch；同进程同 epoch 可复用，换 epoch 或重启后不能命中旧私有磁盘条目，公共媒体 namespace 保持稳定。 |
 | [NodeSeek 短后台恢复被超时抢先判失败](regression-corpus.md#reg-topic-021-nodeseek-短后台恢复被超时抢先判失败) | `TOPIC-01` | `AppState` 驱动共享 active-time timeout 预算；短后台期间原请求不被墙钟 timeout 抢先结算，恢复后继续剩余预算且不自动重发。 |
