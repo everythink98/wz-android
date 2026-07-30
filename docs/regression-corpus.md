@@ -3469,6 +3469,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除父级方向受限的横向 Pan、让真实手势只依赖 PagerView 与 ResumableZoom 竞争，编号 UI 用例回到零次选页，设备重新停在 `1/3`。 |
 | 明确不覆盖范围 | 不修改 zoom toolkit、不增加手势库、不恢复缩略图栏或左右箭头，也不改变保存、媒体请求和 SVG 恢复链路。 |
 
+## `REG-TOPIC-047` 评论纵向间距调整误删正文横向缩进
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` |
+| 用户症状 | 只要求调整评论纵向留白后，评论正文却向左扩张到头像列下方，签名、引用、投票和操作区也随正文一起铺满；相邻评论之间的纵向节奏正确，但左右布局已不是原来的样式。 |
+| 触发条件 | 同一提交把 `replyContentArea.paddingLeft` 从 `42` 改成 `0`，又把回复 HTML 宽度从 `contentWidth - 42` 改成完整 `contentWidth`；新增测试随后把“full column”错误地固化为契约。`v1.3.83` 尚未包含，`v1.3.84` 首次发布该回归。 |
+| 根因 seam | `src/screens/topic/ReplyItem.tsx` 的 `replyContentWidth` 与 `src/themeStyles.ts` 的 `replyContentArea`。普通回复的引用、回复目标、正文、投票、签名/留言、reaction/统计/感谢、采纳状态和操作栏都在该容器内；主楼、评论头部、系统事件、User 回复活动和 Reply composer 不经过该容器。 |
+| 必须保持的行为 | 普通评论正文容器保留左侧 `42px`、右侧 `0` 的横向缩进，HTML 可用宽度同步为 `Math.max(220, contentWidth - 42)`；主楼继续使用完整列宽。`replyCard` 的顶部 `16`、底部 `8`、内部 `gap: 8`，以及签名、统计、感谢、采纳提示和操作栏的现有纵向几何均保持不变。 |
+| 精确失败 oracle | `src/theme.test.ts` 的 `REG-TOPIC-047` 同时固定 `paddingLeft: 42`、`paddingRight: 0` 和现有纵向数值；`tests/ui/topic-components.test.tsx` 通过真实 `ReplyItem` 给出 `contentWidth: 360`，要求评论正文与签名 HTML 宽度均为 `318`，而独立主楼正文仍为 `360`。修复前两条用例分别收到 `paddingLeft: 0` 与 `width: 360`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：theme test 固定容器几何，RNTL 固定真实 ReplyItem 到 HTML renderer 的宽度；只检查源码数字或单独渲染 HTML 不能证明入口接线正确。 |
+| Replay 或真实验收路径 | Release APK 在五站 Topic 回复区按 `docs/testing-standard.md` 的评论末尾分支矩阵只读检查；同宽度截图比较普通正文左边界、签名/统计/操作栏与分隔线，确认横向缩进恢复且纵向留白未回退；从列表进入 Topic 并返回，确认原列表位置恢复。 |
+| 负向验证方式 | 把左缩进恢复为 `0`、停止扣减 HTML 宽度，或误把主楼也缩窄，编号 unit/UI 用例必须失败；把纵向数值恢复到旧版本同样由同一 theme oracle 拦截。 |
+| 明确不覆盖范围 | 不改变主楼、评论头部、系统事件、User 页回复卡片或 Reply composer，不重新设计响应式列宽，也不授权任何真实回复或互动写入。 |
+
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 
 | 字段 | 内容 |

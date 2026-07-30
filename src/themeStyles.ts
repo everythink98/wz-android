@@ -2767,7 +2767,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     replyContentArea: {
       gap: 8,
-      paddingLeft: 0,
+      paddingLeft: 42,
       paddingRight: 0
     },
     replyTargetPill: {

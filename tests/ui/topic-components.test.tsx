@@ -368,7 +368,7 @@ describe('Topic real child components', () => {
     ]);
   });
 
-  it('[REG-TOPIC-003] gives reply prose the full column and keeps article density separate', async () => {
+  it('[REG-TOPIC-047] keeps reply prose inset from the avatar column and article density separate', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       contentHtml: '<p>短评论</p>',
@@ -384,8 +384,9 @@ describe('Topic real child components', () => {
 
     const replySources = replyView.getAllByTestId('html-source');
     expect(replySources).toHaveLength(2);
+    expect(replyView.getByTestId('reply-content-area')).toHaveStyle({ paddingLeft: 42, paddingRight: 0 });
     for (const source of replySources) {
-      expect(source.props.style).toEqual({ width: 360 });
+      expect(source.props.style).toEqual({ width: 318 });
       expect(source.props.accessibilityHint).toContain(`class="${HTML_REPLY_CONTENT_CLASS}"`);
     }
 
@@ -397,7 +398,9 @@ describe('Topic real child components', () => {
         topicImageDeriver={topicImageDeriver}
       />
     );
-    expect(articleView.getByTestId('html-source').props.accessibilityHint).not.toContain(HTML_REPLY_CONTENT_CLASS);
+    const articleSource = articleView.getByTestId('html-source');
+    expect(articleSource.props.style).toEqual({ width: 360 });
+    expect(articleSource.props.accessibilityHint).not.toContain(HTML_REPLY_CONTENT_CLASS);
   });
 
   it('[REG-TOPIC-039] routes actual body, reply, quote, and signature links through internal user navigation', async () => {
