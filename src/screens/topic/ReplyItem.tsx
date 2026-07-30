@@ -199,7 +199,7 @@ export function ReplyItem({
   const discourseContentParts = useMemo(() => (
     isDiscourse ? splitDiscourseContentHtml(highlightedHtml, reply.polls) : []
   ), [highlightedHtml, isDiscourse, reply.polls]);
-  const replyContentWidth = Math.max(220, contentWidth);
+  const replyContentWidth = Math.max(220, contentWidth - 42);
   const replyUser = userFromReply(reply, source);
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
@@ -301,7 +301,7 @@ export function ReplyItem({
         </View>
         {isNew ? <Text style={styles.replyNewBadge}>新增</Text> : null}
       </Pressable>
-      <View style={styles.replyContentArea}>
+      <View style={styles.replyContentArea} testID="reply-content-area">
         {quotedFloors.length ? (
           <View style={styles.quoteStack}>
             {quotedFloors.map((quotedFloor, index) => {

@@ -113,7 +113,7 @@ describe('Android reader theme safety rails', () => {
     expect(styles.replyCompactActionButton.minHeight).toBeGreaterThanOrEqual(48);
   });
 
-  it('keeps replies flat while balancing content, signatures, stats, and the action row', () => {
+  it('[REG-TOPIC-047] keeps reply prose inset below the avatar while retaining vertical rhythm', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
@@ -125,7 +125,7 @@ describe('Android reader theme safety rails', () => {
       paddingTop: 16
     });
     expect(styles.replyCard.borderRadius).toBeUndefined();
-    expect(styles.replyContentArea).toMatchObject({ gap: 8, paddingLeft: 0 });
+    expect(styles.replyContentArea).toMatchObject({ gap: 8, paddingLeft: 42, paddingRight: 0 });
     expect(styles.replyActionRow).toMatchObject({ marginTop: -4, minHeight: 48 });
     expect(styles.replyActionRow.marginBottom).toBeUndefined();
     expect(styles.replyDetailActionButton).toMatchObject({ minHeight: 48, paddingBottom: 0, paddingTop: 0 });
