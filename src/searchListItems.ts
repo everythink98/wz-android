@@ -112,7 +112,7 @@ export function buildSearchListItems({
       items.push({ type: 'groupError', group });
       continue;
     }
-    if (mode === 'source' && group.hasMore && group.nextPage) {
+    if (mode === 'source' && group.items.length > 0 && group.hasMore && group.nextPage) {
       items.push({ type: 'groupLoadMore', group, page: group.nextPage });
     }
   }

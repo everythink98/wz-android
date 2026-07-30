@@ -624,6 +624,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把 `settled === false` 分支重新放到 `loading` 前，对应编号测试必须恢复无 Spinner和错误文案。 |
 | 明确不覆盖范围 | 不改变来源错误、登录限制、分页重试或第三方数据可得性。 |
 
+## `REG-SEARCH-018` NodeSeek 空搜索被旧页面壳误报为无法解析
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-02`、`SEARCH-04` |
+| 用户症状 | NodeSeek 单站搜索特定关键词时稳定显示“搜索结果返回内容无法解析，请重试”，而普通关键词可返回结果；原站搜索页实际可能只是明确的空结果。 |
+| 触发条件 | 已登录 NodeSeek `/search` 响应包含搜索表单和空 `.post-list`，但页面其他区域仍有 `post-*` 链接；同类页面还可能在 embedded payload 中保留首页旧主题。真实 `841430` 响应的脱敏结构为列表内候选 0、全页非结果链接 3、embedded candidates 0。 |
+| 根因 seam | `src/localNodeseek.ts` 的搜索解析器以正式 `.post-list` 为结果面，诊断器却把全页 `post-*` 链接及 embedded candidates 一起计入候选，制造 `candidateCount>0 + validCount=0` 的假 `parse_empty`。 |
+| 必须保持的行为 | 候选数只来自当前实际选择的解析面：正式 `.post-list` 存在时只统计其内部 rows/links，并忽略页面其他区域链接及 embedded topics；空列表输出 `isExpectedEmpty=true`、`isParseEmpty=false`。只有表单而结果面未完成时仍报可重试错误；当前 `.post-list` 内存在无效候选时仍允许诊断为 `parse_empty`。 |
+| 精确失败 oracle | `src/localSources.test.ts` 的同名 fixture 经过真实 `searchTopics → searchNodeSeek` 链路，构造空 `.post-list`、3 个 footer `post-*` 链接和 1 个 stale embedded topic，要求空 `items` 且诊断为 `candidateCount=0`、`validCount=0`、`droppedCount=0`、`isExpectedEmpty=true`、`isParseEmpty=false`；修复前稳定得到 `3/0/3/false/true`。相邻用例继续固定只有搜索表单的未完成页面必须 reject。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：adapter fixture 可确定性固定数据面选择与诊断摘要；只断言列表为空无法发现用户可见的错误分类。 |
+| Replay 或真实验收路径 | 保留当前 NodeSeek 登录态，在 Search → NodeSeek 分别查询问题词 `841430` 与普通词 `codex`；前者允许随原站动态返回数据或正常空态，但不得再显示解析错误，后者仍须正常结算。不得清 Cookie 或要求数字词直达帖子。 |
+| 负向验证方式 | 恢复全页链接或 embedded candidates 的全局计数，同名诊断断言必须重新得到 `parse_empty=true` 并失败。 |
+| 明确不覆盖范围 | 不改变 NodeSeek 服务端搜索语义，不把纯数字查询改写为帖子 ID，不保证第三方当前一定返回结果，也不放宽未完成页面或畸形候选的解析失败。 |
+
+## `REG-SEARCH-019` 单站空结果仍显示继续加载
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-02`、`SEARCH-04` |
+| 用户症状 | 单站搜索已经显示“没有匹配结果”，列表尾部仍同时显示“继续下滑加载更多”，继续滚动还可能发起无意义的下一页请求。 |
+| 触发条件 | 来源第一页返回空 `items`，但响应或页面壳仍残留 `hasMore=true` 与 `nextPage`。 |
+| 根因 seam | `src/searchListItems.ts` 分别生成空态和分页哨兵，分页条件没有要求当前累计结果非空。 |
+| 必须保持的行为 | 单站累计结果为 0 时，空态即为终态，不生成分页哨兵；非空结果的用户滚动门禁、自动续页、末页收口及分页失败重试保持不变。 |
+| 精确失败 oracle | `tests/ui/search-screen.test.tsx` 注入 NodeSeek 单站 `items=[]`、`hasMore=true`、`nextPage=2`，要求显示空态且不存在“继续下滑加载更多 NodeSeek”；修复前两条文案稳定同时出现。 |
+| 最低可靠自动测试层 | `UI_PASS`：真实 SearchScreen 列表构建与渲染链路固定用户可见互斥状态；只校验 adapter cursor 不能覆盖其他来源或迟到状态。 |
+| Replay 或真实验收路径 | 保留当前登录态，在 NodeSeek 单站查询无匹配词；结算后只显示空态，继续下滑不得出现分页提示或新请求。 |
+| 负向验证方式 | 移除分页条件中的非空门禁，同名 UI 测试必须重新看到两条矛盾文案并失败。 |
+| 明确不覆盖范围 | 不改变各来源如何判断服务端下一页，不改变已有结果后的分页行为，也不自动重试任何失败请求。 |
+
 ## `REG-LINUXDO-001` linux.do Cloudflare 429 被降级且大响应被截断
 
 | 字段 | 内容 |
@@ -3387,11 +3417,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 浏览器中秒开的论坛图片在 App 正文等待十几秒甚至离页仍未完成；窄屏正文实际下载了灯箱原图或 `srcset` 最大候选，耗时和字节数远大于展示所需。 |
 | 触发条件 | HTML 预处理把 `<a href>` 灯箱 URL 或最大 `srcset` 候选覆盖进正文 `src`，并让一个 URL 同时承担正文展示、全屏预览和保存。 |
 | 根因 seam | `src/htmlImages.ts` 的图片候选解析、正文 source 选择与预览 alias catalog，以及 `src/app/useHtmlRenderingController.tsx` 的最终 native source。 |
-| 必须保持的行为 | 每张 HTML 图片形成最小双层模型：`displayUri` 只用于正文适屏交付，`originalUri` 只用于全屏和保存。`w` 候选选择首个满足 `contentWidth × DPR` 的宽度，否则最大；`x` 候选选择首个不低于 DPR 的倍率，否则最大。安全且非占位的 `src` 在候选不完整时优先；灯箱原图不得覆盖正文。所有 alias 仍结算到同一预览项，主动 URL 继续遵守 `REG-TOPIC-030`。 |
-| 精确失败 oracle | `src/htmlImages.test.ts` 的 `REG-TOPIC-040` 固定 `w/x srcset` 临界点、DPR、无描述符回退、占位 src、非法候选、alias 去重和 display/original 分离；`tests/ui/topic-image-loading.test.tsx` 用含小适屏图与大灯箱图的真实 renderer props 断言正文 native source 只收到适屏 URL，点击后预览仍指向原图。 |
+| 必须保持的行为 | 每张 HTML 图片形成最小双层模型：`displayUri` 必须是正文首个请求，`originalUri` 用于全屏、保存及 `REG-TOPIC-048` 约束的第二阶段清晰升级。`w` 候选选择首个满足 `contentWidth × DPR` 的宽度，否则最大；`x` 候选选择首个不低于 DPR 的倍率，否则最大。安全且非占位的 `src` 在候选不完整时优先；灯箱原图不得覆盖正文首个请求。所有 alias 仍结算到同一预览项，主动 URL 继续遵守 `REG-TOPIC-030`。 |
+| 精确失败 oracle | `src/htmlImages.test.ts` 的 `REG-TOPIC-040` 固定 `w/x srcset` 临界点、DPR、无描述符回退、占位 src、非法候选、alias 去重和 display/original 分离；`tests/ui/topic-image-loading.test.tsx` 用含小适屏图与大灯箱图的真实 renderer props 断言适屏图完成 `onLoad + onDisplay` 前 native source 只收到适屏 URL，点击后预览仍指向原图。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：解析器固定候选算法，RNTL 固定最终 native source；源码字符串或仅验证 catalog 不足以证明正文没有下载原图。 |
 | Replay 或真实验收路径 | 用“大原图 + 小适屏图 + 可暂停响应”的受控只读端点打开 Topic，核对正文命中的候选、最终字节数和预览原图。今日日志没有保存图片 URL；重新取得原帖/图片入口前，幺火该资源专项标 `NOT_VERIFIED`。 |
-| 负向验证方式 | 恢复灯箱 URL 覆盖正文、无条件取最大候选或让正文直接使用 `originalUri`，编号测试会收到大图 URL；放宽危险候选会同时触发 `REG-TOPIC-030`。 |
+| 负向验证方式 | 恢复灯箱 URL 覆盖正文首个请求、无条件先取最大候选或让原图早于适屏图 `onDisplay` 启动，编号测试会收到大图 URL；放宽危险候选会同时触发 `REG-TOPIC-030`。 |
 | 明确不覆盖范围 | 不新增全局请求队列、ImageManager、OkHttp 响应缓存或后台全量预取，不猜测 CDN 变体，也不把原图降质后保存。 |
 
 ## `REG-TOPIC-041` 不同会话 epoch 的同 URL 图片请求被 Glide 合并
@@ -3498,6 +3528,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | Release APK 在五站 Topic 回复区按 `docs/testing-standard.md` 的评论末尾分支矩阵只读检查；同宽度截图比较普通正文左边界、签名/统计/操作栏与分隔线，确认横向缩进恢复且纵向留白未回退；从列表进入 Topic 并返回，确认原列表位置恢复。 |
 | 负向验证方式 | 把左缩进恢复为 `0`、停止扣减 HTML 宽度，或误把主楼也缩窄，编号 unit/UI 用例必须失败；把纵向数值恢复到旧版本同样由同一 theme oracle 拦截。 |
 | 明确不覆盖范围 | 不改变主楼、评论头部、系统事件、User 页回复卡片或 Reply composer，不重新设计响应式列宽，也不授权任何真实回复或互动写入。 |
+
+## `REG-TOPIC-048` 适屏图显示后不渐进升级且全屏返回仍模糊
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` |
+| 用户症状 | 详情与评论只能一直显示适屏图；即使全屏原图已经清晰显示，关闭预览后外层仍模糊。若直接把原图改成首个请求，长帖又会恢复慢加载、滚动期间整页抢带宽和图片尺寸跳动。 |
+| 触发条件 | `displayUri/originalUri` 只在预览 catalog 中分层，块图 renderer 不消费安全原图；正文与全屏也没有按完整媒体请求 identity 共享“原图已显示”状态。 |
+| 根因 seam | `src/htmlImages.ts` 的原图来源传递、`src/app/useHtmlRenderingController.tsx` 的块图双层生命周期、`src/originalImageLoading.tsx` 的附近门禁与进程内显示信号、`src/screens/topic/TopicScreenBody.tsx` 的主楼分块范围，以及 `src/components/ImagePreviewModal.tsx` 的全屏 `onDisplay` 结算。 |
+| 必须保持的行为 | 适屏图仍是首个请求，并继续独占 4:3 占位、唯一 Spinner、`onLoad` 真实比例与 `onDisplay` 显示门槛。适屏图显示后，评论只依赖 FlashList 的 `720px` render window，主楼只允许同一 `720px` 范围内已测量分块以低优先级启动原图；点击图片立即使用高优先级。原图层以适屏图为 placeholder、`150ms` 过渡并绝对覆盖既有 frame，成功或分辨率差异不得改变外层几何。完整媒体 request identity（URL、cache key、headers/session）匹配的正文、评论或全屏原图只有在 `onDisplay` 后才能发布进程内 ready；全屏成功后外层复用同一 Glide 缓存或已有 SVG poster。相同 URL 不发第二次请求；后台失败保留适屏图、没有第二错误态或循环重试，只有后续全屏成功 revision 可重新触发；复杂 SVG 后台失败不得启动 Chromium，现有全屏重试和 artifact 恢复保持不变。 |
+| 精确失败 oracle | `src/htmlImages.test.ts` 的 `REG-TOPIC-048` 固定安全灯箱/最大 `srcset` 原图传递；`src/originalImageLoading.test.ts` 固定 `720px` 边界和完整 session identity 隔离；`tests/ui/topic-image-loading.test.tsx` 固定原图不早启、低/高优先级、placeholder、`150ms`、同 URL 去重、稳定几何、失败保留适屏图、ready 后重试与旧 epoch 隔离；`tests/ui/image-preview.test.tsx` 固定全屏 `onLoad` 不发布、匹配 `onDisplay` 才发布。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：parser/纯函数固定来源与范围，RNTL 必须观察真实 Expo Image props、生命周期、几何和跨全屏信号；源码字符串、只检查 catalog 或只打开 App 都不足以证明请求顺序。 |
+| Replay 或真实验收路径 | 在当前身份匹配的 App 中只读打开含主楼长图、远端评论图和 SVG 的详情：冷加载确认先适屏后附近原图；滚到长帖远段确认未到附近不启动；点开原图等清晰显示后关闭，外层应同步清晰且位置不跳；快速返回与原图自然失败时适屏图继续可用。不得为制造失败清 Cookie、断网或写入论坛。 |
+| 负向验证方式 | 让原图在适屏图 `onDisplay` 前、主楼 `720px` 范围外或旧 session ready 后挂载，移除绝对覆盖/placeholder，原图失败时替换成错误态，或在后台 SVG 失败时调用 Chromium 恢复，编号 unit/UI 用例必须失败。 |
+| 明确不覆盖范围 | 不改变适屏图既有加载方式，不重构主楼为列表，不增加全局下载队列、设置或依赖；inline emoji、sticker、reaction、视频封面和保存原图链路不进入渐进升级。 |
 
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 

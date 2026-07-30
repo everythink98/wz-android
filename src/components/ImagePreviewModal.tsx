@@ -29,6 +29,7 @@ import {
 } from '../compatibleImageSources';
 import { useForumMediaRequestContext } from '../mediaSessionEpoch';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
+import { markOriginalImageDisplayed } from '../originalImageLoading';
 import {
   beginDiagnosticTrace,
   diagnosticRef,
@@ -608,8 +609,9 @@ function PreviewPagerPage({
         displayedAt
       );
     }
+    markOriginalImageDisplayed(originalSource);
     setCurrentStatus('loaded');
-  }, [finishActiveDiagnostic, setCurrentStatus, sourceIdentity]);
+  }, [finishActiveDiagnostic, originalSource, setCurrentStatus, sourceIdentity]);
 
   const settleFailure = useCallback((fallback: boolean, terminalReason: 'fallback-error' | 'native-error' | 'timeout') => {
     if (

@@ -4,6 +4,7 @@ import { flowInlineImagesInMixedParagraphs } from '../../htmlImages';
 import { HTML_REPLY_CONTENT_CLASS, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from '../../htmlRenderingStyles';
 import { markNodeSeekReplyReferenceLinks, normalizeRenderableHtml } from '../../topicContentHtml';
 import { inlineSizedImageSignatureForHtml, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../../topicDerivedData';
+import { OriginalImageUpgradeBoundary } from '../../originalImageLoading';
 
 export function TopicContentBlock({
   baseUrl,
@@ -11,6 +12,7 @@ export function TopicContentBlock({
   contentWidth,
   html,
   inlineSizedImageUrls,
+  originalImageUpgradeEnabled = true,
   trimTrailingBlockSpacing = false,
   topicImageDeriver
 }: {
@@ -19,6 +21,7 @@ export function TopicContentBlock({
   contentWidth: number;
   html: string | undefined;
   inlineSizedImageUrls: InlineSizedImageUrlMap;
+  originalImageUpgradeEnabled?: boolean;
   trimTrailingBlockSpacing?: boolean;
   topicImageDeriver: TopicImageDeriver;
 }) {
@@ -37,10 +40,12 @@ export function TopicContentBlock({
     };
   }, [baseUrl, compact, html, inlineSizedImageUrls, topicImageDeriver, trimTrailingBlockSpacing]);
   return (
-    <RenderHTMLSource
-      contentWidth={contentWidth}
-      source={source}
-    />
+    <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
+      <RenderHTMLSource
+        contentWidth={contentWidth}
+        source={source}
+      />
+    </OriginalImageUpgradeBoundary>
   );
 }
 
@@ -49,6 +54,7 @@ export const MemoizedTopicContentBlock = memo(TopicContentBlock, (previous, next
   && previous.compact === next.compact
   && previous.contentWidth === next.contentWidth
   && previous.html === next.html
+  && previous.originalImageUpgradeEnabled === next.originalImageUpgradeEnabled
   && previous.trimTrailingBlockSpacing === next.trimTrailingBlockSpacing
   && previous.topicImageDeriver === next.topicImageDeriver
   && inlineSizedImageSignatureForHtml(previous.html || '<p></p>', previous.inlineSizedImageUrls) === inlineSizedImageSignatureForHtml(next.html || '<p></p>', next.inlineSizedImageUrls)

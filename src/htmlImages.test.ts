@@ -19,6 +19,7 @@ import {
   isPreviewableImageUrl,
   normalizeImagePreviewUrl,
   selectImageDisplaySource,
+  selectImageOriginalSource,
   shouldMarkLoadedImageInline
 } from './htmlImages';
 
@@ -68,6 +69,20 @@ describe('Android HTML image preview helpers', () => {
       displayUri: 'https://cdn.example.com/optimized.png',
       originalUri: 'https://cdn.example.com/original.png'
     }]);
+  });
+
+  it('[REG-TOPIC-048] carries the safe lightbox original into the progressive renderer', () => {
+    const originalUrl = 'https://cdn.example.com/progressive-original.png';
+    const rendered = flowInlineImagesInMixedParagraphs(
+      `<a class="lightbox" href="${originalUrl}"><img src="https://cdn.example.com/display.png" srcset="https://cdn.example.com/display-640.png 640w, https://cdn.example.com/display-1280.png 1280w"></a>`
+    );
+
+    expect(rendered).toContain(`data-forum-original-src="${originalUrl}"`);
+    expect(selectImageOriginalSource({
+      'data-original': 'javascript:alert(1)',
+      src: 'https://cdn.example.com/display.png',
+      srcset: 'https://cdn.example.com/display-640.png 640w, https://cdn.example.com/display-1280.png 1280w'
+    })).toBe('https://cdn.example.com/display-1280.png');
   });
 
   it('[REG-TOPIC-040] resolves every catalog placeholder at the body width and keeps explicit originals', () => {
@@ -795,7 +810,7 @@ describe('Android HTML image preview helpers', () => {
     const html = '<p><div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img alt="image" src="https://cdn.example.com/optimized.png" width="689" height="411"></a></div><br>text <img class="emoji" src="https://cdn.ldstatic.com/images/emoji/twemoji/joy.png?v=15" alt=":joy:" title=":joy:" width="20" height="20"></p>';
     const result = flowInlineImagesInMixedParagraphs(html);
 
-    expect(result).toContain('<img alt="image" src="https://cdn.example.com/optimized.png" width="689" height="411">');
+    expect(result).toContain('<img alt="image" src="https://cdn.example.com/optimized.png" width="689" height="411" data-forum-original-src="https://cdn.example.com/original.png">');
     expect(result).not.toContain('<img alt="image" src="https://cdn.example.com/original.png"');
     expect(result).toContain('<forum-inline-image class="emoji"');
   });

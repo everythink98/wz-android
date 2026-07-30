@@ -627,12 +627,20 @@ describe('Search state', () => {
     dismissKeyboard.mockRestore();
   });
 
-  it('identifies which source completed with no matching results', async () => {
+  it('REG-SEARCH-019 ends an empty source search without a pagination sentinel', async () => {
     const view = await renderSearchScreen({
-      searchGroups: [{ source: 'nodeseek', label: 'NodeSeek', items: [] }]
+      searchSource: 'nodeseek',
+      searchGroups: [{
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [],
+        hasMore: true,
+        nextPage: 2
+      }]
     });
 
     expect(view.getByText('NodeSeek 没有匹配结果')).toBeTruthy();
+    expect(view.queryByText('继续下滑加载更多 NodeSeek')).toBeNull();
   });
 
   it('loads the active source after a user scroll and never from initial render', async () => {

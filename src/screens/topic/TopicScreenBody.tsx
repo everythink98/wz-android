@@ -1,5 +1,6 @@
 import { createContext, memo, type ReactNode, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
@@ -56,6 +57,7 @@ import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
+import { isOriginalImageUpgradeNearViewport } from '../../originalImageLoading';
 import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposerSheet } from './ReplyComposerSheet';
 import { TopicMenu } from './TopicMenu';
@@ -579,6 +581,88 @@ export const TopicScreen = memo(function TopicScreen({
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
+  const topicContentLayoutsRef = useRef<{
+    topicKey: string;
+    values: Map<string, { height: number; y: number }>;
+  }>({ topicKey: '', values: new Map() });
+  const topicViewportRef = useRef({ height: 0, offsetY: 0, topicKey: '' });
+  const [nearbyTopicContent, setNearbyTopicContent] = useState<{
+    keys: ReadonlySet<string>;
+    topicKey: string;
+  }>({ keys: new Set(), topicKey: '' });
+  const nearbyTopicContentKeys = nearbyTopicContent.topicKey === detailTopicStateKey
+    ? nearbyTopicContent.keys
+    : new Set<string>();
+  const addNearbyTopicContentKeys = useCallback((keys: string[]) => {
+    if (!detailTopicStateKey || !keys.length) {
+      return;
+    }
+    setNearbyTopicContent((current) => {
+      const currentKeys = current.topicKey === detailTopicStateKey ? current.keys : new Set<string>();
+      const additions = keys.filter((key) => !currentKeys.has(key));
+      if (!additions.length) {
+        return current;
+      }
+      return {
+        keys: new Set([...currentKeys, ...additions]),
+        topicKey: detailTopicStateKey
+      };
+    });
+  }, [detailTopicStateKey]);
+  const setTopicViewport = useCallback((height: number, offsetY: number) => {
+    if (!detailTopicStateKey || !(height > 0)) {
+      return;
+    }
+    const viewport = { height, offsetY, topicKey: detailTopicStateKey };
+    topicViewportRef.current = viewport;
+    if (topicContentLayoutsRef.current.topicKey !== detailTopicStateKey) {
+      return;
+    }
+    addNearbyTopicContentKeys(Array.from(topicContentLayoutsRef.current.values.entries())
+      .filter(([, layout]) => isOriginalImageUpgradeNearViewport(
+        layout,
+        viewport,
+        TOPIC_DETAIL_LIST_PERFORMANCE_PROPS.drawDistance
+      ))
+      .map(([key]) => key));
+  }, [addNearbyTopicContentKeys, detailTopicStateKey]);
+  const recordTopicContentLayout = useCallback((key: string, event: LayoutChangeEvent) => {
+    if (!detailTopicStateKey) {
+      return;
+    }
+    if (topicContentLayoutsRef.current.topicKey !== detailTopicStateKey) {
+      topicContentLayoutsRef.current = { topicKey: detailTopicStateKey, values: new Map() };
+    }
+    const layout = {
+      height: event.nativeEvent.layout.height,
+      y: event.nativeEvent.layout.y
+    };
+    topicContentLayoutsRef.current.values.set(key, layout);
+    const viewport = topicViewportRef.current;
+    if (
+      viewport.topicKey === detailTopicStateKey
+      && viewport.height > 0
+      && isOriginalImageUpgradeNearViewport(layout, viewport, TOPIC_DETAIL_LIST_PERFORMANCE_PROPS.drawDistance)
+    ) {
+      addNearbyTopicContentKeys([key]);
+    }
+  }, [addNearbyTopicContentKeys, detailTopicStateKey]);
+  const handleTopicViewportLayout = useCallback((event: LayoutChangeEvent) => {
+    const currentViewport = topicViewportRef.current.topicKey === detailTopicStateKey
+      ? topicViewportRef.current
+      : { offsetY: 0 };
+    setTopicViewport(event.nativeEvent.layout.height, currentViewport.offsetY);
+  }, [detailTopicStateKey, setTopicViewport]);
+  const updateTopicViewport = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setTopicViewport(
+      event.nativeEvent.layoutMeasurement.height,
+      event.nativeEvent.contentOffset.y
+    );
+  }, [setTopicViewport]);
+  const handleTopicScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    updateTopicViewport(event);
+    onTopicScroll(event);
+  }, [onTopicScroll, updateTopicViewport]);
   const isOptimisticActionPending = useCallback((targetId: string | number | undefined, action: TopicActionStateKind) => {
     if (!detailTopicStateKey || !targetId) {
       return false;
@@ -1002,8 +1086,8 @@ export const TopicScreen = memo(function TopicScreen({
     topicImageDeriver,
     topicPolls
   ]);
-  const renderTopicListItemFrame = useCallback((children: ReactNode, key?: string) => (
-    <View key={key} style={styles.topicListItemFrame}>{children}</View>
+  const renderTopicListItemFrame = useCallback((children: ReactNode, key?: string, onLayout?: (event: LayoutChangeEvent) => void) => (
+    <View key={key} style={styles.topicListItemFrame} onLayout={onLayout}>{children}</View>
   ), [styles]);
   function renderTopicContentItem(contentItem: TopicContentItem) {
     if (contentItem.type === 'accessNotice') {
@@ -1059,12 +1143,14 @@ export const TopicScreen = memo(function TopicScreen({
                 contentWidth={contentWidth}
                 inlineSizedImageUrls={inlineSizedImageUrls}
                 html={contentItem.html}
+                originalImageUpgradeEnabled={nearbyTopicContentKeys.has(contentItem.key)}
                 topicImageDeriver={topicImageDeriver}
               />
             </RenderHTMLConfigProvider>
           </View>
         </View>,
-        contentItem.key
+        contentItem.key,
+        (event) => recordTopicContentLayout(contentItem.key, event)
       );
     }
 
@@ -1417,8 +1503,9 @@ export const TopicScreen = memo(function TopicScreen({
             keyExtractor={topicListItemKey}
             getItemType={topicListItemType}
             keyboardShouldPersistTaps="always"
-            onMomentumScrollEnd={onTopicScroll}
-            onScrollEndDrag={onTopicScroll}
+            onLayout={handleTopicViewportLayout}
+            onMomentumScrollEnd={handleTopicScrollEnd}
+            onScrollEndDrag={handleTopicScrollEnd}
             onEndReachedThreshold={0.55}
             onEndReached={handleReplyEndReached}
             onScrollBeginDrag={armReplyAutoLoad}

@@ -30,6 +30,7 @@ import {
   isPreviewableImageUrl,
   normalizeImagePreviewUrl,
   selectImageDisplaySource,
+  selectImageOriginalSource,
   shouldMarkLoadedImageInline,
   type ImageDisplayCandidateKind,
   type ImageDisplaySize
@@ -48,6 +49,12 @@ import { cachedCompatibleSvgArtifact, compatibleImageRequestIdentity, recoverCom
 import { readManagedCookieHeader } from '../managedCookies';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
 import { beginDiagnosticTrace, diagnosticRef, finishDiagnosticTrace, type DiagnosticFields, type DiagnosticTrace } from '../diagnostics';
+import {
+  markOriginalImageDisplayed,
+  originalImageDisplayIdentity,
+  useOriginalImageDisplayRevision,
+  useOriginalImageUpgradeEnabled
+} from '../originalImageLoading';
 
 export async function readManagedWebViewCookieHeader(url: string) {
   const result = await readManagedCookieHeader(url);
@@ -267,7 +274,9 @@ function PreviewImageBlock({
   markInlineSizedImageUrl,
   mediaContext,
   mediaSessionIdentity,
+  nodeSeekMediaUserAgent,
   onOpenImagePreview,
+  originalUri,
   src,
   trimTrailingBlockSpacing
 }: {
@@ -282,11 +291,26 @@ function PreviewImageBlock({
   markInlineSizedImageUrl: (url: string) => void;
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
+  nodeSeekMediaUserAgent?: string;
   onOpenImagePreview: (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void;
+  originalUri: string;
   src: string;
   trimTrailingBlockSpacing: boolean;
 }) {
   const requestIdentity = compatibleImageRequestIdentity(imageSource);
+  const originalSource = useMemo(() => {
+    const cleanOriginalUri = normalizeImagePreviewUrl(originalUri);
+    return cleanOriginalUri && cleanOriginalUri !== normalizeImagePreviewUrl(src)
+      ? imageSourceFromUrl(cleanOriginalUri, {
+        baseSource: imageProps.source,
+        mediaContext,
+        nodeSeekUserAgent: nodeSeekMediaUserAgent
+      }) as ImageURISource
+      : null;
+  }, [imageProps.source, mediaContext, nodeSeekMediaUserAgent, originalUri, src]);
+  const originalRequestIdentity = originalImageDisplayIdentity(originalSource);
+  const originalDisplayRevision = useOriginalImageDisplayRevision(originalSource);
+  const originalUpgradeEnabled = useOriginalImageUpgradeEnabled();
   const mountedRef = useRef(true);
   const requestIdentityRef = useRef(requestIdentity);
   const bodyStartedAtRef = useRef(0);
@@ -343,6 +367,9 @@ function PreviewImageBlock({
   const [displayedImageLoadIdentity, setDisplayedImageLoadIdentity] = useState('');
   const [compatibleSvgArtifact, setCompatibleSvgArtifact] = useState<CompatibleSvgArtifact | null>(null);
   const [failedRequestIdentity, setFailedRequestIdentity] = useState('');
+  const [forcedOriginalIdentity, setForcedOriginalIdentity] = useState('');
+  const [displayedOriginalIdentity, setDisplayedOriginalIdentity] = useState('');
+  const [failedOriginal, setFailedOriginal] = useState({ identity: '', revision: -1 });
   const contentWidth = Math.max(1, imageProps.contentWidth || 1);
   const cachedArtifact = cachedCompatibleSvgArtifact(imageSource);
   const activeArtifact = compatibleSvgArtifact?.requestIdentity === requestIdentity
@@ -592,6 +619,32 @@ function PreviewImageBlock({
   const imageLoadingOverlayStyle = [StyleSheet.absoluteFillObject, imageStateFrameStyle];
   const imageDisplayed = Boolean(activeLoadedImage)
     && displayedImageLoadIdentity === imageLoadIdentity;
+  const cachedOriginalArtifact = originalSource && originalDisplayRevision > 0
+    ? cachedCompatibleSvgArtifact(originalSource)
+    : null;
+  const progressiveSource = cachedOriginalArtifact?.posterSource || originalSource;
+  const progressiveIdentity = progressiveSource
+    ? compatibleImageRequestIdentity(progressiveSource)
+    : '';
+  const progressiveIdentityRef = useRef(progressiveIdentity);
+  const originalForced = Boolean(originalRequestIdentity)
+    && forcedOriginalIdentity === originalRequestIdentity;
+  const originalFailed = failedOriginal.identity === progressiveIdentity
+    && failedOriginal.revision === originalDisplayRevision;
+  const originalDisplayed = Boolean(progressiveIdentity)
+    && displayedOriginalIdentity === progressiveIdentity;
+  const shouldLoadOriginal = Boolean(
+    progressiveSource
+    && !originalFailed
+    && (
+      originalDisplayRevision > 0
+      || originalForced
+      || (originalUpgradeEnabled && imageDisplayed)
+    )
+  );
+  useLayoutEffect(() => {
+    progressiveIdentityRef.current = progressiveIdentity;
+  }, [progressiveIdentity]);
   useEffect(() => {
     if (!imageDisplayed || settledRequestIdentityRef.current === requestIdentity) {
       return;
@@ -615,6 +668,9 @@ function PreviewImageBlock({
       style={sharedContainerStyle}
       onPress={(event) => {
         event.stopPropagation?.();
+        if (originalRequestIdentity) {
+          setForcedOriginalIdentity(originalRequestIdentity);
+        }
         onOpenImagePreview(
           src,
           activeLoadedImage?.dimensions || cachedDimensions,
@@ -623,7 +679,7 @@ function PreviewImageBlock({
       }}
     >
       <View testID="topic-image-frame" style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
-        {!loadFailed ? (
+        {!loadFailed && !originalDisplayed ? (
           <ExpoImage
             cachePolicy="memory-disk"
             contentFit="contain"
@@ -638,11 +694,46 @@ function PreviewImageBlock({
             onProgress={handleImageProgress}
           />
         ) : null}
-        {!imageDisplayed && !loadFailed ? (
+        {shouldLoadOriginal ? (
+          <ExpoImage
+            testID="topic-image-original"
+            cachePolicy="memory-disk"
+            contentFit="contain"
+            placeholder={activeImageSource}
+            placeholderContentFit="contain"
+            priority={originalForced ? 'high' : 'low'}
+            recyclingKey={`${progressiveIdentity}:body-original`}
+            source={progressiveSource}
+            style={StyleSheet.absoluteFillObject}
+            transition={150}
+            onDisplay={() => {
+              if (
+                !mountedRef.current
+                || progressiveIdentityRef.current !== progressiveIdentity
+                || displayedOriginalIdentity === progressiveIdentity
+              ) {
+                return;
+              }
+              setDisplayedOriginalIdentity(progressiveIdentity);
+              markOriginalImageDisplayed(originalSource);
+            }}
+            onError={() => {
+              if (
+                !mountedRef.current
+                || progressiveIdentityRef.current !== progressiveIdentity
+                || displayedOriginalIdentity === progressiveIdentity
+              ) {
+                return;
+              }
+              setFailedOriginal({ identity: progressiveIdentity, revision: originalDisplayRevision });
+            }}
+          />
+        ) : null}
+        {!imageDisplayed && !loadFailed && !originalDisplayed ? (
           <View style={imageLoadingOverlayStyle}>
             <ActivityIndicator color={loadingColor} size="small" />
           </View>
-        ) : loadFailed ? (
+        ) : loadFailed && !originalDisplayed ? (
           <View style={imageLoadingOverlayStyle}>
             <Text numberOfLines={2} style={errorTextStyle}>{imageState.alt || '图片加载失败'}</Text>
           </View>
@@ -1050,6 +1141,7 @@ export function useHtmlRenderingController({
         return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
       }
       const src = displaySource.uri;
+      const originalUri = selectImageOriginalSource(attributes) || src;
       const imageSource = imageSourceFromUrl(
         src,
         { baseSource: imageProps.source, mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
@@ -1068,7 +1160,9 @@ export function useHtmlRenderingController({
           markInlineSizedImageUrl={markInlineSizedImageUrl}
           mediaContext={mediaContext}
           mediaSessionIdentity={mediaSessionIdentity}
+          nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
           onOpenImagePreview={onOpenImagePreview}
+          originalUri={originalUri}
           src={src}
           trimTrailingBlockSpacing={trimsTrailingBlockSpacing(props.tnode)}
         />

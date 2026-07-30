@@ -8,6 +8,7 @@ import { createStyles, createTheme } from '../../src/theme';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '../../src/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '../../src/app/serverState';
 import { setDiagnosticWriter } from '../../src/diagnostics';
+import { originalImageDisplayRevision } from '../../src/originalImageLoading';
 
 const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
   documentHeight: 1025,
@@ -325,6 +326,25 @@ describe('Image preview', () => {
 
     expect(view.queryByText('图片加载中...')).toBeNull();
     expect(view.queryByText('图片加载失败')).toBeNull();
+  });
+
+  it('[REG-TOPIC-048] publishes fullscreen readiness only after the original is displayed', async () => {
+    const originalUrl = 'https://example.com/fullscreen-ready-original.png';
+    const view = await render(
+      <ImagePreviewModal
+        preview={previewProps([previewItem(originalUrl, 'https://example.com/fullscreen-ready-display.png')])}
+        styles={styles}
+        theme={theme}
+        {...callbacks()}
+      />
+    );
+    const image = view.getByTestId('preview-image-0');
+
+    expect(originalImageDisplayRevision(image.props.source)).toBe(0);
+    await fireEvent(image, 'load', { source: { height: 900, width: 1_600 } });
+    expect(originalImageDisplayRevision(image.props.source)).toBe(0);
+    await fireEvent(image, 'display');
+    expect(originalImageDisplayRevision(image.props.source)).toBe(1);
   });
 
   it('shows one active failure and retries only that page', async () => {
