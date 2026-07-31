@@ -275,7 +275,7 @@ describe('Image preview', () => {
     };
   });
 
-  it('mounts only the current and adjacent originals with the display image as placeholder', async () => {
+  it('[REG-TOPIC-050] mounts only current and adjacent originals and promotes them without cross-dissolving', async () => {
     const items = Array.from({ length: 5 }, (_, index) => previewItem(
       `https://example.com/original-${index}.png`,
       `https://example.com/display-${index}.png`
@@ -294,8 +294,7 @@ describe('Image preview', () => {
       allowDownscaling: true,
       cachePolicy: 'memory-disk',
       placeholder: expect.objectContaining({ uri: items[1]?.displayUri }),
-      priority: 'low',
-      transition: 150
+      priority: 'low'
     }));
     expect(view.getByTestId('preview-image-2').props).toEqual(expect.objectContaining({
       allowDownscaling: false,
@@ -304,12 +303,17 @@ describe('Image preview', () => {
       source: expect.objectContaining({ uri: items[2]?.originalUri })
     }));
     expect(view.getByTestId('preview-image-3').props.priority).toBe('low');
+    expect(view.getByTestId('preview-image-1').props.transition).toBeUndefined();
+    expect(view.getByTestId('preview-image-2').props.transition).toBeUndefined();
+    expect(view.getByTestId('preview-image-3').props.transition).toBeUndefined();
     expect(view.queryByTestId('preview-image-4')).toBeNull();
     expect(view.queryByTestId('preview-thumbnail-image')).toBeNull();
 
     await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
     expect(view.getByTestId('preview-image-2').props.allowDownscaling).toBe(true);
     expect(view.getByTestId('preview-image-3').props.allowDownscaling).toBe(false);
+    expect(view.getByTestId('preview-image-2').props.transition).toBeUndefined();
+    expect(view.getByTestId('preview-image-3').props.transition).toBeUndefined();
   });
 
   it('REG-TOPIC-031 settles an immediate cache hit only after the image is displayed', async () => {

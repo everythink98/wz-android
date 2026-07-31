@@ -892,7 +892,6 @@ function PreviewPagerPage({
               recyclingKey={`${mediaContext.sessionIdentity}:${item.originalUri}:${retryVersion}:native`}
               source={originalSource}
               style={StyleSheet.absoluteFill}
-              transition={150}
               onDisplay={() => settleLoaded(false)}
               onError={() => {
                 if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {

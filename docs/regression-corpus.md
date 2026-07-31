@@ -3559,6 +3559,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除移动播放器端点白名单后，编号 unit 用例恢复为 `false`，设备页面再次停在只有 `<head>` 的桌面外链页并显示空白卡片。 |
 | 明确不覆盖范围 | 不放开 Bilibili 全站导航，不增加通用 WebView allowlist、依赖或 fallback；不保证第三方视频在下架、地域限制、网络或解码失败时仍可播放。 |
 
+## `REG-TOPIC-050` 全屏图片切换时高清升级闪黑
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02` |
+| 用户症状 | 帖子详情的多图预览在 `1x` 横向切换时，新当前页会短暂整体变暗，视觉上像在黑色背景上闪了一下；页码、手势和最终图片均正常。 |
+| 触发条件 | 相邻栅格页先以低优先级和允许下采样预热，升为当前页后切换高优先级并禁用下采样；`expo-image` 因 `allowDownscaling` 变化重新渲染同一原图，而全屏栅格分支同时配置了 `150ms` transition。 |
+| 根因 seam | `src/components/ImagePreviewModal.tsx` 普通栅格图分支把同一媒体的清晰度升级当成需要 cross-dissolve 的内容切换。`expo-image@3.0.11` Android 实现同时淡出旧 view、淡入新 view；在预览黑色背景上，两张相同图片的合成亮度中点约为 `75%`。 |
+| 必须保持的行为 | Pager 继续只挂载当前页与相邻页；相邻页保持低优先级、允许下采样和 display placeholder，升为当前页后保持高优先级并禁用下采样。普通栅格页的初次显示及清晰度升级均不得配置 transition，资源就绪后原子替换；请求 source、cache/recycling identity、失败重试、缩放、控制层和关闭行为不变。正文原图覆盖层继续保留 `REG-TOPIC-048` 的 `150ms` 过渡；SVG poster/document 分支不进入本条。 |
+| 精确失败 oracle | `tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-050` 以不同 display/original URL 渲染 5 张图片，从第 3 张开始，要求当前与相邻的普通栅格 Expo Image 均没有 `transition`；推进一页后，新旧当前页仍没有 `transition`，同时保持既有 `allowDownscaling` 切换。修复前收到 `transition: 150`。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 通过公开 `ImagePreviewModal` 渲染结果观察 Expo Image 系统边界 props 与真实切页状态；源码字符串测试不足以固定当前页/相邻页生命周期。 |
+| Replay 或真实验收路径 | 在身份匹配的当前构建中只读进入小隐寺，搜索“SAAS”并打开“有关SAAS和储存的几张图”，打开第 1 张图后以至少 `60fps` 录制 `1/3 ↔ 2/3` 往返 4 次并重复两轮。不得出现黑帧；高清升级窗口的中部图像亮度不得低于相邻稳定帧较暗者的 `90%`，并同时确认页码、预热、高清显示、缩放、控制层和关闭。 |
+| 负向验证方式 | 给普通栅格分支恢复任意正时长 transition，编号 UI 用例必须收到该值并失败；只对当前页关闭而让可见相邻页继续 cross-dissolve 也不满足 oracle。 |
+| 明确不覆盖范围 | 不改变 PagerView、背景色、预取数量、下采样策略、SVG 恢复、正文渐进升级或 Expo 依赖版本；不增加自定义双层动画、配置项或仅能断言手势成功的 Replay。 |
+
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 
 | 字段 | 内容 |
