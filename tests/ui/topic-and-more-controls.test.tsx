@@ -4,7 +4,8 @@ import React from 'react';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { BackupRestorePanel, AppearancePanel } from '@/screens/more/MorePanels';
 import { TopicMenu } from '@/screens/topic/TopicMenu';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;

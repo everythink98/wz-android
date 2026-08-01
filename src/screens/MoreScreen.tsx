@@ -1,3 +1,4 @@
+import type { MoreScreenStyles } from '@/features/more/styles';
 import { memo, type RefObject, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -8,8 +9,8 @@ import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from 
 import type { LinuxDoLevelProfile } from '@/sources/sourceGateway';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { createStyles, type ReaderTheme } from '@/theme';
-import { AppButton, ExpandablePanel, MenuButton } from '@/components/AppControls';
+import { type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton, ExpandablePanel, MenuButton } from '@/ui/controls/AppControls';
 import {
   AppearancePanel,
   BackupRestorePanel,
@@ -146,7 +147,7 @@ export const MoreScreen = memo(function MoreScreen({
   showNetworkProxyPanel: boolean;
   showSettingsPanel: boolean;
   statusBusy: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreScreenStyles;
   backupBusy: boolean;
   diagnosticBusy: boolean;
   theme: ReaderTheme;

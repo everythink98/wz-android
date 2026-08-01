@@ -1,3 +1,4 @@
+import type { FeedStyles } from '@/features/feed/styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
@@ -38,7 +39,7 @@ import {
 } from '@/feedFloatingActions';
 import type { ReadingFilter } from '@/feedLogic';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { createStyles, type ReaderTheme } from '@/theme';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import {
   AppButton,
   EmptyText,
@@ -47,9 +48,9 @@ import {
   PillRail,
   TOUCH_HIT_SLOP,
   triggerPressFeedback
-} from '@/components/AppControls';
-import { MemoizedTopicCard } from '@/components/TopicCard';
-import { FEED_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+} from '@/ui/controls/AppControls';
+import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { FEED_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
@@ -107,7 +108,7 @@ export const FeedScreen = memo(function FeedScreen({
   readingFilter: ReadingFilter;
   refreshing: boolean;
   scrollToTopSignal: number;
-  styles: ReturnType<typeof createStyles>;
+  styles: FeedStyles;
   theme: ReaderTheme;
   onCategoryChange: (categoryId: string) => void;
   onFeedFilterChange: (filter: SourceFeedFilter) => void;

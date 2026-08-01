@@ -5,7 +5,8 @@ import { Alert, View } from 'react-native';
 import type { LibraryTab } from '@/feedLogic';
 import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
 import { LibraryScreen } from '@/screens/LibraryScreen';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { Category, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 
@@ -67,7 +68,7 @@ jest.mock('lucide-react-native', () => ({
   Trash2: () => null
 }));
 
-jest.mock('@/components/TopicCard', () => {
+jest.mock('@/ui/topic/TopicCard', () => {
   const ReactModule = require('react') as typeof React;
   const {
     Pressable: NativePressable,

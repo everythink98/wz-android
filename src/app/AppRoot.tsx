@@ -86,7 +86,16 @@ import { isHttpOrHttpsUrl, type ImageDisplaySize } from '@/platform/media/htmlIm
 import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { replyHtmlWithSignature } from '@/features/topic/model/topicDerivedData';
-import { contentWidthValue, createStyles, createTheme } from '@/theme';
+import { contentWidthValue, createTheme } from '@/ui/theme/tokens';
+import { createSharedStyles } from '@/ui/theme/sharedStyles';
+import { createAppStyles } from './styles';
+import { createFeedStyles } from '@/features/feed/styles';
+import { createSearchStyles } from '@/features/search/styles';
+import { createTopicStyles } from '@/features/topic/styles';
+import { createUserStyles } from '@/features/user/styles';
+import { createLibraryStyles } from '@/features/library/styles';
+import { createAccountStyles } from '@/features/account/styles';
+import { createMoreStyles } from '@/features/more/styles';
 import type { LibraryTab } from '@/feedLogic';
 import { errorMessage } from '@/platform/network/errors';
 import { parseInternalTopicOpenLink } from '@/domain/forum/links';
@@ -96,7 +105,7 @@ import { MoreScreen } from '@/screens/MoreScreen';
 import { AppearancePanel } from '@/screens/more/MorePanels';
 import { SearchScreen } from '@/screens/SearchScreen';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '@/screens/TopicScreen';
-import { LoadingState } from '@/components/AppControls';
+import { LoadingState } from '@/ui/controls/AppControls';
 import { hasSameYaohuoTopicLayout } from '@/screens/topic/topicScreenHelpers';
 import { UserScreen } from '@/screens/UserScreen';
 import { isSessionSource } from '@/domain/forum/sourceCatalog';
@@ -510,7 +519,7 @@ export function AppRoot() {
   useCommitRefValue(showLoginPanelRef, showLoginPanel);
   useCommitRefValue(showYaohuoLoginPanelRef, showYaohuoLoginPanel);
   useCommitRefValue(showLinuxDoPanelRef, showLinuxDoPanel);
-  const { fontFamily, fontScale, listDensity } = readerData.settings;
+  const { fontScale } = readerData.settings;
   const deferredFontScale = useDeferredValue(fontScale);
   const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings.theme]);
   const navigationTheme = useMemo(() => {
@@ -529,9 +538,42 @@ export function AppRoot() {
       }
     };
   }, [theme]);
-  const styles = useMemo(
-    () => createStyles(theme, { ...readerData.settings, fontScale: deferredFontScale }, height),
-    [deferredFontScale, fontFamily, height, listDensity, theme]
+  const styleSettings = useMemo(
+    () => ({ ...readerData.settings, fontScale: deferredFontScale }),
+    [deferredFontScale, readerData.settings]
+  );
+  const sharedStyles = useMemo(() => createSharedStyles(theme, styleSettings, height), [height, styleSettings, theme]);
+  const accountStyles = useMemo(
+    () => createAccountStyles(sharedStyles, theme, styleSettings),
+    [sharedStyles, styleSettings, theme]
+  );
+  const appStyles = useMemo(
+    () => Object.assign(createAppStyles(sharedStyles, theme), accountStyles),
+    [accountStyles, sharedStyles, theme]
+  );
+  const feedStyles = useMemo(
+    () => createFeedStyles(sharedStyles, theme, styleSettings),
+    [sharedStyles, styleSettings, theme]
+  );
+  const searchStyles = useMemo(
+    () => createSearchStyles(sharedStyles, theme, styleSettings),
+    [sharedStyles, styleSettings, theme]
+  );
+  const topicStyles = useMemo(
+    () => createTopicStyles(sharedStyles, theme, styleSettings),
+    [sharedStyles, styleSettings, theme]
+  );
+  const userStyles = useMemo(
+    () => createUserStyles(sharedStyles, theme, styleSettings),
+    [sharedStyles, styleSettings, theme]
+  );
+  const libraryStyles = useMemo(
+    () => createLibraryStyles(sharedStyles, theme, styleSettings),
+    [sharedStyles, styleSettings, theme]
+  );
+  const moreStyles = useMemo(
+    () => Object.assign(createMoreStyles(sharedStyles, theme, styleSettings), accountStyles),
+    [accountStyles, sharedStyles, styleSettings, theme]
   );
   const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
   const {
@@ -791,7 +833,7 @@ export function AppRoot() {
     nodeSeekMediaUserAgent: nodeSeekWebViewUserAgent,
     selectedTopic,
     settings: readerData.settings,
-    styles,
+    styles: topicStyles,
     theme,
     topicDetail,
     topicKey: `${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`,
@@ -2051,7 +2093,7 @@ export function AppRoot() {
       readingFilter,
       refreshing: activeFeedState.refreshing,
       scrollToTopSignal: tabScrollToTopSignals.feed,
-      styles,
+      styles: feedStyles,
       theme,
       onCategoryChange: setCategoryFilter,
       onFeedSourceChange: changeFeedSource,
@@ -2091,7 +2133,7 @@ export function AppRoot() {
       setFeedFilter,
       setReadingFilter,
       shownFeedItems,
-      styles,
+      feedStyles,
       tabScrollToTopSignals.feed,
       theme,
       topicStateIndex
@@ -2120,7 +2162,7 @@ export function AppRoot() {
       searchSource,
       submittedQuery: submittedSearchQuery,
       scrollToTopSignal: tabScrollToTopSignals.search,
-      styles,
+      styles: searchStyles,
       theme,
       onLoadMoreSearchSource: loadMoreSearchSource,
       onCheckLinuxDoStatus: checkLinuxDoStatus,
@@ -2168,7 +2210,7 @@ export function AppRoot() {
       setSearchQuery,
       setSearchSource,
       showLinuxDoPanel,
-      styles,
+      searchStyles,
       submittedSearchQuery,
       tabScrollToTopSignals.search,
       theme,
@@ -2186,7 +2228,7 @@ export function AppRoot() {
       records: libraryRecords,
       scrollToTopSignal: tabScrollToTopSignals.library,
       topicStateIndex,
-      styles,
+      styles: libraryStyles,
       theme,
       onClearHistory: clearHistory,
       onOpenTopic: openTopic,
@@ -2206,7 +2248,7 @@ export function AppRoot() {
       readerDataLoaded,
       removeFollowedUser,
       removeLibraryTopic,
-      styles,
+      libraryStyles,
       tabScrollToTopSignals.library,
       theme,
       topicStateIndex
@@ -2242,7 +2284,7 @@ export function AppRoot() {
       showNetworkProxyPanel,
       showSettingsPanel,
       statusBusy,
-      styles,
+      styles: moreStyles,
       backupBusy,
       diagnosticBusy,
       theme,
@@ -2383,7 +2425,7 @@ export function AppRoot() {
       showSettingsPanel,
       showYaohuoLoginPanel,
       statusBusy,
-      styles,
+      moreStyles,
       testNetworkProxyProfile,
       theme,
       upsertNetworkProxyProfile,
@@ -2444,7 +2486,7 @@ export function AppRoot() {
       replies: displayReplies,
       selectedTopic,
       sourceReplies: topicReplies,
-      styles,
+      styles: topicStyles,
       theme,
       topic: topicLayoutDetail,
       topicBusy: topicBusy && !topicIdentityError,
@@ -2539,7 +2581,7 @@ export function AppRoot() {
       stableVerifyLinuxDoFromTopic,
       stableVerifyNodeSeekFromTopic,
       stableVotePoll,
-      styles,
+      topicStyles,
       sourceActionAvailability,
       theme,
       toggleReplyComposer,
@@ -2566,7 +2608,7 @@ export function AppRoot() {
       identityChecking: Boolean(selectedUserIdentityCheck?.checking),
       profile: userProfile,
       requestedUser: selectedUser,
-      styles,
+      styles: userStyles,
       theme,
       topicStateIndex,
       loadingMoreReplies: userLoadingMoreReplies,
@@ -2592,7 +2634,7 @@ export function AppRoot() {
       selectedUser,
       selectedUserIdentityCheck?.checking,
       selectedUserIdentityCheck?.pending,
-      styles,
+      userStyles,
       theme,
       toggleUserFollow,
       topicStateIndex,
@@ -2612,31 +2654,31 @@ export function AppRoot() {
     () => (
       <ScrollView
         ref={moreScrollRef}
-        style={styles.content}
-        contentContainerStyle={styles.moreContentInner}
+        style={moreStyles.content}
+        contentContainerStyle={appStyles.moreContentInner}
         keyboardShouldPersistTaps="always"
       >
         <MoreScreen {...moreProps} />
       </ScrollView>
     ),
-    [moreProps, styles]
+    [appStyles.moreContentInner, moreProps, moreStyles.content]
   );
   const renderReadingSettingsScreen = useCallback(
     () => (
       <ScrollView
-        style={styles.content}
-        contentContainerStyle={styles.moreContentInner}
+        style={moreStyles.content}
+        contentContainerStyle={appStyles.moreContentInner}
         keyboardShouldPersistTaps="handled"
       >
         <AppearancePanel
           settings={readerData.settings}
           showSettingsPanel
-          styles={styles}
+          styles={moreStyles}
           onUpdateSettings={updateSettings}
         />
       </ScrollView>
     ),
-    [readerData.settings, styles, updateSettings]
+    [appStyles.moreContentInner, moreStyles, readerData.settings, updateSettings]
   );
   const renderTopicScreen = useCallback(
     ({ listRef, routeSource }: TopicRouteRenderRequest) => {
@@ -2650,12 +2692,12 @@ export function AppRoot() {
       return {
         content: <TopicScreen {...topicProps} topicScrollRef={listRef} />,
         identity: selectedTopic ? `${selectedTopic.source}:${selectedTopic.id}` : '',
-        loadingContent: <LoadingState text="正在读取主题..." styles={styles} theme={theme} />,
+        loadingContent: <LoadingState text="正在读取主题..." styles={topicStyles} theme={theme} />,
         routeSessionEpoch,
         sessionEpoch
       };
     },
-    [forumSessionEpochs, selectedTopic, styles, theme, topicProps]
+    [forumSessionEpochs, selectedTopic, theme, topicProps, topicStyles]
   );
   const renderUserScreen = useCallback(() => <UserScreen {...userProps} />, [userProps]);
   const handleTopicClosing = useCallback(
@@ -2678,16 +2720,16 @@ export function AppRoot() {
 
   return (
     <ForumSessionEpochProvider sessionEpochs={forumSessionEpochs}>
-      <GestureHandlerRootView style={styles.screen}>
+      <GestureHandlerRootView style={appStyles.screen}>
         <SafeAreaProvider>
-          <KeyboardAvoidingView style={styles.screen}>
-            <SafeAreaView edges={['left', 'right']} style={styles.screen}>
+          <KeyboardAvoidingView style={appStyles.screen}>
+            <SafeAreaView edges={['left', 'right']} style={appStyles.screen}>
               <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
               <View
                 pointerEvents="none"
                 style={[
-                  styles.statusBarScrim,
-                  screen === 'topic' && replyComposerOpen && styles.statusBarScrimBelowOverlay
+                  appStyles.statusBarScrim,
+                  screen === 'topic' && replyComposerOpen && appStyles.statusBarScrimBelowOverlay
                 ]}
               />
               <HiddenBrowserHost
@@ -2708,7 +2750,7 @@ export function AppRoot() {
                     userAgent: nodeSeekWebViewUserAgent
                   }
                 }}
-                styles={styles}
+                styles={appStyles}
                 onLinuxDoHttpErrorStatus={markLinuxDoBrowserFetchHttpError}
                 onNodeSeekHttpErrorStatus={markNodeSeekBrowserFetchHttpError}
               />
@@ -2749,7 +2791,7 @@ export function AppRoot() {
                 setNodeImageAuthError={reportNodeImageAuthFailure}
                 showLinuxDoPanel={showLinuxDoPanel}
                 showNodeImageAuthPanel={showNodeImageAuthPanel}
-                styles={styles}
+                styles={appStyles}
                 theme={theme}
                 webViewBlockMessage={networkProxyWebViewBlockMessage}
                 changeLinuxDoPanel={changeLinuxDoPanel}
@@ -2774,7 +2816,7 @@ export function AppRoot() {
                     renderSearchTab={renderSearchTab}
                     renderTopicScreen={renderTopicScreen}
                     renderUserScreen={renderUserScreen}
-                    styles={styles}
+                    styles={appStyles}
                     theme={theme}
                     onReady={handleNavigationReady}
                     onScreenChange={handleNavigationScreenChange}

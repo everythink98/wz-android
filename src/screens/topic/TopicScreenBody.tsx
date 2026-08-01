@@ -1,3 +1,4 @@
+import type { TopicStyles } from '@/features/topic/styles';
 import {
   createContext,
   memo,
@@ -64,7 +65,7 @@ import type {
 } from '@/features/topic/rendering/types';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from '@/features/topic/model/types';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
-import { HTML_ALLOWED_INLINE_STYLES, trimsTrailingBlockSpacing } from '@/htmlRenderingStyles';
+import { HTML_ALLOWED_INLINE_STYLES, trimsTrailingBlockSpacing } from '@/features/topic/rendering/htmlStyles';
 import {
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
@@ -82,7 +83,6 @@ import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import { forumVideoBlockFromHtml, splitTopicContentHtml } from '@/domain/forum/topicContentSplit';
 import {
   androidRipple,
-  createStyles,
   replyContextBadgeStyle,
   sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
@@ -90,7 +90,7 @@ import {
   topicTagColorStyle,
   topicTagTextColorStyle,
   type ReaderTheme
-} from '@/theme';
+} from '@/ui/theme/tokens';
 import {
   AppButton,
   EmptyText,
@@ -98,10 +98,10 @@ import {
   LoadingState,
   PillRail,
   triggerPressFeedback
-} from '@/components/AppControls';
-import { Avatar } from '@/components/Avatar';
-import { ForumContentVideo } from '@/components/ForumContentVideo';
-import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+} from '@/ui/controls/AppControls';
+import { Avatar } from '@/ui/avatar/Avatar';
+import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
+import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavigation';
 import {
   topicActionStateKey,
@@ -189,7 +189,7 @@ function YaohuoFavoriteButton({
 }: {
   actionBusy: boolean;
   fallbackBookmarked?: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   theme: ReaderTheme;
   topicKey: string;
 }) {
@@ -234,7 +234,7 @@ function AcceptedAnswerPreview({
   onLoad?: () => void;
   onReadMore?: () => void;
   reply?: Reply;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   theme: ReaderTheme;
   topicBaseUrl?: string;
   topicImageDeriver: TopicImageDeriver;
@@ -622,7 +622,7 @@ export const TopicScreen = memo(function TopicScreen({
   replies: Reply[];
   selectedTopic: Topic | null;
   sourceReplies: Reply[];
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   theme: ReaderTheme;
   topic: TopicDetail | null;
   topicBusy: boolean;

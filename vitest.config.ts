@@ -11,7 +11,12 @@ export default defineConfig({
     environment: 'jsdom',
     pool: 'forks',
     maxWorkers: 2,
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: [
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      'tests/integration/**/*.test.ts',
+      'tests/integration/**/*.test.tsx'
+    ],
     exclude: ['node_modules', 'android', '.expo', '.expo-shared']
   }
 });

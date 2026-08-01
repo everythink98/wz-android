@@ -1,10 +1,11 @@
+import type { TopicStyles } from '@/features/topic/styles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, useWindowDimensions } from 'react-native';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView, type BottomSheetBackdropProps } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
 import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
-import { createStyles, type ReaderTheme } from '@/theme';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import type { Source } from '@/domain/forum/models';
 import { ReplyComposer } from '@/screens/topic/ReplyComposer';
 
@@ -32,7 +33,7 @@ export function ReplyComposerSheet({
   replyEditTarget?: ReplyEditTarget | null;
   replyTarget: ReplyTarget | null;
   source?: Source;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   theme: ReaderTheme;
   visible: boolean;
   onReplyComposerOpenChange: (open: boolean) => void;

@@ -1,3 +1,4 @@
+import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
@@ -5,7 +6,7 @@ import { SvgXml } from 'react-native-svg';
 import { loadRemoteAvatarSvgText } from '@/platform/media/avatarImages';
 import { imageSourceFromUrl } from '@/platform/media/htmlImages';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
-import type { createStyles } from '@/theme';
+
 import type { Source } from '@/domain/forum/models';
 
 const MAX_IMAGE_RETRY_COUNT = 1;
@@ -41,7 +42,7 @@ export function Avatar({
   name?: string;
   small?: boolean;
   tiny?: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   uri?: string;
 }) {
   const [imageFailed, setImageFailed] = useState(false);

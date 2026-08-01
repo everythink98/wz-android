@@ -1,3 +1,4 @@
+import type { MoreStyles } from '@/features/more/styles';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -14,8 +15,8 @@ import {
 } from 'react-native';
 import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppButton, EmptyText, SettingRail } from '@/components/AppControls';
-import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, EmptyText, SettingRail } from '@/ui/controls/AppControls';
+import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   createNetworkProxyProfile,
   validateNetworkProxyProfile,
@@ -92,7 +93,7 @@ export function NetworkProxyModal({
   applyError: string;
   applyStatus: string;
   proxyState: NetworkProxyState;
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreStyles;
   theme: ReaderTheme;
   visible: boolean;
   onClose: () => void;
@@ -619,7 +620,7 @@ function ProxyInput({
   placeholder?: string;
   secureTextEntry?: boolean;
   style?: object;
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreStyles;
   theme: ReaderTheme;
   value: string;
   onChangeText: (value: string) => void;

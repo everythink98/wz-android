@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import * as htmlRenderingStyles from '@/htmlRenderingStyles';
+import * as htmlRenderingStyles from './htmlStyles';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { createTheme, LINK_COLOR } from '@/theme';
+import { createTheme, LINK_COLOR } from '@/ui/theme/tokens';
 
 vi.mock('react-native', () => ({
   StyleSheet: {

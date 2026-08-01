@@ -514,7 +514,7 @@ describe('Android release evidence guards', () => {
 
   it('keeps stable selectors on the read-only navigation paths', () => {
     expect(readProjectFile('src', 'app', 'AppNavigator.tsx')).toContain('tabBarButtonTestID: `main-tab-${item.value}`');
-    const appControls = readProjectFile('src', 'components', 'AppControls.tsx');
+    const appControls = readProjectFile('src', 'ui', 'controls', 'AppControls.tsx');
     expect(appControls).toContain('testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}');
     expect(appControls).toContain("accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}");
     const feedScreen = readProjectFile('src', 'screens', 'FeedScreen.tsx');

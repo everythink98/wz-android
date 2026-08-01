@@ -1,8 +1,9 @@
+import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 
 export const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
 
@@ -31,7 +32,7 @@ export function PillRail({
   value: string;
   resetScrollKey?: string | number;
   testIDPrefix?: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   onChange: (value: string) => void;
 }) {
   const isTabs = variant === 'tabs';
@@ -97,7 +98,7 @@ export function SettingRail({
   title: string;
   items: { value: string; label: string }[];
   value: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   onChange: (value: string) => void;
 }) {
   return (
@@ -125,7 +126,7 @@ export function MenuButton({
   nested?: boolean;
   value: string;
   expanded?: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
@@ -180,7 +181,7 @@ export function ExpandablePanel({
   icon?: LucideIcon;
   meta?: string;
   quiet?: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   theme: ReaderTheme;
   title: string;
   onExpandedChange?: (expanded: boolean) => void;
@@ -245,7 +246,7 @@ export function FloatingIconButton({
   icon: LucideIcon;
   label: string;
   loading?: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
@@ -291,7 +292,7 @@ export function IconButton({
   iconOnly?: boolean;
   icon: LucideIcon;
   label: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   tiny?: boolean;
   theme: ReaderTheme;
   onPress: () => void;
@@ -352,7 +353,7 @@ export function AppButton({
   testID?: string;
   tiny?: boolean;
   variant?: 'default' | 'danger' | 'ghost' | 'primary';
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   onPress: () => void;
 }) {
   return (
@@ -389,19 +390,11 @@ export function AppButton({
   );
 }
 
-export function EmptyText({ text, styles }: { text: string; styles: ReturnType<typeof createStyles> }) {
+export function EmptyText({ text, styles }: { text: string; styles: SharedStyles }) {
   return <Text style={styles.empty}>{text}</Text>;
 }
 
-export function LoadingState({
-  text,
-  styles,
-  theme
-}: {
-  text: string;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-}) {
+export function LoadingState({ text, styles, theme }: { text: string; styles: SharedStyles; theme: ReaderTheme }) {
   return (
     <View
       accessible

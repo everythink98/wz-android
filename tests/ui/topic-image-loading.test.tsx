@@ -3,10 +3,11 @@ import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/re
 import React from 'react';
 import { NativeModules, StyleSheet, Text } from 'react-native';
 import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
-import { ForumContentVideo } from '@/components/ForumContentVideo';
+import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 import type { TopicDetail } from '@/domain/forum/models';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { imageSourceFromUrl } from '@/platform/media/htmlImages';

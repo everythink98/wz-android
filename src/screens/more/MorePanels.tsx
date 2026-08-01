@@ -1,3 +1,4 @@
+import type { MoreScreenStyles } from '@/features/more/styles';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, Text, TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -14,9 +15,9 @@ import {
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { NODESEEK_URL, YAOHUO_URL } from '@/domain/forum/sourceUrls';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
-import { createStyles, type ReaderTheme } from '@/theme';
-import { AppButton, MenuButton, triggerPressFeedback } from '@/components/AppControls';
-import { LoginWebViewModal } from '@/components/LoginWebViewModal';
+import { type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton, MenuButton, triggerPressFeedback } from '@/ui/controls/AppControls';
+import { LoginWebViewModal } from '@/features/account/components/LoginWebViewModal';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '@/loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '@/loginFormAdapters';
 import { LinuxDoLevelPanel } from '@/screens/more/LinuxDoLevelPanel';
@@ -33,7 +34,7 @@ export function BackupRestorePanel({
   onImportBackupFile
 }: {
   backupBusy: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreScreenStyles;
   onExportBackupFile: () => void;
   onImportBackupFile: () => void;
 }) {
@@ -99,7 +100,7 @@ export function NodeSeekLoginPanel({
   loginFormMode: boolean;
   loadingLoginPage: boolean;
   showLoginPanel: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreScreenStyles;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
   webViewBlockMessage: string;
@@ -372,7 +373,7 @@ export function YaohuoLoginPanel({
   loginFormMode: boolean;
   loadingYaohuoLoginPage: boolean;
   showYaohuoLoginPanel: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreScreenStyles;
   theme: ReaderTheme;
   yaohuoLoginPrompt: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
@@ -542,7 +543,7 @@ export function AppearancePanel({
 }: {
   settings: ReaderSettings;
   showSettingsPanel: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreScreenStyles;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   return (
@@ -560,7 +561,7 @@ function SettingsPanel({
   onUpdateSettings
 }: {
   settings: ReaderSettings;
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreScreenStyles;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   return (
@@ -651,7 +652,7 @@ function SegmentedSetting({
 }: {
   divided?: boolean;
   items: { value: string; label: string }[];
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreScreenStyles;
   title: string;
   value: string;
   onChange: (value: string) => void;
@@ -689,7 +690,7 @@ function FontScaleSetting({
   value,
   onChange
 }: {
-  styles: ReturnType<typeof createStyles>;
+  styles: MoreScreenStyles;
   value: number;
   onChange: (value: number) => void;
 }) {

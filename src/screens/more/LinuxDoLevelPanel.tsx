@@ -1,10 +1,11 @@
+import type { AccountStyles } from '@/features/account/styles';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { RefreshCw } from 'lucide-react-native';
 import type { LinuxDoLevelProfile } from '@/sources/sourceGateway';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
-import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
-import { AppButton, IconButton } from '@/components/AppControls';
+import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton, IconButton } from '@/ui/controls/AppControls';
 
 const LINUXDO_LEVEL_TABS = [
   { value: 'progress', label: '等级进度' },
@@ -41,7 +42,7 @@ export function LinuxDoLevelPanel({
   loginMessage?: string;
   profile: LinuxDoLevelProfile | null;
   siteSession: SiteSessionViewModel;
-  styles: ReturnType<typeof createStyles>;
+  styles: AccountStyles;
   theme: ReaderTheme;
   onOpenLogin: () => void;
   onRefresh: () => void;
@@ -174,15 +175,7 @@ export function LinuxDoLevelPanel({
   );
 }
 
-function LevelStat({
-  label,
-  value,
-  styles
-}: {
-  label: string;
-  value: string;
-  styles: ReturnType<typeof createStyles>;
-}) {
+function LevelStat({ label, value, styles }: { label: string; value: string; styles: AccountStyles }) {
   return (
     <View style={styles.levelStatItem}>
       <Text style={styles.levelStatLabel}>{label}</Text>

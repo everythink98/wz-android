@@ -4,7 +4,8 @@ import React from 'react';
 import type { Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { UserScreen } from '@/screens/UserScreen';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 
 jest.mock('@shopify/flash-list', () => {
@@ -48,7 +49,7 @@ jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return { ChevronLeft: Icon, ExternalLink: Icon, RefreshCw: Icon, Star: Icon };
 });
-jest.mock('@/components/Avatar', () => {
+jest.mock('@/ui/avatar/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
@@ -60,7 +61,7 @@ jest.mock('@/components/Avatar', () => {
       )
   };
 });
-jest.mock('@/components/TopicCard', () => {
+jest.mock('@/ui/topic/TopicCard', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
   return {

@@ -4,14 +4,15 @@ import React, { type ComponentProps } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
-import { HTML_REPLY_CONTENT_CLASS } from '@/htmlRenderingStyles';
+import { HTML_REPLY_CONTENT_CLASS } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReplyComposerSheet } from '@/screens/topic/ReplyComposerSheet';
 import { ReplyItem } from '@/screens/topic/ReplyItem';
 import { TopicBodyQuoteCard } from '@/screens/topic/TopicBodyQuoteCard';
 import { TopicContentBlock } from '@/screens/topic/TopicContentBlock';
 import { TopicPolls } from '@/screens/topic/TopicPolls';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import type { Reply, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import {
@@ -197,7 +198,7 @@ jest.mock('expo-image', () => {
       })
   };
 });
-jest.mock('@/components/Avatar', () => {
+jest.mock('@/ui/avatar/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {

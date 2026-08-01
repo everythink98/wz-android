@@ -3,8 +3,9 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { MemoizedTopicCard, TopicCard } from '@/components/TopicCard';
-import { createStyles, createTheme } from '@/theme';
+import { MemoizedTopicCard, TopicCard } from '@/ui/topic/TopicCard';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 import type { Topic } from '@/domain/forum/models';
 
 jest.mock('@shopify/flash-list', () => ({
@@ -17,7 +18,7 @@ jest.mock('lucide-react-native', () => {
 });
 
 jest.mock('expo-image', () => ({ Image: () => null }));
-jest.mock('@/components/Avatar', () => {
+jest.mock('@/ui/avatar/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {

@@ -3,7 +3,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { type ComponentProps } from 'react';
 import { Text, View } from 'react-native';
 import { LinuxDoVerifyModal } from '@/app/LinuxDoVerifyModal';
-import { LoginWebViewModal } from '@/components/LoginWebViewModal';
+import { LoginWebViewModal } from '@/features/account/components/LoginWebViewModal';
 import type { LinuxDoLevelProfile } from '@/linuxdoLevel';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { LinuxDoLevelPanel } from '@/screens/more/LinuxDoLevelPanel';
@@ -14,7 +14,8 @@ import {
   type SessionSite,
   type SiteSessionStatus
 } from '@/domain/session/siteSessionState';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 
 let mockLoginWebViewProps: Record<string, any> = {};
 let mockLoginWebViewMountCount = 0;

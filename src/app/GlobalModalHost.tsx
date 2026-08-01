@@ -1,13 +1,14 @@
+import type { AppHostStyles } from '@/app/styles';
 import type { RefObject } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { ImagePreviewModal } from '@/components/ImagePreviewModal';
-import { LoginWebViewModal } from '@/components/LoginWebViewModal';
+import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
+import { LoginWebViewModal } from '@/features/account/components/LoginWebViewModal';
 import type { ImagePreviewList } from '@/platform/media/htmlImages';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { MemoizedLinuxDoVerifyModal } from './LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
-import type { createStyles, ReaderTheme } from '@/theme';
+import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { NodeImageAuthDocument } from './useNodeImageAuthController';
 
 export function GlobalModalHost({
@@ -89,7 +90,7 @@ export function GlobalModalHost({
   changeLinuxDoPanel: (value: boolean) => void;
   requestLinuxDoCredentialFill: () => void;
   closeNodeImageAuthPanel: () => void;
-  styles: ReturnType<typeof createStyles>;
+  styles: AppHostStyles;
   theme: ReaderTheme;
   webViewBlockMessage: string;
 }) {

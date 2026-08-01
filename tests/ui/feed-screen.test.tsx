@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import { Platform } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { FeedScreen } from '@/screens/FeedScreen';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { defaultFeedFilters } from '@/feedCategoryRail';
 import type { ReadingFilter } from '@/feedLogic';
@@ -159,7 +160,7 @@ jest.mock('lucide-react-native', () => {
   };
 });
 
-jest.mock('@/components/Avatar', () => {
+jest.mock('@/ui/avatar/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {

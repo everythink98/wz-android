@@ -1,3 +1,4 @@
+import type { AppStyles } from '@/app/styles';
 import {
   createContext,
   memo,
@@ -21,9 +22,9 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
 import { View } from 'react-native';
-import { TabBarIcon, tabNavItems } from '@/components/NavBar';
-import { triggerPressFeedback } from '@/components/AppControls';
-import type { createStyles, ReaderTheme } from '@/theme';
+import { TabBarIcon, tabNavItems } from '@/ui/navigation/NavBar';
+import { triggerPressFeedback } from '@/ui/controls/AppControls';
+import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { Screen } from '@/ui/navigation/types';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import type { TopicListItem } from '@/screens/TopicScreen';
@@ -275,7 +276,7 @@ function MainTabsHost({
   renderLibraryTab: () => ReactNode;
   renderMoreTab: () => ReactNode;
   renderSearchTab: () => ReactNode;
-  styles: ReturnType<typeof createStyles>;
+  styles: AppStyles;
   theme: ReaderTheme;
   onTabPress: (target: keyof MainTabParamList) => void;
 }) {
@@ -353,7 +354,7 @@ export const AppNavigator = memo(function AppNavigator({
   renderSearchTab: () => ReactNode;
   renderTopicScreen: (request: TopicRouteRenderRequest) => TopicRoutePresentation;
   renderUserScreen: () => ReactNode;
-  styles: ReturnType<typeof createStyles>;
+  styles: AppStyles;
   theme: ReaderTheme;
   onReady: () => void;
   onScreenChange: (screen: Screen, routeKey: string) => void;

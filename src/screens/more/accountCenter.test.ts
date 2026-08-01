@@ -169,7 +169,7 @@ describe('account center view', () => {
 
   it('keeps More controls out of the Android Fabric animated-transform hit-testing path', () => {
     const appRoot = readFileSync(path.join(process.cwd(), 'src/app/AppRoot.tsx'), 'utf8');
-    const appControls = readFileSync(path.join(process.cwd(), 'src/components/AppControls.tsx'), 'utf8');
+    const appControls = readFileSync(path.join(process.cwd(), 'src/ui/controls/AppControls.tsx'), 'utf8');
 
     expect(appRoot).toContain('keyboardShouldPersistTaps="always"');
     expect(appRoot).not.toContain('decelerationRate={0}');

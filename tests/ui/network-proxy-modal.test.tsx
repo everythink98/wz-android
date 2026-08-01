@@ -5,7 +5,8 @@ import { Alert } from 'react-native';
 import { createEmptyNetworkProxyState, type NetworkProxyProfile } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { NetworkProxyModal } from '@/screens/more/NetworkProxyModal';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 })

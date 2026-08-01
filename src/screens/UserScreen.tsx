@@ -1,3 +1,4 @@
+import type { UserStyles } from '@/features/user/styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
@@ -5,11 +6,11 @@ import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native'
 import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
-import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '@/components/AppControls';
-import { Avatar } from '@/components/Avatar';
-import { MemoizedTopicCard } from '@/components/TopicCard';
-import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '@/ui/controls/AppControls';
+import { Avatar } from '@/ui/avatar/Avatar';
+import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import {
   createUserListItems,
@@ -49,7 +50,7 @@ function UserReplyCard({
   onOpenTopic
 }: {
   reply: UserReplyActivity;
-  styles: ReturnType<typeof createStyles>;
+  styles: UserStyles;
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
 }) {
@@ -125,7 +126,7 @@ export const UserScreen = memo(function UserScreen({
   identityChecking?: boolean;
   profile: UserProfile | null;
   requestedUser: UserReference | null;
-  styles: ReturnType<typeof createStyles>;
+  styles: UserStyles;
   theme: ReaderTheme;
   topicStateIndex: TopicListItemStateIndex;
   loadingMoreReplies: boolean;

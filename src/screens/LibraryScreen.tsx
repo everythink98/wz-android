@@ -1,3 +1,4 @@
+import type { LibraryStyles } from '@/features/library/styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
@@ -9,11 +10,11 @@ import { filterLibraryRecords, libraryCategoryFilterItems } from '@/features/lib
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { feedSources } from '@/feedCategoryRail';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { createStyles, type ReaderTheme } from '@/theme';
-import { AppButton, EmptyText, PillRail, TOUCH_HIT_SLOP, triggerPressFeedback } from '@/components/AppControls';
-import { avatarInitial } from '@/components/Avatar';
-import { MemoizedTopicCard } from '@/components/TopicCard';
-import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+import { type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton, EmptyText, PillRail, TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/AppControls';
+import { avatarInitial } from '@/ui/avatar/Avatar';
+import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import {
   createLibraryListItems,
   filterFollowedUsersBySource,
@@ -40,15 +41,7 @@ function pressLibraryAction(event: GestureResponderEvent, onPress: () => void) {
   onPress();
 }
 
-function LibraryRowAction({
-  label,
-  styles,
-  onPress
-}: {
-  label: string;
-  styles: ReturnType<typeof createStyles>;
-  onPress: () => void;
-}) {
+function LibraryRowAction({ label, styles, onPress }: { label: string; styles: LibraryStyles; onPress: () => void }) {
   return (
     <Pressable
       hitSlop={TOUCH_HIT_SLOP}
@@ -75,7 +68,7 @@ function LibraryIconAction({
   label: string;
   tone?: 'primary' | 'danger' | 'favorite';
   filled?: boolean;
-  styles: ReturnType<typeof createStyles>;
+  styles: LibraryStyles;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
@@ -118,7 +111,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   records: TopicRecord[];
   scrollToTopSignal: number;
   topicStateIndex: TopicListItemStateIndex;
-  styles: ReturnType<typeof createStyles>;
+  styles: LibraryStyles;
   theme: ReaderTheme;
   onClearHistory: () => void;
   onOpenTopic: (topic: Topic) => void;

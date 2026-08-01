@@ -1,11 +1,12 @@
+import type { TopicStyles } from '@/features/topic/styles';
 import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
 import type { Source, TopicPoll } from '@/domain/forum/models';
 import { isDiscourseSource, sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
 import { pollParticipationLabel, pollTotalVotes } from '@/domain/forum/topicPollDisplay';
-import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
-import { AppButton, triggerPressFeedback } from '@/components/AppControls';
+import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton, triggerPressFeedback } from '@/ui/controls/AppControls';
 
 function topicPollKey(poll: TopicPoll, index: number) {
   return poll.id || poll.name || `poll-${index}`;
@@ -68,7 +69,7 @@ export function TopicPolls({
   pollSelections: Record<string, string[]>;
   polls: TopicPoll[];
   source?: Source;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   theme: ReaderTheme;
 }) {
   const { getMappingKey } = useMappingHelper();

@@ -1,3 +1,4 @@
+import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -19,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-native-zoom-toolkit';
 import { X } from 'lucide-react-native';
 import { imageSourceFromUrl, type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/htmlImages';
-import { createStyles, type ReaderTheme } from '@/theme';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -38,7 +39,7 @@ import {
   type DiagnosticFields,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
-import { CompatibleSvgDocumentView } from '@/components/CompatibleSvgDocumentView';
+import { CompatibleSvgDocumentView } from '../content/CompatibleSvgDocumentView';
 
 const EMPTY_PREVIEW_ITEMS: ImagePreviewItem[] = [];
 const IMAGE_LOAD_TIMEOUT_MS = 30_000;
@@ -64,7 +65,7 @@ type PreviewImageLoadMetrics = {
 type ImagePreviewModalProps = {
   preview: ImagePreviewList | null;
   nodeSeekMediaUserAgent?: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   theme: ReaderTheme;
   onClose: () => void;
   onSave: () => void;
@@ -86,7 +87,7 @@ type PreviewPageProps = {
   onToggleChrome: () => void;
   onZoomGestureSettled: (index: number, scale: number) => void;
   onZoomGestureStart: (index: number) => void;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   theme: ReaderTheme;
   width: number;
 };

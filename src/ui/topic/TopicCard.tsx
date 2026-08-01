@@ -1,20 +1,20 @@
+import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle } from 'lucide-react-native';
 import type { Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
-import { highlightTextParts } from '@/ui/text/highlight';
+import { highlightTextParts } from '../text/highlight';
 import {
   androidRipple,
-  createStyles,
   sourceBadgeColorStyle,
   topicTagColorStyle,
   topicTagTextColorStyle,
   type ReaderTheme
-} from '@/theme';
+} from '@/ui/theme/tokens';
 import type { TopicListItemState } from '@/domain/forum/topicListItemState';
-import { Avatar } from '@/components/Avatar';
+import { Avatar } from '../avatar/Avatar';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
 
@@ -24,7 +24,7 @@ type TopicCardProps = {
   renderTrailingAction?: (topic: Topic) => ReactNode;
   topic: Topic;
   readerState: TopicListItemState;
-  styles: ReturnType<typeof createStyles>;
+  styles: SharedStyles;
   testID?: string;
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;

@@ -50,10 +50,10 @@ import {
 } from '@/platform/media/htmlImages';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/nsVideoEmbeds';
 import { parseForumTopicLink, parseForumUserLink } from '@/domain/forum/links';
-import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/theme';
+import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
 import type { Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 import type { HtmlRenderers, HtmlRenderersProps } from '@/features/topic/rendering/types';
-import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from '@/htmlRenderingStyles';
+import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from '@/features/topic/rendering/htmlStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import {
   FORUM_LINK_CARD_TAG,
@@ -62,8 +62,8 @@ import {
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG
 } from '@/domain/forum/html';
-import { ForumContentVideo } from '@/components/ForumContentVideo';
-import { ForumCallout } from '@/components/ForumCallout';
+import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
+import { ForumCallout } from '@/ui/content/ForumCallout';
 import { hasSameYaohuoTopicLayout } from '@/screens/topic/topicScreenHelpers';
 import {
   cachedCompatibleSvgArtifact,

@@ -7,10 +7,11 @@ import type { ReplyFilter } from '@/features/topic/model/types';
 import { filterTopicSessionReplies } from '@/app/useTopicSessionController';
 import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
 import { discoursePollPlaceholder } from '@/discourseContent';
-import { buildHtmlRenderingStyles } from '@/htmlRenderingStyles';
+import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '@/screens/topic/TopicScreenBody';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 
@@ -118,8 +119,8 @@ jest.mock('lucide-react-native', () => {
   };
 });
 
-jest.mock('@/components/Avatar', () => ({ Avatar: () => null }));
-jest.mock('@/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
+jest.mock('@/ui/avatar/Avatar', () => ({ Avatar: () => null }));
+jest.mock('@/ui/content/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
 jest.mock('@/domain/forum/topicContentSplit', () => {
   const actual = jest.requireActual<typeof import('@/domain/forum/topicContentSplit')>(
     '@/domain/forum/topicContentSplit'

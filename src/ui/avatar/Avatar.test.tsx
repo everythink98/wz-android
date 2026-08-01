@@ -18,7 +18,7 @@ vi.mock('react-native-svg', () => ({
 
 describe('Android avatar initials', () => {
   it('keeps emoji initials as complete characters', async () => {
-    const { avatarInitial } = (await import('@/components/Avatar')) as typeof import('@/components/Avatar') & {
+    const { avatarInitial } = (await import('./Avatar')) as typeof import('./Avatar') & {
       avatarInitial?: (name?: string) => string;
     };
 

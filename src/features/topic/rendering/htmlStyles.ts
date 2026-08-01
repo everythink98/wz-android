@@ -1,14 +1,8 @@
 import { StyleSheet } from 'react-native';
 import type { TNode } from 'react-native-render-html';
-import type {
-  HtmlAllowedStyles,
-  HtmlBaseStyle,
-  HtmlClassesStyles,
-  HtmlIgnoredStyles,
-  HtmlTagsStyles
-} from '@/features/topic/rendering/types';
+import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlTagsStyles } from './types';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from '@/theme';
+import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from '@/ui/theme/tokens';
 import { DISCOURSE_CALLOUT_TITLE_CLASS, DISCOURSE_CALLOUT_TONE_CLASS_PREFIX } from '@/discourseContent';
 
 export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = [

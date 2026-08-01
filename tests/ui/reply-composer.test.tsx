@@ -6,7 +6,8 @@ import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types'
 import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReplyComposer } from '@/screens/topic/ReplyComposer';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 import type { Source } from '@/domain/forum/models';
 
 jest.mock('@gorhom/bottom-sheet', () => {

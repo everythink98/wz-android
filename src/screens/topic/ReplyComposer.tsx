@@ -1,11 +1,12 @@
+import type { TopicStyles } from '@/features/topic/styles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Pressable, Text, View } from 'react-native';
 import { BottomSheetFlatList, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { Image as ExpoImage } from 'expo-image';
 import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
 import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
-import { createStyles, type ReaderTheme } from '@/theme';
-import { AppButton } from '@/components/AppControls';
+import { type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton } from '@/ui/controls/AppControls';
 import type { Source } from '@/domain/forum/models';
 import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
 import { imageSourceFromUrl } from '@/platform/media/htmlImages';
@@ -57,7 +58,7 @@ export function ReplyComposer({
   replyEditTarget?: ReplyEditTarget | null;
   replyTarget: ReplyTarget | null;
   source?: Source;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   theme: ReaderTheme;
   focusSignal?: number;
   onReplyComposerOpenChange: (open: boolean) => void;

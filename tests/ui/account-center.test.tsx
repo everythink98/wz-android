@@ -6,7 +6,8 @@ import { CredentialVaultError, emptyCredentialSummaries } from '@/platform/stora
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AccountCenterPanel, type AccountCenterCommand } from '@/screens/more/AccountCenterPanel';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { createStyles, createTheme } from '@/theme';
+import { createTheme } from '@/ui/theme/tokens';
+import { createTestStyles as createStyles } from './styleFixture';
 
 jest.mock('lucide-react-native', () => ({
   ChevronDown: () => null,

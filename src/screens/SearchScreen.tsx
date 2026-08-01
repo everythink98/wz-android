@@ -1,3 +1,4 @@
+import type { SearchStyles } from '@/features/search/styles';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -40,10 +41,10 @@ import {
   type SourceSearchFilter
 } from '@/searchFilters';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
-import { AppButton, EmptyText, LoadingState, PillRail, TOUCH_HIT_SLOP } from '@/components/AppControls';
-import { MemoizedTopicCard } from '@/components/TopicCard';
-import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton, EmptyText, LoadingState, PillRail, TOUCH_HIT_SLOP } from '@/ui/controls/AppControls';
+import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
+import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import type { SearchSessionNoticeItem } from '@/domain/session/siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '@/domain/session/siteSessionPrompts';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -78,7 +79,7 @@ function SearchInputField({
 }: {
   busy: boolean;
   query: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   onQueryChange: (value: string) => void;
   onSearch: () => void;
@@ -147,7 +148,7 @@ function FilterChoiceGroup({
   items: { value: string; label: string }[];
   title: string;
   value: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   onChange: (value: string) => void;
 }) {
@@ -201,7 +202,7 @@ function FilterTextField({
   label: string;
   placeholder: string;
   value: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   onChange: (value: string) => void;
 }) {
@@ -241,7 +242,7 @@ function SearchFilterSheet({
   requestsEnabled: boolean;
   source: Source;
   searchFilters: SearchFilterState;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   visible: boolean;
   onSearchDiscourseTags: (options: {
@@ -1143,7 +1144,7 @@ function FilterCheckbox({
 }: {
   checked: boolean;
   label: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   onChange: (checked: boolean) => void;
 }) {
@@ -1170,7 +1171,7 @@ function FilterNumberField({
 }: {
   label: string;
   value: number | null;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   onChange: (value: number | null) => void;
 }) {
@@ -1206,7 +1207,7 @@ function SearchFilterEntry({
   onPress
 }: {
   summary: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
@@ -1243,7 +1244,7 @@ function LinuxDoAiControl({
   onToggle
 }: {
   state: LinuxDoAiSearchState;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   onRetry: () => void;
   onToggle: () => void;
@@ -1341,7 +1342,7 @@ export const SearchScreen = memo(function SearchScreen({
   searchSource: FeedSource;
   submittedQuery: string;
   scrollToTopSignal: number;
-  styles: ReturnType<typeof createStyles>;
+  styles: SearchStyles;
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
   onLoadMoreSearchSource: (source: Source, page: number) => void;

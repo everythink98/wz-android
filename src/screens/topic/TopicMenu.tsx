@@ -1,6 +1,7 @@
+import type { TopicStyles } from '@/features/topic/styles';
 import { Modal, Pressable, Text, View } from 'react-native';
 import { ExternalLink, RefreshCw, Settings, Share2 } from 'lucide-react-native';
-import { createStyles, type ReaderTheme } from '@/theme';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 
 export function TopicMenu({
   onOpenOriginal,
@@ -22,7 +23,7 @@ export function TopicMenu({
   onRequestClose: () => void;
   onShareTopic: () => void;
   runTopicMenuAction: (action: () => void) => void;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   theme: ReaderTheme;
   topicUrl: string;
   visible: boolean;

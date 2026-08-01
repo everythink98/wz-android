@@ -1,3 +1,4 @@
+import type { TopicStyles } from '@/features/topic/styles';
 import { memo, useCallback, useMemo } from 'react';
 import { Pressable, Text, ToastAndroid, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
@@ -29,9 +30,9 @@ import {
   replyQuotedPostInstanceKey,
   type ToggleReplyQuoteOptions
 } from '@/domain/forum/quotedPosts';
-import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '@/theme';
-import { AppButton, triggerPressFeedback } from '@/components/AppControls';
-import { Avatar } from '@/components/Avatar';
+import { replyContextBadgeStyle, type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton, triggerPressFeedback } from '@/ui/controls/AppControls';
+import { Avatar } from '@/ui/avatar/Avatar';
 import { userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import type { InteractionType, TopicActionStateKind } from '@/domain/forum/topicActionState';
 import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '@/features/topic/model/topicDerivedData';
@@ -85,7 +86,7 @@ export function NodeSeekStatPill({
 }: {
   compact?: boolean;
   label: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   value: number;
 }) {
   return (
@@ -107,7 +108,7 @@ export function DiscourseReactionPill({
   compact?: boolean;
   contentSource: Source | null;
   stat: DiscourseReactionStat;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
 }) {
   const mediaContext = useForumMediaRequestContext(contentSource);
   const mediaSessionIdentity = mediaContext.sessionIdentity;
@@ -134,7 +135,7 @@ export function DiscourseReactionPill({
   );
 }
 
-function NodeSeekActionPlaceholder({ styles }: { styles: ReturnType<typeof createStyles> }) {
+function NodeSeekActionPlaceholder({ styles }: { styles: TopicStyles }) {
   return (
     <View
       pointerEvents="none"
@@ -214,7 +215,7 @@ export function ReplyItem({
   repliesByFloor: Map<number, Reply>;
   section?: ReplyItemSection;
   source?: Source;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   theme: ReaderTheme;
   topicAuthor?: string;
   topicBaseUrl?: string;

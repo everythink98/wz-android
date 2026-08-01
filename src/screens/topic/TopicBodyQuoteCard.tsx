@@ -1,7 +1,8 @@
+import type { TopicStyles } from '@/features/topic/styles';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 
 export function TopicBodyQuoteCard({
   completeContent,
@@ -24,7 +25,7 @@ export function TopicBodyQuoteCard({
   onToggle?: () => void;
   preview?: ReactNode;
   previewTestID?: string;
-  styles: ReturnType<typeof createStyles>;
+  styles: TopicStyles;
   testID?: string;
   theme: ReaderTheme;
 }) {

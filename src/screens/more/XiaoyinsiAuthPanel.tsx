@@ -1,9 +1,10 @@
+import type { AccountStyles } from '@/features/account/styles';
 import { Alert, Text, View } from 'react-native';
 import type { XiaoyinsiAuthPhase } from '@/app/useXiaoyinsiAuthController';
 import type { XiaoyinsiPendingAuthorization } from '@/xiaoyinsiAuth';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
-import { AppButton } from '@/components/AppControls';
-import type { createStyles, ReaderTheme } from '@/theme';
+import { AppButton } from '@/ui/controls/AppControls';
+import type { ReaderTheme } from '@/ui/theme/tokens';
 
 function countdownLabel(seconds: number) {
   const minutes = Math.floor(Math.max(0, seconds) / 60);
@@ -29,7 +30,7 @@ export function XiaoyinsiAuthPanel({
   phase: XiaoyinsiAuthPhase;
   secondsRemaining: number;
   session: SiteSessionViewModel;
-  styles: ReturnType<typeof createStyles>;
+  styles: AccountStyles;
   theme: ReaderTheme;
   onBegin: () => void;
   onCancel: () => void;
