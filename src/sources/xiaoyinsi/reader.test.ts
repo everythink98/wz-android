@@ -12,7 +12,7 @@ import {
   searchXiaoyinsi,
   searchXiaoyinsiTags,
   searchXiaoyinsiUsers
-} from '@/localXiaoyinsi';
+} from './reader';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 

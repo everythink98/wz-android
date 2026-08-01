@@ -5,7 +5,7 @@ import {
   type DiscourseActionRequest
 } from './actionRequest';
 import { sourceCatalog, type DiscourseSource } from '@/domain/forum/sourceCatalog';
-import { buildXiaoyinsiActionRequest } from '@/xiaoyinsiActions';
+import { buildXiaoyinsiActionRequest } from '@/sources/xiaoyinsi/actionRequest';
 
 type DiscourseActionBuilder = (action: DiscourseAction) => DiscourseActionRequest;
 

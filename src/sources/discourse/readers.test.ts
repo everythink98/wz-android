@@ -25,7 +25,7 @@ const readers = vi.hoisted(() => ({
   searchXiaoyinsiUsers: vi.fn()
 }));
 
-vi.mock('@/localLinuxdo', () => ({
+vi.mock('@/sources/linuxdo/reader', () => ({
   getLinuxDoCategories: readers.getLinuxDoCategories,
   getLinuxDoCurrentUserProfile: readers.getLinuxDoCurrentUserProfile,
   getLinuxDoEmojiUrls: readers.getLinuxDoEmojiUrls,
@@ -39,7 +39,7 @@ vi.mock('@/localLinuxdo', () => ({
   searchLinuxDoUsers: readers.searchLinuxDoUsers
 }));
 
-vi.mock('@/localXiaoyinsi', () => ({
+vi.mock('@/sources/xiaoyinsi/reader', () => ({
   getXiaoyinsiCategories: readers.getXiaoyinsiCategories,
   getXiaoyinsiCurrentUserProfile: readers.getXiaoyinsiCurrentUserProfile,
   getXiaoyinsiEmojiUrls: readers.getXiaoyinsiEmojiUrls,

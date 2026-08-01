@@ -10,7 +10,6 @@ import type {
   SearchResponse,
   Topic,
   TopicDetail,
-  TopicPoll,
   UserProfile,
   UserReplyActivity
 } from '@/domain/forum/models';
@@ -18,7 +17,6 @@ import {
   decodeHtml,
   isRecord,
   parsePositiveInteger,
-  sanitizeContentHtml,
   sortTopicsByCreatedAt,
   textExcerpt,
   toIsoString
@@ -35,15 +33,13 @@ import {
 } from '@/sources/discourse/model';
 import {
   discourseAvatarUrl,
-  discourseContentNeedsCalloutNormalization,
-  discoursePollPlaceholder,
   discourseQuoteMetadata,
-  normalizeDiscourseCallouts,
   stripDiscourseCalloutMarkersFromExcerpt
 } from '@/sources/discourse/content';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
+import { sanitizeXiaoyinsiContentHtml } from './parser';
+import { XIAOYINSI_BASE_URL } from './protocol';
 
-export const XIAOYINSI_BASE_URL = 'https://forum.xiaoyinsi.com';
 const LIST_PAGE_SIZE = 30;
 let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
 
@@ -254,22 +250,6 @@ function normalizeTopic(
     createdAt: fields.createdAt,
     ...(trustLevel ? { authorLevelLabel: trustLevel } : {})
   };
-}
-
-export function sanitizeXiaoyinsiContentHtml(html: unknown, polls?: TopicPoll[]) {
-  const names = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
-  const normalizeCallouts = discourseContentNeedsCalloutNormalization(html);
-  return sanitizeContentHtml(html, XIAOYINSI_BASE_URL, (root) => {
-    root.querySelectorAll('.poll').forEach((node) => {
-      const name = String(node.getAttribute('data-poll-name') || '').trim();
-      if (name && names.has(name)) {
-        node.replaceWith(discoursePollPlaceholder(name));
-      }
-    });
-    if (normalizeCallouts) {
-      normalizeDiscourseCallouts(root);
-    }
-  });
 }
 
 function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeLinuxDoUserAgent, summarizeLinuxDoCookieHeader } from '@/linuxdoSession';
+import { sanitizeLinuxDoUserAgent, summarizeLinuxDoCookieHeader } from './session';
 
 describe('linux.do session metadata', () => {
   it('accepts _forum_session as a session candidate without requiring _t', () => {

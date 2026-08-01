@@ -73,7 +73,7 @@ describe('Android local HTML helpers', () => {
     vi.resetModules();
     vi.doMock('node-html-parser', () => ({ ...nodeHtmlParser, parse }));
     try {
-      const { sanitizeLinuxDoContentHtml } = await import('@/localLinuxdo');
+      const { sanitizeLinuxDoContentHtml } = await import('@/sources/linuxdo/parser');
       const before = parse.mock.calls.length;
       const result = sanitizeLinuxDoContentHtml(
         `
@@ -102,7 +102,7 @@ describe('Android local HTML helpers', () => {
     vi.resetModules();
     vi.doMock('node-html-parser', () => ({ ...nodeHtmlParser, parse }));
     try {
-      const { sanitizeXiaoyinsiContentHtml } = await import('@/localXiaoyinsi');
+      const { sanitizeXiaoyinsiContentHtml } = await import('@/sources/xiaoyinsi/parser');
       const before = parse.mock.calls.length;
       const result = sanitizeXiaoyinsiContentHtml(
         `
@@ -130,7 +130,7 @@ describe('Android local HTML helpers', () => {
       normalizeDiscourseCallouts
     }));
     try {
-      const { sanitizeLinuxDoContentHtml } = await import('@/localLinuxdo');
+      const { sanitizeLinuxDoContentHtml } = await import('@/sources/linuxdo/parser');
 
       expect(sanitizeLinuxDoContentHtml('<blockquote><p>Ordinary quote</p></blockquote>', [])).toContain(
         'Ordinary quote'

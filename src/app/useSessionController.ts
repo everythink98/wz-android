@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
-import { sanitizeLinuxDoUserAgent, LINUXDO_USER_AGENT_STORAGE_KEY } from '@/linuxdoSession';
+import { sanitizeLinuxDoUserAgent, LINUXDO_USER_AGENT_STORAGE_KEY } from '@/sources/linuxdo/session';
 import { useCommitRefValue } from './useCommittedRef';
 import type { Fetcher } from '@/platform/network/request';
 import {
@@ -16,7 +16,7 @@ import {
   isLinuxDoRequestUrl,
   LinuxDoHiddenBrowserFailureError,
   type LinuxDoHiddenBrowserFailureReason
-} from '@/linuxdoFetchFallback';
+} from '@/sources/linuxdo/browserFallback';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { browserFetchIntentFromInit, type BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { errorMessage } from '@/platform/network/errors';

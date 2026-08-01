@@ -1,7 +1,7 @@
 import type { AccountStyles } from '@/features/account/styles';
 import { Alert, Text, View } from 'react-native';
 import type { XiaoyinsiAuthPhase } from '@/app/useXiaoyinsiAuthController';
-import type { XiaoyinsiPendingAuthorization } from '@/xiaoyinsiAuth';
+import type { XiaoyinsiPendingAuthorization } from '@/sources/xiaoyinsi/auth';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { AppButton } from '@/ui/controls/AppControls';
 import type { ReaderTheme } from '@/ui/theme/tokens';

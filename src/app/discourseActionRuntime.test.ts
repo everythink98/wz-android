@@ -7,9 +7,9 @@ const mocks = vi.hoisted(() => ({
   runXiaoyinsiAction: vi.fn(async () => ({ ok: true }))
 }));
 
-vi.mock('@/linuxdoActionClient', () => ({ runLinuxDoAction: mocks.runLinuxDoAction }));
-vi.mock('@/xiaoyinsiActionClient', () => ({ runXiaoyinsiAction: mocks.runXiaoyinsiAction }));
-vi.mock('@/xiaoyinsiAuth', () => ({
+vi.mock('@/sources/linuxdo/actionClient', () => ({ runLinuxDoAction: mocks.runLinuxDoAction }));
+vi.mock('@/sources/xiaoyinsi/actionClient', () => ({ runXiaoyinsiAction: mocks.runXiaoyinsiAction }));
+vi.mock('@/sources/xiaoyinsi/auth', () => ({
   currentXiaoyinsiCredentialGeneration: mocks.currentXiaoyinsiCredentialGeneration,
   loadXiaoyinsiCredentials: mocks.loadXiaoyinsiCredentials
 }));

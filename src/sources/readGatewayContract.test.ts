@@ -62,10 +62,10 @@ vi.mock('expo-secure-store', () => ({
   setItemAsync: vi.fn()
 }));
 vi.mock('@/sources/aggregateRead', () => forumMocks);
-vi.mock('@/localLinuxdo', () => linuxDoMocks);
+vi.mock('@/sources/linuxdo/reader', () => linuxDoMocks);
 vi.mock('@/sources/nodeseek/reader', () => nodeSeekMocks);
-vi.mock('@/linuxdoLevel', () => linuxDoLevelMocks);
-vi.mock('@/localXiaoyinsi', () => xiaoyinsiMocks);
+vi.mock('@/sources/linuxdo/level', () => linuxDoLevelMocks);
+vi.mock('@/sources/xiaoyinsi/reader', () => xiaoyinsiMocks);
 vi.mock('@/yaohuoApi', () => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(),

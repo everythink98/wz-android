@@ -1,10 +1,10 @@
 import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
-import { runLinuxDoAction } from '@/linuxdoActionClient';
+import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import type { Fetcher } from '@/platform/network/request';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
-import { runXiaoyinsiAction } from '@/xiaoyinsiActionClient';
-import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/xiaoyinsiAuth';
+import { runXiaoyinsiAction } from '@/sources/xiaoyinsi/actionClient';
+import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 import { errorMessage } from '@/platform/network/errors';
 
 export type DiscourseActionRuntimeDependencies = {

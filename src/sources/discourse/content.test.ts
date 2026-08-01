@@ -8,7 +8,7 @@ import {
   splitDiscourseContentHtml,
   stripDiscourseCalloutMarkersFromExcerpt
 } from './content';
-import { sanitizeLinuxDoContentHtml } from '@/localLinuxdo';
+import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 
 describe('portable Discourse content parts', () => {
   it('[REG-TOPIC-056] renders a leading warning marker as semantic Callout content', () => {

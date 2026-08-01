@@ -28,7 +28,7 @@ vi.mock('./serverState', () => ({
   }
 }));
 
-vi.mock('@/linuxdoSession', () => ({
+vi.mock('@/sources/linuxdo/session', () => ({
   sanitizeLinuxDoUserAgent: (userAgent: string) => userAgent.trim()
 }));
 

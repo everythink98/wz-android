@@ -9,14 +9,17 @@ vi.mock('expo-secure-store', () => ({
 import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from '@/sources/aggregateRead';
 import { isLinuxDoCloudflareError } from '@/sources/errors';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from '@/linuxdoFetchFallback';
+import {
+  createLinuxDoWebViewFallbackFetcher,
+  LinuxDoHiddenBrowserFailureError
+} from '@/sources/linuxdo/browserFallback';
 import {
   getLinuxDoCurrentUserProfile,
   getLinuxDoUserProfile,
   searchLinuxDoSemantic,
   searchLinuxDoTags,
   searchLinuxDoUsers
-} from '@/localLinuxdo';
+} from '@/sources/linuxdo/reader';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '@/sources/nodeseek/browserFallback';

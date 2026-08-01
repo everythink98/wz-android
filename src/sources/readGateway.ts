@@ -8,15 +8,18 @@ import {
   searchTopics as searchForumTopics
 } from '@/sources/aggregateRead';
 import { getYaohuoFeedDirect, getYaohuoRepliesDirect, getYaohuoTopicDirect, searchYaohuoDirect } from '@/yaohuoApi';
-import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '@/localLinuxdo';
+import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '@/sources/linuxdo/reader';
 import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '@/sources/nodeseek/reader';
-import { getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/linuxdoLevel';
+import {
+  getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile,
+  type LinuxDoLevelProfile
+} from '@/sources/linuxdo/level';
 import {
   getXiaoyinsiLevelProfile as getLocalXiaoyinsiLevelProfile,
   type XiaoyinsiApiCredentials,
   type XiaoyinsiLevelProfile,
   type XiaoyinsiOptions
-} from '@/localXiaoyinsi';
+} from '@/sources/xiaoyinsi/reader';
 import {
   getDiscourseSourceEmojiUrls,
   searchDiscourseSourceTagOptions,
@@ -47,8 +50,8 @@ import {
 } from '@/domain/forum/sourceCatalog';
 
 export { getCurrentUserProfile } from '@/sources/aggregateRead';
-export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/linuxdoLevel';
-export type { XiaoyinsiLevelProfile } from '@/localXiaoyinsi';
+export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
+export type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/reader';
 export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/yaohuoApi';
 
 type GetFeedOptions = Parameters<typeof getForumFeed>[0];

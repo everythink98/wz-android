@@ -77,7 +77,7 @@ import {
   selectTopicReturnStrategy,
   shouldCloseReplyComposerOnBack
 } from './backHandlerHelpers';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/linuxdoSession';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/sources/linuxdo/session';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { createReadGateway } from '@/sources/readGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '@/platform/network/networkProxy';
@@ -124,7 +124,7 @@ import {
 } from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import type { CredentialSite } from '@/platform/storage/credentialVault';
-import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/xiaoyinsiAuth';
+import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 import {
   CURRENT_ANDROID_VERSION_CODE,
   CURRENT_APP_VERSION,

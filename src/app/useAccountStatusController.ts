@@ -4,7 +4,7 @@ import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sourc
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
 import { summarizeYaohuoCookieHeader } from '@/yaohuoSession';
 import { summarizeNodeSeekCookieHeader } from '@/sources/nodeseek/session';
-import { summarizeLinuxDoCookieHeader } from '@/linuxdoSession';
+import { summarizeLinuxDoCookieHeader } from '@/sources/linuxdo/session';
 import {
   createSiteSessionStates,
   createSiteSessionViewModel,

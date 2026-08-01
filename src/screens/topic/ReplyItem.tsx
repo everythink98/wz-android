@@ -25,7 +25,7 @@ import {
   type DiscourseEmojiUrlMap,
   type DiscourseReactionStat
 } from '@/sources/discourse/reactions';
-import { linuxDoReactionStats } from '@/linuxdoReactions';
+import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import {

@@ -28,7 +28,7 @@ import {
   verifyXiaoyinsiCredentials,
   XiaoyinsiAuthError,
   type XiaoyinsiPendingAuthorization
-} from '@/xiaoyinsiAuth';
+} from '@/sources/xiaoyinsi/auth';
 import { appQueryClient, forumQueryKeys } from './serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 

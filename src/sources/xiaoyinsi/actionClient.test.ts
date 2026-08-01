@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { runXiaoyinsiAction } from '@/xiaoyinsiActionClient';
+import { runXiaoyinsiAction } from './actionClient';
 import { buildDiscourseActionRequest } from '@/sources/discourse/actionRequest';
 
 describe('小隐寺 User API action client', () => {

@@ -16,7 +16,6 @@ import type {
   SearchResponse,
   Topic,
   TopicDetail,
-  TopicPoll,
   UserProfile,
   UserReplyActivity
 } from '@/domain/forum/models';
@@ -25,11 +24,9 @@ import {
   accessRequirementFromText,
   decodeHtml,
   elementText,
-  FORUM_LINK_CARD_TAG,
   isRecord,
   parseHtml,
   parsePositiveInteger,
-  sanitizeContentHtml,
   sortTopicsByCreatedAt,
   textContentFromHtml,
   textExcerpt,
@@ -37,7 +34,7 @@ import {
 } from '@/domain/forum/html';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from '@/sources/searchFallback';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/linuxdoSession';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from './session';
 import {
   LINUXDO_BASE_URL as BASE_URL,
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
@@ -47,7 +44,7 @@ import {
   linuxDoUserUrl as userUrl,
   normalizeLinuxDoTopicId as normalizeTopicId,
   preferredLinuxDoAccessRequirement
-} from '@/localLinuxdoHelpers';
+} from './protocol';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
@@ -58,13 +55,8 @@ import {
   discourseTopicFields,
   discourseUsersById
 } from '@/sources/discourse/model';
-import {
-  discourseContentNeedsCalloutNormalization,
-  discoursePollPlaceholder,
-  discourseQuoteMetadata,
-  normalizeDiscourseCallouts,
-  stripDiscourseCalloutMarkersFromExcerpt
-} from '@/sources/discourse/content';
+import { discourseQuoteMetadata, stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
+import { sanitizeLinuxDoContentHtml } from './parser';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;
@@ -303,52 +295,6 @@ function boostCount(value: unknown) {
 
 function boostCountFromPost(value: Record<string, unknown>) {
   return boostCount(value.boosts) ?? boostCount(value.boost_count);
-}
-
-function escapeLinuxDoContentAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function redditSourceUrl(value: unknown) {
-  try {
-    const url = new URL(String(value || ''), BASE_URL);
-    if (url.hostname.toLowerCase() !== 'embed.reddit.com') {
-      return '';
-    }
-    url.protocol = 'https:';
-    url.hostname = 'www.reddit.com';
-    url.port = '';
-    url.search = '';
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return '';
-  }
-}
-
-export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | undefined) {
-  const pollNames = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
-  const normalizeCallouts = discourseContentNeedsCalloutNormalization(html);
-  return sanitizeContentHtml(html, BASE_URL, (root) => {
-    root.querySelectorAll('.poll').forEach((node) => {
-      const name = String(node.getAttribute('data-poll-name') || '').trim();
-      if (name && pollNames.has(name)) {
-        node.replaceWith(discoursePollPlaceholder(name));
-      }
-    });
-    root.querySelectorAll('iframe').forEach((node) => {
-      const href = redditSourceUrl(node.getAttribute('src'));
-      if (!href) {
-        return;
-      }
-      node.replaceWith(
-        `<${FORUM_LINK_CARD_TAG} href="${escapeLinuxDoContentAttribute(href)}" site="Reddit" title="Reddit 帖子" description="在 Reddit 中查看原帖"></${FORUM_LINK_CARD_TAG}>`
-      );
-    });
-    if (normalizeCallouts) {
-      normalizeDiscourseCallouts(root);
-    }
-  });
 }
 
 function normalizePost(raw: unknown, topicId?: string): Reply | null {

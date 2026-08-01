@@ -23,8 +23,8 @@ import { AccountCenterPanel, type AccountCenterCommand } from '@/screens/more/Ac
 import type { CredentialSummaries } from '@/screens/more/accountCenter';
 import type { AccountCredentialFillAttempt } from '@/app/useAccountCredentialController';
 import type { XiaoyinsiAuthPhase } from '@/app/useXiaoyinsiAuthController';
-import type { XiaoyinsiPendingAuthorization } from '@/xiaoyinsiAuth';
-import type { XiaoyinsiLevelProfile } from '@/localXiaoyinsi';
+import type { XiaoyinsiPendingAuthorization } from '@/sources/xiaoyinsi/auth';
+import type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/reader';
 import { XiaoyinsiAuthPanel } from '@/screens/more/XiaoyinsiAuthPanel';
 
 const moreScreenStyles = StyleSheet.create({

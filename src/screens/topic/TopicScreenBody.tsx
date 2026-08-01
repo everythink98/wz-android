@@ -114,7 +114,7 @@ import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-import { linuxDoReactionStats } from '@/linuxdoReactions';
+import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import { replyImageUploadSupported } from '@/sources/imageUpload';
 import {

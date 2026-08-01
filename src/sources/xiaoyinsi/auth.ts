@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getXiaoyinsiCurrentUserProfile, type XiaoyinsiApiCredentials, XIAOYINSI_BASE_URL } from '@/localXiaoyinsi';
+import { getXiaoyinsiCurrentUserProfile, type XiaoyinsiApiCredentials } from './reader';
+import { XIAOYINSI_BASE_URL } from './protocol';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { UserProfile } from '@/domain/forum/models';
 import { xiaoyinsiKeystore, type XiaoyinsiKeystore } from '@/platform/android/xiaoyinsiKeystore';

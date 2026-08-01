@@ -8,7 +8,7 @@ jest.mock('expo-clipboard', () => ({
   setStringAsync: jest.fn(async () => undefined)
 }));
 
-jest.mock('@/xiaoyinsiAuth', () => {
+jest.mock('@/sources/xiaoyinsi/auth', () => {
   class XiaoyinsiAuthError extends Error {
     code: string;
 
@@ -48,7 +48,7 @@ jest.mock('@/xiaoyinsiAuth', () => {
   };
 });
 
-import * as XiaoyinsiAuth from '@/xiaoyinsiAuth';
+import * as XiaoyinsiAuth from '@/sources/xiaoyinsi/auth';
 import { useXiaoyinsiAuthController, type XiaoyinsiAuthorizationReadResult } from '@/app/useXiaoyinsiAuthController';
 import { appQueryClient } from '@/app/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';

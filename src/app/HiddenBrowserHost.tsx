@@ -6,7 +6,7 @@ import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 
-import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '@/linuxdoFetchFallback';
+import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '@/sources/linuxdo/browserFallback';
 import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '@/sources/nodeseek/browserFallback';
 import { isGoogleSiteSearchAccessTroubleUrl } from '@/sources/searchFallback';
 

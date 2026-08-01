@@ -4,7 +4,7 @@ import React, { type ComponentProps } from 'react';
 import { Text, View } from 'react-native';
 import { LinuxDoVerifyModal } from '@/app/LinuxDoVerifyModal';
 import { LoginWebViewModal } from '@/features/account/components/LoginWebViewModal';
-import type { LinuxDoLevelProfile } from '@/linuxdoLevel';
+import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { LinuxDoLevelPanel } from '@/screens/more/LinuxDoLevelPanel';
 import { NodeSeekLoginPanel, YaohuoLoginPanel } from '@/screens/more/MorePanels';

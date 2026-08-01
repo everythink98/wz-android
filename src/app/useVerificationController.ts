@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
-import { sanitizeLinuxDoUserAgent } from '@/linuxdoSession';
+import { sanitizeLinuxDoUserAgent } from '@/sources/linuxdo/session';
 import type { SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
 import { errorMessage } from '@/platform/network/errors';
 import type { Screen } from '@/ui/navigation/types';

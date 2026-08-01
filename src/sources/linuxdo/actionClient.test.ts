@@ -6,7 +6,7 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { runLinuxDoAction } from '@/linuxdoActionClient';
+import { runLinuxDoAction } from './actionClient';
 import { buildDiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 

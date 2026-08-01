@@ -7,7 +7,7 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { getLinuxDoFeed, getLinuxDoTopic } from '@/localLinuxdo';
+import { getLinuxDoFeed, getLinuxDoTopic } from '@/sources/linuxdo/reader';
 import { getNodeSeekFeed, getNodeSeekTopic } from '@/sources/nodeseek/reader';
 import { getV2exFeed, getV2exTopic } from '@/localV2ex';
 import { accessRequirementFromObject, accessRequirementFromText } from './html';

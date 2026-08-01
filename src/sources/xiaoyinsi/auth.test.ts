@@ -42,7 +42,7 @@ import {
   verifyXiaoyinsiCredentials,
   XIAOYINSI_AUTH_STORAGE_KEYS,
   XiaoyinsiAuthError
-} from '@/xiaoyinsiAuth';
+} from './auth';
 import type { XiaoyinsiKeystore } from '@/platform/android/xiaoyinsiKeystore';
 import { readFileSync } from 'node:fs';
 import {

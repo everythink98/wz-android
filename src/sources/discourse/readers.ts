@@ -10,7 +10,7 @@ import {
   searchLinuxDo,
   searchLinuxDoTags,
   searchLinuxDoUsers
-} from '@/localLinuxdo';
+} from '@/sources/linuxdo/reader';
 import {
   getXiaoyinsiCategories,
   getXiaoyinsiCurrentUserProfile,
@@ -24,7 +24,7 @@ import {
   searchXiaoyinsiTags,
   searchXiaoyinsiUsers,
   type XiaoyinsiApiCredentials
-} from '@/localXiaoyinsi';
+} from '@/sources/xiaoyinsi/reader';
 import type { Fetcher } from '@/platform/network/request';
 import type { DiscourseEmojiUrlMap } from './reactions';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';

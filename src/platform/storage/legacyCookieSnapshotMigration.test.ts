@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LEGACY_COOKIE_SNAPSHOT_KEYS, migrateLegacyCookieSnapshots } from './legacyCookieSnapshotMigration';
-import { LINUXDO_USER_AGENT_STORAGE_KEY } from '@/linuxdoSession';
+import { LINUXDO_USER_AGENT_STORAGE_KEY } from '@/sources/linuxdo/session';
 
 vi.mock('react-native', () => ({
   NativeModules: {}

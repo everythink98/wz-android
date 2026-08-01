@@ -8,7 +8,7 @@ import {
   isLinuxDoBrowserNavigationUrl,
   isLinuxDoBrowserResultUrl,
   isLinuxDoRequestUrl
-} from '@/linuxdoFetchFallback';
+} from '@/sources/linuxdo/browserFallback';
 import {
   isNodeSeekBrowserFetchUrl,
   isNodeSeekBrowserNavigationUrl,
