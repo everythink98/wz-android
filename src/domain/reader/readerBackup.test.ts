@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { safeFileName } from '@/platform/storage/backupFiles';
 import { createEmptyReaderData, topicKey } from './readerData';
 import { MAX_BACKUP_JSON_BYTES, exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import type { Topic } from '@/domain/forum/models';
@@ -177,10 +176,5 @@ describe('reader JSON backup', () => {
       expect(JSON.stringify(data.followedUsers)).not.toContain('fake-');
       expect(data.version).toBe(2);
     }
-  });
-
-  it('builds deterministic safe file names', () => {
-    expect(safeFileName('forum reader backup', 'json', 1234)).toBe('forum-reader-backup-1234.json');
-    expect(safeFileName('***', 'json', 1234)).toBe('forum-reader-1234.json');
   });
 });

@@ -32,7 +32,7 @@ import {
   type DiscourseReadAuth,
   type DiscourseTagOptionReadOptions,
   type DiscourseUserOptionReadOptions
-} from '@/sources/discourse/readers';
+} from '@/sources/discourseRead';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import {

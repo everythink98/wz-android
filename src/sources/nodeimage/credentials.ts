@@ -4,7 +4,7 @@ import {
   createCredentialWriteGate,
   enqueueCredentialWriteForGeneration,
   replaceCredentialWrite
-} from '@/features/account/sessionControllerHelpers';
+} from '@/platform/storage/credentialWriteGate';
 
 export const NODEIMAGE_API_KEY_STORAGE_KEY = 'nodeimage-api-key';
 

@@ -24,7 +24,7 @@ import {
   type DiscourseCalloutFold,
   type DiscourseCalloutTone,
   type DiscourseCalloutType
-} from '@/sources/discourse/content';
+} from '@/domain/forum/callouts';
 import { alphaColor, androidRipple, type ReaderTheme } from '../theme/tokens';
 
 export const FORUM_CALLOUT_TRANSITION_MS = 100;

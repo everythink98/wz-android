@@ -22,7 +22,7 @@ import {
   type YaohuoActionRequest
 } from '@/sources/yaohuo/actionRequest';
 import type { DiscourseAction } from '@/sources/discourse/actionRequest';
-import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/sources/discourse/sourceActions';
+import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/sources/discourseActions';
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actionClient';
 import {

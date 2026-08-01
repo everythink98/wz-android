@@ -4,80 +4,17 @@ import { absoluteUrl, decodeHtml, parseHtml, textContentFromHtml } from '@/domai
 import { discourseQuotedPostReferenceFromAttributes, quotedPostReferenceKey } from '@/domain/forum/quotedPosts';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { QuotedPostMetadata, TopicPoll } from '@/domain/forum/models';
+import {
+  DISCOURSE_CALLOUT_ATTRIBUTE,
+  DISCOURSE_CALLOUT_CONTENT_CLASS,
+  DISCOURSE_CALLOUT_FOLD_ATTRIBUTE,
+  DISCOURSE_CALLOUT_REGISTRY,
+  DISCOURSE_CALLOUT_TITLE_CLASS,
+  DISCOURSE_CALLOUT_TONE_CLASS_PREFIX,
+  DISCOURSE_CALLOUT_TYPE_ATTRIBUTE
+} from '@/domain/forum/callouts';
 
 export const DISCOURSE_POLL_PLACEHOLDER_TAG = 'forum-discourse-poll';
-
-export const DISCOURSE_CALLOUT_ATTRIBUTE = 'data-forum-callout';
-export const DISCOURSE_CALLOUT_TYPE_ATTRIBUTE = 'data-forum-callout-type';
-export const DISCOURSE_CALLOUT_FOLD_ATTRIBUTE = 'data-forum-callout-fold';
-export const DISCOURSE_CALLOUT_TITLE_CLASS = 'forum-callout-title';
-export const DISCOURSE_CALLOUT_CONTENT_CLASS = 'forum-callout-content';
-export const DISCOURSE_CALLOUT_TONE_CLASS_PREFIX = 'forum-callout-tone-';
-
-export type DiscourseCalloutType =
-  | 'note'
-  | 'abstract'
-  | 'info'
-  | 'todo'
-  | 'tip'
-  | 'success'
-  | 'question'
-  | 'warning'
-  | 'failure'
-  | 'danger'
-  | 'bug'
-  | 'example'
-  | 'quote';
-
-export type DiscourseCalloutFold = 'collapsed' | 'expanded';
-export type DiscourseCalloutTone = 'primary' | 'success' | 'warning' | 'danger' | 'muted';
-
-export type DiscourseCalloutDefinition = {
-  title: string;
-  tone: DiscourseCalloutTone;
-  type: DiscourseCalloutType;
-};
-
-export function isDiscourseCalloutType(value: unknown): value is DiscourseCalloutType {
-  const key = typeof value === 'string' ? value : '';
-  return Boolean(key && DISCOURSE_CALLOUT_REGISTRY[key]?.type === key);
-}
-
-const callout = (
-  type: DiscourseCalloutType,
-  title: string,
-  tone: DiscourseCalloutTone
-): DiscourseCalloutDefinition => ({ type, title, tone });
-
-export const DISCOURSE_CALLOUT_REGISTRY: Readonly<Record<string, DiscourseCalloutDefinition>> = {
-  note: callout('note', 'Note', 'primary'),
-  abstract: callout('abstract', 'Abstract', 'primary'),
-  summary: callout('abstract', 'Summary', 'primary'),
-  tldr: callout('abstract', 'TLDR', 'primary'),
-  info: callout('info', 'Info', 'primary'),
-  todo: callout('todo', 'Todo', 'primary'),
-  tip: callout('tip', 'Tip', 'primary'),
-  hint: callout('tip', 'Hint', 'primary'),
-  important: callout('tip', 'Important', 'primary'),
-  success: callout('success', 'Success', 'success'),
-  check: callout('success', 'Check', 'success'),
-  done: callout('success', 'Done', 'success'),
-  question: callout('question', 'Question', 'warning'),
-  help: callout('question', 'Help', 'warning'),
-  faq: callout('question', 'FAQ', 'warning'),
-  warning: callout('warning', 'Warning', 'warning'),
-  caution: callout('warning', 'Caution', 'warning'),
-  attention: callout('warning', 'Attention', 'warning'),
-  failure: callout('failure', 'Failure', 'danger'),
-  fail: callout('failure', 'Fail', 'danger'),
-  missing: callout('failure', 'Missing', 'danger'),
-  danger: callout('danger', 'Danger', 'danger'),
-  error: callout('danger', 'Error', 'danger'),
-  bug: callout('bug', 'Bug', 'danger'),
-  example: callout('example', 'Example', 'primary'),
-  quote: callout('quote', 'Quote', 'muted'),
-  cite: callout('quote', 'Cite', 'muted')
-};
 
 const DEFAULT_CALLOUT = DISCOURSE_CALLOUT_REGISTRY.note;
 const CALLOUT_MARKER = /^\s*\[!([^\]]+)\]([+-])?[ \t]*/i;

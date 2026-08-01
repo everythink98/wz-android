@@ -34,7 +34,7 @@ import {
   getDiscourseSourceUserProfile,
   searchDiscourseSourceTopics,
   type DiscourseReadAuth
-} from '@/sources/discourse/readers';
+} from '@/sources/discourseRead';
 import {
   aggregateFeedSources,
   aggregateSearchSources,

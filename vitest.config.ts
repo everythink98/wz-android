@@ -15,7 +15,9 @@ export default defineConfig({
       'src/**/*.test.ts',
       'src/**/*.test.tsx',
       'tests/integration/**/*.test.ts',
-      'tests/integration/**/*.test.tsx'
+      'tests/integration/**/*.test.tsx',
+      'tests/tooling/**/*.test.ts',
+      'tests/tooling/**/*.test.tsx'
     ],
     exclude: ['node_modules', 'android', '.expo', '.expo-shared']
   }

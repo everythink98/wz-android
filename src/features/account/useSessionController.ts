@@ -25,6 +25,7 @@ import {
   LEGACY_COOKIE_SNAPSHOT_KEYS,
   migrateLegacyCookieSnapshots
 } from '@/platform/storage/legacyCookieSnapshotMigration';
+import { createCredentialWriteGate, replaceCredentialWrite } from '@/platform/storage/credentialWriteGate';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -45,10 +46,8 @@ import {
 } from '@/domain/session/siteSessionState';
 import {
   commitChangedAccountStatusQuery,
-  createCredentialWriteGate,
   enqueueBrowserFetchRequest,
   forumSessionEpochsAfterSourceChange,
-  replaceCredentialWrite,
   resetForumSourceQueries,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
