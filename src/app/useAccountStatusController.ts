@@ -3,7 +3,7 @@ import { isCancelledError, useQuery, type QueryFunctionContext } from '@tanstack
 import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
 import { summarizeYaohuoCookieHeader } from '@/yaohuoSession';
-import { summarizeNodeSeekCookieHeader } from '@/nodeseekSession';
+import { summarizeNodeSeekCookieHeader } from '@/sources/nodeseek/session';
 import { summarizeLinuxDoCookieHeader } from '@/linuxdoSession';
 import {
   createSiteSessionStates,

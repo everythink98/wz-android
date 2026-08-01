@@ -22,7 +22,7 @@ import {
   runNodeImageAuthOpening,
   terminateNodeImageAuthFlow,
   type NodeImageAuthPhase
-} from '@/nodeimageAuthFlow';
+} from '@/sources/nodeimage/authFlow';
 import {
   beginNodeImageApiKeyAuthorization,
   clearNodeImageApiKey,
@@ -32,7 +32,7 @@ import {
   loadNodeImageApiKeyCredential,
   nodeImageApiKeyUseStatus,
   saveNodeImageApiKeyForGeneration
-} from '@/nodeimageCredentials';
+} from '@/sources/nodeimage/credentials';
 import type { UserProfile } from '@/domain/forum/models';
 import { nativeSecureRandomHex } from '@/platform/android/xiaoyinsiKeystore';
 import type { AccountReconcileResult } from '@/features/account/model/sessionContracts';

@@ -8,7 +8,7 @@ import {
   createNodeSeekWebViewFallbackFetcher,
   isNodeSeekBrowserFetchUrl,
   isNodeSeekBrowserResultUrl
-} from '@/nodeseekFetchFallback';
+} from '@/sources/nodeseek/browserFallback';
 import {
   createLinuxDoWebViewFallbackFetcher,
   isLinuxDoBrowserFetchUrl,

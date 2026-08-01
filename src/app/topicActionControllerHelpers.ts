@@ -1,5 +1,5 @@
 import type { ReplyEditTarget } from '@/features/topic/model/types';
-import { nodeSeekMarkdownToHtml } from '@/nodeSeekMarkdown';
+import { nodeSeekMarkdownToHtml } from '@/sources/nodeseek/markdown';
 import { sourceSupportsTopicAction, sourceUsesTopicCreatePermission } from '@/domain/forum/sourceCatalog';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '@/domain/forum/models';
 

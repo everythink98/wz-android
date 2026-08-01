@@ -49,14 +49,14 @@ import {
   nodeSeekTopicUrl,
   safeNodeSeekTopicUrl,
   withNodeSeekReplyPagination
-} from '@/localNodeseekHelpers';
-import { nodeSeekMarkdownToHtml } from '@/nodeSeekMarkdown';
+} from './parser';
+import { nodeSeekMarkdownToHtml } from './markdown';
 import {
   NODESEEK_VOTE_API_HEADERS,
   nodeSeekPollPlaceholderHtml,
   normalizeNodeSeekVoteInfo,
   stripLoadedNodeSeekVoteMarkers
-} from '@/nodeseekPolls';
+} from './polls';
 import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from '@/sources/diagnostics';
 
 const BASE_URL = NODESEEK_BASE_URL;

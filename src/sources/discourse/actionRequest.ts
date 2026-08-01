@@ -1,4 +1,4 @@
-import { appendFileToFormData, type NormalizedReplyImageAsset } from '@/replyImageUpload';
+import { appendFileToFormData, type NormalizedReplyImageAsset } from '@/sources/imageUpload';
 
 export interface DiscourseActionRequest {
   path: string;

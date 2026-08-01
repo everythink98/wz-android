@@ -1,6 +1,6 @@
-import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from '@/nodeseekActions';
+import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './actionRequest';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from '@/nodeseekPolls';
+import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './polls';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 

@@ -14,7 +14,7 @@ import {
   isNodeSeekBrowserNavigationUrl,
   isNodeSeekBrowserResultUrl,
   isNodeSeekRequestUrl
-} from '@/nodeseekFetchFallback';
+} from '@/sources/nodeseek/browserFallback';
 
 const fakeSecret = 'fixed-fake-secret-do-not-leak';
 

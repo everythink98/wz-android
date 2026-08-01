@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createReplyTextIndexForQuery, filterRepliesByQuery } from '@/features/topic/model/replySearch';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from '@/features/topic/model/types';
-import { appendReplyImageMarkup } from '@/replyImageUpload';
+import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import {
   filterRepliesWithImages,
   type InlineSizedImageUrlMap,

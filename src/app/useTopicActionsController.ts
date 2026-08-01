@@ -11,7 +11,7 @@ import {
   buildNodeSeekVoteRequest,
   nodeSeekInteractionRemovalMessage,
   type NodeSeekActionRequest
-} from '@/nodeseekActions';
+} from '@/sources/nodeseek/actionRequest';
 import {
   buildYaohuoDeleteFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
@@ -23,7 +23,7 @@ import {
 } from '@/yaohuoActions';
 import type { DiscourseAction } from '@/sources/discourse/actionRequest';
 import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/sources/discourse/sourceActions';
-import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/nodeseekActionClient';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/yaohuoActionClient';
 import {
   applyBookmarkToTopic,
@@ -44,15 +44,10 @@ import type { Fetcher } from '@/platform/network/request';
 import { errorMessage } from '@/platform/network/errors';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import { isDiscourseSource, isSessionSource, sourceValues, type DiscourseSource } from '@/domain/forum/sourceCatalog';
-import {
-  normalizeReplyImageAsset,
-  isNodeImageApiKeyExpiredError,
-  replyImageMarkupForSource,
-  replyImageUploadSupported,
-  uploadNodeSeekReplyImageWithApiKey,
-  uploadYaohuoReplyImage
-} from '@/replyImageUpload';
-import { currentNodeImageApiKeyGeneration } from '@/nodeimageCredentials';
+import { normalizeReplyImageAsset, replyImageMarkupForSource, replyImageUploadSupported } from '@/sources/imageUpload';
+import { isNodeImageApiKeyExpiredError, uploadNodeSeekReplyImageWithApiKey } from '@/sources/nodeimage/upload';
+import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
+import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authActionMessageForSource } from '@/domain/session/siteSessionPrompts';
 import { useCommittedRef } from './useCommittedRef';

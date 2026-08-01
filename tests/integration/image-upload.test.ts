@@ -1,19 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { buildNodeSeekReplyRequest } from '@/nodeseekActions';
+import { buildNodeSeekReplyRequest } from '@/sources/nodeseek/actionRequest';
 import {
   appendReplyImageMarkup,
   normalizeReplyImageAsset,
   replyImageMarkupForSource,
-  replyImageUploadSupported,
+  replyImageUploadSupported
+} from '@/sources/imageUpload';
+import {
   nodeImageApiKeyFromResponse,
   isNodeImageApiKeyExpiredError,
   nodeImageUploadErrorMessage,
   nodeImageUrlFromUploadResponse,
   uploadNodeSeekReplyImage,
-  uploadNodeSeekReplyImageWithApiKey,
-  uploadYaohuoReplyImage,
-  yaohuoImageUrlFromUploadResponse
-} from '@/replyImageUpload';
+  uploadNodeSeekReplyImageWithApiKey
+} from '@/sources/nodeimage/upload';
+import { uploadYaohuoReplyImage, yaohuoImageUrlFromUploadResponse } from '@/sources/yaohuo/imageUpload';
 
 describe('reply image upload helpers', () => {
   it('supports image uploads only where an upload path is known', () => {

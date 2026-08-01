@@ -9,7 +9,7 @@ import {
 } from '@/sources/aggregateRead';
 import { getYaohuoFeedDirect, getYaohuoRepliesDirect, getYaohuoTopicDirect, searchYaohuoDirect } from '@/yaohuoApi';
 import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '@/localLinuxdo';
-import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '@/localNodeseek';
+import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '@/sources/nodeseek/reader';
 import { getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/linuxdoLevel';
 import {
   getXiaoyinsiLevelProfile as getLocalXiaoyinsiLevelProfile,

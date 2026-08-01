@@ -11,7 +11,7 @@ import {
   runNodeImageAuthSingleFlight,
   terminateNodeImageAuthFlow,
   type NodeImageAuthPhase
-} from '@/nodeimageAuthFlow';
+} from './authFlow';
 
 describe('NodeImage authorization flow', () => {
   afterEach(() => {

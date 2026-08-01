@@ -7,7 +7,7 @@ import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './u
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 
 import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '@/linuxdoFetchFallback';
-import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '@/nodeseekFetchFallback';
+import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '@/sources/nodeseek/browserFallback';
 import { isGoogleSiteSearchAccessTroubleUrl } from '@/sources/searchFallback';
 
 type HiddenBrowserState = {

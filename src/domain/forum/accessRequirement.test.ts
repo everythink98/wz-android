@@ -8,7 +8,7 @@ vi.mock('expo-secure-store', () => ({
 }));
 
 import { getLinuxDoFeed, getLinuxDoTopic } from '@/localLinuxdo';
-import { getNodeSeekFeed, getNodeSeekTopic } from '@/localNodeseek';
+import { getNodeSeekFeed, getNodeSeekTopic } from '@/sources/nodeseek/reader';
 import { getV2exFeed, getV2exTopic } from '@/localV2ex';
 import { accessRequirementFromObject, accessRequirementFromText } from './html';
 import { parseYaohuoListHtml, parseYaohuoTopicHtml } from '@/localYaohuo';

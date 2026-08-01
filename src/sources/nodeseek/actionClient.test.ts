@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/nodeseekActionClient';
-import { buildNodeSeekAttendanceRequest, buildNodeSeekReplyRequest } from '@/nodeseekActions';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from './actionClient';
+import { buildNodeSeekAttendanceRequest, buildNodeSeekReplyRequest } from './actionRequest';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 
 function jsonResponse(body: unknown, status = 200) {

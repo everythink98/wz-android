@@ -1,4 +1,4 @@
-import { NODESEEK_VOTE_API_HEADERS } from '@/nodeseekPolls';
+import { NODESEEK_VOTE_API_HEADERS } from './polls';
 
 export interface NodeSeekActionRequest {
   path: string;

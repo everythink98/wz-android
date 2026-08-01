@@ -19,14 +19,14 @@ import {
 } from '@/localLinuxdo';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { textContentFromHtml } from '@/domain/forum/html';
-import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '@/nodeseekFetchFallback';
+import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '@/sources/nodeseek/browserFallback';
 import {
   getNodeSeekCurrentUserProfile,
   getNodeSeekReplies,
   getNodeSeekTopic,
   getNodeSeekUserProfile,
   resolveNodeSeekUser
-} from '@/localNodeseek';
+} from '@/sources/nodeseek/reader';
 import { setRequestTimeoutsActive } from '@/platform/network/request';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { DEFAULT_SEARCH_FILTERS } from '@/searchFilters';

@@ -63,7 +63,7 @@ vi.mock('expo-secure-store', () => ({
 }));
 vi.mock('@/sources/aggregateRead', () => forumMocks);
 vi.mock('@/localLinuxdo', () => linuxDoMocks);
-vi.mock('@/localNodeseek', () => nodeSeekMocks);
+vi.mock('@/sources/nodeseek/reader', () => nodeSeekMocks);
 vi.mock('@/linuxdoLevel', () => linuxDoLevelMocks);
 vi.mock('@/localXiaoyinsi', () => xiaoyinsiMocks);
 vi.mock('@/yaohuoApi', () => ({

@@ -5,7 +5,7 @@ jest.mock('@/platform/android/xiaoyinsiKeystore', () => ({
   nativeSecureRandomHex: jest.fn(async () => 'a'.repeat(32))
 }));
 
-jest.mock('@/nodeimageCredentials', () => ({
+jest.mock('@/sources/nodeimage/credentials', () => ({
   beginNodeImageApiKeyAuthorization: jest.fn(() => 3),
   clearNodeImageApiKey: jest.fn(async () => true),
   currentNodeImageApiKeyGeneration: jest.fn(() => 3),

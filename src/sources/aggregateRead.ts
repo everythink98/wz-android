@@ -6,7 +6,7 @@ import {
   getNodeSeekTopic,
   getNodeSeekUserProfile,
   searchNodeSeek
-} from '@/localNodeseek';
+} from '@/sources/nodeseek/reader';
 import {
   yaohuoCategoriesResponse,
   parseYaohuoListHtml,

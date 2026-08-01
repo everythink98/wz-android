@@ -8,7 +8,7 @@ jest.mock('expo-secure-store', () => ({
   getItemAsync: jest.fn()
 }));
 
-jest.mock('@/nodeseekActionClient', () => ({
+jest.mock('@/sources/nodeseek/actionClient', () => ({
   fetchNodeSeekVoteInfo: jest.fn(),
   runNodeSeekAction: jest.fn()
 }));
@@ -25,12 +25,12 @@ jest.mock('expo-document-picker', () => ({
   getDocumentAsync: jest.fn()
 }));
 
-jest.mock('@/replyImageUpload', () => ({
-  ...jest.requireActual<typeof import('@/replyImageUpload')>('@/replyImageUpload'),
+jest.mock('@/sources/nodeimage/upload', () => ({
+  ...jest.requireActual<typeof import('@/sources/nodeimage/upload')>('@/sources/nodeimage/upload'),
   uploadNodeSeekReplyImageWithApiKey: jest.fn()
 }));
 
-jest.mock('@/nodeimageCredentials', () => ({
+jest.mock('@/sources/nodeimage/credentials', () => ({
   currentNodeImageApiKeyGeneration: jest.fn()
 }));
 
@@ -41,7 +41,7 @@ jest.mock('@/platform/network/managedCookies', () => ({
   }))
 }));
 
-import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/nodeseekActionClient';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/yaohuoActionClient';
 import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeRecovery } from '@/app/discourseActionRuntime';
 import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
@@ -49,8 +49,8 @@ import { useTopicActionsController } from '@/app/useTopicActionsController';
 import { useTopicSessionController } from '@/app/useTopicSessionController';
 import { appQueryClient, forumQueryKeys } from '@/app/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { currentNodeImageApiKeyGeneration } from '@/nodeimageCredentials';
-import { uploadNodeSeekReplyImageWithApiKey } from '@/replyImageUpload';
+import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
+import { uploadNodeSeekReplyImageWithApiKey } from '@/sources/nodeimage/upload';
 import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
 import {
   createSiteSessionStates,
