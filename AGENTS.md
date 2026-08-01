@@ -24,6 +24,7 @@
 
 - 当前项目是独立 Android App；命令和发布流程见 `package.json` 与 `docs/operator-runbook.md`。
 - 项目背景读 `README.md`；接手或确认边界读 `docs/handoff.md`；结构、目录职责和数据边界读 `docs/architecture.md`。
+- 代码 ownership、import、测试归属和质量门禁读 `docs/code-standards.md`。
 - 现有产品功能、用户入口、能力 ID 和共享回归范围见 `docs/product-map.md`；开发前选择受影响能力 ID，交付时按 ID 报告验证结果。
 - 已逃逸问题、精确失败 oracle 和最低可靠测试层见 `docs/regression-corpus.md`；命中事故 seam 时必须执行对应回归。
 - 测试标准见 `docs/testing-standard.md`；需要模拟器时只读取与当前 Git revision、App 版本和 APK 身份匹配的 `docs/emulator-baseline.md` 记录，不能按日期判断当前基线。

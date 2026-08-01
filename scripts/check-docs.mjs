@@ -9,6 +9,7 @@ const stableMarkdownFiles = [
   'docs/product-map.md',
   'docs/regression-corpus.md',
   'docs/architecture.md',
+  'docs/code-standards.md',
   'docs/testing-standard.md',
   'docs/operator-runbook.md',
   'docs/handoff.md',
