@@ -55,6 +55,25 @@ describe('Android HTML rendering styles', () => {
     expect(replyStyle).toMatchObject({ fontSize: 15, lineHeight: 24 });
   });
 
+  it('[REG-TOPIC-056] gives canonical Callout titles App-owned tone styles', () => {
+    const theme = createTheme(settings);
+    const ordinaryStyles = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+    const { htmlClassesStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({
+      enableDiscourseCallouts: true,
+      settings,
+      theme
+    });
+
+    expect(ordinaryStyles.htmlClassesStyles['forum-callout-title']).toBeUndefined();
+    expect(ordinaryStyles.htmlClassesStyles['forum-callout-tone-danger']).toBeUndefined();
+    expect(htmlClassesStyles['forum-callout-title']).toMatchObject({ fontWeight: '700' });
+    expect(htmlClassesStyles['forum-callout-tone-primary']).toMatchObject({ color: theme.primary });
+    expect(htmlClassesStyles['forum-callout-tone-success']).toMatchObject({ color: theme.success });
+    expect(htmlClassesStyles['forum-callout-tone-warning']).toMatchObject({ color: theme.warning });
+    expect(htmlClassesStyles['forum-callout-tone-danger']).toMatchObject({ color: theme.danger });
+    expect(htmlClassesStyles['forum-callout-tone-muted']).toMatchObject({ color: theme.muted });
+  });
+
   it('trims only the last visible block inside a marked reply fragment', () => {
     const markedParent = {
       attributes: { [htmlRenderingStyles.TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE]: 'true' },

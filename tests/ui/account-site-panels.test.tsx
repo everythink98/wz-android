@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { type ComponentProps } from 'react';
 import { Text, View } from 'react-native';
 import { LinuxDoVerifyModal } from '../../src/app/LinuxDoVerifyModal';
@@ -312,6 +312,7 @@ describe('Account site panels', () => {
     expect(onAuthorizeNodeImageApiKey).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByLabelText('手动粘贴备用'));
     expect(view.getByLabelText('保存 Key').props.accessibilityState.disabled).toBe(true);
+    expect(view.getByLabelText('NodeImage API Key 输入')).toBeTruthy();
     await fireEvent.changeText(view.getByPlaceholderText('NodeImage API Key'), 'local-test-key');
     expect(view.getByLabelText('保存 Key').props.accessibilityState.disabled).toBe(false);
     await fireEvent.press(view.getByLabelText('保存 Key'));
@@ -373,6 +374,32 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
+  it('[REG-VERIFICATION-004] unmounts a timed-out NodeSeek WebView until the user refreshes', async () => {
+    jest.useFakeTimers();
+    try {
+      mockLoginWebViewMountCount = 0;
+      const view = await render(<NodeSeekLoginPanel {...nodeSeekProps({
+        loadingLoginPage: true,
+        showLoginPanel: true
+      })} />);
+
+      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      await act(async () => {
+        jest.advanceTimersByTime(12_000);
+      });
+
+      expect(view.getByText('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。')).toBeTruthy();
+      expect(view.queryByTestId('mock-login-webview')).toBeNull();
+      expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
+
+      await fireEvent.press(view.getByLabelText('刷新页面'));
+      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      expect(mockLoginWebViewMountCount).toBe(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('[REG-ACCOUNT-022] keeps login WebViews mounted while a new credential fill attempt is injected', async () => {
     mockLoginWebViewMountCount = 0;
     const nodeSeek = await render(<NodeSeekLoginPanel {...nodeSeekProps({
@@ -415,6 +442,31 @@ describe('Account site panels', () => {
     await render(<LinuxDoVerifyModal {...linuxDoVerifyProps()} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
+  });
+
+  it('[REG-VERIFICATION-004] unmounts a timed-out linux.do WebView until the user refreshes', async () => {
+    jest.useFakeTimers();
+    try {
+      const onResetLinuxDoWebView = jest.fn();
+      const props = linuxDoVerifyProps({ onResetLinuxDoWebView });
+      const view = await render(<LinuxDoVerifyModal {...props} />);
+
+      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      await act(async () => {
+        jest.advanceTimersByTime(12_000);
+      });
+
+      expect(view.queryByTestId('mock-login-webview')).toBeNull();
+      await fireEvent.press(view.getByLabelText('刷新页面'));
+      expect(onResetLinuxDoWebView).toHaveBeenCalledTimes(1);
+      await view.rerender(<LinuxDoVerifyModal {...linuxDoVerifyProps({
+        linuxDoWebViewKey: 2,
+        onResetLinuxDoWebView
+      })} />);
+      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('[REG-ACCOUNT-019] invalidates the linux.do document probe on every navigation after the page was ready', async () => {
@@ -488,6 +540,30 @@ describe('Account site panels', () => {
     expect(onWebViewState).toHaveBeenCalledWith('error', 4);
     await fireEvent.press(view.getByLabelText('刷新页面'));
     expect(onSetLoadingYaohuoLoginPage).toHaveBeenLastCalledWith(true);
+  });
+
+  it('[REG-VERIFICATION-004] unmounts a timed-out Yaohuo WebView until the user refreshes', async () => {
+    jest.useFakeTimers();
+    try {
+      mockLoginWebViewMountCount = 0;
+      const view = await render(<YaohuoLoginPanel {...yaohuoProps({
+        loadingYaohuoLoginPage: true
+      })} />);
+
+      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      await act(async () => {
+        jest.advanceTimersByTime(12_000);
+      });
+
+      expect(view.getByText('妖火页面打开超时：请检查模拟器网络后刷新页面。')).toBeTruthy();
+      expect(view.queryByTestId('mock-login-webview')).toBeNull();
+
+      await fireEvent.press(view.getByLabelText('刷新页面'));
+      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      expect(mockLoginWebViewMountCount).toBe(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('shows linux.do block messages and keeps all verification actions available', async () => {

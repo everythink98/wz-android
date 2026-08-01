@@ -128,6 +128,53 @@ describe('reader JSON backup', () => {
     expect(backup.favorites[topicKey(topic)]?.topic.title).toBe('妖火帖子');
   });
 
+  it('[REG-DATA-006] canonicalizes record links and removes every portable URL credential', () => {
+    const topic: Topic = {
+      source: 'nodeseek',
+      id: '42',
+      title: '安全备份',
+      author: 'alice',
+      authorId: '7',
+      authorAvatar: 'https://user:pass@cdn.example.com/avatar.png?X-Amz-Signature=fake-amz#profile',
+      authorUrl: 'https://user:pass@www.nodeseek.com/space/7?unknown_credential=fake-author#profile',
+      url: 'https://user:pass@www.nodeseek.com/post-42-9?unknown_credential=fake-topic#reply',
+      createdAt: '2026-05-20T00:00:00.000Z',
+      replyCount: 1
+    };
+    const remote = createEmptyReaderData();
+    remote.favorites[topicKey(topic)] = {
+      topic,
+      savedAt: '2026-05-20T00:00:00.000Z'
+    };
+    remote.followedUsers['linuxdo:88'] = {
+      user: {
+        source: 'linuxdo',
+        id: '88',
+        username: 'alice',
+        displayName: 'Alice',
+        avatar: 'https://user:pass@cdn.example.com/user.png?Signature=fake-user#profile',
+        url: 'https://user:pass@linux.do/u/wrong?unknown_credential=fake-profile#profile',
+        topics: []
+      },
+      followedAt: '2026-05-20T00:00:00.000Z'
+    };
+
+    const exported = JSON.parse(exportReaderBackupJson(remote));
+    const imported = importReaderBackupJson(createEmptyReaderData(), JSON.stringify(remote));
+
+    for (const data of [exported, imported]) {
+      const clean = data.favorites[topicKey(topic)]?.topic;
+      expect(clean?.url).toBe('https://www.nodeseek.com/post-42-1');
+      expect(clean?.authorUrl).toBe('https://www.nodeseek.com/space/7');
+      expect(clean?.authorAvatar).toBe('https://cdn.example.com/avatar.png');
+      expect(data.followedUsers['linuxdo:88']?.user.url).toBe('https://linux.do/u/alice');
+      expect(data.followedUsers['linuxdo:88']?.user.avatar).toBe('https://cdn.example.com/user.png');
+      expect(JSON.stringify(clean)).not.toContain('fake-');
+      expect(JSON.stringify(data.followedUsers)).not.toContain('fake-');
+      expect(data.version).toBe(2);
+    }
+  });
+
   it('builds deterministic safe file names', () => {
     expect(safeFileName('forum reader backup', 'json', 1234)).toBe('forum-reader-backup-1234.json');
     expect(safeFileName('***', 'json', 1234)).toBe('forum-reader-1234.json');

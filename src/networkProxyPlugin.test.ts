@@ -63,3 +63,16 @@ describe('withNetworkProxyModule Expo Video integration', () => {
       .toThrow('Expo Video DataSource 源码与已审核版本不匹配');
   });
 });
+
+describe('withNetworkProxyModule local relay hardening', () => {
+  const pluginSource = readFileSync(
+    join(process.cwd(), 'plugins', 'withNetworkProxyModule.js'),
+    'utf8'
+  );
+
+  it('[REG-PROXY-007] binds the relay with the connection cap as its backlog', () => {
+    expect(pluginSource).toContain(
+      'ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))'
+    );
+  });
+});

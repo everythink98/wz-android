@@ -13,7 +13,7 @@ import {
   updateFavoriteTopic,
   type ReaderData
 } from '../readerData';
-import { isSameReply, mergeReplies, removeReply } from '../feedLogic';
+import { isSameReply, mergeReplies, removeReply, replyKey as replyIdentityKey } from '../feedLogic';
 import { isCanceledRequest } from '../appUtils';
 import {
   replyCountAfterNewReplySubmit,
@@ -35,9 +35,10 @@ import type { RepliesResponse, Reply, Source, SourceErrorInfo, Topic, TopicDetai
 import type { Screen, TopicRepliesRefreshOptions } from '../appTypes';
 import type { ReaderDataMutationReason } from './useReaderDataController';
 import {
-  quotedPostReferenceFromReply,
   quotedPostReferenceKey,
+  quotedPostsForSource,
   replyQuotedPostInstanceKey,
+  topicOpeningPostAsReply,
   type QuotedPostReference,
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
@@ -165,7 +166,7 @@ export function useTopicController({
   getCurrentScreen: () => Screen;
   notify: (message: string) => void;
   onNodeSeekTopicVerificationRequired: (message: string, recovery: LinuxDoReadRecovery) => void;
-  pushTopicScreen: () => void;
+  pushTopicScreen: (topic: Topic) => boolean;
   readerData: ReaderData;
   readerDataRef: MutableRef<ReaderData>;
   reopenExistingTopicScreenRef: MutableRef<boolean>;
@@ -181,7 +182,7 @@ export function useTopicController({
 }) {
   const queryClient = useQueryClient();
   const {
-    state: { selectedTopic },
+    state: { expandedQuotes, selectedTopic },
     commands: {
       navigation: topicNavigation,
       quotes: topicQuotes,
@@ -445,16 +446,30 @@ export function useTopicController({
     topicCommands
   ]);
 
+  const activeQuoteRequests = useMemo(() => {
+    const active = { ...quoteRequests };
+    if (!selectedTopic) return active;
+    topicReplies.forEach((reply) => {
+      const replyKey = replyIdentityKey(reply);
+      quotedPostsForSource(reply, selectedTopic.source).forEach(({ reference }) => {
+        const instanceKey = replyQuotedPostInstanceKey(replyKey, reference);
+        if (expandedQuotes[instanceKey] && !active[instanceKey]) {
+          active[instanceKey] = { prefetch: false, reference };
+        }
+      });
+    });
+    return active;
+  }, [expandedQuotes, quoteRequests, selectedTopic, topicReplies]);
   const quoteReferences = useMemo(() => {
     const unique = new Map<string, QuotedPostReference>();
-    Object.values(quoteRequests).forEach(({ reference }) => unique.set(quotedPostReferenceKey(reference), reference));
+    Object.values(activeQuoteRequests).forEach(({ reference }) => unique.set(quotedPostReferenceKey(reference), reference));
     return [...unique.values()];
-  }, [quoteRequests]);
+  }, [activeQuoteRequests]);
   const interactiveQuoteReferenceKeys = useMemo(() => new Set(
-    Object.values(quoteRequests)
+    Object.values(activeQuoteRequests)
       .filter(({ prefetch }) => !prefetch)
       .map(({ reference }) => quotedPostReferenceKey(reference))
-  ), [quoteRequests]);
+  ), [activeQuoteRequests]);
   const quoteQueries = useQueries({
     queries: quoteReferences.map((reference) => ({
       queryKey: forumQueryKeys.reply({
@@ -511,12 +526,12 @@ export function useTopicController({
   }, [quoteQueries, quoteReferences]);
   const loadingQuotedFloors = useMemo<Record<string, boolean>>(() => {
     const loading: Record<string, boolean> = {};
-    Object.entries(quoteRequests).forEach(([instanceKey, { reference }]) => {
+    Object.entries(activeQuoteRequests).forEach(([instanceKey, { reference }]) => {
       const result = quoteResults.get(quotedPostReferenceKey(reference));
       if (result?.isPending || result?.isFetching) loading[instanceKey] = true;
     });
     return loading;
-  }, [quoteRequests, quoteResults]);
+  }, [activeQuoteRequests, quoteResults]);
 
   useEffect(() => {
     quoteReferences.forEach((reference, index) => {
@@ -550,7 +565,7 @@ export function useTopicController({
       const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: sessionEpochs });
       void queryClient.cancelQueries({ queryKey: key });
     }
-    Object.values(quoteRequests).forEach(({ reference }) => {
+    Object.values(activeQuoteRequests).forEach(({ reference }) => {
       void queryClient.cancelQueries({
         queryKey: forumQueryKeys.reply({
           source: reference.source,
@@ -561,7 +576,7 @@ export function useTopicController({
         exact: true
       });
     });
-  }, [sessionEpochs, queryClient, quoteRequests, selectedTopic]);
+  }, [activeQuoteRequests, sessionEpochs, queryClient, selectedTopic]);
 
   const openTopic = useCallback(async (topic: Topic, refresh = false): Promise<LinuxDoReadResumeOutcome> => {
     const currentScreen = getCurrentScreen();
@@ -575,13 +590,16 @@ export function useTopicController({
       topicNavigation.clearBackStack();
     } else if (opensDifferentTopic) {
       topicNavigation.pushBackStack(topicSnapshot(), topic);
-      pushTopicScreen();
     }
     if (opensDifferentTopic) cancelTopicQueries(selectedTopic);
     if (opensDifferentTopic) setQuoteRequests({});
     unreadBaselineRef.current[nextKey] = readerDataRef.current.history[nextKey]?.topic.replyCount || 0;
+    const shouldPushTopicScreen = currentScreen !== 'topic' || opensDifferentTopic;
+    const pushedTopicScreen = shouldPushTopicScreen && pushTopicScreen(topic);
     topicCommands.select(topic);
-    if (currentScreen !== 'topic' || !reopenExistingTopicScreen) changeScreen('topic');
+    if (shouldPushTopicScreen && !pushedTopicScreen) {
+      changeScreen('topic');
+    }
     if (refresh) {
       const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: sessionEpochs });
       await queryClient.invalidateQueries({ queryKey: key, exact: true });
@@ -821,7 +839,15 @@ export function useTopicController({
       topicQuotes.changeExpanded(instanceKey, false);
       return 'completed';
     }
-    if (!isDiscourseSource(reference.source) && !quotedPost) {
+    const cachedTopic = reference.postNumber === 1
+      ? queryClient.getQueryData<TopicDetail>(forumQueryKeys.topic({
+        source: reference.source,
+        topicId: reference.topicId,
+        scope: sessionEpochs
+      }))
+      : undefined;
+    const reusableQuotedPost = quotedPost || (cachedTopic ? topicOpeningPostAsReply(cachedTopic) : undefined);
+    if (!isDiscourseSource(reference.source) && !reusableQuotedPost) {
       if (!prefetch) {
         topicQuotes.changeExpanded(instanceKey, true);
         notify('引用楼层未加载');
@@ -835,11 +861,11 @@ export function useTopicController({
       scope: sessionEpochs
     });
     const queryState = queryClient.getQueryState(queryKey);
-    if (!quotedPost && queryState?.status === 'error') {
+    if (!reusableQuotedPost && queryState?.status === 'error') {
       handledQuoteErrorsRef.current[quotedPostReferenceKey(reference)] = queryState.errorUpdatedAt;
       void queryClient.refetchQueries({ queryKey, exact: true });
     }
-    if (quotedPost) queryClient.setQueryData(queryKey, quotedPost);
+    if (reusableQuotedPost) queryClient.setQueryData(queryKey, reusableQuotedPost);
     setQuoteRequests((current) => ({ ...current, [instanceKey]: { prefetch, reference } }));
     if (!prefetch) {
       topicQuotes.changeExpanded(instanceKey, true);
@@ -851,14 +877,13 @@ export function useTopicController({
     toggleLoadedQuotedPost(options)
   ), [toggleLoadedQuotedPost]);
 
-  const toggleReplyQuote = useCallback(({ replyFloor, quotedFloor, quotedReply }: ToggleReplyQuoteOptions) => {
-    const reference = quotedPostReferenceFromReply(selectedTopic?.source, selectedTopic?.id, quotedFloor);
-    if (!reference) {
+  const toggleReplyQuote = useCallback(({ replyKey, reference, quotedReply }: ToggleReplyQuoteOptions) => {
+    if (!selectedTopic || selectedTopic.source !== reference.source) {
       notify('引用楼层未加载');
       return;
     }
     return toggleLoadedQuotedPost({
-      instanceKey: replyQuotedPostInstanceKey(replyFloor, reference),
+      instanceKey: replyQuotedPostInstanceKey(replyKey, reference),
       reference,
       quotedPost: quotedReply
     });

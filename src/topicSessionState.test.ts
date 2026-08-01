@@ -34,7 +34,7 @@ describe('topic local session state', () => {
     expect(pushTopicSession([], createEmptyTopicSession(topic('1')), topic('1'))).toEqual([]);
   });
 
-  it('round-trips only route, filter, draft, quote expansion and scroll state', () => {
+  it('[REG-WRITE-026] restores an edit snapshot as a closed text draft', () => {
     const session: TopicSession = {
       ...createEmptyTopicSession(topic('3')),
       commentQuery: 'needle',
@@ -43,14 +43,42 @@ describe('topic local session state', () => {
       replyFace: '淡定.gif',
       replyComposerOpen: true,
       replyTarget: { floor: 2, author: 'bob' },
-      replyEditTarget: { commentId: 9, floor: 3, contentMarkdown: '旧回复' },
+      replyEditTarget: {
+        commentId: 9,
+        floor: 3,
+        contentMarkdown: '旧回复',
+        topicId: '1',
+        ticket: { source: 'nodeseek', identityKey: 'nodeseek:alice', sessionEpoch: 1 }
+      },
       expandedQuotes: { 'reply:4:nodeseek:3:2': true },
       scrollY: 120
     };
 
-    expect(topicSessionFromSnapshot(snapshotFromTopicSession(session))).toEqual(session);
-    expect(snapshotFromTopicSession(session)).not.toHaveProperty('topicDetail');
-    expect(snapshotFromTopicSession(session)).not.toHaveProperty('topicReplies');
+    const restoredDraft = {
+      ...session,
+      replyComposerOpen: false,
+      replyEditTarget: null,
+      replyFace: '',
+      replyTarget: null
+    };
+    const snapshot = snapshotFromTopicSession(session);
+    expect(snapshot).toMatchObject({
+      replyComposerOpen: false,
+      replyContent: '待回复',
+      replyEditTarget: null,
+      replyFace: '',
+      replyTarget: null
+    });
+    expect(topicSessionFromSnapshot(snapshot)).toEqual(restoredDraft);
+    expect(topicSessionFromSnapshot({
+      ...snapshot,
+      replyComposerOpen: true,
+      replyEditTarget: session.replyEditTarget,
+      replyFace: session.replyFace,
+      replyTarget: session.replyTarget
+    })).toEqual(restoredDraft);
+    expect(snapshot).not.toHaveProperty('topicDetail');
+    expect(snapshot).not.toHaveProperty('topicReplies');
   });
 
   it('stores separate local snapshots per navigation route', () => {

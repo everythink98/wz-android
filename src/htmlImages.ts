@@ -201,7 +201,14 @@ export function inlineForumImageAlignmentStyle(attributes: Record<string, string
   const displaySize = inlineForumImageDisplaySize(attributes, safeScale);
   const resolvedLineHeight = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : Math.round(16 * safeScale * 1.62);
   const translateY = Math.max(0, Math.round((resolvedLineHeight - displaySize.height) / 2));
-  return translateY > 0 ? { transform: [{ translateY }] } : {};
+  const classNames = (attributes.class || '').split(/\s+/);
+  const isAvatar = classNames.includes('avatar')
+    || classNames.includes('user-avatar')
+    || /\/user_avatar\//i.test(attributes.src || '');
+  return {
+    ...(isAvatar ? { marginRight: Math.round(6 * safeScale) } : {}),
+    ...(translateY > 0 ? { transform: [{ translateY }] } : {})
+  };
 }
 
 export function flowInlineImagesInMixedParagraphs(html: string) {

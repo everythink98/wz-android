@@ -67,7 +67,7 @@ const posts = [
     id: 101,
     post_number: 2,
     username: 'bob',
-    cooked: '<aside class="quote" data-topic="42" data-post="1" data-display-name="Alice Display"><blockquote>正文</blockquote></aside><p>回复</p>',
+    cooked: '<aside class="quote" data-topic="420" data-post="1" data-display-name="Alice Display"><blockquote>正文</blockquote></aside><p>回复</p>',
     raw: '回复',
     created_at: '2026-07-01T00:30:00.000Z',
     can_edit: true,
@@ -168,7 +168,7 @@ describe('xiaoyinsi adapter', () => {
       if (url.pathname === '/search.json') {
         return json({
           topics: [topic],
-          posts: [{ topic_id: 42, username: 'alice', blurb: '命中正文' }],
+          posts: [{ topic_id: 42, username: 'alice', blurb: '[!warning]- 命中正文' }],
           users: [{ id: 7, username: 'alice', avatar_template: malformedAvatar }],
           grouped_search_result: { more_full_page_results: true }
         });
@@ -187,7 +187,7 @@ describe('xiaoyinsi adapter', () => {
         });
       }
       if (url.pathname === '/user_actions.json') {
-        return json({ user_actions: [{ id: 101, post_id: 101, topic_id: 42, title: '小隐寺主题', slug: 'temple-topic', post_number: 2, created_at: '2026-07-01T00:30:00.000Z' }] });
+        return json({ user_actions: [{ id: 101, post_id: 101, topic_id: 42, title: '小隐寺主题', slug: 'temple-topic', post_number: 2, created_at: '2026-07-01T00:30:00.000Z', excerpt: '[!tip]+ 回复摘要' }] });
       }
       if (url.pathname === '/session/current.json') {
         return json({ current_user: { id: 7, username: 'alice', name: 'Alice', trust_level: 2, avatar_template: malformedAvatar } });
@@ -228,8 +228,11 @@ describe('xiaoyinsi adapter', () => {
       floor: 2,
       canEdit: true,
       canDelete: true,
-      quotedFloors: [1],
-      quotedAuthors: { 1: { label: 'Alice Display' } },
+      quotedPosts: [{
+        reference: { source: 'xiaoyinsi', topicId: '420', postNumber: 1 },
+        author: { label: 'Alice Display' },
+        preview: '正文'
+      }],
       contentMarkdown: '回复',
       acceptedAnswer: true,
       hidden: true,
@@ -248,7 +251,7 @@ describe('xiaoyinsi adapter', () => {
     expect(search.items[0]).toMatchObject({ authorAvatar: undefined, category: '生活', excerpt: '命中正文' });
     expect(profile).toMatchObject({ source: 'xiaoyinsi', username: 'alice', displayName: 'Alice', avatar: undefined, levelLabel: 'Lv2', hasMoreReplies: false });
     expect(profile.topics[0]).toMatchObject({ author: 'alice', authorAvatar: undefined, authorLevelLabel: 'Lv2', category: '生活' });
-    expect(profile.replies?.[0]).toMatchObject({ topicId: '42', floor: 2 });
+    expect(profile.replies?.[0]).toMatchObject({ topicId: '42', floor: 2, excerpt: '回复摘要' });
     expect(current).toMatchObject({ source: 'xiaoyinsi', username: 'alice', displayName: 'Alice', avatar: undefined });
 
     for (const [, init] of fetcher.mock.calls) {

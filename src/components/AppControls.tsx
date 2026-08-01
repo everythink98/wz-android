@@ -310,10 +310,17 @@ export function EmptyText({ text, styles }: { text: string; styles: ReturnType<t
 
 export function LoadingState({ text, styles, theme }: { text: string; styles: ReturnType<typeof createStyles>; theme: ReaderTheme }) {
   return (
-    <View style={styles.loadingState}>
+    <View
+      accessible
+      accessibilityLabel={text}
+      accessibilityLiveRegion="polite"
+      accessibilityState={{ busy: true }}
+      role="status"
+      style={styles.loadingState}
+    >
       <View style={styles.loadingStateHeader}>
-        <ActivityIndicator color={theme.primary} size="small" />
-        <Text style={styles.loadingStateText}>{text}</Text>
+        <ActivityIndicator accessible={false} color={theme.primary} size="small" />
+        <Text accessible={false} style={styles.loadingStateText}>{text}</Text>
       </View>
       <View style={styles.loadingPlaceholderStack}>
         {Array.from({ length: 3 }).map((_, index) => (

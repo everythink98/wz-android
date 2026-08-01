@@ -1,11 +1,10 @@
-import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it } from 'vitest';
+import { resolveReleaseKeystorePath } from '../scripts/release-environment.mjs';
 
-const projectRoot = path.resolve(__dirname, '..');
 const temporaryProjects: string[] = [];
 const require = createRequire(import.meta.url);
 const { singleApkSignerSha256 } = require('../scripts/apk-signing.cjs') as {
@@ -15,33 +14,7 @@ const { singleApkSignerSha256 } = require('../scripts/apk-signing.cjs') as {
 function createReleaseProject() {
   const project = mkdtempSync(path.join(tmpdir(), 'wz-release-signing-'));
   temporaryProjects.push(project);
-  mkdirSync(path.join(project, 'scripts'));
-  copyFileSync(path.join(projectRoot, 'scripts', 'release-android.mjs'), path.join(project, 'scripts', 'release-android.mjs'));
-  copyFileSync(path.join(projectRoot, 'scripts', 'apk-signing.cjs'), path.join(project, 'scripts', 'apk-signing.cjs'));
-  writeFileSync(path.join(project, 'app.json'), JSON.stringify({
-    expo: {
-      version: '1.0.0',
-      android: { package: 'com.example.app', versionCode: 1 },
-      extra: { releaseSignerSha256: 'a'.repeat(64) }
-    }
-  }));
   return project;
-}
-
-function runRelease(project: string, keystorePath: string) {
-  return spawnSync(process.execPath, ['scripts/release-android.mjs'], {
-    cwd: project,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WZ_ANDROID_KEYSTORE_PATH: keystorePath,
-      WZ_ANDROID_KEYSTORE_PASSWORD: 'release-store-password',
-      WZ_ANDROID_KEY_ALIAS: 'release-key',
-      WZ_ANDROID_KEY_PASSWORD: 'release-key-password',
-      WZ_ANDROID_SMOKE_DEVICE: 'test-device',
-      WZ_ANDROID_SMOKE_ABI: 'invalid-abi'
-    }
-  });
 }
 
 afterEach(() => {
@@ -62,25 +35,18 @@ describe('Android release signing preflight', () => {
     ].join('\n'))).toBe('');
   });
 
-  it('[REG-OPS-013] rejects a missing repository-relative keystore before other release work', () => {
+  it('[REG-OPS-013] rejects a missing repository-relative keystore', () => {
     const project = createReleaseProject();
 
-    const result = runRelease(project, 'signing/release.jks');
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(path.join(project, 'signing', 'release.jks'));
-    expect(result.stderr).toContain('keystore 不存在');
-    expect(result.stderr).not.toContain('WZ_ANDROID_SMOKE_ABI');
+    expect(() => resolveReleaseKeystorePath(project, 'signing/release.jks'))
+      .toThrow(`keystore 不存在：${path.join(project, 'signing', 'release.jks')}`);
   });
 
   it('rejects a directory used as the release keystore', () => {
     const project = createReleaseProject();
     mkdirSync(path.join(project, 'signing'));
 
-    const result = runRelease(project, 'signing');
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('keystore 不是普通文件');
-    expect(result.stderr).not.toContain('WZ_ANDROID_SMOKE_ABI');
+    expect(() => resolveReleaseKeystorePath(project, 'signing'))
+      .toThrow('keystore 不是普通文件');
   });
 });

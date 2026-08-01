@@ -37,7 +37,7 @@ export function TopicBodyQuoteCard({
           <Pressable
             accessibilityLabel={loading ? '读取' : expanded ? '收起' : '展开'}
             accessibilityRole="button"
-            accessibilityState={{ expanded }}
+            accessibilityState={{ disabled: loading, expanded }}
             android_ripple={androidRipple(theme.primarySoft)}
             disabled={loading}
             style={styles.quotePanelState}
@@ -50,7 +50,7 @@ export function TopicBodyQuoteCard({
           </Pressable>
         ) : null}
       </View>
-      {preview ? (
+      {preview && !completeContent ? (
         <View style={[styles.quoteBody, styles.quotePanelBody]} testID={previewTestID}>
           {preview}
         </View>

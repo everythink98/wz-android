@@ -91,10 +91,12 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
       notify('无法访问本机缓存目录。');
       return;
     }
+    const target = `${baseDirectory}wz-update.apk`;
     appUpdateDownloadingRef.current = true;
     setAppUpdateDownloading(true);
     let latestProgress = formatAppUpdateDownloadProgress(appUpdateInfo.version, 0, -1);
     let downloadStartedAt = 0;
+    let targetPrepared = false;
     setAppUpdateDownloadProgress(latestProgress);
     setAppUpdateMessage(latestProgress.title);
     try {
@@ -106,8 +108,8 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
         method: 'GET',
         state: 'start'
       });
-      const target = `${baseDirectory}wz-${appUpdateInfo.version}.apk`;
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
+      targetPrepared = true;
       const download = FileSystem.createDownloadResumable(appUpdateInfo.apkUrl, target, {}, (progress) => {
         latestProgress = formatAppUpdateDownloadProgress(appUpdateInfo.version, progress.totalBytesWritten, progress.totalBytesExpectedToWrite);
         setAppUpdateDownloadProgress(latestProgress);
@@ -144,6 +146,9 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
       notify('下载完成，请确认安装');
       finishDiagnosticTrace(trace, 'success');
     } catch (error) {
+      if (targetPrepared) {
+        await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
+      }
       const reason = normalizeDiagnosticReason(error);
       if (downloadStartedAt) {
         markDiagnosticStage(trace, 'transport', {

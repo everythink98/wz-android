@@ -37,7 +37,12 @@ describe('topic local session helpers', () => {
 
   it('drops edit text on close but keeps a normal draft', () => {
     expect(replyContentAfterComposerClose('普通草稿', null)).toBe('普通草稿');
-    expect(replyContentAfterComposerClose('旧回复', { commentId: 9, contentMarkdown: '旧回复' })).toBe('');
+    expect(replyContentAfterComposerClose('旧回复', {
+      commentId: 9,
+      contentMarkdown: '旧回复',
+      topicId: '1',
+      ticket: { source: 'linuxdo', identityKey: 'linuxdo:alice', sessionEpoch: 1 }
+    })).toBe('');
   });
 
   it('clears composer-local state after submission', () => {

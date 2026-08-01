@@ -23,44 +23,7 @@ type TopicCardProps = {
   onOpenTopic: (topic: Topic) => void;
 };
 
-function sameStringArray(left: string[] | undefined, right: string[] | undefined) {
-  if (!left?.length && !right?.length) {
-    return true;
-  }
-  if (!left || !right || left.length !== right.length) {
-    return false;
-  }
-  return left.every((item, index) => item === right[index]);
-}
-
-function sameAccessRequirement(left: Topic['accessRequirement'], right: Topic['accessRequirement']) {
-  if (!left || !right) {
-    return left === right;
-  }
-  return left.type === right.type && left.label === right.label && left.detail === right.detail;
-}
-
-function sameTopicCardTopic(left: Topic, right: Topic) {
-  return left.source === right.source
-    && left.id === right.id
-    && left.title === right.title
-    && left.author === right.author
-    && left.authorAvatar === right.authorAvatar
-    && left.authorLevelLabel === right.authorLevelLabel
-    && left.category === right.category
-    && left.createdAt === right.createdAt
-    && left.lastReplyAt === right.lastReplyAt
-    && left.displayTimeText === right.displayTimeText
-    && left.replyCount === right.replyCount
-    && left.viewCount === right.viewCount
-    && left.excerpt === right.excerpt
-    && left.isAiGenerated === right.isAiGenerated
-    && sameStringArray(left.tags, right.tags)
-    && sameStringArray(left.duplicateSources, right.duplicateSources)
-    && sameAccessRequirement(left.accessRequirement, right.accessRequirement);
-}
-
-export function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) {
+function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) {
   return previous.highlightQuery === next.highlightQuery
     && previous.hideReplyCount === next.hideReplyCount
     && previous.renderTrailingAction === next.renderTrailingAction
@@ -71,7 +34,7 @@ export function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCard
     && previous.readerState.favorite === next.readerState.favorite
     && previous.readerState.read === next.readerState.read
     && previous.readerState.listDensity === next.readerState.listDensity
-    && sameTopicCardTopic(previous.topic, next.topic);
+    && previous.topic === next.topic;
 }
 
 function HighlightedText({

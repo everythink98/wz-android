@@ -402,6 +402,37 @@ describe('Feed loading', () => {
     expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 新请求主题')).toBeTruthy();
   });
 
+  it('[REG-FEED-013] keeps the prelaid loading scene mounted until the target source has data', async () => {
+    const onFeedSourceChange = jest.fn();
+    mockFlashListMountCount = 0;
+    const view = await render(renderFeed(false, [topic], { onFeedSourceChange }));
+
+    expect(mockFlashListMountCount).toBe(1);
+    await act(async () => mockTabViewProps?.onIndexChange(1));
+    await settlePager();
+    await view.rerender(renderFeed(true, [], {
+      feedSource: 'v2ex',
+      onFeedSourceChange
+    }));
+
+    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('正在读取主题...')).toBeTruthy();
+    expect(mockFlashListMountCount).toBe(1);
+
+    await view.rerender(renderFeed(false, [{
+      ...topic,
+      source: 'v2ex',
+      id: 'v2ex-loaded',
+      title: 'V2EX 已加载主题',
+      url: 'https://www.v2ex.com/t/v2ex-loaded'
+    }], {
+      feedSource: 'v2ex',
+      onFeedSourceChange
+    }));
+
+    expect(mockFlashListMountCount).toBe(2);
+    expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 已加载主题')).toBeTruthy();
+  });
+
   it('[REG-PERF-005] keeps the complete rich TopicCard presentation in Feed', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
     const richTopic: Topic = {
@@ -544,12 +575,12 @@ describe('Feed loading', () => {
     expect(view.queryByTestId('feed-outcome-data-all-default')).toBeNull();
   });
 
-  it('shows one loading indicator before data and keeps pull-to-refresh after data arrives', async () => {
+  it('[REG-FEED-013] shows one stable loading scene before data and enables pull-to-refresh after data arrives', async () => {
     const view = await render(renderFeed(true, []));
     const activeScene = () => within(view.getByTestId('mock-feed-scene-all'));
 
     expect(activeScene().getByText('正在读取主题...')).toBeTruthy();
-    expect(activeScene().getByLabelText('列表，无下拉刷新')).toBeTruthy();
+    expect(activeScene().queryByLabelText('列表，无下拉刷新')).toBeNull();
 
     await view.rerender(renderFeed(false, [topic]));
 

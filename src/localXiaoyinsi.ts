@@ -17,7 +17,6 @@ import type {
 import {
   decodeHtml,
   isRecord,
-  parseHtml,
   parsePositiveInteger,
   sanitizeContentHtml,
   sortTopicsByCreatedAt,
@@ -27,7 +26,14 @@ import {
 import { annotateSourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { buildDiscourseLevelProfileFromSummary, type DiscourseLevelProfile } from './discourseLevel';
 import { discourseCategories, discourseOriginalPoster, discoursePolls, discoursePostFields, discourseTopicFields, discourseUsersById } from './discourseModel';
-import { discourseAvatarUrl, discoursePollPlaceholder, discourseQuoteMetadata } from './discourseContent';
+import {
+  discourseAvatarUrl,
+  discourseContentNeedsCalloutNormalization,
+  discoursePollPlaceholder,
+  discourseQuoteMetadata,
+  normalizeDiscourseCallouts,
+  stripDiscourseCalloutMarkersFromExcerpt
+} from './discourseContent';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from './discourseReactions';
 
 export const XIAOYINSI_BASE_URL = 'https://forum.xiaoyinsi.com';
@@ -237,15 +243,19 @@ function normalizeTopic(
 }
 
 export function sanitizeXiaoyinsiContentHtml(html: unknown, polls?: TopicPoll[]) {
-  const root = parseHtml(html);
   const names = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
-  root.querySelectorAll('.poll').forEach((node) => {
-    const name = String(node.getAttribute('data-poll-name') || '').trim();
-    if (name && names.has(name)) {
-      node.replaceWith(discoursePollPlaceholder(name));
+  const normalizeCallouts = discourseContentNeedsCalloutNormalization(html);
+  return sanitizeContentHtml(html, XIAOYINSI_BASE_URL, (root) => {
+    root.querySelectorAll('.poll').forEach((node) => {
+      const name = String(node.getAttribute('data-poll-name') || '').trim();
+      if (name && names.has(name)) {
+        node.replaceWith(discoursePollPlaceholder(name));
+      }
+    });
+    if (normalizeCallouts) {
+      normalizeDiscourseCallouts(root);
     }
   });
-  return sanitizeContentHtml(root.toString(), XIAOYINSI_BASE_URL);
 }
 
 function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {
@@ -256,7 +266,7 @@ function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {
   const { cookedHtml, ...replyFields } = fields;
   const polls = discoursePolls(raw, { includeType: true });
   const sanitized = sanitizeXiaoyinsiContentHtml(cookedHtml, polls);
-  const quote = discourseQuoteMetadata(sanitized, currentTopicId);
+  const quote = discourseQuoteMetadata(sanitized, 'xiaoyinsi', currentTopicId);
   const username = String(raw.username || '').trim();
   const authorTrustLevel = levelLabel(raw);
   return {
@@ -265,9 +275,7 @@ function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {
     authorAvatar: avatarUrl(raw.avatar_template),
     authorUrl: username ? userUrl(username) : undefined,
     contentHtml: quote.html,
-    ...(quote.floors.length ? { quotedFloors: quote.floors } : {}),
-    ...(Object.keys(quote.authors).length ? { quotedAuthors: quote.authors } : {}),
-    ...(Object.keys(quote.previews).length ? { quotedPreviews: quote.previews } : {}),
+    ...(quote.quotedPosts.length ? { quotedPosts: quote.quotedPosts } : {}),
     ...(authorTrustLevel ? { authorLevelLabel: authorTrustLevel } : {}),
     ...(polls ? { polls } : {})
   };
@@ -467,7 +475,10 @@ async function topicsFromSearch(data: Record<string, unknown>, options: Xiaoyins
     const post = postsByTopic.get(String(raw.id));
     const authorData = discourseOriginalPoster(raw, users) || (Number(post?.post_number) === 1 ? post : undefined);
     const topic = normalizeTopic(raw, categories, authorData, true);
-    return topic ? [{ ...topic, excerpt: textExcerpt(post?.blurb || topic.excerpt || '') }] : [];
+    return topic ? [{
+      ...topic,
+      excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || topic.excerpt || ''))
+    }] : [];
   });
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
   return { items, candidateCount: rawTopics.length, hasMore: Boolean(grouped.more_full_page_results) };
@@ -573,7 +584,7 @@ function normalizeUserAction(raw: unknown, username: string, categories: Categor
     category: raw.category_id ? categories.get(String(raw.category_id)) : undefined,
     createdAt: toIsoString(raw.created_at) || undefined,
     ...(floor ? { floor } : {}),
-    excerpt: textExcerpt(raw.excerpt || raw.content || '')
+    excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(raw.excerpt || raw.content || ''))
   };
 }
 

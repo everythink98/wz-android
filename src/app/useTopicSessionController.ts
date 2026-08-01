@@ -131,25 +131,21 @@ export function useTopicSessionController({ notify }: { notify: (message: string
     setReplyComposerOpen(true);
   }, [notify]);
 
-  const editReply = useCallback((reply: Reply) => {
-    if (!reply.commentId) {
-      notify('当前回复缺少评论 id，刷新主题后再试。');
-    } else if (!reply.canEdit) {
-      notify('当前回复不能编辑');
-    } else if (!reply.contentMarkdown) {
-      notify('当前回复缺少原文，刷新主题后再试。');
-    } else {
-      setReplyTarget(null);
-      setReplyFace('');
-      setReplyEditTarget({
-        commentId: reply.commentId,
-        floor: reply.floor,
-        contentMarkdown: reply.contentMarkdown
-      });
-      setReplyContent(reply.contentMarkdown);
-      setReplyComposerOpen(true);
-    }
-  }, [notify]);
+  const editReply = useCallback((target: ReplyEditTarget) => {
+    setReplyTarget(null);
+    setReplyFace('');
+    // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- This is an event callback, not a React state updater.
+    setReplyEditTarget(target);
+    setReplyContent(target.contentMarkdown);
+    setReplyComposerOpen(true);
+  }, []);
+
+  const detachReplyEdit = useCallback(() => {
+    setReplyComposerOpen(false);
+    setReplyFace('');
+    setReplyTarget(null);
+    setReplyEditTarget(null);
+  }, []);
 
   const completeReplySubmission = useCallback(() => {
     const next = replyComposerAfterSuccessfulSubmission();
@@ -250,6 +246,7 @@ export function useTopicSessionController({ notify }: { notify: (message: string
         changeContent: setReplyContent,
         changeFace: setReplyFace,
         completeSubmission: completeReplySubmission,
+        detachEdit: detachReplyEdit,
         editReply,
         replyToFloor,
         toggle: toggleReplyComposer

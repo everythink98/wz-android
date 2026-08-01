@@ -538,7 +538,7 @@ describe('Android release evidence guards', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const signerIndex = releaseScript.indexOf('verifyExpectedReleaseSigner(signerSha256);');
     const smokeIndex = releaseScript.indexOf("run('npm', ['run', 'smoke:android', '--', smokeApkPath]);");
-    const manifestIndex = releaseScript.indexOf('writeReleaseManifest({ sha256, signerSha256 });');
+    const manifestIndex = releaseScript.lastIndexOf('writeReleaseManifest({');
 
     expect(packageJson.scripts['smoke:android']).toBe('node scripts/smoke-android.mjs');
     expect(smokeIndex).toBeGreaterThan(signerIndex);
@@ -547,15 +547,16 @@ describe('Android release evidence guards', () => {
 
   it('keeps the published arm64 APK separate from a development-signed emulator Smoke APK', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const releaseHelpers = readProjectFile('scripts', 'release-environment.mjs');
     const releaseGradle = readProjectFile('scripts', 'android-release-apk.gradle');
-    const loadEnvIndex = releaseScript.indexOf('loadReleaseEnvFile();');
-    const smokeAbiIndex = releaseScript.indexOf('const smokeApkAbi = requestedSmokeApkAbi(process.env.WZ_ANDROID_SMOKE_ABI);');
+    const loadEnvIndex = releaseScript.indexOf('const configuredReleaseEnv = loadReleaseEnvFile();');
+    const smokeAbiIndex = releaseScript.indexOf('const smokeApkAbi = requestedSmokeApkAbi(releaseEnv.WZ_ANDROID_SMOKE_ABI);');
 
-    expect(releaseScript).toContain('process.env.WZ_ANDROID_SMOKE_ABI');
+    expect(releaseScript).not.toContain('process.env.WZ_ANDROID_SMOKE_ABI');
     expect(smokeAbiIndex).toBeGreaterThan(loadEnvIndex);
     expect(releaseScript).toContain("['arm64-v8a', smokeApkAbi]");
-    expect(releaseScript).toContain("`-PreactNativeArchitectures=${releaseApkAbis.join(',')}`");
-    expect(releaseScript).toContain("`-PreleaseApkAbis=${releaseApkAbis.join(',')}`");
+    expect(releaseHelpers).toContain("`-PreactNativeArchitectures=${builtAbis.join(',')}`");
+    expect(releaseHelpers).toContain("`-PreleaseApkAbis=${builtAbis.join(',')}`");
     expect(releaseScript).toContain('app-${smokeApkAbi}-smoke-dev.apk');
     expect(releaseScript).toContain("path.join(androidDir, 'app', 'debug.keystore')");
     expect(releaseScript).toContain("'sign',");

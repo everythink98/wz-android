@@ -1,4 +1,5 @@
 import { decodeHtml, isRecord, textContentFromHtml, textExcerpt, toIsoString } from './localHtml';
+import { stripDiscourseCalloutMarkersFromExcerpt } from './discourseContent';
 import type { Category, ReactionSummary, Reply, Source, TopicPoll, TopicPollOption } from './types';
 
 export type DiscoursePostFields = Pick<Reply,
@@ -281,7 +282,7 @@ export function discourseTopicFields(raw: unknown) {
     lastReplyAt,
     replyCount: postCount - 1,
     ...(viewCount === undefined ? {} : { viewCount }),
-    excerpt: textExcerpt(raw.excerpt || ''),
+    excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(raw.excerpt || '')),
     ...(tags.length ? { tags } : {}),
     ...(raw.closed === true ? { closed: true } : {}),
     ...(raw.archived === true ? { archived: true } : {}),

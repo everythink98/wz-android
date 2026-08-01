@@ -200,7 +200,7 @@ describe('compatible remote image sources', () => {
     expect(cachedCompatibleSvgArtifact(source)).toBeNull();
   });
 
-  it('keeps the most recently accessed artifacts within the 32-entry LRU', async () => {
+  it('[REG-PERF-009] keeps render-safe reads pure while recovery promotes the 32-entry LRU', async () => {
     const renderPoster = async (_svgBase64: string, cacheKey: string) =>
       poster(1, 1, `file:///cache/${cacheKey}.png`);
     const recover = (uri: string) => recoverCompatibleSvgArtifact({ uri }, {
@@ -219,8 +219,19 @@ describe('compatible remote image sources', () => {
 
     await recover('https://images.example.com/lru-overflow.svg');
 
-    expect(cachedCompatibleSvgArtifact(anchor)).not.toBeNull();
-    expect(cachedCompatibleSvgArtifact({ uri: 'https://images.example.com/lru-filler-0.svg' })).toBeNull();
+    expect(cachedCompatibleSvgArtifact(anchor)).toBeNull();
+    expect(cachedCompatibleSvgArtifact({ uri: 'https://images.example.com/lru-filler-0.svg' })).not.toBeNull();
+
+    const promotedAnchor = { uri: 'https://images.example.com/lru-promoted-anchor.svg' };
+    await recover(promotedAnchor.uri);
+    for (let index = 0; index < 31; index += 1) {
+      await recover(`https://images.example.com/lru-promoted-filler-${index}.svg`);
+    }
+    await recover(promotedAnchor.uri);
+    await recover('https://images.example.com/lru-promoted-overflow.svg');
+
+    expect(cachedCompatibleSvgArtifact(promotedAnchor)).not.toBeNull();
+    expect(cachedCompatibleSvgArtifact({ uri: 'https://images.example.com/lru-promoted-filler-0.svg' })).toBeNull();
   });
 
   it('[REG-TOPIC-038] bounds the complete recovery pipeline before downloads or base64 poster payloads accumulate', async () => {

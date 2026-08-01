@@ -16,6 +16,9 @@ import type { InteractionType } from '../../src/topicActionState';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
+const mockSplitTopicContentHtml = jest.fn();
+let lastFlashListItemTypes: string[] = [];
+let lastFlashListItemKeys: string[] = [];
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -45,6 +48,8 @@ jest.mock('@shopify/flash-list', () => {
         scrollToIndex: (options: unknown) => mockScrollToIndex(options),
         scrollToOffset: () => undefined
       }));
+      lastFlashListItemTypes = data.map((item) => String((item as { type?: unknown }).type || 'unknown'));
+      lastFlashListItemKeys = data.map((item, index) => keyExtractor?.(item, index) ?? String(index));
       return ReactModule.createElement(
         NativeView,
         { accessibilityLabel, testID },
@@ -106,6 +111,16 @@ jest.mock('lucide-react-native', () => {
 
 jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
 jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
+jest.mock('../../src/topicContentSplit', () => {
+  const actual = jest.requireActual<typeof import('../../src/topicContentSplit')>('../../src/topicContentSplit');
+  return {
+    ...actual,
+    splitTopicContentHtml: (...args: Parameters<typeof actual.splitTopicContentHtml>) => {
+      mockSplitTopicContentHtml(...args);
+      return actual.splitTopicContentHtml(...args);
+    }
+  };
+});
 jest.mock('../../src/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
@@ -138,7 +153,13 @@ jest.mock('../../src/screens/topic/TopicContentBlock', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    MemoizedTopicContentBlock: ({ html }: { html: string }) => {
+    MemoizedTopicContentBlock: ({
+      html,
+      originalImageUpgradeEnabled
+    }: {
+      html: string;
+      originalImageUpgradeEnabled?: boolean;
+    }) => {
       const renderers = (require('react-native-render-html') as {
         __useMockRenderers: () => Record<string, React.ComponentType<any>>;
       }).__useMockRenderers();
@@ -163,7 +184,9 @@ jest.mock('../../src/screens/topic/TopicContentBlock', () => {
       if (offset < html.length) {
         children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, html.slice(offset)));
       }
-      return ReactModule.createElement(NativeView, { testID: 'topic-html-block' }, children);
+      return ReactModule.createElement(NativeView, {
+        testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
+      }, children);
     }
   };
 });
@@ -207,17 +230,40 @@ jest.mock('../../src/screens/topic/ReplyComposerSheet', () => ({ ReplyComposerSh
 jest.mock('../../src/screens/topic/TopicMenu', () => ({ TopicMenu: () => null }));
 jest.mock('../../src/screens/topic/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
-  const { Text: NativeText } = require('react-native') as typeof import('react-native');
+  const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     DiscourseReactionPill: ({ stat }: { stat: { id: string; imageUrl?: string; label: string; value: number } }) => ReactModule.createElement(
       NativeText,
       { testID: `reaction-${stat.id}` },
       `${stat.label} ${stat.value}${stat.imageUrl ? ` ${stat.imageUrl}` : ''}`
     ),
-    MemoizedReplyItem: ({ reply }: { reply: Reply }) => ReactModule.createElement(
-      NativeText,
-      { testID: `reply-floor-${reply.floor}` },
-      `reply-${reply.floor}-${reply.author}`
+    MemoizedReplyItem: ({
+      onQuoteContentLayout,
+      reply,
+      section
+    }: {
+      onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
+      reply: Reply;
+      section?: {
+        contentToken?: string;
+        instanceKey?: string;
+        key: string;
+        measureForMaterialization?: boolean;
+      };
+    }) => ReactModule.createElement(
+      NativeView,
+      section?.measureForMaterialization ? {
+        onLayout: () => onQuoteContentLayout?.({
+          contentToken: section.contentToken!,
+          instanceKey: section.instanceKey!
+        }),
+        testID: `reply-quote-materialization-${section.key}`
+      } : undefined,
+      ReactModule.createElement(
+        NativeText,
+        { testID: `reply-floor-${reply.floor}` },
+        `reply-${reply.floor}-${reply.author}`
+      )
     ),
     NodeSeekStatPill: ({ label, value }: { label: string; value: number }) => ReactModule.createElement(
       NativeText,
@@ -431,6 +477,7 @@ function TopicFilterHarness({
         onLoadMoreReplies={onLoadMoreReplies}
         onNodeSeekCollection={jest.fn()}
         onOpenOriginal={jest.fn()}
+        onOpenTopic={jest.fn()}
         onOpenReadingSettings={jest.fn()}
         onOpenUser={jest.fn()}
         onRefreshTopic={jest.fn()}
@@ -458,6 +505,177 @@ function TopicFilterHarness({
 }
 
 describe('Topic reply filters', () => {
+  it('[REG-PERF-008] gives split opening-post blocks to FlashList instead of mounting them in its header', async () => {
+    const longTopic: TopicDetail = {
+      ...topic,
+      contentHtml: Array.from({ length: 6 }, (_, index) => `<p>${String(index).repeat(2300)}</p>`).join(''),
+      replies: [],
+      replyCount: 0
+    };
+    lastFlashListItemTypes = [];
+
+    await render(
+      <TopicFilterHarness
+        selectedTopic={longTopic}
+        topicDetail={longTopic}
+        topicReplies={[]}
+      />
+    );
+
+    const contentItemCount = lastFlashListItemTypes.filter((type) => type === 'topicContent').length;
+    expect(contentItemCount).toBeGreaterThan(1);
+    expect(lastFlashListItemTypes.slice(0, contentItemCount)).toEqual(
+      Array.from({ length: contentItemCount }, () => 'topicContent')
+    );
+    expect(lastFlashListItemTypes.indexOf('replyControls')).toBe(contentItemCount);
+  });
+
+  it('[REG-TOPIC-054][REG-TOPIC-055] measures a staged quote row before materializing the complete post', async () => {
+    const pendingFrames: FrameRequestCallback[] = [];
+    const requestFrame = jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
+      pendingFrames.push(callback);
+      return pendingFrames.length;
+    });
+    const cancelFrame = jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const reference = { source: 'linuxdo' as const, topicId: '342888', postNumber: 1 };
+    const instanceKey = 'reply:comment:222:linuxdo:342888:1';
+    const quotedReply: Reply = {
+      author: 'quoted author',
+      contentHtml: Array.from(
+        { length: 6 },
+        (_, index) => `<p>quote ${index} ${'safe text '.repeat(260)}</p>`
+      ).join(''),
+      createdAt: '2026-02-17T00:00:00.000Z',
+      floor: 1
+    };
+    const quotingReply: Reply = {
+      author: 'reader',
+      commentId: 222,
+      contentHtml: '<p>reply body after quote</p>',
+      createdAt: '2026-07-31T00:00:00.000Z',
+      floor: 2,
+      quotedPosts: [{
+        reference,
+        author: { label: 'quoted author' },
+        preview: 'quote preview'
+      }]
+    };
+    const linuxTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      id: '2685882',
+      url: 'https://linux.do/t/topic/2685882',
+      contentHtml: '<p>opening body</p>',
+      replies: [quotingReply],
+      replyCount: 1
+    };
+    const props = {
+      expandedQuotes: { [instanceKey]: true },
+      loadedQuotedReplies: { 'linuxdo:342888:1': quotedReply },
+      selectedTopic: linuxTopic,
+      topicDetail: linuxTopic,
+      topicReplies: [quotingReply]
+    };
+    lastFlashListItemKeys = [];
+    lastFlashListItemTypes = [];
+
+    try {
+      const view = await render(<TopicFilterHarness {...props} />);
+      const quoteContentKeys = () => lastFlashListItemKeys.filter(
+        (_key, index) => lastFlashListItemTypes[index] === 'replyQuoteContent'
+      );
+
+      expect(lastFlashListItemTypes.indexOf('replyStart')).toBeGreaterThan(lastFlashListItemTypes.indexOf('replyControls'));
+      expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(2);
+      const coldKeys = quoteContentKeys();
+      const measuredRows = view.getAllByTestId(/^reply-quote-materialization-/);
+      expect(measuredRows).toHaveLength(2);
+
+      await fireEvent(measuredRows[0], 'layout', {
+        nativeEvent: { layout: { height: 300, width: 720, x: 0, y: 0 } }
+      });
+      expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(2);
+      expect(pendingFrames).toHaveLength(1);
+
+      await act(async () => { pendingFrames.shift()?.(16); });
+      await waitFor(() => expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(6));
+      expect(quoteContentKeys().slice(0, 2)).toEqual(coldKeys);
+      expect(view.queryAllByTestId(/^reply-quote-materialization-/)).toHaveLength(0);
+
+      const fullKeys = quoteContentKeys();
+      await view.rerender(<TopicFilterHarness {...props} topicFavorite />);
+      expect(quoteContentKeys()).toEqual(fullKeys);
+
+      await view.rerender(<TopicFilterHarness {...props} expandedQuotes={{}} />);
+      expect(quoteContentKeys()).toHaveLength(0);
+      await view.rerender(<TopicFilterHarness {...props} />);
+      expect(quoteContentKeys()).toEqual(fullKeys);
+
+      const changedReply = { ...quotedReply, contentHtml: `${quotedReply.contentHtml}<p>changed content</p>` };
+      await view.rerender(
+        <TopicFilterHarness
+          {...props}
+          loadedQuotedReplies={{ 'linuxdo:342888:1': changedReply }}
+        />
+      );
+      expect(quoteContentKeys()).toHaveLength(2);
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+    }
+  });
+
+  it('[REG-PERF-008] does not split an unchanged opening post after unrelated topic state changes', async () => {
+    const openingTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      contentHtml: '<p>opening body</p>',
+      polls: []
+    };
+    mockSplitTopicContentHtml.mockClear();
+    const view = await render(
+      <TopicFilterHarness selectedTopic={openingTopic} topicDetail={openingTopic} />
+    );
+    const initialCalls = mockSplitTopicContentHtml.mock.calls.length;
+    expect(initialCalls).toBeGreaterThan(0);
+
+    const likedTopic = { ...openingTopic, liked: true };
+    await view.rerender(
+      <TopicFilterHarness selectedTopic={likedTopic} topicDetail={likedTopic} />
+    );
+    expect(mockSplitTopicContentHtml).toHaveBeenCalledTimes(initialCalls);
+
+    const changedBodyTopic = { ...likedTopic, contentHtml: '<p>changed opening body</p>' };
+    await view.rerender(
+      <TopicFilterHarness selectedTopic={changedBodyTopic} topicDetail={changedBodyTopic} />
+    );
+    expect(mockSplitTopicContentHtml.mock.calls.length).toBeGreaterThan(initialCalls);
+  });
+
+  it('[REG-TOPIC-048] enables original-image upgrades when FlashList mounts an opening-post chunk', async () => {
+    const topicWithImage = {
+      ...topic,
+      contentHtml: '<p>opening post <img src="https://img.example.com/opening.png"></p>'
+    };
+    const view = await render(
+      <TopicFilterHarness
+        selectedTopic={topicWithImage}
+        topicDetail={topicWithImage}
+        topicReplies={[]}
+      />
+    );
+    const content = view.getByTestId('topic-html-block-deferred');
+    let frame = content.parent;
+    while (frame && typeof frame.props.onLayout !== 'function') frame = frame.parent;
+    expect(frame).toBeTruthy();
+
+    await fireEvent(frame!, 'layout', {
+      nativeEvent: { layout: { height: 200, width: 720, x: 0, y: 0 } }
+    });
+
+    await waitFor(() => expect(view.getByTestId('topic-html-block-ready')).toBeTruthy());
+  });
+
   it.each(['linuxdo', 'xiaoyinsi'] as const)(
     '[REG-TOPIC-026] renders the accepted %s answer inside the opening post before the reply list',
     async (source) => {
@@ -506,7 +724,7 @@ describe('Topic reply filters', () => {
       await fireEvent.press(view.getByLabelText('查看完整解决方案，第 2 楼'));
       expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({
         animated: true,
-        index: 2
+        index: 4
       }));
     }
   );
@@ -555,9 +773,11 @@ describe('Topic reply filters', () => {
         contentHtml: `<p>后分页采纳答案正文</p>${discoursePollPlaceholder('accepted-answer-poll')}`,
         floor: acceptedFloor,
         polls: [{ ...topicPoll, name: 'accepted-answer-poll' }],
-        quotedAuthors: { 7: { label: 'quoted-user', username: 'quoted-user' } },
-        quotedFloors: [7],
-        quotedPreviews: { 7: '采纳答案引用摘要' }
+        quotedPosts: [{
+          reference: { source, topicId: solvedTopic.id, postNumber: 7 },
+          author: { label: 'quoted-user', username: 'quoted-user' },
+          preview: '采纳答案引用摘要'
+        }]
       };
       await view.rerender(
         <TopicFilterHarness
@@ -644,7 +864,7 @@ describe('Topic reply filters', () => {
     await waitFor(() => expect(view.getByPlaceholderText('评论内查找').props.value).toBe(''));
     await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledWith({
       animated: true,
-      index: 2
+      index: 3
     }));
   });
 
@@ -845,7 +1065,7 @@ describe('Topic reply filters', () => {
     expect(beforeIndex).toBeGreaterThanOrEqual(0);
     expect(pollIndex).toBeGreaterThan(beforeIndex);
     expect(afterIndex).toBeGreaterThan(pollIndex);
-    expect(view.getAllByTestId('topic-html-block')).toHaveLength(1);
+    expect(view.getAllByTestId('topic-html-block-deferred')).toHaveLength(1);
     expect(view.getAllByTestId('topic-poll-nodeseek')).toHaveLength(1);
   });
 
@@ -1178,7 +1398,7 @@ describe('Topic reply filters', () => {
     ]);
 
     await fireEvent.press(view.getByLabelText('全部'));
-    await fireEvent.changeText(view.getByPlaceholderText('评论内查找'), 'needle');
+    await fireEvent.changeText(view.getByLabelText('评论内查找'), 'needle');
     expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual(['reply-2-bob', 'reply-3-alice']);
 
     await fireEvent.press(view.getByLabelText('清空查找'));

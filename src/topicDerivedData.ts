@@ -40,6 +40,34 @@ export function inlineSizedImageSignatureForReply(
   return inlineSizedImageSignatureForHtml(replyHtmlWithSignature(reply), inlineSizedImageUrls);
 }
 
+export function sameInlineSizedImagesForHtml(
+  previousHtml: string | undefined,
+  nextHtml: string | undefined,
+  previousUrls: InlineSizedImageUrlMap,
+  nextUrls: InlineSizedImageUrlMap
+) {
+  return previousHtml === nextHtml
+    && (
+      previousUrls === nextUrls
+      || inlineSizedImageSignatureForHtml(previousHtml || '<p></p>', previousUrls)
+        === inlineSizedImageSignatureForHtml(nextHtml || '<p></p>', nextUrls)
+    );
+}
+
+export function sameInlineSizedImagesForReply(
+  previousReply: Pick<Reply, 'contentHtml' | 'signatureHtml'>,
+  nextReply: Pick<Reply, 'contentHtml' | 'signatureHtml'>,
+  previousUrls: InlineSizedImageUrlMap,
+  nextUrls: InlineSizedImageUrlMap
+) {
+  return previousReply === nextReply
+    && (
+      previousUrls === nextUrls
+      || inlineSizedImageSignatureForReply(previousReply, previousUrls)
+        === inlineSizedImageSignatureForReply(nextReply, nextUrls)
+    );
+}
+
 function inlineSizedImageCacheKey(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
   const urls = inlineSizedImageUrlsForHtml(html, inlineSizedImageUrls);
   return urls.length ? `${html}\n__inline__\n${urls.join('\n')}` : html;

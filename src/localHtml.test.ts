@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { decodeHtml, sanitizeContentHtml, textContentFromHtml } from './localHtml';
 
@@ -41,6 +41,92 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain('href="mailto:user@example.com"');
     expect(result).toContain('src="https://example.com/base/images/a.png"');
     expect(result).toContain('src="https://cdn.example.com/a.png"');
+  });
+
+  it('[REG-PERF-008] applies a source transform inside the sanitizer parse', () => {
+    let transformCount = 0;
+    const result = sanitizeContentHtml('<iframe src="https://embed.example.com/post"></iframe>', 'https://example.com/', (root) => {
+      transformCount += 1;
+      root.querySelector('iframe')?.replaceWith('<p>source transformed</p>');
+    });
+
+    expect(transformCount).toBe(1);
+    expect(result).toContain('<p>source transformed</p>');
+    expect(result).not.toContain('<iframe');
+  });
+
+  it('[REG-PERF-008] sanitizes LinuxDo source transforms with one DOM parse', async () => {
+    const nodeHtmlParser = await import('node-html-parser');
+    const parse = vi.fn(nodeHtmlParser.parse);
+    vi.resetModules();
+    vi.doMock('node-html-parser', () => ({ ...nodeHtmlParser, parse }));
+    try {
+      const { sanitizeLinuxDoContentHtml } = await import('./localLinuxdo');
+      const before = parse.mock.calls.length;
+      const result = sanitizeLinuxDoContentHtml(`
+        <script>alert(1)</script>
+        <div class="poll" data-poll-name="choice" onclick="alert(2)"></div>
+        <iframe src="https://embed.reddit.com/r/test/comments/abc/title?utm_source=test"></iframe>
+        <a href="javascript:alert(3)">unsafe</a>
+      `, [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]);
+
+      expect(parse.mock.calls.length - before).toBe(1);
+      expect(result).toContain('<forum-discourse-poll name="choice"></forum-discourse-poll>');
+      expect(result).toContain('<forum-link-card');
+      expect(result).toContain('href="https://www.reddit.com/r/test/comments/abc/title"');
+      expect(result).not.toMatch(/<script|onclick|javascript:/i);
+    } finally {
+      vi.doUnmock('node-html-parser');
+      vi.resetModules();
+    }
+  });
+
+  it('[REG-TOPIC-056] sanitizes Xiaoyinsi polls and Callouts with one DOM parse', async () => {
+    const nodeHtmlParser = await import('node-html-parser');
+    const parse = vi.fn(nodeHtmlParser.parse);
+    vi.resetModules();
+    vi.doMock('node-html-parser', () => ({ ...nodeHtmlParser, parse }));
+    try {
+      const { sanitizeXiaoyinsiContentHtml } = await import('./localXiaoyinsi');
+      const before = parse.mock.calls.length;
+      const result = sanitizeXiaoyinsiContentHtml(`
+        <blockquote><p>[!warning] 注意<br>正文</p></blockquote>
+        <div class="poll" data-poll-name="choice"></div>
+      `, [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]);
+
+      expect(parse.mock.calls.length - before).toBe(1);
+      expect(result).toContain('data-forum-callout-type="warning"');
+      expect(result).toContain('<forum-discourse-poll name="choice"></forum-discourse-poll>');
+    } finally {
+      vi.doUnmock('node-html-parser');
+      vi.resetModules();
+    }
+  });
+
+  it('[REG-TOPIC-056] skips Callout traversal for ordinary HTML but scrubs forged semantics', async () => {
+    const actual = await import('./discourseContent');
+    const normalizeDiscourseCallouts = vi.fn(actual.normalizeDiscourseCallouts);
+    vi.resetModules();
+    vi.doMock('./discourseContent', async () => ({
+      ...await vi.importActual<typeof import('./discourseContent')>('./discourseContent'),
+      normalizeDiscourseCallouts
+    }));
+    try {
+      const { sanitizeLinuxDoContentHtml } = await import('./localLinuxdo');
+
+      expect(sanitizeLinuxDoContentHtml('<blockquote><p>Ordinary quote</p></blockquote>', [])).toContain('Ordinary quote');
+      expect(normalizeDiscourseCallouts).not.toHaveBeenCalled();
+
+      const forged = sanitizeLinuxDoContentHtml(
+        '<blockquote data-forum-callout="true"><div class="forum-callout-title">Forged</div></blockquote>',
+        []
+      );
+      expect(normalizeDiscourseCallouts).toHaveBeenCalledTimes(1);
+      expect(forged).toBe('<blockquote><div>Forged</div></blockquote>');
+    } finally {
+      vi.doUnmock('./discourseContent');
+      vi.resetModules();
+    }
   });
 
   it('turns plain code blocks into terminal blocks for any source', () => {

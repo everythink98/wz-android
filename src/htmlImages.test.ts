@@ -509,6 +509,18 @@ describe('Android HTML image preview helpers', () => {
     }, 1, 26)).toEqual({ transform: [{ translateY: 3 }] });
   });
 
+  it('[REG-TOPIC-054] leaves breathing room after an inline quote avatar', () => {
+    expect(inlineForumImageAlignmentStyle({
+      class: 'avatar',
+      src: 'https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png',
+      width: '24',
+      height: '24'
+    }, 1, 26)).toEqual({
+      marginRight: 6,
+      transform: [{ translateY: 1 }]
+    });
+  });
+
   it('keeps real images block-like even when mixed with paragraph text', () => {
     const mixed = '<p>hello 😟<img alt="image" src="https://cdn.example.com/sticker.png"></p>';
     const standalone = '<p><img alt="image" src="https://cdn.example.com/photo.jpg"></p>';

@@ -43,14 +43,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `NAV-02`、`NAV-03`、`TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`TOPIC-04`、`USER-01`、`USER-02` |
-| 用户症状 | 从 Topic 或 User 返回时偶发卡顿；正常 native pop 已由 route-key 恢复目标 Topic，返回 handler 又同步恢复整份 snapshot，User 路径还再次 `openTopic`。 |
+| 用户症状 | 从 Topic 或 User 返回时偶发卡顿或状态回滚；returning native route 已保留自己的可视 presentation，返回链路却又恢复整份 fallback snapshot，User 路径还再次 `openTopic`。 |
 | 触发条件 | Topic → Topic → 返回，或 Topic → User → Topic；原生栈存在可返回的 Topic route，同时内存中也保留兼容 fallback snapshot。 |
 | 根因 seam | `src/app/AppRoot.tsx` 的 Topic/User 返回策略、`src/app/useTopicSessionController.ts` 的 route 恢复幂等边界，以及 `src/app/backHandlerHelpers.ts` 的返回决策。 |
-| 必须保持的行为 | 正常 native pop 只以目标 route key 恢复可视 Topic；重复报告当前 active route 必须 no-op。User 转场结束后只恢复 return-screen/back stack 元数据；仅缺少可返回 Topic route 或不能 pop 时才执行完整 snapshot fallback 与重新打开。离开 route 时请求取消和 owner 失效仍立即发生。 |
-| 精确失败 oracle | `tests/ui/topic-session-controller.test.tsx` 保存旧 route snapshot 后修改当前草稿，再重复恢复 active route，要求当前草稿不回滚；`src/app/backHandlerHelpers.test.ts` 要求有可 pop Topic route 时即使也有 snapshot 仍选择 route-key 路径，且实际 Topic 分支只 pop、零 snapshot restore，User 分支只排队 metadata restore、零完整 fallback/open；缺 route/不能 pop 才选择 snapshot fallback。 |
+| 必须保持的行为 | 正常 native pop 由 returning route 自己缓存的 presentation 保证可视连续性；返回链路只恢复精确 route session，当前 active route 的重复报告必须 no-op。User 转场结束后只恢复 return-screen/back stack 元数据；仅精确 route snapshot 丢失或不能 pop 时才执行完整 snapshot fallback 与重新打开。离开 route 时请求取消和 owner 失效仍立即发生。 |
+| 精确失败 oracle | `tests/ui/topic-session-controller.test.tsx` 保存旧 route snapshot 后修改当前草稿，再重复恢复 active route，要求当前草稿不回滚；`src/app/backHandlerHelpers.test.ts` 要求可 pop Topic route 只 dispatch 一次 pop 并恢复精确 route，route miss 才恢复 fallback snapshot，User 分支只排队 metadata restore、零完整 fallback/open。`tests/ui/app-navigator.test.tsx` 与 `REG-PERF-008` 另固定 route presentation 的可见隔离；helper 调用顺序不能代替该 UI oracle。 |
 | 最低可靠自动测试层 | `UI_PASS` 固定 session 状态没有二次提交，`UNIT_PASS` 固定返回分支；实际 native 转场和帧时序仍需设备验收。 |
 | Replay 或真实验收路径 | 在匹配构建上分别执行五站列表 → Topic → 返回、Topic → User → Topic、嵌套 Topic 返回；核对筛选、草稿、展开引用、滚动位置和逐层返回，并记录 20 次帧指标。 |
-| 负向验证方式 | 移除 active-route no-op，或让有 returning route 的正常 pop 仍选择 snapshot fallback，编号测试必须分别回滚当前草稿或选错返回策略。 |
+| 负向验证方式 | 移除 active-route no-op，或让有 returning route 的正常 pop 仍选择完整 snapshot fallback，编号测试必须分别回滚当前草稿或选错返回策略。 |
 | 明确不覆盖范围 | 第三方请求当天延迟、随机目标是否存在和未经授权的论坛写操作不由该回归固定。 |
 
 ## `REG-PERF-003` Feed 来源切换把列表工作压进 Pager 收尾帧
@@ -113,6 +113,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | `tests/device/four-source-feed.ad` 执行“全部 → V2EX → 全部”，每次等待目标 selected 与本次合法 outcome。匹配 revision 的 90Hz Release 模拟器再覆盖曾访问/冷来源、取消、连续反向、来源栏点击和六来源正反向，检查旧标题零帧可见、导航不慢一步、每次完成切换一次新请求；性能门槛沿用 `REG-PERF-004`。 |
 | 负向验证方式 | 让二级导航继续读取 active `feedSource`、恢复 `feedScenePreviews`/Query cache subscription、取消目标 Feed cache 清理或让 inactive scene 挂 FlashList，编号 UI/controller oracle必须失败。 |
 | 明确不覆盖范围 | 不改变 Gateway、Query key 结构、全局 `staleTime`、站点协议、依赖或原生配置；不证明第三方当天响应速度，也不以限流为由自动重试或恢复缓存。 |
+
+## `REG-PERF-008` 嵌套 Topic 共用 presentation 且大正文同步挂载阻塞返回
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-02`、`NAV-03`、`TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
+| 用户症状 | 从评论里的跨主题链接进入大主题后，在“正在读取主题”期间点击顶栏或 Android 返回没有立即离开；加载完成后返回也可能先闪白/灰空页。超长 opening body 虽然被分块，进入和返回时仍有明显同步卡顿。 |
+| 触发条件 | 多个 native Topic route 共用一个全局 renderer/session/list ref，使 A、B route 同时消费当前 B presentation；native-stack 保留上一 route 时，A 没有自己的可视内容可立即恢复。超长 opening body 又在 FlashList `ListHeaderComponent` 中同步挂载全部 chunk；读取端与展示端对同一正文重复 DOM parse，普通 chunk 还逐个解析“是否纯视频”，任意 topic 对象更新也会重跑整篇拆分。 |
+| 根因 seam | `src/app/AppNavigator.tsx` 的 route presentation/媒体活动所有权、`src/app/AppRoot.tsx` 的 route seed 与全局 active Topic runtime、`src/screens/topic/TopicScreenBody.tsx` 的 FlashList item/memo 输入边界，以及 `src/localHtml.ts`、`src/localLinuxdo.ts`、`src/discourseContent.ts`、`src/topicContentSplit.ts` 的 DOM ownership。`src/app/backHandlerHelpers.ts` 只负责一次 pop 与精确/fallback session 恢复分支；它的函数调用顺序不能证明原生转场首帧。 |
+| 必须保持的行为 | 每个 Topic route 只以稳定的 `source + topicId` identity 绑定目标并拥有独立 list ref；只有 identity 与当前 route/content generation 匹配的 focused presentation 可更新缓存。inactive route 保留最后一次匹配 UI，但关闭 pointer/accessibility 交互并暂停原图升级；epoch 变化或 identity 不匹配立即使缓存失效。opening body chunk、正文后控件和回复必须作为同一 FlashList data，正文按 render window 挂载；已挂载 chunk 才可升级原图。LinuxDo source transform 与通用 sanitizer 共用一棵 DOM；无 poll placeholder/原生 video tag 时跳过对应解析，正文/polls/source 未变时不得因点赞或收藏对象更新重拆正文。正式解析前让出一次事件循环并再次检查 AbortSignal，使 Loading 期间已排队的返回先取消读取。返回只 dispatch 一次 native pop，returning route 立即使用自己的 presentation；全局 active runtime 通过精确 route snapshot 独立恢复。迟到 B 结果不得覆盖 A；上级筛选、展开引用、草稿、回复页和滚动位置保持。 |
+| 精确失败 oracle | `tests/ui/app-navigator.test.tsx` 固定 A ready/B Loading 的 route 可见隔离、跨 epoch 拒绝和 inactive 原图暂停；`tests/ui/topic-reply-filters.test.tsx` 固定 opening-body item 位于 FlashList data、mounted-cell 原图 gate，以及正文未变时不重复 split。`src/localHtml.test.ts` 固定 LinuxDo poll/Reddit transform 只触发一次 DOM parse且后续安全清理有效；`src/discourseContent.test.ts`、`src/topicContentSplit.test.ts` 固定普通内容不进入多余解析；`src/localSources.test.ts` 固定已排队取消在正文解析前胜出。`src/app/backHandlerHelpers.test.ts` 与 `tests/ui/topic-session-controller.test.tsx` 固定一次 pop、精确 route restore、route-miss fallback 和先保存 A 再选择 B；这些状态/顺序测试不替代 AppNavigator 可见 oracle。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定 route presentation 隔离、非交互边界、真实 React session 恢复和正文 list shape；`UNIT_PASS` 固定返回分支。native transition 的空白帧与超长正文实际挂载成本仍须匹配 APK 的模拟器/设备只读验收。 |
+| Replay 或真实验收路径 | 保留 App 数据直达 `https://linux.do/t/topic/2685882`，点击首条跨主题引用标题，在目标仍显示 Loading 时立即返回；必须一次返回到原主题且旧内容、筛选与滚动可用。目标若已命中缓存，覆盖进入后立即返回和加载完成后返回；全程只读。 |
+| 负向验证方式 | 恢复全局 Topic presentation/shared list ref、允许 inactive route 交互或继续升级原图、跨 epoch 复用缓存、先 select B 再保存 A，或把 opening-body chunk 移回 ListHeader 全量 `map`，编号 UI oracle 必须失败。恢复 LinuxDo 双重 sanitizer parse、普通 chunk 逐个 video parse、整 topic 对象 memo 依赖或取消前不让出事件循环，对应性能 oracle 必须失败。 |
+| 明确不覆盖范围 | 不以关闭动画、延长 Loading、禁用链接、预取整篇大主题、额外 memo/cache 或 idle prewarm 掩盖问题；第三方响应速度和物理高刷绝对帧指标分别记录，不执行真实论坛写操作。 |
 
 ## `REG-FEED-001` 首次加载出现两套 Loading
 
@@ -804,6 +819,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 重新向任一可见验证 WebView 传入固定 UA、让旧存储 UA 覆盖当前 provider，或在 sanitizer 中删除 `wv`/`Version/4.0`，对应编号测试必须失败。 |
 | 明确不覆盖范围 | 不自动解决 Cloudflare，不伪造 clearance，不通过切换 IP、代理或浏览器指纹规避站点策略；Android System WebView 更新属于验收环境维护，不由 App 静默安装。 |
 
+## `REG-VERIFICATION-004` 登录 WebView 超时后仍持续运行
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-02`、`ACCOUNT-04`、`MORE-02`；共享 `RELEASE-02` |
+| 用户症状 | 登录面板已经显示“页面打开超时”，但第三方页面仍在后台刷新；Android accessibility 无法读取 App 自有错误、刷新按钮或 `nodeseek-login-webview-settled`，Release Replay 永久等到失败。 |
+| 触发条件 | NodeSeek、linux.do 或妖火页面主体已可见，但子资源、脚本或持续变化的 DOM 让 `onLoadEnd` 长期不触发；12 秒 watchdog 只关闭 Loading 并写错误文案，没有终止当前 WebView generation。 |
+| 根因 seam | 登录面板 terminal outcome 与原生 WebView renderer 生命周期分属不同 state owner；timeout 被当成展示状态，而不是当前 generation 的结束边界。 |
+| 必须保持的行为 | 当前 generation 在 timeout 或 renderer gone 后立即卸载，停止继续占用 renderer 并让 App 自有错误、关闭和刷新入口恢复可访问；NodeSeek timeout 仍暴露 settled marker。Cookie、凭据、账号状态和面板本身不清除，用户可关闭；只有显式点击“刷新页面”才创建新 WebView generation。正常 `onLoadEnd`、用户检测提交和凭据填入不因普通 rerender remount。三站使用各自既有 state，不新增 scheduler 或测试专用产品入口。 |
+| 精确失败 oracle | `tests/ui/account-site-panels.test.tsx` 的 `REG-VERIFICATION-004` 分别用 12 秒 fake timer 驱动 NodeSeek、linux.do、妖火，要求 WebView 卸载且显式刷新后恰好 remount；旧实现三例都保留 `mock-login-webview`。`tests/device/nodeseek-session.ad` 在真实 Android 上等待 App 自有 settled marker、刷新和返回，不读取第三方 DOM。 |
+| 最低可靠自动测试层 | `UI_PASS` + `DEVICE_REPLAY_PASS`：RNTL 固定三站组件生命周期，Release APK Replay 证明失败 WebView 不再阻断 Android hierarchy；截图只能辅助定位，不能替代可重复 oracle。 |
+| Replay 或真实验收路径 | 用与 revision/version/SHA-256 匹配的 Release smoke APK 覆盖安装且保留登录态，运行零重试 `nodeseek-session.ad`；页面正常完成或 12 秒后进入 App 错误均应结算，刷新创建新页面，系统返回回到 More。linux.do、妖火由同一轮只读 Agent Live 检查 timeout/renderer gone 时的错误与刷新入口。 |
+| 负向验证方式 | 删除 timeout 的卸载状态、让刷新前自动 remount，或在 timeout 后继续渲染旧 WebView；三个 UI oracle会看到旧 mount，NodeSeek Replay 会再次因 busy hierarchy 超时。 |
+| 明确不覆盖范围 | 不保证第三方页面或 challenge 当天可达，不把 timeout 当作登录成功，不自动重试、清 Cookie、改变登录态、绕过验证或读取第三方 DOM。 |
+
 ## `REG-ACCOUNT-001` 身份读取失败覆盖已确认账号状态
 
 | 字段 | 内容 |
@@ -1245,11 +1275,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | keystore 路径错误时，完整测试和 clean prebuild 后才在 Gradle 报错，且相对路径可能按 `android/app` 而不是仓库根解析。 |
 | 触发条件 | Node 发布脚本只检查环境变量和 debug 文件名，不验证文件身份，也不统一路径基准。 |
 | 根因 seam | `scripts/release-android.mjs` 的签名环境预检与 Gradle 环境传递。 |
-| 必须保持的行为 | keystore 相对仓库根解析为绝对路径，必须存在且为普通文件，并在任何 version/verify/prebuild/Gradle 工作前回写环境变量；密码和 alias 不得输出。 |
-| 精确失败 oracle | `src/releaseSigning.test.ts` 复制真实 CLI 到临时项目，同时配置缺失 keystore 和非法 ABI：必须先报告解析后的 keystore 根因；目录也必须被拒绝。 |
-| 最低可靠自动测试层 | `UNIT_PASS`：真实 Node CLI 的退出顺序；正式 Gradle 签名仍只在获授权的发布验证中执行。 |
+| 必须保持的行为 | release 先完成 Node 22 与 clean checkout 门禁；随后 keystore 相对仓库根解析为绝对路径，必须存在且为普通文件，并在 version/verify/prebuild/Gradle 等昂贵工作前进入局部签名环境；密码和 alias 不得输出。 |
+| 精确失败 oracle | `src/releaseSigning.test.ts` 直接验证缺失相对路径按仓库根解析并报告、目录被拒绝；`src/releaseWorkflow.test.ts` 固定 Node/clean 之后、version/verify/prebuild 之前执行签名环境预检。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `STATIC_PASS`：纯路径 helper 固定文件身份，workflow guard 固定调用顺序；正式 Gradle 签名仍只在获授权的发布验证中执行。 |
 | Replay 或真实验收路径 | 明确发布任务按 operator runbook 提供真实 keystore 后运行完整 release；本回归不读取或复制真实密钥。 |
-| 负向验证方式 | 移除文件检查、改回 basename-only 或把预检移到 `npm run verify` 后，编号测试必须收到 ABI 错误或错误顺序。 |
+| 负向验证方式 | 移除文件检查、改回 basename-only，或把签名预检移到 version/verify/prebuild 之后，编号测试或 workflow guard 必须失败。 |
 | 明确不覆盖范围 | 不验证 keystore 密码、alias 或证书内容；这些继续由 apksigner 与固定 signer 门禁验证。 |
 
 ## `REG-OPS-014` Android Smoke 自相冲突的设备 session
@@ -3341,7 +3371,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-03`、`NAV-02` |
 | 用户症状 | linux.do 或小隐寺引用缺少 `data-username` 时，显示名、头像路径或标题回退被当成 username；点击作者会进入不存在或错误的用户页。 |
 | 触发条件 | 回复模型用单个字符串同时表达引用作者的显示标签和站内路由身份，两套 Discourse adapter 的回退规则又各自漂移。 |
-| 根因 seam | `src/discourseContent.ts` 的共享 Discourse 引用解析、`Reply.quotedAuthors` 数据模型与 `ReplyItem` 导航门禁。 |
+| 根因 seam | `src/discourseContent.ts` 的共享 Discourse 引用解析、`Reply.quotedPosts[].author` 数据模型与 `ReplyItem` 导航门禁。 |
 | 必须保持的行为 | 引用始终可显示最可靠的 `label`；只有原始 `data-username` 能产生可导航 `username`。display-name、头像 URL 和标题只作 label；linux.do 与小隐寺使用同一解析实现，本主题引用继续移出正文并保留摘要。 |
 | 精确失败 oracle | `tests/ui/topic-components.test.tsx` 的 `REG-TOPIC-035` 构造只有 label 的引用，要求显示标签且点击不调用 `onOpenUser`；`src/localSources.test.ts` 固定头像回退只有 label，显式 username 同时保留两字段；`src/localXiaoyinsi.test.ts` 固定同一结构。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：来源归一化与真实 ReplyItem 点击行为。 |
@@ -3574,6 +3604,66 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 给普通栅格分支恢复任意正时长 transition，编号 UI 用例必须收到该值并失败；只对当前页关闭而让可见相邻页继续 cross-dissolve 也不满足 oracle。 |
 | 明确不覆盖范围 | 不改变 PagerView、背景色、预取数量、下采样策略、SVG 恢复、正文渐进升级或 Expo 依赖版本；不增加自定义双层动画、配置项或仅能断言手势成功的 Replay。 |
 
+## `REG-TOPIC-052` 全屏重复打开已显示图片仍闪 Spinner
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02` |
+| 用户症状 | 同一张原图已经在全屏成功显示，关闭后再次点击，仍会短暂出现“图片加载中”并闪一下。 |
+| 触发条件 | 全屏页关闭后重新挂载；共享层已经记录同一完整媒体 request identity 的 `onDisplay` 成功，但新页面仍把局部状态固定初始化为 `loading`，随后 memory-cache 的 `onLoadStart` 又继续维持 Spinner。 |
+| 根因 seam | `src/components/ImagePreviewModal.tsx` 的普通栅格预览状态没有消费 `src/originalImageLoading.tsx` 已有的进程内显示证明。 |
+| 必须保持的行为 | 同一 URL、cache key、headers/session identity 已经 `onDisplay` 成功后，本进程内再次打开必须直接显示现有 placeholder/cache 像素，不恢复 Spinner；随后同一请求的 `onLoadStart` 也不得重新显示遮罩。内部状态、30 秒 timeout 与 diagnostics 仍保持 loading，超时必须进入失败，显式重试必须重新显示 Spinner。冷图、新 session identity 与 SVG poster 继续使用原有 loading/error 生命周期，静态 poster 仍须等本次 `onDisplay` 才撤下遮罩；显示证明受既有 512 项 LRU 限制。 |
+| 精确失败 oracle | `tests/ui/image-preview.test.tsx` 的 `REG-TOPIC-052` 先观察冷图 Spinner和 `onDisplay` 结算，再关闭并用相同 recycling/request identity 重开；共享 revision 必须已存在，重开前后及再次触发 `onLoadStart` 后均不得出现“图片加载中”，推进 30 秒仍须失败且显式重试重新显示 Spinner。`REG-TOPIC-043` 另让静态 poster 首次 `onDisplay` 后重开，要求新 poster 在本次 `onDisplay` 前仍保留 Spinner。修复前普通图重开立即收到 Spinner；把状态直接伪装为 loaded 又会使 timeout 与 SVG 门槛失败。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 通过公开 `ImagePreviewModal` 驱动真实关闭/重开与 Expo Image 回调；只测试 revision Map 或缓存 key 不足以证明用户可见遮罩。 |
+| Replay 或真实验收路径 | 在身份与当前 APK 匹配的详情中只读打开同一张图片，等待清晰显示后关闭并重复打开三次；第一次允许冷加载，之后不得闪 Spinner。不得通过断网、清缓存、清 Cookie 或写入论坛制造状态。 |
+| 负向验证方式 | 删除已显示 revision 的初始化读取，或让已显示请求的 `onLoadStart` 无条件写回 loading，编号 UI 用例必须重新看到 Spinner。 |
+| 明确不覆盖范围 | 不增加图片预热、全局缓存、依赖或动画；App 重启、LRU 淘汰、URL/session identity 变化后仍按冷请求处理。 |
+
+## `REG-TOPIC-053` 跨主题评论引用被当作普通 HTML
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 用户症状 | linux.do 评论中的跨主题引用没有显示为引用卡片，而是把头像、主题标题、分类和整段灰色 blockquote 当作普通评论 HTML 展开；同楼层还可能误取当前主题的帖子。 |
+| 触发条件 | 评论 quote 的 `data-topic` 与当前主题不同。共享 parser 把 topic mismatch 判成“不是引用”，而 `Reply` 只保存 floor-only 的三组并行字段，UI 又用当前 topic + floor 重建引用身份。 |
+| 根因 seam | `src/discourseContent.ts` 的 Discourse reply quote 提取、`Reply.quotedPosts` 的完整身份、linux.do/小隐寺 adapter、`ReplyItem` 的本地楼层复用与 `useTopicController` 的引用事件。2026-07-16 的 `REG-TOPIC-003` 只对正文构造跨主题 fixture，评论 fixture 仍是同主题；2026-07-26 抽公共 parser 时保留了该限制，因此文档承诺没有对应评论 oracle。 |
+| 必须保持的行为 | 合法评论 quote 从 parser 到 Reply、UI event、Query 全程携带 `source + topicId + postNumber`，从普通 `contentHtml` 删除 aside 并显示作者、目标主题链接、简介和展开入口。只有 reference topic 等于当前 topic 时才能复用 `repliesByFloor`；跨主题只读 full-key Query cache/transport。目标标题链接仍按站内 Topic 导航，display-only 作者不得猜成 username。主楼正文 quote 继续使用独立 renderer，不与评论卡片合并。 |
+| 精确失败 oracle | `src/discourseContent.test.ts` 要求 cross-topic aside 产出 full reference 并从 HTML 移除；`src/localSources.test.ts` 与 `src/localXiaoyinsi.test.ts` 固定两站 adapter；`tests/ui/topic-components.test.tsx` 注入当前主题同楼层错误内容，要求默认只见跨主题简介、目标标题可内部跳转、展开只见 full-key 正确内容；`tests/ui/topic-session-controller.test.tsx` 让两个引用实例指向同一跨主题 reference，要求 transport 一次、两个 instance 均展开。`REG-TOPIC-003/007/035` 继续通过。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 parser/adapter/full key，`UI_PASS` 固定可见卡片、内部跳转、本地楼层门禁、Query 去重和作者导航边界。 |
+| Replay 或真实验收路径 | 保留 App 数据直达 `https://linux.do/t/topic/2685882`，检查首条可见回复的跨主题内容为单个引用卡片而非原始灰色 HTML；点击“盘点L站的徽章…”进入目标，再按 `REG-PERF-008` 分别在 Loading 与加载完成后返回。不得扫描其他主题、绕过 Cloudflare或执行写操作。 |
+| 负向验证方式 | 恢复 `data-topic !== currentTopicId` 跳过、恢复 floor-only 字段、无条件读取 `repliesByFloor.get(postNumber)`，或从 toggle event 删除 reference，编号 parser/adapter/UI/controller 至少一层必须失败。 |
+| 明确不覆盖范围 | 不改变原站引用正文，不预取目标主题，不合并主楼与评论引用 UI；动态目标内容改变时只核对引用结构和身份，不固定实时文本或回复数。 |
+
+## `REG-TOPIC-054` 超长评论引用展开时同步挂载整帖并挤压作者信息
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`TOPIC-03` |
+| 用户症状 | 已加载的超长跨主题引用再次展开仍会长时间卡顿；头像稍后出现会推挤姓名，长作者名和标题拥挤，引用分块之间还可能露出灰色空带。进入引用目标再返回时，还可能显示“收起”却没有正文；两条同展示楼层的回复可能一起展开或串位。 |
+| 触发条件 | 一个 ReplyItem 在单个父列表 cell 中同步创建引用帖的全部 HTML/图片节点；目标为首帖时另走 reply Query 而没有复用同 epoch Topic cache；route 只恢复 expanded boolean、未从当前 epoch cache 重建 active request；实例 key 只绑定展示楼层；任一状态变化重复拆分所有已展开正文。头像节点只在 URL 存在时挂载，列表全局 gap 又被用于同一卡片的连续分块。 |
+| 根因 seam | `useTopicController` 的引用 Query、`buildVirtualizedReplyItems`、`TopicScreenBody` 的唯一纵向 FlashList、`ReplyItem` 分段渲染与引用卡片样式。 |
+| 必须保持的行为 | 目标首帖已在当前 session epoch 的 Topic Query cache 时直接转换并 seed 对应 reply Query，零重复 transport；route 恢复已展开评论引用时，从当前回复实体和同 epoch reply cache 重建 observer。引用实例绑定稳定 reply identity（优先 commentId），展示楼层只用于文案。评论、每个引用摘要、展开正文 chunk 和评论尾部按稳定顺序成为父 FlashList data，由同一个 render window 挂载，不创建嵌套纵向列表。折叠只移除正文 rows，二次展开复用 WeakMap 中同一 immutable Reply 的拆分结果和稳定 key。头像位始终保留 fallback，作者单行、标题最多两行；同一卡片分块无外部 gap，不同引用及普通列表项保留明确纵向间距，inline 引用头像保留 6dp 右间距，展开/收起及标题入口至少 48dp。 |
+| 精确失败 oracle | `tests/ui/topic-session-controller.test.tsx` 在目标 Topic 已缓存时要求展开零 `getReply`，进入目标再 restore parent 后仍立即得到同一 cached reply、transport 总数不增加；`src/screens/topic/topicScreenHelpers.test.ts` 以两个不同 commentId 但相同 floor/reference 的回复要求 key 与 expanded 状态隔离，并要求重复 build 复用同一 content 对象；`tests/ui/topic-reply-filters.test.tsx` 要求超长引用生成多个稳定父列表 rows、顺序不变、折叠只去除内容且分隔值为 0/8/10/12；`tests/ui/topic-components.test.tsx` 固定头像 fallback、长作者/标题行数和携带 reply identity 的 callback；`src/htmlImages.test.ts`、`src/theme.test.ts` 固定 inline 头像与触控/间距样式。修复前缓存二次展开仍出现约 433.6ms 最慢帧和约 2874 个 helper 节点。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Query 行为、列表 data、真实组件布局语义和样式共同固定；只测 fetch 去重或只看最终截图均不足。 |
+| Replay 或真实验收路径 | 保留 App 数据直达 `https://linux.do/t/topic/2685882`，展开首条跨主题引用，连续滚过文字、链接和图片分块，再收起并二次展开；卡片必须连续、作者区不位移、返回可立即操作。匹配的 90Hz debug 模拟器记录二次展开帧分布并与逃逸基线对照，不以工具 settle 时长代替 App 帧耗时，不访问其他主题或执行写操作。 |
+| 负向验证方式 | 把完整引用放回单个 ReplyItem、增加嵌套纵向列表、删除 Topic/reply cache 恢复、以 floor 生成实例 key、每次 build 重拆同一 Reply、恢复条件头像或全局列表 gap，编号 controller/helper/UI/theme 测试至少一层必须失败。 |
+| 明确不覆盖范围 | 不预取引用、不增加缓存或列表依赖，不为未测量设备加入 idle prewarm；动态正文和图片内容不写死，Release 设备仍需独立性能验收。 |
+
+## `REG-TOPIC-055` 超长引用首次展开让 FlashList 同帧预渲染过多富 HTML
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`TOPIC-03` |
+| 用户症状 | `REG-TOPIC-054` 已把完整引用拆进父 FlashList 后，首次点击“展开”仍可能明显卡住；展开态还重复显示简介与完整正文，头像、姓名、标题和正文显得拥挤。 |
+| 触发条件 | 一篇约 138 KiB 的引用首帖被拆成 57 个新 `replyQuoteContent` rows；FlashList 尚未测得该 item type 的真实高度，却按估算高度和既有 `720px` 图片 render window 同帧 engage 多个富 HTML/图片 row。WeakMap 只省重复拆分，不能省首次 RenderHTML/native subtree。 |
+| 根因 seam | `buildVirtualizedReplyItems` 的冷引用 materialization、`TopicScreenBody` 的 row `onLayout`/下一帧放开、`ReplyItem` 的 content row 与引用简介显示条件。 |
+| 必须保持的行为 | 冷引用保留全部稳定拆分结果，但首次只把前 2 个正文 row 放入父 FlashList；首个实际挂载 row 完成 `onLayout` 后，下一 animation frame 才放开同实例剩余 rows，使列表先取得真实高度。primed token 同时绑定引用实例与完整 content row keys；折叠后同内容二次展开立即全量，内容或 Topic route 改变后重新测量，两个引用实例互不解锁。首批与全量的前两项 key 不变。完整正文存在时隐藏重复简介；加载、失败或折叠态仍保留简介。不得降低全局 `720px` 图片窗口、缩小全局 chunk 或增加嵌套列表。 |
+| 精确失败 oracle | `src/screens/topic/topicScreenHelpers.test.ts` 以两个实例各引用 6 个安全普通 chunks，要求冷态各仅 2 行、实例独立、primed 后一实例全量且前两 key 不变、内容改变重新回到 2 行；`tests/ui/topic-reply-filters.test.tsx` 要求首个 staged row `onLayout` 前仍为 2 行，flush RAF 后才变成 6 行，折叠再展开立即全量；`tests/ui/topic-components.test.tsx` 要求完整正文出现后简介消失，而 loading 无完整正文时简介仍存在。修复前精确主题首次展开观测到约 672 attached Views 与 150ms 峰值。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯列表 data 固定实例/token/key，RNTL 固定真实 layout→RAF→全量生命周期与可见简介；配置字符串或最终截图不足以证明分帧。 |
+| Replay 或真实验收路径 | 保留 App 数据直达 `https://linux.do/t/topic/2685882`，从冷的折叠态展开首条跨主题引用，再收起/展开并快速滚过文字、链接和图片。作者区和卡片连续，展开后不重复简介，快速滚动不得出现页面灰色空洞。匹配 90Hz debug 模拟器分别记录冷展开与缓存展开的 gfxinfo；本次开发 bundle 冷展开为 323 attached Views、p95/max 32ms，缓存重复样本 p95/max 为 36–42ms，均不得拿工具 settle 时长替代。 |
+| 负向验证方式 | 冷态直接放入全部 rows、在首个 layout 前放开、primed token 不含实例或内容身份、内容变化沿用旧 token、完整正文仍重复简介，编号 helper/UI 测试必须失败。把 drawDistance 降到 250 虽可减少首批 View，但快速滚动会推迟原图进入窗口，不满足本条。 |
+| 明确不覆盖范围 | 不改变 Query、网络、原图加载窗口、全局 splitter 或 FlashList 依赖；不宣称 debug 模拟器达到 90Hz 零丢帧，Release 设备性能仍为 `NOT_VERIFIED`。 |
+
 ## `REG-XIAOYINSI-023` 畸形可选头像拒绝整页
 
 | 字段 | 内容 |
@@ -3588,6 +3678,246 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 动态来源自然出现缺头像时检查列表与详情仍可读；不向真实站点注入畸形数据，没有样本时标 `NOT_VERIFIED`。 |
 | 负向验证方式 | 恢复直接 `new URL()` 后，编号测试必然 reject。 |
 | 明确不覆盖范围 | 不替用户生成占位头像 URL，不吞掉必填主题身份或正文解析错误。 |
+
+## `REG-WRITE-026` 回复编辑权限跨账号或 epoch 继续生效
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`WRITE-01`、`WRITE-02`、`WRITE-04`、`TOPIC-03`、`NAV-03` |
+| 用户症状 | A 账号进入回复编辑后切换到 B、恢复旧 route 或失去逐条权限，旧编辑仍可能提交、选图或上传。 |
+| 触发条件 | 编辑目标只保存 `canEdit` 与回复 id，未绑定来源、账号 identity、session epoch 和 topic；提交前又提前读取旧 epoch Query key。 |
+| 根因 seam | `ReplyEditTarget`、`useTopicSessionController` 与 `useTopicActionsController` 的写 ticket、Replies Query 和 composer 生命周期。 |
+| 必须保持的行为 | 编辑目标绑定 `topicId + WritableSessionTicket`；编辑入口先取得 ticket，提交和上传按该 ticket epoch 生成 Query key，并在取消 Query 后、凭据/runtime 准备后、文件选择/上传/transport 前确认同 `commentId` 在缓存中恰好存在一条且 `canEdit=true`；跨页重复或权限冲突必须 fail closed。身份、epoch、route 或权限变化关闭编辑态并清除 target，但保留文本；旧 target 不得产生 picker、NodeImage Key、optimistic update、上传或 transport。 |
+| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-026` 固定 A→B、旧 route snapshot、reply missing、`canEdit=false`、跨页重复权限冲突、取消 Query 或 Discourse runtime 准备期间失效、NodeImage 前置零调用和 ticket epoch Query key；修复前旧 target 可进入写链路或读取旧 key。 |
+| 最低可靠自动测试层 | `UI_PASS`：在真实 QueryClient/Controller 生命周期上观察编辑 target、草稿和所有副作用 mock；只测 ticket helper 或按钮隐藏不足以证明 transport 前门禁。 |
+| Replay 或真实验收路径 | 未获真实写授权时只检查编辑入口、切号后 composer 收起和文本保留，提交、上传与真实 A→B 保持 `NOT_VERIFIED`；获授权后按 `tests/live/agent-live.md` 记录账号、恢复和残留。 |
+| 负向验证方式 | 移除 target ticket/topic、在 `ensureWritableSession` 前生成 Query key，或跳过取消 Query 后复核，编号 UI 用例必须出现 transport、picker/Key 调用或旧 epoch cache 命中。 |
+| 明确不覆盖范围 | 不自动把旧编辑文本提交为 B 账号的新回复，不迁移论坛账号数据，不执行真实编辑、上传或清登录。 |
+
+## `REG-DATA-006` 备份 URL 携带未知 query 凭据
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `DATA-01`、`DATA-02`、`DATA-03`、`FEED-03`、`LIBRARY-01`、`LIBRARY-02`、`LIBRARY-03` |
+| 用户症状 | 备份虽删除已知 token 名，未知签名参数、userinfo 或 fragment 仍可随 Topic、用户和头像 URL 导出并在导入后继续保存。 |
+| 触发条件 | URL sanitizer 依赖敏感 query denylist，且直接信任远端 Topic/Profile URL。 |
+| 根因 seam | `src/readerData.ts` 的 Topic/User summary 与 ReaderData v2 的 load/save/import/export 统一 sanitizer。 |
+| 必须保持的行为 | Topic URL 只由 `source + id` 重建，用户主页只由 `source + id/username` 重建；avatar/media 只保留合法 HTTP(S) 的 origin 与 pathname，清空 userinfo、全部 query 和 hash。ReaderData 仍为 version 2，所有持久化与备份入口共用同一边界。 |
+| 精确失败 oracle | `src/readerBackup.test.ts` 的 `REG-DATA-006` 使用假 token/signature 覆盖 export/import，要求 canonical Topic/Profile URL、干净头像 URL、version 2 且任何假凭据均不存在；`src/readerData.test.ts` 固定相对、危险 scheme 和未知 query。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：纯数据输入同时经过 sanitizer、export 与 import；源码 denylist 或单一路径断言不能证明完整边界。 |
+| Replay 或真实验收路径 | 真实文件导入/导出涉及本机资料，未单独授权时保持 `NOT_VERIFIED`；只读 Library/Feed 使用现有数据确认链接仍可打开。 |
+| 负向验证方式 | 恢复 query denylist、保留 supplied Topic/Profile URL 或 userinfo/hash，编号测试必须重新看到假凭据或非 canonical URL。 |
+| 明确不覆盖范围 | 不改变 ReaderData schema/version，不迁移 Cookie、代理、密码或 User API Key，也不保留远端展示 query。 |
+
+## `REG-TOPIC-051` NodeSeek Markdown 无输入预算
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
+| 用户症状 | 异常大的 NodeSeek Markdown 可进入 Markdown/linkify 全流程，造成不必要的 CPU 与内存占用。 |
+| 触发条件 | Markdown renderer 没有 UTF-8 字节预算和显式 nesting 上限。 |
+| 根因 seam | `src/nodeSeekMarkdown.ts` 的唯一 MarkdownIt 实例及进入 `sanitizeContentHtml` 前的输入门禁。 |
+| 必须保持的行为 | `markdown-it@14.3.0` 与 `linkify-it>=5.0.2` 保留既有 linkify/breaks 行为，`maxNesting=100`；输入最多 256 KiB UTF-8，超限不调用 Markdown/linkify，只返回经过现有 sanitizer 的固定提示。 |
+| 精确失败 oracle | `src/nodeSeekMarkdown.test.ts` 的 `REG-TOPIC-051` 固定普通短 Markdown/linkify 和 256 KiB 安全边界字符串；超限 marker 不得进入 HTML。`npm ls markdown-it linkify-it` 固定实际安装版本。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：直接调用公开转换函数并检查安装依赖；不复制或执行大规模 DoS payload。 |
+| Replay 或真实验收路径 | 自然出现超限内容时只读确认提示；没有样本则 `NOT_VERIFIED`，不得向真实站点注入构造内容。 |
+| 负向验证方式 | 删除字节门禁、恢复旧依赖或让超限输入进入 `md.render`，编号测试必须看到 marker 或依赖版本不符。 |
+| 明确不覆盖范围 | 不预热 Markdown、不改变普通正文语法、不增加远端内容探测或恶意 payload 压测。 |
+
+## `REG-PROXY-007` localhost relay 接受危险目标并遗留空闲 tunnel
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-01` |
+| 用户症状 | WebView localhost relay 可接受任意端口、userinfo、畸形 request line、非标准 numeric IPv4、IPv4-compatible/mapped IPv6 或私网 IP literal；合法首请求后的流水线第二 target 还能绕过校验，空闲 tunnel 也可能长期占用连接与 copy worker，按方向独立计时又会误杀仍在持续单向传输的 tunnel；worker 结束与 relay 停止并发时还可能抛异常并跳过后续 socket/executor 清理；profile 只改名还会无意义重启。 |
+| 触发条件 | relay 依赖随机本地端口和宽松 URI 解析，IPv4-compatible IPv6 绕过普通 `InetAddress` 私网判断，校验首个 HTTP header 后盲转整个 client stream，socket copy 没有由双向活动共同续期的 idle deadline，socket registry 的 snapshot 与 remove 不受同一 ownership lock 保护，apply key 包含展示字段。 |
+| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的 `LocalNetworkProxyServer` 与 `useNetworkProxyController` apply key。 |
+| 必须保持的行为 | relay 只绑定 `127.0.0.1`，并发与 backlog 均为 16、header 上限 64 KiB；只接受 HTTP absolute-form 80 和显式 HTTPS CONNECT 443，拒绝 userinfo、控制字符、空/不一致 Host、hex/octal/short/前导零 numeric IPv4、IPv4-compatible/mapped IPv6，以及 loopback/private/link-local/multicast/unspecified IP literal。非 CONNECT 只按唯一合法 `Content-Length` 转发首个 request body，拒绝 `Transfer-Encoding`、重复/歧义长度，剥离持久连接头并关闭连接，流水线第二 target 不得到达 upstream。共享双向 idle deadline 为 120 秒：任一方向读到字节都续期，只有整个 tunnel 双向静默才超时；所有 socket registry mutation 与停止 snapshot 使用同一 ownership lock，超时、停止和切换都不得抛出 cleanup 竞态，并关闭 client/upstream socket 与 copy task。apply key 只含 protocol/host/port/username/password。 |
+| 精确失败 oracle | 生成的 `NetworkProxyRuntimeTest.kt` 的 `REG-PROXY-007` 只连接进程内 `127.0.0.1` socket pair/fake upstream，固定非法端口/目标、numeric IPv4、IPv4-compatible/mapped IPv6、合法公网 IPv6 的带方括号 upstream authority、流水线第二 target 零转发、唯一长度 framing、17th connection、64 KiB header、短注入共享 idle deadline、单向持续传输、copy executor reject；`regProxy007StopOverlapsConnectionWorkerCleanupWithoutBackgroundFailure` 用现有 `socketConnector` 与 latch 精确重叠 connection worker unwind 和 `stop()`，捕获并 join 实际 connection worker 后再断言后台零异常及 socket/worker 全部释放。`src/networkProxyPlugin.test.ts` 与 `tests/ui/network-proxy-controller.test.tsx` 固定生成接线和改名不重启。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Kotlin JUnit 验证真实 socket/parser 生命周期，Jest 验证 controller apply；JS 字符串检查不能代替原生行为测试。 |
+| Replay 或真实验收路径 | 代理启停、WebView 公网连通性与真实代理凭据保持 `NOT_VERIFIED`，除非另获授权；不得扫描端口、探测其他 App 或压测公网代理。 |
+| 负向验证方式 | 放开 80/443、移除 IPv4-embedded/IP literal/Host/framing 校验、恢复 client stream 盲转、按读方向独立 timeout 或无 timeout，或把 profile name/id 放回 apply key，编号原生/UI 用例必须失败。 |
+| 明确不覆盖范围 | 普通 `ServerSocket` 无可靠 caller UID，随机端口、端口限制和 timeout 只是 hardening；hostname DNS rebinding及同设备恶意 App 尝试连接仍是残余风险。若要求同-App认证，必须另行设计 `VpnService`。 |
+
+## `REG-OPS-015` 发布 secret 进入所有子进程且缺少 provenance
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `RELEASE-01`、`RELEASE-02` |
+| 用户症状 | `.env.release.local` 的签名变量进入全局 `process.env` 并穿透 verify/prebuild/native test/smoke；产物只能看到 APK hash，无法追踪源码、lockfile 与 toolchain。 |
+| 触发条件 | release 脚本全局写 env，并让所有 `spawnSync` 继承；构建前没有 Node/dirty checkout 门禁或 unsigned native test 阶段。 |
+| 根因 seam | `scripts/release-environment.mjs`、`scripts/release-android.mjs` 与 release manifest 生成顺序。 |
+| 必须保持的行为 | 只解析签名与 smoke allowlist，不修改全局 env；普通子进程显式删除四个签名变量，只有最终 `assembleRelease` 注入。正式 release 要求 Node 22 与 clean checkout；prebuild 使用 `--no-install`，随后以无签名 env 执行 `testReleaseUnitTest` 和 `compileReleaseKotlin`。manifest 在原可信字段外记录 git/lockfile SHA、Node/npm/Java/Gradle 与 ABI provenance，更新检查仍只信任原签名、包名、版本和 APK hash。 |
+| 精确失败 oracle | `src/releaseEnvironment.test.ts` 的 `REG-OPS-015` 行为测试固定 allowlist、secret scope、Node/dirty gate、unsigned native validation → signed assemble 顺序及 provenance manifest，且不输出 secret 值；`src/releaseWorkflow.test.ts` 固定 prebuild 恢复后调用该受测 build stage，signing/packaging/Smoke guards 固定 keystore 和产物顺序。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `STATIC_PASS`：纯 env helper 行为测试加 release workflow/packaging guard；真实签名只在明确发布任务中验证。 |
+| Replay 或真实验收路径 | 本轮不执行正式 release、签名、APK 安装或上传，均为 `NOT_VERIFIED`；当前 Node 非 22 时 release 会有意在起始门禁阻断。 |
+| 负向验证方式 | 向 `process.env` 写入 release 文件、让 ordinary child 保留任一签名变量、移除 clean/Node gate或把签名 env 提前到 native tests，编号测试必须失败。 |
+| 明确不覆盖范围 | 目标是来源可追踪，不宣称字节可复现；不引入 Docker、Fastlane、远端发布服务或 Signal 级 toolchain。 |
+
+## `REG-FEED-012` TopicCard memo 忽略不可见 payload 变化
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-03`、`FEED-04`、`SEARCH-02`、`USER-01`、`LIBRARY-01`、`LIBRARY-02`、`LIBRARY-03` |
+| 用户症状 | 两个 Topic 展示文字相同但 `url/categoryId/authorId` 已变化时，卡片不重渲染，点击和 trailing action 继续使用旧对象。 |
+| 触发条件 | `TopicCard` memo 只白名单比较部分可见字段，遗漏下游行为消费的 payload。 |
+| 根因 seam | `TopicCard` 的 immutable Topic 输入和 memo comparator。 |
+| 必须保持的行为 | 只有 `previous.topic === next.topic` 才复用 Topic；其余稳定 props 继续浅比较。任何新 Topic 对象都重渲染，点击和 trailing action 获得同一新对象。 |
+| 精确失败 oracle | `tests/ui/topic-card.test.tsx` 以展示文本相同但 url/categoryId/authorId 变化的新对象 rerender `MemoizedTopicCard`，要求点击与 trailing action 都收到新对象。修复前卡片仍调用旧 payload。 |
+| 最低可靠自动测试层 | `UI_PASS`：在真实 memoized component 上观察用户动作；只断言 comparator 返回值不足以证明可见行为。 |
+| Replay 或真实验收路径 | 只读 Feed/Search/User/Library 自然刷新后打开同一主题，确认跳转使用新对象；动态来源无法稳定制造同文 payload 时标 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复可见字段白名单或深比较后，编号测试必须错误返回 true 或失去 O(1) fast path。 |
+| 明确不覆盖范围 | 不增加深比较、hash、clone 或额外 memo，不改变 TopicCard 视觉与列表库。 |
+
+## `REG-FEED-013` Feed 请求期间先露空白再出现 Loading
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-04` |
+| 用户症状 | 首次读取或切换来源后，顶部内容区可能先闪一帧空白，再出现灰色 Loading；请求最终仍能成功。 |
+| 触发条件 | 目标来源已经由 Pager 预铺 Loading，idle 提交后 controller 短暂发布 `busy=true`、`items=[]`。 |
+| 根因 seam | `FeedScreen.renderFeedScene` 在目标 route 成为 active 后立即用空 `FlashList` 替换预铺 Loading；原生列表布局和 `ListEmptyComponent` 建立前，透明 Pager 暴露页面背景。 |
+| 必须保持的行为 | active 来源在无数据且读取或身份确认未完成时继续显示同一 Loading 场景，不挂载空 `FlashList`；取得数据或明确错误/空终态后才切换内容树。inactive scene、单 active rich list、冷请求、身份屏障、刷新和分页语义不变。 |
+| 精确失败 oracle | `tests/ui/feed-screen.test.tsx` 的 `REG-FEED-013` 从已有 All 列表切到 V2EX，在目标 `busy + empty` 阶段要求 Loading 仍可见且 `FlashList` mount 数不增加；数据到达后才增加一次。首次空数据读取同样要求 Loading 期间不存在空列表，数据到达后恢复下拉刷新。修复前 mount 数会提前从 1 变成 2。 |
+| 最低可靠自动测试层 | `UI_PASS`：真实 Feed scene、Pager idle 与 rerender 共同固定组件树连续性；源码字符串、最终数据截图或 App 能启动都不能证明中间帧没有空列表。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 的 Release 模拟器执行“全部 → V2EX → 全部”，在来源提交后的请求窗口连续观察顶部内容区；只允许 Loading 或目标数据，不得出现空白、旧列表或先空后灰。 |
+| 负向验证方式 | 恢复 `busy + empty` 时挂载 `FlashList`，编号测试必须因提前 mount 和 Loading 消失而失败。 |
+| 明确不覆盖范围 | 不增加最短 Loading 时长、旧列表缓存、全局遮罩、背景色补丁或预请求；第三方响应速度与 `REG-PERF-004` 帧门槛独立验收。 |
+
+## `REG-A11Y-001` Loading 与关键输入缺少稳定无障碍语义
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-03`、`ACCOUNT-04`、`TOPIC-03`、`MORE-03` |
+| 用户症状 | Loading 的 Spinner 与文本可能重复播报；Search filter、NodeImage Key、评论搜索只靠 placeholder；外观和回复目标触控区域小于 48dp。 |
+| 触发条件 | 共享 LoadingState 没有 status/live/busy 语义，输入缺显式 label，若干视觉尺寸同时承担 touch target。 |
+| 根因 seam | `AppControls.LoadingState`、三个输入入口和 `themeStyles` 的 appearance/reply 交互几何。 |
+| 必须保持的行为 | Loading 作为单一 polite busy status 播报，Spinner/文本不再各自成为 accessibility element；筛选、Key 与评论搜索有明确 label；appearance segment、字号按钮/slider 与 reply head 的布局至少 48dp，紧凑 reply target 由 `hitSlop` 扩展触控区，图标尺寸和评论正文 42px 缩进不变。 |
+| 精确失败 oracle | `tests/ui/accessibility-basics.test.tsx` 的 `REG-A11Y-001` 固定单次 status 播报语义；Search/More/Topic UI 测试用 label 驱动真实输入；`src/theme.test.ts` 固定布局尺寸与 `replyContentArea.paddingLeft=42`，`tests/ui/topic-components.test.tsx` 固定 target `hitSlop`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：style 数值与真实 RNTL accessibility tree 同时覆盖；只查 placeholder 或源码字符串不足。 |
+| Replay 或真实验收路径 | TalkBack 与大字体必须使用 revision/APK 匹配设备只读验收；本轮未执行时为 `NOT_VERIFIED`。 |
+| 负向验证方式 | 移除 role/live/busy、恢复 placeholder-only、缩小可点范围，或用视觉 `minHeight` 替代 target `hitSlop`，编号 UI/theme 测试必须失败；改变 42px 缩进由 `REG-TOPIC-047` 同时拦截。 |
+| 明确不覆盖范围 | 不放大视觉图标、不重排评论几何、不替代完整 TalkBack/大字体设备验收。 |
+
+## `REG-UPDATE-005` 连续版本下载累积历史 APK
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-04` |
+| 用户症状 | 每个更新版本使用不同 cache 文件名，连续下载会留下多个历史 APK；下载失败还可能保留 partial。 |
+| 触发条件 | 目标文件名包含版本号，catch 路径未清理已经准备的下载目标。 |
+| 根因 seam | `useAppUpdateController.downloadAppUpdate` 的 cache target 与失败清理。 |
+| 必须保持的行为 | 所有版本固定使用 `wz-update.apk`；新下载前删除旧文件，失败或取消后删除 partial，成功后保留给系统安装器读取。 |
+| 精确失败 oracle | `src/app/useAppUpdateController.test.ts` 的 `REG-UPDATE-005` 连续下载两个版本要求同一 target 且成功只执行下载前清理；失败要求第二次幂等删除 partial、零安装。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：mock FileSystem 与 installer 精确观察 target、删除次数和成功/失败顺序。 |
+| Replay 或真实验收路径 | APK 下载与安装属于发布风险操作，本轮保持 `NOT_VERIFIED`；只有明确授权后检查 cache 与系统安装确认。 |
+| 负向验证方式 | 恢复版本化文件名或移除 catch 清理，编号测试必须看到两个路径或少一次删除。 |
+| 明确不覆盖范围 | 不自动删除安装器正在读取的成功 APK，不下载真实 release，不改变签名/hash 校验。 |
+
+## `REG-PERF-007` 进程级缓存与通知无容量或 identity 边界
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`TOPIC-03`、`DATA-01`、`MORE-02` |
+| 用户症状 | 图片尺寸/revision 与诊断引用可随进程运行无界增长；任一原图显示会唤醒所有监听者；memo comparator 和 ReaderData render 反复做无谓扫描/序列化。 |
+| 触发条件 | 进程级 Map/Set 无容量，revision 使用全局 listener Set，昂贵 signature 与 `JSON.stringify` 位于廉价 ref 检查或 lazy 初始化之前。 |
+| 根因 seam | HTML 图片尺寸、原图 revision、诊断 reference、ReaderData controller 与 Topic/Reply memo comparator。 |
+| 必须保持的行为 | 两个图片缓存使用现有 Map delete/reinsert 的 512 项 LRU；active revision listener 不淘汰，解除后收敛，通知只发给同 identity。诊断 raw ref 每 kind 4096、issued ref 8192，以单调 sequence 禁止 ID 重用且不记录原值。ReaderData 初始 JSON 只序列化一次；Reply/TopicContent 先比较 ref/标量，只有相同内容对象但不同 inline map 才扫描 signature。 |
+| 精确失败 oracle | `src/originalImageLoading.test.ts`、`src/app/useHtmlRenderingController.test.tsx`、`src/diagnostics.test.ts` 与 `src/topicDerivedData.test.ts` 的 `REG-PERF-007` 固定容量、LRU promotion、epoch key 隔离、active listener、按 key 通知、单调引用和 signature 扫描次数；`typecheck` 固定 controller 接线。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：确定性容量、通知和调用次数测试；未测量的帧预算不据此宣称改善。 |
+| Replay 或真实验收路径 | 只读 Topic 长图/评论滚动可做后续 Release trace；若首次预览解析 p95 超过 90Hz 一帧约 11ms，再单独评估 idle prewarm。 |
+| 负向验证方式 | 恢复无界 Map/全局 Set、用 `refs.size+1` 生成 ID、或把 signature 放回 ref 检查前，编号测试必须出现旧项不淘汰、跨 key 通知、ID 复用或扫描次数增加。 |
+| 明确不覆盖范围 | 不增加 cache 依赖、预计算、idle prewarm 或广泛 memo；不以静态回归替代 Release 设备性能测量。 |
+
+## `REG-PERF-009` 图片 cache getter 在 React render 阶段提升全局 LRU
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`TOPIC-03` |
+| 用户症状 | 被 React 丢弃或重复执行的图片 render 也会改变进程级 cache 淘汰顺序；长帖、返回和预览切页期间，真正已提交的热尺寸、原图 revision 或 SVG artifact 可能被 speculative render 挤出。 |
+| 触发条件 | preview dimensions、display revision 与 compatible SVG artifact 的 getter 在命中时直接执行 `Map.delete → Map.set`，同时这些 getter 被正文图片 render、全屏预览 render 和 `useSyncExternalStore.getSnapshot` 调用。 |
+| 根因 seam | `src/app/useHtmlRenderingController.tsx`、`src/originalImageLoading.tsx` 与 `src/compatibleImageSources.ts` 的 cache read/promotion ownership。 |
+| 必须保持的行为 | 所有 render/getSnapshot cache read 都是无副作用 snapshot；尺寸只在已提交 effect 或新值写入时提升，原图 revision 只在显示事件或已提交订阅时提升，SVG artifact 只在已提交 effect、recovery 或写入时提升。既有 512/512/32 容量、完整媒体 identity、active listener pinning、按 identity 通知和异步 recovery single-flight 不变。 |
+| 精确失败 oracle | `src/app/useHtmlRenderingController.test.tsx`、`src/originalImageLoading.test.ts` 与 `src/compatibleImageSources.test.ts` 的 `REG-PERF-009` 先读取最旧项再施加容量压力，要求纯 snapshot 不改变淘汰顺序；随后通过 committed promotion/subscription/recovery 读取，要求热项保留而下一冷项淘汰。修复前三个 getter 都会让第一阶段错误保留旧项。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `STATIC_PASS`：确定性 Map 淘汰顺序固定 read/commit ownership，`npm run check:react` 固定相关 render purity；实际帧和 cache 命中率仍需匹配构建的 Release trace。 |
+| Replay 或真实验收路径 | 在匹配 revision/APK 上打开含多张正文图和复杂 SVG 的长帖，滚动、进入预览、切换相邻页并返回；不得出现热图比例丢失、Spinner 回退或重复 SVG recovery。若要声明性能改善，另记录 cache hit 与 FrameTimeline，不以肉眼顺滑代替。 |
+| 负向验证方式 | 把任一 getter 恢复为命中即 `delete/set`，编号测试必须因最旧项被 speculative read 错误保留而失败；删除 committed promotion 则热项保留阶段必须失败。 |
+| 明确不覆盖范围 | 不改变 cache 容量、媒体协议、原图加载窗口、SVG worker 数量或预热策略；不新增 cache module、scheduler 或依赖。 |
+
+## `REG-TOPIC-056` Discourse Callout marker 被当作普通灰色引用
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
+| 用户症状 | linux.do cooked HTML 中的 `[!warning]`、`[!caution]` 等 Callout marker 原样可见，整块按普通灰色引用渲染；评论引用展开后同样丢失黄色警告等语义，富文本标题、嵌套和折叠内容没有统一布局。 |
+| 触发条件 | App 只把 Discourse `blockquote` 当通用 HTML，没有把站点 Callout 方言归一为内部语义；Topic 页面还局部持有 `blockquote` renderer，回复、引用和采纳答案无法共享同一解释。 |
+| 根因 seam | `src/discourseContent.ts` 的 cooked-HTML 协议边界、linux.do/小隐寺 sanitizer transform，以及 `useHtmlRenderingController` 的共享 blockquote renderer。 |
+| 必须保持的行为 | 两站在 sanitizer 的同一次 DOM parse 中识别首段开头、大小写不敏感的 `[!type][+/-]`；支持 13 个主类型及 alias、未知类型 Note 回退、富文本标题、无正文、100 层 Callout 上限、嵌套和普通引用混排。转换前清除来源伪造的 `data-forum-callout-*` 与 `forum-callout-*` class，canonical 根仍为 `blockquote`。只有当前 Discourse 来源的完整 canonical 结构进入共享 `ForumCallout`；普通引用与非 Discourse 内容继续默认渲染。tone 只取 App theme，来源颜色/style/CSS/JS 不可信。`-` 初始收起、`+` 初始展开，隐藏正文不挂载；可折叠 header 至少 48dp、暴露 expanded 状态、100ms layout transition 遵循 Reduce Motion，标题链接阻止折叠冒泡。主题、回复、同/跨主题引用、采纳答案和超长分块使用同一 renderer；Topic/Search/UserActivity/引用简介不泄漏 marker。 |
+| 精确失败 oracle | `src/discourseContent.test.ts` 首个 tracer 用例在修复前得到原样 `<blockquote><p>[!warning] ...`，要求 marker 消失并生成 canonical title/content；其矩阵固定类型、alias、大小写、未知回退、富文本、折叠、嵌套、复杂正文、深度和伪造属性。`src/localHtml.test.ts` 固定两站单 parse 与普通 HTML fast path；`src/discourseModel.test.ts`、两站 adapter 测试固定摘要清理。`tests/ui/forum-callout.test.tsx` 固定 light/dark tone、48dp、expanded、未挂载正文与动画预算；`tests/ui/topic-components.test.tsx` 固定 Callout/普通引用分流、非 Discourse 负例及标题链接冒泡。`REG-TOPIC-003/053/054/055` 继续固定正文/评论引用、跨主题身份、分阶段长引用和返回链。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：DOM 协议矩阵与真实 Native component/共享 renderer 同时覆盖；只查输出字符串、单一 warning 颜色或 App 能启动不能证明完整入口与交互。 |
+| Replay 或真实验收路径 | 按当前 revision/bundle 直达 `https://linux.do/t/topic/342888/1`，核对 warning、caution、tip、check、todo、danger、链接、图片、列表、嵌套、浅/深色和大字体；再直达 `https://linux.do/t/topic/2685882` 展开目标评论引用，Loading 时 Android Back 可立即返回，重进使用现有 Query cache。普通 blockquote 作负向对照；全程只读，不发帖、编辑、上传、投票或探测网络。动态第三方主题不进入 tracked Replay。 |
+| 负向验证方式 | 删除 normalizer、恢复 Topic 局部 blockquote override、信任来源 canonical attr/style、只处理 warning、让非 Discourse 来源进入 renderer，或折叠时继续挂载正文，编号协议/UI 测试必须分别出现 marker、错误分流、伪造语义或隐藏内容。 |
+| 明确不覆盖范围 | 不增加 Callout 创作工具栏、站点管理员动态类型、运行时 CSS/JS 抓取、来源配色、Query/cache/WebView 或新依赖；若小隐寺真实内容明确把 `[!type]` 当普通文字，则保留共享协议并将来源范围改为明确 opt-in，不叠兼容规则。 |
+
+## `REG-TOPIC-057` route epoch 被固化为 Topic 身份导致永久 Loading
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`NAV-03` |
+| 用户症状 | Topic 在账号 generation 变化后会立即隐藏旧内容，但同一路由即使收到新 generation 内容仍永久停在 Loading；返回嵌套 Topic 时还可能复用已经失效的旧内容。 |
+| 触发条件 | route push 把当时的 `sessionEpoch` 固化到 `TopicRouteSeed`，presentation 又要求当前 epoch 与这个不可变 seed 相等；render 阶段同时写 expected-epoch/cache ref，使 route identity 与内容 freshness 混为一体。 |
+| 根因 seam | `src/app/AppNavigator.tsx` 的 `TopicRouteSeed`、`TopicRouteScreen` presentation 选择与 `AppRoot.pushTopicRoute`。 |
+| 必须保持的行为 | route identity 只由稳定的 `source + topicId` 组成；无 seed 入口只锁定首次有效 identity。`routeSessionEpoch` 表示目标来源当前 generation，presentation `sessionEpoch` 表示内容 generation，两者与 route identity 全部匹配后才可提交。渲染优先级固定为 focused matching live → 同 identity 且当前 epoch cache → Loading，只有 live 可交互；inactive route 的旧 cache 在 epoch 失效时清除，新 generation 到达后恢复同一 Topic。presentation 提交与缓存清理在 layout effect 中完成，render 不写 ref/state。嵌套 Topic、返回、草稿、滚动和无 seed 启动兜底保持可用。 |
+| 精确失败 oracle | `tests/ui/app-navigator.test.tsx` 的首个 `REG-TOPIC-057` 通过无 seed 兼容入口先显示 epoch 0 内容，再让 route epoch 变为 1 而内容保持 0，要求旧内容立即消失并显示 Loading；内容 epoch 变为 1 后要求同一 Topic 恢复。另一用例让无 seed 的 linux.do A 进入 inactive、再打开带稳定 seed 的 NodeSeek B；A 的 epoch 变化必须立即清除隐藏缓存，返回后先 Loading、再接受 A 的新 generation，不能借用 B 的 epoch；既有 nested cache 与返回用例继续通过。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 驱动真实 navigator/presentation renderer 观察可见文本、Loading、返回和交互归属；源码字符串或 controller 单测不能证明 route cache 生命周期。 |
+| Replay 或真实验收路径 | 真实账号 epoch 变化会改变登录态，未单独授权时保持 `NOT_VERIFIED`；只读设备可验证普通 Topic 嵌套与返回，不得为制造 epoch 清 Cookie、切换账号或清 App 数据。 |
+| 负向验证方式 | 把 epoch 放回 `TopicRouteSeed`、恢复 render 阶段 cache 写入，或仅拒绝旧 generation 而不接受新 generation，编号 UI 测试必须出现旧内容泄露或永久 Loading。 |
+| 明确不覆盖范围 | 不新增路由层级、scheduler、测试专用产品钩子或登录态模拟；React Doctor 的其他非阻断 warning 不在此回归范围。 |
+
+## `REG-TOPIC-058` 48dp 门禁把回复目标撑成大按钮
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03`；共享 `REG-A11Y-001` |
+| 用户症状 | V2EX 等站点的楼层回复关系原本是紧凑标签，未发布改动后变成高大蓝色按钮，挤开正文并与内联 mention 抢层级；真实 V2EX 7 楼可稳定复现。 |
+| 触发条件 | 为满足 48dp 触控门禁，直接给视觉 pill 增加 `minHeight: 48` 和居中布局。 |
+| 根因 seam | `ReplyItem` 的 reply-target Pressable 与 `themeStyles.replyTargetPill` 把视觉几何误当成触控几何。 |
+| 必须保持的行为 | reply target 保持原有的紧凑 padding、文字层级和 42px 正文缩进；Pressable 使用 `hitSlop=12` 扩展可点范围，仍可进入合法 User route。正文 mention 的可点语义与既有轻量背景不变。 |
+| 精确失败 oracle | `src/theme.test.ts` 在修复前看到 `replyTargetPill.justifyContent=center`/`minHeight=48`；既有 `tests/ui/topic-components.test.tsx` 回复用例在修复前看不到 Pressable `hitSlop=12`。两个 oracle 先红后绿，不新建重复测试文件。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：style 数值阻止视觉回归，RNTL 阻止可点区和 User route 丢失。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 的 Release 设备打开包含 reply target 的真实楼层，以 V2EX 7 楼或等价当前样本截图比较；要求关系标签紧凑、正文不下移，点击标签进入 User 后返回原楼层。 |
+| 负向验证方式 | 恢复 pill `minHeight/justifyContent`、删除 `hitSlop`、把整个正文行做成按钮，或去掉 User 导航，编号测试必须失败。 |
+| 明确不覆盖范围 | 不重设所有 mention/引用视觉，不改回复解析、楼层语义、字体或其他 48dp 控件；大字体与 TalkBack 仍按 `REG-A11Y-001` 单独验收。 |
+
+## `REG-PROXY-008` 阻塞写绕过共享 tunnel deadline
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-01` |
+| 用户症状 | relay 任一方向的 socket write 永不返回时，两个 copy task 和 connection worker 可永久占用并发槽；读侧 timeout 已到期也无法结束 tunnel。 |
+| 触发条件 | `pipeBoth` 在启动 copy task 后无界 `latch.await()`；`Socket.soTimeout` 只影响阻塞 read，不能中断 `OutputStream.write`，tunnel 生命周期因此被误交给读循环。 |
+| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的 `LocalNetworkProxyServer.pipeBoth` 与既有 `TunnelIdleDeadline`。 |
+| 必须保持的行为 | connection worker 按现有共享 deadline 的剩余时间循环执行有界 `latch.await(timeout)`；任一方向读取字节后重新计算剩余时间，真正过期时关闭双方 socket并退出。不创建额外线程或 scheduler，`Socket.soTimeout` 继续只作读侧唤醒。停止、切换、copy reject 和单向持续活动的既有语义不变。 |
+| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.kt` 中 `regProxy008BlockedWritesCannotOutliveTheSharedIdleDeadline` 使用测试内 fake `Socket`/阻塞 `OutputStream`：双方 write 都进入且永不主动返回，短 deadline 后 `pipeBoth` 必须结算且双方 socket 都关闭；`src/networkProxyPlugin.test.ts` 固定该测试被生成。既有单向活动续期测试继续证明活跃 tunnel 不被误杀。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：Android JVM 测试直接执行真实 `pipeBoth`/executor/socket 关闭链；JS 模板字符串检查只证明生成接线，不能替代阻塞行为 oracle。 |
+| Replay 或真实验收路径 | 真实代理启停、公网 tunnel 与代理凭据未获授权时保持 `NOT_VERIFIED`；不得通过公网压测或故意占用真实代理 worker 验证。 |
+| 负向验证方式 | 恢复无界 `latch.await()`、只调 `Socket.soTimeout` 或为 deadline 新增不关闭 socket 的旁路线程，编号原生测试必须超时或看到未关闭 socket。 |
+| 明确不覆盖范围 | 不新增线程、scheduler、代理协议、配置项或公网测试；普通 `ServerSocket` caller UID 与 DNS rebinding 风险仍归 `REG-PROXY-007`。 |
+
+## `REG-OPS-016` Java 环境提示被写成 release provenance
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `RELEASE-01`、`RELEASE-02` |
+| 用户症状 | 设置 `JAVA_TOOL_OPTIONS` 或 `JDK_JAVA_OPTIONS` 后，release manifest 的 `javaVersion` 可能记录提示行而非 JVM 版本；失败路径还可能把原始输出或 marker 带入日志。 |
+| 触发条件 | release 脚本对 `java -version` 与 `npm --version` 共用任意首个非空行解析，而 Java 会在真正版本行前后输出环境提示。 |
+| 根因 seam | `scripts/release-environment.mjs` 的 Java provenance parser 与 `scripts/release-android.mjs` 的 preflight 接线。 |
+| 必须保持的行为 | Java 输出按行 trim 后只接受唯一完整匹配的 `openjdk version "…"` 或 `java version "…"` 行；stdout/stderr 合并顺序及周围 `JAVA_TOOL_OPTIONS`/`JDK_JAVA_OPTIONS` 提示不影响结果。零匹配或多匹配以固定通用错误中止，不回显原始输出或 marker。npm 继续使用既有首行解析；不改变 manifest schema、网络或存储。 |
+| 精确失败 oracle | `src/releaseEnvironment.test.ts` 的 `REG-OPS-016` 覆盖 OpenJDK、Oracle、提示位于版本行前后、零匹配和冲突多匹配；失败消息必须精确为 `无法读取可信的 Java 版本。` 且不含测试 marker。`src/releasePackaging.test.ts` 固定 release 脚本只通过 parser 接线 Java，并在命令启动失败或非零退出时选择不打印 stdout/stderr 的同一通用 preflight 错误。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `STATIC_PASS`：纯 parser 行为测试加发布脚本/打包 guard；不需要签名 APK 即可证明输入边界。 |
+| Replay 或真实验收路径 | 本轮不执行正式 release、签名、APK 安装或上传，均为 `NOT_VERIFIED`；正式发布时由 clean Node 22 环境执行完整 `npm run release:android`。 |
+| 负向验证方式 | 让 Java 重新使用 `firstOutputLine`、接受零/多个版本行或把原始输出拼进错误，编号测试必须记录提示行、错误接受冲突或泄露 marker。 |
+| 明确不覆盖范围 | 不改变 npm/Gradle 版本解析、manifest schema、toolchain 选择、签名或发布流程，也不引入新依赖。 |
 
 ## 待确认观察
 

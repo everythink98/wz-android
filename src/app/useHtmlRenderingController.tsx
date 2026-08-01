@@ -44,8 +44,9 @@ import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from '../htmlRend
 import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
 import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
 import { ForumContentVideo } from '../components/ForumContentVideo';
+import { ForumCallout } from '../components/ForumCallout';
 import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
-import { cachedCompatibleSvgArtifact, compatibleImageRequestIdentity, recoverCompatibleSvgArtifact, refreshCompatibleSvgPoster, type CompatibleSvgArtifact } from '../compatibleImageSources';
+import { cachedCompatibleSvgArtifact, compatibleImageRequestIdentity, promoteCachedCompatibleSvgArtifact, recoverCompatibleSvgArtifact, refreshCompatibleSvgPoster, type CompatibleSvgArtifact } from '../compatibleImageSources';
 import { readManagedCookieHeader } from '../managedCookies';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
 import { beginDiagnosticTrace, diagnosticRef, finishDiagnosticTrace, type DiagnosticFields, type DiagnosticTrace } from '../diagnostics';
@@ -55,6 +56,17 @@ import {
   useOriginalImageDisplayRevision,
   useOriginalImageUpgradeEnabled
 } from '../originalImageLoading';
+import {
+  DISCOURSE_CALLOUT_ATTRIBUTE,
+  DISCOURSE_CALLOUT_CONTENT_CLASS,
+  DISCOURSE_CALLOUT_FOLD_ATTRIBUTE,
+  DISCOURSE_CALLOUT_TITLE_CLASS,
+  DISCOURSE_CALLOUT_TYPE_ATTRIBUTE,
+  DISCOURSE_CALLOUT_REGISTRY,
+  isDiscourseCalloutType,
+  type DiscourseCalloutFold
+} from '../discourseContent';
+import { isDiscourseSource } from '../sourceCatalog';
 
 export async function readManagedWebViewCookieHeader(url: string) {
   const result = await readManagedCookieHeader(url);
@@ -124,6 +136,10 @@ function terminalNodeTagName(node: unknown) {
   }
   const record = node as { name?: unknown; tagName?: unknown };
   return String(record.tagName || record.name || '').toLowerCase();
+}
+
+function terminalNodeHasClass(node: unknown, className: string) {
+  return terminalNodeAttribute(node, 'class').split(/\s+/).includes(className);
 }
 
 function terminalTextStyle(tnode: unknown) {
@@ -243,7 +259,20 @@ type BodyImageLoadMetrics = {
   totalBytes?: number;
 };
 
+const PREVIEW_IMAGE_DIMENSIONS_CACHE_LIMIT = 512;
 const previewImageDimensionsByUrl = new Map<string, PreviewImageDimensions>();
+
+export function cachedPreviewImageDimensions(cacheKey: string) {
+  return previewImageDimensionsByUrl.get(cacheKey);
+}
+
+export function rememberPreviewImageDimensions(cacheKey: string, dimensions: PreviewImageDimensions) {
+  previewImageDimensionsByUrl.delete(cacheKey);
+  previewImageDimensionsByUrl.set(cacheKey, dimensions);
+  if (previewImageDimensionsByUrl.size > PREVIEW_IMAGE_DIMENSIONS_CACHE_LIMIT) {
+    previewImageDimensionsByUrl.delete(previewImageDimensionsByUrl.keys().next().value!);
+  }
+}
 
 function bodyImageMetricFields(
   metrics: BodyImageLoadMetrics,
@@ -372,6 +401,11 @@ function PreviewImageBlock({
   const [failedOriginal, setFailedOriginal] = useState({ identity: '', revision: -1 });
   const contentWidth = Math.max(1, imageProps.contentWidth || 1);
   const cachedArtifact = cachedCompatibleSvgArtifact(imageSource);
+  useEffect(() => {
+    if (cachedArtifact) {
+      promoteCachedCompatibleSvgArtifact(requestIdentity);
+    }
+  }, [cachedArtifact, requestIdentity]);
   const activeArtifact = compatibleSvgArtifact?.requestIdentity === requestIdentity
     ? compatibleSvgArtifact
     : cachedArtifact;
@@ -571,7 +605,12 @@ function PreviewImageBlock({
     return () => clearTimeout(timeout);
   }, [currentBodyTrace, requestIdentity]);
   const cacheKey = `${mediaSessionIdentity}:${normalizeImagePreviewUrl(src).trim()}`;
-  const cachedDimensions = previewImageDimensionsByUrl.get(cacheKey);
+  const cachedDimensions = cachedPreviewImageDimensions(cacheKey);
+  useEffect(() => {
+    if (cachedDimensions) {
+      rememberPreviewImageDimensions(cacheKey, cachedDimensions);
+    }
+  }, [cacheKey, cachedDimensions]);
   const activeLoadedImage = loadedImage?.requestIdentity === requestIdentity
     && loadedImage.imageLoadIdentity === imageLoadIdentity
     ? loadedImage
@@ -597,7 +636,7 @@ function PreviewImageBlock({
       return;
     }
     const dimensions = activeLoadedImage.dimensions;
-    previewImageDimensionsByUrl.set(cacheKey, dimensions);
+    rememberPreviewImageDimensions(cacheKey, dimensions);
     if (shouldMarkLoadedImageInline(attributes, dimensions.width, dimensions.height)) {
       markInlineSizedImageUrl(src);
     }
@@ -622,6 +661,11 @@ function PreviewImageBlock({
   const cachedOriginalArtifact = originalSource && originalDisplayRevision > 0
     ? cachedCompatibleSvgArtifact(originalSource)
     : null;
+  useEffect(() => {
+    if (cachedOriginalArtifact) {
+      promoteCachedCompatibleSvgArtifact(originalRequestIdentity);
+    }
+  }, [cachedOriginalArtifact, originalRequestIdentity]);
   const progressiveSource = cachedOriginalArtifact?.posterSource || originalSource;
   const progressiveIdentity = progressiveSource
     ? compatibleImageRequestIdentity(progressiveSource)
@@ -824,15 +868,20 @@ export function useHtmlRenderingController({
     htmlClassesStyles,
     htmlIgnoredStyles,
     htmlTagsStyles
-  } = useMemo(() => buildHtmlRenderingStyles({ settings, theme }), [
+  } = useMemo(() => buildHtmlRenderingStyles({
+    enableDiscourseCallouts: isDiscourseSource(mediaContext.contentSource),
+    settings,
+    theme
+  }), [
+    mediaContext.contentSource,
     settings.fontFamily,
     settings.fontScale,
     settings.lineHeight,
     theme
   ]);
   const openHtmlLink = useCallback((href: string, event?: { stopPropagation?: () => void }) => {
+    event?.stopPropagation?.();
     if (isPreviewableImageUrl(href)) {
-      event?.stopPropagation?.();
       onOpenImagePreview(href);
       return;
     }
@@ -843,13 +892,11 @@ export function useHtmlRenderingController({
     ];
     const appUser = parseForumUserLink(href, baseUrl, candidates);
     if (appUser) {
-      event?.stopPropagation?.();
       void onOpenUser(appUser);
       return;
     }
     const appTopic = parseForumTopicLink(href, baseUrl);
     if (appTopic) {
-      event?.stopPropagation?.();
       void onOpenTopic(appTopic);
       return;
     }
@@ -858,6 +905,54 @@ export function useHtmlRenderingController({
     }
   }, [htmlTopicDetail, onOpenExternalUrl, onOpenImagePreview, onOpenTopic, onOpenUser, selectedTopic]);
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
+    const BlockquoteRenderer: CustomBlockRenderer = (props) => {
+      const renderOrdinaryQuote = () => {
+        const { InternalRenderer, ...internalRendererProps } = props;
+        return (
+          <InternalRenderer
+            {...internalRendererProps}
+            style={trimsTrailingBlockSpacing(props.tnode)
+              ? { ...props.style, marginBottom: -4 }
+              : props.style}
+          />
+        );
+      };
+      const attributes = props.tnode.attributes || {};
+      const type = attributes[DISCOURSE_CALLOUT_TYPE_ATTRIBUTE];
+      const foldValue = attributes[DISCOURSE_CALLOUT_FOLD_ATTRIBUTE];
+      if (
+        !isDiscourseSource(mediaContext.contentSource)
+        || attributes[DISCOURSE_CALLOUT_ATTRIBUTE] !== 'true'
+        || !isDiscourseCalloutType(type)
+        || (foldValue !== undefined && foldValue !== 'collapsed' && foldValue !== 'expanded')
+      ) {
+        return renderOrdinaryQuote();
+      }
+      const titleNodes = props.tnode.children.filter((child) => (
+        terminalNodeTagName(child) === 'div'
+        && terminalNodeHasClass(child, DISCOURSE_CALLOUT_TITLE_CLASS)
+      ));
+      const contentNodes = props.tnode.children.filter((child) => (
+        terminalNodeTagName(child) === 'div'
+        && terminalNodeHasClass(child, DISCOURSE_CALLOUT_CONTENT_CLASS)
+      ));
+      if (titleNodes.length !== 1 || contentNodes.length > 1) {
+        return renderOrdinaryQuote();
+      }
+      const titleNode = titleNodes[0];
+      const contentNode = contentNodes[0];
+      return (
+        <ForumCallout
+          body={contentNode ? <TChildrenRenderer tchildren={[contentNode]} /> : undefined}
+          fold={foldValue as DiscourseCalloutFold | undefined}
+          theme={theme}
+          title={<TChildrenRenderer tchildren={[titleNode]} />}
+          titleLabel={tnodeText(titleNode) || DISCOURSE_CALLOUT_REGISTRY[type].title}
+          trimTrailingBlockSpacing={trimsTrailingBlockSpacing(props.tnode)}
+          type={type}
+        />
+      );
+    };
     const ReplyReferenceRenderer: CustomBlockRenderer = (props) => {
       const attributes = props.tnode.attributes || {};
       const mention = attributes['data-mention'] || '';
@@ -1184,6 +1279,7 @@ export function useHtmlRenderingController({
     };
     return {
       a: ReplyReferenceLinkRenderer,
+      blockquote: BlockquoteRenderer,
       div: TerminalDivRenderer,
       [FORUM_INLINE_MEDIA_LINE_TAG]: ForumInlineMediaLineRenderer,
       [FORUM_STICKER_ROW_TAG]: ForumStickerRowRenderer,

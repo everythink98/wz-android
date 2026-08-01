@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import {
@@ -44,7 +44,7 @@ import {
   type OptimisticActionState
 } from '../topicActionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '../types';
-import type { TopicRepliesRefreshOptions } from '../appTypes';
+import type { ReplyEditTarget, TopicRepliesRefreshOptions } from '../appTypes';
 import { topicKey } from '../readerData';
 import type { Fetcher } from '../request';
 import { errorMessage } from '../appUtils';
@@ -117,9 +117,10 @@ type MutationVariables = {
   task: (ticket: WritableSessionTicket) => Promise<unknown>;
   topicId: string;
   trace: DiagnosticTrace;
+  editTarget?: ReplyEditTarget;
   applyOptimistic?: () => void;
-  applyResult?: (result: unknown) => void;
-  afterSuccess?: (result: unknown) => Promise<boolean>;
+  applyResult?: (result: unknown, variables: MutationVariables) => void;
+  afterSuccess?: (result: unknown, variables: MutationVariables) => Promise<boolean>;
   successMessage?: string | ((result: unknown) => string);
 };
 
@@ -169,6 +170,33 @@ function updateReplyCache(
   } : current);
 }
 
+function replyEditTargetIsCurrent(
+  target: ReplyEditTarget,
+  ticket: WritableSessionTicket,
+  source: Source,
+  topicId: string,
+  cachedReplies: ReplyCache | undefined
+) {
+  if (
+    target.topicId !== topicId
+    || target.ticket.source !== source
+    || target.ticket.source !== ticket.source
+    || target.ticket.identityKey !== ticket.identityKey
+    || target.ticket.sessionEpoch !== ticket.sessionEpoch
+  ) {
+    return false;
+  }
+  let matchingReplyCount = 0;
+  for (const page of cachedReplies?.pages || []) {
+    for (const reply of page.items) {
+      if (reply.commentId !== target.commentId) continue;
+      matchingReplyCount += 1;
+      if (matchingReplyCount > 1 || reply.canEdit !== true) return false;
+    }
+  }
+  return matchingReplyCount === 1;
+}
+
 export function useTopicActionsController({
   sessionEpochs,
   discourseActionRuntimeDependencies,
@@ -206,9 +234,12 @@ export function useTopicActionsController({
   const pendingActionReservationsRef = useRef(new Set<string>());
   const sessionEpochsRef = useCommittedRef(sessionEpochs);
   const {
-    state: { replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic },
+    state: { replyComposerOpen, replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic },
     commands: { composer: topicComposer, topic: topicCommands }
   } = topicSession;
+  const replyComposerOpenRef = useCommittedRef(replyComposerOpen);
+  const detachReplyEdit = topicComposer.detachEdit;
+  const openReplyEditor = topicComposer.editReply;
   const detail = currentTopicActionTopic(topicDetail, selectedTopic);
   const mutationSource = detail?.source || 'nodeseek';
   const mutationTopicId = detail?.id || 'global';
@@ -235,6 +266,17 @@ export function useTopicActionsController({
       ]);
       if (!isWritableSessionTicketCurrent(variables.ticket)) {
         throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
+      }
+      if (variables.editTarget && !replyEditTargetIsCurrent(
+        variables.editTarget,
+        variables.ticket,
+        variables.source,
+        variables.topicId,
+        queryClient.getQueryData<ReplyCache>(variables.repliesKey)
+      )) {
+        detachReplyEdit();
+        notify('编辑权限已变化，请刷新主题后重试');
+        throw new HandledMutationError('编辑权限已变化，请刷新主题后重试', 'blocked', 'permission_denied');
       }
       const previousDetail = variables.applyOptimistic
         ? queryClient.getQueryData<TopicDetail>(variables.detailKey)
@@ -276,8 +318,8 @@ export function useTopicActionsController({
         });
         return;
       }
-      variables.applyResult?.(result);
-      const refreshed = await variables.afterSuccess?.(result);
+      variables.applyResult?.(result, variables);
+      const refreshed = await variables.afterSuccess?.(result, variables);
       if (!isWritableSessionTicketCurrent(variables.ticket)) {
         finishDiagnosticTrace(variables.trace, 'stale', {
           source: variables.source,
@@ -320,14 +362,85 @@ export function useTopicActionsController({
       }])
   ), [pendingVariables]);
 
-  const cacheKeys = useCallback((actionTopic: TopicDetail) => {
+  const cacheKeys = useCallback((actionTopic: TopicDetail, ticket?: WritableSessionTicket) => {
+    const scope = ticket
+      ? { ...sessionEpochsRef.current, [ticket.source]: ticket.sessionEpoch }
+      : sessionEpochsRef.current;
     const detailKey = forumQueryKeys.topic({
       source: actionTopic.source,
       topicId: actionTopic.id,
-      scope: sessionEpochsRef.current
+      scope
     });
     return { detailKey, repliesKey: forumQueryKeys.replies(detailKey) };
   }, []);
+
+  const editReply = useCallback(async (reply: Reply) => {
+    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!actionTopic) {
+      notify('主题尚未加载');
+      return;
+    }
+    if (!reply.commentId) {
+      notify('当前回复缺少评论 id，刷新主题后再试。');
+      return;
+    }
+    if (!reply.canEdit) {
+      notify('当前回复不能编辑');
+      return;
+    }
+    if (!reply.contentMarkdown) {
+      notify('当前回复缺少原文，刷新主题后再试。');
+      return;
+    }
+    if (!isSessionSource(actionTopic.source)) {
+      notify('当前来源不支持写操作');
+      return;
+    }
+    try {
+      const ticket = await ensureWritableSession(actionTopic.source);
+      if (!isWritableSessionTicketCurrent(ticket)) {
+        throw new WritableSessionBlockedError('登录状态已变化，请重试', 'stale');
+      }
+      openReplyEditor({
+        commentId: reply.commentId,
+        contentMarkdown: reply.contentMarkdown,
+        floor: reply.floor,
+        topicId: actionTopic.id,
+        ticket
+      });
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }, [
+    ensureWritableSession,
+    isWritableSessionTicketCurrent,
+    notify,
+    selectedTopic,
+    openReplyEditor,
+    topicDetail
+  ]);
+
+  useEffect(() => {
+    if (replyEditTarget && (
+      !selectedTopic
+      || replyEditTarget.topicId !== selectedTopic.id
+      || replyEditTarget.ticket.source !== selectedTopic.source
+      || !isWritableSessionTicketCurrent(replyEditTarget.ticket)
+      || !topicReplies.some((reply) => (
+        reply.commentId === replyEditTarget.commentId && reply.canEdit === true
+      ))
+    )) {
+      detachReplyEdit();
+    }
+  }, [
+    isWritableSessionTicketCurrent,
+    replyEditTarget,
+    selectedTopic,
+    sessionEpochs,
+    siteSessionViewModels,
+    topicReplies,
+    detachReplyEdit
+  ]);
 
   const refreshRepliesAfterWrite = useCallback(async (
     actionTopic: TopicDetail,
@@ -359,12 +472,29 @@ export function useTopicActionsController({
     });
     if (duplicate || pendingActionReservationsRef.current.has(reservationKey)) return false;
     pendingActionReservationsRef.current.add(reservationKey);
-    const keys = cacheKeys(actionTopic);
     try {
       if (!isSessionSource(actionTopic.source)) {
         throw new WritableSessionBlockedError('当前来源不支持写操作', 'login_required');
       }
       const ticket = await ensureWritableSession(actionTopic.source);
+      const keys = cacheKeys(actionTopic, ticket);
+      if (variables.editTarget) {
+        if (!replyEditTargetIsCurrent(
+          variables.editTarget,
+          ticket,
+          actionTopic.source,
+          actionTopic.id,
+          queryClient.getQueryData<ReplyCache>(keys.repliesKey)
+        )) {
+          detachReplyEdit();
+          notify('编辑权限已变化，请刷新主题后重试');
+          finishDiagnosticTrace(variables.trace, 'blocked', {
+            source: actionTopic.source,
+            reason: 'permission_denied'
+          });
+          return false;
+        }
+      }
       await mutation.mutateAsync({
         ...variables,
         ...keys,
@@ -393,7 +523,7 @@ export function useTopicActionsController({
     } finally {
       pendingActionReservationsRef.current.delete(reservationKey);
     }
-  }, [cacheKeys, ensureWritableSession, mutation.mutateAsync, notify, queryClient]);
+  }, [cacheKeys, detachReplyEdit, ensureWritableSession, mutation.mutateAsync, notify, queryClient]);
 
   const assertWritableTicket = useCallback((ticket: WritableSessionTicket, serverConfirmed = false) => {
     if (!isWritableSessionTicketCurrent(ticket)) {
@@ -515,7 +645,8 @@ export function useTopicActionsController({
     source: DiscourseSource,
     action: DiscourseAction,
     trace: DiagnosticTrace,
-    ticket: WritableSessionTicket
+    ticket: WritableSessionTicket,
+    preTransport?: () => void
   ) => {
     assertWritableTicket(ticket);
     const loginPrompt = discourseLoginPrompts[source];
@@ -524,6 +655,7 @@ export function useTopicActionsController({
       fetcher: withDiagnosticFetcher(trace, fetcher)
     });
     assertWritableTicket(ticket);
+    preTransport?.();
     if (runtime.isCredentialCurrent?.() === false) {
       throw new HandledMutationError('凭据已变化', 'stale', 'stale');
     }
@@ -597,6 +729,10 @@ export function useTopicActionsController({
       ...(actionTopic ? { source: actionTopic.source } : {}),
       contentLength: replyContent.length
     });
+    if (!replyComposerOpenRef.current) {
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+      return;
+    }
     const canEditDiscourseReply = Boolean(actionTopic && isDiscourseSource(actionTopic.source) && replyEditTarget);
     if (!actionTopic || (!canEditDiscourseReply && !canSubmitReplyToTopic(actionTopic))) {
       finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
@@ -618,14 +754,43 @@ export function useTopicActionsController({
       await executeMutation(actionTopic as TopicDetail, {
         actionKey: topicEditReplyActionKey(actionTopicKey, replyEditTarget.commentId),
         busy: true,
+        editTarget: replyEditTarget,
         trace,
-        task: (ticket) => isNodeSeekActionTopic(actionTopic)
-          ? runNodeSeekRequest(buildNodeSeekEditReplyRequest({ commentId: edit.commentId, content: edit.contentMarkdown, csrfToken: '' }), trace, ticket)
-          : runDiscourseRequest(actionTopic.source as DiscourseSource, {
-              type: 'edit-post', postId: edit.commentId, content: edit.contentMarkdown
-            }, trace, ticket),
-        applyResult: () => {
-          const { repliesKey } = cacheKeys(actionTopic as TopicDetail);
+        task: (ticket) => {
+          if (isNodeSeekActionTopic(actionTopic)) {
+            return runNodeSeekRequest(
+              buildNodeSeekEditReplyRequest({
+                commentId: edit.commentId,
+                content: edit.contentMarkdown,
+                csrfToken: ''
+              }),
+              trace,
+              ticket
+            );
+          }
+          const editRepliesKey = cacheKeys(actionTopic as TopicDetail, ticket).repliesKey;
+          return runDiscourseRequest(actionTopic.source as DiscourseSource, {
+            type: 'edit-post', postId: edit.commentId, content: edit.contentMarkdown
+          }, trace, ticket, () => {
+            if (replyEditTargetIsCurrent(
+              replyEditTarget,
+              ticket,
+              actionTopic.source,
+              actionTopic.id,
+              queryClient.getQueryData<ReplyCache>(editRepliesKey)
+            )) {
+              return;
+            }
+            detachReplyEdit();
+            notify('编辑权限已变化，请刷新主题后重试');
+            throw new HandledMutationError(
+              '编辑权限已变化，请刷新主题后重试',
+              'blocked',
+              'permission_denied'
+            );
+          });
+        },
+        applyResult: (_result, { repliesKey }) => {
           updateReplyCache(queryClient, repliesKey, (replies) => applyEditedReplyContent(replies, edit, actionTopic.source));
           void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
           if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
@@ -679,7 +844,7 @@ export function useTopicActionsController({
       }),
       successMessage: '回复已提交'
     });
-  }, [cacheKeys, executeMutation, notify, queryClient, refreshRepliesAfterWrite, replyContent, replyEditTarget, replyFace, replyTarget, runDiscourseRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
+  }, [cacheKeys, detachReplyEdit, executeMutation, notify, queryClient, refreshRepliesAfterWrite, replyComposerOpenRef, replyContent, replyEditTarget, replyFace, replyTarget, runDiscourseRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
 
   const deleteReplyConfirmed = useCallback(async (reply: Reply, trace: DiagnosticTrace) => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -769,6 +934,10 @@ export function useTopicActionsController({
   const uploadReplyImage = useCallback(async () => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
     const trace = beginDiagnosticTrace('reply', 'image-upload', actionTopic ? { source: actionTopic.source } : {});
+    if (!replyComposerOpenRef.current) {
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+      return;
+    }
     const canEditXiaoyinsiReply = Boolean(actionTopic && isXiaoyinsiActionTopic(actionTopic) && replyEditTarget);
     if (!actionTopic || (!canEditXiaoyinsiReply && !canSubmitReplyToTopic(actionTopic))) {
       finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
@@ -783,14 +952,38 @@ export function useTopicActionsController({
     await executeMutation(actionTopic as TopicDetail, {
       actionKey: `${topicReplyActionKey(actionTopicKey)}:image`,
       busy: true,
+      ...(replyEditTarget ? { editTarget: replyEditTarget } : {}),
       trace,
       task: async (ticket) => {
+        const editRepliesKey = replyEditTarget
+          ? cacheKeys(actionTopic as TopicDetail, ticket).repliesKey
+          : null;
+        const assertCurrentEditTarget = (serverConfirmed = false) => {
+          if (!replyEditTarget || !editRepliesKey || replyEditTargetIsCurrent(
+            replyEditTarget,
+            ticket,
+            actionTopic.source,
+            actionTopic.id,
+            queryClient.getQueryData<ReplyCache>(editRepliesKey)
+          )) {
+            return;
+          }
+          detachReplyEdit();
+          notify('编辑权限已变化，请刷新主题后重试');
+          throw new HandledMutationError(
+            '编辑权限已变化，请刷新主题后重试',
+            'blocked',
+            'permission_denied',
+            serverConfirmed
+          );
+        };
         assertWritableTicket(ticket);
         let nodeSeekApiKey: string | null = null;
         let nodeImageGeneration: number | undefined;
         if (isNodeSeekActionTopic(actionTopic)) {
           nodeSeekApiKey = await ensureNodeImageApiKey();
           assertWritableTicket(ticket);
+          assertCurrentEditTarget();
           nodeImageGeneration = currentNodeImageApiKeyGeneration();
           if (!nodeSeekApiKey) {
             notify(NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE);
@@ -805,13 +998,20 @@ export function useTopicActionsController({
           type: 'image/*', copyToCacheDirectory: true, multiple: false
         });
         assertWritableTicket(ticket);
+        assertCurrentEditTarget();
         if (picked.canceled || !picked.assets?.[0]) {
           throw new HandledMutationError('已取消选择', 'canceled', 'canceled');
         }
         const file = normalizeReplyImageAsset(picked.assets[0]);
         let imageUrl = '';
         if (isDiscourseSource(actionTopic.source)) {
-          const result = await runDiscourseRequest(actionTopic.source, { type: 'upload', file }, trace, ticket);
+          const result = await runDiscourseRequest(
+            actionTopic.source,
+            { type: 'upload', file },
+            trace,
+            ticket,
+            () => assertCurrentEditTarget()
+          );
           imageUrl = discourseSourceUploadUrl(actionTopic.source, result);
         } else if (isYaohuoActionTopic(actionTopic)) {
           imageUrl = await uploadYaohuoReplyImage({ fetcher: withDiagnosticFetcher(trace, fetcher), file });
@@ -838,6 +1038,7 @@ export function useTopicActionsController({
           }
         }
         assertWritableTicket(ticket, Boolean(imageUrl));
+        assertCurrentEditTarget(Boolean(imageUrl));
         if (!imageUrl) throw new HandledMutationError('图片上传结果不正确', 'failure', 'invalid_response');
         return { imageUrl, name: file.name };
       },
@@ -848,7 +1049,7 @@ export function useTopicActionsController({
       },
       successMessage: '图片已插入'
     });
-  }, [ensureNodeImageApiKey, executeMutation, fetcher, notify, replyEditTarget, runDiscourseRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
+  }, [cacheKeys, detachReplyEdit, ensureNodeImageApiKey, executeMutation, fetcher, notify, queryClient, replyComposerOpenRef, replyEditTarget, runDiscourseRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
 
   const checkIn = useCallback(async () => {
     const trace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });
@@ -1120,6 +1321,7 @@ export function useTopicActionsController({
     checkIn,
     collectOnNodeSeekSite,
     deleteReply,
+    editReply,
     favoriteOnYaohuoSite,
     interact,
     optimisticTopicActions,

@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createTopicImageDeriver, filterRepliesWithImages, inlineSizedImageSignatureForHtml, inlineSizedImageSignatureForReply, replyHtmlWithSignature } from './topicDerivedData';
+import {
+  createTopicImageDeriver,
+  filterRepliesWithImages,
+  inlineSizedImageSignatureForHtml,
+  inlineSizedImageSignatureForReply,
+  replyHtmlWithSignature,
+  sameInlineSizedImagesForHtml,
+  sameInlineSizedImagesForReply
+} from './topicDerivedData';
 import type { Reply } from './types';
 
 const replyWithImage: Reply = {
@@ -75,6 +83,46 @@ describe('Android topic derived data', () => {
       contentHtml: '<p>body</p>',
       signatureHtml: '<p><img src="https://cdn.example.com/sign.png"></p>'
     }, inlineSizedImageUrls)).toBe('https://cdn.example.com/sign.png');
+  });
+
+  it('[REG-PERF-007] skips inline image scans for changed replies and stable maps', () => {
+    const scanned = vi.fn();
+    const countedMap = () => new Proxy({ 'https://cdn.example.com/a.jpg': true as const }, {
+      ownKeys(target) {
+        scanned();
+        return Reflect.ownKeys(target);
+      }
+    });
+    const firstMap = countedMap();
+    const secondMap = countedMap();
+
+    expect(sameInlineSizedImagesForReply(
+      replyWithImage,
+      { ...replyWithImage },
+      firstMap,
+      secondMap
+    )).toBe(false);
+    expect(sameInlineSizedImagesForReply(
+      replyWithImage,
+      replyWithImage,
+      firstMap,
+      firstMap
+    )).toBe(true);
+    expect(sameInlineSizedImagesForHtml(
+      replyWithImage.contentHtml,
+      replyWithImage.contentHtml,
+      firstMap,
+      firstMap
+    )).toBe(true);
+    expect(scanned).not.toHaveBeenCalled();
+
+    expect(sameInlineSizedImagesForReply(
+      replyWithImage,
+      replyWithImage,
+      firstMap,
+      secondMap
+    )).toBe(true);
+    expect(scanned).toHaveBeenCalledTimes(2);
   });
 
   it('treats reply signature images as reply images', () => {

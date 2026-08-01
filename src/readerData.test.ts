@@ -723,38 +723,41 @@ describe('Android reader data helpers', () => {
     expect(data.favorites[topicKey(topic)]?.topic.url).toBe(topic.url);
   });
 
-  it('removes sensitive query parameters from stored topic links', () => {
-    const unsafeTopic: Topic = {
-      ...topic,
-      source: 'yaohuo',
+  it.each([
+    {
+      label: 'a Yaohuo URL with remote query credentials',
+      source: 'yaohuo' as const,
       id: '1',
-      url: 'https://yaohuo.me/bbs/book_view.aspx?id=1&classid=177&sid=secret&token=hidden'
-    };
-
-    const data = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(unsafeTopic)]: {
-          topic: unsafeTopic,
-          savedAt: '2026-05-20T03:00:00.000Z'
-        }
-      }
-    });
-
-    const url = data.favorites[topicKey(unsafeTopic)]?.topic.url || '';
-    const params = new URL(url).searchParams;
-    expect(params.get('id')).toBe('1');
-    expect(params.get('classid')).toBe('177');
-    expect(url).not.toContain('secret');
-    expect(params.has('sid')).toBe(false);
-    expect(params.has('token')).toBe(false);
-  });
-
-  it('removes URL userinfo, fragments, and token parameter variants from stored links', () => {
+      suppliedUrl: 'https://yaohuo.me/bbs/book_view.aspx?id=1&classid=177&sid=secret&token=hidden',
+      expectedUrl: 'https://www.yaohuo.me/bbs-1.html'
+    },
+    {
+      label: 'a NodeSeek URL with userinfo, token variants and a fragment',
+      source: 'nodeseek' as const,
+      id: 'unsafe-url',
+      suppliedUrl: 'https://user:pass@www.nodeseek.com/post-723704-1?access_token=secret&auth_token=secret&csrf_token=secret&ok=1#reply',
+      expectedUrl: 'https://www.nodeseek.com/post-unsafe-url-1'
+    },
+    {
+      label: 'a relative URL',
+      source: 'nodeseek' as const,
+      id: 'relative',
+      suppliedUrl: '/post-723704-1?session=secret&tab=1',
+      expectedUrl: 'https://www.nodeseek.com/post-relative-1'
+    },
+    {
+      label: 'an unsafe URL scheme',
+      source: 'nodeseek' as const,
+      id: 'unsafe-link',
+      suppliedUrl: 'javascript:alert(1)',
+      expectedUrl: 'https://www.nodeseek.com/post-unsafe-link-1'
+    }
+  ])('[REG-DATA-006] rebuilds $label from source identity only', ({ expectedUrl, id, source, suppliedUrl }) => {
     const unsafeTopic: Topic = {
       ...topic,
-      id: 'unsafe-url',
-      url: 'https://user:pass@www.nodeseek.com/post-723704-1?access_token=secret&auth_token=secret&csrf_token=secret&ok=1#reply'
+      source,
+      id,
+      url: suppliedUrl
     };
 
     const data = sanitizeReaderData({
@@ -769,13 +772,12 @@ describe('Android reader data helpers', () => {
 
     const url = data.favorites[topicKey(unsafeTopic)]?.topic.url || '';
     const parsed = new URL(url);
+    expect(url).toBe(expectedUrl);
     expect(parsed.username).toBe('');
     expect(parsed.password).toBe('');
     expect(parsed.hash).toBe('');
-    expect(parsed.searchParams.get('ok')).toBe('1');
-    expect(parsed.searchParams.has('access_token')).toBe(false);
-    expect(parsed.searchParams.has('auth_token')).toBe(false);
-    expect(parsed.searchParams.has('csrf_token')).toBe(false);
+    expect([...parsed.searchParams]).toEqual([]);
+    expect(url).not.toMatch(/secret|hidden|alert/);
   });
 
   it('drops unsafe object fields and non-finite numbers while sanitizing topic records', () => {
@@ -853,46 +855,6 @@ describe('Android reader data helpers', () => {
     });
 
     expect(data.favorites[topicKey(unsafeTopic)]).toBeUndefined();
-  });
-
-  it('normalizes relative topic links against the topic source', () => {
-    const relativeTopic: Topic = {
-      ...topic,
-      id: 'relative',
-      url: '/post-723704-1?session=secret&tab=1'
-    };
-
-    const data = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(relativeTopic)]: {
-          topic: relativeTopic,
-          savedAt: '2026-05-20T03:00:00.000Z'
-        }
-      }
-    });
-
-    expect(data.favorites[topicKey(relativeTopic)]?.topic.url).toBe('https://www.nodeseek.com/post-723704-1?tab=1');
-  });
-
-  it('drops unsafe topic link schemes during sanitizing', () => {
-    const unsafeTopic: Topic = {
-      ...topic,
-      id: 'unsafe-link',
-      url: 'javascript:alert(1)'
-    };
-
-    const data = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(unsafeTopic)]: {
-          topic: unsafeTopic,
-          savedAt: '2026-05-20T03:00:00.000Z'
-        }
-      }
-    });
-
-    expect(data.favorites[topicKey(unsafeTopic)]?.topic.url).toBe('');
   });
 
   it('merges reader settings field by field and keeps local values for invalid remote fields', () => {

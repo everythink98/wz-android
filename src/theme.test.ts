@@ -142,17 +142,46 @@ describe('Android reader theme safety rails', () => {
     expect(styles.replyQuoteBox.backgroundColor).not.toBe(styles.quoteBox.backgroundColor);
   });
 
+  it('[REG-TOPIC-054] gives quote headers stable touch targets and compact breathing room', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.quoteBox).toMatchObject({ gap: 8, paddingHorizontal: 12, paddingVertical: 10 });
+    expect(styles.quoteAuthorSummary.minHeight).toBeGreaterThanOrEqual(48);
+    expect(styles.quotePanelHeader.minHeight).toBeGreaterThanOrEqual(48);
+    expect(styles.quotePanelState.minHeight).toBeGreaterThanOrEqual(48);
+    expect(styles.topicContentInner.gap).toBe(0);
+    expect(styles.quoteRowTop).toMatchObject({ borderBottomWidth: 0, paddingBottom: 8 });
+    expect(styles.quoteRowContinuation).toMatchObject({ borderBottomWidth: 0, borderTopWidth: 0, paddingBottom: 0, paddingTop: 0 });
+    expect(styles.quoteRowBottom).toMatchObject({ borderTopWidth: 0, paddingTop: 0 });
+  });
+
   it('keeps appearance controls compact, equal-width, and touch accessible', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
     expect(styles.appearanceSegmentedControl.flex).toBe(1);
     expect(styles.appearanceSegment.flex).toBe(1);
-    expect(styles.appearanceStepButton.width).toBeGreaterThanOrEqual(44);
-    expect(styles.appearanceStepButton.height).toBeGreaterThanOrEqual(44);
-    expect(styles.appearanceSlider.height).toBeGreaterThanOrEqual(44);
+    expect(styles.appearanceSegment.minHeight).toBeGreaterThanOrEqual(48);
+    expect(styles.appearanceStepButton.width).toBeGreaterThanOrEqual(48);
+    expect(styles.appearanceStepButton.height).toBeGreaterThanOrEqual(48);
+    expect(styles.appearanceSlider.height).toBeGreaterThanOrEqual(48);
     expect(styles.menuIcon.backgroundColor).toBeUndefined();
     expect(styles.expandableStateIcon.backgroundColor).toBeUndefined();
+  });
+
+  it('[REG-A11Y-001][REG-TOPIC-058] keeps reply navigation visually compact without changing the prose inset', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.replyHead.minHeight).toBeGreaterThanOrEqual(48);
+    expect(styles.replyTargetPill).toMatchObject({
+      alignSelf: 'flex-start',
+      paddingVertical: 5
+    });
+    expect(styles.replyTargetPill).not.toHaveProperty('justifyContent');
+    expect(styles.replyTargetPill).not.toHaveProperty('minHeight');
+    expect(styles.replyContentArea).toMatchObject({ paddingLeft: 42, paddingRight: 0 });
   });
 
   it('keeps reply composer actions grouped at the bottom edge', () => {

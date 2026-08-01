@@ -47,18 +47,40 @@ describe('Android back handler helpers', () => {
     })).toBe('return-screen');
   });
 
-  it('[REG-PERF-002] performs a normal Topic pop without restoring the fallback snapshot', () => {
+  it('[REG-PERF-002][REG-PERF-008] dispatches native pop before restoring the returning Topic route', () => {
     const calls: string[] = [];
 
     executeTopicReturnStrategy({
       canGoBack: true,
       strategy: 'route-pop',
       goBack: () => calls.push('pop'),
+      restoreReturningRoute: () => {
+        calls.push('restore-route');
+        return true;
+      },
       restoreSnapshot: () => calls.push('restore-snapshot'),
       returnToScreen: () => calls.push('return-screen')
     });
 
-    expect(calls).toEqual(['pop']);
+    expect(calls).toEqual(['pop', 'restore-route']);
+  });
+
+  it('[REG-PERF-008] restores the fallback snapshot before pop only when the returning route was lost', () => {
+    const calls: string[] = [];
+
+    executeTopicReturnStrategy({
+      canGoBack: true,
+      strategy: 'route-pop',
+      goBack: () => calls.push('pop'),
+      restoreReturningRoute: () => {
+        calls.push('route-miss');
+        return false;
+      },
+      restoreSnapshot: () => calls.push('restore-fallback-snapshot'),
+      returnToScreen: () => calls.push('return-screen')
+    });
+
+    expect(calls).toEqual(['pop', 'route-miss', 'restore-fallback-snapshot']);
   });
 
   it('[REG-PERF-002] defers only User return metadata on a normal Topic route pop', () => {

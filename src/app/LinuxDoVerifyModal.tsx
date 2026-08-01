@@ -1,4 +1,4 @@
-import { memo, type RefObject, useEffect, useRef } from 'react';
+import { memo, type RefObject, useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { LINUXDO_URL } from '../appUrls';
@@ -67,6 +67,7 @@ export function LinuxDoVerifyModal({
   onShowLinuxDoPanelChange: (value: boolean) => void;
 }) {
   const linuxDoWebViewReadyRef = useRef(false);
+  const [webViewNeedsRemount, setWebViewNeedsRemount] = useState(false);
   const markLinuxDoPageReady = () => {
     linuxDoWebViewReadyRef.current = true;
     onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
@@ -74,6 +75,7 @@ export function LinuxDoVerifyModal({
 
   useEffect(() => {
     linuxDoWebViewReadyRef.current = false;
+    setWebViewNeedsRemount(false);
   }, [linuxDoWebViewKey, showLinuxDoPanel]);
 
   useEffect(() => {
@@ -81,6 +83,7 @@ export function LinuxDoVerifyModal({
       return undefined;
     }
     const timeout = setTimeout(() => {
+      setWebViewNeedsRemount(true);
       onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
       onSetLinuxDoWebViewError('linux.do 页面打开超时：请检查模拟器网络后刷新页面。', linuxDoWebViewKey, credentialAttempt);
     }, LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS);
@@ -106,7 +109,7 @@ export function LinuxDoVerifyModal({
         </View>
       )}
     >
-      {showLinuxDoPanel && mountLinuxDoWebView && !webViewBlockMessage ? (
+      {showLinuxDoPanel && mountLinuxDoWebView && !webViewBlockMessage && !webViewNeedsRemount ? (
         <WebView
           key={linuxDoWebViewKey}
           ref={linuxDoWebViewRef}
@@ -137,6 +140,7 @@ export function LinuxDoVerifyModal({
           }}
           onLoadStart={() => {
             linuxDoWebViewReadyRef.current = false;
+            setWebViewNeedsRemount(false);
             onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
             onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
           }}
@@ -151,6 +155,7 @@ export function LinuxDoVerifyModal({
           }}
           renderError={() => <View style={styles.webViewErrorPlaceholder} />}
           onRenderProcessGone={() => {
+            setWebViewNeedsRemount(true);
             onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
             onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。', linuxDoWebViewKey, credentialAttempt);
           }}

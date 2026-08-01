@@ -48,6 +48,7 @@ import {
   discourseQuotedPostReferenceFromAttributes,
   quotedPostReferenceKey,
   quotedPostReferenceFromReply,
+  topicOpeningPostAsReply,
   topicQuotedPostInstanceKey,
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
@@ -57,11 +58,10 @@ import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
-import { isOriginalImageUpgradeNearViewport } from '../../originalImageLoading';
 import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposerSheet } from './ReplyComposerSheet';
 import { TopicMenu } from './TopicMenu';
-import { buildReplyListItems, getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicOpeningPostAsReply, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
+import { buildReplyListItems, buildVirtualizedReplyItems, isAccessNoticeHtml, readableTopicError, stableTextHash, topicListItemSpacing, topicStatusBadges, type TopicListItem as ReplyTopicListItem } from './topicScreenHelpers';
 
 type YaohuoFavoriteState = {
   bookmarked?: boolean;
@@ -70,6 +70,13 @@ type YaohuoFavoriteState = {
 };
 
 const YaohuoFavoriteStateContext = createContext<YaohuoFavoriteState | null>(null);
+const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
+
+type QuoteContentLayoutProgress = {
+  contentToken: string;
+  frame: number | null;
+  primed: boolean;
+};
 
 export function YaohuoFavoriteStateProvider({
   bookmarked,
@@ -146,10 +153,7 @@ function AcceptedAnswerPreview({
     () => reply ? splitDiscourseContentHtml(reply.contentHtml, reply.polls) : [],
     [reply]
   );
-  const quotedFloors = useMemo(
-    () => Array.from(new Set(reply?.quotedFloors || [])),
-    [reply?.quotedFloors]
-  );
+  const quotedPosts = reply?.quotedPosts || [];
   const ToggleIcon = expanded ? ChevronUp : ChevronDown;
 
   return (
@@ -186,22 +190,25 @@ function AcceptedAnswerPreview({
                 </View>
               </View>
               <View style={!fullAnswerVisible ? styles.topicAcceptedAnswerPreview : undefined}>
-                {quotedFloors.length ? (
+                {quotedPosts.length ? (
                   <View style={styles.quoteStack}>
-                    {quotedFloors.map((quotedFloor) => (
-                      <View key={`accepted-quote-${quotedFloor}`} style={[styles.quoteBox, styles.replyQuoteBox]}>
+                    {quotedPosts.map((quote) => (
+                      <View
+                        key={`accepted-quote-${quotedPostReferenceKey(quote.reference)}`}
+                        style={[styles.quoteBox, styles.replyQuoteBox]}
+                      >
                         <View style={styles.quoteHeader}>
                           <View style={styles.quoteAuthorSummary}>
                             <View style={styles.quoteAuthorTextBlock}>
                               <Text style={styles.quoteAuthorText} numberOfLines={1}>
-                                {reply.quotedAuthors?.[quotedFloor]?.label || '引用内容'}
+                                {quote.author?.label || '引用内容'}
                               </Text>
-                              <Text style={styles.replyMeta}>引用 #{quotedFloor}</Text>
+                              <Text style={styles.replyMeta}>引用 #{quote.reference.postNumber}</Text>
                             </View>
                           </View>
                         </View>
-                        {reply.quotedPreviews?.[quotedFloor] ? (
-                          <Text style={styles.quotePreviewText}>{reply.quotedPreviews[quotedFloor]}</Text>
+                        {quote.preview ? (
+                          <Text style={styles.quotePreviewText}>{quote.preview}</Text>
                         ) : null}
                       </View>
                     ))}
@@ -285,6 +292,9 @@ type TopicContentItem =
   | { type: 'contentVideo'; key: string; src: string }
   | { type: 'poll'; key: string; poll: TopicPoll }
   | { type: 'accessNotice'; key: string; label: string; detail: string };
+type TopicListItem = ReplyTopicListItem
+  | { type: 'topicContent'; key: string; content: TopicContentItem }
+  | { type: 'topicPostlude'; key: string };
 export type { TopicListItem };
 
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
@@ -401,7 +411,10 @@ function topicListItemKey(item: TopicListItem) {
 }
 
 function topicListItemType(item: TopicListItem) {
-  return item.type;
+  if (item.type === 'replyQuoteContent') {
+    return `${item.type}:${item.content.type}`;
+  }
+  return item.type === 'topicContent' ? `topicContent:${item.content.type}` : item.type;
 }
 
 export const TopicScreen = memo(function TopicScreen({
@@ -455,6 +468,7 @@ export const TopicScreen = memo(function TopicScreen({
   onVotePoll,
   onLoadMoreReplies,
   onOpenOriginal,
+  onOpenTopic,
   onOpenReadingSettings,
   onReplyComposerOpenChange,
   onReplyContentChange,
@@ -528,6 +542,7 @@ export const TopicScreen = memo(function TopicScreen({
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onLoadMoreReplies: () => void;
   onOpenOriginal: (url: string) => void;
+  onOpenTopic: (topic: Topic) => void;
   onOpenReadingSettings: () => void;
   onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
@@ -581,11 +596,6 @@ export const TopicScreen = memo(function TopicScreen({
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
-  const topicContentLayoutsRef = useRef<{
-    topicKey: string;
-    values: Map<string, { height: number; y: number }>;
-  }>({ topicKey: '', values: new Map() });
-  const topicViewportRef = useRef({ height: 0, offsetY: 0, topicKey: '' });
   const [nearbyTopicContent, setNearbyTopicContent] = useState<{
     keys: ReadonlySet<string>;
     topicKey: string;
@@ -609,60 +619,59 @@ export const TopicScreen = memo(function TopicScreen({
       };
     });
   }, [detailTopicStateKey]);
-  const setTopicViewport = useCallback((height: number, offsetY: number) => {
-    if (!detailTopicStateKey || !(height > 0)) {
-      return;
-    }
-    const viewport = { height, offsetY, topicKey: detailTopicStateKey };
-    topicViewportRef.current = viewport;
-    if (topicContentLayoutsRef.current.topicKey !== detailTopicStateKey) {
-      return;
-    }
-    addNearbyTopicContentKeys(Array.from(topicContentLayoutsRef.current.values.entries())
-      .filter(([, layout]) => isOriginalImageUpgradeNearViewport(
-        layout,
-        viewport,
-        TOPIC_DETAIL_LIST_PERFORMANCE_PROPS.drawDistance
-      ))
-      .map(([key]) => key));
-  }, [addNearbyTopicContentKeys, detailTopicStateKey]);
-  const recordTopicContentLayout = useCallback((key: string, event: LayoutChangeEvent) => {
-    if (!detailTopicStateKey) {
-      return;
-    }
-    if (topicContentLayoutsRef.current.topicKey !== detailTopicStateKey) {
-      topicContentLayoutsRef.current = { topicKey: detailTopicStateKey, values: new Map() };
-    }
-    const layout = {
-      height: event.nativeEvent.layout.height,
-      y: event.nativeEvent.layout.y
+  const [primedReplyQuoteContent, setPrimedReplyQuoteContent] = useState<{
+    tokens: ReadonlyMap<string, string>;
+    topicKey: string;
+  }>({ tokens: EMPTY_QUOTE_CONTENT_TOKENS, topicKey: '' });
+  const primedReplyQuoteContentTokens = primedReplyQuoteContent.topicKey === detailTopicStateKey
+    ? primedReplyQuoteContent.tokens
+    : EMPTY_QUOTE_CONTENT_TOKENS;
+  const quoteContentLayoutProgressRef = useRef(new Map<string, QuoteContentLayoutProgress>());
+  useEffect(() => {
+    setPrimedReplyQuoteContent((current) => (
+      current.topicKey === detailTopicStateKey && current.tokens.size === 0
+        ? current
+        : { tokens: EMPTY_QUOTE_CONTENT_TOKENS, topicKey: detailTopicStateKey }
+    ));
+    return () => {
+      quoteContentLayoutProgressRef.current.forEach((progress) => {
+        if (progress.frame !== null) cancelAnimationFrame(progress.frame);
+      });
+      quoteContentLayoutProgressRef.current.clear();
     };
-    topicContentLayoutsRef.current.values.set(key, layout);
-    const viewport = topicViewportRef.current;
-    if (
-      viewport.topicKey === detailTopicStateKey
-      && viewport.height > 0
-      && isOriginalImageUpgradeNearViewport(layout, viewport, TOPIC_DETAIL_LIST_PERFORMANCE_PROPS.drawDistance)
-    ) {
-      addNearbyTopicContentKeys([key]);
+  }, [detailTopicStateKey]);
+  const markReplyQuoteContentLayout = useCallback(({
+    contentToken,
+    instanceKey
+  }: {
+    contentToken: string;
+    instanceKey: string;
+  }) => {
+    if (!detailTopicStateKey) return;
+    const progressKey = `${detailTopicStateKey}:${instanceKey}`;
+    let progress = quoteContentLayoutProgressRef.current.get(progressKey);
+    if (!progress || progress.contentToken !== contentToken) {
+      if (progress?.frame !== null && progress?.frame !== undefined) cancelAnimationFrame(progress.frame);
+      progress = { contentToken, frame: null, primed: false };
+      quoteContentLayoutProgressRef.current.set(progressKey, progress);
     }
-  }, [addNearbyTopicContentKeys, detailTopicStateKey]);
-  const handleTopicViewportLayout = useCallback((event: LayoutChangeEvent) => {
-    const currentViewport = topicViewportRef.current.topicKey === detailTopicStateKey
-      ? topicViewportRef.current
-      : { offsetY: 0 };
-    setTopicViewport(event.nativeEvent.layout.height, currentViewport.offsetY);
-  }, [detailTopicStateKey, setTopicViewport]);
-  const updateTopicViewport = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setTopicViewport(
-      event.nativeEvent.layoutMeasurement.height,
-      event.nativeEvent.contentOffset.y
-    );
-  }, [setTopicViewport]);
-  const handleTopicScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    updateTopicViewport(event);
-    onTopicScroll(event);
-  }, [onTopicScroll, updateTopicViewport]);
+    if (progress.primed) return;
+    if (progress.frame !== null) return;
+    progress.frame = requestAnimationFrame(() => {
+      if (quoteContentLayoutProgressRef.current.get(progressKey) !== progress) return;
+      progress!.frame = null;
+      progress!.primed = true;
+      setPrimedReplyQuoteContent((current) => {
+        const currentTokens = current.topicKey === detailTopicStateKey
+          ? current.tokens
+          : EMPTY_QUOTE_CONTENT_TOKENS;
+        if (currentTokens.get(instanceKey) === contentToken) return current;
+        const tokens = new Map(currentTokens);
+        tokens.set(instanceKey, contentToken);
+        return { tokens, topicKey: detailTopicStateKey };
+      });
+    });
+  }, [detailTopicStateKey]);
   const isOptimisticActionPending = useCallback((targetId: string | number | undefined, action: TopicActionStateKind) => {
     if (!detailTopicStateKey || !targetId) {
       return false;
@@ -738,21 +747,22 @@ export const TopicScreen = memo(function TopicScreen({
   }, []);
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
+  const topicSource = topic?.source;
   const topicContentHtml = topic?.contentHtml || '';
   const topicPolls = topic?.polls || EMPTY_TOPIC_POLLS;
   const topicAccessRequirementText = topic?.accessRequirement ? forumAccessRequirementText(topic.accessRequirement) : '';
   const topicAccessRequirementDetail = topic?.accessRequirement?.detail || '当前账号暂无权限查看这个帖子';
   const topicShowsAccessNotice = Boolean(topic && isAccessNoticeHtml(topicContentHtml, topic.accessRequirement));
-  const topicContentItems = useMemo<TopicContentItem[]>(() => (
-    topic
+  const topicContentItems = useMemo<TopicContentItem[]>(() => {
+    return topicSource
       ? topicShowsAccessNotice
         ? [{
-          type: 'accessNotice',
+          type: 'accessNotice' as const,
           key: 'topic-access-notice',
           label: topicAccessRequirementText,
           detail: topicAccessRequirementDetail
         }]
-        : (isDiscourseSource(topic.source)
+        : (isDiscourseSource(topicSource)
           ? splitDiscourseContentHtml(topicContentHtml, topicPolls)
           : [{ type: 'html' as const, html: topicContentHtml }]
         ).flatMap((part, partIndex): TopicContentItem[] => {
@@ -766,14 +776,18 @@ export const TopicScreen = memo(function TopicScreen({
               : { type: 'content' as const, key: `topic-content-${partIndex}-${index}-${stableTextHash(html)}`, html };
           });
         })
-      : []
-  ), [topic, topicAccessRequirementDetail, topicAccessRequirementText, topicContentHtml, topicPolls, topicShowsAccessNotice]);
-  const replyItems = useMemo<TopicListItem[]>(() => replies.map((reply) => ({
-    type: 'reply',
-    key: getReplyKey(reply),
-    reply,
-    replyFloor: reply.floor ?? 0
-  })), [replies]);
+      : [];
+  }, [topicAccessRequirementDetail, topicAccessRequirementText, topicContentHtml, topicPolls, topicShowsAccessNotice, topicSource]);
+  const replyItems = useMemo<ReplyTopicListItem[]>(() => buildVirtualizedReplyItems({
+    expandedQuotes,
+    loadedQuotedReplies,
+    loadingQuotedFloors,
+    primedQuoteContentTokens: primedReplyQuoteContentTokens,
+    replies,
+    repliesByFloor,
+    source: itemSource,
+    topicId: item?.id
+  }), [expandedQuotes, item?.id, itemSource, loadedQuotedReplies, loadingQuotedFloors, primedReplyQuoteContentTokens, replies, repliesByFloor]);
   const acceptedAnswer = useMemo(() => {
     if (!topic || topicShowsAccessNotice || !isDiscourseSource(topic.source)) {
       return null;
@@ -833,6 +847,7 @@ export const TopicScreen = memo(function TopicScreen({
   const discourseTopicReactionStats = topic && isDiscourseSource(topic.source)
     ? topic.source === 'linuxdo' ? linuxDoReactionStats(topic, discourseEmojiUrls) : discourseReactionStats(topic, discourseEmojiUrls)
     : [];
+  const topicReactionStats = topic?.source === 'nodeseek' ? nodeSeekTopicReactionStats(topic) : [];
   const topicHasPostActions = Boolean(topic && !topicShowsAccessNotice && (
     (topic.source === 'nodeseek' && (canWriteNodeSeek || nodeSeekTopicReactionStats(topic).length > 0))
     || (isDiscourseSource(topic.source) && (canUseDiscourseInteractions || discourseTopicReactionStats.length > 0))
@@ -844,13 +859,35 @@ export const TopicScreen = memo(function TopicScreen({
     replyItems,
     topicShowsAccessNotice
   }), [canShowReplies, replyItems, topicShowsAccessNotice]);
+  const legacyTopicPollsVisible = Boolean(
+    topic
+    && !isDiscourseSource(topic.source)
+    && topic.source !== 'nodeseek'
+    && !topicShowsAccessNotice
+    && topicPolls.length
+  );
+  const topicPostludeVisible = Boolean(
+    legacyTopicPollsVisible
+    || (acceptedAnswer && !topicShowsAccessNotice)
+    || topicHasPostActions
+  );
+  const topicListItems = useMemo<TopicListItem[]>(() => [
+    ...topicContentItems.map((content) => ({
+      type: 'topicContent' as const,
+      key: content.key,
+      content
+    })),
+    ...(topicPostludeVisible ? [{ type: 'topicPostlude' as const, key: 'topic-postlude' }] : []),
+    ...replyListItems
+  ], [replyListItems, topicContentItems, topicPostludeVisible]);
   const acceptedAnswerListIndex = useMemo(() => {
     if (!acceptedAnswerReply) {
       return -1;
     }
-    return replyListItems.findIndex((listItem) => listItem.type === 'reply'
-      && listItem.reply.floor === acceptedAnswerReply.floor);
-  }, [acceptedAnswerReply, replyListItems]);
+    return topicListItems.findIndex((listItem) => (
+      listItem.type === 'reply' || listItem.type === 'replyStart'
+    ) && listItem.reply.floor === acceptedAnswerReply.floor);
+  }, [acceptedAnswerReply, topicListItems]);
   const acceptedAnswerIsInSourceReplies = Boolean(
     acceptedAnswer && sourceReplies.some((reply) => reply.floor === acceptedAnswer.floor)
   );
@@ -951,7 +988,6 @@ export const TopicScreen = memo(function TopicScreen({
     };
     return {
       ...htmlRenderers,
-      blockquote: TrimTrailingBlockSpacingRenderer,
       details: DetailsRenderer,
       h1: TrimTrailingBlockSpacingRenderer,
       h2: TrimTrailingBlockSpacingRenderer,
@@ -1089,7 +1125,22 @@ export const TopicScreen = memo(function TopicScreen({
   const renderTopicListItemFrame = useCallback((children: ReactNode, key?: string, onLayout?: (event: LayoutChangeEvent) => void) => (
     <View key={key} style={styles.topicListItemFrame} onLayout={onLayout}>{children}</View>
   ), [styles]);
-  function renderTopicContentItem(contentItem: TopicContentItem) {
+  const TopicListItemSeparator = useCallback(({
+    leadingItem,
+    trailingItem
+  }: {
+    leadingItem: TopicListItem;
+    trailingItem: TopicListItem;
+  }) => {
+    const height = leadingItem.type === 'topicContent'
+      || leadingItem.type === 'topicPostlude'
+      || trailingItem.type === 'topicContent'
+      || trailingItem.type === 'topicPostlude'
+      ? 10
+      : topicListItemSpacing(leadingItem, trailingItem);
+    return height ? <View style={{ height }} /> : null;
+  }, []);
+  const renderTopicContentItem = useCallback((contentItem: TopicContentItem) => {
     if (contentItem.type === 'accessNotice') {
       return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
@@ -1150,7 +1201,7 @@ export const TopicScreen = memo(function TopicScreen({
           </View>
         </View>,
         contentItem.key,
-        (event) => recordTopicContentLayout(contentItem.key, event)
+        () => addNearbyTopicContentKeys([contentItem.key])
       );
     }
 
@@ -1167,222 +1218,32 @@ export const TopicScreen = memo(function TopicScreen({
       </View>,
       contentItem.key
     );
-  }
-
-  const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
-    if (listItem.type === 'replyControls') {
-      return renderTopicListItemFrame(
-        <View style={[styles.replyHeader, topicColumnStyle]}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{replyDisplayCount} 条</Text></Text>
-            {canWrite ? (
-              <AppButton
-                label={replyComposerOpen ? '收起回复' : '写回复'}
-                variant={replyComposerOpen ? 'ghost' : 'default'}
-                styles={styles}
-                onPress={() => onReplyComposerOpenChange(!replyComposerOpen)}
-              />
-            ) : null}
-          </View>
-          <PillRail
-            variant="subtabs"
-            items={[
-              { value: 'all', label: '全部' },
-              { value: 'author', label: '只看楼主' },
-              { value: 'images', label: '只看带图' },
-              { value: 'newest', label: '倒序' }
-            ]}
-            value={replyFilter}
-            styles={styles}
-            onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
-          />
-          {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
-          <View style={styles.searchRow}>
-            <TextInput
-              style={[styles.input, styles.flex]}
-              value={commentQuery}
-              onChangeText={onCommentQueryChange}
-              placeholder="评论内查找"
-              placeholderTextColor={theme.muted}
-            />
-            {commentQuery ? <IconButton icon={X} label="清空查找" styles={styles} theme={theme} onPress={() => onCommentQueryChange('')} /> : null}
-          </View>
-        </View>
-      );
-    }
-
-    if (listItem.type === 'emptyReplies') {
-      return renderTopicListItemFrame(
-        <View style={[styles.replyListItem, topicColumnStyle]}>
-          <EmptyText text="暂无回复" styles={styles} />
-        </View>
-      );
-    }
-
-    return renderTopicListItemFrame(
-      <View style={[styles.replyListItem, topicColumnStyle]}>
-        <MemoizedReplyItem
-          actionBusy={actionBusy}
-          canUseDiscourseActions={canUseDiscourseInteractions}
-          canWrite={canWrite}
-          contentWidth={contentWidth}
-          expandedQuotes={expandedQuotes}
-          isActionPending={isOptimisticActionPending}
-          inlineSizedImageUrls={inlineSizedImageUrls}
-          discourseEmojiUrls={discourseEmojiUrls}
-          topicImageDeriver={topicImageDeriver}
-          topicBaseUrl={topicBaseUrl}
-          loadedQuotedReplies={loadedQuotedReplies}
-          loadingQuotedFloors={loadingQuotedFloors}
-          onTogglePollSelection={togglePollSelection}
-          reply={listItem.reply}
-          replyFloor={listItem.replyFloor}
-          pollSelections={pollSelections}
-          repliesByFloor={repliesByFloor}
-          styles={styles}
-          theme={theme}
-          topicAuthor={item?.author}
-          onInteract={onInteract}
-          onDeleteReply={onDeleteReply}
-          onEditReply={onEditReply}
-          onVotePoll={onVotePoll}
-          onReplyToFloor={onReplyToFloor}
-          onToggleReplyQuote={onToggleReplyQuote}
-          topicId={item?.id}
-          query={replyHighlightQuery}
-          isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
-          source={itemSource}
-          onOpenUser={onOpenUser}
-        />
-      </View>
-    );
   }, [
     actionBusy,
-    canUseDiscourseInteractions,
-    canWrite,
-    commentQuery,
+    canWriteTopicPollSource,
     contentWidth,
-    expandedQuotes,
+    htmlRenderersProps,
     inlineSizedImageUrls,
-    item?.author,
-    item?.id,
-    topicImageDeriver,
-    isOptimisticActionPending,
-    loadedQuotedReplies,
-    loadingQuotedFloors,
-    discourseEmojiUrls,
-    newReplyFloorStart,
-    onCommentQueryChange,
-    onDeleteReply,
-    onEditReply,
-    onInteract,
-    onReplyComposerOpenChange,
-    onReplyFilterChange,
-    onReplyToFloor,
-    onToggleReplyQuote,
-    onOpenUser,
+    mediaContext,
+    mediaSessionIdentity,
+    nearbyTopicContentKeys,
     onVotePoll,
     pollSelections,
+    addNearbyTopicContentKeys,
     renderTopicListItemFrame,
-    itemSource,
-    replyComposerOpen,
-    replyHighlightQuery,
-    replyFilter,
-    repliesByFloor,
-    replyDisplayCount,
     styles,
     theme,
     togglePollSelection,
+    topic?.source,
     topicBaseUrl,
+    topicBodyHtmlRenderers,
     topicColumnStyle,
-    unreadReplyCount
+    topicImageDeriver
   ]);
 
-  if (!item) {
-    return <EmptyText text="未选择主题" styles={styles} />;
-  }
-
-  const topicHeaderStatusBadges = topicStatusBadges(item);
-  const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
-  const topicReadableError = topicError ? readableTopicError(topicError.message) : '';
-  const topicAuthNotice = topicError ? authNoticeForSourceError(topicError) : null;
-  const topicAuthNoticeBoxStyle = topicAuthNotice?.tone === 'danger'
-    ? styles.authNoticeBoxDanger
-    : topicAuthNotice?.tone === 'warning'
-      ? styles.authNoticeBoxWarning
-      : styles.authNoticeBoxNeutral;
-  const topicAuthNoticeTextStyle = topicAuthNotice?.tone === 'danger'
-    ? styles.authNoticeTextDanger
-    : topicAuthNotice?.tone === 'warning'
-      ? styles.authNoticeTextWarning
-      : styles.authNoticeTextNeutral;
-  const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
-  const listHeader = (
-    <View style={styles.topicHeaderStack}>
-      <View style={[styles.article, topicColumnStyle]}>
-        <View style={styles.topicMetaStack}>
-          <View style={styles.topicBadgeRow}>
-            <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>{sourceLabel(item.source)}</Text>
-            {item.category ? <Text style={styles.topicCategoryBadge} numberOfLines={1}>{item.category}</Text> : null}
-          </View>
-          <Text selectable style={styles.articleTitle}>{item.title}</Text>
-          <Pressable
-            testID="topic-author"
-            accessibilityRole="button"
-            disabled={!userFromTopic(item)}
-            style={styles.topicAuthorRow}
-            onPress={() => {
-              const user = userFromTopic(item);
-              if (user) {
-                onOpenUser(user);
-              }
-            }}
-          >
-            <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} styles={styles} />
-            <View style={styles.topicAuthorMeta}>
-              <View style={styles.replyAuthorNameRow}>
-                <Text style={styles.replyAuthor} numberOfLines={1}>{item.author || '未知作者'}</Text>
-                {item.authorLevelLabel ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]} numberOfLines={1}>{item.authorLevelLabel}</Text> : null}
-              </View>
-              <Text style={styles.meta}>{formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
-            </View>
-          </Pressable>
-          {itemAccessRequirementText ? <Text style={styles.topicAccessBadge}>{itemAccessRequirementText}</Text> : null}
-          {topicHeaderStatusBadges.length ? (
-            <View style={styles.topicStatusRow}>
-              {topicHeaderStatusBadges.map((badge) => (
-                <View key={badge.label} style={[styles.topicStatusBadge, topicStatusBadgeColorStyle(badge.tone, theme)]}>
-                  <Text style={[styles.topicStatusBadgeText, topicStatusBadgeTextColorStyle(badge.tone, theme)]} numberOfLines={1}>{badge.label}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-          {item.tags?.length ? (
-            <View style={styles.topicTagRow}>
-              {item.tags.map((tag, index) => (
-                <View key={`${tag}-${index}`} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
-                  <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>{tag}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
-        {topicError ? (
-          <View style={topicAuthNotice ? [styles.authNoticeBox, topicAuthNoticeBoxStyle] : styles.errorBox}>
-            <Text style={topicAuthNotice ? [styles.authNoticeText, topicAuthNoticeTextStyle] : styles.errorText}>{topicAuthNotice?.message || topicReadableError}</Text>
-            <View style={styles.actions}>
-              {item.source === 'linuxdo' && identityBlocked ? <AppButton label="检查 L 站状态" styles={styles} onPress={onVerifyLinuxDo} /> : null}
-              {item.source === 'linuxdo' && !identityBlocked && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
-              {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyNodeSeek} /> : null}
-              <AppButton label={identityBlocked ? '重试检测' : '重试'} styles={styles} onPress={onRefreshWholeTopic} />
-            </View>
-          </View>
-        ) : null}
-        {topic && identityChecking ? <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} /> : null}
-        {!topic && !topicError ? <LoadingState text={identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'} styles={styles} theme={theme} /> : null}
-      </View>
-      {topicContentItems.map(renderTopicContentItem)}
-      {topic && !isDiscourseSource(topic.source) && topic.source !== 'nodeseek' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
+  const topicPostlude = useMemo(() => (
+    <>
+      {legacyTopicPollsVisible ? renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <TopicPolls
@@ -1394,7 +1255,7 @@ export const TopicScreen = memo(function TopicScreen({
               onVotePoll={onVotePoll}
               pollSelections={pollSelections}
               polls={topicPolls}
-              source={topic.source}
+              source={topic?.source}
               styles={styles}
               theme={theme}
             />
@@ -1406,7 +1267,7 @@ export const TopicScreen = memo(function TopicScreen({
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <AcceptedAnswerPreview
             key={acceptedAnswer.instanceKey}
-            contentSource={item.source}
+            contentSource={topic!.source}
             contentWidth={contentWidth}
             floor={acceptedAnswer.floor}
             inlineSizedImageUrls={inlineSizedImageUrls}
@@ -1471,6 +1332,269 @@ export const TopicScreen = memo(function TopicScreen({
         </View>,
         'topic-actions'
       ) : null}
+    </>
+  ), [
+    acceptedAnswer,
+    acceptedAnswerIsInSourceReplies,
+    acceptedAnswerLoading,
+    acceptedAnswerReply,
+    actionBusy,
+    canUseDiscourseInteractions,
+    canWriteNodeSeek,
+    canWriteTopicPollSource,
+    canWriteYaohuo,
+    contentWidth,
+    detailTopicStateKey,
+    discourseTopicReactionStats,
+    inlineSizedImageUrls,
+    isOptimisticActionPending,
+    legacyTopicPollsVisible,
+    loadAcceptedAnswer,
+    onDiscourseBookmark,
+    onInteract,
+    onNodeSeekCollection,
+    onVotePoll,
+    pollSelections,
+    renderTopicListItemFrame,
+    scrollToAcceptedAnswer,
+    styles,
+    theme,
+    togglePollSelection,
+    topic,
+    topicBaseUrl,
+    topicColumnStyle,
+    topicHasPostActions,
+    topicImageDeriver,
+    topicPolls,
+    topicReactionStats,
+    topicShowsAccessNotice
+  ]);
+
+  const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
+    if (listItem.type === 'topicContent') {
+      return renderTopicContentItem(listItem.content);
+    }
+    if (listItem.type === 'topicPostlude') {
+      return topicPostlude;
+    }
+    if (listItem.type === 'replyControls') {
+      return renderTopicListItemFrame(
+        <View style={[styles.replyHeader, topicColumnStyle]}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{replyDisplayCount} 条</Text></Text>
+            {canWrite ? (
+              <AppButton
+                label={replyComposerOpen ? '收起回复' : '写回复'}
+                variant={replyComposerOpen ? 'ghost' : 'default'}
+                styles={styles}
+                onPress={() => onReplyComposerOpenChange(!replyComposerOpen)}
+              />
+            ) : null}
+          </View>
+          <PillRail
+            variant="subtabs"
+            items={[
+              { value: 'all', label: '全部' },
+              { value: 'author', label: '只看楼主' },
+              { value: 'images', label: '只看带图' },
+              { value: 'newest', label: '倒序' }
+            ]}
+            value={replyFilter}
+            styles={styles}
+            onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
+          />
+          {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
+          <View style={styles.searchRow}>
+            <TextInput
+              accessibilityLabel="评论内查找"
+              style={[styles.input, styles.flex]}
+              value={commentQuery}
+              onChangeText={onCommentQueryChange}
+              placeholder="评论内查找"
+              placeholderTextColor={theme.muted}
+            />
+            {commentQuery ? <IconButton icon={X} label="清空查找" styles={styles} theme={theme} onPress={() => onCommentQueryChange('')} /> : null}
+          </View>
+        </View>
+      );
+    }
+
+    if (listItem.type === 'emptyReplies') {
+      return renderTopicListItemFrame(
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <EmptyText text="暂无回复" styles={styles} />
+        </View>
+      );
+    }
+
+    return renderTopicListItemFrame(
+      <View style={[styles.replyListItem, topicColumnStyle]}>
+        <MemoizedReplyItem
+          actionBusy={actionBusy}
+          canUseDiscourseActions={canUseDiscourseInteractions}
+          canWrite={canWrite}
+          contentWidth={contentWidth}
+          expandedQuotes={expandedQuotes}
+          isActionPending={isOptimisticActionPending}
+          inlineSizedImageUrls={inlineSizedImageUrls}
+          discourseEmojiUrls={discourseEmojiUrls}
+          topicImageDeriver={topicImageDeriver}
+          topicBaseUrl={topicBaseUrl}
+          loadedQuotedReplies={loadedQuotedReplies}
+          loadingQuotedFloors={loadingQuotedFloors}
+          onTogglePollSelection={togglePollSelection}
+          reply={listItem.reply}
+          replyFloor={listItem.replyFloor}
+          pollSelections={pollSelections}
+          repliesByFloor={repliesByFloor}
+          section={listItem.type === 'reply' ? undefined : listItem}
+          styles={styles}
+          theme={theme}
+          topicAuthor={item?.author}
+          onInteract={onInteract}
+          onDeleteReply={onDeleteReply}
+          onEditReply={onEditReply}
+          onOpenTopic={onOpenTopic}
+          onQuoteContentLayout={markReplyQuoteContentLayout}
+          onVotePoll={onVotePoll}
+          onReplyToFloor={onReplyToFloor}
+          onToggleReplyQuote={onToggleReplyQuote}
+          topicId={item?.id}
+          query={replyHighlightQuery}
+          isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
+          source={itemSource}
+          onOpenUser={onOpenUser}
+        />
+      </View>
+    );
+  }, [
+    actionBusy,
+    canUseDiscourseInteractions,
+    canWrite,
+    commentQuery,
+    contentWidth,
+    expandedQuotes,
+    inlineSizedImageUrls,
+    item?.author,
+    item?.id,
+    topicImageDeriver,
+    isOptimisticActionPending,
+    loadedQuotedReplies,
+    loadingQuotedFloors,
+    discourseEmojiUrls,
+    newReplyFloorStart,
+    onCommentQueryChange,
+    onDeleteReply,
+    onEditReply,
+    onInteract,
+    onOpenTopic,
+    markReplyQuoteContentLayout,
+    onReplyComposerOpenChange,
+    onReplyFilterChange,
+    onReplyToFloor,
+    onToggleReplyQuote,
+    onOpenUser,
+    onVotePoll,
+    pollSelections,
+    renderTopicContentItem,
+    renderTopicListItemFrame,
+    itemSource,
+    replyComposerOpen,
+    replyHighlightQuery,
+    replyFilter,
+    repliesByFloor,
+    replyDisplayCount,
+    styles,
+    theme,
+    togglePollSelection,
+    topicBaseUrl,
+    topicColumnStyle,
+    topicPostlude,
+    unreadReplyCount
+  ]);
+
+  if (!item) {
+    return <EmptyText text="未选择主题" styles={styles} />;
+  }
+
+  const topicHeaderStatusBadges = topicStatusBadges(item);
+  const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
+  const topicReadableError = topicError ? readableTopicError(topicError.message) : '';
+  const topicAuthNotice = topicError ? authNoticeForSourceError(topicError) : null;
+  const topicAuthNoticeBoxStyle = topicAuthNotice?.tone === 'danger'
+    ? styles.authNoticeBoxDanger
+    : topicAuthNotice?.tone === 'warning'
+      ? styles.authNoticeBoxWarning
+      : styles.authNoticeBoxNeutral;
+  const topicAuthNoticeTextStyle = topicAuthNotice?.tone === 'danger'
+    ? styles.authNoticeTextDanger
+    : topicAuthNotice?.tone === 'warning'
+      ? styles.authNoticeTextWarning
+      : styles.authNoticeTextNeutral;
+  const listHeader = (
+    <View style={styles.topicHeaderStack}>
+      <View style={[styles.article, topicColumnStyle]}>
+        <View style={styles.topicMetaStack}>
+          <View style={styles.topicBadgeRow}>
+            <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>{sourceLabel(item.source)}</Text>
+            {item.category ? <Text style={styles.topicCategoryBadge} numberOfLines={1}>{item.category}</Text> : null}
+          </View>
+          <Text selectable style={styles.articleTitle}>{item.title}</Text>
+          <Pressable
+            testID="topic-author"
+            accessibilityRole="button"
+            disabled={!userFromTopic(item)}
+            style={styles.topicAuthorRow}
+            onPress={() => {
+              const user = userFromTopic(item);
+              if (user) {
+                onOpenUser(user);
+              }
+            }}
+          >
+            <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} styles={styles} />
+            <View style={styles.topicAuthorMeta}>
+              <View style={styles.replyAuthorNameRow}>
+                <Text style={styles.replyAuthor} numberOfLines={1}>{item.author || '未知作者'}</Text>
+                {item.authorLevelLabel ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]} numberOfLines={1}>{item.authorLevelLabel}</Text> : null}
+              </View>
+              <Text style={styles.meta}>{formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
+            </View>
+          </Pressable>
+          {itemAccessRequirementText ? <Text style={styles.topicAccessBadge}>{itemAccessRequirementText}</Text> : null}
+          {topicHeaderStatusBadges.length ? (
+            <View style={styles.topicStatusRow}>
+              {topicHeaderStatusBadges.map((badge) => (
+                <View key={badge.label} style={[styles.topicStatusBadge, topicStatusBadgeColorStyle(badge.tone, theme)]}>
+                  <Text style={[styles.topicStatusBadgeText, topicStatusBadgeTextColorStyle(badge.tone, theme)]} numberOfLines={1}>{badge.label}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {item.tags?.length ? (
+            <View style={styles.topicTagRow}>
+              {item.tags.map((tag, index) => (
+                <View key={`${tag}-${index}`} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
+                  <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>{tag}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+        {topicError ? (
+          <View style={topicAuthNotice ? [styles.authNoticeBox, topicAuthNoticeBoxStyle] : styles.errorBox}>
+            <Text style={topicAuthNotice ? [styles.authNoticeText, topicAuthNoticeTextStyle] : styles.errorText}>{topicAuthNotice?.message || topicReadableError}</Text>
+            <View style={styles.actions}>
+              {item.source === 'linuxdo' && identityBlocked ? <AppButton label="检查 L 站状态" styles={styles} onPress={onVerifyLinuxDo} /> : null}
+              {item.source === 'linuxdo' && !identityBlocked && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
+              {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyNodeSeek} /> : null}
+              <AppButton label={identityBlocked ? '重试检测' : '重试'} styles={styles} onPress={onRefreshWholeTopic} />
+            </View>
+          </View>
+        ) : null}
+        {topic && identityChecking ? <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} /> : null}
+        {!topic && !topicError ? <LoadingState text={identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'} styles={styles} theme={theme} /> : null}
+      </View>
     </View>
   );
 
@@ -1499,13 +1623,13 @@ export const TopicScreen = memo(function TopicScreen({
             testID={topic ? 'topic-detail-loaded' : undefined}
             style={[styles.content, styles.topicContent]}
             contentContainerStyle={styles.topicContentInner}
-            data={replyListItems}
+            data={topicListItems}
             keyExtractor={topicListItemKey}
             getItemType={topicListItemType}
+            ItemSeparatorComponent={TopicListItemSeparator}
             keyboardShouldPersistTaps="always"
-            onLayout={handleTopicViewportLayout}
-            onMomentumScrollEnd={handleTopicScrollEnd}
-            onScrollEndDrag={handleTopicScrollEnd}
+            onMomentumScrollEnd={onTopicScroll}
+            onScrollEndDrag={onTopicScroll}
             onEndReachedThreshold={0.55}
             onEndReached={handleReplyEndReached}
             onScrollBeginDrag={armReplyAutoLoad}

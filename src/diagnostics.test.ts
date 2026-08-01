@@ -511,6 +511,27 @@ describe('diagnostic traces', () => {
     expect(firstTopic).not.toContain('91827');
   });
 
+  it('[REG-PERF-007] bounds raw and issued diagnostic references without reusing IDs', () => {
+    const rawAnchor = 'diagnostic-raw-cap-anchor';
+    const firstRawRef = diagnosticRef('cursor', rawAnchor);
+    for (let index = 0; index < 4_097; index += 1) {
+      diagnosticRef('cursor', `diagnostic-raw-cap-${index}`);
+    }
+    const secondRawRef = diagnosticRef('cursor', rawAnchor);
+    expect(secondRawRef).not.toBe(firstRawRef);
+    expect(Number(secondRawRef.split('-').at(-1))).toBeGreaterThan(
+      Number(firstRawRef.split('-').at(-1))
+    );
+
+    const events = captureEvents();
+    const issuedAnchor = diagnosticRef('user', 'diagnostic-issued-cap-anchor');
+    for (let index = 0; index < 8_193; index += 1) {
+      diagnosticRef('user', `diagnostic-issued-cap-${index}`);
+    }
+    beginDiagnosticTrace('user', 'load', { userRef: issuedAnchor });
+    expect(events().at(-1)).toEqual(expect.objectContaining({ userRef: 'redacted' }));
+  });
+
   it('links optimized and original media aliases to one process-local reference', () => {
     const displayUrl = 'https://img.example.com/diagnostic-display-640.webp';
     const originalUrl = 'https://img.example.com/diagnostic-original.png';

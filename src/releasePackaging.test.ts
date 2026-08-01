@@ -14,7 +14,7 @@ describe('Android release packaging guards', () => {
     const ciWorkflow = readProjectFile('.github', 'workflows', 'ci.yml');
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const verifyIndex = releaseScript.indexOf("run('npm', ['run', 'verify']);");
-    const prebuildIndex = releaseScript.indexOf("run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);");
+    const prebuildIndex = releaseScript.indexOf("run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean', '--no-install']);");
 
     expect(pkg.scripts.verify).toBe('npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && node scripts/check-version.mjs');
     expect(ciWorkflow).toContain('- run: npm run verify');
@@ -33,11 +33,12 @@ describe('Android release packaging guards', () => {
 
   it('keeps the published APK arm64-only and development signing limited to the smoke APK', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const releaseHelpers = readProjectFile('scripts', 'release-environment.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
 
     expect(releaseScript).toContain('app-arm64-v8a-release.apk');
     expect(releaseScript).toContain('.env.release.local');
-    expect(releaseScript).toContain('verifyReleaseSigningEnv();');
+    expect(releaseScript).toContain('verifyReleaseSigningEnv(configuredReleaseEnv)');
     expect(releaseScript).toContain('androiddebugkey');
     expect(releaseScript).toContain('debug.keystore');
     expect(releaseScript).toContain("const releaseApkFileName = 'app-arm64-v8a-release.apk'");
@@ -46,8 +47,8 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('signDevelopmentSmokeApk(builtSmokeApkPath, smokeApkPath);');
     expect(releaseScript).toContain('smokeSignerSha256 === expectedReleaseSignerSha256');
     expect(releaseScript).not.toContain('verifyExpectedReleaseSigner(smokeSignerSha256);');
-    expect(releaseScript).toContain("`-PreactNativeArchitectures=${releaseApkAbis.join(',')}`");
-    expect(releaseScript).toContain("`-PreleaseApkAbis=${releaseApkAbis.join(',')}`");
+    expect(releaseHelpers).toContain("`-PreactNativeArchitectures=${builtAbis.join(',')}`");
+    expect(releaseHelpers).toContain("`-PreleaseApkAbis=${builtAbis.join(',')}`");
     expect(releaseScript).not.toContain('armeabi-v7a');
     expect(gradle).toContain('project.findProperty("releaseApkAbis") ?: "arm64-v8a"');
     expect(gradle).toContain('include(*requestedReleaseAbis)');
@@ -65,6 +66,15 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('versionCode');
     expect(releaseScript).toContain('signerSha256');
     expect(releaseScript).toContain('singleApkSignerSha256(output)');
+  });
+
+  it('[REG-OPS-016] records Java provenance through the validated parser', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+
+    expect(releaseScript).toContain("parseJavaVersionOutput(runCapture('java', ['-version'], {");
+    expect(releaseScript).toContain("failureMessage: '无法读取可信的 Java 版本。'");
+    expect(releaseScript).toContain('if (!failureMessage) {');
+    expect(releaseScript).not.toContain("firstOutputLine(runCapture('java', ['-version']), 'Java')");
   });
 
   it('pins the expected release signer digest before writing the manifest', () => {
@@ -240,7 +250,10 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('proxyServers.requireCurrent(owner)');
     expect(plugin).toContain('restoreWebViewProxyIfStateChanged(proxyServers, generation');
     expect(plugin).toContain('"WebView 代理清除超时",\n      onTimeoutOrLateCompletion = ::restoreWebViewProxyFromRuntime');
-    expect(plugin.match(/local\.soTimeout = 0/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(plugin).toContain('private const val PROXY_IDLE_TIMEOUT_MS = 120_000');
+    expect(plugin.match(/pipeBoth\(local, remote, copyExecutor, idleTimeoutMs\)/g)).toHaveLength(1);
+    expect(plugin).toContain('pipeBoth(local, remote, copyExecutor, idleTimeoutMs, request.contentLength)');
+    expect(plugin).not.toContain('local.soTimeout = 0');
     expect(plugin).not.toContain('latch.await(5, TimeUnit.MINUTES)');
     expect(serializedTransitionIndex).toBeGreaterThanOrEqual(0);
     expect(blockIndex).toBeGreaterThanOrEqual(0);

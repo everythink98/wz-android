@@ -33,6 +33,13 @@ export type ReleaseManifest = {
   versionName: string;
   versionCode: number;
   signerSha256: string;
+  gitSha?: string;
+  packageLockSha256?: string;
+  nodeVersion?: string;
+  npmVersion?: string;
+  javaVersion?: string;
+  gradleVersion?: string;
+  builtAbis?: string[];
 };
 
 export type ApkInspection = {

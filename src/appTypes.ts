@@ -2,6 +2,7 @@ import type { ComponentProps } from 'react';
 import type RenderHTML from 'react-native-render-html';
 import type { DiagnosticTrace } from './diagnostics';
 import type { Reply, Topic } from './types';
+import type { WritableSessionTicket } from './writableSessionGate';
 
 export type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic' | 'user';
 export type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
@@ -24,6 +25,8 @@ export interface ReplyEditTarget {
   commentId: number;
   floor?: number;
   contentMarkdown: string;
+  topicId: string;
+  ticket: WritableSessionTicket;
 }
 
 export type ReplyRefreshTarget = Pick<Reply, 'commentId' | 'floor' | 'deletePath'>;

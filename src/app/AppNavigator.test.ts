@@ -22,6 +22,7 @@ vi.mock('@react-navigation/bottom-tabs', () => ({
 vi.mock('@react-navigation/native-stack', () => ({
   createNativeStackNavigator: () => ({ Navigator: () => null, Screen: () => null })
 }));
+vi.mock('react-native', () => ({ View: () => null }));
 vi.mock('../components/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 vi.mock('../components/AppControls', () => ({ triggerPressFeedback: vi.fn() }));
 

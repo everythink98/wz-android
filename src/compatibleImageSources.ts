@@ -58,6 +58,10 @@ export function compatibleImageRequestIdentity(source: ImageURISource) {
 
 export function cachedCompatibleSvgArtifact(source: ImageURISource) {
   const identity = compatibleImageRequestIdentity(source);
+  return compatibleSvgArtifactCache.get(identity) || null;
+}
+
+export function promoteCachedCompatibleSvgArtifact(identity: string) {
   const artifact = compatibleSvgArtifactCache.get(identity);
   if (!artifact) {
     return null;
@@ -72,7 +76,7 @@ export function recoverCompatibleSvgArtifact(
   options: CompatibleSvgArtifactOptions = {}
 ): Promise<CompatibleSvgArtifact | null> {
   const requestIdentity = compatibleImageRequestIdentity(source);
-  const cached = cachedCompatibleSvgArtifact(source);
+  const cached = promoteCachedCompatibleSvgArtifact(requestIdentity);
   if (cached) {
     return Promise.resolve(cached);
   }

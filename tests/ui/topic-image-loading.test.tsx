@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { NativeModules, StyleSheet } from 'react-native';
+import { NativeModules, StyleSheet, Text } from 'react-native';
 import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
 import { ForumContentVideo } from '../../src/components/ForumContentVideo';
 import { FORUM_VIDEO_TAG } from '../../src/localHtml';
@@ -12,7 +12,8 @@ import { setDiagnosticWriter } from '../../src/diagnostics';
 import { imageSourceFromUrl } from '../../src/htmlImages';
 import {
   markOriginalImageDisplayed,
-  OriginalImageUpgradeBoundary
+  OriginalImageUpgradeBoundary,
+  useOriginalImageUpgradeEnabled
 } from '../../src/originalImageLoading';
 
 const imageUrl = 'https://img.example.com/topic.png';
@@ -231,6 +232,19 @@ describe('topic block image loading', () => {
       fetchSvgDocument: mockFetchSvgDocument,
       renderPoster: mockRenderSvgPoster
     };
+  });
+
+  it('[REG-PERF-008] composes nested original-image gates with the inactive route gate', async () => {
+    const Probe = () => <Text>{useOriginalImageUpgradeEnabled() ? 'original active' : 'original paused'}</Text>;
+    const view = await render(
+      <OriginalImageUpgradeBoundary enabled={false}>
+        <OriginalImageUpgradeBoundary enabled>
+          <Probe />
+        </OriginalImageUpgradeBoundary>
+      </OriginalImageUpgradeBoundary>
+    );
+
+    expect(view.getByText('original paused')).toBeTruthy();
   });
 
   it('lets the mounted native image view own the body request lifecycle', async () => {

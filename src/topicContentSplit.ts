@@ -12,6 +12,9 @@ export function forumVideoBlockFromHtml(html: string | undefined) {
   if (!clean) {
     return null;
   }
+  if (!new RegExp(`<${FORUM_VIDEO_TAG}\\b`, 'i').test(clean)) {
+    return null;
+  }
   try {
     const body = parseHtml(`<body>${clean}</body>`).querySelector('body');
     const nodes = (body?.childNodes || []).filter((node) => node.toString().trim());
