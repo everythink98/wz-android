@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import { NODESEEK_USER_AGENT_STORAGE_KEY } from '@/platform/android/nodeSeekUserAgent';
-import { LINUXDO_USER_AGENT_STORAGE_KEY } from '@/sources/linuxdo/session';
+import { LINUXDO_USER_AGENT_STORAGE_KEY } from '@/platform/android/linuxDoUserAgent';
 import {
   readManagedCookieHeader as readManagedCookieHeaderFromNative,
   type ManagedCookieReadResult

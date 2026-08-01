@@ -11,6 +11,12 @@ export interface LibrarySection {
   records: TopicRecord[];
 }
 
+export const EMPTY_LIBRARY_RECORDS: Record<string, TopicRecord> = {};
+
+export function sortLibraryRecords(records: Record<string, TopicRecord>) {
+  return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
+}
+
 export function libraryCategoryKey(source: FeedSource, categoryId: string) {
   return source === 'all' ? categoryId : `${source}:${categoryId}`;
 }

@@ -9,6 +9,7 @@ import {
   createSiteSessionStates,
   createSiteSessionViewModel,
   reduceSiteSessionState,
+  siteSessionIdentityKey,
   type ScopedSiteSessionEvent,
   type SiteSessionState,
   type SiteSessionViewModel,
@@ -600,8 +601,8 @@ export function useAccountStatusController({
           const previousSession =
             previousData?.session ||
             (sessionViewModels[source].identityTrust === 'confirmed' ? sessionViewModels[source] : undefined);
-          const previousIdentity = previousSession ? accountIdentityKey(previousSession) : undefined;
-          const nextIdentity = accountIdentityKey(nextData.session);
+          const previousIdentity = previousSession ? siteSessionIdentityKey(previousSession) : undefined;
+          const nextIdentity = siteSessionIdentityKey(nextData.session);
           if (previousIdentity && previousIdentity !== nextIdentity) {
             onAccountStatusChanged(source, probeQueryKey, nextData.session);
             identityPendingRef.current[source] = false;
@@ -719,11 +720,4 @@ export function useAccountStatusController({
     refreshAccountStatus,
     statusBusy
   };
-}
-
-function accountIdentityKey(session: Pick<SiteSessionState, 'currentUser' | 'site' | 'status'>) {
-  if (session.status === 'logged-in' && session.currentUser?.id) {
-    return `${session.site}:${session.currentUser.id}`;
-  }
-  return `${session.site}:anonymous`;
 }

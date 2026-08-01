@@ -68,6 +68,12 @@ export type SiteSessionEvent =
   | { type: 'cleared'; recoveryQueryKey?: readonly unknown[]; at?: string };
 export type ScopedSiteSessionEvent = SiteSessionEvent & { site: SessionSite };
 
+export function siteSessionIdentityKey(session: Pick<SiteSessionState, 'currentUser' | 'site' | 'status'>) {
+  return session.status === 'logged-in' && session.currentUser?.id
+    ? `${session.site}:${session.currentUser.id}`
+    : `${session.site}:anonymous`;
+}
+
 function cleanCookieSummary(cookieSummary: string[] = []) {
   return cookieSummary.map((item) => item.trim()).filter(Boolean);
 }

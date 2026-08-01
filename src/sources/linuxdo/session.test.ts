@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeLinuxDoUserAgent, summarizeLinuxDoCookieHeader } from './session';
+import { summarizeLinuxDoCookieHeader } from './session';
 
 describe('linux.do session metadata', () => {
   it('accepts _forum_session as a session candidate without requiring _t', () => {
@@ -16,10 +16,5 @@ describe('linux.do session metadata', () => {
       hasClearance: true,
       hasSessionCandidate: false
     });
-  });
-
-  it('normalizes the WebView user agent without inventing one', () => {
-    expect(sanitizeLinuxDoUserAgent('  Mozilla/5.0   ( Android )  ')).toBe('Mozilla/5.0 (Android)');
-    expect(sanitizeLinuxDoUserAgent()).toBe('');
   });
 });

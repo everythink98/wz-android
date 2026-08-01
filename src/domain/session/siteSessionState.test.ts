@@ -6,11 +6,19 @@ import {
   createSiteSessionStates,
   isSiteLoggedIn,
   isSiteVerificationReady,
+  siteSessionIdentityKey,
   type SiteSessionState
 } from './siteSessionState';
 import type { UserProfile } from '@/domain/forum/models';
 
 describe('site session state', () => {
+  it('derives identity only from a confirmed logged-in user', () => {
+    expect(
+      siteSessionIdentityKey({ site: 'nodeseek', status: 'logged-in', currentUser: { id: '42' } as UserProfile })
+    ).toBe('nodeseek:42');
+    expect(siteSessionIdentityKey({ site: 'nodeseek', status: 'anonymous' })).toBe('nodeseek:anonymous');
+  });
+
   it('keeps verification and login transitions explicit', () => {
     const initial: SiteSessionState = {
       site: 'linuxdo',

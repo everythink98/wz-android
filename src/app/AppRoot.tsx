@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   BackHandler,
@@ -13,15 +13,14 @@ import {
   View,
   useWindowDimensions
 } from 'react-native';
-import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
-import type { TopicRecord } from '@/domain/reader/readerData';
 import { useReaderDataController } from '@/features/library/useReaderDataController';
 import { useReaderDataActionsController } from '@/features/library/useReaderDataActionsController';
 import { useReaderSettingsController } from '@/features/more/useReaderSettingsController';
@@ -54,8 +53,10 @@ import {
 import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { useSearchController } from '@/features/search/useSearchController';
 import { useSessionController } from '@/features/account/useSessionController';
+import { useSessionReadGateway } from '@/features/account/useSessionReadGateway';
 import { useNetworkProxyController } from '@/features/more/useNetworkProxyController';
 import { useTopicController } from '@/features/topic/useTopicController';
+import { useStableTopicLayoutDetail } from '@/features/topic/useStableTopicLayoutDetail';
 import { filterTopicSessionReplies, useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useUserController } from '@/features/user/useUserController';
 import {
@@ -76,6 +77,7 @@ import { shareTopicWithClipboardFallback } from '@/features/topic/shareTopic';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import {
@@ -84,37 +86,24 @@ import {
   selectTopicReturnStrategy,
   shouldCloseReplyComposerOnBack
 } from './backHandlerHelpers';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/sources/linuxdo/session';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
-import { createReadGateway } from '@/sources/readGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '@/platform/network/networkProxy';
-import type { Topic, TopicDetail, UserProfile, UserReference } from '@/domain/forum/models';
+import type { Topic, UserReference } from '@/domain/forum/models';
 import { isHttpOrHttpsUrl, type ImageDisplaySize } from '@/platform/media/htmlImages';
-import { shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
+import { LOGIN_WEBVIEW_ALLOWED_HOSTS, shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { replyHtmlWithSignature } from '@/features/topic/model/topicDerivedData';
-import { contentWidthValue, createTheme } from '@/ui/theme/tokens';
-import { createSharedStyles } from '@/ui/theme/sharedStyles';
-import { createAppStyles } from './styles';
-import { createFeedStyles } from '@/features/feed/styles';
-import { createSearchStyles } from '@/features/search/styles';
-import { createTopicStyles } from '@/features/topic/styles';
-import { createUserStyles } from '@/features/user/styles';
-import { createLibraryStyles } from '@/features/library/styles';
-import { createMoreStyles } from '@/features/more/styles';
-import { createMoreAccountStyles } from '@/features/more/accountStyles';
-import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { errorMessage } from '@/platform/network/errors';
 import { parseInternalTopicOpenLink } from '@/domain/forum/links';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { LibraryScreen } from '@/features/library/LibraryScreen';
+import { EMPTY_LIBRARY_RECORDS, sortLibraryRecords } from '@/features/library/model/libraryFilters';
 import { MoreScreen } from '@/features/more/MoreScreen';
 import { AppearancePanel } from '@/features/more/components/MorePanels';
 import { SearchScreen } from '@/features/search/SearchScreen';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '@/features/topic/TopicScreen';
 import { LoadingState } from '@/ui/controls/AppControls';
-import { hasSameYaohuoTopicLayout } from '@/features/topic/model/screenHelpers';
 import { UserScreen } from '@/features/user/UserScreen';
 import { isSessionSource } from '@/domain/forum/sourceCatalog';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
@@ -128,10 +117,10 @@ import {
   createSiteSessionViewModels,
   nodeSeekUserIdForSession,
   sessionSources,
+  siteSessionIdentityKey,
   type SessionSite
 } from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from '@/features/account/credentialDiagnostics';
-import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 import {
   CURRENT_ANDROID_VERSION_CODE,
   CURRENT_APP_VERSION,
@@ -161,47 +150,13 @@ import {
   type WritableSessionTicket
 } from '@/domain/session/writableSessionGate';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
+import { useAppTheme } from './useAppTheme';
 
 type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;
   snapshot: TopicSnapshot;
   backStack: TopicSnapshot[];
 };
-
-function useStableTopicLayoutDetail(topicDetail: TopicDetail | null) {
-  const stableDetailRef = useRef(topicDetail);
-  const stableDetail = hasSameYaohuoTopicLayout(stableDetailRef.current, topicDetail)
-    ? stableDetailRef.current
-    : topicDetail;
-  useLayoutEffect(() => {
-    stableDetailRef.current = stableDetail;
-  }, [stableDetail]);
-  return stableDetail;
-}
-
-function useLatestCallback<Arguments extends unknown[], Result>(callback: (...args: Arguments) => Result) {
-  const callbackRef = useRef(callback);
-  useLayoutEffect(() => {
-    callbackRef.current = callback;
-  }, [callback]);
-  return useCallback((...args: Arguments) => callbackRef.current(...args), []);
-}
-
-const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
-const NODEIMAGE_LOGIN_HOSTS = ['nodeimage.com', 'nodeseek.com', 'challenges.cloudflare.com'];
-const YAOHUO_LOGIN_HOSTS = ['www.yaohuo.me'];
-const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
-function sortedRecords(records: Record<string, TopicRecord>) {
-  return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
-}
-
-const EMPTY_LIBRARY_RECORDS: Record<string, TopicRecord> = {};
-
-function accountIdentityKey(view: { site: SessionSite; status: string; currentUser?: UserProfile }) {
-  return view.status === 'logged-in' && view.currentUser?.id
-    ? `${view.site}:${view.currentUser.id}`
-    : `${view.site}:anonymous`;
-}
 
 export function AppRoot() {
   const webViewRef = useRef<WebView>(null);
@@ -527,67 +482,18 @@ export function AppRoot() {
   useCommitRefValue(showYaohuoLoginPanelRef, showYaohuoLoginPanel);
   useCommitRefValue(showLinuxDoPanelRef, showLinuxDoPanel);
   const { fontScale } = readerData.settings;
-  const deferredFontScale = useDeferredValue(fontScale);
-  const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings.theme]);
-  const navigationTheme = useMemo(() => {
-    const base = theme.dark ? DarkTheme : DefaultTheme;
-    return {
-      ...base,
-      dark: theme.dark,
-      colors: {
-        ...base.colors,
-        primary: theme.primary,
-        background: theme.background,
-        card: theme.surface,
-        text: theme.ink,
-        border: theme.line,
-        notification: theme.primary
-      }
-    };
-  }, [theme]);
-  const styleSettings = useMemo(
-    () => ({ ...readerData.settings, fontScale: deferredFontScale }),
-    [deferredFontScale, readerData.settings]
-  );
-  const sharedStyles = useMemo(() => createSharedStyles(theme, styleSettings, height), [height, styleSettings, theme]);
-  const loginWebViewStyles = useMemo(
-    () => createLoginWebViewStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const appStyles = useMemo(
-    () => Object.assign(createAppStyles(sharedStyles, theme), loginWebViewStyles),
-    [loginWebViewStyles, sharedStyles, theme]
-  );
-  const feedStyles = useMemo(
-    () => createFeedStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const searchStyles = useMemo(
-    () => createSearchStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const topicStyles = useMemo(
-    () => createTopicStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const userStyles = useMemo(
-    () => createUserStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const libraryStyles = useMemo(
-    () => createLibraryStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const moreStyles = useMemo(
-    () =>
-      Object.assign(
-        createMoreStyles(sharedStyles, theme, styleSettings),
-        createMoreAccountStyles(sharedStyles, theme, styleSettings),
-        loginWebViewStyles
-      ),
-    [loginWebViewStyles, sharedStyles, styleSettings, theme]
-  );
-  const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
+  const {
+    appStyles,
+    contentWidth,
+    feedStyles,
+    libraryStyles,
+    moreStyles,
+    navigationTheme,
+    searchStyles,
+    theme,
+    topicStyles,
+    userStyles
+  } = useAppTheme(readerData.settings, width, height);
   const {
     activeProfile: networkProxyActiveProfile,
     applyError: networkProxyApplyError,
@@ -661,30 +567,14 @@ export function AppRoot() {
   >(null);
 
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
-  const readGateway = useMemo(
-    () =>
-      createReadGateway({
-        currentSessionEpoch: (source) => forumSessionEpochsRef.current[source],
-        currentXiaoyinsiCredentialGeneration,
-        fetcher: forumFetchWithWebViewFallback,
-        isSourceAuthenticated: (source) => readSessionRuntimeSnapshot(source).authenticated,
-        isSourceReadBlocked: (source) => {
-          const runtime = readSessionRuntimeSnapshot(source);
-          return runtime.identityTrust === 'pending' || runtime.authSurfaceOpen;
-        },
-        linuxDoUserAgent: () => linuxDoWebViewUserAgentRef.current,
-        loadXiaoyinsiCredentialsForSource: async (_source, options) => {
-          const generation = currentXiaoyinsiCredentialGeneration();
-          options?.captureGeneration?.(generation);
-          const credentials = await loadXiaoyinsiCredentials();
-          return generation === currentXiaoyinsiCredentialGeneration() ? credentials : undefined;
-        },
-        nodeSeekUserAgent: () => nodeSeekWebViewUserAgentRef.current,
-        refreshXiaoyinsiAuthorization: (trace) =>
-          refreshXiaoyinsiAuthorizationRef.current?.(trace) ?? Promise.resolve(null)
-      }),
-    [forumFetchWithWebViewFallback, readSessionRuntimeSnapshot]
-  );
+  const readGateway = useSessionReadGateway({
+    fetcher: forumFetchWithWebViewFallback,
+    forumSessionEpochsRef,
+    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    readSessionRuntimeSnapshot,
+    refreshXiaoyinsiAuthorizationRef
+  });
   const xiaoyinsiAuthController = useXiaoyinsiAuthController({
     sessionEpochs: forumSessionEpochs,
     dispatchSiteSessionEvent,
@@ -725,10 +615,10 @@ export function AppRoot() {
   useCommitRefValue(reconcileAccountStatusRef, reconcileAccountStatus);
   const accountIdentityKeys = useMemo<Record<SessionSite, string>>(
     () => ({
-      linuxdo: accountIdentityKey(accountSessionViewModels.linuxdo),
-      nodeseek: accountIdentityKey(accountSessionViewModels.nodeseek),
-      xiaoyinsi: accountIdentityKey(accountSessionViewModels.xiaoyinsi),
-      yaohuo: accountIdentityKey(accountSessionViewModels.yaohuo)
+      linuxdo: siteSessionIdentityKey(accountSessionViewModels.linuxdo),
+      nodeseek: siteSessionIdentityKey(accountSessionViewModels.nodeseek),
+      xiaoyinsi: siteSessionIdentityKey(accountSessionViewModels.xiaoyinsi),
+      yaohuo: siteSessionIdentityKey(accountSessionViewModels.yaohuo)
     }),
     [accountSessionViewModels]
   );
@@ -804,7 +694,7 @@ export function AppRoot() {
       : libraryTab === 'favorites'
         ? readerData.favorites
         : EMPTY_LIBRARY_RECORDS;
-  const libraryRecords = useMemo(() => sortedRecords(selectedLibraryRecords), [selectedLibraryRecords]);
+  const libraryRecords = useMemo(() => sortLibraryRecords(selectedLibraryRecords), [selectedLibraryRecords]);
   const openExternalUrl = useCallback(
     (url: string) => {
       if (!isHttpOrHttpsUrl(url)) {
@@ -886,7 +776,7 @@ export function AppRoot() {
     });
   useCommitRefValue(openImagePreviewRef, openImagePreview);
   const handleLoginNavigation = useCallback(
-    (request: LoginNavigationRequest, allowedHosts: string[]) => {
+    (request: LoginNavigationRequest, allowedHosts: readonly string[]) => {
       if (shouldOpenLoginWebViewUrl(request.url, allowedHosts)) {
         return true;
       }
@@ -898,19 +788,19 @@ export function AppRoot() {
     [openExternalUrl]
   );
   const handleNodeSeekLoginNavigation = useCallback(
-    (request: LoginNavigationRequest) => handleLoginNavigation(request, NODESEEK_LOGIN_HOSTS),
+    (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.nodeseek),
     [handleLoginNavigation]
   );
   const handleNodeImageAuthNavigation = useCallback(
-    (request: LoginNavigationRequest) => handleLoginNavigation(request, NODEIMAGE_LOGIN_HOSTS),
+    (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.nodeimage),
     [handleLoginNavigation]
   );
   const handleYaohuoLoginNavigation = useCallback(
-    (request: LoginNavigationRequest) => handleLoginNavigation(request, YAOHUO_LOGIN_HOSTS),
+    (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.yaohuo),
     [handleLoginNavigation]
   );
   const handleLinuxDoNavigation = useCallback(
-    (request: LoginNavigationRequest) => handleLoginNavigation(request, LINUXDO_LOGIN_HOSTS),
+    (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.linuxdo),
     [handleLoginNavigation]
   );
   useEffect(

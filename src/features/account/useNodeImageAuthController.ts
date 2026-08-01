@@ -33,9 +33,9 @@ import {
   nodeImageApiKeyUseStatus,
   saveNodeImageApiKeyForGeneration
 } from '@/sources/nodeimage/credentials';
-import type { UserProfile } from '@/domain/forum/models';
 import { nativeSecureRandomHex } from '@/platform/android/xiaoyinsiKeystore';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
+import { siteSessionIdentityKey } from '@/domain/session/siteSessionState';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 
 export type NodeImageAuthDocument = {
@@ -100,12 +100,6 @@ function nodeImageAuthDocumentForFlow(flow: ActiveNodeImageAuthFlow): NodeImageA
     key: `${flow.surfaceGeneration}:${flow.phase}`,
     url: NODEIMAGE_URL
   };
-}
-
-function accountIdentityKey(view: { site: string; status: string; currentUser?: UserProfile | null }) {
-  return view.status === 'logged-in' && view.currentUser?.id
-    ? `${view.site}:${view.currentUser.id}`
-    : `${view.site}:anonymous`;
 }
 
 export function useNodeImageAuthController({
@@ -268,7 +262,7 @@ export function useNodeImageAuthController({
           flow.ownerSessionEpoch !== null &&
           (result.status === 'same' || result.status === 'changed')
         ) {
-          const settledIdentityKey = accountIdentityKey(result.session);
+          const settledIdentityKey = siteSessionIdentityKey(result.session);
           if (readRuntime().sessionEpoch === flow.ownerSessionEpoch) {
             const saved = await saveNodeImageApiKeyForGeneration(
               flow.credentialGeneration,
@@ -380,7 +374,7 @@ export function useNodeImageAuthController({
               reportFailure('请先完成 NodeSeek 登录，再重新打开 NodeImage 授权。');
               return;
             }
-            flow.ownerIdentityKey = accountIdentityKey(result.session);
+            flow.ownerIdentityKey = siteSessionIdentityKey(result.session);
             flow.ownerSessionEpoch = readRuntime().sessionEpoch;
             setError('');
             setDocument(nodeImageAuthDocumentForFlow(flow));
