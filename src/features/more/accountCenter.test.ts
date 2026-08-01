@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CredentialSummaries } from '@/platform/storage/credentialVault';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { accountCenterSummary, createSiteAccountViews } from '@/screens/more/accountCenter';
+import { accountCenterSummary, createSiteAccountViews } from './accountCenter';
 
 function emptyCredentialSummaries(): CredentialSummaries {
   return {
@@ -145,13 +145,16 @@ describe('account center view', () => {
   });
 
   it('uses one account center while retaining every existing site tool', () => {
-    const more = readFileSync(path.join(process.cwd(), 'src/screens/MoreScreen.tsx'), 'utf8');
+    const more = readFileSync(path.join(process.cwd(), 'src/features/more/MoreScreen.tsx'), 'utf8');
     const accountCenterPanel = readFileSync(
-      path.join(process.cwd(), 'src/screens/more/AccountCenterPanel.tsx'),
+      path.join(process.cwd(), 'src/features/more/components/AccountCenterPanel.tsx'),
       'utf8'
     );
-    const panels = readFileSync(path.join(process.cwd(), 'src/screens/more/MorePanels.tsx'), 'utf8');
-    const linuxDoModal = readFileSync(path.join(process.cwd(), 'src/app/LinuxDoVerifyModal.tsx'), 'utf8');
+    const panels = readFileSync(path.join(process.cwd(), 'src/features/more/components/MorePanels.tsx'), 'utf8');
+    const linuxDoModal = readFileSync(
+      path.join(process.cwd(), 'src/features/account/components/LinuxDoVerifyModal.tsx'),
+      'utf8'
+    );
 
     expect(more).toContain('<AccountCenterPanel');
     expect(more).not.toContain('title="个人中心"');

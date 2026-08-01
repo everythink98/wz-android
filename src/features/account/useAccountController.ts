@@ -15,8 +15,8 @@ import { isLinuxDoCloudflareError } from '@/sources/errors';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { Screen } from '@/ui/navigation/types';
 import { sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
-import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
-import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
+import { shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
+import type { LoginWebViewFailureReason } from './credentialDiagnostics';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,

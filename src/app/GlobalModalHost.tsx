@@ -3,13 +3,13 @@ import type { RefObject } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
-import { LoginWebViewModal } from '@/features/account/components/LoginWebViewModal';
+import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { ImagePreviewList } from '@/platform/media/htmlImages';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
-import { MemoizedLinuxDoVerifyModal } from './LinuxDoVerifyModal';
+import { MemoizedLinuxDoVerifyModal } from '@/features/account/components/LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import type { ReaderTheme } from '@/ui/theme/tokens';
-import type { NodeImageAuthDocument } from './useNodeImageAuthController';
+import type { NodeImageAuthDocument } from '@/features/account/useNodeImageAuthController';
 
 export function GlobalModalHost({
   checking,

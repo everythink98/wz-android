@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { BackupRestorePanel, AppearancePanel } from '@/screens/more/MorePanels';
+import { BackupRestorePanel, AppearancePanel } from '@/features/more/components/MorePanels';
 import { TopicMenu } from '@/features/topic/components/TopicMenu';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from './styleFixture';

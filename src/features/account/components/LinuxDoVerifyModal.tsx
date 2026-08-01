@@ -1,13 +1,13 @@
-import type { AppHostStyles } from './styles';
+import type { LoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { memo, type RefObject, useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { LINUXDO_URL } from '@/domain/forum/sourceUrls';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { AppButton } from '@/ui/controls/AppControls';
-import { LoginWebViewModal } from '@/features/account/components/LoginWebViewModal';
-import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/loginWebViewScripts';
-import { LOGIN_FORM_ADAPTERS } from '@/loginFormAdapters';
+import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
+import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 
@@ -53,7 +53,7 @@ export function LinuxDoVerifyModal({
   mountLinuxDoWebView: boolean;
   loadingLinuxDoPage: boolean;
   showLinuxDoPanel: boolean;
-  styles: AppHostStyles;
+  styles: LoginWebViewStyles;
   theme: ReaderTheme;
   webViewBlockMessage: string;
   onCheckLinuxDoCookie: () => void;

@@ -1,4 +1,4 @@
-import type { MoreScreenStyles } from '@/features/more/styles';
+import type { MoreScreenStyles } from './styles';
 import { memo, type RefObject, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -17,15 +17,18 @@ import {
   LinuxDoLevelPanel,
   NodeSeekLoginPanel,
   YaohuoLoginPanel
-} from '@/screens/more/MorePanels';
-import { NetworkProxyModal } from '@/screens/more/NetworkProxyModal';
-import { AccountCenterPanel, type AccountCenterCommand } from '@/screens/more/AccountCenterPanel';
-import type { CredentialSummaries } from '@/screens/more/accountCenter';
-import type { AccountCredentialFillAttempt } from '@/app/useAccountCredentialController';
-import type { XiaoyinsiAuthPhase } from '@/app/useXiaoyinsiAuthController';
+} from './components/MorePanels';
+import { NetworkProxyModal } from './components/NetworkProxyModal';
+import { AccountCenterPanel } from './components/AccountCenterPanel';
+import type {
+  AccountCenterCommand,
+  AccountCredentialFillAttempt,
+  XiaoyinsiAuthPhase
+} from '@/domain/session/accountCenter';
+import type { CredentialSummaries } from './accountCenter';
 import type { XiaoyinsiPendingAuthorization } from '@/sources/xiaoyinsi/auth';
 import type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/reader';
-import { XiaoyinsiAuthPanel } from '@/screens/more/XiaoyinsiAuthPanel';
+import { XiaoyinsiAuthPanel } from './components/XiaoyinsiAuthPanel';
 
 const moreScreenStyles = StyleSheet.create({
   accountFooterAction: {

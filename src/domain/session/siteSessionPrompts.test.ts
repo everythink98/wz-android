@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CredentialSummaries } from '@/platform/storage/credentialVault';
-import { createSiteAccountViews } from '@/screens/more/accountCenter';
+import { createSiteAccountViews } from '@/features/more/accountCenter';
 import {
   authActionMessageForSource,
   authNoticeForSource,

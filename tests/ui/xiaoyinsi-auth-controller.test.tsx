@@ -49,7 +49,8 @@ jest.mock('@/sources/xiaoyinsi/auth', () => {
 });
 
 import * as XiaoyinsiAuth from '@/sources/xiaoyinsi/auth';
-import { useXiaoyinsiAuthController, type XiaoyinsiAuthorizationReadResult } from '@/app/useXiaoyinsiAuthController';
+import { useXiaoyinsiAuthController } from '@/features/account/useXiaoyinsiAuthController';
+import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';

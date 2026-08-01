@@ -16,7 +16,8 @@ vi.mock('expo-secure-store', () => {
 });
 
 import * as SecureStore from 'expo-secure-store';
-import { credentialVault, type CredentialSite } from './credentialVault';
+import { credentialVault } from './credentialVault';
+import type { CredentialSite } from '@/domain/session/sessionContracts';
 
 const secureStore = SecureStore as typeof SecureStore & { __store: Map<string, string> };
 

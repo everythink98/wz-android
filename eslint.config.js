@@ -38,6 +38,8 @@ module.exports = defineConfig([
       'src/app/use*Controller.{ts,tsx}',
       'src/features/**/use*Controller.{ts,tsx}',
       'src/features/library/LibraryScreen.tsx',
+      'src/features/more/MoreScreen.tsx',
+      'src/features/more/components/MorePanels.tsx',
       'src/features/search/SearchFilterSheet.tsx',
       'src/features/search/SearchScreen.tsx',
       'src/features/topic/TopicScreen.tsx',

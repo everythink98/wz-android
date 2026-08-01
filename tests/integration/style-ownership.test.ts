@@ -16,7 +16,8 @@ import { createSearchStyles } from '@/features/search/styles';
 import { createTopicStyles } from '@/features/topic/styles';
 import { createUserStyles } from '@/features/user/styles';
 import { createLibraryStyles } from '@/features/library/styles';
-import { createAccountStyles } from '@/features/account/styles';
+import { createMoreAccountStyles } from '@/features/more/accountStyles';
+import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { createMoreStyles } from '@/features/more/styles';
 
 vi.mock('react-native', () => ({
@@ -43,7 +44,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight
     createTopicStyles(sharedStyles, theme, settings),
     createUserStyles(sharedStyles, theme, settings),
     createLibraryStyles(sharedStyles, theme, settings),
-    createAccountStyles(sharedStyles, theme, settings),
+    createMoreAccountStyles(sharedStyles, theme, settings),
+    createLoginWebViewStyles(sharedStyles, theme, settings),
     createMoreStyles(sharedStyles, theme, settings)
   );
 }

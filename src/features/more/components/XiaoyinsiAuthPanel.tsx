@@ -1,6 +1,6 @@
-import type { AccountStyles } from '@/features/account/styles';
+import type { MoreAccountStyles } from '../accountStyles';
 import { Alert, Text, View } from 'react-native';
-import type { XiaoyinsiAuthPhase } from '@/app/useXiaoyinsiAuthController';
+import type { XiaoyinsiAuthPhase } from '@/domain/session/accountCenter';
 import type { XiaoyinsiPendingAuthorization } from '@/sources/xiaoyinsi/auth';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { AppButton } from '@/ui/controls/AppControls';
@@ -30,7 +30,7 @@ export function XiaoyinsiAuthPanel({
   phase: XiaoyinsiAuthPhase;
   secondsRemaining: number;
   session: SiteSessionViewModel;
-  styles: AccountStyles;
+  styles: MoreAccountStyles;
   theme: ReaderTheme;
   onBegin: () => void;
   onCancel: () => void;

@@ -16,7 +16,7 @@ import {
 } from '@/domain/session/siteSessionState';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
-import type { XiaoyinsiAuthorizationReadResult } from './useXiaoyinsiAuthController';
+import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {

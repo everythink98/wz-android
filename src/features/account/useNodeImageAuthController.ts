@@ -14,7 +14,7 @@ import {
   nodeImageSessionScript,
   nodeSeekNodeImageAuthScript,
   type NodeImageAuthPayload
-} from '@/loginWebViewScripts';
+} from '@/platform/network/loginWebViewScripts';
 import {
   closeNodeImageAuthOpening,
   createNodeImageAuthNonce,

@@ -5,11 +5,15 @@ import {
   CredentialVaultError,
   credentialVault,
   emptyCredentialSummaries,
-  type CredentialSummaries,
-  CredentialSite
+  type CredentialSummaries
 } from '@/platform/storage/credentialVault';
-import { isTrustedLoginFormMessageSource, LOGIN_FORM_ADAPTERS, parseLoginFormMessage } from '@/loginFormAdapters';
-import type { AccountCenterCommand } from '@/screens/more/AccountCenterPanel';
+import type { CredentialSite } from '@/domain/session/sessionContracts';
+import type { AccountCenterCommand, AccountCredentialFillAttempt } from '@/domain/session/accountCenter';
+import {
+  isTrustedLoginFormMessageSource,
+  LOGIN_FORM_ADAPTERS,
+  parseLoginFormMessage
+} from '@/domain/session/loginFormAdapters';
 import type { SessionSite } from '@/domain/session/siteSessionState';
 import {
   beginDiagnosticTrace,
@@ -25,9 +29,8 @@ import {
   loadCredentialSummariesWithTrace,
   type CredentialFillTraceState,
   type LoginWebViewFailureReason
-} from './accountCredentialDiagnostics';
+} from './credentialDiagnostics';
 
-export type AccountCredentialFillAttempt = { site: CredentialSite; attempt: number };
 type WebViewRef = RefObject<WebView | null>;
 
 export function useAccountCredentialController({

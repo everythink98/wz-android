@@ -27,7 +27,7 @@ vi.mock('@/platform/network/networkProxy', async () => ({
 }));
 
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
-import { useNetworkProxyController } from '@/app/useNetworkProxyController';
+import { useNetworkProxyController } from '@/features/more/useNetworkProxyController';
 
 const rootDir = path.resolve(__dirname, '..');
 
@@ -88,7 +88,7 @@ describe('network proxy controller guard', () => {
   });
 
   it('keeps enable, persistence and native apply on one diagnostic trace', () => {
-    const source = readSource('src', 'app', 'useNetworkProxyController.ts');
+    const source = readSource('src', 'features', 'more', 'useNetworkProxyController.ts');
     const enableFlow = source.slice(
       source.indexOf('const runSetProxyEnabled'),
       source.indexOf('const upsertProxyProfile')
@@ -103,7 +103,7 @@ describe('network proxy controller guard', () => {
   });
 
   it('blocks all requests after a failed native disable instead of silently going direct', () => {
-    const source = readSource('src', 'app', 'useNetworkProxyController.ts');
+    const source = readSource('src', 'features', 'more', 'useNetworkProxyController.ts');
     const guard = source.slice(
       source.indexOf('const ensureNetworkProxyReady'),
       source.indexOf('const networkProxyFetcher')

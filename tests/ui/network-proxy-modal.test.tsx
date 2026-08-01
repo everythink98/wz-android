@@ -4,7 +4,7 @@ import React from 'react';
 import { Alert } from 'react-native';
 import { createEmptyNetworkProxyState, type NetworkProxyProfile } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { NetworkProxyModal } from '@/screens/more/NetworkProxyModal';
+import { NetworkProxyModal } from '@/features/more/components/NetworkProxyModal';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from './styleFixture';
 

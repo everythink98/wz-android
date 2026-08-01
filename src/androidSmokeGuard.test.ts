@@ -32,7 +32,7 @@ function readProjectFile(...parts: string[]) {
 describe('Android release evidence guards', () => {
   it('[REG-TEST-003] keeps logged-out testing outside the App and on an explicit isolated device', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
-    const moreScreen = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+    const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
     const nativePlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
 
     expect(moreScreen).not.toContain('devAnonymous');
@@ -517,12 +517,12 @@ describe('Android release evidence guards', () => {
     const appControls = readProjectFile('src', 'ui', 'controls', 'AppControls.tsx');
     expect(appControls).toContain('testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}');
     expect(appControls).toContain("accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}");
-    const feedScreen = readProjectFile('src', 'screens', 'FeedScreen.tsx');
+    const feedScreen = readProjectFile('src', 'features', 'feed', 'FeedScreen.tsx');
     expect(feedScreen).toContain("testID={index === 0 ? 'feed-topic-first' : undefined}");
     expect(feedScreen).toContain("`feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`");
     expect(feedScreen).not.toContain('feed-list-ready-');
     expect(feedScreen).toContain('testIDPrefix="feed-source"');
-    const searchScreen = readProjectFile('src', 'screens', 'SearchScreen.tsx');
+    const searchScreen = readProjectFile('src', 'features', 'search', 'SearchScreen.tsx');
     expect(searchScreen).toContain('testID="search-query"');
     expect(searchScreen).toContain('testID="search-submit"');
     expect(searchScreen).toContain('testIDPrefix="search-source"');
@@ -533,22 +533,22 @@ describe('Android release evidence guards', () => {
     expect(searchScreen).not.toContain('search-result-first');
     expect(searchScreen).toContain("'search-all-sources-settled'");
     expect(searchScreen).toContain("'search-complete'");
-    expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain(
+    expect(readProjectFile('src', 'features', 'topic', 'TopicScreen.tsx')).toContain(
       "testID={topic ? 'topic-detail-loaded' : undefined}"
     );
-    expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain('testID="topic-author"');
-    const userScreen = readProjectFile('src', 'screens', 'UserScreen.tsx');
+    expect(readProjectFile('src', 'features', 'topic', 'TopicScreen.tsx')).toContain('testID="topic-author"');
+    const userScreen = readProjectFile('src', 'features', 'user', 'UserScreen.tsx');
     expect(userScreen).toContain("testID={profile && !busy ? 'user-screen-loaded' : undefined}");
     expect(userScreen).toContain("testID={index === 0 ? 'user-topic-first' : undefined}");
-    const libraryScreen = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
+    const libraryScreen = readProjectFile('src', 'features', 'library', 'LibraryScreen.tsx');
     expect(libraryScreen).toContain("'library-favorites-ready'");
     expect(libraryScreen).toContain("'library-users-ready'");
     expect(libraryScreen).toContain("'library-history-ready'");
     expect(libraryScreen).toContain("'library-user-first'");
     expect(libraryScreen).toContain("'library-history-first'");
-    const accountCenter = readProjectFile('src', 'screens', 'more', 'AccountCenterPanel.tsx');
+    const accountCenter = readProjectFile('src', 'features', 'more', 'components', 'AccountCenterPanel.tsx');
     expect(accountCenter).toContain('testID={`account-site-${view.site}`}');
-    const morePanels = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
+    const morePanels = readProjectFile('src', 'features', 'more', 'components', 'MorePanels.tsx');
     expect(morePanels).toContain('webViewSettledForReplay');
     expect(morePanels).toContain("'nodeseek-login-webview-settled'");
     expect(morePanels).not.toContain("'nodeseek-login-webview-ready'");
@@ -559,7 +559,7 @@ describe('Android release evidence guards', () => {
   it('keeps diagnostic logging initialized and wired into the More screen', () => {
     const entry = readProjectFile('index.ts');
     const appRoot = readProjectFile('src', 'app', 'AppRoot.tsx');
-    const moreScreen = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+    const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
 
     expect(entry).toContain(
       "import { initializeDiagnosticFileLogging } from '@/platform/diagnostics/diagnosticFileStore';"

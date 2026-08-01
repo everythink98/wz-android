@@ -20,7 +20,7 @@ describe('WebView proxy guard', () => {
       'rendering',
       'useHtmlRenderingController.tsx'
     );
-    const morePanels = readSource('src', 'screens', 'more', 'MorePanels.tsx');
+    const morePanels = readSource('src', 'features', 'more', 'components', 'MorePanels.tsx');
 
     expect(appRoot).toContain('const networkProxyWebViewBlockMessage =');
     expect(appRoot).toContain('blockedMessage={networkProxyWebViewBlockMessage}');

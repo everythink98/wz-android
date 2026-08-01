@@ -1,7 +1,7 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import type { SharedStyles } from '@/ui/theme/sharedStyles';
-import type { AccountStyles } from '@/features/account/styles';
+import type { LoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 
 export function createAppStyles(sharedStyles: SharedStyles, theme: ReaderTheme) {
   return Object.assign(
@@ -60,4 +60,4 @@ export function createAppStyles(sharedStyles: SharedStyles, theme: ReaderTheme) 
 }
 
 export type AppStyles = ReturnType<typeof createAppStyles>;
-export type AppHostStyles = AppStyles & AccountStyles;
+export type AppHostStyles = AppStyles & LoginWebViewStyles;

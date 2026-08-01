@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import type { LinuxDoLevelProfile, ReadGateway } from '@/sources/readGateway';
-import { useAccountController } from '@/app/useAccountController';
+import { useAccountController } from '@/features/account/useAccountController';
 import type { Screen } from '@/ui/navigation/types';
 import type { SiteSessionState } from '@/domain/session/siteSessionState';
 import { appQueryClient } from '@/platform/query/serverState';

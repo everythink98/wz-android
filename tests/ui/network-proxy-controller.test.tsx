@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { useNetworkProxyController } from '@/app/useNetworkProxyController';
+import { useNetworkProxyController } from '@/features/more/useNetworkProxyController';
 import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/networkProxy';
 import { fetchWithTimeout } from '@/platform/network/request';
 

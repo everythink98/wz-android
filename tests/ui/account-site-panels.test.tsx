@@ -2,12 +2,12 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { type ComponentProps } from 'react';
 import { Text, View } from 'react-native';
-import { LinuxDoVerifyModal } from '@/app/LinuxDoVerifyModal';
-import { LoginWebViewModal } from '@/features/account/components/LoginWebViewModal';
+import { LinuxDoVerifyModal } from '@/features/account/components/LinuxDoVerifyModal';
+import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { LinuxDoLevelPanel } from '@/screens/more/LinuxDoLevelPanel';
-import { NodeSeekLoginPanel, YaohuoLoginPanel } from '@/screens/more/MorePanels';
+import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel';
+import { NodeSeekLoginPanel, YaohuoLoginPanel } from '@/features/more/components/MorePanels';
 import {
   createSiteSessionStates,
   createSiteSessionViewModels,

@@ -23,7 +23,7 @@ jest.mock('react-native-webview', () => {
 jest.mock('@/ui/controls/AppControls', () => ({
   AppButton: () => null
 }));
-jest.mock('@/features/account/components/LoginWebViewModal', () => {
+jest.mock('@/ui/navigation/LoginWebViewModal', () => {
   const React = require('react');
   const ReactNative = require('react-native');
   return {
@@ -36,7 +36,7 @@ jest.mock('@/features/account/components/LoginWebViewModal', () => {
 jest.mock('@/ui/media/ImagePreviewModal', () => ({
   ImagePreviewModal: () => null
 }));
-jest.mock('@/app/LinuxDoVerifyModal', () => ({
+jest.mock('@/features/account/components/LinuxDoVerifyModal', () => ({
   MemoizedLinuxDoVerifyModal: () => null
 }));
 

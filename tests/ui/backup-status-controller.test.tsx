@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { exportReaderBackupJson } from '@/domain/reader/readerBackup';
-import { useBackupStatusController } from '@/app/useBackupStatusController';
+import { useBackupStatusController } from '@/features/more/useBackupStatusController';
 
 const mockGetDocumentAsync = jest.fn<
   (...args: unknown[]) => Promise<{

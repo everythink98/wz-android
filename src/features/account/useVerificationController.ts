@@ -5,7 +5,7 @@ import type { SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models'
 import { errorMessage } from '@/platform/network/errors';
 import type { Screen } from '@/ui/navigation/types';
 import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
-import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
+import type { LoginWebViewFailureReason } from './credentialDiagnostics';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -16,7 +16,7 @@ import {
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
-import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
+import { shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import { appQueryClient } from '@/platform/query/serverState';
 import type {
   AccountReconcileResult,

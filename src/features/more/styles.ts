@@ -2,7 +2,8 @@ import { StyleSheet } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
 import type { SharedStyles } from '@/ui/theme/sharedStyles';
-import type { AccountStyles } from '@/features/account/styles';
+import type { MoreAccountStyles } from './accountStyles';
+import type { LoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 
 export function createMoreStyles(sharedStyles: SharedStyles, theme: ReaderTheme, settings: ReaderSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
@@ -223,4 +224,4 @@ export function createMoreStyles(sharedStyles: SharedStyles, theme: ReaderTheme,
 }
 
 export type MoreStyles = ReturnType<typeof createMoreStyles>;
-export type MoreScreenStyles = MoreStyles & AccountStyles;
+export type MoreScreenStyles = MoreStyles & MoreAccountStyles & LoginWebViewStyles;

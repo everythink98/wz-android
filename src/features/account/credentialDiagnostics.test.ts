@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { CredentialSite, CredentialSummary } from '@/platform/storage/credentialVault';
+import type { CredentialSummary } from '@/platform/storage/credentialVault';
+import type { CredentialSite } from '@/domain/session/sessionContracts';
 import { beginDiagnosticTrace, setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
-import {
-  finishCredentialFillTraceForWebViewFailure,
-  loadCredentialSummariesWithTrace
-} from './accountCredentialDiagnostics';
+import { finishCredentialFillTraceForWebViewFailure, loadCredentialSummariesWithTrace } from './credentialDiagnostics';
 
 const summaries: Record<CredentialSite, CredentialSummary> = {
   nodeseek: { site: 'nodeseek', state: 'saved', hasCredential: true, protection: 'biometric' },

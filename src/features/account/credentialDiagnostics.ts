@@ -1,4 +1,5 @@
-import type { CredentialSite, CredentialSummaries, CredentialSummary } from '@/platform/storage/credentialVault';
+import type { CredentialSummaries, CredentialSummary } from '@/platform/storage/credentialVault';
+import type { CredentialSite } from '@/domain/session/sessionContracts';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,

@@ -1,6 +1,7 @@
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { createAppStyles } from '@/app/styles';
-import { createAccountStyles } from '@/features/account/styles';
+import { createMoreAccountStyles } from '@/features/more/accountStyles';
+import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { createFeedStyles } from '@/features/feed/styles';
 import { createLibraryStyles } from '@/features/library/styles';
 import { createMoreStyles } from '@/features/more/styles';
@@ -15,7 +16,8 @@ export function createTestStyles(theme: ReaderTheme, settings: ReaderSettings, w
   return Object.assign(
     {},
     createAppStyles(sharedStyles, theme),
-    createAccountStyles(sharedStyles, theme, settings),
+    createMoreAccountStyles(sharedStyles, theme, settings),
+    createLoginWebViewStyles(sharedStyles, theme, settings),
     createFeedStyles(sharedStyles, theme, settings),
     createLibraryStyles(sharedStyles, theme, settings),
     createMoreStyles(sharedStyles, theme, settings),

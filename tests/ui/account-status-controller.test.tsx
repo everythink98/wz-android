@@ -9,12 +9,12 @@ jest.mock('@/sources/readGateway', () => ({
 }));
 
 import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
-import { useAccountStatusController } from '@/app/useAccountStatusController';
-import { useLinuxDoIdentityVerificationPrompt } from '@/app/useVerificationController';
-import type { XiaoyinsiAuthorizationReadResult } from '@/app/useXiaoyinsiAuthController';
+import { useAccountStatusController } from '@/features/account/useAccountStatusController';
+import { useLinuxDoIdentityVerificationPrompt } from '@/features/account/useVerificationController';
+import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { commitChangedAccountStatusQuery } from '@/app/sessionControllerHelpers';
+import { commitChangedAccountStatusQuery } from '@/features/account/sessionControllerHelpers';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { UserProfile } from '@/domain/forum/models';
 import { QueryTestWrapper } from './QueryTestWrapper';

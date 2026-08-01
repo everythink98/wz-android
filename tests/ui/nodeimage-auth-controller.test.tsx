@@ -16,7 +16,7 @@ jest.mock('@/sources/nodeimage/credentials', () => ({
   saveNodeImageApiKeyForGeneration: jest.fn(async () => 'saved-key')
 }));
 
-import { useNodeImageAuthController } from '@/app/useNodeImageAuthController';
+import { useNodeImageAuthController } from '@/features/account/useNodeImageAuthController';
 
 function nodeSeekSession() {
   return {

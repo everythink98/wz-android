@@ -4,7 +4,7 @@ import React, { type ComponentProps } from 'react';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { MoreScreen } from '@/screens/MoreScreen';
+import { MoreScreen } from '@/features/more/MoreScreen';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from './styleFixture';

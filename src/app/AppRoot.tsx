@@ -24,16 +24,17 @@ import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
 import type { TopicRecord } from '@/domain/reader/readerData';
 import { useReaderDataController } from '@/features/library/useReaderDataController';
 import { useReaderDataActionsController } from '@/features/library/useReaderDataActionsController';
-import { useReaderSettingsController } from './useReaderSettingsController';
-import { useBackupStatusController } from './useBackupStatusController';
-import { useDiagnosticLogController } from './useDiagnosticLogController';
-import { useAccountStatusController } from './useAccountStatusController';
+import { useReaderSettingsController } from '@/features/more/useReaderSettingsController';
+import { useBackupStatusController } from '@/features/more/useBackupStatusController';
+import { useDiagnosticLogController } from '@/features/more/useDiagnosticLogController';
+import { useAccountStatusController } from '@/features/account/useAccountStatusController';
 import type {
   AccountReconcileResult,
+  CredentialSite,
   LinuxDoReadRecovery,
   LinuxDoReadResumeOutcome
 } from '@/domain/session/sessionContracts';
-import { useAppUpdateController } from './useAppUpdateController';
+import { useAppUpdateController } from '@/features/more/useAppUpdateController';
 import { useFeedController } from '@/features/feed/useFeedController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
@@ -52,18 +53,24 @@ import {
 } from './AppNavigator';
 import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { useSearchController } from '@/features/search/useSearchController';
-import { useSessionController } from './useSessionController';
-import { useNetworkProxyController } from './useNetworkProxyController';
+import { useSessionController } from '@/features/account/useSessionController';
+import { useNetworkProxyController } from '@/features/more/useNetworkProxyController';
 import { useTopicController } from '@/features/topic/useTopicController';
 import { filterTopicSessionReplies, useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useUserController } from '@/features/user/useUserController';
-import { useLinuxDoIdentityVerificationPrompt, useVerificationController } from './useVerificationController';
-import { useAccountController } from './useAccountController';
-import { useAccountCredentialController } from './useAccountCredentialController';
+import {
+  useLinuxDoIdentityVerificationPrompt,
+  useVerificationController
+} from '@/features/account/useVerificationController';
+import { useAccountController } from '@/features/account/useAccountController';
+import { useAccountCredentialController } from '@/features/account/useAccountCredentialController';
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
-import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
-import { useNodeImageAuthController } from './useNodeImageAuthController';
-import { takeNodeSeekVerificationRetry, type NodeSeekVerificationRetry } from './sessionControllerHelpers';
+import { useXiaoyinsiAuthController } from '@/features/account/useXiaoyinsiAuthController';
+import { useNodeImageAuthController } from '@/features/account/useNodeImageAuthController';
+import {
+  takeNodeSeekVerificationRetry,
+  type NodeSeekVerificationRetry
+} from '@/features/account/sessionControllerHelpers';
 import { markCurrentNodeSeekOwnRepliesUnlikable } from '@/features/topic/actions/actionHelpers';
 import { shareTopicWithClipboardFallback } from '@/features/topic/shareTopic';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
@@ -83,7 +90,7 @@ import { createReadGateway } from '@/sources/readGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '@/platform/network/networkProxy';
 import type { Topic, TopicDetail, UserProfile, UserReference } from '@/domain/forum/models';
 import { isHttpOrHttpsUrl, type ImageDisplaySize } from '@/platform/media/htmlImages';
-import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
+import { shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { replyHtmlWithSignature } from '@/features/topic/model/topicDerivedData';
 import { contentWidthValue, createTheme } from '@/ui/theme/tokens';
@@ -94,15 +101,16 @@ import { createSearchStyles } from '@/features/search/styles';
 import { createTopicStyles } from '@/features/topic/styles';
 import { createUserStyles } from '@/features/user/styles';
 import { createLibraryStyles } from '@/features/library/styles';
-import { createAccountStyles } from '@/features/account/styles';
 import { createMoreStyles } from '@/features/more/styles';
+import { createMoreAccountStyles } from '@/features/more/accountStyles';
+import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { errorMessage } from '@/platform/network/errors';
 import { parseInternalTopicOpenLink } from '@/domain/forum/links';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { LibraryScreen } from '@/features/library/LibraryScreen';
-import { MoreScreen } from '@/screens/MoreScreen';
-import { AppearancePanel } from '@/screens/more/MorePanels';
+import { MoreScreen } from '@/features/more/MoreScreen';
+import { AppearancePanel } from '@/features/more/components/MorePanels';
 import { SearchScreen } from '@/features/search/SearchScreen';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '@/features/topic/TopicScreen';
 import { LoadingState } from '@/ui/controls/AppControls';
@@ -122,8 +130,7 @@ import {
   sessionSources,
   type SessionSite
 } from '@/domain/session/siteSessionState';
-import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
-import type { CredentialSite } from '@/platform/storage/credentialVault';
+import type { LoginWebViewFailureReason } from '@/features/account/credentialDiagnostics';
 import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 import {
   CURRENT_ANDROID_VERSION_CODE,
@@ -543,13 +550,13 @@ export function AppRoot() {
     [deferredFontScale, readerData.settings]
   );
   const sharedStyles = useMemo(() => createSharedStyles(theme, styleSettings, height), [height, styleSettings, theme]);
-  const accountStyles = useMemo(
-    () => createAccountStyles(sharedStyles, theme, styleSettings),
+  const loginWebViewStyles = useMemo(
+    () => createLoginWebViewStyles(sharedStyles, theme, styleSettings),
     [sharedStyles, styleSettings, theme]
   );
   const appStyles = useMemo(
-    () => Object.assign(createAppStyles(sharedStyles, theme), accountStyles),
-    [accountStyles, sharedStyles, theme]
+    () => Object.assign(createAppStyles(sharedStyles, theme), loginWebViewStyles),
+    [loginWebViewStyles, sharedStyles, theme]
   );
   const feedStyles = useMemo(
     () => createFeedStyles(sharedStyles, theme, styleSettings),
@@ -572,8 +579,13 @@ export function AppRoot() {
     [sharedStyles, styleSettings, theme]
   );
   const moreStyles = useMemo(
-    () => Object.assign(createMoreStyles(sharedStyles, theme, styleSettings), accountStyles),
-    [accountStyles, sharedStyles, styleSettings, theme]
+    () =>
+      Object.assign(
+        createMoreStyles(sharedStyles, theme, styleSettings),
+        createMoreAccountStyles(sharedStyles, theme, styleSettings),
+        loginWebViewStyles
+      ),
+    [loginWebViewStyles, sharedStyles, styleSettings, theme]
   );
   const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
   const {

@@ -5,7 +5,7 @@ import {
   parseLoginFormMessage,
   type LoginFormAdapter,
   type LoginFormMessage
-} from '@/loginFormAdapters';
+} from './loginFormAdapters';
 
 const siteCases = [
   {

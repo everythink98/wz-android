@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
+import type { CredentialSite } from '@/domain/session/sessionContracts';
 
-export type CredentialSite = 'nodeseek' | 'linuxdo' | 'yaohuo';
 export type CredentialProtection = 'biometric' | 'device';
 
 export type CredentialSummary =

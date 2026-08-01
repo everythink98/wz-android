@@ -24,7 +24,7 @@ vi.mock('@/platform/storage/credentialVault', () => ({
   }
 }));
 
-import { LOGIN_FORM_ADAPTERS } from '@/loginFormAdapters';
+import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { useAccountCredentialController } from './useAccountCredentialController';
 

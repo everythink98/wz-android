@@ -5,7 +5,7 @@ import {
   NODESEEK_LOGIN_PROBE_SCRIPT,
   nodeImageAuthPayloadScript,
   nodeImageSessionScript
-} from '@/loginWebViewScripts';
+} from './loginWebViewScripts';
 
 const NODEIMAGE_AUTH_NONCE = '00112233445566778899aabbccddeeff';
 const NODEIMAGE_AUTH_PAYLOAD = {

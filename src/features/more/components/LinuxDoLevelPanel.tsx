@@ -1,4 +1,4 @@
-import type { AccountStyles } from '@/features/account/styles';
+import type { MoreAccountStyles } from '../accountStyles';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { RefreshCw } from 'lucide-react-native';
@@ -42,7 +42,7 @@ export function LinuxDoLevelPanel({
   loginMessage?: string;
   profile: LinuxDoLevelProfile | null;
   siteSession: SiteSessionViewModel;
-  styles: AccountStyles;
+  styles: MoreAccountStyles;
   theme: ReaderTheme;
   onOpenLogin: () => void;
   onRefresh: () => void;
@@ -175,7 +175,7 @@ export function LinuxDoLevelPanel({
   );
 }
 
-function LevelStat({ label, value, styles }: { label: string; value: string; styles: AccountStyles }) {
+function LevelStat({ label, value, styles }: { label: string; value: string; styles: MoreAccountStyles }) {
   return (
     <View style={styles.levelStatItem}>
       <Text style={styles.levelStatLabel}>{label}</Text>

@@ -1,4 +1,4 @@
-import type { MoreScreenStyles } from '@/features/more/styles';
+import type { MoreScreenStyles } from '../styles';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, Text, TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -17,10 +17,10 @@ import { NODESEEK_URL, YAOHUO_URL } from '@/domain/forum/sourceUrls';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, MenuButton, triggerPressFeedback } from '@/ui/controls/AppControls';
-import { LoginWebViewModal } from '@/features/account/components/LoginWebViewModal';
-import { NODESEEK_LOGIN_PROBE_SCRIPT } from '@/loginWebViewScripts';
-import { LOGIN_FORM_ADAPTERS } from '@/loginFormAdapters';
-import { LinuxDoLevelPanel } from '@/screens/more/LinuxDoLevelPanel';
+import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { NODESEEK_LOGIN_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
+import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
+import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';

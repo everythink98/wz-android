@@ -1,4 +1,4 @@
-import type { AccountStyles } from '@/features/account/styles';
+import type { MoreAccountStyles } from '../accountStyles';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
@@ -14,9 +14,9 @@ import {
 } from 'react-native';
 import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '@/platform/storage/credentialVault';
-import type { CredentialSite } from '@/platform/storage/credentialVault';
+import type { CredentialSite } from '@/domain/session/sessionContracts';
+import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import type { UserProfile } from '@/domain/forum/models';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, ExpandablePanel, IconButton, triggerPressFeedback } from '@/ui/controls/AppControls';
 import {
@@ -24,15 +24,7 @@ import {
   createSiteAccountViews,
   type CredentialSummaries,
   type SiteAccountView
-} from '@/screens/more/accountCenter';
-
-export type AccountCenterCommand =
-  | { type: 'refresh' }
-  | { type: 'open-user'; user: UserProfile }
-  | { type: 'open-login'; site: SessionSite }
-  | { type: 'open-login-with-fill'; site: SessionSite }
-  | { type: 'save-credential'; site: CredentialSite; account: string; password: string; allowUnprotected?: boolean }
-  | { type: 'delete-credential'; site: CredentialSite };
+} from '../accountCenter';
 
 type CommandHandler = (command: AccountCenterCommand) => void | Promise<void>;
 type AccountCenterStyles = ReturnType<typeof createAccountCenterStyles>;
@@ -183,7 +175,7 @@ function AccountAction({
   disabled?: boolean;
   label: string;
   accountStyles: AccountCenterStyles;
-  styles: AccountStyles;
+  styles: MoreAccountStyles;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
@@ -228,7 +220,7 @@ function CredentialEditor({
   site: CredentialSite;
   view: SiteAccountView;
   accountStyles: AccountCenterStyles;
-  styles: AccountStyles;
+  styles: MoreAccountStyles;
   theme: ReaderTheme;
   onCommand: CommandHandler;
 }) {
@@ -486,7 +478,7 @@ export function AccountCenterPanel({
   sessions: SiteSessionViewModels;
   siteContent: Partial<Record<SessionSite, ReactNode>>;
   statusBusy: boolean;
-  styles: AccountStyles;
+  styles: MoreAccountStyles;
   theme: ReaderTheme;
   onCommand: CommandHandler;
   onExpandedChange: (expanded: boolean) => void;

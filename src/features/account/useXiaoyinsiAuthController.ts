@@ -13,6 +13,7 @@ import {
 } from '@/platform/diagnostics/diagnostics';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { ScopedSiteSessionEvent, SiteSessionEvent } from '@/domain/session/siteSessionState';
+import type { XiaoyinsiAuthPhase, XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import type { ReadGateway } from '@/sources/readGateway';
 import {
   beginXiaoyinsiDeviceAuth,
@@ -31,14 +32,6 @@ import {
 } from '@/sources/xiaoyinsi/auth';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-
-export type XiaoyinsiAuthPhase =
-  'idle' | 'requesting' | 'waiting' | 'authorized' | 'denied' | 'expired' | 'cleanup' | 'unsupported' | 'error';
-
-export type XiaoyinsiAuthorizationReadResult = {
-  authenticated: boolean | null;
-  sessionEvent?: SiteSessionEvent;
-};
 
 type XiaoyinsiAuthorizationCheckResult = XiaoyinsiAuthorizationReadResult & {
   reason?: string;

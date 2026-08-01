@@ -1,4 +1,4 @@
-import type { MoreStyles } from '@/features/more/styles';
+import type { MoreStyles } from '../styles';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,

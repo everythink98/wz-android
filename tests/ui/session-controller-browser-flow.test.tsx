@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { useSessionController } from '@/app/useSessionController';
+import { useSessionController } from '@/features/account/useSessionController';
 
 jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(async () => undefined),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isTrustedNodeImageAuthMessageSource, shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
+import { isTrustedNodeImageAuthMessageSource, shouldOpenLoginWebViewUrl } from './loginWebViewNavigation';
 
 describe('login WebView navigation guard', () => {
   it('allows only the expected login host and subdomains', () => {

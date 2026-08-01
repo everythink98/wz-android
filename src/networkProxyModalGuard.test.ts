@@ -10,7 +10,7 @@ function readSource(...parts: string[]) {
 
 describe('network proxy modal guard', () => {
   it('[REG-PROXY-005] keeps connectivity testing on the status hit area without selecting the row', () => {
-    const source = readSource('src', 'screens', 'more', 'NetworkProxyModal.tsx');
+    const source = readSource('src', 'features', 'more', 'components', 'NetworkProxyModal.tsx');
 
     expect(source).toMatch(
       /const canTestLatency\s*=\s*!selecting\s*&&\s*testingId !== profile\.id\s*&&\s*applyStatus !== 'applying'\s*&&\s*pendingEnabled === null;/
@@ -21,7 +21,7 @@ describe('network proxy modal guard', () => {
   });
 
   it('shows the saved proxy name before the address in the profile list', () => {
-    const source = readSource('src', 'screens', 'more', 'NetworkProxyModal.tsx');
+    const source = readSource('src', 'features', 'more', 'components', 'NetworkProxyModal.tsx');
     const nameIndex = source.search(/\{profile\.name\}\s*<\/Text>/);
     const addressIndex = source.search(/\{profile\.host\}:\{profile\.port\} · \{statusText\}\s*<\/Text>/);
 
@@ -30,7 +30,7 @@ describe('network proxy modal guard', () => {
   });
 
   it('resets the proxy draft sheet when the Android keyboard hides', () => {
-    const source = readSource('src', 'screens', 'more', 'NetworkProxyModal.tsx');
+    const source = readSource('src', 'features', 'more', 'components', 'NetworkProxyModal.tsx');
 
     expect(source).not.toContain('KeyboardAvoidingView');
     expect(source).toContain(
