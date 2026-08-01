@@ -7,7 +7,12 @@ import {
   getUserProfile as getForumUserProfile,
   searchTopics as searchForumTopics
 } from '@/sources/aggregateRead';
-import { getYaohuoFeedDirect, getYaohuoRepliesDirect, getYaohuoTopicDirect, searchYaohuoDirect } from '@/yaohuoApi';
+import {
+  getYaohuoFeedDirect,
+  getYaohuoRepliesDirect,
+  getYaohuoTopicDirect,
+  searchYaohuoDirect
+} from '@/sources/yaohuo/reader';
 import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '@/sources/linuxdo/reader';
 import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '@/sources/nodeseek/reader';
 import {
@@ -52,7 +57,7 @@ import {
 export { getCurrentUserProfile } from '@/sources/aggregateRead';
 export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 export type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/reader';
-export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/yaohuoApi';
+export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/sources/yaohuo/reader';
 
 type GetFeedOptions = Parameters<typeof getForumFeed>[0];
 

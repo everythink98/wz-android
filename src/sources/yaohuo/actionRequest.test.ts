@@ -6,7 +6,7 @@ import {
   buildYaohuoReplyRequest,
   buildYaohuoVoteRequest,
   extractYaohuoSid
-} from '@/yaohuoActions';
+} from './actionRequest';
 
 function bodyParams(body?: string) {
   return new URLSearchParams(body || '');

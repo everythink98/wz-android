@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { exportReaderBackupJson, importReaderBackupJson } from '@/domain/reader/readerBackup';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { isGoogleSiteSearchAccessTroubleUrl } from '@/sources/searchFallback';
-import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from '@/localYaohuoHelpers';
+import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from '@/sources/yaohuo/protocol';
 import {
   isLinuxDoBrowserFetchUrl,
   isLinuxDoBrowserNavigationUrl,

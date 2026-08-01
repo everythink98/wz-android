@@ -5,7 +5,7 @@ import {
   parseYaohuoRepliesHtml,
   parseYaohuoUserProfileHtml,
   parseYaohuoUserRepliesHtml
-} from '@/localYaohuo';
+} from './parser';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 describe('yaohuo reply parsing', () => {

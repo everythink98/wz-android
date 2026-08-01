@@ -9,8 +9,8 @@ import {
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
-} from '@/localYaohuo';
-import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL, requireYaohuoRequestUrl } from '@/localYaohuoHelpers';
+} from './parser';
+import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL, requireYaohuoRequestUrl } from './protocol';
 import {
   annotateSourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,

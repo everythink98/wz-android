@@ -20,11 +20,11 @@ import {
   buildYaohuoVoteRequest,
   extractYaohuoSid,
   type YaohuoActionRequest
-} from '@/yaohuoActions';
+} from '@/sources/yaohuo/actionRequest';
 import type { DiscourseAction } from '@/sources/discourse/actionRequest';
 import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/sources/discourse/sourceActions';
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
-import { runYaohuoAction, type YaohuoActionResult } from '@/yaohuoActionClient';
+import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actionClient';
 import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
@@ -84,7 +84,7 @@ import {
   type WritableSessionTicket
 } from '@/domain/session/writableSessionGate';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
-import { YAOHUO_BASE_URL } from '@/localYaohuoHelpers';
+import { YAOHUO_BASE_URL } from '@/sources/yaohuo/protocol';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 
 type Ref<T> = { current: T };

@@ -31,8 +31,8 @@ import {
   extractYaohuoUserIdFromHref as extractUserIdFromHref,
   nextYaohuoPageFromHtml as nextPageFromHtml,
   yaohuoUserUrl as userUrl
-} from '@/localYaohuoHelpers';
-import { normalizeYaohuoReplyDeletePath } from '@/yaohuoActions';
+} from './protocol';
+import { normalizeYaohuoReplyDeletePath } from './actionRequest';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));

@@ -13,7 +13,7 @@ jest.mock('@/sources/nodeseek/actionClient', () => ({
   runNodeSeekAction: jest.fn()
 }));
 
-jest.mock('@/yaohuoActionClient', () => ({
+jest.mock('@/sources/yaohuo/actionClient', () => ({
   runYaohuoAction: jest.fn()
 }));
 
@@ -42,7 +42,7 @@ jest.mock('@/platform/network/managedCookies', () => ({
 }));
 
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
-import { runYaohuoAction, type YaohuoActionResult } from '@/yaohuoActionClient';
+import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actionClient';
 import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeRecovery } from '@/app/discourseActionRuntime';
 import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { useTopicActionsController } from '@/app/useTopicActionsController';

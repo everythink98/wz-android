@@ -36,7 +36,7 @@ import {
   safeV2exTopicUrl as safeTopicUrl,
   v2exMemberUrl as memberUrl,
   v2exNodeIdFromHref as nodeIdFromHref
-} from '@/localV2exHelpers';
+} from './parser';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 const HTML_LIST_PAGE_SIZE = 20;

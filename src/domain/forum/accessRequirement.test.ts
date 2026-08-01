@@ -9,9 +9,9 @@ vi.mock('expo-secure-store', () => ({
 
 import { getLinuxDoFeed, getLinuxDoTopic } from '@/sources/linuxdo/reader';
 import { getNodeSeekFeed, getNodeSeekTopic } from '@/sources/nodeseek/reader';
-import { getV2exFeed, getV2exTopic } from '@/localV2ex';
+import { getV2exFeed, getV2exTopic } from '@/sources/v2ex/reader';
 import { accessRequirementFromObject, accessRequirementFromText } from './html';
-import { parseYaohuoListHtml, parseYaohuoTopicHtml } from '@/localYaohuo';
+import { parseYaohuoListHtml, parseYaohuoTopicHtml } from '@/sources/yaohuo/parser';
 import { forumAccessRequirementText } from './presentation';
 
 function json(value: unknown) {

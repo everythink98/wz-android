@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { isCancelledError, useQuery, type QueryFunctionContext } from '@tanstack/react-query';
 import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
-import { summarizeYaohuoCookieHeader } from '@/yaohuoSession';
+import { summarizeYaohuoCookieHeader } from '@/sources/yaohuo/session';
 import { summarizeNodeSeekCookieHeader } from '@/sources/nodeseek/session';
 import { summarizeLinuxDoCookieHeader } from '@/sources/linuxdo/session';
 import {

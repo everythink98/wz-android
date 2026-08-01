@@ -12,7 +12,7 @@ import {
   parseYaohuoListHtml,
   parseYaohuoUserProfileHtml,
   parseYaohuoUserRepliesHtml
-} from '@/localYaohuo';
+} from '@/sources/yaohuo/parser';
 import {
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
@@ -21,9 +21,9 @@ import {
   yaohuoTopicListNextPageUrl,
   yaohuoUserProfileReplyListUrl,
   yaohuoUserProfileTopicListUrl
-} from '@/localYaohuoHelpers';
-import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from '@/localV2ex';
-import { checkYaohuoLoginDirect, getYaohuoFeedDirect, searchYaohuoDirect } from '@/yaohuoApi';
+} from '@/sources/yaohuo/protocol';
+import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from '@/sources/v2ex/reader';
+import { checkYaohuoLoginDirect, getYaohuoFeedDirect, searchYaohuoDirect } from '@/sources/yaohuo/reader';
 import {
   getDiscourseSourceCategories,
   getDiscourseSourceCurrentUserProfile,

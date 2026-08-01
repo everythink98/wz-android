@@ -15,7 +15,7 @@ import {
   setDiagnosticWriter
 } from '@/platform/diagnostics/diagnostics';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
-import { getYaohuoTopicDirect } from '@/yaohuoApi';
+import { getYaohuoTopicDirect } from '@/sources/yaohuo/reader';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -66,7 +66,7 @@ vi.mock('@/sources/linuxdo/reader', () => linuxDoMocks);
 vi.mock('@/sources/nodeseek/reader', () => nodeSeekMocks);
 vi.mock('@/sources/linuxdo/level', () => linuxDoLevelMocks);
 vi.mock('@/sources/xiaoyinsi/reader', () => xiaoyinsiMocks);
-vi.mock('@/yaohuoApi', () => ({
+vi.mock('@/sources/yaohuo/reader', () => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(),
   getYaohuoRepliesDirect: vi.fn(),

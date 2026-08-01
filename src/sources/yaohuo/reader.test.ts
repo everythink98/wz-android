@@ -10,7 +10,7 @@ import {
   getYaohuoRepliesDirect,
   getYaohuoTopicDirect,
   searchYaohuoDirect
-} from '@/yaohuoApi';
+} from './reader';
 import {
   parseYaohuoCurrentUserHtml,
   parseYaohuoFavoriteRecordId,
@@ -18,7 +18,7 @@ import {
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
-} from '@/localYaohuo';
+} from './parser';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { Topic } from '@/domain/forum/models';
 
