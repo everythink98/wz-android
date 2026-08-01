@@ -7,8 +7,8 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/searchFilters';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import type { ReadGateway } from '@/sources/readGateway';
 import type { SearchResponse, Source, Topic } from '@/domain/forum/models';
 import { appQueryClient } from '@/app/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -59,13 +59,13 @@ function createGateway({
   searchSemanticTopics,
   searchTopics
 }: {
-  searchSemanticTopics?: SourceGateway['searchSemanticTopics'];
-  searchTopics: SourceGateway['searchTopics'];
+  searchSemanticTopics?: ReadGateway['searchSemanticTopics'];
+  searchTopics: ReadGateway['searchTopics'];
 }) {
   return {
     searchSemanticTopics:
       searchSemanticTopics ??
-      jest.fn<SourceGateway['searchSemanticTopics']>(async () => ({
+      jest.fn<ReadGateway['searchSemanticTopics']>(async () => ({
         items: [],
         errors: {},
         hasMore: false,
@@ -74,11 +74,11 @@ function createGateway({
     searchTagOptions: jest.fn(async () => []),
     searchUserOptions: jest.fn(async () => []),
     searchTopics
-  } as unknown as SourceGateway;
+  } as unknown as ReadGateway;
 }
 
 function renderSearchController(
-  sourceGateway: SourceGateway,
+  readGateway: ReadGateway,
   notify = jest.fn<(message: string) => void>(),
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
   getSessionEpochs: () => ForumSessionEpochs = () => initialForumSessionEpochs,
@@ -99,7 +99,7 @@ function renderSearchController(
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        sourceGateway
+        readGateway
       }),
     { wrapper: QueryTestWrapper }
   );
@@ -122,7 +122,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('[REG-SEARCH-006] keeps the first search submit enabled before any Query has started', async () => {
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
       hasMore: false,
@@ -143,7 +143,7 @@ describe('linux.do AI search controller', () => {
   it('[REG-SEARCH-011] exposes a same-key source refetch as busy until the replacement settles', async () => {
     const replacement = Promise.withResolvers<SearchResponse>();
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [standardTopic],
         errors: {},
@@ -180,7 +180,7 @@ describe('linux.do AI search controller', () => {
   it('[REG-SEARCH-012] does not open an action panel for a result whose input was just replaced', async () => {
     const pending = Promise.withResolvers<SearchResponse>();
     const showNodeSeekVerification = jest.fn<(message?: string) => void>();
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => pending.promise);
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => pending.promise);
     const hook = await renderSearchController(
       createGateway({ searchTopics }),
       jest.fn(),
@@ -224,7 +224,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('[REG-LINUXDO-005] selects anonymous search until linux.do identity is confirmed', async () => {
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
       hasMore: false,
@@ -274,7 +274,7 @@ describe('linux.do AI search controller', () => {
   it('[REG-LINUXDO-006] keeps the active authenticated search identity while verification is in progress', async () => {
     const restartedSearch = Promise.withResolvers<SearchResponse>();
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [],
         errors: {
@@ -289,7 +289,7 @@ describe('linux.do AI search controller', () => {
       })
       .mockImplementation(async () => restartedSearch.promise);
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const sourceGateway = createGateway({ searchTopics });
+    const readGateway = createGateway({ searchTopics });
     let sessionViewModels = loggedInSessions;
     appQueryClient.clear();
     const hook = await renderHook(
@@ -304,7 +304,7 @@ describe('linux.do AI search controller', () => {
           showLinuxDoVerification,
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -338,14 +338,14 @@ describe('linux.do AI search controller', () => {
   it('[REG-LINUXDO-006] aborts an owned search after leaving Search and does not restart it for a new credential scope', async () => {
     const pendingSearch = Promise.withResolvers<SearchResponse>();
     let requestSignal: AbortSignal | undefined;
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async (options) => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async (options) => {
       requestSignal = options.signal;
       return pendingSearch.promise;
     });
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const showNodeSeekVerification = jest.fn<(message?: string) => void>();
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
-    const sourceGateway = createGateway({ searchTopics });
+    const readGateway = createGateway({ searchTopics });
     let screen: Screen = 'search';
     let sessionEpochs = initialForumSessionEpochs;
     appQueryClient.clear();
@@ -361,7 +361,7 @@ describe('linux.do AI search controller', () => {
           showLinuxDoVerification,
           showNodeSeekVerification,
           showYaohuoLogin,
-          sourceGateway
+          readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -402,7 +402,7 @@ describe('linux.do AI search controller', () => {
 
   it('[REG-LINUXDO-006] pauses an in-flight AI read while verification is open and resumes it after closing', async () => {
     const aiSignals: AbortSignal[] = [];
-    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>(async ({ signal }) => {
+    const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>(async ({ signal }) => {
       if (signal) aiSignals.push(signal);
       if (aiSignals.length === 1) {
         return new Promise((_resolve, reject) => {
@@ -411,13 +411,13 @@ describe('linux.do AI search controller', () => {
       }
       return { items: [aiOnlyTopic], errors: {}, hasMore: false, nextPage: null };
     });
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
       hasMore: false,
       nextPage: null
     }));
-    const sourceGateway = createGateway({ searchSemanticTopics, searchTopics });
+    const readGateway = createGateway({ searchSemanticTopics, searchTopics });
     let linuxDoVerificationActive = false;
     appQueryClient.clear();
     const hook = await renderHook(
@@ -432,7 +432,7 @@ describe('linux.do AI search controller', () => {
           showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
           showNodeSeekVerification: jest.fn<(message?: string) => void>(),
           showYaohuoLogin: jest.fn<(message?: string) => void>(),
-          sourceGateway
+          readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -508,7 +508,7 @@ describe('linux.do AI search controller', () => {
   it('REG-LINUXDO-002 resumes the exact foreground search without recursively reopening verification', async () => {
     const showLinuxDoVerification = jest.fn();
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [],
         errors: {
@@ -529,7 +529,7 @@ describe('linux.do AI search controller', () => {
       });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       }),
       jest.fn(),
@@ -561,7 +561,7 @@ describe('linux.do AI search controller', () => {
   it('REG-LINUXDO-003 reports an ordinary search recovery failure instead of completed', async () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [],
         errors: {
@@ -626,7 +626,7 @@ describe('linux.do AI search controller', () => {
     };
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [standardTopic],
         errors: {},
@@ -653,7 +653,7 @@ describe('linux.do AI search controller', () => {
       });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       }),
       jest.fn(),
@@ -704,7 +704,7 @@ describe('linux.do AI search controller', () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const showNodeSeekVerification = jest.fn<(message?: string) => void>();
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
       if (source === 'yaohuo') {
         throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' });
       }
@@ -726,7 +726,7 @@ describe('linux.do AI search controller', () => {
     });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       }),
       jest.fn(),
@@ -765,7 +765,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('[REG-SEARCH-009] keeps an initial source failure out of trusted Query data', async () => {
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [],
       errors: {
         nodeseek: { kind: 'ordinary', message: 'NodeSeek 首次搜索失败' }
@@ -798,7 +798,7 @@ describe('linux.do AI search controller', () => {
       id: 'ns-1',
       url: 'https://www.nodeseek.com/post-1-1'
     };
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
       if (source !== 'nodeseek') {
         return { items: [], errors: {}, hasMore: false, nextPage: null };
       }
@@ -841,7 +841,7 @@ describe('linux.do AI search controller', () => {
   it('REG-SEARCH-004 judges a whole-source retry by that source instead of unrelated aggregate errors', async () => {
     const notify = jest.fn<(message: string) => void>();
     let nodeSeekAttempts = 0;
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
       if (source === 'linuxdo') {
         return {
           items: [],
@@ -870,7 +870,7 @@ describe('linux.do AI search controller', () => {
     });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       }),
       notify
@@ -913,7 +913,7 @@ describe('linux.do AI search controller', () => {
   it('uses inline status instead of success notifications for search and pagination', async () => {
     const notify = jest.fn<(message: string) => void>();
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [standardTopic],
         errors: {},
@@ -928,7 +928,7 @@ describe('linux.do AI search controller', () => {
       });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       }),
       notify
@@ -952,7 +952,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('submits a query override with the current source and stores one recent entry', async () => {
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {},
       hasMore: false,
@@ -960,7 +960,7 @@ describe('linux.do AI search controller', () => {
     });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       })
     );
@@ -996,7 +996,7 @@ describe('linux.do AI search controller', () => {
   it('persists a search submitted before saved history finishes loading', async () => {
     const storedHistory = Promise.withResolvers<string | null>();
     mockStorageGetItem.mockImplementationOnce(async () => storedHistory.promise);
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {},
       hasMore: false,
@@ -1004,7 +1004,7 @@ describe('linux.do AI search controller', () => {
     });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       })
     );
@@ -1033,8 +1033,8 @@ describe('linux.do AI search controller', () => {
     mockStorageGetItem.mockImplementationOnce(async () => storedHistory.promise);
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
-        searchTopics: jest.fn<SourceGateway['searchTopics']>()
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
+        searchTopics: jest.fn<ReadGateway['searchTopics']>()
       })
     );
 
@@ -1051,7 +1051,7 @@ describe('linux.do AI search controller', () => {
     mockStorageGetItem
       .mockRejectedValueOnce(new Error('storage unavailable'))
       .mockResolvedValueOnce(JSON.stringify(['saved query']));
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {},
       hasMore: false,
@@ -1059,7 +1059,7 @@ describe('linux.do AI search controller', () => {
     });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       })
     );
@@ -1087,7 +1087,7 @@ describe('linux.do AI search controller', () => {
     const firstStandard = Promise.withResolvers<SearchResponse>();
     const ai = Promise.withResolvers<SearchResponse>();
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockImplementationOnce(async () => firstStandard.promise)
       .mockResolvedValueOnce({
         items: [{ ...standardTopic, id: '2', title: '普通第二页', url: 'https://linux.do/t/2' }],
@@ -1095,7 +1095,7 @@ describe('linux.do AI search controller', () => {
         hasMore: false,
         nextPage: null
       });
-    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>(async () => ai.promise);
+    const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>(async () => ai.promise);
     const hook = await renderSearchController(createGateway({ searchSemanticTopics, searchTopics }));
     await prepareLinuxDoSearch(hook, 'codex');
     const filters: SearchFilterState = {
@@ -1176,7 +1176,7 @@ describe('linux.do AI search controller', () => {
       url: 'https://linux.do/t/2'
     };
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [standardTopic],
         errors: {},
@@ -1192,7 +1192,7 @@ describe('linux.do AI search controller', () => {
       });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       })
     );
@@ -1239,7 +1239,7 @@ describe('linux.do AI search controller', () => {
       url: 'https://linux.do/t/2'
     };
     let requestCount = 0;
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ page = 1 }) => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ page = 1 }) => {
       requestCount += 1;
       if (requestCount === 4) {
         return {
@@ -1295,7 +1295,7 @@ describe('linux.do AI search controller', () => {
       url: 'https://linux.do/t/partial-2'
     };
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [standardTopic],
         errors: {},
@@ -1315,7 +1315,7 @@ describe('linux.do AI search controller', () => {
       });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       })
     );
@@ -1348,7 +1348,7 @@ describe('linux.do AI search controller', () => {
       url: 'https://linux.do/t/2'
     };
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [standardTopic],
         errors: {},
@@ -1380,7 +1380,7 @@ describe('linux.do AI search controller', () => {
       });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       })
     );
@@ -1421,7 +1421,7 @@ describe('linux.do AI search controller', () => {
 
   it('REG-SOURCE-002 preserves existing results when a whole-source retry parses empty', async () => {
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [standardTopic],
         errors: {},
@@ -1447,7 +1447,7 @@ describe('linux.do AI search controller', () => {
       );
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       })
     );
@@ -1473,7 +1473,7 @@ describe('linux.do AI search controller', () => {
 
   it('keeps a first-page partial failure on the whole-source retry path', async () => {
     const notify = jest.fn<(message: string) => void>();
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {
         linuxdo: {
@@ -1486,7 +1486,7 @@ describe('linux.do AI search controller', () => {
     });
     const hook = await renderSearchController(
       createGateway({
-        searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+        searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
         searchTopics
       }),
       notify
@@ -1519,7 +1519,7 @@ describe('linux.do AI search controller', () => {
       url: 'https://www.nodeseek.com/post-2-1'
     };
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [nodeSeekTopic],
         errors: {},
@@ -1558,7 +1558,7 @@ describe('linux.do AI search controller', () => {
       });
     const onVerificationRequired = jest.fn<(message: string, recovery: LinuxDoReadRecovery) => void>();
     const gateway = createGateway({
-      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchSemanticTopics: jest.fn<ReadGateway['searchSemanticTopics']>(),
       searchTopics
     });
     appQueryClient.clear();
@@ -1583,7 +1583,7 @@ describe('linux.do AI search controller', () => {
           showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway: gateway
+          readGateway: gateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -1626,16 +1626,16 @@ describe('linux.do AI search controller', () => {
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
     });
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {},
       hasMore: false,
       nextPage: null
     });
-    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>();
+    const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>();
     const gateway = createGateway({ searchSemanticTopics, searchTopics });
-    const searchTagOptions = jest.fn<SourceGateway['searchTagOptions']>(async () => [{ name: 'private-tag' }]);
-    const searchUserOptions = jest.fn<SourceGateway['searchUserOptions']>(async () => [
+    const searchTagOptions = jest.fn<ReadGateway['searchTagOptions']>(async () => [{ name: 'private-tag' }]);
+    const searchUserOptions = jest.fn<ReadGateway['searchUserOptions']>(async () => [
       { id: '7', username: 'private-user' }
     ]);
     gateway.searchTagOptions = searchTagOptions;
@@ -1667,14 +1667,14 @@ describe('linux.do AI search controller', () => {
     });
     const firstAi = Promise.withResolvers<SearchResponse>();
     const secondAi = Promise.withResolvers<SearchResponse>();
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {},
       hasMore: false,
       nextPage: null
     });
     const searchSemanticTopics = jest
-      .fn<SourceGateway['searchSemanticTopics']>()
+      .fn<ReadGateway['searchSemanticTopics']>()
       .mockImplementationOnce(async () => firstAi.promise)
       .mockImplementationOnce(async () => secondAi.promise)
       .mockRejectedValueOnce(Object.assign(new Error('limited'), { status: 429 }))
@@ -1728,14 +1728,14 @@ describe('linux.do AI search controller', () => {
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
     });
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {},
       hasMore: false,
       nextPage: null
     });
     const searchSemanticTopics = jest
-      .fn<SourceGateway['searchSemanticTopics']>()
+      .fn<ReadGateway['searchSemanticTopics']>()
       .mockImplementationOnce(
         async ({ signal }) =>
           new Promise<SearchResponse>((_resolve, reject) => {
@@ -1768,13 +1768,13 @@ describe('linux.do AI search controller', () => {
   });
 
   it('does not expose or request AI search for latest-order results', async () => {
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {},
       hasMore: false,
       nextPage: null
     });
-    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>();
+    const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>();
     const hook = await renderSearchController(createGateway({ searchSemanticTopics, searchTopics }));
     await prepareLinuxDoSearch(hook, 'latest only');
 
@@ -1794,7 +1794,7 @@ describe('linux.do AI search controller', () => {
   it('does not expose data from the previous credential scope while the replacement query loads', async () => {
     const replacement = Promise.withResolvers<SearchResponse>();
     const searchTopics = jest
-      .fn<SourceGateway['searchTopics']>()
+      .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
         items: [standardTopic],
         errors: {},
@@ -1802,7 +1802,7 @@ describe('linux.do AI search controller', () => {
         nextPage: null
       })
       .mockImplementationOnce(async () => replacement.promise);
-    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>().mockResolvedValue({
+    const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>().mockResolvedValue({
       items: [],
       errors: {},
       hasMore: false,
@@ -1847,13 +1847,13 @@ describe('linux.do AI search controller', () => {
   });
 
   it('[REG-ACCOUNT-031] pauses a dirty single-source search and AI request without entering permanent loading', async () => {
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
       hasMore: false,
       nextPage: null
     }));
-    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>(async () => ({
+    const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>(async () => ({
       items: [aiOnlyTopic],
       errors: {},
       hasMore: false,
@@ -1892,7 +1892,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('[REG-ACCOUNT-031] skips only the dirty source during an aggregate search', async () => {
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => ({
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
       items: [{ ...standardTopic, source: source as Source, id: source }],
       errors: {},
       hasMore: false,
@@ -1937,7 +1937,7 @@ describe('linux.do AI search controller', () => {
 
   it('keeps an unrelated source search in flight when another credential session changes', async () => {
     const pendingSearch = Promise.withResolvers<SearchResponse>();
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(() => pendingSearch.promise);
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(() => pendingSearch.promise);
     const hook = await renderSearchController(createGateway({ searchTopics }));
 
     await act(async () => {
@@ -1975,7 +1975,7 @@ describe('linux.do AI search controller', () => {
   it('lets unaffected aggregate search sources finish when one source session changes', async () => {
     const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'];
     const pendingSearches = new Map(sources.map((source) => [source, Promise.withResolvers<SearchResponse>()]));
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(
       ({ source }) => pendingSearches.get(source as Source)!.promise
     );
     const hook = await renderSearchController(createGateway({ searchTopics }));

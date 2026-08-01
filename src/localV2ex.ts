@@ -37,7 +37,7 @@ import {
   v2exMemberUrl as memberUrl,
   v2exNodeIdFromHref as nodeIdFromHref
 } from '@/localV2exHelpers';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 const HTML_LIST_PAGE_SIZE = 20;
 const V2EX_FEED_CURSOR_LIMIT = 200;

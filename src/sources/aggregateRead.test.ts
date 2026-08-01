@@ -15,9 +15,9 @@ import {
   getTopic,
   getUserProfile,
   searchTopics
-} from '@/forumApi';
+} from '@/sources/aggregateRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 const nodeSeekPayload = Buffer.from(
   JSON.stringify({

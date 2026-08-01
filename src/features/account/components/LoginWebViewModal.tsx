@@ -1,4 +1,4 @@
-import type { AccountStyles } from '@/features/account/styles';
+import type { AccountStyles } from '../styles';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Modal, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

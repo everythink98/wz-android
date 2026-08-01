@@ -19,10 +19,14 @@ import { stripHtml } from '@/domain/forum/text';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { parseForumTopicLink } from '@/domain/forum/links';
 import { imageSourceFromUrl } from '@/platform/media/htmlImages';
-import { splitDiscourseContentHtml } from '@/discourseContent';
-import { discourseReactionStats, type DiscourseEmojiUrlMap, type DiscourseReactionStat } from '@/discourseReactions';
+import { splitDiscourseContentHtml } from '@/sources/discourse/content';
+import {
+  discourseReactionStats,
+  type DiscourseEmojiUrlMap,
+  type DiscourseReactionStat
+} from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/linuxdoReactions';
-import { canToggleDiscourseLike } from '@/discoursePermissions';
+import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   quotedPostsForSource,

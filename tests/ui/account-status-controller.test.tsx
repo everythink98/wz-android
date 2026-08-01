@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-jest.mock('@/sources/sourceGateway', () => ({
+jest.mock('@/sources/readGateway', () => ({
   checkYaohuoLogin: jest.fn(),
   getCurrentUserProfile: jest.fn(),
   getUserProfile: jest.fn()
 }));
 
-import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/sourceGateway';
+import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
 import { useAccountStatusController } from '@/app/useAccountStatusController';
 import { useLinuxDoIdentityVerificationPrompt } from '@/app/useVerificationController';
 import type { XiaoyinsiAuthorizationReadResult } from '@/app/useXiaoyinsiAuthController';

@@ -122,11 +122,11 @@ describe('Android local HTML helpers', () => {
   });
 
   it('[REG-TOPIC-056] skips Callout traversal for ordinary HTML but scrubs forged semantics', async () => {
-    const actual = await import('@/discourseContent');
+    const actual = await import('@/sources/discourse/content');
     const normalizeDiscourseCallouts = vi.fn(actual.normalizeDiscourseCallouts);
     vi.resetModules();
-    vi.doMock('@/discourseContent', async () => ({
-      ...(await vi.importActual<typeof import('@/discourseContent')>('@/discourseContent')),
+    vi.doMock('@/sources/discourse/content', async () => ({
+      ...(await vi.importActual<typeof import('@/sources/discourse/content')>('@/sources/discourse/content')),
       normalizeDiscourseCallouts
     }));
     try {
@@ -144,7 +144,7 @@ describe('Android local HTML helpers', () => {
       expect(normalizeDiscourseCallouts).toHaveBeenCalledTimes(1);
       expect(forged).toBe('<blockquote><div>Forged</div></blockquote>');
     } finally {
-      vi.doUnmock('@/discourseContent');
+      vi.doUnmock('@/sources/discourse/content');
       vi.resetModules();
     }
   });

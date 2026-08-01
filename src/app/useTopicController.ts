@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import type { ReadGateway } from '@/sources/readGateway';
 import { recordHistory, topicKey, updateFavoriteTopic, type ReaderData } from '@/domain/reader/readerData';
 import { isSameReply, mergeReplies, removeReply, replyKey as replyIdentityKey } from '@/feedLogic';
 import { isCanceledRequest } from '@/platform/network/errors';
@@ -12,7 +12,11 @@ import {
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './topicActionControllerHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
-import { sourceErrorFromUnknown, sourceReadRecoveryOutcome, yaohuoErrorRequiresLoginPanel } from '@/sourceErrors';
+import {
+  sourceErrorFromUnknown,
+  sourceReadRecoveryOutcome,
+  yaohuoErrorRequiresLoginPanel
+} from '@/sources/sourceErrors';
 import type { RepliesResponse, Reply, Source, SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
 import type { Screen } from '@/ui/navigation/types';
 import type { TopicRepliesRefreshOptions } from '@/features/topic/model/types';
@@ -35,7 +39,7 @@ import {
 } from '@/platform/diagnostics/diagnostics';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
 
@@ -126,7 +130,7 @@ export function useTopicController({
   screen,
   showLinuxDoVerification,
   showYaohuoLogin,
-  sourceGateway,
+  readGateway,
   topicReturnScreenRef,
   topicSession
 }: {
@@ -147,7 +151,7 @@ export function useTopicController({
     recovery?: LinuxDoReadRecovery
   ) => void | boolean | Promise<void | boolean>;
   showYaohuoLogin: (message?: string) => void;
-  sourceGateway: SourceGateway;
+  readGateway: ReadGateway;
   topicReturnScreenRef: MutableRef<Exclude<Screen, 'topic'>>;
   topicSession: TopicSessionController;
 }) {
@@ -206,7 +210,7 @@ export function useTopicController({
         topicRef: diagnosticRef('topic', `${topic.source}:${topic.id}`)
       });
       try {
-        const loaded = await sourceGateway.getTopic(
+        const loaded = await readGateway.getTopic(
           {
             source: topic.source,
             id: topic.id,
@@ -263,7 +267,7 @@ export function useTopicController({
         page: pageParam.page
       });
       try {
-        const loaded = await sourceGateway.getReplies(
+        const loaded = await readGateway.getReplies(
           {
             source: detail.source,
             id: detail.id,
@@ -505,7 +509,7 @@ export function useTopicController({
           }
         );
         try {
-          const loaded = await sourceGateway.getReply(
+          const loaded = await readGateway.getReply(
             {
               source: reference.source,
               id: reference.topicId,
@@ -754,7 +758,7 @@ export function useTopicController({
           queryKey: refreshKey,
           staleTime: 0,
           queryFn: ({ signal }) =>
-            sourceGateway.getReplies(
+            readGateway.getReplies(
               {
                 source: selectedTopic.source,
                 id: selectedTopic.id,
@@ -865,7 +869,7 @@ export function useTopicController({
       replyNextPage,
       selectedIdentityPending,
       selectedTopic,
-      sourceGateway,
+      readGateway,
       topicDetail,
       topicQueryKey,
       topicReplies

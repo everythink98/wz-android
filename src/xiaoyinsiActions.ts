@@ -1,4 +1,8 @@
-import { buildDiscourseActionRequest, type DiscourseAction, type DiscourseActionRequest } from '@/discourseActions';
+import {
+  buildDiscourseActionRequest,
+  type DiscourseAction,
+  type DiscourseActionRequest
+} from '@/sources/discourse/actionRequest';
 
 function positiveInteger(value: string | number, name: string) {
   const text = String(value).trim();

@@ -4,7 +4,7 @@ import { Keyboard, useWindowDimensions } from 'react-native';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView, type BottomSheetBackdropProps } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
-import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
+import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import type { Source } from '@/domain/forum/models';
 import { ReplyComposer } from '@/screens/topic/ReplyComposer';

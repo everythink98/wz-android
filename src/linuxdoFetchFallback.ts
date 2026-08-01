@@ -3,7 +3,7 @@ import {
   isGoogleSiteSearchNavigationUrl,
   isGoogleSiteSearchUrl,
   isSameGoogleSiteSearchUrl
-} from '@/googleSearchFallback';
+} from '@/sources/searchFallback';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { cancelRequestTimeoutForFallback, type Fetcher } from '@/platform/network/request';
 import {

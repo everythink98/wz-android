@@ -1,6 +1,6 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
+import { type ReaderTheme, alphaColor, fontFamilyValue } from './tokens';
 
 export function createSharedStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight: number) {
   const fontScale = settings.fontScale;

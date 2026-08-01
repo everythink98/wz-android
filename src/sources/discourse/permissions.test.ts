@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canToggleDiscourseLike } from '@/discoursePermissions';
+import { canToggleDiscourseLike } from './permissions';
 
 describe('portable Discourse permissions', () => {
   it('fails closed when like permission is missing', () => {

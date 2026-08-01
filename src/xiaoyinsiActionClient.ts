@@ -1,7 +1,7 @@
 import type { XiaoyinsiApiCredentials } from '@/localXiaoyinsi';
 import { XIAOYINSI_BASE_URL } from '@/localXiaoyinsi';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import type { DiscourseActionRequest } from '@/discourseActions';
+import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 
 type XiaoyinsiActionErrorFields = {
   source: 'xiaoyinsi';

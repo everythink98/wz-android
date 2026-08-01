@@ -4,8 +4,8 @@ import { useLayoutEffect } from 'react';
 import { useFeedController } from '@/app/useFeedController';
 import type { Screen } from '@/ui/navigation/types';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
-import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import type { ReadGateway } from '@/sources/readGateway';
 import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/app/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/app/sessionControllerHelpers';
@@ -33,7 +33,7 @@ describe('小隐寺 Feed controller', () => {
         message: 'V2EX 暂时不可用'
       }
     };
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async () => ({
         items: [
@@ -52,7 +52,7 @@ describe('小隐寺 Feed controller', () => {
         nextPage: null
       })),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const notify = jest.fn();
     let screen: Screen = 'feed';
     const hook = await renderHook(() =>
@@ -65,11 +65,11 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
     await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
-    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1);
+    expect(readGateway.getFeed).toHaveBeenCalledTimes(1);
 
     screen = 'more';
     await act(async () => hook.rerender({}));
@@ -79,7 +79,7 @@ describe('小隐寺 Feed controller', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1);
+    expect(readGateway.getFeed).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
@@ -104,11 +104,11 @@ describe('小隐寺 Feed controller', () => {
     const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
     const showNodeSeekVerification = jest.fn<void, [message?: string]>();
     const showYaohuoLogin = jest.fn<void, [message?: string]>();
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let sessionEpochs = initialForumSessionEpochs;
     let screen: Screen = 'feed';
     const hook = await renderHook(() =>
@@ -122,7 +122,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        sourceGateway
+        readGateway
       })
     );
     await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
@@ -182,11 +182,11 @@ describe('小隐寺 Feed controller', () => {
       feedSignals.push(signal);
       return pendingFeed.promise;
     });
-    const sourceGateway = {
+    const readGateway = {
       getCategories,
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let linuxDoVerificationActive = false;
     const hook = await renderHook(() =>
       useFeedController({
@@ -198,7 +198,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
     await waitFor(() => {
@@ -265,11 +265,11 @@ describe('小隐寺 Feed controller', () => {
               nextPage: null
             }
     );
-    const sourceGateway = {
+    const readGateway = {
       getCategories,
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let identityReconciliationPending = true;
     let identityBarriers: ForumIdentityBarrierSource[] = [...sessionSources];
     let sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs;
@@ -287,7 +287,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       });
       renderedStates.push({
         busy: controller.feedBusy,
@@ -451,11 +451,11 @@ describe('小隐寺 Feed controller', () => {
             nextPage: null
           };
     });
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = [];
     let identityReconciliationPending = false;
     let sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs;
@@ -472,7 +472,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
 
@@ -544,11 +544,11 @@ describe('小隐寺 Feed controller', () => {
           };
     });
     const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = [];
     let identityReconciliationPending = false;
     const hook = await renderHook(() =>
@@ -563,7 +563,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
 
@@ -609,17 +609,17 @@ describe('小隐寺 Feed controller', () => {
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       });
     });
-    const getFeed = jest.fn(async (_options: Parameters<SourceGateway['getFeed']>[0]) => ({
+    const getFeed = jest.fn(async (_options: Parameters<ReadGateway['getFeed']>[0]) => ({
       items: [],
       errors: {},
       hasMore: false,
       nextPage: null
     }));
-    const sourceGateway = {
+    const readGateway = {
       getCategories,
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let screen: Screen = 'search';
     const hook = await renderHook(() =>
       useFeedController({
@@ -631,7 +631,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
     await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(1));
@@ -658,11 +658,11 @@ describe('小隐寺 Feed controller', () => {
       });
     });
     const showNodeSeekVerification = jest.fn<void, [message?: string]>();
-    const sourceGateway = {
+    const readGateway = {
       getCategories,
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let screen: Screen = 'feed';
     const hook = await renderHook(() =>
       useFeedController({
@@ -674,7 +674,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification,
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
     await act(async () => hook.result.current.changeFeedSource('nodeseek'));
@@ -720,11 +720,11 @@ describe('小隐寺 Feed controller', () => {
     const getFeed = jest.fn(async ({ source }: { source: string }) =>
       source === 'v2ex' ? v2exFeed.promise : { items: [], errors: {}, hasMore: false, nextPage: null }
     );
-    const sourceGateway = {
+    const readGateway = {
       getCategories,
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const readerData = createEmptyReaderData();
     const notify = jest.fn();
     const showLinuxDoVerification = jest.fn();
@@ -740,7 +740,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        sourceGateway
+        readGateway
       })
     );
 
@@ -778,7 +778,7 @@ describe('小隐寺 Feed controller', () => {
     };
     const newTopic = { ...oldTopic, id: 'new', title: '新账号主题', author: 'new-user' };
     let nodeSeekReads = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async ({ source }: { source: string }) => {
         if (source !== 'nodeseek') {
@@ -793,7 +793,7 @@ describe('小隐寺 Feed controller', () => {
         };
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const notify = jest.fn();
     const readerData = createEmptyReaderData();
     const showLinuxDoVerification = jest.fn();
@@ -811,7 +811,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        sourceGateway
+        readGateway
       })
     );
 
@@ -851,11 +851,11 @@ describe('小隐寺 Feed controller', () => {
       hasMore: false;
       nextPage: null;
     }>();
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async () => safeRead.promise),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     appQueryClient.clear();
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
@@ -889,7 +889,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         });
         renderedKeys.push(controller.activeFeedState.items.map(topicKey));
         return controller;
@@ -897,7 +897,7 @@ describe('小隐寺 Feed controller', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(1));
     expect(renderedKeys.some((keys) => keys.includes(topicKey(oldPrivateTopic)))).toBe(false);
 
     await act(async () => {
@@ -933,7 +933,7 @@ describe('小隐寺 Feed controller', () => {
       nextPage: null;
     }>();
     let v2exReadCount = 0;
-    const getFeed = jest.fn(async ({ source }: Parameters<SourceGateway['getFeed']>[0]) => {
+    const getFeed = jest.fn(async ({ source }: Parameters<ReadGateway['getFeed']>[0]) => {
       if (source === 'v2ex') {
         v2exReadCount += 1;
         return v2exReadCount === 1 ? firstV2exRead.promise : secondV2exRead.promise;
@@ -971,11 +971,11 @@ describe('小隐寺 Feed controller', () => {
     appQueryClient.setQueryData(defaultV2exKey, cachedFeed([cachedTopic]));
     appQueryClient.setQueryData(latestV2exKey, cachedFeed([cachedLatestTopic]));
     appQueryClient.setQueryData(categoryV2exKey, cachedFeed([cachedLatestTopic]));
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const hook = await renderNativeHook(
       () =>
         useFeedController({
@@ -987,7 +987,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -1046,11 +1046,11 @@ describe('小隐寺 Feed controller', () => {
       items: [cachedTargetCategory],
       errors: {}
     });
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const hook = await renderNativeHook(
       () =>
         useFeedController({
@@ -1062,7 +1062,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -1110,7 +1110,7 @@ describe('小隐寺 Feed controller', () => {
       nextPage: null;
     }>();
     let v2exReadCount = 0;
-    const getFeed = jest.fn(async ({ source }: Parameters<SourceGateway['getFeed']>[0]) => {
+    const getFeed = jest.fn(async ({ source }: Parameters<ReadGateway['getFeed']>[0]) => {
       if (source === 'v2ex') {
         v2exReadCount += 1;
         return {
@@ -1148,11 +1148,11 @@ describe('小隐寺 Feed controller', () => {
       }),
       cachedFeed([cachedTopic])
     );
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const hook = await renderNativeHook(
       () =>
         useFeedController({
@@ -1164,7 +1164,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -1221,17 +1221,17 @@ describe('小隐寺 Feed controller', () => {
       createdAt: '2026-07-20T00:00:00.000Z',
       replyCount: 0
     };
-    const getFeed = jest.fn(async (_options: Parameters<SourceGateway['getFeed']>[0]) => ({
+    const getFeed = jest.fn(async (_options: Parameters<ReadGateway['getFeed']>[0]) => ({
       items: [],
       errors: {},
       hasMore: false,
       nextPage: null
     }));
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     appQueryClient.clear();
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
@@ -1271,7 +1271,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -1333,11 +1333,11 @@ describe('小隐寺 Feed controller', () => {
       .catch(() => undefined);
     const notify = jest.fn();
     const showNodeSeekVerification = jest.fn();
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const hook = await renderNativeHook(
       () =>
         useFeedController({
@@ -1350,7 +1350,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification,
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         }),
       { wrapper: QueryTestWrapper }
     );
@@ -1389,7 +1389,7 @@ describe('小隐寺 Feed controller', () => {
     }>();
     const firstAbort = jest.fn();
     let feedReadCount = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async ({ signal }: { signal?: AbortSignal }) => {
         feedReadCount += 1;
@@ -1400,7 +1400,7 @@ describe('小隐寺 Feed controller', () => {
         return nextRead.promise;
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek', 'linuxdo'];
     const hook = await renderHook(() =>
       useFeedController({
@@ -1413,10 +1413,10 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(1));
 
     identityBarriers = ['linuxdo'];
     await act(async () => {
@@ -1425,13 +1425,13 @@ describe('小隐寺 Feed controller', () => {
     });
 
     expect(firstAbort).not.toHaveBeenCalled();
-    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1);
+    expect(readGateway.getFeed).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       safeRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
       await safeRead.promise;
     });
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
     expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
 
     await act(async () => {
@@ -1478,7 +1478,7 @@ describe('小隐寺 Feed controller', () => {
     }>();
     let feedReadCount = 0;
     let categoryReadCount = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => {
         categoryReadCount += 1;
         return categoryReadCount === 1 ? { items: [safeCategory], errors: {} } : fullCategoriesRead.promise;
@@ -1490,7 +1490,7 @@ describe('小隐寺 Feed controller', () => {
           : fullRead.promise;
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     appQueryClient.clear();
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
@@ -1529,7 +1529,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         });
         renderedKeys.push(controller.activeFeedState.items.map(topicKey));
         return controller;
@@ -1546,8 +1546,8 @@ describe('小隐寺 Feed controller', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(sourceGateway.getCategories).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(2));
     expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
     expect(hook.result.current.categories).toEqual([safeCategory]);
     expect(renderedKeys.slice(firstSafeFrame)).not.toContainEqual([topicKey(oldSafeTopic)]);
@@ -1585,7 +1585,7 @@ describe('小隐寺 Feed controller', () => {
       nextPage: null;
     }>();
     let readCount = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async () => {
         readCount += 1;
@@ -1594,7 +1594,7 @@ describe('小隐寺 Feed controller', () => {
           : fullRead.promise;
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
     const renderedKeys: string[][] = [];
     const hook = await renderHook(() => {
@@ -1608,7 +1608,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       });
       renderedKeys.push(controller.activeFeedState.items.map(topicKey));
       return controller;
@@ -1620,13 +1620,13 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
 
     expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
     expect(hook.result.current.feedBusy).toBe(false);
     expect(hook.result.current.activeFeedState.hasMore).toBe(false);
     await expect(hook.result.current.loadFeed()).resolves.toBe('stale');
-    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2);
+    expect(readGateway.getFeed).toHaveBeenCalledTimes(2);
     const firstSafeFrame = renderedKeys.findIndex((keys) => keys.includes(topicKey(safeTopic)));
     expect(renderedKeys.slice(firstSafeFrame)).not.toContainEqual([]);
 
@@ -1645,14 +1645,14 @@ describe('小隐寺 Feed controller', () => {
       nextPage: null;
     }>();
     let readCount = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async () => {
         readCount += 1;
         return readCount === 1 ? { items: [], errors: {}, hasMore: false as const, nextPage: null } : fullRead.promise;
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
     const hook = await renderHook(() =>
       useFeedController({
@@ -1665,7 +1665,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
 
@@ -1675,7 +1675,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
     expect(hook.result.current.feedBusy).toBe(true);
 
     await act(async () => {
@@ -1701,7 +1701,7 @@ describe('小隐寺 Feed controller', () => {
       errors: Record<string, never>;
     }>();
     let categoryReadCount = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => {
         categoryReadCount += 1;
         if (categoryReadCount === 1) {
@@ -1714,7 +1714,7 @@ describe('小隐寺 Feed controller', () => {
       }),
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
     let retainableIdentityBarriers: ForumIdentityBarrierSource[] = [];
     let sessionEpochs = initialForumSessionEpochs;
@@ -1732,7 +1732,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       });
       renderedCategoryKeys.push(controller.categories.map((category) => `${category.source}:${category.id}`));
       return controller;
@@ -1744,7 +1744,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getCategories).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(2));
     expect(hook.result.current.categories).toEqual([safeCategory]);
 
     await act(async () => {
@@ -1761,7 +1761,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getCategories).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(3));
     expect(hook.result.current.categories).toEqual([safeCategory, privateCategory, unchangedCategory]);
 
     await act(async () => {
@@ -1780,7 +1780,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getCategories).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(4));
     expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
     const firstSafeFrame = renderedCategoryKeys.findIndex((keys) => keys.includes('v2ex:v2ex'));
     expect(renderedCategoryKeys.slice(firstSafeFrame)).not.toContainEqual([]);
@@ -1810,11 +1810,11 @@ describe('小隐寺 Feed controller', () => {
         ? changedEpochRead.promise
         : { items: [changedCategory, safeCategory, unchangedCategory], errors: {} }
     );
-    const sourceGateway = {
+    const readGateway = {
       getCategories,
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const hook = await renderHook(() =>
       useFeedController({
         sessionEpochs,
@@ -1826,7 +1826,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
 
@@ -1897,7 +1897,7 @@ describe('小隐寺 Feed controller', () => {
       nextPage: null;
     }>();
     let readCount = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async () => {
         readCount += 1;
@@ -1907,7 +1907,7 @@ describe('小隐寺 Feed controller', () => {
         return readCount === 2 ? dirtyRead.promise : newEpochRead.promise;
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = [];
     let sessionEpochs = initialForumSessionEpochs;
     const notify = jest.fn();
@@ -1925,7 +1925,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       });
       renderedKeys.push(controller.activeFeedState.items.map(topicKey));
       return controller;
@@ -1938,7 +1938,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
     expect(hook.result.current.activeFeedState.items).toEqual([oldTopic]);
 
     await act(async () => {
@@ -1969,7 +1969,7 @@ describe('小隐寺 Feed controller', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(3));
     expect(hook.result.current.activeFeedState.items).toEqual([dirtyPublicTopic, unchangedManagedTopic]);
     await waitFor(() => expect(notify).toHaveBeenCalled());
     const transitionMessages = notify.mock.calls.flat().join(' ');
@@ -2059,11 +2059,11 @@ describe('小隐寺 Feed controller', () => {
       }
       return newEpochFirstRead.promise;
     });
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const notify = jest.fn();
     let settleCanceledRefreshInLayout = false;
     const hook = await renderHook(() => {
@@ -2077,7 +2077,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       });
       useLayoutEffect(() => {
         if (!settleCanceledRefreshInLayout || screen !== 'more') {
@@ -2260,11 +2260,11 @@ describe('小隐寺 Feed controller', () => {
       }
       return page === 1 ? changedEpochFirstRead.promise : changedEpochSecondRead.promise;
     });
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const hook = await renderHook(() =>
       useFeedController({
         identityBarriers,
@@ -2278,7 +2278,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
 
@@ -2304,7 +2304,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(3));
     await act(async () => {
       barrierRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
       await barrierRead.promise;
@@ -2426,7 +2426,7 @@ describe('小隐寺 Feed controller', () => {
     }>();
     let identityBarriers: ForumIdentityBarrierSource[] = [];
     let barrierCycleStarted = false;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async ({ page = 1 }: { page?: number }) => {
         if (identityBarriers.length) {
@@ -2441,7 +2441,7 @@ describe('小隐寺 Feed controller', () => {
           : { items: [secondPageSafeTopic, secondPageTopic], errors: {}, hasMore: false, nextPage: null };
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const hook = await renderHook(() =>
       useFeedController({
         identityBarriers,
@@ -2454,7 +2454,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
     const loadedKeys = [...firstPage, secondPageSafeTopic, secondPageTopic].map(topicKey);
@@ -2491,7 +2491,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(3));
     expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
 
     await act(async () => {
@@ -2506,7 +2506,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(4));
     expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
 
     await act(async () => {
@@ -2518,7 +2518,7 @@ describe('小隐寺 Feed controller', () => {
       });
       await releaseFirstRead.promise;
     });
-    await waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(5));
     expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
 
     await act(async () => {
@@ -2534,17 +2534,17 @@ describe('小隐寺 Feed controller', () => {
   });
 
   it('[REG-ACCOUNT-031] does not start or manually refresh a dirty single-source feed', async () => {
-    const getFeed = jest.fn(async (_options: Parameters<SourceGateway['getFeed']>[0]) => ({
+    const getFeed = jest.fn(async (_options: Parameters<ReadGateway['getFeed']>[0]) => ({
       items: [],
       errors: {},
       hasMore: false,
       nextPage: null
     }));
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const hook = await renderHook(() =>
       useFeedController({
         identityBarriers: ['nodeseek'],
@@ -2556,7 +2556,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
     await waitFor(() =>
@@ -2593,7 +2593,7 @@ describe('小隐寺 Feed controller', () => {
       url: 'https://linux.do/t/second'
     };
     let pageTwoAttempts = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async ({ source, page = 1 }: { source: string; page?: number }) => {
         if (source !== 'linuxdo') {
@@ -2619,7 +2619,7 @@ describe('小隐寺 Feed controller', () => {
           : { items: [secondTopic], errors: {}, hasMore: false, nextPage: null };
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const readerData = createEmptyReaderData();
     const notify = jest.fn();
     const showLinuxDoVerification = jest.fn();
@@ -2635,7 +2635,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        sourceGateway
+        readGateway
       })
     );
 
@@ -2670,7 +2670,7 @@ describe('小隐寺 Feed controller', () => {
 
   it('REG-LINUXDO-003 reports an ordinary feed recovery failure instead of another verification result', async () => {
     let linuxAttempts = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async ({ source }: { source: string }) => {
         if (source !== 'linuxdo') {
@@ -2694,7 +2694,7 @@ describe('小隐寺 Feed controller', () => {
         throw new Error('恢复后网络失败');
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const showLinuxDoVerification = jest.fn();
     const hook = await renderHook(() =>
       useFeedController({
@@ -2706,7 +2706,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
 
@@ -2763,11 +2763,11 @@ describe('小隐寺 Feed controller', () => {
         nextPage: null
       };
     });
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const showLinuxDoVerification = jest.fn();
     const hook = await renderHook(() =>
       useFeedController({
@@ -2779,7 +2779,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        sourceGateway
+        readGateway
       })
     );
 
@@ -2842,7 +2842,7 @@ describe('小隐寺 Feed controller', () => {
         lastReplyAt: '2026-07-27T00:00:00.000Z',
         replyCount: 0
       };
-      const sourceGateway = {
+      const readGateway = {
         getCategories: jest.fn(async () => ({ items: [], errors: {} })),
         getFeed: jest.fn(async ({ source, page = 1 }: { source: string; page?: number }) => {
           if (source !== feedSource) {
@@ -2853,7 +2853,7 @@ describe('小隐寺 Feed controller', () => {
             : { items: [nextPageTopic], errors: {}, hasMore: false, nextPage: null };
         }),
         hasYaohuoCredential: jest.fn(async () => false)
-      } as unknown as SourceGateway;
+      } as unknown as ReadGateway;
       const hook = await renderHook(() =>
         useFeedController({
           linuxDoVerificationActive: false,
@@ -2864,7 +2864,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
-          sourceGateway
+          readGateway
         })
       );
 
@@ -2889,7 +2889,7 @@ describe('小隐寺 Feed controller', () => {
   );
 
   it('[REG-FEED-005] reports a single-source category error instead of treating it as an empty category list', async () => {
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async ({ source }: { source: string }) =>
         source === 'all'
           ? { items: [], errors: {} }
@@ -2897,7 +2897,7 @@ describe('小隐寺 Feed controller', () => {
       ),
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const notify = jest.fn();
     const readerData = createEmptyReaderData();
     const showLinuxDoVerification = jest.fn();
@@ -2913,12 +2913,12 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        sourceGateway
+        readGateway
       })
     );
 
     await waitFor(() =>
-      expect(sourceGateway.getCategories).toHaveBeenCalledWith(
+      expect(readGateway.getCategories).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'all' }),
         expect.any(Object)
       )
@@ -2927,7 +2927,7 @@ describe('小隐寺 Feed controller', () => {
       hook.result.current.changeFeedSource('v2ex');
     });
     await waitFor(() =>
-      expect(sourceGateway.getCategories).toHaveBeenCalledWith(
+      expect(readGateway.getCategories).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'v2ex' }),
         expect.any(Object)
       )
@@ -2947,7 +2947,7 @@ describe('小隐寺 Feed controller', () => {
       replyCount: 0
     };
     let v2exRequestCount = 0;
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({ items: [] })),
       getFeed: jest.fn(async ({ source }: { source: string }) => {
         if (source !== 'v2ex') {
@@ -2964,7 +2964,7 @@ describe('小隐寺 Feed controller', () => {
             };
       }),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const notify = jest.fn();
     const readerData = createEmptyReaderData();
     const showLinuxDoVerification = jest.fn();
@@ -2980,7 +2980,7 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        sourceGateway
+        readGateway
       })
     );
 
@@ -3033,7 +3033,7 @@ describe('小隐寺 Feed controller', () => {
               isParseEmpty: true
             })
           : partialPage;
-      const sourceGateway = {
+      const readGateway = {
         getCategories: jest.fn(async () => ({ items: [{ source: 'v2ex' as const, id: 'v2ex', name: 'V2EX' }] })),
         getFeed: jest.fn(async ({ page = 1 }: { page?: number }) =>
           page === 1
@@ -3041,7 +3041,7 @@ describe('小隐寺 Feed controller', () => {
             : secondPage
         ),
         hasYaohuoCredential: jest.fn(async () => false)
-      } as unknown as SourceGateway;
+      } as unknown as ReadGateway;
       const readerData = createEmptyReaderData();
       const notify = jest.fn();
       const showLinuxDoVerification = jest.fn();
@@ -3057,7 +3057,7 @@ describe('小隐寺 Feed controller', () => {
           showLinuxDoVerification,
           showNodeSeekVerification,
           showYaohuoLogin,
-          sourceGateway
+          readGateway
         })
       );
 
@@ -3073,7 +3073,7 @@ describe('小隐寺 Feed controller', () => {
   );
 
   it('REG-XIAOYINSI-015 keeps its list filter state independent after a non-empty response', async () => {
-    const sourceGateway = {
+    const readGateway = {
       getCategories: jest.fn(async () => ({
         items: [
           { source: 'v2ex', id: 'v2ex', name: 'V2EX' },
@@ -3100,7 +3100,7 @@ describe('小隐寺 Feed controller', () => {
         nextPage: null
       })),
       hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as SourceGateway;
+    } as unknown as ReadGateway;
     const readerData = createEmptyReaderData();
     const notify = jest.fn();
     const showLinuxDoVerification = jest.fn();
@@ -3116,18 +3116,18 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        sourceGateway
+        readGateway
       })
     );
 
     await waitFor(() =>
-      expect(sourceGateway.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source: 'all' }), expect.any(Object))
+      expect(readGateway.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source: 'all' }), expect.any(Object))
     );
     await act(async () => {
       hook.result.current.changeFeedSource('xiaoyinsi');
     });
     await waitFor(() =>
-      expect(sourceGateway.getFeed).toHaveBeenCalledWith(
+      expect(readGateway.getFeed).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'xiaoyinsi', feedFilter: 'latest' }),
         expect.any(Object)
       )
@@ -3138,7 +3138,7 @@ describe('小隐寺 Feed controller', () => {
     });
 
     await waitFor(() =>
-      expect(sourceGateway.getFeed).toHaveBeenCalledWith(
+      expect(readGateway.getFeed).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'xiaoyinsi', feedFilter: 'hot' }),
         expect.any(Object)
       )
@@ -3149,7 +3149,7 @@ describe('小隐寺 Feed controller', () => {
       hook.result.current.setFeedFilter('new-replies');
     });
     await waitFor(() =>
-      expect(sourceGateway.getFeed).toHaveBeenCalledWith(
+      expect(readGateway.getFeed).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'xiaoyinsi', feedFilter: 'new-replies' }),
         expect.any(Object)
       )

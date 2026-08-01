@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
 import type { Screen } from '@/ui/navigation/types';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import type { ReadGateway } from '@/sources/readGateway';
 import {
   defaultFeedFilters,
   shouldAllowFeedRemotePagination,
@@ -20,7 +20,7 @@ import {
 } from '@/platform/diagnostics/diagnostics';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { isFeedFilterSource, isSessionSource, sessionSources, sourceValues } from '@/domain/forum/sourceCatalog';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   formatSourceErrorMessages,
   linuxDoVerificationNavigationMessage,
@@ -28,7 +28,7 @@ import {
   sourceErrorFromUnknown,
   sourceReadRecoveryOutcome,
   yaohuoErrorRequiresLoginPanel
-} from '@/sourceErrors';
+} from '@/sources/sourceErrors';
 import type {
   Category,
   CategoriesResponse,
@@ -432,7 +432,7 @@ export function useFeedController({
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
-  sourceGateway
+  readGateway
 }: {
   identityBarriers?: readonly ForumIdentityBarrierSource[];
   identityReconciliationPending?: boolean;
@@ -449,7 +449,7 @@ export function useFeedController({
   ) => void | boolean | Promise<void | boolean>;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
-  sourceGateway: SourceGateway;
+  readGateway: ReadGateway;
 }) {
   const queryClient = useQueryClient();
   const feedActive = screen === 'feed';
@@ -556,7 +556,7 @@ export function useFeedController({
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: 'all' });
       try {
-        const data = await sourceGateway.getCategories(
+        const data = await readGateway.getCategories(
           { source: 'all', signal },
           { identityBarriers: categoriesQueryIdentityBarriers, trace }
         );
@@ -706,7 +706,7 @@ export function useFeedController({
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: feedSource });
       try {
-        const data = await sourceGateway.getCategories({ source: feedSource, signal }, { trace });
+        const data = await readGateway.getCategories({ source: feedSource, signal }, { trace });
         const error = firstSourceError(data.errors || {});
         if (error) {
           throw Object.assign(new Error(error.message), error);
@@ -760,7 +760,7 @@ export function useFeedController({
           source: feedSource,
           state: pageParam.page > 1 ? 'load-more' : 'initial'
         });
-        const response = await sourceGateway.getFeed(
+        const response = await readGateway.getFeed(
           {
             source: feedSource,
             page: pageParam.page,

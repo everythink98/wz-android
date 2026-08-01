@@ -60,7 +60,7 @@ import {
   getDiscourseSourceFeed,
   getDiscourseSourceReply,
   searchDiscourseSourceTagOptions
-} from '@/discourseSourceReaders';
+} from './readers';
 
 describe('Discourse source reader registration', () => {
   beforeEach(() => {

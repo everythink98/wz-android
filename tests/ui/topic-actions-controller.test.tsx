@@ -44,7 +44,7 @@ jest.mock('@/platform/network/managedCookies', () => ({
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/nodeseekActionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/yaohuoActionClient';
 import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeRecovery } from '@/app/discourseActionRuntime';
-import type { DiscourseActionRequest } from '@/discourseActions';
+import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { useTopicActionsController } from '@/app/useTopicActionsController';
 import { useTopicSessionController } from '@/app/useTopicSessionController';
 import { appQueryClient, forumQueryKeys } from '@/app/serverState';

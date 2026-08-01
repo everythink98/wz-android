@@ -7,7 +7,7 @@ import {
 } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
-import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from '@/googleSearchFallback';
+import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from '@/sources/searchFallback';
 import type { NodeSeekSearchFilter } from '@/searchFilters';
 import type {
   Category,
@@ -57,7 +57,7 @@ import {
   normalizeNodeSeekVoteInfo,
   stripLoadedNodeSeekVoteMarkers
 } from '@/nodeseekPolls';
-import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from '@/sourceAdapterDiagnostics';
+import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from '@/sources/diagnostics';
 
 const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';

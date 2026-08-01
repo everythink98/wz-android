@@ -1,4 +1,4 @@
-import type { AppHostStyles } from '@/app/styles';
+import type { AppHostStyles } from './styles';
 import { memo, type RefObject, useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';

@@ -1,9 +1,9 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
+import type { SharedStyles } from '../theme/sharedStyles';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { androidRipple, type ReaderTheme } from '../theme/tokens';
 
 export const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
 

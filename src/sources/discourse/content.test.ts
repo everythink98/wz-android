@@ -7,7 +7,7 @@ import {
   discourseQuoteMetadata,
   splitDiscourseContentHtml,
   stripDiscourseCalloutMarkersFromExcerpt
-} from '@/discourseContent';
+} from './content';
 import { sanitizeLinuxDoContentHtml } from '@/localLinuxdo';
 
 describe('portable Discourse content parts', () => {
@@ -246,7 +246,7 @@ describe('portable Discourse content parts', () => {
       textContentFromHtml: vi.fn()
     }));
     try {
-      const { splitDiscourseContentHtml: splitWithoutPoll } = await import('@/discourseContent');
+      const { splitDiscourseContentHtml: splitWithoutPoll } = await import('./content');
 
       expect(splitWithoutPoll('<p>ordinary content</p>', [])).toEqual([
         { type: 'html', html: '<p>ordinary content</p>' }

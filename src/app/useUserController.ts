@@ -10,8 +10,8 @@ import {
 } from '@/platform/diagnostics/diagnostics';
 import { isUserFollowed, type FollowedUserRecord, type ReaderData } from '@/domain/reader/readerData';
 import { nodeSeekUserIdFromValue } from '@/domain/forum/userNavigation';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
-import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '@/sourceErrors';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
 import type {
   Source,
   SourceErrorInfo,
@@ -21,7 +21,7 @@ import type {
   UserReplyActivity
 } from '@/domain/forum/models';
 import type { Screen } from '@/ui/navigation/types';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
@@ -124,7 +124,7 @@ export function useUserController({
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
-  sourceGateway
+  readGateway
 }: {
   identityBarriers?: readonly ForumIdentityBarrierSource[];
   sessionEpochs?: ForumSessionEpochs;
@@ -138,7 +138,7 @@ export function useUserController({
   ) => void | boolean | Promise<void | boolean>;
   showNodeSeekVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showYaohuoLogin: (message?: string) => void;
-  sourceGateway: SourceGateway;
+  readGateway: ReadGateway;
 }) {
   const queryClient = useQueryClient();
   const handledUserErrorAtRef = useRef<Record<'resolution' | 'profile' | UserLane, number>>({
@@ -182,7 +182,7 @@ export function useUserController({
       });
       try {
         markDiagnosticStage(trace, 'guard', { source: 'nodeseek', state: 'resolve' });
-        const resolved = await sourceGateway.resolveNodeSeekUser(
+        const resolved = await readGateway.resolveNodeSeekUser(
           {
             username: selectedUsername,
             signal
@@ -236,7 +236,7 @@ export function useUserController({
       });
       try {
         markDiagnosticStage(trace, 'guard', { source: user.source, state: 'open' });
-        const profile = await sourceGateway.getUserProfile(
+        const profile = await readGateway.getUserProfile(
           {
             source: user.source,
             id: user.id!,
@@ -282,7 +282,7 @@ export function useUserController({
       });
       try {
         markDiagnosticStage(trace, 'guard', { source: user.source, state: 'load-more', hasCursor: true });
-        const page = await sourceGateway.getUserProfile(
+        const page = await readGateway.getUserProfile(
           {
             source: user.source,
             id: user.id!,

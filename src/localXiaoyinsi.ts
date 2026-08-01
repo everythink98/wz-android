@@ -23,8 +23,8 @@ import {
   textExcerpt,
   toIsoString
 } from '@/domain/forum/html';
-import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
-import { buildDiscourseLevelProfileFromSummary, type DiscourseLevelProfile } from '@/discourseLevel';
+import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { buildDiscourseLevelProfileFromSummary, type DiscourseLevelProfile } from '@/sources/discourse/level';
 import {
   discourseCategories,
   discourseOriginalPoster,
@@ -32,7 +32,7 @@ import {
   discoursePostFields,
   discourseTopicFields,
   discourseUsersById
-} from '@/discourseModel';
+} from '@/sources/discourse/model';
 import {
   discourseAvatarUrl,
   discourseContentNeedsCalloutNormalization,
@@ -40,8 +40,8 @@ import {
   discourseQuoteMetadata,
   normalizeDiscourseCallouts,
   stripDiscourseCalloutMarkersFromExcerpt
-} from '@/discourseContent';
-import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/discourseReactions';
+} from '@/sources/discourse/content';
+import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 
 export const XIAOYINSI_BASE_URL = 'https://forum.xiaoyinsi.com';
 const LIST_PAGE_SIZE = 30;

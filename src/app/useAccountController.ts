@@ -12,9 +12,9 @@ import { type WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
 import { errorMessage } from '@/platform/network/errors';
 import { isLinuxDoCloudflareError } from '@/sources/errors';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import type { ReadGateway } from '@/sources/readGateway';
 import type { Screen } from '@/ui/navigation/types';
-import { sourceReadRecoveryOutcome } from '@/sourceErrors';
+import { sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
 import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import {
@@ -67,7 +67,7 @@ export function useAccountController({
   setNodeSeekWebViewUserAgent,
   screen,
   showLinuxDoVerification,
-  sourceGateway,
+  readGateway,
   showLoginPanelRef,
   showYaohuoLoginPanel,
   webViewRef,
@@ -95,7 +95,7 @@ export function useAccountController({
     message?: string,
     recovery?: LinuxDoReadRecovery
   ) => void | boolean | Promise<void | boolean>;
-  sourceGateway: Pick<SourceGateway, 'getLinuxDoLevelProfile'>;
+  readGateway: Pick<ReadGateway, 'getLinuxDoLevelProfile'>;
   showLoginPanelRef: Ref<boolean>;
   showYaohuoLoginPanel: boolean;
   webViewRef: Ref<WebView | null>;
@@ -127,7 +127,7 @@ export function useAccountController({
     enabled: screen === 'more' && linuxDoLevelRequested && !linuxDoIdentityPending,
     queryKey: linuxDoLevelQueryKey,
     queryFn: ({ signal }) =>
-      sourceGateway.getLinuxDoLevelProfile({
+      readGateway.getLinuxDoLevelProfile({
         source: 'linuxdo',
         signal
       }),

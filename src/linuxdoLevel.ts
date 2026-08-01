@@ -8,7 +8,7 @@ import {
   type DiscourseLevelProfile,
   type DiscourseLevelRequirement,
   type DiscourseSummaryInput
-} from '@/discourseLevel';
+} from '@/sources/discourse/level';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 
 const BASE_URL = 'https://linux.do';

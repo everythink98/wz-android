@@ -6,7 +6,7 @@ import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/do
 import type { ReplyFilter } from '@/features/topic/model/types';
 import { filterTopicSessionReplies } from '@/app/useTopicSessionController';
 import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
-import { discoursePollPlaceholder } from '@/discourseContent';
+import { discoursePollPlaceholder } from '@/sources/discourse/content';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '@/screens/topic/TopicScreenBody';

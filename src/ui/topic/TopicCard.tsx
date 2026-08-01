@@ -1,4 +1,4 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
+import type { SharedStyles } from '../theme/sharedStyles';
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
@@ -12,7 +12,7 @@ import {
   topicTagColorStyle,
   topicTagTextColorStyle,
   type ReaderTheme
-} from '@/ui/theme/tokens';
+} from '../theme/tokens';
 import type { TopicListItemState } from '@/domain/forum/topicListItemState';
 import { Avatar } from '../avatar/Avatar';
 

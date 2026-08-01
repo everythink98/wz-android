@@ -14,7 +14,7 @@ import {
   markDiagnosticStage,
   setDiagnosticWriter
 } from '@/platform/diagnostics/diagnostics';
-import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import { getYaohuoTopicDirect } from '@/yaohuoApi';
 
 const forumMocks = vi.hoisted(() => ({
@@ -61,7 +61,7 @@ vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn()
 }));
-vi.mock('@/forumApi', () => forumMocks);
+vi.mock('@/sources/aggregateRead', () => forumMocks);
 vi.mock('@/localLinuxdo', () => linuxDoMocks);
 vi.mock('@/localNodeseek', () => nodeSeekMocks);
 vi.mock('@/linuxdoLevel', () => linuxDoLevelMocks);
@@ -74,14 +74,7 @@ vi.mock('@/yaohuoApi', () => ({
   searchYaohuoDirect: vi.fn()
 }));
 
-import {
-  createSourceGateway,
-  getFeed,
-  getReplies,
-  getTopic,
-  getUserProfile,
-  searchTopics
-} from '@/sources/sourceGateway';
+import { createReadGateway, getFeed, getReplies, getTopic, getUserProfile, searchTopics } from '@/sources/readGateway';
 
 describe('source gateway read contract', () => {
   beforeEach(() => {
@@ -132,7 +125,7 @@ describe('source gateway read contract', () => {
       hasMore: false,
       nextPage: null
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       currentSessionEpoch: () => 7,
       fetcher: vi.fn(),
       isSourceAuthenticated: () => true,
@@ -186,7 +179,7 @@ describe('source gateway read contract', () => {
       displayName: 'lcy0828',
       url: 'https://www.nodeseek.com/space/23042'
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       currentSessionEpoch: () => 4,
       fetcher,
       isSourceAuthenticated: (source) => source === 'nodeseek',
@@ -206,7 +199,7 @@ describe('source gateway read contract', () => {
   });
 
   it('[REG-TOPIC-039] blocks NodeSeek username resolution at the identity barrier', async () => {
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: () => true,
       isSourceReadBlocked: (source) => source === 'nodeseek',
@@ -240,7 +233,7 @@ describe('source gateway read contract', () => {
         url: 'https://www.nodeseek.com/space/7'
       };
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher,
       isSourceAuthenticated: () => true,
       nodeSeekUserAgent: () => 'NodeSeek UA'
@@ -262,7 +255,7 @@ describe('source gateway read contract', () => {
       url: string;
     }>();
     nodeSeekMocks.resolveNodeSeekUser.mockReturnValueOnce(pending.promise);
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       currentSessionEpoch: () => epoch,
       fetcher: vi.fn(),
       isSourceAuthenticated: () => true,
@@ -304,7 +297,7 @@ describe('source gateway read contract', () => {
       hasMore: false,
       nextPage: null
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       currentSessionEpoch: () => 7,
       fetcher: vi.fn(),
       isSourceAuthenticated: () => true,
@@ -334,7 +327,7 @@ describe('source gateway read contract', () => {
       await options.fetcher?.('https://linux.do/emojis.json', { signal: options.signal });
       return { heart: 'https://linux.do/heart.png' };
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher,
       isSourceAuthenticated: (source) => source === 'linuxdo',
       linuxDoUserAgent: () => 'LinuxDo UA',
@@ -360,7 +353,7 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'nodeseek',
       nodeSeekUserAgent: () => 'NodeSeek UA'
@@ -411,7 +404,7 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'linuxdo',
       linuxDoUserAgent: () => 'LinuxDo UA',
@@ -433,7 +426,7 @@ describe('source gateway read contract', () => {
     const signal = new AbortController().signal;
     const pending = Promise.withResolvers<{ username: string }>();
     linuxDoLevelMocks.getLinuxDoLevelProfile.mockReturnValueOnce(pending.promise);
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       currentSessionEpoch: () => generation,
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'linuxdo',
@@ -460,7 +453,7 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -505,7 +498,7 @@ describe('source gateway read contract', () => {
       hasMore: false,
       nextPage: null
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       loadXiaoyinsiCredentialsForSource: vi.fn(async () => {
         throw new Error('Xiaoyinsi credential store failed');
@@ -535,7 +528,7 @@ describe('source gateway read contract', () => {
       lines.push(line);
     });
     const trace = beginDiagnosticTrace('feed', 'refresh', { source: 'v2ex' });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -552,7 +545,7 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -593,7 +586,7 @@ describe('source gateway read contract', () => {
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -629,7 +622,7 @@ describe('source gateway read contract', () => {
       lines.push(line);
     });
     const trace = beginDiagnosticTrace('feed', 'load', { source: 'nodeseek' });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -670,7 +663,7 @@ describe('source gateway read contract', () => {
       lines.push(line);
     });
     const trace = beginDiagnosticTrace('user', 'open', { source: 'v2ex' });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -718,7 +711,7 @@ describe('source gateway read contract', () => {
       createdAt: '',
       replyCount: 0
     };
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -767,7 +760,7 @@ describe('source gateway read contract', () => {
   });
 
   it('[REG-LINUXDO-005] preserves the confirmed-auth decision through the managed gateway', async () => {
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'linuxdo',
       linuxDoUserAgent: () => 'linux.do UA',
@@ -800,7 +793,7 @@ describe('source gateway read contract', () => {
       lines.push(line);
     });
     const fetcher = vi.fn();
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher,
       nodeSeekUserAgent: () => ''
     });
@@ -853,7 +846,7 @@ describe('source gateway read contract', () => {
   it('owns NodeSeek identity, session epoch, user agent, and transport for every read path', async () => {
     const fetcher = vi.fn();
     const currentSessionEpoch = vi.fn(() => 4);
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       currentSessionEpoch,
       fetcher,
       isSourceAuthenticated: (source) => source === 'nodeseek',
@@ -936,7 +929,7 @@ describe('source gateway read contract', () => {
         topics: never[];
       }>();
       forumMocks.getUserProfile.mockReturnValueOnce(response.promise);
-      const gateway = createSourceGateway({
+      const gateway = createReadGateway({
         currentSessionEpoch: () => generation,
         currentXiaoyinsiCredentialGeneration: () => generation,
         fetcher: vi.fn(),
@@ -958,7 +951,7 @@ describe('source gateway read contract', () => {
   );
 
   it('[REG-ACCOUNT-026] returns typed Yaohuo expiry without invoking a logout command', async () => {
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -979,7 +972,7 @@ describe('source gateway read contract', () => {
   it('REG-ACCOUNT-009 cancels an expired Yaohuo read when a newer credential takes ownership', async () => {
     let generation = 7;
     const response = Promise.withResolvers<never>();
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       currentSessionEpoch: () => generation,
       fetcher: vi.fn(),
       isSourceAuthenticated: () => true,
@@ -1002,7 +995,7 @@ describe('source gateway read contract', () => {
   });
 
   it('[REG-ACCOUNT-026] cannot invoke a failing Yaohuo logout command during a read', async () => {
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -1021,7 +1014,7 @@ describe('source gateway read contract', () => {
   });
 
   it('surfaces a Yaohuo verification-required error without mutating session state', async () => {
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
@@ -1042,7 +1035,7 @@ describe('source gateway read contract', () => {
 
   it('routes 小隐寺 search candidates with its independent User API credentials', async () => {
     const credentials = { apiKey: 'secret-key', clientId: 'install-client' };
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       loadXiaoyinsiCredentialsForSource: vi.fn(async () => credentials),
       nodeSeekUserAgent: () => ''
@@ -1070,7 +1063,7 @@ describe('source gateway read contract', () => {
 
   it('[REG-XIAOYINSI-007] rechecks 小隐寺 authorization after an authenticated read returns 403', async () => {
     const refreshXiaoyinsiAuthorization = vi.fn(async () => true);
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
       nodeSeekUserAgent: () => '',
@@ -1095,7 +1088,7 @@ describe('source gateway read contract', () => {
       generation += 1;
       return true;
     });
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       currentXiaoyinsiCredentialGeneration: () => generation,
       fetcher: vi.fn(),
       loadXiaoyinsiCredentialsForSource: vi.fn(async (_source, options) => {
@@ -1119,7 +1112,7 @@ describe('source gateway read contract', () => {
   it('[REG-XIAOYINSI-007] routes the authenticated level read through authorization recheck', async () => {
     const refreshXiaoyinsiAuthorization = vi.fn(async () => false);
     const credentials = { apiKey: 'api-key', clientId: 'client-id' };
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       loadXiaoyinsiCredentialsForSource: vi.fn(async () => credentials),
       nodeSeekUserAgent: () => '',
@@ -1142,7 +1135,7 @@ describe('source gateway read contract', () => {
 
   it('[REG-XIAOYINSI-007] rechecks aggregate 小隐寺 read failures once', async () => {
     const refreshXiaoyinsiAuthorization = vi.fn(async () => true);
-    const gateway = createSourceGateway({
+    const gateway = createReadGateway({
       fetcher: vi.fn(),
       loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
       nodeSeekUserAgent: () => '',

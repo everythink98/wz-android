@@ -7,8 +7,8 @@ import { useUserController } from '@/app/useUserController';
 import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import type { ReadGateway } from '@/sources/readGateway';
 import type { UserProfile, UserReference } from '@/domain/forum/models';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
@@ -29,14 +29,14 @@ function renderUserController({
   getIdentityBarriers = () => [],
   getSessionEpochs = () => initialForumSessionEpochs,
   getUserProfile,
-  resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(),
+  resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(),
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
   showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
 }: {
   getIdentityBarriers?: () => ForumIdentityBarrierSource[];
   getSessionEpochs?: () => ForumSessionEpochs;
-  getUserProfile: SourceGateway['getUserProfile'];
-  resolveNodeSeekUser?: SourceGateway['resolveNodeSeekUser'];
+  getUserProfile: ReadGateway['getUserProfile'];
+  resolveNodeSeekUser?: ReadGateway['resolveNodeSeekUser'];
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showNodeSeekVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
 }) {
@@ -51,7 +51,7 @@ function renderUserController({
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin: jest.fn(),
-      sourceGateway: { getUserProfile, resolveNodeSeekUser } as unknown as SourceGateway
+      readGateway: { getUserProfile, resolveNodeSeekUser } as unknown as ReadGateway
     })
   );
 }
@@ -71,8 +71,8 @@ describe('user query controller', () => {
       url: 'https://www.nodeseek.com/member?t=xy'
     };
     const resolution = Promise.withResolvers<UserReference>();
-    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(async () => resolution.promise);
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async ({ cursorType }) => ({
+    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => resolution.promise);
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => ({
       ...user,
       id: '8052',
       username: 'xy',
@@ -128,7 +128,7 @@ describe('user query controller', () => {
       url: 'https://www.nodeseek.com/member?t=xy'
     };
     const resolveNodeSeekUser = jest
-      .fn<SourceGateway['resolveNodeSeekUser']>()
+      .fn<ReadGateway['resolveNodeSeekUser']>()
       .mockRejectedValueOnce(new Error('429 Too Many Requests'))
       .mockResolvedValueOnce({
         source: 'nodeseek',
@@ -136,7 +136,7 @@ describe('user query controller', () => {
         username: 'xy',
         url: 'https://www.nodeseek.com/space/8052'
       });
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
       ...user,
       id: '8052',
       username: 'xy'
@@ -165,7 +165,7 @@ describe('user query controller', () => {
       url: 'https://www.nodeseek.com/member?t=xy'
     };
     const resolveNodeSeekUser = jest
-      .fn<SourceGateway['resolveNodeSeekUser']>()
+      .fn<ReadGateway['resolveNodeSeekUser']>()
       .mockRejectedValueOnce(
         Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
           source: 'nodeseek',
@@ -178,7 +178,7 @@ describe('user query controller', () => {
         username: 'xy',
         url: 'https://www.nodeseek.com/space/8052'
       });
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
       ...user,
       id: '8052',
       username: 'xy'
@@ -202,7 +202,7 @@ describe('user query controller', () => {
 
   it('[REG-TOPIC-039] preserves the exact canonical profile query for NodeSeek verification recovery', async () => {
     const getUserProfile = jest
-      .fn<SourceGateway['getUserProfile']>()
+      .fn<ReadGateway['getUserProfile']>()
       .mockRejectedValueOnce(
         Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
           source: 'nodeseek',
@@ -210,7 +210,7 @@ describe('user query controller', () => {
         })
       )
       .mockResolvedValueOnce({ ...user, id: '1414', username: '男朋友' });
-    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>();
+    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>();
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser, showNodeSeekVerification });
 
@@ -236,7 +236,7 @@ describe('user query controller', () => {
 
   it('[REG-TOPIC-039] does not turn a NodeSeek pagination failure into a user-route recovery', async () => {
     const getUserProfile = jest
-      .fn<SourceGateway['getUserProfile']>()
+      .fn<ReadGateway['getUserProfile']>()
       .mockResolvedValueOnce({
         ...user,
         id: '1414',
@@ -270,7 +270,7 @@ describe('user query controller', () => {
   });
 
   it('[REG-TOPIC-039] keeps a known logged-out resolution error out of Cloudflare recovery', async () => {
-    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(async () => {
+    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => {
       throw Object.assign(new Error('请先登录 NodeSeek 后再打开用户主页'), {
         source: 'nodeseek',
         loginRequired: true
@@ -278,7 +278,7 @@ describe('user query controller', () => {
     });
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderUserController({
-      getUserProfile: jest.fn<SourceGateway['getUserProfile']>(),
+      getUserProfile: jest.fn<ReadGateway['getUserProfile']>(),
       resolveNodeSeekUser,
       showNodeSeekVerification
     });
@@ -302,13 +302,13 @@ describe('user query controller', () => {
     };
     let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
     let sessionEpochs = initialForumSessionEpochs;
-    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(async () => ({
+    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => ({
       source: 'nodeseek',
       id: '8052',
       username: 'xy',
       url: 'https://www.nodeseek.com/space/8052'
     }));
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
       ...user,
       id: '8052',
       username: 'xy'
@@ -347,7 +347,7 @@ describe('user query controller', () => {
   it('[REG-TOPIC-039] cancels an old username resolution when the selected user changes', async () => {
     const oldResolution = Promise.withResolvers<UserReference>();
     let oldSignal: AbortSignal | undefined;
-    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>(async ({ signal, username }) => {
+    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async ({ signal, username }) => {
       if (username === 'old-user') {
         oldSignal = signal;
         return oldResolution.promise;
@@ -359,7 +359,7 @@ describe('user query controller', () => {
         url: 'https://www.nodeseek.com/space/22'
       };
     });
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async ({ id, username }) => ({
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ id, username }) => ({
       ...user,
       id,
       username: username || id,
@@ -400,8 +400,8 @@ describe('user query controller', () => {
   });
 
   it('loads the profile once and seeds both pagination lanes without repeating first-page transport', async () => {
-    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>();
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
+    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>();
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
       ...user,
       topics: [
         {
@@ -430,7 +430,7 @@ describe('user query controller', () => {
 
   it('[REG-ACCOUNT-031] keeps a loaded user profile read-only while its identity is pending', async () => {
     let identityBarriers: ForumIdentityBarrierSource[] = [];
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => user);
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => user);
     const hook = await renderUserController({
       getIdentityBarriers: () => identityBarriers,
       getUserProfile
@@ -468,7 +468,7 @@ describe('user query controller', () => {
   });
 
   it('REG-USER-001 keeps topic and reply cursors independent', async () => {
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async ({ cursorType }) => {
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => {
       if (!cursorType) {
         return {
           ...user,
@@ -552,7 +552,7 @@ describe('user query controller', () => {
     };
     const refresh = Promise.withResolvers<UserProfile>();
     const getUserProfile = jest
-      .fn<SourceGateway['getUserProfile']>()
+      .fn<ReadGateway['getUserProfile']>()
       .mockResolvedValueOnce({
         ...user,
         topics: [firstTopic],
@@ -625,7 +625,7 @@ describe('user query controller', () => {
       ]
     };
     const getUserProfile = jest
-      .fn<SourceGateway['getUserProfile']>()
+      .fn<ReadGateway['getUserProfile']>()
       .mockResolvedValueOnce(oldRouteProfile)
       .mockImplementationOnce(async () => replacement.promise);
     let sessionEpochs = initialForumSessionEpochs;
@@ -685,7 +685,7 @@ describe('user query controller', () => {
       replyCount: 0
     };
     let attempts = 0;
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async ({ cursorType }) => {
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => {
       if (!cursorType) return linuxUser;
       attempts += 1;
       if (attempts === 1) throw new LinuxDoCloudflareError();
@@ -722,7 +722,7 @@ describe('user query controller', () => {
       url: 'https://linux.do/u/alice'
     };
     const getUserProfile = jest
-      .fn<SourceGateway['getUserProfile']>()
+      .fn<ReadGateway['getUserProfile']>()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new Error('恢复后网络失败'));
@@ -758,7 +758,7 @@ describe('user query controller', () => {
       }
     );
     const hook = await renderUserController({
-      getUserProfile: jest.fn<SourceGateway['getUserProfile']>(async () => parsedEmpty)
+      getUserProfile: jest.fn<ReadGateway['getUserProfile']>(async () => parsedEmpty)
     });
 
     await act(async () => {

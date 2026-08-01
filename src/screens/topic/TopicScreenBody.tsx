@@ -111,11 +111,11 @@ import {
 } from '@/domain/forum/topicActionState';
 import type { TopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
-import { splitDiscourseContentHtml } from '@/discourseContent';
+import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/nodeseekPolls';
-import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/discourseReactions';
+import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/linuxdoReactions';
-import { canToggleDiscourseLike } from '@/discoursePermissions';
+import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import { replyImageUploadSupported } from '@/replyImageUpload';
 import {
   discourseQuotedPostReferenceFromAttributes,

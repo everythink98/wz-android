@@ -21,8 +21,8 @@ import {
   extractYaohuoSid,
   type YaohuoActionRequest
 } from '@/yaohuoActions';
-import type { DiscourseAction } from '@/discourseActions';
-import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/discourseSourceActions';
+import type { DiscourseAction } from '@/sources/discourse/actionRequest';
+import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/sources/discourse/sourceActions';
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/nodeseekActionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/yaohuoActionClient';
 import {
@@ -42,7 +42,7 @@ import type { ReplyEditTarget, TopicRepliesRefreshOptions } from '@/features/top
 import { topicKey } from '@/domain/reader/readerData';
 import type { Fetcher } from '@/platform/network/request';
 import { errorMessage } from '@/platform/network/errors';
-import { canToggleDiscourseLike } from '@/discoursePermissions';
+import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import { isDiscourseSource, isSessionSource, sourceValues, type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   normalizeReplyImageAsset,
@@ -90,7 +90,7 @@ import {
 } from '@/domain/session/writableSessionGate';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import { YAOHUO_BASE_URL } from '@/localYaohuoHelpers';
-import { sourceErrorFromUnknown } from '@/sourceErrors';
+import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 
 type Ref<T> = { current: T };
 type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unknown>;

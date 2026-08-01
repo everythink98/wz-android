@@ -26,7 +26,7 @@ import {
   type XiaoyinsiApiCredentials
 } from '@/localXiaoyinsi';
 import type { Fetcher } from '@/platform/network/request';
-import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
+import type { DiscourseEmojiUrlMap } from './reactions';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type {
   CategoriesResponse,

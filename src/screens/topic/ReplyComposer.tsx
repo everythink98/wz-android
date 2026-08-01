@@ -8,7 +8,7 @@ import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types'
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/AppControls';
 import type { Source } from '@/domain/forum/models';
-import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
+import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { imageSourceFromUrl } from '@/platform/media/htmlImages';
 import {
   applyReplyComposerFormat,

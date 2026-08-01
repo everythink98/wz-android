@@ -6,7 +6,7 @@ import {
   sourceErrorFromUnknown,
   sourceErrorKind,
   yaohuoErrorRequiresLoginPanel
-} from '@/sourceErrors';
+} from '@/sources/sourceErrors';
 
 describe('source error navigation helpers', () => {
   it('does not auto-open verification for aggregated feed errors', () => {

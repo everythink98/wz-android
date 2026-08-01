@@ -1,8 +1,8 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
+import type { SharedStyles } from '../theme/sharedStyles';
 import { Text, View } from 'react-native';
 import { Home, MoreHorizontal, Search, Star, type LucideIcon } from 'lucide-react-native';
 import type { Screen } from './types';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '../theme/tokens';
 
 export const tabNavItems: { value: Screen; label: string; icon: LucideIcon }[] = [
   { value: 'feed', label: '首页', icon: Home },

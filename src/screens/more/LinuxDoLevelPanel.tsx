@@ -2,7 +2,7 @@ import type { AccountStyles } from '@/features/account/styles';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { RefreshCw } from 'lucide-react-native';
-import type { LinuxDoLevelProfile } from '@/sources/sourceGateway';
+import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/AppControls';

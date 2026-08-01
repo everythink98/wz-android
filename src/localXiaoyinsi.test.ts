@@ -13,8 +13,8 @@ import {
   searchXiaoyinsiTags,
   searchXiaoyinsiUsers
 } from '@/localXiaoyinsi';
-import { splitDiscourseContentHtml } from '@/discourseContent';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { splitDiscourseContentHtml } from '@/sources/discourse/content';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {

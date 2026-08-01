@@ -1,4 +1,4 @@
-import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
+import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 
 export type ReplyComposerInsertExpression = {
   code: string;

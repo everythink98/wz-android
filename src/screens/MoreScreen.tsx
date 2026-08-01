@@ -6,7 +6,7 @@ import { Activity, Bug, DatabaseBackup, Server, Settings } from 'lucide-react-na
 import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '@/platform/update/appUpdate';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '@/platform/network/networkProxy';
-import type { LinuxDoLevelProfile } from '@/sources/sourceGateway';
+import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';

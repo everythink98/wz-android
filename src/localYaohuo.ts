@@ -33,7 +33,7 @@ import {
   yaohuoUserUrl as userUrl
 } from '@/localYaohuoHelpers';
 import { normalizeYaohuoReplyDeletePath } from '@/yaohuoActions';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;

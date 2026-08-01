@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { isCancelledError, useQuery, type QueryFunctionContext } from '@tanstack/react-query';
-import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/sourceGateway';
+import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
 import { summarizeYaohuoCookieHeader } from '@/yaohuoSession';
 import { summarizeNodeSeekCookieHeader } from '@/nodeseekSession';
@@ -15,7 +15,7 @@ import {
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
-import { sourceErrorFromUnknown } from '@/sourceErrors';
+import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import type { XiaoyinsiAuthorizationReadResult } from './useXiaoyinsiAuthController';
 import { appQueryClient, forumQueryKeys } from './serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';

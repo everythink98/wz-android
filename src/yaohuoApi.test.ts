@@ -19,7 +19,7 @@ import {
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
 } from '@/localYaohuo';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { Topic } from '@/domain/forum/models';
 
 describe('Android direct yaohuo API', () => {

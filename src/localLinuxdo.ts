@@ -36,7 +36,7 @@ import {
   toIsoString
 } from '@/domain/forum/html';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
-import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from '@/googleSearchFallback';
+import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from '@/sources/searchFallback';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/linuxdoSession';
 import {
   LINUXDO_BASE_URL as BASE_URL,
@@ -48,8 +48,8 @@ import {
   normalizeLinuxDoTopicId as normalizeTopicId,
   preferredLinuxDoAccessRequirement
 } from '@/localLinuxdoHelpers';
-import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/discourseReactions';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   discourseCategories,
   discourseOriginalPoster,
@@ -57,14 +57,14 @@ import {
   discoursePostFields,
   discourseTopicFields,
   discourseUsersById
-} from '@/discourseModel';
+} from '@/sources/discourse/model';
 import {
   discourseContentNeedsCalloutNormalization,
   discoursePollPlaceholder,
   discourseQuoteMetadata,
   normalizeDiscourseCallouts,
   stripDiscourseCalloutMarkersFromExcerpt
-} from '@/discourseContent';
+} from '@/sources/discourse/content';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;

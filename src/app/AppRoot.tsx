@@ -78,8 +78,8 @@ import {
   shouldCloseReplyComposerOnBack
 } from './backHandlerHelpers';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/linuxdoSession';
-import { sourceErrorFromUnknown } from '@/sourceErrors';
-import { createSourceGateway } from '@/sources/sourceGateway';
+import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { createReadGateway } from '@/sources/readGateway';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '@/platform/network/networkProxy';
 import type { Topic, TopicDetail, UserProfile, UserReference } from '@/domain/forum/models';
 import { isHttpOrHttpsUrl, type ImageDisplaySize } from '@/platform/media/htmlImages';
@@ -649,9 +649,9 @@ export function AppRoot() {
   >(null);
 
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
-  const sourceGateway = useMemo(
+  const readGateway = useMemo(
     () =>
-      createSourceGateway({
+      createReadGateway({
         currentSessionEpoch: (source) => forumSessionEpochsRef.current[source],
         currentXiaoyinsiCredentialGeneration,
         fetcher: forumFetchWithWebViewFallback,
@@ -679,7 +679,7 @@ export function AppRoot() {
     fetcher: networkProxyFetcher,
     isIdentityPending: () => accountIdentityPendingRef.current.xiaoyinsi,
     notify,
-    sourceGateway
+    readGateway
   });
   useEffect(() => {
     refreshXiaoyinsiAuthorizationRef.current = xiaoyinsiAuthController.refreshAuthorization;
@@ -777,7 +777,7 @@ export function AppRoot() {
     screen,
     showLinuxDoVerification: showLinuxDoVerificationForTopic,
     showYaohuoLogin: showYaohuoLoginForTopic,
-    sourceGateway,
+    readGateway,
     topicReturnScreenRef,
     topicSession
   });
@@ -1123,7 +1123,7 @@ export function AppRoot() {
     setNodeSeekWebViewUserAgent,
     screen,
     showLinuxDoVerification,
-    sourceGateway,
+    readGateway,
     showLoginPanelRef,
     showYaohuoLoginPanel,
     webViewRef,
@@ -1231,7 +1231,7 @@ export function AppRoot() {
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,
-    sourceGateway
+    readGateway
   });
   const feedIdentityCheck = feedSource === 'linuxdo' ? accountIdentityChecks.linuxdo : undefined;
   const feedIdentityError = feedIdentityCheck?.pending ? feedIdentityCheck.error : undefined;
@@ -1269,7 +1269,7 @@ export function AppRoot() {
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,
-    sourceGateway
+    readGateway
   });
   const searchIdentityCheck = searchSource === 'linuxdo' ? accountIdentityChecks.linuxdo : undefined;
   const searchIdentityError = searchIdentityCheck?.pending ? searchIdentityCheck.error : undefined;
@@ -1497,7 +1497,7 @@ export function AppRoot() {
     screen,
     showLinuxDoVerification,
     showNodeSeekVerification: handleNodeSeekUserVerificationRequired,
-    sourceGateway,
+    readGateway,
     showYaohuoLogin
   });
   const selectedUserIdentityCheck = selectedUser?.source === 'linuxdo' ? accountIdentityChecks.linuxdo : undefined;
@@ -2464,7 +2464,7 @@ export function AppRoot() {
       htmlRenderers,
       htmlRenderersProps,
       htmlTagsStyles,
-      getDiscourseEmojiUrls: sourceGateway.getEmojiUrls,
+      getDiscourseEmojiUrls: readGateway.getEmojiUrls,
       inlineSizedImageUrls,
       topicImageDeriver,
       expandedQuotes,
@@ -2563,7 +2563,7 @@ export function AppRoot() {
       changeReplyFace,
       changeReplyFilter,
       selectedTopic,
-      sourceGateway,
+      readGateway,
       stableBookmarkOnDiscourseSite,
       stableCollectOnNodeSeekSite,
       stableDeleteReply,

@@ -3,7 +3,7 @@ import {
   isGoogleSiteSearchNavigationUrl,
   isGoogleSiteSearchUrl,
   isSameGoogleSiteSearchUrl
-} from '@/googleSearchFallback';
+} from '@/sources/searchFallback';
 import { isNodeSeekChallengeResponse } from '@/localNodeseekHelpers';
 import {
   beginDiagnosticTrace,

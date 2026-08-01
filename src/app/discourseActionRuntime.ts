@@ -1,4 +1,4 @@
-import type { DiscourseActionRequest } from '@/discourseActions';
+import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { runLinuxDoAction } from '@/linuxdoActionClient';
 import type { Fetcher } from '@/platform/network/request';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';

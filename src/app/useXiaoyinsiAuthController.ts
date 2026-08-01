@@ -13,7 +13,7 @@ import {
 } from '@/platform/diagnostics/diagnostics';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { ScopedSiteSessionEvent, SiteSessionEvent } from '@/domain/session/siteSessionState';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import type { ReadGateway } from '@/sources/readGateway';
 import {
   beginXiaoyinsiDeviceAuth,
   cancelXiaoyinsiDeviceAuth,
@@ -124,14 +124,14 @@ export function useXiaoyinsiAuthController({
   fetcher,
   isIdentityPending,
   notify,
-  sourceGateway
+  readGateway
 }: {
   sessionEpochs: ForumSessionEpochs;
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   fetcher: Fetcher;
   isIdentityPending?: () => boolean;
   notify: (message: string) => void;
-  sourceGateway: Pick<SourceGateway, 'getLevelProfile'>;
+  readGateway: Pick<ReadGateway, 'getLevelProfile'>;
 }) {
   const [phase, setPhase] = useState<XiaoyinsiAuthPhase>('idle');
   const [pending, setPending] = useState<XiaoyinsiPendingAuthorization | null>(null);
@@ -154,7 +154,7 @@ export function useXiaoyinsiAuthController({
       const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
       markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
       try {
-        const profile = await sourceGateway.getLevelProfile({ source: 'xiaoyinsi', signal }, { trace });
+        const profile = await readGateway.getLevelProfile({ source: 'xiaoyinsi', signal }, { trace });
         markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'loaded' });
         finishDiagnosticTrace(trace, 'success', { source: 'xiaoyinsi' });
         return profile;

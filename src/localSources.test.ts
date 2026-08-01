@@ -6,7 +6,7 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from '@/forumApi';
+import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from '@/sources/aggregateRead';
 import { isLinuxDoCloudflareError } from '@/sources/errors';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from '@/linuxdoFetchFallback';
@@ -17,7 +17,7 @@ import {
   searchLinuxDoTags,
   searchLinuxDoUsers
 } from '@/localLinuxdo';
-import { splitDiscourseContentHtml } from '@/discourseContent';
+import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '@/nodeseekFetchFallback';
 import {
@@ -28,7 +28,7 @@ import {
   resolveNodeSeekUser
 } from '@/localNodeseek';
 import { setRequestTimeoutsActive } from '@/platform/network/request';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { DEFAULT_SEARCH_FILTERS } from '@/searchFilters';
 import {
   beginDiagnosticTrace,

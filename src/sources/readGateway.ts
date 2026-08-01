@@ -6,7 +6,7 @@ import {
   getTopic as getForumTopic,
   getUserProfile as getForumUserProfile,
   searchTopics as searchForumTopics
-} from '@/forumApi';
+} from '@/sources/aggregateRead';
 import { getYaohuoFeedDirect, getYaohuoRepliesDirect, getYaohuoTopicDirect, searchYaohuoDirect } from '@/yaohuoApi';
 import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '@/localLinuxdo';
 import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '@/localNodeseek';
@@ -24,9 +24,9 @@ import {
   type DiscourseReadAuth,
   type DiscourseTagOptionReadOptions,
   type DiscourseUserOptionReadOptions
-} from '@/discourseSourceReaders';
+} from '@/sources/discourse/readers';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
-import { sourceErrorFromUnknown } from '@/sourceErrors';
+import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -37,7 +37,7 @@ import {
   type DiagnosticFields,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
 import {
   isSessionSource,
@@ -46,7 +46,7 @@ import {
   type SessionSource
 } from '@/domain/forum/sourceCatalog';
 
-export { getCurrentUserProfile } from '@/forumApi';
+export { getCurrentUserProfile } from '@/sources/aggregateRead';
 export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/linuxdoLevel';
 export type { XiaoyinsiLevelProfile } from '@/localXiaoyinsi';
 export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/yaohuoApi';
@@ -124,12 +124,12 @@ export async function getUserProfile(options: GetUserProfileOptions) {
   return getForumUserProfile(options);
 }
 
-type SourceGatewayCredentialLoadOptions = {
+type ReadGatewayCredentialLoadOptions = {
   captureGeneration?: (generation: number) => void;
   diagnosticTrace?: DiagnosticTrace;
 };
 
-type SourceGatewayDependencies = {
+type ReadGatewayDependencies = {
   currentSessionEpoch?: (source: SessionSource) => number;
   currentXiaoyinsiCredentialGeneration?: () => number;
   fetcher: Fetcher;
@@ -138,7 +138,7 @@ type SourceGatewayDependencies = {
   linuxDoUserAgent?: () => string;
   loadXiaoyinsiCredentialsForSource?: (
     source: FeedSource,
-    options?: SourceGatewayCredentialLoadOptions
+    options?: ReadGatewayCredentialLoadOptions
   ) => Promise<XiaoyinsiApiCredentials | undefined>;
   nodeSeekUserAgent: () => string;
   refreshXiaoyinsiAuthorization?: (trace?: DiagnosticTrace) => Promise<boolean | null>;
@@ -187,7 +187,7 @@ type ManagedLinuxDoLevelProfileOptions = Omit<
 type ManagedLevelProfileOptions = Omit<XiaoyinsiOptions, 'credentials' | 'fetcher'> & {
   source: 'xiaoyinsi';
 };
-export type SourceGatewayReadContext = {
+export type ReadGatewayReadContext = {
   identityBarriers?: readonly SessionSource[];
   trace?: DiagnosticTrace;
 };
@@ -233,7 +233,7 @@ function summarizeReadResult(result: unknown) {
   return summary satisfies DiagnosticFields;
 }
 
-export function createSourceGateway<Dependencies extends SourceGatewayDependencies>(dependencies: Dependencies) {
+export function createReadGateway<Dependencies extends ReadGatewayDependencies>(dependencies: Dependencies) {
   const read = async <T>(
     source: FeedSource,
     operationName: string,
@@ -245,7 +245,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
       nodeSeekUserAgent?: string;
       unavailableSources?: readonly Source[];
     }) => Promise<T>,
-    context?: SourceGatewayReadContext
+    context?: ReadGatewayReadContext
   ) => {
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
@@ -475,7 +475,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         dependencies.isSourceAuthenticated?.('yaohuo') === true && dependencies.isSourceReadBlocked?.('yaohuo') !== true
       );
     },
-    getCategories(options: ManagedGetCategoriesOptions = {}, context?: SourceGatewayReadContext) {
+    getCategories(options: ManagedGetCategoriesOptions = {}, context?: ReadGatewayReadContext) {
       const source = options.source || 'all';
       return read(
         source,
@@ -488,7 +488,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    getFeed(options: ManagedGetFeedOptions, context?: SourceGatewayReadContext) {
+    getFeed(options: ManagedGetFeedOptions, context?: ReadGatewayReadContext) {
       return read(
         options.source,
         'getFeed',
@@ -500,7 +500,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    getEmojiUrls({ source, ...options }: ManagedGetEmojiUrlsOptions, context?: SourceGatewayReadContext) {
+    getEmojiUrls({ source, ...options }: ManagedGetEmojiUrlsOptions, context?: ReadGatewayReadContext) {
       return read(
         source,
         'getEmojiUrls',
@@ -513,7 +513,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    searchTopics(options: ManagedSearchTopicsOptions, context?: SourceGatewayReadContext) {
+    searchTopics(options: ManagedSearchTopicsOptions, context?: ReadGatewayReadContext) {
       return read(
         options.source,
         'searchTopics',
@@ -525,7 +525,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    searchTagOptions(request: ManagedTagOptionSearchOptions, context?: SourceGatewayReadContext) {
+    searchTagOptions(request: ManagedTagOptionSearchOptions, context?: ReadGatewayReadContext) {
       const { source, ...options } = request;
       return read(
         source,
@@ -539,7 +539,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    searchUserOptions(request: ManagedUserOptionSearchOptions, context?: SourceGatewayReadContext) {
+    searchUserOptions(request: ManagedUserOptionSearchOptions, context?: ReadGatewayReadContext) {
       const { source, ...options } = request;
       return read(
         source,
@@ -555,7 +555,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
     },
     searchSemanticTopics(
       { query, source, ...options }: ManagedSemanticTopicSearchOptions,
-      context?: SourceGatewayReadContext
+      context?: ReadGatewayReadContext
     ) {
       return read(
         source,
@@ -571,7 +571,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
     },
     getLinuxDoLevelProfile(
       { source, ...options }: ManagedLinuxDoLevelProfileOptions,
-      context?: SourceGatewayReadContext
+      context?: ReadGatewayReadContext
     ): Promise<LinuxDoLevelProfile> {
       return read(
         source,
@@ -592,7 +592,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    getTopic(options: ManagedGetTopicOptions, context?: SourceGatewayReadContext) {
+    getTopic(options: ManagedGetTopicOptions, context?: ReadGatewayReadContext) {
       return read(
         options.source,
         'getTopic',
@@ -604,7 +604,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    getReplies(options: ManagedGetRepliesOptions, context?: SourceGatewayReadContext) {
+    getReplies(options: ManagedGetRepliesOptions, context?: ReadGatewayReadContext) {
       return read(
         options.source,
         'getReplies',
@@ -616,7 +616,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    getReply(options: ManagedGetReplyOptions, context?: SourceGatewayReadContext) {
+    getReply(options: ManagedGetReplyOptions, context?: ReadGatewayReadContext) {
       return read(
         options.source,
         'getReply',
@@ -628,7 +628,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    getUserProfile(options: ManagedGetUserProfileOptions, context?: SourceGatewayReadContext) {
+    getUserProfile(options: ManagedGetUserProfileOptions, context?: ReadGatewayReadContext) {
       return read(
         options.source,
         'getUserProfile',
@@ -640,7 +640,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         context
       );
     },
-    resolveNodeSeekUser(options: ManagedResolveNodeSeekUserOptions, context?: SourceGatewayReadContext) {
+    resolveNodeSeekUser(options: ManagedResolveNodeSeekUserOptions, context?: ReadGatewayReadContext) {
       return read(
         'nodeseek',
         'resolveUser',
@@ -656,7 +656,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
     },
     getLevelProfile(
       { source, ...options }: ManagedLevelProfileOptions,
-      context?: SourceGatewayReadContext
+      context?: ReadGatewayReadContext
     ): Promise<XiaoyinsiLevelProfile> {
       return read(
         source,
@@ -677,4 +677,4 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
   };
 }
 
-export type SourceGateway = ReturnType<typeof createSourceGateway>;
+export type ReadGateway = ReturnType<typeof createReadGateway>;

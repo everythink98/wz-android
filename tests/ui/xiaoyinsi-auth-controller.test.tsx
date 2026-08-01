@@ -53,7 +53,7 @@ import { useXiaoyinsiAuthController, type XiaoyinsiAuthorizationReadResult } fro
 import { appQueryClient } from '@/app/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import type { ReadGateway } from '@/sources/readGateway';
 
 const mockBegin = jest.mocked(XiaoyinsiAuth.beginXiaoyinsiDeviceAuth);
 const mockCancel = jest.mocked(XiaoyinsiAuth.cancelXiaoyinsiDeviceAuth);
@@ -122,9 +122,9 @@ async function renderController(
   isIdentityPending = () => false
 ) {
   const fetcher = jest.fn(async () => new Response('{}'));
-  const sourceGateway = {
+  const readGateway = {
     getLevelProfile: jest.fn(async () => levelProfile)
-  } as unknown as SourceGateway;
+  } as unknown as ReadGateway;
   return {
     dispatchSiteSessionEvent,
     hook: await (async () => {
@@ -136,7 +136,7 @@ async function renderController(
             fetcher,
             isIdentityPending,
             notify,
-            sourceGateway
+            readGateway
           }),
         {
           wrapper: ({ children }) => <QueryClientProvider client={appQueryClient}>{children}</QueryClientProvider>
@@ -149,7 +149,7 @@ async function renderController(
       return hook;
     })(),
     notify,
-    sourceGateway
+    readGateway
   };
 }
 
@@ -304,7 +304,7 @@ describe('小隐寺授权 controller', () => {
       lines.push(line);
     });
     mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
-    const { hook, notify, sourceGateway } = await renderController();
+    const { hook, notify, readGateway } = await renderController();
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
     lines.length = 0;
 
@@ -312,7 +312,7 @@ describe('小隐寺授权 controller', () => {
       await hook.result.current.refreshLevel();
     });
 
-    expect(sourceGateway.getLevelProfile).toHaveBeenCalledWith(
+    expect(readGateway.getLevelProfile).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'xiaoyinsi' }),
       expect.any(Object)
     );
@@ -320,7 +320,7 @@ describe('小隐寺授权 controller', () => {
     expect(hook.result.current.levelError).toBe('');
     expect(notify).toHaveBeenCalledWith('小隐寺等级已更新。');
     const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
-    const context = jest.mocked(sourceGateway.getLevelProfile).mock.calls.at(-1)?.[1];
+    const context = jest.mocked(readGateway.getLevelProfile).mock.calls.at(-1)?.[1];
     expect(context?.trace?.traceId).toBe(events[0]?.traceId);
     expect(events.map((event) => event.phase)).toEqual(['intent', 'guard', 'apply', 'finish']);
     expect(events.at(-1)).toMatchObject({ area: 'session', operation: 'refresh', outcome: 'success' });
@@ -328,24 +328,24 @@ describe('小隐寺授权 controller', () => {
 
   it('[REG-ACCOUNT-031] does not refresh the Xiaoyinsi level while identity is pending', async () => {
     mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
-    const { hook, sourceGateway } = await renderController(jest.fn(), jest.fn(), () => true);
+    const { hook, readGateway } = await renderController(jest.fn(), jest.fn(), () => true);
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
 
     await expect(hook.result.current.refreshLevel()).resolves.toBe(false);
-    expect(sourceGateway.getLevelProfile).not.toHaveBeenCalled();
+    expect(readGateway.getLevelProfile).not.toHaveBeenCalled();
     expect(hook.result.current.levelBusy).toBe(false);
   });
 
   it('[REG-ACCOUNT-018] reports a failed Xiaoyinsi level refresh while retaining trusted data', async () => {
     mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
-    const { hook, notify, sourceGateway } = await renderController();
+    const { hook, notify, readGateway } = await renderController();
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
 
     await act(async () => {
       await expect(hook.result.current.refreshLevel()).resolves.toBe(true);
     });
     await waitFor(() => expect(hook.result.current.levelProfile).toEqual(levelProfile));
-    jest.mocked(sourceGateway.getLevelProfile).mockRejectedValueOnce(new Error('小隐寺等级刷新失败'));
+    jest.mocked(readGateway.getLevelProfile).mockRejectedValueOnce(new Error('小隐寺等级刷新失败'));
     await act(async () => {
       await expect(hook.result.current.refreshLevel()).resolves.toBe(false);
     });
@@ -359,15 +359,15 @@ describe('小隐寺授权 controller', () => {
 
   it('[REG-TEST-005] retries a transient level failure only after an explicit user refresh', async () => {
     mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
-    const { hook, notify, sourceGateway } = await renderController();
+    const { hook, notify, readGateway } = await renderController();
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
-    jest.mocked(sourceGateway.getLevelProfile).mockRejectedValueOnce(new Error('限制 10 秒后再试'));
+    jest.mocked(readGateway.getLevelProfile).mockRejectedValueOnce(new Error('限制 10 秒后再试'));
 
     await act(async () => {
       await expect(hook.result.current.refreshLevel()).resolves.toBe(false);
     });
 
-    expect(sourceGateway.getLevelProfile).toHaveBeenCalledTimes(1);
+    expect(readGateway.getLevelProfile).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(hook.result.current.levelProfile).toBeNull();
       expect(hook.result.current.levelError).toBe('限制 10 秒后再试');
@@ -382,7 +382,7 @@ describe('小隐寺授权 controller', () => {
       expect(hook.result.current.levelProfile).toEqual(levelProfile);
       expect(hook.result.current.levelError).toBe('');
     });
-    expect(sourceGateway.getLevelProfile).toHaveBeenCalledTimes(2);
+    expect(readGateway.getLevelProfile).toHaveBeenCalledTimes(2);
     expect(notify).toHaveBeenCalledWith('小隐寺等级已更新。');
   });
 

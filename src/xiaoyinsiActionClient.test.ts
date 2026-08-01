@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { runXiaoyinsiAction } from '@/xiaoyinsiActionClient';
-import { buildDiscourseActionRequest } from '@/discourseActions';
+import { buildDiscourseActionRequest } from '@/sources/discourse/actionRequest';
 
 describe('小隐寺 User API action client', () => {
   it('只携带独立 User API headers，不使用 Cookie 或 CSRF', async () => {

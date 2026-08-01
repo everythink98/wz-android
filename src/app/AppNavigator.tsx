@@ -1,4 +1,4 @@
-import type { AppStyles } from '@/app/styles';
+import type { AppStyles } from './styles';
 import {
   createContext,
   memo,

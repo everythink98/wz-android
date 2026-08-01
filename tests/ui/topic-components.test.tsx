@@ -20,7 +20,7 @@ import {
   DISCOURSE_CALLOUT_CONTENT_CLASS,
   DISCOURSE_CALLOUT_TITLE_CLASS,
   DISCOURSE_CALLOUT_TYPE_ATTRIBUTE
-} from '@/discourseContent';
+} from '@/sources/discourse/content';
 
 jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({

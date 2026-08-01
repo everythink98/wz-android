@@ -10,7 +10,7 @@ import {
   type SourceSearchFilter
 } from '@/searchFilters';
 import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '@/searchHistory';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import type { ReadGateway } from '@/sources/readGateway';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -18,8 +18,12 @@ import {
   normalizeDiagnosticReason
 } from '@/platform/diagnostics/diagnostics';
 import { sourceLabel } from '@/domain/forum/presentation';
-import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
-import { sourceErrorFromUnknown, sourceReadRecoveryOutcome, yaohuoErrorRequiresLoginPanel } from '@/sourceErrors';
+import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import {
+  sourceErrorFromUnknown,
+  sourceReadRecoveryOutcome,
+  yaohuoErrorRequiresLoginPanel
+} from '@/sources/sourceErrors';
 import {
   authNoticeForSource,
   authNoticeForSourceError,
@@ -209,7 +213,7 @@ export function useSearchController({
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
-  sourceGateway
+  readGateway
 }: {
   categories: Category[];
   sessionEpochs?: ForumSessionEpochs;
@@ -224,7 +228,7 @@ export function useSearchController({
   ) => void | boolean | Promise<void | boolean>;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
-  sourceGateway: SourceGateway;
+  readGateway: ReadGateway;
 }) {
   const queryClient = useQueryClient();
   const searchActive = screen === 'search';
@@ -342,7 +346,7 @@ export function useSearchController({
       try {
         markDiagnosticStage(trace, 'guard', { source, page, state: page > 1 ? 'load-more' : 'started' });
         const activeFilter = filter?.source === source ? filter : undefined;
-        const data = await sourceGateway.searchTopics(
+        const data = await readGateway.searchTopics(
           {
             query,
             source,
@@ -439,7 +443,7 @@ export function useSearchController({
         return { kind: 'failed', group };
       }
     },
-    [categories, linuxDoAuthenticated, sessionViewModels, sourceGateway]
+    [categories, linuxDoAuthenticated, sessionViewModels, readGateway]
   );
 
   const submittedSource = submittedSearch?.source === 'all' ? 'v2ex' : submittedSearch?.source || 'v2ex';
@@ -632,7 +636,7 @@ export function useSearchController({
       const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
       try {
         markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started' });
-        const result = await sourceGateway.searchSemanticTopics(
+        const result = await readGateway.searchSemanticTopics(
           { source: 'linuxdo', query: linuxDoAiFullQuery, signal },
           { trace }
         );
@@ -943,9 +947,7 @@ export function useSearchController({
   );
 
   const searchDiscourseTags = useCallback(
-    async (
-      options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'> & { source?: DiscourseSource }
-    ) => {
+    async (options: Omit<Parameters<ReadGateway['searchTagOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
       const source = options.source || 'linuxdo';
       const { source: _source, ...request } = options;
       const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source });
@@ -956,7 +958,7 @@ export function useSearchController({
         selectedCount: options.selectedTags?.length || 0
       });
       try {
-        const items = await sourceGateway.searchTagOptions({ source, ...request }, { trace });
+        const items = await readGateway.searchTagOptions({ source, ...request }, { trace });
         markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
         finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
         return items;
@@ -968,19 +970,17 @@ export function useSearchController({
         throw error;
       }
     },
-    [sourceGateway]
+    [readGateway]
   );
 
   const searchDiscourseUsers = useCallback(
-    async (
-      options: Omit<Parameters<SourceGateway['searchUserOptions']>[0], 'source'> & { source?: DiscourseSource }
-    ) => {
+    async (options: Omit<Parameters<ReadGateway['searchUserOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
       const source = options.source || 'linuxdo';
       const { source: _source, ...request } = options;
       const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
       markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
       try {
-        const items = await sourceGateway.searchUserOptions({ source, ...request }, { trace });
+        const items = await readGateway.searchUserOptions({ source, ...request }, { trace });
         markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
         finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
         return items;
@@ -992,7 +992,7 @@ export function useSearchController({
         throw error;
       }
     },
-    [sourceGateway]
+    [readGateway]
   );
 
   const toggleLinuxDoAiSearch = useCallback(() => {

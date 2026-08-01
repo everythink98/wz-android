@@ -10,8 +10,8 @@ import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContra
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
-import type { SourceGateway } from '@/sources/sourceGateway';
+import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import type { ReadGateway } from '@/sources/readGateway';
 import type { Screen } from '@/ui/navigation/types';
 import type { TopicSnapshot } from '@/features/topic/model/types';
 import type { Reply, Topic, TopicDetail } from '@/domain/forum/models';
@@ -125,7 +125,7 @@ function renderTopicController({
   getSessionEpochs = () => initialForumSessionEpochs,
   notify = jest.fn(),
   onPushTopicScreen,
-  sourceGateway,
+  readGateway,
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
 }: {
   getCurrentTopicRouteKey?: () => string | null;
@@ -133,7 +133,7 @@ function renderTopicController({
   getSessionEpochs?: () => ForumSessionEpochs;
   notify?: (message: string) => void;
   onPushTopicScreen?: (topic: Topic, snapshot: TopicSnapshot) => void;
-  sourceGateway: Partial<SourceGateway>;
+  readGateway: Partial<ReadGateway>;
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
 }) {
   const readerData = createEmptyReaderData();
@@ -164,7 +164,7 @@ function renderTopicController({
         screen,
         showLinuxDoVerification,
         showYaohuoLogin: jest.fn(),
-        sourceGateway: sourceGateway as SourceGateway,
+        readGateway: readGateway as ReadGateway,
         topicReturnScreenRef: { current: 'feed' },
         topicSession: session
       });
@@ -185,8 +185,8 @@ describe('topic query controller', () => {
 
   it('uses one transport for repeated opens of the same key', async () => {
     const pending = Promise.withResolvers<TopicDetail>();
-    const getTopic = jest.fn<SourceGateway['getTopic']>(async () => pending.promise);
-    const hook = await renderTopicController({ sourceGateway: { getTopic } });
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => pending.promise);
+    const hook = await renderTopicController({ readGateway: { getTopic } });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(firstTopic);
@@ -206,14 +206,14 @@ describe('topic query controller', () => {
     const firstPending = Promise.withResolvers<TopicDetail>();
     const secondTopic = { ...firstTopic, id: '2', title: 'Second', url: 'https://www.nodeseek.com/post-2-1' };
     const secondDetail = { ...firstDetail, ...secondTopic };
-    const getTopic = jest.fn<SourceGateway['getTopic']>(async ({ id, signal }) => {
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async ({ id, signal }) => {
       if (id === '1') {
         firstSignal = signal;
         return firstPending.promise;
       }
       return secondDetail;
     });
-    const hook = await renderTopicController({ sourceGateway: { getTopic } });
+    const hook = await renderTopicController({ readGateway: { getTopic } });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(firstTopic);
@@ -234,8 +234,8 @@ describe('topic query controller', () => {
     const hook = await renderTopicController({
       getCurrentTopicRouteKey: () => currentRouteKey,
       onPushTopicScreen: (_topic, snapshot) => pushedSnapshots.push(snapshot),
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async ({ id }) =>
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async ({ id }) =>
           id === firstTopic.id ? firstDetail : { ...firstDetail, ...secondTopic }
         )
       }
@@ -277,10 +277,10 @@ describe('topic query controller', () => {
     let scope = initialForumSessionEpochs;
     const replacement = Promise.withResolvers<TopicDetail>();
     const getTopic = jest
-      .fn<SourceGateway['getTopic']>()
+      .fn<ReadGateway['getTopic']>()
       .mockResolvedValueOnce(firstDetail)
       .mockImplementationOnce(async () => replacement.promise);
-    const hook = await renderTopicController({ getSessionEpochs: () => scope, sourceGateway: { getTopic } });
+    const hook = await renderTopicController({ getSessionEpochs: () => scope, readGateway: { getTopic } });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(firstTopic);
@@ -313,10 +313,10 @@ describe('topic query controller', () => {
 
   it('[REG-ACCOUNT-031] keeps a loaded topic read-only while its identity is pending', async () => {
     let identityBarriers: ForumIdentityBarrierSource[] = [];
-    const getTopic = jest.fn<SourceGateway['getTopic']>(async () => firstDetail);
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => firstDetail);
     const hook = await renderTopicController({
       getIdentityBarriers: () => identityBarriers,
-      sourceGateway: { getTopic }
+      readGateway: { getTopic }
     });
 
     await act(async () => {
@@ -346,12 +346,12 @@ describe('topic query controller', () => {
       ...linuxTopic
     };
     let identityBarriers: ForumIdentityBarrierSource[] = ['linuxdo'];
-    const getTopic = jest.fn<SourceGateway['getTopic']>(async () => linuxDetail);
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => linuxDetail);
     const showLinuxDoVerification = jest.fn();
     const hook = await renderTopicController({
       getIdentityBarriers: () => identityBarriers,
       showLinuxDoVerification,
-      sourceGateway: { getTopic }
+      readGateway: { getTopic }
     });
 
     await act(async () => {
@@ -387,7 +387,7 @@ describe('topic query controller', () => {
       }
     );
     const hook = await renderTopicController({
-      sourceGateway: { getTopic: jest.fn<SourceGateway['getTopic']>(async () => parsedEmpty) }
+      readGateway: { getTopic: jest.fn<ReadGateway['getTopic']>(async () => parsedEmpty) }
     });
 
     await act(async () => {
@@ -400,12 +400,12 @@ describe('topic query controller', () => {
 
   it('preserves loaded pages and cursor when the next reply page fails', async () => {
     const detail = { ...firstDetail, replyHasMore: true, replyNextPage: 2, replyNextOffset: 1 };
-    const getReplies = jest.fn<SourceGateway['getReplies']>(async () => {
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
       throw new Error('offline');
     });
     const hook = await renderTopicController({
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => detail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
         getReplies
       }
     });
@@ -458,15 +458,15 @@ describe('topic query controller', () => {
       replyNextOffset: 1
     };
     const getTopic = jest
-      .fn<SourceGateway['getTopic']>()
+      .fn<ReadGateway['getTopic']>()
       .mockResolvedValueOnce(initialDetail)
       .mockResolvedValueOnce(refreshedDetail);
-    const getReplies = jest.fn<SourceGateway['getReplies']>(async ({ page }) =>
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async ({ page }) =>
       page === 2
         ? { items: [oldSecondReply], hasMore: false, nextPage: null, nextOffset: null }
         : { items: [refreshedSecondReply], hasMore: false, nextPage: null, nextOffset: null }
     );
-    const hook = await renderTopicController({ sourceGateway: { getReplies, getTopic } });
+    const hook = await renderTopicController({ readGateway: { getReplies, getTopic } });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(firstTopic);
@@ -511,7 +511,7 @@ describe('topic query controller', () => {
       createdAt: '2026-07-20T00:02:00.000Z'
     };
     const getReplies = jest
-      .fn<SourceGateway['getReplies']>()
+      .fn<ReadGateway['getReplies']>()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockResolvedValueOnce({
         items: [secondReply],
@@ -522,8 +522,8 @@ describe('topic query controller', () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderTopicController({
       showLinuxDoVerification,
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => linuxDetail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReplies
       }
     });
@@ -557,15 +557,15 @@ describe('topic query controller', () => {
     };
     const xiaDetail = { ...firstDetail, ...xiaTopic, replyCount: 100, replies: [] };
     const authoritativeReply = { ...firstReply, floor: 8 };
-    const getReplies = jest.fn<SourceGateway['getReplies']>(async () => ({
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
       items: [authoritativeReply],
       hasMore: false,
       nextPage: null,
       totalCount: 7
     }));
     const hook = await renderTopicController({
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => xiaDetail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => xiaDetail),
         getReplies
       }
     });
@@ -607,7 +607,7 @@ describe('topic query controller', () => {
       contentHtml: '<p>new reply</p>',
       createdAt: '2026-07-20T00:21:00.000Z'
     };
-    const getReplies = jest.fn<SourceGateway['getReplies']>(async () => ({
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
       items: [submittedReply],
       hasMore: false,
       nextPage: null,
@@ -615,8 +615,8 @@ describe('topic query controller', () => {
       totalCount: 21
     }));
     const hook = await renderTopicController({
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => detail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
         getReplies
       }
     });
@@ -658,14 +658,14 @@ describe('topic query controller', () => {
     };
     const v2exDetail = { ...firstDetail, ...v2exTopic };
     const getTopic = jest
-      .fn<SourceGateway['getTopic']>()
+      .fn<ReadGateway['getTopic']>()
       .mockResolvedValueOnce(v2exDetail)
       .mockRejectedValueOnce(new Error('V2EX refresh failed'));
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    const hook = await renderTopicController({ sourceGateway: { getTopic } });
+    const hook = await renderTopicController({ readGateway: { getTopic } });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(v2exTopic);
@@ -685,13 +685,13 @@ describe('topic query controller', () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     let attempts = 0;
-    const getTopic = jest.fn<SourceGateway['getTopic']>(async () => {
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => {
       attempts += 1;
       if (attempts === 1) throw new LinuxDoCloudflareError();
       return linuxDetail;
     });
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderTopicController({ sourceGateway: { getTopic }, showLinuxDoVerification });
+    const hook = await renderTopicController({ readGateway: { getTopic }, showLinuxDoVerification });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(linuxTopic);
@@ -710,10 +710,10 @@ describe('topic query controller', () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const quoted: Reply = { author: 'carol', floor: 2, contentHtml: '<p>quoted</p>', createdAt: '' };
-    const getReply = jest.fn<SourceGateway['getReply']>(async () => quoted);
+    const getReply = jest.fn<ReadGateway['getReply']>(async () => quoted);
     const hook = await renderTopicController({
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => linuxDetail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReply
       }
     });
@@ -758,11 +758,11 @@ describe('topic query controller', () => {
       floor: 9
     };
     const notify = jest.fn();
-    const getReply = jest.fn<SourceGateway['getReply']>(async () => acceptedReply);
+    const getReply = jest.fn<ReadGateway['getReply']>(async () => acceptedReply);
     const hook = await renderTopicController({
       notify,
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => solvedDetail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => solvedDetail),
         getReply
       }
     });
@@ -799,14 +799,14 @@ describe('topic query controller', () => {
     const solvedDetail: TopicDetail = { ...firstDetail, ...solvedTopic, replies: [], solved: true };
     const notify = jest.fn();
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const getReply = jest.fn<SourceGateway['getReply']>(async () => {
+    const getReply = jest.fn<ReadGateway['getReply']>(async () => {
       throw new LinuxDoCloudflareError();
     });
     const hook = await renderTopicController({
       notify,
       showLinuxDoVerification,
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => solvedDetail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => solvedDetail),
         getReply
       }
     });
@@ -857,7 +857,7 @@ describe('topic query controller', () => {
       };
       const notify = jest.fn();
       let replyAttempt = 0;
-      const getReply = jest.fn<SourceGateway['getReply']>(async () => {
+      const getReply = jest.fn<ReadGateway['getReply']>(async () => {
         replyAttempt += 1;
         if (replyAttempt === 1) {
           throw new Error('prefetch failed');
@@ -866,8 +866,8 @@ describe('topic query controller', () => {
       });
       const hook = await renderTopicController({
         notify,
-        sourceGateway: {
-          getTopic: jest.fn<SourceGateway['getTopic']>(async () => solvedDetail),
+        readGateway: {
+          getTopic: jest.fn<ReadGateway['getTopic']>(async () => solvedDetail),
           getReply
         }
       });
@@ -915,7 +915,7 @@ describe('topic query controller', () => {
     let quoteSignal: AbortSignal | undefined;
     let unrelatedSignal: AbortSignal | undefined;
     const getTopic = jest
-      .fn<SourceGateway['getTopic']>()
+      .fn<ReadGateway['getTopic']>()
       .mockResolvedValueOnce(firstDetail)
       .mockImplementationOnce(
         async ({ signal }) =>
@@ -924,21 +924,21 @@ describe('topic query controller', () => {
             signal?.addEventListener('abort', () => reject(new Error('detail canceled')), { once: true });
           })
       );
-    const getReplies = jest.fn<SourceGateway['getReplies']>(
+    const getReplies = jest.fn<ReadGateway['getReplies']>(
       async ({ signal }) =>
         new Promise((_resolve, reject) => {
           repliesSignal = signal;
           signal?.addEventListener('abort', () => reject(new Error('replies canceled')), { once: true });
         })
     );
-    const getReply = jest.fn<SourceGateway['getReply']>(
+    const getReply = jest.fn<ReadGateway['getReply']>(
       async ({ signal }) =>
         new Promise((_resolve, reject) => {
           quoteSignal = signal;
           signal?.addEventListener('abort', () => reject(new Error('quote canceled')), { once: true });
         })
     );
-    const hook = await renderTopicController({ sourceGateway: { getReply, getReplies, getTopic } });
+    const hook = await renderTopicController({ readGateway: { getReply, getReplies, getTopic } });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(firstTopic);
@@ -992,10 +992,10 @@ describe('topic query controller', () => {
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const quoted: Reply = { author: 'carol', floor: 2, contentHtml: '<p>quoted</p>', createdAt: '' };
     const pending = Promise.withResolvers<Reply>();
-    const getReply = jest.fn<SourceGateway['getReply']>(async () => pending.promise);
+    const getReply = jest.fn<ReadGateway['getReply']>(async () => pending.promise);
     const hook = await renderTopicController({
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => linuxDetail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReply
       }
     });
@@ -1056,7 +1056,7 @@ describe('topic query controller', () => {
       contentHtml: '<p>不应重复请求</p>',
       createdAt: ''
     };
-    const getReply = jest.fn<SourceGateway['getReply']>(async () => networkReply);
+    const getReply = jest.fn<ReadGateway['getReply']>(async () => networkReply);
     const targetTopicKey = forumQueryKeys.topic({
       source: 'linuxdo',
       topicId: cachedTarget.id,
@@ -1064,8 +1064,8 @@ describe('topic query controller', () => {
     });
     appQueryClient.setQueryData(targetTopicKey, cachedTarget);
     const hook = await renderTopicController({
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => linuxDetail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReply
       }
     });
@@ -1119,10 +1119,10 @@ describe('topic query controller', () => {
       createdAt: '',
       floor: reference.postNumber
     };
-    const getReply = jest.fn<SourceGateway['getReply']>(async () => quoted);
+    const getReply = jest.fn<ReadGateway['getReply']>(async () => quoted);
     const hook = await renderTopicController({
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async ({ id }) =>
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async ({ id }) =>
           id === parentTopic.id ? parentDetail : targetDetail
         ),
         getReply
@@ -1160,15 +1160,15 @@ describe('topic query controller', () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const getReply = jest
-      .fn<SourceGateway['getReply']>()
+      .fn<ReadGateway['getReply']>()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new Error('引用恢复网络失败'));
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderTopicController({
       showLinuxDoVerification,
-      sourceGateway: {
-        getTopic: jest.fn<SourceGateway['getTopic']>(async () => linuxDetail),
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReply
       }
     });

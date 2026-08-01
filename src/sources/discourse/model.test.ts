@@ -7,7 +7,7 @@ import {
   discoursePolls,
   discourseTopicFields,
   discourseUsersById
-} from '@/discourseModel';
+} from './model';
 
 describe('portable Discourse fields', () => {
   it('maps shared topic semantics and rejects a missing identity', () => {

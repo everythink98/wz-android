@@ -1,4 +1,4 @@
-import type { AppStyles } from '@/app/styles';
+import type { AppStyles } from './styles';
 import { useCallback, useEffect, useState, type RefObject } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -8,7 +8,7 @@ import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './
 
 import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '@/linuxdoFetchFallback';
 import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '@/nodeseekFetchFallback';
-import { isGoogleSiteSearchAccessTroubleUrl } from '@/googleSearchFallback';
+import { isGoogleSiteSearchAccessTroubleUrl } from '@/sources/searchFallback';
 
 type HiddenBrowserState = {
   linuxDo: {

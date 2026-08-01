@@ -10,7 +10,7 @@ import type {
 } from '@/domain/forum/models';
 import { accessRequirementFromNoticeText, textContentFromHtml } from '@/domain/forum/html';
 import { replyKey } from '@/feedLogic';
-import { splitDiscourseContentHtml } from '@/discourseContent';
+import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { splitTopicContentHtml } from '@/domain/forum/topicContentSplit';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { quotedPostsForSource, replyForQuotedPost, replyQuotedPostInstanceKey } from '@/domain/forum/quotedPosts';

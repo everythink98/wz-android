@@ -15,7 +15,7 @@ import {
   annotateSourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,
   sourceDiagnosticSummary
-} from '@/sourceAdapterDiagnostics';
+} from '@/sources/diagnostics';
 
 interface DirectRequestOptions {
   signal?: AbortSignal;

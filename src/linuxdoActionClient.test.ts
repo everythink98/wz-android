@@ -7,7 +7,7 @@ vi.mock('expo-secure-store', () => ({
 }));
 
 import { runLinuxDoAction } from '@/linuxdoActionClient';
-import { buildDiscourseActionRequest } from '@/discourseActions';
+import { buildDiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 
 describe('linux.do action client', () => {

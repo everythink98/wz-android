@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/discourseSourceActions';
+import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from './sourceActions';
 
 describe('Discourse source action composition', () => {
   it('uses the portable operation for standard behavior on both sites', () => {

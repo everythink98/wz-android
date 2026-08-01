@@ -97,7 +97,7 @@ import {
   DISCOURSE_CALLOUT_REGISTRY,
   isDiscourseCalloutType,
   type DiscourseCalloutFold
-} from '@/discourseContent';
+} from '@/sources/discourse/content';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 
 export async function readManagedWebViewCookieHeader(url: string) {

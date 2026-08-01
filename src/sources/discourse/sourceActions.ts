@@ -3,7 +3,7 @@ import {
   discourseImageUrlFromUploadResponse,
   type DiscourseAction,
   type DiscourseActionRequest
-} from '@/discourseActions';
+} from './actionRequest';
 import { sourceCatalog, type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import { buildXiaoyinsiActionRequest } from '@/xiaoyinsiActions';
 

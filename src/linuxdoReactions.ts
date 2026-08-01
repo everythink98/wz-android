@@ -1,4 +1,8 @@
-import { discourseReactionStats, type DiscourseEmojiUrlMap, type DiscourseReactionStat } from '@/discourseReactions';
+import {
+  discourseReactionStats,
+  type DiscourseEmojiUrlMap,
+  type DiscourseReactionStat
+} from '@/sources/discourse/reactions';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 
 export function linuxDoReactionStats(

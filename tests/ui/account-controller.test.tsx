@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import type { LinuxDoLevelProfile, SourceGateway } from '@/sources/sourceGateway';
+import type { LinuxDoLevelProfile, ReadGateway } from '@/sources/readGateway';
 import { useAccountController } from '@/app/useAccountController';
 import type { Screen } from '@/ui/navigation/types';
 import type { SiteSessionState } from '@/domain/session/siteSessionState';
@@ -31,7 +31,7 @@ function linuxDoCloudflareError(message = 'linux.do 需要完成 Cloudflare 验�
   });
 }
 
-const mockManagedLinuxDoLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>();
+const mockManagedLinuxDoLevelProfile = jest.fn<ReadGateway['getLinuxDoLevelProfile']>();
 const mountedHooks: { unmount: () => void }[] = [];
 
 async function renderAccountController(overrides: Partial<Parameters<typeof useAccountController>[0]> = {}) {
@@ -56,7 +56,7 @@ async function renderAccountController(overrides: Partial<Parameters<typeof useA
     setChecking: jest.fn() as never,
     setNodeSeekWebViewUserAgent: jest.fn() as never,
     showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
-    sourceGateway: {
+    readGateway: {
       getLinuxDoLevelProfile: mockManagedLinuxDoLevelProfile
     },
     showLoginPanelRef: ref(true),
@@ -106,11 +106,11 @@ describe('account workflows with canonical identity reconciliation', () => {
     jest.useRealTimers();
   });
 
-  it('reads linux.do level through SourceGateway with only the Query signal', async () => {
+  it('reads linux.do level through ReadGateway with only the Query signal', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest.fn(async () => profile);
     const { hook } = await renderAccountController({
-      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+      readGateway: { getLinuxDoLevelProfile: getLevelProfile }
     });
 
     let refresh!: Promise<boolean>;
@@ -133,7 +133,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     const getLevelProfile = jest.fn(async () => ({ username: 'alice' }) as LinuxDoLevelProfile);
     const { hook } = await renderAccountController({
       linuxDoIdentityPending: true,
-      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+      readGateway: { getLinuxDoLevelProfile: getLevelProfile }
     });
 
     await expect(hook.result.current.refreshLinuxDoLevel()).resolves.toBe(false);
@@ -144,13 +144,13 @@ describe('account workflows with canonical identity reconciliation', () => {
   it('[REG-LINUXDO-006] resumes the exact active Level Query once after verification', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest
-      .fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .fn<ReadGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockResolvedValueOnce(profile);
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const { hook } = await renderAccountController({
       showLinuxDoVerification,
-      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+      readGateway: { getLinuxDoLevelProfile: getLevelProfile }
     });
 
     let refresh!: Promise<boolean>;
@@ -186,7 +186,7 @@ describe('account workflows with canonical identity reconciliation', () => {
   it('[REG-LINUXDO-006] aborts Level recovery and makes it stale after leaving More', async () => {
     let recoverySignal: AbortSignal | undefined;
     const getLevelProfile = jest
-      .fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .fn<ReadGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockImplementationOnce(async ({ signal }) => {
         recoverySignal = signal;
@@ -198,7 +198,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     const overrides: Partial<Parameters<typeof useAccountController>[0]> = {
       screen: 'more' as Screen,
       showLinuxDoVerification,
-      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+      readGateway: { getLinuxDoLevelProfile: getLevelProfile }
     };
     const { hook } = await renderAccountController(overrides);
     await act(async () => {
@@ -232,14 +232,14 @@ describe('account workflows with canonical identity reconciliation', () => {
   it('[REG-VERIFICATION-001] retains Level recovery across explicit repeated checks', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest
-      .fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .fn<ReadGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockRejectedValueOnce(linuxDoCloudflareError('仍需验证'))
       .mockResolvedValueOnce(profile);
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const { hook } = await renderAccountController({
       showLinuxDoVerification,
-      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+      readGateway: { getLinuxDoLevelProfile: getLevelProfile }
     });
     await act(async () => {
       void hook.result.current.refreshLinuxDoLevel();
@@ -262,7 +262,7 @@ describe('account workflows with canonical identity reconciliation', () => {
   it('releases Level state when verification preparation is rejected', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest
-      .fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .fn<ReadGateway['getLinuxDoLevelProfile']>()
       .mockRejectedValueOnce(linuxDoCloudflareError())
       .mockResolvedValueOnce(profile);
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => Promise<boolean>>(
@@ -270,7 +270,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     );
     const { hook } = await renderAccountController({
       showLinuxDoVerification,
-      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+      readGateway: { getLinuxDoLevelProfile: getLevelProfile }
     });
 
     let first!: Promise<boolean>;

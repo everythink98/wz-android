@@ -1,6 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import type { DiscourseActionRequest } from '@/discourseActions';
+import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/linuxdoSession';
 
