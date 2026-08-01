@@ -16,6 +16,7 @@ const ALLOWED_DEPENDENCIES = {
   ui: new Set(['domain', 'platform', 'ui'])
 };
 const CODE_EXTENSIONS = ['.ts', '.tsx'];
+const METRO_RESOLUTION_EXTENSIONS = ['.android.ts', '.android.tsx', '.native.ts', '.native.tsx', ...CODE_EXTENSIONS];
 
 function normalizedPath(filePath) {
   return path.resolve(filePath).toLowerCase();
@@ -80,8 +81,8 @@ function resolveInternalModule(fromFile, specifier, srcDir, filesByPath) {
 
   const candidates = [
     basePath,
-    ...CODE_EXTENSIONS.map((extension) => `${basePath}${extension}`),
-    ...CODE_EXTENSIONS.map((extension) => path.join(basePath, `index${extension}`))
+    ...METRO_RESOLUTION_EXTENSIONS.map((extension) => `${basePath}${extension}`),
+    ...METRO_RESOLUTION_EXTENSIONS.map((extension) => path.join(basePath, `index${extension}`))
   ];
   for (const candidate of candidates) {
     const target = filesByPath.get(normalizedPath(candidate));

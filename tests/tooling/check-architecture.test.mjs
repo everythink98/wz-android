@@ -56,6 +56,21 @@ test('rejects reverse, cross-feature, and cross-provider imports', () => {
   assert.ok(codes.includes('cross-provider'));
 });
 
+test('rejects invalid source roots and barrel files', () => {
+  const srcDir = architectureFixture({
+    'domain/index.ts': 'export const model = true;',
+    'legacy/file.ts': 'export const legacy = true;',
+    'root.ts': 'export const root = true;'
+  });
+  rmSync(path.join(srcDir, 'ui'), { recursive: true });
+  const codes = analyzeArchitecture(srcDir).issues.map((issue) => issue.code);
+
+  assert.ok(codes.includes('missing-root'));
+  assert.ok(codes.includes('root-file'));
+  assert.ok(codes.includes('unexpected-root'));
+  assert.ok(codes.includes('barrel'));
+});
+
 test('enforces relative imports inside an owner and aliases across owners', () => {
   const srcDir = architectureFixture({
     'features/feed/screen.ts': 'export type Feed = { id: string };',
@@ -70,6 +85,16 @@ test('detects dependency cycles', () => {
   const srcDir = architectureFixture({
     'domain/left.ts': "import type { Right } from './right'; export type Left = Right;",
     'domain/right.ts': "import type { Left } from './left'; export type Right = Left;"
+  });
+
+  assert.equal(analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'cycle').length, 1);
+});
+
+test('resolves Metro platform files before generic modules', () => {
+  const srcDir = architectureFixture({
+    'domain/left.ts': "import type { Right } from './right'; export type Left = Right;",
+    'domain/right.ts': 'export type Right = { id: string };',
+    'domain/right.android.ts': "import type { Left } from './left'; export type Right = Left;"
   });
 
   assert.equal(analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'cycle').length, 1);

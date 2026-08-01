@@ -43,7 +43,7 @@
 - App 支持 NodeSeek、linux.do、V2EX、妖火和小隐寺；五站共享阅读主干，互动能力按原站真实支持范围提供。
 - App 的读取 controller 统一经 `src/sources/readGateway.ts` 进入来源层；写操作目前由 `src/features/topic/actions/useTopicActionsController.ts` 按 capability 调用各站 action client。
 - NodeSeek、linux.do、妖火 Cookie 只由网站 WebView 与 Android `CookieManager` 持有；小隐寺 User API Key / Client ID、保存的账号密码和服务器代理配置使用 SecureStore；小隐寺 RSA 私钥只存在 Android Keystore。以上敏感材料都不进入备份 JSON，代理启用失败不能静默直连。
-- `App.tsx` 是真实 Expo bootstrap；内部模块不保留旧路径 re-export 或纯转发 facade。
+- `App.tsx` 是真实 Expo bootstrap。
 - `android/` 是生成目录；长期原生配置只改 `app.json` 与 `plugins/`。
 - 模拟器验收不得卸载 App、清 App 数据、Cookie 或登录态；默认覆盖安装并 force-stop 后重启。
 - 未经明确授权，不执行真实回复、编辑、删除、上传、点赞、投票或收藏切换。

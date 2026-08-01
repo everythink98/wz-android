@@ -46,7 +46,6 @@
 - App controller 使用不带 `Direct` 和站点前缀的通用读取入口；妖火的 `Direct` 命名只保留在 gateway 后的来源实现。
 - `readGateway` 内部仍转发到 `src/sources/aggregateRead.ts` 和 `src/sources/yaohuo/reader.ts`；Discourse adapter 注册集中在 `discourseRead` / `discourseActions`。
 - `src/sources/aggregateRead.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
-- 新增读取调用方应使用 `readGateway`，不要在 `src/features/<journey>/use*Controller.ts` 里新增对具体 provider reader 的直接调用；新增写操作复用现有 action client，并按触及路径逐项收口。
 - 来源静态 capability 只说明该站可能支持某项能力；当前主题或回复的 `canEdit`、`canDelete` 等权限仍以原站解析结果为准。
 
 ## 服务器状态与请求生命周期
@@ -164,7 +163,7 @@
 
 ## 稳定入口与生成边界
 
-- `App.tsx` 是真实 Expo bootstrap；`src/app/AppRoot.tsx` 是组合根。内部模块一次性迁移调用方，不保留旧路径 re-export 或纯转发 facade。
+- `App.tsx` 是真实 Expo bootstrap；`src/app/AppRoot.tsx` 是组合根。
 - `android/` 是生成目录；Android 长期配置通过 `app.json` 与 `plugins/` 持久化。
 - 不改变备份 JSON version、安全存储键、Cookie、User API Key、代理、签名或更新 manifest 的既有可信字段，除非有单独迁移方案和兼容验证。Release manifest 可附加 provenance 字段，但更新检查仍只信任原有签名、包名、版本与 APK hash。
 - 正式发布要求 Node 22 与 clean Git tree；`.env.release.local` 只解析到局部 allowlist，普通子进程显式移除四个签名变量，只有最终正式 `assembleRelease` 注入。clean prebuild 使用 `--no-install`，随后以无签名环境执行 Release unit test 与 Kotlin compile，再生成签名 APK。manifest 记录 Git、package-lock、Node/npm/Java/Gradle 与 ABI 来源；Java provenance 只接受输出中唯一完整的 `openjdk version "…"` 或 `java version "…"` 行，零匹配或多匹配以不回显原始输出的通用 preflight 错误中止。目标是可追踪，不宣称字节级可复现。见 `REG-OPS-015/016`。

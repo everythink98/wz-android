@@ -46,14 +46,7 @@ module.exports = defineConfig([
       'src/features/topic/components/ReplyItem.tsx',
       'src/features/topic/composer/ReplyComposer.tsx',
       'src/features/user/UserScreen.tsx',
-      'src/ui/content/ForumContentVideo.tsx',
-      'src/screens/LibraryScreen.tsx',
-      'src/screens/SearchScreen.tsx',
-      'src/screens/UserScreen.tsx',
-      'src/screens/more/MorePanels.tsx',
-      'src/screens/topic/ReplyComposer.tsx',
-      'src/screens/topic/ReplyItem.tsx',
-      'src/screens/topic/TopicScreenBody.tsx'
+      'src/ui/content/ForumContentVideo.tsx'
     ],
     rules: {
       'react-hooks/exhaustive-deps': 'off'

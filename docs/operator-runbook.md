@@ -72,9 +72,7 @@ npm run test:device:logged-out
 - release 包应为 `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`。
 - release 脚本生成 APK 后会校验签名，并打印 APK SHA-256；manifest 在既有签名、版本与 APK SHA-256 外记录 `gitSha`、`packageLockSha256`、Node/npm/Java/Gradle 版本和 built ABIs。Java 版本只取 `java -version` 输出中唯一完整的 `openjdk version "…"` 或 `java version "…"` 行；`JAVA_TOOL_OPTIONS`/`JDK_JAVA_OPTIONS` 提示不进入 manifest，零匹配或多匹配时以不回显原始输出的通用 preflight 错误停止。这些字段用于 provenance，不代表字节级可复现。发布说明只记录 APK SHA-256，不记录签名 SHA-256。
 - GitHub Release 必须同时上传 `app-arm64-v8a-release.apk` 和 `release-manifest.json`；App 更新检查依赖 `release-manifest.json`。
-- 首页、搜索、详情、回复和用户页的 controller 不应直接 import 具体 provider reader，应通过 `src/sources/readGateway.ts`；已有互动 action client 按触及路径逐项迁移，不改变请求格式。
-- `App.tsx` 应保持入口职责，不承载 WebView、Cookie、来源读取和业务回调。
-- 内部模块移动时一次性更新调用方；不得新增旧路径 re-export 或纯转发 facade。
+- 代码 ownership、import 和 facade 约束见 `docs/code-standards.md`。
 - More 页只有一个 `账号中心`：统一显示四个可登录来源的状态和当前身份；自动填入仍只服务原三站，小隐寺只提供 Device Code 授权 / 重新授权 / 撤销授权，并提供公共 `刷新账号状态`；App 内没有伪匿名测试入口，代理、诊断、备份和外观保持独立。
 - More 页 `服务器代理` 支持 HTTP / SOCKS5；启用失败时网络请求不应静默直连。
 - WebView localhost relay 只允许 HTTP 80 与 HTTPS CONNECT 443，并固定连接、header 与共享双向 idle deadline 上限；任一方向读到字节都会续期，只有整个 tunnel 双向静默才超时。connection worker 必须用剩余 deadline 等待 copy task，阻塞写到期后由关闭双方 socket 解开；`Socket.soTimeout` 只唤醒读侧。非 CONNECT HTTP 必须只转发首个、由唯一 `Content-Length` 定长的 request body，拒绝 `Transfer-Encoding`、歧义长度、非标准 numeric IPv4 和 IPv4-compatible/mapped IPv6，且不得复用 client socket 透传后续请求。普通 `ServerSocket` 不能可靠证明 caller UID，因此同设备恶意 App 与 hostname DNS rebinding 仍是明确残余风险，不得把随机端口或 timeout 宣称为同-App认证。验证只连接测试进程内 fake upstream；禁止端口扫描、跨 App 探测与公网代理压测。
