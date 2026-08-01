@@ -1,4 +1,4 @@
-import type { TopicStyles } from '@/features/topic/styles';
+import type { TopicStyles } from '../styles';
 import { Modal, Pressable, Text, View } from 'react-native';
 import { ExternalLink, RefreshCw, Settings, Share2 } from 'lucide-react-native';
 import { type ReaderTheme } from '@/ui/theme/tokens';

@@ -1,7 +1,7 @@
 import Anser from 'anser';
 import { parse, type HTMLElement } from 'node-html-parser';
 import { accessRequirementLevelValue } from './presentation';
-import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from '@/nsVideoEmbeds';
+import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
 import type { AccessRequirement } from './models';
 
 export const FORUM_VIDEO_TAG = 'forum-video';

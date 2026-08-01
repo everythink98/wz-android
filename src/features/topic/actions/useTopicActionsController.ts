@@ -38,7 +38,7 @@ import {
   type OptimisticActionState
 } from '@/domain/forum/topicActionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
-import type { ReplyEditTarget, TopicRepliesRefreshOptions } from '@/features/topic/model/types';
+import type { ReplyEditTarget, TopicRepliesRefreshOptions } from '../model/types';
 import { topicKey } from '@/domain/reader/readerData';
 import type { Fetcher } from '@/platform/network/request';
 import { errorMessage } from '@/platform/network/errors';
@@ -60,7 +60,7 @@ import {
   withDiagnosticFetcher,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
-import type { TopicSessionController } from './useTopicSessionController';
+import type { TopicSessionController } from '../useTopicSessionController';
 import { forumMutationKeys, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeDependencies } from './discourseActionRuntime';
@@ -77,7 +77,7 @@ import {
   topicReplyActionKey,
   yaohuoFavoriteActionKey,
   YAOHUO_DEFAULT_CLASS_ID
-} from './topicActionControllerHelpers';
+} from './actionHelpers';
 import {
   WritableSessionBlockedError,
   type WritableSessionReconcileResult,

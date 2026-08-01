@@ -1,4 +1,4 @@
-import type { TopicStyles } from '@/features/topic/styles';
+import type { TopicStyles } from '../styles';
 import { memo, useCallback, useMemo } from 'react';
 import { Pressable, Text, ToastAndroid, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
@@ -39,11 +39,11 @@ import { AppButton, triggerPressFeedback } from '@/ui/controls/AppControls';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import type { InteractionType, TopicActionStateKind } from '@/domain/forum/topicActionState';
-import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '@/features/topic/model/topicDerivedData';
-import { TopicPolls } from '@/screens/topic/TopicPolls';
-import { DetailActionButton } from '@/screens/topic/TopicActionBar';
-import { MemoizedTopicContentBlock } from '@/screens/topic/TopicContentBlock';
-import { getReplyKey, stableTextHash, type TopicListItem } from '@/screens/topic/topicScreenHelpers';
+import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../model/topicDerivedData';
+import { TopicPolls } from './TopicPolls';
+import { DetailActionButton } from './TopicActionBar';
+import { MemoizedTopicContentBlock } from './TopicContentBlock';
+import { getReplyKey, stableTextHash, type TopicListItem } from '../model/screenHelpers';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 
 type NodeSeekStat = { label: string; value: number };

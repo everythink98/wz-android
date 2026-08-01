@@ -35,7 +35,7 @@ import type {
 } from '@/domain/session/sessionContracts';
 import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from '@/features/feed/useFeedController';
-import { useHtmlRenderingController } from './useHtmlRenderingController';
+import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
 import {
   AppNavigator,
@@ -50,22 +50,22 @@ import {
   type MainTabParamList,
   type TopicRouteRenderRequest
 } from './AppNavigator';
-import { useImagePreviewController } from './useImagePreviewController';
+import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { useSearchController } from '@/features/search/useSearchController';
 import { useSessionController } from './useSessionController';
 import { useNetworkProxyController } from './useNetworkProxyController';
-import { useTopicController } from './useTopicController';
-import { filterTopicSessionReplies, useTopicSessionController } from './useTopicSessionController';
+import { useTopicController } from '@/features/topic/useTopicController';
+import { filterTopicSessionReplies, useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useUserController } from '@/features/user/useUserController';
 import { useLinuxDoIdentityVerificationPrompt, useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
-import { useTopicActionsController } from './useTopicActionsController';
+import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
 import { useNodeImageAuthController } from './useNodeImageAuthController';
 import { takeNodeSeekVerificationRetry, type NodeSeekVerificationRetry } from './sessionControllerHelpers';
-import { markCurrentNodeSeekOwnRepliesUnlikable } from './topicActionControllerHelpers';
-import { shareTopicWithClipboardFallback } from './topicActionHelpers';
+import { markCurrentNodeSeekOwnRepliesUnlikable } from '@/features/topic/actions/actionHelpers';
+import { shareTopicWithClipboardFallback } from '@/features/topic/shareTopic';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
@@ -104,9 +104,9 @@ import { LibraryScreen } from '@/features/library/LibraryScreen';
 import { MoreScreen } from '@/screens/MoreScreen';
 import { AppearancePanel } from '@/screens/more/MorePanels';
 import { SearchScreen } from '@/features/search/SearchScreen';
-import { TopicScreen, YaohuoFavoriteStateProvider } from '@/screens/TopicScreen';
+import { TopicScreen, YaohuoFavoriteStateProvider } from '@/features/topic/TopicScreen';
 import { LoadingState } from '@/ui/controls/AppControls';
-import { hasSameYaohuoTopicLayout } from '@/screens/topic/topicScreenHelpers';
+import { hasSameYaohuoTopicLayout } from '@/features/topic/model/screenHelpers';
 import { UserScreen } from '@/features/user/UserScreen';
 import { isSessionSource } from '@/domain/forum/sourceCatalog';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';

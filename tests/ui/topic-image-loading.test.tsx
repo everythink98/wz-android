@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { NativeModules, StyleSheet, Text } from 'react-native';
-import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
+import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';

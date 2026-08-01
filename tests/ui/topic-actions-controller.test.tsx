@@ -17,7 +17,7 @@ jest.mock('@/sources/yaohuo/actionClient', () => ({
   runYaohuoAction: jest.fn()
 }));
 
-jest.mock('@/app/discourseActionRuntime', () => ({
+jest.mock('@/features/topic/actions/discourseActionRuntime', () => ({
   prepareDiscourseActionRuntime: jest.fn()
 }));
 
@@ -43,10 +43,13 @@ jest.mock('@/platform/network/managedCookies', () => ({
 
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actionClient';
-import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeRecovery } from '@/app/discourseActionRuntime';
+import {
+  prepareDiscourseActionRuntime,
+  type DiscourseActionRuntimeRecovery
+} from '@/features/topic/actions/discourseActionRuntime';
 import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
-import { useTopicActionsController } from '@/app/useTopicActionsController';
-import { useTopicSessionController } from '@/app/useTopicSessionController';
+import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
+import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';

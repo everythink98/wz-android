@@ -4,12 +4,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ReplyFilter } from '@/features/topic/model/types';
-import { filterTopicSessionReplies } from '@/app/useTopicSessionController';
-import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
+import { filterTopicSessionReplies } from '@/features/topic/useTopicSessionController';
+import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { discoursePollPlaceholder } from '@/sources/discourse/content';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { TopicScreen, YaohuoFavoriteStateProvider } from '@/screens/topic/TopicScreenBody';
+import { TopicScreen, YaohuoFavoriteStateProvider } from '@/features/topic/TopicScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
@@ -133,7 +133,7 @@ jest.mock('@/domain/forum/topicContentSplit', () => {
     }
   };
 });
-jest.mock('@/screens/topic/TopicActionBar', () => {
+jest.mock('@/features/topic/components/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
@@ -166,7 +166,7 @@ jest.mock('@/screens/topic/TopicActionBar', () => {
       )
   };
 });
-jest.mock('@/screens/topic/TopicContentBlock', () => {
+jest.mock('@/features/topic/components/TopicContentBlock', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
@@ -217,7 +217,7 @@ jest.mock('@/screens/topic/TopicContentBlock', () => {
     }
   };
 });
-jest.mock('@/screens/topic/TopicPolls', () => {
+jest.mock('@/features/topic/components/TopicPolls', () => {
   const ReactModule = require('react') as typeof React;
   const {
     Pressable: NativePressable,
@@ -259,9 +259,9 @@ jest.mock('@/screens/topic/TopicPolls', () => {
     }
   };
 });
-jest.mock('@/screens/topic/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
-jest.mock('@/screens/topic/TopicMenu', () => ({ TopicMenu: () => null }));
-jest.mock('@/screens/topic/ReplyItem', () => {
+jest.mock('@/features/topic/components/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
+jest.mock('@/features/topic/components/TopicMenu', () => ({ TopicMenu: () => null }));
+jest.mock('@/features/topic/components/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {

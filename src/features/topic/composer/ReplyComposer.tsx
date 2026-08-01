@@ -1,10 +1,10 @@
-import type { TopicStyles } from '@/features/topic/styles';
+import type { TopicStyles } from '../styles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Pressable, Text, View } from 'react-native';
 import { BottomSheetFlatList, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { Image as ExpoImage } from 'expo-image';
 import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
-import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
+import type { ReplyEditTarget, ReplyTarget } from '../model/types';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/AppControls';
 import type { Source } from '@/domain/forum/models';
@@ -18,13 +18,13 @@ import {
   replaceReplyComposerSelection,
   type ReplyComposerAccessory,
   type ReplyComposerFormatAction
-} from '@/screens/topic/replyComposerFormatting';
+} from './formatting';
 import {
   discourseEmojiCatalogFromUrlMap,
   NODESEEK_STICKER_CATEGORIES,
   YAOHUO_FACE_ITEMS,
   type ReplyComposerInsertExpression
-} from '@/screens/topic/replyComposerExpressionCatalogs';
+} from './expressionCatalogs';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 

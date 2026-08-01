@@ -27,7 +27,7 @@ import { triggerPressFeedback } from '@/ui/controls/AppControls';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { Screen } from '@/ui/navigation/types';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
-import type { TopicListItem } from '@/screens/TopicScreen';
+import type { TopicListItem } from '@/features/topic/TopicScreen';
 import type { Source } from '@/domain/forum/models';
 
 export type MainTabParamList = {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/nsVideoEmbeds';
+import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from './videoEmbeds';
 
 describe('NodeSeek video embeds', () => {
   it('builds Bilibili player URLs from NodeSeek-supported video links', () => {

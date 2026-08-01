@@ -6,7 +6,7 @@ import {
   hasSameYaohuoTopicLayout,
   topicListItemSpacing,
   type TopicListItem
-} from '@/screens/topic/topicScreenHelpers';
+} from './screenHelpers';
 import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 

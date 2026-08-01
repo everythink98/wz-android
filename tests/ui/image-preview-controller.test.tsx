@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 import { PixelRatio } from 'react-native';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
-import { useImagePreviewController } from '@/app/useImagePreviewController';
+import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 
 const mockSaveImageUriToLibrary = jest.fn<(...args: unknown[]) => Promise<void>>();
 

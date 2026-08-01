@@ -1,5 +1,5 @@
 import { topicKey } from '@/domain/reader/readerData';
-import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from '@/features/topic/model/types';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from './types';
 import type { Topic } from '@/domain/forum/models';
 
 export type TopicSession = {

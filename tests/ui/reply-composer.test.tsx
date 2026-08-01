@@ -5,7 +5,7 @@ import { Pressable, Text, View } from 'react-native';
 import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { ReplyComposer } from '@/screens/topic/ReplyComposer';
+import { ReplyComposer } from '@/features/topic/composer/ReplyComposer';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from './styleFixture';
 import type { Source } from '@/domain/forum/models';

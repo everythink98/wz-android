@@ -1,13 +1,13 @@
 import { memo, useMemo } from 'react';
 import { RenderHTMLSource } from 'react-native-render-html';
 import { flowInlineImagesInMixedParagraphs } from '@/platform/media/htmlImages';
-import { HTML_REPLY_CONTENT_CLASS, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from '@/features/topic/rendering/htmlStyles';
+import { HTML_REPLY_CONTENT_CLASS, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from '../rendering/htmlStyles';
 import { markNodeSeekReplyReferenceLinks, normalizeRenderableHtml } from '@/domain/forum/topicContentHtml';
 import {
   sameInlineSizedImagesForHtml,
   type InlineSizedImageUrlMap,
   type TopicImageDeriver
-} from '@/features/topic/model/topicDerivedData';
+} from '../model/topicDerivedData';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 
 export function TopicContentBlock({

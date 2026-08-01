@@ -7,7 +7,7 @@ import {
   type ImageDisplaySize,
   type ImagePreviewList
 } from '@/platform/media/htmlImages';
-import type { TopicImageDeriver } from '@/features/topic/model/topicDerivedData';
+import type { TopicImageDeriver } from '../model/topicDerivedData';
 import { errorMessage } from '@/platform/network/errors';
 import { saveImageUriToLibrary } from '@/platform/media/imageSave';
 import type { Fetcher } from '@/platform/network/request';

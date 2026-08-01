@@ -13,7 +13,13 @@ describe('WebView proxy guard', () => {
     const appRoot = readSource('src', 'app', 'AppRoot.tsx');
     const hiddenBrowserHost = readSource('src', 'app', 'HiddenBrowserHost.tsx');
     const globalModalHost = readSource('src', 'app', 'GlobalModalHost.tsx');
-    const htmlRenderingController = readSource('src', 'app', 'useHtmlRenderingController.tsx');
+    const htmlRenderingController = readSource(
+      'src',
+      'features',
+      'topic',
+      'rendering',
+      'useHtmlRenderingController.tsx'
+    );
     const morePanels = readSource('src', 'screens', 'more', 'MorePanels.tsx');
 
     expect(appRoot).toContain('const networkProxyWebViewBlockMessage =');

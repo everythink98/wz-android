@@ -1,13 +1,13 @@
-import type { TopicStyles } from '@/features/topic/styles';
+import type { TopicStyles } from '../styles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, useWindowDimensions } from 'react-native';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView, type BottomSheetBackdropProps } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
+import type { ReplyEditTarget, ReplyTarget } from '../model/types';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import type { Source } from '@/domain/forum/models';
-import { ReplyComposer } from '@/screens/topic/ReplyComposer';
+import { ReplyComposer } from '../composer/ReplyComposer';
 
 export function ReplyComposerSheet({
   actionBusy,

@@ -28,7 +28,7 @@ import {
   type IMGElementProps
 } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
+import { createTopicImageDeriver } from '../model/topicDerivedData';
 import {
   imageSourceFromUrl,
   imageRequestHeadersForUrl,
@@ -48,12 +48,12 @@ import {
   type ImageDisplayCandidateKind,
   type ImageDisplaySize
 } from '@/platform/media/htmlImages';
-import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/nsVideoEmbeds';
+import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/domain/forum/videoEmbeds';
 import { parseForumTopicLink, parseForumUserLink } from '@/domain/forum/links';
 import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
 import type { Topic, TopicDetail, UserReference } from '@/domain/forum/models';
-import type { HtmlRenderers, HtmlRenderersProps } from '@/features/topic/rendering/types';
-import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from '@/features/topic/rendering/htmlStyles';
+import type { HtmlRenderers, HtmlRenderersProps } from './types';
+import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from './htmlStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import {
   FORUM_LINK_CARD_TAG,
@@ -64,7 +64,7 @@ import {
 } from '@/domain/forum/html';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { ForumCallout } from '@/ui/content/ForumCallout';
-import { hasSameYaohuoTopicLayout } from '@/screens/topic/topicScreenHelpers';
+import { hasSameYaohuoTopicLayout } from '../model/screenHelpers';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,

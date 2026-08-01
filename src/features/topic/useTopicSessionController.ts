@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createReplyTextIndexForQuery, filterRepliesByQuery } from '@/features/topic/model/replySearch';
-import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from '@/features/topic/model/types';
+import { createReplyTextIndexForQuery, filterRepliesByQuery } from './model/replySearch';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
-import {
-  filterRepliesWithImages,
-  type InlineSizedImageUrlMap,
-  type TopicImageDeriver
-} from '@/features/topic/model/topicDerivedData';
+import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from './model/topicDerivedData';
 import {
   createEmptyTopicSession,
   createInactiveTopicSession,
@@ -17,7 +13,7 @@ import {
   saveTopicRouteSnapshot,
   snapshotFromTopicSession,
   topicSessionFromSnapshot
-} from '@/topicSessionState';
+} from './model/sessionState';
 import type { Reply, Topic, TopicDetail } from '@/domain/forum/models';
 
 export function replyContentAfterComposerClose(content: string, replyEditTarget: ReplyEditTarget | null) {

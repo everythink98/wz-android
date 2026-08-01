@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { shareTopicWithClipboardFallback } from './topicActionHelpers';
+import { shareTopicWithClipboardFallback } from './shareTopic';
 
 describe('topic action helpers', () => {
   it('REG-TOPIC-017 consumes a clipboard fallback failure and tells the user', async () => {

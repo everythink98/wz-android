@@ -10,13 +10,9 @@ import {
 } from '@/domain/reader/readerData';
 import { isSameReply, mergeReplies, removeReply, replyKey as replyIdentityKey } from '@/domain/forum/feed';
 import { isCanceledRequest } from '@/platform/network/errors';
-import {
-  replyCountAfterNewReplySubmit,
-  replyLoadMoreLimit,
-  replyRefreshTarget
-} from '@/features/topic/model/replyPagination';
+import { replyCountAfterNewReplySubmit, replyLoadMoreLimit, replyRefreshTarget } from './model/replyPagination';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
-import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './topicActionControllerHelpers';
+import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './actions/actionHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
 import {
   sourceErrorFromUnknown,
@@ -25,7 +21,7 @@ import {
 } from '@/sources/sourceErrors';
 import type { RepliesResponse, Reply, Source, SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
 import type { Screen } from '@/ui/navigation/types';
-import type { TopicRepliesRefreshOptions } from '@/features/topic/model/types';
+import type { TopicRepliesRefreshOptions } from './model/types';
 import {
   quotedPostReferenceKey,
   quotedPostsForSource,

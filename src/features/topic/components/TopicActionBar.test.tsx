@@ -77,7 +77,7 @@ describe('Android topic action buttons', () => {
   const Icon = () => null;
 
   it('keeps compact reply actions labeled with short counts and accessibility labels', async () => {
-    const { DetailActionButton } = await import('@/screens/topic/TopicActionBar');
+    const { DetailActionButton } = await import('./TopicActionBar');
 
     const element = DetailActionButton({
       accessibilityLabel: '点赞',
@@ -97,7 +97,7 @@ describe('Android topic action buttons', () => {
   });
 
   it('keeps favorite actions yellow instead of using the black primary color', async () => {
-    const { DetailActionButton } = await import('@/screens/topic/TopicActionBar');
+    const { DetailActionButton } = await import('./TopicActionBar');
 
     const element = DetailActionButton({
       accessibilityLabel: '已收藏',

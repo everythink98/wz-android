@@ -1,4 +1,4 @@
-import type { TopicStyles } from '@/features/topic/styles';
+import type { TopicStyles } from '../styles';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';

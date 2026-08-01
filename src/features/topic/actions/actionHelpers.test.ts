@@ -8,7 +8,7 @@ import {
   topicPollVoteActionKey,
   topicReplyActionKey,
   yaohuoFavoriteActionKey
-} from './topicActionControllerHelpers';
+} from './actionHelpers';
 import type { Reply, UserProfile } from '@/domain/forum/models';
 
 describe('topic action controller helpers', () => {

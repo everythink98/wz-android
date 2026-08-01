@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  NODESEEK_STICKER_CATEGORIES,
-  YAOHUO_FACE_ITEMS,
-  discourseEmojiCatalogFromUrlMap
-} from '@/screens/topic/replyComposerExpressionCatalogs';
+import { NODESEEK_STICKER_CATEGORIES, YAOHUO_FACE_ITEMS, discourseEmojiCatalogFromUrlMap } from './expressionCatalogs';
 
 describe('reply composer expression catalogs', () => {
   it('keeps NodeSeek sticker categories aligned with the original composer groups', () => {

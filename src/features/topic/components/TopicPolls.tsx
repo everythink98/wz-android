@@ -1,4 +1,4 @@
-import type { TopicStyles } from '@/features/topic/styles';
+import type { TopicStyles } from '../styles';
 import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
