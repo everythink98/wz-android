@@ -1,4 +1,4 @@
-import { absoluteUrl } from './localHtml';
+import { absoluteUrl } from '@/domain/forum/html';
 
 export const V2EX_BASE_URL = 'https://www.v2ex.com';
 export const SOV2EX_URL = 'https://www.sov2ex.com';

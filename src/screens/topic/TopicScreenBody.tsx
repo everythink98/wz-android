@@ -45,35 +45,41 @@ import {
   ThumbsUp,
   X
 } from 'lucide-react-native';
-import type { Reply, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserReference } from '../../types';
+import type {
+  Reply,
+  Source,
+  SourceErrorInfo,
+  Topic,
+  TopicDetail,
+  TopicPoll,
+  UserReference
+} from '@/domain/forum/models';
 import type {
   HtmlBaseStyle,
   HtmlClassesStyles,
   HtmlIgnoredStyles,
   HtmlRenderers,
   HtmlRenderersProps,
-  HtmlTagsStyles,
-  ReplyEditTarget,
-  ReplyFilter,
-  ReplyTarget
-} from '../../appTypes';
-import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
-import { HTML_ALLOWED_INLINE_STYLES, trimsTrailingBlockSpacing } from '../../htmlRenderingStyles';
+  HtmlTagsStyles
+} from '@/features/topic/rendering/types';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from '@/features/topic/model/types';
+import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
+import { HTML_ALLOWED_INLINE_STYLES, trimsTrailingBlockSpacing } from '@/htmlRenderingStyles';
 import {
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
   FORUM_STICKER_TAG,
   INLINE_FORUM_IMAGE_TAG
-} from '../../htmlImages';
+} from '@/platform/media/htmlImages';
 import {
   FORUM_LINK_CARD_TAG,
   FORUM_TERMINAL_REPORT_TAG,
   FORUM_TERMINAL_TAB_TAG,
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG
-} from '../../localHtml';
-import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
-import { forumVideoBlockFromHtml, splitTopicContentHtml } from '../../topicContentSplit';
+} from '@/domain/forum/html';
+import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
+import { forumVideoBlockFromHtml, splitTopicContentHtml } from '@/domain/forum/topicContentSplit';
 import {
   androidRipple,
   createStyles,
@@ -84,7 +90,7 @@ import {
   topicTagColorStyle,
   topicTagTextColorStyle,
   type ReaderTheme
-} from '../../theme';
+} from '@/theme';
 import {
   AppButton,
   EmptyText,
@@ -92,25 +98,25 @@ import {
   LoadingState,
   PillRail,
   triggerPressFeedback
-} from '../../components/AppControls';
-import { Avatar } from '../../components/Avatar';
-import { ForumContentVideo } from '../../components/ForumContentVideo';
-import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
-import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
+} from '@/components/AppControls';
+import { Avatar } from '@/components/Avatar';
+import { ForumContentVideo } from '@/components/ForumContentVideo';
+import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavigation';
 import {
   topicActionStateKey,
   type InteractionType,
   type OptimisticActionState,
   type TopicActionStateKind
-} from '../../topicActionState';
-import type { TopicImageDeriver } from '../../topicDerivedData';
-import { authNoticeForSourceError } from '../../siteSessionPrompts';
-import { splitDiscourseContentHtml } from '../../discourseContent';
-import { NODESEEK_POLL_PLACEHOLDER_TAG } from '../../nodeseekPolls';
-import { discourseReactionStats, type DiscourseEmojiUrlMap } from '../../discourseReactions';
-import { linuxDoReactionStats } from '../../linuxdoReactions';
-import { canToggleDiscourseLike } from '../../discoursePermissions';
-import { replyImageUploadSupported } from '../../replyImageUpload';
+} from '@/domain/forum/topicActionState';
+import type { TopicImageDeriver } from '@/features/topic/model/topicDerivedData';
+import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
+import { splitDiscourseContentHtml } from '@/discourseContent';
+import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/nodeseekPolls';
+import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/discourseReactions';
+import { linuxDoReactionStats } from '@/linuxdoReactions';
+import { canToggleDiscourseLike } from '@/discoursePermissions';
+import { replyImageUploadSupported } from '@/replyImageUpload';
 import {
   discourseQuotedPostReferenceFromAttributes,
   quotedPostReferenceKey,
@@ -119,20 +125,25 @@ import {
   topicQuotedPostInstanceKey,
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
-} from '../../quotedPosts';
+} from '@/domain/forum/quotedPosts';
 import {
   isDiscourseSource,
   sourceSupportsTopicAction,
   sourceUsesTopicCreatePermission,
   type DiscourseSource
-} from '../../sourceCatalog';
-import { TopicPolls } from './TopicPolls';
-import { DetailActionButton } from './TopicActionBar';
-import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
-import { MemoizedTopicContentBlock } from './TopicContentBlock';
-import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
-import { ReplyComposerSheet } from './ReplyComposerSheet';
-import { TopicMenu } from './TopicMenu';
+} from '@/domain/forum/sourceCatalog';
+import { TopicPolls } from '@/screens/topic/TopicPolls';
+import { DetailActionButton } from '@/screens/topic/TopicActionBar';
+import { TopicBodyQuoteCard } from '@/screens/topic/TopicBodyQuoteCard';
+import { MemoizedTopicContentBlock } from '@/screens/topic/TopicContentBlock';
+import {
+  DiscourseReactionPill,
+  MemoizedReplyItem,
+  NodeSeekStatPill,
+  nodeSeekTopicReactionStats
+} from '@/screens/topic/ReplyItem';
+import { ReplyComposerSheet } from '@/screens/topic/ReplyComposerSheet';
+import { TopicMenu } from '@/screens/topic/TopicMenu';
 import {
   buildReplyListItems,
   buildVirtualizedReplyItems,
@@ -142,7 +153,7 @@ import {
   topicListItemSpacing,
   topicStatusBadges,
   type TopicListItem as ReplyTopicListItem
-} from './topicScreenHelpers';
+} from '@/screens/topic/topicScreenHelpers';
 
 type YaohuoFavoriteState = {
   bookmarked?: boolean;

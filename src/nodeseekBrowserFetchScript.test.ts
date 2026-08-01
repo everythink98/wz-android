@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './app/useHiddenBrowserFetchController';
+import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from '@/app/useHiddenBrowserFetchController';
 
 function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'account') {
   window.history.pushState(null, '', url);

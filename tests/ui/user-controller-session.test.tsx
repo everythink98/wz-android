@@ -1,19 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import {
-  appQueryClient,
-  initialForumSessionEpochs,
-  type ForumIdentityBarrierSource,
-  type ForumSessionEpochs
-} from '../../src/app/serverState';
-import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
-import { useUserController } from '../../src/app/useUserController';
-import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
-import { LinuxDoCloudflareError } from '../../src/cloudflareChallenge';
-import { createEmptyReaderData } from '../../src/readerData';
-import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
-import type { SourceGateway } from '../../src/sources/sourceGateway';
-import type { UserProfile, UserReference } from '../../src/types';
+import { appQueryClient, type ForumIdentityBarrierSource } from '@/app/serverState';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { resetForumSourceQueries } from '@/app/sessionControllerHelpers';
+import { useUserController } from '@/app/useUserController';
+import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
+import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import type { SourceGateway } from '@/sources/sourceGateway';
+import type { UserProfile, UserReference } from '@/domain/forum/models';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 function renderHook<Result>(callback: () => Result) {

@@ -1,11 +1,11 @@
-import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
+import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import {
   isGoogleSiteSearchNavigationUrl,
   isGoogleSiteSearchUrl,
   isSameGoogleSiteSearchUrl
-} from './googleSearchFallback';
-import { browserFetchIntentFromInit } from './browserFetchIntent';
-import { cancelRequestTimeoutForFallback, type Fetcher } from './request';
+} from '@/googleSearchFallback';
+import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import { cancelRequestTimeoutForFallback, type Fetcher } from '@/platform/network/request';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -13,7 +13,7 @@ import {
   markDiagnosticStage,
   normalizeDiagnosticReason,
   registerDiagnosticContextFetcher
-} from './diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 
 export type LinuxDoHiddenBrowserFailureReason =
   'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';

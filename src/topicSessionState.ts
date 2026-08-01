@@ -1,6 +1,6 @@
-import { topicKey } from './readerData';
-import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from './appTypes';
-import type { Topic } from './types';
+import { topicKey } from '@/domain/reader/readerData';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from '@/features/topic/model/types';
+import type { Topic } from '@/domain/forum/models';
 
 export type TopicSession = {
   key: string;

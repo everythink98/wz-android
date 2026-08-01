@@ -7,10 +7,15 @@ import type {
   SearchResponse,
   Source,
   Topic
-} from '../types';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
-import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import { getYaohuoTopicDirect } from '../yaohuoApi';
+} from '@/domain/forum/models';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  setDiagnosticWriter
+} from '@/platform/diagnostics/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { getYaohuoTopicDirect } from '@/yaohuoApi';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -56,12 +61,12 @@ vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn()
 }));
-vi.mock('../forumApi', () => forumMocks);
-vi.mock('../localLinuxdo', () => linuxDoMocks);
-vi.mock('../localNodeseek', () => nodeSeekMocks);
-vi.mock('../linuxdoLevel', () => linuxDoLevelMocks);
-vi.mock('../localXiaoyinsi', () => xiaoyinsiMocks);
-vi.mock('../yaohuoApi', () => ({
+vi.mock('@/forumApi', () => forumMocks);
+vi.mock('@/localLinuxdo', () => linuxDoMocks);
+vi.mock('@/localNodeseek', () => nodeSeekMocks);
+vi.mock('@/linuxdoLevel', () => linuxDoLevelMocks);
+vi.mock('@/localXiaoyinsi', () => xiaoyinsiMocks);
+vi.mock('@/yaohuoApi', () => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(),
   getYaohuoRepliesDirect: vi.fn(),
@@ -69,7 +74,14 @@ vi.mock('../yaohuoApi', () => ({
   searchYaohuoDirect: vi.fn()
 }));
 
-import { createSourceGateway, getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './sourceGateway';
+import {
+  createSourceGateway,
+  getFeed,
+  getReplies,
+  getTopic,
+  getUserProfile,
+  searchTopics
+} from '@/sources/sourceGateway';
 
 describe('source gateway read contract', () => {
   beforeEach(() => {

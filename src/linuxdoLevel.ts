@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { parse } from 'node-html-parser';
-import { isCloudflareChallengeResponse } from './cloudflareChallenge';
+import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
 import {
   buildDiscourseLevelProfileFromSummary,
   displayDiscourseLevelChange,
@@ -8,8 +8,8 @@ import {
   type DiscourseLevelProfile,
   type DiscourseLevelRequirement,
   type DiscourseSummaryInput
-} from './discourseLevel';
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from './request';
+} from '@/discourseLevel';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 
 const BASE_URL = 'https://linux.do';
 const CONNECT_URL = 'https://connect.linux.do/';

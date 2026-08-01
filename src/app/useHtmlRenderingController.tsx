@@ -27,8 +27,8 @@ import {
   type CustomMixedRenderer,
   type IMGElementProps
 } from 'react-native-render-html';
-import type { ReaderSettings } from '../readerData';
-import { createTopicImageDeriver } from '../topicDerivedData';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import {
   imageSourceFromUrl,
   imageRequestHeadersForUrl,
@@ -47,24 +47,24 @@ import {
   shouldMarkLoadedImageInline,
   type ImageDisplayCandidateKind,
   type ImageDisplaySize
-} from '../htmlImages';
-import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
-import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
-import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
-import type { Topic, TopicDetail, UserReference } from '../types';
-import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
-import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from '../htmlRenderingStyles';
-import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
+} from '@/platform/media/htmlImages';
+import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/nsVideoEmbeds';
+import { parseForumTopicLink, parseForumUserLink } from '@/domain/forum/links';
+import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/theme';
+import type { Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type { HtmlRenderers, HtmlRenderersProps } from '@/features/topic/rendering/types';
+import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from '@/htmlRenderingStyles';
+import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import {
   FORUM_LINK_CARD_TAG,
   FORUM_TERMINAL_REPORT_TAG,
   FORUM_TERMINAL_TAB_TAG,
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG
-} from '../localHtml';
-import { ForumContentVideo } from '../components/ForumContentVideo';
-import { ForumCallout } from '../components/ForumCallout';
-import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
+} from '@/domain/forum/html';
+import { ForumContentVideo } from '@/components/ForumContentVideo';
+import { ForumCallout } from '@/components/ForumCallout';
+import { hasSameYaohuoTopicLayout } from '@/screens/topic/topicScreenHelpers';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -72,22 +72,22 @@ import {
   recoverCompatibleSvgArtifact,
   refreshCompatibleSvgPoster,
   type CompatibleSvgArtifact
-} from '../compatibleImageSources';
-import { readManagedCookieHeader } from '../managedCookies';
-import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
+} from '@/platform/media/compatibleImageSources';
+import { readManagedCookieHeader } from '@/platform/network/managedCookies';
+import { forumMediaTargetClass, type ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import {
   beginDiagnosticTrace,
   diagnosticRef,
   finishDiagnosticTrace,
   type DiagnosticFields,
   type DiagnosticTrace
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 import {
   markOriginalImageDisplayed,
   originalImageDisplayIdentity,
   useOriginalImageDisplayRevision,
   useOriginalImageUpgradeEnabled
-} from '../originalImageLoading';
+} from '@/platform/media/originalImageLoading';
 import {
   DISCOURSE_CALLOUT_ATTRIBUTE,
   DISCOURSE_CALLOUT_CONTENT_CLASS,
@@ -97,8 +97,8 @@ import {
   DISCOURSE_CALLOUT_REGISTRY,
   isDiscourseCalloutType,
   type DiscourseCalloutFold
-} from '../discourseContent';
-import { isDiscourseSource } from '../sourceCatalog';
+} from '@/discourseContent';
+import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 
 export async function readManagedWebViewCookieHeader(url: string) {
   const result = await readManagedCookieHeader(url);

@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { errorMessage } from '../appUtils';
-import { createEmptyReaderData, sanitizeReaderSettings, sanitizeReaderData, type ReaderData } from '../readerData';
-import { loadReaderData, saveCleanReaderData, saveReaderSettings } from '../readerDataStore';
+import { errorMessage } from '@/platform/network/errors';
+import {
+  createEmptyReaderData,
+  sanitizeReaderSettings,
+  sanitizeReaderData,
+  type ReaderData
+} from '@/domain/reader/readerData';
+import { loadReaderData, saveCleanReaderData, saveReaderSettings } from '@/platform/storage/readerDataStore';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason,
   type DiagnosticTrace
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 
 export type ReaderDataMutationReason =
   | 'backup-imported'

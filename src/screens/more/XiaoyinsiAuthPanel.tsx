@@ -1,9 +1,9 @@
 import { Alert, Text, View } from 'react-native';
-import type { XiaoyinsiAuthPhase } from '../../app/useXiaoyinsiAuthController';
-import type { XiaoyinsiPendingAuthorization } from '../../xiaoyinsiAuth';
-import type { SiteSessionViewModel } from '../../siteSessionState';
-import { AppButton } from '../../components/AppControls';
-import type { createStyles, ReaderTheme } from '../../theme';
+import type { XiaoyinsiAuthPhase } from '@/app/useXiaoyinsiAuthController';
+import type { XiaoyinsiPendingAuthorization } from '@/xiaoyinsiAuth';
+import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
+import { AppButton } from '@/components/AppControls';
+import type { createStyles, ReaderTheme } from '@/theme';
 
 function countdownLabel(seconds: number) {
   const minutes = Math.floor(Math.max(0, seconds) / 60);

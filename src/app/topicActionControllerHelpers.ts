@@ -1,7 +1,7 @@
-import type { ReplyEditTarget } from '../appTypes';
-import { nodeSeekMarkdownToHtml } from '../nodeSeekMarkdown';
-import { sourceSupportsTopicAction, sourceUsesTopicCreatePermission } from '../sourceCatalog';
-import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
+import type { ReplyEditTarget } from '@/features/topic/model/types';
+import { nodeSeekMarkdownToHtml } from '@/nodeSeekMarkdown';
+import { sourceSupportsTopicAction, sourceUsesTopicCreatePermission } from '@/domain/forum/sourceCatalog';
+import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '@/domain/forum/models';
 
 type TopicActionTopic = Topic | TopicDetail;
 

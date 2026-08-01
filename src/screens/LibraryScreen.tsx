@@ -2,18 +2,18 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star, Trash2, type LucideIcon } from 'lucide-react-native';
-import type { FeedSource, Topic, UserProfile, UserReference } from '../types';
-import { type FollowedUserRecord, type TopicRecord } from '../readerData';
-import { type LibraryTab } from '../feedLogic';
-import { filterLibraryRecords, libraryCategoryFilterItems } from '../androidFeatureHelpers';
-import { formatDateTime, sourceLabel } from '../appUtils';
-import { feedSources } from '../feedCategoryRail';
-import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
-import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, PillRail, TOUCH_HIT_SLOP, triggerPressFeedback } from '../components/AppControls';
-import { avatarInitial } from '../components/Avatar';
-import { MemoizedTopicCard } from '../components/TopicCard';
-import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
+import type { FeedSource, Topic, UserProfile, UserReference } from '@/domain/forum/models';
+import { type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
+import { type LibraryTab } from '@/feedLogic';
+import { filterLibraryRecords, libraryCategoryFilterItems } from '@/features/library/model/libraryFilters';
+import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
+import { feedSources } from '@/feedCategoryRail';
+import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import { createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, EmptyText, PillRail, TOUCH_HIT_SLOP, triggerPressFeedback } from '@/components/AppControls';
+import { avatarInitial } from '@/components/Avatar';
+import { MemoizedTopicCard } from '@/components/TopicCard';
+import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
 import {
   createLibraryListItems,
   filterFollowedUsersBySource,
@@ -22,7 +22,7 @@ import {
   libraryDataItemType,
   type LibraryDataItem,
   type LibraryListItem
-} from './library/libraryScreenItems';
+} from '@/screens/library/libraryScreenItems';
 
 const LIBRARY_TAB_ITEMS = [
   { value: 'favorites', label: '帖子' },

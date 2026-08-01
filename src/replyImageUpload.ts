@@ -1,6 +1,6 @@
-import type { Source } from './types';
-import { fetchWithTimeout, type Fetcher } from './request';
-import { sourceSupportsTopicAction } from './sourceCatalog';
+import type { Source } from '@/domain/forum/models';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
 
 export type ReplyImageAsset = {
   uri: string;

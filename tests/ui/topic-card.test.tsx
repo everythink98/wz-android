@@ -2,10 +2,10 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
-import { createEmptyReaderData } from '../../src/readerData';
-import { MemoizedTopicCard, TopicCard } from '../../src/components/TopicCard';
-import { createStyles, createTheme } from '../../src/theme';
-import type { Topic } from '../../src/types';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { MemoizedTopicCard, TopicCard } from '@/components/TopicCard';
+import { createStyles, createTheme } from '@/theme';
+import type { Topic } from '@/domain/forum/models';
 
 jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({ getMappingKey: (key: string | number) => String(key) })
@@ -17,7 +17,7 @@ jest.mock('lucide-react-native', () => {
 });
 
 jest.mock('expo-image', () => ({ Image: () => null }));
-jest.mock('../../src/components/Avatar', () => {
+jest.mock('@/components/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {

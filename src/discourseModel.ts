@@ -1,6 +1,6 @@
-import { decodeHtml, isRecord, textContentFromHtml, textExcerpt, toIsoString } from './localHtml';
-import { stripDiscourseCalloutMarkersFromExcerpt } from './discourseContent';
-import type { Category, ReactionSummary, Reply, Source, TopicPoll, TopicPollOption } from './types';
+import { decodeHtml, isRecord, textContentFromHtml, textExcerpt, toIsoString } from '@/domain/forum/html';
+import { stripDiscourseCalloutMarkersFromExcerpt } from '@/discourseContent';
+import type { Category, ReactionSummary, Reply, Source, TopicPoll, TopicPollOption } from '@/domain/forum/models';
 
 export type DiscoursePostFields = Pick<Reply, 'author' | 'createdAt' | 'commentId' | 'floor'> & {
   cookedHtml: string;

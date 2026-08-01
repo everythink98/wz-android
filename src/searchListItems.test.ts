@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildSearchListItems, searchGroupEmptyText, type SearchGroup } from './searchListItems';
-import type { Topic } from './types';
+import { buildSearchListItems, searchGroupEmptyText, type SearchGroup } from '@/searchListItems';
+import type { Topic } from '@/domain/forum/models';
 
 function topic(id: string, source: Topic['source'], category = '默认'): Topic {
   return {

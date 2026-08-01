@@ -1,6 +1,6 @@
-import { fetchWithTimeout, type Fetcher } from './request';
-import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
-import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
+import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from '@/domain/forum/models';
 import {
   checkYaohuoLoginHtml,
   ensureYaohuoHtmlLoggedIn,
@@ -9,13 +9,13 @@ import {
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
-} from './localYaohuo';
-import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL, requireYaohuoRequestUrl } from './localYaohuoHelpers';
+} from '@/localYaohuo';
+import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL, requireYaohuoRequestUrl } from '@/localYaohuoHelpers';
 import {
   annotateSourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,
   sourceDiagnosticSummary
-} from './sourceAdapterDiagnostics';
+} from '@/sourceAdapterDiagnostics';
 
 interface DirectRequestOptions {
   signal?: AbortSignal;

@@ -3,8 +3,8 @@ import {
   type BrowserFetchIntent,
   type BrowserFetchOwner,
   type BrowserFetchPriority
-} from './browserFetchIntent';
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from './request';
+} from '@/platform/network/browserFetchIntent';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type {
   CategoriesResponse,
   DiscourseFeedFilter,
@@ -19,7 +19,7 @@ import type {
   TopicPoll,
   UserProfile,
   UserReplyActivity
-} from './types';
+} from '@/domain/forum/models';
 import {
   accessRequirementFromObject,
   accessRequirementFromText,
@@ -34,10 +34,10 @@ import {
   textContentFromHtml,
   textExcerpt,
   toIsoString
-} from './localHtml';
-import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
-import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from './googleSearchFallback';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from './linuxdoSession';
+} from '@/domain/forum/html';
+import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
+import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from '@/googleSearchFallback';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/linuxdoSession';
 import {
   LINUXDO_BASE_URL as BASE_URL,
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
@@ -47,9 +47,9 @@ import {
   linuxDoUserUrl as userUrl,
   normalizeLinuxDoTopicId as normalizeTopicId,
   preferredLinuxDoAccessRequirement
-} from './localLinuxdoHelpers';
-import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from './discourseReactions';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
+} from '@/localLinuxdoHelpers';
+import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/discourseReactions';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
 import {
   discourseCategories,
   discourseOriginalPoster,
@@ -57,14 +57,14 @@ import {
   discoursePostFields,
   discourseTopicFields,
   discourseUsersById
-} from './discourseModel';
+} from '@/discourseModel';
 import {
   discourseContentNeedsCalloutNormalization,
   discoursePollPlaceholder,
   discourseQuoteMetadata,
   normalizeDiscourseCallouts,
   stripDiscourseCalloutMarkersFromExcerpt
-} from './discourseContent';
+} from '@/discourseContent';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;

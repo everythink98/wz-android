@@ -1,9 +1,9 @@
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getXiaoyinsiCurrentUserProfile, type XiaoyinsiApiCredentials, XIAOYINSI_BASE_URL } from './localXiaoyinsi';
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from './request';
-import type { UserProfile } from './types';
-import { xiaoyinsiKeystore, type XiaoyinsiKeystore } from './xiaoyinsiKeystore';
+import { getXiaoyinsiCurrentUserProfile, type XiaoyinsiApiCredentials, XIAOYINSI_BASE_URL } from '@/localXiaoyinsi';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import type { UserProfile } from '@/domain/forum/models';
+import { xiaoyinsiKeystore, type XiaoyinsiKeystore } from '@/platform/android/xiaoyinsiKeystore';
 
 const APPLICATION_NAME = '阅坛 Android';
 const AUTH_API_VERSION = 4;

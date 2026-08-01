@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createEmptyReaderData, recordHistory, toggleFavorite, topicKey, updateFavoriteTopic } from '../readerData';
-import { setDiagnosticWriter } from '../diagnostics';
-import type { Topic } from '../types';
+import {
+  createEmptyReaderData,
+  recordHistory,
+  toggleFavorite,
+  topicKey,
+  updateFavoriteTopic
+} from '@/domain/reader/readerData';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { Topic } from '@/domain/forum/models';
 import {
   loadInitialReaderData,
   prepareReaderDataCommit,

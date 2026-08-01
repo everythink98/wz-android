@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { summarizeYaohuoCookieHeader } from './yaohuoSession';
+import { summarizeYaohuoCookieHeader } from '@/yaohuoSession';
 
 describe('Yaohuo session metadata', () => {
   it('records Cookie names without treating sidyaohuo as identity proof', () => {

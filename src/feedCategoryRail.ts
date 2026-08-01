@@ -1,4 +1,4 @@
-import { sourceCatalog } from './sourceCatalog';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import type {
   Category,
   DiscourseFeedFilter,
@@ -9,8 +9,8 @@ import type {
   Source,
   SourceFeedFilter,
   V2exFeedFilter
-} from './types';
-import type { ReadingFilter } from './feedLogic';
+} from '@/domain/forum/models';
+import type { ReadingFilter } from '@/feedLogic';
 
 const registeredSources = Object.keys(sourceCatalog) as Source[];
 

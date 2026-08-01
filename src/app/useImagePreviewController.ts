@@ -6,19 +6,19 @@ import {
   normalizeImagePreviewUrl,
   type ImageDisplaySize,
   type ImagePreviewList
-} from '../htmlImages';
-import type { TopicImageDeriver } from '../topicDerivedData';
-import { errorMessage } from '../appUtils';
-import { saveImageUriToLibrary } from '../imageSave';
-import type { Fetcher } from '../request';
-import { useForumMediaRequestContext } from '../mediaSessionEpoch';
-import type { Source } from '../types';
+} from '@/platform/media/htmlImages';
+import type { TopicImageDeriver } from '@/features/topic/model/topicDerivedData';
+import { errorMessage } from '@/platform/network/errors';
+import { saveImageUriToLibrary } from '@/platform/media/imageSave';
+import type { Fetcher } from '@/platform/network/request';
+import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
+import type { Source } from '@/domain/forum/models';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 import { useCommittedRef } from './useCommittedRef';
 
 function normalizeImageCacheKey(url: string) {

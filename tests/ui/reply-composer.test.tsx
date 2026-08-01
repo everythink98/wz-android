@@ -2,12 +2,12 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import type { ReplyEditTarget, ReplyTarget } from '../../src/appTypes';
-import type { DiscourseEmojiUrlMap } from '../../src/discourseReactions';
-import { createEmptyReaderData } from '../../src/readerData';
-import { ReplyComposer } from '../../src/screens/topic/ReplyComposer';
-import { createStyles, createTheme } from '../../src/theme';
-import type { Source } from '../../src/types';
+import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
+import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { ReplyComposer } from '@/screens/topic/ReplyComposer';
+import { createStyles, createTheme } from '@/theme';
+import type { Source } from '@/domain/forum/models';
 
 jest.mock('@gorhom/bottom-sheet', () => {
   const ReactModule = require('react') as typeof React;

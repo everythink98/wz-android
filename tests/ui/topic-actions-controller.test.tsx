@@ -8,16 +8,16 @@ jest.mock('expo-secure-store', () => ({
   getItemAsync: jest.fn()
 }));
 
-jest.mock('../../src/nodeseekActionClient', () => ({
+jest.mock('@/nodeseekActionClient', () => ({
   fetchNodeSeekVoteInfo: jest.fn(),
   runNodeSeekAction: jest.fn()
 }));
 
-jest.mock('../../src/yaohuoActionClient', () => ({
+jest.mock('@/yaohuoActionClient', () => ({
   runYaohuoAction: jest.fn()
 }));
 
-jest.mock('../../src/app/discourseActionRuntime', () => ({
+jest.mock('@/app/discourseActionRuntime', () => ({
   prepareDiscourseActionRuntime: jest.fn()
 }));
 
@@ -25,49 +25,42 @@ jest.mock('expo-document-picker', () => ({
   getDocumentAsync: jest.fn()
 }));
 
-jest.mock('../../src/replyImageUpload', () => ({
-  ...jest.requireActual<typeof import('../../src/replyImageUpload')>('../../src/replyImageUpload'),
+jest.mock('@/replyImageUpload', () => ({
+  ...jest.requireActual<typeof import('@/replyImageUpload')>('@/replyImageUpload'),
   uploadNodeSeekReplyImageWithApiKey: jest.fn()
 }));
 
-jest.mock('../../src/nodeimageCredentials', () => ({
+jest.mock('@/nodeimageCredentials', () => ({
   currentNodeImageApiKeyGeneration: jest.fn()
 }));
 
-jest.mock('../../src/managedCookies', () => ({
+jest.mock('@/platform/network/managedCookies', () => ({
   readManagedCookieHeader: jest.fn(async () => ({
     status: 'ok',
     header: 'sidyaohuo=test'
   }))
 }));
 
-import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '../../src/nodeseekActionClient';
-import { runYaohuoAction, type YaohuoActionResult } from '../../src/yaohuoActionClient';
-import {
-  prepareDiscourseActionRuntime,
-  type DiscourseActionRuntimeRecovery
-} from '../../src/app/discourseActionRuntime';
-import type { DiscourseActionRequest } from '../../src/discourseActions';
-import { useTopicActionsController } from '../../src/app/useTopicActionsController';
-import { useTopicSessionController } from '../../src/app/useTopicSessionController';
-import {
-  appQueryClient,
-  initialForumSessionEpochs,
-  forumQueryKeys,
-  type ForumSessionEpochs
-} from '../../src/app/serverState';
-import { currentNodeImageApiKeyGeneration } from '../../src/nodeimageCredentials';
-import { uploadNodeSeekReplyImageWithApiKey } from '../../src/replyImageUpload';
-import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/nodeseekActionClient';
+import { runYaohuoAction, type YaohuoActionResult } from '@/yaohuoActionClient';
+import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeRecovery } from '@/app/discourseActionRuntime';
+import type { DiscourseActionRequest } from '@/discourseActions';
+import { useTopicActionsController } from '@/app/useTopicActionsController';
+import { useTopicSessionController } from '@/app/useTopicSessionController';
+import { appQueryClient, forumQueryKeys } from '@/app/serverState';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { currentNodeImageApiKeyGeneration } from '@/nodeimageCredentials';
+import { uploadNodeSeekReplyImageWithApiKey } from '@/replyImageUpload';
+import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
 import {
   createSiteSessionStates,
   createSiteSessionViewModels,
   type ScopedSiteSessionEvent,
   type SiteSessionStates,
   type SiteSessionViewModels
-} from '../../src/siteSessionState';
-import type { Reply, Source, TopicDetail, TopicPoll } from '../../src/types';
-import { WritableSessionBlockedError, type WritableSessionTicket } from '../../src/writableSessionGate';
+} from '@/domain/session/siteSessionState';
+import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const mockGetItem = jest.mocked(SecureStore.getItemAsync);

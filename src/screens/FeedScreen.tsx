@@ -20,8 +20,8 @@ import type {
   SourceFeedFilter,
   SourceLoadOutcomeKind,
   Topic
-} from '../types';
-import { topicKey } from '../readerData';
+} from '@/domain/forum/models';
+import { topicKey } from '@/domain/reader/readerData';
 import {
   feedCategoryItems,
   feedFilterLabel,
@@ -30,15 +30,15 @@ import {
   feedSourceItems,
   shouldUseFeedFilter,
   shouldUseReadingFilter
-} from '../feedCategoryRail';
+} from '@/feedCategoryRail';
 import {
   shouldAllowFeedAutoLoadRequest,
   shouldLoadMoreFeedFromScroll,
   shouldShowFeedFloatingActions
-} from '../feedFloatingActions';
-import type { ReadingFilter } from '../feedLogic';
-import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
-import { createStyles, type ReaderTheme } from '../theme';
+} from '@/feedFloatingActions';
+import type { ReadingFilter } from '@/feedLogic';
+import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import { createStyles, type ReaderTheme } from '@/theme';
 import {
   AppButton,
   EmptyText,
@@ -47,10 +47,10 @@ import {
   PillRail,
   TOUCH_HIT_SLOP,
   triggerPressFeedback
-} from '../components/AppControls';
-import { MemoizedTopicCard } from '../components/TopicCard';
-import { FEED_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-import { isFeedFilterSource } from '../sourceCatalog';
+} from '@/components/AppControls';
+import { MemoizedTopicCard } from '@/components/TopicCard';
+import { FEED_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
 const FEED_PAGER_ROUTES = feedSourceItems.map((item) => ({ key: item.value, title: item.label }));

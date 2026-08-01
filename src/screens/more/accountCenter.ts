@@ -1,9 +1,9 @@
-import { sourceLabel } from '../../appUtils';
-import type { CredentialSummaries, CredentialProtection } from '../../credentialVault';
-import { sessionSources, type SessionSite, type SiteSessionViewModels } from '../../siteSessionState';
-import type { UserProfile } from '../../types';
+import { sourceLabel } from '@/domain/forum/presentation';
+import type { CredentialSummaries, CredentialProtection } from '@/platform/storage/credentialVault';
+import { sessionSources, type SessionSite, type SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import type { UserProfile } from '@/domain/forum/models';
 
-export type { CredentialSummaries } from '../../credentialVault';
+export type { CredentialSummaries } from '@/platform/storage/credentialVault';
 export type AccountPrimaryAction = 'open-user' | 'open-login' | 'open-login-with-fill' | 'none';
 
 export type SiteAccountCredentialView = {

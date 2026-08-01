@@ -28,13 +28,17 @@ vi.mock('./serverState', () => ({
   }
 }));
 
-vi.mock('../linuxdoSession', () => ({
+vi.mock('@/linuxdoSession', () => ({
   sanitizeLinuxDoUserAgent: (userAgent: string) => userAgent.trim()
 }));
 
-import { reduceSiteSessionState, type SiteSessionEvent, type SiteSessionState } from '../siteSessionState';
-import type { Topic } from '../types';
-import type { AccountReconcileResult } from './useAccountStatusController';
+import {
+  reduceSiteSessionState,
+  type SiteSessionEvent,
+  type SiteSessionState
+} from '@/domain/session/siteSessionState';
+import type { Topic } from '@/domain/forum/models';
+import type { AccountReconcileResult } from '@/features/account/model/sessionContracts';
 import { useVerificationController } from './useVerificationController';
 
 const ref = <T>(current: T) => ({ current });

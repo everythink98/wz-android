@@ -1,11 +1,11 @@
 import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
-import type { Source, TopicPoll } from '../../types';
-import { isDiscourseSource, sourceSupportsTopicAction } from '../../sourceCatalog';
-import { pollParticipationLabel, pollTotalVotes } from '../../topicPollDisplay';
-import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
-import { AppButton, triggerPressFeedback } from '../../components/AppControls';
+import type { Source, TopicPoll } from '@/domain/forum/models';
+import { isDiscourseSource, sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
+import { pollParticipationLabel, pollTotalVotes } from '@/domain/forum/topicPollDisplay';
+import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, triggerPressFeedback } from '@/components/AppControls';
 
 function topicPollKey(poll: TopicPoll, index: number) {
   return poll.id || poll.name || `poll-${index}`;

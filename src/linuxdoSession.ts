@@ -1,5 +1,5 @@
-import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
-import { cookieNamesFromHeader } from './cookieHeaderNames';
+import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
+import { cookieNamesFromHeader } from '@/platform/network/cookieHeaderNames';
 
 export const LINUXDO_USER_AGENT_STORAGE_KEY = 'linuxdo-user-agent';
 

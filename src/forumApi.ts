@@ -6,13 +6,13 @@ import {
   getNodeSeekTopic,
   getNodeSeekUserProfile,
   searchNodeSeek
-} from './localNodeseek';
+} from '@/localNodeseek';
 import {
   yaohuoCategoriesResponse,
   parseYaohuoListHtml,
   parseYaohuoUserProfileHtml,
   parseYaohuoUserRepliesHtml
-} from './localYaohuo';
+} from '@/localYaohuo';
 import {
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
@@ -21,9 +21,9 @@ import {
   yaohuoTopicListNextPageUrl,
   yaohuoUserProfileReplyListUrl,
   yaohuoUserProfileTopicListUrl
-} from './localYaohuoHelpers';
-import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
-import { checkYaohuoLoginDirect, getYaohuoFeedDirect, searchYaohuoDirect } from './yaohuoApi';
+} from '@/localYaohuoHelpers';
+import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from '@/localV2ex';
+import { checkYaohuoLoginDirect, getYaohuoFeedDirect, searchYaohuoDirect } from '@/yaohuoApi';
 import {
   getDiscourseSourceCategories,
   getDiscourseSourceCurrentUserProfile,
@@ -34,8 +34,13 @@ import {
   getDiscourseSourceUserProfile,
   searchDiscourseSourceTopics,
   type DiscourseReadAuth
-} from './discourseSourceReaders';
-import { aggregateFeedSources, aggregateSearchSources, isDiscourseSource, sourceValues } from './sourceCatalog';
+} from '@/discourseSourceReaders';
+import {
+  aggregateFeedSources,
+  aggregateSearchSources,
+  isDiscourseSource,
+  sourceValues
+} from '@/domain/forum/sourceCatalog';
 import {
   balanceTopicsBySource,
   parseSearchExpression,
@@ -44,14 +49,14 @@ import {
   sortTopicsByCreatedAt,
   type SearchExpression,
   type SearchSort
-} from './feedLogic';
+} from '@/feedLogic';
 import {
   buildDiscourseSearchQuery,
   filterSearchResponseItems,
   isDiscourseSearchFilter,
   type SourceSearchFilter
-} from './searchFilters';
-import { sourceErrorFromUnknown } from './sourceErrors';
+} from '@/searchFilters';
+import { sourceErrorFromUnknown } from '@/sourceErrors';
 import type {
   CategoriesResponse,
   Category,
@@ -69,14 +74,14 @@ import type {
   TopicDetail,
   V2exFeedFilter,
   UserProfile
-} from './types';
-import { fetchWithTimeout, type Fetcher } from './request';
+} from '@/domain/forum/models';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import {
   annotateSourceDiagnosticSummary,
   copySourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,
   sourceDiagnosticSummary
-} from './sourceAdapterDiagnostics';
+} from '@/sourceAdapterDiagnostics';
 
 const allFeedSources = aggregateFeedSources;
 

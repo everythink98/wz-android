@@ -39,8 +39,8 @@ vi.mock('expo-file-system/legacy', () => ({
   deleteAsync: mocks.deleteAsync
 }));
 
-vi.mock('../appUpdate', async () => ({
-  ...(await vi.importActual<typeof import('../appUpdate')>('../appUpdate')),
+vi.mock('@/platform/update/appUpdate', async () => ({
+  ...(await vi.importActual<typeof import('@/platform/update/appUpdate')>('@/platform/update/appUpdate')),
   checkGithubAppUpdate: mocks.checkGithubAppUpdate,
   installVerifiedApk: mocks.installVerifiedApk
 }));

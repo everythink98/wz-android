@@ -21,13 +21,13 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
 import { View } from 'react-native';
-import { TabBarIcon, tabNavItems } from '../components/NavBar';
-import { triggerPressFeedback } from '../components/AppControls';
-import type { createStyles, ReaderTheme } from '../theme';
-import type { Screen } from '../appTypes';
-import { OriginalImageUpgradeBoundary } from '../originalImageLoading';
-import type { TopicListItem } from '../screens/TopicScreen';
-import type { Source } from '../types';
+import { TabBarIcon, tabNavItems } from '@/components/NavBar';
+import { triggerPressFeedback } from '@/components/AppControls';
+import type { createStyles, ReaderTheme } from '@/theme';
+import type { Screen } from '@/ui/navigation/types';
+import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
+import type { TopicListItem } from '@/screens/TopicScreen';
+import type { Source } from '@/domain/forum/models';
 
 export type MainTabParamList = {
   feed: undefined;

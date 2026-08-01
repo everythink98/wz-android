@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
-import { createEmptyReaderData } from './readerData';
-import { isGoogleSiteSearchAccessTroubleUrl } from './googleSearchFallback';
-import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from './localYaohuoHelpers';
+import { exportReaderBackupJson, importReaderBackupJson } from '@/domain/reader/readerBackup';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { isGoogleSiteSearchAccessTroubleUrl } from '@/googleSearchFallback';
+import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from '@/localYaohuoHelpers';
 import {
   isLinuxDoBrowserFetchUrl,
   isLinuxDoBrowserNavigationUrl,
   isLinuxDoBrowserResultUrl,
   isLinuxDoRequestUrl
-} from './linuxdoFetchFallback';
+} from '@/linuxdoFetchFallback';
 import {
   isNodeSeekBrowserFetchUrl,
   isNodeSeekBrowserNavigationUrl,
   isNodeSeekBrowserResultUrl,
   isNodeSeekRequestUrl
-} from './nodeseekFetchFallback';
+} from '@/nodeseekFetchFallback';
 
 const fakeSecret = 'fixed-fake-secret-do-not-leak';
 

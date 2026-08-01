@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { buildLinuxDoLevelProfileFromSummary, getLinuxDoLevelProfile } from './linuxdoLevel';
+import { buildLinuxDoLevelProfileFromSummary, getLinuxDoLevelProfile } from '@/linuxdoLevel';
 
 vi.mock('@react-native-async-storage/async-storage', () => {
   const store = new Map<string, string>();

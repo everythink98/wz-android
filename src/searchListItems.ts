@@ -1,5 +1,5 @@
-import type { Source, SourceErrorKind, Topic } from './types';
-import type { AuthNotice } from './siteSessionPrompts';
+import type { Source, SourceErrorKind, Topic } from '@/domain/forum/models';
+import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 
 export type SearchGroup = {
   source: Source;

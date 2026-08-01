@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const plugin = require('../plugins/withNetworkProxyModule.js') as {
+const plugin = require('../plugins/withNetworkProxyModule') as {
   patchExpoVideoDataSource: (projectRoot: string) => void;
 };
 const scratchRoots: string[] = [];

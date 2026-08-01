@@ -1,5 +1,5 @@
-import type { FeedSource, SourceErrorInfo, SourceErrorKind, SourceErrors } from './types';
-import { isCanceledRequest } from './appUtils';
+import type { FeedSource, SourceErrorInfo, SourceErrorKind, SourceErrors } from '@/domain/forum/models';
+import { isCanceledRequest } from '@/platform/network/errors';
 
 type LegacySourceErrorInfo = string | (Omit<SourceErrorInfo, 'kind'> & { kind?: SourceErrorKind });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { StyleSheet } from 'react-native';
-import { type ReaderSettings } from './readerData';
+import { type ReaderSettings } from '@/domain/reader/readerData';
 import {
   createStyles,
   createTheme,
@@ -8,7 +8,7 @@ import {
   sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
   topicTagColorStyle
-} from './theme';
+} from '@/theme';
 
 vi.mock('react-native', () => ({
   Platform: {

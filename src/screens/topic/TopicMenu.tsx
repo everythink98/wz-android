@@ -1,6 +1,6 @@
 import { Modal, Pressable, Text, View } from 'react-native';
 import { ExternalLink, RefreshCw, Settings, Share2 } from 'lucide-react-native';
-import { createStyles, type ReaderTheme } from '../../theme';
+import { createStyles, type ReaderTheme } from '@/theme';
 
 export function TopicMenu({
   onOpenOriginal,

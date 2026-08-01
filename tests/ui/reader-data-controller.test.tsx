@@ -1,21 +1,21 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { createEmptyReaderData, recordHistory, toggleFavorite, type ReaderData } from '../../src/readerData';
-import type { Topic } from '../../src/types';
+import { createEmptyReaderData, recordHistory, toggleFavorite, type ReaderData } from '@/domain/reader/readerData';
+import type { Topic } from '@/domain/forum/models';
 
 const mockLoadReaderData = jest.fn<() => Promise<ReaderData>>();
 const mockSaveCleanReaderData =
   jest.fn<(data: ReaderData, previousJson?: string | null, cleanJson?: string) => Promise<ReaderData>>();
 const mockSaveReaderSettings = jest.fn<() => Promise<void>>();
 
-jest.mock('../../src/readerDataStore', () => ({
+jest.mock('@/platform/storage/readerDataStore', () => ({
   loadReaderData: () => mockLoadReaderData(),
   saveCleanReaderData: (data: ReaderData, previousJson?: string | null, cleanJson?: string) =>
     mockSaveCleanReaderData(data, previousJson, cleanJson),
   saveReaderSettings: () => mockSaveReaderSettings()
 }));
 
-import { useReaderDataController } from '../../src/app/useReaderDataController';
+import { useReaderDataController } from '@/app/useReaderDataController';
 
 const topic: Topic = {
   source: 'nodeseek',

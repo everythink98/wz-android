@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pollParticipationLabel } from '../../topicPollDisplay';
+import { pollParticipationLabel } from '@/domain/forum/topicPollDisplay';
 
 describe('TopicPolls', () => {
   it('uses participant count before summed option votes', () => {

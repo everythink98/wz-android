@@ -9,12 +9,13 @@ import {
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { sanitizeNodeSeekUserAgent } from '../nodeseekSession';
-import { errorMessage, isLinuxDoCloudflareError } from '../appUtils';
-import type { SourceGateway } from '../sources/sourceGateway';
-import type { Screen } from '../appTypes';
-import { sourceReadRecoveryOutcome } from '../sourceErrors';
-import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
+import { sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import { errorMessage } from '@/platform/network/errors';
+import { isLinuxDoCloudflareError } from '@/sources/errors';
+import type { SourceGateway } from '@/sources/sourceGateway';
+import type { Screen } from '@/ui/navigation/types';
+import { sourceReadRecoveryOutcome } from '@/sourceErrors';
+import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import {
   beginDiagnosticTrace,
@@ -22,11 +23,15 @@ import {
   markDiagnosticStage,
   normalizeDiagnosticReason,
   type DiagnosticTrace
-} from '../diagnostics';
-import { forumQueryKeys, type ForumSessionEpochs } from './serverState';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
+} from '@/platform/diagnostics/diagnostics';
+import { forumQueryKeys } from './serverState';
+import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import type {
+  LinuxDoReadRecovery,
+  LinuxDoReadResumeOutcome,
+  AccountReconcileResult
+} from '@/features/account/model/sessionContracts';
 import { useCommitRefValue } from './useCommittedRef';
-import type { AccountReconcileResult } from './useAccountStatusController';
 
 const NODESEEK_MESSAGE_HOSTS = ['nodeseek.com'];
 

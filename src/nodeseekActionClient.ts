@@ -1,8 +1,8 @@
-import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './nodeseekActions';
-import { withBrowserFetchIntent } from './browserFetchIntent';
-import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './nodeseekPolls';
-import { fetchWithTimeout, type Fetcher } from './request';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekSession';
+import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from '@/nodeseekActions';
+import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
+import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from '@/nodeseekPolls';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 
 const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 const NODESEEK_ACTION_HEADERS = {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_NODESEEK_MARKDOWN_BYTES, nodeSeekMarkdownToHtml } from './nodeSeekMarkdown';
+import { MAX_NODESEEK_MARKDOWN_BYTES, nodeSeekMarkdownToHtml } from '@/nodeSeekMarkdown';
 
 describe('NodeSeek Markdown', () => {
   it('keeps ordinary Markdown and linkify rendering enabled', () => {

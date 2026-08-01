@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
-import { NODESEEK_URL } from './appUrls';
-import { sanitizeContentHtml } from './localHtml';
+import { NODESEEK_URL } from '@/domain/forum/sourceUrls';
+import { sanitizeContentHtml } from '@/domain/forum/html';
 
 export const MAX_NODESEEK_MARKDOWN_BYTES = 256 * 1024;
 const OVERSIZED_MARKDOWN_NOTICE = '<p>内容过长，无法安全显示。</p>';

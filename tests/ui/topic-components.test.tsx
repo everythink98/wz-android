@@ -3,23 +3,23 @@ import { fireEvent, render, renderHook, within } from '@testing-library/react-na
 import React, { type ComponentProps } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
-import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
-import { HTML_REPLY_CONTENT_CLASS } from '../../src/htmlRenderingStyles';
-import { createEmptyReaderData } from '../../src/readerData';
-import { ReplyComposerSheet } from '../../src/screens/topic/ReplyComposerSheet';
-import { ReplyItem } from '../../src/screens/topic/ReplyItem';
-import { TopicBodyQuoteCard } from '../../src/screens/topic/TopicBodyQuoteCard';
-import { TopicContentBlock } from '../../src/screens/topic/TopicContentBlock';
-import { TopicPolls } from '../../src/screens/topic/TopicPolls';
-import { createStyles, createTheme } from '../../src/theme';
-import { createTopicImageDeriver } from '../../src/topicDerivedData';
-import type { Reply, TopicDetail, TopicPoll } from '../../src/types';
+import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
+import { HTML_REPLY_CONTENT_CLASS } from '@/htmlRenderingStyles';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { ReplyComposerSheet } from '@/screens/topic/ReplyComposerSheet';
+import { ReplyItem } from '@/screens/topic/ReplyItem';
+import { TopicBodyQuoteCard } from '@/screens/topic/TopicBodyQuoteCard';
+import { TopicContentBlock } from '@/screens/topic/TopicContentBlock';
+import { TopicPolls } from '@/screens/topic/TopicPolls';
+import { createStyles, createTheme } from '@/theme';
+import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
+import type { Reply, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import {
   DISCOURSE_CALLOUT_ATTRIBUTE,
   DISCOURSE_CALLOUT_CONTENT_CLASS,
   DISCOURSE_CALLOUT_TITLE_CLASS,
   DISCOURSE_CALLOUT_TYPE_ATTRIBUTE
-} from '../../src/discourseContent';
+} from '@/discourseContent';
 
 jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({
@@ -197,7 +197,7 @@ jest.mock('expo-image', () => {
       })
   };
 });
-jest.mock('../../src/components/Avatar', () => {
+jest.mock('@/components/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {

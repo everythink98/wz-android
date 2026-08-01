@@ -1,6 +1,7 @@
 import { QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import { createAppQueryClient, initialForumSessionEpochs, forumQueryKeys } from './serverState';
+import { createAppQueryClient, forumQueryKeys } from './serverState';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   commitChangedAccountStatusQuery,
   commitExpiredAccountStatusQuery,

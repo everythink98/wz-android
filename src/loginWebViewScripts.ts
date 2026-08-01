@@ -1,4 +1,4 @@
-import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from './appUrls';
+import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '@/domain/forum/sourceUrls';
 
 export const NODESEEK_LOGIN_PROBE_SCRIPT = `
 (() => {

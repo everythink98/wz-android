@@ -16,7 +16,7 @@ import {
   nodeImageApiKeyUseStatus,
   NODEIMAGE_API_KEY_STORAGE_KEY,
   saveNodeImageApiKeyForGeneration
-} from './nodeimageCredentials';
+} from '@/nodeimageCredentials';
 
 describe('NodeImage credential persistence', () => {
   beforeEach(() => {

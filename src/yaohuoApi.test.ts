@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('./androidWebViewUserAgent', () => ({
+vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
   DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
 }));
 
@@ -10,7 +10,7 @@ import {
   getYaohuoRepliesDirect,
   getYaohuoTopicDirect,
   searchYaohuoDirect
-} from './yaohuoApi';
+} from '@/yaohuoApi';
 import {
   parseYaohuoCurrentUserHtml,
   parseYaohuoFavoriteRecordId,
@@ -18,9 +18,9 @@ import {
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
-} from './localYaohuo';
-import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
-import type { Topic } from './types';
+} from '@/localYaohuo';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import type { Topic } from '@/domain/forum/models';
 
 describe('Android direct yaohuo API', () => {
   it('[REG-ACCOUNT-029] fetches yaohuo through the native read-only cookie jar', async () => {

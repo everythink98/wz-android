@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '../appUrls';
-import { errorMessage } from '../appUtils';
-import type { AuthSurfaceCloseReason } from '../authSurfaceCoordinator';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, type DiagnosticTrace } from '../diagnostics';
+import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '@/domain/forum/sourceUrls';
+import { errorMessage } from '@/platform/network/errors';
+import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  type DiagnosticTrace
+} from '@/platform/diagnostics/diagnostics';
 import {
   nodeImageAuthPayloadScript,
   nodeImageSessionScript,
   nodeSeekNodeImageAuthScript,
   type NodeImageAuthPayload
-} from '../loginWebViewScripts';
+} from '@/loginWebViewScripts';
 import {
   closeNodeImageAuthOpening,
   createNodeImageAuthNonce,
@@ -17,7 +22,7 @@ import {
   runNodeImageAuthOpening,
   terminateNodeImageAuthFlow,
   type NodeImageAuthPhase
-} from '../nodeimageAuthFlow';
+} from '@/nodeimageAuthFlow';
 import {
   beginNodeImageApiKeyAuthorization,
   clearNodeImageApiKey,
@@ -27,11 +32,11 @@ import {
   loadNodeImageApiKeyCredential,
   nodeImageApiKeyUseStatus,
   saveNodeImageApiKeyForGeneration
-} from '../nodeimageCredentials';
-import type { UserProfile } from '../types';
-import { nativeSecureRandomHex } from '../xiaoyinsiKeystore';
-import type { AccountReconcileResult } from './useAccountStatusController';
-import type { SessionRuntimeSnapshot } from '../writableSessionGate';
+} from '@/nodeimageCredentials';
+import type { UserProfile } from '@/domain/forum/models';
+import { nativeSecureRandomHex } from '@/platform/android/xiaoyinsiKeystore';
+import type { AccountReconcileResult } from '@/features/account/model/sessionContracts';
+import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 
 export type NodeImageAuthDocument = {
   injectedJavaScript: string;

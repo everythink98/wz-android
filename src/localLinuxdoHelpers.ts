@@ -1,7 +1,7 @@
-import type { DiscourseFeedFilter, Topic } from './types';
-import { isRecord } from './localHtml';
-import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
-import { discourseAvatarUrl } from './discourseContent';
+import type { DiscourseFeedFilter, Topic } from '@/domain/forum/models';
+import { isRecord } from '@/domain/forum/html';
+import { accessRequirementLevelValue, accessRequirementSpecificity } from '@/domain/forum/presentation';
+import { discourseAvatarUrl } from '@/discourseContent';
 
 export const LINUXDO_BASE_URL = 'https://linux.do';
 export const LINUXDO_UNCATEGORIZED_CATEGORY_NAME = '未分类';

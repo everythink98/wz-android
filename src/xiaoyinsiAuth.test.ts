@@ -42,10 +42,15 @@ import {
   verifyXiaoyinsiCredentials,
   XIAOYINSI_AUTH_STORAGE_KEYS,
   XiaoyinsiAuthError
-} from './xiaoyinsiAuth';
-import type { XiaoyinsiKeystore } from './xiaoyinsiKeystore';
+} from '@/xiaoyinsiAuth';
+import type { XiaoyinsiKeystore } from '@/platform/android/xiaoyinsiKeystore';
 import { readFileSync } from 'node:fs';
-import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter, withDiagnosticFetcher } from './diagnostics';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  setDiagnosticWriter,
+  withDiagnosticFetcher
+} from '@/platform/diagnostics/diagnostics';
 
 function json(value: unknown, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(value), {

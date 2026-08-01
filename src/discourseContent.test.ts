@@ -7,8 +7,8 @@ import {
   discourseQuoteMetadata,
   splitDiscourseContentHtml,
   stripDiscourseCalloutMarkersFromExcerpt
-} from './discourseContent';
-import { sanitizeLinuxDoContentHtml } from './localLinuxdo';
+} from '@/discourseContent';
+import { sanitizeLinuxDoContentHtml } from '@/localLinuxdo';
 
 describe('portable Discourse content parts', () => {
   it('[REG-TOPIC-056] renders a leading warning marker as semantic Callout content', () => {
@@ -240,20 +240,20 @@ describe('portable Discourse content parts', () => {
       throw new Error('ordinary content should not be parsed here');
     });
     vi.resetModules();
-    vi.doMock('./localHtml', () => ({
+    vi.doMock('@/domain/forum/html', () => ({
       absoluteUrl: vi.fn(),
       parseHtml,
       textContentFromHtml: vi.fn()
     }));
     try {
-      const { splitDiscourseContentHtml: splitWithoutPoll } = await import('./discourseContent');
+      const { splitDiscourseContentHtml: splitWithoutPoll } = await import('@/discourseContent');
 
       expect(splitWithoutPoll('<p>ordinary content</p>', [])).toEqual([
         { type: 'html', html: '<p>ordinary content</p>' }
       ]);
       expect(parseHtml).not.toHaveBeenCalled();
     } finally {
-      vi.doUnmock('./localHtml');
+      vi.doUnmock('@/domain/forum/html');
       vi.resetModules();
     }
   });

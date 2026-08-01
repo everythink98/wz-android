@@ -1,4 +1,4 @@
-import type { CredentialSite } from './credentialVault';
+import type { CredentialSite } from '@/platform/storage/credentialVault';
 
 export type LoginCredentials = {
   account: string;

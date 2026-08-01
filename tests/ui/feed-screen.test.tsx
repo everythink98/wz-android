@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React, { useState } from 'react';
 import { Platform } from 'react-native';
-import { createEmptyReaderData } from '../../src/readerData';
-import { FeedScreen } from '../../src/screens/FeedScreen';
-import { createStyles, createTheme } from '../../src/theme';
-import { createTopicListItemStateIndex } from '../../src/topicListItemState';
-import { defaultFeedFilters } from '../../src/feedCategoryRail';
-import type { ReadingFilter } from '../../src/feedLogic';
-import type { Category, FeedFilterState, FeedSource, SourceFeedFilter, Topic } from '../../src/types';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { FeedScreen } from '@/screens/FeedScreen';
+import { createStyles, createTheme } from '@/theme';
+import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import { defaultFeedFilters } from '@/feedCategoryRail';
+import type { ReadingFilter } from '@/feedLogic';
+import type { Category, FeedFilterState, FeedSource, SourceFeedFilter, Topic } from '@/domain/forum/models';
 
 let mockTabViewProps: {
   initialLayout?: { width: number };
@@ -159,7 +159,7 @@ jest.mock('lucide-react-native', () => {
   };
 });
 
-jest.mock('../../src/components/Avatar', () => {
+jest.mock('@/components/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {

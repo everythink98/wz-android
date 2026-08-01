@@ -1,9 +1,9 @@
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 
-import { absoluteUrl, decodeHtml, parseHtml, textContentFromHtml } from './localHtml';
-import { discourseQuotedPostReferenceFromAttributes, quotedPostReferenceKey } from './quotedPosts';
-import type { DiscourseSource } from './sourceCatalog';
-import type { QuotedPostMetadata, TopicPoll } from './types';
+import { absoluteUrl, decodeHtml, parseHtml, textContentFromHtml } from '@/domain/forum/html';
+import { discourseQuotedPostReferenceFromAttributes, quotedPostReferenceKey } from '@/domain/forum/quotedPosts';
+import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
+import type { QuotedPostMetadata, TopicPoll } from '@/domain/forum/models';
 
 export const DISCOURSE_POLL_PLACEHOLDER_TAG = 'forum-discourse-poll';
 

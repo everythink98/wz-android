@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 import type { WebViewMessageEvent } from 'react-native-webview';
-import { useHiddenBrowserFetchController } from '../../src/app/useHiddenBrowserFetchController';
+import { useHiddenBrowserFetchController } from '@/app/useHiddenBrowserFetchController';
 
 function browserMessage(sourceUrl: string, data: Record<string, unknown>) {
   return {

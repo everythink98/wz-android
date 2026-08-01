@@ -1,7 +1,10 @@
 import { Buffer } from 'buffer';
 import type { HTMLElement } from 'node-html-parser';
-import { canContainCloudflareChallengePage, isCloudflareChallengeResponse } from './cloudflareChallenge';
-import type { Topic, TopicDetail } from './types';
+import {
+  canContainCloudflareChallengePage,
+  isCloudflareChallengeResponse
+} from '@/platform/network/cloudflareChallenge';
+import type { Topic, TopicDetail } from '@/domain/forum/models';
 import {
   absoluteUrl,
   accessRequirementFromText,
@@ -9,7 +12,7 @@ import {
   isRecord,
   parseHtml,
   parsePositiveInteger
-} from './localHtml';
+} from '@/domain/forum/html';
 
 export const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 

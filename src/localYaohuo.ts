@@ -9,7 +9,7 @@ import type {
   TopicPollOption,
   UserProfile,
   UserReplyActivity
-} from './types';
+} from '@/domain/forum/models';
 import {
   absoluteUrl,
   accessRequirementFromText,
@@ -22,7 +22,7 @@ import {
   sortTopicsByTime,
   textContentFromHtml,
   textExcerpt
-} from './localHtml';
+} from '@/domain/forum/html';
 import {
   YAOHUO_BASE_URL as BASE_URL,
   YAOHUO_CATEGORIES,
@@ -31,9 +31,9 @@ import {
   extractYaohuoUserIdFromHref as extractUserIdFromHref,
   nextYaohuoPageFromHtml as nextPageFromHtml,
   yaohuoUserUrl as userUrl
-} from './localYaohuoHelpers';
-import { normalizeYaohuoReplyDeletePath } from './yaohuoActions';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
+} from '@/localYaohuoHelpers';
+import { normalizeYaohuoReplyDeletePath } from '@/yaohuoActions';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
 
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyReaderData } from '../readerData';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { applyReaderSettingsPatch } from './useReaderSettingsController';
 
 describe('reader settings controller helpers', () => {

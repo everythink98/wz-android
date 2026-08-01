@@ -2,11 +2,11 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { SvgXml } from 'react-native-svg';
-import { loadRemoteAvatarSvgText } from '../avatarImages';
-import { imageSourceFromUrl } from '../htmlImages';
-import { useForumMediaRequestContext } from '../mediaSessionEpoch';
-import type { createStyles } from '../theme';
-import type { Source } from '../types';
+import { loadRemoteAvatarSvgText } from '@/platform/media/avatarImages';
+import { imageSourceFromUrl } from '@/platform/media/htmlImages';
+import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
+import type { createStyles } from '@/theme';
+import type { Source } from '@/domain/forum/models';
 
 const MAX_IMAGE_RETRY_COUNT = 1;
 

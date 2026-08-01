@@ -2,17 +2,17 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
-import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '../../src/types';
-import type { ReplyFilter } from '../../src/appTypes';
-import { filterTopicSessionReplies } from '../../src/app/useTopicSessionController';
-import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
-import { discoursePollPlaceholder } from '../../src/discourseContent';
-import { buildHtmlRenderingStyles } from '../../src/htmlRenderingStyles';
-import { createEmptyReaderData } from '../../src/readerData';
-import { TopicScreen, YaohuoFavoriteStateProvider } from '../../src/screens/topic/TopicScreenBody';
-import { createStyles, createTheme } from '../../src/theme';
-import { createTopicImageDeriver } from '../../src/topicDerivedData';
-import type { InteractionType } from '../../src/topicActionState';
+import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { ReplyFilter } from '@/features/topic/model/types';
+import { filterTopicSessionReplies } from '@/app/useTopicSessionController';
+import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
+import { discoursePollPlaceholder } from '@/discourseContent';
+import { buildHtmlRenderingStyles } from '@/htmlRenderingStyles';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { TopicScreen, YaohuoFavoriteStateProvider } from '@/screens/topic/TopicScreenBody';
+import { createStyles, createTheme } from '@/theme';
+import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
+import type { InteractionType } from '@/domain/forum/topicActionState';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
@@ -118,10 +118,12 @@ jest.mock('lucide-react-native', () => {
   };
 });
 
-jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
-jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
-jest.mock('../../src/topicContentSplit', () => {
-  const actual = jest.requireActual<typeof import('../../src/topicContentSplit')>('../../src/topicContentSplit');
+jest.mock('@/components/Avatar', () => ({ Avatar: () => null }));
+jest.mock('@/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
+jest.mock('@/domain/forum/topicContentSplit', () => {
+  const actual = jest.requireActual<typeof import('@/domain/forum/topicContentSplit')>(
+    '@/domain/forum/topicContentSplit'
+  );
   return {
     ...actual,
     splitTopicContentHtml: (...args: Parameters<typeof actual.splitTopicContentHtml>) => {
@@ -130,7 +132,7 @@ jest.mock('../../src/topicContentSplit', () => {
     }
   };
 });
-jest.mock('../../src/screens/topic/TopicActionBar', () => {
+jest.mock('@/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
@@ -163,7 +165,7 @@ jest.mock('../../src/screens/topic/TopicActionBar', () => {
       )
   };
 });
-jest.mock('../../src/screens/topic/TopicContentBlock', () => {
+jest.mock('@/screens/topic/TopicContentBlock', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
@@ -214,7 +216,7 @@ jest.mock('../../src/screens/topic/TopicContentBlock', () => {
     }
   };
 });
-jest.mock('../../src/screens/topic/TopicPolls', () => {
+jest.mock('@/screens/topic/TopicPolls', () => {
   const ReactModule = require('react') as typeof React;
   const {
     Pressable: NativePressable,
@@ -256,9 +258,9 @@ jest.mock('../../src/screens/topic/TopicPolls', () => {
     }
   };
 });
-jest.mock('../../src/screens/topic/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
-jest.mock('../../src/screens/topic/TopicMenu', () => ({ TopicMenu: () => null }));
-jest.mock('../../src/screens/topic/ReplyItem', () => {
+jest.mock('@/screens/topic/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
+jest.mock('@/screens/topic/TopicMenu', () => ({ TopicMenu: () => null }));
+jest.mock('@/screens/topic/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {

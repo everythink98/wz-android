@@ -14,8 +14,8 @@ import {
 } from 'react-native';
 import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppButton, EmptyText, SettingRail } from '../../components/AppControls';
-import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
+import { AppButton, EmptyText, SettingRail } from '@/components/AppControls';
+import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
 import {
   createNetworkProxyProfile,
   validateNetworkProxyProfile,
@@ -23,8 +23,8 @@ import {
   type NetworkProxyProtocol,
   type NetworkProxyState,
   type NetworkProxyStatus
-} from '../../networkProxy';
-import { errorMessage } from '../../appUtils';
+} from '@/platform/network/networkProxy';
+import { errorMessage } from '@/platform/network/errors';
 
 type Draft = {
   id?: string;

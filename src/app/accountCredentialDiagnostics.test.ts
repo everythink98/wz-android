@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { CredentialSite, CredentialSummary } from '../credentialVault';
-import { beginDiagnosticTrace, setDiagnosticWriter, type DiagnosticEvent } from '../diagnostics';
+import type { CredentialSite, CredentialSummary } from '@/platform/storage/credentialVault';
+import { beginDiagnosticTrace, setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
 import {
   finishCredentialFillTraceForWebViewFailure,
   loadCredentialSummariesWithTrace

@@ -11,7 +11,7 @@ import {
   buildNodeSeekVoteRequest,
   nodeSeekInteractionRemovalMessage,
   type NodeSeekActionRequest
-} from '../nodeseekActions';
+} from '@/nodeseekActions';
 import {
   buildYaohuoDeleteFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
@@ -20,11 +20,11 @@ import {
   buildYaohuoVoteRequest,
   extractYaohuoSid,
   type YaohuoActionRequest
-} from '../yaohuoActions';
-import type { DiscourseAction } from '../discourseActions';
-import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '../discourseSourceActions';
-import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '../nodeseekActionClient';
-import { runYaohuoAction, type YaohuoActionResult } from '../yaohuoActionClient';
+} from '@/yaohuoActions';
+import type { DiscourseAction } from '@/discourseActions';
+import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/discourseSourceActions';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/nodeseekActionClient';
+import { runYaohuoAction, type YaohuoActionResult } from '@/yaohuoActionClient';
 import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
@@ -36,14 +36,14 @@ import {
   topicActionStateKey,
   type InteractionType,
   type OptimisticActionState
-} from '../topicActionState';
-import type { Reply, Source, TopicDetail, TopicPoll } from '../types';
-import type { ReplyEditTarget, TopicRepliesRefreshOptions } from '../appTypes';
-import { topicKey } from '../readerData';
-import type { Fetcher } from '../request';
-import { errorMessage } from '../appUtils';
-import { canToggleDiscourseLike } from '../discoursePermissions';
-import { isDiscourseSource, isSessionSource, sourceValues, type DiscourseSource } from '../sourceCatalog';
+} from '@/domain/forum/topicActionState';
+import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { ReplyEditTarget, TopicRepliesRefreshOptions } from '@/features/topic/model/types';
+import { topicKey } from '@/domain/reader/readerData';
+import type { Fetcher } from '@/platform/network/request';
+import { errorMessage } from '@/platform/network/errors';
+import { canToggleDiscourseLike } from '@/discoursePermissions';
+import { isDiscourseSource, isSessionSource, sourceValues, type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   normalizeReplyImageAsset,
   isNodeImageApiKeyExpiredError,
@@ -51,10 +51,10 @@ import {
   replyImageUploadSupported,
   uploadNodeSeekReplyImageWithApiKey,
   uploadYaohuoReplyImage
-} from '../replyImageUpload';
-import { currentNodeImageApiKeyGeneration } from '../nodeimageCredentials';
-import type { SessionSite, SiteSessionViewModels } from '../siteSessionState';
-import { authActionMessageForSource } from '../siteSessionPrompts';
+} from '@/replyImageUpload';
+import { currentNodeImageApiKeyGeneration } from '@/nodeimageCredentials';
+import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { authActionMessageForSource } from '@/domain/session/siteSessionPrompts';
 import { useCommittedRef } from './useCommittedRef';
 import {
   beginDiagnosticTrace,
@@ -64,9 +64,10 @@ import {
   normalizeDiagnosticReason,
   withDiagnosticFetcher,
   type DiagnosticTrace
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 import type { TopicSessionController } from './useTopicSessionController';
-import { forumMutationKeys, forumQueryKeys, type ForumSessionEpochs } from './serverState';
+import { forumMutationKeys, forumQueryKeys } from './serverState';
+import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeDependencies } from './discourseActionRuntime';
 import {
   canSubmitReplyToTopic,
@@ -86,10 +87,10 @@ import {
   WritableSessionBlockedError,
   type WritableSessionReconcileResult,
   type WritableSessionTicket
-} from '../writableSessionGate';
-import { readManagedCookieHeader } from '../managedCookies';
-import { YAOHUO_BASE_URL } from '../localYaohuoHelpers';
-import { sourceErrorFromUnknown } from '../sourceErrors';
+} from '@/domain/session/writableSessionGate';
+import { readManagedCookieHeader } from '@/platform/network/managedCookies';
+import { YAOHUO_BASE_URL } from '@/localYaohuoHelpers';
+import { sourceErrorFromUnknown } from '@/sourceErrors';
 
 type Ref<T> = { current: T };
 type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unknown>;

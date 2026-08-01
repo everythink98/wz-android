@@ -3,9 +3,9 @@ import {
   discourseImageUrlFromUploadResponse,
   type DiscourseAction,
   type DiscourseActionRequest
-} from './discourseActions';
-import { sourceCatalog, type DiscourseSource } from './sourceCatalog';
-import { buildXiaoyinsiActionRequest } from './xiaoyinsiActions';
+} from '@/discourseActions';
+import { sourceCatalog, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import { buildXiaoyinsiActionRequest } from '@/xiaoyinsiActions';
 
 type DiscourseActionBuilder = (action: DiscourseAction) => DiscourseActionRequest;
 

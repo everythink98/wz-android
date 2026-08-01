@@ -1,6 +1,6 @@
 import type { TextStyle } from 'react-native';
-import { type ReaderSettings } from './readerData';
-import type { Source } from './types';
+import { type ReaderSettings } from '@/domain/reader/readerData';
+import type { Source } from '@/domain/forum/models';
 
 export interface ReaderTheme {
   dark: boolean;

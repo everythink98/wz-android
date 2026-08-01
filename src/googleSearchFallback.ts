@@ -1,4 +1,4 @@
-import { elementText, parseHtml } from './localHtml';
+import { elementText, parseHtml } from '@/domain/forum/html';
 
 export function googleSiteSearchUrl(site: string, query: string, page = 1) {
   const params = new URLSearchParams({ q: `site:${site} ${query}` });

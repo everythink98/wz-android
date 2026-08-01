@@ -1,26 +1,26 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
-import type { Screen } from '../appTypes';
-import type { SourceGateway } from '../sources/sourceGateway';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
+import type { Screen } from '@/ui/navigation/types';
+import type { SourceGateway } from '@/sources/sourceGateway';
 import {
   defaultFeedFilters,
   shouldAllowFeedRemotePagination,
   shouldLoadCategoriesForSource,
   shouldUseFeedFilter,
   shouldUseReadingFilter
-} from '../feedCategoryRail';
-import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '../feedLogic';
-import { categoryKey, topicKey, type ReaderData } from '../readerData';
+} from '@/feedCategoryRail';
+import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '@/feedLogic';
+import { categoryKey, topicKey, type ReaderData } from '@/domain/reader/readerData';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason
-} from '../diagnostics';
-import { sourceLabel } from '../appUtils';
-import { isFeedFilterSource, isSessionSource, sessionSources, sourceValues } from '../sourceCatalog';
-import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
+} from '@/platform/diagnostics/diagnostics';
+import { sourceLabel } from '@/domain/forum/presentation';
+import { isFeedFilterSource, isSessionSource, sessionSources, sourceValues } from '@/domain/forum/sourceCatalog';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
 import {
   formatSourceErrorMessages,
   linuxDoVerificationNavigationMessage,
@@ -28,7 +28,7 @@ import {
   sourceErrorFromUnknown,
   sourceReadRecoveryOutcome,
   yaohuoErrorRequiresLoginPanel
-} from '../sourceErrors';
+} from '@/sourceErrors';
 import type {
   Category,
   CategoriesResponse,
@@ -41,13 +41,9 @@ import type {
   SourceErrors,
   SourceLoadOutcomeKind,
   Topic
-} from '../types';
-import {
-  initialForumSessionEpochs,
-  forumQueryKeys,
-  type ForumIdentityBarrierSource,
-  type ForumSessionEpochs
-} from './serverState';
+} from '@/domain/forum/models';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
 import { useCommittedRef } from './useCommittedRef';
 
 type FeedPageParam = { cursor?: string; page: number };

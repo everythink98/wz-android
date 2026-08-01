@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import type { SourceGateway } from '../sources/sourceGateway';
-import { recordHistory, topicKey, updateFavoriteTopic, type ReaderData } from '../readerData';
-import { isSameReply, mergeReplies, removeReply, replyKey as replyIdentityKey } from '../feedLogic';
-import { isCanceledRequest } from '../appUtils';
-import { replyCountAfterNewReplySubmit, replyLoadMoreLimit, replyRefreshTarget } from '../androidFeatureHelpers';
-import { topicWithAuthorFallback } from '../userNavigation';
+import type { SourceGateway } from '@/sources/sourceGateway';
+import { recordHistory, topicKey, updateFavoriteTopic, type ReaderData } from '@/domain/reader/readerData';
+import { isSameReply, mergeReplies, removeReply, replyKey as replyIdentityKey } from '@/feedLogic';
+import { isCanceledRequest } from '@/platform/network/errors';
+import {
+  replyCountAfterNewReplySubmit,
+  replyLoadMoreLimit,
+  replyRefreshTarget
+} from '@/features/topic/model/replyPagination';
+import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './topicActionControllerHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
-import { sourceErrorFromUnknown, sourceReadRecoveryOutcome, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
-import type { RepliesResponse, Reply, Source, SourceErrorInfo, Topic, TopicDetail } from '../types';
-import type { Screen, TopicRepliesRefreshOptions } from '../appTypes';
+import { sourceErrorFromUnknown, sourceReadRecoveryOutcome, yaohuoErrorRequiresLoginPanel } from '@/sourceErrors';
+import type { RepliesResponse, Reply, Source, SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
+import type { Screen } from '@/ui/navigation/types';
+import type { TopicRepliesRefreshOptions } from '@/features/topic/model/types';
 import type { ReaderDataMutationReason } from './useReaderDataController';
 import {
   quotedPostReferenceKey,
@@ -20,23 +25,19 @@ import {
   type QuotedPostReference,
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
-} from '../quotedPosts';
+} from '@/domain/forum/quotedPosts';
 import {
   beginDiagnosticTrace,
   diagnosticRef,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason
-} from '../diagnostics';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
-import { isDiscourseSource } from '../sourceCatalog';
-import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import {
-  initialForumSessionEpochs,
-  forumQueryKeys,
-  type ForumIdentityBarrierSource,
-  type ForumSessionEpochs
-} from './serverState';
+} from '@/platform/diagnostics/diagnostics';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
+import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;

@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn()
 }));
 
-vi.mock('../credentialVault', () => ({
+vi.mock('@/platform/storage/credentialVault', () => ({
   CredentialVaultError: class CredentialVaultError extends Error {},
   credentialVault: mocks,
   emptyCredentialSummaries: {
@@ -24,8 +24,8 @@ vi.mock('../credentialVault', () => ({
   }
 }));
 
-import { LOGIN_FORM_ADAPTERS } from '../loginFormAdapters';
-import { setDiagnosticWriter } from '../diagnostics';
+import { LOGIN_FORM_ADAPTERS } from '@/loginFormAdapters';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { useAccountCredentialController } from './useAccountCredentialController';
 
 function createController(overrides: Partial<Parameters<typeof useAccountCredentialController>[0]> = {}) {

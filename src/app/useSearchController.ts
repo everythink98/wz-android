@@ -1,30 +1,34 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { aggregateSearchSources, type DiscourseSource } from '../sourceCatalog';
-import { mergeTopics, type SearchSort } from '../feedLogic';
+import { aggregateSearchSources, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import { mergeTopics, type SearchSort } from '@/feedLogic';
 import {
   buildDiscourseSearchQuery,
   DEFAULT_SEARCH_FILTERS,
   type SearchFilterState,
   type SourceSearchFilter
-} from '../searchFilters';
-import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '../searchHistory';
-import type { SourceGateway } from '../sources/sourceGateway';
+} from '@/searchFilters';
+import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '@/searchHistory';
+import type { SourceGateway } from '@/sources/sourceGateway';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason
-} from '../diagnostics';
-import { sourceLabel } from '../appUtils';
-import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import { sourceErrorFromUnknown, sourceReadRecoveryOutcome, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
-import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
-import type { SiteSessionViewModels } from '../siteSessionState';
-import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source } from '../types';
-import type { Screen } from '../appTypes';
-import type { SearchGroup } from '../searchListItems';
+} from '@/platform/diagnostics/diagnostics';
+import { sourceLabel } from '@/domain/forum/presentation';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { sourceErrorFromUnknown, sourceReadRecoveryOutcome, yaohuoErrorRequiresLoginPanel } from '@/sourceErrors';
+import {
+  authNoticeForSource,
+  authNoticeForSourceError,
+  searchSessionNoticeItems
+} from '@/domain/session/siteSessionPrompts';
+import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source } from '@/domain/forum/models';
+import type { Screen } from '@/ui/navigation/types';
+import type { SearchGroup } from '@/searchListItems';
 import {
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
@@ -37,9 +41,10 @@ import {
   type LinuxDoAiSearchState,
   type RemoteSearchSourceResult,
   type SearchRunOptions
-} from '../searchControllerResults';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
-import { initialForumSessionEpochs, forumQueryKeys, type ForumSessionEpochs } from './serverState';
+} from '@/searchControllerResults';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { forumQueryKeys } from './serverState';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 type SearchRunInput = Source | Partial<SearchRunOptions>;

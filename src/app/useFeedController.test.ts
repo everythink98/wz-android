@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { feedOutcomeKind } from './useFeedController';
-import type { SourceErrors } from '../types';
+import type { SourceErrors } from '@/domain/forum/models';
 
 describe('feedOutcomeKind', () => {
   it.each([

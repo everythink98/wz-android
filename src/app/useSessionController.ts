@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import * as SecureStore from 'expo-secure-store';
-import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '../nodeseekSession';
-import { sanitizeLinuxDoUserAgent, LINUXDO_USER_AGENT_STORAGE_KEY } from '../linuxdoSession';
+import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import { sanitizeLinuxDoUserAgent, LINUXDO_USER_AGENT_STORAGE_KEY } from '@/linuxdoSession';
 import { useCommitRefValue } from './useCommittedRef';
-import type { Fetcher } from '../request';
+import type { Fetcher } from '@/platform/network/request';
 import {
   createNodeSeekWebViewFallbackFetcher,
   isNodeSeekBrowserFetchUrl,
   isNodeSeekBrowserResultUrl
-} from '../nodeseekFetchFallback';
+} from '@/nodeseekFetchFallback';
 import {
   createLinuxDoWebViewFallbackFetcher,
   isLinuxDoBrowserFetchUrl,
@@ -16,12 +16,15 @@ import {
   isLinuxDoRequestUrl,
   LinuxDoHiddenBrowserFailureError,
   type LinuxDoHiddenBrowserFailureReason
-} from '../linuxdoFetchFallback';
-import { LinuxDoCloudflareError } from '../cloudflareChallenge';
-import { browserFetchIntentFromInit, type BrowserFetchIntent } from '../browserFetchIntent';
-import { errorMessage } from '../appUtils';
-import { clearManagedLoginCookies } from '../managedCookies';
-import { LEGACY_COOKIE_SNAPSHOT_KEYS, migrateLegacyCookieSnapshots } from '../legacyCookieSnapshotMigration';
+} from '@/linuxdoFetchFallback';
+import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
+import { browserFetchIntentFromInit, type BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
+import { errorMessage } from '@/platform/network/errors';
+import { clearManagedLoginCookies } from '@/platform/network/managedCookies';
+import {
+  LEGACY_COOKIE_SNAPSHOT_KEYS,
+  migrateLegacyCookieSnapshots
+} from '@/platform/storage/legacyCookieSnapshotMigration';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -29,8 +32,9 @@ import {
   markDiagnosticStage,
   normalizeDiagnosticReason,
   type DiagnosticTrace
-} from '../diagnostics';
-import { appQueryClient, type ForumSessionEpochs } from './serverState';
+} from '@/platform/diagnostics/diagnostics';
+import { appQueryClient } from './serverState';
+import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   createSiteSessionViewModels,
   createSiteSessionStates,
@@ -38,7 +42,7 @@ import {
   type ScopedSiteSessionEvent,
   type SessionSite,
   type SiteSessionEvent
-} from '../siteSessionState';
+} from '@/domain/session/siteSessionState';
 import {
   commitChangedAccountStatusQuery,
   createCredentialWriteGate,

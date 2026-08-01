@@ -1,4 +1,4 @@
-import type { Topic, UserReference, UserReplyActivity } from '../../types';
+import type { Topic, UserReference, UserReplyActivity } from '@/domain/forum/models';
 
 export type UserActivityTab = 'topics' | 'replies';
 

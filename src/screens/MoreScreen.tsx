@@ -2,29 +2,29 @@ import { memo, type RefObject, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, Bug, DatabaseBackup, Server, Settings } from 'lucide-react-native';
-import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '../appUpdate';
-import type { ReaderSettings } from '../readerData';
-import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '../networkProxy';
-import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
-import type { LoginNavigationRequest } from '../appTypes';
-import type { SessionSite, SiteSessionViewModels } from '../siteSessionState';
-import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, ExpandablePanel, MenuButton } from '../components/AppControls';
+import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '@/platform/update/appUpdate';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '@/platform/network/networkProxy';
+import type { LinuxDoLevelProfile } from '@/sources/sourceGateway';
+import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
+import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, ExpandablePanel, MenuButton } from '@/components/AppControls';
 import {
   AppearancePanel,
   BackupRestorePanel,
   LinuxDoLevelPanel,
   NodeSeekLoginPanel,
   YaohuoLoginPanel
-} from './more/MorePanels';
-import { NetworkProxyModal } from './more/NetworkProxyModal';
-import { AccountCenterPanel, type AccountCenterCommand } from './more/AccountCenterPanel';
-import type { CredentialSummaries } from './more/accountCenter';
-import type { AccountCredentialFillAttempt } from '../app/useAccountCredentialController';
-import type { XiaoyinsiAuthPhase } from '../app/useXiaoyinsiAuthController';
-import type { XiaoyinsiPendingAuthorization } from '../xiaoyinsiAuth';
-import type { XiaoyinsiLevelProfile } from '../localXiaoyinsi';
-import { XiaoyinsiAuthPanel } from './more/XiaoyinsiAuthPanel';
+} from '@/screens/more/MorePanels';
+import { NetworkProxyModal } from '@/screens/more/NetworkProxyModal';
+import { AccountCenterPanel, type AccountCenterCommand } from '@/screens/more/AccountCenterPanel';
+import type { CredentialSummaries } from '@/screens/more/accountCenter';
+import type { AccountCredentialFillAttempt } from '@/app/useAccountCredentialController';
+import type { XiaoyinsiAuthPhase } from '@/app/useXiaoyinsiAuthController';
+import type { XiaoyinsiPendingAuthorization } from '@/xiaoyinsiAuth';
+import type { XiaoyinsiLevelProfile } from '@/localXiaoyinsi';
+import { XiaoyinsiAuthPanel } from '@/screens/more/XiaoyinsiAuthPanel';
 
 const moreScreenStyles = StyleSheet.create({
   accountFooterAction: {

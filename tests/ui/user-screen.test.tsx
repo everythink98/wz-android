@@ -1,11 +1,11 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
-import type { Topic, UserProfile, UserReference } from '../../src/types';
-import { createEmptyReaderData } from '../../src/readerData';
-import { UserScreen } from '../../src/screens/UserScreen';
-import { createStyles, createTheme } from '../../src/theme';
-import { createTopicListItemStateIndex } from '../../src/topicListItemState';
+import type { Topic, UserProfile, UserReference } from '@/domain/forum/models';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { UserScreen } from '@/screens/UserScreen';
+import { createStyles, createTheme } from '@/theme';
+import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -48,7 +48,7 @@ jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return { ChevronLeft: Icon, ExternalLink: Icon, RefreshCw: Icon, Star: Icon };
 });
-jest.mock('../../src/components/Avatar', () => {
+jest.mock('@/components/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
@@ -60,7 +60,7 @@ jest.mock('../../src/components/Avatar', () => {
       )
   };
 });
-jest.mock('../../src/components/TopicCard', () => {
+jest.mock('@/components/TopicCard', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
   return {

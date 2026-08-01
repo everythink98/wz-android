@@ -6,9 +6,9 @@ import {
   toggleFavorite,
   toggleFollowedUser,
   type ReaderData
-} from '../readerData';
-import type { LibraryTab } from '../feedLogic';
-import type { Topic, UserProfile } from '../types';
+} from '@/domain/reader/readerData';
+import type { LibraryTab } from '@/feedLogic';
+import type { Topic, UserProfile } from '@/domain/forum/models';
 import type { ReaderDataMutationReason } from './useReaderDataController';
 
 type CommitReaderData = (

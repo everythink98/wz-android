@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { dateTime } from './appUtils';
-import { createEmptyReaderData } from './readerData';
+import { dateTime } from '@/domain/forum/presentation';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import {
   applyFeedFilter,
   feedRequestKey,
@@ -10,8 +10,8 @@ import {
   nextFeedPageState,
   removeReply,
   shouldReuseFeedStateForRequest
-} from './feedLogic';
-import type { Reply, Topic } from './types';
+} from '@/feedLogic';
+import type { Reply, Topic } from '@/domain/forum/models';
 
 describe('Android feed logic helpers', () => {
   const topic: Topic = {

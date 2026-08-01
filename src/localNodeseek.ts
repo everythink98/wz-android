@@ -4,11 +4,11 @@ import {
   type BrowserFetchIntent,
   type BrowserFetchOwner,
   type BrowserFetchPriority
-} from './browserFetchIntent';
-import { fetchWithTimeout, type Fetcher } from './request';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekSession';
-import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
-import type { NodeSeekSearchFilter } from './searchFilters';
+} from '@/platform/network/browserFetchIntent';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from '@/googleSearchFallback';
+import type { NodeSeekSearchFilter } from '@/searchFilters';
 import type {
   Category,
   FeedResponse,
@@ -23,7 +23,7 @@ import type {
   UserProfile,
   UserReference,
   UserReplyActivity
-} from './types';
+} from '@/domain/forum/models';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -35,7 +35,7 @@ import {
   sanitizeContentHtml,
   textExcerpt,
   toIsoString
-} from './localHtml';
+} from '@/domain/forum/html';
 import {
   NODESEEK_BASE_URL,
   extractNodeSeekEmbeddedData,
@@ -49,15 +49,15 @@ import {
   nodeSeekTopicUrl,
   safeNodeSeekTopicUrl,
   withNodeSeekReplyPagination
-} from './localNodeseekHelpers';
-import { nodeSeekMarkdownToHtml } from './nodeSeekMarkdown';
+} from '@/localNodeseekHelpers';
+import { nodeSeekMarkdownToHtml } from '@/nodeSeekMarkdown';
 import {
   NODESEEK_VOTE_API_HEADERS,
   nodeSeekPollPlaceholderHtml,
   normalizeNodeSeekVoteInfo,
   stripLoadedNodeSeekVoteMarkers
-} from './nodeseekPolls';
-import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from './sourceAdapterDiagnostics';
+} from '@/nodeseekPolls';
+import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from '@/sourceAdapterDiagnostics';
 
 const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';

@@ -2,15 +2,15 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native';
-import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '../types';
-import { formatDateTime, sourceLabel } from '../appUtils';
-import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
-import { androidRipple, createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../components/AppControls';
-import { Avatar } from '../components/Avatar';
-import { MemoizedTopicCard } from '../components/TopicCard';
-import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-import { authNoticeForSourceError } from '../siteSessionPrompts';
+import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
+import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
+import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '@/components/AppControls';
+import { Avatar } from '@/components/Avatar';
+import { MemoizedTopicCard } from '@/components/TopicCard';
+import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import {
   createUserListItems,
   userListInstanceKey,
@@ -18,7 +18,7 @@ import {
   userListItemType,
   type UserActivityTab,
   type UserListItem
-} from './user/userScreenItems';
+} from '@/screens/user/userScreenItems';
 
 const USER_LIST_POSITION_PROPS = { disabled: true };
 

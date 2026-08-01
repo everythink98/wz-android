@@ -9,7 +9,7 @@ import {
   topicReplyActionKey,
   yaohuoFavoriteActionKey
 } from './topicActionControllerHelpers';
-import type { Reply, UserProfile } from '../types';
+import type { Reply, UserProfile } from '@/domain/forum/models';
 
 describe('topic action controller helpers', () => {
   it('[REG-XIAOYINSI-007] requires the server topic permission before submitting a 小隐寺 reply', () => {

@@ -7,13 +7,13 @@ import type {
   Topic,
   TopicDetail,
   TopicPoll
-} from '../../types';
-import { accessRequirementFromNoticeText, textContentFromHtml } from '../../localHtml';
-import { replyKey } from '../../feedLogic';
-import { splitDiscourseContentHtml } from '../../discourseContent';
-import { splitTopicContentHtml } from '../../topicContentSplit';
-import { isDiscourseSource } from '../../sourceCatalog';
-import { quotedPostsForSource, replyForQuotedPost, replyQuotedPostInstanceKey } from '../../quotedPosts';
+} from '@/domain/forum/models';
+import { accessRequirementFromNoticeText, textContentFromHtml } from '@/domain/forum/html';
+import { replyKey } from '@/feedLogic';
+import { splitDiscourseContentHtml } from '@/discourseContent';
+import { splitTopicContentHtml } from '@/domain/forum/topicContentSplit';
+import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
+import { quotedPostsForSource, replyForQuotedPost, replyQuotedPostInstanceKey } from '@/domain/forum/quotedPosts';
 
 export type ReplyQuoteContent = { type: 'html'; html: string } | { type: 'poll'; poll: TopicPoll };
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isCancelledError, useQuery } from '@tanstack/react-query';
 import { AppState, Linking, type AppStateStatus } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { errorMessage, isCanceledRequest } from '../appUtils';
+import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -10,10 +10,10 @@ import {
   normalizeDiagnosticReason,
   withDiagnosticFetcher,
   type DiagnosticTrace
-} from '../diagnostics';
-import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
-import type { ScopedSiteSessionEvent, SiteSessionEvent } from '../siteSessionState';
-import type { SourceGateway } from '../sources/sourceGateway';
+} from '@/platform/diagnostics/diagnostics';
+import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import type { ScopedSiteSessionEvent, SiteSessionEvent } from '@/domain/session/siteSessionState';
+import type { SourceGateway } from '@/sources/sourceGateway';
 import {
   beginXiaoyinsiDeviceAuth,
   cancelXiaoyinsiDeviceAuth,
@@ -28,8 +28,9 @@ import {
   verifyXiaoyinsiCredentials,
   XiaoyinsiAuthError,
   type XiaoyinsiPendingAuthorization
-} from '../xiaoyinsiAuth';
-import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
+} from '@/xiaoyinsiAuth';
+import { appQueryClient, forumQueryKeys } from './serverState';
+import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 
 export type XiaoyinsiAuthPhase =
   'idle' | 'requesting' | 'waiting' | 'authorized' | 'denied' | 'expired' | 'cleanup' | 'unsupported' | 'error';

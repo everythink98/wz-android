@@ -25,7 +25,7 @@ const readers = vi.hoisted(() => ({
   searchXiaoyinsiUsers: vi.fn()
 }));
 
-vi.mock('./localLinuxdo', () => ({
+vi.mock('@/localLinuxdo', () => ({
   getLinuxDoCategories: readers.getLinuxDoCategories,
   getLinuxDoCurrentUserProfile: readers.getLinuxDoCurrentUserProfile,
   getLinuxDoEmojiUrls: readers.getLinuxDoEmojiUrls,
@@ -39,7 +39,7 @@ vi.mock('./localLinuxdo', () => ({
   searchLinuxDoUsers: readers.searchLinuxDoUsers
 }));
 
-vi.mock('./localXiaoyinsi', () => ({
+vi.mock('@/localXiaoyinsi', () => ({
   getXiaoyinsiCategories: readers.getXiaoyinsiCategories,
   getXiaoyinsiCurrentUserProfile: readers.getXiaoyinsiCurrentUserProfile,
   getXiaoyinsiEmojiUrls: readers.getXiaoyinsiEmojiUrls,
@@ -60,7 +60,7 @@ import {
   getDiscourseSourceFeed,
   getDiscourseSourceReply,
   searchDiscourseSourceTagOptions
-} from './discourseSourceReaders';
+} from '@/discourseSourceReaders';
 
 describe('Discourse source reader registration', () => {
   beforeEach(() => {

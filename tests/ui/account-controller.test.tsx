@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import type { LinuxDoLevelProfile, SourceGateway } from '../../src/sources/sourceGateway';
-import { useAccountController } from '../../src/app/useAccountController';
-import type { Screen } from '../../src/appTypes';
-import type { SiteSessionState } from '../../src/siteSessionState';
-import { appQueryClient, initialForumSessionEpochs } from '../../src/app/serverState';
-import type { AccountReconcileResult } from '../../src/app/useAccountStatusController';
-import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
+import type { LinuxDoLevelProfile, SourceGateway } from '@/sources/sourceGateway';
+import { useAccountController } from '@/app/useAccountController';
+import type { Screen } from '@/ui/navigation/types';
+import type { SiteSessionState } from '@/domain/session/siteSessionState';
+import { appQueryClient } from '@/app/serverState';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const ref = <T,>(current: T) => ({ current });

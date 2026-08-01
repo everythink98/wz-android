@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from './discourseActions';
+import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from '@/discourseActions';
 
 describe('Discourse action requests', () => {
   it('builds an existing-topic reply without knowing the site', () => {

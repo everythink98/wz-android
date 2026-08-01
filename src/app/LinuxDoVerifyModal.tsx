@@ -1,14 +1,14 @@
 import { memo, type RefObject, useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { LINUXDO_URL } from '../appUrls';
-import type { LoginNavigationRequest } from '../appTypes';
-import { AppButton } from '../components/AppControls';
-import { LoginWebViewModal } from '../components/LoginWebViewModal';
-import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '../loginWebViewScripts';
-import { LOGIN_FORM_ADAPTERS } from '../loginFormAdapters';
-import type { SiteSessionViewModel } from '../siteSessionState';
-import { createStyles, type ReaderTheme } from '../theme';
+import { LINUXDO_URL } from '@/domain/forum/sourceUrls';
+import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
+import { AppButton } from '@/components/AppControls';
+import { LoginWebViewModal } from '@/components/LoginWebViewModal';
+import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/loginWebViewScripts';
+import { LOGIN_FORM_ADAPTERS } from '@/loginFormAdapters';
+import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
+import { createStyles, type ReaderTheme } from '@/theme';
 
 const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
 const LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS = 12000;

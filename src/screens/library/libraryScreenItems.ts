@@ -1,7 +1,7 @@
-import type { FeedSource } from '../../types';
-import { type FollowedUserRecord, type TopicRecord, userKey } from '../../readerData';
-import type { LibraryTab } from '../../feedLogic';
-import { groupLibraryRecordsByTime } from '../../androidFeatureHelpers';
+import type { FeedSource } from '@/domain/forum/models';
+import { type FollowedUserRecord, type TopicRecord, userKey } from '@/domain/reader/readerData';
+import type { LibraryTab } from '@/feedLogic';
+import { groupLibraryRecordsByTime } from '@/features/library/model/libraryFilters';
 
 export type LibraryListItem =
   | { type: 'section'; key: string; label: string; first: boolean }

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
-jest.mock('../../src/xiaoyinsiKeystore', () => ({
+jest.mock('@/platform/android/xiaoyinsiKeystore', () => ({
   nativeSecureRandomHex: jest.fn(async () => 'a'.repeat(32))
 }));
 
-jest.mock('../../src/nodeimageCredentials', () => ({
+jest.mock('@/nodeimageCredentials', () => ({
   beginNodeImageApiKeyAuthorization: jest.fn(() => 3),
   clearNodeImageApiKey: jest.fn(async () => true),
   currentNodeImageApiKeyGeneration: jest.fn(() => 3),
@@ -16,7 +16,7 @@ jest.mock('../../src/nodeimageCredentials', () => ({
   saveNodeImageApiKeyForGeneration: jest.fn(async () => 'saved-key')
 }));
 
-import { useNodeImageAuthController } from '../../src/app/useNodeImageAuthController';
+import { useNodeImageAuthController } from '@/app/useNodeImageAuthController';
 
 function nodeSeekSession() {
   return {

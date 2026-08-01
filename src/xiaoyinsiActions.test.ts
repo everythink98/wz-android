@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildXiaoyinsiActionRequest } from './xiaoyinsiActions';
+import { buildXiaoyinsiActionRequest } from '@/xiaoyinsiActions';
 
 describe('小隐寺 Discourse action extensions', () => {
   it('[REG-XIAOYINSI-003] removes a topic bookmark without a bookmark id', () => {

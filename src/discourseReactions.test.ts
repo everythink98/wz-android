@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { discourseEmojiUrlMapFromData, discourseReactionStats } from './discourseReactions';
+import { discourseEmojiUrlMapFromData, discourseReactionStats } from '@/discourseReactions';
 
 describe('portable Discourse reaction presentation', () => {
   it('[REG-XIAOYINSI-017] renders reactions with the current site emoji catalog', () => {

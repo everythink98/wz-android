@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SEARCH_FILTERS } from '../searchFilters';
+import { DEFAULT_SEARCH_FILTERS } from '@/searchFilters';
 import {
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
@@ -9,7 +9,7 @@ import {
   mergeLinuxDoAiTopics,
   snapshotSearchFilters,
   type RemoteSearchSourceResult
-} from '../searchControllerResults';
+} from '@/searchControllerResults';
 
 describe('search controller result helpers', () => {
   it('keeps an undisplayed cached search page reachable and only rejects a repeated page', () => {

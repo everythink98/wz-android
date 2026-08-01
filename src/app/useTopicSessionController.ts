@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createReplyTextIndexForQuery, filterRepliesByQuery } from '../androidFeatureHelpers';
-import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from '../appTypes';
-import { appendReplyImageMarkup } from '../replyImageUpload';
-import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../topicDerivedData';
+import { createReplyTextIndexForQuery, filterRepliesByQuery } from '@/features/topic/model/replySearch';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from '@/features/topic/model/types';
+import { appendReplyImageMarkup } from '@/replyImageUpload';
+import {
+  filterRepliesWithImages,
+  type InlineSizedImageUrlMap,
+  type TopicImageDeriver
+} from '@/features/topic/model/topicDerivedData';
 import {
   createEmptyTopicSession,
   createInactiveTopicSession,
@@ -13,8 +17,8 @@ import {
   saveTopicRouteSnapshot,
   snapshotFromTopicSession,
   topicSessionFromSnapshot
-} from '../topicSessionState';
-import type { Reply, Topic, TopicDetail } from '../types';
+} from '@/topicSessionState';
+import type { Reply, Topic, TopicDetail } from '@/domain/forum/models';
 
 export function replyContentAfterComposerClose(content: string, replyEditTarget: ReplyEditTarget | null) {
   return replyEditTarget ? '' : content;

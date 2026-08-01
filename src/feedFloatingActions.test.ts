@@ -3,7 +3,7 @@ import {
   shouldAllowFeedAutoLoadRequest,
   shouldLoadMoreFeedFromScroll,
   shouldShowFeedFloatingActions
-} from './feedFloatingActions';
+} from '@/feedFloatingActions';
 
 describe('Android feed floating actions', () => {
   it('shows the back-to-top action after meaningful scrolling', () => {

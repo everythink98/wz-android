@@ -5,7 +5,7 @@ import {
   replyComposerKeepsAccessoryOpenAfterExpressionInsert,
   replyComposerToolbarItems,
   replaceReplyComposerSelection
-} from './replyComposerFormatting';
+} from '@/screens/topic/replyComposerFormatting';
 
 describe('reply composer formatting', () => {
   it('inserts Markdown formatting for NodeSeek and linux.do replies', () => {

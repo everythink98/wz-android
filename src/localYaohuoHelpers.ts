@@ -1,5 +1,5 @@
-import type { Category } from './types';
-import { absoluteUrl, elementText, parseHtml, parsePositiveInteger } from './localHtml';
+import type { Category } from '@/domain/forum/models';
+import { absoluteUrl, elementText, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
 
 export const YAOHUO_BASE_URL = 'https://www.yaohuo.me';
 export const YAOHUO_LOGIN_URL = `${YAOHUO_BASE_URL}/waplogin.aspx?siteid=1000`;

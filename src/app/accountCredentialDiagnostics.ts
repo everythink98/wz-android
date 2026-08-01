@@ -1,5 +1,10 @@
-import type { CredentialSite, CredentialSummaries, CredentialSummary } from '../credentialVault';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, type DiagnosticTrace } from '../diagnostics';
+import type { CredentialSite, CredentialSummaries, CredentialSummary } from '@/platform/storage/credentialVault';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  type DiagnosticTrace
+} from '@/platform/diagnostics/diagnostics';
 
 const sites = ['nodeseek', 'linuxdo', 'yaohuo'] as const satisfies readonly CredentialSite[];
 

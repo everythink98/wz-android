@@ -6,31 +6,36 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
-import { isLinuxDoCloudflareError } from './appUtils';
-import { browserFetchIntentFromInit, withBrowserFetchIntent } from './browserFetchIntent';
-import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from './linuxdoFetchFallback';
+import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from '@/forumApi';
+import { isLinuxDoCloudflareError } from '@/sources/errors';
+import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
+import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from '@/linuxdoFetchFallback';
 import {
   getLinuxDoCurrentUserProfile,
   getLinuxDoUserProfile,
   searchLinuxDoSemantic,
   searchLinuxDoTags,
   searchLinuxDoUsers
-} from './localLinuxdo';
-import { splitDiscourseContentHtml } from './discourseContent';
-import { textContentFromHtml } from './localHtml';
-import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
+} from '@/localLinuxdo';
+import { splitDiscourseContentHtml } from '@/discourseContent';
+import { textContentFromHtml } from '@/domain/forum/html';
+import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '@/nodeseekFetchFallback';
 import {
   getNodeSeekCurrentUserProfile,
   getNodeSeekReplies,
   getNodeSeekTopic,
   getNodeSeekUserProfile,
   resolveNodeSeekUser
-} from './localNodeseek';
-import { setRequestTimeoutsActive } from './request';
-import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
-import { DEFAULT_SEARCH_FILTERS } from './searchFilters';
-import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter, withDiagnosticFetcher } from './diagnostics';
+} from '@/localNodeseek';
+import { setRequestTimeoutsActive } from '@/platform/network/request';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { DEFAULT_SEARCH_FILTERS } from '@/searchFilters';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  setDiagnosticWriter,
+  withDiagnosticFetcher
+} from '@/platform/diagnostics/diagnostics';
 
 const nodeSeekPayload = Buffer.from(
   JSON.stringify({

@@ -11,10 +11,10 @@ import {
   openReadingSettingsScreen,
   pushTopicRoute,
   type MainTabParamList
-} from '../../src/app/AppNavigator';
-import { createEmptyReaderData } from '../../src/readerData';
-import { useOriginalImageUpgradeEnabled } from '../../src/originalImageLoading';
-import { createStyles, createTheme } from '../../src/theme';
+} from '@/app/AppNavigator';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { useOriginalImageUpgradeEnabled } from '@/platform/media/originalImageLoading';
+import { createStyles, createTheme } from '@/theme';
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;

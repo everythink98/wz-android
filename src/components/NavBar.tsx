@@ -1,7 +1,7 @@
 import { Text, View } from 'react-native';
 import { Home, MoreHorizontal, Search, Star, type LucideIcon } from 'lucide-react-native';
-import type { Screen } from '../appTypes';
-import { createStyles, type ReaderTheme } from '../theme';
+import type { Screen } from '@/ui/navigation/types';
+import { createStyles, type ReaderTheme } from '@/theme';
 
 export const tabNavItems: { value: Screen; label: string; icon: LucideIcon }[] = [
   { value: 'feed', label: '首页', icon: Home },

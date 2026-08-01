@@ -10,17 +10,17 @@ import {
   fontScaleFromSliderPosition,
   normalizeFontScale,
   type ReaderSettings
-} from '../../readerData';
-import type { LoginNavigationRequest } from '../../appTypes';
-import { NODESEEK_URL, YAOHUO_URL } from '../../appUrls';
-import type { SiteSessionViewModel } from '../../siteSessionState';
-import { createStyles, type ReaderTheme } from '../../theme';
-import { AppButton, MenuButton, triggerPressFeedback } from '../../components/AppControls';
-import { LoginWebViewModal } from '../../components/LoginWebViewModal';
-import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../../loginWebViewScripts';
-import { LOGIN_FORM_ADAPTERS } from '../../loginFormAdapters';
-import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
-import { useCommittedRef } from '../../app/useCommittedRef';
+} from '@/domain/reader/readerData';
+import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
+import { NODESEEK_URL, YAOHUO_URL } from '@/domain/forum/sourceUrls';
+import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
+import { createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, MenuButton, triggerPressFeedback } from '@/components/AppControls';
+import { LoginWebViewModal } from '@/components/LoginWebViewModal';
+import { NODESEEK_LOGIN_PROBE_SCRIPT } from '@/loginWebViewScripts';
+import { LOGIN_FORM_ADAPTERS } from '@/loginFormAdapters';
+import { LinuxDoLevelPanel } from '@/screens/more/LinuxDoLevelPanel';
+import { useCommittedRef } from '@/app/useCommittedRef';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';

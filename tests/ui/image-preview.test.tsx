@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { NativeModules, StyleSheet } from 'react-native';
-import { ImagePreviewModal } from '../../src/components/ImagePreviewModal';
-import { createEmptyReaderData } from '../../src/readerData';
-import { createStyles, createTheme } from '../../src/theme';
-import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '../../src/mediaSessionEpoch';
-import { initialForumSessionEpochs } from '../../src/app/serverState';
-import { setDiagnosticWriter } from '../../src/diagnostics';
-import { originalImageDisplayRevision } from '../../src/originalImageLoading';
+import { ImagePreviewModal } from '@/components/ImagePreviewModal';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createStyles, createTheme } from '@/theme';
+import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { originalImageDisplayRevision } from '@/platform/media/originalImageLoading';
 
 const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
   documentHeight: 1025,

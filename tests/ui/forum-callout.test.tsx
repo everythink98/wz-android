@@ -3,9 +3,9 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 
-import { FORUM_CALLOUT_TRANSITION_MS, ForumCallout, forumCalloutPalette } from '../../src/components/ForumCallout';
-import { createEmptyReaderData } from '../../src/readerData';
-import { alphaColor, createTheme } from '../../src/theme';
+import { FORUM_CALLOUT_TRANSITION_MS, ForumCallout, forumCalloutPalette } from '@/components/ForumCallout';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { alphaColor, createTheme } from '@/theme';
 
 const readerData = createEmptyReaderData();
 const lightTheme = createTheme(readerData.settings);

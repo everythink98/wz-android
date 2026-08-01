@@ -1,10 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
-import { createEmptyReaderData } from '../../src/readerData';
-import { BackupRestorePanel, AppearancePanel } from '../../src/screens/more/MorePanels';
-import { TopicMenu } from '../../src/screens/topic/TopicMenu';
-import { createStyles, createTheme } from '../../src/theme';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { BackupRestorePanel, AppearancePanel } from '@/screens/more/MorePanels';
+import { TopicMenu } from '@/screens/topic/TopicMenu';
+import { createStyles, createTheme } from '@/theme';
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;

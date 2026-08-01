@@ -1,24 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { useRef, useState } from 'react';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import {
-  appQueryClient,
-  initialForumSessionEpochs,
-  forumQueryKeys,
-  type ForumIdentityBarrierSource,
-  type ForumSessionEpochs
-} from '../../src/app/serverState';
-import { useTopicController } from '../../src/app/useTopicController';
-import { useTopicSessionController } from '../../src/app/useTopicSessionController';
-import { executeTopicReturnStrategy } from '../../src/app/backHandlerHelpers';
-import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
-import { LinuxDoCloudflareError } from '../../src/cloudflareChallenge';
-import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
-import { createEmptyReaderData } from '../../src/readerData';
-import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
-import type { SourceGateway } from '../../src/sources/sourceGateway';
-import type { Screen, TopicSnapshot } from '../../src/appTypes';
-import type { Reply, Topic, TopicDetail } from '../../src/types';
+import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/app/serverState';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { useTopicController } from '@/app/useTopicController';
+import { useTopicSessionController } from '@/app/useTopicSessionController';
+import { executeTopicReturnStrategy } from '@/app/backHandlerHelpers';
+import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
+import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
+import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import type { SourceGateway } from '@/sources/sourceGateway';
+import type { Screen } from '@/ui/navigation/types';
+import type { TopicSnapshot } from '@/features/topic/model/types';
+import type { Reply, Topic, TopicDetail } from '@/domain/forum/models';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const firstTopic: Topic = {

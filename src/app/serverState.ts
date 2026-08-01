@@ -1,18 +1,10 @@
 import { QueryClient } from '@tanstack/react-query';
-import type { SourceSearchFilter } from '../searchFilters';
-import { isSessionSource, type SessionSource } from '../sourceCatalog';
-import type { FeedSource, Source } from '../types';
-
-export type ForumSessionEpochs = Readonly<Record<SessionSource, number>>;
+import type { SourceSearchFilter } from '@/searchFilters';
+import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import type { FeedSource, Source } from '@/domain/forum/models';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 
 export type ForumIdentityBarrierSource = SessionSource;
-
-export const initialForumSessionEpochs: ForumSessionEpochs = {
-  linuxdo: 0,
-  nodeseek: 0,
-  xiaoyinsi: 0,
-  yaohuo: 0
-};
 
 function sessionEpochKey(source: FeedSource, epochs: ForumSessionEpochs) {
   if (source === 'all') {

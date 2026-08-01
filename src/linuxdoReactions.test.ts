@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { linuxDoReactionStats } from './linuxdoReactions';
+import { linuxDoReactionStats } from '@/linuxdoReactions';
 
 describe('linux.do reaction presentation', () => {
   it('renders reaction ids from the provided catalog and keeps boosts as text', () => {

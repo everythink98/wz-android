@@ -1,27 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
-import { mergeTopics } from '../feedLogic';
+import { mergeTopics } from '@/feedLogic';
 import {
   beginDiagnosticTrace,
   diagnosticRef,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason
-} from '../diagnostics';
-import { isUserFollowed, type FollowedUserRecord, type ReaderData } from '../readerData';
-import { nodeSeekUserIdFromValue } from '../userNavigation';
-import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '../sourceErrors';
-import type { Source, SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '../types';
-import type { Screen } from '../appTypes';
-import type { SourceGateway } from '../sources/sourceGateway';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
-import {
-  initialForumSessionEpochs,
-  forumQueryKeys,
-  type ForumIdentityBarrierSource,
-  type ForumSessionEpochs
-} from './serverState';
+} from '@/platform/diagnostics/diagnostics';
+import { isUserFollowed, type FollowedUserRecord, type ReaderData } from '@/domain/reader/readerData';
+import { nodeSeekUserIdFromValue } from '@/domain/forum/userNavigation';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '@/sourceErrors';
+import type {
+  Source,
+  SourceErrorInfo,
+  Topic,
+  UserProfile,
+  UserReference,
+  UserReplyActivity
+} from '@/domain/forum/models';
+import type { Screen } from '@/ui/navigation/types';
+import type { SourceGateway } from '@/sources/sourceGateway';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
 
 type UserLane = 'topics' | 'replies';
 

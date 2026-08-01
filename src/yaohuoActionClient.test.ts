@@ -1,16 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('./androidWebViewUserAgent', () => ({
+vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
   DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
 }));
 
-import { runYaohuoAction } from './yaohuoActionClient';
+import { runYaohuoAction } from '@/yaohuoActionClient';
 import {
   buildYaohuoDeleteFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
   buildYaohuoFavoriteRequest,
   buildYaohuoReplyRequest
-} from './yaohuoActions';
+} from '@/yaohuoActions';
 
 function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/bbs/book_re.aspx') {
   const response = new Response(body, {

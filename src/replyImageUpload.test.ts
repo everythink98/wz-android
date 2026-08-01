@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNodeSeekReplyRequest } from './nodeseekActions';
+import { buildNodeSeekReplyRequest } from '@/nodeseekActions';
 import {
   appendReplyImageMarkup,
   normalizeReplyImageAsset,
@@ -13,7 +13,7 @@ import {
   uploadNodeSeekReplyImageWithApiKey,
   uploadYaohuoReplyImage,
   yaohuoImageUrlFromUploadResponse
-} from './replyImageUpload';
+} from '@/replyImageUpload';
 
 describe('reply image upload helpers', () => {
   it('supports image uploads only where an upload path is known', () => {

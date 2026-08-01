@@ -1,5 +1,5 @@
-import { absoluteUrl, isRecord } from './localHtml';
-import type { ReactionSummary, Reply, TopicDetail } from './types';
+import { absoluteUrl, isRecord } from '@/domain/forum/html';
+import type { ReactionSummary, Reply, TopicDetail } from '@/domain/forum/models';
 
 export type DiscourseReactionStat = {
   id: string;

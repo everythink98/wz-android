@@ -1,9 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 import { render } from '@testing-library/react-native';
 import React from 'react';
-import { LoadingState } from '../../src/components/AppControls';
-import { createEmptyReaderData } from '../../src/readerData';
-import { createStyles, createTheme } from '../../src/theme';
+import { LoadingState } from '@/components/AppControls';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createStyles, createTheme } from '@/theme';
 
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);

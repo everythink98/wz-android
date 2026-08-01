@@ -4,10 +4,10 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
-import type { createStyles } from '../theme';
-import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '../linuxdoFetchFallback';
-import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '../nodeseekFetchFallback';
-import { isGoogleSiteSearchAccessTroubleUrl } from '../googleSearchFallback';
+import type { createStyles } from '@/theme';
+import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '@/linuxdoFetchFallback';
+import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '@/nodeseekFetchFallback';
+import { isGoogleSiteSearchAccessTroubleUrl } from '@/googleSearchFallback';
 
 type HiddenBrowserState = {
   linuxDo: {

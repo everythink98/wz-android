@@ -2,19 +2,19 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { NativeModules, StyleSheet, Text } from 'react-native';
-import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
-import { ForumContentVideo } from '../../src/components/ForumContentVideo';
-import { FORUM_VIDEO_TAG } from '../../src/localHtml';
-import { createEmptyReaderData } from '../../src/readerData';
-import { createStyles, createTheme } from '../../src/theme';
-import type { TopicDetail } from '../../src/types';
-import { setDiagnosticWriter } from '../../src/diagnostics';
-import { imageSourceFromUrl } from '../../src/htmlImages';
+import { useHtmlRenderingController } from '@/app/useHtmlRenderingController';
+import { ForumContentVideo } from '@/components/ForumContentVideo';
+import { FORUM_VIDEO_TAG } from '@/domain/forum/html';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createStyles, createTheme } from '@/theme';
+import type { TopicDetail } from '@/domain/forum/models';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { imageSourceFromUrl } from '@/platform/media/htmlImages';
 import {
   markOriginalImageDisplayed,
   OriginalImageUpgradeBoundary,
   useOriginalImageUpgradeEnabled
-} from '../../src/originalImageLoading';
+} from '@/platform/media/originalImageLoading';
 
 const imageUrl = 'https://img.example.com/topic.png';
 let mockSourceHeaders: Record<string, string> | undefined;
@@ -112,8 +112,8 @@ jest.mock('expo-video', () => ({
 
 jest.mock('react-native-webview', () => ({ WebView: (props: unknown) => mockWebView(props) }));
 
-jest.mock('../../src/managedCookies', () => ({
-  ...jest.requireActual<typeof import('../../src/managedCookies')>('../../src/managedCookies')
+jest.mock('@/platform/network/managedCookies', () => ({
+  ...jest.requireActual<typeof import('@/platform/network/managedCookies')>('@/platform/network/managedCookies')
 }));
 
 jest.mock('react-native-render-html', () => ({

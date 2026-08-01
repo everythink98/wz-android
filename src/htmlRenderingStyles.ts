@@ -6,10 +6,10 @@ import type {
   HtmlClassesStyles,
   HtmlIgnoredStyles,
   HtmlTagsStyles
-} from './appTypes';
-import type { ReaderSettings } from './readerData';
-import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from './theme';
-import { DISCOURSE_CALLOUT_TITLE_CLASS, DISCOURSE_CALLOUT_TONE_CLASS_PREFIX } from './discourseContent';
+} from '@/features/topic/rendering/types';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from '@/theme';
+import { DISCOURSE_CALLOUT_TITLE_CLASS, DISCOURSE_CALLOUT_TONE_CLASS_PREFIX } from '@/discourseContent';
 
 export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = [
   'color',

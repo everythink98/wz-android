@@ -20,10 +20,10 @@ jest.mock('react-native-webview', () => {
     })
   };
 });
-jest.mock('../../src/components/AppControls', () => ({
+jest.mock('@/components/AppControls', () => ({
   AppButton: () => null
 }));
-jest.mock('../../src/components/LoginWebViewModal', () => {
+jest.mock('@/components/LoginWebViewModal', () => {
   const React = require('react');
   const ReactNative = require('react-native');
   return {
@@ -33,14 +33,14 @@ jest.mock('../../src/components/LoginWebViewModal', () => {
     }
   };
 });
-jest.mock('../../src/components/ImagePreviewModal', () => ({
+jest.mock('@/components/ImagePreviewModal', () => ({
   ImagePreviewModal: () => null
 }));
-jest.mock('../../src/app/LinuxDoVerifyModal', () => ({
+jest.mock('@/app/LinuxDoVerifyModal', () => ({
   MemoizedLinuxDoVerifyModal: () => null
 }));
 
-import { GlobalModalHost } from '../../src/app/GlobalModalHost';
+import { GlobalModalHost } from '@/app/GlobalModalHost';
 
 describe('GlobalModalHost NodeImage authorization boundary', () => {
   beforeEach(() => {

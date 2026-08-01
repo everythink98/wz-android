@@ -1,5 +1,5 @@
-import type { Source } from '../../types';
-import { sourceSupportsTopicAction } from '../../sourceCatalog';
+import type { Source } from '@/domain/forum/models';
+import { sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
 
 export type ReplyComposerFormatAction = 'bold' | 'italic' | 'heading' | 'link' | 'image' | 'quote' | 'code' | 'list';
 export type ReplyComposerAccessory = 'nodeseek-sticker' | 'discourse-emoji' | 'yaohuo-face';

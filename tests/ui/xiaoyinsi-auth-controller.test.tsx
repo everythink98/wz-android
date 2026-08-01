@@ -8,7 +8,7 @@ jest.mock('expo-clipboard', () => ({
   setStringAsync: jest.fn(async () => undefined)
 }));
 
-jest.mock('../../src/xiaoyinsiAuth', () => {
+jest.mock('@/xiaoyinsiAuth', () => {
   class XiaoyinsiAuthError extends Error {
     code: string;
 
@@ -48,14 +48,12 @@ jest.mock('../../src/xiaoyinsiAuth', () => {
   };
 });
 
-import * as XiaoyinsiAuth from '../../src/xiaoyinsiAuth';
-import {
-  useXiaoyinsiAuthController,
-  type XiaoyinsiAuthorizationReadResult
-} from '../../src/app/useXiaoyinsiAuthController';
-import { appQueryClient, initialForumSessionEpochs } from '../../src/app/serverState';
-import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
-import type { SourceGateway } from '../../src/sources/sourceGateway';
+import * as XiaoyinsiAuth from '@/xiaoyinsiAuth';
+import { useXiaoyinsiAuthController, type XiaoyinsiAuthorizationReadResult } from '@/app/useXiaoyinsiAuthController';
+import { appQueryClient } from '@/app/serverState';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
+import type { SourceGateway } from '@/sources/sourceGateway';
 
 const mockBegin = jest.mocked(XiaoyinsiAuth.beginXiaoyinsiDeviceAuth);
 const mockCancel = jest.mocked(XiaoyinsiAuth.cancelXiaoyinsiDeviceAuth);

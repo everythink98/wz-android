@@ -9,16 +9,16 @@ import {
   installVerifiedApk,
   type ApkInstaller,
   type AppUpdateDownloadProgress
-} from '../appUpdate';
-import { errorMessage } from '../appUtils';
-import type { Fetcher } from '../request';
+} from '@/platform/update/appUpdate';
+import { errorMessage } from '@/platform/network/errors';
+import type { Fetcher } from '@/platform/network/request';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason,
   withDiagnosticFetcher
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 
 type CheckAppUpdateOptions = {
   silent?: boolean;

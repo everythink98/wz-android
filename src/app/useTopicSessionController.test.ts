@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Reply, TopicDetail } from '../types';
-import { createTopicImageDeriver } from '../topicDerivedData';
+import type { Reply, TopicDetail } from '@/domain/forum/models';
+import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import {
   filterTopicSessionReplies,
   replyContentAfterComposerClose,

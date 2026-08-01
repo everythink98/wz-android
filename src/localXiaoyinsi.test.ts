@@ -12,9 +12,9 @@ import {
   searchXiaoyinsi,
   searchXiaoyinsiTags,
   searchXiaoyinsiUsers
-} from './localXiaoyinsi';
-import { splitDiscourseContentHtml } from './discourseContent';
-import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
+} from '@/localXiaoyinsi';
+import { splitDiscourseContentHtml } from '@/discourseContent';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {

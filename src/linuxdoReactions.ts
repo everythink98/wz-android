@@ -1,5 +1,5 @@
-import { discourseReactionStats, type DiscourseEmojiUrlMap, type DiscourseReactionStat } from './discourseReactions';
-import type { Reply, TopicDetail } from './types';
+import { discourseReactionStats, type DiscourseEmojiUrlMap, type DiscourseReactionStat } from '@/discourseReactions';
+import type { Reply, TopicDetail } from '@/domain/forum/models';
 
 export function linuxDoReactionStats(
   item: Pick<Reply | TopicDetail, 'siteExtension' | 'reactionSummary' | 'likeCount'>,

@@ -1,6 +1,6 @@
-import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from './appUrls';
-import type { NodeImageAuthPayload } from './loginWebViewScripts';
-import { nodeImageApiKeyFromResponse } from './replyImageUpload';
+import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '@/domain/forum/sourceUrls';
+import type { NodeImageAuthPayload } from '@/loginWebViewScripts';
+import { nodeImageApiKeyFromResponse } from '@/replyImageUpload';
 
 export type NodeImageAuthPhase = 'nodeimage-session' | 'nodeseek-cauth' | 'nodeimage-verify';
 

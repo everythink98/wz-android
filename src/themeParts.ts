@@ -1,5 +1,5 @@
 import { StyleSheet } from 'react-native';
-import type { ReaderTheme } from './theme';
+import type { ReaderTheme } from '@/themeCore';
 
 export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string | undefined) {
   return {

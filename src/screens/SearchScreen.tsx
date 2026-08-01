@@ -21,13 +21,13 @@ import type {
   Source,
   SourceErrorInfo,
   Topic
-} from '../types';
-import { aggregateSearchSources, type DiscourseSource } from '../sourceCatalog';
-import { topicKey } from '../readerData';
-import { sourceLabel } from '../appUtils';
-import { feedSourceItems } from '../feedCategoryRail';
-import { buildSearchListItems, searchGroupEmptyText, type SearchGroup, type SearchListItem } from '../searchListItems';
-import type { LinuxDoAiSearchState } from '../searchControllerResults';
+} from '@/domain/forum/models';
+import { aggregateSearchSources, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import { topicKey } from '@/domain/reader/readerData';
+import { sourceLabel } from '@/domain/forum/presentation';
+import { feedSourceItems } from '@/feedCategoryRail';
+import { buildSearchListItems, searchGroupEmptyText, type SearchGroup, type SearchListItem } from '@/searchListItems';
+import type { LinuxDoAiSearchState } from '@/searchControllerResults';
 import {
   defaultSearchFilterForSource,
   discourseSearchFilterError,
@@ -38,16 +38,16 @@ import {
   type DiscourseVisitedFilter,
   type SearchFilterState,
   type SourceSearchFilter
-} from '../searchFilters';
-import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
-import { androidRipple, createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, LoadingState, PillRail, TOUCH_HIT_SLOP } from '../components/AppControls';
-import { MemoizedTopicCard } from '../components/TopicCard';
-import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
-import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
-import type { ForumSessionEpochs } from '../app/serverState';
-import { useSearchCandidateQueries } from '../app/useSearchController';
+} from '@/searchFilters';
+import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, EmptyText, LoadingState, PillRail, TOUCH_HIT_SLOP } from '@/components/AppControls';
+import { MemoizedTopicCard } from '@/components/TopicCard';
+import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/components/listPerformance';
+import type { SearchSessionNoticeItem } from '@/domain/session/siteSessionPrompts';
+import { searchSessionNoticeLightTone } from '@/domain/session/siteSessionPrompts';
+import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { useSearchCandidateQueries } from '@/app/useSearchController';
 
 const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 50,

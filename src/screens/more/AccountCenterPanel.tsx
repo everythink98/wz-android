@@ -12,18 +12,18 @@ import {
   View
 } from 'react-native';
 import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
-import { CredentialVaultError } from '../../credentialVault';
-import type { CredentialSite } from '../../credentialVault';
-import type { SessionSite, SiteSessionViewModels } from '../../siteSessionState';
-import type { UserProfile } from '../../types';
-import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
-import { AppButton, ExpandablePanel, IconButton, triggerPressFeedback } from '../../components/AppControls';
+import { CredentialVaultError } from '@/platform/storage/credentialVault';
+import type { CredentialSite } from '@/platform/storage/credentialVault';
+import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import type { UserProfile } from '@/domain/forum/models';
+import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, ExpandablePanel, IconButton, triggerPressFeedback } from '@/components/AppControls';
 import {
   accountCenterSummary,
   createSiteAccountViews,
   type CredentialSummaries,
   type SiteAccountView
-} from './accountCenter';
+} from '@/screens/more/accountCenter';
 
 export type AccountCenterCommand =
   | { type: 'refresh' }

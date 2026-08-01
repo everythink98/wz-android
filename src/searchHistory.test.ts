@@ -6,7 +6,7 @@ import {
   normalizeSearchHistory,
   sameSearchHistory,
   searchHistoryFromRaw
-} from './searchHistory';
+} from '@/searchHistory';
 
 describe('search history helpers', () => {
   it('loads only clean deduplicated search terms from storage', () => {

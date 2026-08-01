@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { Alert } from 'react-native';
-import { CredentialVaultError, emptyCredentialSummaries } from '../../src/credentialVault';
-import { createEmptyReaderData } from '../../src/readerData';
-import { AccountCenterPanel, type AccountCenterCommand } from '../../src/screens/more/AccountCenterPanel';
-import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
-import { createStyles, createTheme } from '../../src/theme';
+import { CredentialVaultError, emptyCredentialSummaries } from '@/platform/storage/credentialVault';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { AccountCenterPanel, type AccountCenterCommand } from '@/screens/more/AccountCenterPanel';
+import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createStyles, createTheme } from '@/theme';
 
 jest.mock('lucide-react-native', () => ({
   ChevronDown: () => null,

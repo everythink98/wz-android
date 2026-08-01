@@ -10,7 +10,7 @@ import {
   searchLinuxDo,
   searchLinuxDoTags,
   searchLinuxDoUsers
-} from './localLinuxdo';
+} from '@/localLinuxdo';
 import {
   getXiaoyinsiCategories,
   getXiaoyinsiCurrentUserProfile,
@@ -24,10 +24,10 @@ import {
   searchXiaoyinsiTags,
   searchXiaoyinsiUsers,
   type XiaoyinsiApiCredentials
-} from './localXiaoyinsi';
-import type { Fetcher } from './request';
-import type { DiscourseEmojiUrlMap } from './discourseReactions';
-import type { DiscourseSource } from './sourceCatalog';
+} from '@/localXiaoyinsi';
+import type { Fetcher } from '@/platform/network/request';
+import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
+import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type {
   CategoriesResponse,
   DiscourseFeedFilter,
@@ -39,7 +39,7 @@ import type {
   SearchResponse,
   TopicDetail,
   UserProfile
-} from './types';
+} from '@/domain/forum/models';
 
 export interface DiscourseReadAuthMap {
   linuxdo: {

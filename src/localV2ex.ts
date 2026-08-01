@@ -1,6 +1,6 @@
-import { fetchWithTimeout, type Fetcher } from './request';
-import type { SearchSort } from './feedLogic';
-import { searchTimeRangeStartEpoch, type V2exSearchFilter } from './searchFilters';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import type { SearchSort } from '@/feedLogic';
+import { searchTimeRangeStartEpoch, type V2exSearchFilter } from '@/searchFilters';
 import { XMLParser } from 'fast-xml-parser';
 import type {
   CategoriesResponse,
@@ -12,7 +12,7 @@ import type {
   UserProfile,
   UserReplyActivity,
   V2exFeedFilter
-} from './types';
+} from '@/domain/forum/models';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -28,7 +28,7 @@ import {
   textExcerpt,
   textContentFromHtml,
   toIsoString
-} from './localHtml';
+} from '@/domain/forum/html';
 import {
   SOV2EX_URL,
   V2EX_BASE_URL as BASE_URL,
@@ -36,8 +36,8 @@ import {
   safeV2exTopicUrl as safeTopicUrl,
   v2exMemberUrl as memberUrl,
   v2exNodeIdFromHref as nodeIdFromHref
-} from './localV2exHelpers';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
+} from '@/localV2exHelpers';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
 
 const HTML_LIST_PAGE_SIZE = 20;
 const V2EX_FEED_CURSOR_LIMIT = 200;

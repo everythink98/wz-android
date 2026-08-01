@@ -3,7 +3,7 @@ node_modules/
 .expo/
 .expo-shared/
 .agent-device/
-android/
+/android/
 AGENTS.md
 memory/
 # 稳定、脱敏文档进入版本控制；模拟器基线等运行态资料继续只留本机。

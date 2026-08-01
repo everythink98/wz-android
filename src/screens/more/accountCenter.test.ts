@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { CredentialSummaries } from '../../credentialVault';
-import { createSiteSessionStates, createSiteSessionViewModels } from '../../siteSessionState';
-import { accountCenterSummary, createSiteAccountViews } from './accountCenter';
+import type { CredentialSummaries } from '@/platform/storage/credentialVault';
+import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { accountCenterSummary, createSiteAccountViews } from '@/screens/more/accountCenter';
 
 function emptyCredentialSummaries(): CredentialSummaries {
   return {

@@ -1,5 +1,5 @@
-import { decodeHtml, isRecord, parseHtml } from './localHtml';
-import type { TopicPoll, TopicPollOption } from './types';
+import { decodeHtml, isRecord, parseHtml } from '@/domain/forum/html';
+import type { TopicPoll, TopicPollOption } from '@/domain/forum/models';
 
 export const NODESEEK_VOTE_API_HEADERS = {
   accept: 'application/json, text/plain, */*',

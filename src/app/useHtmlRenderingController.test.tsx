@@ -11,7 +11,7 @@ const reanimatedTransition = vi.hoisted(() => {
   };
 });
 
-vi.mock('../managedCookies', () => ({
+vi.mock('@/platform/network/managedCookies', () => ({
   readManagedCookieHeader
 }));
 

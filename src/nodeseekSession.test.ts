@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeNodeSeekUserAgent, summarizeNodeSeekCookieHeader } from './nodeseekSession';
+import { sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import { summarizeNodeSeekCookieHeader } from '@/nodeseekSession';
 
 describe('NodeSeek session metadata', () => {
   it('keeps Cookie diagnostics name-only and does not infer identity', () => {

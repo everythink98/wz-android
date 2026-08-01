@@ -1,4 +1,4 @@
-import { fetchWithTimeout, type Fetcher } from './request';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type {
   CategoriesResponse,
   DiscourseFeedFilter,
@@ -13,7 +13,7 @@ import type {
   TopicPoll,
   UserProfile,
   UserReplyActivity
-} from './types';
+} from '@/domain/forum/models';
 import {
   decodeHtml,
   isRecord,
@@ -22,9 +22,9 @@ import {
   sortTopicsByCreatedAt,
   textExcerpt,
   toIsoString
-} from './localHtml';
-import { annotateSourceDiagnosticSummary } from './sourceAdapterDiagnostics';
-import { buildDiscourseLevelProfileFromSummary, type DiscourseLevelProfile } from './discourseLevel';
+} from '@/domain/forum/html';
+import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import { buildDiscourseLevelProfileFromSummary, type DiscourseLevelProfile } from '@/discourseLevel';
 import {
   discourseCategories,
   discourseOriginalPoster,
@@ -32,7 +32,7 @@ import {
   discoursePostFields,
   discourseTopicFields,
   discourseUsersById
-} from './discourseModel';
+} from '@/discourseModel';
 import {
   discourseAvatarUrl,
   discourseContentNeedsCalloutNormalization,
@@ -40,8 +40,8 @@ import {
   discourseQuoteMetadata,
   normalizeDiscourseCallouts,
   stripDiscourseCalloutMarkersFromExcerpt
-} from './discourseContent';
-import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from './discourseReactions';
+} from '@/discourseContent';
+import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/discourseReactions';
 
 export const XIAOYINSI_BASE_URL = 'https://forum.xiaoyinsi.com';
 const LIST_PAGE_SIZE = 30;

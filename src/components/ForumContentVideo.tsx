@@ -3,9 +3,9 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View, type GestureRespo
 import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
 import { Maximize2, Play } from 'lucide-react-native';
-import type { ReaderTheme } from '../theme';
-import type { ForumMediaRequestContext } from '../mediaRequestContext';
-import { imageRequestHeadersForUrl } from '../htmlImages';
+import type { ReaderTheme } from '@/theme';
+import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
+import { imageRequestHeadersForUrl } from '@/platform/media/htmlImages';
 
 export function ForumContentVideo({
   headers,

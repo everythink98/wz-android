@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { initialForumSessionEpochs } from '../../src/app/serverState';
-import { useSessionController } from '../../src/app/useSessionController';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { useSessionController } from '@/app/useSessionController';
 
 jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(async () => undefined),
@@ -9,7 +9,7 @@ jest.mock('expo-secure-store', () => ({
   setItemAsync: jest.fn(async () => undefined)
 }));
 
-jest.mock('../../src/legacyCookieSnapshotMigration', () => ({
+jest.mock('@/platform/storage/legacyCookieSnapshotMigration', () => ({
   LEGACY_COOKIE_SNAPSHOT_KEYS: [],
   migrateLegacyCookieSnapshots: jest.fn(async () => ({
     linuxdo: 'retained',

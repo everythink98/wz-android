@@ -1,4 +1,4 @@
-import type { Screen } from '../appTypes';
+import type { Screen } from '@/ui/navigation/types';
 
 export function selectTopicReturnStrategy({
   canGoBack,

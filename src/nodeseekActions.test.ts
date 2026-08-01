@@ -7,7 +7,7 @@ import {
   buildNodeSeekReplyRequest,
   buildNodeSeekVoteRequest,
   nodeSeekActionErrorMessage
-} from './nodeseekActions';
+} from '@/nodeseekActions';
 
 describe('NodeSeek action request builders', () => {
   it('builds a reply request with a csrf token and the expected payload', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from './discourseActions';
+import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from '@/discourseActions';
 
 describe('linux.do image upload requests', () => {
   it('builds a Discourse composer upload request without forcing a multipart boundary', () => {

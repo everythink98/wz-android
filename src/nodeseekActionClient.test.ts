@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchNodeSeekVoteInfo, runNodeSeekAction } from './nodeseekActionClient';
-import { buildNodeSeekAttendanceRequest, buildNodeSeekReplyRequest } from './nodeseekActions';
-import { browserFetchIntentFromInit } from './browserFetchIntent';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/nodeseekActionClient';
+import { buildNodeSeekAttendanceRequest, buildNodeSeekReplyRequest } from '@/nodeseekActions';
+import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

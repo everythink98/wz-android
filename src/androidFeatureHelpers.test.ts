@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   filterLibraryRecords,
+  groupLibraryRecordsByTime,
+  libraryCategoryFilterItems
+} from '@/features/library/model/libraryFilters';
+import {
   filterRepliesByQuery,
   createReplyTextIndex,
-  createReplyTextIndexForQuery,
-  groupLibraryRecordsByTime,
-  highlightHtml,
-  highlightTextParts,
-  libraryCategoryFilterItems,
-  replyLoadMoreLimit,
-  replyRefreshTarget,
-  stripHtml
-} from './androidFeatureHelpers';
-import type { Category, Reply, Topic } from './types';
-import type { TopicRecord } from './readerData';
+  createReplyTextIndexForQuery
+} from '@/features/topic/model/replySearch';
+import { highlightHtml, highlightTextParts } from '@/ui/text/highlight';
+import { replyLoadMoreLimit, replyRefreshTarget } from '@/features/topic/model/replyPagination';
+import { stripHtml } from '@/domain/forum/text';
+import type { Category, Reply, Topic } from '@/domain/forum/models';
+import type { TopicRecord } from '@/domain/reader/readerData';
 
 const topic: Topic = {
   source: 'nodeseek',

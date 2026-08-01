@@ -1,6 +1,6 @@
 // @vitest-environment-options {"url":"https://www.nodeseek.com/connect?target=NodeImage"}
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { nodeSeekNodeImageAuthScript } from './loginWebViewScripts';
+import { nodeSeekNodeImageAuthScript } from '@/loginWebViewScripts';
 
 const AUTH_NONCE = '00112233445566778899aabbccddeeff';
 const RETRY_NONCE = 'ffeeddccbbaa99887766554433221100';

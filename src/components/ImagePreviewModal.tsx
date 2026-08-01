@@ -18,8 +18,8 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-native-zoom-toolkit';
 import { X } from 'lucide-react-native';
-import { imageSourceFromUrl, type ImagePreviewItem, type ImagePreviewList } from '../htmlImages';
-import { createStyles, type ReaderTheme } from '../theme';
+import { imageSourceFromUrl, type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/htmlImages';
+import { createStyles, type ReaderTheme } from '@/theme';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -27,18 +27,18 @@ import {
   recoverCompatibleSvgArtifact,
   refreshCompatibleSvgPoster,
   type CompatibleSvgArtifact
-} from '../compatibleImageSources';
-import { useForumMediaRequestContext } from '../mediaSessionEpoch';
-import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
-import { markOriginalImageDisplayed, originalImageDisplayRevision } from '../originalImageLoading';
+} from '@/platform/media/compatibleImageSources';
+import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
+import { forumMediaTargetClass, type ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
+import { markOriginalImageDisplayed, originalImageDisplayRevision } from '@/platform/media/originalImageLoading';
 import {
   beginDiagnosticTrace,
   diagnosticRef,
   finishDiagnosticTrace,
   type DiagnosticFields,
   type DiagnosticTrace
-} from '../diagnostics';
-import { CompatibleSvgDocumentView } from './CompatibleSvgDocumentView';
+} from '@/platform/diagnostics/diagnostics';
+import { CompatibleSvgDocumentView } from '@/components/CompatibleSvgDocumentView';
 
 const EMPTY_PREVIEW_ITEMS: ImagePreviewItem[] = [];
 const IMAGE_LOAD_TIMEOUT_MS = 30_000;

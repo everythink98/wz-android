@@ -3,7 +3,7 @@ import {
   NODESEEK_STICKER_CATEGORIES,
   YAOHUO_FACE_ITEMS,
   discourseEmojiCatalogFromUrlMap
-} from './replyComposerExpressionCatalogs';
+} from '@/screens/topic/replyComposerExpressionCatalogs';
 
 describe('reply composer expression catalogs', () => {
   it('keeps NodeSeek sticker categories aligned with the original composer groups', () => {

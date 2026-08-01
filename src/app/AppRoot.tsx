@@ -19,15 +19,20 @@ import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekSession';
-import { setDefaultAvatarFetcher } from '../avatarImages';
-import type { TopicRecord } from '../readerData';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
+import type { TopicRecord } from '@/domain/reader/readerData';
 import { useReaderDataController } from './useReaderDataController';
 import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useReaderSettingsController } from './useReaderSettingsController';
 import { useBackupStatusController } from './useBackupStatusController';
 import { useDiagnosticLogController } from './useDiagnosticLogController';
-import { useAccountStatusController, type AccountReconcileResult } from './useAccountStatusController';
+import { useAccountStatusController } from './useAccountStatusController';
+import type {
+  AccountReconcileResult,
+  LinuxDoReadRecovery,
+  LinuxDoReadResumeOutcome
+} from '@/features/account/model/sessionContracts';
 import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
@@ -52,12 +57,7 @@ import { useNetworkProxyController } from './useNetworkProxyController';
 import { useTopicController } from './useTopicController';
 import { filterTopicSessionReplies, useTopicSessionController } from './useTopicSessionController';
 import { useUserController } from './useUserController';
-import {
-  useLinuxDoIdentityVerificationPrompt,
-  useVerificationController,
-  type LinuxDoReadRecovery,
-  type LinuxDoReadResumeOutcome
-} from './useVerificationController';
+import { useLinuxDoIdentityVerificationPrompt, useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
 import { useTopicActionsController } from './useTopicActionsController';
@@ -77,54 +77,57 @@ import {
   selectTopicReturnStrategy,
   shouldCloseReplyComposerOnBack
 } from './backHandlerHelpers';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoSession';
-import { sourceErrorFromUnknown } from '../sourceErrors';
-import { createSourceGateway } from '../sources/sourceGateway';
-import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '../networkProxy';
-import type { Topic, TopicDetail, UserProfile, UserReference } from '../types';
-import { isHttpOrHttpsUrl, type ImageDisplaySize } from '../htmlImages';
-import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
-import { createTopicListItemStateIndex } from '../topicListItemState';
-import { replyHtmlWithSignature } from '../topicDerivedData';
-import { contentWidthValue, createStyles, createTheme } from '../theme';
-import type { LibraryTab } from '../feedLogic';
-import { errorMessage, parseInternalTopicOpenLink } from '../appUtils';
-import { FeedScreen } from '../screens/FeedScreen';
-import { LibraryScreen } from '../screens/LibraryScreen';
-import { MoreScreen } from '../screens/MoreScreen';
-import { AppearancePanel } from '../screens/more/MorePanels';
-import { SearchScreen } from '../screens/SearchScreen';
-import { TopicScreen, YaohuoFavoriteStateProvider } from '../screens/TopicScreen';
-import { LoadingState } from '../components/AppControls';
-import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
-import { UserScreen } from '../screens/UserScreen';
-import { isSessionSource } from '../sourceCatalog';
-import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
-import { setRequestTimeoutsActive } from '../request';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/linuxdoSession';
+import { sourceErrorFromUnknown } from '@/sourceErrors';
+import { createSourceGateway } from '@/sources/sourceGateway';
+import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '@/platform/network/networkProxy';
+import type { Topic, TopicDetail, UserProfile, UserReference } from '@/domain/forum/models';
+import { isHttpOrHttpsUrl, type ImageDisplaySize } from '@/platform/media/htmlImages';
+import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
+import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import { replyHtmlWithSignature } from '@/features/topic/model/topicDerivedData';
+import { contentWidthValue, createStyles, createTheme } from '@/theme';
+import type { LibraryTab } from '@/feedLogic';
+import { errorMessage } from '@/platform/network/errors';
+import { parseInternalTopicOpenLink } from '@/domain/forum/links';
+import { FeedScreen } from '@/screens/FeedScreen';
+import { LibraryScreen } from '@/screens/LibraryScreen';
+import { MoreScreen } from '@/screens/MoreScreen';
+import { AppearancePanel } from '@/screens/more/MorePanels';
+import { SearchScreen } from '@/screens/SearchScreen';
+import { TopicScreen, YaohuoFavoriteStateProvider } from '@/screens/TopicScreen';
+import { LoadingState } from '@/components/AppControls';
+import { hasSameYaohuoTopicLayout } from '@/screens/topic/topicScreenHelpers';
+import { UserScreen } from '@/screens/UserScreen';
+import { isSessionSource } from '@/domain/forum/sourceCatalog';
+import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
+import type { Screen } from '@/ui/navigation/types';
+import type { TopicSnapshot } from '@/features/topic/model/types';
+import { setRequestTimeoutsActive } from '@/platform/network/request';
 import { focusManager } from '@tanstack/react-query';
-import {
-  appQueryClient,
-  initialForumSessionEpochs,
-  forumQueryKeys,
-  type ForumIdentityBarrierSource,
-  type ForumSessionEpochs
-} from './serverState';
+import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   createSiteSessionViewModels,
   nodeSeekUserIdForSession,
   sessionSources,
   type SessionSite
-} from '../siteSessionState';
+} from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
-import type { CredentialSite } from '../credentialVault';
-import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
+import type { CredentialSite } from '@/platform/storage/credentialVault';
+import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/xiaoyinsiAuth';
 import {
   CURRENT_ANDROID_VERSION_CODE,
   CURRENT_APP_VERSION,
   CURRENT_EXPO_VERSION,
   CURRENT_REACT_NATIVE_VERSION
-} from '../appUpdate';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, type DiagnosticTrace } from '../diagnostics';
+} from '@/platform/update/appUpdate';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  type DiagnosticTrace
+} from '@/platform/diagnostics/diagnostics';
 import {
   beginAuthSurface,
   closeOtherAuthSurfaces,
@@ -133,15 +136,15 @@ import {
   hasOpenAuthSurfaceForSource,
   type AuthSurface,
   type AuthSurfaceCloseReason
-} from '../authSurfaceCoordinator';
+} from '@/domain/session/authSurfaceCoordinator';
 import {
   ensureWritableSessionTicket,
   validateWritableSessionTicket,
   type SessionRuntimeSnapshot,
   type WritableSessionSnapshot,
   type WritableSessionTicket
-} from '../writableSessionGate';
-import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '../mediaSessionEpoch';
+} from '@/domain/session/writableSessionGate';
+import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
 
 type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;

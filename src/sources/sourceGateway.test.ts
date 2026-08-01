@@ -6,8 +6,8 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './sourceGateway';
-import type { Topic } from '../types';
+import { getFeed, getReplies, getTopic, getUserProfile, searchTopics } from '@/sources/sourceGateway';
+import type { Topic } from '@/domain/forum/models';
 
 describe('source gateway reads', () => {
   it('reads the yaohuo feed through the shared getFeed interface', async () => {

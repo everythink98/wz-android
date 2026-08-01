@@ -4,36 +4,42 @@ import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 import { CheckCircle, Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
-import type { QuotedPostMetadata, Reply, Source, Topic, TopicDetail, TopicPoll, UserReference } from '../../types';
-import { highlightHtml, stripHtml } from '../../androidFeatureHelpers';
-import { formatDateTime, parseForumTopicLink } from '../../appUtils';
-import { imageSourceFromUrl } from '../../htmlImages';
-import { splitDiscourseContentHtml } from '../../discourseContent';
-import {
-  discourseReactionStats,
-  type DiscourseEmojiUrlMap,
-  type DiscourseReactionStat
-} from '../../discourseReactions';
-import { linuxDoReactionStats } from '../../linuxdoReactions';
-import { canToggleDiscourseLike } from '../../discoursePermissions';
-import { isDiscourseSource } from '../../sourceCatalog';
+import type {
+  QuotedPostMetadata,
+  Reply,
+  Source,
+  Topic,
+  TopicDetail,
+  TopicPoll,
+  UserReference
+} from '@/domain/forum/models';
+import { highlightHtml } from '@/ui/text/highlight';
+import { stripHtml } from '@/domain/forum/text';
+import { formatDateTime } from '@/domain/forum/presentation';
+import { parseForumTopicLink } from '@/domain/forum/links';
+import { imageSourceFromUrl } from '@/platform/media/htmlImages';
+import { splitDiscourseContentHtml } from '@/discourseContent';
+import { discourseReactionStats, type DiscourseEmojiUrlMap, type DiscourseReactionStat } from '@/discourseReactions';
+import { linuxDoReactionStats } from '@/linuxdoReactions';
+import { canToggleDiscourseLike } from '@/discoursePermissions';
+import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   quotedPostsForSource,
   replyForQuotedPost,
   replyQuotedPostInstanceKey,
   type ToggleReplyQuoteOptions
-} from '../../quotedPosts';
-import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../theme';
-import { AppButton, triggerPressFeedback } from '../../components/AppControls';
-import { Avatar } from '../../components/Avatar';
-import { userFromReply, userReferenceFromUsername } from '../../userNavigation';
-import type { InteractionType, TopicActionStateKind } from '../../topicActionState';
-import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../../topicDerivedData';
-import { TopicPolls } from './TopicPolls';
-import { DetailActionButton } from './TopicActionBar';
-import { MemoizedTopicContentBlock } from './TopicContentBlock';
-import { getReplyKey, stableTextHash, type TopicListItem } from './topicScreenHelpers';
-import { useForumMediaRequestContext } from '../../mediaSessionEpoch';
+} from '@/domain/forum/quotedPosts';
+import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '@/theme';
+import { AppButton, triggerPressFeedback } from '@/components/AppControls';
+import { Avatar } from '@/components/Avatar';
+import { userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
+import type { InteractionType, TopicActionStateKind } from '@/domain/forum/topicActionState';
+import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '@/features/topic/model/topicDerivedData';
+import { TopicPolls } from '@/screens/topic/TopicPolls';
+import { DetailActionButton } from '@/screens/topic/TopicActionBar';
+import { MemoizedTopicContentBlock } from '@/screens/topic/TopicContentBlock';
+import { getReplyKey, stableTextHash, type TopicListItem } from '@/screens/topic/topicScreenHelpers';
+import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 
 type NodeSeekStat = { label: string; value: number };
 type ReplyItemSection = Extract<

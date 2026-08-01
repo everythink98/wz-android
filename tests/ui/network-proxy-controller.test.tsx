@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { useNetworkProxyController } from '../../src/app/useNetworkProxyController';
-import type { NetworkProxyProfile, NetworkProxyState } from '../../src/networkProxy';
-import { fetchWithTimeout } from '../../src/request';
+import { useNetworkProxyController } from '@/app/useNetworkProxyController';
+import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/networkProxy';
+import { fetchWithTimeout } from '@/platform/network/request';
 
 const mockLoadNetworkProxyState = jest.fn<() => Promise<NetworkProxyState>>();
 const mockSaveNetworkProxyState = jest.fn<(state: NetworkProxyState) => Promise<NetworkProxyState>>();
 const mockApplyNetworkProxy = jest.fn<(profile: NetworkProxyProfile | null) => Promise<unknown>>();
 
-jest.mock('../../src/networkProxy', () => ({
-  ...jest.requireActual<typeof import('../../src/networkProxy')>('../../src/networkProxy'),
+jest.mock('@/platform/network/networkProxy', () => ({
+  ...jest.requireActual<typeof import('@/platform/network/networkProxy')>('@/platform/network/networkProxy'),
   applyNetworkProxy: (profile: NetworkProxyProfile | null) => mockApplyNetworkProxy(profile),
   loadNetworkProxyState: () => mockLoadNetworkProxyState(),
   saveNetworkProxyState: (state: NetworkProxyState) => mockSaveNetworkProxyState(state)

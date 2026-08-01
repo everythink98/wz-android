@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React, { useState } from 'react';
 import { Alert, View } from 'react-native';
-import type { LibraryTab } from '../../src/feedLogic';
-import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from '../../src/readerData';
-import { LibraryScreen } from '../../src/screens/LibraryScreen';
-import { createStyles, createTheme } from '../../src/theme';
-import { createTopicListItemStateIndex } from '../../src/topicListItemState';
-import type { Category, Topic, UserProfile, UserReference } from '../../src/types';
+import type { LibraryTab } from '@/feedLogic';
+import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
+import { LibraryScreen } from '@/screens/LibraryScreen';
+import { createStyles, createTheme } from '@/theme';
+import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { Category, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 
 let mockFlashListMountCount = 0;
 const mockFlashListRenders: { dataLength: number; testID?: string }[] = [];
@@ -67,7 +67,7 @@ jest.mock('lucide-react-native', () => ({
   Trash2: () => null
 }));
 
-jest.mock('../../src/components/TopicCard', () => {
+jest.mock('@/components/TopicCard', () => {
   const ReactModule = require('react') as typeof React;
   const {
     Pressable: NativePressable,

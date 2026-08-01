@@ -1,9 +1,9 @@
-import type { YaohuoActionRequest } from './yaohuoActions';
-import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
-import { fetchWithTimeout, type Fetcher } from './request';
-import { elementText, parseHtml, textContentFromHtml } from './localHtml';
-import { parseYaohuoFavoriteRecordId, yaohuoLoginRequirementReason } from './localYaohuo';
-import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL } from './localYaohuoHelpers';
+import type { YaohuoActionRequest } from '@/yaohuoActions';
+import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { elementText, parseHtml, textContentFromHtml } from '@/domain/forum/html';
+import { parseYaohuoFavoriteRecordId, yaohuoLoginRequirementReason } from '@/localYaohuo';
+import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL } from '@/localYaohuoHelpers';
 
 const YAOHUO_ACTION_HEADERS = {
   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

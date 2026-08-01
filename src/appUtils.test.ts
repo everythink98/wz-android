@@ -1,18 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   forumAccessRequirementText,
-  isCanceledRequest,
-  isLinuxDoCloudflareError,
-  isYaohuoLoginExpiredError,
-  isYaohuoLoginRequiredError,
-  parseForumTopicLink,
-  parseInternalTopicOpenLink,
-  parseForumUserLink,
   sourceLabel,
   topicListDisplayTime,
   topicListDisplayTimeText
-} from './appUtils';
-import { REQUEST_CANCELED_MESSAGE } from './request';
+} from '@/domain/forum/presentation';
+import { isCanceledRequest } from '@/platform/network/errors';
+import { isLinuxDoCloudflareError, isYaohuoLoginExpiredError, isYaohuoLoginRequiredError } from '@/sources/errors';
+import { parseForumTopicLink, parseInternalTopicOpenLink, parseForumUserLink } from '@/domain/forum/links';
+import { REQUEST_CANCELED_MESSAGE } from '@/platform/network/request';
 
 describe('Android app utils', () => {
   it('formats source labels and canceled request errors', () => {

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
-import { errorMessage } from '../appUtils';
+import { errorMessage } from '@/platform/network/errors';
 import {
   CredentialVaultError,
   credentialVault,
   emptyCredentialSummaries,
   type CredentialSummaries,
   CredentialSite
-} from '../credentialVault';
-import { isTrustedLoginFormMessageSource, LOGIN_FORM_ADAPTERS, parseLoginFormMessage } from '../loginFormAdapters';
-import type { AccountCenterCommand } from '../screens/more/AccountCenterPanel';
-import type { SessionSite } from '../siteSessionState';
+} from '@/platform/storage/credentialVault';
+import { isTrustedLoginFormMessageSource, LOGIN_FORM_ADAPTERS, parseLoginFormMessage } from '@/loginFormAdapters';
+import type { AccountCenterCommand } from '@/screens/more/AccountCenterPanel';
+import type { SessionSite } from '@/domain/session/siteSessionState';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -19,7 +19,7 @@ import {
   type DiagnosticFields,
   type DiagnosticOutcome,
   type DiagnosticTrace
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 import {
   finishCredentialFillTraceForWebViewFailure,
   loadCredentialSummariesWithTrace,

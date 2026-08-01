@@ -1,6 +1,6 @@
-import type { SearchSort } from './feedLogic';
-import type { Category, Source } from './types';
-import { isDiscourseSource, sourceCatalog, type DiscourseSource } from './sourceCatalog';
+import type { SearchSort } from '@/feedLogic';
+import type { Category, Source } from '@/domain/forum/models';
+import { isDiscourseSource, sourceCatalog, type DiscourseSource } from '@/domain/forum/sourceCatalog';
 
 export type SearchTimeRange = 'all' | 'day' | 'week' | 'month' | 'year';
 export type SearchTextScope = 'all' | 'title';

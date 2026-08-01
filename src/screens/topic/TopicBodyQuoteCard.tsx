@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
+import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
 
 export function TopicBodyQuoteCard({
   completeContent,

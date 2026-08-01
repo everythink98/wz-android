@@ -21,13 +21,13 @@ vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(),
   setItemAsync: vi.fn()
 }));
-vi.mock('./networkProxy', async () => ({
-  ...(await vi.importActual<typeof import('./networkProxy')>('./networkProxy')),
+vi.mock('@/platform/network/networkProxy', async () => ({
+  ...(await vi.importActual<typeof import('@/platform/network/networkProxy')>('@/platform/network/networkProxy')),
   loadNetworkProxyState: proxyMocks.loadNetworkProxyState
 }));
 
-import { setDiagnosticWriter } from './diagnostics';
-import { useNetworkProxyController } from './app/useNetworkProxyController';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { useNetworkProxyController } from '@/app/useNetworkProxyController';
 
 const rootDir = path.resolve(__dirname, '..');
 

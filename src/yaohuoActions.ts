@@ -1,4 +1,4 @@
-import { YAOHUO_BASE_URL } from './localYaohuoHelpers';
+import { YAOHUO_BASE_URL } from '@/localYaohuoHelpers';
 
 export interface YaohuoActionRequest {
   path: string;

@@ -1,7 +1,7 @@
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { alphaColor, androidRipple, createStyles, type ReaderTheme } from '../../theme';
-import { triggerPressFeedback } from '../../components/AppControls';
+import { alphaColor, androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { triggerPressFeedback } from '@/components/AppControls';
 
 export type DetailActionTone = 'danger' | 'favorite' | 'primary' | 'success' | 'warning';
 

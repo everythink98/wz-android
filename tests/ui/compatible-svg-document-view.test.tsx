@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
-import { CompatibleSvgDocumentView } from '../../src/components/CompatibleSvgDocumentView';
+import { CompatibleSvgDocumentView } from '@/components/CompatibleSvgDocumentView';
 
 jest.mock('react-native-webview', () => {
   const ReactModule = require('react') as typeof React;

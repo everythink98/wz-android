@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Fetcher } from '../request';
-import { errorMessage } from '../appUtils';
+import type { Fetcher } from '@/platform/network/request';
+import { errorMessage } from '@/platform/network/errors';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
   normalizeDiagnosticReason,
   type DiagnosticTrace
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 import {
   activeNetworkProxyProfile,
   applyNetworkProxy,
@@ -23,7 +23,7 @@ import {
   type NetworkProxyApplyStatus,
   type NetworkProxyProfile,
   type NetworkProxyState
-} from '../networkProxy';
+} from '@/platform/network/networkProxy';
 
 type SettledApplyStatus = Extract<NetworkProxyApplyStatus, 'disabled' | 'applied'>;
 const RESOLVED_VOID_PROMISE: Promise<void> = Promise.resolve();

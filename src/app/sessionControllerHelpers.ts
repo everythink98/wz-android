@@ -1,10 +1,11 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
-import type { BrowserFetchIntent } from '../browserFetchIntent';
-import type { DiagnosticTrace } from '../diagnostics';
-import type { SessionSite, SiteSessionEvent } from '../siteSessionState';
-import type { FeedSource, Source } from '../types';
-import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
-import type { LinuxDoReadRecovery } from './useVerificationController';
+import type { BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
+import type { DiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import type { SessionSite, SiteSessionEvent } from '@/domain/session/siteSessionState';
+import type { FeedSource, Source } from '@/domain/forum/models';
+import { appQueryClient, forumQueryKeys } from './serverState';
+import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
 
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;

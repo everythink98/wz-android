@@ -1,22 +1,17 @@
 import { afterEach } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { useLayoutEffect } from 'react';
-import { useFeedController } from '../../src/app/useFeedController';
-import type { Screen } from '../../src/appTypes';
-import { createEmptyReaderData, topicKey } from '../../src/readerData';
-import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
-import type { SourceGateway } from '../../src/sources/sourceGateway';
-import {
-  appQueryClient,
-  forumQueryKeys,
-  initialForumSessionEpochs,
-  type ForumIdentityBarrierSource,
-  type ForumSessionEpochs
-} from '../../src/app/serverState';
-import { resetForumSourceQueries } from '../../src/app/sessionControllerHelpers';
-import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
-import { sessionSources } from '../../src/sourceCatalog';
-import type { Category, SourceErrors, Topic } from '../../src/types';
+import { useFeedController } from '@/app/useFeedController';
+import type { Screen } from '@/ui/navigation/types';
+import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
+import { annotateSourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import type { SourceGateway } from '@/sources/sourceGateway';
+import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/app/serverState';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { resetForumSourceQueries } from '@/app/sessionControllerHelpers';
+import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
+import { sessionSources } from '@/domain/forum/sourceCatalog';
+import type { Category, SourceErrors, Topic } from '@/domain/forum/models';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 function renderHook<Result>(callback: () => Result) {

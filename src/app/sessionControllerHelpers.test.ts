@@ -24,7 +24,8 @@ import {
   takeNodeSeekVerificationRetry,
   type BrowserFetchQueueRequest
 } from './sessionControllerHelpers';
-import { initialForumSessionEpochs, forumQueryKeys } from './serverState';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { forumQueryKeys } from './serverState';
 
 const ref = <T>(current: T) => ({ current });
 

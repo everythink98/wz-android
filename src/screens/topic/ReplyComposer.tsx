@@ -3,12 +3,12 @@ import { Keyboard, Pressable, Text, View } from 'react-native';
 import { BottomSheetFlatList, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { Image as ExpoImage } from 'expo-image';
 import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
-import type { ReplyEditTarget, ReplyTarget } from '../../appTypes';
-import { createStyles, type ReaderTheme } from '../../theme';
-import { AppButton } from '../../components/AppControls';
-import type { Source } from '../../types';
-import type { DiscourseEmojiUrlMap } from '../../discourseReactions';
-import { imageSourceFromUrl } from '../../htmlImages';
+import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
+import { createStyles, type ReaderTheme } from '@/theme';
+import { AppButton } from '@/components/AppControls';
+import type { Source } from '@/domain/forum/models';
+import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
+import { imageSourceFromUrl } from '@/platform/media/htmlImages';
 import {
   applyReplyComposerFormat,
   replyComposerExpressionGridKey,
@@ -17,15 +17,15 @@ import {
   replaceReplyComposerSelection,
   type ReplyComposerAccessory,
   type ReplyComposerFormatAction
-} from './replyComposerFormatting';
+} from '@/screens/topic/replyComposerFormatting';
 import {
   discourseEmojiCatalogFromUrlMap,
   NODESEEK_STICKER_CATEGORIES,
   YAOHUO_FACE_ITEMS,
   type ReplyComposerInsertExpression
-} from './replyComposerExpressionCatalogs';
-import { useCommittedRef } from '../../app/useCommittedRef';
-import { useForumMediaRequestContext } from '../../mediaSessionEpoch';
+} from '@/screens/topic/replyComposerExpressionCatalogs';
+import { useCommittedRef } from '@/app/useCommittedRef';
+import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 
 type ReplyComposerInputHandle = {
   blur: () => void;

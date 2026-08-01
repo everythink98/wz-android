@@ -6,17 +6,17 @@ import {
   getTopic as getForumTopic,
   getUserProfile as getForumUserProfile,
   searchTopics as searchForumTopics
-} from '../forumApi';
-import { getYaohuoFeedDirect, getYaohuoRepliesDirect, getYaohuoTopicDirect, searchYaohuoDirect } from '../yaohuoApi';
-import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '../localLinuxdo';
-import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '../localNodeseek';
-import { getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../linuxdoLevel';
+} from '@/forumApi';
+import { getYaohuoFeedDirect, getYaohuoRepliesDirect, getYaohuoTopicDirect, searchYaohuoDirect } from '@/yaohuoApi';
+import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '@/localLinuxdo';
+import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '@/localNodeseek';
+import { getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/linuxdoLevel';
 import {
   getXiaoyinsiLevelProfile as getLocalXiaoyinsiLevelProfile,
   type XiaoyinsiApiCredentials,
   type XiaoyinsiLevelProfile,
   type XiaoyinsiOptions
-} from '../localXiaoyinsi';
+} from '@/localXiaoyinsi';
 import {
   getDiscourseSourceEmojiUrls,
   searchDiscourseSourceTagOptions,
@@ -24,9 +24,9 @@ import {
   type DiscourseReadAuth,
   type DiscourseTagOptionReadOptions,
   type DiscourseUserOptionReadOptions
-} from '../discourseSourceReaders';
-import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
-import { sourceErrorFromUnknown } from '../sourceErrors';
+} from '@/discourseSourceReaders';
+import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import { sourceErrorFromUnknown } from '@/sourceErrors';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -36,15 +36,20 @@ import {
   withDiagnosticFetcher,
   type DiagnosticFields,
   type DiagnosticTrace
-} from '../diagnostics';
-import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import type { FeedSource, Source, SourceErrors, Topic } from '../types';
-import { isSessionSource, sessionSources, type DiscourseSource, type SessionSource } from '../sourceCatalog';
+} from '@/platform/diagnostics/diagnostics';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
+import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
+import {
+  isSessionSource,
+  sessionSources,
+  type DiscourseSource,
+  type SessionSource
+} from '@/domain/forum/sourceCatalog';
 
-export { getCurrentUserProfile } from '../forumApi';
-export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../linuxdoLevel';
-export type { XiaoyinsiLevelProfile } from '../localXiaoyinsi';
-export { checkYaohuoLoginDirect as checkYaohuoLogin } from '../yaohuoApi';
+export { getCurrentUserProfile } from '@/forumApi';
+export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/linuxdoLevel';
+export type { XiaoyinsiLevelProfile } from '@/localXiaoyinsi';
+export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/yaohuoApi';
 
 type GetFeedOptions = Parameters<typeof getForumFeed>[0];
 

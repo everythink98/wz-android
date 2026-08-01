@@ -6,9 +6,9 @@ import {
   hasSameYaohuoTopicLayout,
   topicListItemSpacing,
   type TopicListItem
-} from './topicScreenHelpers';
-import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '../../quotedPosts';
-import type { Reply, TopicDetail } from '../../types';
+} from '@/screens/topic/topicScreenHelpers';
+import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
+import type { Reply, TopicDetail } from '@/domain/forum/models';
 
 const reply: Reply = {
   author: 'alice',

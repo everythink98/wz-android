@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { initialForumSessionEpochs } from '../../src/app/serverState';
-import { Avatar } from '../../src/components/Avatar';
-import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '../../src/mediaSessionEpoch';
-import { createEmptyReaderData } from '../../src/readerData';
-import { createStyles, createTheme } from '../../src/theme';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { Avatar } from '@/components/Avatar';
+import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createStyles, createTheme } from '@/theme';
 
-type AvatarSvgLoader = typeof import('../../src/avatarImages').loadRemoteAvatarSvgText;
+type AvatarSvgLoader = typeof import('@/platform/media/avatarImages').loadRemoteAvatarSvgText;
 const mockLoadRemoteAvatarSvgText = jest.fn<AvatarSvgLoader>();
 
-jest.mock('../../src/avatarImages', () => ({
+jest.mock('@/platform/media/avatarImages', () => ({
   loadRemoteAvatarSvgText: (...args: Parameters<AvatarSvgLoader>) => mockLoadRemoteAvatarSvgText(...args)
 }));
 

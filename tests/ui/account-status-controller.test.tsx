@@ -2,25 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-jest.mock('../../src/sources/sourceGateway', () => ({
+jest.mock('@/sources/sourceGateway', () => ({
   checkYaohuoLogin: jest.fn(),
   getCurrentUserProfile: jest.fn(),
   getUserProfile: jest.fn()
 }));
 
-import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '../../src/sources/sourceGateway';
-import { useAccountStatusController } from '../../src/app/useAccountStatusController';
-import { useLinuxDoIdentityVerificationPrompt } from '../../src/app/useVerificationController';
-import type { XiaoyinsiAuthorizationReadResult } from '../../src/app/useXiaoyinsiAuthController';
-import {
-  appQueryClient,
-  forumQueryKeys,
-  initialForumSessionEpochs,
-  type ForumSessionEpochs
-} from '../../src/app/serverState';
-import { commitChangedAccountStatusQuery } from '../../src/app/sessionControllerHelpers';
-import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
-import type { UserProfile } from '../../src/types';
+import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/sourceGateway';
+import { useAccountStatusController } from '@/app/useAccountStatusController';
+import { useLinuxDoIdentityVerificationPrompt } from '@/app/useVerificationController';
+import type { XiaoyinsiAuthorizationReadResult } from '@/app/useXiaoyinsiAuthController';
+import { appQueryClient, forumQueryKeys } from '@/app/serverState';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { commitChangedAccountStatusQuery } from '@/app/sessionControllerHelpers';
+import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import type { UserProfile } from '@/domain/forum/models';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLogin);

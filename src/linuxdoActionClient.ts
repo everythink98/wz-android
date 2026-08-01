@@ -1,8 +1,8 @@
-import { fetchWithTimeout, type Fetcher } from './request';
-import { withBrowserFetchIntent } from './browserFetchIntent';
-import type { DiscourseActionRequest } from './discourseActions';
-import { isCloudflareChallengeResponse } from './cloudflareChallenge';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from './linuxdoSession';
+import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
+import type { DiscourseActionRequest } from '@/discourseActions';
+import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/linuxdoSession';
 
 const LINUXDO_BASE_URL = 'https://linux.do';
 const LINUXDO_ACTION_HEADERS = {

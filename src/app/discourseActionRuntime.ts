@@ -1,11 +1,11 @@
-import type { DiscourseActionRequest } from '../discourseActions';
-import { runLinuxDoAction } from '../linuxdoActionClient';
-import type { Fetcher } from '../request';
-import type { DiscourseSource } from '../sourceCatalog';
-import type { SiteSessionEvent } from '../siteSessionState';
-import { runXiaoyinsiAction } from '../xiaoyinsiActionClient';
-import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
-import { errorMessage } from '../appUtils';
+import type { DiscourseActionRequest } from '@/discourseActions';
+import { runLinuxDoAction } from '@/linuxdoActionClient';
+import type { Fetcher } from '@/platform/network/request';
+import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
+import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
+import { runXiaoyinsiAction } from '@/xiaoyinsiActionClient';
+import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/xiaoyinsiAuth';
+import { errorMessage } from '@/platform/network/errors';
 
 export type DiscourseActionRuntimeDependencies = {
   linuxDoUserAgent: () => string;

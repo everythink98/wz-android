@@ -10,8 +10,8 @@ import {
   snapshotFromTopicSession,
   topicSessionFromSnapshot,
   type TopicSession
-} from './topicSessionState';
-import type { Topic } from './types';
+} from '@/topicSessionState';
+import type { Topic } from '@/domain/forum/models';
 
 function topic(id: string): Topic {
   return {

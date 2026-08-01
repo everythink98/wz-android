@@ -2,9 +2,9 @@ import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle } from 'lucide-react-native';
-import type { Topic } from '../types';
-import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '../appUtils';
-import { highlightTextParts } from '../androidFeatureHelpers';
+import type { Topic } from '@/domain/forum/models';
+import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
+import { highlightTextParts } from '@/ui/text/highlight';
 import {
   androidRipple,
   createStyles,
@@ -12,9 +12,9 @@ import {
   topicTagColorStyle,
   topicTagTextColorStyle,
   type ReaderTheme
-} from '../theme';
-import type { TopicListItemState } from '../topicListItemState';
-import { Avatar } from './Avatar';
+} from '@/theme';
+import type { TopicListItemState } from '@/domain/forum/topicListItemState';
+import { Avatar } from '@/components/Avatar';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
 

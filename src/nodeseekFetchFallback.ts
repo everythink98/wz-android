@@ -1,10 +1,10 @@
-import { cancelRequestTimeoutForFallback, scheduleRequestTimeout, type Fetcher } from './request';
+import { cancelRequestTimeoutForFallback, scheduleRequestTimeout, type Fetcher } from '@/platform/network/request';
 import {
   isGoogleSiteSearchNavigationUrl,
   isGoogleSiteSearchUrl,
   isSameGoogleSiteSearchUrl
-} from './googleSearchFallback';
-import { isNodeSeekChallengeResponse } from './localNodeseekHelpers';
+} from '@/googleSearchFallback';
+import { isNodeSeekChallengeResponse } from '@/localNodeseekHelpers';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -13,9 +13,9 @@ import {
   normalizeDiagnosticReason,
   registerDiagnosticContextFetcher,
   type DiagnosticReason
-} from './diagnostics';
-import { browserFetchIntentFromInit } from './browserFetchIntent';
-import { hasNodeSeekAccountEvidenceHtml } from './localNodeseek';
+} from '@/platform/diagnostics/diagnostics';
+import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import { hasNodeSeekAccountEvidenceHtml } from '@/localNodeseek';
 
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE = 'NodeSeek direct fetch timeout';

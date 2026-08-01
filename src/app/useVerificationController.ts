@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { QueryKey } from '@tanstack/react-query';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
-import { sanitizeLinuxDoUserAgent } from '../linuxdoSession';
-import type { SourceErrorInfo, Topic, TopicDetail } from '../types';
-import { errorMessage } from '../appUtils';
-import type { Screen } from '../appTypes';
-import type { SiteSessionEvent } from '../siteSessionState';
+import { sanitizeLinuxDoUserAgent } from '@/linuxdoSession';
+import type { SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
+import { errorMessage } from '@/platform/network/errors';
+import type { Screen } from '@/ui/navigation/types';
+import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import {
   beginDiagnosticTrace,
@@ -15,25 +14,23 @@ import {
   type DiagnosticFields,
   type DiagnosticOutcome,
   type DiagnosticTrace
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 import { useCommitRefValue } from './useCommittedRef';
-import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
+import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
 import { appQueryClient } from './serverState';
-import type { AccountReconcileResult } from './useAccountStatusController';
-import type { AuthSurfaceCloseReason } from '../authSurfaceCoordinator';
+import type {
+  AccountReconcileResult,
+  LinuxDoReadRecovery,
+  LinuxDoReadResumeOutcome
+} from '@/features/account/model/sessionContracts';
+import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
 
 const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
 
 type Ref<T> = MutableRefObject<T>;
 
-export type LinuxDoReadResumeOutcome = 'completed' | 'failed' | 'verification-required' | 'stale';
 type LinuxDoVerificationPhase =
   'idle' | 'preparing' | 'awaiting-clearance' | 'checking-clearance' | 'resuming-read' | 'closing';
-
-export type LinuxDoReadRecovery = {
-  queryKey: QueryKey;
-  resume: () => Promise<LinuxDoReadResumeOutcome>;
-};
 
 export function useLinuxDoIdentityVerificationPrompt({
   enabled = true,

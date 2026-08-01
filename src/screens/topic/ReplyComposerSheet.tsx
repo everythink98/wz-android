@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, useWindowDimensions } from 'react-native';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView, type BottomSheetBackdropProps } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { ReplyEditTarget, ReplyTarget } from '../../appTypes';
-import type { DiscourseEmojiUrlMap } from '../../discourseReactions';
-import { createStyles, type ReaderTheme } from '../../theme';
-import type { Source } from '../../types';
-import { ReplyComposer } from './ReplyComposer';
+import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
+import type { DiscourseEmojiUrlMap } from '@/discourseReactions';
+import { createStyles, type ReaderTheme } from '@/theme';
+import type { Source } from '@/domain/forum/models';
+import { ReplyComposer } from '@/screens/topic/ReplyComposer';
 
 export function ReplyComposerSheet({
   actionBusy,

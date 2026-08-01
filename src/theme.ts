@@ -1,4 +1,4 @@
-export { createStyles } from './themeStyles';
+export { createStyles } from '@/themeStyles';
 export {
   alphaColor,
   androidRipple,
@@ -13,5 +13,5 @@ export {
   topicStatusBadgeTextColorStyle,
   topicTagColorStyle,
   topicTagTextColorStyle
-} from './themeCore';
-export type { ReaderTheme, StatusBadgeTone } from './themeCore';
+} from '@/themeCore';
+export type { ReaderTheme, StatusBadgeTone } from '@/themeCore';

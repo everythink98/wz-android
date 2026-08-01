@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { Alert } from 'react-native';
-import { createEmptyNetworkProxyState, type NetworkProxyProfile } from '../../src/networkProxy';
-import { createEmptyReaderData } from '../../src/readerData';
-import { NetworkProxyModal } from '../../src/screens/more/NetworkProxyModal';
-import { createStyles, createTheme } from '../../src/theme';
+import { createEmptyNetworkProxyState, type NetworkProxyProfile } from '@/platform/network/networkProxy';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { NetworkProxyModal } from '@/screens/more/NetworkProxyModal';
+import { createStyles, createTheme } from '@/theme';
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 })

@@ -1,12 +1,12 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React, { type ComponentProps } from 'react';
-import { emptyCredentialSummaries } from '../../src/credentialVault';
-import { createEmptyNetworkProxyState } from '../../src/networkProxy';
-import { createEmptyReaderData } from '../../src/readerData';
-import { MoreScreen } from '../../src/screens/MoreScreen';
-import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
-import { createStyles, createTheme } from '../../src/theme';
+import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
+import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { MoreScreen } from '@/screens/MoreScreen';
+import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createStyles, createTheme } from '@/theme';
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })

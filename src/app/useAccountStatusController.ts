@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { isCancelledError, useQuery, type QueryFunctionContext } from '@tanstack/react-query';
-import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '../sources/sourceGateway';
-import { errorMessage, isCanceledRequest } from '../appUtils';
-import { summarizeYaohuoCookieHeader } from '../yaohuoSession';
-import { summarizeNodeSeekCookieHeader } from '../nodeseekSession';
-import { summarizeLinuxDoCookieHeader } from '../linuxdoSession';
+import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/sourceGateway';
+import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
+import { summarizeYaohuoCookieHeader } from '@/yaohuoSession';
+import { summarizeNodeSeekCookieHeader } from '@/nodeseekSession';
+import { summarizeLinuxDoCookieHeader } from '@/linuxdoSession';
 import {
   createSiteSessionStates,
   createSiteSessionViewModel,
@@ -13,11 +13,12 @@ import {
   type SiteSessionState,
   type SiteSessionViewModel,
   type SiteSessionViewModels
-} from '../siteSessionState';
-import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
-import { sourceErrorFromUnknown } from '../sourceErrors';
+} from '@/domain/session/siteSessionState';
+import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import { sourceErrorFromUnknown } from '@/sourceErrors';
 import type { XiaoyinsiAuthorizationReadResult } from './useXiaoyinsiAuthController';
-import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
+import { appQueryClient, forumQueryKeys } from './serverState';
+import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -25,14 +26,15 @@ import {
   normalizeDiagnosticReason,
   withDiagnosticFetcher,
   type DiagnosticTrace
-} from '../diagnostics';
+} from '@/platform/diagnostics/diagnostics';
 import {
   readManagedCookieHeader as readManagedCookieHeaderFromNative,
   type ManagedCookieReadResult
-} from '../managedCookies';
+} from '@/platform/network/managedCookies';
 import { cancelForumSourceQueries, removeUnconfirmedForumSourceQueries } from './sessionControllerHelpers';
-import { sessionSources, type SessionSource } from '../sourceCatalog';
-import type { SourceErrorInfo } from '../types';
+import { sessionSources, type SessionSource } from '@/domain/forum/sourceCatalog';
+import type { SourceErrorInfo } from '@/domain/forum/models';
+import type { AccountReconcileResult } from '@/features/account/model/sessionContracts';
 
 const NODESEEK_ACCOUNT_URL = 'https://www.nodeseek.com/';
 const LINUXDO_ACCOUNT_URL = 'https://linux.do/session/current.json';
@@ -43,10 +45,6 @@ type StatusQueryData = {
   failed?: boolean;
   session?: SiteSessionState;
 };
-export type AccountReconcileResult =
-  | { status: 'anonymous' | 'changed' | 'same'; session: SiteSessionState; partial?: boolean }
-  | { status: 'stale' }
-  | { status: 'unknown'; error: string; errorInfo: SourceErrorInfo };
 export type AccountIdentityRuntimeUpdate = {
   identityKey?: string;
   pending: boolean;

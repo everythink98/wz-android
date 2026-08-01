@@ -5,8 +5,8 @@ import {
   parseYaohuoRepliesHtml,
   parseYaohuoUserProfileHtml,
   parseYaohuoUserRepliesHtml
-} from './localYaohuo';
-import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
+} from '@/localYaohuo';
+import { sourceDiagnosticSummary } from '@/sourceAdapterDiagnostics';
 
 describe('yaohuo reply parsing', () => {
   it('summarizes invalid list candidates and source replies with synthesized floors', () => {

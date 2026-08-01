@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { RefreshCw } from 'lucide-react-native';
-import type { LinuxDoLevelProfile } from '../../sources/sourceGateway';
-import type { SiteSessionViewModel } from '../../siteSessionState';
-import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
-import { AppButton, IconButton } from '../../components/AppControls';
+import type { LinuxDoLevelProfile } from '@/sources/sourceGateway';
+import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
+import { androidRipple, createStyles, type ReaderTheme } from '@/theme';
+import { AppButton, IconButton } from '@/components/AppControls';
 
 const LINUXDO_LEVEL_TABS = [
   { value: 'progress', label: '等级进度' },

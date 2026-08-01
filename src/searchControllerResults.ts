@@ -1,7 +1,7 @@
-import type { SearchGroup } from './searchListItems';
-import type { SearchSort } from './feedLogic';
-import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from './searchFilters';
-import type { FeedSource, Source, Topic } from './types';
+import type { SearchGroup } from '@/searchListItems';
+import type { SearchSort } from '@/feedLogic';
+import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/searchFilters';
+import type { FeedSource, Source, Topic } from '@/domain/forum/models';
 
 export type SearchHistoryWriteQueue = {
   current: Promise<void>;

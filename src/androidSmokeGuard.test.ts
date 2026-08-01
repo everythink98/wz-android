@@ -561,7 +561,9 @@ describe('Android release evidence guards', () => {
     const appRoot = readProjectFile('src', 'app', 'AppRoot.tsx');
     const moreScreen = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 
-    expect(entry).toContain("import { initializeDiagnosticFileLogging } from './src/diagnosticFileStore';");
+    expect(entry).toContain(
+      "import { initializeDiagnosticFileLogging } from '@/platform/diagnostics/diagnosticFileStore';"
+    );
     expect(entry.indexOf('initializeDiagnosticFileLogging();')).toBeLessThan(
       entry.indexOf('registerRootComponent(App);')
     );

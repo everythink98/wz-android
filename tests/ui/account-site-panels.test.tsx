@@ -2,19 +2,19 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { type ComponentProps } from 'react';
 import { Text, View } from 'react-native';
-import { LinuxDoVerifyModal } from '../../src/app/LinuxDoVerifyModal';
-import { LoginWebViewModal } from '../../src/components/LoginWebViewModal';
-import type { LinuxDoLevelProfile } from '../../src/linuxdoLevel';
-import { createEmptyReaderData } from '../../src/readerData';
-import { LinuxDoLevelPanel } from '../../src/screens/more/LinuxDoLevelPanel';
-import { NodeSeekLoginPanel, YaohuoLoginPanel } from '../../src/screens/more/MorePanels';
+import { LinuxDoVerifyModal } from '@/app/LinuxDoVerifyModal';
+import { LoginWebViewModal } from '@/components/LoginWebViewModal';
+import type { LinuxDoLevelProfile } from '@/linuxdoLevel';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { LinuxDoLevelPanel } from '@/screens/more/LinuxDoLevelPanel';
+import { NodeSeekLoginPanel, YaohuoLoginPanel } from '@/screens/more/MorePanels';
 import {
   createSiteSessionStates,
   createSiteSessionViewModels,
   type SessionSite,
   type SiteSessionStatus
-} from '../../src/siteSessionState';
-import { createStyles, createTheme } from '../../src/theme';
+} from '@/domain/session/siteSessionState';
+import { createStyles, createTheme } from '@/theme';
 
 let mockLoginWebViewProps: Record<string, any> = {};
 let mockLoginWebViewMountCount = 0;
