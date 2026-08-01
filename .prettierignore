@@ -1,0 +1,16 @@
+android/
+.expo/
+coverage/
+node_modules/
+tmp/
+tmp-*
+dogfood-output/
+package-lock.json
+*.bundle
+*.md
+*.ad
+*.csv
+*.log
+*.png
+*.sqlite*
+*.xml
