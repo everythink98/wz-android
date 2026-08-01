@@ -15,10 +15,11 @@ export function forumAccessRequirementText(requirement?: AccessRequirement) {
   }
   if (requirement.type === 'level') {
     const text = requirement.detail || '';
-    const level = text.match(/(?:lv|level)\s*(?:of\s+|[:：#-]\s*)?(\d+)/i)?.[1]
-      || text.match(/trust level\s*(\d+)/i)?.[1]
-      || text.match(/等级(?:达到|达|至少|要求|需|需要|不低于|高于|大于)?\s*(\d+)/i)?.[1]
-      || text.match(/需要[^。；\n]{0,24}(\d+)\s*级[^。；\n]{0,16}(?:查看|阅读|才能|才可|以上)/i)?.[1];
+    const level =
+      text.match(/(?:lv|level)\s*(?:of\s+|[:：#-]\s*)?(\d+)/i)?.[1] ||
+      text.match(/trust level\s*(\d+)/i)?.[1] ||
+      text.match(/等级(?:达到|达|至少|要求|需|需要|不低于|高于|大于)?\s*(\d+)/i)?.[1] ||
+      text.match(/需要[^。；\n]{0,24}(\d+)\s*级[^。；\n]{0,16}(?:查看|阅读|才能|才可|以上)/i)?.[1];
     if (level) {
       return `需 Lv${level}`;
     }
@@ -115,25 +116,24 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
   }
   if (isForumHost(host, 'linux.do')) {
     const parts = pathname.split('/').filter(Boolean);
-    const id = parts[0]?.toLowerCase() === 't'
-      ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2])
-      : '';
+    const id = parts[0]?.toLowerCase() === 't' ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2]) : '';
     return id && /^\d+$/.test(id) ? internalTopic('linuxdo', id, 'linux.do 主题', `https://linux.do/t/${id}`) : null;
   }
   if (isForumHost(host, 'forum.xiaoyinsi.com')) {
     const parts = pathname.split('/').filter(Boolean);
-    const id = parts[0]?.toLowerCase() === 't'
-      ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2])
-      : '';
-    return id && /^\d+$/.test(id) ? internalTopic('xiaoyinsi', id, '小隐寺主题', `https://forum.xiaoyinsi.com/t/${id}`) : null;
+    const id = parts[0]?.toLowerCase() === 't' ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2]) : '';
+    return id && /^\d+$/.test(id)
+      ? internalTopic('xiaoyinsi', id, '小隐寺主题', `https://forum.xiaoyinsi.com/t/${id}`)
+      : null;
   }
   if (isForumHost(host, 'v2ex.com')) {
     const id = pathname.match(/^\/t\/(\d+)(?:\/)?$/i)?.[1];
     return id ? internalTopic('v2ex', id, 'V2EX 主题', `https://www.v2ex.com/t/${id}`) : null;
   }
   if (isYaohuoContentHost(host)) {
-    const id = pathname.match(/^\/bbs-(\d+)\.html$/i)?.[1]
-      || (/\/(?:view|book_re|book_view)\.aspx$/i.test(pathname) ? url.searchParams.get('id') || '' : '');
+    const id =
+      pathname.match(/^\/bbs-(\d+)\.html$/i)?.[1] ||
+      (/\/(?:view|book_re|book_view)\.aspx$/i.test(pathname) ? url.searchParams.get('id') || '' : '');
     if (!id || !/^\d+$/.test(id)) {
       return null;
     }
@@ -153,7 +153,11 @@ export function parseInternalTopicOpenLink(value: string) {
     : null;
 }
 
-export function parseForumUserLink(href: string, baseUrl?: string, candidates: ForumUserLinkCandidate[] = []): UserReference | null {
+export function parseForumUserLink(
+  href: string,
+  baseUrl?: string,
+  candidates: ForumUserLinkCandidate[] = []
+): UserReference | null {
   const url = forumLinkUrl(href, baseUrl);
   if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
     return null;
@@ -165,13 +169,15 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
     }
     try {
       const username = decodeURIComponent(rawUsername);
-      return username ? {
-        source: 'linuxdo',
-        id: username,
-        username,
-        displayName: username,
-        url: `https://linux.do/u/${encodeURIComponent(username)}`
-      } : null;
+      return username
+        ? {
+            source: 'linuxdo',
+            id: username,
+            username,
+            displayName: username,
+            url: `https://linux.do/u/${encodeURIComponent(username)}`
+          }
+        : null;
     } catch {
       return null;
     }
@@ -193,35 +199,37 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       return null;
     }
     const candidate = candidates.slice(0, 32).find((item) => item.author === username);
-    const candidateId = candidate?.authorId?.match(/^\d+$/)?.[0]
-      || candidate?.authorUrl?.match(/(?:^|\/)space\/(\d+)(?:[/?#]|$)/)?.[1];
-    return candidateId ? {
-      source: 'nodeseek',
-      id: candidateId,
-      username,
-      displayName: username,
-      avatar: candidate?.authorAvatar,
-      url: `https://www.nodeseek.com/space/${candidateId}`
-    } : {
-      source: 'nodeseek',
-      username,
-      displayName: username,
-      url: `https://www.nodeseek.com/member?t=${encodeURIComponent(username)}`
-    };
+    const candidateId =
+      candidate?.authorId?.match(/^\d+$/)?.[0] || candidate?.authorUrl?.match(/(?:^|\/)space\/(\d+)(?:[/?#]|$)/)?.[1];
+    return candidateId
+      ? {
+          source: 'nodeseek',
+          id: candidateId,
+          username,
+          displayName: username,
+          avatar: candidate?.authorAvatar,
+          url: `https://www.nodeseek.com/space/${candidateId}`
+        }
+      : {
+          source: 'nodeseek',
+          username,
+          displayName: username,
+          url: `https://www.nodeseek.com/member?t=${encodeURIComponent(username)}`
+        };
   }
   if (isYaohuoContentHost(url.hostname)) {
     if (!/^\/(?:bbs\/)?userinfo\.aspx$/i.test(url.pathname)) {
       return null;
     }
-    const id = [...url.searchParams.entries()]
-      .find(([key]) => /^(touserid|userid)$/i.test(key))?.[1]
-      .trim() || '';
-    return /^\d+$/.test(id) ? {
-      source: 'yaohuo',
-      id,
-      username: id,
-      url: `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`
-    } : null;
+    const id = [...url.searchParams.entries()].find(([key]) => /^(touserid|userid)$/i.test(key))?.[1].trim() || '';
+    return /^\d+$/.test(id)
+      ? {
+          source: 'yaohuo',
+          id,
+          username: id,
+          url: `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`
+        }
+      : null;
   }
   if (isForumHost(url.hostname, 'forum.xiaoyinsi.com')) {
     const rawUsername = discourseProfileUsername(url.pathname);
@@ -230,13 +238,15 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
     }
     try {
       const username = decodeURIComponent(rawUsername);
-      return username ? {
-        source: 'xiaoyinsi',
-        id: username,
-        username,
-        displayName: username,
-        url: `https://forum.xiaoyinsi.com/u/${encodeURIComponent(username)}`
-      } : null;
+      return username
+        ? {
+            source: 'xiaoyinsi',
+            id: username,
+            username,
+            displayName: username,
+            url: `https://forum.xiaoyinsi.com/u/${encodeURIComponent(username)}`
+          }
+        : null;
     } catch {
       return null;
     }
@@ -250,13 +260,15 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
   }
   try {
     const username = decodeURIComponent(rawUsername);
-    return username ? {
-      source: 'v2ex',
-      id: username,
-      username,
-      displayName: username,
-      url: `https://www.v2ex.com/member/${encodeURIComponent(username)}`
-    } : null;
+    return username
+      ? {
+          source: 'v2ex',
+          id: username,
+          username,
+          displayName: username,
+          url: `https://www.v2ex.com/member/${encodeURIComponent(username)}`
+        }
+      : null;
   } catch {
     return null;
   }
@@ -264,35 +276,32 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
 
 export function isYaohuoLoginRequiredError(error: unknown) {
   return Boolean(
-    error
-    && typeof error === 'object'
-    && 'loginRequired' in error
-    && (error as { loginRequired?: unknown }).loginRequired
+    error &&
+    typeof error === 'object' &&
+    'loginRequired' in error &&
+    (error as { loginRequired?: unknown }).loginRequired
   );
 }
 
 export function isYaohuoLoginExpiredError(error: unknown) {
-  return Boolean(
-    isYaohuoLoginRequiredError(error)
-    && (error as { reason?: unknown }).reason === 'expired'
-  );
+  return Boolean(isYaohuoLoginRequiredError(error) && (error as { reason?: unknown }).reason === 'expired');
 }
 
 export function isLinuxDoCloudflareError(error: unknown) {
   return Boolean(
-    error
-    && typeof error === 'object'
-    && (error as { source?: unknown }).source === 'linuxdo'
-    && (error as { reason?: unknown }).reason === 'cloudflare'
+    error &&
+    typeof error === 'object' &&
+    (error as { source?: unknown }).source === 'linuxdo' &&
+    (error as { reason?: unknown }).reason === 'cloudflare'
   );
 }
 
 export function isNodeSeekCloudflareError(error: unknown) {
   return Boolean(
-    error
-    && typeof error === 'object'
-    && (error as { source?: unknown }).source === 'nodeseek'
-    && (error as { reason?: unknown }).reason === 'cloudflare'
+    error &&
+    typeof error === 'object' &&
+    (error as { source?: unknown }).source === 'nodeseek' &&
+    (error as { reason?: unknown }).reason === 'cloudflare'
   );
 }
 
@@ -329,7 +338,12 @@ export function topicListDisplayTime(topic: { source: Source; createdAt: string;
   return topic.lastReplyAt || topic.createdAt;
 }
 
-export function topicListDisplayTimeText(topic: { source: Source; createdAt: string; lastReplyAt?: string; displayTimeText?: string }) {
+export function topicListDisplayTimeText(topic: {
+  source: Source;
+  createdAt: string;
+  lastReplyAt?: string;
+  displayTimeText?: string;
+}) {
   return topic.displayTimeText?.trim() || formatRelativeTime(topicListDisplayTime(topic));
 }
 

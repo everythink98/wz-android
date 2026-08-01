@@ -5,9 +5,7 @@
     "version": "1.3.90",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
-    "platforms": [
-      "android"
-    ],
+    "platforms": ["android"],
     "newArchEnabled": true,
     "userInterfaceStyle": "light",
     "extra": {
@@ -35,9 +33,7 @@
       [
         "expo-media-library",
         {
-          "granularPermissions": [
-            "photo"
-          ]
+          "granularPermissions": ["photo"]
         }
       ],
       [

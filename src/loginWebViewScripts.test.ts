@@ -52,14 +52,18 @@ describe('NodeSeek login WebView probe script', () => {
 
   it('reads explicit NodeSeek UID and CSRF from the rendered page without fetch', async () => {
     const fetchMock = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <meta name="csrf-token" content="page-csrf">
       <a href="/space/4706">topic author</a>
       <a href="/setting">设置</a>
       <a href="/api/account/signOut">退出登录</a>
       <main>UID: 54874</main>
       <article>claude code cli 登录掉了怎么处理</article>
-    `, fetchMock);
+    `,
+      fetchMock
+    );
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
@@ -73,11 +77,15 @@ describe('NodeSeek login WebView probe script', () => {
 
   it('does not infer the current NodeSeek user from random space links', async () => {
     const fetchMock = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <a href="/space/4706">topic author</a>
       <a href="/setting">设置</a>
       <a href="/api/account/signOut">退出登录</a>
-    `, fetchMock);
+    `,
+      fetchMock
+    );
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
@@ -90,12 +98,16 @@ describe('NodeSeek login WebView probe script', () => {
 
   it('reads the current NodeSeek user from the explicit Username link', async () => {
     const fetchMock = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <a class="Username" href="/space/48872">凡想世界</a>
       <a href="/space/4706">topic author</a>
       <a href="/setting">设置</a>
       <a href="/api/account/signOut">退出登录</a>
-    `, fetchMock);
+    `,
+      fetchMock
+    );
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
@@ -107,10 +119,13 @@ describe('NodeSeek login WebView probe script', () => {
   });
 
   it('[REG-ACCOUNT-019] marks the real NodeSeek .html guest controls as logged out', async () => {
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <a class="btn" href="/signIn.html">登录</a>
       <a class="btn" href="/register.html">注册</a>
-    `);
+    `
+    );
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
@@ -121,11 +136,14 @@ describe('NodeSeek login WebView probe script', () => {
   });
 
   it('[REG-ACCOUNT-019] gives explicit NodeSeek guest controls priority over stale self markers', async () => {
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <a class="Username" href="/space/48872">旧账号</a>
       <a class="btn" href="/signIn.html">登录</a>
       <a class="btn" href="/register.html">注册</a>
-    `);
+    `
+    );
 
     expect(payload).toMatchObject({
       status: 'logged-out',
@@ -141,10 +159,13 @@ describe('NodeSeek login WebView probe script', () => {
         member_name: '当前账号'
       }
     };
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <a class="btn" href="/signIn.html">登录</a>
       <a class="btn" href="/register.html">注册</a>
-    `);
+    `
+    );
 
     expect(payload).toMatchObject({
       status: 'logged-in',
@@ -165,10 +186,13 @@ describe('NodeSeek login WebView probe script', () => {
   });
 
   it('[REG-ACCOUNT-019] does not treat login text or related content links as an explicit guest page', async () => {
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <article>登录</article>
       <a href="/topics/login-help">登录问题讨论</a>
-    `);
+    `
+    );
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
@@ -179,9 +203,12 @@ describe('NodeSeek login WebView probe script', () => {
   });
 
   it('[REG-ACCOUNT-031] keeps a login-path error or half-loaded page unknown', async () => {
-    const payload = await runNodeSeekLoginProbe('/signIn.html', `
+    const payload = await runNodeSeekLoginProbe(
+      '/signIn.html',
+      `
       <main>安全检查暂时无法完成，请稍后重试</main>
-    `);
+    `
+    );
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
@@ -192,22 +219,28 @@ describe('NodeSeek login WebView probe script', () => {
   });
 
   it('[REG-ACCOUNT-019] does not treat exact NodeSeek login links inside ordinary content as guest controls', async () => {
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <article>
         <a href="/signIn.html">登录教程</a>
         <a href="/register.html">注册教程</a>
       </article>
-    `);
+    `
+    );
 
     expect(payload).toMatchObject({ status: 'unknown', userId: null });
     expect(payload.loggedIn).toBeUndefined();
   });
 
   it('[REG-ACCOUNT-019] does not treat public account-navigation links as current-user proof', async () => {
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <a href="/setting">设置</a>
       <a href="/notification">通知</a>
-    `);
+    `
+    );
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
@@ -218,10 +251,13 @@ describe('NodeSeek login WebView probe script', () => {
   });
 
   it('[REG-ACCOUNT-019] does not infer self identity from UID text beside an ordinary author link', async () => {
-    const payload = await runNodeSeekLoginProbe('/', `
+    const payload = await runNodeSeekLoginProbe(
+      '/',
+      `
       <article>如何查看 UID: 4706</article>
       <a href="/space/4706">帖子作者</a>
-    `);
+    `
+    );
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
@@ -272,7 +308,9 @@ describe('linux.do login WebView probe script', () => {
       documentKey: expect.stringContaining('https://www.nodeimage.com/login:'),
       status: 'unknown'
     });
-    expect((window as typeof window & { __WZ_NODESEEK_LOGIN_PROBE_ID__?: number }).__WZ_NODESEEK_LOGIN_PROBE_ID__).toBeUndefined();
+    expect(
+      (window as typeof window & { __WZ_NODESEEK_LOGIN_PROBE_ID__?: number }).__WZ_NODESEEK_LOGIN_PROBE_ID__
+    ).toBeUndefined();
   });
 });
 
@@ -286,10 +324,7 @@ function runNodeImageApiKeyProbe(html: string, fetchMock: typeof fetch) {
   });
   vi.stubGlobal('fetch', fetchMock);
 
-  window.eval(nodeImageAuthPayloadScript(
-    NODEIMAGE_AUTH_NONCE,
-    NODEIMAGE_AUTH_PAYLOAD
-  ));
+  window.eval(nodeImageAuthPayloadScript(NODEIMAGE_AUTH_NONCE, NODEIMAGE_AUTH_PAYLOAD));
 
   return postMessage;
 }
@@ -317,12 +352,18 @@ describe('NodeImage existing-session probe script', () => {
   });
 
   it('[REG-ACCOUNT-038] reuses an authenticated NodeImage session without requesting NodeSeek Connect', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      api_key: ' existing-secret '
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            api_key: ' existing-secret '
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        )
+    ) as unknown as typeof fetch;
     const postMessage = runNodeImageSessionProbe('', fetchMock);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
@@ -335,10 +376,7 @@ describe('NodeImage existing-session probe script', () => {
         headers: { Accept: 'application/json' }
       })
     );
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      expect.stringContaining('/api/cAuth'),
-      expect.anything()
-    );
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/cAuth'), expect.anything());
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-session-key',
       documentUrl: 'https://www.nodeimage.com/',
@@ -348,12 +386,18 @@ describe('NodeImage existing-session probe script', () => {
   });
 
   it('[REG-ACCOUNT-038] reports only the verified anonymous JSON contract as an expired session', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      error: '未认证，请先通过NodeSeek授权登录'
-    }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json; charset=utf-8' }
-    })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: '未认证，请先通过NodeSeek授权登录'
+          }),
+          {
+            status: 401,
+            headers: { 'Content-Type': 'application/json; charset=utf-8' }
+          }
+        )
+    ) as unknown as typeof fetch;
     const postMessage = runNodeImageSessionProbe('', fetchMock);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
@@ -369,10 +413,7 @@ describe('NodeImage existing-session probe script', () => {
 
   it('[REG-ACCOUNT-038] keeps the rendered API key input as the existing-session fallback', async () => {
     const fetchMock = vi.fn() as unknown as typeof fetch;
-    const postMessage = runNodeImageSessionProbe(
-      '<input id="apiKeyInput" value="dom-session-secret">',
-      fetchMock
-    );
+    const postMessage = runNodeImageSessionProbe('<input id="apiKeyInput" value="dom-session-secret">', fetchMock);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
@@ -386,38 +427,55 @@ describe('NodeImage existing-session probe script', () => {
   });
 
   it.each([
-    ['Cloudflare HTML 403', () => new Response('<html>challenge</html>', {
-      status: 403,
-      headers: { 'Content-Type': 'text/html' }
-    }), 403],
-    ['server JSON 500', () => new Response(JSON.stringify({ error: 'temporary' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    }), 500],
-    ['successful JSON without a key', () => new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    }), 200],
-    ['invalid JSON 401', () => new Response('{', {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' }
-    }), 401]
-  ] as const)(
-    '[REG-ACCOUNT-038] does not turn %s into a Connect attempt',
-    async (_label, responseFactory, status) => {
-      const fetchMock = vi.fn(async () => responseFactory()) as unknown as typeof fetch;
-      const postMessage = runNodeImageSessionProbe('', fetchMock);
+    [
+      'Cloudflare HTML 403',
+      () =>
+        new Response('<html>challenge</html>', {
+          status: 403,
+          headers: { 'Content-Type': 'text/html' }
+        }),
+      403
+    ],
+    [
+      'server JSON 500',
+      () =>
+        new Response(JSON.stringify({ error: 'temporary' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        }),
+      500
+    ],
+    [
+      'successful JSON without a key',
+      () =>
+        new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }),
+      200
+    ],
+    [
+      'invalid JSON 401',
+      () =>
+        new Response('{', {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' }
+        }),
+      401
+    ]
+  ] as const)('[REG-ACCOUNT-038] does not turn %s into a Connect attempt', async (_label, responseFactory, status) => {
+    const fetchMock = vi.fn(async () => responseFactory()) as unknown as typeof fetch;
+    const postMessage = runNodeImageSessionProbe('', fetchMock);
 
-      await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
-      expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
-        type: 'nodeimage-session-error',
-        documentUrl: 'https://www.nodeimage.com/',
-        nonce: NODEIMAGE_AUTH_NONCE,
-        status
-      });
-    }
-  );
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
+      type: 'nodeimage-session-error',
+      documentUrl: 'https://www.nodeimage.com/',
+      nonce: NODEIMAGE_AUTH_NONCE,
+      status
+    });
+  });
 
   it('[REG-ACCOUNT-038] stops on a session-probe network error without Connect', async () => {
     const fetchMock = vi.fn(async () => {
@@ -464,18 +522,23 @@ describe('NodeImage API key WebView probe script', () => {
   });
 
   it('posts the current NodeImage API key response from the authorized page', async () => {
-    const fetchMock = vi.fn(async (input) => new Response(JSON.stringify(
-      String(input).endsWith('/api/auth/verify')
-        ? { success: true }
-        : { api_key: ' secret ' }
-    ), { status: 200 })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(
+      async (input) =>
+        new Response(
+          JSON.stringify(String(input).endsWith('/api/auth/verify') ? { success: true } : { api_key: ' secret ' }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
     const postMessage = runNodeImageApiKeyProbe('', fetchMock);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
-    expect(fetchMock).toHaveBeenCalledWith('https://api.nodeimage.com/api/user/api-key', expect.objectContaining({
-      credentials: 'include'
-    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.nodeimage.com/api/user/api-key',
+      expect.objectContaining({
+        credentials: 'include'
+      })
+    );
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
       documentUrl: 'https://www.nodeimage.com/',
@@ -485,9 +548,12 @@ describe('NodeImage API key WebView probe script', () => {
   });
 
   it('falls back to the API key input already rendered by NodeImage', async () => {
-    const fetchMock = vi.fn(async (input) => new Response('{}', {
-      status: String(input).endsWith('/api/auth/verify') ? 200 : 401
-    })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(
+      async (input) =>
+        new Response('{}', {
+          status: String(input).endsWith('/api/auth/verify') ? 200 : 401
+        })
+    ) as unknown as typeof fetch;
     const postMessage = runNodeImageApiKeyProbe('<input id="apiKeyInput" value="dom-secret">', fetchMock);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
@@ -542,10 +608,7 @@ describe('NodeImage API key WebView probe script', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    window.eval(nodeImageAuthPayloadScript(
-      NODEIMAGE_AUTH_NONCE,
-      NODEIMAGE_AUTH_PAYLOAD
-    ));
+    window.eval(nodeImageAuthPayloadScript(NODEIMAGE_AUTH_NONCE, NODEIMAGE_AUTH_PAYLOAD));
     await Promise.resolve();
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -554,11 +617,18 @@ describe('NodeImage API key WebView probe script', () => {
 
   it('[REG-ACCOUNT-040] does not report a verify result after same-document navigation', async () => {
     const verifyResponse = Promise.withResolvers<Response>();
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockImplementationOnce(() => verifyResponse.promise)
-      .mockImplementationOnce(async () => new Response(JSON.stringify({
-        api_key: 'late-secret'
-      }), { status: 200 })) as unknown as typeof fetch;
+      .mockImplementationOnce(
+        async () =>
+          new Response(
+            JSON.stringify({
+              api_key: 'late-secret'
+            }),
+            { status: 200 }
+          )
+      ) as unknown as typeof fetch;
     const postMessage = runNodeImageApiKeyProbe('', fetchMock);
 
     window.history.pushState(null, '', '/account');
@@ -571,9 +641,12 @@ describe('NodeImage API key WebView probe script', () => {
 
   it('keeps the authorization payload lexical and never writes browser storage', async () => {
     window.history.pushState(null, '', '/');
-    const fetchMock = vi.fn(async (input) => new Response('{}', {
-      status: String(input).endsWith('/api/auth/verify') ? 200 : 401
-    })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(
+      async (input) =>
+        new Response('{}', {
+          status: String(input).endsWith('/api/auth/verify') ? 200 : 401
+        })
+    ) as unknown as typeof fetch;
     const postMessage = vi.fn();
     const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
     Object.defineProperty(window, 'ReactNativeWebView', {
@@ -590,10 +663,7 @@ describe('NodeImage API key WebView probe script', () => {
     }
     vi.stubGlobal('fetch', fetchMock);
 
-    window.eval(nodeImageAuthPayloadScript(
-      NODEIMAGE_AUTH_NONCE,
-      NODEIMAGE_AUTH_PAYLOAD
-    ));
+    window.eval(nodeImageAuthPayloadScript(NODEIMAGE_AUTH_NONCE, NODEIMAGE_AUTH_PAYLOAD));
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toMatchObject({

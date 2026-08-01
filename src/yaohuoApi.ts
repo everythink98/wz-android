@@ -10,12 +10,7 @@ import {
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
 } from './localYaohuo';
-import {
-  YAOHUO_BASE_URL,
-  YAOHUO_BBS_REFERER,
-  YAOHUO_LOGIN_URL,
-  requireYaohuoRequestUrl
-} from './localYaohuoHelpers';
+import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL, requireYaohuoRequestUrl } from './localYaohuoHelpers';
 import {
   annotateSourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,
@@ -52,9 +47,7 @@ function yaohuoRequestInit(): RequestInit {
       'Sec-Fetch-Mode': 'navigate',
       'Sec-Fetch-Site': 'same-origin',
       'Upgrade-Insecure-Requests': '1',
-      ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT
-        ? { 'User-Agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT }
-        : {})
+      ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT ? { 'User-Agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT } : {})
     }
   };
 }
@@ -102,18 +95,22 @@ export async function getYaohuoFeedDirect({
   timeoutMs?: number;
 }): Promise<FeedResponse> {
   const classId = category?.trim();
-  const pageResult = await fetchYaohuoHtml(classId
-    ? yaohuoUrl('/bbs/book_list.aspx', {
-      action: 'new',
-      classid: classId,
-      page,
-      siteid: '1000'
-    })
-    : yaohuoUrl('/bbs/book_list.aspx', {
-      gettotal: '2025',
-      action: 'new',
-      ...(page > 1 ? { page } : {})
-    }), yaohuoFetcher, { signal, timeoutMs });
+  const pageResult = await fetchYaohuoHtml(
+    classId
+      ? yaohuoUrl('/bbs/book_list.aspx', {
+          action: 'new',
+          classid: classId,
+          page,
+          siteid: '1000'
+        })
+      : yaohuoUrl('/bbs/book_list.aspx', {
+          gettotal: '2025',
+          action: 'new',
+          ...(page > 1 ? { page } : {})
+        }),
+    yaohuoFetcher,
+    { signal, timeoutMs }
+  );
 
   return parseYaohuoListHtml(pageResult.html, {
     url: pageResult.url,
@@ -141,15 +138,19 @@ export async function searchYaohuoDirect({
   timeoutMs?: number;
 }): Promise<SearchResponse> {
   const searchPath = page > 1 ? '/bbs/book_list_search.aspx' : '/bbs/book_list.aspx';
-  const pageResult = await fetchYaohuoHtml(yaohuoUrl(searchPath, {
-    action: 'search',
-    type: 'title',
-    key: query,
-    classid: category,
-    page,
-    siteid: '1000',
-    getTotal: '2021'
-    }), yaohuoFetcher, { signal, timeoutMs });
+  const pageResult = await fetchYaohuoHtml(
+    yaohuoUrl(searchPath, {
+      action: 'search',
+      type: 'title',
+      key: query,
+      classid: category,
+      page,
+      siteid: '1000',
+      getTotal: '2021'
+    }),
+    yaohuoFetcher,
+    { signal, timeoutMs }
+  );
 
   return parseYaohuoSearchHtml(pageResult.html, {
     classId: category,
@@ -190,27 +191,31 @@ export async function getYaohuoTopicDirect({
       signal,
       timeoutMs
     }),
-    fetchYaohuoHtml(yaohuoUrl('/bbs/favlist.aspx', {
-      key: detail.title || topic.title
-    }), yaohuoFetcher, { signal, timeoutMs }).catch((error) => {
+    fetchYaohuoHtml(
+      yaohuoUrl('/bbs/favlist.aspx', {
+        key: detail.title || topic.title
+      }),
+      yaohuoFetcher,
+      { signal, timeoutMs }
+    ).catch((error) => {
       if (signal?.aborted) {
         throw error;
       }
       return null;
     })
   ]);
-  const favoriteId = favoritePage
-    ? parseYaohuoFavoriteRecordId(favoritePage.html, detail.id || id)
-    : undefined;
+  const favoriteId = favoritePage ? parseYaohuoFavoriteRecordId(favoritePage.html, detail.id || id) : undefined;
 
   const result = {
     ...detail,
     categoryId: detail.categoryId || topic.categoryId,
     category: detail.category || topic.category,
-    ...(favoritePage ? {
-      bookmarked: Boolean(favoriteId),
-      bookmarkId: favoriteId
-    } : {}),
+    ...(favoritePage
+      ? {
+          bookmarked: Boolean(favoriteId),
+          bookmarkId: favoriteId
+        }
+      : {}),
     replyCount: Math.max(detail.replyCount || 0, topic.replyCount || 0, replies.items.length),
     replies: replies.items,
     replyHasMore: replies.hasMore,
@@ -223,10 +228,10 @@ export async function getYaohuoTopicDirect({
   const summary = sourceDiagnosticSummary(mergedResult);
   return !favoritePage && summary
     ? annotateSourceDiagnosticSummary(mergedResult, {
-      ...summary,
-      partialErrorCount: summary.partialErrorCount + 1,
-      hasDegradation: true
-    })
+        ...summary,
+        partialErrorCount: summary.partialErrorCount + 1,
+        hasDegradation: true
+      })
     : mergedResult;
 }
 
@@ -247,11 +252,15 @@ export async function getYaohuoRepliesDirect({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
-  const pageResult = await fetchYaohuoHtml(yaohuoUrl('/bbs/book_re.aspx', {
-    id: topicIdValue(id),
-    classid: categoryId || DEFAULT_CLASS_ID,
-    page
-  }), yaohuoFetcher, { signal, timeoutMs });
+  const pageResult = await fetchYaohuoHtml(
+    yaohuoUrl('/bbs/book_re.aspx', {
+      id: topicIdValue(id),
+      classid: categoryId || DEFAULT_CLASS_ID,
+      page
+    }),
+    yaohuoFetcher,
+    { signal, timeoutMs }
+  );
 
   return parseYaohuoRepliesHtml(pageResult.html, {
     url: pageResult.url,

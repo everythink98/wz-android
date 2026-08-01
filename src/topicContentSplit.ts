@@ -1,6 +1,27 @@
 import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_VIDEO_TAG, parseHtml } from './localHtml';
 
-const FALLBACK_BLOCK_TAGS = new Set(['p', 'div', 'blockquote', 'pre', 'ul', 'ol', 'li', 'table', 'details', 'summary', 'iframe', FORUM_VIDEO_TAG, FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+const FALLBACK_BLOCK_TAGS = new Set([
+  'p',
+  'div',
+  'blockquote',
+  'pre',
+  'ul',
+  'ol',
+  'li',
+  'table',
+  'details',
+  'summary',
+  'iframe',
+  FORUM_VIDEO_TAG,
+  FORUM_LINK_CARD_TAG,
+  FORUM_TERMINAL_REPORT_TAG,
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6'
+]);
 
 function nodeTagName(node: unknown) {
   const record = node as { rawTagName?: unknown; tagName?: unknown };
@@ -22,9 +43,7 @@ export function forumVideoBlockFromHtml(html: string | undefined) {
       return null;
     }
     const node = nodes[0] as unknown as { getAttribute?: (name: string) => string | undefined };
-    const src = typeof node.getAttribute === 'function'
-      ? node.getAttribute('src') || ''
-      : '';
+    const src = typeof node.getAttribute === 'function' ? node.getAttribute('src') || '' : '';
     return src ? { src } : null;
   } catch {
     return null;

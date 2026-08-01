@@ -11,7 +11,9 @@ export function currentTopicActionTopic(topicDetail: TopicDetail | null, selecte
   return topicDetail || selectedTopic;
 }
 
-export function isNodeSeekActionTopic(topic: TopicActionTopic | null): topic is TopicActionTopic & { source: 'nodeseek' } {
+export function isNodeSeekActionTopic(
+  topic: TopicActionTopic | null
+): topic is TopicActionTopic & { source: 'nodeseek' } {
   return topic?.source === 'nodeseek';
 }
 
@@ -19,11 +21,15 @@ export function isYaohuoActionTopic(topic: TopicActionTopic | null): topic is To
   return topic?.source === 'yaohuo';
 }
 
-export function isLinuxDoActionTopic(topic: TopicActionTopic | null): topic is TopicActionTopic & { source: 'linuxdo' } {
+export function isLinuxDoActionTopic(
+  topic: TopicActionTopic | null
+): topic is TopicActionTopic & { source: 'linuxdo' } {
   return topic?.source === 'linuxdo';
 }
 
-export function isXiaoyinsiActionTopic(topic: TopicActionTopic | null): topic is TopicActionTopic & { source: 'xiaoyinsi' } {
+export function isXiaoyinsiActionTopic(
+  topic: TopicActionTopic | null
+): topic is TopicActionTopic & { source: 'xiaoyinsi' } {
   return topic?.source === 'xiaoyinsi';
 }
 
@@ -58,7 +64,11 @@ export function nodeSeekAttendanceActionKey() {
   return 'nodeseek:attendance';
 }
 
-export function applyEditedReplyContent(replies: Reply[], edit: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>, source: Source) {
+export function applyEditedReplyContent(
+  replies: Reply[],
+  edit: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>,
+  source: Source
+) {
   if (source !== 'nodeseek') {
     return replies;
   }
@@ -87,11 +97,20 @@ export function shouldApplyEditedReplyFallback(
   edit: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'> | undefined,
   source: Source
 ): edit is Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'> {
-  return source === 'nodeseek' && Boolean(edit?.contentMarkdown.trim()) && !replies.some((reply) => reply.commentId === edit?.commentId);
+  return (
+    source === 'nodeseek' &&
+    Boolean(edit?.contentMarkdown.trim()) &&
+    !replies.some((reply) => reply.commentId === edit?.commentId)
+  );
 }
 
-export function markCurrentNodeSeekOwnRepliesUnlikable(replies: Reply[], currentUser: UserProfile | undefined, currentUserId?: number | null) {
-  const cleanCurrentUserId = positiveId(currentUserId) || (currentUser?.source === 'nodeseek' ? String(currentUser.id || '').trim() : '');
+export function markCurrentNodeSeekOwnRepliesUnlikable(
+  replies: Reply[],
+  currentUser: UserProfile | undefined,
+  currentUserId?: number | null
+) {
+  const cleanCurrentUserId =
+    positiveId(currentUserId) || (currentUser?.source === 'nodeseek' ? String(currentUser.id || '').trim() : '');
   if (!cleanCurrentUserId) {
     return replies;
   }

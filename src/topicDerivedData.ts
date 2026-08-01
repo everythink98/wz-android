@@ -22,7 +22,9 @@ function inlineSizedImageUrlsForHtml(html: string, inlineSizedImageUrls: InlineS
   if (!/<img\b/i.test(html)) {
     return [];
   }
-  return Object.keys(inlineSizedImageUrls).filter((url) => htmlContainsImageUrl(html, url)).sort();
+  return Object.keys(inlineSizedImageUrls)
+    .filter((url) => htmlContainsImageUrl(html, url))
+    .sort();
 }
 
 export function inlineSizedImageSignatureForHtml(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
@@ -46,12 +48,12 @@ export function sameInlineSizedImagesForHtml(
   previousUrls: InlineSizedImageUrlMap,
   nextUrls: InlineSizedImageUrlMap
 ) {
-  return previousHtml === nextHtml
-    && (
-      previousUrls === nextUrls
-      || inlineSizedImageSignatureForHtml(previousHtml || '<p></p>', previousUrls)
-        === inlineSizedImageSignatureForHtml(nextHtml || '<p></p>', nextUrls)
-    );
+  return (
+    previousHtml === nextHtml &&
+    (previousUrls === nextUrls ||
+      inlineSizedImageSignatureForHtml(previousHtml || '<p></p>', previousUrls) ===
+        inlineSizedImageSignatureForHtml(nextHtml || '<p></p>', nextUrls))
+  );
 }
 
 export function sameInlineSizedImagesForReply(
@@ -60,12 +62,12 @@ export function sameInlineSizedImagesForReply(
   previousUrls: InlineSizedImageUrlMap,
   nextUrls: InlineSizedImageUrlMap
 ) {
-  return previousReply === nextReply
-    && (
-      previousUrls === nextUrls
-      || inlineSizedImageSignatureForReply(previousReply, previousUrls)
-        === inlineSizedImageSignatureForReply(nextReply, nextUrls)
-    );
+  return (
+    previousReply === nextReply &&
+    (previousUrls === nextUrls ||
+      inlineSizedImageSignatureForReply(previousReply, previousUrls) ===
+        inlineSizedImageSignatureForReply(nextReply, nextUrls))
+  );
 }
 
 function inlineSizedImageCacheKey(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
@@ -124,5 +126,7 @@ export function filterRepliesWithImages(
   inlineSizedImageUrls: InlineSizedImageUrlMap,
   deriver: TopicImageDeriver
 ) {
-  return replies.filter((reply) => deriver.imageUrlsForHtml(replyHtmlWithSignature(reply), inlineSizedImageUrls).length > 0);
+  return replies.filter(
+    (reply) => deriver.imageUrlsForHtml(replyHtmlWithSignature(reply), inlineSizedImageUrls).length > 0
+  );
 }

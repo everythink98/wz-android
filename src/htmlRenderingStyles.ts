@@ -1,11 +1,23 @@
 import { StyleSheet } from 'react-native';
 import type { TNode } from 'react-native-render-html';
-import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlTagsStyles } from './appTypes';
+import type {
+  HtmlAllowedStyles,
+  HtmlBaseStyle,
+  HtmlClassesStyles,
+  HtmlIgnoredStyles,
+  HtmlTagsStyles
+} from './appTypes';
 import type { ReaderSettings } from './readerData';
 import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from './theme';
 import { DISCOURSE_CALLOUT_TITLE_CLASS, DISCOURSE_CALLOUT_TONE_CLASS_PREFIX } from './discourseContent';
 
-export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['color', 'fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
+export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = [
+  'color',
+  'fontWeight',
+  'fontStyle',
+  'textAlign',
+  'textDecorationLine'
+];
 export const HTML_REPLY_CONTENT_CLASS = 'forum-reply-content';
 export const TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE = 'data-trim-trailing-block-spacing';
 
@@ -46,7 +58,13 @@ export function buildHtmlRenderingStyles({
     marginBottom: 10,
     marginTop: 0
   };
-  const heading = (size: number, lineHeight: number, weight: '600' | '700', marginTop: number, marginBottom: number) => ({
+  const heading = (
+    size: number,
+    lineHeight: number,
+    weight: '600' | '700',
+    marginTop: number,
+    marginBottom: number
+  ) => ({
     fontSize: Math.round(size * settings.fontScale),
     fontWeight: weight,
     lineHeight: Math.round(lineHeight * settings.fontScale),
@@ -158,16 +176,18 @@ export function buildHtmlRenderingStyles({
       paddingVertical: 1,
       textDecorationLine: 'none'
     },
-    ...(enableDiscourseCallouts ? {
-      [DISCOURSE_CALLOUT_TITLE_CLASS]: {
-        fontWeight: '700'
-      },
-      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}primary`]: { color: theme.primary },
-      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}success`]: { color: theme.success },
-      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}warning`]: { color: theme.warning },
-      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}danger`]: { color: theme.danger },
-      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}muted`]: { color: theme.muted }
-    } : {})
+    ...(enableDiscourseCallouts
+      ? {
+          [DISCOURSE_CALLOUT_TITLE_CLASS]: {
+            fontWeight: '700'
+          },
+          [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}primary`]: { color: theme.primary },
+          [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}success`]: { color: theme.success },
+          [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}warning`]: { color: theme.warning },
+          [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}danger`]: { color: theme.danger },
+          [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}muted`]: { color: theme.muted }
+        }
+      : {})
   };
   const htmlIgnoredStyles: HtmlIgnoredStyles = [
     'backgroundColor',

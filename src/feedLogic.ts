@@ -64,7 +64,9 @@ export function sortTopicsByCreatedAt(items: Topic[]) {
 }
 
 function sortTopicsByActivity(items: Topic[]) {
-  return [...items].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
+  return [...items].sort(
+    (left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt)
+  );
 }
 
 function shouldUseIncomingAccessRequirement(current: Topic['accessRequirement'], incoming: Topic['accessRequirement']) {

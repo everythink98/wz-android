@@ -12,7 +12,12 @@ import {
 } from '../feedCategoryRail';
 import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '../feedLogic';
 import { categoryKey, topicKey, type ReaderData } from '../readerData';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, normalizeDiagnosticReason } from '../diagnostics';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason
+} from '../diagnostics';
 import { sourceLabel } from '../appUtils';
 import { isFeedFilterSource, isSessionSource, sessionSources, sourceValues } from '../sourceCatalog';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
@@ -69,7 +74,11 @@ class FeedQueryError extends Error {
   }
 }
 
-function feedFilterForRequest(source: FeedSource, category: string, filters: FeedFilterState): SourceFeedFilter | undefined {
+function feedFilterForRequest(
+  source: FeedSource,
+  category: string,
+  filters: FeedFilterState
+): SourceFeedFilter | undefined {
   if (!shouldUseFeedFilter(source, category)) {
     return undefined;
   }
@@ -84,10 +93,7 @@ function nextFeedPage(lastPage: FeedPage): FeedPageParam | undefined {
   if (!lastPage.hasMore || !lastPage.nextPage) {
     return undefined;
   }
-  if (
-    lastPage.nextPage === lastPage.page
-    && (lastPage.nextCursor || '') === (lastPage.cursor || '')
-  ) {
+  if (lastPage.nextPage === lastPage.page && (lastPage.nextCursor || '') === (lastPage.cursor || '')) {
     return undefined;
   }
   return { page: lastPage.nextPage, ...(lastPage.nextCursor ? { cursor: lastPage.nextCursor } : {}) };
@@ -97,10 +103,9 @@ function validateFeedPage(source: FeedSource, pageParam: FeedPageParam, response
   const errors = response.errors || {};
   const diagnostic = sourceDiagnosticSummary(response);
   const loadMore = pageParam.page > 1;
-  const parseEmpty = diagnostic?.isParseEmpty === true
-    && (loadMore || Number(diagnostic.validCount || 0) === 0);
-  const rejectsPartial = Object.keys(errors).length > 0
-    && (source !== 'all' || loadMore || response.items.length === 0);
+  const parseEmpty = diagnostic?.isParseEmpty === true && (loadMore || Number(diagnostic.validCount || 0) === 0);
+  const rejectsPartial =
+    Object.keys(errors).length > 0 && (source !== 'all' || loadMore || response.items.length === 0);
   if (parseEmpty) {
     throw new FeedQueryError(
       loadMore ? '加载下一页失败：返回内容无法解析，请重试。' : `${sourceLabel(source)} 返回内容无法解析，请重试。`,
@@ -116,16 +121,19 @@ function validateFeedPage(source: FeedSource, pageParam: FeedPageParam, response
 }
 
 function mergeFeedPages(pages: FeedPage[]) {
-  return pages.reduce<FeedResponse>((current, page) => ({
-    ...page,
-    errors: { ...current.errors, ...page.errors },
-    items: mergeTopics(current.items, page.items)
-  }), {
-    errors: {},
-    hasMore: false,
-    items: [],
-    nextPage: null
-  });
+  return pages.reduce<FeedResponse>(
+    (current, page) => ({
+      ...page,
+      errors: { ...current.errors, ...page.errors },
+      items: mergeTopics(current.items, page.items)
+    }),
+    {
+      errors: {},
+      hasMore: false,
+      items: [],
+      nextPage: null
+    }
+  );
 }
 
 function canRetainTrustedSource(
@@ -133,9 +141,7 @@ function canRetainTrustedSource(
   blockedSources: ReadonlySet<ForumIdentityBarrierSource>,
   retainableSources: ReadonlySet<ForumIdentityBarrierSource>
 ) {
-  return !isSessionSource(source)
-    || !blockedSources.has(source)
-    || retainableSources.has(source);
+  return !isSessionSource(source) || !blockedSources.has(source) || retainableSources.has(source);
 }
 
 function mergeTrustedTopics(
@@ -144,8 +150,8 @@ function mergeTrustedTopics(
   blockedSources: ReadonlySet<ForumIdentityBarrierSource>,
   retainableSources: ReadonlySet<ForumIdentityBarrierSource>
 ) {
-  const visibleTrusted = trusted.filter(
-    (topic) => canRetainTrustedSource(topic.source, blockedSources, retainableSources)
+  const visibleTrusted = trusted.filter((topic) =>
+    canRetainTrustedSource(topic.source, blockedSources, retainableSources)
   );
   const merged = mergeTopics(current, visibleTrusted);
   const remaining = new Map(merged.map((topic) => [topicKey(topic), topic]));
@@ -167,8 +173,8 @@ function mergeTrustedCategories(
   blockedSources: ReadonlySet<ForumIdentityBarrierSource>,
   retainableSources: ReadonlySet<ForumIdentityBarrierSource>
 ) {
-  const visibleTrusted = trusted.filter(
-    (category) => canRetainTrustedSource(category.source, blockedSources, retainableSources)
+  const visibleTrusted = trusted.filter((category) =>
+    canRetainTrustedSource(category.source, blockedSources, retainableSources)
   );
   const merged = mergeCategories(current, visibleTrusted);
   const remaining = new Map(merged.map((category) => [categoryKey(category), category]));
@@ -193,8 +199,7 @@ function sameIdentityBarriers(
   right: readonly ForumIdentityBarrierSource[]
 ) {
   const normalizedRight = normalizeIdentityBarriers(right);
-  return left.length === normalizedRight.length
-    && left.every((source, index) => source === normalizedRight[index]);
+  return left.length === normalizedRight.length && left.every((source, index) => source === normalizedRight[index]);
 }
 
 function sameSessionEpochs(left: ForumSessionEpochs, right: ForumSessionEpochs) {
@@ -210,8 +215,7 @@ function identityBarriersOnlyRemoved(
   current: readonly ForumIdentityBarrierSource[]
 ) {
   const normalizedCurrent = normalizeIdentityBarriers(current);
-  return normalizedCurrent.length < previous.length
-    && normalizedCurrent.every((source) => previous.includes(source));
+  return normalizedCurrent.length < previous.length && normalizedCurrent.every((source) => previous.includes(source));
 }
 
 type AggregateQueryKeyState = {
@@ -226,11 +230,11 @@ function aggregateQueryKeyState(
   resource: 'categories' | 'feed'
 ): AggregateQueryKeyState | null {
   if (
-    queryKey[0] !== 'forum'
-    || queryKey[1] !== 'all'
-    || queryKey[2] !== resource
-    || !queryKey[3]
-    || typeof queryKey[3] !== 'object'
+    queryKey[0] !== 'forum' ||
+    queryKey[1] !== 'all' ||
+    queryKey[2] !== resource ||
+    !queryKey[3] ||
+    typeof queryKey[3] !== 'object'
   ) {
     return null;
   }
@@ -245,11 +249,7 @@ function changedSourcesForIdentityTransition(
 ) {
   const previous = previousQueryKey ? aggregateQueryKeyState(previousQueryKey, resource) : null;
   const current = aggregateQueryKeyState(currentQueryKey, resource);
-  if (
-    !previous
-    || !current
-    || scopedFields.some((field) => !Object.is(previous[field], current[field]))
-  ) {
+  if (!previous || !current || scopedFields.some((field) => !Object.is(previous[field], current[field]))) {
     return null;
   }
 
@@ -258,9 +258,7 @@ function changedSourcesForIdentityTransition(
   if (!previousEpochs || !currentEpochs) {
     return null;
   }
-  const changedSources = new Set(sessionSources.filter(
-    (source) => previousEpochs[source] !== currentEpochs[source]
-  ));
+  const changedSources = new Set(sessionSources.filter((source) => previousEpochs[source] !== currentEpochs[source]));
   return changedSources;
 }
 
@@ -268,9 +266,9 @@ function withoutChangedSourceErrors(
   errors: SourceErrors | undefined,
   changedSources: ReadonlySet<ForumIdentityBarrierSource>
 ) {
-  return Object.fromEntries(Object.entries(errors || {}).filter(
-    ([source]) => !changedSources.has(source as ForumIdentityBarrierSource)
-  )) as SourceErrors;
+  return Object.fromEntries(
+    Object.entries(errors || {}).filter(([source]) => !changedSources.has(source as ForumIdentityBarrierSource))
+  ) as SourceErrors;
 }
 
 function visibleIdentityErrors(
@@ -279,12 +277,10 @@ function visibleIdentityErrors(
   retainableSources: ReadonlySet<ForumIdentityBarrierSource>
 ) {
   const current = errors || {};
-  const visible = Object.entries(current).filter(
-    ([source]) => canRetainTrustedSource(source as Source, blockedSources, retainableSources)
+  const visible = Object.entries(current).filter(([source]) =>
+    canRetainTrustedSource(source as Source, blockedSources, retainableSources)
   );
-  return visible.length === Object.keys(current).length
-    ? current
-    : Object.fromEntries(visible) as SourceErrors;
+  return visible.length === Object.keys(current).length ? current : (Object.fromEntries(visible) as SourceErrors);
 }
 
 function transitionFeedData(
@@ -293,13 +289,15 @@ function transitionFeedData(
 ): InfiniteData<FeedPage, FeedPageParam> {
   if (!trustedData?.pages.length) {
     return {
-      pages: [{
-        ...response,
-        hasMore: false,
-        nextCursor: null,
-        nextPage: null,
-        page: 1
-      }],
+      pages: [
+        {
+          ...response,
+          hasMore: false,
+          nextCursor: null,
+          nextPage: null,
+          page: 1
+        }
+      ],
       pageParams: [{ page: 1 }]
     };
   }
@@ -354,12 +352,10 @@ function projectSafeFeedPlaceholder(
   previousQueryKey: readonly unknown[] | undefined,
   currentQueryKey: readonly unknown[]
 ) {
-  const changedSources = changedSourcesForIdentityTransition(
-    previousQueryKey,
-    currentQueryKey,
-    'feed',
-    ['category', 'feedFilter']
-  );
+  const changedSources = changedSourcesForIdentityTransition(previousQueryKey, currentQueryKey, 'feed', [
+    'category',
+    'feedFilter'
+  ]);
   if (!previousData || !changedSources) {
     return undefined;
   }
@@ -370,9 +366,7 @@ function projectSafeFeedPlaceholder(
   const pages = previousData.pages.map((page) => ({
     ...page,
     errors: withoutChangedSourceErrors(page.errors, changedSources),
-    items: page.items.filter(
-      (topic) => !isSessionSource(topic.source) || !changedSources.has(topic.source)
-    )
+    items: page.items.filter((topic) => !isSessionSource(topic.source) || !changedSources.has(topic.source))
   }));
   return pages.some((page) => page.items.length) ? { ...previousData, pages } : undefined;
 }
@@ -382,11 +376,7 @@ function projectSafeCategoriesPlaceholder(
   previousQueryKey: readonly unknown[] | undefined,
   currentQueryKey: readonly unknown[]
 ) {
-  const changedSources = changedSourcesForIdentityTransition(
-    previousQueryKey,
-    currentQueryKey,
-    'categories'
-  );
+  const changedSources = changedSourcesForIdentityTransition(previousQueryKey, currentQueryKey, 'categories');
   if (!previousData || !changedSources) {
     return undefined;
   }
@@ -396,11 +386,13 @@ function projectSafeCategoriesPlaceholder(
   const items = previousData.items.filter(
     (category) => !isSessionSource(category.source) || !changedSources.has(category.source)
   );
-  return items.length ? {
-    ...previousData,
-    errors: withoutChangedSourceErrors(previousData.errors, changedSources),
-    items
-  } : undefined;
+  return items.length
+    ? {
+        ...previousData,
+        errors: withoutChangedSourceErrors(previousData.errors, changedSources),
+        items
+      }
+    : undefined;
 }
 
 function sourceErrorsFromFeedError(source: FeedSource, error: unknown): SourceErrors {
@@ -417,11 +409,12 @@ function firstSourceError(errors: SourceErrors): SourceErrorInfo | undefined {
 
 export function feedOutcomeKind(itemCount: number, errors: SourceErrors): SourceLoadOutcomeKind {
   const sourceErrors = Object.values(errors).filter((error): error is SourceErrorInfo => Boolean(error));
-  if (sourceErrors.some((error) => (
-    error.kind === 'login-required'
-    || error.kind === 'login-expired'
-    || error.kind === 'verification-required'
-  ))) {
+  if (
+    sourceErrors.some(
+      (error) =>
+        error.kind === 'login-required' || error.kind === 'login-expired' || error.kind === 'verification-required'
+    )
+  ) {
     return 'auth';
   }
   if (sourceErrors.length) {
@@ -469,36 +462,39 @@ export function useFeedController({
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
-  const [categoriesQueryIdentityBarriers, setCategoriesQueryIdentityBarriers] = useState(
-    () => normalizeIdentityBarriers(identityBarriers)
+  const [categoriesQueryIdentityBarriers, setCategoriesQueryIdentityBarriers] = useState(() =>
+    normalizeIdentityBarriers(identityBarriers)
   );
-  const [categoriesQueryRetainableIdentityBarriers, setCategoriesQueryRetainableIdentityBarriers] = useState(
-    () => normalizeIdentityBarriers(retainableIdentityBarriers)
+  const [categoriesQueryRetainableIdentityBarriers, setCategoriesQueryRetainableIdentityBarriers] = useState(() =>
+    normalizeIdentityBarriers(retainableIdentityBarriers)
   );
   const [categoriesQuerySessionEpochs, setCategoriesQuerySessionEpochs] = useState(sessionEpochs);
-  const [feedQueryIdentityBarriers, setFeedQueryIdentityBarriers] = useState(
-    () => normalizeIdentityBarriers(identityBarriers)
+  const [feedQueryIdentityBarriers, setFeedQueryIdentityBarriers] = useState(() =>
+    normalizeIdentityBarriers(identityBarriers)
   );
-  const [feedQueryRetainableIdentityBarriers, setFeedQueryRetainableIdentityBarriers] = useState(
-    () => normalizeIdentityBarriers(retainableIdentityBarriers)
+  const [feedQueryRetainableIdentityBarriers, setFeedQueryRetainableIdentityBarriers] = useState(() =>
+    normalizeIdentityBarriers(retainableIdentityBarriers)
   );
   const [feedQuerySessionEpochs, setFeedQuerySessionEpochs] = useState(sessionEpochs);
-  const trustedAggregateCategoriesRef = useRef<{
-    data: CategoriesResponse;
-    queryKey: readonly unknown[];
-  } | undefined>(undefined);
-  const trustedAggregateFeedRef = useRef<{
-    data: InfiniteData<FeedPage, FeedPageParam>;
-    queryKey: readonly unknown[];
-  } | undefined>(undefined);
+  const trustedAggregateCategoriesRef = useRef<
+    | {
+        data: CategoriesResponse;
+        queryKey: readonly unknown[];
+      }
+    | undefined
+  >(undefined);
+  const trustedAggregateFeedRef = useRef<
+    | {
+        data: InfiniteData<FeedPage, FeedPageParam>;
+        queryKey: readonly unknown[];
+      }
+    | undefined
+  >(undefined);
   const handledCategoriesErrorRef = useRef<unknown>(undefined);
   const handledFeedErrorRef = useRef<unknown>(undefined);
   const handledPartialErrorsRef = useRef<unknown>(undefined);
   const blockedIdentitySources = useMemo(() => new Set(identityBarriers), [identityBarriers]);
-  const retainableIdentitySources = useMemo(
-    () => new Set(retainableIdentityBarriers),
-    [retainableIdentityBarriers]
-  );
+  const retainableIdentitySources = useMemo(() => new Set(retainableIdentityBarriers), [retainableIdentityBarriers]);
   const categoriesChangedIdentitySources = useMemo(
     () => changedSessionSources(categoriesQuerySessionEpochs, sessionEpochs),
     [categoriesQuerySessionEpochs, sessionEpochs]
@@ -512,9 +508,7 @@ export function useFeedController({
     [blockedIdentitySources, categoriesChangedIdentitySources]
   );
   const categoriesRetainableIdentitySources = useMemo(
-    () => new Set([...retainableIdentitySources].filter(
-      (source) => !categoriesChangedIdentitySources.has(source)
-    )),
+    () => new Set([...retainableIdentitySources].filter((source) => !categoriesChangedIdentitySources.has(source))),
     [categoriesChangedIdentitySources, retainableIdentitySources]
   );
   const feedBlockedIdentitySources = useMemo(
@@ -522,25 +516,23 @@ export function useFeedController({
     [blockedIdentitySources, feedChangedIdentitySources]
   );
   const feedRetainableIdentitySources = useMemo(
-    () => new Set([...retainableIdentitySources].filter(
-      (source) => !feedChangedIdentitySources.has(source)
-    )),
+    () => new Set([...retainableIdentitySources].filter((source) => !feedChangedIdentitySources.has(source))),
     [feedChangedIdentitySources, retainableIdentitySources]
   );
-  const feedSourceIdentityPending = feedSource !== 'all'
-    && feedSource !== 'v2ex'
-    && identityBarriers.includes(feedSource);
-  const feedIdentitySnapshotReady = feedSource !== 'all' || (
-    !identityReconciliationPending
-    && sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers)
-    && sameSessionEpochs(feedQuerySessionEpochs, sessionEpochs)
-  );
-  const categoriesIdentitySnapshotReady = !identityReconciliationPending
-    && sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers)
-    && sameSessionEpochs(categoriesQuerySessionEpochs, sessionEpochs);
+  const feedSourceIdentityPending =
+    feedSource !== 'all' && feedSource !== 'v2ex' && identityBarriers.includes(feedSource);
+  const feedIdentitySnapshotReady =
+    feedSource !== 'all' ||
+    (!identityReconciliationPending &&
+      sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers) &&
+      sameSessionEpochs(feedQuerySessionEpochs, sessionEpochs));
+  const categoriesIdentitySnapshotReady =
+    !identityReconciliationPending &&
+    sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers) &&
+    sameSessionEpochs(categoriesQuerySessionEpochs, sessionEpochs);
   const aggregateIdentityTransitionPending = feedSource === 'all' && !feedIdentitySnapshotReady;
-  const canShowFeedSourceData = !feedSourceIdentityPending
-    || isSessionSource(feedSource) && retainableIdentityBarriers.includes(feedSource);
+  const canShowFeedSourceData =
+    !feedSourceIdentityPending || (isSessionSource(feedSource) && retainableIdentityBarriers.includes(feedSource));
   const feedFilter = feedFilterForRequest(feedSource, categoryFilter, feedFilters);
   const feedQueryKey = forumQueryKeys.feed({
     category: categoryFilter || undefined,
@@ -549,9 +541,10 @@ export function useFeedController({
     scope: feedSource === 'all' ? feedQuerySessionEpochs : sessionEpochs,
     source: feedSource
   });
-  const feedEnabled = !feedSourceIdentityPending
-    && feedIdentitySnapshotReady
-    && (readerDataLoaded || !shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter));
+  const feedEnabled =
+    !feedSourceIdentityPending &&
+    feedIdentitySnapshotReady &&
+    (readerDataLoaded || !shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter));
 
   const allCategoriesQueryKey = forumQueryKeys.categories(
     'all',
@@ -562,9 +555,8 @@ export function useFeedController({
   const allCategoriesQuery = useQuery<CategoriesResponse>({
     queryKey: allCategoriesQueryKey,
     enabled: categoriesActive && categoriesIdentitySnapshotReady,
-    placeholderData: (previousData, previousQuery) => (
-      projectSafeCategoriesPlaceholder(previousData, previousQuery?.queryKey, allCategoriesQueryKey)
-    ),
+    placeholderData: (previousData, previousQuery) =>
+      projectSafeCategoriesPlaceholder(previousData, previousQuery?.queryKey, allCategoriesQueryKey),
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: 'all' });
       try {
@@ -590,29 +582,24 @@ export function useFeedController({
   const effectiveCategoriesRetainableIdentityBarriers = sameIdentityBarriers(
     categoriesQueryIdentityBarriers,
     identityBarriers
-  ) ? normalizeIdentityBarriers(retainableIdentityBarriers) : categoriesQueryRetainableIdentityBarriers;
+  )
+    ? normalizeIdentityBarriers(retainableIdentityBarriers)
+    : categoriesQueryRetainableIdentityBarriers;
   const trustedCategoriesState = trustedAggregateCategoriesRef.current;
   const trustedCategoriesChangedSources = trustedCategoriesState
-    ? changedSourcesForIdentityTransition(
-        trustedCategoriesState.queryKey,
-        visibleAllCategoriesQueryKey,
-        'categories'
-      )
+    ? changedSourcesForIdentityTransition(trustedCategoriesState.queryKey, visibleAllCategoriesQueryKey, 'categories')
     : null;
-  const trustedCategoriesData = trustedCategoriesState
-    && (effectiveCategoriesRetainableIdentityBarriers.length || trustedCategoriesChangedSources?.size)
-    ? projectSafeCategoriesPlaceholder(
-        trustedCategoriesState.data,
-        trustedCategoriesState.queryKey,
-        visibleAllCategoriesQueryKey
-      )
-    : undefined;
-  const currentAggregateCategories = (allCategoriesQuery.data?.items || []).filter(
-    (category) => canRetainTrustedSource(
-      category.source,
-      categoriesBlockedIdentitySources,
-      categoriesRetainableIdentitySources
-    )
+  const trustedCategoriesData =
+    trustedCategoriesState &&
+    (effectiveCategoriesRetainableIdentityBarriers.length || trustedCategoriesChangedSources?.size)
+      ? projectSafeCategoriesPlaceholder(
+          trustedCategoriesState.data,
+          trustedCategoriesState.queryKey,
+          visibleAllCategoriesQueryKey
+        )
+      : undefined;
+  const currentAggregateCategories = (allCategoriesQuery.data?.items || []).filter((category) =>
+    canRetainTrustedSource(category.source, categoriesBlockedIdentitySources, categoriesRetainableIdentitySources)
   );
   const allCategories = useMemo(() => {
     if (!trustedCategoriesData?.items.length) {
@@ -632,11 +619,11 @@ export function useFeedController({
   ]);
   useEffect(() => {
     if (
-      categoriesQueryIdentityBarriers.length
-      || !allCategoriesQuery.isSuccess
-      || allCategoriesQuery.isFetching
-      || allCategoriesQuery.isPlaceholderData
-      || !allCategoriesQuery.data
+      categoriesQueryIdentityBarriers.length ||
+      !allCategoriesQuery.isSuccess ||
+      allCategoriesQuery.isFetching ||
+      allCategoriesQuery.isPlaceholderData ||
+      !allCategoriesQuery.data
     ) {
       return;
     }
@@ -668,8 +655,8 @@ export function useFeedController({
     }
     const nextRetainableIdentityBarriers = normalizeIdentityBarriers(retainableIdentityBarriers);
     if (
-      sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers)
-      && sameSessionEpochs(categoriesQuerySessionEpochs, sessionEpochs)
+      sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers) &&
+      sameSessionEpochs(categoriesQuerySessionEpochs, sessionEpochs)
     ) {
       if (!sameIdentityBarriers(categoriesQueryRetainableIdentityBarriers, nextRetainableIdentityBarriers)) {
         setCategoriesQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
@@ -719,10 +706,7 @@ export function useFeedController({
   const needsSourceCategories = feedSource !== 'all' && shouldLoadCategoriesForSource(allCategories, feedSource);
   const sourceCategoriesQuery = useQuery({
     queryKey: forumQueryKeys.categories(feedSource === 'all' ? 'v2ex' : feedSource, sessionEpochs),
-    enabled: feedActive
-      && !linuxDoVerificationActive
-      && !feedSourceIdentityPending
-      && needsSourceCategories,
+    enabled: feedActive && !linuxDoVerificationActive && !feedSourceIdentityPending && needsSourceCategories,
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: feedSource });
       try {
@@ -746,33 +730,28 @@ export function useFeedController({
     () => mergeCategories(allCategories, canShowFeedSourceData ? sourceCategoriesQuery.data?.items || [] : []),
     [allCategories, canShowFeedSourceData, sourceCategoriesQuery.data?.items]
   );
-  const feedCategories = useMemo(() => sourceValues.reduce((current, source) => {
-    const cached = queryClient.getQueryData<CategoriesResponse>(
-      forumQueryKeys.categories(source, sessionEpochs)
-    );
-    return cached?.items.length
-      ? mergeTrustedCategories(
-          current,
-          cached.items,
-          categoriesBlockedIdentitySources,
-          categoriesRetainableIdentitySources
-        )
-      : current;
-  }, categories), [
-    categories,
-    categoriesBlockedIdentitySources,
-    categoriesRetainableIdentitySources,
-    queryClient,
-    sessionEpochs
-  ]);
+  const feedCategories = useMemo(
+    () =>
+      sourceValues.reduce((current, source) => {
+        const cached = queryClient.getQueryData<CategoriesResponse>(forumQueryKeys.categories(source, sessionEpochs));
+        return cached?.items.length
+          ? mergeTrustedCategories(
+              current,
+              cached.items,
+              categoriesBlockedIdentitySources,
+              categoriesRetainableIdentitySources
+            )
+          : current;
+      }, categories),
+    [categories, categoriesBlockedIdentitySources, categoriesRetainableIdentitySources, queryClient, sessionEpochs]
+  );
 
   const feedQuery = useInfiniteQuery({
     queryKey: feedQueryKey,
     enabled: feedActive && feedEnabled,
     initialPageParam: { page: 1 } satisfies FeedPageParam,
-    placeholderData: (previousData, previousQuery) => (
-      projectSafeFeedPlaceholder(previousData, previousQuery?.queryKey, feedQueryKey)
-    ),
+    placeholderData: (previousData, previousQuery) =>
+      projectSafeFeedPlaceholder(previousData, previousQuery?.queryKey, feedQueryKey),
     queryFn: async ({ pageParam, signal }) => {
       const trace = beginDiagnosticTrace('feed', 'load', {
         source: feedSource,
@@ -785,18 +764,21 @@ export function useFeedController({
           source: feedSource,
           state: pageParam.page > 1 ? 'load-more' : 'initial'
         });
-        const response = await sourceGateway.getFeed({
-          source: feedSource,
-          page: pageParam.page,
-          cursor: pageParam.cursor,
-          limit: 30,
-          category: categoryFilter || undefined,
-          feedFilter,
-          signal
-        }, {
-          ...(feedSource === 'all' ? { identityBarriers: feedQueryIdentityBarriers } : {}),
-          trace
-        });
+        const response = await sourceGateway.getFeed(
+          {
+            source: feedSource,
+            page: pageParam.page,
+            cursor: pageParam.cursor,
+            limit: 30,
+            category: categoryFilter || undefined,
+            feedFilter,
+            signal
+          },
+          {
+            ...(feedSource === 'all' ? { identityBarriers: feedQueryIdentityBarriers } : {}),
+            trace
+          }
+        );
         const page = validateFeedPage(feedSource, pageParam, response);
         markDiagnosticStage(trace, 'apply', {
           source: feedSource,
@@ -811,12 +793,15 @@ export function useFeedController({
         return page;
       } catch (error) {
         const sourceError = sourceErrorFromUnknown(feedSource, error);
-        finishDiagnosticTrace(trace,
+        finishDiagnosticTrace(
+          trace,
           signal.aborted
             ? 'canceled'
-            : sourceError.kind === 'verification-required' || sourceError.kind === 'login-required' || sourceError.kind === 'permission-denied'
-            ? 'blocked'
-            : 'failure',
+            : sourceError.kind === 'verification-required' ||
+                sourceError.kind === 'login-required' ||
+                sourceError.kind === 'permission-denied'
+              ? 'blocked'
+              : 'failure',
           { source: feedSource, reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error) }
         );
         throw error instanceof FeedQueryError
@@ -826,44 +811,42 @@ export function useFeedController({
     },
     getNextPageParam: nextFeedPage
   });
-  const visibleFeedQueryKey = feedSource === 'all' ? forumQueryKeys.feed({
-    category: categoryFilter || undefined,
-    feedFilter,
-    identityBarriers,
-    scope: sessionEpochs,
-    source: 'all'
-  }) : feedQueryKey;
+  const visibleFeedQueryKey =
+    feedSource === 'all'
+      ? forumQueryKeys.feed({
+          category: categoryFilter || undefined,
+          feedFilter,
+          identityBarriers,
+          scope: sessionEpochs,
+          source: 'all'
+        })
+      : feedQueryKey;
   const rawPages = canShowFeedSourceData ? feedQuery.data?.pages || [] : [];
-  const pages = feedSource === 'all' ? rawPages.map((page) => ({
-    ...page,
-    errors: visibleIdentityErrors(
-      page.errors,
-      feedBlockedIdentitySources,
-      feedRetainableIdentitySources
-    ),
-    items: page.items.filter((topic) => canRetainTrustedSource(
-      topic.source,
-      feedBlockedIdentitySources,
-      feedRetainableIdentitySources
-    ))
-  })) : rawPages;
-  const effectiveFeedRetainableIdentityBarriers = sameIdentityBarriers(
-    feedQueryIdentityBarriers,
-    identityBarriers
-  ) ? normalizeIdentityBarriers(retainableIdentityBarriers) : feedQueryRetainableIdentityBarriers;
+  const pages =
+    feedSource === 'all'
+      ? rawPages.map((page) => ({
+          ...page,
+          errors: visibleIdentityErrors(page.errors, feedBlockedIdentitySources, feedRetainableIdentitySources),
+          items: page.items.filter((topic) =>
+            canRetainTrustedSource(topic.source, feedBlockedIdentitySources, feedRetainableIdentitySources)
+          )
+        }))
+      : rawPages;
+  const effectiveFeedRetainableIdentityBarriers = sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers)
+    ? normalizeIdentityBarriers(retainableIdentityBarriers)
+    : feedQueryRetainableIdentityBarriers;
   const trustedFeedState = trustedAggregateFeedRef.current;
-  const trustedFeedChangedSources = feedSource === 'all' && trustedFeedState
-    ? changedSourcesForIdentityTransition(
-        trustedFeedState.queryKey,
-        visibleFeedQueryKey,
-        'feed',
-        ['category', 'feedFilter']
-      )
-    : null;
-  const trustedFeedData = trustedFeedState
-    && (effectiveFeedRetainableIdentityBarriers.length || trustedFeedChangedSources?.size)
-    ? projectSafeFeedPlaceholder(trustedFeedState.data, trustedFeedState.queryKey, visibleFeedQueryKey)
-    : undefined;
+  const trustedFeedChangedSources =
+    feedSource === 'all' && trustedFeedState
+      ? changedSourcesForIdentityTransition(trustedFeedState.queryKey, visibleFeedQueryKey, 'feed', [
+          'category',
+          'feedFilter'
+        ])
+      : null;
+  const trustedFeedData =
+    trustedFeedState && (effectiveFeedRetainableIdentityBarriers.length || trustedFeedChangedSources?.size)
+      ? projectSafeFeedPlaceholder(trustedFeedState.data, trustedFeedState.queryKey, visibleFeedQueryKey)
+      : undefined;
   const refreshFeedScope = JSON.stringify([
     feedActive,
     feedQueryKey,
@@ -885,37 +868,28 @@ export function useFeedController({
     const trustedItems = mergeFeedPages(trustedFeedData.pages).items;
     return {
       ...current,
-      items: mergeTrustedTopics(
-        current.items,
-        trustedItems,
-        feedBlockedIdentitySources,
-        feedRetainableIdentitySources
-      )
+      items: mergeTrustedTopics(current.items, trustedItems, feedBlockedIdentitySources, feedRetainableIdentitySources)
     };
   }, [feedBlockedIdentitySources, feedRetainableIdentitySources, pages, trustedFeedData?.pages]);
   useEffect(() => {
     if (
-      feedSource !== 'all'
-      || feedQueryIdentityBarriers.length
-      || !feedQuery.isSuccess
-      || feedQuery.isFetching
-      || feedQuery.isPlaceholderData
-      || !feedQuery.data
+      feedSource !== 'all' ||
+      feedQueryIdentityBarriers.length ||
+      !feedQuery.isSuccess ||
+      feedQuery.isFetching ||
+      feedQuery.isPlaceholderData ||
+      !feedQuery.data
     ) {
       return;
     }
     const data = feedQuery.data as InfiniteData<FeedPage, FeedPageParam>;
     if (trustedFeedChangedSources?.size && trustedFeedData?.pages.length) {
       const trustedPageCount = trustedFeedData.pages.reduce(
-        (count, page, index) => page.items.length ? index + 1 : count,
+        (count, page, index) => (page.items.length ? index + 1 : count),
         0
       );
       const currentLastPage = data.pages.at(-1);
-      if (
-        data.pages.length < trustedPageCount
-        && currentLastPage
-        && nextFeedPage(currentLastPage)
-      ) {
+      if (data.pages.length < trustedPageCount && currentLastPage && nextFeedPage(currentLastPage)) {
         return;
       }
       const stableData = stabilizeFeedData(data, mergedFeed.items);
@@ -946,8 +920,8 @@ export function useFeedController({
     }
     const nextRetainableIdentityBarriers = normalizeIdentityBarriers(retainableIdentityBarriers);
     if (
-      sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers)
-      && sameSessionEpochs(feedQuerySessionEpochs, sessionEpochs)
+      sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers) &&
+      sameSessionEpochs(feedQuerySessionEpochs, sessionEpochs)
     ) {
       if (!sameIdentityBarriers(feedQueryRetainableIdentityBarriers, nextRetainableIdentityBarriers)) {
         setFeedQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
@@ -1002,43 +976,42 @@ export function useFeedController({
     sessionEpochs
   ]);
   const lastPage = pages.at(-1);
-  const nextPage = !feedQuery.isPlaceholderData
-    && feedIdentitySnapshotReady
-    && lastPage
-    ? nextFeedPage(lastPage)
-    : undefined;
+  const nextPage =
+    !feedQuery.isPlaceholderData && feedIdentitySnapshotReady && lastPage ? nextFeedPage(lastPage) : undefined;
   const loadMoreError = !feedSourceIdentityPending && feedQuery.isFetchNextPageError;
-  const activeFeedState = useMemo<FeedSourceState>(() => ({
-    hasMore: Boolean(nextPage),
-    items: mergedFeed.items,
-    loadMoreFailureSignal: loadMoreError ? feedQuery.errorUpdatedAt : 0,
-    loadingMore: feedQuery.isFetchingNextPage,
-    nextCursor: nextPage?.cursor,
-    page: lastPage?.page || 1,
-    refreshing: feedQuery.isRefetching && !feedQuery.isFetchingNextPage
-  }), [
-    feedQuery.errorUpdatedAt,
-    feedQuery.isFetchingNextPage,
-    feedQuery.isRefetching,
-    lastPage?.page,
-    loadMoreError,
-    mergedFeed.items,
-    nextPage
-  ]);
+  const activeFeedState = useMemo<FeedSourceState>(
+    () => ({
+      hasMore: Boolean(nextPage),
+      items: mergedFeed.items,
+      loadMoreFailureSignal: loadMoreError ? feedQuery.errorUpdatedAt : 0,
+      loadingMore: feedQuery.isFetchingNextPage,
+      nextCursor: nextPage?.cursor,
+      page: lastPage?.page || 1,
+      refreshing: feedQuery.isRefetching && !feedQuery.isFetchingNextPage
+    }),
+    [
+      feedQuery.errorUpdatedAt,
+      feedQuery.isFetchingNextPage,
+      feedQuery.isRefetching,
+      lastPage?.page,
+      loadMoreError,
+      mergedFeed.items,
+      nextPage
+    ]
+  );
   const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);
   const shownFeedItems = useMemo(
-    () => applyFeedFilter(activeFeedState.items, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
+    () =>
+      applyFeedFilter(activeFeedState.items, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
     [activeFeedState.items, feedSource, readerData.favorites, readerData.history, readingFilter]
   );
-  const settledFeedOutcomeKind = aggregateIdentityTransitionPending
-    || feedSourceIdentityPending
-    || feedQuery.isPending
-    || feedQuery.isFetching
-    ? undefined
-    : feedOutcomeKind(
-        mergedFeed.items.length,
-        feedQuery.isError ? sourceErrorsFromFeedError(feedSource, feedQuery.error) : mergedFeed.errors
-      );
+  const settledFeedOutcomeKind =
+    aggregateIdentityTransitionPending || feedSourceIdentityPending || feedQuery.isPending || feedQuery.isFetching
+      ? undefined
+      : feedOutcomeKind(
+          mergedFeed.items.length,
+          feedQuery.isError ? sourceErrorsFromFeedError(feedSource, feedQuery.error) : mergedFeed.errors
+        );
   const feedRecoveryQueryIdentity = JSON.stringify(feedQueryKey);
   const feedRecoveryOwnerRef = useCommittedRef({
     active: feedActive,
@@ -1051,9 +1024,10 @@ export function useFeedController({
     if (!categoriesActive) {
       return;
     }
-    const query = feedActive && !feedSourceIdentityPending && sourceCategoriesQuery.isError
-      ? sourceCategoriesQuery
-      : allCategoriesQuery;
+    const query =
+      feedActive && !feedSourceIdentityPending && sourceCategoriesQuery.isError
+        ? sourceCategoriesQuery
+        : allCategoriesQuery;
     if (!query.isError || handledCategoriesErrorRef.current === query.error) {
       return;
     }
@@ -1104,10 +1078,10 @@ export function useFeedController({
         resume: async () => {
           const owner = feedRecoveryOwnerRef.current;
           if (
-            !owner.active
-            || !owner.identityReady
-            || owner.queryIdentity !== feedRecoveryQueryIdentity
-            || owner.sourceIdentityPending
+            !owner.active ||
+            !owner.identityReady ||
+            owner.queryIdentity !== feedRecoveryQueryIdentity ||
+            owner.sourceIdentityPending
           ) {
             return 'stale';
           }
@@ -1116,9 +1090,8 @@ export function useFeedController({
             : await feedQuery.refetch({ cancelRefetch: false });
           handledFeedErrorRef.current = result.error;
           if (!result.isError) return 'completed';
-          const error = result.error instanceof FeedQueryError
-            ? result.error.sourceErrors.linuxdo || result.error
-            : result.error;
+          const error =
+            result.error instanceof FeedQueryError ? result.error.sourceErrors.linuxdo || result.error : result.error;
           return sourceReadRecoveryOutcome('linuxdo', error);
         }
       };
@@ -1180,11 +1153,11 @@ export function useFeedController({
 
   const loadFeed = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (
-      !feedActive
-      || !feedIdentitySnapshotReady
-      || feedSourceIdentityPending
-      || !nextPage
-      || feedQuery.isFetchingNextPage
+      !feedActive ||
+      !feedIdentitySnapshotReady ||
+      feedSourceIdentityPending ||
+      !nextPage ||
+      feedQuery.isFetchingNextPage
     ) {
       return 'stale';
     }
@@ -1215,11 +1188,11 @@ export function useFeedController({
     }
     if (!result.isError) {
       if (
-        feedSource === 'all'
-        && feedQueryIdentityBarriers.length === 0
-        && identityBarriers.length === 0
-        && trustedFeedChangedSources?.size
-        && result.data
+        feedSource === 'all' &&
+        feedQueryIdentityBarriers.length === 0 &&
+        identityBarriers.length === 0 &&
+        trustedFeedChangedSources?.size &&
+        result.data
       ) {
         trustedAggregateFeedRef.current = {
           data: result.data as InfiniteData<FeedPage, FeedPageParam>,
@@ -1242,38 +1215,42 @@ export function useFeedController({
     trustedFeedChangedSources?.size
   ]);
 
-  const changeFeedSource = useCallback((source: FeedSource) => {
-    if (source === feedSource) {
-      return;
-    }
-    queryClient.removeQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum'
-        && queryKey[1] === source
-        && queryKey[2] === 'feed'
-    });
-    setFeedSource(source);
-    setCategoryFilter('');
-  }, [feedSource, queryClient]);
+  const changeFeedSource = useCallback(
+    (source: FeedSource) => {
+      if (source === feedSource) {
+        return;
+      }
+      queryClient.removeQueries({
+        predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === source && queryKey[2] === 'feed'
+      });
+      setFeedSource(source);
+      setCategoryFilter('');
+    },
+    [feedSource, queryClient]
+  );
 
-  const setFeedFilter = useCallback((filter: SourceFeedFilter) => {
-    setFeedFilters((current) => feedSource !== 'all' && isFeedFilterSource(feedSource)
-      ? { ...current, [feedSource]: filter } as FeedFilterState
-      : current
-    );
-  }, [feedSource]);
+  const setFeedFilter = useCallback(
+    (filter: SourceFeedFilter) => {
+      setFeedFilters((current) =>
+        feedSource !== 'all' && isFeedFilterSource(feedSource)
+          ? ({ ...current, [feedSource]: filter } as FeedFilterState)
+          : current
+      );
+    },
+    [feedSource]
+  );
 
   const abortFeedRequests = useCallback(() => {
     void queryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum'
-        && (queryKey[2] === 'feed' || queryKey[2] === 'categories')
+      predicate: ({ queryKey }) => queryKey[0] === 'forum' && (queryKey[2] === 'feed' || queryKey[2] === 'categories')
     });
   }, [queryClient]);
 
   useEffect(() => {
     if (feedActive) return;
     void queryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum'
-        && (queryKey[2] === 'feed' || (queryKey[2] === 'categories' && queryKey[1] !== 'all'))
+      predicate: ({ queryKey }) =>
+        queryKey[0] === 'forum' && (queryKey[2] === 'feed' || (queryKey[2] === 'categories' && queryKey[1] !== 'all'))
     });
   }, [feedActive, queryClient]);
   useEffect(() => {
@@ -1291,11 +1268,11 @@ export function useFeedController({
     categoryFilter,
     changeFeedSource,
     feedAllowsRemotePagination,
-    feedBusy: feedActive && (
-      aggregateIdentityTransitionPending && mergedFeed.items.length === 0
-      || feedSourceIdentityPending && mergedFeed.items.length === 0
-      || feedEnabled && feedQuery.isPending
-    ),
+    feedBusy:
+      feedActive &&
+      ((aggregateIdentityTransitionPending && mergedFeed.items.length === 0) ||
+        (feedSourceIdentityPending && mergedFeed.items.length === 0) ||
+        (feedEnabled && feedQuery.isPending)),
     feedCategories,
     feedFilter,
     feedFilters,

@@ -1,5 +1,15 @@
 import type { HTMLElement } from 'node-html-parser';
-import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
+import type {
+  FeedResponse,
+  RepliesResponse,
+  SearchResponse,
+  Topic,
+  TopicDetail,
+  TopicPoll,
+  TopicPollOption,
+  UserProfile,
+  UserReplyActivity
+} from './types';
 import {
   absoluteUrl,
   accessRequirementFromText,
@@ -30,45 +40,55 @@ const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
 type YaohuoClock = { year: number; month: number; day: number; nowMs: number };
 
 function hasYaohuoContentSurface(html: string) {
-  return /class=["'][^"']*\b(?:bbscontent|listdata|line1|line2)\b/i.test(html)
-    || /href=["'][^"']*(?:\/bbs-|book_view)/i.test(html);
+  return (
+    /class=["'][^"']*\b(?:bbscontent|listdata|line1|line2)\b/i.test(html) ||
+    /href=["'][^"']*(?:\/bbs-|book_view)/i.test(html)
+  );
 }
 
 export function isYaohuoLoginFormHtml(html: string, responseUrl = '') {
   try {
     const expected = new URL(YAOHUO_LOGIN_URL);
     const actual = new URL(responseUrl);
-    if (actual.username
-      || actual.password
-      || actual.origin !== expected.origin
-      || actual.pathname !== expected.pathname
-      || actual.search !== expected.search) {
+    if (
+      actual.username ||
+      actual.password ||
+      actual.origin !== expected.origin ||
+      actual.pathname !== expected.pathname ||
+      actual.search !== expected.search
+    ) {
       return false;
     }
   } catch {
     return false;
   }
   const form = parseHtml(html).querySelector('form[name="login"]');
-  return String(form?.getAttribute('method') || '').toLowerCase() === 'post'
-    && Boolean(form?.querySelector('#logname[name="logname"]'))
-    && Boolean(form?.querySelector('#password[name="logpass"]'));
+  return (
+    String(form?.getAttribute('method') || '').toLowerCase() === 'post' &&
+    Boolean(form?.querySelector('#logname[name="logname"]')) &&
+    Boolean(form?.querySelector('#password[name="logpass"]'))
+  );
 }
 
 export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
   const visibleText = textContentFromHtml(html);
-  return isYaohuoLoginFormHtml(html, responseUrl)
-    || isYaohuoVerificationRequiredHtml(html)
-    || (!hasYaohuoContentSurface(html) && (
-      /身份失效了，请重新登录网站|请先登录网站/.test(html)
-      || /请先\s+登录/.test(visibleText)
-    ));
+  return (
+    isYaohuoLoginFormHtml(html, responseUrl) ||
+    isYaohuoVerificationRequiredHtml(html) ||
+    (!hasYaohuoContentSurface(html) &&
+      (/身份失效了，请重新登录网站|请先登录网站/.test(html) || /请先\s+登录/.test(visibleText)))
+  );
 }
 
 export function isYaohuoVerificationRequiredHtml(html: string) {
-  return /<title\b[^>]*>[^<]*(?:访问验证|请开启JavaScript并刷新该页)[^<]*<\/title>/i.test(html)
-    || /<script\b[^>]*(?:ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG)[^>]*>/i.test(html)
-    || /<script\b[^>]*>[\s\S]*?(?:ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG)[\s\S]*?<\/script>/i.test(html)
-    || /<(?:form|input|img|iframe|div)\b[^>]*(?:id|class|name|src)=["'][^"']*(?:captcha|Gocaptcha|ImageCaptcha)[^"']*["'][^>]*>/i.test(html);
+  return (
+    /<title\b[^>]*>[^<]*(?:访问验证|请开启JavaScript并刷新该页)[^<]*<\/title>/i.test(html) ||
+    /<script\b[^>]*(?:ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG)[^>]*>/i.test(html) ||
+    /<script\b[^>]*>[\s\S]*?(?:ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG)[\s\S]*?<\/script>/i.test(html) ||
+    /<(?:form|input|img|iframe|div)\b[^>]*(?:id|class|name|src)=["'][^"']*(?:captcha|Gocaptcha|ImageCaptcha)[^"']*["'][^>]*>/i.test(
+      html
+    )
+  );
 }
 
 export function yaohuoLoginRequirementReason(html: string, responseUrl = '') {
@@ -76,12 +96,18 @@ export function yaohuoLoginRequirementReason(html: string, responseUrl = '') {
     return undefined;
   }
   return isYaohuoLoginFormHtml(html, responseUrl) || !isYaohuoVerificationRequiredHtml(html)
-    ? 'expired' as const
-    : 'verification' as const;
+    ? ('expired' as const)
+    : ('verification' as const);
 }
 
 function loginRequiredError(reason = 'expired') {
-  const error = new Error(reason === 'missing_cookie' ? '请先登录妖火' : reason === 'verification' ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录');
+  const error = new Error(
+    reason === 'missing_cookie'
+      ? '请先登录妖火'
+      : reason === 'verification'
+        ? '妖火需要完成访问验证，请在登录页完成验证后重试'
+        : '妖火登录已失效，请重新登录'
+  );
   Object.assign(error, {
     source: 'yaohuo',
     loginRequired: true,
@@ -143,7 +169,11 @@ function yaohuoPartialDateText(text: string) {
 }
 
 function yaohuoRelativeDateText(text: string) {
-  return text.match(/(?:刚刚|刚才|\d{1,4}\s*(?:分钟|小时|天)前|(?:今天|昨天|前天)\s*(?:(?:午夜|凌晨|上午|中午|下午|晚上)\s*)?\d{1,2}:\d{1,2}|(?:今天|昨天|前天)\s*(?:午夜|凌晨|上午|中午|下午|晚上))/)?.[0] || '';
+  return (
+    text.match(
+      /(?:刚刚|刚才|\d{1,4}\s*(?:分钟|小时|天)前|(?:今天|昨天|前天)\s*(?:(?:午夜|凌晨|上午|中午|下午|晚上)\s*)?\d{1,2}:\d{1,2}|(?:今天|昨天|前天)\s*(?:午夜|凌晨|上午|中午|下午|晚上))/
+    )?.[0] || ''
+  );
 }
 
 function yaohuoDisplayTimeText(text: string) {
@@ -182,7 +212,13 @@ function parseYaohuoRelativeDate(text: string, now: YaohuoClock) {
   if (!Number.isInteger(hour) || !Number.isInteger(minute) || minute < 0 || minute > 59) {
     return '';
   }
-  return beijingDateToIso(beijingDay.getUTCFullYear(), beijingDay.getUTCMonth() + 1, beijingDay.getUTCDate(), hour, minute);
+  return beijingDateToIso(
+    beijingDay.getUTCFullYear(),
+    beijingDay.getUTCMonth() + 1,
+    beijingDay.getUTCDate(),
+    hour,
+    minute
+  );
 }
 
 function normalizeYaohuoRelativeHour(period: string, rawHour?: number) {
@@ -216,7 +252,9 @@ function profileStats(root: ReturnType<typeof parseHtml>, text: string) {
 }
 
 function profileStatNumber(value: unknown) {
-  const text = String(value ?? '').replace(/,/g, '').trim();
+  const text = String(value ?? '')
+    .replace(/,/g, '')
+    .trim();
   return /^\d+$/.test(text) ? Number(text) : undefined;
 }
 
@@ -240,15 +278,19 @@ function profileStatValue(text: string, labels: string) {
 }
 
 function cleanYaohuoLevelLabel(value: unknown) {
-  const text = String(value || '').replace(/\s+/g, '').trim();
+  const text = String(value || '')
+    .replace(/\s+/g, '')
+    .trim();
   return /^\d{1,3}级/.test(text) && text.length <= 32 ? text : '';
 }
 
 function yaohuoProfileLevelLabel(text: string) {
-  return cleanYaohuoLevelLabel(text.match(/【等级】\s*([^【\s]+)/)?.[1])
-    || cleanYaohuoLevelLabel(text.match(/(\d{1,3}\s*级)\s*等级/)?.[1])
-    || cleanYaohuoLevelLabel(text.match(/经验值\s*[:：]\s*[\d,]+\s*(\d{1,3}\s*级)/)?.[1])
-    || undefined;
+  return (
+    cleanYaohuoLevelLabel(text.match(/【等级】\s*([^【\s]+)/)?.[1]) ||
+    cleanYaohuoLevelLabel(text.match(/(\d{1,3}\s*级)\s*等级/)?.[1]) ||
+    cleanYaohuoLevelLabel(text.match(/经验值\s*[:：]\s*[\d,]+\s*(\d{1,3}\s*级)/)?.[1]) ||
+    undefined
+  );
 }
 
 function yaohuoAuthorLevelLabel(text: string) {
@@ -292,19 +334,21 @@ function hasYaohuoSelfAccountNavigation(contextNode: HTMLElement) {
     ['/bbs/book_list_search.aspx', '帖子'],
     ['/bbs/messagelist.aspx', '信箱']
   ];
-  const hasFixedDestinations = fixedDestinations.every(([path, text]) => (
+  const hasFixedDestinations = fixedDestinations.every(([path, text]) =>
     links.some((link) => link.path === path && link.text === text)
-  ));
-  const hasSelfProfile = links.some((link) => (
-    link.path === '/bbs/userinfo.aspx'
-    && Boolean(link.userId)
-    && (link.text === '空间' || Boolean(safeYaohuoCurrentUserName(link.text)))
-  ));
+  );
+  const hasSelfProfile = links.some(
+    (link) =>
+      link.path === '/bbs/userinfo.aspx' &&
+      Boolean(link.userId) &&
+      (link.text === '空间' || Boolean(safeYaohuoCurrentUserName(link.text)))
+  );
   return hasFixedDestinations && hasSelfProfile;
 }
 
 function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
-  return element.querySelectorAll('a[href]')
+  return element
+    .querySelectorAll('a[href]')
     .map((item) => item.getAttribute('href')?.match(/[?&]classid=(\d+)/i)?.[1])
     .find(Boolean);
 }
@@ -317,7 +361,12 @@ function parseListItem(
 ) {
   const link = element.querySelectorAll('a[href]').find((item) => {
     const href = item.getAttribute('href') || '';
-    return elementText(item) && (/bbs-\d+\.html/i.test(href) || /view\.aspx/i.test(href) || (/[?&]id=\d+/i.test(href) && !/book_re\.aspx/i.test(href)));
+    return (
+      elementText(item) &&
+      (/bbs-\d+\.html/i.test(href) ||
+        /view\.aspx/i.test(href) ||
+        (/[?&]id=\d+/i.test(href) && !/book_re\.aspx/i.test(href)))
+    );
   });
   const { id, classId, url } = extractTopicParts(link?.getAttribute('href'));
   if (!id) {
@@ -327,19 +376,30 @@ function parseListItem(
   const title = elementText(link);
   const resolvedClassId = classId || extractClassIdFromRow(element) || fallbackClassId;
   const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
-  const replyCount = parsePositiveInteger(element.querySelectorAll('a').find((item) => /^\d+$/.test(elementText(item)))?.text);
-  const viewCount = parsePositiveInteger(text.match(/阅\s*(\d+)/)?.[1] || text.match(/(\d+)\s*阅/)?.[1] || text.match(/\/\s*阅(\d+)/)?.[1]);
+  const replyCount = parsePositiveInteger(
+    element.querySelectorAll('a').find((item) => /^\d+$/.test(elementText(item)))?.text
+  );
+  const viewCount = parsePositiveInteger(
+    text.match(/阅\s*(\d+)/)?.[1] || text.match(/(\d+)\s*阅/)?.[1] || text.match(/\/\s*阅(\d+)/)?.[1]
+  );
   const rightText = element.querySelectorAll('.right').map(elementText).find(Boolean) || '';
-  const timeText = rightText
-    || text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
-    || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
-    || '';
+  const timeText =
+    rightText ||
+    text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
+    text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
+    '';
   const displayTimeText = timeText;
   const parsedCreatedAt = parseYaohuoDate(timeText || text, now);
   const createdAt = parsedCreatedAt || fallbackCreatedAt;
-  const author = text.replace(title, '').split('/').map((part) => part.trim().replace(/^\d+\.\s*/, '')).find((part) => (
-    part && !/^\d+$/.test(part) && !/阅\s*\d+/.test(part) && !/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/.test(part)
-  )) || '';
+  const author =
+    text
+      .replace(title, '')
+      .split('/')
+      .map((part) => part.trim().replace(/^\d+\.\s*/, ''))
+      .find(
+        (part) =>
+          part && !/^\d+$/.test(part) && !/阅\s*\d+/.test(part) && !/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/.test(part)
+      ) || '';
   const authorLink = element.querySelector('a[href*="userinfo"], a[href*="touserid"]');
   const authorHref = authorLink?.getAttribute('href') || '';
   const authorId = extractUserIdFromHref(authorHref);
@@ -364,8 +424,11 @@ function parseListItem(
 }
 
 function parseListDataChunks(html: string) {
-  return [...html.matchAll(/<div\b[^>]*class=["'][^"']*\blistdata\b[^"']*["'][^>]*>[\s\S]*?(?=<div\b[^>]*class=["'][^"']*\blistdata\b|<!--listE-->|$)/gi)]
-    .map((match) => match[0]);
+  return [
+    ...html.matchAll(
+      /<div\b[^>]*class=["'][^"']*\blistdata\b[^"']*["'][^>]*>[\s\S]*?(?=<div\b[^>]*class=["'][^"']*\blistdata\b|<!--listE-->|$)/gi
+    )
+  ].map((match) => match[0]);
 }
 
 function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClassId?: string, limit = 30) {
@@ -407,13 +470,16 @@ function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClass
   return items;
 }
 
-export function parseYaohuoListHtml(html: string, {
-  classId,
-  limit = 30,
-  page = 1,
-  preserveOrder = false,
-  url
-}: { classId?: string; limit?: number; page?: number; preserveOrder?: boolean; url?: string } = {}): FeedResponse {
+export function parseYaohuoListHtml(
+  html: string,
+  {
+    classId,
+    limit = 30,
+    page = 1,
+    preserveOrder = false,
+    url
+  }: { classId?: string; limit?: number; page?: number; preserveOrder?: boolean; url?: string } = {}
+): FeedResponse {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
   let rows = root.querySelectorAll('.listdata');
@@ -476,8 +542,20 @@ function extractMarkedContent(html: string, start: string, end: string) {
   return marked ? marked.content : html;
 }
 
-const yaohuoDownloadContentPattern = /下载|网盘|提取码|提取密码|解压密码|访问码|夸克|百度云?|蓝奏|123云盘|迅雷|天翼云|阿里云盘|城通|apk\b|pan\.|quark|lanzou|123pan|aliyundrive|cloud\.189|ctfile|uc\.cn/i;
-const yaohuoNonPostClassNames = new Set(['content', 'subtitle', 'line1', 'line2', 'listdata', 'page', 'pager', 'nav', 'footer', 'header']);
+const yaohuoDownloadContentPattern =
+  /下载|网盘|提取码|提取密码|解压密码|访问码|夸克|百度云?|蓝奏|123云盘|迅雷|天翼云|阿里云盘|城通|apk\b|pan\.|quark|lanzou|123pan|aliyundrive|cloud\.189|ctfile|uc\.cn/i;
+const yaohuoNonPostClassNames = new Set([
+  'content',
+  'subtitle',
+  'line1',
+  'line2',
+  'listdata',
+  'page',
+  'pager',
+  'nav',
+  'footer',
+  'header'
+]);
 const yaohuoPostBoundaryTextPattern = /原站收藏|回复列表|更多回帖|评论内查找|写回复|只看楼主|只看带图|倒序/;
 const yaohuoRawPostBoundaryPatterns = [
   /<div\b[^>]*class=["'][^"']*\blouzhuxinxi\b[^"']*["'][^>]*>/i,
@@ -496,10 +574,12 @@ function extractMarkedContentBounds(html: string, start: string, end: string) {
 }
 
 function firstYaohuoRawPostBoundaryIndex(html: string) {
-  return yaohuoRawPostBoundaryPatterns
-    .map((pattern) => html.search(pattern))
-    .filter((index) => index >= 0)
-    .sort((left, right) => left - right)[0] ?? -1;
+  return (
+    yaohuoRawPostBoundaryPatterns
+      .map((pattern) => html.search(pattern))
+      .filter((index) => index >= 0)
+      .sort((left, right) => left - right)[0] ?? -1
+  );
 }
 
 function extractRawYaohuoPostContent(html: string) {
@@ -509,11 +589,11 @@ function extractRawYaohuoPostContent(html: string) {
   }
   const rest = html.slice(marked.endIndex);
   const boundaryIndex = firstYaohuoRawPostBoundaryIndex(rest);
-  const followingContent = (boundaryIndex >= 0 ? rest.slice(0, boundaryIndex) : rest)
-    .replace(/^\s*(?:<\/div>\s*)+/, '');
-  return [marked.content, followingContent]
-    .filter((part) => hasRenderableHtmlContent(part))
-    .join('\n');
+  const followingContent = (boundaryIndex >= 0 ? rest.slice(0, boundaryIndex) : rest).replace(
+    /^\s*(?:<\/div>\s*)+/,
+    ''
+  );
+  return [marked.content, followingContent].filter((part) => hasRenderableHtmlContent(part)).join('\n');
 }
 
 function hasAncestor(node: HTMLElement, ancestor: HTMLElement | null | undefined) {
@@ -535,7 +615,9 @@ function hasExcludedYaohuoClass(node: HTMLElement) {
 }
 
 function isHtmlElementNode(node: unknown): node is HTMLElement {
-  return Boolean(node && typeof node === 'object' && 'tagName' in node && typeof (node as HTMLElement).getAttribute === 'function');
+  return Boolean(
+    node && typeof node === 'object' && 'tagName' in node && typeof (node as HTMLElement).getAttribute === 'function'
+  );
 }
 
 function isYaohuoPostBoundaryNode(node: HTMLElement) {
@@ -608,7 +690,11 @@ function collectYaohuoDownloadContent(root: ReturnType<typeof parseHtml>, mainCo
   return selected.map((node) => node.toString());
 }
 
-function appendYaohuoPostContent(contentHtml: string, root: ReturnType<typeof parseHtml>, mainContent: HTMLElement | null | undefined) {
+function appendYaohuoPostContent(
+  contentHtml: string,
+  root: ReturnType<typeof parseHtml>,
+  mainContent: HTMLElement | null | undefined
+) {
   const followingContent = collectFollowingYaohuoPostContent(mainContent);
   const extraHtml = followingContent.length ? followingContent : collectYaohuoDownloadContent(root, mainContent);
   return [contentHtml, ...extraHtml].filter((part) => hasRenderableHtmlContent(part)).join('\n');
@@ -656,8 +742,7 @@ function parseVoteOptions(html: string) {
         return;
       }
       const count = parsePositiveInteger(
-        text.match(/[（(]\s*(\d+)\s*(?:票)?\s*[）)]\s*$/)?.[1]
-        || text.match(/(\d+)\s*票\s*$/)?.[1]
+        text.match(/[（(]\s*(\d+)\s*(?:票)?\s*[）)]\s*$/)?.[1] || text.match(/(\d+)\s*票\s*$/)?.[1]
       );
       const label = text
         .replace(/^\[[^\]]+\]\s*/, '')
@@ -685,17 +770,21 @@ function parseVotePolls(html: string, topicId: string): TopicPoll[] | undefined 
   }
   const text = textContentFromHtml(html);
   const { min, max } = parseYaohuoVoteChoiceLimits(text);
-  const multiple = /多选|可选\s*\d+\s*项|至少\s*(?:选择\s*)?\d+\s*项|至少\s*选择|最多\s*(?:选择)?\s*\d+\s*项/i.test(text);
-  return [{
-    id: `yaohuo-${topicId}`,
-    title: '投票',
-    voted: options.some((option) => option.selected) || /已投票|已经投票|您已投/i.test(text),
-    closed: /投票(?:已)?(?:结束|关闭|截止)|已结束投票/i.test(text),
-    multiple,
-    ...(min !== undefined ? { min } : {}),
-    ...(max !== undefined ? { max } : {}),
-    options
-  }];
+  const multiple = /多选|可选\s*\d+\s*项|至少\s*(?:选择\s*)?\d+\s*项|至少\s*选择|最多\s*(?:选择)?\s*\d+\s*项/i.test(
+    text
+  );
+  return [
+    {
+      id: `yaohuo-${topicId}`,
+      title: '投票',
+      voted: options.some((option) => option.selected) || /已投票|已经投票|您已投/i.test(text),
+      closed: /投票(?:已)?(?:结束|关闭|截止)|已结束投票/i.test(text),
+      multiple,
+      ...(min !== undefined ? { min } : {}),
+      ...(max !== undefined ? { max } : {}),
+      options
+    }
+  ];
 }
 
 function yaohuoTopicAccessRequirementFromContent(html: string) {
@@ -704,15 +793,21 @@ function yaohuoTopicAccessRequirementFromContent(html: string) {
     return accessRequirement;
   }
   const text = textContentFromHtml(html);
-  return /请先\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读)|需要\s*登录(?:后)?(?:才|才能|可)?(?:查看|访问|回复|阅读)|未登录[^。；\n]{0,20}(?:无法|不能|不可|禁止)?(?:查看|访问|回复|阅读)/i.test(text)
+  return /请先\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读)|需要\s*登录(?:后)?(?:才|才能|可)?(?:查看|访问|回复|阅读)|未登录[^。；\n]{0,20}(?:无法|不能|不可|禁止)?(?:查看|访问|回复|阅读)/i.test(
+    text
+  )
     ? accessRequirement
     : undefined;
 }
 
 function topicTitle(root: ReturnType<typeof parseHtml>) {
   const content = elementText(root.querySelector('div.content'));
-  return content.match(/\[标题\]\s*(.*?)\s*\(阅/i)?.[1]?.trim()
-    || elementText(root.querySelector('title')).replace(/[-_].*$/, '').trim();
+  return (
+    content.match(/\[标题\]\s*(.*?)\s*\(阅/i)?.[1]?.trim() ||
+    elementText(root.querySelector('title'))
+      .replace(/[-_].*$/, '')
+      .trim()
+  );
 }
 
 export function parseYaohuoFavoriteRecordId(html: string, topicId: string | number) {
@@ -720,12 +815,14 @@ export function parseYaohuoFavoriteRecordId(html: string, topicId: string | numb
   if (!/^\d+$/.test(expectedTopicId)) {
     return undefined;
   }
-  const row = parseHtml(html).querySelectorAll('.modern-list-item').find((item) => {
-    const topicLink = item.querySelectorAll('a[href]').find((link) => (
-      extractTopicParts(link.getAttribute('href')).id === expectedTopicId
-    ));
-    return Boolean(topicLink);
-  });
+  const row = parseHtml(html)
+    .querySelectorAll('.modern-list-item')
+    .find((item) => {
+      const topicLink = item
+        .querySelectorAll('a[href]')
+        .find((link) => extractTopicParts(link.getAttribute('href')).id === expectedTopicId);
+      return Boolean(topicLink);
+    });
   return parsePositiveInteger(row?.querySelector('[data-fav-id]')?.getAttribute('data-fav-id')) || undefined;
 }
 
@@ -735,23 +832,34 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const bbsContentElement = root.querySelector('div.bbscontent');
   const bbsContent = bbsContentElement?.innerHTML || '';
   const activitySummaryHtml = yaohuoActivitySummaryHtml(root);
-  const postContentHtml = extractRawYaohuoPostContent(html)
-    || appendYaohuoPostContent(extractMarkedContent(bbsContent, '<!--listS-->', '<!--listE-->'), root, bbsContentElement);
+  const postContentHtml =
+    extractRawYaohuoPostContent(html) ||
+    appendYaohuoPostContent(extractMarkedContent(bbsContent, '<!--listS-->', '<!--listE-->'), root, bbsContentElement);
   const contentHtml = [activitySummaryHtml, postContentHtml]
     .filter((part) => hasRenderableHtmlContent(part))
     .join('\n');
   const contentText = elementText(root.querySelector('div.content'));
-  const classId = root.querySelectorAll('a[href*="classid="]').map((link) => link.getAttribute('href')?.match(/[?&]classid=(\d+)/i)?.[1]).find(Boolean);
-  const author = elementText(root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')) || elementText(root.querySelector('div.subtitle a'));
-  const authorHref = root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')?.getAttribute('href') || '';
+  const classId = root
+    .querySelectorAll('a[href*="classid="]')
+    .map((link) => link.getAttribute('href')?.match(/[?&]classid=(\d+)/i)?.[1])
+    .find(Boolean);
+  const author =
+    elementText(root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')) ||
+    elementText(root.querySelector('div.subtitle a'));
+  const authorHref =
+    root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')?.getAttribute('href') ||
+    '';
   const authorId = extractUserIdFromHref(authorHref);
   const authorLevelLabel = yaohuoAuthorLevelLabel(elementText(root.querySelector('div.louzhuxinxi, div.subtitle')));
-  const createdAt = parseYaohuoDate(contentText.match(/\[时间\]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
-    || contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
-    || contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]) || new Date().toISOString();
+  const createdAt =
+    parseYaohuoDate(
+      contentText.match(/\[时间\]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1] ||
+        contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1] ||
+        contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
+    ) || new Date().toISOString();
   const polls = parseVotePolls(html, String(id || ''));
-  const accessRequirement = yaohuoTopicAccessRequirementFromContent(contentHtml)
-    || yaohuoTopicAccessRequirementFromContent(html);
+  const accessRequirement =
+    yaohuoTopicAccessRequirementFromContent(contentHtml) || yaohuoTopicAccessRequirementFromContent(html);
   const result: TopicDetail = {
     source: 'yaohuo',
     id: String(id || ''),
@@ -792,10 +900,17 @@ function parseFloor(value: string) {
 }
 
 function explicitReplyFloor(row: HTMLElement, text: string) {
-  return parsePositiveInteger(row.getAttribute('data-floor'))
-    || parsePositiveInteger(String(row.getAttribute('id') || '').match(/floor-(\d+)/i)?.[1])
-    || parsePositiveInteger(row.querySelector('.floornumber0')?.getAttribute('title')?.match(/原\s*(\d+)\s*楼/i)?.[1])
-    || parseFloor(text.match(/\[(沙发|椅子|板凳|\d+楼?)\]/)?.[1] || '');
+  return (
+    parsePositiveInteger(row.getAttribute('data-floor')) ||
+    parsePositiveInteger(String(row.getAttribute('id') || '').match(/floor-(\d+)/i)?.[1]) ||
+    parsePositiveInteger(
+      row
+        .querySelector('.floornumber0')
+        ?.getAttribute('title')
+        ?.match(/原\s*(\d+)\s*楼/i)?.[1]
+    ) ||
+    parseFloor(text.match(/\[(沙发|椅子|板凳|\d+楼?)\]/)?.[1] || '')
+  );
 }
 
 function yaohuoReplyContentHtml(row: HTMLElement, rawHtml: string, authorHtml: string) {
@@ -818,7 +933,12 @@ function yaohuoReplyContentHtml(row: HTMLElement, rawHtml: string, authorHtml: s
 function yaohuoReplyDeletePath(row: HTMLElement, url?: string) {
   const deleteLink = row.querySelectorAll('a[href]').find((link) => {
     const href = String(link.getAttribute('href') || '');
-    return /book_re_del\.aspx/i.test(href) || String(link.getAttribute('class') || '').split(/\s+/).includes('delete-myfloor');
+    return (
+      /book_re_del\.aspx/i.test(href) ||
+      String(link.getAttribute('class') || '')
+        .split(/\s+/)
+        .includes('delete-myfloor')
+    );
   });
   const href = deleteLink?.getAttribute('href');
   if (!href) {
@@ -842,43 +962,54 @@ function yaohuoReplyDeleteId(deletePath: string) {
   }
 }
 
-export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url }: { page?: number; limit?: number; url?: string } = {}): RepliesResponse {
+export function parseYaohuoRepliesHtml(
+  html: string,
+  { page = 1, limit = 30, url }: { page?: number; limit?: number; url?: string } = {}
+): RepliesResponse {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
   const rows = root.querySelectorAll('div.list-reply, div.line1, div.line2');
   const floorOffset = Math.max(0, page - 1) * limit;
   let missingFloorCount = 0;
-  const items = rows.map((row, index) => {
-    const rawHtml = row.innerHTML;
-    const text = elementText(row);
-    const explicitFloor = explicitReplyFloor(row, text);
-    if (!explicitFloor) {
-      missingFloorCount += 1;
-    }
-    const floor = explicitFloor || floorOffset + index + 1;
-    const deletePath = yaohuoReplyDeletePath(row, url);
-    const deleteId = yaohuoReplyDeleteId(deletePath);
-    const authorLink = row.querySelectorAll('a[href*="userinfo"]').at(-1);
-    const actionLink = row.querySelector('a[href*="book_re.aspx"][href*="reply="], a[href*="book_re.aspx"][href*="touserid="]');
-    const author = elementText(authorLink);
-    const authorId = extractUserIdFromHref(authorLink?.getAttribute('href'))
-      || extractUserIdFromHref(actionLink?.getAttribute('href'));
-    const createdAt = parseYaohuoDate(elementText(row.querySelector('.retime'))
-      || text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
-      || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]) || new Date().toISOString();
-    const authorHtml = authorLink?.toString() || '';
-    const contentOnly = yaohuoReplyContentHtml(row, rawHtml, authorHtml);
-    return {
-      author,
-      ...(authorId ? { authorId } : {}),
-      ...(authorId ? { authorUrl: userUrl(authorId) } : {}),
-      contentHtml: sanitizeContentHtml(contentOnly, url || `${BASE_URL}/bbs/book_re.aspx`),
-      createdAt,
-      floor,
-      ...(deleteId ? { commentId: deleteId } : {}),
-      ...(deletePath ? { canDelete: true, deletePath } : {})
-    };
-  }).slice(0, limit);
+  const items = rows
+    .map((row, index) => {
+      const rawHtml = row.innerHTML;
+      const text = elementText(row);
+      const explicitFloor = explicitReplyFloor(row, text);
+      if (!explicitFloor) {
+        missingFloorCount += 1;
+      }
+      const floor = explicitFloor || floorOffset + index + 1;
+      const deletePath = yaohuoReplyDeletePath(row, url);
+      const deleteId = yaohuoReplyDeleteId(deletePath);
+      const authorLink = row.querySelectorAll('a[href*="userinfo"]').at(-1);
+      const actionLink = row.querySelector(
+        'a[href*="book_re.aspx"][href*="reply="], a[href*="book_re.aspx"][href*="touserid="]'
+      );
+      const author = elementText(authorLink);
+      const authorId =
+        extractUserIdFromHref(authorLink?.getAttribute('href')) ||
+        extractUserIdFromHref(actionLink?.getAttribute('href'));
+      const createdAt =
+        parseYaohuoDate(
+          elementText(row.querySelector('.retime')) ||
+            text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
+            text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
+        ) || new Date().toISOString();
+      const authorHtml = authorLink?.toString() || '';
+      const contentOnly = yaohuoReplyContentHtml(row, rawHtml, authorHtml);
+      return {
+        author,
+        ...(authorId ? { authorId } : {}),
+        ...(authorId ? { authorUrl: userUrl(authorId) } : {}),
+        contentHtml: sanitizeContentHtml(contentOnly, url || `${BASE_URL}/bbs/book_re.aspx`),
+        createdAt,
+        floor,
+        ...(deleteId ? { commentId: deleteId } : {}),
+        ...(deletePath ? { canDelete: true, deletePath } : {})
+      };
+    })
+    .slice(0, limit);
   const nextPage = nextPageFromHtml(html, page, items.length, limit);
   const result = {
     items,
@@ -896,21 +1027,22 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
   });
 }
 
-export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: { id: string; username?: string; url?: string }): UserProfile {
+export function parseYaohuoUserProfileHtml(
+  html: string,
+  { id, username, url }: { id: string; username?: string; url?: string }
+): UserProfile {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
   const visibleText = elementText(root);
-  const displayName = safeYaohuoProfileName(visibleText.match(/(?:昵称|用户名)\s*[:：]\s*([^\s<]+)/)?.[1])
-    || safeYaohuoProfileName(elementText(root.querySelector('.username, .user-name, h1')))
-    || username
-    || id;
+  const displayName =
+    safeYaohuoProfileName(visibleText.match(/(?:昵称|用户名)\s*[:：]\s*([^\s<]+)/)?.[1]) ||
+    safeYaohuoProfileName(elementText(root.querySelector('.username, .user-name, h1'))) ||
+    username ||
+    id;
   const levelLabel = yaohuoProfileLevelLabel(visibleText);
   const stats = profileStats(root, visibleText);
   const seen = new Set<string>();
-  const rows = [
-    ...root.querySelectorAll('.listdata, div.line1, div.line2'),
-    ...root.querySelectorAll('a[href]')
-  ];
+  const rows = [...root.querySelectorAll('.listdata, div.line1, div.line2'), ...root.querySelectorAll('a[href]')];
   const topics = rows.flatMap((row) => {
     const link = row.rawTagName === 'a' ? row : row.querySelector('a[href]');
     const title = elementText(link);
@@ -922,22 +1054,24 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
     const text = elementText(row);
     const timeText = yaohuoDisplayTimeText(text);
     const createdAt = parseYaohuoDate(timeText || text) || new Date().toISOString();
-    return [{
-      source: 'yaohuo' as const,
-      id: topicId,
-      title,
-      author: displayName,
-      authorId: id,
-      authorUrl: userUrl(id),
-      categoryId: classId,
-      category: classId ? categoryNames.get(classId) : undefined,
-      url: topicUrl || `${BASE_URL}/bbs-${topicId}.html`,
-      createdAt,
-      lastReplyAt: createdAt,
-      ...(timeText ? { displayTimeText: timeText } : {}),
-      replyCount: 0,
-      ...(levelLabel ? { authorLevelLabel: levelLabel } : {})
-    }];
+    return [
+      {
+        source: 'yaohuo' as const,
+        id: topicId,
+        title,
+        author: displayName,
+        authorId: id,
+        authorUrl: userUrl(id),
+        categoryId: classId,
+        category: classId ? categoryNames.get(classId) : undefined,
+        url: topicUrl || `${BASE_URL}/bbs-${topicId}.html`,
+        createdAt,
+        lastReplyAt: createdAt,
+        ...(timeText ? { displayTimeText: timeText } : {}),
+        replyCount: 0,
+        ...(levelLabel ? { authorLevelLabel: levelLabel } : {})
+      }
+    ];
   });
   const result: UserProfile = {
     source: 'yaohuo',
@@ -949,9 +1083,10 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
     ...stats,
     topics: sortTopicsByCreatedAt(topics).slice(0, 30)
   };
-  const hasProfileSurface = /昵称|用户名|发帖|回帖|等级|注册/.test(visibleText)
-    || Boolean(root.querySelector('.username, .user-name, h1'))
-    || result.topics.length > 0;
+  const hasProfileSurface =
+    /昵称|用户名|发帖|回帖|等级|注册/.test(visibleText) ||
+    Boolean(root.querySelector('.username, .user-name, h1')) ||
+    result.topics.length > 0;
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'html-user',
     candidateCount: 1 + topics.length,
@@ -962,7 +1097,10 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
   });
 }
 
-export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: { id: string; username?: string; url?: string }): UserReplyActivity[] {
+export function parseYaohuoUserRepliesHtml(
+  html: string,
+  { id, username, url }: { id: string; username?: string; url?: string }
+): UserReplyActivity[] {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
   const author = username || id;
@@ -995,11 +1133,12 @@ export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: 
         .replace(/\s+/g, ' ')
         .trim();
       excerpt = textExcerpt(excerpt);
-      const replyIdentity = floor || createdAt
-        ? [topicId, floor || '', createdAt || ''].join(':')
-        : excerpt
-          ? `${topicId}:${excerpt}`
-          : `${topicId}:row:${index}`;
+      const replyIdentity =
+        floor || createdAt
+          ? [topicId, floor || '', createdAt || ''].join(':')
+          : excerpt
+            ? `${topicId}:${excerpt}`
+            : `${topicId}:row:${index}`;
       const topicDateIdentity = createdAt ? `${topicId}:${createdAt}` : '';
       if (seen.has(replyIdentity) || (!floor && topicDateIdentity && seenTopicDates.has(topicDateIdentity))) {
         return null;
@@ -1027,9 +1166,9 @@ export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: 
       };
     })
     .filter(Boolean) as UserReplyActivity[];
-  const candidateCount = rows.filter((row) => (
-    row.querySelectorAll('a[href*="/bbs-"], a[href*="book_view"]').length === 1
-  )).length;
+  const candidateCount = rows.filter(
+    (row) => row.querySelectorAll('a[href*="/bbs-"], a[href*="book_view"]').length === 1
+  ).length;
   return annotateSourceDiagnosticSummary(replies, {
     parserVariant: 'html-user-replies',
     candidateCount,
@@ -1045,10 +1184,10 @@ export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProf
     return null;
   }
   const root = parseHtml(html);
-  const accountContainers = root.querySelectorAll('div.top2')
-    .filter(hasYaohuoSelfAccountNavigation);
+  const accountContainers = root.querySelectorAll('div.top2').filter(hasYaohuoSelfAccountNavigation);
   for (const contextNode of accountContainers) {
-    const link = contextNode.querySelectorAll('a[href*="userinfo"], a[href*="touserid"]')
+    const link = contextNode
+      .querySelectorAll('a[href*="userinfo"], a[href*="touserid"]')
       .find((candidate) => Boolean(extractUserIdFromHref(candidate.getAttribute('href'))));
     const id = extractUserIdFromHref(link?.getAttribute('href'));
     const linkUsername = safeYaohuoCurrentUserName(link ? elementText(link) : '');
@@ -1068,7 +1207,10 @@ export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProf
   return null;
 }
 
-export function parseYaohuoSearchHtml(html: string, options: { classId?: string; page?: number; limit?: number; url?: string } = {}): SearchResponse {
+export function parseYaohuoSearchHtml(
+  html: string,
+  options: { classId?: string; page?: number; limit?: number; url?: string } = {}
+): SearchResponse {
   const result = parseYaohuoListHtml(html, { ...options, classId: options.classId || '0', preserveOrder: true });
   const response = {
     items: result.items,
@@ -1104,8 +1246,12 @@ export function checkYaohuoLoginHtml(html: string, url?: string) {
     ...(currentUser ? { currentUser } : {}),
     loginUrl: YAOHUO_LOGIN_URL,
     message: loginRequired
-      ? (loginReason === 'verification' ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录。')
-      : currentUser ? undefined : '妖火登录状态暂时无法确认。'
+      ? loginReason === 'verification'
+        ? '妖火需要完成访问验证，请在登录页完成验证后重试'
+        : '妖火登录已失效，请重新登录。'
+      : currentUser
+        ? undefined
+        : '妖火登录状态暂时无法确认。'
   };
 }
 

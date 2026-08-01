@@ -31,12 +31,14 @@ describe('topic action controller helpers', () => {
   it('uses different request keys for different non-optimistic actions on the same topic', () => {
     const topicKey = 'yaohuo:123';
 
-    expect(new Set([
-      topicReplyActionKey(topicKey),
-      topicEditReplyActionKey(topicKey, 9),
-      yaohuoFavoriteActionKey(topicKey),
-      topicPollVoteActionKey(topicKey, { id: 'poll-1' })
-    ]).size).toBe(4);
+    expect(
+      new Set([
+        topicReplyActionKey(topicKey),
+        topicEditReplyActionKey(topicKey, 9),
+        yaohuoFavoriteActionKey(topicKey),
+        topicPollVoteActionKey(topicKey, { id: 'poll-1' })
+      ]).size
+    ).toBe(4);
   });
 
   it('keeps vote request keys scoped to each poll', () => {
@@ -88,12 +90,14 @@ describe('topic action controller helpers', () => {
   });
 
   it('does not show NodeSeek edit on own replies without edit source data', () => {
-    const replies: Reply[] = [{
-      author: '凡想世界',
-      authorId: '48872',
-      contentHtml: '<p>reply</p>',
-      createdAt: '2026-01-01T00:00:00.000Z'
-    }];
+    const replies: Reply[] = [
+      {
+        author: '凡想世界',
+        authorId: '48872',
+        contentHtml: '<p>reply</p>',
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }
+    ];
 
     const marked = markCurrentNodeSeekOwnRepliesUnlikable(replies, {
       source: 'nodeseek',
@@ -108,20 +112,24 @@ describe('topic action controller helpers', () => {
   });
 
   it('does not infer NodeSeek delete permission from matching usernames', () => {
-    const replies: Reply[] = [{
-      author: '凡想世界',
-      commentId: 9,
-      contentHtml: '<p>reply</p>',
-      createdAt: '2026-01-01T00:00:00.000Z'
-    }];
+    const replies: Reply[] = [
+      {
+        author: '凡想世界',
+        commentId: 9,
+        contentHtml: '<p>reply</p>',
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }
+    ];
 
-    expect(markCurrentNodeSeekOwnRepliesUnlikable(replies, {
-      source: 'nodeseek',
-      id: '48872',
-      username: '凡想世界',
-      url: 'https://www.nodeseek.com/space/48872',
-      topics: []
-    })).toBe(replies);
+    expect(
+      markCurrentNodeSeekOwnRepliesUnlikable(replies, {
+        source: 'nodeseek',
+        id: '48872',
+        username: '凡想世界',
+        url: 'https://www.nodeseek.com/space/48872',
+        topics: []
+      })
+    ).toBe(replies);
   });
 
   it('updates only the edited reply content locally', () => {
@@ -142,10 +150,14 @@ describe('topic action controller helpers', () => {
       }
     ];
 
-    const updated = applyEditedReplyContent(replies, {
-      commentId: 9,
-      contentMarkdown: '新回复 **重点**'
-    }, 'nodeseek');
+    const updated = applyEditedReplyContent(
+      replies,
+      {
+        commentId: 9,
+        contentMarkdown: '新回复 **重点**'
+      },
+      'nodeseek'
+    );
 
     expect(updated[0]).toMatchObject({
       author: '凡想世界',
@@ -158,63 +170,96 @@ describe('topic action controller helpers', () => {
   });
 
   it('does not apply NodeSeek markdown fallback to linux.do edited replies', () => {
-    const replies: Reply[] = [{
-      author: 'alice',
-      commentId: 9,
-      contentMarkdown: '旧回复',
-      contentHtml: '<p>旧回复</p>',
-      createdAt: '2026-01-01T00:00:00.000Z'
-    }];
+    const replies: Reply[] = [
+      {
+        author: 'alice',
+        commentId: 9,
+        contentMarkdown: '旧回复',
+        contentHtml: '<p>旧回复</p>',
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }
+    ];
 
-    expect(applyEditedReplyContent(replies, {
-      commentId: 9,
-      contentMarkdown: 'https://linux.do/t/42'
-    }, 'linuxdo')).toBe(replies);
+    expect(
+      applyEditedReplyContent(
+        replies,
+        {
+          commentId: 9,
+          contentMarkdown: 'https://linux.do/t/42'
+        },
+        'linuxdo'
+      )
+    ).toBe(replies);
   });
 
   it('does not override refreshed edited replies that already came back from the source', () => {
-    const refreshed: Reply[] = [{
-      author: '凡想世界',
-      authorId: '48872',
-      commentId: 9,
-      contentHtml: '<p><a href="https://example.com">正式渲染</a></p>',
-      createdAt: '2026-01-01T00:00:00.000Z'
-    }];
+    const refreshed: Reply[] = [
+      {
+        author: '凡想世界',
+        authorId: '48872',
+        commentId: 9,
+        contentHtml: '<p><a href="https://example.com">正式渲染</a></p>',
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }
+    ];
 
-    expect(shouldApplyEditedReplyFallback(refreshed, {
-      commentId: 9,
-      contentMarkdown: '本地提交 https://example.com'
-    }, 'nodeseek')).toBe(false);
-    expect(shouldApplyEditedReplyFallback([], {
-      commentId: 9,
-      contentMarkdown: '本地提交 https://example.com'
-    }, 'nodeseek')).toBe(true);
+    expect(
+      shouldApplyEditedReplyFallback(
+        refreshed,
+        {
+          commentId: 9,
+          contentMarkdown: '本地提交 https://example.com'
+        },
+        'nodeseek'
+      )
+    ).toBe(false);
+    expect(
+      shouldApplyEditedReplyFallback(
+        [],
+        {
+          commentId: 9,
+          contentMarkdown: '本地提交 https://example.com'
+        },
+        'nodeseek'
+      )
+    ).toBe(true);
   });
 
   it('uses the saved NodeSeek login user id when the current user profile is not loaded', () => {
-    const replies: Reply[] = [{
-      author: '凡想世界',
-      authorId: '48872',
-      commentId: 9,
-      contentMarkdown: 'reply',
-      contentHtml: '<p>reply</p>',
-      createdAt: '2026-01-01T00:00:00.000Z'
-    }];
+    const replies: Reply[] = [
+      {
+        author: '凡想世界',
+        authorId: '48872',
+        commentId: 9,
+        contentMarkdown: 'reply',
+        contentHtml: '<p>reply</p>',
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }
+    ];
 
-    expect(markCurrentNodeSeekOwnRepliesUnlikable(replies, undefined, 48872)[0]).toMatchObject({ canEdit: true, canLike: false });
+    expect(markCurrentNodeSeekOwnRepliesUnlikable(replies, undefined, 48872)[0]).toMatchObject({
+      canEdit: true,
+      canLike: false
+    });
   });
 
   it('disables NodeSeek interactions for current user replies that are already deletable', () => {
-    const replies: Reply[] = [{
-      author: '凡想世界',
-      authorId: '48872',
-      canDelete: true,
-      commentId: 9,
-      contentMarkdown: 'reply',
-      contentHtml: '<p>reply</p>',
-      createdAt: '2026-01-01T00:00:00.000Z'
-    }];
+    const replies: Reply[] = [
+      {
+        author: '凡想世界',
+        authorId: '48872',
+        canDelete: true,
+        commentId: 9,
+        contentMarkdown: 'reply',
+        contentHtml: '<p>reply</p>',
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }
+    ];
 
-    expect(markCurrentNodeSeekOwnRepliesUnlikable(replies, undefined, 48872)[0]).toMatchObject({ canDelete: true, canEdit: true, canLike: false });
+    expect(markCurrentNodeSeekOwnRepliesUnlikable(replies, undefined, 48872)[0]).toMatchObject({
+      canDelete: true,
+      canEdit: true,
+      canLike: false
+    });
   });
 });

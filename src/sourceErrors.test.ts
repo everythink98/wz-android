@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, normalizeSourceErrorInfo, sourceErrorFromUnknown, sourceErrorKind, yaohuoErrorRequiresLoginPanel } from './sourceErrors';
+import {
+  linuxDoVerificationNavigationMessage,
+  nodeSeekVerificationNavigationMessage,
+  normalizeSourceErrorInfo,
+  sourceErrorFromUnknown,
+  sourceErrorKind,
+  yaohuoErrorRequiresLoginPanel
+} from './sourceErrors';
 
 describe('source error navigation helpers', () => {
   it('does not auto-open verification for aggregated feed errors', () => {
@@ -78,10 +85,13 @@ describe('source error navigation helpers', () => {
   });
 
   it('opens the Yaohuo login panel for verification without treating it as expired', () => {
-    const verification = sourceErrorFromUnknown('yaohuo', Object.assign(new Error('妖火需要完成访问验证'), {
-      loginRequired: true,
-      reason: 'verification'
-    }));
+    const verification = sourceErrorFromUnknown(
+      'yaohuo',
+      Object.assign(new Error('妖火需要完成访问验证'), {
+        loginRequired: true,
+        reason: 'verification'
+      })
+    );
 
     expect(verification.kind).toBe('verification-required');
     expect(yaohuoErrorRequiresLoginPanel(verification)).toBe(true);
@@ -93,11 +103,13 @@ describe('source error navigation helpers', () => {
       kind: 'ordinary',
       message: '旧版读取失败'
     });
-    expect(normalizeSourceErrorInfo({
-      message: '需要验证',
-      reason: 'cloudflare',
-      verificationRequired: true
-    })).toMatchObject({
+    expect(
+      normalizeSourceErrorInfo({
+        message: '需要验证',
+        reason: 'cloudflare',
+        verificationRequired: true
+      })
+    ).toMatchObject({
       kind: 'verification-required',
       message: '需要验证'
     });

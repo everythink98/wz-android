@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  LEGACY_COOKIE_SNAPSHOT_KEYS,
-  migrateLegacyCookieSnapshots
-} from './legacyCookieSnapshotMigration';
+import { LEGACY_COOKIE_SNAPSHOT_KEYS, migrateLegacyCookieSnapshots } from './legacyCookieSnapshotMigration';
 import { LINUXDO_USER_AGENT_STORAGE_KEY } from './linuxdoSession';
 
 vi.mock('react-native', () => ({
@@ -47,10 +44,12 @@ describe('legacy Cookie snapshot migration', () => {
       header: ''
     }));
 
-    await expect(migrateLegacyCookieSnapshots({
-      readManagedCookieHeader,
-      secureStore: store
-    })).resolves.toEqual({
+    await expect(
+      migrateLegacyCookieSnapshots({
+        readManagedCookieHeader,
+        secureStore: store
+      })
+    ).resolves.toEqual({
       linuxdo: 'migrated',
       nodeseek: 'migrated',
       yaohuo: 'migrated'
@@ -84,10 +83,12 @@ describe('legacy Cookie snapshot migration', () => {
       return { status: 'ok' as const, header: 'sidyaohuo=current' };
     });
 
-    await expect(migrateLegacyCookieSnapshots({
-      readManagedCookieHeader,
-      secureStore: store
-    })).resolves.toEqual({
+    await expect(
+      migrateLegacyCookieSnapshots({
+        readManagedCookieHeader,
+        secureStore: store
+      })
+    ).resolves.toEqual({
       linuxdo: 'retained',
       nodeseek: 'retained',
       yaohuo: 'migrated'

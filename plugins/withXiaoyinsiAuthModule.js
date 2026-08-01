@@ -132,24 +132,27 @@ function injectPackage(contents) {
 }
 
 module.exports = function withXiaoyinsiAuthModule(config) {
-  config = withDangerousMod(config, ['android', async (config) => {
-    const packageName = config.android?.package;
-    if (!packageName) {
+  config = withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const packageName = config.android?.package;
+      if (!packageName) {
+        return config;
+      }
+      const outputDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'main',
+        'java',
+        packagePath(packageName)
+      );
+      fs.mkdirSync(outputDir, { recursive: true });
+      fs.writeFileSync(path.join(outputDir, 'XiaoyinsiAuthModule.kt'), moduleSource(packageName));
+      fs.writeFileSync(path.join(outputDir, 'XiaoyinsiAuthPackage.kt'), packageSource(packageName));
       return config;
     }
-    const outputDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'main',
-      'java',
-      packagePath(packageName)
-    );
-    fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(path.join(outputDir, 'XiaoyinsiAuthModule.kt'), moduleSource(packageName));
-    fs.writeFileSync(path.join(outputDir, 'XiaoyinsiAuthPackage.kt'), packageSource(packageName));
-    return config;
-  }]);
+  ]);
 
   return withMainApplication(config, (config) => {
     config.modResults.contents = injectPackage(config.modResults.contents);

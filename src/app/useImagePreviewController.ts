@@ -61,7 +61,9 @@ export function useImagePreviewController({
     return (tappedUrl: string, tappedDisplaySize?: ImageDisplaySize) => {
       if (!catalog) {
         catalog = createImagePreviewCatalog(
-          htmlPartsFromSource(htmlParts).map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls)),
+          htmlPartsFromSource(htmlParts).map((html) =>
+            topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls)
+          ),
           contentWidth,
           PixelRatio.get()
         );
@@ -90,10 +92,14 @@ export function useImagePreviewController({
   }, []);
   const closeImagePreview = useCallback(() => setImagePreview(null), []);
   const selectPreviewImage = useCallback((index: number) => {
-    setImagePreview((current) => current ? {
-      ...current,
-      index: Math.max(0, Math.min(index, current.items.length - 1))
-    } : current);
+    setImagePreview((current) =>
+      current
+        ? {
+            ...current,
+            index: Math.max(0, Math.min(index, current.items.length - 1))
+          }
+        : current
+    );
   }, []);
   const savePreviewImage = useCallback(async () => {
     const trace = beginDiagnosticTrace('media', 'save-preview', {
@@ -115,10 +121,15 @@ export function useImagePreviewController({
       const uri = item.originalUri;
       markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
-      await saveImageUriToLibrary(uri, {
-        mediaContext: previewMediaContext,
-        nodeSeekUserAgent: nodeSeekMediaUserAgent
-      }, fetcher, trace);
+      await saveImageUriToLibrary(
+        uri,
+        {
+          mediaContext: previewMediaContext,
+          nodeSeekUserAgent: nodeSeekMediaUserAgent
+        },
+        fetcher,
+        trace
+      );
       markDiagnosticStage(trace, 'apply', { state: 'saved' });
       finishDiagnosticTrace(trace, 'success');
       notify('图片已保存');

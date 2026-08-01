@@ -54,11 +54,13 @@ jest.mock('@shopify/flash-list', () => {
         NativeView,
         { accessibilityLabel, testID },
         ListHeaderComponent,
-        ...data.map((item, index) => ReactModule.createElement(
-          NativeView,
-          { key: keyExtractor?.(item, index) ?? index },
-          renderItem?.({ item, index })
-        )),
+        ...data.map((item, index) =>
+          ReactModule.createElement(
+            NativeView,
+            { key: keyExtractor?.(item, index) ?? index },
+            renderItem?.({ item, index })
+          )
+        ),
         ListFooterComponent
       );
     })
@@ -74,13 +76,20 @@ jest.mock('react-native-webview', () => ({ WebView: () => null }));
 
 jest.mock('react-native-render-html', () => {
   const ReactModule = require('react') as typeof React;
-  const Passthrough = ({ children }: { children?: React.ReactNode }) => ReactModule.createElement(ReactModule.Fragment, null, children);
+  const Passthrough = ({ children }: { children?: React.ReactNode }) =>
+    ReactModule.createElement(ReactModule.Fragment, null, children);
   const RenderersContext = ReactModule.createContext<Record<string, React.ComponentType<any>>>({});
   return {
     __useMockRenderers: () => ReactModule.useContext(RenderersContext),
     HTMLContentModel: { block: 'block', mixed: 'mixed', textual: 'textual' },
     HTMLElementModel: { fromCustomModel: () => ({}) },
-    RenderHTMLConfigProvider: ({ children, renderers = {} }: { children?: React.ReactNode; renderers?: Record<string, React.ComponentType<any>> }) => ReactModule.createElement(RenderersContext.Provider, { value: renderers }, children),
+    RenderHTMLConfigProvider: ({
+      children,
+      renderers = {}
+    }: {
+      children?: React.ReactNode;
+      renderers?: Record<string, React.ComponentType<any>>;
+    }) => ReactModule.createElement(RenderersContext.Provider, { value: renderers }, children),
     TChildrenRenderer: () => null,
     TRenderEngineProvider: Passthrough,
     defaultHTMLElementModels: {
@@ -139,14 +148,19 @@ jest.mock('../../src/screens/topic/TopicActionBar', () => {
       label: string;
       onPress: () => void;
       tone?: string;
-    }) => ReactModule.createElement(NativePressable, {
-      accessibilityLabel,
-      accessibilityRole: 'button',
-      accessibilityState: { disabled: Boolean(disabled), selected: Boolean(active) },
-      disabled,
-      onPress,
-      testID: `detail-action-${tone || 'primary'}`
-    }, ReactModule.createElement(NativeText, null, label))
+    }) =>
+      ReactModule.createElement(
+        NativePressable,
+        {
+          accessibilityLabel,
+          accessibilityRole: 'button',
+          accessibilityState: { disabled: Boolean(disabled), selected: Boolean(active) },
+          disabled,
+          onPress,
+          testID: `detail-action-${tone || 'primary'}`
+        },
+        ReactModule.createElement(NativeText, null, label)
+      )
   };
 });
 jest.mock('../../src/screens/topic/TopicContentBlock', () => {
@@ -160,23 +174,29 @@ jest.mock('../../src/screens/topic/TopicContentBlock', () => {
       html: string;
       originalImageUpgradeEnabled?: boolean;
     }) => {
-      const renderers = (require('react-native-render-html') as {
-        __useMockRenderers: () => Record<string, React.ComponentType<any>>;
-      }).__useMockRenderers();
+      const renderers = (
+        require('react-native-render-html') as {
+          __useMockRenderers: () => Record<string, React.ComponentType<any>>;
+        }
+      ).__useMockRenderers();
       const children: React.ReactNode[] = [];
       const pattern = /<forum-nodeseek-poll\b[^>]*\bid=["']([^"']+)["'][^>]*>\s*<\/forum-nodeseek-poll\s*>/gi;
       let offset = 0;
       let match = pattern.exec(html);
       while (match) {
         if (match.index > offset) {
-          children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, html.slice(offset, match.index)));
+          children.push(
+            ReactModule.createElement(NativeText, { key: `html-${offset}` }, html.slice(offset, match.index))
+          );
         }
         const Renderer = renderers['forum-nodeseek-poll'];
         if (Renderer) {
-          children.push(ReactModule.createElement(Renderer, {
-            key: `poll-${match.index}`,
-            tnode: { attributes: { id: match[1] } }
-          }));
+          children.push(
+            ReactModule.createElement(Renderer, {
+              key: `poll-${match.index}`,
+              tnode: { attributes: { id: match[1] } }
+            })
+          );
         }
         offset = pattern.lastIndex;
         match = pattern.exec(html);
@@ -184,15 +204,23 @@ jest.mock('../../src/screens/topic/TopicContentBlock', () => {
       if (offset < html.length) {
         children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, html.slice(offset)));
       }
-      return ReactModule.createElement(NativeView, {
-        testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
-      }, children);
+      return ReactModule.createElement(
+        NativeView,
+        {
+          testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
+        },
+        children
+      );
     }
   };
 });
 jest.mock('../../src/screens/topic/TopicPolls', () => {
   const ReactModule = require('react') as typeof React;
-  const { Pressable: NativePressable, Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
+  const {
+    Pressable: NativePressable,
+    Text: NativeText,
+    View: NativeView
+  } = require('react-native') as typeof import('react-native');
   return {
     TopicPolls: ({
       canWritePollSource,
@@ -213,15 +241,17 @@ jest.mock('../../src/screens/topic/TopicPolls', () => {
         NativeView,
         { testID: `topic-poll-${source}` },
         ReactModule.createElement(NativeText, null, canWritePollSource ? '可投票' : '只读投票'),
-        canWritePollSource ? ReactModule.createElement(
-          NativePressable,
-          {
-            accessibilityLabel: `提交 ${source} 投票`,
-            accessibilityRole: 'button',
-            onPress: () => onVotePoll(poll, [poll.options[0].id])
-          },
-          ReactModule.createElement(NativeText, null, '提交投票')
-        ) : null
+        canWritePollSource
+          ? ReactModule.createElement(
+              NativePressable,
+              {
+                accessibilityLabel: `提交 ${source} 投票`,
+                accessibilityRole: 'button',
+                onPress: () => onVotePoll(poll, [poll.options[0].id])
+              },
+              ReactModule.createElement(NativeText, null, '提交投票')
+            )
+          : null
       );
     }
   };
@@ -232,11 +262,12 @@ jest.mock('../../src/screens/topic/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    DiscourseReactionPill: ({ stat }: { stat: { id: string; imageUrl?: string; label: string; value: number } }) => ReactModule.createElement(
-      NativeText,
-      { testID: `reaction-${stat.id}` },
-      `${stat.label} ${stat.value}${stat.imageUrl ? ` ${stat.imageUrl}` : ''}`
-    ),
+    DiscourseReactionPill: ({ stat }: { stat: { id: string; imageUrl?: string; label: string; value: number } }) =>
+      ReactModule.createElement(
+        NativeText,
+        { testID: `reaction-${stat.id}` },
+        `${stat.label} ${stat.value}${stat.imageUrl ? ` ${stat.imageUrl}` : ''}`
+      ),
     MemoizedReplyItem: ({
       onQuoteContentLayout,
       reply,
@@ -250,26 +281,27 @@ jest.mock('../../src/screens/topic/ReplyItem', () => {
         key: string;
         measureForMaterialization?: boolean;
       };
-    }) => ReactModule.createElement(
-      NativeView,
-      section?.measureForMaterialization ? {
-        onLayout: () => onQuoteContentLayout?.({
-          contentToken: section.contentToken!,
-          instanceKey: section.instanceKey!
-        }),
-        testID: `reply-quote-materialization-${section.key}`
-      } : undefined,
+    }) =>
       ReactModule.createElement(
-        NativeText,
-        { testID: `reply-floor-${reply.floor}` },
-        `reply-${reply.floor}-${reply.author}`
-      )
-    ),
-    NodeSeekStatPill: ({ label, value }: { label: string; value: number }) => ReactModule.createElement(
-      NativeText,
-      { testID: `readonly-stat-${label}` },
-      `${label} ${value}`
-    ),
+        NativeView,
+        section?.measureForMaterialization
+          ? {
+              onLayout: () =>
+                onQuoteContentLayout?.({
+                  contentToken: section.contentToken!,
+                  instanceKey: section.instanceKey!
+                }),
+              testID: `reply-quote-materialization-${section.key}`
+            }
+          : undefined,
+        ReactModule.createElement(
+          NativeText,
+          { testID: `reply-floor-${reply.floor}` },
+          `reply-${reply.floor}-${reply.author}`
+        )
+      ),
+    NodeSeekStatPill: ({ label, value }: { label: string; value: number }) =>
+      ReactModule.createElement(NativeText, { testID: `readonly-stat-${label}` }, `${label} ${value}`),
     nodeSeekTopicReactionStats: () => []
   };
 });
@@ -282,7 +314,12 @@ const topicImageDeriver = createTopicImageDeriver();
 const noop = () => undefined;
 const sourceReplies: Reply[] = [
   { author: 'alice', contentHtml: '<p>first answer</p>', createdAt: '2026-07-14T00:01:00.000Z', floor: 1 },
-  { author: 'bob', contentHtml: '<p>second needle</p><img src="https://img.example.com/2.png">', createdAt: '2026-07-14T00:02:00.000Z', floor: 2 },
+  {
+    author: 'bob',
+    contentHtml: '<p>second needle</p><img src="https://img.example.com/2.png">',
+    createdAt: '2026-07-14T00:02:00.000Z',
+    floor: 2
+  },
   { author: 'alice', contentHtml: '<p>third needle</p>', createdAt: '2026-07-14T00:03:00.000Z', floor: 3 }
 ];
 const topic: TopicDetail = {
@@ -404,14 +441,18 @@ function TopicFilterHarness({
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const topicScrollRef = useRef(null);
   const effectiveCommentQuery = filteredCommentQuery ?? commentQuery;
-  const replies = useMemo(() => filterTopicSessionReplies({
-    commentQuery: effectiveCommentQuery,
-    inlineSizedImageUrls: {},
-    replyFilter,
-    topicDetail,
-    topicImageDeriver,
-    topicReplies
-  }), [effectiveCommentQuery, replyFilter, topicDetail, topicReplies]);
+  const replies = useMemo(
+    () =>
+      filterTopicSessionReplies({
+        commentQuery: effectiveCommentQuery,
+        inlineSizedImageUrls: {},
+        replyFilter,
+        topicDetail,
+        topicImageDeriver,
+        topicReplies
+      }),
+    [effectiveCommentQuery, replyFilter, topicDetail, topicReplies]
+  );
 
   return (
     <View>
@@ -421,83 +462,83 @@ function TopicFilterHarness({
         topicKey={topicDetail ? `${topicDetail.source}:${topicDetail.id}` : ''}
       >
         <TopicScreen
-        actionBusy={false}
-        sourceActionAvailability={{
-          linuxdo: canUseLinuxDoActions,
-          nodeseek: canUseNodeSeekActions,
-          v2ex: false,
-          xiaoyinsi: canUseXiaoyinsiActions,
-          yaohuo: canUseYaohuoActions
-        }}
-        commentQuery={commentQuery}
-        contentWidth={720}
-        expandedQuotes={expandedQuotes}
-        htmlBaseStyle={htmlStyles.htmlBaseStyle}
-        htmlClassesStyles={htmlStyles.htmlClassesStyles}
-        htmlIgnoredStyles={htmlStyles.htmlIgnoredStyles}
-        htmlRenderers={{}}
-        htmlRenderersProps={{}}
-        htmlTagsStyles={htmlStyles.htmlTagsStyles}
-        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
-        inlineSizedImageUrls={{}}
-        mediaSessionIdentity={`${topicDetail?.source || 'public'}:0`}
-        loadedQuotedReplies={loadedQuotedReplies}
-        loadingMoreReplies={loadingMoreReplies}
-        loadingQuotedFloors={loadingQuotedFloors}
-        optimisticActions={{}}
-        quoteStateVersion={0}
-        replies={replies}
-        replyComposerOpen={false}
-        replyContent=""
-        replyEditTarget={null}
-        replyFace=""
-        replyFilter={replyFilter}
-        replyHasMore={replyHasMore}
-        replyHighlightQuery={effectiveCommentQuery}
-        replyTarget={null}
-        selectedTopic={selectedTopic}
-        sourceReplies={topicReplies}
-        styles={styles}
-        theme={theme}
-        topic={topicDetail}
-        topicBusy={topicBusy}
-        topicError={topicError}
-        identityBlocked={identityBlocked}
-        identityChecking={identityChecking}
-        topicFavorite={topicFavorite}
-        topicImageDeriver={topicImageDeriver}
-        topicScrollRef={topicScrollRef}
-        unreadReplyCount={0}
-        onBack={jest.fn()}
-        onCommentQueryChange={setCommentQuery}
-        onDeleteReply={jest.fn()}
-        onEditReply={jest.fn()}
-        onInteract={onInteract}
-        onDiscourseBookmark={onDiscourseBookmark}
-        onLoadMoreReplies={onLoadMoreReplies}
-        onNodeSeekCollection={jest.fn()}
-        onOpenOriginal={jest.fn()}
-        onOpenTopic={jest.fn()}
-        onOpenReadingSettings={jest.fn()}
-        onOpenUser={jest.fn()}
-        onRefreshTopic={jest.fn()}
-        onRefreshWholeTopic={onRefreshWholeTopic}
-        onReplyComposerOpenChange={onReplyComposerOpenChange}
-        onReplyContentChange={jest.fn()}
-        onReplyFaceChange={jest.fn()}
-        onReplyFilterChange={setReplyFilter}
-        onReplyToFloor={jest.fn()}
-        onShareTopic={jest.fn()}
-        onSubmitReply={jest.fn()}
-        onToggleFavorite={onToggleFavorite}
-        onToggleReplyQuote={jest.fn()}
-        onToggleTopicBodyQuote={onToggleTopicBodyQuote}
-        onTopicScroll={jest.fn()}
-        onUploadReplyImage={jest.fn()}
-        onVerifyLinuxDo={onVerifyLinuxDo}
-        onVerifyNodeSeek={onVerifyNodeSeek}
-        onVotePoll={onVotePoll}
-      />
+          actionBusy={false}
+          sourceActionAvailability={{
+            linuxdo: canUseLinuxDoActions,
+            nodeseek: canUseNodeSeekActions,
+            v2ex: false,
+            xiaoyinsi: canUseXiaoyinsiActions,
+            yaohuo: canUseYaohuoActions
+          }}
+          commentQuery={commentQuery}
+          contentWidth={720}
+          expandedQuotes={expandedQuotes}
+          htmlBaseStyle={htmlStyles.htmlBaseStyle}
+          htmlClassesStyles={htmlStyles.htmlClassesStyles}
+          htmlIgnoredStyles={htmlStyles.htmlIgnoredStyles}
+          htmlRenderers={{}}
+          htmlRenderersProps={{}}
+          htmlTagsStyles={htmlStyles.htmlTagsStyles}
+          getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+          inlineSizedImageUrls={{}}
+          mediaSessionIdentity={`${topicDetail?.source || 'public'}:0`}
+          loadedQuotedReplies={loadedQuotedReplies}
+          loadingMoreReplies={loadingMoreReplies}
+          loadingQuotedFloors={loadingQuotedFloors}
+          optimisticActions={{}}
+          quoteStateVersion={0}
+          replies={replies}
+          replyComposerOpen={false}
+          replyContent=""
+          replyEditTarget={null}
+          replyFace=""
+          replyFilter={replyFilter}
+          replyHasMore={replyHasMore}
+          replyHighlightQuery={effectiveCommentQuery}
+          replyTarget={null}
+          selectedTopic={selectedTopic}
+          sourceReplies={topicReplies}
+          styles={styles}
+          theme={theme}
+          topic={topicDetail}
+          topicBusy={topicBusy}
+          topicError={topicError}
+          identityBlocked={identityBlocked}
+          identityChecking={identityChecking}
+          topicFavorite={topicFavorite}
+          topicImageDeriver={topicImageDeriver}
+          topicScrollRef={topicScrollRef}
+          unreadReplyCount={0}
+          onBack={jest.fn()}
+          onCommentQueryChange={setCommentQuery}
+          onDeleteReply={jest.fn()}
+          onEditReply={jest.fn()}
+          onInteract={onInteract}
+          onDiscourseBookmark={onDiscourseBookmark}
+          onLoadMoreReplies={onLoadMoreReplies}
+          onNodeSeekCollection={jest.fn()}
+          onOpenOriginal={jest.fn()}
+          onOpenTopic={jest.fn()}
+          onOpenReadingSettings={jest.fn()}
+          onOpenUser={jest.fn()}
+          onRefreshTopic={jest.fn()}
+          onRefreshWholeTopic={onRefreshWholeTopic}
+          onReplyComposerOpenChange={onReplyComposerOpenChange}
+          onReplyContentChange={jest.fn()}
+          onReplyFaceChange={jest.fn()}
+          onReplyFilterChange={setReplyFilter}
+          onReplyToFloor={jest.fn()}
+          onShareTopic={jest.fn()}
+          onSubmitReply={jest.fn()}
+          onToggleFavorite={onToggleFavorite}
+          onToggleReplyQuote={jest.fn()}
+          onToggleTopicBodyQuote={onToggleTopicBodyQuote}
+          onTopicScroll={jest.fn()}
+          onUploadReplyImage={jest.fn()}
+          onVerifyLinuxDo={onVerifyLinuxDo}
+          onVerifyNodeSeek={onVerifyNodeSeek}
+          onVotePoll={onVotePoll}
+        />
       </YaohuoFavoriteStateProvider>
       <Text testID="active-filter">{replyFilter}</Text>
     </View>
@@ -514,13 +555,7 @@ describe('Topic reply filters', () => {
     };
     lastFlashListItemTypes = [];
 
-    await render(
-      <TopicFilterHarness
-        selectedTopic={longTopic}
-        topicDetail={longTopic}
-        topicReplies={[]}
-      />
-    );
+    await render(<TopicFilterHarness selectedTopic={longTopic} topicDetail={longTopic} topicReplies={[]} />);
 
     const contentItemCount = lastFlashListItemTypes.filter((type) => type === 'topicContent').length;
     expect(contentItemCount).toBeGreaterThan(1);
@@ -541,10 +576,9 @@ describe('Topic reply filters', () => {
     const instanceKey = 'reply:comment:222:linuxdo:342888:1';
     const quotedReply: Reply = {
       author: 'quoted author',
-      contentHtml: Array.from(
-        { length: 6 },
-        (_, index) => `<p>quote ${index} ${'safe text '.repeat(260)}</p>`
-      ).join(''),
+      contentHtml: Array.from({ length: 6 }, (_, index) => `<p>quote ${index} ${'safe text '.repeat(260)}</p>`).join(
+        ''
+      ),
       createdAt: '2026-02-17T00:00:00.000Z',
       floor: 1
     };
@@ -554,11 +588,13 @@ describe('Topic reply filters', () => {
       contentHtml: '<p>reply body after quote</p>',
       createdAt: '2026-07-31T00:00:00.000Z',
       floor: 2,
-      quotedPosts: [{
-        reference,
-        author: { label: 'quoted author' },
-        preview: 'quote preview'
-      }]
+      quotedPosts: [
+        {
+          reference,
+          author: { label: 'quoted author' },
+          preview: 'quote preview'
+        }
+      ]
     };
     const linuxTopic: TopicDetail = {
       ...topic,
@@ -581,11 +617,12 @@ describe('Topic reply filters', () => {
 
     try {
       const view = await render(<TopicFilterHarness {...props} />);
-      const quoteContentKeys = () => lastFlashListItemKeys.filter(
-        (_key, index) => lastFlashListItemTypes[index] === 'replyQuoteContent'
-      );
+      const quoteContentKeys = () =>
+        lastFlashListItemKeys.filter((_key, index) => lastFlashListItemTypes[index] === 'replyQuoteContent');
 
-      expect(lastFlashListItemTypes.indexOf('replyStart')).toBeGreaterThan(lastFlashListItemTypes.indexOf('replyControls'));
+      expect(lastFlashListItemTypes.indexOf('replyStart')).toBeGreaterThan(
+        lastFlashListItemTypes.indexOf('replyControls')
+      );
       expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(2);
       const coldKeys = quoteContentKeys();
       const measuredRows = view.getAllByTestId(/^reply-quote-materialization-/);
@@ -597,8 +634,12 @@ describe('Topic reply filters', () => {
       expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(2);
       expect(pendingFrames).toHaveLength(1);
 
-      await act(async () => { pendingFrames.shift()?.(16); });
-      await waitFor(() => expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(6));
+      await act(async () => {
+        pendingFrames.shift()?.(16);
+      });
+      await waitFor(() =>
+        expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(6)
+      );
       expect(quoteContentKeys().slice(0, 2)).toEqual(coldKeys);
       expect(view.queryAllByTestId(/^reply-quote-materialization-/)).toHaveLength(0);
 
@@ -612,12 +653,7 @@ describe('Topic reply filters', () => {
       expect(quoteContentKeys()).toEqual(fullKeys);
 
       const changedReply = { ...quotedReply, contentHtml: `${quotedReply.contentHtml}<p>changed content</p>` };
-      await view.rerender(
-        <TopicFilterHarness
-          {...props}
-          loadedQuotedReplies={{ 'linuxdo:342888:1': changedReply }}
-        />
-      );
+      await view.rerender(<TopicFilterHarness {...props} loadedQuotedReplies={{ 'linuxdo:342888:1': changedReply }} />);
       expect(quoteContentKeys()).toHaveLength(2);
     } finally {
       requestFrame.mockRestore();
@@ -633,22 +669,16 @@ describe('Topic reply filters', () => {
       polls: []
     };
     mockSplitTopicContentHtml.mockClear();
-    const view = await render(
-      <TopicFilterHarness selectedTopic={openingTopic} topicDetail={openingTopic} />
-    );
+    const view = await render(<TopicFilterHarness selectedTopic={openingTopic} topicDetail={openingTopic} />);
     const initialCalls = mockSplitTopicContentHtml.mock.calls.length;
     expect(initialCalls).toBeGreaterThan(0);
 
     const likedTopic = { ...openingTopic, liked: true };
-    await view.rerender(
-      <TopicFilterHarness selectedTopic={likedTopic} topicDetail={likedTopic} />
-    );
+    await view.rerender(<TopicFilterHarness selectedTopic={likedTopic} topicDetail={likedTopic} />);
     expect(mockSplitTopicContentHtml).toHaveBeenCalledTimes(initialCalls);
 
     const changedBodyTopic = { ...likedTopic, contentHtml: '<p>changed opening body</p>' };
-    await view.rerender(
-      <TopicFilterHarness selectedTopic={changedBodyTopic} topicDetail={changedBodyTopic} />
-    );
+    await view.rerender(<TopicFilterHarness selectedTopic={changedBodyTopic} topicDetail={changedBodyTopic} />);
     expect(mockSplitTopicContentHtml.mock.calls.length).toBeGreaterThan(initialCalls);
   });
 
@@ -658,11 +688,7 @@ describe('Topic reply filters', () => {
       contentHtml: '<p>opening post <img src="https://img.example.com/opening.png"></p>'
     };
     const view = await render(
-      <TopicFilterHarness
-        selectedTopic={topicWithImage}
-        topicDetail={topicWithImage}
-        topicReplies={[]}
-      />
+      <TopicFilterHarness selectedTopic={topicWithImage} topicDetail={topicWithImage} topicReplies={[]} />
     );
     const content = view.getByTestId('topic-html-block-deferred');
     let frame = content.parent;
@@ -694,17 +720,11 @@ describe('Topic reply filters', () => {
         replies: topicReplies,
         solved: true,
         source,
-        url: source === 'linuxdo'
-          ? 'https://linux.do/t/topic/206'
-          : 'https://forum.xiaoyinsi.com/t/topic/206'
+        url: source === 'linuxdo' ? 'https://linux.do/t/topic/206' : 'https://forum.xiaoyinsi.com/t/topic/206'
       };
       mockScrollToIndex.mockClear();
       const view = await render(
-        <TopicFilterHarness
-          selectedTopic={solvedTopic}
-          topicDetail={solvedTopic}
-          topicReplies={topicReplies}
-        />
+        <TopicFilterHarness selectedTopic={solvedTopic} topicDetail={solvedTopic} topicReplies={topicReplies} />
       );
 
       expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
@@ -722,10 +742,12 @@ describe('Topic reply filters', () => {
 
       await fireEvent.press(view.getByLabelText('展开已采纳答案'));
       await fireEvent.press(view.getByLabelText('查看完整解决方案，第 2 楼'));
-      expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({
-        animated: true,
-        index: 4
-      }));
+      expect(mockScrollToIndex).toHaveBeenCalledWith(
+        expect.objectContaining({
+          animated: true,
+          index: 4
+        })
+      );
     }
   );
 
@@ -740,9 +762,7 @@ describe('Topic reply filters', () => {
         replies: [sourceReplies[0]],
         solved: true,
         source,
-        url: source === 'linuxdo'
-          ? 'https://linux.do/t/topic/208'
-          : 'https://forum.xiaoyinsi.com/t/topic/208'
+        url: source === 'linuxdo' ? 'https://linux.do/t/topic/208' : 'https://forum.xiaoyinsi.com/t/topic/208'
       };
       const referenceKey = `${source}:${solvedTopic.id}:${acceptedFloor}`;
       const instanceKey = `accepted-answer:${solvedTopic.id}:${referenceKey}`;
@@ -757,15 +777,17 @@ describe('Topic reply filters', () => {
       );
 
       expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
-      await waitFor(() => expect(onToggleTopicBodyQuote).toHaveBeenCalledWith({
-        instanceKey,
-        prefetch: true,
-        reference: {
-          source,
-          topicId: solvedTopic.id,
-          postNumber: acceptedFloor
-        }
-      }));
+      await waitFor(() =>
+        expect(onToggleTopicBodyQuote).toHaveBeenCalledWith({
+          instanceKey,
+          prefetch: true,
+          reference: {
+            source,
+            topicId: solvedTopic.id,
+            postNumber: acceptedFloor
+          }
+        })
+      );
 
       const loadedAnswer: Reply = {
         ...sourceReplies[1],
@@ -773,11 +795,13 @@ describe('Topic reply filters', () => {
         contentHtml: `<p>后分页采纳答案正文</p>${discoursePollPlaceholder('accepted-answer-poll')}`,
         floor: acceptedFloor,
         polls: [{ ...topicPoll, name: 'accepted-answer-poll' }],
-        quotedPosts: [{
-          reference: { source, topicId: solvedTopic.id, postNumber: 7 },
-          author: { label: 'quoted-user', username: 'quoted-user' },
-          preview: '采纳答案引用摘要'
-        }]
+        quotedPosts: [
+          {
+            reference: { source, topicId: solvedTopic.id, postNumber: 7 },
+            author: { label: 'quoted-user', username: 'quoted-user' },
+            preview: '采纳答案引用摘要'
+          }
+        ]
       };
       await view.rerender(
         <TopicFilterHarness
@@ -846,11 +870,7 @@ describe('Topic reply filters', () => {
     };
     mockScrollToIndex.mockClear();
     const view = await render(
-      <TopicFilterHarness
-        selectedTopic={solvedTopic}
-        topicDetail={solvedTopic}
-        topicReplies={topicReplies}
-      />
+      <TopicFilterHarness selectedTopic={solvedTopic} topicDetail={solvedTopic} topicReplies={topicReplies} />
     );
 
     await fireEvent.press(view.getByLabelText('只看楼主'));
@@ -862,10 +882,12 @@ describe('Topic reply filters', () => {
 
     await waitFor(() => expect(view.getByTestId('active-filter').props.children).toBe('all'));
     await waitFor(() => expect(view.getByPlaceholderText('评论内查找').props.value).toBe(''));
-    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledWith({
-      animated: true,
-      index: 3
-    }));
+    await waitFor(() =>
+      expect(mockScrollToIndex).toHaveBeenCalledWith({
+        animated: true,
+        index: 3
+      })
+    );
   });
 
   it('[REG-XIAOYINSI-017] retries the emoji catalog after a same-topic refresh', async () => {
@@ -878,15 +900,11 @@ describe('Topic reply filters', () => {
     mockGetDiscourseSourceEmojiUrls
       .mockRejectedValueOnce(new Error('temporary emoji failure'))
       .mockResolvedValue({ heart: 'https://forum.xiaoyinsi.com/heart.png' });
-    const view = await render(
-      <TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />
-    );
+    const view = await render(<TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />);
     await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(1));
 
     const refreshedTopic = { ...xiaoyinsiTopic, title: '刷新后的主题' };
-    await view.rerender(
-      <TopicFilterHarness selectedTopic={refreshedTopic} topicDetail={refreshedTopic} />
-    );
+    await view.rerender(<TopicFilterHarness selectedTopic={refreshedTopic} topicDetail={refreshedTopic} />);
 
     await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(2));
   });
@@ -896,15 +914,16 @@ describe('Topic reply filters', () => {
     type EmojiUrls = Awaited<ReturnType<EmojiLoader>>;
     let resolveFirst: ((urls: EmojiUrls) => void) | undefined;
     let resolveSecond: ((urls: EmojiUrls) => void) | undefined;
-    const getDiscourseEmojiUrls = jest.fn((_request: Parameters<EmojiLoader>[0]) => (
-      new Promise<EmojiUrls>((resolve) => {
-        if (!resolveFirst) {
-          resolveFirst = resolve;
-        } else {
-          resolveSecond = resolve;
-        }
-      })
-    ));
+    const getDiscourseEmojiUrls = jest.fn(
+      (_request: Parameters<EmojiLoader>[0]) =>
+        new Promise<EmojiUrls>((resolve) => {
+          if (!resolveFirst) {
+            resolveFirst = resolve;
+          } else {
+            resolveSecond = resolve;
+          }
+        })
+    );
     const xiaoyinsiTopic: TopicDetail = {
       ...topic,
       source: 'xiaoyinsi',
@@ -936,45 +955,53 @@ describe('Topic reply filters', () => {
     await waitFor(() => expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(2));
     expect(firstSignal?.aborted).toBe(true);
 
-    await act(async () => { resolveSecond?.({ heart: 'https://linux.do/current-heart.png' }); });
+    await act(async () => {
+      resolveSecond?.({ heart: 'https://linux.do/current-heart.png' });
+    });
     await waitFor(() => {
       expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/current-heart.png');
     });
 
-    await act(async () => { resolveFirst?.({ heart: 'https://forum.xiaoyinsi.com/stale-heart.png' }); });
+    await act(async () => {
+      resolveFirst?.({ heart: 'https://forum.xiaoyinsi.com/stale-heart.png' });
+    });
     expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/current-heart.png');
     expect(view.getByTestId('reaction-heart').props.children).not.toContain('stale-heart.png');
   });
 
-  it.each(['linuxdo', 'yaohuo', 'xiaoyinsi'] as const)('wires %s topic polls through the source-specific writable path', async (source) => {
-    const onVotePoll = jest.fn<(poll: TopicPoll, optionIds: string[]) => void>();
-    const sourceTopic: TopicDetail = {
-      ...topic,
-      source,
-      id: `${source}-poll-topic`,
-      url: source === 'linuxdo'
-        ? 'https://linux.do/t/topic/2'
-        : source === 'xiaoyinsi'
-          ? 'https://forum.xiaoyinsi.com/t/topic/2'
-          : 'https://yaohuo.me/bbs-2.html',
-      polls: [topicPoll]
-    };
-    const view = await render(
-      <TopicFilterHarness
-        canUseLinuxDoActions={source === 'linuxdo'}
-        canUseXiaoyinsiActions={source === 'xiaoyinsi'}
-        canUseYaohuoActions={source === 'yaohuo'}
-        onVotePoll={onVotePoll}
-        selectedTopic={sourceTopic}
-        topicDetail={sourceTopic}
-      />
-    );
+  it.each(['linuxdo', 'yaohuo', 'xiaoyinsi'] as const)(
+    'wires %s topic polls through the source-specific writable path',
+    async (source) => {
+      const onVotePoll = jest.fn<(poll: TopicPoll, optionIds: string[]) => void>();
+      const sourceTopic: TopicDetail = {
+        ...topic,
+        source,
+        id: `${source}-poll-topic`,
+        url:
+          source === 'linuxdo'
+            ? 'https://linux.do/t/topic/2'
+            : source === 'xiaoyinsi'
+              ? 'https://forum.xiaoyinsi.com/t/topic/2'
+              : 'https://yaohuo.me/bbs-2.html',
+        polls: [topicPoll]
+      };
+      const view = await render(
+        <TopicFilterHarness
+          canUseLinuxDoActions={source === 'linuxdo'}
+          canUseXiaoyinsiActions={source === 'xiaoyinsi'}
+          canUseYaohuoActions={source === 'yaohuo'}
+          onVotePoll={onVotePoll}
+          selectedTopic={sourceTopic}
+          topicDetail={sourceTopic}
+        />
+      );
 
-    expect(view.getByTestId(`topic-poll-${source}`)).toBeTruthy();
-    expect(view.getByText('可投票')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText(`提交 ${source} 投票`));
-    expect(onVotePoll).toHaveBeenCalledWith(topicPoll, ['yes']);
-  });
+      expect(view.getByTestId(`topic-poll-${source}`)).toBeTruthy();
+      expect(view.getByText('可投票')).toBeTruthy();
+      await fireEvent.press(view.getByLabelText(`提交 ${source} 投票`));
+      expect(onVotePoll).toHaveBeenCalledWith(topicPoll, ['yes']);
+    }
+  );
 
   it('shows 小隐寺 write actions only after authorization and wires them independently', async () => {
     const xiaoyinsiTopic: TopicDetail = {
@@ -992,9 +1019,7 @@ describe('Topic reply filters', () => {
     const onInteract = jest.fn<(type: InteractionType, commentId?: number) => void>();
     const onDiscourseBookmark = jest.fn();
 
-    const anonymous = await render(
-      <TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />
-    );
+    const anonymous = await render(<TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />);
     expect(anonymous.getByTestId('reaction-heart')).toBeTruthy();
     expect(anonymous.queryByLabelText('点赞')).toBeNull();
     expect(anonymous.queryByLabelText('原站收藏')).toBeNull();
@@ -1029,11 +1054,7 @@ describe('Topic reply filters', () => {
     };
 
     const view = await render(
-      <TopicFilterHarness
-        canUseXiaoyinsiActions
-        selectedTopic={readOnlyTopic}
-        topicDetail={readOnlyTopic}
-      />
+      <TopicFilterHarness canUseXiaoyinsiActions selectedTopic={readOnlyTopic} topicDetail={readOnlyTopic} />
     );
 
     expect(view.queryByText('写回复')).toBeNull();
@@ -1047,15 +1068,12 @@ describe('Topic reply filters', () => {
       source: 'nodeseek',
       id: 'nodeseek-poll-topic',
       url: 'https://www.nodeseek.com/post-2-1',
-      contentHtml: '<p>投票前正文<br><forum-nodeseek-poll id="source-poll"></forum-nodeseek-poll><br>投票后正文 <img class="sticker" src="/sticker.png"></p>',
+      contentHtml:
+        '<p>投票前正文<br><forum-nodeseek-poll id="source-poll"></forum-nodeseek-poll><br>投票后正文 <img class="sticker" src="/sticker.png"></p>',
       polls: [topicPoll]
     };
     const view = await render(
-      <TopicFilterHarness
-        canUseNodeSeekActions
-        selectedTopic={nodeSeekTopic}
-        topicDetail={nodeSeekTopic}
-      />
+      <TopicFilterHarness canUseNodeSeekActions selectedTopic={nodeSeekTopic} topicDetail={nodeSeekTopic} />
     );
 
     const rendered = JSON.stringify(view.toJSON());
@@ -1071,9 +1089,7 @@ describe('Topic reply filters', () => {
 
   it('shows the V2EX topic vote count without exposing a vote action', async () => {
     const v2exTopic: TopicDetail = { ...topic, upvoteCount: 336 };
-    const view = await render(
-      <TopicFilterHarness selectedTopic={v2exTopic} topicDetail={v2exTopic} />
-    );
+    const view = await render(<TopicFilterHarness selectedTopic={v2exTopic} topicDetail={v2exTopic} />);
 
     expect(view.getByTestId('readonly-stat-UP 票').props.children).toBe('UP 票 336');
     expect(view.queryByTestId('topic-poll-v2ex')).toBeNull();
@@ -1082,10 +1098,7 @@ describe('Topic reply filters', () => {
   it('keeps V2EX read-only and exposes reply composition only for an authorized writable source', async () => {
     const onReplyComposerOpenChange = jest.fn<(open: boolean) => void>();
     const view = await render(
-      <TopicFilterHarness
-        canUseNodeSeekActions
-        onReplyComposerOpenChange={onReplyComposerOpenChange}
-      />
+      <TopicFilterHarness canUseNodeSeekActions onReplyComposerOpenChange={onReplyComposerOpenChange} />
     );
 
     expect(view.queryByLabelText('写回复')).toBeNull();
@@ -1109,9 +1122,7 @@ describe('Topic reply filters', () => {
   });
 
   it('shows a single detail loading state before the selected topic is available', async () => {
-    const view = await render(
-      <TopicFilterHarness topicDetail={null} topicBusy />
-    );
+    const view = await render(<TopicFilterHarness topicDetail={null} topicBusy />);
 
     expect(view.getAllByText('正在读取主题...')).toHaveLength(1);
     expect(view.queryByText('回复列表')).toBeNull();
@@ -1199,16 +1210,12 @@ describe('Topic reply filters', () => {
 
   it('disables reply pagination while the next page is loading', async () => {
     const onLoadMoreReplies = jest.fn<() => void>();
-    const view = await render(
-      <TopicFilterHarness replyHasMore onLoadMoreReplies={onLoadMoreReplies} />
-    );
+    const view = await render(<TopicFilterHarness replyHasMore onLoadMoreReplies={onLoadMoreReplies} />);
 
     await fireEvent.press(view.getByLabelText('加载更多回复'));
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
 
-    await view.rerender(
-      <TopicFilterHarness replyHasMore loadingMoreReplies onLoadMoreReplies={onLoadMoreReplies} />
-    );
+    await view.rerender(<TopicFilterHarness replyHasMore loadingMoreReplies onLoadMoreReplies={onLoadMoreReplies} />);
     expect(view.getByLabelText('正在加载...').props.accessibilityState.disabled).toBe(true);
     await fireEvent.press(view.getByLabelText('正在加载...'));
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
@@ -1216,17 +1223,13 @@ describe('Topic reply filters', () => {
 
   it('toggles the local favorite for the current topic and reflects the updated state', async () => {
     const onToggleFavorite = jest.fn<(topic: Topic) => void>();
-    const view = await render(
-      <TopicFilterHarness onToggleFavorite={onToggleFavorite} />
-    );
+    const view = await render(<TopicFilterHarness onToggleFavorite={onToggleFavorite} />);
 
     await fireEvent.press(view.getByLabelText('收藏'));
     expect(onToggleFavorite).toHaveBeenCalledTimes(1);
     expect(onToggleFavorite).toHaveBeenCalledWith(topic);
 
-    await view.rerender(
-      <TopicFilterHarness topicFavorite onToggleFavorite={onToggleFavorite} />
-    );
+    await view.rerender(<TopicFilterHarness topicFavorite onToggleFavorite={onToggleFavorite} />);
     expect(view.getByLabelText('已收藏')).toBeTruthy();
   });
 

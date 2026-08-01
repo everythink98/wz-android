@@ -36,7 +36,8 @@ const moreScreenStyles = StyleSheet.create({
 
 function appearanceSummary(settings: ReaderSettings) {
   const themeLabel = settings.theme === 'dark' ? '深色' : '浅色';
-  const densityLabel = settings.listDensity === 'compact' ? '紧凑密度' : settings.listDensity === 'loose' ? '宽松密度' : '标准密度';
+  const densityLabel =
+    settings.listDensity === 'compact' ? '紧凑密度' : settings.listDensity === 'loose' ? '宽松密度' : '标准密度';
   return `${themeLabel} · 字号 ${Math.round(settings.fontScale * 100)}% · ${densityLabel}`;
 }
 export const MoreScreen = memo(function MoreScreen({
@@ -186,8 +187,14 @@ export const MoreScreen = memo(function MoreScreen({
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
-  onNodeSeekLoginWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
-  onYaohuoLoginWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
+  onNodeSeekLoginWebViewState: (
+    state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout',
+    attempt?: number
+  ) => void;
+  onYaohuoLoginWebViewState: (
+    state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout',
+    attempt?: number
+  ) => void;
   onExportBackupFile: () => void;
   onExportDiagnosticLog: () => void;
   onImportBackupFile: () => void;
@@ -215,31 +222,38 @@ export const MoreScreen = memo(function MoreScreen({
   const yaohuoSession = sessionViewModels.yaohuo;
   const xiaoyinsiSession = sessionViewModels.xiaoyinsi;
   const updateNotes = appUpdateInfo?.notes.trim();
-  const appUpdateStatus = appUpdateMessage === `当前版本 ${CURRENT_APP_VERSION}` || (appUpdateInfo && appUpdateMessage === `发现新版 ${appUpdateInfo.version}`) ? '' : appUpdateMessage;
-  const appUpdateProgressWidth = appUpdateDownloadProgress && appUpdateDownloadProgress.percent !== null ? `${appUpdateDownloadProgress.percent}%` as `${number}%` : null;
+  const appUpdateStatus =
+    appUpdateMessage === `当前版本 ${CURRENT_APP_VERSION}` ||
+    (appUpdateInfo && appUpdateMessage === `发现新版 ${appUpdateInfo.version}`)
+      ? ''
+      : appUpdateMessage;
+  const appUpdateProgressWidth =
+    appUpdateDownloadProgress && appUpdateDownloadProgress.percent !== null
+      ? (`${appUpdateDownloadProgress.percent}%` as `${number}%`)
+      : null;
   const appVersionMeta = appUpdateInfo
     ? `当前版本 ${CURRENT_APP_VERSION} · 最新版本 ${appUpdateInfo.version}`
     : `多网站第三方客户端 · 当前版本 ${CURRENT_APP_VERSION}`;
-  const xiaoyinsiAuthForcedOpen = xiaoyinsiAuth.phase === 'requesting'
-    || xiaoyinsiAuth.phase === 'waiting'
-    || xiaoyinsiAuth.phase === 'cleanup';
-  const accountSessionViewModels = xiaoyinsiAuth.phase === 'cleanup'
-    ? {
-      ...sessionViewModels,
-      xiaoyinsi: {
-        ...xiaoyinsiSession,
-        status: 'authorizing' as const,
-        statusLabel: '待清理',
-        summaryLabel: '本机清理未完成',
-        cookieSummary: [],
-        isVerified: false,
-        isLoggedIn: false,
-        isVerifying: true,
-        canWrite: false,
-        currentUser: undefined
-      }
-    }
-    : sessionViewModels;
+  const xiaoyinsiAuthForcedOpen =
+    xiaoyinsiAuth.phase === 'requesting' || xiaoyinsiAuth.phase === 'waiting' || xiaoyinsiAuth.phase === 'cleanup';
+  const accountSessionViewModels =
+    xiaoyinsiAuth.phase === 'cleanup'
+      ? {
+          ...sessionViewModels,
+          xiaoyinsi: {
+            ...xiaoyinsiSession,
+            status: 'authorizing' as const,
+            statusLabel: '待清理',
+            summaryLabel: '本机清理未完成',
+            cookieSummary: [],
+            isVerified: false,
+            isLoggedIn: false,
+            isVerifying: true,
+            canWrite: false,
+            currentUser: undefined
+          }
+        }
+      : sessionViewModels;
   useEffect(() => {
     if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel || xiaoyinsiAuthForcedOpen) {
       setAccountExpanded(true);
@@ -249,12 +263,32 @@ export const MoreScreen = memo(function MoreScreen({
     if (levelExpanded && linuxDoSession.canWrite && !linuxDoLevelProfile && !linuxDoLevelBusy && !linuxDoLevelError) {
       onRefreshLinuxDoLevel();
     }
-  }, [levelExpanded, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, linuxDoSession.canWrite, onRefreshLinuxDoLevel]);
+  }, [
+    levelExpanded,
+    linuxDoLevelBusy,
+    linuxDoLevelError,
+    linuxDoLevelProfile,
+    linuxDoSession.canWrite,
+    onRefreshLinuxDoLevel
+  ]);
   useEffect(() => {
-    if (xiaoyinsiLevelExpanded && xiaoyinsiSession.canWrite && !xiaoyinsiLevelProfile && !xiaoyinsiLevelBusy && !xiaoyinsiLevelError) {
+    if (
+      xiaoyinsiLevelExpanded &&
+      xiaoyinsiSession.canWrite &&
+      !xiaoyinsiLevelProfile &&
+      !xiaoyinsiLevelBusy &&
+      !xiaoyinsiLevelError
+    ) {
       onRefreshXiaoyinsiLevel();
     }
-  }, [onRefreshXiaoyinsiLevel, xiaoyinsiLevelBusy, xiaoyinsiLevelError, xiaoyinsiLevelExpanded, xiaoyinsiLevelProfile, xiaoyinsiSession.canWrite]);
+  }, [
+    onRefreshXiaoyinsiLevel,
+    xiaoyinsiLevelBusy,
+    xiaoyinsiLevelError,
+    xiaoyinsiLevelExpanded,
+    xiaoyinsiLevelProfile,
+    xiaoyinsiSession.canWrite
+  ]);
   const levelMeta = !linuxDoSession.canWrite
     ? '登录后查看'
     : linuxDoLevelBusy
@@ -288,18 +322,38 @@ export const MoreScreen = memo(function MoreScreen({
         <View style={styles.actions}>
           {appUpdateInfo ? (
             <>
-              <AppButton variant="primary" label={appUpdateDownloading ? '下载中' : '下载并安装'} styles={styles} disabled={appUpdateBusy || appUpdateDownloading} onPress={onDownloadAppUpdate} />
-              <AppButton tiny label={appUpdateBusy ? '检查中' : '检查更新'} styles={styles} disabled={appUpdateBusy || appUpdateDownloading} onPress={onCheckAppUpdate} />
+              <AppButton
+                variant="primary"
+                label={appUpdateDownloading ? '下载中' : '下载并安装'}
+                styles={styles}
+                disabled={appUpdateBusy || appUpdateDownloading}
+                onPress={onDownloadAppUpdate}
+              />
+              <AppButton
+                tiny
+                label={appUpdateBusy ? '检查中' : '检查更新'}
+                styles={styles}
+                disabled={appUpdateBusy || appUpdateDownloading}
+                onPress={onCheckAppUpdate}
+              />
             </>
           ) : (
-            <AppButton tiny label={appUpdateBusy ? '检查中' : '检查更新'} styles={styles} disabled={appUpdateBusy} onPress={onCheckAppUpdate} />
+            <AppButton
+              tiny
+              label={appUpdateBusy ? '检查中' : '检查更新'}
+              styles={styles}
+              disabled={appUpdateBusy}
+              onPress={onCheckAppUpdate}
+            />
           )}
         </View>
         {appUpdateDownloadProgress ? (
           <View style={styles.updateProgressBox}>
             <View style={styles.updateProgressHeader}>
               <Text style={styles.updateProgressTitle}>{appUpdateDownloadProgress.title}</Text>
-              {appUpdateDownloadProgress.percentLabel ? <Text style={styles.updateProgressPercent}>{appUpdateDownloadProgress.percentLabel}</Text> : null}
+              {appUpdateDownloadProgress.percentLabel ? (
+                <Text style={styles.updateProgressPercent}>{appUpdateDownloadProgress.percentLabel}</Text>
+              ) : null}
             </View>
             {appUpdateProgressWidth ? (
               <View style={styles.updateProgressTrack}>
@@ -315,7 +369,17 @@ export const MoreScreen = memo(function MoreScreen({
       <AccountCenterPanel
         credentials={credentialSummaries}
         expanded={accountExpanded}
-        forcedSite={showLoginPanel ? 'nodeseek' : showYaohuoLoginPanel ? 'yaohuo' : showLinuxDoPanel ? 'linuxdo' : xiaoyinsiAuthForcedOpen ? 'xiaoyinsi' : null}
+        forcedSite={
+          showLoginPanel
+            ? 'nodeseek'
+            : showYaohuoLoginPanel
+              ? 'yaohuo'
+              : showLinuxDoPanel
+                ? 'linuxdo'
+                : xiaoyinsiAuthForcedOpen
+                  ? 'xiaoyinsi'
+                  : null
+        }
         pendingFillSite={pendingCredentialFillSite}
         nodeSeekUserId={nodeSeekUserId}
         sessions={accountSessionViewModels}
@@ -345,7 +409,9 @@ export const MoreScreen = memo(function MoreScreen({
               onClearLogin={onClearLogin}
               onHandleLoginMessage={onHandleLoginMessage}
               onLoginFormMessage={onLoginFormMessage}
-              onRequestCredentialFill={() => { void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'nodeseek' }); }}
+              onRequestCredentialFill={() => {
+                void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'nodeseek' });
+              }}
               onWebViewState={onNodeSeekLoginWebViewState}
               handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
               onSetLoadingLoginPage={onSetLoadingLoginPage}
@@ -354,7 +420,16 @@ export const MoreScreen = memo(function MoreScreen({
           ),
           linuxdo: (
             <>
-              <MenuButton nested icon={Activity} label="linux.do 等级" value={levelMeta} expanded={levelExpanded} styles={styles} theme={theme} onPress={() => setLevelExpanded((value) => !value)} />
+              <MenuButton
+                nested
+                icon={Activity}
+                label="linux.do 等级"
+                value={levelMeta}
+                expanded={levelExpanded}
+                styles={styles}
+                theme={theme}
+                onPress={() => setLevelExpanded((value) => !value)}
+              />
               {levelExpanded ? (
                 <LinuxDoLevelPanel
                   busy={linuxDoLevelBusy}
@@ -363,7 +438,9 @@ export const MoreScreen = memo(function MoreScreen({
                   profile={linuxDoLevelProfile}
                   styles={styles}
                   theme={theme}
-                  onOpenLogin={() => { void onAccountCenterCommand({ type: 'open-login', site: 'linuxdo' }); }}
+                  onOpenLogin={() => {
+                    void onAccountCenterCommand({ type: 'open-login', site: 'linuxdo' });
+                  }}
                   onRefresh={onRefreshLinuxDoLevel}
                 />
               ) : null}
@@ -389,7 +466,9 @@ export const MoreScreen = memo(function MoreScreen({
               onClearYaohuoLogin={onClearYaohuoLogin}
               handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
               onLoginFormMessage={onLoginFormMessage}
-              onRequestCredentialFill={() => { void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'yaohuo' }); }}
+              onRequestCredentialFill={() => {
+                void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'yaohuo' });
+              }}
               onWebViewState={onYaohuoLoginWebViewState}
               onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
               onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
@@ -411,10 +490,26 @@ export const MoreScreen = memo(function MoreScreen({
                 onRevoke={xiaoyinsiAuth.onRevoke}
               />
               <View
-                testID={xiaoyinsiLevelExpanded && xiaoyinsiSession.canWrite && !xiaoyinsiLevelBusy && (xiaoyinsiLevelProfile || xiaoyinsiLevelError) ? 'xiaoyinsi-level-settled' : undefined}
+                testID={
+                  xiaoyinsiLevelExpanded &&
+                  xiaoyinsiSession.canWrite &&
+                  !xiaoyinsiLevelBusy &&
+                  (xiaoyinsiLevelProfile || xiaoyinsiLevelError)
+                    ? 'xiaoyinsi-level-settled'
+                    : undefined
+                }
                 style={[moreScreenStyles.accountFooterAction, { borderTopColor: theme.line }]}
               >
-                <MenuButton nested icon={Activity} label="查看等级" value={xiaoyinsiLevelMeta} expanded={xiaoyinsiLevelExpanded} styles={styles} theme={theme} onPress={() => setXiaoyinsiLevelExpanded((value) => !value)} />
+                <MenuButton
+                  nested
+                  icon={Activity}
+                  label="查看等级"
+                  value={xiaoyinsiLevelMeta}
+                  expanded={xiaoyinsiLevelExpanded}
+                  styles={styles}
+                  theme={theme}
+                  onPress={() => setXiaoyinsiLevelExpanded((value) => !value)}
+                />
                 {xiaoyinsiLevelExpanded ? (
                   <LinuxDoLevelPanel
                     busy={xiaoyinsiLevelBusy}
@@ -475,7 +570,9 @@ export const MoreScreen = memo(function MoreScreen({
         onExpandedChange={setDiagnosticExpanded}
       >
         <View style={styles.stack}>
-          <Text style={styles.meta}>日志只保存在本机并经过脱敏。显示问题请同时附截图；特定内容解析异常请附原帖链接。</Text>
+          <Text style={styles.meta}>
+            日志只保存在本机并经过脱敏。显示问题请同时附截图；特定内容解析异常请附原帖链接。
+          </Text>
           <AppButton
             label={diagnosticBusy ? '正在生成' : '生成并分享诊断日志'}
             styles={styles}

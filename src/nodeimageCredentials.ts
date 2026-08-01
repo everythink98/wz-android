@@ -13,16 +13,10 @@ const nodeImageApiKeyWriteGate = createCredentialWriteGate();
 export type NodeImageApiKeyCredential = Readonly<{
   version: 1;
   apiKey: string;
-  ownership:
-    | Readonly<{ kind: 'unverified' }>
-    | Readonly<{ kind: 'verified'; identityKey: string }>;
+  ownership: Readonly<{ kind: 'unverified' }> | Readonly<{ kind: 'verified'; identityKey: string }>;
 }>;
 
-export type NodeImageApiKeyUseStatus =
-  | 'confirmation-required'
-  | 'identity-mismatch'
-  | 'missing'
-  | 'usable';
+export type NodeImageApiKeyUseStatus = 'confirmation-required' | 'identity-mismatch' | 'missing' | 'usable';
 
 export function normalizeNodeImageApiKey(value: string) {
   return String(value || '').trim();
@@ -36,10 +30,7 @@ function unverifiedNodeImageCredential(apiKey: string): NodeImageApiKeyCredentia
   };
 }
 
-function verifiedNodeImageCredential(
-  apiKey: string,
-  identityKey: string
-): NodeImageApiKeyCredential {
+function verifiedNodeImageCredential(apiKey: string, identityKey: string): NodeImageApiKeyCredential {
   return {
     apiKey,
     ownership: { kind: 'verified', identityKey },
@@ -57,15 +48,12 @@ function parseNodeImageCredential(rawValue: string | null): NodeImageApiKeyCrede
       return unverifiedNodeImageCredential(apiKey);
     }
     if (
-      parsed.version === 1
-      && apiKey
-      && parsed.ownership?.kind === 'verified'
-      && normalizeNodeImageApiKey(parsed.ownership.identityKey)
+      parsed.version === 1 &&
+      apiKey &&
+      parsed.ownership?.kind === 'verified' &&
+      normalizeNodeImageApiKey(parsed.ownership.identityKey)
     ) {
-      return verifiedNodeImageCredential(
-        apiKey,
-        normalizeNodeImageApiKey(parsed.ownership.identityKey)
-      );
+      return verifiedNodeImageCredential(apiKey, normalizeNodeImageApiKey(parsed.ownership.identityKey));
     }
   } catch {
     // Legacy versions stored the API key as a plain string.
@@ -78,10 +66,7 @@ function serializeNodeImageCredential(credential: NodeImageApiKeyCredential) {
 }
 
 async function writeNodeImageCredential(credential: NodeImageApiKeyCredential) {
-  await SecureStore.setItemAsync(
-    NODEIMAGE_API_KEY_STORAGE_KEY,
-    serializeNodeImageCredential(credential)
-  );
+  await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, serializeNodeImageCredential(credential));
 }
 
 export function nodeImageApiKeyUseStatus(
@@ -136,11 +121,7 @@ export async function saveNodeImageApiKeyForGeneration(
 ) {
   const authorizedIdentityKey = confirmedNodeSeekOwner(authorizationOwner);
   const settledIdentityKey = confirmedNodeSeekOwner(settledOwner);
-  if (
-    !authorizedIdentityKey
-    || !settledIdentityKey
-    || authorizedIdentityKey !== settledIdentityKey
-  ) {
+  if (!authorizedIdentityKey || !settledIdentityKey || authorizedIdentityKey !== settledIdentityKey) {
     return undefined;
   }
   const apiKey = normalizeNodeImageApiKey(value);

@@ -174,14 +174,15 @@ function safeLabel(value: string | undefined, fallback = 'unknown') {
   if (/[\\/?=&:#]|cookie|token|password|secret|authorization|session|csrf|sid/i.test(raw)) {
     return fallback;
   }
-  const clean = raw.replace(/[^A-Za-z0-9 ._()+-]/g, '').trim().slice(0, 80);
+  const clean = raw
+    .replace(/[^A-Za-z0-9 ._()+-]/g, '')
+    .trim()
+    .slice(0, 80);
   return clean || fallback;
 }
 
 function safeInteger(value: number | undefined, maximum: number) {
-  return Number.isSafeInteger(value) && Number(value) >= 0
-    ? Math.min(Number(value), maximum)
-    : 0;
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Math.min(Number(value), maximum) : 0;
 }
 
 function safeDimension(value: number | undefined) {
@@ -193,24 +194,24 @@ function safeFontScale(value: number | undefined) {
 }
 
 function safeSessionStatus(value: DiagnosticSessionStatus | undefined): DiagnosticSessionStatus {
-  return value === 'anonymous'
-    || value === 'verified'
-    || value === 'logged-in'
-    || value === 'verification-required'
-    || value === 'verifying'
-    || value === 'authorizing'
-    || value === 'expired'
+  return value === 'anonymous' ||
+    value === 'verified' ||
+    value === 'logged-in' ||
+    value === 'verification-required' ||
+    value === 'verifying' ||
+    value === 'authorizing' ||
+    value === 'expired'
     ? value
     : 'unknown';
 }
 
 function safeScreen(value: DiagnosticExportMetadata['currentScreen']) {
-  return value === 'feed'
-    || value === 'search'
-    || value === 'library'
-    || value === 'more'
-    || value === 'topic'
-    || value === 'user'
+  return value === 'feed' ||
+    value === 'search' ||
+    value === 'library' ||
+    value === 'more' ||
+    value === 'topic' ||
+    value === 'user'
     ? value
     : 'unknown';
 }
@@ -248,15 +249,12 @@ async function readLog(name: string) {
 export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
   flushPendingDiagnosticLines();
   closeActiveLogHandle();
-  const [previous, current] = await Promise.all([
-    readLog(PREVIOUS_LOG_NAME),
-    readLog(CURRENT_LOG_NAME)
-  ]);
+  const [previous, current] = await Promise.all([readLog(PREVIOUS_LOG_NAME), readLog(CURRENT_LOG_NAME)]);
   const temporary = new File(Paths.cache, safeFileName('forum-reader-diagnostic', 'txt'));
   try {
     temporary.create({ overwrite: true });
     temporary.write(`${metadataLine(metadata)}\n${previous}${current}`);
-    if (!await Sharing.isAvailableAsync()) {
+    if (!(await Sharing.isAvailableAsync())) {
       throw new Error('当前设备不支持分享诊断日志。');
     }
     await Sharing.shareAsync(temporary.uri, {

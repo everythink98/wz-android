@@ -32,10 +32,13 @@ function releaseManifestUrl(tagName: string) {
   return releaseAssetUrl(tagName, UPDATE_MANIFEST_NAME);
 }
 
-function release(tagName: string, assets = [
-  { name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl(tagName) },
-  { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(tagName) }
-]) {
+function release(
+  tagName: string,
+  assets = [
+    { name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl(tagName) },
+    { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(tagName) }
+  ]
+) {
   return {
     tag_name: tagName,
     body: '修复问题',
@@ -75,55 +78,97 @@ describe('app update release parsing', () => {
   });
 
   it('rejects newer releases without the fixed APK asset', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag, [
-      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }
-    ]), manifest())).toThrow('GitHub Release 未找到 app-arm64-v8a-release.apk。');
+    expect(() =>
+      getAppUpdateFromRelease(
+        '1.3.6',
+        release(newerTag, [{ name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }]),
+        manifest()
+      )
+    ).toThrow('GitHub Release 未找到 app-arm64-v8a-release.apk。');
   });
 
   it('rejects APK assets outside the expected GitHub release URL', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag, [
-      { name: UPDATE_APK_NAME, browser_download_url: `http://github.com/everythink98/wz-android/releases/download/${newerTag}/app-arm64-v8a-release.apk` },
-      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }
-    ]), manifest())).toThrow('GitHub Release 下载地址不可信。');
+    expect(() =>
+      getAppUpdateFromRelease(
+        '1.3.6',
+        release(newerTag, [
+          {
+            name: UPDATE_APK_NAME,
+            browser_download_url: `http://github.com/everythink98/wz-android/releases/download/${newerTag}/app-arm64-v8a-release.apk`
+          },
+          { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }
+        ]),
+        manifest()
+      )
+    ).toThrow('GitHub Release 下载地址不可信。');
 
-    expect(() => getReleaseManifestUrlFromRelease('1.3.6', release(newerTag, [
-      { name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl(newerTag) },
-      { name: UPDATE_MANIFEST_NAME, browser_download_url: `https://github.com/other/wz-android/releases/download/${newerTag}/release-manifest.json` }
-    ]))).toThrow('GitHub Release 下载地址不可信。');
+    expect(() =>
+      getReleaseManifestUrlFromRelease(
+        '1.3.6',
+        release(newerTag, [
+          { name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl(newerTag) },
+          {
+            name: UPDATE_MANIFEST_NAME,
+            browser_download_url: `https://github.com/other/wz-android/releases/download/${newerTag}/release-manifest.json`
+          }
+        ])
+      )
+    ).toThrow('GitHub Release 下载地址不可信。');
 
-    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag, [
-      { name: UPDATE_APK_NAME, browser_download_url: `https://github.com/everythink98/wz-android/releases/download/${newerTag}/app-release.apk` },
-      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }
-    ]), manifest())).toThrow('GitHub Release 下载地址不可信。');
+    expect(() =>
+      getAppUpdateFromRelease(
+        '1.3.6',
+        release(newerTag, [
+          {
+            name: UPDATE_APK_NAME,
+            browser_download_url: `https://github.com/everythink98/wz-android/releases/download/${newerTag}/app-release.apk`
+          },
+          { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }
+        ]),
+        manifest()
+      )
+    ).toThrow('GitHub Release 下载地址不可信。');
   });
 
   it('rejects release manifests with mismatched package, version, or signature fields', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
-      ...manifest(),
-      packageName: 'evil.package'
-    })).toThrow('Release manifest 内容不可信。');
+    expect(() =>
+      getAppUpdateFromRelease('1.3.6', release(newerTag), {
+        ...manifest(),
+        packageName: 'evil.package'
+      })
+    ).toThrow('Release manifest 内容不可信。');
 
-    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
-      ...manifest(),
-      versionName: '1.3.23'
-    })).toThrow('Release manifest 内容不可信。');
+    expect(() =>
+      getAppUpdateFromRelease('1.3.6', release(newerTag), {
+        ...manifest(),
+        versionName: '1.3.23'
+      })
+    ).toThrow('Release manifest 内容不可信。');
 
-    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
-      ...manifest(),
-      signerSha256: 'not-a-sha'
-    })).toThrow('Release manifest 内容不可信。');
+    expect(() =>
+      getAppUpdateFromRelease('1.3.6', release(newerTag), {
+        ...manifest(),
+        signerSha256: 'not-a-sha'
+      })
+    ).toThrow('Release manifest 内容不可信。');
   });
 
   it('[REG-UPDATE-003] rejects a well-formed manifest signer that differs from the built-in release signer', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
-      ...manifest(),
-      signerSha256: 'b'.repeat(64)
-    })).toThrow('Release manifest 内容不可信。');
+    expect(() =>
+      getAppUpdateFromRelease('1.3.6', release(newerTag), {
+        ...manifest(),
+        signerSha256: 'b'.repeat(64)
+      })
+    ).toThrow('Release manifest 内容不可信。');
   });
 
   it('rejects invalid release tags', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release('latest'), manifest())).toThrow('GitHub Release 版本格式不正确。');
-    expect(() => getAppUpdateFromRelease('1.3.6', release('1.3.7'), manifest())).toThrow('GitHub Release 版本格式不正确。');
+    expect(() => getAppUpdateFromRelease('1.3.6', release('latest'), manifest())).toThrow(
+      'GitHub Release 版本格式不正确。'
+    );
+    expect(() => getAppUpdateFromRelease('1.3.6', release('1.3.7'), manifest())).toThrow(
+      'GitHub Release 版本格式不正确。'
+    );
   });
 
   it('compares multi-digit versions numerically', () => {
@@ -157,28 +202,35 @@ describe('app update release parsing', () => {
   });
 
   it('loads the latest GitHub release with the pinned API version', async () => {
-    const fetcher = vi.fn(async (url: string) => new Response(JSON.stringify(
-      url === GITHUB_LATEST_RELEASE_URL ? release(newerTag) : manifest()
-    )));
+    const fetcher = vi.fn(
+      async (url: string) =>
+        new Response(JSON.stringify(url === GITHUB_LATEST_RELEASE_URL ? release(newerTag) : manifest()))
+    );
 
     expect(await checkGithubAppUpdate(fetcher as unknown as typeof fetch, '1.3.6')).toMatchObject({
       version: newerVersion,
       apkUrl: releaseApkUrl(newerTag),
       sha256: apkSha256
     });
-    expect(fetcher).toHaveBeenCalledWith(GITHUB_LATEST_RELEASE_URL, expect.objectContaining({
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28'
-      },
-      signal: expect.any(AbortSignal)
-    }));
-    expect(fetcher).toHaveBeenCalledWith(releaseManifestUrl(newerTag), expect.objectContaining({
-      headers: {
-        Accept: 'application/json'
-      },
-      signal: expect.any(AbortSignal)
-    }));
+    expect(fetcher).toHaveBeenCalledWith(
+      GITHUB_LATEST_RELEASE_URL,
+      expect.objectContaining({
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        },
+        signal: expect.any(AbortSignal)
+      })
+    );
+    expect(fetcher).toHaveBeenCalledWith(
+      releaseManifestUrl(newerTag),
+      expect.objectContaining({
+        headers: {
+          Accept: 'application/json'
+        },
+        signal: expect.any(AbortSignal)
+      })
+    );
   });
 
   it('does not install a downloaded APK when inspection does not match the manifest', async () => {

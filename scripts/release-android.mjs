@@ -31,9 +31,7 @@ const releaseManifestPath = path.join(path.dirname(releaseApkPath), releaseManif
 const releaseEnvPath = path.join(rootDir, '.env.release.local');
 const appConfig = JSON.parse(readFileSync(path.join(rootDir, 'app.json'), 'utf8'));
 const expectedReleaseSignerSha256 = cleanSha256(appConfig.expo?.extra?.releaseSignerSha256);
-const requiredSigningEnv = [
-  ...RELEASE_SIGNING_ENV_NAMES
-];
+const requiredSigningEnv = [...RELEASE_SIGNING_ENV_NAMES];
 const requiredSmokeEnv = ['WZ_ANDROID_SMOKE_DEVICE', 'WZ_ANDROID_SMOKE_ABI'];
 const windowsNodeCliCommands = new Map([
   ['npm', 'npm-cli.js'],
@@ -131,12 +129,17 @@ function findApkSignerJar() {
   if (!existsSync(buildToolsDir)) {
     return null;
   }
-  return readdirSync(buildToolsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(buildToolsDir, entry.name, 'lib', 'apksigner.jar'))
-    .filter((candidate) => existsSync(candidate))
-    .sort((left, right) => path.basename(path.dirname(path.dirname(right))).localeCompare(path.basename(path.dirname(path.dirname(left))), undefined, { numeric: true }))
-    [0] || null;
+  return (
+    readdirSync(buildToolsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(buildToolsDir, entry.name, 'lib', 'apksigner.jar'))
+      .filter((candidate) => existsSync(candidate))
+      .sort((left, right) =>
+        path
+          .basename(path.dirname(path.dirname(right)))
+          .localeCompare(path.basename(path.dirname(path.dirname(left))), undefined, { numeric: true })
+      )[0] || null
+  );
 }
 
 function verifyReleaseApkSignature(apkPath) {
@@ -161,19 +164,28 @@ function signDevelopmentSmokeApk(inputPath, outputPath) {
     process.exit(1);
   }
   run('java', [
-    '-jar', apkSignerJar,
+    '-jar',
+    apkSignerJar,
     'sign',
-    '--ks', developmentKeystorePath,
-    '--ks-key-alias', 'androiddebugkey',
-    '--ks-pass', 'pass:android',
-    '--key-pass', 'pass:android',
-    '--out', outputPath,
+    '--ks',
+    developmentKeystorePath,
+    '--ks-key-alias',
+    'androiddebugkey',
+    '--ks-pass',
+    'pass:android',
+    '--key-pass',
+    'pass:android',
+    '--out',
+    outputPath,
     inputPath
   ]);
 }
 
 function cleanSha256(value) {
-  const clean = String(value || '').replace(/:/g, '').trim().toLowerCase();
+  const clean = String(value || '')
+    .replace(/:/g, '')
+    .trim()
+    .toLowerCase();
   return /^[a-f0-9]{64}$/.test(clean) ? clean : '';
 }
 
@@ -295,7 +307,10 @@ function cleanGitSha() {
 }
 
 function firstOutputLine(output, tool) {
-  const line = output.split(/\r?\n/).map((value) => value.trim()).find(Boolean);
+  const line = output
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find(Boolean);
   if (!line) {
     failReleasePreflight(new Error(`无法读取 ${tool} 版本。`));
   }
@@ -324,9 +339,11 @@ const packageLockSha256 = fileSha256(path.join(rootDir, 'package-lock.json'));
 const npmVersion = firstOutputLine(runCapture('npm', ['--version']), 'npm');
 let javaVersion;
 try {
-  javaVersion = parseJavaVersionOutput(runCapture('java', ['-version'], {
-    failureMessage: '无法读取可信的 Java 版本。'
-  }));
+  javaVersion = parseJavaVersionOutput(
+    runCapture('java', ['-version'], {
+      failureMessage: '无法读取可信的 Java 版本。'
+    })
+  );
 } catch (error) {
   failReleasePreflight(error);
 }
@@ -334,8 +351,24 @@ run('node', ['scripts/check-version.mjs', '--require-previous-release']);
 verifySmokeEnv(releaseEnv);
 const smokeApkAbi = requestedSmokeApkAbi(releaseEnv.WZ_ANDROID_SMOKE_ABI);
 const releaseApkAbis = [...new Set(['arm64-v8a', smokeApkAbi])];
-const builtSmokeApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', `app-${smokeApkAbi}-release.apk`);
-const smokeApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', `app-${smokeApkAbi}-smoke-dev.apk`);
+const builtSmokeApkPath = path.join(
+  androidDir,
+  'app',
+  'build',
+  'outputs',
+  'apk',
+  'release',
+  `app-${smokeApkAbi}-release.apk`
+);
+const smokeApkPath = path.join(
+  androidDir,
+  'app',
+  'build',
+  'outputs',
+  'apk',
+  'release',
+  `app-${smokeApkAbi}-smoke-dev.apk`
+);
 
 run('npm', ['run', 'verify']);
 

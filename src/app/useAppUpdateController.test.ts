@@ -19,9 +19,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react', () => ({
-  useCallback: <T,>(callback: T) => callback,
-  useRef: <T,>(value: T) => ({ current: value }),
-  useState: <T,>(initial: T | (() => T)) => {
+  useCallback: <T>(callback: T) => callback,
+  useRef: <T>(value: T) => ({ current: value }),
+  useState: <T>(initial: T | (() => T)) => {
     let value = typeof initial === 'function' ? (initial as () => T)() : initial;
     if (value === null && mocks.nullStateIndex++ === 0 && mocks.initialUpdateInfo) {
       value = mocks.initialUpdateInfo as T;
@@ -40,7 +40,7 @@ vi.mock('expo-file-system/legacy', () => ({
 }));
 
 vi.mock('../appUpdate', async () => ({
-  ...await vi.importActual<typeof import('../appUpdate')>('../appUpdate'),
+  ...(await vi.importActual<typeof import('../appUpdate')>('../appUpdate')),
   checkGithubAppUpdate: mocks.checkGithubAppUpdate,
   installVerifiedApk: mocks.installVerifiedApk
 }));
@@ -118,11 +118,7 @@ describe('app update controller', () => {
     await useAppUpdateController({ fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
 
     expect(mocks.deleteAsync).toHaveBeenCalledTimes(2);
-    expect(mocks.deleteAsync).toHaveBeenNthCalledWith(
-      2,
-      'file:///cache/wz-update.apk',
-      { idempotent: true }
-    );
+    expect(mocks.deleteAsync).toHaveBeenNthCalledWith(2, 'file:///cache/wz-update.apk', { idempotent: true });
     expect(mocks.installVerifiedApk).not.toHaveBeenCalled();
   });
 });

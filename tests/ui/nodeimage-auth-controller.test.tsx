@@ -55,14 +55,16 @@ async function createControllerHarness() {
     status: 'same' as const,
     session: nodeSeekSession()
   }));
-  const hook = await renderHook(() => useNodeImageAuthController({
-    beginSurface,
-    finishSurface,
-    notify,
-    prepareSurfaceOpen,
-    readRuntime,
-    reconcileAccountStatus
-  }));
+  const hook = await renderHook(() =>
+    useNodeImageAuthController({
+      beginSurface,
+      finishSurface,
+      notify,
+      prepareSurfaceOpen,
+      readRuntime,
+      reconcileAccountStatus
+    })
+  );
   return {
     beginSurface,
     finishSurface,
@@ -81,9 +83,7 @@ async function openController() {
     await Promise.resolve();
   });
   await waitFor(() => {
-    expect(harness.hook.result.current.panel.document?.key).toBe(
-      '7:nodeimage-session'
-    );
+    expect(harness.hook.result.current.panel.document?.key).toBe('7:nodeimage-session');
   });
   return harness;
 }
@@ -95,9 +95,7 @@ async function sendBridgeMessage(
   type: string,
   data: Record<string, unknown> = {}
 ) {
-  const nonce = hook.result.current.panel.document?.injectedJavaScript.match(
-    /const nonce = "([0-9a-f]{32})";/
-  )?.[1];
+  const nonce = hook.result.current.panel.document?.injectedJavaScript.match(/const nonce = "([0-9a-f]{32})";/)?.[1];
   if (!nonce) {
     throw new Error('NodeImage authorization nonce is unavailable');
   }
@@ -128,13 +126,7 @@ describe('NodeImage auth controller', () => {
   });
 
   it('keeps key and panel behavior behind two controller groups', async () => {
-    const {
-      beginSurface,
-      finishSurface,
-      hook,
-      prepareSurfaceOpen,
-      reconcileAccountStatus
-    } = await openController();
+    const { beginSurface, finishSurface, hook, prepareSurfaceOpen, reconcileAccountStatus } = await openController();
 
     expect(Object.keys(hook.result.current).sort()).toEqual(['key', 'panel']);
 

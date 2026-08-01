@@ -5,9 +5,12 @@ import { buildDiscourseActionRequest } from './discourseActions';
 
 describe('小隐寺 User API action client', () => {
   it('只携带独立 User API headers，不使用 Cookie 或 CSRF', async () => {
-    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response(JSON.stringify({ success: true }), {
-      headers: { 'content-type': 'application/json' }
-    }));
+    const fetcher = vi.fn(
+      async (_input: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ success: true }), {
+          headers: { 'content-type': 'application/json' }
+        })
+    );
 
     await runXiaoyinsiAction({
       credentials: { apiKey: 'secret-api-key', clientId: 'installation-client-id' },
@@ -31,26 +34,33 @@ describe('小隐寺 User API action client', () => {
   });
 
   it('缺少任一授权材料时阻止写入', async () => {
-    await expect(runXiaoyinsiAction({
-      credentials: { apiKey: '', clientId: 'client' },
-      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
-      fetcher: vi.fn()
-    })).rejects.toMatchObject({
+    await expect(
+      runXiaoyinsiAction({
+        credentials: { apiKey: '', clientId: 'client' },
+        request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
+        fetcher: vi.fn()
+      })
+    ).rejects.toMatchObject({
       source: 'xiaoyinsi',
       loginRequired: true
     });
   });
 
   it('普通 403 只标记操作权限不足，并要求上层复核会话', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['没有权限执行该操作'] }), {
-      status: 403
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ errors: ['没有权限执行该操作'] }), {
+          status: 403
+        })
+    );
 
-    await expect(runXiaoyinsiAction({
-      credentials: { apiKey: 'key', clientId: 'client' },
-      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
-      fetcher
-    })).rejects.toMatchObject({
+    await expect(
+      runXiaoyinsiAction({
+        credentials: { apiKey: 'key', clientId: 'client' },
+        request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
+        fetcher
+      })
+    ).rejects.toMatchObject({
       source: 'xiaoyinsi',
       status: 403,
       reason: 'permission',
@@ -59,9 +69,12 @@ describe('小隐寺 User API action client', () => {
   });
 
   it('401 要求复核授权，但错误信息不回显 Token', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['无效的 API key'] }), {
-      status: 401
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ errors: ['无效的 API key'] }), {
+          status: 401
+        })
+    );
 
     const promise = runXiaoyinsiAction({
       credentials: { apiKey: 'do-not-log-this-token', clientId: 'client' },

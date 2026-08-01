@@ -2,11 +2,7 @@ import { Buffer } from 'buffer';
 import type { ImageURISource } from 'react-native';
 import { normalizeImagePreviewUrl } from './htmlImages';
 import { fetchWithTimeout, type Fetcher } from './request';
-import {
-  fetchBoundedSvgDocument,
-  renderSvgPoster,
-  type SvgPosterRenderResult
-} from './svgPosterRenderer';
+import { fetchBoundedSvgDocument, renderSvgPoster, type SvgPosterRenderResult } from './svgPosterRenderer';
 
 const COMPATIBLE_SVG_ARTIFACT_CACHE_LIMIT = 32;
 const COMPATIBLE_SVG_MAX_WORK_ITEMS = 32;
@@ -47,9 +43,10 @@ type CompatibleSvgWorkItem = Readonly<{
 
 export function compatibleImageRequestIdentity(source: ImageURISource) {
   const uri = normalizeImagePreviewUrl(source.uri || '');
-  const cacheKey = typeof (source as ImageURISource & { cacheKey?: unknown }).cacheKey === 'string'
-    ? String((source as ImageURISource & { cacheKey?: string }).cacheKey)
-    : '';
+  const cacheKey =
+    typeof (source as ImageURISource & { cacheKey?: unknown }).cacheKey === 'string'
+      ? String((source as ImageURISource & { cacheKey?: string }).cacheKey)
+      : '';
   const headers = Object.entries(source.headers || {})
     .map(([name, value]) => [name.toLowerCase(), String(value)] as const)
     .sort(([left], [right]) => left.localeCompare(right));
@@ -85,7 +82,8 @@ export function recoverCompatibleSvgArtifact(
     return pending;
   }
   const request = scheduleCompatibleSvgWork((deadlineAt) =>
-    loadCompatibleSvgArtifact(source, requestIdentity, options, deadlineAt))
+    loadCompatibleSvgArtifact(source, requestIdentity, options, deadlineAt)
+  )
     .then((artifact) => {
       if (artifact) {
         rememberCompatibleSvgArtifact(requestIdentity, artifact);
@@ -119,15 +117,17 @@ export function refreshCompatibleSvgPoster(
       remainingMs
     );
     return artifactWithPoster(artifact, poster);
-  }).then((refreshed) => {
-    if (!refreshed) {
-      throw new Error('SVG 海报重建超时');
-    }
-    rememberCompatibleSvgArtifact(artifact.requestIdentity, refreshed);
-    return refreshed;
-  }).finally(() => {
-    compatibleSvgPosterRefreshes.delete(artifact.requestIdentity);
-  });
+  })
+    .then((refreshed) => {
+      if (!refreshed) {
+        throw new Error('SVG 海报重建超时');
+      }
+      rememberCompatibleSvgArtifact(artifact.requestIdentity, refreshed);
+      return refreshed;
+    })
+    .finally(() => {
+      compatibleSvgPosterRefreshes.delete(artifact.requestIdentity);
+    });
   compatibleSvgPosterRefreshes.set(artifact.requestIdentity, request);
   return request;
 }
@@ -146,19 +146,15 @@ async function loadCompatibleSvgArtifact(
     ...(source.headers || {}),
     Accept: 'image/svg+xml,image/*,*/*;q=0.8'
   };
-  const fetchTimeoutMs = Math.min(
-    COMPATIBLE_SVG_TIMEOUT_MS,
-    remainingCompatibleSvgTime(deadlineAt)
-  );
+  const fetchTimeoutMs = Math.min(COMPATIBLE_SVG_TIMEOUT_MS, remainingCompatibleSvgTime(deadlineAt));
   if (fetchTimeoutMs <= 0) {
     return null;
   }
-  const nativeDocument = options.fetcher
-    ? undefined
-    : await fetchBoundedSvgDocument(uri, headers, fetchTimeoutMs);
-  const bytes = nativeDocument === undefined
-    ? await fetchCompatibleSvgBytes(uri, headers, options.fetcher || fetch, fetchTimeoutMs)
-    : nativeDocument && Buffer.from(nativeDocument.base64, 'base64');
+  const nativeDocument = options.fetcher ? undefined : await fetchBoundedSvgDocument(uri, headers, fetchTimeoutMs);
+  const bytes =
+    nativeDocument === undefined
+      ? await fetchCompatibleSvgBytes(uri, headers, options.fetcher || fetch, fetchTimeoutMs)
+      : nativeDocument && Buffer.from(nativeDocument.base64, 'base64');
   if (!bytes || bytes.length > MAX_COMPATIBLE_SVG_BYTES) {
     return null;
   }
@@ -176,12 +172,15 @@ async function loadCompatibleSvgArtifact(
     stableSvgPosterKey(requestIdentity),
     remainingMs
   );
-  return artifactWithPoster({
-    animated: isAnimatedSvg(svg),
-    dimensions: { height: poster.documentHeight, width: poster.documentWidth },
-    documentDataUri: `data:image/svg+xml;base64,${svgBase64}`,
-    requestIdentity
-  }, poster);
+  return artifactWithPoster(
+    {
+      animated: isAnimatedSvg(svg),
+      dimensions: { height: poster.documentHeight, width: poster.documentWidth },
+      documentDataUri: `data:image/svg+xml;base64,${svgBase64}`,
+      requestIdentity
+    },
+    poster
+  );
 }
 
 async function fetchCompatibleSvgBytes(
@@ -190,10 +189,14 @@ async function fetchCompatibleSvgBytes(
   fetcher: Fetcher,
   timeoutMs: number
 ) {
-  const response = await fetchWithTimeout(uri, { headers }, {
-    fetcher,
-    timeoutMs
-  });
+  const response = await fetchWithTimeout(
+    uri,
+    { headers },
+    {
+      fetcher,
+      timeoutMs
+    }
+  );
   if (!response.ok || !isSvgContentType(response.headers.get('content-type'))) {
     return null;
   }
@@ -223,9 +226,7 @@ function artifactWithPoster(
   };
 }
 
-function scheduleCompatibleSvgWork(
-  run: CompatibleSvgWorkItem['run']
-): Promise<CompatibleSvgArtifact | null> {
+function scheduleCompatibleSvgWork(run: CompatibleSvgWorkItem['run']): Promise<CompatibleSvgArtifact | null> {
   if (activeCompatibleSvgWorkItems + compatibleSvgWorkQueue.length >= COMPATIBLE_SVG_MAX_WORK_ITEMS) {
     return Promise.reject(new Error('SVG 兼容队列已满'));
   }
@@ -241,10 +242,7 @@ function scheduleCompatibleSvgWork(
 }
 
 function drainCompatibleSvgWorkQueue() {
-  while (
-    activeCompatibleSvgWorkItems < COMPATIBLE_SVG_WORK_CONCURRENCY
-    && compatibleSvgWorkQueue.length > 0
-  ) {
+  while (activeCompatibleSvgWorkItems < COMPATIBLE_SVG_WORK_CONCURRENCY && compatibleSvgWorkQueue.length > 0) {
     const item = compatibleSvgWorkQueue.shift();
     if (!item) {
       return;
@@ -254,7 +252,8 @@ function drainCompatibleSvgWorkQueue() {
       continue;
     }
     activeCompatibleSvgWorkItems += 1;
-    void item.run(item.deadlineAt)
+    void item
+      .run(item.deadlineAt)
       .then(item.resolve, item.reject)
       .finally(() => {
         activeCompatibleSvgWorkItems -= 1;
@@ -320,9 +319,7 @@ function rememberCompatibleSvgArtifact(identity: string, artifact: CompatibleSvg
 }
 
 function isAnimatedSvg(svg: string) {
-  const animationSource = svg
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const animationSource = svg.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
   if (/<(?:[A-Za-z_][\w.-]*:)?(?:animate(?:color|motion|transform)?|discard|set)(?=[\s/>])/i.test(animationSource)) {
     return true;
   }
@@ -349,16 +346,36 @@ function isAnimatedSvg(svg: string) {
   return false;
 }
 
-const CSS_ANIMATION_NAME_RESET_TOKENS = new Set([
-  'inherit', 'initial', 'none', 'revert', 'revert-layer', 'unset'
-]);
+const CSS_ANIMATION_NAME_RESET_TOKENS = new Set(['inherit', 'initial', 'none', 'revert', 'revert-layer', 'unset']);
 
 const CSS_ANIMATION_NON_NAME_TOKENS = new Set([
-  'accumulate', 'add', 'alternate', 'alternate-reverse', 'auto', 'backwards', 'both',
-  'ease', 'ease-in', 'ease-in-out', 'ease-out', 'forwards',
-  'infinite', 'inherit', 'initial',
-  'linear', 'none', 'normal', 'paused', 'replace', 'reverse', 'revert', 'revert-layer',
-  'running', 'step-end', 'step-start', 'unset'
+  'accumulate',
+  'add',
+  'alternate',
+  'alternate-reverse',
+  'auto',
+  'backwards',
+  'both',
+  'ease',
+  'ease-in',
+  'ease-in-out',
+  'ease-out',
+  'forwards',
+  'infinite',
+  'inherit',
+  'initial',
+  'linear',
+  'none',
+  'normal',
+  'paused',
+  'replace',
+  'reverse',
+  'revert',
+  'revert-layer',
+  'running',
+  'step-end',
+  'step-start',
+  'unset'
 ]);
 
 function stableSvgPosterKey(value: string) {

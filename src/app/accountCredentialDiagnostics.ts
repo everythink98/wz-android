@@ -1,10 +1,5 @@
 import type { CredentialSite, CredentialSummaries, CredentialSummary } from '../credentialVault';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  type DiagnosticTrace
-} from '../diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, type DiagnosticTrace } from '../diagnostics';
 
 const sites = ['nodeseek', 'linuxdo', 'yaohuo'] as const satisfies readonly CredentialSite[];
 
@@ -26,36 +21,38 @@ export async function loadCredentialSummariesWithTrace(
     store: 'secure-store',
     generation
   });
-  const results = await Promise.all(sites.map(async (site) => {
-    try {
-      const summary = await loadSummary(site);
-      markDiagnosticStage(trace, 'credential', {
-        site,
-        store: 'secure-store',
-        state: 'loaded',
-        hasCredential: summary.hasCredential,
-        isInvalidated: summary.state === 'invalidated'
-      });
-      return { ok: true as const, summary };
-    } catch (error) {
-      markDiagnosticStage(trace, 'credential', {
-        site,
-        store: 'secure-store',
-        state: 'failure',
-        reason: 'storage_error'
-      });
-      return { ok: false as const, error };
-    }
-  }));
+  const results = await Promise.all(
+    sites.map(async (site) => {
+      try {
+        const summary = await loadSummary(site);
+        markDiagnosticStage(trace, 'credential', {
+          site,
+          store: 'secure-store',
+          state: 'loaded',
+          hasCredential: summary.hasCredential,
+          isInvalidated: summary.state === 'invalidated'
+        });
+        return { ok: true as const, summary };
+      } catch (error) {
+        markDiagnosticStage(trace, 'credential', {
+          site,
+          store: 'secure-store',
+          state: 'failure',
+          reason: 'storage_error'
+        });
+        return { ok: false as const, error };
+      }
+    })
+  );
   const failures = results.filter((result) => !result.ok);
   if (options.isCurrent && !options.isCurrent()) {
     finishDiagnosticTrace(trace, 'stale', { source: 'all', reason: 'stale', generation });
     return { ok: false, stale: true };
   }
   if (failures.length) {
-    const summaries = Object.fromEntries(results.flatMap((result) => (
-      result.ok ? [[result.summary.site, result.summary] as const] : []
-    ))) as Partial<CredentialSummaries>;
+    const summaries = Object.fromEntries(
+      results.flatMap((result) => (result.ok ? [[result.summary.site, result.summary] as const] : []))
+    ) as Partial<CredentialSummaries>;
     finishDiagnosticTrace(trace, 'partial', {
       source: 'all',
       reason: 'storage_error',
@@ -63,10 +60,12 @@ export async function loadCredentialSummariesWithTrace(
     });
     return { ok: false, error: failures[0].error, summaries };
   }
-  const summaries = Object.fromEntries(results.map((result) => {
-    const summary = result.ok ? result.summary : null;
-    return [summary!.site, summary!];
-  })) as CredentialSummaries;
+  const summaries = Object.fromEntries(
+    results.map((result) => {
+      const summary = result.ok ? result.summary : null;
+      return [summary!.site, summary!];
+    })
+  ) as CredentialSummaries;
   finishDiagnosticTrace(trace, 'success', {
     source: 'all',
     count: results.length,

@@ -1,10 +1,29 @@
 import type { HTMLElement } from 'node-html-parser';
-import { withBrowserFetchIntent, type BrowserFetchIntent, type BrowserFetchOwner, type BrowserFetchPriority } from './browserFetchIntent';
+import {
+  withBrowserFetchIntent,
+  type BrowserFetchIntent,
+  type BrowserFetchOwner,
+  type BrowserFetchPriority
+} from './browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekSession';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
 import type { NodeSeekSearchFilter } from './searchFilters';
-import type { Category, FeedResponse, NodeSeekFeedFilter, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReference, UserReplyActivity } from './types';
+import type {
+  Category,
+  FeedResponse,
+  NodeSeekFeedFilter,
+  RepliesResponse,
+  Reply,
+  SearchResponse,
+  Topic,
+  TopicDetail,
+  TopicPoll,
+  TopicPollOption,
+  UserProfile,
+  UserReference,
+  UserReplyActivity
+} from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -32,7 +51,12 @@ import {
   withNodeSeekReplyPagination
 } from './localNodeseekHelpers';
 import { nodeSeekMarkdownToHtml } from './nodeSeekMarkdown';
-import { NODESEEK_VOTE_API_HEADERS, nodeSeekPollPlaceholderHtml, normalizeNodeSeekVoteInfo, stripLoadedNodeSeekVoteMarkers } from './nodeseekPolls';
+import {
+  NODESEEK_VOTE_API_HEADERS,
+  nodeSeekPollPlaceholderHtml,
+  normalizeNodeSeekVoteInfo,
+  stripLoadedNodeSeekVoteMarkers
+} from './nodeseekPolls';
 import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from './sourceAdapterDiagnostics';
 
 const BASE_URL = NODESEEK_BASE_URL;
@@ -94,19 +118,16 @@ function nodeSeekSignatureHtml(signature: unknown) {
 }
 
 function parseViewCount(value: unknown) {
-  const match = String(value || '').replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*(万|千|w|k|m)?/i);
+  const match = String(value || '')
+    .replace(/,/g, '')
+    .match(/(\d+(?:\.\d+)?)\s*(万|千|w|k|m)?/i);
   if (!match) {
     return undefined;
   }
   const number = Number(match[1]);
   const suffix = match[2]?.toLowerCase();
-  const multiplier = suffix === '万' || suffix === 'w'
-    ? 10000
-    : suffix === '千' || suffix === 'k'
-      ? 1000
-      : suffix === 'm'
-        ? 1000000
-        : 1;
+  const multiplier =
+    suffix === '万' || suffix === 'w' ? 10000 : suffix === '千' || suffix === 'k' ? 1000 : suffix === 'm' ? 1000000 : 1;
   const count = Math.round(number * multiplier);
   return count || undefined;
 }
@@ -165,9 +186,7 @@ function nodeSeekElementHasAttribute(element: HTMLElement, name: string) {
 }
 
 function nodeSeekParentElement(element: HTMLElement | null | undefined) {
-  return element?.parentNode && 'rawTagName' in element.parentNode
-    ? element.parentNode as HTMLElement
-    : null;
+  return element?.parentNode && 'rawTagName' in element.parentNode ? (element.parentNode as HTMLElement) : null;
 }
 
 function nearestNodeSeekLabel(element: HTMLElement) {
@@ -186,9 +205,7 @@ function nodeSeekPollCountFromElement(element: HTMLElement | null | undefined) {
     return undefined;
   }
   const dataCount = optionalInteger(
-    element.getAttribute('data-count')
-    || element.getAttribute('data-votes')
-    || element.getAttribute('aria-label')
+    element.getAttribute('data-count') || element.getAttribute('data-votes') || element.getAttribute('aria-label')
   );
   if (dataCount !== undefined) {
     return dataCount;
@@ -211,38 +228,43 @@ function cleanNodeSeekPollOptionLabel(value: string, countText?: string) {
 }
 
 function nodeSeekPollIdFromForm(form: HTMLElement, fallbackIndex: number) {
-  const hiddenId = form.querySelectorAll('input[type="hidden"]').find((input) => (
-    /^(?:vote_?id|id)$/i.test(String(input.getAttribute('name') || ''))
-    && String(input.getAttribute('value') || '').trim()
-  ));
+  const hiddenId = form
+    .querySelectorAll('input[type="hidden"]')
+    .find(
+      (input) =>
+        /^(?:vote_?id|id)$/i.test(String(input.getAttribute('name') || '')) &&
+        String(input.getAttribute('value') || '').trim()
+    );
   const linkedId = elementText(form).match(/nsapp:\/\/vote\?id=(\d+)/i)?.[1];
-  const rawId = form.getAttribute('data-vote-id')
-    || form.getAttribute('data-voteid')
-    || form.getAttribute('data-id')
-    || hiddenId?.getAttribute('value')
-    || linkedId
-    || String(form.getAttribute('id') || '').match(/(?:vote|poll)[-_]?(\d+)/i)?.[1]
-    || '';
+  const rawId =
+    form.getAttribute('data-vote-id') ||
+    form.getAttribute('data-voteid') ||
+    form.getAttribute('data-id') ||
+    hiddenId?.getAttribute('value') ||
+    linkedId ||
+    String(form.getAttribute('id') || '').match(/(?:vote|poll)[-_]?(\d+)/i)?.[1] ||
+    '';
   return String(rawId || `rendered-${fallbackIndex}`).trim();
 }
 
 function nodeSeekPollTitleFromForm(form: HTMLElement) {
-  const titleElement = form.querySelector('legend')
-    || form.querySelector('.vote-title')
-    || form.querySelector('.poll-title')
-    || form.querySelector('[data-title]')
-    || form.querySelector('h1, h2, h3, h4');
+  const titleElement =
+    form.querySelector('legend') ||
+    form.querySelector('.vote-title') ||
+    form.querySelector('.poll-title') ||
+    form.querySelector('[data-title]') ||
+    form.querySelector('h1, h2, h3, h4');
   const title = titleElement?.getAttribute('data-title') || elementText(titleElement);
   return title.trim() || undefined;
 }
 
 function nodeSeekPollOptionFromInput(form: HTMLElement, input: HTMLElement): TopicPollOption | null {
   const id = String(
-    input.getAttribute('value')
-    || input.getAttribute('data-vote-item-id')
-    || input.getAttribute('data-item-id')
-    || input.getAttribute('id')
-    || ''
+    input.getAttribute('value') ||
+      input.getAttribute('data-vote-item-id') ||
+      input.getAttribute('data-item-id') ||
+      input.getAttribute('id') ||
+      ''
   ).trim();
   if (!id) {
     return null;
@@ -263,7 +285,9 @@ function nodeSeekPollOptionFromInput(form: HTMLElement, input: HTMLElement): Top
     id,
     label,
     ...(count !== undefined ? { count } : {}),
-    selected: nodeSeekElementHasAttribute(input, 'checked') || /(?:selected|active|checked)/i.test(String(labelContainer?.getAttribute('class') || ''))
+    selected:
+      nodeSeekElementHasAttribute(input, 'checked') ||
+      /(?:selected|active|checked)/i.test(String(labelContainer?.getAttribute('class') || ''))
   };
 }
 
@@ -302,8 +326,12 @@ function parseRenderedNodeSeekPollForms(html: string) {
       form.getAttribute('data-voteid'),
       elementText(form)
     ].join(' ');
-    return /vote|poll/i.test(marker)
-      || form.querySelectorAll('input[type="radio"], input[type="checkbox"]').some((input) => /^(?:ids?|ids\[\]|vote|vote-item|option)$/i.test(String(input.getAttribute('name') || '')));
+    return (
+      /vote|poll/i.test(marker) ||
+      form
+        .querySelectorAll('input[type="radio"], input[type="checkbox"]')
+        .some((input) => /^(?:ids?|ids\[\]|vote|vote-item|option)$/i.test(String(input.getAttribute('name') || '')))
+    );
   });
   const parsedPolls = forms.map((form, index): TopicPoll | null => {
     const inputs = form.querySelectorAll('input[type="radio"], input[type="checkbox"]');
@@ -315,12 +343,9 @@ function parseRenderedNodeSeekPollForms(html: string) {
     }
     const formText = elementText(form);
     const explicitMultiple = optionalBoolean(form.getAttribute('data-multiple') ?? form.getAttribute('multiple'));
-    const multiple = explicitMultiple ?? inputs.some((input) => String(input.getAttribute('type') || '').toLowerCase() === 'checkbox');
-    const publicState = /不公开|匿名/.test(formText)
-      ? false
-      : /公开/.test(formText)
-        ? true
-        : undefined;
+    const multiple =
+      explicitMultiple ?? inputs.some((input) => String(input.getAttribute('type') || '').toLowerCase() === 'checkbox');
+    const publicState = /不公开|匿名/.test(formText) ? false : /公开/.test(formText) ? true : undefined;
     const closed = /已关闭|投票关闭|closed/i.test(formText) || undefined;
     const voted = options.some((option) => option.selected) || /已投票|已选择|voted/i.test(formText) || undefined;
     return {
@@ -337,7 +362,7 @@ function parseRenderedNodeSeekPollForms(html: string) {
   const replacements = new Map<string, { end: number; html: string; start: number }>();
   forms.forEach((form, index) => {
     const poll = parsedPolls[index];
-    const target = poll?.id ? (form.closest('.vote-panel') || form) : form;
+    const target = poll?.id ? form.closest('.vote-panel') || form : form;
     const [start, end] = target.range;
     replacements.set(`${start}:${end}`, {
       end,
@@ -347,9 +372,11 @@ function parseRenderedNodeSeekPollForms(html: string) {
   });
   const replacedHtml = [...replacements.values()]
     .sort((left, right) => right.start - left.start)
-    .reduce((source, replacement) => (
-      `${source.slice(0, replacement.start)}${replacement.html}${source.slice(replacement.end)}`
-    ), wrappedHtml);
+    .reduce(
+      (source, replacement) =>
+        `${source.slice(0, replacement.start)}${replacement.html}${source.slice(replacement.end)}`,
+      wrappedHtml
+    );
   const cleanedRoot = parseHtml(replacedHtml);
   removeEmptyRenderedNodeSeekPollShells(cleanedRoot);
   const cleaned = cleanedRoot.querySelector('body')?.innerHTML || '';
@@ -359,7 +386,7 @@ function parseRenderedNodeSeekPollForms(html: string) {
   };
 }
 
-function mergeNodeSeekPolls(...groups: Array<TopicPoll[] | undefined>) {
+function mergeNodeSeekPolls(...groups: (TopicPoll[] | undefined)[]) {
   const seen = new Set<string>();
   const polls: TopicPoll[] = [];
   for (const group of groups) {
@@ -386,22 +413,25 @@ async function readNodeSeekPollsFromVoteLinks(
     return { partialErrorCount: 0, polls: undefined };
   }
   let partialErrorCount = 0;
-  const polls = (await Promise.all(ids.map(async (id) => {
-    try {
-      const poll = normalizeNodeSeekVoteInfo(await fetchNodeSeekJson(
-        `/api/vote/info/${encodeURIComponent(id)}`,
-        options,
-        NODESEEK_VOTE_API_HEADERS
-      ), id);
-      if (!poll) {
-        partialErrorCount += 1;
-      }
-      return poll;
-    } catch {
-      partialErrorCount += 1;
-      return null;
-    }
-  }))).filter((poll): poll is TopicPoll => Boolean(poll));
+  const polls = (
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const poll = normalizeNodeSeekVoteInfo(
+            await fetchNodeSeekJson(`/api/vote/info/${encodeURIComponent(id)}`, options, NODESEEK_VOTE_API_HEADERS),
+            id
+          );
+          if (!poll) {
+            partialErrorCount += 1;
+          }
+          return poll;
+        } catch {
+          partialErrorCount += 1;
+          return null;
+        }
+      })
+    )
+  ).filter((poll): poll is TopicPoll => Boolean(poll));
   return {
     partialErrorCount,
     polls: polls.length ? polls : undefined
@@ -414,13 +444,14 @@ function nodeSeekEmbeddedUserId(user: Record<string, unknown>) {
 
 function nodeSeekLevelLabel(user: Record<string, unknown>) {
   const value = user.rank;
-  const level = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  const level =
+    typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
   return Number.isInteger(level) && level >= 0 ? `Lv${level}` : undefined;
 }
 
 function nodeSeekRoleLabel(user: Record<string, unknown>) {
   const labels = (Array.isArray(user.roles) ? user.roles : [])
-    .map((role) => isRecord(role) ? String(role.display_text || role.displayText || role.name || '').trim() : '')
+    .map((role) => (isRecord(role) ? String(role.display_text || role.displayText || role.name || '').trim() : ''))
     .filter((label) => label && label !== '楼主');
   return labels.join(' · ') || undefined;
 }
@@ -470,7 +501,15 @@ function arrayField(value: unknown) {
 
 function nodeSeekCreatedAt(raw: Record<string, unknown>) {
   const time = isRecord(raw.time) ? raw.time : {};
-  return toIsoString(raw.created_at || raw.createdAt || raw.createdDate || time.created_at || time.createdAt || time.createdDate || raw.time);
+  return toIsoString(
+    raw.created_at ||
+      raw.createdAt ||
+      raw.createdDate ||
+      time.created_at ||
+      time.createdAt ||
+      time.createdDate ||
+      raw.time
+  );
 }
 
 function nodeSeekReplyCountValue(value: unknown) {
@@ -481,15 +520,17 @@ function nodeSeekReplyCountValue(value: unknown) {
 }
 
 function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>, fallback = 0) {
-  const explicitReplyCount = nodeSeekReplyCountValue(raw.replyCount)
-    ?? nodeSeekReplyCountValue(raw.replies)
-    ?? nodeSeekReplyCountValue(raw.reply_count);
+  const explicitReplyCount =
+    nodeSeekReplyCountValue(raw.replyCount) ??
+    nodeSeekReplyCountValue(raw.replies) ??
+    nodeSeekReplyCountValue(raw.reply_count);
   if (explicitReplyCount !== undefined) {
     return explicitReplyCount;
   }
-  const totalComments = nodeSeekReplyCountValue(raw.comments)
-    ?? nodeSeekReplyCountValue(raw.commentCount)
-    ?? nodeSeekReplyCountValue(raw.comment_count);
+  const totalComments =
+    nodeSeekReplyCountValue(raw.comments) ??
+    nodeSeekReplyCountValue(raw.commentCount) ??
+    nodeSeekReplyCountValue(raw.comment_count);
   return totalComments !== undefined ? Math.max(totalComments - 1, 0) : fallback;
 }
 
@@ -505,7 +546,12 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   const createdAt = nodeSeekCreatedAt(raw) || new Date().toISOString();
   const lastReplyAt = toIsoString(raw.updatedDate || raw.lastReplyAt) || createdAt;
   const categoryId = typeof category.key === 'string' ? category.key : undefined;
-  const categoryName = typeof category.name === 'string' ? category.name : typeof raw.categoryWord === 'string' ? raw.categoryWord : undefined;
+  const categoryName =
+    typeof category.name === 'string'
+      ? category.name
+      : typeof raw.categoryWord === 'string'
+        ? raw.categoryWord
+        : undefined;
   const accessRequirement = accessRequirementFromObject(raw);
   return {
     source: 'nodeseek',
@@ -544,7 +590,12 @@ function sortNodeSeekUserTopics(topics: Topic[]) {
     .map((item) => item.topic);
 }
 
-function normalizeNodeSeekUserReply(raw: Record<string, unknown>, username: string, userId: string, avatar?: string): UserReplyActivity | null {
+function normalizeNodeSeekUserReply(
+  raw: Record<string, unknown>,
+  username: string,
+  userId: string,
+  avatar?: string
+): UserReplyActivity | null {
   const topicId = String(raw.post_id || raw.postId || raw.id || '').trim();
   const topicTitle = String(raw.title || raw.titleText || '').trim();
   if (!topicId || !topicTitle) {
@@ -570,11 +621,10 @@ function normalizeNodeSeekUserReply(raw: Record<string, unknown>, username: stri
 }
 
 function embeddedTopics(data: Record<string, unknown>) {
-  return [
-    ...arrayField(data.rotateTopics),
-    ...arrayField(data.topicList),
-    ...arrayField(data.posts)
-  ].filter(isRecord).map((topic) => normalizeTopic(topic)).filter(Boolean) as Topic[];
+  return [...arrayField(data.rotateTopics), ...arrayField(data.topicList), ...arrayField(data.posts)]
+    .filter(isRecord)
+    .map((topic) => normalizeTopic(topic))
+    .filter(Boolean) as Topic[];
 }
 
 function nodeSeekSearchTopicUrl(id: string, href: string) {
@@ -666,7 +716,9 @@ function parseNodeSeekSearchTopics(html: string) {
   const embedded = extractNodeSeekEmbeddedData(html);
   const renderedItems = parseHtmlTopics(html);
   const root = parseHtml(html);
-  const hasSearchSurface = Boolean(root.querySelector('form[action*="/search"], input[name="q"], .post-list, .empty-state, .notice, .alert'));
+  const hasSearchSurface = Boolean(
+    root.querySelector('form[action*="/search"], input[name="q"], .post-list, .empty-state, .notice, .alert')
+  );
   const useRenderedSearch = renderedItems.length > 0 || hasSearchSurface;
   const hasPostList = Boolean(root.querySelector('.post-list'));
   const renderedCandidateCount = hasPostList
@@ -683,10 +735,12 @@ function parseNodeSeekSearchTopics(html: string) {
   const candidateCount = useRenderedSearch
     ? renderedCandidateCount
     : embedded
-      ? arrayField(embedded.rotateTopics).length + arrayField(embedded.topicList).length + arrayField(embedded.posts).length
+      ? arrayField(embedded.rotateTopics).length +
+        arrayField(embedded.topicList).length +
+        arrayField(embedded.posts).length
       : 0;
   const seen = new Set<string>();
-  const items = useRenderedSearch ? renderedItems : (embedded ? embeddedTopics(embedded) : []);
+  const items = useRenderedSearch ? renderedItems : embedded ? embeddedTopics(embedded) : [];
   return {
     candidateCount,
     items: items.filter((topic) => {
@@ -712,11 +766,13 @@ function isIncompleteNodeSeekSearchPage(html: string, items: Topic[]) {
 }
 
 function normalizeCategories(data: Record<string, unknown>) {
-  return arrayField(data.allCategory).filter(isRecord).flatMap((category) => {
-    const id = String(category.key || category.id || '').trim();
-    const name = String(category.cn_text || category.name || category.text || '').trim();
-    return id && name && !category.adminOnly ? [{ source: 'nodeseek' as const, id, name }] : [];
-  });
+  return arrayField(data.allCategory)
+    .filter(isRecord)
+    .flatMap((category) => {
+      const id = String(category.key || category.id || '').trim();
+      const name = String(category.cn_text || category.name || category.text || '').trim();
+      return id && name && !category.adminOnly ? [{ source: 'nodeseek' as const, id, name }] : [];
+    });
 }
 
 function mergeNodeSeekCategories(categories: Category[]) {
@@ -733,18 +789,20 @@ function mergeNodeSeekCategories(categories: Category[]) {
 
 function parseHtmlCategories(html: string) {
   const root = parseHtml(html);
-  return mergeNodeSeekCategories(root.querySelectorAll('a[href*="/categories/"]').flatMap((link) => {
-    const id = link.getAttribute('href')?.match(/\/categories\/([^/?#]+)/)?.[1];
-    const name = elementText(link).replace(/^#/, '').trim();
-    if (!id || !name) {
-      return [];
-    }
-    try {
-      return [{ source: 'nodeseek' as const, id: decodeURIComponent(id), name }];
-    } catch {
-      return [];
-    }
-  }));
+  return mergeNodeSeekCategories(
+    root.querySelectorAll('a[href*="/categories/"]').flatMap((link) => {
+      const id = link.getAttribute('href')?.match(/\/categories\/([^/?#]+)/)?.[1];
+      const name = elementText(link).replace(/^#/, '').trim();
+      if (!id || !name) {
+        return [];
+      }
+      try {
+        return [{ source: 'nodeseek' as const, id: decodeURIComponent(id), name }];
+      } catch {
+        return [];
+      }
+    })
+  );
 }
 
 function nodeSeekCloudflareError() {
@@ -770,9 +828,16 @@ async function fetchNodeSeekText(
     'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT,
     ...requestHeaders
   };
-  const response = await fetchWithTimeout(`${BASE_URL}${path}`, withBrowserFetchIntent({
-    headers
-  }, requestOptions.browserFetchIntent || { owner: 'feed', priority: 'foreground' }), requestOptions);
+  const response = await fetchWithTimeout(
+    `${BASE_URL}${path}`,
+    withBrowserFetchIntent(
+      {
+        headers
+      },
+      requestOptions.browserFetchIntent || { owner: 'feed', priority: 'foreground' }
+    ),
+    requestOptions
+  );
   const text = await response.text();
   if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`)) {
     throw nodeSeekCloudflareError();
@@ -795,12 +860,19 @@ function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
 
 async function fetchNodeSeekGoogleSearchText(query: string, page: number, options: NodeSeekOptions = {}) {
   const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
-  const response = await fetchWithTimeout(googleSiteSearchUrl('nodeseek.com', query, page), withBrowserFetchIntent({
-    headers: {
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
-      'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
-    }
-  }, requestOptions.browserFetchIntent || { owner: 'search', priority: 'foreground' }), requestOptions);
+  const response = await fetchWithTimeout(
+    googleSiteSearchUrl('nodeseek.com', query, page),
+    withBrowserFetchIntent(
+      {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
+          'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
+        }
+      },
+      requestOptions.browserFetchIntent || { owner: 'search', priority: 'foreground' }
+    ),
+    requestOptions
+  );
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -850,24 +922,18 @@ function searchPath(query: string, page = 1, filter?: NodeSeekSearchFilter) {
 
 function nextSearchPath(html: string, fallbackPage: number) {
   const root = parseHtml(html);
-  const links = [
-    ...root.querySelectorAll('a[rel="next"]'),
-    ...root.querySelectorAll('a[href*="page="]')
-  ];
+  const links = [...root.querySelectorAll('a[rel="next"]'), ...root.querySelectorAll('a[href*="page="]')];
   const href = links
     .map((link) => ({
       href: link.getAttribute('href') || '',
       label: elementText(link),
       rel: String(link.getAttribute('rel') || '')
     }))
-    .find((link) => (
-      link.href
-      && (
-        /next/i.test(link.rel)
-        || /下一|Next/i.test(link.label)
-        || link.href.includes(`page=${fallbackPage}`)
-      )
-    ))?.href;
+    .find(
+      (link) =>
+        link.href &&
+        (/next/i.test(link.rel) || /下一|Next/i.test(link.label) || link.href.includes(`page=${fallbackPage}`))
+    )?.href;
 
   if (!href) {
     return null;
@@ -890,12 +956,14 @@ function listPath(page: number, category?: string, feedFilter: NodeSeekFeedFilte
   return `${path}?sortBy=${feedFilter}`;
 }
 
-export async function getNodeSeekFeed(options: NodeSeekOptions & {
-  page?: number;
-  limit?: number;
-  category?: string;
-  feedFilter?: NodeSeekFeedFilter;
-} = {}): Promise<FeedResponse> {
+export async function getNodeSeekFeed(
+  options: NodeSeekOptions & {
+    page?: number;
+    limit?: number;
+    category?: string;
+    feedFilter?: NodeSeekFeedFilter;
+  } = {}
+): Promise<FeedResponse> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
@@ -903,9 +971,11 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
   const html = await fetchNodeSeekText(listPath(page, options.category, feedFilter), requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
   const renderedItems = parseHtmlTopics(html);
-  const items = renderedItems.length ? renderedItems : (embedded ? embeddedTopics(embedded) : []);
+  const items = renderedItems.length ? renderedItems : embedded ? embeddedTopics(embedded) : [];
   const filtered = options.category
-    ? items.filter((item) => !item.categoryId || item.categoryId === options.category || item.category === options.category)
+    ? items.filter(
+        (item) => !item.categoryId || item.categoryId === options.category || item.category === options.category
+      )
     : items;
   const nextPage = nextNodeSeekListPage(html, page);
   const hasMore = Boolean(nextPage);
@@ -916,7 +986,9 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
     nextPage: nextPage || null
   };
   const embeddedCandidateCount = embedded
-    ? arrayField(embedded.rotateTopics).length + arrayField(embedded.topicList).length + arrayField(embedded.posts).length
+    ? arrayField(embedded.rotateTopics).length +
+      arrayField(embedded.topicList).length +
+      arrayField(embedded.posts).length
     : 0;
   const renderedCandidateCount = Math.max(
     (html.match(/<li\b[^>]*\bpost-list-item\b/gi) || []).length,
@@ -938,13 +1010,10 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'foreground');
   const html = await fetchNodeSeekText('/', requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
-  const embeddedCategories = embedded ? normalizeCategories(embedded) : [] as Category[];
+  const embeddedCategories = embedded ? normalizeCategories(embedded) : ([] as Category[]);
   const htmlCategories = parseHtmlCategories(html);
   const result = {
-    items: mergeNodeSeekCategories([
-      ...embeddedCategories,
-      ...htmlCategories
-    ]),
+    items: mergeNodeSeekCategories([...embeddedCategories, ...htmlCategories]),
     errors: {}
   };
   const candidateCount = embeddedCategories.length
@@ -959,41 +1028,47 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   });
 }
 
-function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffset = 0 }: { skipFirst: boolean; start?: number; floorOffset?: number }) {
+function normalizeReplies(
+  comments: unknown[],
+  { skipFirst, start = 0, floorOffset = 0 }: { skipFirst: boolean; start?: number; floorOffset?: number }
+) {
   const source = skipFirst ? comments.slice(1) : comments;
-  return source.slice(start).filter(isRecord).map((comment, index) => {
-    const poster = isRecord(comment.poster) ? comment.poster : {};
-    const authorId = nodeSeekEmbeddedUserId(poster);
-    const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
-    const authorLevelLabel = nodeSeekRoleLabel(poster);
-    const rawMarkdown = typeof comment.markdown === 'string' ? comment.markdown : '';
-    const contentMarkdown = nodeSeekEditableMarkdown(rawMarkdown);
-    const signatureHtml = nodeSeekSignatureHtml(comment.signature);
-    const floorIndex = optionalInteger(comment.floorIndex ?? comment.floor);
-    return {
-      author: String(poster.name || ''),
-      authorAvatar: absoluteUrl(poster.avatar, BASE_URL),
-      authorId: authorId || undefined,
-      authorUrl,
-      ...(authorLevelLabel ? { authorLevelLabel } : {}),
-      contentHtml: nodeSeekDisplayHtml(comment.content, rawMarkdown),
-      ...(contentMarkdown ? { contentMarkdown } : {}),
-      createdAt: toIsoString(isRecord(comment.time) ? comment.time.createdDate : comment.createdDate),
-      floor: floorIndex ?? floorOffset + start + index + 1,
-      commentId: optionalInteger(comment.commentId),
-      upvoteCount: optionalInteger(comment.upvoteCount),
-      likeCount: optionalInteger(comment.likeCount),
-      dislikeCount: optionalInteger(comment.dislikeCount),
-      upvoted: optionalBoolean(comment.upvoted),
-      liked: optionalBoolean(comment.liked),
-      disliked: optionalBoolean(comment.disliked),
-      ...(poster.isMe === true ? { canEdit: true, canLike: false } : {}),
-      isOp: poster.isOp === true || String(poster.info || '').trim() === '楼主' || undefined,
-      hot: comment.hot === true || undefined,
-      pinned: comment.pined === true || comment.pinned === true || undefined,
-      signatureHtml
-    };
-  });
+  return source
+    .slice(start)
+    .filter(isRecord)
+    .map((comment, index) => {
+      const poster = isRecord(comment.poster) ? comment.poster : {};
+      const authorId = nodeSeekEmbeddedUserId(poster);
+      const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
+      const authorLevelLabel = nodeSeekRoleLabel(poster);
+      const rawMarkdown = typeof comment.markdown === 'string' ? comment.markdown : '';
+      const contentMarkdown = nodeSeekEditableMarkdown(rawMarkdown);
+      const signatureHtml = nodeSeekSignatureHtml(comment.signature);
+      const floorIndex = optionalInteger(comment.floorIndex ?? comment.floor);
+      return {
+        author: String(poster.name || ''),
+        authorAvatar: absoluteUrl(poster.avatar, BASE_URL),
+        authorId: authorId || undefined,
+        authorUrl,
+        ...(authorLevelLabel ? { authorLevelLabel } : {}),
+        contentHtml: nodeSeekDisplayHtml(comment.content, rawMarkdown),
+        ...(contentMarkdown ? { contentMarkdown } : {}),
+        createdAt: toIsoString(isRecord(comment.time) ? comment.time.createdDate : comment.createdDate),
+        floor: floorIndex ?? floorOffset + start + index + 1,
+        commentId: optionalInteger(comment.commentId),
+        upvoteCount: optionalInteger(comment.upvoteCount),
+        likeCount: optionalInteger(comment.likeCount),
+        dislikeCount: optionalInteger(comment.dislikeCount),
+        upvoted: optionalBoolean(comment.upvoted),
+        liked: optionalBoolean(comment.liked),
+        disliked: optionalBoolean(comment.disliked),
+        ...(poster.isMe === true ? { canEdit: true, canLike: false } : {}),
+        isOp: poster.isOp === true || String(poster.info || '').trim() === '楼主' || undefined,
+        hot: comment.hot === true || undefined,
+        pinned: comment.pined === true || comment.pinned === true || undefined,
+        signatureHtml
+      };
+    });
 }
 
 function normalizePostData(data: Record<string, unknown>, id: string, url: string, replyLimit = 30): TopicDetail {
@@ -1003,20 +1078,23 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   const poster = isRecord(first.poster) ? first.poster : {};
   const category = isRecord(data.category) ? data.category : isRecord(data.node) ? data.node : {};
   const categoryLink = String(data.categoryLink || '');
-  const categoryId = typeof category.key === 'string'
-    ? category.key
-    : typeof data.category === 'string'
-      ? data.category
-      : categoryLink.match(/\/categories\/([^/?#]+)/)?.[1];
-  const categoryName = typeof category.name === 'string'
-    ? category.name
-    : typeof data.categoryWord === 'string'
-      ? data.categoryWord
-      : undefined;
+  const categoryId =
+    typeof category.key === 'string'
+      ? category.key
+      : typeof data.category === 'string'
+        ? data.category
+        : categoryLink.match(/\/categories\/([^/?#]+)/)?.[1];
+  const categoryName =
+    typeof category.name === 'string'
+      ? category.name
+      : typeof data.categoryWord === 'string'
+        ? data.categoryWord
+        : undefined;
   const allReplies = normalizeReplies(comments, { skipFirst: true });
   const replies = allReplies.slice(0, replyLimit);
   const replyCount = nodeSeekEmbeddedReplyCount(data, allReplies.length);
-  const createdAt = toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
+  const createdAt =
+    toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
   const lastComment = comments.at(-1);
   let lastCommentDate: unknown;
   if (isRecord(lastComment)) {
@@ -1025,7 +1103,8 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   const lastReplyAt = toIsoString(lastCommentDate || data.updatedDate) || createdAt;
   const accessRequirement = accessRequirementFromObject(data);
   const authorId = nodeSeekEmbeddedUserId(op) || nodeSeekEmbeddedUserId(poster);
-  const authorUrl = absoluteUrl(op.profile || poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
+  const authorUrl =
+    absoluteUrl(op.profile || poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
   const authorLevelLabel = nodeSeekRoleLabel(poster) || nodeSeekRoleLabel(op);
   return {
     source: 'nodeseek',
@@ -1089,11 +1168,11 @@ function mergeRenderedNodeSeekReply(rendered: Reply, embedded?: Reply): Reply {
 }
 
 function matchingEmbeddedNodeSeekReply(reply: Reply, embeddedReplies: Reply[]) {
-  return embeddedReplies.find((item) => (
+  return embeddedReplies.find((item) =>
     reply.commentId && item.commentId
       ? item.commentId === reply.commentId
       : Boolean(reply.floor && item.floor === reply.floor)
-  ));
+  );
 }
 
 function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: TopicDetail): TopicDetail {
@@ -1105,7 +1184,9 @@ function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: TopicDetai
     return { ...rendered, replies: renderedReplies };
   }
   const replies = renderedReplies.length
-    ? renderedReplies.map((reply) => mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embedded.replies)))
+    ? renderedReplies.map((reply) =>
+        mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embedded.replies))
+      )
     : embedded.replies;
   return {
     ...embedded,
@@ -1150,11 +1231,16 @@ function renderedNodeSeekAuthor(element: HTMLElement | null | undefined) {
   if (!element) {
     return '';
   }
-  return elementText(element.querySelector('.author-name'))
-    || elementText(element.querySelector('.comment-author'))
-    || elementText(element.querySelector('.reply-author'))
-    || element.querySelectorAll('a[href*="/space/"]').map((link) => elementText(link)).find(Boolean)
-    || '';
+  return (
+    elementText(element.querySelector('.author-name')) ||
+    elementText(element.querySelector('.comment-author')) ||
+    elementText(element.querySelector('.reply-author')) ||
+    element
+      .querySelectorAll('a[href*="/space/"]')
+      .map((link) => elementText(link))
+      .find(Boolean) ||
+    ''
+  );
 }
 
 function renderedNodeSeekAvatar(element: HTMLElement | null | undefined) {
@@ -1162,7 +1248,11 @@ function renderedNodeSeekAvatar(element: HTMLElement | null | undefined) {
     return undefined;
   }
   return absoluteUrl(
-    element.querySelector('.author-info a[href*="/space/"] img, .post-info a[href*="/space/"] img, .comment-author img, .reply-author img, a[href*="/space/"] img, img.avatar')?.getAttribute('src'),
+    element
+      .querySelector(
+        '.author-info a[href*="/space/"] img, .post-info a[href*="/space/"] img, .comment-author img, .reply-author img, a[href*="/space/"] img, img.avatar'
+      )
+      ?.getAttribute('src'),
     BASE_URL
   );
 }
@@ -1180,15 +1270,19 @@ function renderedNodeSeekReactionItem(element: HTMLElement | null | undefined, k
   if (!element) {
     return null;
   }
-  return element.querySelectorAll('.comment-menu .menu-item').find((item) => {
-    const haystack = [
-      item.getAttribute('title'),
-      item.getAttribute('aria-label'),
-      item.getAttribute('class'),
-      item.innerHTML
-    ].join(' ').toLowerCase();
-    return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
-  }) || null;
+  return (
+    element.querySelectorAll('.comment-menu .menu-item').find((item) => {
+      const haystack = [
+        item.getAttribute('title'),
+        item.getAttribute('aria-label'),
+        item.getAttribute('class'),
+        item.innerHTML
+      ]
+        .join(' ')
+        .toLowerCase();
+      return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+    }) || null
+  );
 }
 
 function renderedNodeSeekReactionCount(element: HTMLElement | null | undefined, keywords: string[]) {
@@ -1197,16 +1291,20 @@ function renderedNodeSeekReactionCount(element: HTMLElement | null | undefined, 
     return undefined;
   }
   return optionalInteger(
-    elementText(item.querySelector('span'))
-    || item.getAttribute('data-count')
-    || item.getAttribute('title')
-    || elementText(item)
+    elementText(item.querySelector('span')) ||
+      item.getAttribute('data-count') ||
+      item.getAttribute('title') ||
+      elementText(item)
   );
 }
 
 function renderedNodeSeekReactionClicked(element: HTMLElement | null | undefined, keywords: string[]) {
   const item = renderedNodeSeekReactionItem(element, keywords);
-  return item ? String(item.getAttribute('class') || '').split(/\s+/).includes('clicked') || undefined : undefined;
+  return item
+    ? String(item.getAttribute('class') || '')
+        .split(/\s+/)
+        .includes('clicked') || undefined
+    : undefined;
 }
 
 function renderedNodeSeekSignature(element: HTMLElement | null | undefined) {
@@ -1215,13 +1313,23 @@ function renderedNodeSeekSignature(element: HTMLElement | null | undefined) {
 }
 
 function renderedNodeSeekIsOp(element: HTMLElement | null | undefined) {
-  return Boolean(element?.querySelector('.is-poster, .poster-badge') || elementText(element?.querySelector('.role-tag')).trim() === '楼主') || undefined;
+  return (
+    Boolean(
+      element?.querySelector('.is-poster, .poster-badge') ||
+      elementText(element?.querySelector('.role-tag')).trim() === '楼主'
+    ) || undefined
+  );
 }
 
 function renderedNodeSeekRoleLabel(element: HTMLElement | null | undefined) {
   const authorInfo = element?.querySelector('.author-info, .post-info, .comment-author, .reply-author') || element;
   const labels = (authorInfo?.querySelectorAll('.role-tag, .nsk-badge') || [])
-    .filter((badge) => !String(badge.getAttribute('class') || '').split(/\s+/).some((className) => className === 'is-poster' || className === 'poster-badge'))
+    .filter(
+      (badge) =>
+        !String(badge.getAttribute('class') || '')
+          .split(/\s+/)
+          .some((className) => className === 'is-poster' || className === 'poster-badge')
+    )
     .map((badge) => elementText(badge))
     .filter((label) => label && label !== '楼主');
   return labels.join(' · ') || undefined;
@@ -1232,16 +1340,18 @@ function nodeSeekMetaContent(root: ReturnType<typeof parseHtml>, selector: strin
 }
 
 function nodeSeekRenderedTitle(root: ReturnType<typeof parseHtml>, restrictedNotice?: string) {
-  const titleElement = root.querySelector('.post-title a')
-    || root.querySelector('a.post-title')
-    || root.querySelector('article .post-title')
-    || root.querySelector('.post-detail .post-title')
-    || root.querySelector('.post-title')
-    || root.querySelector('h1');
-  const title = elementText(titleElement)
-    || nodeSeekMetaContent(root, 'meta[property="og:title"]')
-    || nodeSeekMetaContent(root, 'meta[name="twitter:title"]')
-    || elementText(root.querySelector('title'));
+  const titleElement =
+    root.querySelector('.post-title a') ||
+    root.querySelector('a.post-title') ||
+    root.querySelector('article .post-title') ||
+    root.querySelector('.post-detail .post-title') ||
+    root.querySelector('.post-title') ||
+    root.querySelector('h1');
+  const title =
+    elementText(titleElement) ||
+    nodeSeekMetaContent(root, 'meta[property="og:title"]') ||
+    nodeSeekMetaContent(root, 'meta[name="twitter:title"]') ||
+    elementText(root.querySelector('title'));
   if (title && title !== 'NodeSeek') {
     return title;
   }
@@ -1249,20 +1359,22 @@ function nodeSeekRenderedTitle(root: ReturnType<typeof parseHtml>, restrictedNot
 }
 
 function nodeSeekRestrictedNotice(root: ReturnType<typeof parseHtml>) {
-  const restricted = root.querySelector('.restricted-post')
-    || root.querySelector('.post-restricted');
+  const restricted = root.querySelector('.restricted-post') || root.querySelector('.post-restricted');
   const restrictedText = elementText(restricted);
   if (accessRequirementFromText(restrictedText)) {
     return restrictedText;
   }
-  const readableContent = root.querySelectorAll('.post-content, .comment-content, .reply-content, .content-item .content')
+  const readableContent = root
+    .querySelectorAll('.post-content, .comment-content, .reply-content, .content-item .content')
     .some((node) => elementText(node) || node.querySelector('img, video, pre, code'));
   if (readableContent) {
     return '';
   }
-  const explicitText = root.querySelectorAll('.empty-state, .notice, .alert')
-    .map((node) => elementText(node))
-    .find((text) => accessRequirementFromText(text)) || '';
+  const explicitText =
+    root
+      .querySelectorAll('.empty-state, .notice, .alert')
+      .map((node) => elementText(node))
+      .find((text) => accessRequirementFromText(text)) || '';
   if (explicitText) {
     return explicitText;
   }
@@ -1285,22 +1397,22 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
   const root = parseHtml(html);
   const firstContentItem = root.querySelector('.content-item');
   const restrictedNotice = nodeSeekRestrictedNotice(root);
-  const contentElement = firstContentItem?.querySelector('.post-content')
-    || firstContentItem?.querySelector('.content')
-    || root.querySelector('article .post-content')
-    || root.querySelector('.post-detail .post-content')
-    || root.querySelector('.post-content');
+  const contentElement =
+    firstContentItem?.querySelector('.post-content') ||
+    firstContentItem?.querySelector('.content') ||
+    root.querySelector('article .post-content') ||
+    root.querySelector('.post-detail .post-content') ||
+    root.querySelector('.post-content');
   const title = nodeSeekRenderedTitle(root, restrictedNotice);
-  const renderedContentOuterHtml = contentElement
-    ? html.slice(contentElement.range[0], contentElement.range[1])
-    : '';
+  const renderedContentOuterHtml = contentElement ? html.slice(contentElement.range[0], contentElement.range[1]) : '';
   const renderedContentOpeningEnd = renderedContentOuterHtml.indexOf('>');
-  const renderedContentClosingStart = renderedContentOuterHtml.toLowerCase().lastIndexOf(
-    `</${String(contentElement?.rawTagName || '').toLowerCase()}`
-  );
-  const rawRenderedContentHtml = renderedContentOpeningEnd >= 0 && renderedContentClosingStart > renderedContentOpeningEnd
-    ? renderedContentOuterHtml.slice(renderedContentOpeningEnd + 1, renderedContentClosingStart)
-    : '';
+  const renderedContentClosingStart = renderedContentOuterHtml
+    .toLowerCase()
+    .lastIndexOf(`</${String(contentElement?.rawTagName || '').toLowerCase()}`);
+  const rawRenderedContentHtml =
+    renderedContentOpeningEnd >= 0 && renderedContentClosingStart > renderedContentOpeningEnd
+      ? renderedContentOuterHtml.slice(renderedContentOpeningEnd + 1, renderedContentClosingStart)
+      : '';
   const renderedContentHtml = String(
     contentElement?.querySelector('.vote-panel') && rawRenderedContentHtml
       ? rawRenderedContentHtml
@@ -1311,20 +1423,30 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     return null;
   }
   const accessRequirement = accessRequirementFromText(restrictedNotice);
-  const authorContainer = firstContentItem || root.querySelector('article') || root.querySelector('.post-detail') || root;
-  const categoryLink = firstContentItem?.querySelector('.content-category a[href*="/categories/"], a[href*="/categories/"]')
-    || root.querySelector('article a[href*="/categories/"]')
-    || root.querySelector('.post-detail a[href*="/categories/"]')
-    || root.querySelector('.post-info a[href*="/categories/"]')
-    || root.querySelector('a[href*="/categories/"]');
+  const authorContainer =
+    firstContentItem || root.querySelector('article') || root.querySelector('.post-detail') || root;
+  const categoryLink =
+    firstContentItem?.querySelector('.content-category a[href*="/categories/"], a[href*="/categories/"]') ||
+    root.querySelector('article a[href*="/categories/"]') ||
+    root.querySelector('.post-detail a[href*="/categories/"]') ||
+    root.querySelector('.post-info a[href*="/categories/"]') ||
+    root.querySelector('a[href*="/categories/"]');
   const categoryHref = categoryLink?.getAttribute('href') || '';
-  const createdAt = renderedNodeSeekTime(firstContentItem?.querySelector('time') || root.querySelector('article time') || root.querySelector('.post-detail time') || root.querySelector('time')) || new Date().toISOString();
+  const createdAt =
+    renderedNodeSeekTime(
+      firstContentItem?.querySelector('time') ||
+        root.querySelector('article time') ||
+        root.querySelector('.post-detail time') ||
+        root.querySelector('time')
+    ) || new Date().toISOString();
   const renderedPolls = parseRenderedNodeSeekPollForms(renderedContentHtml);
   const cleanedContentHtml = renderedContentHtml ? renderedPolls.html : contentHtml;
-  const replyRows = root.querySelectorAll('.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]').filter((row) => {
-    const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
-    return Boolean(replyContent?.innerHTML && row !== firstContentItem);
-  });
+  const replyRows = root
+    .querySelectorAll('.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]')
+    .filter((row) => {
+      const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
+      return Boolean(replyContent?.innerHTML && row !== firstContentItem);
+    });
   const allReplies = replyRows.map((row) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
@@ -1383,7 +1505,13 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     upvoted: renderedNodeSeekReactionClicked(firstContentItem, ['点赞', 'good-one', 'upvote']),
     liked: renderedNodeSeekReactionClicked(firstContentItem, ['加鸡腿', 'chicken-leg']),
     disliked: renderedNodeSeekReactionClicked(firstContentItem, ['反对', 'bad-one', 'oppose', 'dislike']),
-    collectionCount: renderedNodeSeekReactionCount(firstContentItem, ['收藏', 'star', 'favorite', 'collect', 'bookmark']),
+    collectionCount: renderedNodeSeekReactionCount(firstContentItem, [
+      '收藏',
+      'star',
+      'favorite',
+      'collect',
+      'bookmark'
+    ]),
     replies,
     replyHasMore: allReplies.length > replyLimit,
     replyNextPage: allReplies.length > replyLimit ? 1 : null,
@@ -1392,7 +1520,10 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
 }
 
 async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
-  return fetchNodeSeekText(nodeSeekTopicPagePath(id, page), nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground'));
+  return fetchNodeSeekText(
+    nodeSeekTopicPagePath(id, page),
+    nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
+  );
 }
 
 async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
@@ -1413,21 +1544,34 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
   if (rendered) {
-    const embeddedTopic = postData ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30) : undefined;
+    const embeddedTopic = postData
+      ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30)
+      : undefined;
     const topic = mergeRenderedNodeSeekTopic(rendered, embeddedTopic);
     const voteLinkPolls = await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], requestOptions, topic.polls);
     const polls = mergeNodeSeekPolls(topic.polls, voteLinkPolls.polls);
-    const result = withNodeSeekReplyPagination({
-      ...topic,
-      contentHtml: stripLoadedNodeSeekVoteMarkers(topic.contentHtml, (polls || []).map((poll) => poll.id)),
-      ...(polls ? { polls } : {})
-    }, html, id, 1);
+    const result = withNodeSeekReplyPagination(
+      {
+        ...topic,
+        contentHtml: stripLoadedNodeSeekVoteMarkers(
+          topic.contentHtml,
+          (polls || []).map((poll) => poll.id)
+        ),
+        ...(polls ? { polls } : {})
+      },
+      html,
+      id,
+      1
+    );
     const comments = postData ? arrayField(postData.comments) : [];
     return annotateSourceDiagnosticSummary(result, {
       parserVariant: 'rendered-topic',
       candidateCount: 1 + Math.max(rendered.replies.length, Math.max(0, comments.length - 1)),
       validCount: 1 + result.replies.length,
-      droppedCount: Math.max(0, Math.max(rendered.replies.length, Math.max(0, comments.length - 1)) - result.replies.length),
+      droppedCount: Math.max(
+        0,
+        Math.max(rendered.replies.length, Math.max(0, comments.length - 1)) - result.replies.length
+      ),
       partialErrorCount: voteLinkPolls.partialErrorCount,
       missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length
     });
@@ -1438,13 +1582,25 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
     const voteLinkPolls = await readNodeSeekPollsFromVoteLinks([first.markdown, html], requestOptions);
     const polls = mergeNodeSeekPolls(voteLinkPolls.polls);
-    const result = withNodeSeekReplyPagination({
-      ...topic,
-      contentHtml: stripLoadedNodeSeekVoteMarkers(topic.contentHtml, (polls || []).map((poll) => poll.id)),
-      ...(polls ? { polls } : {})
-    }, html, id, 1);
+    const result = withNodeSeekReplyPagination(
+      {
+        ...topic,
+        contentHtml: stripLoadedNodeSeekVoteMarkers(
+          topic.contentHtml,
+          (polls || []).map((poll) => poll.id)
+        ),
+        ...(polls ? { polls } : {})
+      },
+      html,
+      id,
+      1
+    );
     const replyCandidates = Math.max(0, comments.length - 1);
-    const missingFloorCount = comments.slice(1).filter((comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined).length;
+    const missingFloorCount = comments
+      .slice(1)
+      .filter(
+        (comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined
+      ).length;
     return annotateSourceDiagnosticSummary(result, {
       parserVariant: 'embedded-topic',
       candidateCount: 1 + replyCandidates,
@@ -1464,7 +1620,12 @@ type NodeSeekRepliesOptions = NodeSeekOptions & {
   fillPages?: boolean;
 };
 
-async function fillNodeSeekRepliesLimit(id: string, options: NodeSeekRepliesOptions, result: RepliesResponse, limit: number): Promise<RepliesResponse> {
+async function fillNodeSeekRepliesLimit(
+  id: string,
+  options: NodeSeekRepliesOptions,
+  result: RepliesResponse,
+  limit: number
+): Promise<RepliesResponse> {
   if (result.items.length >= limit || !result.hasMore || !result.nextPage) {
     return result;
   }
@@ -1522,18 +1683,23 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
   const limit = options.limit || 30;
   const { html, postData, rendered } = await fetchTopicPageData(id, page, requestOptions);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
-  const offset = hasOffset ? options.offset as number : 0;
-  const floorOffset = hasOffset ? offset : ((page - 1) * limit);
+  const offset = hasOffset ? (options.offset as number) : 0;
+  const floorOffset = hasOffset ? offset : (page - 1) * limit;
   if (rendered && (rendered.replies.length || !postData)) {
     const renderedSource = rendered.replies.map((reply, index) => ({
       ...reply,
       floor: reply.floor ?? (page <= 1 ? index + 1 : floorOffset + index + 1)
     }));
     const embeddedReplies = postData
-      ? normalizeReplies(arrayField(postData.comments), { skipFirst: page <= 1, floorOffset: page <= 1 ? 0 : floorOffset })
+      ? normalizeReplies(arrayField(postData.comments), {
+          skipFirst: page <= 1,
+          floorOffset: page <= 1 ? 0 : floorOffset
+        })
       : [];
     const source = embeddedReplies.length
-      ? renderedSource.map((reply) => mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embeddedReplies)))
+      ? renderedSource.map((reply) =>
+          mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embeddedReplies))
+        )
       : renderedSource;
     const items = page <= 1 ? source.slice(offset, offset + limit) : source;
     const consumed = offset + items.length;
@@ -1572,7 +1738,11 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
       nextOffset: hasMore ? consumed : null
     };
-    const missingFloorCount = comments.slice(1).filter((comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined).length;
+    const missingFloorCount = comments
+      .slice(1)
+      .filter(
+        (comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined
+      ).length;
     const annotated = annotateNodeSeekReplies(result, {
       parserVariant: 'embedded-replies',
       candidateCount: Math.max(0, comments.length - 1),
@@ -1594,7 +1764,9 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
   const annotated = annotateNodeSeekReplies(result, {
     parserVariant: 'embedded-replies',
     candidateCount: comments.length,
-    missingFloorCount: comments.filter((comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined).length,
+    missingFloorCount: comments.filter(
+      (comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined
+    ).length,
     offset,
     page
   });
@@ -1613,23 +1785,24 @@ export async function resolveNodeSeekUser(username: string, options: NodeSeekOpt
     });
   }
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground');
-  const data = await fetchNodeSeekJson(
-    `/api/account/find/${encodeURIComponent(requestedUsername)}`,
-    requestOptions
-  );
+  const data = await fetchNodeSeekJson(`/api/account/find/${encodeURIComponent(requestedUsername)}`, requestOptions);
   if (!isRecord(data) || data.success === false || !Array.isArray(data.memberList)) {
     throw new Error('NodeSeek 用户名解析失败');
   }
   const candidates = data.memberList.filter(isRecord);
-  const exactMembers = candidates.filter((candidate) => (
-    String(candidate.member_name || '').trim() === requestedUsername
-  ));
-  const foldedMembers = exactMembers.length ? [] : candidates.filter((candidate) => (
-    String(candidate.member_name || '').trim().toLowerCase() === requestedUsername.toLowerCase()
-  ));
-  const member = exactMembers.length === 1
-    ? exactMembers[0]
-    : foldedMembers.length === 1 ? foldedMembers[0] : undefined;
+  const exactMembers = candidates.filter(
+    (candidate) => String(candidate.member_name || '').trim() === requestedUsername
+  );
+  const foldedMembers = exactMembers.length
+    ? []
+    : candidates.filter(
+        (candidate) =>
+          String(candidate.member_name || '')
+            .trim()
+            .toLowerCase() === requestedUsername.toLowerCase()
+      );
+  const member =
+    exactMembers.length === 1 ? exactMembers[0] : foldedMembers.length === 1 ? foldedMembers[0] : undefined;
   const id = member ? String(member.member_id || '').trim() : '';
   if (!member || !/^\d+$/.test(id)) {
     throw new Error('NodeSeek 用户名解析失败');
@@ -1650,7 +1823,10 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     throw new Error('NodeSeek 用户主页需要数字用户 ID');
   }
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground');
-  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(requestedId)}?readme=1`, requestOptions);
+  const userData = await fetchNodeSeekJson(
+    `/api/account/getInfo/${encodeURIComponent(requestedId)}?readme=1`,
+    requestOptions
+  );
   if (!isRecord(userData) || userData.success === false || !isRecord(userData.detail)) {
     throw new Error('NodeSeek 用户主页读取失败');
   }
@@ -1670,8 +1846,12 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   const wantsReplies = options.cursorType !== 'topics';
   let discussions: unknown[] = [];
   if (wantsTopics) {
-    const discussionData = await fetchNodeSeekJson(`/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, requestOptions);
-    discussions = isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
+    const discussionData = await fetchNodeSeekJson(
+      `/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=${cursorPage}`,
+      requestOptions
+    );
+    discussions =
+      isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
   }
   const topics = discussions.filter(isRecord).map((discussion) => {
     const topicId = String(discussion.post_id || discussion.postId || discussion.id || '').trim();
@@ -1681,9 +1861,22 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     }
     const createdAt = nodeSeekCreatedAt(discussion);
     const accessRequirement = accessRequirementFromObject(discussion);
-    const categoryId = String(discussion.category_id || discussion.categoryId || discussion.tag_id || discussion.tagId || discussion.tag_name || '').trim() || undefined;
-    const category = String(discussion.category_name || discussion.categoryName || discussion.tag_cn_text || discussion.tagName || '').trim() || undefined;
-    const excerpt = textExcerpt(discussion.text || discussion.content || discussion.markdown || discussion.excerpt || '');
+    const categoryId =
+      String(
+        discussion.category_id ||
+          discussion.categoryId ||
+          discussion.tag_id ||
+          discussion.tagId ||
+          discussion.tag_name ||
+          ''
+      ).trim() || undefined;
+    const category =
+      String(
+        discussion.category_name || discussion.categoryName || discussion.tag_cn_text || discussion.tagName || ''
+      ).trim() || undefined;
+    const excerpt = textExcerpt(
+      discussion.text || discussion.content || discussion.markdown || discussion.excerpt || ''
+    );
     return {
       source: 'nodeseek' as const,
       id: topicId,
@@ -1702,7 +1895,7 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
       ...(excerpt ? { excerpt } : {}),
       ...(accessRequirement ? { accessRequirement } : {})
     };
-  }) as Array<Topic | null>;
+  }) as (Topic | null)[];
   const visibleTopics = sortNodeSeekUserTopics(topics.filter(Boolean) as Topic[]);
   let replies: UserReplyActivity[] = [];
   let replyCandidateCount = 0;
@@ -1710,11 +1903,19 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   let partialErrorCount = 0;
   if (wantsReplies) {
     const readReplies = async () => {
-      const commentData = await fetchNodeSeekJson(`/api/content/list-comments?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, requestOptions);
+      const commentData = await fetchNodeSeekJson(
+        `/api/content/list-comments?uid=${encodeURIComponent(userId)}&page=${cursorPage}`,
+        requestOptions
+      );
       const comments = isRecord(commentData) && Array.isArray(commentData.comments) ? commentData.comments : [];
       replyCandidateCount = comments.length;
-      missingFloorCount = comments.filter((comment) => isRecord(comment) && !parsePositiveInteger(comment.floor_id || comment.floor || comment.rank)).length;
-      return comments.filter(isRecord).map((comment) => normalizeNodeSeekUserReply(comment, username, userId, avatar)).filter(Boolean) as UserReplyActivity[];
+      missingFloorCount = comments.filter(
+        (comment) => isRecord(comment) && !parsePositiveInteger(comment.floor_id || comment.floor || comment.rank)
+      ).length;
+      return comments
+        .filter(isRecord)
+        .map((comment) => normalizeNodeSeekUserReply(comment, username, userId, avatar))
+        .filter(Boolean) as UserReplyActivity[];
     };
     if (options.cursorType === 'replies') {
       replies = await readReplies();
@@ -1769,9 +1970,12 @@ function parseNodeSeekCurrentUserHtml(html: string, { allowUidText = false }: { 
   const root = parseHtml(html);
   const text = elementText(root);
   const uid = allowUidText ? text.match(/UID\s*[:：]\s*(\d+)/i)?.[1] || '' : '';
-  const explicitUserLink = root.querySelector('a.Username[href*="/space/"]') || root.querySelector('.Username a[href*="/space/"]');
+  const explicitUserLink =
+    root.querySelector('a.Username[href*="/space/"]') || root.querySelector('.Username a[href*="/space/"]');
   const explicitUserId = explicitUserLink?.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] || '';
-  const spaceLinks = root.querySelectorAll('a[href*="/space/"]').filter((link) => /\/space\/\d+/i.test(link.getAttribute('href') || ''));
+  const spaceLinks = root
+    .querySelectorAll('a[href*="/space/"]')
+    .filter((link) => /\/space\/\d+/i.test(link.getAttribute('href') || ''));
   const spaceLink = uid
     ? spaceLinks.find((link) => link.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] === uid)
     : explicitUserLink;
@@ -1797,18 +2001,28 @@ function isNodeSeekLoggedOutHtml(html: string) {
   if (root.querySelector('meta[name="nodeseekAccountState"][content="anonymous"]')) {
     return true;
   }
-  const controls = root.querySelectorAll('a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]');
-  const kinds = new Set(controls.flatMap((link) => {
-    const href = link.getAttribute('href') || '';
-    const label = elementText(link).trim();
-    if (/^\/(?:login|signin|sign-in)(?:\.html?)?(?:[/?#]|$)/i.test(href) && /^(?:登录|sign in|log in)$/i.test(label)) {
-      return ['login'];
-    }
-    if (/^\/(?:register|signup|sign-up)(?:\.html?)?(?:[/?#]|$)/i.test(href) && /^(?:注册|sign up|register)$/i.test(label)) {
-      return ['register'];
-    }
-    return [];
-  }));
+  const controls = root.querySelectorAll(
+    'a.btn[href], header a[href], nav a[href], .header a[href], .navbar a[href], .topbar a[href]'
+  );
+  const kinds = new Set(
+    controls.flatMap((link) => {
+      const href = link.getAttribute('href') || '';
+      const label = elementText(link).trim();
+      if (
+        /^\/(?:login|signin|sign-in)(?:\.html?)?(?:[/?#]|$)/i.test(href) &&
+        /^(?:登录|sign in|log in)$/i.test(label)
+      ) {
+        return ['login'];
+      }
+      if (
+        /^\/(?:register|signup|sign-up)(?:\.html?)?(?:[/?#]|$)/i.test(href) &&
+        /^(?:注册|sign up|register)$/i.test(label)
+      ) {
+        return ['register'];
+      }
+      return [];
+    })
+  );
   return kinds.has('login') && kinds.has('register');
 }
 
@@ -1819,10 +2033,7 @@ export function hasNodeSeekAccountEvidenceHtml(html: string, url = BASE_URL) {
   } catch {
     // Keep ambiguous URLs on the stricter path.
   }
-  return Boolean(
-    parseNodeSeekCurrentUserHtml(html, { allowUidText })
-    || isNodeSeekLoggedOutHtml(html)
-  );
+  return Boolean(parseNodeSeekCurrentUserHtml(html, { allowUidText }) || isNodeSeekLoggedOutHtml(html));
 }
 
 function nodeSeekLoginExpiredError() {
@@ -1853,19 +2064,25 @@ export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {
   throw new Error('无法读取当前 NodeSeek 用户身份，请重新检测 NodeSeek 登录。');
 }
 
-export async function searchNodeSeek(query: string, options: NodeSeekOptions & { limit?: number; page?: number; filter?: NodeSeekSearchFilter } = {}): Promise<SearchResponse> {
+export async function searchNodeSeek(
+  query: string,
+  options: NodeSeekOptions & { limit?: number; page?: number; filter?: NodeSeekSearchFilter } = {}
+): Promise<SearchResponse> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'search', 'foreground');
   const trimmedQuery = query.trim();
   const limit = options.limit || 30;
   const page = options.page || 1;
   if (!trimmedQuery) {
-    return annotateSourceDiagnosticSummary({ items: [], errors: {}, hasMore: false, nextPage: null }, {
-      parserVariant: 'search-empty-query',
-      candidateCount: 0,
-      validCount: 0,
-      droppedCount: 0,
-      isExpectedEmpty: true
-    });
+    return annotateSourceDiagnosticSummary(
+      { items: [], errors: {}, hasMore: false, nextPage: null },
+      {
+        parserVariant: 'search-empty-query',
+        candidateCount: 0,
+        validCount: 0,
+        droppedCount: 0,
+        isExpectedEmpty: true
+      }
+    );
   }
 
   let items: Topic[] = [];
@@ -1877,16 +2094,22 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
     const html = useGoogleSearch
       ? await fetchNodeSeekGoogleSearchText(trimmedQuery, page, requestOptions)
       : await fetchNodeSeekText(searchPath(trimmedQuery, page, requestOptions.filter), requestOptions);
-    parserVariant = useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com') ? 'google-search' : 'rendered-search';
+    parserVariant =
+      useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com') ? 'google-search' : 'rendered-search';
     const parsedSearch = parseNodeSeekSearchTopics(html);
     candidateCount = parsedSearch.candidateCount;
     items = parsedSearch.items;
     if (isIncompleteNodeSeekSearchPage(html, items)) {
       throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
     }
-    nextPage = useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com')
-      ? hasGoogleSiteSearchNextPage(html, 'nodeseek.com', page + 1) ? page + 1 : null
-      : nextSearchPath(html, page + 1) ? page + 1 : null;
+    nextPage =
+      useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com')
+        ? hasGoogleSiteSearchNextPage(html, 'nodeseek.com', page + 1)
+          ? page + 1
+          : null
+        : nextSearchPath(html, page + 1)
+          ? page + 1
+          : null;
   } catch (error) {
     if (isNodeSeekCloudflareError(error)) {
       throw error;

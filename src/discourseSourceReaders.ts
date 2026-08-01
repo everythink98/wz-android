@@ -50,7 +50,7 @@ export interface DiscourseReadAuthMap {
 }
 
 export type DiscourseReadAuth = Partial<{
-  [Site in DiscourseSource]: DiscourseReadAuthMap[Site]
+  [Site in DiscourseSource]: DiscourseReadAuthMap[Site];
 }>;
 
 type DiscourseReadOptions = {
@@ -113,7 +113,9 @@ type DiscourseSourceReader = {
   searchUserOptions: (options: DiscourseUserOptionReadOptions) => Promise<DiscourseUserOption[]>;
 };
 
-function withLinuxDoAuth<T extends DiscourseReadOptions>(options: T): Omit<T, 'auth'> & {
+function withLinuxDoAuth<T extends DiscourseReadOptions>(
+  options: T
+): Omit<T, 'auth'> & {
   linuxDoAccess?: DiscourseReadAuthMap['linuxdo'];
 } {
   const { auth, ...requestOptions } = options;
@@ -123,7 +125,9 @@ function withLinuxDoAuth<T extends DiscourseReadOptions>(options: T): Omit<T, 'a
   };
 }
 
-function withXiaoyinsiAuth<T extends DiscourseReadOptions>(options: T): Omit<T, 'auth'> & {
+function withXiaoyinsiAuth<T extends DiscourseReadOptions>(
+  options: T
+): Omit<T, 'auth'> & {
   credentials?: XiaoyinsiApiCredentials;
 } {
   const { auth, ...requestOptions } = options;
@@ -144,10 +148,11 @@ const discourseSourceReaders = {
       });
     },
     getEmojiUrls: (options) => getLinuxDoEmojiUrls(withLinuxDoAuth(options)),
-    getFeed: ({ filter, ...options }) => getLinuxDoFeed({
-      ...withLinuxDoAuth(options),
-      linuxDoFilter: filter
-    }),
+    getFeed: ({ filter, ...options }) =>
+      getLinuxDoFeed({
+        ...withLinuxDoAuth(options),
+        linuxDoFilter: filter
+      }),
     getReplies: (id, options) => getLinuxDoReplies(id, withLinuxDoAuth(options)),
     getReply: (id, floor, options) => getLinuxDoReply(id, floor, withLinuxDoAuth(options)),
     getTopic: (id, options) => getLinuxDoTopic(id, withLinuxDoAuth(options)),
@@ -160,10 +165,11 @@ const discourseSourceReaders = {
     getCategories: (options) => getXiaoyinsiCategories(withXiaoyinsiAuth(options)),
     getCurrentUserProfile: (options) => getXiaoyinsiCurrentUserProfile(withXiaoyinsiAuth(options)),
     getEmojiUrls: (options) => getXiaoyinsiEmojiUrls(withXiaoyinsiAuth(options)),
-    getFeed: ({ filter, ...options }) => getXiaoyinsiFeed({
-      ...withXiaoyinsiAuth(options),
-      feedFilter: filter
-    }),
+    getFeed: ({ filter, ...options }) =>
+      getXiaoyinsiFeed({
+        ...withXiaoyinsiAuth(options),
+        feedFilter: filter
+      }),
     getReplies: (id, options) => getXiaoyinsiReplies(id, withXiaoyinsiAuth(options)),
     getReply: (id, floor, options) => getXiaoyinsiReply(id, floor, withXiaoyinsiAuth(options)),
     getTopic: (id, options) => getXiaoyinsiTopic(id, withXiaoyinsiAuth(options)),
@@ -180,26 +186,15 @@ export function getDiscourseSourceFeed(source: DiscourseSource, options: Discour
   return discourseSourceReaders[source].getFeed(options);
 }
 
-export function getDiscourseSourceCategories(
-  source: DiscourseSource,
-  options: DiscourseReadOptions
-) {
+export function getDiscourseSourceCategories(source: DiscourseSource, options: DiscourseReadOptions) {
   return discourseSourceReaders[source].getCategories(options);
 }
 
-export function getDiscourseSourceTopic(
-  source: DiscourseSource,
-  id: string,
-  options: DiscourseTopicReadOptions
-) {
+export function getDiscourseSourceTopic(source: DiscourseSource, id: string, options: DiscourseTopicReadOptions) {
   return discourseSourceReaders[source].getTopic(id, options);
 }
 
-export function getDiscourseSourceReplies(
-  source: DiscourseSource,
-  id: string,
-  options: DiscourseRepliesReadOptions
-) {
+export function getDiscourseSourceReplies(source: DiscourseSource, id: string, options: DiscourseRepliesReadOptions) {
   return discourseSourceReaders[source].getReplies(id, options);
 }
 
@@ -221,17 +216,11 @@ export function getDiscourseSourceUserProfile(
   return discourseSourceReaders[source].getUserProfile(id, username, options);
 }
 
-export function getDiscourseSourceCurrentUserProfile(
-  source: DiscourseSource,
-  options: DiscourseReadOptions
-) {
+export function getDiscourseSourceCurrentUserProfile(source: DiscourseSource, options: DiscourseReadOptions) {
   return discourseSourceReaders[source].getCurrentUserProfile(options);
 }
 
-export function getDiscourseSourceEmojiUrls(
-  source: DiscourseSource,
-  options: DiscourseReadOptions = {}
-) {
+export function getDiscourseSourceEmojiUrls(source: DiscourseSource, options: DiscourseReadOptions = {}) {
   return discourseSourceReaders[source].getEmojiUrls(options);
 }
 
@@ -243,16 +232,10 @@ export function searchDiscourseSourceTopics(
   return discourseSourceReaders[source].searchTopics(query, options);
 }
 
-export function searchDiscourseSourceTagOptions(
-  source: DiscourseSource,
-  options: DiscourseTagOptionReadOptions
-) {
+export function searchDiscourseSourceTagOptions(source: DiscourseSource, options: DiscourseTagOptionReadOptions) {
   return discourseSourceReaders[source].searchTagOptions(options);
 }
 
-export function searchDiscourseSourceUserOptions(
-  source: DiscourseSource,
-  options: DiscourseUserOptionReadOptions
-) {
+export function searchDiscourseSourceUserOptions(source: DiscourseSource, options: DiscourseUserOptionReadOptions) {
   return discourseSourceReaders[source].searchUserOptions(options);
 }

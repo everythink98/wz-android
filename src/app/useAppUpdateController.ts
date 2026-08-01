@@ -1,7 +1,15 @@
 import { useCallback, useRef, useState } from 'react';
 import { NativeModules } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import { AppUpdateInfo, checkGithubAppUpdate, CURRENT_APP_VERSION, formatAppUpdateDownloadProgress, installVerifiedApk, type ApkInstaller, type AppUpdateDownloadProgress } from '../appUpdate';
+import {
+  AppUpdateInfo,
+  checkGithubAppUpdate,
+  CURRENT_APP_VERSION,
+  formatAppUpdateDownloadProgress,
+  installVerifiedApk,
+  type ApkInstaller,
+  type AppUpdateDownloadProgress
+} from '../appUpdate';
 import { errorMessage } from '../appUtils';
 import type { Fetcher } from '../request';
 import {
@@ -31,48 +39,51 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
   const appUpdateBusyRef = useRef(false);
   const appUpdateDownloadingRef = useRef(false);
 
-  const checkAppUpdate = useCallback(async (options: CheckAppUpdateOptions = {}) => {
-    const silent = options.silent === true;
-    const trace = beginDiagnosticTrace('update', 'check', { mode: silent ? 'silent' : 'manual' });
-    if (appUpdateBusyRef.current || appUpdateDownloadingRef.current) {
-      markDiagnosticStage(trace, 'guard', { state: 'busy' });
-      finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
-      return;
-    }
-    appUpdateBusyRef.current = true;
-    setAppUpdateBusy(true);
-    if (!silent) {
-      setAppUpdateInfo(null);
-      setAppUpdateDownloadProgress(null);
-      setAppUpdateMessage('正在检查更新');
-    }
-    try {
-      markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
-      await beforeRequest?.();
-      const update = await checkGithubAppUpdate(withDiagnosticFetcher(trace, fetcher));
-      markDiagnosticStage(trace, 'parse', { state: update ? 'update-available' : 'current' });
-      setAppUpdateInfo(update);
-      if (update || !silent) {
-        const message = update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`;
-        setAppUpdateMessage(message);
+  const checkAppUpdate = useCallback(
+    async (options: CheckAppUpdateOptions = {}) => {
+      const silent = options.silent === true;
+      const trace = beginDiagnosticTrace('update', 'check', { mode: silent ? 'silent' : 'manual' });
+      if (appUpdateBusyRef.current || appUpdateDownloadingRef.current) {
+        markDiagnosticStage(trace, 'guard', { state: 'busy' });
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
+        return;
+      }
+      appUpdateBusyRef.current = true;
+      setAppUpdateBusy(true);
+      if (!silent) {
+        setAppUpdateInfo(null);
+        setAppUpdateDownloadProgress(null);
+        setAppUpdateMessage('正在检查更新');
+      }
+      try {
+        markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
+        await beforeRequest?.();
+        const update = await checkGithubAppUpdate(withDiagnosticFetcher(trace, fetcher));
+        markDiagnosticStage(trace, 'parse', { state: update ? 'update-available' : 'current' });
+        setAppUpdateInfo(update);
+        if (update || !silent) {
+          const message = update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`;
+          setAppUpdateMessage(message);
+          if (!silent) {
+            notify(message);
+          }
+        }
+        markDiagnosticStage(trace, 'apply', { state: 'status-updated' });
+        finishDiagnosticTrace(trace, 'success', { state: update ? 'update-available' : 'current' });
+      } catch (error) {
+        finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
         if (!silent) {
+          const message = errorMessage(error);
+          setAppUpdateMessage(message);
           notify(message);
         }
+      } finally {
+        appUpdateBusyRef.current = false;
+        setAppUpdateBusy(false);
       }
-      markDiagnosticStage(trace, 'apply', { state: 'status-updated' });
-      finishDiagnosticTrace(trace, 'success', { state: update ? 'update-available' : 'current' });
-    } catch (error) {
-      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-      if (!silent) {
-        const message = errorMessage(error);
-        setAppUpdateMessage(message);
-        notify(message);
-      }
-    } finally {
-      appUpdateBusyRef.current = false;
-      setAppUpdateBusy(false);
-    }
-  }, [beforeRequest, fetcher, notify]);
+    },
+    [beforeRequest, fetcher, notify]
+  );
 
   const downloadAppUpdate = useCallback(async () => {
     const trace = beginDiagnosticTrace('update', 'download');
@@ -111,7 +122,11 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
       targetPrepared = true;
       const download = FileSystem.createDownloadResumable(appUpdateInfo.apkUrl, target, {}, (progress) => {
-        latestProgress = formatAppUpdateDownloadProgress(appUpdateInfo.version, progress.totalBytesWritten, progress.totalBytesExpectedToWrite);
+        latestProgress = formatAppUpdateDownloadProgress(
+          appUpdateInfo.version,
+          progress.totalBytesWritten,
+          progress.totalBytesExpectedToWrite
+        );
         setAppUpdateDownloadProgress(latestProgress);
         setAppUpdateMessage(latestProgress.title);
       });

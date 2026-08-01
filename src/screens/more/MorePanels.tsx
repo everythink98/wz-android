@@ -40,8 +40,19 @@ export function BackupRestorePanel({
   return (
     <View style={styles.stack}>
       <View style={styles.actions}>
-        <AppButton label={backupBusy ? '处理中' : '导出备份文件'} styles={styles} disabled={backupBusy} onPress={onExportBackupFile} />
-        <AppButton label="选择备份文件恢复" variant="ghost" styles={styles} disabled={backupBusy} onPress={onImportBackupFile} />
+        <AppButton
+          label={backupBusy ? '处理中' : '导出备份文件'}
+          styles={styles}
+          disabled={backupBusy}
+          onPress={onExportBackupFile}
+        />
+        <AppButton
+          label="选择备份文件恢复"
+          variant="ghost"
+          styles={styles}
+          disabled={backupBusy}
+          onPress={onImportBackupFile}
+        />
       </View>
     </View>
   );
@@ -134,7 +145,15 @@ export function NodeSeekLoginPanel({
       setWebViewError('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。');
     }, LOGIN_WEBVIEW_LOADING_TIMEOUT_MS);
     return () => clearTimeout(timeout);
-  }, [credentialAttempt, loadingLoginPage, onSetLoadingLoginPage, onWebViewState, showLoginPanel, webViewBlockMessage, webViewRef]);
+  }, [
+    credentialAttempt,
+    loadingLoginPage,
+    onSetLoadingLoginPage,
+    onWebViewState,
+    showLoginPanel,
+    webViewBlockMessage,
+    webViewRef
+  ]);
 
   useEffect(() => {
     if (showLoginPanel && loginFormMode && !loadingLoginPage && credentialAttempt > 0) {
@@ -156,7 +175,17 @@ export function NodeSeekLoginPanel({
 
   return (
     <>
-      {nodeSeekSession.canWrite ? <MenuButton nested icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
+      {nodeSeekSession.canWrite ? (
+        <MenuButton
+          nested
+          icon={CheckCircle}
+          label="NodeSeek 签到"
+          value="使用本机登录 Cookie"
+          styles={styles}
+          theme={theme}
+          onPress={onCheckIn}
+        />
+      ) : null}
       <MenuButton
         nested
         icon={ImageIcon}
@@ -229,9 +258,16 @@ export function NodeSeekLoginPanel({
         styles={styles}
         theme={theme}
         onClose={() => onShowLoginPanelChange(false)}
-        actions={(
+        actions={
           <View style={styles.actions}>
-            {credentialSaved ? <AppButton label="填入已保存登录信息" styles={styles} disabled={credentialFillPending} onPress={onRequestCredentialFill} /> : null}
+            {credentialSaved ? (
+              <AppButton
+                label="填入已保存登录信息"
+                styles={styles}
+                disabled={credentialFillPending}
+                onPress={onRequestCredentialFill}
+              />
+            ) : null}
             <AppButton
               testID={webViewSettledForReplay || webViewBlockMessage ? 'nodeseek-login-webview-settled' : undefined}
               label={checking ? '检测中' : '检测登录'}
@@ -242,59 +278,61 @@ export function NodeSeekLoginPanel({
             <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLogin} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={refreshWebView} />
           </View>
-        )}
+        }
       >
         {showLoginPanel && accountExpanded && !webViewBlockMessage && !webViewNeedsRemount ? (
-            <WebView
-              key={`nodeseek-login-${webViewKey}`}
-              ref={webViewRef}
-              source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.nodeseek.loginUrl : NODESEEK_URL }}
-              javaScriptCanOpenWindowsAutomatically={false}
-              sharedCookiesEnabled
-              thirdPartyCookiesEnabled
-              setSupportMultipleWindows={false}
-              injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
-              onLoadEnd={(event) => {
-                onSetLoadingLoginPage(false);
-                setWebViewSettledForReplay(true);
-                if ('code' in event.nativeEvent) {
-                  return;
-                }
-                onWebViewState('ready', credentialAttempt);
-                setWebViewError('');
-                webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
-                if (loginFormMode) {
-                  webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.nodeseek.probeScript(credentialAttempt));
-                }
-              }}
-              onLoadStart={() => {
-                onWebViewState('start', credentialAttempt);
-                setWebViewError('');
-                setWebViewNeedsRemount(false);
-                setWebViewSettledForReplay(false);
-                onSetLoadingLoginPage(true);
-              }}
-              onMessage={(event) => {
-                if (!onLoginFormMessage(event)) {
-                  onHandleLoginMessage(event);
-                }
-              }}
-              onError={(event) => {
-                onWebViewState('error', credentialAttempt);
-                onSetLoadingLoginPage(false);
-                setWebViewSettledForReplay(true);
-                setWebViewError(`NodeSeek 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
-              }}
-              renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-              onRenderProcessGone={() => {
-                onWebViewState('renderer-gone', credentialAttempt);
-                onSetLoadingLoginPage(false);
-                setWebViewSettledForReplay(true);
-                setWebViewNeedsRemount(true);
-                setWebViewError('NodeSeek 登录页面已停止，请刷新页面重试。');
-              }}
-              onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}
-            />
+          <WebView
+            key={`nodeseek-login-${webViewKey}`}
+            ref={webViewRef}
+            source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.nodeseek.loginUrl : NODESEEK_URL }}
+            javaScriptCanOpenWindowsAutomatically={false}
+            sharedCookiesEnabled
+            thirdPartyCookiesEnabled
+            setSupportMultipleWindows={false}
+            injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
+            onLoadEnd={(event) => {
+              onSetLoadingLoginPage(false);
+              setWebViewSettledForReplay(true);
+              if ('code' in event.nativeEvent) {
+                return;
+              }
+              onWebViewState('ready', credentialAttempt);
+              setWebViewError('');
+              webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
+              if (loginFormMode) {
+                webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.nodeseek.probeScript(credentialAttempt));
+              }
+            }}
+            onLoadStart={() => {
+              onWebViewState('start', credentialAttempt);
+              setWebViewError('');
+              setWebViewNeedsRemount(false);
+              setWebViewSettledForReplay(false);
+              onSetLoadingLoginPage(true);
+            }}
+            onMessage={(event) => {
+              if (!onLoginFormMessage(event)) {
+                onHandleLoginMessage(event);
+              }
+            }}
+            onError={(event) => {
+              onWebViewState('error', credentialAttempt);
+              onSetLoadingLoginPage(false);
+              setWebViewSettledForReplay(true);
+              setWebViewError(
+                `NodeSeek 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`
+              );
+            }}
+            renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+            onRenderProcessGone={() => {
+              onWebViewState('renderer-gone', credentialAttempt);
+              onSetLoadingLoginPage(false);
+              setWebViewSettledForReplay(true);
+              setWebViewNeedsRemount(true);
+              setWebViewError('NodeSeek 登录页面已停止，请刷新页面重试。');
+            }}
+            onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}
+          />
         ) : null}
       </LoginWebViewModal>
     </>
@@ -370,7 +408,14 @@ export function YaohuoLoginPanel({
       setWebViewError('妖火页面打开超时：请检查模拟器网络后刷新页面。');
     }, LOGIN_WEBVIEW_LOADING_TIMEOUT_MS);
     return () => clearTimeout(timeout);
-  }, [credentialAttempt, loadingYaohuoLoginPage, onSetLoadingYaohuoLoginPage, onWebViewState, showYaohuoLoginPanel, webViewBlockMessage]);
+  }, [
+    credentialAttempt,
+    loadingYaohuoLoginPage,
+    onSetLoadingYaohuoLoginPage,
+    onWebViewState,
+    showYaohuoLoginPanel,
+    webViewBlockMessage
+  ]);
 
   useEffect(() => {
     if (showYaohuoLoginPanel && loginFormMode && !loadingYaohuoLoginPage && credentialAttempt > 0) {
@@ -401,14 +446,26 @@ export function YaohuoLoginPanel({
         styles={styles}
         theme={theme}
         onClose={() => onShowYaohuoLoginPanelChange(false)}
-        actions={(
+        actions={
           <View style={styles.actions}>
-            {credentialSaved ? <AppButton label="填入已保存登录信息" styles={styles} disabled={credentialFillPending} onPress={onRequestCredentialFill} /> : null}
-            <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
+            {credentialSaved ? (
+              <AppButton
+                label="填入已保存登录信息"
+                styles={styles}
+                disabled={credentialFillPending}
+                onPress={onRequestCredentialFill}
+              />
+            ) : null}
+            <AppButton
+              label={checking ? '检测中' : '检测登录'}
+              styles={styles}
+              disabled={checking}
+              onPress={onCheckYaohuoLogin}
+            />
             <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearYaohuoLogin} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={refreshWebView} />
           </View>
-        )}
+        }
       >
         {showYaohuoLoginPanel && accountExpanded && !webViewBlockMessage ? (
           <View style={styles.flex}>
@@ -418,7 +475,13 @@ export function YaohuoLoginPanel({
                 style={styles.flex}
                 key={`yaohuo-login-${webViewKey}`}
                 ref={yaohuoWebViewRef}
-                source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.yaohuo.loginUrl : yaohuoSession.isLoggedIn ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
+                source={{
+                  uri: loginFormMode
+                    ? LOGIN_FORM_ADAPTERS.yaohuo.loginUrl
+                    : yaohuoSession.isLoggedIn
+                      ? YAOHUO_SESSION_URL
+                      : YAOHUO_LOGIN_URL
+                }}
                 javaScriptCanOpenWindowsAutomatically={false}
                 sharedCookiesEnabled
                 thirdPartyCookiesEnabled
@@ -431,7 +494,9 @@ export function YaohuoLoginPanel({
                   onWebViewState('ready', credentialAttempt);
                   setWebViewError('');
                   if (loginFormMode) {
-                    yaohuoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.yaohuo.probeScript(credentialAttempt));
+                    yaohuoWebViewRef.current?.injectJavaScript(
+                      LOGIN_FORM_ADAPTERS.yaohuo.probeScript(credentialAttempt)
+                    );
                   }
                 }}
                 onLoadStart={() => {
@@ -440,11 +505,15 @@ export function YaohuoLoginPanel({
                   setWebViewNeedsRemount(false);
                   onSetLoadingYaohuoLoginPage(true);
                 }}
-                onMessage={(event) => { onLoginFormMessage(event); }}
+                onMessage={(event) => {
+                  onLoginFormMessage(event);
+                }}
                 onError={(event) => {
                   onWebViewState('error', credentialAttempt);
                   onSetLoadingYaohuoLoginPage(false);
-                  setWebViewError(`妖火页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
+                  setWebViewError(
+                    `妖火页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`
+                  );
                 }}
                 renderError={() => <View style={styles.webViewErrorPlaceholder} />}
                 onRenderProcessGone={() => {
@@ -500,7 +569,10 @@ function SettingsPanel({
         <Text style={styles.appearanceSectionTitle}>显示</Text>
         <SegmentedSetting
           title="主题"
-          items={[{ value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]}
+          items={[
+            { value: 'light', label: '浅色' },
+            { value: 'dark', label: '深色' }
+          ]}
           value={settings.theme}
           styles={styles}
           onChange={(value) => onUpdateSettings({ theme: value as ReaderSettings['theme'] })}
@@ -509,11 +581,19 @@ function SettingsPanel({
 
       <View style={styles.appearanceSection}>
         <Text style={styles.appearanceSectionTitle}>阅读</Text>
-        <FontScaleSetting value={settings.fontScale} styles={styles} onChange={(fontScale) => onUpdateSettings({ fontScale })} />
+        <FontScaleSetting
+          value={settings.fontScale}
+          styles={styles}
+          onChange={(fontScale) => onUpdateSettings({ fontScale })}
+        />
         <SegmentedSetting
           divided
           title="行距"
-          items={[{ value: 'compact', label: '紧凑' }, { value: 'standard', label: '标准' }, { value: 'loose', label: '宽松' }]}
+          items={[
+            { value: 'compact', label: '紧凑' },
+            { value: 'standard', label: '标准' },
+            { value: 'loose', label: '宽松' }
+          ]}
           value={settings.lineHeight}
           styles={styles}
           onChange={(value) => onUpdateSettings({ lineHeight: value as ReaderSettings['lineHeight'] })}
@@ -521,7 +601,11 @@ function SettingsPanel({
         <SegmentedSetting
           divided
           title="正文宽度"
-          items={[{ value: 'narrow', label: '窄' }, { value: 'standard', label: '标准' }, { value: 'wide', label: '宽' }]}
+          items={[
+            { value: 'narrow', label: '窄' },
+            { value: 'standard', label: '标准' },
+            { value: 'wide', label: '宽' }
+          ]}
           value={settings.contentWidth}
           styles={styles}
           onChange={(value) => onUpdateSettings({ contentWidth: value as ReaderSettings['contentWidth'] })}
@@ -529,7 +613,10 @@ function SettingsPanel({
         <SegmentedSetting
           divided
           title="字体"
-          items={[{ value: 'sans', label: '无衬线' }, { value: 'serif', label: '衬线' }]}
+          items={[
+            { value: 'sans', label: '无衬线' },
+            { value: 'serif', label: '衬线' }
+          ]}
           value={settings.fontFamily}
           styles={styles}
           onChange={(value) => onUpdateSettings({ fontFamily: value as ReaderSettings['fontFamily'] })}
@@ -540,7 +627,11 @@ function SettingsPanel({
         <Text style={styles.appearanceSectionTitle}>列表</Text>
         <SegmentedSetting
           title="列表密度"
-          items={[{ value: 'compact', label: '紧凑' }, { value: 'standard', label: '标准' }, { value: 'loose', label: '宽松' }]}
+          items={[
+            { value: 'compact', label: '紧凑' },
+            { value: 'standard', label: '标准' },
+            { value: 'loose', label: '宽松' }
+          ]}
           value={settings.listDensity}
           styles={styles}
           onChange={(value) => onUpdateSettings({ listDensity: value as ReaderSettings['listDensity'] })}
@@ -559,7 +650,7 @@ function SegmentedSetting({
   onChange
 }: {
   divided?: boolean;
-  items: Array<{ value: string; label: string }>;
+  items: { value: string; label: string }[];
   styles: ReturnType<typeof createStyles>;
   title: string;
   value: string;
@@ -582,7 +673,9 @@ function SegmentedSetting({
                 onChange(item.value);
               }}
             >
-              <Text style={[styles.appearanceSegmentText, selected && styles.appearanceSegmentTextActive]}>{item.label}</Text>
+              <Text style={[styles.appearanceSegmentText, selected && styles.appearanceSegmentTextActive]}>
+                {item.label}
+              </Text>
             </Pressable>
           );
         })}
@@ -603,7 +696,9 @@ function FontScaleSetting({
   const [draftValue, setDraftValue] = useState(value);
   const [trackWidth, setTrackWidth] = useState(0);
   const draftValueRef = useRef(value);
-  const progressValue = useRef(new Animated.Value((value - FONT_SCALE_MIN) / (FONT_SCALE_MAX - FONT_SCALE_MIN))).current;
+  const progressValue = useRef(
+    new Animated.Value((value - FONT_SCALE_MIN) / (FONT_SCALE_MAX - FONT_SCALE_MIN))
+  ).current;
   const sliderRef = useRef<View>(null);
   const trackLeftRef = useRef(0);
   const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -617,12 +712,15 @@ function FontScaleSetting({
     progressValue.setValue((value - FONT_SCALE_MIN) / (FONT_SCALE_MAX - FONT_SCALE_MIN));
   }, [progressValue, value]);
 
-  useEffect(() => () => {
-    if (commitTimerRef.current) {
-      clearTimeout(commitTimerRef.current);
-      onChangeRef.current(draftValueRef.current);
-    }
-  }, []);
+  useEffect(
+    () => () => {
+      if (commitTimerRef.current) {
+        clearTimeout(commitTimerRef.current);
+        onChangeRef.current(draftValueRef.current);
+      }
+    },
+    []
+  );
 
   const animateProgress = (nextValue: number) => {
     Animated.timing(progressValue, {
@@ -715,7 +813,10 @@ function FontScaleSetting({
           <View
             ref={sliderRef}
             accessible
-            accessibilityActions={[{ name: 'decrement', label: '减小字号' }, { name: 'increment', label: '增大字号' }]}
+            accessibilityActions={[
+              { name: 'decrement', label: '减小字号' },
+              { name: 'increment', label: '增大字号' }
+            ]}
             accessibilityLabel="字号"
             accessibilityRole="adjustable"
             accessibilityValue={{ min: 85, max: 140, now: percent, text: `字号 ${percent}%` }}

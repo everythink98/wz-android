@@ -27,12 +27,15 @@ type UserLane = 'topics' | 'replies';
 
 function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserReplyActivity[] = []) {
   const seen = new Set(existing.map((reply) => `${reply.source}:${reply.id}`));
-  return [...existing, ...incoming.filter((reply) => {
-    const key = `${reply.source}:${reply.id}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  })];
+  return [
+    ...existing,
+    ...incoming.filter((reply) => {
+      const key = `${reply.source}:${reply.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+  ];
 }
 
 export function userSourceRecoveryTarget(source: Source, error: SourceErrorInfo) {
@@ -60,9 +63,10 @@ export function hasNextUserPage(
 
 function normalizeRequestedUser(user: UserReference): UserReference | null {
   const username = user.username?.trim() || undefined;
-  const id = user.source === 'nodeseek'
-    ? nodeSeekUserIdFromValue(user.id) || nodeSeekUserIdFromValue(user.url) || undefined
-    : user.id?.trim() || username;
+  const id =
+    user.source === 'nodeseek'
+      ? nodeSeekUserIdFromValue(user.id) || nodeSeekUserIdFromValue(user.url) || undefined
+      : user.id?.trim() || username;
   if (!id && !username) {
     return null;
   }
@@ -84,13 +88,12 @@ function hasMoreUserLane(profile: UserProfile, lane: UserLane) {
   return lane === 'topics' ? profile.hasMoreTopics : profile.hasMoreReplies;
 }
 
-function mergeUserProfile(
-  profile: UserProfile,
-  topicPages: UserProfile[],
-  replyPages: UserProfile[]
-): UserProfile {
+function mergeUserProfile(profile: UserProfile, topicPages: UserProfile[], replyPages: UserProfile[]): UserProfile {
   const topics = topicPages.reduce<Topic[]>((items, page) => mergeTopics(items, page.topics || []), []);
-  const replies = replyPages.reduce<UserReplyActivity[]>((items, page) => mergeUserReplies(items, page.replies || []), []);
+  const replies = replyPages.reduce<UserReplyActivity[]>(
+    (items, page) => mergeUserReplies(items, page.replies || []),
+    []
+  );
   const lastTopicPage = topicPages.at(-1) || profile;
   const lastReplyPage = replyPages.at(-1) || profile;
   return {
@@ -143,30 +146,29 @@ export function useUserController({
   });
   const [selectedUser, setSelectedUser] = useState<UserReference | null>(null);
   const followedUserRecords = useMemo<FollowedUserRecord[]>(
-    () => Object.values(readerData.followedUsers).sort((left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)),
+    () =>
+      Object.values(readerData.followedUsers).sort(
+        (left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)
+      ),
     [readerData.followedUsers]
   );
   const selectedSource = selectedUser?.source || 'v2ex';
   const selectedUsername = selectedUser?.username || '';
   const selectedNeedsResolution = Boolean(
-    selectedUser?.source === 'nodeseek'
-    && !nodeSeekUserIdFromValue(selectedUser.id)
-    && selectedUsername
+    selectedUser?.source === 'nodeseek' && !nodeSeekUserIdFromValue(selectedUser.id) && selectedUsername
   );
   const selectedIdentityPending = Boolean(
-    selectedUser
-    && selectedUser.source !== 'v2ex'
-    && identityBarriers.includes(selectedUser.source)
+    selectedUser && selectedUser.source !== 'v2ex' && identityBarriers.includes(selectedUser.source)
   );
-  const resolutionKey = useMemo(() => forumQueryKeys.userResolution({
-    scope: sessionEpochs,
-    username: selectedUsername
-  }), [sessionEpochs.nodeseek, selectedUsername]);
-  const resolutionEnabled = Boolean(
-    selectedNeedsResolution
-    && screen === 'user'
-    && !selectedIdentityPending
+  const resolutionKey = useMemo(
+    () =>
+      forumQueryKeys.userResolution({
+        scope: sessionEpochs,
+        username: selectedUsername
+      }),
+    [sessionEpochs.nodeseek, selectedUsername]
   );
+  const resolutionEnabled = Boolean(selectedNeedsResolution && screen === 'user' && !selectedIdentityPending);
   const resolutionQuery = useQuery({
     queryKey: resolutionKey,
     enabled: resolutionEnabled,
@@ -177,10 +179,13 @@ export function useUserController({
       });
       try {
         markDiagnosticStage(trace, 'guard', { source: 'nodeseek', state: 'resolve' });
-        const resolved = await sourceGateway.resolveNodeSeekUser({
-          username: selectedUsername,
-          signal
-        }, { trace });
+        const resolved = await sourceGateway.resolveNodeSeekUser(
+          {
+            username: selectedUsername,
+            signal
+          },
+          { trace }
+        );
         if (!/^\d+$/.test(resolved.id || '')) {
           throw new Error('NodeSeek 用户名解析结果缺少数字用户 ID');
         }
@@ -197,18 +202,22 @@ export function useUserController({
   });
   const canonicalUser = selectedNeedsResolution ? resolutionQuery.data || null : selectedUser;
   const identity = canonicalUser?.id || '';
-  const profileKey = useMemo(() => forumQueryKeys.user({
-    source: selectedSource,
-    userId: identity,
-    scope: sessionEpochs
-  }), [
-    sessionEpochs.linuxdo,
-    sessionEpochs.nodeseek,
-    sessionEpochs.xiaoyinsi,
-    sessionEpochs.yaohuo,
-    identity,
-    selectedSource
-  ]);
+  const profileKey = useMemo(
+    () =>
+      forumQueryKeys.user({
+        source: selectedSource,
+        userId: identity,
+        scope: sessionEpochs
+      }),
+    [
+      sessionEpochs.linuxdo,
+      sessionEpochs.nodeseek,
+      sessionEpochs.xiaoyinsi,
+      sessionEpochs.yaohuo,
+      identity,
+      selectedSource
+    ]
+  );
   const topicKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'topics'), [profileKey]);
   const replyKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'replies'), [profileKey]);
   const enabled = Boolean(canonicalUser && identity && screen === 'user' && !selectedIdentityPending);
@@ -224,12 +233,15 @@ export function useUserController({
       });
       try {
         markDiagnosticStage(trace, 'guard', { source: user.source, state: 'open' });
-        const profile = await sourceGateway.getUserProfile({
-          source: user.source,
-          id: user.id!,
-          username: user.username,
-          signal
-        }, { trace });
+        const profile = await sourceGateway.getUserProfile(
+          {
+            source: user.source,
+            id: user.id!,
+            username: user.username,
+            signal
+          },
+          { trace }
+        );
         if (sourceDiagnosticSummary(profile)?.isParseEmpty) {
           throw new Error('用户主页解析为空，无法显示，请重试。');
         }
@@ -267,14 +279,17 @@ export function useUserController({
       });
       try {
         markDiagnosticStage(trace, 'guard', { source: user.source, state: 'load-more', hasCursor: true });
-        const page = await sourceGateway.getUserProfile({
-          source: user.source,
-          id: user.id!,
-          username: user.username,
-          cursor: pageParam,
-          cursorType: lane,
-          signal
-        }, { trace });
+        const page = await sourceGateway.getUserProfile(
+          {
+            source: user.source,
+            id: user.id!,
+            username: user.username,
+            cursor: pageParam,
+            cursorType: lane,
+            signal
+          },
+          { trace }
+        );
         if (sourceDiagnosticSummary(page)?.isParseEmpty) {
           throw new Error(`用户${lane === 'topics' ? '帖子' : '回复'}解析为空，无法加载下一页，请重试。`);
         }
@@ -300,17 +315,27 @@ export function useUserController({
   const topicsQuery = useInfiniteQuery(createLaneQuery('topics', topicKey));
   const repliesQuery = useInfiniteQuery(createLaneQuery('replies', replyKey));
 
-  const seedUserLane = useCallback((key: QueryKey) => {
-    const profile = profileQuery.data;
-    if (!profile) return;
-    const state = queryClient.getQueryState(key);
-    if (!state || profileQuery.dataUpdatedAt > state.dataUpdatedAt) {
-      queryClient.setQueryData<InfiniteData<UserProfile, string | null>>(key, (current) => current ? {
-        pages: [profile, ...current.pages.slice(1)],
-        pageParams: [null, ...current.pageParams.slice(1)]
-      } : firstLaneData(profile), { updatedAt: profileQuery.dataUpdatedAt });
-    }
-  }, [profileQuery.data, profileQuery.dataUpdatedAt, queryClient]);
+  const seedUserLane = useCallback(
+    (key: QueryKey) => {
+      const profile = profileQuery.data;
+      if (!profile) return;
+      const state = queryClient.getQueryState(key);
+      if (!state || profileQuery.dataUpdatedAt > state.dataUpdatedAt) {
+        queryClient.setQueryData<InfiniteData<UserProfile, string | null>>(
+          key,
+          (current) =>
+            current
+              ? {
+                  pages: [profile, ...current.pages.slice(1)],
+                  pageParams: [null, ...current.pageParams.slice(1)]
+                }
+              : firstLaneData(profile),
+          { updatedAt: profileQuery.dataUpdatedAt }
+        );
+      }
+    },
+    [profileQuery.data, profileQuery.dataUpdatedAt, queryClient]
+  );
 
   useEffect(() => {
     seedUserLane(topicKey);
@@ -322,52 +347,71 @@ export function useUserController({
     return profile
       ? mergeUserProfile(profile, topicsQuery.data?.pages || [profile], repliesQuery.data?.pages || [profile])
       : null;
-  },
-  [profileQuery.data, repliesQuery.data?.pages, topicsQuery.data?.pages]);
+  }, [profileQuery.data, repliesQuery.data?.pages, topicsQuery.data?.pages]);
   const queryError = resolutionQuery.error || profileQuery.error || topicsQuery.error || repliesQuery.error;
   const userError = queryError && selectedUser ? sourceErrorFromUnknown(selectedUser.source, queryError) : null;
   const currentUserFollowed = Boolean(userProfile && isUserFollowed(readerData, userProfile));
 
-  const handleError = useCallback((
-    error: unknown,
-    lane: 'resolution' | 'profile' | UserLane,
-    resume: () => Promise<{ error: unknown; errorUpdatedAt: number; isError: boolean }>
-  ) => {
-    if (!selectedUser) return;
-    const sourceError = sourceErrorFromUnknown(selectedUser.source, error);
-    const target = userSourceRecoveryTarget(selectedUser.source, sourceError);
-    if (target === 'linuxdo-verification') {
-      const queryKey = lane === 'resolution' ? resolutionKey : lane === 'profile' ? profileKey : lane === 'topics' ? topicKey : replyKey;
-      const recovery: LinuxDoReadRecovery = {
-        queryKey,
-        resume: async () => {
-          const result = await resume();
-          handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
-          return result.isError ? sourceReadRecoveryOutcome('linuxdo', result.error) : 'completed';
+  const handleError = useCallback(
+    (
+      error: unknown,
+      lane: 'resolution' | 'profile' | UserLane,
+      resume: () => Promise<{ error: unknown; errorUpdatedAt: number; isError: boolean }>
+    ) => {
+      if (!selectedUser) return;
+      const sourceError = sourceErrorFromUnknown(selectedUser.source, error);
+      const target = userSourceRecoveryTarget(selectedUser.source, sourceError);
+      if (target === 'linuxdo-verification') {
+        const queryKey =
+          lane === 'resolution'
+            ? resolutionKey
+            : lane === 'profile'
+              ? profileKey
+              : lane === 'topics'
+                ? topicKey
+                : replyKey;
+        const recovery: LinuxDoReadRecovery = {
+          queryKey,
+          resume: async () => {
+            const result = await resume();
+            handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
+            return result.isError ? sourceReadRecoveryOutcome('linuxdo', result.error) : 'completed';
+          }
+        };
+        void showLinuxDoVerification(sourceError.message, recovery);
+      } else if (target === 'nodeseek-verification') {
+        if (lane !== 'resolution' && lane !== 'profile') {
+          showNodeSeekVerification(sourceError.message);
+          return;
         }
-      };
-      void showLinuxDoVerification(sourceError.message, recovery);
-    } else if (target === 'nodeseek-verification') {
-      if (lane !== 'resolution' && lane !== 'profile') {
-        showNodeSeekVerification(sourceError.message);
-        return;
+        const queryKey = lane === 'resolution' ? resolutionKey : profileKey;
+        const recovery: LinuxDoReadRecovery = {
+          queryKey,
+          resume: async () => {
+            const result = await resume();
+            handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
+            return result.isError ? sourceReadRecoveryOutcome('nodeseek', result.error) : 'completed';
+          }
+        };
+        showNodeSeekVerification(sourceError.message, recovery);
+      } else if (target === 'yaohuo-login') {
+        showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : sourceError.message);
+      } else {
+        notify(sourceError.message);
       }
-      const queryKey = lane === 'resolution' ? resolutionKey : profileKey;
-      const recovery: LinuxDoReadRecovery = {
-        queryKey,
-        resume: async () => {
-          const result = await resume();
-          handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
-          return result.isError ? sourceReadRecoveryOutcome('nodeseek', result.error) : 'completed';
-        }
-      };
-      showNodeSeekVerification(sourceError.message, recovery);
-    } else if (target === 'yaohuo-login') {
-      showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : sourceError.message);
-    } else {
-      notify(sourceError.message);
-    }
-  }, [notify, profileKey, replyKey, resolutionKey, selectedUser, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicKey]);
+    },
+    [
+      notify,
+      profileKey,
+      replyKey,
+      resolutionKey,
+      selectedUser,
+      showLinuxDoVerification,
+      showNodeSeekVerification,
+      showYaohuoLogin,
+      topicKey
+    ]
+  );
 
   useEffect(() => {
     if (resolutionQuery.error && handledUserErrorAtRef.current.resolution !== resolutionQuery.errorUpdatedAt) {
@@ -381,34 +425,60 @@ export function useUserController({
       handledUserErrorAtRef.current.profile = profileQuery.errorUpdatedAt;
       handleError(profileQuery.error, 'profile', () => profileQuery.refetch({ cancelRefetch: false }));
     }
-  }, [handleError, identity, profileQuery.error, profileQuery.errorUpdatedAt, profileQuery.refetch, selectedUser?.source]);
+  }, [
+    handleError,
+    identity,
+    profileQuery.error,
+    profileQuery.errorUpdatedAt,
+    profileQuery.refetch,
+    selectedUser?.source
+  ]);
   useEffect(() => {
     if (topicsQuery.error && handledUserErrorAtRef.current.topics !== topicsQuery.errorUpdatedAt) {
       handledUserErrorAtRef.current.topics = topicsQuery.errorUpdatedAt;
       handleError(topicsQuery.error, 'topics', () => topicsQuery.fetchNextPage({ cancelRefetch: false }));
     }
-  }, [handleError, identity, selectedUser?.source, topicsQuery.data?.pageParams, topicsQuery.error, topicsQuery.errorUpdatedAt, topicsQuery.fetchNextPage]);
+  }, [
+    handleError,
+    identity,
+    selectedUser?.source,
+    topicsQuery.data?.pageParams,
+    topicsQuery.error,
+    topicsQuery.errorUpdatedAt,
+    topicsQuery.fetchNextPage
+  ]);
   useEffect(() => {
     if (repliesQuery.error && handledUserErrorAtRef.current.replies !== repliesQuery.errorUpdatedAt) {
       handledUserErrorAtRef.current.replies = repliesQuery.errorUpdatedAt;
       handleError(repliesQuery.error, 'replies', () => repliesQuery.fetchNextPage({ cancelRefetch: false }));
     }
-  }, [handleError, identity, repliesQuery.data?.pageParams, repliesQuery.error, repliesQuery.errorUpdatedAt, repliesQuery.fetchNextPage, selectedUser?.source]);
+  }, [
+    handleError,
+    identity,
+    repliesQuery.data?.pageParams,
+    repliesQuery.error,
+    repliesQuery.errorUpdatedAt,
+    repliesQuery.fetchNextPage,
+    selectedUser?.source
+  ]);
 
-  const openUser = useCallback(async (user: UserReference): Promise<LinuxDoReadResumeOutcome> => {
-    if (!user.id && !user.username) {
-      notify('用户信息不完整');
+  const openUser = useCallback(
+    async (user: UserReference): Promise<LinuxDoReadResumeOutcome> => {
+      if (!user.id && !user.username) {
+        notify('用户信息不完整');
+        return 'completed';
+      }
+      const requested = normalizeRequestedUser(user);
+      if (!requested) {
+        notify('用户信息不完整');
+        return 'completed';
+      }
+      onOpenUserScreen();
+      setSelectedUser(requested);
       return 'completed';
-    }
-    const requested = normalizeRequestedUser(user);
-    if (!requested) {
-      notify('用户信息不完整');
-      return 'completed';
-    }
-    onOpenUserScreen();
-    setSelectedUser(requested);
-    return 'completed';
-  }, [notify, onOpenUserScreen]);
+    },
+    [notify, onOpenUserScreen]
+  );
 
   const refreshUser = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!selectedUser) return 'completed';
@@ -425,7 +495,18 @@ export function useUserController({
       queryClient.setQueryData(replyKey, firstLaneData(profile));
     }
     return 'completed';
-  }, [identity, profileKey, queryClient, replyKey, resolutionQuery.data, resolutionQuery.refetch, selectedIdentityPending, selectedNeedsResolution, selectedUser, topicKey]);
+  }, [
+    identity,
+    profileKey,
+    queryClient,
+    replyKey,
+    resolutionQuery.data,
+    resolutionQuery.refetch,
+    selectedIdentityPending,
+    selectedNeedsResolution,
+    selectedUser,
+    topicKey
+  ]);
 
   const loadMoreUserTopics = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (selectedIdentityPending) return 'stale';
@@ -437,14 +518,23 @@ export function useUserController({
     const cached = queryClient.getQueryData<InfiniteData<UserProfile, string | null>>(topicKey);
     const lastPage = cached?.pages.at(-1);
     const lastCursor = cached?.pageParams.at(-1) ?? null;
-    if (!lastPage || !hasNextUserPage(
-      hasMoreUserLane(lastPage, 'topics'),
-      nextUserCursor(lastPage, 'topics'),
-      lastCursor
-    )) return 'completed';
+    if (
+      !lastPage ||
+      !hasNextUserPage(hasMoreUserLane(lastPage, 'topics'), nextUserCursor(lastPage, 'topics'), lastCursor)
+    )
+      return 'completed';
     const result = await topicsQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [profileQuery.data, queryClient, seedUserLane, selectedIdentityPending, topicKey, topicsQuery.fetchNextPage, topicsQuery.isFetchingNextPage, topicsQuery.refetch]);
+  }, [
+    profileQuery.data,
+    queryClient,
+    seedUserLane,
+    selectedIdentityPending,
+    topicKey,
+    topicsQuery.fetchNextPage,
+    topicsQuery.isFetchingNextPage,
+    topicsQuery.refetch
+  ]);
   const loadMoreUserReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (selectedIdentityPending) return 'stale';
     if (repliesQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
@@ -455,14 +545,23 @@ export function useUserController({
     const cached = queryClient.getQueryData<InfiniteData<UserProfile, string | null>>(replyKey);
     const lastPage = cached?.pages.at(-1);
     const lastCursor = cached?.pageParams.at(-1) ?? null;
-    if (!lastPage || !hasNextUserPage(
-      hasMoreUserLane(lastPage, 'replies'),
-      nextUserCursor(lastPage, 'replies'),
-      lastCursor
-    )) return 'completed';
+    if (
+      !lastPage ||
+      !hasNextUserPage(hasMoreUserLane(lastPage, 'replies'), nextUserCursor(lastPage, 'replies'), lastCursor)
+    )
+      return 'completed';
     const result = await repliesQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [profileQuery.data, queryClient, repliesQuery.fetchNextPage, repliesQuery.isFetchingNextPage, repliesQuery.refetch, replyKey, seedUserLane, selectedIdentityPending]);
+  }, [
+    profileQuery.data,
+    queryClient,
+    repliesQuery.fetchNextPage,
+    repliesQuery.isFetchingNextPage,
+    repliesQuery.refetch,
+    replyKey,
+    seedUserLane,
+    selectedIdentityPending
+  ]);
 
   useEffect(() => {
     if (screen === 'user' || !selectedUser) return;
@@ -472,12 +571,15 @@ export function useUserController({
     void queryClient.cancelQueries({ queryKey: replyKey, exact: true });
   }, [profileKey, queryClient, replyKey, resolutionKey, screen, selectedUser, topicKey]);
 
-  useEffect(() => () => {
-    void queryClient.cancelQueries({ queryKey: resolutionKey, exact: true });
-    void queryClient.cancelQueries({ queryKey: profileKey, exact: true });
-    void queryClient.cancelQueries({ queryKey: topicKey, exact: true });
-    void queryClient.cancelQueries({ queryKey: replyKey, exact: true });
-  }, [profileKey, queryClient, replyKey, resolutionKey, topicKey]);
+  useEffect(
+    () => () => {
+      void queryClient.cancelQueries({ queryKey: resolutionKey, exact: true });
+      void queryClient.cancelQueries({ queryKey: profileKey, exact: true });
+      void queryClient.cancelQueries({ queryKey: topicKey, exact: true });
+      void queryClient.cancelQueries({ queryKey: replyKey, exact: true });
+    },
+    [profileKey, queryClient, replyKey, resolutionKey, topicKey]
+  );
 
   return {
     currentUserFollowed,

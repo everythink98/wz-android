@@ -1,18 +1,21 @@
-import type { AccessRequirement, QuotedPostMetadata, QuotedPostReference, Reply, Source, Topic, TopicDetail, TopicPoll } from '../../types';
+import type {
+  AccessRequirement,
+  QuotedPostMetadata,
+  QuotedPostReference,
+  Reply,
+  Source,
+  Topic,
+  TopicDetail,
+  TopicPoll
+} from '../../types';
 import { accessRequirementFromNoticeText, textContentFromHtml } from '../../localHtml';
 import { replyKey } from '../../feedLogic';
 import { splitDiscourseContentHtml } from '../../discourseContent';
 import { splitTopicContentHtml } from '../../topicContentSplit';
 import { isDiscourseSource } from '../../sourceCatalog';
-import {
-  quotedPostsForSource,
-  replyForQuotedPost,
-  replyQuotedPostInstanceKey
-} from '../../quotedPosts';
+import { quotedPostsForSource, replyForQuotedPost, replyQuotedPostInstanceKey } from '../../quotedPosts';
 
-export type ReplyQuoteContent =
-  | { type: 'html'; html: string }
-  | { type: 'poll'; poll: TopicPoll };
+export type ReplyQuoteContent = { type: 'html'; html: string } | { type: 'poll'; poll: TopicPoll };
 
 export type TopicListItem =
   | { type: 'replyControls'; key: string }
@@ -68,15 +71,18 @@ function quotedPostContent(reply: Reply, source: Source): QuotedPostContentEntry
   const parts = isDiscourseSource(source)
     ? splitDiscourseContentHtml(reply.contentHtml, reply.polls)
     : [{ type: 'html' as const, html: reply.contentHtml }];
-  const content = parts.flatMap<QuotedPostContentRow>((part, partIndex) => part.type === 'poll'
-    ? [{
-        content: { type: 'poll' as const, poll: part.poll },
-        key: `poll:${partIndex}:${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`
-      }]
-    : splitTopicContentHtml(part.html).map((html, chunkIndex) => ({
-        content: { type: 'html' as const, html },
-        key: `html:${partIndex}:${chunkIndex}:${stableTextHash(html)}`
-      }))
+  const content = parts.flatMap<QuotedPostContentRow>((part, partIndex) =>
+    part.type === 'poll'
+      ? [
+          {
+            content: { type: 'poll' as const, poll: part.poll },
+            key: `poll:${partIndex}:${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`
+          }
+        ]
+      : splitTopicContentHtml(part.html).map((html, chunkIndex) => ({
+          content: { type: 'html' as const, html },
+          key: `html:${partIndex}:${chunkIndex}:${stableTextHash(html)}`
+        }))
   );
   const entry = {
     rows: content,
@@ -119,20 +125,11 @@ export function buildVirtualizedReplyItems({
     quotes.forEach((quote) => {
       const instanceKey = replyQuotedPostInstanceKey(key, quote.reference);
       const expanded = Boolean(expandedQuotes[instanceKey]);
-      const quotedReply = replyForQuotedPost(
-        quote.reference,
-        source,
-        topicId,
-        repliesByFloor,
-        loadedQuotedReplies
-      );
-      const contentEntry = expanded && quotedReply
-        ? quotedPostContent(quotedReply, quote.reference.source)
-        : undefined;
+      const quotedReply = replyForQuotedPost(quote.reference, source, topicId, repliesByFloor, loadedQuotedReplies);
+      const contentEntry = expanded && quotedReply ? quotedPostContent(quotedReply, quote.reference.source) : undefined;
       const content = contentEntry?.rows || [];
-      const fullyMaterialized = !contentEntry
-        || content.length <= 2
-        || primedQuoteContentTokens?.get(instanceKey) === contentEntry.token;
+      const fullyMaterialized =
+        !contentEntry || content.length <= 2 || primedQuoteContentTokens?.get(instanceKey) === contentEntry.token;
       const visibleContent = fullyMaterialized ? content : content.slice(0, 2);
       rows.push({
         type: 'replyQuoteSummary',
@@ -183,7 +180,9 @@ export function topicListItemSpacing(leading: TopicListItem, trailing: TopicList
   return 10;
 }
 
-export function topicStatusBadges(item: Pick<Topic, 'acceptedAnswerFloor' | 'archived' | 'closed' | 'pinned' | 'slowModeSeconds' | 'solved'>) {
+export function topicStatusBadges(
+  item: Pick<Topic, 'acceptedAnswerFloor' | 'archived' | 'closed' | 'pinned' | 'slowModeSeconds' | 'solved'>
+) {
   const badges: { label: string; tone: 'success' | 'accent' | 'danger' | 'neutral' | 'warning' }[] = [];
   if (item.solved) {
     badges.push({ label: '已解决', tone: 'success' });
@@ -243,7 +242,13 @@ export function buildReplyListItems({
 }
 
 export function hasSameYaohuoTopicLayout(previous: TopicDetail | null, current: TopicDetail | null) {
-  if (!previous || !current || previous.source !== 'yaohuo' || current.source !== 'yaohuo' || previous.id !== current.id) {
+  if (
+    !previous ||
+    !current ||
+    previous.source !== 'yaohuo' ||
+    current.source !== 'yaohuo' ||
+    previous.id !== current.id
+  ) {
     return false;
   }
   const previousRecord = previous as unknown as Record<string, unknown>;
@@ -260,7 +265,4 @@ export function hasSameYaohuoTopicLayout(previous: TopicDetail | null, current: 
   return true;
 }
 
-export {
-  getReplyKey,
-  stableTextHash
-};
+export { getReplyKey, stableTextHash };

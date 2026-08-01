@@ -3,7 +3,11 @@ import { RenderHTMLSource } from 'react-native-render-html';
 import { flowInlineImagesInMixedParagraphs } from '../../htmlImages';
 import { HTML_REPLY_CONTENT_CLASS, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from '../../htmlRenderingStyles';
 import { markNodeSeekReplyReferenceLinks, normalizeRenderableHtml } from '../../topicContentHtml';
-import { sameInlineSizedImagesForHtml, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../../topicDerivedData';
+import {
+  sameInlineSizedImagesForHtml,
+  type InlineSizedImageUrlMap,
+  type TopicImageDeriver
+} from '../../topicDerivedData';
 import { OriginalImageUpgradeBoundary } from '../../originalImageLoading';
 
 export function TopicContentBlock({
@@ -32,34 +36,28 @@ export function TopicContentBlock({
     const wrapperAttributes = [
       compact ? `class="${HTML_REPLY_CONTENT_CLASS}"` : '',
       trimTrailingBlockSpacing ? `${TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE}="true"` : ''
-    ].filter(Boolean).join(' ');
+    ]
+      .filter(Boolean)
+      .join(' ');
     return {
-      html: wrapperAttributes
-        ? `<div ${wrapperAttributes}>${renderableHtml}</div>`
-        : renderableHtml
+      html: wrapperAttributes ? `<div ${wrapperAttributes}>${renderableHtml}</div>` : renderableHtml
     };
   }, [baseUrl, compact, html, inlineSizedImageUrls, topicImageDeriver, trimTrailingBlockSpacing]);
   return (
     <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
-      <RenderHTMLSource
-        contentWidth={contentWidth}
-        source={source}
-      />
+      <RenderHTMLSource contentWidth={contentWidth} source={source} />
     </OriginalImageUpgradeBoundary>
   );
 }
 
-export const MemoizedTopicContentBlock = memo(TopicContentBlock, (previous, next) => (
-  previous.baseUrl === next.baseUrl
-  && previous.compact === next.compact
-  && previous.contentWidth === next.contentWidth
-  && previous.originalImageUpgradeEnabled === next.originalImageUpgradeEnabled
-  && previous.trimTrailingBlockSpacing === next.trimTrailingBlockSpacing
-  && previous.topicImageDeriver === next.topicImageDeriver
-  && sameInlineSizedImagesForHtml(
-    previous.html,
-    next.html,
-    previous.inlineSizedImageUrls,
-    next.inlineSizedImageUrls
-  )
-));
+export const MemoizedTopicContentBlock = memo(
+  TopicContentBlock,
+  (previous, next) =>
+    previous.baseUrl === next.baseUrl &&
+    previous.compact === next.compact &&
+    previous.contentWidth === next.contentWidth &&
+    previous.originalImageUpgradeEnabled === next.originalImageUpgradeEnabled &&
+    previous.trimTrailingBlockSpacing === next.trimTrailingBlockSpacing &&
+    previous.topicImageDeriver === next.topicImageDeriver &&
+    sameInlineSizedImagesForHtml(previous.html, next.html, previous.inlineSizedImageUrls, next.inlineSizedImageUrls)
+);

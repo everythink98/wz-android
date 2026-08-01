@@ -65,12 +65,7 @@ describe('diagnostic traces', () => {
       state: 'session-check'
     });
 
-    for (const state of [
-      'session-expired',
-      'connect-started',
-      'connect-finished',
-      'key-saved'
-    ]) {
+    for (const state of ['session-expired', 'connect-started', 'connect-finished', 'key-saved']) {
       markDiagnosticStage(trace, 'credential', {
         apiKey: 'api-key-secret',
         payload: 'payload-secret',
@@ -79,16 +74,14 @@ describe('diagnostic traces', () => {
     }
     finishDiagnosticTrace(trace, 'success');
 
-    expect(events().flatMap((event) => event.state ? [event.state] : [])).toEqual([
+    expect(events().flatMap((event) => (event.state ? [event.state] : []))).toEqual([
       'session-check',
       'session-expired',
       'connect-started',
       'connect-finished',
       'key-saved'
     ]);
-    expect(JSON.stringify(events())).not.toMatch(
-      /nonce-secret|api-key-secret|payload-secret|nonce|apiKey|payload/
-    );
+    expect(JSON.stringify(events())).not.toMatch(/nonce-secret|api-key-secret|payload-secret|nonce|apiKey|payload/);
   });
 
   it('REG-ACCOUNT-040 records only the classified NodeImage timeout result', () => {
@@ -127,13 +120,17 @@ describe('diagnostic traces', () => {
   it('records only classified request metadata around a fetch', async () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('network', 'request');
-    const fetcher = withDiagnosticFetcher(trace, async () => new Response('ok', {
-      status: 200,
-      headers: {
-        'content-length': '2',
-        'content-type': 'text/plain; charset=utf-8'
-      }
-    }));
+    const fetcher = withDiagnosticFetcher(
+      trace,
+      async () =>
+        new Response('ok', {
+          status: 200,
+          headers: {
+            'content-length': '2',
+            'content-type': 'text/plain; charset=utf-8'
+          }
+        })
+    );
 
     await fetcher('https://www.nodeseek.com/private/topic?token=FAKE_SECRET', {
       method: 'POST',
@@ -196,10 +193,12 @@ describe('diagnostic traces', () => {
     });
     finishDiagnosticTrace(trace, 'failure', { fallback: 'svg', terminalReason: 'fallback-error' });
 
-    expect(events().at(-1)).toEqual(expect.objectContaining({
-      fallback: 'svg',
-      terminalReason: 'fallback-error'
-    }));
+    expect(events().at(-1)).toEqual(
+      expect.objectContaining({
+        fallback: 'svg',
+        terminalReason: 'fallback-error'
+      })
+    );
     expect(JSON.stringify(events())).not.toContain('secret.example');
   });
 
@@ -224,21 +223,25 @@ describe('diagnostic traces', () => {
       totalBytes: 8192
     });
 
-    expect(events()[0]).toEqual(expect.objectContaining({
-      candidateKind: 'srcset',
-      mediaRef,
-      mediaRole: 'body'
-    }));
-    expect(events().at(-1)).toEqual(expect.objectContaining({
-      cacheType: 'memory',
-      displayMs: 41,
-      firstProgressMs: 7,
-      loadedBytes: 8192,
-      loadMs: 35,
-      sourceHeight: 720,
-      sourceWidth: 1280,
-      totalBytes: 8192
-    }));
+    expect(events()[0]).toEqual(
+      expect.objectContaining({
+        candidateKind: 'srcset',
+        mediaRef,
+        mediaRole: 'body'
+      })
+    );
+    expect(events().at(-1)).toEqual(
+      expect.objectContaining({
+        cacheType: 'memory',
+        displayMs: 41,
+        firstProgressMs: 7,
+        loadedBytes: 8192,
+        loadMs: 35,
+        sourceHeight: 720,
+        sourceWidth: 1280,
+        totalBytes: 8192
+      })
+    );
     expect(mediaRef).toMatch(/^media-\d+$/);
     expect(JSON.stringify(events())).not.toMatch(/secret\.example|ULTRA_FAKE_SECRET_9/);
   });
@@ -247,11 +250,14 @@ describe('diagnostic traces', () => {
     const trace = beginDiagnosticTrace('topic', 'open');
     let nestedInit: RequestInit | undefined;
     let nestedTrace: unknown;
-    const fetcher = withDiagnosticFetcher(trace, registerDiagnosticContextFetcher(async (_input, receivedInit) => {
-      nestedInit = receivedInit;
-      nestedTrace = diagnosticTraceForRequest(receivedInit);
-      return new Response('ok');
-    }));
+    const fetcher = withDiagnosticFetcher(
+      trace,
+      registerDiagnosticContextFetcher(async (_input, receivedInit) => {
+        nestedInit = receivedInit;
+        nestedTrace = diagnosticTraceForRequest(receivedInit);
+        return new Response('ok');
+      })
+    );
 
     await fetcher('https://linux.do/t/42.json');
 
@@ -265,17 +271,25 @@ describe('diagnostic traces', () => {
     const trace = beginDiagnosticTrace('network', 'request');
     const failure = new TypeError('Network request failed');
     const init: RequestInit = { method: 'GET' };
-    const fetcher = withDiagnosticFetcher(trace, async () => { throw failure; });
+    const fetcher = withDiagnosticFetcher(trace, async () => {
+      throw failure;
+    });
 
     await expect(fetcher('https://example.com/private?token=ULTRA_FAKE_SECRET_9', init)).rejects.toBe(failure);
     expect(diagnosticTraceForRequest(init)).toBeUndefined();
 
-    expect(events().filter((event) => event.phase === 'transport').at(-1)).toEqual(expect.objectContaining({
-      endpoint: 'external',
-      state: 'failure',
-      outcome: 'failure',
-      reason: 'network_error'
-    }));
+    expect(
+      events()
+        .filter((event) => event.phase === 'transport')
+        .at(-1)
+    ).toEqual(
+      expect.objectContaining({
+        endpoint: 'external',
+        state: 'failure',
+        outcome: 'failure',
+        reason: 'network_error'
+      })
+    );
     expect(JSON.stringify(events())).not.toMatch(/example\.com|private|token|ULTRA_FAKE_SECRET_9/);
   });
 
@@ -293,13 +307,15 @@ describe('diagnostic traces', () => {
     markDiagnosticStage(trace, 'apply', { itemCount: 3 });
 
     expect(events().map((event) => event.phase)).toEqual(['intent', 'parse', 'finish']);
-    expect(events()[1]).toEqual(expect.objectContaining({
-      traceId: trace.traceId,
-      candidateCount: 4,
-      validCount: 3,
-      droppedCount: 1,
-      parserVariant: 'html-topic'
-    }));
+    expect(events()[1]).toEqual(
+      expect.objectContaining({
+        traceId: trace.traceId,
+        candidateCount: 4,
+        validCount: 3,
+        droppedCount: 1,
+        parserVariant: 'html-topic'
+      })
+    );
   });
 
   it.each([
@@ -327,16 +343,18 @@ describe('diagnostic traces', () => {
     hintDiagnosticOutcome(trace, 'partial', { droppedCount: 2 });
     finishDiagnosticTrace(trace, 'success', { source: 'v2ex', state: 'applied' });
 
-    expect(events().at(-1)).toEqual(expect.objectContaining({
-      phase: 'finish',
-      outcome: 'failure',
-      source: 'v2ex',
-      state: 'applied',
-      reason: 'parse_empty',
-      candidateCount: 0,
-      droppedCount: 2,
-      partialErrorCount: 1
-    }));
+    expect(events().at(-1)).toEqual(
+      expect.objectContaining({
+        phase: 'finish',
+        outcome: 'failure',
+        source: 'v2ex',
+        state: 'applied',
+        reason: 'parse_empty',
+        candidateCount: 0,
+        droppedCount: 2,
+        partialErrorCount: 1
+      })
+    );
   });
 
   it.each([
@@ -388,15 +406,17 @@ describe('diagnostic traces', () => {
 
     beginDiagnosticTrace('source', '/users/private?token=ULTRA_FAKE_SECRET_9', unsafeFields, 1_000);
 
-    expect(events()[0]).toEqual(expect.objectContaining({
-      operation: 'unknown',
-      endpoint: 'user',
-      channel: 'webview',
-      state: 'session-expired',
-      itemCount: 3,
-      hasCookie: true,
-      mutationReason: 'redacted'
-    }));
+    expect(events()[0]).toEqual(
+      expect.objectContaining({
+        operation: 'unknown',
+        endpoint: 'user',
+        channel: 'webview',
+        state: 'session-expired',
+        itemCount: 3,
+        hasCookie: true,
+        mutationReason: 'redacted'
+      })
+    );
     expect(events()[0]).not.toHaveProperty('unknown');
     expect(events()[0]).not.toHaveProperty('payload');
     expect(JSON.stringify(events())).not.toMatch(/users|private|token|ULTRA_FAKE_SECRET_9|password/);
@@ -473,10 +493,12 @@ describe('diagnostic traces', () => {
       contentType: 'export-secret/private'
     });
 
-    expect(events()[0]).toEqual(expect.objectContaining({
-      topicRef: 'redacted',
-      contentType: 'other'
-    }));
+    expect(events()[0]).toEqual(
+      expect.objectContaining({
+        topicRef: 'redacted',
+        contentType: 'other'
+      })
+    );
     expect(events()[0]).not.toHaveProperty('privateCount');
     expect(events()[0]).not.toHaveProperty('privateStatus');
     expect(JSON.stringify(events()[0])).not.toMatch(/91827|40123|export-secret|private/);
@@ -485,9 +507,13 @@ describe('diagnostic traces', () => {
   it('classifies same-site requests by fixed endpoint type without retaining paths', async () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('network', 'request');
-    const fetcher = withDiagnosticFetcher(trace, async () => new Response('{}', {
-      headers: { 'content-type': 'application/problem+json' }
-    }));
+    const fetcher = withDiagnosticFetcher(
+      trace,
+      async () =>
+        new Response('{}', {
+          headers: { 'content-type': 'application/problem+json' }
+        })
+    );
 
     await fetcher('https://www.nodeseek.com/api/account/getInfo/91827?token=SECRET');
     await fetcher('https://www.nodeseek.com/api/content/list-comments?uid=91827');
@@ -497,7 +523,11 @@ describe('diagnostic traces', () => {
       expect.objectContaining({ endpoint: 'user' }),
       expect.objectContaining({ endpoint: 'replies' })
     ]);
-    expect(events().filter((event) => event.contentType).every((event) => event.contentType === 'application/json')).toBe(true);
+    expect(
+      events()
+        .filter((event) => event.contentType)
+        .every((event) => event.contentType === 'application/json')
+    ).toBe(true);
     expect(JSON.stringify(events())).not.toMatch(/getInfo|list-comments|91827|SECRET/);
   });
 
@@ -519,9 +549,7 @@ describe('diagnostic traces', () => {
     }
     const secondRawRef = diagnosticRef('cursor', rawAnchor);
     expect(secondRawRef).not.toBe(firstRawRef);
-    expect(Number(secondRawRef.split('-').at(-1))).toBeGreaterThan(
-      Number(firstRawRef.split('-').at(-1))
-    );
+    expect(Number(secondRawRef.split('-').at(-1))).toBeGreaterThan(Number(firstRawRef.split('-').at(-1)));
 
     const events = captureEvents();
     const issuedAnchor = diagnosticRef('user', 'diagnostic-issued-cap-anchor');
@@ -547,13 +575,19 @@ describe('diagnostic traces', () => {
     expect(normalizeDiagnosticReason(new Error('request timeout'))).toBe('timeout');
     expect(normalizeDiagnosticReason(new Error('HTTP 403 forbidden'))).toBe('permission_denied');
     expect(normalizeDiagnosticReason(new Error('HTTP status 500'))).toBe('http_error');
-    expect(normalizeDiagnosticReason(new Error('Google 搜索环境验证暂时未通过，请稍后重试'))).toBe('verification_required');
+    expect(normalizeDiagnosticReason(new Error('Google 搜索环境验证暂时未通过，请稍后重试'))).toBe(
+      'verification_required'
+    );
     expect(normalizeDiagnosticReason(new SyntaxError('Unexpected token in JSON'))).toBe('invalid_response');
     expect(normalizeDiagnosticReason(new TypeError('Network request failed'))).toBe('network_error');
-    expect(normalizeDiagnosticReason({
-      message: 'token=ULTRA_FAKE_SECRET_9',
-      toString: () => { throw new Error('must not stringify'); }
-    })).toBe('unknown');
+    expect(
+      normalizeDiagnosticReason({
+        message: 'token=ULTRA_FAKE_SECRET_9',
+        toString: () => {
+          throw new Error('must not stringify');
+        }
+      })
+    ).toBe('unknown');
   });
 
   it('normalizes recognizable business failure classes', () => {
@@ -572,7 +606,9 @@ describe('diagnostic traces', () => {
 
   it('redacts and bounds uncaught error details', () => {
     const events = captureEvents();
-    const error = new Error('PRIVATE_TITLE_91827 PRIVATE_BODY_91827 Failed https://linux.do/users/private?token=ULTRA_FAKE_SECRET_9 password=ULTRA_FAKE_SECRET_9 C:\\Users\\alice\\private.txt');
+    const error = new Error(
+      'PRIVATE_TITLE_91827 PRIVATE_BODY_91827 Failed https://linux.do/users/private?token=ULTRA_FAKE_SECRET_9 password=ULTRA_FAKE_SECRET_9 C:\\Users\\alice\\private.txt'
+    );
     error.stack = `${error.message}\n    at privateFn (C:\\Users\\alice\\project\\private.ts:1:2)\n${'x'.repeat(5_000)}`;
 
     recordDiagnosticError('app', 'uncaught-error', error);
@@ -583,14 +619,20 @@ describe('diagnostic traces', () => {
     expect(event.stack).toBe('Error\n    at [frame] ([bundle]:1:2)');
     expect(String(event.message).length).toBeLessThanOrEqual(512);
     expect(String(event.stack).length).toBeLessThanOrEqual(2_048);
-    expect(JSON.stringify(event)).not.toMatch(/PRIVATE_TITLE_91827|PRIVATE_BODY_91827|ULTRA_FAKE_SECRET_9|linux\.do|users|private\.txt|private\.ts|C:\\\\Users/);
+    expect(JSON.stringify(event)).not.toMatch(
+      /PRIVATE_TITLE_91827|PRIVATE_BODY_91827|ULTRA_FAKE_SECRET_9|linux\.do|users|private\.txt|private\.ts|C:\\\\Users/
+    );
   });
 
   it('never lets synchronous or asynchronous writer failures escape', async () => {
-    setDiagnosticWriter(() => { throw new Error('disk failed'); });
+    setDiagnosticWriter(() => {
+      throw new Error('disk failed');
+    });
     expect(() => beginDiagnosticTrace('diagnostic', 'sync-writer-failure')).not.toThrow();
 
-    setDiagnosticWriter(async () => { throw new Error('async disk failed'); });
+    setDiagnosticWriter(async () => {
+      throw new Error('async disk failed');
+    });
     expect(() => beginDiagnosticTrace('diagnostic', 'async-writer-failure')).not.toThrow();
     await Promise.resolve();
   });

@@ -55,9 +55,11 @@ describe('Discourse action runtime registry', () => {
     await xiaoyinsi.execute?.(request, new AbortController().signal);
 
     expect(mocks.runLinuxDoAction).toHaveBeenCalledOnce();
-    expect(mocks.runLinuxDoAction).toHaveBeenCalledWith(expect.objectContaining({
-      userAgent: 'test-agent'
-    }));
+    expect(mocks.runLinuxDoAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userAgent: 'test-agent'
+      })
+    );
     expect(mocks.runXiaoyinsiAction).toHaveBeenCalledOnce();
     expect(linuxdo.csrfSource).toBe('session-endpoint');
     expect(xiaoyinsi.csrfSource).toBe('none');
@@ -84,10 +86,14 @@ describe('Discourse action runtime registry', () => {
     const context = runtimeContext();
     const runtime = await prepareDiscourseActionRuntime('linuxdo', context);
 
-    await expect(runtime.recover(Object.assign(new Error('linux.do 登录已失效'), {
-      loginRequired: true,
-      source: 'linuxdo'
-    }))).resolves.toMatchObject({
+    await expect(
+      runtime.recover(
+        Object.assign(new Error('linux.do 登录已失效'), {
+          loginRequired: true,
+          source: 'linuxdo'
+        })
+      )
+    ).resolves.toMatchObject({
       loginRequired: true,
       phase: 'credential'
     });

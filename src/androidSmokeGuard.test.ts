@@ -2,7 +2,12 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { capturedAgentDeviceOutput, deviceSelectionArgs, isVersionSupported, MIN_AGENT_DEVICE_VERSION } from '../scripts/agent-device-runtime.mjs';
+import {
+  capturedAgentDeviceOutput,
+  deviceSelectionArgs,
+  isVersionSupported,
+  MIN_AGENT_DEVICE_VERSION
+} from '../scripts/agent-device-runtime.mjs';
 import { runApkSanity, withSmokeSession } from '../scripts/smoke-android.mjs';
 import {
   listReplayFiles,
@@ -34,21 +39,21 @@ describe('Android release evidence guards', () => {
     expect(moreScreen).not.toContain('title="测试工具"');
     expect(nativePlugin).not.toContain('debugAnonymousAvailable');
     expect(nativePlugin).not.toContain('setManagedAnonymousMode');
-    expect(packageJson.scripts['test:device:logged-out']).toBe(
-      'node scripts/run-logged-out-device-replay.mjs'
-    );
-    expect(readProjectFile('scripts', 'run-logged-out-device-replay.mjs')).toContain(
-      'WZ_ANDROID_LOGGED_OUT_DEVICE'
-    );
+    expect(packageJson.scripts['test:device:logged-out']).toBe('node scripts/run-logged-out-device-replay.mjs');
+    expect(readProjectFile('scripts', 'run-logged-out-device-replay.mjs')).toContain('WZ_ANDROID_LOGGED_OUT_DEVICE');
     expect(() => loggedOutDeviceName({})).toThrow('必须设置 WZ_ANDROID_LOGGED_OUT_DEVICE');
-    expect(() => loggedOutDeviceName({
-      WZ_ANDROID_LOGGED_OUT_DEVICE: 'WZ Logged Out API 35',
-      WZ_ANDROID_TEST_DEVICE: 'WZ_Logged_Out_API_35'
-    })).toThrow('必须与主测试/Smoke 设备不同');
-    expect(loggedOutDeviceName({
-      WZ_ANDROID_LOGGED_OUT_DEVICE: 'WZ_Logged_Out_API_35',
-      WZ_ANDROID_TEST_DEVICE: 'WZ_Pixel_API_35'
-    })).toBe('WZ_Logged_Out_API_35');
+    expect(() =>
+      loggedOutDeviceName({
+        WZ_ANDROID_LOGGED_OUT_DEVICE: 'WZ Logged Out API 35',
+        WZ_ANDROID_TEST_DEVICE: 'WZ_Logged_Out_API_35'
+      })
+    ).toThrow('必须与主测试/Smoke 设备不同');
+    expect(
+      loggedOutDeviceName({
+        WZ_ANDROID_LOGGED_OUT_DEVICE: 'WZ_Logged_Out_API_35',
+        WZ_ANDROID_TEST_DEVICE: 'WZ_Pixel_API_35'
+      })
+    ).toBe('WZ_Logged_Out_API_35');
     expect(normalizedAndroidDeviceName(' WZ_Pixel_API_35 ')).toBe('wz pixel api 35');
   });
 
@@ -86,16 +91,21 @@ describe('Android release evidence guards', () => {
     const events: string[] = [];
     const failure = new Error('sanity failed');
 
-    expect(() => withSmokeSession({
-      selectedDevice: 'WZ Pixel API 35',
-      runAgentDeviceCommand: (args: string[]) => {
-        events.push(args.join(' '));
-        return '';
-      }
-    }, () => {
-      events.push('sanity');
-      throw failure;
-    })).toThrow(failure);
+    expect(() =>
+      withSmokeSession(
+        {
+          selectedDevice: 'WZ Pixel API 35',
+          runAgentDeviceCommand: (args: string[]) => {
+            events.push(args.join(' '));
+            return '';
+          }
+        },
+        () => {
+          events.push('sanity');
+          throw failure;
+        }
+      )
+    ).toThrow(failure);
     expect(events).toEqual([
       'boot --session wz-apk-sanity --platform android --device WZ Pixel API 35 --headless',
       'sanity',
@@ -104,17 +114,15 @@ describe('Android release evidence guards', () => {
   });
 
   it('[REG-OPS-004] maps the configured AVD name to the booted device display name', () => {
-    const devices = parseAgentDeviceList(JSON.stringify({
-      success: true,
-      data: {
-        devices: [
-          { id: 'emulator-5554', name: 'WZ Pixel API 35', platform: 'android', booted: true }
-        ]
-      }
-    }));
-    expect(devices).toEqual([
-      { id: 'emulator-5554', name: 'WZ Pixel API 35', platform: 'android', booted: true }
-    ]);
+    const devices = parseAgentDeviceList(
+      JSON.stringify({
+        success: true,
+        data: {
+          devices: [{ id: 'emulator-5554', name: 'WZ Pixel API 35', platform: 'android', booted: true }]
+        }
+      })
+    );
+    expect(devices).toEqual([{ id: 'emulator-5554', name: 'WZ Pixel API 35', platform: 'android', booted: true }]);
     expect(replayDeviceSelectionArgs(devices[0])).toEqual(['--device', 'WZ Pixel API 35']);
     expect(parseAndroidPackageInfo('versionCode=67 minSdk=24\nversionName=1.3.63\n')).toEqual({
       versionCode: 67,
@@ -147,13 +155,18 @@ describe('Android release evidence guards', () => {
   });
 
   it('[REG-OPS-007] treats active and atomic-temp recording manifests as occupied scratch', () => {
-    expect(parseAndroidRecordingScratchPaths([
-      'agent-device-recording-1784023321348.mp4',
-      'agent-device-recording-active.json',
-      'agent-device-recording-active.json.tmp',
-      'screenrecord-user.mp4',
-      'agent-device-recording-not-a-timestamp.mp4'
-    ].join('\n'), '/sdcard')).toEqual([
+    expect(
+      parseAndroidRecordingScratchPaths(
+        [
+          'agent-device-recording-1784023321348.mp4',
+          'agent-device-recording-active.json',
+          'agent-device-recording-active.json.tmp',
+          'screenrecord-user.mp4',
+          'agent-device-recording-not-a-timestamp.mp4'
+        ].join('\n'),
+        '/sdcard'
+      )
+    ).toEqual([
       '/sdcard/agent-device-recording-1784023321348.mp4',
       '/sdcard/agent-device-recording-active.json',
       '/sdcard/agent-device-recording-active.json.tmp'
@@ -170,8 +183,10 @@ describe('Android release evidence guards', () => {
     expect(sanityIndex).toBeGreaterThan(bootIndex);
     expect(smokeScript).toContain("['install', appPackage, apkPath");
     expect(smokeScript).toContain("['logs', 'clear', '--restart'");
-    expect(smokeScript).toContain("['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']");
-    expect(smokeScript).toContain("waitFor('id=\"main-tab-feed\"', 60_000, runAgentDeviceCommand);");
+    expect(smokeScript).toContain(
+      "['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']"
+    );
+    expect(smokeScript).toContain('waitFor(\'id="main-tab-feed"\', 60_000, runAgentDeviceCommand);');
     expect(smokeScript).toContain("console.log('APK_SANITY');");
     expect(smokeScript).not.toContain('device-logged-out');
     expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:press|click|fill|type|back|uninstall|reinstall)['"]/);
@@ -184,9 +199,7 @@ describe('Android release evidence guards', () => {
     const events: string[] = [];
     const runAgentDeviceCommand = (args: string[]) => {
       events.push(`agent:${args.join(' ')}`);
-      return args[0] === 'appstate'
-        ? JSON.stringify({ data: { package: 'com.wz.reader' } })
-        : '';
+      return args[0] === 'appstate' ? JSON.stringify({ data: { package: 'com.wz.reader' } }) : '';
     };
     const runAdbCommand = (args: string[]) => {
       events.push(`adb:${args.join(' ')}`);
@@ -247,9 +260,7 @@ describe('Android release evidence guards', () => {
     expect(readdirSync(deviceDir).sort()).toEqual(expected);
     expect(listReplayFiles(deviceDir).map((file) => path.basename(file))).toEqual(expected);
     expect(readdirSync(loggedOutDeviceDir).sort()).toEqual(['logged-out-readonly.ad']);
-    expect(listReplayFiles(loggedOutDeviceDir).map((file) => path.basename(file))).toEqual([
-      'logged-out-readonly.ad'
-    ]);
+    expect(listReplayFiles(loggedOutDeviceDir).map((file) => path.basename(file))).toEqual(['logged-out-readonly.ad']);
 
     for (const replayPath of [
       ...expected.map((file) => path.join(deviceDir, file)),
@@ -265,17 +276,28 @@ describe('Android release evidence guards', () => {
       expect(replay).not.toMatch(/(?:清除登录|退出登录|清空历史|取消收藏|取消关注|删除回复|提交回复|保存 Key|签到)/);
       expect(replay).not.toMatch(/^\s*(?:uninstall|reinstall|settings reset|shutdown)\b/m);
     }
-    expect(expected.reduce((count, file) => (
-      count + (readFileSync(path.join(deviceDir, file), 'utf8').match(/open \$\{APP_ID\} --relaunch/g)?.length || 0)
-    ), 0)).toBe(6);
+    expect(
+      expected.reduce(
+        (count, file) =>
+          count +
+          (readFileSync(path.join(deviceDir, file), 'utf8').match(/open \$\{APP_ID\} --relaunch/g)?.length || 0),
+        0
+      )
+    ).toBe(6);
     const loggedOutReplay = readFileSync(path.join(loggedOutDeviceDir, 'logged-out-readonly.ad'), 'utf8');
     expect(loggedOutReplay.match(/open \$\{APP_ID\} --relaunch/g)).toHaveLength(2);
     expect(
-      loggedOutReplay.match(/wait "id=\\"account-site-nodeseek\\" label=\\"NodeSeek，未登录，已选择\\" \|\| id=\\"account-site-nodeseek\\" label=\\"NodeSeek，已验证，已选择\\"" 60000/g)
+      loggedOutReplay.match(
+        /wait "id=\\"account-site-nodeseek\\" label=\\"NodeSeek，未登录，已选择\\" \|\| id=\\"account-site-nodeseek\\" label=\\"NodeSeek，已验证，已选择\\"" 60000/g
+      )
     ).toHaveLength(2);
-    expect(loggedOutReplay).toContain('wait "id=\\"account-site-linuxdo\\" label=\\"linux.do，匿名可用，已选择\\"" 60000');
+    expect(loggedOutReplay).toContain(
+      'wait "id=\\"account-site-linuxdo\\" label=\\"linux.do，匿名可用，已选择\\"" 60000'
+    );
     expect(loggedOutReplay).toContain('wait "id=\\"account-site-yaohuo\\" label=\\"妖火，未登录，已选择\\"" 60000');
-    expect(loggedOutReplay).toContain('wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，未登录，已选择\\"" 60000');
+    expect(loggedOutReplay).toContain(
+      'wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，未登录，已选择\\"" 60000'
+    );
     expect(loggedOutReplay).not.toContain('测试工具');
     expect(loggedOutReplay).toContain('press id="search-source-all"');
     expect(loggedOutReplay).toContain('fill id="search-query" codex');
@@ -294,7 +316,9 @@ describe('Android release evidence guards', () => {
     expect(nodeSeekReplay).not.toMatch(/role=\\"(?:webview|image)\\"|label="新帖子"/);
 
     const fourSourceReplay = readFileSync(path.join(deviceDir, 'four-source-feed.ad'), 'utf8').replace(/\r\n/g, '\n');
-    expect(fourSourceReplay).toContain('wait "id=\\"feed-outcome-data-all-default\\" || id=\\"feed-outcome-empty-all-default\\" || id=\\"feed-outcome-partial-all-default\\" || id=\\"feed-outcome-error-all-default\\" || id=\\"feed-outcome-auth-all-default\\"" 60000');
+    expect(fourSourceReplay).toContain(
+      'wait "id=\\"feed-outcome-data-all-default\\" || id=\\"feed-outcome-empty-all-default\\" || id=\\"feed-outcome-partial-all-default\\" || id=\\"feed-outcome-error-all-default\\" || id=\\"feed-outcome-auth-all-default\\"" 60000'
+    );
     for (const source of ['all', 'v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi']) {
       expect(fourSourceReplay).toContain(`feed-source-${source}`);
     }
@@ -306,7 +330,9 @@ describe('Android release evidence guards', () => {
     expect(multiSourceSearchReplay).toContain('wait "label=\\"搜索最近记录 AI\\"" 10000');
     expect(multiSourceSearchReplay).not.toContain('press "label=\\"搜索最近记录 AI\\""');
     expect(multiSourceSearchReplay.match(/press id="search-submit"/g)).toHaveLength(1);
-    expect(multiSourceSearchReplay).not.toMatch(/search-result-first|topic-detail-loaded|user-screen-loaded|back --system/);
+    expect(multiSourceSearchReplay).not.toMatch(
+      /search-result-first|topic-detail-loaded|user-screen-loaded|back --system/
+    );
 
     const accountReplay = readFileSync(path.join(deviceDir, 'account-readonly.ad'), 'utf8');
     const moreReplay = readFileSync(path.join(deviceDir, 'more-readonly.ad'), 'utf8');
@@ -315,12 +341,20 @@ describe('Android release evidence guards', () => {
     expect(moreReplay).not.toMatch(/account-site-|查看等级|刷新等级|xiaoyinsi-level-settled/);
     expect(moreReplay).toMatch(/服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/);
     expect(libraryReplay).toMatch(/library-favorites-ready[\s\S]*library-users-ready[\s\S]*library-history-ready/);
-    expect(libraryReplay).not.toMatch(/library-user-first|library-history-first|topic-detail-loaded|user-screen-loaded/);
+    expect(libraryReplay).not.toMatch(
+      /library-user-first|library-history-first|topic-detail-loaded|user-screen-loaded/
+    );
   });
 
   it('[REG-TEST-002] waits for the catalog-complete aggregate search outcome', () => {
-    const loggedOutReplay = readFileSync(path.join(rootDir, 'tests', 'device-logged-out', 'logged-out-readonly.ad'), 'utf8');
-    const multiSourceSearchReplay = readFileSync(path.join(rootDir, 'tests', 'device', 'search-multi-source.ad'), 'utf8');
+    const loggedOutReplay = readFileSync(
+      path.join(rootDir, 'tests', 'device-logged-out', 'logged-out-readonly.ad'),
+      'utf8'
+    );
+    const multiSourceSearchReplay = readFileSync(
+      path.join(rootDir, 'tests', 'device', 'search-multi-source.ad'),
+      'utf8'
+    );
 
     for (const replay of [loggedOutReplay, multiSourceSearchReplay]) {
       expect(replay).toContain('wait id="search-all-sources-settled" 60000');
@@ -332,14 +366,16 @@ describe('Android release evidence guards', () => {
   it('[REG-TEST-005] accepts either settled Xiaoyinsi level outcome without requiring live data success', () => {
     const accountReplay = readProjectFile('tests', 'device', 'account-readonly.ad');
 
-    expect(accountReplay).toContain([
-      'press id="account-site-xiaoyinsi"',
-      'wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，已登录，已选择\\"" 60000',
-      'wait "label=\\"查看等级, 点击读取\\"" 60000',
-      'press "label=\\"查看等级, 点击读取\\""',
-      'wait id="xiaoyinsi-level-settled" 60000',
-      'wait label="刷新等级" 60000'
-    ].join('\n'));
+    expect(accountReplay).toContain(
+      [
+        'press id="account-site-xiaoyinsi"',
+        'wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，已登录，已选择\\"" 60000',
+        'wait "label=\\"查看等级, 点击读取\\"" 60000',
+        'press "label=\\"查看等级, 点击读取\\""',
+        'wait id="xiaoyinsi-level-settled" 60000',
+        'wait label="刷新等级" 60000'
+      ].join('\n')
+    );
     expect(accountReplay.match(/^(?:press|click|find)\b[^\r\n]*(?:查看等级|刷新等级)[^\r\n]*$/gm) ?? []).toEqual([
       'press "label=\\"查看等级, 点击读取\\""'
     ]);
@@ -353,7 +389,8 @@ describe('Android release evidence guards', () => {
       ...listReplayFiles(deviceDir),
       ...listReplayFiles(path.join(rootDir, 'tests', 'device-logged-out'))
     ];
-    const forbidden = /feed-topic-first|search-result-first|topic-detail-loaded|user-screen-loaded|role=\\"image\\" label=\\"logo\\"|label="新帖子"/;
+    const forbidden =
+      /feed-topic-first|search-result-first|topic-detail-loaded|user-screen-loaded|role=\\"image\\" label=\\"logo\\"|label="新帖子"/;
 
     for (const replayFile of replayFiles) {
       expect(readFileSync(replayFile, 'utf8')).not.toMatch(forbidden);
@@ -390,8 +427,7 @@ describe('Android release evidence guards', () => {
   it('[REG-OPS-009] keeps true logged-out Replay on its explicit isolated device suite', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
     const loggedOutDeviceDir = path.join(rootDir, 'tests', 'device-logged-out');
-    const releaseReplayNames = listReplayFiles(deviceDir)
-      .map((file) => path.basename(file));
+    const releaseReplayNames = listReplayFiles(deviceDir).map((file) => path.basename(file));
 
     expect(releaseReplayNames).toEqual([
       'account-readonly.ad',
@@ -401,9 +437,7 @@ describe('Android release evidence guards', () => {
       'nodeseek-session.ad',
       'search-multi-source.ad'
     ]);
-    expect(listReplayFiles(loggedOutDeviceDir).map((file) => path.basename(file))).toEqual([
-      'logged-out-readonly.ad'
-    ]);
+    expect(listReplayFiles(loggedOutDeviceDir).map((file) => path.basename(file))).toEqual(['logged-out-readonly.ad']);
     expect(readProjectFile('scripts', 'smoke-android.mjs')).not.toContain('device-logged-out');
     expect(readProjectFile('scripts', 'run-logged-out-device-replay.mjs')).toContain(
       "path.join(rootDir, 'tests', 'device-logged-out')"
@@ -463,14 +497,14 @@ describe('Android release evidence guards', () => {
     expect(replayScript).toContain('expectedSha256 !== installedSha256');
     expect(replayScript).toContain("path.join(rootDir, 'tmp', 'agent-device')");
     expect(replayScript).toContain('for (const replayFile of replayFiles)');
-    expect(replayScript).toContain("'test', replayFile");
-    expect(replayScript).toContain("'--retries', '0'");
-    expect(replayScript).toContain("'--reporter', `junit:${junitPath}`");
-    expect(replayScript).toContain("'--session', replaySession");
+    expect(replayScript).toMatch(/'test',\s*replayFile/);
+    expect(replayScript).toMatch(/'--retries',\s*'0'/);
+    expect(replayScript).toMatch(/'--reporter',\s*`junit:\$\{junitPath\}`/);
+    expect(replayScript).toMatch(/'--session',\s*replaySession/);
     expect(replayScript).toContain('assertNoExistingAgentDeviceRecording(device.id)');
     expect(replayScript).toContain('androidRecordingScratchPaths(device.id)');
     expect(replayScript).toContain('recoverOwnedReplayRecording(device, replaySession)');
-    expect(replayScript).toContain("'record', 'stop'");
+    expect(replayScript).toMatch(/'record',\s*'stop'/);
     expect(replayScript).not.toContain('closeDefaultReplaySession');
     expect(replayScript).not.toContain("'shell', 'kill'");
     expect(replayScript).not.toContain('rm -f /sdcard/agent-device-recording-');
@@ -485,7 +519,7 @@ describe('Android release evidence guards', () => {
     expect(appControls).toContain("accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}");
     const feedScreen = readProjectFile('src', 'screens', 'FeedScreen.tsx');
     expect(feedScreen).toContain("testID={index === 0 ? 'feed-topic-first' : undefined}");
-    expect(feedScreen).toContain('`feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? \'default\'}`');
+    expect(feedScreen).toContain("`feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`");
     expect(feedScreen).not.toContain('feed-list-ready-');
     expect(feedScreen).toContain('testIDPrefix="feed-source"');
     const searchScreen = readProjectFile('src', 'screens', 'SearchScreen.tsx');
@@ -499,7 +533,9 @@ describe('Android release evidence guards', () => {
     expect(searchScreen).not.toContain('search-result-first');
     expect(searchScreen).toContain("'search-all-sources-settled'");
     expect(searchScreen).toContain("'search-complete'");
-    expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain("testID={topic ? 'topic-detail-loaded' : undefined}");
+    expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain(
+      "testID={topic ? 'topic-detail-loaded' : undefined}"
+    );
     expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain('testID="topic-author"');
     const userScreen = readProjectFile('src', 'screens', 'UserScreen.tsx');
     expect(userScreen).toContain("testID={profile && !busy ? 'user-screen-loaded' : undefined}");
@@ -526,8 +562,12 @@ describe('Android release evidence guards', () => {
     const moreScreen = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 
     expect(entry).toContain("import { initializeDiagnosticFileLogging } from './src/diagnosticFileStore';");
-    expect(entry.indexOf('initializeDiagnosticFileLogging();')).toBeLessThan(entry.indexOf('registerRootComponent(App);'));
-    expect(appRoot).toContain('useDiagnosticLogController({ getCurrentScreen, metadata: diagnosticMetadata, notify })');
+    expect(entry.indexOf('initializeDiagnosticFileLogging();')).toBeLessThan(
+      entry.indexOf('registerRootComponent(App);')
+    );
+    expect(appRoot).toMatch(
+      /useDiagnosticLogController\(\{\s*getCurrentScreen,\s*metadata: diagnosticMetadata,\s*notify\s*\}\)/
+    );
     expect(appRoot).toContain('onExportDiagnosticLog: exportDiagnosticLogFile');
     expect(moreScreen).toContain('title="问题诊断"');
     expect(moreScreen).toContain('onPress={onExportDiagnosticLog}');
@@ -550,7 +590,9 @@ describe('Android release evidence guards', () => {
     const releaseHelpers = readProjectFile('scripts', 'release-environment.mjs');
     const releaseGradle = readProjectFile('scripts', 'android-release-apk.gradle');
     const loadEnvIndex = releaseScript.indexOf('const configuredReleaseEnv = loadReleaseEnvFile();');
-    const smokeAbiIndex = releaseScript.indexOf('const smokeApkAbi = requestedSmokeApkAbi(releaseEnv.WZ_ANDROID_SMOKE_ABI);');
+    const smokeAbiIndex = releaseScript.indexOf(
+      'const smokeApkAbi = requestedSmokeApkAbi(releaseEnv.WZ_ANDROID_SMOKE_ABI);'
+    );
 
     expect(releaseScript).not.toContain('process.env.WZ_ANDROID_SMOKE_ABI');
     expect(smokeAbiIndex).toBeGreaterThan(loadEnvIndex);

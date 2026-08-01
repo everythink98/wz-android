@@ -159,15 +159,19 @@ describe('network proxy controller', () => {
     const hook = await renderHook(() => useNetworkProxyController({ notify: jest.fn() }));
     await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledWith(profileA));
 
-    const request = fetchWithTimeout('https://example.com/private', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { Cookie: 'session=explicit' },
-      body: 'payload'
-    }, {
-      fetcher: hook.result.current.networkProxyFetcher,
-      timeoutMs: 0
-    });
+    const request = fetchWithTimeout(
+      'https://example.com/private',
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Cookie: 'session=explicit' },
+        body: 'payload'
+      },
+      {
+        fetcher: hook.result.current.networkProxyFetcher,
+        timeoutMs: 0
+      }
+    );
     await Promise.resolve();
     await Promise.resolve();
 
@@ -253,9 +257,11 @@ describe('network proxy controller', () => {
       await hook.result.current.upsertProxyProfile({ ...profileA, name: 'Renamed' });
     });
 
-    expect(mockSaveNetworkProxyState).toHaveBeenCalledWith(expect.objectContaining({
-      profiles: [expect.objectContaining({ id: profileA.id, name: 'Renamed' })]
-    }));
+    expect(mockSaveNetworkProxyState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profiles: [expect.objectContaining({ id: profileA.id, name: 'Renamed' })]
+      })
+    );
     expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
     expect(hook.result.current.applyStatus).toBe('applied');
   });
@@ -284,10 +290,6 @@ describe('network proxy controller', () => {
 
     expect(hook.result.current.proxyState.enabled).toBe(false);
     expect(hook.result.current.applyStatus).toBe('disabled');
-    expect(mockApplyNetworkProxy.mock.calls.map(([profile]) => profile?.id || null)).toEqual([
-      null,
-      profileA.id,
-      null
-    ]);
+    expect(mockApplyNetworkProxy.mock.calls.map(([profile]) => profile?.id || null)).toEqual([null, profileA.id, null]);
   });
 });

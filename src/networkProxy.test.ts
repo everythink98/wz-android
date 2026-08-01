@@ -43,41 +43,49 @@ describe('network proxy settings', () => {
   });
 
   it('validates HTTP and SOCKS5 proxy profiles with optional credentials', () => {
-    expect(validateNetworkProxyProfile({
-      id: 'http',
-      name: 'HTTP',
-      protocol: 'http',
-      host: 'proxy.example.com',
-      port: 8080
-    })).toEqual({});
+    expect(
+      validateNetworkProxyProfile({
+        id: 'http',
+        name: 'HTTP',
+        protocol: 'http',
+        host: 'proxy.example.com',
+        port: 8080
+      })
+    ).toEqual({});
     expect(validateNetworkProxyProfile(socksProfile)).toEqual({});
-    expect(createNetworkProxyProfile({
-      name: 'No Password',
-      protocol: 'socks5',
-      host: 'proxy.example.com',
-      port: 1080,
-      username: '',
-      password: ''
-    })).toHaveProperty('password', undefined);
+    expect(
+      createNetworkProxyProfile({
+        name: 'No Password',
+        protocol: 'socks5',
+        host: 'proxy.example.com',
+        port: 1080,
+        username: '',
+        password: ''
+      })
+    ).toHaveProperty('password', undefined);
   });
 
   it('rejects invalid hosts and ports before saving', () => {
-    expect(validateNetworkProxyProfile({
-      name: '',
-      protocol: 'socks5',
-      host: 'https://proxy.example.com/path',
-      port: 70000
-    })).toMatchObject({
+    expect(
+      validateNetworkProxyProfile({
+        name: '',
+        protocol: 'socks5',
+        host: 'https://proxy.example.com/path',
+        port: 70000
+      })
+    ).toMatchObject({
       name: '请填写名称',
       host: '服务器只填 IP 或域名',
       port: '端口必须是 1-65535'
     });
-    expect(validateNetworkProxyProfile({
-      name: 'Bad IP',
-      protocol: 'socks5',
-      host: '999.999.999.999',
-      port: 1080
-    })).toMatchObject({
+    expect(
+      validateNetworkProxyProfile({
+        name: 'Bad IP',
+        protocol: 'socks5',
+        host: '999.999.999.999',
+        port: 1080
+      })
+    ).toMatchObject({
       host: '服务器 IP 格式不正确'
     });
   });
@@ -128,24 +136,30 @@ describe('network proxy settings', () => {
   });
 
   it('[REG-PROXY-004] keeps WebViews blocked throughout enabled and disabled proxy transitions', () => {
-    expect(networkProxyWebViewBlockMessage({
-      applyError: '',
-      applyStatus: 'applying',
-      enabled: true,
-      loaded: true
-    })).not.toBe('');
-    expect(networkProxyWebViewBlockMessage({
-      applyError: '',
-      applyStatus: 'applying',
-      enabled: false,
-      loaded: true
-    })).not.toBe('');
-    expect(networkProxyWebViewBlockMessage({
-      applyError: '',
-      applyStatus: 'disabled',
-      enabled: false,
-      loaded: true
-    })).toBe('');
+    expect(
+      networkProxyWebViewBlockMessage({
+        applyError: '',
+        applyStatus: 'applying',
+        enabled: true,
+        loaded: true
+      })
+    ).not.toBe('');
+    expect(
+      networkProxyWebViewBlockMessage({
+        applyError: '',
+        applyStatus: 'applying',
+        enabled: false,
+        loaded: true
+      })
+    ).not.toBe('');
+    expect(
+      networkProxyWebViewBlockMessage({
+        applyError: '',
+        applyStatus: 'disabled',
+        enabled: false,
+        loaded: true
+      })
+    ).toBe('');
   });
 
   it('blocks enabled proxy mode when the native module is missing', async () => {
@@ -165,5 +179,4 @@ describe('network proxy settings', () => {
     expect(applyProxy).toHaveBeenCalledWith(socksProfile);
     expect(testProxy).toHaveBeenCalledWith(socksProfile);
   });
-
 });

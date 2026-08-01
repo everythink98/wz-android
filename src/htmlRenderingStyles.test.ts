@@ -33,7 +33,10 @@ describe('Android HTML rendering styles', () => {
     const theme = createTheme(settings);
     const { htmlIgnoredStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
 
-    expect((htmlRenderingStyles as typeof htmlRenderingStyles & { HTML_ALLOWED_INLINE_STYLES?: string[] }).HTML_ALLOWED_INLINE_STYLES).toContain('color');
+    expect(
+      (htmlRenderingStyles as typeof htmlRenderingStyles & { HTML_ALLOWED_INLINE_STYLES?: string[] })
+        .HTML_ALLOWED_INLINE_STYLES
+    ).toContain('color');
     expect(htmlIgnoredStyles).not.toContain('color');
     expect(htmlIgnoredStyles).toContain('backgroundColor');
   });

@@ -17,23 +17,29 @@ afterEach(() => setDiagnosticWriter(null));
 describe('account credential diagnostics', () => {
   it('records per-site summary results under a distinct operation without secrets', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
 
     const result = await loadCredentialSummariesWithTrace(async (site) => summaries[site]);
 
     expect(result).toEqual({ ok: true, summaries });
     const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
-    expect(events.filter((event) => event.operation === 'load-summary')).toEqual(expect.arrayContaining([
-      expect.objectContaining({ phase: 'credential', site: 'nodeseek', hasCredential: true }),
-      expect.objectContaining({ phase: 'credential', site: 'yaohuo', isInvalidated: true }),
-      expect.objectContaining({ phase: 'finish', outcome: 'success', count: 3, validCount: 1 })
-    ]));
+    expect(events.filter((event) => event.operation === 'load-summary')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'credential', site: 'nodeseek', hasCredential: true }),
+        expect.objectContaining({ phase: 'credential', site: 'yaohuo', isInvalidated: true }),
+        expect.objectContaining({ phase: 'finish', outcome: 'success', count: 3, validCount: 1 })
+      ])
+    );
     expect(lines.join('')).not.toMatch(/account|password|cookie|key/i);
   });
 
   it('returns a handled failure and identifies the failing site without logging its error', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const privateError = new Error('PRIVATE_STORAGE_ERROR_WITH_ACCOUNT');
 
     const result = await loadCredentialSummariesWithTrace(async (site) => {
@@ -52,10 +58,22 @@ describe('account credential diagnostics', () => {
       }
     });
     const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
-    expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ operation: 'load-summary', phase: 'credential', site: 'linuxdo', reason: 'storage_error' }),
-      expect.objectContaining({ operation: 'load-summary', phase: 'finish', outcome: 'partial', partialErrorCount: 1 })
-    ]));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'load-summary',
+          phase: 'credential',
+          site: 'linuxdo',
+          reason: 'storage_error'
+        }),
+        expect.objectContaining({
+          operation: 'load-summary',
+          phase: 'finish',
+          outcome: 'partial',
+          partialErrorCount: 1
+        })
+      ])
+    );
     expect(lines.join('')).not.toContain('PRIVATE_STORAGE_ERROR_WITH_ACCOUNT');
   });
 
@@ -81,17 +99,30 @@ describe('account credential diagnostics', () => {
 
   it('finishes only the matching automatic-fill trace on WebView failure', () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const trace = beginDiagnosticTrace('credential', 'load', { site: 'nodeseek' });
 
-    expect(finishCredentialFillTraceForWebViewFailure({ site: 'nodeseek', attempt: 1, trace }, 'yaohuo', 1, 'network_error')).toBe(false);
-    expect(finishCredentialFillTraceForWebViewFailure({ site: 'nodeseek', attempt: 1, trace }, 'nodeseek', 1, 'renderer_gone')).toBe(true);
+    expect(
+      finishCredentialFillTraceForWebViewFailure({ site: 'nodeseek', attempt: 1, trace }, 'yaohuo', 1, 'network_error')
+    ).toBe(false);
+    expect(
+      finishCredentialFillTraceForWebViewFailure(
+        { site: 'nodeseek', attempt: 1, trace },
+        'nodeseek',
+        1,
+        'renderer_gone'
+      )
+    ).toBe(true);
 
     const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
-    expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ phase: 'transport', site: 'nodeseek', reason: 'renderer_gone' }),
-      expect.objectContaining({ phase: 'finish', outcome: 'failure', site: 'nodeseek', reason: 'renderer_gone' })
-    ]));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'transport', site: 'nodeseek', reason: 'renderer_gone' }),
+        expect.objectContaining({ phase: 'finish', outcome: 'failure', site: 'nodeseek', reason: 'renderer_gone' })
+      ])
+    );
   });
 
   it('does not let an older same-site attempt finish the current trace', () => {
@@ -112,15 +143,18 @@ describe('account credential diagnostics', () => {
       options: { generation: number; isCurrent: () => boolean }
     ) => ReturnType<typeof loadCredentialSummariesWithTrace>;
 
-    const result = await loadWithGeneration(async (site) => {
-      if (site === 'linuxdo') {
-        throw new Error('superseded failure');
+    const result = await loadWithGeneration(
+      async (site) => {
+        if (site === 'linuxdo') {
+          throw new Error('superseded failure');
+        }
+        return summaries[site];
+      },
+      {
+        generation: 1,
+        isCurrent: () => false
       }
-      return summaries[site];
-    }, {
-      generation: 1,
-      isCurrent: () => false
-    });
+    );
 
     expect(result).toEqual({ ok: false, stale: true });
   });

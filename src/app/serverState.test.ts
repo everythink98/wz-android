@@ -1,10 +1,6 @@
 import { QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  createAppQueryClient,
-  initialForumSessionEpochs,
-  forumQueryKeys
-} from './serverState';
+import { createAppQueryClient, initialForumSessionEpochs, forumQueryKeys } from './serverState';
 import {
   commitChangedAccountStatusQuery,
   commitExpiredAccountStatusQuery,
@@ -17,7 +13,9 @@ describe('forum server state', () => {
     const pending = Promise.withResolvers<string>();
     const queryFn = vi.fn(() => pending.promise);
     const queryKey = forumQueryKeys.topic({
-      source: 'nodeseek', topicId: '123', scope: initialForumSessionEpochs
+      source: 'nodeseek',
+      topicId: '123',
+      scope: initialForumSessionEpochs
     });
 
     const first = client.fetchQuery({ queryKey, queryFn });
@@ -31,12 +29,16 @@ describe('forum server state', () => {
 
   it('does not retry failed reads', async () => {
     const client = createAppQueryClient();
-    const queryFn = vi.fn(async () => { throw new Error('offline'); });
+    const queryFn = vi.fn(async () => {
+      throw new Error('offline');
+    });
 
-    await expect(client.fetchQuery({
-      queryKey: forumQueryKeys.feed({ source: 'all', scope: initialForumSessionEpochs }),
-      queryFn
-    })).rejects.toThrow('offline');
+    await expect(
+      client.fetchQuery({
+        queryKey: forumQueryKeys.feed({ source: 'all', scope: initialForumSessionEpochs }),
+        queryFn
+      })
+    ).rejects.toThrow('offline');
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
@@ -51,18 +53,8 @@ describe('forum server state', () => {
       userId: '23042'
     });
 
-    expect(resolution).toEqual([
-      'forum',
-      'nodeseek',
-      'user-resolution',
-      { sessionEpoch: 0, username: 'lcy0828' }
-    ]);
-    expect(profile).toEqual([
-      'forum',
-      'nodeseek',
-      'user',
-      { sessionEpoch: 0, userId: '23042' }
-    ]);
+    expect(resolution).toEqual(['forum', 'nodeseek', 'user-resolution', { sessionEpoch: 0, username: 'lcy0828' }]);
+    expect(profile).toEqual(['forum', 'nodeseek', 'user', { sessionEpoch: 0, userId: '23042' }]);
   });
 
   it('[REG-LINUXDO-005] separates anonymous and confirmed linux.do search caches', () => {
@@ -97,11 +89,7 @@ describe('forum server state', () => {
       scope: initialForumSessionEpochs
     });
     const trustedCategories = forumQueryKeys.categories('all', initialForumSessionEpochs);
-    const pendingCategories = forumQueryKeys.categories(
-      'all',
-      initialForumSessionEpochs,
-      ['nodeseek']
-    );
+    const pendingCategories = forumQueryKeys.categories('all', initialForumSessionEpochs, ['nodeseek']);
 
     expect(pendingFeed).not.toEqual(trustedFeed);
     expect(pendingCategories).not.toEqual(trustedCategories);
@@ -109,14 +97,18 @@ describe('forum server state', () => {
   });
 
   it('[REG-ACCOUNT-031] ignores identity barriers on single-source keys', () => {
-    expect(forumQueryKeys.feed({
-      identityBarriers: ['nodeseek'],
-      source: 'linuxdo',
-      scope: initialForumSessionEpochs
-    })).toEqual(forumQueryKeys.feed({
-      source: 'linuxdo',
-      scope: initialForumSessionEpochs
-    }));
+    expect(
+      forumQueryKeys.feed({
+        identityBarriers: ['nodeseek'],
+        source: 'linuxdo',
+        scope: initialForumSessionEpochs
+      })
+    ).toEqual(
+      forumQueryKeys.feed({
+        source: 'linuxdo',
+        scope: initialForumSessionEpochs
+      })
+    );
   });
 
   it('removes only the changed source and aggregate caches', () => {
@@ -200,12 +192,7 @@ describe('forum server state', () => {
     const unsubscribe = observer.subscribe(() => undefined);
 
     const result = await observer.refetch();
-    const nextScope = commitExpiredAccountStatusQuery(
-      'nodeseek',
-      initialForumSessionEpochs,
-      accountKey,
-      client
-    );
+    const nextScope = commitExpiredAccountStatusQuery('nodeseek', initialForumSessionEpochs, accountKey, client);
     const nextAccountKey = forumQueryKeys.accountStatus({
       sessionEpochs: nextScope,
       source: 'nodeseek'
@@ -262,12 +249,7 @@ describe('forum server state', () => {
     client.setQueryData(oldFeedKey, 'private account A feed');
     client.setQueryData(otherFeedKey, 'unrelated feed');
 
-    const nextScope = commitChangedAccountStatusQuery(
-      'nodeseek',
-      initialForumSessionEpochs,
-      probeKey,
-      client
-    );
+    const nextScope = commitChangedAccountStatusQuery('nodeseek', initialForumSessionEpochs, probeKey, client);
     const nextAccountKey = forumQueryKeys.accountStatus({
       sessionEpochs: nextScope,
       source: 'nodeseek'

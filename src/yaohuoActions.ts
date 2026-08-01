@@ -39,7 +39,9 @@ function appendIfPresent(params: URLSearchParams, key: string, value?: string | 
 }
 
 function yaohuoDeleteUrl(deletePath: string) {
-  const text = String(deletePath || '').trim().replace(/&amp;/gi, '&');
+  const text = String(deletePath || '')
+    .trim()
+    .replace(/&amp;/gi, '&');
   let url: URL;
   try {
     url = new URL(text, YAOHUO_BASE_URL);
@@ -47,11 +49,13 @@ function yaohuoDeleteUrl(deletePath: string) {
     throw new Error('妖火删除链接不正确');
   }
   const host = url.hostname.toLowerCase();
-  if (!['http:', 'https:'].includes(url.protocol)
-    || url.username
-    || url.password
-    || host !== 'www.yaohuo.me'
-    || !/^\/bbs\/book_re_del\.aspx$/i.test(url.pathname)) {
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    host !== 'www.yaohuo.me' ||
+    !/^\/bbs\/book_re_del\.aspx$/i.test(url.pathname)
+  ) {
     throw new Error('妖火删除链接不正确');
   }
   cleanPositiveInteger(url.searchParams.get('reid') || '', '回复 id');
@@ -165,11 +169,7 @@ export function buildYaohuoFavoriteRequest({
   };
 }
 
-export function buildYaohuoDeleteFavoriteRequest({
-  favoriteId
-}: {
-  favoriteId: string | number;
-}): YaohuoActionRequest {
+export function buildYaohuoDeleteFavoriteRequest({ favoriteId }: { favoriteId: string | number }): YaohuoActionRequest {
   const params = new URLSearchParams({
     action: 'delete',
     siteid: '1000',
@@ -192,7 +192,7 @@ export function buildYaohuoVoteRequest({
   topicId: string | number;
   classId: string | number;
   voteId?: string | number;
-  voteIds?: Array<string | number>;
+  voteIds?: (string | number)[];
 }): YaohuoActionRequest {
   const rawVoteIds = voteIds ?? (voteId !== undefined ? [voteId] : []);
   if (!rawVoteIds.length) {

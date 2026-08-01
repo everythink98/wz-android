@@ -23,7 +23,7 @@ vi.mock('react-native', () => ({
   StyleSheet: {
     absoluteFillObject: {},
     create: (styles: unknown) => styles,
-    flatten: (style: unknown) => Array.isArray(style) ? Object.assign({}, ...style) : style,
+    flatten: (style: unknown) => (Array.isArray(style) ? Object.assign({}, ...style) : style),
     hairlineWidth: 1
   },
   Text: 'Text',
@@ -112,9 +112,9 @@ describe('HTML topic media loading state', () => {
       header: 'future_cookie=future'
     });
 
-    await expect(readManagedWebViewCookieHeader(
-      'https://www.nodeseek.com/uploads/private/video.webm?version=2'
-    )).resolves.toBe('future_cookie=future');
+    await expect(
+      readManagedWebViewCookieHeader('https://www.nodeseek.com/uploads/private/video.webm?version=2')
+    ).resolves.toBe('future_cookie=future');
     expect(readManagedCookieHeader).toHaveBeenCalledWith(
       'https://www.nodeseek.com/uploads/private/video.webm?version=2'
     );
@@ -122,9 +122,9 @@ describe('HTML topic media loading state', () => {
 
   it('[REG-ACCOUNT-029] fails closed when the managed Cookie reader is unavailable', async () => {
     readManagedCookieHeader.mockResolvedValueOnce({ status: 'unsupported' });
-    await expect(readManagedWebViewCookieHeader(
-      'https://www.nodeseek.com/uploads/private/video.webm'
-    )).rejects.toThrow('原生 Cookie 读取能力不可用');
+    await expect(readManagedWebViewCookieHeader('https://www.nodeseek.com/uploads/private/video.webm')).rejects.toThrow(
+      '原生 Cookie 读取能力不可用'
+    );
   });
 
   it('[REG-PERF-007][REG-PERF-009] bounds preview dimensions with pure reads and committed promotion', () => {

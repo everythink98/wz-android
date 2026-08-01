@@ -5,23 +5,23 @@ export type CredentialProtection = 'biometric' | 'device';
 
 export type CredentialSummary =
   | {
-    site: CredentialSite;
-    state: 'missing';
-    hasCredential: false;
-    protection: null;
-  }
+      site: CredentialSite;
+      state: 'missing';
+      hasCredential: false;
+      protection: null;
+    }
   | {
-    site: CredentialSite;
-    state: 'invalidated';
-    hasCredential: false;
-    protection: null;
-  }
+      site: CredentialSite;
+      state: 'invalidated';
+      hasCredential: false;
+      protection: null;
+    }
   | {
-    site: CredentialSite;
-    state: 'saved';
-    hasCredential: true;
-    protection: CredentialProtection;
-  };
+      site: CredentialSite;
+      state: 'saved';
+      hasCredential: true;
+      protection: CredentialProtection;
+    };
 
 export type CredentialSummaries = Record<CredentialSite, CredentialSummary>;
 
@@ -32,10 +32,7 @@ export type SavedCredential = {
   updatedAt: number;
 };
 
-export type CredentialVaultErrorCode =
-  | 'biometric-unavailable'
-  | 'invalid-input'
-  | 'invalidated';
+export type CredentialVaultErrorCode = 'biometric-unavailable' | 'invalid-input' | 'invalidated';
 
 export class CredentialVaultError extends Error {
   constructor(
@@ -64,12 +61,17 @@ const MAX_CREDENTIAL_BYTES = 1900;
 const siteOperationTails = new Map<CredentialSite, Promise<void>>();
 
 export function emptyCredentialSummaries(): CredentialSummaries {
-  return Object.fromEntries([...SITES].map((site) => [site, {
-    site,
-    state: 'missing',
-    hasCredential: false,
-    protection: null
-  }])) as CredentialSummaries;
+  return Object.fromEntries(
+    [...SITES].map((site) => [
+      site,
+      {
+        site,
+        state: 'missing',
+        hasCredential: false,
+        protection: null
+      }
+    ])
+  ) as CredentialSummaries;
 }
 
 function assertSite(site: CredentialSite) {
@@ -97,13 +99,16 @@ function parseStoredSummary(site: CredentialSite, raw: string | null): StoredSum
   }
   try {
     const value = JSON.parse(raw) as Partial<StoredSummary>;
-    if (value.version === 1
-      && value.site === site
-      && (value.protection === 'biometric' || value.protection === 'device')
-      && (value.state === undefined || value.state === 'saved' || value.state === 'invalidated')
-      && (value.slot === undefined || value.slot === 0 || value.slot === 1)
-      && (value.cleanupSlots === undefined || (Array.isArray(value.cleanupSlots)
-        && value.cleanupSlots.every((slot) => slot === 'legacy' || slot === 0 || slot === 1)))) {
+    if (
+      value.version === 1 &&
+      value.site === site &&
+      (value.protection === 'biometric' || value.protection === 'device') &&
+      (value.state === undefined || value.state === 'saved' || value.state === 'invalidated') &&
+      (value.slot === undefined || value.slot === 0 || value.slot === 1) &&
+      (value.cleanupSlots === undefined ||
+        (Array.isArray(value.cleanupSlots) &&
+          value.cleanupSlots.every((slot) => slot === 'legacy' || slot === 0 || slot === 1)))
+    ) {
       return {
         version: 1,
         site,
@@ -132,15 +137,17 @@ function summaryFromStored(site: CredentialSite, value: StoredSummary | null): C
 function parseCredential(site: CredentialSite, raw: string): SavedCredential | null {
   try {
     const value = JSON.parse(raw) as Partial<StoredCredential>;
-    if (value.version === 1
-      && value.site === site
-      && typeof value.account === 'string'
-      && value.account.length > 0
-      && typeof value.password === 'string'
-      && value.password.length > 0
-      && typeof value.updatedAt === 'number'
-      && Number.isFinite(value.updatedAt)
-      && value.updatedAt > 0) {
+    if (
+      value.version === 1 &&
+      value.site === site &&
+      typeof value.account === 'string' &&
+      value.account.length > 0 &&
+      typeof value.password === 'string' &&
+      value.password.length > 0 &&
+      typeof value.updatedAt === 'number' &&
+      Number.isFinite(value.updatedAt) &&
+      value.updatedAt > 0
+    ) {
       return {
         site,
         account: value.account,
@@ -155,9 +162,7 @@ function parseCredential(site: CredentialSite, raw: string): SavedCredential | n
 }
 
 function secureOptions(protection: CredentialProtection, prompt: string) {
-  return protection === 'biometric'
-    ? { requireAuthentication: true, authenticationPrompt: prompt }
-    : undefined;
+  return protection === 'biometric' ? { requireAuthentication: true, authenticationPrompt: prompt } : undefined;
 }
 
 async function getSummary(site: CredentialSite): Promise<CredentialSummary> {
@@ -165,9 +170,7 @@ async function getSummary(site: CredentialSite): Promise<CredentialSummary> {
 }
 
 async function finishPendingCleanup(site: CredentialSite, summary: StoredSummary) {
-  const activeSlot: CredentialValueSlot | null = summary.state === 'invalidated'
-    ? null
-    : summary.slot ?? 'legacy';
+  const activeSlot: CredentialValueSlot | null = summary.state === 'invalidated' ? null : (summary.slot ?? 'legacy');
   const pendingSlots = summary.cleanupSlots?.filter((slot) => slot !== activeSlot) ?? [];
   if (!pendingSlots.length) {
     return summary;
@@ -213,14 +216,9 @@ async function save(
     throw new CredentialVaultError('invalid-input', '账号和密码不能为空');
   }
 
-  const protection: CredentialProtection = SecureStore.canUseBiometricAuthentication()
-    ? 'biometric'
-    : 'device';
+  const protection: CredentialProtection = SecureStore.canUseBiometricAuthentication() ? 'biometric' : 'device';
   if (protection === 'device' && input.allowUnprotected !== true) {
-    throw new CredentialVaultError(
-      'biometric-unavailable',
-      '当前设备无法使用用户身份认证，请确认后再使用本机加密保存'
-    );
+    throw new CredentialVaultError('biometric-unavailable', '当前设备无法使用用户身份认证，请确认后再使用本机加密保存');
   }
 
   const record: StoredCredential = {
@@ -245,12 +243,11 @@ async function save(
     cleanupSlots: [...new Set([...(pendingSummaryBase.cleanupSlots ?? []), slot])]
   };
   const previousSlot: CredentialValueSlot | undefined = previousSummary
-    ? previousSummary.slot ?? 'legacy'
+    ? (previousSummary.slot ?? 'legacy')
     : undefined;
-  const cleanupSlots = [...new Set([
-    ...(previousSummary?.cleanupSlots ?? []),
-    ...(previousSlot === undefined ? [] : [previousSlot])
-  ])].filter((pendingSlot) => pendingSlot !== slot);
+  const cleanupSlots = [
+    ...new Set([...(previousSummary?.cleanupSlots ?? []), ...(previousSlot === undefined ? [] : [previousSlot])])
+  ].filter((pendingSlot) => pendingSlot !== slot);
   const storedSummary: StoredSummary = {
     version: 1,
     site,
@@ -261,15 +258,8 @@ async function save(
   };
   await SecureStore.setItemAsync(storageKey(site, 'summary'), JSON.stringify(pendingSummary));
   try {
-    await SecureStore.setItemAsync(
-      stagedValueKey,
-      serialized,
-      secureOptions(protection, '保存登录信息')
-    );
-    await SecureStore.setItemAsync(
-      storageKey(site, 'summary'),
-      JSON.stringify(storedSummary)
-    );
+    await SecureStore.setItemAsync(stagedValueKey, serialized, secureOptions(protection, '保存登录信息'));
+    await SecureStore.setItemAsync(storageKey(site, 'summary'), JSON.stringify(storedSummary));
   } catch (error) {
     try {
       await SecureStore.deleteItemAsync(stagedValueKey);
@@ -298,11 +288,12 @@ async function markInvalidated(site: CredentialSite, storedSummary: StoredSummar
   await SecureStore.deleteItemAsync(
     valueStorageKey(site, activeSlot),
     secureOptions(storedSummary.protection, '清理已失效的登录信息')
-  ).catch(() => { activeCleanupFailed = true; });
-  const cleanupSlots = [...new Set([
-    ...(storedSummary.cleanupSlots ?? []),
-    ...(activeCleanupFailed ? [activeSlot] : [])
-  ])];
+  ).catch(() => {
+    activeCleanupFailed = true;
+  });
+  const cleanupSlots = [
+    ...new Set([...(storedSummary.cleanupSlots ?? []), ...(activeCleanupFailed ? [activeSlot] : [])])
+  ];
   const summary: StoredSummary = {
     version: 1,
     site,
@@ -353,9 +344,11 @@ async function remove(site: CredentialSite): Promise<void> {
 
 function runExclusive<T>(site: CredentialSite, operation: () => Promise<T>): Promise<T> {
   assertSite(site);
-  const result = (siteOperationTails.get(site) ?? Promise.resolve())
-    .then(operation, operation);
-  const tail = result.then(() => undefined, () => undefined);
+  const result = (siteOperationTails.get(site) ?? Promise.resolve()).then(operation, operation);
+  const tail = result.then(
+    () => undefined,
+    () => undefined
+  );
   siteOperationTails.set(site, tail);
   void tail.then(() => {
     if (siteOperationTails.get(site) === tail) {
@@ -367,10 +360,8 @@ function runExclusive<T>(site: CredentialSite, operation: () => Promise<T>): Pro
 
 export const credentialVault = {
   getSummary: (site: CredentialSite) => runExclusive(site, () => getSummary(site)),
-  save: (
-    site: CredentialSite,
-    input: { account: string; password: string; allowUnprotected?: boolean }
-  ) => runExclusive(site, () => save(site, input)),
+  save: (site: CredentialSite, input: { account: string; password: string; allowUnprotected?: boolean }) =>
+    runExclusive(site, () => save(site, input)),
   readForFill: (site: CredentialSite) => runExclusive(site, () => readForFill(site)),
   delete: (site: CredentialSite) => runExclusive(site, () => remove(site))
 };

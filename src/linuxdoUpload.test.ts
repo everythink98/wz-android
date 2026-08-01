@@ -27,20 +27,44 @@ describe('linux.do image upload requests', () => {
   });
 
   it('reads Discourse upload URLs from known response shapes', () => {
-    expect(discourseImageUrlFromUploadResponse({
-      markdown: '![demo.png](upload://abc.png)'
-    }, 'https://linux.do', 'linux.do')).toBe('upload://abc.png');
+    expect(
+      discourseImageUrlFromUploadResponse(
+        {
+          markdown: '![demo.png](upload://abc.png)'
+        },
+        'https://linux.do',
+        'linux.do'
+      )
+    ).toBe('upload://abc.png');
 
-    expect(discourseImageUrlFromUploadResponse({
-      short_url: 'upload://abc.png'
-    }, 'https://linux.do', 'linux.do')).toBe('upload://abc.png');
+    expect(
+      discourseImageUrlFromUploadResponse(
+        {
+          short_url: 'upload://abc.png'
+        },
+        'https://linux.do',
+        'linux.do'
+      )
+    ).toBe('upload://abc.png');
 
-    expect(discourseImageUrlFromUploadResponse({
-      url: '//linux.do/uploads/default/original/1X/a.png'
-    }, 'https://linux.do', 'linux.do')).toBe('https://linux.do/uploads/default/original/1X/a.png');
+    expect(
+      discourseImageUrlFromUploadResponse(
+        {
+          url: '//linux.do/uploads/default/original/1X/a.png'
+        },
+        'https://linux.do',
+        'linux.do'
+      )
+    ).toBe('https://linux.do/uploads/default/original/1X/a.png');
 
-    expect(discourseImageUrlFromUploadResponse({
-      url: '/uploads/default/original/1X/a.png'
-    }, 'https://linux.do', 'linux.do')).toBe('https://linux.do/uploads/default/original/1X/a.png');
+    expect(
+      discourseImageUrlFromUploadResponse(
+        {
+          url: '/uploads/default/original/1X/a.png'
+        },
+        'https://linux.do',
+        'linux.do'
+      )
+    ).toBe('https://linux.do/uploads/default/original/1X/a.png');
   });
 });

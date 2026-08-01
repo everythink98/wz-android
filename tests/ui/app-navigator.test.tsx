@@ -149,18 +149,30 @@ describe('App navigator UI state', () => {
     }
     await fireEvent.changeText(view.getByLabelText(`${originLabel}状态`), `${origin}-state`);
 
-    await act(async () => { expect(navigateAppScreen('topic')).toBe(true); });
+    await act(async () => {
+      expect(navigateAppScreen('topic')).toBe(true);
+    });
     await waitFor(() => expect(view.getByText('固定主题 topic-42')).toBeTruthy());
-    await act(async () => { expect(navigateAppScreen('user')).toBe(true); });
+    await act(async () => {
+      expect(navigateAppScreen('user')).toBe(true);
+    });
     await waitFor(() => expect(view.getByText('固定用户 alice')).toBeTruthy());
-    await act(async () => { expect(navigateAppScreen('topic')).toBe(true); });
+    await act(async () => {
+      expect(navigateAppScreen('topic')).toBe(true);
+    });
     await waitFor(() => expect(view.getByText('固定主题 topic-42')).toBeTruthy());
 
-    await act(async () => { navigationRef.goBack(); });
+    await act(async () => {
+      navigationRef.goBack();
+    });
     await waitFor(() => expect(view.getByText('固定用户 alice')).toBeTruthy());
-    await act(async () => { navigationRef.goBack(); });
+    await act(async () => {
+      navigationRef.goBack();
+    });
     await waitFor(() => expect(view.getByText('固定主题 topic-42')).toBeTruthy());
-    await act(async () => { navigationRef.goBack(); });
+    await act(async () => {
+      navigationRef.goBack();
+    });
     await waitFor(() => expect(view.getByLabelText(`${originLabel}状态`).props.value).toBe(`${origin}-state`));
   });
 
@@ -254,12 +266,9 @@ describe('App navigator UI state', () => {
           renderMoreTab={() => <StatefulTab label="更多" />}
           renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
           renderSearchTab={() => <StatefulTab label="搜索" />}
-          renderTopicScreen={() => topicPresentation(
-            <Text>{`A epoch ${contentEpoch}`}</Text>,
-            'linuxdo:A',
-            routeEpoch,
-            contentEpoch
-          )}
+          renderTopicScreen={() =>
+            topicPresentation(<Text>{`A epoch ${contentEpoch}`}</Text>, 'linuxdo:A', routeEpoch, contentEpoch)
+          }
           renderUserScreen={() => <Text>用户详情页面</Text>}
           styles={styles}
           theme={theme}
@@ -319,12 +328,14 @@ describe('App navigator UI state', () => {
           renderMoreTab={() => <StatefulTab label="更多" />}
           renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
           renderSearchTab={() => <StatefulTab label="搜索" />}
-          renderTopicScreen={({ routeSource, seed }) => topicPresentation(
-            <Text>{`${activeTopic.id} epoch ${activeTopic.sessionEpoch}`}</Text>,
-            `${activeTopic.source}:${activeTopic.id}`,
-            (seed?.source || routeSource || activeTopic.source) === 'linuxdo' ? topicAEpoch : 0,
-            activeTopic.sessionEpoch
-          )}
+          renderTopicScreen={({ routeSource, seed }) =>
+            topicPresentation(
+              <Text>{`${activeTopic.id} epoch ${activeTopic.sessionEpoch}`}</Text>,
+              `${activeTopic.source}:${activeTopic.id}`,
+              (seed?.source || routeSource || activeTopic.source) === 'linuxdo' ? topicAEpoch : 0,
+              activeTopic.sessionEpoch
+            )
+          }
           renderUserScreen={() => <Text>用户详情页面</Text>}
           styles={styles}
           theme={theme}
@@ -462,5 +473,4 @@ describe('App navigator UI state', () => {
       expect(view.getByLabelText('主题阅读状态').props.value).toBe('保留筛选和位置');
     });
   });
-
 });

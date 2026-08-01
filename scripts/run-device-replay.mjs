@@ -5,7 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { assertAgentDeviceVersion, deviceSelectionArgs, runAgentDevice, selectedDeviceName } from './agent-device-runtime.mjs';
+import {
+  assertAgentDeviceVersion,
+  deviceSelectionArgs,
+  runAgentDevice,
+  selectedDeviceName
+} from './agent-device-runtime.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootDir = path.resolve(path.dirname(scriptPath), '..');
@@ -46,22 +51,26 @@ function runAdb(args) {
     throw new Error(`adb 启动失败：${result.error.message}`);
   }
   if (result.status !== 0) {
-    throw new Error(`adb ${args.join(' ')} 失败：${String(result.stderr || '').trim() || `退出码 ${result.status ?? 'unknown'}`}`);
+    throw new Error(
+      `adb ${args.join(' ')} 失败：${String(result.stderr || '').trim() || `退出码 ${result.status ?? 'unknown'}`}`
+    );
   }
   return String(result.stdout || '');
 }
 
 function parseAndroidAgentDeviceRecorders(output) {
-  return String(output).split(/\r?\n/).flatMap((line) => {
-    const match = line.trim().match(/^(\d+)\s+.*\bscreenrecord\b.*(\/(?:sdcard|data\/local\/tmp)\/agent-device-recording-\d+\.mp4)(?:\s|$)/);
-    return match ? [{ pid: match[1], remotePath: match[2] }] : [];
-  });
+  return String(output)
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const match = line
+        .trim()
+        .match(/^(\d+)\s+.*\bscreenrecord\b.*(\/(?:sdcard|data\/local\/tmp)\/agent-device-recording-\d+\.mp4)(?:\s|$)/);
+      return match ? [{ pid: match[1], remotePath: match[2] }] : [];
+    });
 }
 
 function agentDeviceRecorders(deviceId) {
-  return parseAndroidAgentDeviceRecorders(runAdb([
-    '-s', deviceId, 'shell', 'ps', '-A', '-o', 'pid=,args='
-  ]));
+  return parseAndroidAgentDeviceRecorders(runAdb(['-s', deviceId, 'shell', 'ps', '-A', '-o', 'pid=,args=']));
 }
 
 const androidRecordingManifestPaths = [
@@ -74,17 +83,17 @@ export function parseAndroidRecordingScratchPaths(output, root) {
   if (!androidRecordingScratchRoots.includes(root)) {
     throw new Error(`不受支持的录屏 scratch 根目录：${root}`);
   }
-  return String(output).split(/\r?\n/)
+  return String(output)
+    .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((name) => /^(?:agent-device-recording-\d+\.mp4|agent-device-recording-active\.json(?:\.tmp)?)$/.test(name))
     .map((name) => `${root}/${name}`);
 }
 
 function androidRecordingScratchPaths(deviceId) {
-  return androidRecordingScratchRoots.flatMap((root) => parseAndroidRecordingScratchPaths(
-    runAdb(['-s', deviceId, 'shell', 'ls', '-1', root]),
-    root
-  ));
+  return androidRecordingScratchRoots.flatMap((root) =>
+    parseAndroidRecordingScratchPaths(runAdb(['-s', deviceId, 'shell', 'ls', '-1', root]), root)
+  );
 }
 
 function readAndroidRecordingManifests(deviceId) {
@@ -104,8 +113,7 @@ function readAndroidRecordingManifests(deviceId) {
 }
 
 function isAndroidRecordingPath(value) {
-  return typeof value === 'string'
-    && /^\/(?:sdcard|data\/local\/tmp)\/agent-device-recording-\d+\.mp4$/.test(value);
+  return typeof value === 'string' && /^\/(?:sdcard|data\/local\/tmp)\/agent-device-recording-\d+\.mp4$/.test(value);
 }
 
 export function replayRecordingRecoverySession(manifestText, deviceId, replaySession) {
@@ -117,13 +125,13 @@ export function replayRecordingRecoverySession(manifestText, deviceId, replaySes
       ...(Array.isArray(manifest?.chunks) ? manifest.chunks.map((chunk) => chunk?.remotePath) : [])
     ].filter((value) => value !== undefined);
     if (
-      manifest?.version !== 1
-      || manifest?.deviceId !== deviceId
-      || typeof manifest?.sessionName !== 'string'
-      || !manifest.sessionName.startsWith(`${replaySession}:test:`)
-      || typeof manifest?.recordingId !== 'string'
-      || paths.length === 0
-      || paths.some((recordingPath) => !isAndroidRecordingPath(recordingPath))
+      manifest?.version !== 1 ||
+      manifest?.deviceId !== deviceId ||
+      typeof manifest?.sessionName !== 'string' ||
+      !manifest.sessionName.startsWith(`${replaySession}:test:`) ||
+      typeof manifest?.recordingId !== 'string' ||
+      paths.length === 0 ||
+      paths.some((recordingPath) => !isAndroidRecordingPath(recordingPath))
     ) {
       return undefined;
     }
@@ -135,9 +143,9 @@ export function replayRecordingRecoverySession(manifestText, deviceId, replaySes
 
 function assertNoExistingAgentDeviceRecording(deviceId) {
   if (
-    readAndroidRecordingManifests(deviceId).length > 0
-    || agentDeviceRecorders(deviceId).length > 0
-    || androidRecordingScratchPaths(deviceId).length > 0
+    readAndroidRecordingManifests(deviceId).length > 0 ||
+    agentDeviceRecorders(deviceId).length > 0 ||
+    androidRecordingScratchPaths(deviceId).length > 0
   ) {
     throw new Error('BLOCKED_BY_ENV：设备已有无法归属于本次任务的 agent-device 录屏；未终止进程或删除 scratch。');
   }
@@ -150,17 +158,15 @@ function recoverOwnedReplayRecording(device, replaySession) {
     throw new Error('设备存在不属于本次 Replay 的录屏 manifest；已保留进程和 scratch。');
   }
   for (const sessionName of new Set(recoverySessions)) {
-    runAgentDevice([
-      'record', 'stop',
-      '--session', sessionName,
-      '--platform', 'android',
-      ...replayDeviceSelectionArgs(device)
-    ], { cwd: rootDir });
+    runAgentDevice(
+      ['record', 'stop', '--session', sessionName, '--platform', 'android', ...replayDeviceSelectionArgs(device)],
+      { cwd: rootDir }
+    );
   }
   if (
-    readAndroidRecordingManifests(device.id).length > 0
-    || agentDeviceRecorders(device.id).length > 0
-    || androidRecordingScratchPaths(device.id).length > 0
+    readAndroidRecordingManifests(device.id).length > 0 ||
+    agentDeviceRecorders(device.id).length > 0 ||
+    androidRecordingScratchPaths(device.id).length > 0
   ) {
     throw new Error('本次 Replay 的录屏恢复后仍有设备残留；已停止后续 Replay。');
   }
@@ -175,19 +181,21 @@ function resolveExpectedApkPath(value = process.argv[2] || process.env.WZ_ANDROI
 }
 
 export function normalizedAndroidDeviceName(value) {
-  return String(value).trim().toLowerCase().replace(/[\s_]+/g, ' ');
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, ' ');
 }
 
 export function matchingAndroidDevices(devices, selectedDevice) {
   const normalizedSelectedDevice = normalizedAndroidDeviceName(selectedDevice);
-  return devices.filter((device) => (
-    device.platform === 'android'
-    && (
-      device.id === selectedDevice
-      || device.name === selectedDevice
-      || normalizedAndroidDeviceName(device.name) === normalizedSelectedDevice
-    )
-  ));
+  return devices.filter(
+    (device) =>
+      device.platform === 'android' &&
+      (device.id === selectedDevice ||
+        device.name === selectedDevice ||
+        normalizedAndroidDeviceName(device.name) === normalizedSelectedDevice)
+  );
 }
 
 export function resolveAndroidDevice(selectedDevice) {
@@ -321,17 +329,26 @@ export async function runDeviceReplay({
     let replayError;
     let cleanupError;
     try {
-      runAgentDevice([
-        'test', replayFile,
-        '--session', replaySession,
-        ...replayDeviceSelectionArgs(device),
-        '--retries', '0',
-        '--fail-fast',
-        '--record-video',
-        '--artifacts-dir', replayArtifactsDir,
-        '--reporter', 'default',
-        '--reporter', `junit:${junitPath}`
-      ], { cwd: rootDir });
+      runAgentDevice(
+        [
+          'test',
+          replayFile,
+          '--session',
+          replaySession,
+          ...replayDeviceSelectionArgs(device),
+          '--retries',
+          '0',
+          '--fail-fast',
+          '--record-video',
+          '--artifacts-dir',
+          replayArtifactsDir,
+          '--reporter',
+          'default',
+          '--reporter',
+          `junit:${junitPath}`
+        ],
+        { cwd: rootDir }
+      );
     } catch (error) {
       replayError = error;
     }

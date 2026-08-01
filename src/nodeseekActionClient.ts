@@ -30,7 +30,9 @@ function isFailedActionPayload(data: unknown) {
     return true;
   }
   if (record.success !== true && typeof record.message === 'string') {
-    return /high risk|risk|fail|error|invalid|csrf|unauthorized|forbidden|拒绝|失败|错误|风险|无效|登录/i.test(record.message);
+    return /high risk|risk|fail|error|invalid|csrf|unauthorized|forbidden|拒绝|失败|错误|风险|无效|登录/i.test(
+      record.message
+    );
   }
   return false;
 }
@@ -53,18 +55,25 @@ export async function fetchNodeSeekVoteInfo({
     throw new Error('投票 id 不正确');
   }
   const cleanUserAgent = (userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT).trim();
-  const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}/api/vote/info/${encodeURIComponent(cleanPollId)}`, withBrowserFetchIntent({
-    method: 'GET',
-    headers: {
-      ...NODESEEK_ACTION_HEADERS,
-      ...NODESEEK_VOTE_API_HEADERS,
-      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {})
+  const response = await fetchWithTimeout(
+    `${NODESEEK_BASE_URL}/api/vote/info/${encodeURIComponent(cleanPollId)}`,
+    withBrowserFetchIntent(
+      {
+        method: 'GET',
+        headers: {
+          ...NODESEEK_ACTION_HEADERS,
+          ...NODESEEK_VOTE_API_HEADERS,
+          ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {})
+        }
+      },
+      { owner: 'write', priority: 'write' }
+    ),
+    {
+      fetcher,
+      signal,
+      timeoutMs
     }
-  }, { owner: 'write', priority: 'write' }), {
-    fetcher,
-    signal,
-    timeoutMs
-  });
+  );
   let data: unknown = null;
   try {
     data = await response.json();
@@ -96,19 +105,26 @@ export async function runNodeSeekAction({
 }) {
   const cleanUserAgent = (userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT).trim();
 
-  const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}${request.path}`, withBrowserFetchIntent({
-    method: request.method,
-    headers: {
-      ...NODESEEK_ACTION_HEADERS,
-      ...request.headers,
-      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {})
-    },
-    body: request.body
-  }, { owner: 'write', priority: 'write' }), {
-    fetcher,
-    signal,
-    timeoutMs
-  });
+  const response = await fetchWithTimeout(
+    `${NODESEEK_BASE_URL}${request.path}`,
+    withBrowserFetchIntent(
+      {
+        method: request.method,
+        headers: {
+          ...NODESEEK_ACTION_HEADERS,
+          ...request.headers,
+          ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {})
+        },
+        body: request.body
+      },
+      { owner: 'write', priority: 'write' }
+    ),
+    {
+      fetcher,
+      signal,
+      timeoutMs
+    }
+  );
   let data: unknown = null;
   let parsedJson = true;
   try {

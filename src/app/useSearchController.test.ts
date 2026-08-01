@@ -25,18 +25,29 @@ describe('search controller result helpers', () => {
         group: {
           source: 'v2ex',
           label: 'V2EX',
-          items: [{
-            source: 'v2ex', id: '1', title: 'V2EX result', author: 'alice',
-            url: 'https://www.v2ex.com/t/1', createdAt: '2026-06-21T00:00:00.000Z', replyCount: 0
-          }]
+          items: [
+            {
+              source: 'v2ex',
+              id: '1',
+              title: 'V2EX result',
+              author: 'alice',
+              url: 'https://www.v2ex.com/t/1',
+              createdAt: '2026-06-21T00:00:00.000Z',
+              replyCount: 0
+            }
+          ]
         }
       },
       {
         kind: 'action-required',
         action: { type: 'yaohuo-login', message: '妖火需要登录后使用此功能。' },
         group: {
-          source: 'yaohuo', label: '妖火', items: [],
-          error: '妖火需要登录后使用此功能。', hasMore: false, nextPage: null
+          source: 'yaohuo',
+          label: '妖火',
+          items: [],
+          error: '妖火需要登录后使用此功能。',
+          hasMore: false,
+          nextPage: null
         }
       }
     ];
@@ -52,7 +63,9 @@ describe('search controller result helpers', () => {
       await releaseFirstWrite.promise;
       writes.push('with A');
     });
-    const second = enqueueSearchHistoryWrite(queue, async () => { writes.push('without A'); });
+    const second = enqueueSearchHistoryWrite(queue, async () => {
+      writes.push('without A');
+    });
 
     releaseFirstWrite.resolve();
     await Promise.all([first, second]);
@@ -89,10 +102,14 @@ describe('search controller result helpers', () => {
 
   it('separates unavailable AI search from retryable failures', () => {
     expect(linuxDoAiFailureState(Object.assign(new Error('forbidden'), { status: 403 }))).toMatchObject({
-      status: 'unavailable', enabled: false, message: '当前不可用'
+      status: 'unavailable',
+      enabled: false,
+      message: '当前不可用'
     });
     expect(linuxDoAiFailureState(Object.assign(new Error('limited'), { status: 429 }))).toMatchObject({
-      status: 'error', enabled: false, message: 'AI 搜索失败，可重试'
+      status: 'error',
+      enabled: false,
+      message: 'AI 搜索失败，可重试'
     });
   });
 });

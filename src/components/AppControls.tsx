@@ -26,7 +26,7 @@ export function PillRail({
   onChange
 }: {
   disabled?: boolean;
-  items: Array<{ value: string; label: string }>;
+  items: { value: string; label: string }[];
   variant?: 'pills' | 'tabs' | 'subtabs';
   value: string;
   resetScrollKey?: string | number;
@@ -43,7 +43,13 @@ export function PillRail({
     }
   }, [resetScrollKey]);
   return (
-    <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={0} contentContainerStyle={isTabs ? styles.tabRail : isSubtabs ? styles.subtabRail : styles.pillRail}>
+    <ScrollView
+      ref={scrollRef}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      fadingEdgeLength={0}
+      contentContainerStyle={isTabs ? styles.tabRail : isSubtabs ? styles.subtabRail : styles.pillRail}
+    >
       {items.map((item) => (
         <Pressable
           testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}
@@ -51,14 +57,30 @@ export function PillRail({
           key={`${item.value}-${item.label}`}
           accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}
           accessibilityRole="button"
-          accessibilityState={disabled
-            ? { disabled: true, selected: value === item.value }
-            : { selected: value === item.value }}
+          accessibilityState={
+            disabled ? { disabled: true, selected: value === item.value } : { selected: value === item.value }
+          }
           disabled={disabled || undefined}
-          style={isTabs ? [styles.tab, value === item.value && styles.tabActive] : isSubtabs ? [styles.subtab, value === item.value && styles.subtabActive] : [styles.pill, value === item.value && styles.pillActive]}
+          style={
+            isTabs
+              ? [styles.tab, value === item.value && styles.tabActive]
+              : isSubtabs
+                ? [styles.subtab, value === item.value && styles.subtabActive]
+                : [styles.pill, value === item.value && styles.pillActive]
+          }
           onPress={() => pressWithFeedback(() => onChange(item.value))}
         >
-          <Text style={isTabs ? [styles.tabText, value === item.value && styles.tabTextActive] : isSubtabs ? [styles.subtabText, value === item.value && styles.subtabTextActive] : [styles.pillText, value === item.value && styles.pillTextActive]}>{item.label}</Text>
+          <Text
+            style={
+              isTabs
+                ? [styles.tabText, value === item.value && styles.tabTextActive]
+                : isSubtabs
+                  ? [styles.subtabText, value === item.value && styles.subtabTextActive]
+                  : [styles.pillText, value === item.value && styles.pillTextActive]
+            }
+          >
+            {item.label}
+          </Text>
         </Pressable>
       ))}
     </ScrollView>
@@ -73,7 +95,7 @@ export function SettingRail({
   onChange
 }: {
   title: string;
-  items: Array<{ value: string; label: string }>;
+  items: { value: string; label: string }[];
   value: string;
   styles: ReturnType<typeof createStyles>;
   onChange: (value: string) => void;
@@ -111,7 +133,14 @@ export function MenuButton({
   const Chevron = expanded === undefined ? ChevronRight : ChevronDown;
   const nestedActionColor = theme.primary;
   return (
-    <Pressable accessibilityRole="button" accessibilityState={{ disabled }} android_ripple={nested ? androidRipple(theme.primarySoft) : undefined} disabled={disabled} style={[styles.menuButton, disabled && styles.buttonDisabled]} onPress={() => pressWithFeedback(onPress)}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      android_ripple={nested ? androidRipple(theme.primarySoft) : undefined}
+      disabled={disabled}
+      style={[styles.menuButton, disabled && styles.buttonDisabled]}
+      onPress={() => pressWithFeedback(onPress)}
+    >
       {nested ? null : (
         <View style={styles.menuIcon}>
           <Icon size={19} color={theme.primary} strokeWidth={1.8} />
@@ -119,9 +148,16 @@ export function MenuButton({
       )}
       <View style={styles.flex}>
         <Text style={[styles.menuLabel, nested && { color: nestedActionColor }]}>{label}</Text>
-        <Text style={styles.meta} numberOfLines={2}>{value}</Text>
+        <Text style={styles.meta} numberOfLines={2}>
+          {value}
+        </Text>
       </View>
-      <Chevron size={16} color={nested ? nestedActionColor : theme.muted} strokeWidth={1.6} style={[styles.menuChevron, expanded && styles.menuChevronExpanded]} />
+      <Chevron
+        size={16}
+        color={nested ? nestedActionColor : theme.muted}
+        strokeWidth={1.6}
+        style={[styles.menuChevron, expanded && styles.menuChevronExpanded]}
+      />
     </Pressable>
   );
 }
@@ -176,13 +212,20 @@ export function ExpandablePanel({
         ) : null}
         <View style={styles.flex}>
           <Text style={styles.panelTitle}>{title}</Text>
-          {meta ? <Text style={styles.meta} numberOfLines={2}>{meta}</Text> : null}
+          {meta ? (
+            <Text style={styles.meta} numberOfLines={2}>
+              {meta}
+            </Text>
+          ) : null}
         </View>
         <View style={styles.expandableStateIcon}>
           <StateIcon size={18} color={theme.primary} strokeWidth={1.9} />
         </View>
       </Pressable>
-      <View pointerEvents={panelExpanded ? 'auto' : 'none'} style={[styles.expandableBody, { display: panelExpanded ? 'flex' : 'none' }]}>
+      <View
+        pointerEvents={panelExpanded ? 'auto' : 'none'}
+        style={[styles.expandableBody, { display: panelExpanded ? 'flex' : 'none' }]}
+      >
         {children}
       </View>
     </View>
@@ -217,7 +260,11 @@ export function FloatingIconButton({
       style={[styles.floatingIconButton, disabled && styles.buttonDisabled]}
       onPress={() => pressWithFeedback(onPress)}
     >
-      {loading ? <ActivityIndicator color={theme.primary} size="small" /> : <Icon size={20} color={theme.primary} strokeWidth={1.9} />}
+      {loading ? (
+        <ActivityIndicator color={theme.primary} size="small" />
+      ) : (
+        <Icon size={20} color={theme.primary} strokeWidth={1.9} />
+      )}
     </Pressable>
   );
 }
@@ -259,12 +306,32 @@ export function IconButton({
       accessibilityLabel={label}
       accessibilityState={{ disabled, selected: active }}
       android_ripple={androidRipple(theme.primarySoft, iconOnly || tiny)}
-      style={[styles.button, ghost && styles.buttonGhost, compact && styles.buttonCompact, iconOnly && styles.buttonIconOnly, tiny && styles.buttonTiny, active && !iconOnly && styles.buttonActive, disabled && styles.buttonDisabled]}
+      style={[
+        styles.button,
+        ghost && styles.buttonGhost,
+        compact && styles.buttonCompact,
+        iconOnly && styles.buttonIconOnly,
+        tiny && styles.buttonTiny,
+        active && !iconOnly && styles.buttonActive,
+        disabled && styles.buttonDisabled
+      ]}
       disabled={disabled}
       onPress={() => pressWithFeedback(onPress)}
     >
       <Icon size={iconSize} color={color} fill={active ? color : 'none'} strokeWidth={1.8} />
-      {iconOnly ? null : <Text numberOfLines={1} style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, active && styles.buttonTextActive]}>{label}</Text>}
+      {iconOnly ? null : (
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.buttonText,
+            compact && styles.buttonTextCompact,
+            tiny && styles.buttonTextTiny,
+            active && styles.buttonTextActive
+          ]}
+        >
+          {label}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -295,11 +362,29 @@ export function AppButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
-      style={[styles.button, compact && styles.buttonCompact, tiny && styles.buttonTiny, variant === 'ghost' && styles.buttonGhost, variant === 'primary' && styles.buttonPrimary, variant === 'danger' && styles.buttonDanger, disabled && styles.buttonDisabled]}
+      style={[
+        styles.button,
+        compact && styles.buttonCompact,
+        tiny && styles.buttonTiny,
+        variant === 'ghost' && styles.buttonGhost,
+        variant === 'primary' && styles.buttonPrimary,
+        variant === 'danger' && styles.buttonDanger,
+        disabled && styles.buttonDisabled
+      ]}
       disabled={disabled}
       onPress={() => pressWithFeedback(onPress)}
     >
-      <Text style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, variant === 'primary' && styles.buttonTextPrimary, variant === 'danger' && styles.buttonTextDanger]}>{label}</Text>
+      <Text
+        style={[
+          styles.buttonText,
+          compact && styles.buttonTextCompact,
+          tiny && styles.buttonTextTiny,
+          variant === 'primary' && styles.buttonTextPrimary,
+          variant === 'danger' && styles.buttonTextDanger
+        ]}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -308,7 +393,15 @@ export function EmptyText({ text, styles }: { text: string; styles: ReturnType<t
   return <Text style={styles.empty}>{text}</Text>;
 }
 
-export function LoadingState({ text, styles, theme }: { text: string; styles: ReturnType<typeof createStyles>; theme: ReaderTheme }) {
+export function LoadingState({
+  text,
+  styles,
+  theme
+}: {
+  text: string;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+}) {
   return (
     <View
       accessible
@@ -320,7 +413,9 @@ export function LoadingState({ text, styles, theme }: { text: string; styles: Re
     >
       <View style={styles.loadingStateHeader}>
         <ActivityIndicator accessible={false} color={theme.primary} size="small" />
-        <Text accessible={false} style={styles.loadingStateText}>{text}</Text>
+        <Text accessible={false} style={styles.loadingStateText}>
+          {text}
+        </Text>
       </View>
       <View style={styles.loadingPlaceholderStack}>
         {Array.from({ length: 3 }).map((_, index) => (

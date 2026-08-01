@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import {
-  useMutation,
-  useMutationState,
-  useQueryClient,
-  type InfiniteData,
-  type QueryKey
-} from '@tanstack/react-query';
+import { useMutation, useMutationState, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
 import {
   buildNodeSeekAttendanceRequest,
   buildNodeSeekCollectionRequest,
@@ -72,15 +66,8 @@ import {
   type DiagnosticTrace
 } from '../diagnostics';
 import type { TopicSessionController } from './useTopicSessionController';
-import {
-  forumMutationKeys,
-  forumQueryKeys,
-  type ForumSessionEpochs
-} from './serverState';
-import {
-  prepareDiscourseActionRuntime,
-  type DiscourseActionRuntimeDependencies
-} from './discourseActionRuntime';
+import { forumMutationKeys, forumQueryKeys, type ForumSessionEpochs } from './serverState';
+import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeDependencies } from './discourseActionRuntime';
 import {
   canSubmitReplyToTopic,
   canVotePollOnTopic,
@@ -129,8 +116,7 @@ type AttendanceMutationVariables = {
   trace: DiagnosticTrace;
 };
 
-const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE =
-  'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
+const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE = 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
 
 class HandledMutationError extends Error {
   constructor(
@@ -150,9 +136,7 @@ function mutationFailure(error: unknown, outcome: HandledMutationError['outcome'
 
 function writeFailureRequiresIdentityProbe(source: SessionSite, error: unknown) {
   const kind = sourceErrorFromUnknown(source, error).kind;
-  return kind === 'login-required'
-    || kind === 'login-expired'
-    || kind === 'verification-required';
+  return kind === 'login-required' || kind === 'login-expired' || kind === 'verification-required';
 }
 
 function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
@@ -164,10 +148,14 @@ function updateReplyCache(
   queryKey: QueryKey,
   update: (replies: Reply[]) => Reply[]
 ) {
-  queryClient.setQueryData<ReplyCache>(queryKey, (current) => current ? {
-    ...current,
-    pages: current.pages.map((page) => ({ ...page, items: update(page.items) }))
-  } : current);
+  queryClient.setQueryData<ReplyCache>(queryKey, (current) =>
+    current
+      ? {
+          ...current,
+          pages: current.pages.map((page) => ({ ...page, items: update(page.items) }))
+        }
+      : current
+  );
 }
 
 function replyEditTargetIsCurrent(
@@ -178,11 +166,11 @@ function replyEditTargetIsCurrent(
   cachedReplies: ReplyCache | undefined
 ) {
   if (
-    target.topicId !== topicId
-    || target.ticket.source !== source
-    || target.ticket.source !== ticket.source
-    || target.ticket.identityKey !== ticket.identityKey
-    || target.ticket.sessionEpoch !== ticket.sessionEpoch
+    target.topicId !== topicId ||
+    target.ticket.source !== source ||
+    target.ticket.source !== ticket.source ||
+    target.ticket.identityKey !== ticket.identityKey ||
+    target.ticket.sessionEpoch !== ticket.sessionEpoch
   ) {
     return false;
   }
@@ -248,10 +236,9 @@ export function useTopicActionsController({
     [mutationSource, mutationTopicId]
   );
   const mutationScope = `forum:${mutationSource}:topic:${mutationTopicId}`;
-  const sourceActionAvailability = Object.fromEntries(sourceValues.map((source) => [
-    source,
-    isSessionSource(source) && siteSessionViewModels[source].canWrite
-  ])) as Record<Source, boolean>;
+  const sourceActionAvailability = Object.fromEntries(
+    sourceValues.map((source) => [source, isSessionSource(source) && siteSessionViewModels[source].canWrite])
+  ) as Record<Source, boolean>;
 
   const mutation = useMutation<unknown, unknown, MutationVariables>({
     mutationKey,
@@ -267,13 +254,16 @@ export function useTopicActionsController({
       if (!isWritableSessionTicketCurrent(variables.ticket)) {
         throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
       }
-      if (variables.editTarget && !replyEditTargetIsCurrent(
-        variables.editTarget,
-        variables.ticket,
-        variables.source,
-        variables.topicId,
-        queryClient.getQueryData<ReplyCache>(variables.repliesKey)
-      )) {
+      if (
+        variables.editTarget &&
+        !replyEditTargetIsCurrent(
+          variables.editTarget,
+          variables.ticket,
+          variables.source,
+          variables.topicId,
+          queryClient.getQueryData<ReplyCache>(variables.repliesKey)
+        )
+      ) {
         detachReplyEdit();
         notify('编辑权限已变化，请刷新主题后重试');
         throw new HandledMutationError('编辑权限已变化，请刷新主题后重试', 'blocked', 'permission_denied');
@@ -328,9 +318,8 @@ export function useTopicActionsController({
         });
         return;
       }
-      const message = typeof variables.successMessage === 'function'
-        ? variables.successMessage(result)
-        : variables.successMessage;
+      const message =
+        typeof variables.successMessage === 'function' ? variables.successMessage(result) : variables.successMessage;
       if (message) notify(message);
       finishDiagnosticTrace(variables.trace, refreshed === false ? 'partial' : 'success', {
         source: variables.source,
@@ -354,13 +343,20 @@ export function useTopicActionsController({
     filters: { mutationKey, status: 'pending' },
     select: (entry) => entry.state.variables as MutationVariables
   });
-  const optimisticTopicActions = useMemo<Record<string, OptimisticActionState>>(() => Object.fromEntries(
-    pendingVariables
-      .filter((variables) => variables?.applyOptimistic)
-      .map((variables) => [variables.actionKey, {
-        inFlight: true
-      }])
-  ), [pendingVariables]);
+  const optimisticTopicActions = useMemo<Record<string, OptimisticActionState>>(
+    () =>
+      Object.fromEntries(
+        pendingVariables
+          .filter((variables) => variables?.applyOptimistic)
+          .map((variables) => [
+            variables.actionKey,
+            {
+              inFlight: true
+            }
+          ])
+      ),
+    [pendingVariables]
+  );
 
   const cacheKeys = useCallback((actionTopic: TopicDetail, ticket?: WritableSessionTicket) => {
     const scope = ticket
@@ -374,62 +370,57 @@ export function useTopicActionsController({
     return { detailKey, repliesKey: forumQueryKeys.replies(detailKey) };
   }, []);
 
-  const editReply = useCallback(async (reply: Reply) => {
-    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!actionTopic) {
-      notify('主题尚未加载');
-      return;
-    }
-    if (!reply.commentId) {
-      notify('当前回复缺少评论 id，刷新主题后再试。');
-      return;
-    }
-    if (!reply.canEdit) {
-      notify('当前回复不能编辑');
-      return;
-    }
-    if (!reply.contentMarkdown) {
-      notify('当前回复缺少原文，刷新主题后再试。');
-      return;
-    }
-    if (!isSessionSource(actionTopic.source)) {
-      notify('当前来源不支持写操作');
-      return;
-    }
-    try {
-      const ticket = await ensureWritableSession(actionTopic.source);
-      if (!isWritableSessionTicketCurrent(ticket)) {
-        throw new WritableSessionBlockedError('登录状态已变化，请重试', 'stale');
+  const editReply = useCallback(
+    async (reply: Reply) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      if (!actionTopic) {
+        notify('主题尚未加载');
+        return;
       }
-      openReplyEditor({
-        commentId: reply.commentId,
-        contentMarkdown: reply.contentMarkdown,
-        floor: reply.floor,
-        topicId: actionTopic.id,
-        ticket
-      });
-    } catch (error) {
-      notify(errorMessage(error));
-    }
-  }, [
-    ensureWritableSession,
-    isWritableSessionTicketCurrent,
-    notify,
-    selectedTopic,
-    openReplyEditor,
-    topicDetail
-  ]);
+      if (!reply.commentId) {
+        notify('当前回复缺少评论 id，刷新主题后再试。');
+        return;
+      }
+      if (!reply.canEdit) {
+        notify('当前回复不能编辑');
+        return;
+      }
+      if (!reply.contentMarkdown) {
+        notify('当前回复缺少原文，刷新主题后再试。');
+        return;
+      }
+      if (!isSessionSource(actionTopic.source)) {
+        notify('当前来源不支持写操作');
+        return;
+      }
+      try {
+        const ticket = await ensureWritableSession(actionTopic.source);
+        if (!isWritableSessionTicketCurrent(ticket)) {
+          throw new WritableSessionBlockedError('登录状态已变化，请重试', 'stale');
+        }
+        openReplyEditor({
+          commentId: reply.commentId,
+          contentMarkdown: reply.contentMarkdown,
+          floor: reply.floor,
+          topicId: actionTopic.id,
+          ticket
+        });
+      } catch (error) {
+        notify(errorMessage(error));
+      }
+    },
+    [ensureWritableSession, isWritableSessionTicketCurrent, notify, selectedTopic, openReplyEditor, topicDetail]
+  );
 
   useEffect(() => {
-    if (replyEditTarget && (
-      !selectedTopic
-      || replyEditTarget.topicId !== selectedTopic.id
-      || replyEditTarget.ticket.source !== selectedTopic.source
-      || !isWritableSessionTicketCurrent(replyEditTarget.ticket)
-      || !topicReplies.some((reply) => (
-        reply.commentId === replyEditTarget.commentId && reply.canEdit === true
-      ))
-    )) {
+    if (
+      replyEditTarget &&
+      (!selectedTopic ||
+        replyEditTarget.topicId !== selectedTopic.id ||
+        replyEditTarget.ticket.source !== selectedTopic.source ||
+        !isWritableSessionTicketCurrent(replyEditTarget.ticket) ||
+        !topicReplies.some((reply) => reply.commentId === replyEditTarget.commentId && reply.canEdit === true))
+    ) {
       detachReplyEdit();
     }
   }, [
@@ -442,136 +433,144 @@ export function useTopicActionsController({
     detachReplyEdit
   ]);
 
-  const refreshRepliesAfterWrite = useCallback(async (
-    actionTopic: TopicDetail,
-    trace: DiagnosticTrace,
-    options: TopicRepliesRefreshOptions
-  ) => {
-    if (topicCommands.getCurrentKey() !== topicKey(actionTopic)) {
-      const { detailKey, repliesKey } = cacheKeys(actionTopic);
-      queryClient.removeQueries({ queryKey: repliesKey, exact: true });
-      queryClient.removeQueries({ queryKey: detailKey, exact: true });
-      markDiagnosticStage(trace, 'apply', { source: actionTopic.source, state: 'cache-removed' });
-      return true;
-    }
-    const outcome = await refreshTopicReplies({ ...options, diagnosticTrace: trace });
-    return outcome === 'completed' || outcome === true;
-  }, [cacheKeys, queryClient, refreshTopicReplies, topicCommands]);
-
-  const executeMutation = useCallback(async (
-    actionTopic: TopicDetail,
-    variables: Omit<MutationVariables, 'ticket' | 'detailKey' | 'repliesKey' | 'source' | 'topicId'>
-  ) => {
-    const reservationKey = `${actionTopic.source}:${actionTopic.id}:${variables.actionKey}`;
-    const duplicate = queryClient.getMutationCache().getAll().some((entry) => {
-      const pending = entry.state.variables as MutationVariables | undefined;
-      return entry.state.status === 'pending'
-        && pending?.actionKey === variables.actionKey
-        && pending.source === actionTopic.source
-        && pending.topicId === actionTopic.id;
-    });
-    if (duplicate || pendingActionReservationsRef.current.has(reservationKey)) return false;
-    pendingActionReservationsRef.current.add(reservationKey);
-    try {
-      if (!isSessionSource(actionTopic.source)) {
-        throw new WritableSessionBlockedError('当前来源不支持写操作', 'login_required');
+  const refreshRepliesAfterWrite = useCallback(
+    async (actionTopic: TopicDetail, trace: DiagnosticTrace, options: TopicRepliesRefreshOptions) => {
+      if (topicCommands.getCurrentKey() !== topicKey(actionTopic)) {
+        const { detailKey, repliesKey } = cacheKeys(actionTopic);
+        queryClient.removeQueries({ queryKey: repliesKey, exact: true });
+        queryClient.removeQueries({ queryKey: detailKey, exact: true });
+        markDiagnosticStage(trace, 'apply', { source: actionTopic.source, state: 'cache-removed' });
+        return true;
       }
-      const ticket = await ensureWritableSession(actionTopic.source);
-      const keys = cacheKeys(actionTopic, ticket);
-      if (variables.editTarget) {
-        if (!replyEditTargetIsCurrent(
-          variables.editTarget,
+      const outcome = await refreshTopicReplies({ ...options, diagnosticTrace: trace });
+      return outcome === 'completed' || outcome === true;
+    },
+    [cacheKeys, queryClient, refreshTopicReplies, topicCommands]
+  );
+
+  const executeMutation = useCallback(
+    async (
+      actionTopic: TopicDetail,
+      variables: Omit<MutationVariables, 'ticket' | 'detailKey' | 'repliesKey' | 'source' | 'topicId'>
+    ) => {
+      const reservationKey = `${actionTopic.source}:${actionTopic.id}:${variables.actionKey}`;
+      const duplicate = queryClient
+        .getMutationCache()
+        .getAll()
+        .some((entry) => {
+          const pending = entry.state.variables as MutationVariables | undefined;
+          return (
+            entry.state.status === 'pending' &&
+            pending?.actionKey === variables.actionKey &&
+            pending.source === actionTopic.source &&
+            pending.topicId === actionTopic.id
+          );
+        });
+      if (duplicate || pendingActionReservationsRef.current.has(reservationKey)) return false;
+      pendingActionReservationsRef.current.add(reservationKey);
+      try {
+        if (!isSessionSource(actionTopic.source)) {
+          throw new WritableSessionBlockedError('当前来源不支持写操作', 'login_required');
+        }
+        const ticket = await ensureWritableSession(actionTopic.source);
+        const keys = cacheKeys(actionTopic, ticket);
+        if (variables.editTarget) {
+          if (
+            !replyEditTargetIsCurrent(
+              variables.editTarget,
+              ticket,
+              actionTopic.source,
+              actionTopic.id,
+              queryClient.getQueryData<ReplyCache>(keys.repliesKey)
+            )
+          ) {
+            detachReplyEdit();
+            notify('编辑权限已变化，请刷新主题后重试');
+            finishDiagnosticTrace(variables.trace, 'blocked', {
+              source: actionTopic.source,
+              reason: 'permission_denied'
+            });
+            return false;
+          }
+        }
+        await mutation.mutateAsync({
+          ...variables,
+          ...keys,
           ticket,
-          actionTopic.source,
-          actionTopic.id,
-          queryClient.getQueryData<ReplyCache>(keys.repliesKey)
-        )) {
-          detachReplyEdit();
-          notify('编辑权限已变化，请刷新主题后重试');
+          source: actionTopic.source,
+          topicId: actionTopic.id
+        });
+        return true;
+      } catch (error) {
+        if (error instanceof HandledMutationError) {
+          // Mutation callbacks already own diagnostics and user feedback.
+        } else if (error instanceof WritableSessionBlockedError) {
+          notify(error.message);
           finishDiagnosticTrace(variables.trace, 'blocked', {
             source: actionTopic.source,
-            reason: 'permission_denied'
+            reason: error.reason
           });
-          return false;
+        } else {
+          notify(errorMessage(error));
+          finishDiagnosticTrace(variables.trace, 'failure', {
+            source: actionTopic.source,
+            reason: normalizeDiagnosticReason(error)
+          });
         }
+        return false;
+      } finally {
+        pendingActionReservationsRef.current.delete(reservationKey);
       }
-      await mutation.mutateAsync({
-        ...variables,
-        ...keys,
-        ticket,
-        source: actionTopic.source,
-        topicId: actionTopic.id
+    },
+    [cacheKeys, detachReplyEdit, ensureWritableSession, mutation.mutateAsync, notify, queryClient]
+  );
+
+  const assertWritableTicket = useCallback(
+    (ticket: WritableSessionTicket, serverConfirmed = false) => {
+      if (!isWritableSessionTicketCurrent(ticket)) {
+        throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale', serverConfirmed);
+      }
+    },
+    [isWritableSessionTicketCurrent]
+  );
+
+  const runNodeSeekRequest = useCallback(
+    async (request: NodeSeekActionRequest, trace: DiagnosticTrace, ticket: WritableSessionTicket) => {
+      assertWritableTicket(ticket);
+      markDiagnosticStage(trace, 'credential', {
+        source: 'nodeseek',
+        state: 'ready',
+        hasCredential: true,
+        credentialSource: 'managed-cookie-jar'
       });
+      try {
+        assertWritableTicket(ticket);
+        await runNodeSeekAction({
+          fetcher: withDiagnosticFetcher(trace, fetcher),
+          request,
+          userAgent: nodeSeekWebViewUserAgentRef.current
+        });
+      } catch (error) {
+        assertWritableTicket(ticket);
+        const message = errorMessage(error);
+        if (writeFailureRequiresIdentityProbe('nodeseek', error)) {
+          await reconcileWritableSession('nodeseek').catch(() => ({ status: 'unknown' as const }));
+        }
+        notify(message);
+        throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
+      }
+      markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
+      assertWritableTicket(ticket, true);
       return true;
-    } catch (error) {
-      if (error instanceof HandledMutationError) {
-        // Mutation callbacks already own diagnostics and user feedback.
-      } else if (error instanceof WritableSessionBlockedError) {
-        notify(error.message);
-        finishDiagnosticTrace(variables.trace, 'blocked', {
-          source: actionTopic.source,
-          reason: error.reason
-        });
-      } else {
-        notify(errorMessage(error));
-        finishDiagnosticTrace(variables.trace, 'failure', {
-          source: actionTopic.source,
-          reason: normalizeDiagnosticReason(error)
-        });
-      }
-      return false;
-    } finally {
-      pendingActionReservationsRef.current.delete(reservationKey);
-    }
-  }, [cacheKeys, detachReplyEdit, ensureWritableSession, mutation.mutateAsync, notify, queryClient]);
-
-  const assertWritableTicket = useCallback((ticket: WritableSessionTicket, serverConfirmed = false) => {
-    if (!isWritableSessionTicketCurrent(ticket)) {
-      throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale', serverConfirmed);
-    }
-  }, [isWritableSessionTicketCurrent]);
-
-  const runNodeSeekRequest = useCallback(async (
-    request: NodeSeekActionRequest,
-    trace: DiagnosticTrace,
-    ticket: WritableSessionTicket
-  ) => {
-    assertWritableTicket(ticket);
-    markDiagnosticStage(trace, 'credential', {
-      source: 'nodeseek',
-      state: 'ready',
-      hasCredential: true,
-      credentialSource: 'managed-cookie-jar'
-    });
-    try {
-      assertWritableTicket(ticket);
-      await runNodeSeekAction({
-        fetcher: withDiagnosticFetcher(trace, fetcher),
-        request,
-        userAgent: nodeSeekWebViewUserAgentRef.current
-      });
-    } catch (error) {
-      assertWritableTicket(ticket);
-      const message = errorMessage(error);
-      if (writeFailureRequiresIdentityProbe('nodeseek', error)) {
-        await reconcileWritableSession('nodeseek').catch(() => ({ status: 'unknown' as const }));
-      }
-      notify(message);
-      throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
-    }
-    markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
-    assertWritableTicket(ticket, true);
-    return true;
-  }, [assertWritableTicket, fetcher, nodeSeekWebViewUserAgentRef, notify, reconcileWritableSession]);
+    },
+    [assertWritableTicket, fetcher, nodeSeekWebViewUserAgentRef, notify, reconcileWritableSession]
+  );
 
   const attendanceMutation = useMutation<unknown, unknown, AttendanceMutationVariables>({
     mutationKey: forumMutationKeys.topic('nodeseek', 'global'),
     scope: { id: 'forum:nodeseek:topic:global' },
-    mutationFn: ({ ticket, trace }) => runNodeSeekRequest(
-      buildNodeSeekAttendanceRequest({ random: false }),
-      trace,
-      ticket
-    ),
+    mutationFn: ({ ticket, trace }) =>
+      runNodeSeekRequest(buildNodeSeekAttendanceRequest({ random: false }), trace, ticket),
     onSuccess: (_result, variables) => {
       if (!isWritableSessionTicketCurrent(variables.ticket)) {
         finishDiagnosticTrace(variables.trace, 'stale', {
@@ -595,133 +594,147 @@ export function useTopicActionsController({
       });
     }
   });
-  const actionBusy = attendanceMutation.isPending
-    || pendingVariables.some((variables) => variables?.busy !== false);
+  const actionBusy = attendanceMutation.isPending || pendingVariables.some((variables) => variables?.busy !== false);
 
-  const runYaohuoRequest = useCallback(async (
-    requestFactory: (cookieHeader: string) => YaohuoActionRequest,
-    trace: DiagnosticTrace,
-    ticket: WritableSessionTicket
-  ) => {
-    assertWritableTicket(ticket);
-    const draftRequest = requestFactory('');
-    const actionUrl = new URL(draftRequest.path, YAOHUO_BASE_URL).toString();
-    const cookieRead = await readManagedCookieHeader(actionUrl);
-    assertWritableTicket(ticket);
-    if (cookieRead.status !== 'ok') {
-      throw new HandledMutationError(
-        cookieRead.status === 'error' ? cookieRead.message : '当前安装包不支持读取 WebView Cookie',
-        'blocked',
-        'identity_pending'
-      );
-    }
-    try {
+  const runYaohuoRequest = useCallback(
+    async (
+      requestFactory: (cookieHeader: string) => YaohuoActionRequest,
+      trace: DiagnosticTrace,
+      ticket: WritableSessionTicket
+    ) => {
       assertWritableTicket(ticket);
-      const result = await runYaohuoAction({
-        fetcher: withDiagnosticFetcher(trace, fetcher),
-        request: requestFactory(cookieRead.header)
-      });
-      if (result.status === 'unknown') {
-        assertWritableTicket(ticket);
-        notify(result.message);
-        throw new HandledMutationError(result.message, 'failure', 'invalid_response');
-      }
-      markDiagnosticStage(trace, 'transport', { source: 'yaohuo', state: 'confirmed', serverConfirmed: true });
-      assertWritableTicket(ticket, true);
-      return result;
-    } catch (error) {
-      if (error instanceof HandledMutationError) throw error;
+      const draftRequest = requestFactory('');
+      const actionUrl = new URL(draftRequest.path, YAOHUO_BASE_URL).toString();
+      const cookieRead = await readManagedCookieHeader(actionUrl);
       assertWritableTicket(ticket);
-      const message = errorMessage(error);
-      if (writeFailureRequiresIdentityProbe('yaohuo', error)) {
-        await reconcileWritableSession('yaohuo').catch(() => ({ status: 'unknown' as const }));
-      }
-      notify(message);
-      throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
-    }
-  }, [assertWritableTicket, fetcher, notify, reconcileWritableSession]);
-
-  const runDiscourseRequest = useCallback(async (
-    source: DiscourseSource,
-    action: DiscourseAction,
-    trace: DiagnosticTrace,
-    ticket: WritableSessionTicket,
-    preTransport?: () => void
-  ) => {
-    assertWritableTicket(ticket);
-    const loginPrompt = discourseLoginPrompts[source];
-    const runtime = await prepareDiscourseActionRuntime(source, {
-      ...discourseActionRuntimeDependencies,
-      fetcher: withDiagnosticFetcher(trace, fetcher)
-    });
-    assertWritableTicket(ticket);
-    preTransport?.();
-    if (runtime.isCredentialCurrent?.() === false) {
-      throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-    }
-    if (!runtime.credentialReady || !runtime.execute) {
-      runtime.onMissingCredential?.();
-      loginPrompt(authActionMessageForSource(source, siteSessionViewModels));
-      throw new HandledMutationError('登录信息不可用', 'blocked', 'missing_credential');
-    }
-    try {
-      assertWritableTicket(ticket);
-      const result = await runtime.execute(buildDiscourseSourceActionRequest(source, action));
-      markDiagnosticStage(trace, 'transport', { source, state: 'confirmed', serverConfirmed: true });
-      if (runtime.isCredentialCurrent?.() === false) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale', true);
-      }
-      assertWritableTicket(ticket, true);
-      return result ?? true;
-    } catch (error) {
-      if (error instanceof HandledMutationError) throw error;
-      if (runtime.isCredentialCurrent?.() === false) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
-      let recovery;
-      let recoveryError: unknown;
-      try {
-        recovery = await runtime.recover(error);
-      } catch (errorDuringRecovery) {
-        recoveryError = errorDuringRecovery;
-        recovery = { loginRequired: false, phase: 'credential' as const };
-      }
-      if (recovery.stale || runtime.isCredentialCurrent?.() === false) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
-      const originalMessage = errorMessage(error);
-      const recoveryMessage = recoveryError ? errorMessage(recoveryError) : '';
-      const message = recoveryError
-        ? `${originalMessage}；${recoveryMessage.includes('复核未完成')
-          ? recoveryMessage
-          : `授权状态复核未完成：${recoveryMessage}`}`
-        : originalMessage;
-      if (source === 'linuxdo'
-        && (recovery.loginRequired || writeFailureRequiresIdentityProbe(source, error))) {
-        const promptMessage = recovery.message || message;
-        await reconcileWritableSession(source).catch(() => ({ status: 'unknown' as const }));
-        notify(promptMessage);
+      if (cookieRead.status !== 'ok') {
         throw new HandledMutationError(
-          promptMessage,
-          'failure',
-          normalizeDiagnosticReason(error)
+          cookieRead.status === 'error' ? cookieRead.message : '当前安装包不支持读取 WebView Cookie',
+          'blocked',
+          'identity_pending'
         );
       }
-      if (recovery.loginRequired) {
-        const promptMessage = recovery.message || message;
-        loginPrompt(promptMessage);
-        throw new HandledMutationError(promptMessage, 'blocked', 'login_required');
+      try {
+        assertWritableTicket(ticket);
+        const result = await runYaohuoAction({
+          fetcher: withDiagnosticFetcher(trace, fetcher),
+          request: requestFactory(cookieRead.header)
+        });
+        if (result.status === 'unknown') {
+          assertWritableTicket(ticket);
+          notify(result.message);
+          throw new HandledMutationError(result.message, 'failure', 'invalid_response');
+        }
+        markDiagnosticStage(trace, 'transport', { source: 'yaohuo', state: 'confirmed', serverConfirmed: true });
+        assertWritableTicket(ticket, true);
+        return result;
+      } catch (error) {
+        if (error instanceof HandledMutationError) throw error;
+        assertWritableTicket(ticket);
+        const message = errorMessage(error);
+        if (writeFailureRequiresIdentityProbe('yaohuo', error)) {
+          await reconcileWritableSession('yaohuo').catch(() => ({ status: 'unknown' as const }));
+        }
+        notify(message);
+        throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
       }
-      notify(message);
-      throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
-    }
-  }, [assertWritableTicket, discourseActionRuntimeDependencies, discourseLoginPrompts, fetcher, notify, reconcileWritableSession, siteSessionViewModels]);
+    },
+    [assertWritableTicket, fetcher, notify, reconcileWritableSession]
+  );
 
-  const updateInteraction = useCallback((actionTopic: TopicDetail, patch: Parameters<typeof applyInteractionToTopic>[1]) => {
-    const { detailKey, repliesKey } = cacheKeys(actionTopic);
-    queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyInteractionToTopic(current || null, patch) || current);
-    updateReplyCache(queryClient, repliesKey, (replies) => applyInteractionToReplies(replies, patch));
-  }, [cacheKeys, queryClient]);
+  const runDiscourseRequest = useCallback(
+    async (
+      source: DiscourseSource,
+      action: DiscourseAction,
+      trace: DiagnosticTrace,
+      ticket: WritableSessionTicket,
+      preTransport?: () => void
+    ) => {
+      assertWritableTicket(ticket);
+      const loginPrompt = discourseLoginPrompts[source];
+      const runtime = await prepareDiscourseActionRuntime(source, {
+        ...discourseActionRuntimeDependencies,
+        fetcher: withDiagnosticFetcher(trace, fetcher)
+      });
+      assertWritableTicket(ticket);
+      preTransport?.();
+      if (runtime.isCredentialCurrent?.() === false) {
+        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
+      }
+      if (!runtime.credentialReady || !runtime.execute) {
+        runtime.onMissingCredential?.();
+        loginPrompt(authActionMessageForSource(source, siteSessionViewModels));
+        throw new HandledMutationError('登录信息不可用', 'blocked', 'missing_credential');
+      }
+      try {
+        assertWritableTicket(ticket);
+        const result = await runtime.execute(buildDiscourseSourceActionRequest(source, action));
+        markDiagnosticStage(trace, 'transport', { source, state: 'confirmed', serverConfirmed: true });
+        if (runtime.isCredentialCurrent?.() === false) {
+          throw new HandledMutationError('凭据已变化', 'stale', 'stale', true);
+        }
+        assertWritableTicket(ticket, true);
+        return result ?? true;
+      } catch (error) {
+        if (error instanceof HandledMutationError) throw error;
+        if (runtime.isCredentialCurrent?.() === false) {
+          throw new HandledMutationError('凭据已变化', 'stale', 'stale');
+        }
+        let recovery;
+        let recoveryError: unknown;
+        try {
+          recovery = await runtime.recover(error);
+        } catch (errorDuringRecovery) {
+          recoveryError = errorDuringRecovery;
+          recovery = { loginRequired: false, phase: 'credential' as const };
+        }
+        if (recovery.stale || runtime.isCredentialCurrent?.() === false) {
+          throw new HandledMutationError('凭据已变化', 'stale', 'stale');
+        }
+        const originalMessage = errorMessage(error);
+        const recoveryMessage = recoveryError ? errorMessage(recoveryError) : '';
+        const message = recoveryError
+          ? `${originalMessage}；${
+              recoveryMessage.includes('复核未完成') ? recoveryMessage : `授权状态复核未完成：${recoveryMessage}`
+            }`
+          : originalMessage;
+        if (source === 'linuxdo' && (recovery.loginRequired || writeFailureRequiresIdentityProbe(source, error))) {
+          const promptMessage = recovery.message || message;
+          await reconcileWritableSession(source).catch(() => ({ status: 'unknown' as const }));
+          notify(promptMessage);
+          throw new HandledMutationError(promptMessage, 'failure', normalizeDiagnosticReason(error));
+        }
+        if (recovery.loginRequired) {
+          const promptMessage = recovery.message || message;
+          loginPrompt(promptMessage);
+          throw new HandledMutationError(promptMessage, 'blocked', 'login_required');
+        }
+        notify(message);
+        throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
+      }
+    },
+    [
+      assertWritableTicket,
+      discourseActionRuntimeDependencies,
+      discourseLoginPrompts,
+      fetcher,
+      notify,
+      reconcileWritableSession,
+      siteSessionViewModels
+    ]
+  );
+
+  const updateInteraction = useCallback(
+    (actionTopic: TopicDetail, patch: Parameters<typeof applyInteractionToTopic>[1]) => {
+      const { detailKey, repliesKey } = cacheKeys(actionTopic);
+      queryClient.setQueryData<TopicDetail>(
+        detailKey,
+        (current) => applyInteractionToTopic(current || null, patch) || current
+      );
+      updateReplyCache(queryClient, repliesKey, (replies) => applyInteractionToReplies(replies, patch));
+    },
+    [cacheKeys, queryClient]
+  );
 
   const submitReply = useCallback(async () => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -769,38 +782,47 @@ export function useTopicActionsController({
             );
           }
           const editRepliesKey = cacheKeys(actionTopic as TopicDetail, ticket).repliesKey;
-          return runDiscourseRequest(actionTopic.source as DiscourseSource, {
-            type: 'edit-post', postId: edit.commentId, content: edit.contentMarkdown
-          }, trace, ticket, () => {
-            if (replyEditTargetIsCurrent(
-              replyEditTarget,
-              ticket,
-              actionTopic.source,
-              actionTopic.id,
-              queryClient.getQueryData<ReplyCache>(editRepliesKey)
-            )) {
-              return;
+          return runDiscourseRequest(
+            actionTopic.source as DiscourseSource,
+            {
+              type: 'edit-post',
+              postId: edit.commentId,
+              content: edit.contentMarkdown
+            },
+            trace,
+            ticket,
+            () => {
+              if (
+                replyEditTargetIsCurrent(
+                  replyEditTarget,
+                  ticket,
+                  actionTopic.source,
+                  actionTopic.id,
+                  queryClient.getQueryData<ReplyCache>(editRepliesKey)
+                )
+              ) {
+                return;
+              }
+              detachReplyEdit();
+              notify('编辑权限已变化，请刷新主题后重试');
+              throw new HandledMutationError('编辑权限已变化，请刷新主题后重试', 'blocked', 'permission_denied');
             }
-            detachReplyEdit();
-            notify('编辑权限已变化，请刷新主题后重试');
-            throw new HandledMutationError(
-              '编辑权限已变化，请刷新主题后重试',
-              'blocked',
-              'permission_denied'
-            );
-          });
+          );
         },
         applyResult: (_result, { repliesKey }) => {
-          updateReplyCache(queryClient, repliesKey, (replies) => applyEditedReplyContent(replies, edit, actionTopic.source));
+          updateReplyCache(queryClient, repliesKey, (replies) =>
+            applyEditedReplyContent(replies, edit, actionTopic.source)
+          );
           void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
           if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
         },
-        afterSuccess: () => refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
-          silent: true,
-          afterSubmit: true,
-          targetReply: replyEditTarget,
-          editedReplyContent: edit
-        }),
+        afterSuccess: () =>
+          refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+            silent: true,
+            afterSubmit: true,
+            targetReply: replyEditTarget,
+            editedReplyContent: edit
+          }),
         successMessage: '回复已更新'
       });
       return;
@@ -817,119 +839,206 @@ export function useTopicActionsController({
       actionKey: topicReplyActionKey(actionTopicKey),
       busy: true,
       trace,
-      task: (ticket) => isYaohuoActionTopic(actionTopic)
-        ? runYaohuoRequest((cookieHeader) => buildYaohuoReplyRequest({
-            topicId: actionTopic.id,
-            classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-            content,
-            face,
-            sid: extractYaohuoSid(cookieHeader),
-            replyFloor: target?.floor,
-            toUserId: target?.authorId
-          }), trace, ticket)
-        : isDiscourseSource(actionTopic.source)
-          ? runDiscourseRequest(actionTopic.source, {
-              type: 'reply', topicId: actionTopic.id, content, replyToPostNumber: target?.floor
-            }, trace, ticket)
-          : runNodeSeekRequest(buildNodeSeekReplyRequest({ postId: actionTopic.id, content, replyTarget: target, csrfToken: '' }), trace, ticket),
+      task: (ticket) =>
+        isYaohuoActionTopic(actionTopic)
+          ? runYaohuoRequest(
+              (cookieHeader) =>
+                buildYaohuoReplyRequest({
+                  topicId: actionTopic.id,
+                  classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+                  content,
+                  face,
+                  sid: extractYaohuoSid(cookieHeader),
+                  replyFloor: target?.floor,
+                  toUserId: target?.authorId
+                }),
+              trace,
+              ticket
+            )
+          : isDiscourseSource(actionTopic.source)
+            ? runDiscourseRequest(
+                actionTopic.source,
+                {
+                  type: 'reply',
+                  topicId: actionTopic.id,
+                  content,
+                  replyToPostNumber: target?.floor
+                },
+                trace,
+                ticket
+              )
+            : runNodeSeekRequest(
+                buildNodeSeekReplyRequest({ postId: actionTopic.id, content, replyTarget: target, csrfToken: '' }),
+                trace,
+                ticket
+              ),
       applyResult: () => {
         if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
         const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
         void queryClient.invalidateQueries({ queryKey: detailKey, exact: true });
         void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
       },
-      afterSuccess: () => refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
-        silent: true,
-        afterSubmit: true
-      }),
+      afterSuccess: () =>
+        refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+          silent: true,
+          afterSubmit: true
+        }),
       successMessage: '回复已提交'
     });
-  }, [cacheKeys, detachReplyEdit, executeMutation, notify, queryClient, refreshRepliesAfterWrite, replyComposerOpenRef, replyContent, replyEditTarget, replyFace, replyTarget, runDiscourseRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
+  }, [
+    cacheKeys,
+    detachReplyEdit,
+    executeMutation,
+    notify,
+    queryClient,
+    refreshRepliesAfterWrite,
+    replyComposerOpenRef,
+    replyContent,
+    replyEditTarget,
+    replyFace,
+    replyTarget,
+    runDiscourseRequest,
+    runNodeSeekRequest,
+    runYaohuoRequest,
+    selectedTopic,
+    topicCommands,
+    topicComposer,
+    topicDetail
+  ]);
 
-  const deleteReplyConfirmed = useCallback(async (reply: Reply, trace: DiagnosticTrace) => {
-    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!actionTopic || !reply.canDelete) {
-      notify(actionTopic ? '当前回复不能删除' : '主题尚未加载');
-      finishDiagnosticTrace(trace, 'blocked', { reason: actionTopic ? 'permission_denied' : 'not_ready' });
-      return;
-    }
-    if (isNodeSeekActionTopic(actionTopic)) {
-      notify('NodeSeek 原站没有删除评论入口');
-      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
-      return;
-    }
-    if (isYaohuoActionTopic(actionTopic) && !reply.deletePath) {
-      notify('当前回复缺少删除链接，刷新主题后再试。');
-      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
-      return;
-    }
-    if (isDiscourseSource(actionTopic.source) && !reply.commentId) {
-      notify('当前回复缺少评论 id，刷新主题后再试。');
-      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
-      return;
-    }
-    const actionTopicKey = topicKey(actionTopic);
-    const patch = () => {
-      const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
-      updateReplyCache(queryClient, repliesKey, (replies) => replies.filter((item) => (
-        reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor
-      )));
-      queryClient.setQueryData<TopicDetail>(detailKey, (current) => current ? {
-        ...current,
-        replyCount: Math.max(0, current.replyCount - 1),
-        replies: current.replies.filter((item) => reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor)
-      } : current);
-    };
-    await executeMutation(actionTopic as TopicDetail, {
-      actionKey: topicDeleteReplyActionKey(actionTopicKey, reply),
-      busy: true,
-      trace,
-      task: (ticket) => isYaohuoActionTopic(actionTopic)
-        ? runYaohuoRequest((cookieHeader) => buildYaohuoDeleteReplyRequest({
-            deletePath: reply.deletePath || '', sid: extractYaohuoSid(cookieHeader)
-          }), trace, ticket)
-        : runDiscourseRequest(actionTopic.source as DiscourseSource, {
-            type: 'delete-post', postId: reply.commentId || 0
-          }, trace, ticket),
-      applyOptimistic: patch,
-      applyResult: () => {
-        const { repliesKey } = cacheKeys(actionTopic as TopicDetail);
-        void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
-      },
-      afterSuccess: () => refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
-        silent: true,
-        afterSubmit: true,
-        targetReply: reply,
-        excludeReply: reply
-      }),
-      successMessage: '回复已删除'
-    });
-  }, [cacheKeys, executeMutation, notify, queryClient, refreshRepliesAfterWrite, runDiscourseRequest, runYaohuoRequest, selectedTopic, topicDetail]);
-
-  const deleteReply = useCallback((reply: Reply) => {
-    const trace = beginDiagnosticTrace('reply', 'delete', detail ? { source: detail.source } : {});
-    if (!reply.canDelete) {
-      notify('当前回复不能删除');
-      finishDiagnosticTrace(trace, 'blocked', { reason: 'permission_denied' });
-      return;
-    }
-    let handled = false;
-    Alert.alert('删除回复', '确认删除这条回复？', [
-      { text: '取消', style: 'cancel', onPress: () => {
-        handled = true;
-        finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
-      } },
-      { text: '删除', style: 'destructive', onPress: () => {
-        handled = true;
-        void deleteReplyConfirmed(reply, trace);
-      } }
-    ], {
-      cancelable: true,
-      onDismiss: () => {
-        if (!handled) finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+  const deleteReplyConfirmed = useCallback(
+    async (reply: Reply, trace: DiagnosticTrace) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      if (!actionTopic || !reply.canDelete) {
+        notify(actionTopic ? '当前回复不能删除' : '主题尚未加载');
+        finishDiagnosticTrace(trace, 'blocked', { reason: actionTopic ? 'permission_denied' : 'not_ready' });
+        return;
       }
-    });
-  }, [deleteReplyConfirmed, detail, notify]);
+      if (isNodeSeekActionTopic(actionTopic)) {
+        notify('NodeSeek 原站没有删除评论入口');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
+        return;
+      }
+      if (isYaohuoActionTopic(actionTopic) && !reply.deletePath) {
+        notify('当前回复缺少删除链接，刷新主题后再试。');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+        return;
+      }
+      if (isDiscourseSource(actionTopic.source) && !reply.commentId) {
+        notify('当前回复缺少评论 id，刷新主题后再试。');
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
+        return;
+      }
+      const actionTopicKey = topicKey(actionTopic);
+      const patch = () => {
+        const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
+        updateReplyCache(queryClient, repliesKey, (replies) =>
+          replies.filter((item) => (reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor))
+        );
+        queryClient.setQueryData<TopicDetail>(detailKey, (current) =>
+          current
+            ? {
+                ...current,
+                replyCount: Math.max(0, current.replyCount - 1),
+                replies: current.replies.filter((item) =>
+                  reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor
+                )
+              }
+            : current
+        );
+      };
+      await executeMutation(actionTopic as TopicDetail, {
+        actionKey: topicDeleteReplyActionKey(actionTopicKey, reply),
+        busy: true,
+        trace,
+        task: (ticket) =>
+          isYaohuoActionTopic(actionTopic)
+            ? runYaohuoRequest(
+                (cookieHeader) =>
+                  buildYaohuoDeleteReplyRequest({
+                    deletePath: reply.deletePath || '',
+                    sid: extractYaohuoSid(cookieHeader)
+                  }),
+                trace,
+                ticket
+              )
+            : runDiscourseRequest(
+                actionTopic.source as DiscourseSource,
+                {
+                  type: 'delete-post',
+                  postId: reply.commentId || 0
+                },
+                trace,
+                ticket
+              ),
+        applyOptimistic: patch,
+        applyResult: () => {
+          const { repliesKey } = cacheKeys(actionTopic as TopicDetail);
+          void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
+        },
+        afterSuccess: () =>
+          refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+            silent: true,
+            afterSubmit: true,
+            targetReply: reply,
+            excludeReply: reply
+          }),
+        successMessage: '回复已删除'
+      });
+    },
+    [
+      cacheKeys,
+      executeMutation,
+      notify,
+      queryClient,
+      refreshRepliesAfterWrite,
+      runDiscourseRequest,
+      runYaohuoRequest,
+      selectedTopic,
+      topicDetail
+    ]
+  );
+
+  const deleteReply = useCallback(
+    (reply: Reply) => {
+      const trace = beginDiagnosticTrace('reply', 'delete', detail ? { source: detail.source } : {});
+      if (!reply.canDelete) {
+        notify('当前回复不能删除');
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'permission_denied' });
+        return;
+      }
+      let handled = false;
+      Alert.alert(
+        '删除回复',
+        '确认删除这条回复？',
+        [
+          {
+            text: '取消',
+            style: 'cancel',
+            onPress: () => {
+              handled = true;
+              finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+            }
+          },
+          {
+            text: '删除',
+            style: 'destructive',
+            onPress: () => {
+              handled = true;
+              void deleteReplyConfirmed(reply, trace);
+            }
+          }
+        ],
+        {
+          cancelable: true,
+          onDismiss: () => {
+            if (!handled) finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+          }
+        }
+      );
+    },
+    [deleteReplyConfirmed, detail, notify]
+  );
 
   const uploadReplyImage = useCallback(async () => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -955,17 +1064,19 @@ export function useTopicActionsController({
       ...(replyEditTarget ? { editTarget: replyEditTarget } : {}),
       trace,
       task: async (ticket) => {
-        const editRepliesKey = replyEditTarget
-          ? cacheKeys(actionTopic as TopicDetail, ticket).repliesKey
-          : null;
+        const editRepliesKey = replyEditTarget ? cacheKeys(actionTopic as TopicDetail, ticket).repliesKey : null;
         const assertCurrentEditTarget = (serverConfirmed = false) => {
-          if (!replyEditTarget || !editRepliesKey || replyEditTargetIsCurrent(
-            replyEditTarget,
-            ticket,
-            actionTopic.source,
-            actionTopic.id,
-            queryClient.getQueryData<ReplyCache>(editRepliesKey)
-          )) {
+          if (
+            !replyEditTarget ||
+            !editRepliesKey ||
+            replyEditTargetIsCurrent(
+              replyEditTarget,
+              ticket,
+              actionTopic.source,
+              actionTopic.id,
+              queryClient.getQueryData<ReplyCache>(editRepliesKey)
+            )
+          ) {
             return;
           }
           detachReplyEdit();
@@ -987,15 +1098,13 @@ export function useTopicActionsController({
           nodeImageGeneration = currentNodeImageApiKeyGeneration();
           if (!nodeSeekApiKey) {
             notify(NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE);
-            throw new HandledMutationError(
-              NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE,
-              'blocked',
-              'missing_credential'
-            );
+            throw new HandledMutationError(NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE, 'blocked', 'missing_credential');
           }
         }
         const picked = await DocumentPicker.getDocumentAsync({
-          type: 'image/*', copyToCacheDirectory: true, multiple: false
+          type: 'image/*',
+          copyToCacheDirectory: true,
+          multiple: false
         });
         assertWritableTicket(ticket);
         assertCurrentEditTarget();
@@ -1005,12 +1114,8 @@ export function useTopicActionsController({
         const file = normalizeReplyImageAsset(picked.assets[0]);
         let imageUrl = '';
         if (isDiscourseSource(actionTopic.source)) {
-          const result = await runDiscourseRequest(
-            actionTopic.source,
-            { type: 'upload', file },
-            trace,
-            ticket,
-            () => assertCurrentEditTarget()
+          const result = await runDiscourseRequest(actionTopic.source, { type: 'upload', file }, trace, ticket, () =>
+            assertCurrentEditTarget()
           );
           imageUrl = discourseSourceUploadUrl(actionTopic.source, result);
         } else if (isYaohuoActionTopic(actionTopic)) {
@@ -1027,11 +1132,7 @@ export function useTopicActionsController({
               throw error;
             }
             notify(NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE);
-            throw new HandledMutationError(
-              NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE,
-              'blocked',
-              'missing_credential'
-            );
+            throw new HandledMutationError(NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE, 'blocked', 'missing_credential');
           }
           if (nodeImageGeneration !== currentNodeImageApiKeyGeneration()) {
             throw new HandledMutationError('NodeImage 凭据已变化', 'stale', 'stale', true);
@@ -1049,7 +1150,22 @@ export function useTopicActionsController({
       },
       successMessage: '图片已插入'
     });
-  }, [cacheKeys, detachReplyEdit, ensureNodeImageApiKey, executeMutation, fetcher, notify, queryClient, replyComposerOpenRef, replyEditTarget, runDiscourseRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
+  }, [
+    cacheKeys,
+    detachReplyEdit,
+    ensureNodeImageApiKey,
+    executeMutation,
+    fetcher,
+    notify,
+    queryClient,
+    replyComposerOpenRef,
+    replyEditTarget,
+    runDiscourseRequest,
+    selectedTopic,
+    topicCommands,
+    topicComposer,
+    topicDetail
+  ]);
 
   const checkIn = useCallback(async () => {
     const trace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });
@@ -1071,59 +1187,86 @@ export function useTopicActionsController({
     }
   }, [attendanceMutation.mutateAsync, ensureWritableSession, notify]);
 
-  const interact = useCallback(async (type: InteractionType, commentId?: number) => {
-    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-    const trace = beginDiagnosticTrace('topic', 'interaction', {
-      ...(actionTopic ? { source: actionTopic.source } : {}), action: type
-    });
-    if (!actionTopic || !commentId) {
-      notify('当前内容缺少评论 id，刷新主题后再试。');
-      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-      return;
-    }
-    const target = [topicDetail, ...topicReplies].find((item) => item?.commentId === commentId);
-    if (isDiscourseSource(actionTopic.source)) {
-      if (type !== 'like' || !canToggleDiscourseLike(target)) {
-        notify(type === 'like' ? '当前帖子不能点赞' : '当前来源暂不支持此操作');
+  const interact = useCallback(
+    async (type: InteractionType, commentId?: number) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      const trace = beginDiagnosticTrace('topic', 'interaction', {
+        ...(actionTopic ? { source: actionTopic.source } : {}),
+        action: type
+      });
+      if (!actionTopic || !commentId) {
+        notify('当前内容缺少评论 id，刷新主题后再试。');
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+        return;
+      }
+      const target = [topicDetail, ...topicReplies].find((item) => item?.commentId === commentId);
+      if (isDiscourseSource(actionTopic.source)) {
+        if (type !== 'like' || !canToggleDiscourseLike(target)) {
+          notify(type === 'like' ? '当前帖子不能点赞' : '当前来源暂不支持此操作');
+          finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
+          return;
+        }
+        const desired = !Boolean(target?.liked);
+        const actionKey = topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: commentId, action: 'like' });
+        const patch = {
+          commentId,
+          type: 'like' as const,
+          mode: desired ? ('add' as const) : ('remove' as const),
+          reactionId: 'heart'
+        };
+        await executeMutation(actionTopic as TopicDetail, {
+          actionKey,
+          busy: false,
+          trace,
+          applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
+          task: (ticket) =>
+            runDiscourseRequest(
+              actionTopic.source as DiscourseSource,
+              {
+                type: 'set-like',
+                postId: commentId,
+                active: desired
+              },
+              trace,
+              ticket
+            ),
+          successMessage: desired ? '点赞已提交' : '已取消点赞'
+        });
+        return;
+      }
+      if (!isNodeSeekActionTopic(actionTopic)) {
         finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
         return;
       }
-      const desired = !Boolean(target?.liked);
-      const actionKey = topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: commentId, action: 'like' });
-      const patch = { commentId, type: 'like' as const, mode: desired ? 'add' as const : 'remove' as const, reactionId: 'heart' };
+      const fields = { upvote: 'upvoted', like: 'liked', dislike: 'disliked' } as const;
+      if (target?.[fields[type]]) {
+        notify(nodeSeekInteractionRemovalMessage(type));
+        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
+        return;
+      }
+      const actionKey = topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: commentId, action: type });
+      const patch = { commentId, type, mode: 'add' as const };
       await executeMutation(actionTopic as TopicDetail, {
         actionKey,
         busy: false,
         trace,
         applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
-        task: (ticket) => runDiscourseRequest(actionTopic.source as DiscourseSource, {
-          type: 'set-like', postId: commentId, active: desired
-        }, trace, ticket),
-        successMessage: desired ? '点赞已提交' : '已取消点赞'
+        task: (ticket) =>
+          runNodeSeekRequest(buildNodeSeekInteractionRequest({ type, commentId, active: false }), trace, ticket),
+        successMessage: type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
       });
-      return;
-    }
-    if (!isNodeSeekActionTopic(actionTopic)) {
-      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
-      return;
-    }
-    const fields = { upvote: 'upvoted', like: 'liked', dislike: 'disliked' } as const;
-    if (target?.[fields[type]]) {
-      notify(nodeSeekInteractionRemovalMessage(type));
-      finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
-      return;
-    }
-    const actionKey = topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: commentId, action: type });
-    const patch = { commentId, type, mode: 'add' as const };
-    await executeMutation(actionTopic as TopicDetail, {
-      actionKey,
-      busy: false,
-      trace,
-      applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
-      task: (ticket) => runNodeSeekRequest(buildNodeSeekInteractionRequest({ type, commentId, active: false }), trace, ticket),
-      successMessage: type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
-    });
-  }, [executeMutation, notify, runDiscourseRequest, runNodeSeekRequest, selectedTopic, topicDetail, topicReplies, updateInteraction]);
+    },
+    [
+      executeMutation,
+      notify,
+      runDiscourseRequest,
+      runNodeSeekRequest,
+      selectedTopic,
+      topicDetail,
+      topicReplies,
+      updateInteraction
+    ]
+  );
 
   const favoriteOnYaohuoSite = useCallback(async () => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -1141,26 +1284,35 @@ export function useTopicActionsController({
     }
     const patch = (active: boolean, bookmarkId?: number) => {
       const { detailKey } = cacheKeys(actionDetail);
-      queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyBookmarkToTopic(current || null, {
-        bookmarked: active, bookmarkId
-      }) || current);
+      queryClient.setQueryData<TopicDetail>(
+        detailKey,
+        (current) =>
+          applyBookmarkToTopic(current || null, {
+            bookmarked: active,
+            bookmarkId
+          }) || current
+      );
     };
     await executeMutation(actionDetail, {
       actionKey: yaohuoFavoriteActionKey(topicKey(actionTopic)),
       busy: false,
       trace,
       applyOptimistic: () => patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId),
-      task: (ticket) => runYaohuoRequest(() => bookmarked
-        ? buildYaohuoDeleteFavoriteRequest({ favoriteId: actionDetail.bookmarkId || 0 })
-        : buildYaohuoFavoriteRequest({
-            topicId: actionTopic.id,
-            classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID
-          }), trace, ticket),
+      task: (ticket) =>
+        runYaohuoRequest(
+          () =>
+            bookmarked
+              ? buildYaohuoDeleteFavoriteRequest({ favoriteId: actionDetail.bookmarkId || 0 })
+              : buildYaohuoFavoriteRequest({
+                  topicId: actionTopic.id,
+                  classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID
+                }),
+          trace,
+          ticket
+        ),
       applyResult: (result) => {
         const yaohuoResult = result as YaohuoActionResult;
-        patch(!bookmarked, bookmarked || yaohuoResult.status === 'unknown'
-          ? undefined
-          : yaohuoResult.favoriteId);
+        patch(!bookmarked, bookmarked || yaohuoResult.status === 'unknown' ? undefined : yaohuoResult.favoriteId);
       },
       successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
     });
@@ -1177,16 +1329,25 @@ export function useTopicActionsController({
     const collected = Boolean(actionDetail.collected);
     const patch = () => {
       const { detailKey } = cacheKeys(actionDetail);
-      queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyNodeSeekCollectionToTopic(current || null, {
-        collected: !collected
-      }) || current);
+      queryClient.setQueryData<TopicDetail>(
+        detailKey,
+        (current) =>
+          applyNodeSeekCollectionToTopic(current || null, {
+            collected: !collected
+          }) || current
+      );
     };
     await executeMutation(actionDetail, {
-      actionKey: topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: actionTopic.id, action: 'collection' }),
+      actionKey: topicActionStateKey({
+        topicKey: topicKey(actionTopic),
+        targetId: actionTopic.id,
+        action: 'collection'
+      }),
       busy: false,
       trace,
       applyOptimistic: patch,
-      task: (ticket) => runNodeSeekRequest(buildNodeSeekCollectionRequest({ postId: actionTopic.id, collected }), trace, ticket),
+      task: (ticket) =>
+        runNodeSeekRequest(buildNodeSeekCollectionRequest({ postId: actionTopic.id, collected }), trace, ticket),
       successMessage: collected ? '已取消原站收藏' : '原站收藏已提交'
     });
   }, [cacheKeys, executeMutation, queryClient, runNodeSeekRequest, selectedTopic, topicDetail]);
@@ -1202,118 +1363,174 @@ export function useTopicActionsController({
     const bookmarked = Boolean(actionDetail.bookmarked);
     const patch = (active: boolean, bookmarkId?: number) => {
       const { detailKey } = cacheKeys(actionDetail);
-      queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyBookmarkToTopic(current || null, {
-        bookmarked: active, bookmarkId
-      }) || current);
+      queryClient.setQueryData<TopicDetail>(
+        detailKey,
+        (current) =>
+          applyBookmarkToTopic(current || null, {
+            bookmarked: active,
+            bookmarkId
+          }) || current
+      );
     };
     await executeMutation(actionDetail, {
       actionKey: topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: actionTopic.id, action: 'bookmark' }),
       busy: false,
       trace,
       applyOptimistic: () => patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId),
-      task: (ticket) => runDiscourseRequest(actionTopic.source as DiscourseSource, {
-        type: 'set-bookmark',
-        targetId: actionTopic.id,
-        targetType: 'Topic',
-        active: !bookmarked,
-        bookmarkId: actionDetail.bookmarkId
-      }, trace, ticket),
+      task: (ticket) =>
+        runDiscourseRequest(
+          actionTopic.source as DiscourseSource,
+          {
+            type: 'set-bookmark',
+            targetId: actionTopic.id,
+            targetType: 'Topic',
+            active: !bookmarked,
+            bookmarkId: actionDetail.bookmarkId
+          },
+          trace,
+          ticket
+        ),
       applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : discourseBookmarkIdFromActionResult(result)),
       successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
     });
   }, [cacheKeys, executeMutation, queryClient, runDiscourseRequest, selectedTopic, topicDetail]);
 
-  const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
-    const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-    const trace = beginDiagnosticTrace('topic', 'vote', {
-      ...(actionTopic ? { source: actionTopic.source } : {}), selectedCount: optionIds.length
-    });
-    if (!canVotePollOnTopic(actionTopic) || !optionIds.length) {
-      if (!optionIds.length) notify('请选择投票选项');
-      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
-      return;
-    }
-    const submit = async () => {
-      await executeMutation(actionTopic as TopicDetail, {
-        actionKey: topicPollVoteActionKey(topicKey(actionTopic), poll),
-        busy: true,
-        trace,
-        task: async (ticket) => {
-          if (isNodeSeekActionTopic(actionTopic)) {
-            await runNodeSeekRequest(buildNodeSeekVoteRequest({ optionIds }), trace, ticket);
-            try {
-              if (!poll.id) throw new Error('投票 id 不正确');
-              assertWritableTicket(ticket);
-              const confirmedPoll = await fetchNodeSeekVoteInfo({
-                pollId: poll.id,
-                fetcher: withDiagnosticFetcher(trace, fetcher),
-                userAgent: nodeSeekWebViewUserAgentRef.current
-              });
-              return { confirmedPoll, refreshFailed: false };
-            } catch {
-              hintDiagnosticOutcome(trace, 'partial', {
-                source: 'nodeseek',
-                reason: 'refresh_failed'
-              });
-              return { confirmedPoll: undefined, refreshFailed: true };
-            }
-          }
-          if (isDiscourseSource(actionTopic.source)) {
-            if (!poll.postId || !poll.name) {
-              throw new HandledMutationError('当前投票信息不完整，刷新主题后再试。', 'blocked', 'not_ready');
-            }
-            await runDiscourseRequest(actionTopic.source, {
-              type: 'vote', postId: poll.postId, pollName: poll.name, optionIds
-            }, trace, ticket);
-          } else {
-            await runYaohuoRequest(() => buildYaohuoVoteRequest({
-              topicId: actionTopic.id,
-              classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-              voteIds: optionIds
-            }), trace, ticket);
-          }
-          return { confirmedPoll: undefined, refreshFailed: false };
-        },
-        applyResult: (result) => {
-          const voteResult = result as { confirmedPoll?: TopicPoll; refreshFailed: boolean };
-          const patch = {
-            pollId: poll.id,
-            pollName: poll.name,
-            pollPostId: poll.postId,
-            optionIds,
-            ...(voteResult.confirmedPoll ? { confirmedPoll: voteResult.confirmedPoll } : {}),
-            ...(voteResult.refreshFailed ? { preserveUnknownCounts: true } : {})
-          };
-          const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
-          queryClient.setQueryData<TopicDetail>(detailKey, (current) => applyPollVoteToTopic(current || null, patch) || current);
-          updateReplyCache(queryClient, repliesKey, (replies) => applyPollVoteToReplies(replies, patch));
-          if (voteResult.refreshFailed) notify('提交成功但结果刷新失败，请手动刷新。');
-        },
-        successMessage: (result) => (result as { refreshFailed: boolean }).refreshFailed ? '' : '投票已提交'
+  const votePoll = useCallback(
+    async (poll: TopicPoll, optionIds: string[]) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      const trace = beginDiagnosticTrace('topic', 'vote', {
+        ...(actionTopic ? { source: actionTopic.source } : {}),
+        selectedCount: optionIds.length
       });
-    };
-    if (!isNodeSeekActionTopic(actionTopic)) {
-      await submit();
-      return;
-    }
-    let handled = false;
-    Alert.alert('确认提交投票？', '提交后不可修改。', [
-      { text: '取消', style: 'cancel', onPress: () => {
-        handled = true;
-        finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
-      } },
-      { text: '提交', style: 'destructive', onPress: () => {
-        if (handled) return;
-        handled = true;
-        void submit();
-      } }
-    ], {
-      cancelable: true,
-      onDismiss: () => {
-        if (!handled) finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
+      if (!canVotePollOnTopic(actionTopic) || !optionIds.length) {
+        if (!optionIds.length) notify('请选择投票选项');
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+        return;
       }
-    });
-  }, [cacheKeys, executeMutation, fetcher, nodeSeekWebViewUserAgentRef, notify, queryClient, runDiscourseRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail]);
+      const submit = async () => {
+        await executeMutation(actionTopic as TopicDetail, {
+          actionKey: topicPollVoteActionKey(topicKey(actionTopic), poll),
+          busy: true,
+          trace,
+          task: async (ticket) => {
+            if (isNodeSeekActionTopic(actionTopic)) {
+              await runNodeSeekRequest(buildNodeSeekVoteRequest({ optionIds }), trace, ticket);
+              try {
+                if (!poll.id) throw new Error('投票 id 不正确');
+                assertWritableTicket(ticket);
+                const confirmedPoll = await fetchNodeSeekVoteInfo({
+                  pollId: poll.id,
+                  fetcher: withDiagnosticFetcher(trace, fetcher),
+                  userAgent: nodeSeekWebViewUserAgentRef.current
+                });
+                return { confirmedPoll, refreshFailed: false };
+              } catch {
+                hintDiagnosticOutcome(trace, 'partial', {
+                  source: 'nodeseek',
+                  reason: 'refresh_failed'
+                });
+                return { confirmedPoll: undefined, refreshFailed: true };
+              }
+            }
+            if (isDiscourseSource(actionTopic.source)) {
+              if (!poll.postId || !poll.name) {
+                throw new HandledMutationError('当前投票信息不完整，刷新主题后再试。', 'blocked', 'not_ready');
+              }
+              await runDiscourseRequest(
+                actionTopic.source,
+                {
+                  type: 'vote',
+                  postId: poll.postId,
+                  pollName: poll.name,
+                  optionIds
+                },
+                trace,
+                ticket
+              );
+            } else {
+              await runYaohuoRequest(
+                () =>
+                  buildYaohuoVoteRequest({
+                    topicId: actionTopic.id,
+                    classId: actionTopic.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+                    voteIds: optionIds
+                  }),
+                trace,
+                ticket
+              );
+            }
+            return { confirmedPoll: undefined, refreshFailed: false };
+          },
+          applyResult: (result) => {
+            const voteResult = result as { confirmedPoll?: TopicPoll; refreshFailed: boolean };
+            const patch = {
+              pollId: poll.id,
+              pollName: poll.name,
+              pollPostId: poll.postId,
+              optionIds,
+              ...(voteResult.confirmedPoll ? { confirmedPoll: voteResult.confirmedPoll } : {}),
+              ...(voteResult.refreshFailed ? { preserveUnknownCounts: true } : {})
+            };
+            const { detailKey, repliesKey } = cacheKeys(actionTopic as TopicDetail);
+            queryClient.setQueryData<TopicDetail>(
+              detailKey,
+              (current) => applyPollVoteToTopic(current || null, patch) || current
+            );
+            updateReplyCache(queryClient, repliesKey, (replies) => applyPollVoteToReplies(replies, patch));
+            if (voteResult.refreshFailed) notify('提交成功但结果刷新失败，请手动刷新。');
+          },
+          successMessage: (result) => ((result as { refreshFailed: boolean }).refreshFailed ? '' : '投票已提交')
+        });
+      };
+      if (!isNodeSeekActionTopic(actionTopic)) {
+        await submit();
+        return;
+      }
+      let handled = false;
+      Alert.alert(
+        '确认提交投票？',
+        '提交后不可修改。',
+        [
+          {
+            text: '取消',
+            style: 'cancel',
+            onPress: () => {
+              handled = true;
+              finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
+            }
+          },
+          {
+            text: '提交',
+            style: 'destructive',
+            onPress: () => {
+              if (handled) return;
+              handled = true;
+              void submit();
+            }
+          }
+        ],
+        {
+          cancelable: true,
+          onDismiss: () => {
+            if (!handled) finishDiagnosticTrace(trace, 'canceled', { source: actionTopic.source, reason: 'canceled' });
+          }
+        }
+      );
+    },
+    [
+      cacheKeys,
+      executeMutation,
+      fetcher,
+      nodeSeekWebViewUserAgentRef,
+      notify,
+      queryClient,
+      runDiscourseRequest,
+      runNodeSeekRequest,
+      runYaohuoRequest,
+      selectedTopic,
+      topicDetail
+    ]
+  );
 
   return {
     actionBusy,

@@ -175,11 +175,7 @@ export function buildNodeSeekAttendanceRequest({
   };
 }
 
-export function buildNodeSeekVoteRequest({
-  optionIds
-}: {
-  optionIds: Array<string | number>;
-}): NodeSeekActionRequest {
+export function buildNodeSeekVoteRequest({ optionIds }: { optionIds: (string | number)[] }): NodeSeekActionRequest {
   const ids = optionIds.map((id) => cleanPositiveInteger(id, '投票选项')).filter(Boolean);
   if (!ids.length) {
     throw new Error('请选择投票选项');

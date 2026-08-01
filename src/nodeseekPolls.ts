@@ -42,22 +42,19 @@ function optionalBoolean(value: unknown) {
 }
 
 export function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): TopicPoll | null {
-  const source = isRecord(value) && isRecord(value.vote)
-    ? value.vote
-    : isRecord(value) && isRecord(value.detail)
-      ? value.detail
-      : isRecord(value)
-        ? value
-        : null;
+  const source =
+    isRecord(value) && isRecord(value.vote)
+      ? value.vote
+      : isRecord(value) && isRecord(value.detail)
+        ? value.detail
+        : isRecord(value)
+          ? value
+          : null;
   if (!source) {
     return null;
   }
   const pollId = String(source.id || source.voteId || fallbackId).trim();
-  const itemValues = Array.isArray(source.items)
-    ? source.items
-    : Array.isArray(source.options)
-      ? source.options
-      : [];
+  const itemValues = Array.isArray(source.items) ? source.items : Array.isArray(source.options) ? source.options : [];
   const rawOptions = itemValues
     .filter(isRecord)
     .map((item) => ({
@@ -88,14 +85,20 @@ export function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): T
   };
 }
 
-export function stripLoadedNodeSeekVoteMarkers(html: string, pollIds: Array<string | undefined>) {
+export function stripLoadedNodeSeekVoteMarkers(html: string, pollIds: (string | undefined)[]) {
   const ids = [...new Set(pollIds.filter((id): id is string => /^\d+$/.test(id || '')))];
   if (!ids.length) {
     return html;
   }
   const marker = 'nsapp:\\/\\/vote\\?id=(' + ids.join('|') + ')';
   let cleaned = html
-    .replace(new RegExp(`<(p|div)\\b[^>]*>\\s*(?:(?:&quot;|")?\\s*(?:&gt;|>)\\s*)?(?:提交投票\\s*)?${marker}(?:\\s*[（(][^<)）]*[)）])?\\s*<\\/\\1>`, 'gi'), (_match, _tag, id: string) => nodeSeekPollPlaceholderHtml(id))
+    .replace(
+      new RegExp(
+        `<(p|div)\\b[^>]*>\\s*(?:(?:&quot;|")?\\s*(?:&gt;|>)\\s*)?(?:提交投票\\s*)?${marker}(?:\\s*[（(][^<)）]*[)）])?\\s*<\\/\\1>`,
+        'gi'
+      ),
+      (_match, _tag, id: string) => nodeSeekPollPlaceholderHtml(id)
+    )
     .replace(new RegExp(marker, 'gi'), (_match, id: string) => nodeSeekPollPlaceholderHtml(id));
   const placeholderIds = new Set(ids.filter((id) => cleaned.includes(nodeSeekPollPlaceholderHtml(id))));
   if (!placeholderIds.size) {
@@ -108,12 +111,19 @@ export function stripLoadedNodeSeekVoteMarkers(html: string, pollIds: Array<stri
       return;
     }
     const nearestDiv = element.closest('div');
-    const container = element.closest('p')
-      || (nearestDiv?.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 ? nearestDiv : null);
+    const container =
+      element.closest('p') ||
+      (nearestDiv?.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 ? nearestDiv : null);
     const markerPrefix = decodeHtml(container?.textContent || '').replace(/\s/g, '');
-    const containerHasOtherContent = Boolean(container?.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select'));
-    if (container && container.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1
-      && !containerHasOtherContent && (!markerPrefix || /^"?>$/.test(markerPrefix))) {
+    const containerHasOtherContent = Boolean(
+      container?.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
+    );
+    if (
+      container &&
+      container.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 &&
+      !containerHasOtherContent &&
+      (!markerPrefix || /^"?>$/.test(markerPrefix))
+    ) {
       container.replaceWith(nodeSeekPollPlaceholderHtml(id));
     }
   });
@@ -131,8 +141,11 @@ export function stripLoadedNodeSeekVoteMarkers(html: string, pollIds: Array<stri
     const anchor = element.closest('p') || element;
     const previous = anchor.previousElementSibling;
     const previousPrefix = decodeHtml(previous?.textContent || '').replace(/\s/g, '');
-    if (previous && /^"?>$/.test(previousPrefix)
-      && !previous.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')) {
+    if (
+      previous &&
+      /^"?>$/.test(previousPrefix) &&
+      !previous.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
+    ) {
       previous.remove();
     }
     if (seen.has(id)) {

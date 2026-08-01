@@ -10,7 +10,7 @@ import { createTopicListItemStateIndex } from '../../src/topicListItemState';
 import type { Category, Topic, UserProfile, UserReference } from '../../src/types';
 
 let mockFlashListMountCount = 0;
-const mockFlashListRenders: Array<{ dataLength: number; testID?: string }> = [];
+const mockFlashListRenders: { dataLength: number; testID?: string }[] = [];
 const mockFlashListScrollToOffset = jest.fn<(options: { animated: boolean; offset: number }) => void>();
 
 jest.mock('@shopify/flash-list', () => {
@@ -18,7 +18,16 @@ jest.mock('@shopify/flash-list', () => {
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ReactModule.forwardRef(function FlashList(
-      { data = [], drawDistance, keyExtractor, ListEmptyComponent, ListHeaderComponent, maintainVisibleContentPosition, renderItem, testID }: {
+      {
+        data = [],
+        drawDistance,
+        keyExtractor,
+        ListEmptyComponent,
+        ListHeaderComponent,
+        maintainVisibleContentPosition,
+        renderItem,
+        testID
+      }: {
         data?: unknown[];
         drawDistance?: number;
         keyExtractor?: (item: unknown, index: number) => string;
@@ -40,11 +49,13 @@ jest.mock('@shopify/flash-list', () => {
         NativeView,
         { drawDistance, maintainVisibleContentPosition, testID } as React.ComponentProps<typeof NativeView>,
         ListHeaderComponent,
-        ...data.map((item, index) => ReactModule.createElement(
-          NativeView,
-          { key: keyExtractor?.(item, index) ?? index },
-          renderItem?.({ item, index })
-        )),
+        ...data.map((item, index) =>
+          ReactModule.createElement(
+            NativeView,
+            { key: keyExtractor?.(item, index) ?? index },
+            renderItem?.({ item, index })
+          )
+        ),
         data.length ? null : ListEmptyComponent
       );
     })
@@ -58,9 +69,23 @@ jest.mock('lucide-react-native', () => ({
 
 jest.mock('../../src/components/TopicCard', () => {
   const ReactModule = require('react') as typeof React;
-  const { Pressable: NativePressable, Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
+  const {
+    Pressable: NativePressable,
+    Text: NativeText,
+    View: NativeView
+  } = require('react-native') as typeof import('react-native');
   return {
-    MemoizedTopicCard: ({ onOpenTopic, renderTrailingAction, testID, topic }: { onOpenTopic: (topic: Topic) => void; renderTrailingAction?: (topic: Topic) => React.ReactNode; testID?: string; topic: Topic }) => (
+    MemoizedTopicCard: ({
+      onOpenTopic,
+      renderTrailingAction,
+      testID,
+      topic
+    }: {
+      onOpenTopic: (topic: Topic) => void;
+      renderTrailingAction?: (topic: Topic) => React.ReactNode;
+      testID?: string;
+      topic: Topic;
+    }) =>
       ReactModule.createElement(
         NativeView,
         null,
@@ -71,7 +96,6 @@ jest.mock('../../src/components/TopicCard', () => {
         ),
         renderTrailingAction?.(topic)
       )
-    )
   };
 });
 
@@ -106,11 +130,25 @@ const records: TopicRecord[] = [
 ];
 const followedUsers: FollowedUserRecord[] = [
   {
-    user: { source: 'v2ex', id: 'neo', username: 'neo', displayName: 'Neo', url: 'https://www.v2ex.com/member/neo', topics: [] },
+    user: {
+      source: 'v2ex',
+      id: 'neo',
+      username: 'neo',
+      displayName: 'Neo',
+      url: 'https://www.v2ex.com/member/neo',
+      topics: []
+    },
     followedAt: '2026-07-14T00:00:00.000Z'
   },
   {
-    user: { source: 'linuxdo', id: 'alice', username: 'alice', displayName: 'Alice', url: 'https://linux.do/u/alice', topics: [] },
+    user: {
+      source: 'linuxdo',
+      id: 'alice',
+      username: 'alice',
+      displayName: 'Alice',
+      url: 'https://linux.do/u/alice',
+      topics: []
+    },
     followedAt: '2026-07-14T00:00:00.000Z'
   }
 ];
@@ -186,7 +224,7 @@ describe('Library filters', () => {
   });
 
   it('[REG-PERF-001] resets the list position before switching tabs without animation', async () => {
-    const frameCallbacks: Array<(time: number) => void> = [];
+    const frameCallbacks: ((time: number) => void)[] = [];
     jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
       frameCallbacks.push(callback);
       return frameCallbacks.length;
@@ -219,7 +257,9 @@ describe('Library filters', () => {
   it('[REG-PERF-001] disables visible-position anchoring while library datasets switch', async () => {
     const view = await render(<LibraryHarness />);
 
-    expect(view.getByTestId('library-favorites-ready').props.maintainVisibleContentPosition).toEqual({ disabled: true });
+    expect(view.getByTestId('library-favorites-ready').props.maintainVisibleContentPosition).toEqual({
+      disabled: true
+    });
     expect(view.getByTestId('library-favorites-ready').props.drawDistance).toBe(250);
   });
 
@@ -240,17 +280,10 @@ describe('Library filters', () => {
     const onClearHistory = jest.fn<() => void>();
     const onRemove = jest.fn<(topic: Topic) => void>();
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
-    const view = await render(
-      <LibraryHarness onClearHistory={onClearHistory} onRemove={onRemove} />
-    );
+    const view = await render(<LibraryHarness onClearHistory={onClearHistory} onRemove={onRemove} />);
 
     await fireEvent.press(view.getAllByLabelText('取消收藏')[0]);
-    expect(alert).toHaveBeenNthCalledWith(
-      1,
-      '确定取消收藏吗？',
-      'V2EX 问答主题',
-      expect.any(Array)
-    );
+    expect(alert).toHaveBeenNthCalledWith(1, '确定取消收藏吗？', 'V2EX 问答主题', expect.any(Array));
     expect(onRemove).not.toHaveBeenCalled();
     const removeButtons = alert.mock.calls[0]?.[2];
     removeButtons?.find((button) => button.text === '取消')?.onPress?.();
@@ -260,12 +293,7 @@ describe('Library filters', () => {
 
     await fireEvent.press(view.getByTestId('library-tab-history'));
     await fireEvent.press(view.getByLabelText('清空历史'));
-    expect(alert).toHaveBeenNthCalledWith(
-      2,
-      '清空历史？',
-      '清空后无法恢复。',
-      expect.any(Array)
-    );
+    expect(alert).toHaveBeenNthCalledWith(2, '清空历史？', '清空后无法恢复。', expect.any(Array));
     expect(onClearHistory).not.toHaveBeenCalled();
     const clearButtons = alert.mock.calls[1]?.[2];
     clearButtons?.find((button) => button.text === '取消')?.onPress?.();

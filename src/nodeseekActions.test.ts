@@ -34,11 +34,13 @@ describe('NodeSeek action request builders', () => {
   });
 
   it('rejects empty reply content', () => {
-    expect(() => buildNodeSeekReplyRequest({
-      postId: '723704',
-      content: '   ',
-      csrfToken: 'fixed-csrf-token'
-    })).toThrow('请输入回复内容');
+    expect(() =>
+      buildNodeSeekReplyRequest({
+        postId: '723704',
+        content: '   ',
+        csrfToken: 'fixed-csrf-token'
+      })
+    ).toThrow('请输入回复内容');
   });
 
   it('generates a NodeSeek content request token when none is saved', () => {
@@ -75,10 +77,12 @@ describe('NodeSeek action request builders', () => {
   });
 
   it('builds upvote and like interaction requests for a comment', () => {
-    expect(buildNodeSeekInteractionRequest({
-      type: 'upvote',
-      commentId: 812345
-    })).toEqual({
+    expect(
+      buildNodeSeekInteractionRequest({
+        type: 'upvote',
+        commentId: 812345
+      })
+    ).toEqual({
       path: '/api/statistics/upvote',
       method: 'POST',
       headers: {
@@ -90,17 +94,21 @@ describe('NodeSeek action request builders', () => {
       })
     });
 
-    expect(buildNodeSeekInteractionRequest({
-      type: 'like',
-      commentId: 812345
-    }).path).toBe('/api/statistics/like');
+    expect(
+      buildNodeSeekInteractionRequest({
+        type: 'like',
+        commentId: 812345
+      }).path
+    ).toBe('/api/statistics/like');
   });
 
   it('builds dislike interaction requests for a comment', () => {
-    expect(buildNodeSeekInteractionRequest({
-      type: 'dislike',
-      commentId: '812345'
-    })).toEqual({
+    expect(
+      buildNodeSeekInteractionRequest({
+        type: 'dislike',
+        commentId: '812345'
+      })
+    ).toEqual({
       path: '/api/statistics/dislike',
       method: 'POST',
       headers: {
@@ -114,11 +122,13 @@ describe('NodeSeek action request builders', () => {
   });
 
   it('builds an edit request for an own NodeSeek comment', () => {
-    expect(buildNodeSeekEditReplyRequest({
-      commentId: '812345',
-      content: '  更新后的内容  ',
-      csrfToken: 'fixed-csrf-token'
-    })).toEqual({
+    expect(
+      buildNodeSeekEditReplyRequest({
+        commentId: '812345',
+        content: '  更新后的内容  ',
+        csrfToken: 'fixed-csrf-token'
+      })
+    ).toEqual({
       path: '/api/content/edit-comment',
       method: 'POST',
       headers: {
@@ -134,30 +144,38 @@ describe('NodeSeek action request builders', () => {
   });
 
   it('rejects unsupported NodeSeek reaction removal requests', () => {
-    expect(() => buildNodeSeekInteractionRequest({
-      type: 'dislike',
-      commentId: '812345',
-      active: true
-    })).toThrow('NodeSeek 原站不支持取消反对');
+    expect(() =>
+      buildNodeSeekInteractionRequest({
+        type: 'dislike',
+        commentId: '812345',
+        active: true
+      })
+    ).toThrow('NodeSeek 原站不支持取消反对');
 
-    expect(() => buildNodeSeekInteractionRequest({
-      type: 'like',
-      commentId: '812345',
-      active: true
-    })).toThrow('NodeSeek 原站不支持取消鸡腿');
+    expect(() =>
+      buildNodeSeekInteractionRequest({
+        type: 'like',
+        commentId: '812345',
+        active: true
+      })
+    ).toThrow('NodeSeek 原站不支持取消鸡腿');
 
-    expect(() => buildNodeSeekInteractionRequest({
-      type: 'upvote',
-      commentId: '812345',
-      active: true
-    })).toThrow('NodeSeek 原站不支持取消点赞');
+    expect(() =>
+      buildNodeSeekInteractionRequest({
+        type: 'upvote',
+        commentId: '812345',
+        active: true
+      })
+    ).toThrow('NodeSeek 原站不支持取消点赞');
   });
 
   it('builds NodeSeek original collection toggle requests', () => {
-    expect(buildNodeSeekCollectionRequest({
-      postId: '723704',
-      collected: true
-    })).toEqual({
+    expect(
+      buildNodeSeekCollectionRequest({
+        postId: '723704',
+        collected: true
+      })
+    ).toEqual({
       path: '/api/statistics/collection',
       method: 'POST',
       headers: {
@@ -198,10 +216,15 @@ describe('NodeSeek action request builders', () => {
   });
 
   it('extracts a useful action error message without exposing raw internals', () => {
-    expect(nodeSeekActionErrorMessage({
-      success: false,
-      message: 'ALREADY CHECKED IN'
-    }, 400)).toBe('ALREADY CHECKED IN');
+    expect(
+      nodeSeekActionErrorMessage(
+        {
+          success: false,
+          message: 'ALREADY CHECKED IN'
+        },
+        400
+      )
+    ).toBe('ALREADY CHECKED IN');
 
     expect(nodeSeekActionErrorMessage(null, 403)).toBe('NodeSeek 拒绝了请求，请稍后重试');
   });

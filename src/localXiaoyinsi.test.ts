@@ -51,23 +51,26 @@ const posts = [
     bookmark_id: 9,
     actions_summary: [{ id: 2, acted: true, can_act: true }],
     polls_votes: { choice: ['a'] },
-    polls: [{
-      id: 1,
-      name: 'choice',
-      type: 'regular',
-      status: 'open',
-      voters: 3,
-      options: [
-        { id: 'a', html: '甲', votes: 2 },
-        { id: 'b', html: '乙', votes: 1 }
-      ]
-    }]
+    polls: [
+      {
+        id: 1,
+        name: 'choice',
+        type: 'regular',
+        status: 'open',
+        voters: 3,
+        options: [
+          { id: 'a', html: '甲', votes: 2 },
+          { id: 'b', html: '乙', votes: 1 }
+        ]
+      }
+    ]
   },
   {
     id: 101,
     post_number: 2,
     username: 'bob',
-    cooked: '<aside class="quote" data-topic="420" data-post="1" data-display-name="Alice Display"><blockquote>正文</blockquote></aside><p>回复</p>',
+    cooked:
+      '<aside class="quote" data-topic="420" data-post="1" data-display-name="Alice Display"><blockquote>正文</blockquote></aside><p>回复</p>',
     raw: '回复',
     created_at: '2026-07-01T00:30:00.000Z',
     can_edit: true,
@@ -93,9 +96,7 @@ function postsForRequest(url: URL) {
   const includeRaw = url.searchParams.get('include_raw') === '1';
   return posts.map((post) => {
     const { raw: fixtureRaw, ...withoutRaw } = post as typeof post & { raw?: string };
-    return includeRaw
-      ? { ...withoutRaw, raw: fixtureRaw || `原始内容 ${post.id}` }
-      : withoutRaw;
+    return includeRaw ? { ...withoutRaw, raw: fixtureRaw || `原始内容 ${post.id}` } : withoutRaw;
   });
 }
 
@@ -118,14 +119,12 @@ describe('xiaoyinsi adapter', () => {
   });
 
   it('loads and absolutizes the site-owned Discourse emoji catalog', async () => {
-    const fetcher = vi.fn(async (_input: string) => json({
-      'smileys_&_emotion': [
-        { name: 'heart', url: '/images/emoji/twitter/heart.png?v=15' }
-      ],
-      'people_&_body': [
-        { name: '+1', url: '/images/emoji/twitter/+1.png?v=15' }
-      ]
-    }));
+    const fetcher = vi.fn(async (_input: string) =>
+      json({
+        'smileys_&_emotion': [{ name: 'heart', url: '/images/emoji/twitter/heart.png?v=15' }],
+        'people_&_body': [{ name: '+1', url: '/images/emoji/twitter/+1.png?v=15' }]
+      })
+    );
 
     await expect(getXiaoyinsiEmojiUrls({ fetcher })).resolves.toEqual({
       heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15',
@@ -145,10 +144,12 @@ describe('xiaoyinsi adapter', () => {
         });
       }
       if (url.pathname === '/site.json') {
-        return json({ categories: [
-          { id: 1, name: '未分类', slug: '', topic_count: 0 },
-          { id: 5, name: '生活', slug: 'life', topic_count: 12 }
-        ] });
+        return json({
+          categories: [
+            { id: 1, name: '未分类', slug: '', topic_count: 0 },
+            { id: 5, name: '生活', slug: 'life', topic_count: 12 }
+          ]
+        });
       }
       if (url.pathname === '/t/42.json') {
         return json({
@@ -161,9 +162,13 @@ describe('xiaoyinsi adapter', () => {
         });
       }
       if (url.pathname === '/t/42/posts.json') {
-        return json({ post_stream: { posts: postsForRequest(url)
-          .filter((post) => url.searchParams.getAll('post_ids[]').includes(String(post.id)))
-          .map((post) => ({ ...post, avatar_template: malformedAvatar })) } });
+        return json({
+          post_stream: {
+            posts: postsForRequest(url)
+              .filter((post) => url.searchParams.getAll('post_ids[]').includes(String(post.id)))
+              .map((post) => ({ ...post, avatar_template: malformedAvatar }))
+          }
+        });
       }
       if (url.pathname === '/search.json') {
         return json({
@@ -187,10 +192,25 @@ describe('xiaoyinsi adapter', () => {
         });
       }
       if (url.pathname === '/user_actions.json') {
-        return json({ user_actions: [{ id: 101, post_id: 101, topic_id: 42, title: '小隐寺主题', slug: 'temple-topic', post_number: 2, created_at: '2026-07-01T00:30:00.000Z', excerpt: '[!tip]+ 回复摘要' }] });
+        return json({
+          user_actions: [
+            {
+              id: 101,
+              post_id: 101,
+              topic_id: 42,
+              title: '小隐寺主题',
+              slug: 'temple-topic',
+              post_number: 2,
+              created_at: '2026-07-01T00:30:00.000Z',
+              excerpt: '[!tip]+ 回复摘要'
+            }
+          ]
+        });
       }
       if (url.pathname === '/session/current.json') {
-        return json({ current_user: { id: 7, username: 'alice', name: 'Alice', trust_level: 2, avatar_template: malformedAvatar } });
+        return json({
+          current_user: { id: 7, username: 'alice', name: 'Alice', trust_level: 2, avatar_template: malformedAvatar }
+        });
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -205,7 +225,13 @@ describe('xiaoyinsi adapter', () => {
     const profile = await getXiaoyinsiUserProfile('alice', 'alice', { fetcher, credentials });
     const current = await getXiaoyinsiCurrentUserProfile({ fetcher, credentials });
 
-    expect(feed.items[0]).toMatchObject({ source: 'xiaoyinsi', id: '42', author: 'alice', authorAvatar: undefined, category: '生活' });
+    expect(feed.items[0]).toMatchObject({
+      source: 'xiaoyinsi',
+      id: '42',
+      author: 'alice',
+      authorAvatar: undefined,
+      category: '生活'
+    });
     expect(feed.nextPage).toBe(2);
     expect(categories.items[0]).toEqual({ source: 'xiaoyinsi', id: '5', name: '生活', slug: 'life', topicCount: 12 });
     expect(categories.items).toHaveLength(1);
@@ -228,11 +254,13 @@ describe('xiaoyinsi adapter', () => {
       floor: 2,
       canEdit: true,
       canDelete: true,
-      quotedPosts: [{
-        reference: { source: 'xiaoyinsi', topicId: '420', postNumber: 1 },
-        author: { label: 'Alice Display' },
-        preview: '正文'
-      }],
+      quotedPosts: [
+        {
+          reference: { source: 'xiaoyinsi', topicId: '420', postNumber: 1 },
+          author: { label: 'Alice Display' },
+          preview: '正文'
+        }
+      ],
       contentMarkdown: '回复',
       acceptedAnswer: true,
       hidden: true,
@@ -243,14 +271,34 @@ describe('xiaoyinsi adapter', () => {
     });
     expect(detail.replies[0].authorAvatar).toBeUndefined();
     expect(detail.replies[0].contentHtml).not.toContain('<aside');
-    expect(splitDiscourseContentHtml(detail.contentHtml, detail.polls).map((part) => part.type)).toEqual(['html', 'poll']);
+    expect(splitDiscourseContentHtml(detail.contentHtml, detail.polls).map((part) => part.type)).toEqual([
+      'html',
+      'poll'
+    ]);
     expect(replies).toMatchObject({ totalCount: 2 });
-    expect(replies.items[0]).toMatchObject({ author: 'carol', authorAvatar: undefined, floor: 3, contentMarkdown: '原始内容 102' });
+    expect(replies.items[0]).toMatchObject({
+      author: 'carol',
+      authorAvatar: undefined,
+      floor: 3,
+      contentMarkdown: '原始内容 102'
+    });
     expect(reply).toMatchObject({ author: 'bob', authorAvatar: undefined, floor: 2, contentMarkdown: '回复' });
     expect(search).toMatchObject({ hasMore: true, nextPage: 2 });
     expect(search.items[0]).toMatchObject({ authorAvatar: undefined, category: '生活', excerpt: '命中正文' });
-    expect(profile).toMatchObject({ source: 'xiaoyinsi', username: 'alice', displayName: 'Alice', avatar: undefined, levelLabel: 'Lv2', hasMoreReplies: false });
-    expect(profile.topics[0]).toMatchObject({ author: 'alice', authorAvatar: undefined, authorLevelLabel: 'Lv2', category: '生活' });
+    expect(profile).toMatchObject({
+      source: 'xiaoyinsi',
+      username: 'alice',
+      displayName: 'Alice',
+      avatar: undefined,
+      levelLabel: 'Lv2',
+      hasMoreReplies: false
+    });
+    expect(profile.topics[0]).toMatchObject({
+      author: 'alice',
+      authorAvatar: undefined,
+      authorLevelLabel: 'Lv2',
+      category: '生活'
+    });
     expect(profile.replies?.[0]).toMatchObject({ topicId: '42', floor: 2, excerpt: '回复摘要' });
     expect(current).toMatchObject({ source: 'xiaoyinsi', username: 'alice', displayName: 'Alice', avatar: undefined });
 
@@ -275,7 +323,10 @@ describe('xiaoyinsi adapter', () => {
             { topic_id: 42, post_number: 2, username: 'bob', blurb: '命中回复' },
             { topic_id: 43, post_number: 2, username: 'carol', blurb: '没有楼主身份' }
           ],
-          users: [{ id: 7, username: 'alice' }, { id: 8, username: 'bob' }],
+          users: [
+            { id: 7, username: 'alice' },
+            { id: 8, username: 'bob' }
+          ],
           grouped_search_result: { more_full_page_results: false }
         });
       }
@@ -392,23 +443,27 @@ describe('xiaoyinsi adapter', () => {
     });
     const credentials = { apiKey: 'secret-key', clientId: 'install-client' };
 
-    expect(await searchXiaoyinsiTags({
-      fetcher,
-      credentials,
-      query: '公',
-      categoryId: '5',
-      selectedTags: ['反馈'],
-      limit: 2
-    })).toEqual([
+    expect(
+      await searchXiaoyinsiTags({
+        fetcher,
+        credentials,
+        query: '公',
+        categoryId: '5',
+        selectedTags: ['反馈'],
+        limit: 2
+      })
+    ).toEqual([
       { name: '公告', topicCount: 12 },
       { name: '反馈', topicCount: 8 }
     ]);
-    expect(await searchXiaoyinsiUsers({ fetcher, credentials, term: 'ali', categoryId: '5' })).toEqual([{
-      id: '7',
-      username: 'alice',
-      displayName: 'Alice',
-      avatar: 'https://forum.xiaoyinsi.com/avatar/96.png'
-    }]);
+    expect(await searchXiaoyinsiUsers({ fetcher, credentials, term: 'ali', categoryId: '5' })).toEqual([
+      {
+        id: '7',
+        username: 'alice',
+        displayName: 'Alice',
+        avatar: 'https://forum.xiaoyinsi.com/avatar/96.png'
+      }
+    ]);
 
     const [tagRequest, userRequest] = fetcher.mock.calls.map(([input]) => new URL(input));
     expect(tagRequest.searchParams.get('q')).toBe('公');
@@ -535,15 +590,19 @@ describe('xiaoyinsi adapter', () => {
   });
 
   it('requires both credentials before reading the current identity', async () => {
-    await expect(getXiaoyinsiCurrentUserProfile({ credentials: { apiKey: 'key', clientId: '' } })).rejects.toThrow('请先授权小隐寺');
+    await expect(getXiaoyinsiCurrentUserProfile({ credentials: { apiKey: 'key', clientId: '' } })).rejects.toThrow(
+      '请先授权小隐寺'
+    );
   });
 
   it('[REG-ACCOUNT-019] distinguishes an explicit anonymous Xiaoyinsi session from malformed success data', async () => {
     const credentials = { apiKey: 'key', clientId: 'client' };
-    await expect(getXiaoyinsiCurrentUserProfile({
-      credentials,
-      fetcher: async () => json({ current_user: null })
-    })).rejects.toMatchObject({
+    await expect(
+      getXiaoyinsiCurrentUserProfile({
+        credentials,
+        fetcher: async () => json({ current_user: null })
+      })
+    ).rejects.toMatchObject({
       source: 'xiaoyinsi',
       kind: 'login-expired',
       loginRequired: true,
@@ -563,13 +622,19 @@ describe('xiaoyinsi adapter', () => {
   it('[REG-ACCOUNT-025] types only a Discourse JSON invalid-access response as expired User API authorization', async () => {
     const credentials = { apiKey: 'expired-key', clientId: 'client' };
 
-    await expect(getXiaoyinsiCurrentUserProfile({
-      credentials,
-      fetcher: async () => json({
-        errors: ['Invalid Access'],
-        error_type: 'invalid_access'
-      }, 403)
-    })).rejects.toMatchObject({
+    await expect(
+      getXiaoyinsiCurrentUserProfile({
+        credentials,
+        fetcher: async () =>
+          json(
+            {
+              errors: ['Invalid Access'],
+              error_type: 'invalid_access'
+            },
+            403
+          )
+      })
+    ).rejects.toMatchObject({
       source: 'xiaoyinsi',
       kind: 'login-expired',
       loginRequired: true,
@@ -590,10 +655,11 @@ describe('xiaoyinsi adapter', () => {
   it('[REG-ACCOUNT-025] keeps a non-JSON Xiaoyinsi 403 unknown', async () => {
     const failure = await getXiaoyinsiCurrentUserProfile({
       credentials: { apiKey: 'candidate-key', clientId: 'client' },
-      fetcher: async () => new Response('<title>request rejected</title>', {
-        status: 403,
-        headers: { 'content-type': 'text/html' }
-      })
+      fetcher: async () =>
+        new Response('<title>request rejected</title>', {
+          status: 403,
+          headers: { 'content-type': 'text/html' }
+        })
     }).catch((error) => error);
 
     expect(failure).toBeInstanceOf(Error);
@@ -603,10 +669,14 @@ describe('xiaoyinsi adapter', () => {
   it('[REG-ACCOUNT-025] keeps an unrelated Xiaoyinsi JSON 403 unknown', async () => {
     const failure = await getXiaoyinsiCurrentUserProfile({
       credentials: { apiKey: 'candidate-key', clientId: 'client' },
-      fetcher: async () => json({
-        errors: ['request rejected'],
-        error_type: 'custom_rejection'
-      }, 403)
+      fetcher: async () =>
+        json(
+          {
+            errors: ['request rejected'],
+            error_type: 'custom_rejection'
+          },
+          403
+        )
     }).catch((error) => error);
 
     expect(failure).toBeInstanceOf(Error);

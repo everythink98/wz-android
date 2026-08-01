@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initialForumSessionEpochs } from './app/serverState';
-import {
-  mediaRequestContextForSource,
-  mediaSessionIdentityForSource
-} from './mediaSessionEpoch';
+import { mediaRequestContextForSource, mediaSessionIdentityForSource } from './mediaSessionEpoch';
 
 const epochs = {
   ...initialForumSessionEpochs,

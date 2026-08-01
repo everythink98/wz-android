@@ -67,11 +67,7 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
     }
   };
 }
-export function createTopicStyles(
-  theme: ReaderTheme,
-  appFontFamily: string | undefined,
-  fontScale: number
-) {
+export function createTopicStyles(theme: ReaderTheme, appFontFamily: string | undefined, fontScale: number) {
   return {
     topicAccessNotice: {
       gap: 8,

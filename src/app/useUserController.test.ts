@@ -9,17 +9,23 @@ describe('user query helpers', () => {
   });
 
   it('routes verification and login recovery by source', () => {
-    expect(userSourceRecoveryTarget('linuxdo', {
-      kind: 'verification-required',
-      message: '需要验证'
-    })).toBe('linuxdo-verification');
-    expect(userSourceRecoveryTarget('yaohuo', {
-      kind: 'login-expired',
-      message: '登录失效'
-    })).toBe('yaohuo-login');
-    expect(userSourceRecoveryTarget('yaohuo', {
-      kind: 'ordinary',
-      message: '请求超时'
-    })).toBeNull();
+    expect(
+      userSourceRecoveryTarget('linuxdo', {
+        kind: 'verification-required',
+        message: '需要验证'
+      })
+    ).toBe('linuxdo-verification');
+    expect(
+      userSourceRecoveryTarget('yaohuo', {
+        kind: 'login-expired',
+        message: '登录失效'
+      })
+    ).toBe('yaohuo-login');
+    expect(
+      userSourceRecoveryTarget('yaohuo', {
+        kind: 'ordinary',
+        message: '请求超时'
+      })
+    ).toBeNull();
   });
 });

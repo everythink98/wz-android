@@ -18,8 +18,30 @@ jest.mock('react-native-webview', () => {
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   return {
-    Gesture: { Pan: () => ({ minDistance() { return this; }, runOnJS() { return this; }, onBegin() { return this; }, onUpdate() { return this; }, onEnd() { return this; }, onFinalize() { return this; } }) },
-    GestureDetector: ({ children }: { children: React.ReactNode }) => ReactModule.createElement(ReactModule.Fragment, null, children)
+    Gesture: {
+      Pan: () => ({
+        minDistance() {
+          return this;
+        },
+        runOnJS() {
+          return this;
+        },
+        onBegin() {
+          return this;
+        },
+        onUpdate() {
+          return this;
+        },
+        onEnd() {
+          return this;
+        },
+        onFinalize() {
+          return this;
+        }
+      })
+    },
+    GestureDetector: ({ children }: { children: React.ReactNode }) =>
+      ReactModule.createElement(ReactModule.Fragment, null, children)
   };
 });
 
@@ -137,10 +159,7 @@ describe('Topic and More controls', () => {
     expect(view.getByText('字号 100%')).toBeTruthy();
     await act(async () => jest.advanceTimersByTime(300));
 
-    expect(onUpdateSettings.mock.calls).toEqual([
-      [{ fontScale: 1.05 }],
-      [{ fontScale: 1 }]
-    ]);
+    expect(onUpdateSettings.mock.calls).toEqual([[{ fontScale: 1.05 }], [{ fontScale: 1 }]]);
     view.unmount();
     jest.useRealTimers();
   });

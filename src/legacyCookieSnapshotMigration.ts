@@ -18,10 +18,7 @@ export const LEGACY_COOKIE_SNAPSHOT_KEYS = [
   YAOHUO_COOKIE_STORAGE_KEY
 ] as const;
 
-type SecureStorePort = Pick<
-  typeof SecureStore,
-  'deleteItemAsync' | 'getItemAsync' | 'setItemAsync'
->;
+type SecureStorePort = Pick<typeof SecureStore, 'deleteItemAsync' | 'getItemAsync' | 'setItemAsync'>;
 
 function legacyUserAgent(raw: string | null) {
   if (!raw) {

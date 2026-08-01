@@ -37,10 +37,7 @@ export function searchHistoryFromRaw(raw: string | null) {
 }
 
 export function mergeLoadedSearchHistory(current: string[], raw: string | null) {
-  return normalizeSearchHistory([
-    ...current,
-    ...searchHistoryFromRaw(raw)
-  ]);
+  return normalizeSearchHistory([...current, ...searchHistoryFromRaw(raw)]);
 }
 
 export function sameSearchHistory(left: string[] | null | undefined, right: string[] | null | undefined) {

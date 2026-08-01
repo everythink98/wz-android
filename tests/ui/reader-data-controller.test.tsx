@@ -4,18 +4,14 @@ import { createEmptyReaderData, recordHistory, toggleFavorite, type ReaderData }
 import type { Topic } from '../../src/types';
 
 const mockLoadReaderData = jest.fn<() => Promise<ReaderData>>();
-const mockSaveCleanReaderData = jest.fn<(
-  data: ReaderData,
-  previousJson?: string | null,
-  cleanJson?: string
-) => Promise<ReaderData>>();
+const mockSaveCleanReaderData =
+  jest.fn<(data: ReaderData, previousJson?: string | null, cleanJson?: string) => Promise<ReaderData>>();
 const mockSaveReaderSettings = jest.fn<() => Promise<void>>();
 
 jest.mock('../../src/readerDataStore', () => ({
   loadReaderData: () => mockLoadReaderData(),
-  saveCleanReaderData: (data: ReaderData, previousJson?: string | null, cleanJson?: string) => (
-    mockSaveCleanReaderData(data, previousJson, cleanJson)
-  ),
+  saveCleanReaderData: (data: ReaderData, previousJson?: string | null, cleanJson?: string) =>
+    mockSaveCleanReaderData(data, previousJson, cleanJson),
   saveReaderSettings: () => mockSaveReaderSettings()
 }));
 
@@ -52,9 +48,7 @@ describe('reader data controller persistence', () => {
     });
 
     expect(mockSaveCleanReaderData).toHaveBeenCalledTimes(1);
-    expect(
-      mockSaveCleanReaderData.mock.calls[0]?.[0].history['nodeseek:reader-data-race']?.visitCount
-    ).toBe(1);
+    expect(mockSaveCleanReaderData.mock.calls[0]?.[0].history['nodeseek:reader-data-race']?.visitCount).toBe(1);
   });
 
   it('[REG-DATA-002] persists a full snapshot after an older record save fails before a settings change', async () => {
@@ -85,10 +79,12 @@ describe('reader data controller persistence', () => {
   });
 
   it('[REG-DATA-003] suspends later mutations when a failed save cannot restore its previous snapshot', async () => {
-    mockSaveCleanReaderData.mockRejectedValueOnce(new AggregateError(
-      [new Error('settings write failed'), new Error('snapshot rollback failed')],
-      '本机资料保存失败，且无法恢复先前快照。'
-    ));
+    mockSaveCleanReaderData.mockRejectedValueOnce(
+      new AggregateError(
+        [new Error('settings write failed'), new Error('snapshot rollback failed')],
+        '本机资料保存失败，且无法恢复先前快照。'
+      )
+    );
     const notify = jest.fn();
     const hook = await renderHook(() => useReaderDataController({ notify }));
     await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
@@ -126,10 +122,12 @@ describe('reader data controller persistence', () => {
     const secondTopic: Topic = { ...topic, id: 'reader-data-race-queued', title: 'Queued reader data race' };
     await act(async () => {
       hook.result.current.commitReaderData('favorite-toggled', (current) => toggleFavorite(current, secondTopic));
-      firstSave.reject(new AggregateError(
-        [new Error('settings write failed'), new Error('snapshot rollback failed')],
-        '本机资料保存失败，且无法恢复先前快照。'
-      ));
+      firstSave.reject(
+        new AggregateError(
+          [new Error('settings write failed'), new Error('snapshot rollback failed')],
+          '本机资料保存失败，且无法恢复先前快照。'
+        )
+      );
     });
 
     await act(async () => {
@@ -144,10 +142,12 @@ describe('reader data controller persistence', () => {
   it('[REG-DATA-004] force-writes an identical backup while recovering from an unknown disk state', async () => {
     let physicalWrites = 0;
     mockSaveCleanReaderData
-      .mockRejectedValueOnce(new AggregateError(
-        [new Error('settings write failed'), new Error('snapshot rollback failed')],
-        '本机资料保存失败，且无法恢复先前快照。'
-      ))
+      .mockRejectedValueOnce(
+        new AggregateError(
+          [new Error('settings write failed'), new Error('snapshot rollback failed')],
+          '本机资料保存失败，且无法恢复先前快照。'
+        )
+      )
       .mockImplementationOnce(async (data, previousJson, cleanJson) => {
         if (previousJson !== cleanJson) {
           physicalWrites += 1;

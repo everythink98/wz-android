@@ -44,24 +44,28 @@ function renderUserController({
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showNodeSeekVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
 }) {
-  return renderHook(() => useUserController({
-    identityBarriers: getIdentityBarriers(),
-    sessionEpochs: getSessionEpochs(),
-    notify: jest.fn(),
-    onOpenUserScreen: jest.fn(),
-    readerData: createEmptyReaderData(),
-    screen: 'user',
-    showLinuxDoVerification,
-    showNodeSeekVerification,
-    showYaohuoLogin: jest.fn(),
-    sourceGateway: { getUserProfile, resolveNodeSeekUser } as unknown as SourceGateway
-  }));
+  return renderHook(() =>
+    useUserController({
+      identityBarriers: getIdentityBarriers(),
+      sessionEpochs: getSessionEpochs(),
+      notify: jest.fn(),
+      onOpenUserScreen: jest.fn(),
+      readerData: createEmptyReaderData(),
+      screen: 'user',
+      showLinuxDoVerification,
+      showNodeSeekVerification,
+      showYaohuoLogin: jest.fn(),
+      sourceGateway: { getUserProfile, resolveNodeSeekUser } as unknown as SourceGateway
+    })
+  );
 }
 
 describe('user query controller', () => {
   beforeEach(() => appQueryClient.clear());
   afterEach(async () => {
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
   });
 
   it('[REG-TOPIC-039] resolves a username before loading the canonical NodeSeek profile', async () => {
@@ -101,16 +105,22 @@ describe('user query controller', () => {
       await resolution.promise;
     });
 
-    await waitFor(() => expect(getUserProfile).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'nodeseek', id: '8052', username: 'xy' }),
-      expect.anything()
-    ));
+    await waitFor(() =>
+      expect(getUserProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'nodeseek', id: '8052', username: 'xy' }),
+        expect.anything()
+      )
+    );
     expect(hook.result.current.userProfile).toMatchObject({ id: '8052', username: 'xy' });
 
-    await act(async () => { await hook.result.current.loadMoreUserTopics(); });
+    await act(async () => {
+      await hook.result.current.loadMoreUserTopics();
+    });
     expect(getUserProfile.mock.calls.map(([request]) => request.id)).toEqual(['8052', '8052']);
 
-    await act(async () => { await hook.result.current.refreshUser(); });
+    await act(async () => {
+      await hook.result.current.refreshUser();
+    });
     expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
     expect(getUserProfile).toHaveBeenCalledTimes(3);
   });
@@ -121,7 +131,8 @@ describe('user query controller', () => {
       username: 'xy',
       url: 'https://www.nodeseek.com/member?t=xy'
     };
-    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>()
+    const resolveNodeSeekUser = jest
+      .fn<SourceGateway['resolveNodeSeekUser']>()
       .mockRejectedValueOnce(new Error('429 Too Many Requests'))
       .mockResolvedValueOnce({
         source: 'nodeseek',
@@ -129,15 +140,23 @@ describe('user query controller', () => {
         username: 'xy',
         url: 'https://www.nodeseek.com/space/8052'
       });
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({ ...user, id: '8052', username: 'xy' }));
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
+      ...user,
+      id: '8052',
+      username: 'xy'
+    }));
     const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
 
-    await act(async () => { void hook.result.current.openUser(reference); });
+    await act(async () => {
+      void hook.result.current.openUser(reference);
+    });
     await waitFor(() => expect(hook.result.current.userError).not.toBeNull());
     expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
     expect(getUserProfile).not.toHaveBeenCalled();
 
-    await act(async () => { await hook.result.current.refreshUser(); });
+    await act(async () => {
+      await hook.result.current.refreshUser();
+    });
     await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('8052'));
     expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2);
     expect(getUserProfile).toHaveBeenCalledTimes(1);
@@ -149,37 +168,51 @@ describe('user query controller', () => {
       username: 'xy',
       url: 'https://www.nodeseek.com/member?t=xy'
     };
-    const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>()
-      .mockRejectedValueOnce(Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
-        source: 'nodeseek',
-        reason: 'cloudflare'
-      }))
+    const resolveNodeSeekUser = jest
+      .fn<SourceGateway['resolveNodeSeekUser']>()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
+          source: 'nodeseek',
+          reason: 'cloudflare'
+        })
+      )
       .mockResolvedValueOnce({
         source: 'nodeseek',
         id: '8052',
         username: 'xy',
         url: 'https://www.nodeseek.com/space/8052'
       });
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({ ...user, id: '8052', username: 'xy' }));
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
+      ...user,
+      id: '8052',
+      username: 'xy'
+    }));
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser, showNodeSeekVerification });
 
-    await act(async () => { void hook.result.current.openUser(reference); });
+    await act(async () => {
+      void hook.result.current.openUser(reference);
+    });
     await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
     const recovery = showNodeSeekVerification.mock.calls[0]?.[1];
     expect(recovery?.queryKey).toEqual(expect.arrayContaining(['forum', 'nodeseek', 'user-resolution']));
 
-    await act(async () => { await expect(recovery?.resume()).resolves.toBe('completed'); });
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('completed');
+    });
     await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('8052'));
     expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2);
   });
 
   it('[REG-TOPIC-039] preserves the exact canonical profile query for NodeSeek verification recovery', async () => {
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
-      .mockRejectedValueOnce(Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
-        source: 'nodeseek',
-        reason: 'cloudflare'
-      }))
+    const getUserProfile = jest
+      .fn<SourceGateway['getUserProfile']>()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
+          source: 'nodeseek',
+          reason: 'cloudflare'
+        })
+      )
       .mockResolvedValueOnce({ ...user, id: '1414', username: '男朋友' });
     const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>();
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
@@ -195,21 +228,19 @@ describe('user query controller', () => {
     });
     await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
     const recovery = showNodeSeekVerification.mock.calls[0]?.[1];
-    expect(recovery?.queryKey).toEqual([
-      'forum',
-      'nodeseek',
-      'user',
-      { sessionEpoch: 0, userId: '1414' }
-    ]);
+    expect(recovery?.queryKey).toEqual(['forum', 'nodeseek', 'user', { sessionEpoch: 0, userId: '1414' }]);
 
-    await act(async () => { await expect(recovery?.resume()).resolves.toBe('completed'); });
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('completed');
+    });
     await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({ id: '1414', username: '男朋友' }));
     expect(resolveNodeSeekUser).not.toHaveBeenCalled();
     expect(getUserProfile).toHaveBeenCalledTimes(2);
   });
 
   it('[REG-TOPIC-039] does not turn a NodeSeek pagination failure into a user-route recovery', async () => {
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+    const getUserProfile = jest
+      .fn<SourceGateway['getUserProfile']>()
       .mockResolvedValueOnce({
         ...user,
         id: '1414',
@@ -217,10 +248,12 @@ describe('user query controller', () => {
         hasMoreTopics: true,
         nextTopicsCursor: '2'
       })
-      .mockRejectedValueOnce(Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
-        source: 'nodeseek',
-        reason: 'cloudflare'
-      }));
+      .mockRejectedValueOnce(
+        Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
+          source: 'nodeseek',
+          reason: 'cloudflare'
+        })
+      );
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderUserController({ getUserProfile, showNodeSeekVerification });
 
@@ -233,7 +266,9 @@ describe('user query controller', () => {
       });
     });
     await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('1414'));
-    await act(async () => { await hook.result.current.loadMoreUserTopics(); });
+    await act(async () => {
+      await hook.result.current.loadMoreUserTopics();
+    });
     await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
     expect(showNodeSeekVerification.mock.calls[0]?.[1]).toBeUndefined();
   });
@@ -277,7 +312,11 @@ describe('user query controller', () => {
       username: 'xy',
       url: 'https://www.nodeseek.com/space/8052'
     }));
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({ ...user, id: '8052', username: 'xy' }));
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
+      ...user,
+      id: '8052',
+      username: 'xy'
+    }));
     const hook = await renderUserController({
       getIdentityBarriers: () => identityBarriers,
       getSessionEpochs: () => sessionEpochs,
@@ -285,18 +324,26 @@ describe('user query controller', () => {
       resolveNodeSeekUser
     });
 
-    await act(async () => { void hook.result.current.openUser(reference); });
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      void hook.result.current.openUser(reference);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(resolveNodeSeekUser).not.toHaveBeenCalled();
     expect(getUserProfile).not.toHaveBeenCalled();
 
     identityBarriers = [];
-    await act(async () => { hook.rerender(undefined); });
+    await act(async () => {
+      hook.rerender(undefined);
+    });
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
     expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
 
     sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
-    await act(async () => { hook.rerender(undefined); });
+    await act(async () => {
+      hook.rerender(undefined);
+    });
     await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
   });
@@ -325,11 +372,19 @@ describe('user query controller', () => {
     const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
 
     await act(async () => {
-      void hook.result.current.openUser({ source: 'nodeseek', username: 'old-user', url: 'https://www.nodeseek.com/member?t=old-user' });
+      void hook.result.current.openUser({
+        source: 'nodeseek',
+        username: 'old-user',
+        url: 'https://www.nodeseek.com/member?t=old-user'
+      });
     });
     await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1));
     await act(async () => {
-      void hook.result.current.openUser({ source: 'nodeseek', username: 'new-user', url: 'https://www.nodeseek.com/member?t=new-user' });
+      void hook.result.current.openUser({
+        source: 'nodeseek',
+        username: 'new-user',
+        url: 'https://www.nodeseek.com/member?t=new-user'
+      });
     });
     await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('22'));
     expect(oldSignal?.aborted).toBe(true);
@@ -352,20 +407,24 @@ describe('user query controller', () => {
     const resolveNodeSeekUser = jest.fn<SourceGateway['resolveNodeSeekUser']>();
     const getUserProfile = jest.fn<SourceGateway['getUserProfile']>(async () => ({
       ...user,
-      topics: [{
-        source: 'nodeseek',
-        id: 'topic-1',
-        title: '首屏主题',
-        author: 'alice',
-        url: 'https://www.nodeseek.com/post-1-1',
-        createdAt: '2026-07-20T00:00:00.000Z',
-        replyCount: 0
-      }],
+      topics: [
+        {
+          source: 'nodeseek',
+          id: 'topic-1',
+          title: '首屏主题',
+          author: 'alice',
+          url: 'https://www.nodeseek.com/post-1-1',
+          createdAt: '2026-07-20T00:00:00.000Z',
+          replyCount: 0
+        }
+      ],
       replies: []
     }));
     const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
 
-    await act(async () => { void hook.result.current.openUser(user); });
+    await act(async () => {
+      void hook.result.current.openUser(user);
+    });
     await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
 
     expect(getUserProfile).toHaveBeenCalledTimes(1);
@@ -381,13 +440,17 @@ describe('user query controller', () => {
       getUserProfile
     });
 
-    await act(async () => { await hook.result.current.openUser(user); });
-    await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({
-      source: user.source,
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName
-    }));
+    await act(async () => {
+      await hook.result.current.openUser(user);
+    });
+    await waitFor(() =>
+      expect(hook.result.current.userProfile).toMatchObject({
+        source: user.source,
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName
+      })
+    );
 
     identityBarriers = ['nodeseek'];
     await act(async () => {
@@ -421,42 +484,45 @@ describe('user query controller', () => {
       }
       return cursorType === 'topics'
         ? {
-          ...user,
-          topics: [{
-            source: 'nodeseek',
-            id: 'topic-2',
-            title: '第二页主题',
-            author: 'alice',
-            url: 'https://www.nodeseek.com/post-2-1',
-            createdAt: '2026-07-20T00:00:00.000Z',
-            replyCount: 0
-          }],
-          hasMoreTopics: false,
-          nextTopicsCursor: null
-        }
+            ...user,
+            topics: [
+              {
+                source: 'nodeseek',
+                id: 'topic-2',
+                title: '第二页主题',
+                author: 'alice',
+                url: 'https://www.nodeseek.com/post-2-1',
+                createdAt: '2026-07-20T00:00:00.000Z',
+                replyCount: 0
+              }
+            ],
+            hasMoreTopics: false,
+            nextTopicsCursor: null
+          }
         : {
-          ...user,
-          replies: [{
-            source: 'nodeseek',
-            id: 'reply-2',
-            topicId: 'topic-2',
-            topicTitle: '第二页主题',
-            topicUrl: 'https://www.nodeseek.com/post-2-1',
-            url: 'https://www.nodeseek.com/post-2-2'
-          }],
-          hasMoreReplies: false,
-          nextRepliesCursor: null
-        };
+            ...user,
+            replies: [
+              {
+                source: 'nodeseek',
+                id: 'reply-2',
+                topicId: 'topic-2',
+                topicTitle: '第二页主题',
+                topicUrl: 'https://www.nodeseek.com/post-2-1',
+                url: 'https://www.nodeseek.com/post-2-2'
+              }
+            ],
+            hasMoreReplies: false,
+            nextRepliesCursor: null
+          };
     });
     const hook = await renderUserController({ getUserProfile });
 
-    await act(async () => { void hook.result.current.openUser(user); });
+    await act(async () => {
+      void hook.result.current.openUser(user);
+    });
     await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
     await act(async () => {
-      await Promise.all([
-        hook.result.current.loadMoreUserTopics(),
-        hook.result.current.loadMoreUserReplies()
-      ]);
+      await Promise.all([hook.result.current.loadMoreUserTopics(), hook.result.current.loadMoreUserReplies()]);
     });
 
     await waitFor(() => {
@@ -489,7 +555,8 @@ describe('user query controller', () => {
       url: 'https://www.nodeseek.com/post-3-1'
     };
     const refresh = Promise.withResolvers<UserProfile>();
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+    const getUserProfile = jest
+      .fn<SourceGateway['getUserProfile']>()
       .mockResolvedValueOnce({
         ...user,
         topics: [firstTopic],
@@ -505,10 +572,16 @@ describe('user query controller', () => {
       .mockImplementationOnce(async () => refresh.promise);
     const hook = await renderUserController({ getUserProfile });
 
-    await act(async () => { await hook.result.current.openUser(user); });
+    await act(async () => {
+      await hook.result.current.openUser(user);
+    });
     await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
-    await act(async () => { await hook.result.current.loadMoreUserTopics(); });
-    await waitFor(() => expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-1', 'topic-2']));
+    await act(async () => {
+      await hook.result.current.loadMoreUserTopics();
+    });
+    await waitFor(() =>
+      expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-1', 'topic-2'])
+    );
 
     let refreshOpen!: Promise<unknown>;
     await act(async () => {
@@ -543,29 +616,36 @@ describe('user query controller', () => {
       bio: '账号 A 的个人简介',
       displayName: '账号 A 看到的 Alice',
       levelLabel: 'LV99',
-      topics: [{
-        source: 'nodeseek',
-        id: 'old-topic',
-        title: '账号 A 的旧主题',
-        author: 'alice',
-        url: 'https://www.nodeseek.com/post-old-1',
-        createdAt: '2026-07-20T00:00:00.000Z',
-        replyCount: 0
-      }]
+      topics: [
+        {
+          source: 'nodeseek',
+          id: 'old-topic',
+          title: '账号 A 的旧主题',
+          author: 'alice',
+          url: 'https://www.nodeseek.com/post-old-1',
+          createdAt: '2026-07-20T00:00:00.000Z',
+          replyCount: 0
+        }
+      ]
     };
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+    const getUserProfile = jest
+      .fn<SourceGateway['getUserProfile']>()
       .mockResolvedValueOnce(oldRouteProfile)
       .mockImplementationOnce(async () => replacement.promise);
     let sessionEpochs = initialForumSessionEpochs;
     const hook = await renderUserController({ getSessionEpochs: () => sessionEpochs, getUserProfile });
 
-    await act(async () => { void hook.result.current.openUser(oldRouteProfile); });
-    await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({
-      source: 'nodeseek',
-      id: '1',
-      username: 'alice',
-      displayName: '账号 A 看到的 Alice'
-    }));
+    await act(async () => {
+      void hook.result.current.openUser(oldRouteProfile);
+    });
+    await waitFor(() =>
+      expect(hook.result.current.userProfile).toMatchObject({
+        source: 'nodeseek',
+        id: '1',
+        username: 'alice',
+        displayName: '账号 A 看到的 Alice'
+      })
+    );
 
     await act(async () => {
       resetForumSourceQueries('nodeseek', appQueryClient);
@@ -579,7 +659,7 @@ describe('user query controller', () => {
       username: 'alice',
       displayName: '账号 A 看到的 Alice',
       avatar: 'https://www.nodeseek.com/avatar/alice-old.png',
-      url: 'https://www.nodeseek.com/space/1',
+      url: 'https://www.nodeseek.com/space/1'
     });
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
 
@@ -618,13 +698,14 @@ describe('user query controller', () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderUserController({ getUserProfile, showLinuxDoVerification });
 
-    await act(async () => { void hook.result.current.openUser(linuxUser); });
+    await act(async () => {
+      void hook.result.current.openUser(linuxUser);
+    });
     await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
-    await act(async () => { await hook.result.current.loadMoreUserTopics(); });
-    await waitFor(
-      () => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1),
-      { timeout: 3000 }
-    );
+    await act(async () => {
+      await hook.result.current.loadMoreUserTopics();
+    });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1), { timeout: 3000 });
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
 
     await act(async () => {
@@ -644,14 +725,17 @@ describe('user query controller', () => {
       id: 'alice',
       url: 'https://linux.do/u/alice'
     };
-    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+    const getUserProfile = jest
+      .fn<SourceGateway['getUserProfile']>()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new Error('恢复后网络失败'));
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderUserController({ getUserProfile, showLinuxDoVerification });
 
-    await act(async () => { void hook.result.current.openUser(linuxUser); });
+    await act(async () => {
+      void hook.result.current.openUser(linuxUser);
+    });
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
 
@@ -667,18 +751,23 @@ describe('user query controller', () => {
   });
 
   it('[REG-SOURCE-002] does not cache a parse-empty profile', async () => {
-    const parsedEmpty = annotateSourceDiagnosticSummary({ ...user, displayName: '', topics: [] }, {
-      parserVariant: 'html-user',
-      candidateCount: 1,
-      validCount: 0,
-      droppedCount: 1,
-      isExpectedEmpty: false
-    });
+    const parsedEmpty = annotateSourceDiagnosticSummary(
+      { ...user, displayName: '', topics: [] },
+      {
+        parserVariant: 'html-user',
+        candidateCount: 1,
+        validCount: 0,
+        droppedCount: 1,
+        isExpectedEmpty: false
+      }
+    );
     const hook = await renderUserController({
       getUserProfile: jest.fn<SourceGateway['getUserProfile']>(async () => parsedEmpty)
     });
 
-    await act(async () => { void hook.result.current.openUser(user); });
+    await act(async () => {
+      void hook.result.current.openUser(user);
+    });
     await waitFor(() => expect(hook.result.current.userError?.message).toContain('解析为空'));
     expect(hook.result.current.userProfile).toBeNull();
   });

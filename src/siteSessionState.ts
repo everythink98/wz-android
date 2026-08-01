@@ -3,7 +3,8 @@ import type { UserProfile } from './types';
 
 export type SessionSite = SessionSource;
 export { sessionSources };
-export type SiteSessionStatus = 'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'authorizing' | 'expired';
+export type SiteSessionStatus =
+  'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'authorizing' | 'expired';
 
 export type SiteSessionState = {
   site: SessionSite;
@@ -34,13 +35,34 @@ export type SiteSessionViewModel = {
 export type SiteSessionViewModels = Record<SessionSite, SiteSessionViewModel>;
 
 export type SiteSessionEvent =
-  | { type: 'cookie-loaded'; cookieSummary?: string[]; hasVerification?: boolean; loggedIn?: boolean; currentUser?: UserProfile | null; at?: string }
-  | { type: 'session-updated'; cookieSummary?: string[]; hasVerification?: boolean; loggedIn?: boolean; currentUser?: UserProfile | null; recoveryQueryKey?: readonly unknown[]; at?: string }
+  | {
+      type: 'cookie-loaded';
+      cookieSummary?: string[];
+      hasVerification?: boolean;
+      loggedIn?: boolean;
+      currentUser?: UserProfile | null;
+      at?: string;
+    }
+  | {
+      type: 'session-updated';
+      cookieSummary?: string[];
+      hasVerification?: boolean;
+      loggedIn?: boolean;
+      currentUser?: UserProfile | null;
+      recoveryQueryKey?: readonly unknown[];
+      at?: string;
+    }
   | { type: 'login-detected'; cookieSummary?: string[]; currentUser?: UserProfile | null; at?: string }
   | { type: 'verification-required'; message?: string; at?: string }
   | { type: 'verification-started'; at?: string }
   | { type: 'authorization-started'; at?: string }
-  | { type: 'verification-succeeded'; cookieSummary?: string[]; loggedIn?: boolean; currentUser?: UserProfile | null; at: string }
+  | {
+      type: 'verification-succeeded';
+      cookieSummary?: string[];
+      loggedIn?: boolean;
+      currentUser?: UserProfile | null;
+      at: string;
+    }
   | { type: 'login-expired'; message?: string; recoveryQueryKey?: readonly unknown[]; at?: string }
   | { type: 'check-failed'; message: string; at?: string }
   | { type: 'cleared'; recoveryQueryKey?: readonly unknown[]; at?: string };
@@ -50,7 +72,12 @@ function cleanCookieSummary(cookieSummary: string[] = []) {
   return cookieSummary.map((item) => item.trim()).filter(Boolean);
 }
 
-function createSiteState(site: SessionSite, status: SiteSessionStatus, cookieSummary: string[] = [], lastVerifiedAt?: string): SiteSessionState {
+function createSiteState(
+  site: SessionSite,
+  status: SiteSessionStatus,
+  cookieSummary: string[] = [],
+  lastVerifiedAt?: string
+): SiteSessionState {
   return {
     site,
     status,
@@ -61,10 +88,9 @@ function createSiteState(site: SessionSite, status: SiteSessionStatus, cookieSum
 }
 
 export function createSiteSessionStates(states?: Partial<SiteSessionStates>): SiteSessionStates {
-  return Object.fromEntries(sessionSources.map((site) => [
-    site,
-    states?.[site] || createSiteState(site, 'anonymous')
-  ])) as SiteSessionStates;
+  return Object.fromEntries(
+    sessionSources.map((site) => [site, states?.[site] || createSiteState(site, 'anonymous')])
+  ) as SiteSessionStates;
 }
 
 function currentUserForSite(site: SessionSite, currentUser: UserProfile | null | undefined, loggedIn?: boolean) {
@@ -77,22 +103,31 @@ function currentUserForSite(site: SessionSite, currentUser: UserProfile | null |
   };
 }
 
-function stateWithCookieFacts(state: SiteSessionState, event: {
-  cookieSummary?: string[];
-  hasVerification?: boolean;
-  loggedIn?: boolean;
-  currentUser?: UserProfile | null;
-  at?: string;
-}) {
+function stateWithCookieFacts(
+  state: SiteSessionState,
+  event: {
+    cookieSummary?: string[];
+    hasVerification?: boolean;
+    loggedIn?: boolean;
+    currentUser?: UserProfile | null;
+    at?: string;
+  }
+) {
   const { cookieSummary, hasVerification, loggedIn, currentUser, at } = event;
   const nextCookieSummary = cleanCookieSummary(cookieSummary || state.cookieSummary);
   const status: SiteSessionStatus = loggedIn
     ? 'logged-in'
     : state.status === 'expired'
       ? 'expired'
-      : (hasVerification ?? nextCookieSummary.length > 0) ? 'verified' : 'anonymous';
+      : (hasVerification ?? nextCookieSummary.length > 0)
+        ? 'verified'
+        : 'anonymous';
   const currentUserProvided = Object.prototype.hasOwnProperty.call(event, 'currentUser');
-  const nextCurrentUser = currentUserProvided ? currentUserForSite(state.site, currentUser, loggedIn) : loggedIn ? state.currentUser : undefined;
+  const nextCurrentUser = currentUserProvided
+    ? currentUserForSite(state.site, currentUser, loggedIn)
+    : loggedIn
+      ? state.currentUser
+      : undefined;
   return {
     ...state,
     status,
@@ -104,11 +139,14 @@ function stateWithCookieFacts(state: SiteSessionState, event: {
   };
 }
 
-function stateWithObservedCredentials(state: SiteSessionState, event: {
-  cookieSummary?: string[];
-  hasVerification?: boolean;
-  at?: string;
-}) {
+function stateWithObservedCredentials(
+  state: SiteSessionState,
+  event: {
+    cookieSummary?: string[];
+    hasVerification?: boolean;
+    at?: string;
+  }
+) {
   if (state.status !== 'anonymous' && state.status !== 'verified') {
     return {
       ...state,
@@ -285,8 +323,7 @@ export function nodeSeekUserIdForSession(state: SiteSessionViewModel, webLoginUs
 }
 
 export function createSiteSessionViewModels(states: SiteSessionStates): SiteSessionViewModels {
-  return Object.fromEntries(sessionSources.map((site) => [
-    site,
-    createSiteSessionViewModel(states[site])
-  ])) as SiteSessionViewModels;
+  return Object.fromEntries(
+    sessionSources.map((site) => [site, createSiteSessionViewModel(states[site])])
+  ) as SiteSessionViewModels;
 }

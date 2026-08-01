@@ -51,24 +51,28 @@ describe('Discourse action requests', () => {
   });
 
   it('builds standard bookmark and unbookmark requests', () => {
-    expect(buildDiscourseActionRequest({
-      type: 'set-bookmark',
-      targetId: 42,
-      targetType: 'Topic',
-      active: true
-    })).toEqual({
+    expect(
+      buildDiscourseActionRequest({
+        type: 'set-bookmark',
+        targetId: 42,
+        targetType: 'Topic',
+        active: true
+      })
+    ).toEqual({
       path: '/bookmarks.json',
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: 'bookmarkable_id=42&bookmarkable_type=Topic'
     });
-    expect(buildDiscourseActionRequest({
-      type: 'set-bookmark',
-      targetId: 42,
-      targetType: 'Topic',
-      active: false,
-      bookmarkId: 900
-    })).toEqual({
+    expect(
+      buildDiscourseActionRequest({
+        type: 'set-bookmark',
+        targetId: 42,
+        targetType: 'Topic',
+        active: false,
+        bookmarkId: 900
+      })
+    ).toEqual({
       path: '/bookmarks/900.json',
       method: 'DELETE',
       headers: {},
@@ -107,10 +111,12 @@ describe('Discourse action requests', () => {
 
     expect(request).toMatchObject({ path: '/uploads.json', method: 'POST', headers: {} });
     expect(request.body).toBeInstanceOf(FormData);
-    expect(discourseImageUrlFromUploadResponse(
-      { url: '/uploads/default/original/a.png' },
-      'https://forum.example.com',
-      '示例站'
-    )).toBe('https://forum.example.com/uploads/default/original/a.png');
+    expect(
+      discourseImageUrlFromUploadResponse(
+        { url: '/uploads/default/original/a.png' },
+        'https://forum.example.com',
+        '示例站'
+      )
+    ).toBe('https://forum.example.com/uploads/default/original/a.png');
   });
 });

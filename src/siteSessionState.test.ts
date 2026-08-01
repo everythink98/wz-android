@@ -128,27 +128,29 @@ describe('site session state', () => {
   });
 
   it('builds UI view models from canonical session state without separate login booleans', () => {
-    const viewModels = createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'verified',
-        cookieSummary: ['cf_clearance'],
-        isVerifying: false
-      },
-      linuxdo: {
-        site: 'linuxdo',
-        status: 'logged-in',
-        cookieSummary: ['cf_clearance', '_t'],
-        isVerifying: false
-      },
-      yaohuo: {
-        site: 'yaohuo',
-        status: 'expired',
-        cookieSummary: ['sidyaohuo'],
-        isVerifying: false,
-        lastError: '妖火登录已失效'
-      }
-    }));
+    const viewModels = createSiteSessionViewModels(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'verified',
+          cookieSummary: ['cf_clearance'],
+          isVerifying: false
+        },
+        linuxdo: {
+          site: 'linuxdo',
+          status: 'logged-in',
+          cookieSummary: ['cf_clearance', '_t'],
+          isVerifying: false
+        },
+        yaohuo: {
+          site: 'yaohuo',
+          status: 'expired',
+          cookieSummary: ['sidyaohuo'],
+          isVerifying: false,
+          lastError: '妖火登录已失效'
+        }
+      })
+    );
 
     expect(viewModels.nodeseek).toMatchObject({
       statusLabel: '已验证',
@@ -183,50 +185,63 @@ describe('site session state', () => {
 
     expect(anonymous).toMatchObject({ statusLabel: '未登录', summaryLabel: '未登录' });
     expect(failed).toMatchObject({ status: 'anonymous', isVerifying: false, lastError: 'network failed' });
-    expect(createSiteSessionViewModels(createSiteSessionStates({ xiaoyinsi: failed })).xiaoyinsi.summaryLabel).toBe('未登录');
+    expect(createSiteSessionViewModels(createSiteSessionStates({ xiaoyinsi: failed })).xiaoyinsi.summaryLabel).toBe(
+      '未登录'
+    );
   });
 
   it('does not describe expired or verification-required NodeSeek sessions as saved', () => {
-    const viewModels = createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'expired',
-        cookieSummary: ['session'],
-        isVerifying: false,
-        lastError: 'NodeSeek 登录已失效'
-      }
-    }));
+    const viewModels = createSiteSessionViewModels(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'expired',
+          cookieSummary: ['session'],
+          isVerifying: false,
+          lastError: 'NodeSeek 登录已失效'
+        }
+      })
+    );
 
     expect(nodeSeekUserIdForSession(viewModels.nodeseek, null)).toBeNull();
     expect(nodeSeekUserIdForSession(viewModels.nodeseek, 123)).toBeNull();
-    expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'verification-required',
-        cookieSummary: [],
-        isVerifying: false,
-        lastError: '需要验证'
-      }
-    })).nodeseek, 123)).toBeNull();
+    expect(
+      nodeSeekUserIdForSession(
+        createSiteSessionViewModels(
+          createSiteSessionStates({
+            nodeseek: {
+              site: 'nodeseek',
+              status: 'verification-required',
+              cookieSummary: [],
+              isVerifying: false,
+              lastError: '需要验证'
+            }
+          })
+        ).nodeseek,
+        123
+      )
+    ).toBeNull();
     expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates()).nodeseek, 123)).toBeNull();
   });
 
   it('[REG-ACCOUNT-019] uses the verified NodeSeek account projection for topic ownership after a remote refresh', () => {
-    const view = createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'logged-in',
-        cookieSummary: ['session'],
-        isVerifying: false,
-        currentUser: {
-          source: 'nodeseek',
-          id: '48872',
-          username: '当前账号',
-          url: 'https://www.nodeseek.com/space/48872',
-          topics: []
+    const view = createSiteSessionViewModels(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          isVerifying: false,
+          currentUser: {
+            source: 'nodeseek',
+            id: '48872',
+            username: '当前账号',
+            url: 'https://www.nodeseek.com/space/48872',
+            topics: []
+          }
         }
-      }
-    })).nodeseek;
+      })
+    ).nodeseek;
 
     expect(nodeSeekUserIdForSession(view, null)).toBe(48872);
   });
@@ -436,11 +451,13 @@ describe('site session state', () => {
       currentUser: null
     });
 
-    expect(createSiteSessionViewModels(createSiteSessionStates({ yaohuo: loggedIn })).yaohuo.currentUser).toMatchObject({
-      source: 'yaohuo',
-      id: '7',
-      username: '火友'
-    });
+    expect(createSiteSessionViewModels(createSiteSessionStates({ yaohuo: loggedIn })).yaohuo.currentUser).toMatchObject(
+      {
+        source: 'yaohuo',
+        id: '7',
+        username: '火友'
+      }
+    );
     expect(refreshed.currentUser).toMatchObject({
       source: 'yaohuo',
       id: '7',
@@ -453,5 +470,4 @@ describe('site session state', () => {
       canWrite: false
     });
   });
-
 });

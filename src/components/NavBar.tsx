@@ -3,7 +3,7 @@ import { Home, MoreHorizontal, Search, Star, type LucideIcon } from 'lucide-reac
 import type { Screen } from '../appTypes';
 import { createStyles, type ReaderTheme } from '../theme';
 
-export const tabNavItems: Array<{ value: Screen; label: string; icon: LucideIcon }> = [
+export const tabNavItems: { value: Screen; label: string; icon: LucideIcon }[] = [
   { value: 'feed', label: '首页', icon: Home },
   { value: 'search', label: '搜索', icon: Search },
   { value: 'library', label: '收藏', icon: Star },

@@ -11,14 +11,15 @@ import {
 } from '../searchFilters';
 import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '../searchHistory';
 import type { SourceGateway } from '../sources/sourceGateway';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, normalizeDiagnosticReason } from '../diagnostics';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason
+} from '../diagnostics';
 import { sourceLabel } from '../appUtils';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import {
-  sourceErrorFromUnknown,
-  sourceReadRecoveryOutcome,
-  yaohuoErrorRequiresLoginPanel
-} from '../sourceErrors';
+import { sourceErrorFromUnknown, sourceReadRecoveryOutcome, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
 import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source } from '../types';
@@ -38,11 +39,7 @@ import {
   type SearchRunOptions
 } from '../searchControllerResults';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
-import {
-  initialForumSessionEpochs,
-  forumQueryKeys,
-  type ForumSessionEpochs
-} from './serverState';
+import { initialForumSessionEpochs, forumQueryKeys, type ForumSessionEpochs } from './serverState';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 type SearchRunInput = Source | Partial<SearchRunOptions>;
@@ -53,7 +50,10 @@ type SubmittedSearch = {
 };
 
 class SearchPageError extends Error {
-  constructor(readonly page: number, readonly result: RemoteSearchSourceResult) {
+  constructor(
+    readonly page: number,
+    readonly result: RemoteSearchSourceResult
+  ) {
     super(groupFromRemoteSearchResult(result).error || '搜索失败');
   }
 }
@@ -62,7 +62,11 @@ function remoteSearchResult(group: SearchGroup): RemoteSearchSourceResult {
   return group.error ? { kind: 'failed', group } : { kind: 'success', group };
 }
 
-function searchGroupForUnexpectedError(source: Source, error: unknown, sessionViewModels: SiteSessionViewModels): SearchGroup {
+function searchGroupForUnexpectedError(
+  source: Source,
+  error: unknown,
+  sessionViewModels: SiteSessionViewModels
+): SearchGroup {
   const sourceError = sourceErrorFromUnknown(source, error);
   return {
     source,
@@ -70,7 +74,8 @@ function searchGroupForUnexpectedError(source: Source, error: unknown, sessionVi
     items: [],
     error: sourceError.message,
     errorKind: sourceError.kind,
-    authNotice: authNoticeForSourceError(sourceError) || authNoticeForSource(source, sessionViewModels, 'search') || undefined,
+    authNotice:
+      authNoticeForSourceError(sourceError) || authNoticeForSource(source, sessionViewModels, 'search') || undefined,
     hasMore: false,
     nextPage: null
   };
@@ -132,8 +137,12 @@ export function useSearchCandidateQueries({
 }: {
   sessionEpochs: ForumSessionEpochs;
   enabled: boolean;
-  searchDiscourseTags: (options: SearchTagCandidatesRequest & { signal?: AbortSignal }) => Promise<DiscourseTagOption[]>;
-  searchDiscourseUsers: (options: SearchUserCandidatesRequest & { signal?: AbortSignal }) => Promise<DiscourseUserOption[]>;
+  searchDiscourseTags: (
+    options: SearchTagCandidatesRequest & { signal?: AbortSignal }
+  ) => Promise<DiscourseTagOption[]>;
+  searchDiscourseUsers: (
+    options: SearchUserCandidatesRequest & { signal?: AbortSignal }
+  ) => Promise<DiscourseUserOption[]>;
   tagRequest: SearchTagCandidatesRequest | null;
   userRequest: SearchUserCandidatesRequest | null;
 }) {
@@ -147,9 +156,7 @@ export function useSearchCandidateQueries({
       source: tagRequest?.source || 'linuxdo'
     }),
     enabled: Boolean(enabled && tagRequest),
-    queryFn: ({ signal }) => tagRequest
-      ? searchDiscourseTags({ ...tagRequest, signal })
-      : Promise.resolve([])
+    queryFn: ({ signal }) => (tagRequest ? searchDiscourseTags({ ...tagRequest, signal }) : Promise.resolve([]))
   });
 
   const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
@@ -160,15 +167,13 @@ export function useSearchCandidateQueries({
       term: userRequest?.term || ''
     }),
     enabled: Boolean(enabled && userRequest),
-    queryFn: ({ signal }) => userRequest
-      ? searchDiscourseUsers({ ...userRequest, signal })
-      : Promise.resolve([])
+    queryFn: ({ signal }) => (userRequest ? searchDiscourseUsers({ ...userRequest, signal }) : Promise.resolve([]))
   });
   useEffect(() => {
     if (enabled) return;
     void queryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum'
-        && (queryKey[2] === 'search-tags' || queryKey[2] === 'search-users')
+      predicate: ({ queryKey }) =>
+        queryKey[0] === 'forum' && (queryKey[2] === 'search-tags' || queryKey[2] === 'search-users')
     });
   }, [enabled, queryClient]);
 
@@ -236,11 +241,9 @@ export function useSearchController({
     () => searchSessionNoticeItems(searchSource, sessionViewModels),
     [searchSource, sessionViewModels]
   );
-  const linuxDoVerificationInProgress = sessionViewModels.linuxdo.status === 'verification-required'
-    || sessionViewModels.linuxdo.status === 'verifying';
-  const [stableLinuxDoAuthenticated, setStableLinuxDoAuthenticated] = useState(
-    sessionViewModels.linuxdo.isLoggedIn
-  );
+  const linuxDoVerificationInProgress =
+    sessionViewModels.linuxdo.status === 'verification-required' || sessionViewModels.linuxdo.status === 'verifying';
+  const [stableLinuxDoAuthenticated, setStableLinuxDoAuthenticated] = useState(sessionViewModels.linuxdo.isLoggedIn);
   const linuxDoAuthenticated = linuxDoVerificationInProgress
     ? stableLinuxDoAuthenticated
     : sessionViewModels.linuxdo.isLoggedIn;
@@ -262,8 +265,7 @@ export function useSearchController({
         pendingRecentSearchRemovalKeysRef.current.clear();
         lastSavedRecentSearchesRef.current = storedHistory;
         setRecentSearches((current) => {
-          const merged = mergeLoadedSearchHistory(current, raw)
-            .filter((item) => !removedKeys.has(item.toLowerCase()));
+          const merged = mergeLoadedSearchHistory(current, raw).filter((item) => !removedKeys.has(item.toLowerCase()));
           return sameSearchHistory(current, merged) ? current : merged;
         });
         setRecentSearchesHydrated(true);
@@ -271,7 +273,9 @@ export function useSearchController({
       .catch(() => {
         if (active) recentSearchHistoryReadFailedRef.current = true;
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [recentSearchHistoryReadAttempt]);
 
   useEffect(() => {
@@ -279,9 +283,13 @@ export function useSearchController({
       return;
     }
     const next = recentSearches;
-    void enqueueSearchHistoryWrite(recentSearchWriteQueueRef.current, () => (
+    void enqueueSearchHistoryWrite(recentSearchWriteQueueRef.current, () =>
       AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next))
-    )).then(() => { lastSavedRecentSearchesRef.current = next; }).catch(() => undefined);
+    )
+      .then(() => {
+        lastSavedRecentSearchesRef.current = next;
+      })
+      .catch(() => undefined);
   }, [recentSearches, recentSearchesHydrated]);
 
   const retryRecentSearchHistoryRead = useCallback(() => {
@@ -291,112 +299,149 @@ export function useSearchController({
     }
   }, []);
 
-  const addRecentSearch = useCallback((query: string) => {
-    const clean = query.trim();
-    if (!clean) return;
-    pendingRecentSearchRemovalKeysRef.current.delete(clean.toLowerCase());
-    retryRecentSearchHistoryRead();
-    setRecentSearches((current) => normalizeSearchHistory([
-      clean,
-      ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())
-    ]));
-  }, [retryRecentSearchHistoryRead]);
-
-  const removeRecentSearch = useCallback((query: string) => {
-    if (!recentSearchHistoryHydratedRef.current) {
-      pendingRecentSearchRemovalKeysRef.current.add(query.toLowerCase());
-    }
-    retryRecentSearchHistoryRead();
-    setRecentSearches((current) => current.filter((item) => item !== query));
-  }, [retryRecentSearchHistoryRead]);
-
-  const runRemoteSearchSource = useCallback(async (
-    source: Source,
-    query: string,
-    page: number,
-    signal: AbortSignal,
-    sort: SearchSort,
-    filter?: SourceSearchFilter
-  ): Promise<RemoteSearchSourceResult> => {
-    const trace = beginDiagnosticTrace('search', page > 1 ? 'load-more' : 'run', { source, page });
-    const sourceStatusNotice = authNoticeForSource(source, sessionViewModels, 'search') || undefined;
-    try {
-      markDiagnosticStage(trace, 'guard', { source, page, state: page > 1 ? 'load-more' : 'started' });
-      const activeFilter = filter?.source === source ? filter : undefined;
-      const data = await sourceGateway.searchTopics({
-        query,
-        source,
-        page,
-        limit: source === 'linuxdo' ? 50 : 30,
-        categories,
-        sort: source === 'v2ex' ? sort : 'relevance',
-        filter: activeFilter,
-        signal
-      }, { trace });
-      const parserSummary = sourceDiagnosticSummary(data);
-      const sourceError = data.errors?.[source] || (parserSummary?.isParseEmpty ? {
-        kind: 'ordinary' as const,
-        message: '搜索结果返回内容无法解析，请重试。',
-        reason: 'parse_empty',
-        retryable: true
-      } : undefined);
-      const group: SearchGroup = {
-        source,
-        label: sourceLabel(source),
-        items: data.items,
-        authNotice: sourceError ? authNoticeForSourceError(sourceError) || undefined : sourceStatusNotice,
-        error: sourceError?.message,
-        errorKind: sourceError?.kind,
-        hasMore: !sourceError && hasNextSearchPage(data.hasMore, data.nextPage, page),
-        nextPage: !sourceError && hasNextSearchPage(data.hasMore, data.nextPage, page) ? data.nextPage ?? null : null
-      };
-      const result: RemoteSearchSourceResult = sourceError?.kind === 'verification-required' && (source === 'nodeseek' || source === 'linuxdo')
-        ? { kind: 'action-required', group, action: { type: `${source === 'nodeseek' ? 'nodeseek' : 'linuxdo'}-verification`, message: sourceError.message } }
-        : remoteSearchResult(group);
-      finishDiagnosticTrace(trace, sourceError ? 'failure' : 'success', {
-        source,
-        itemCount: data.items.length,
-        ...(sourceError ? { reason: normalizeDiagnosticReason(sourceError.message) } : {})
-      });
-      return result;
-    } catch (error) {
-      if (signal.aborted) {
-        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
-        throw error;
-      }
-      const sourceError = sourceErrorFromUnknown(source, error);
-      const group: SearchGroup = {
-        source,
-        label: sourceLabel(source),
-        items: [],
-        error: sourceError.message,
-        errorKind: sourceError.kind,
-        authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice,
-        hasMore: false,
-        nextPage: null
-      };
-      finishDiagnosticTrace(trace,
-        sourceError.kind === 'verification-required' || sourceError.kind === 'login-required' || sourceError.kind === 'permission-denied'
-          ? 'blocked'
-          : 'failure',
-        { source, reason: normalizeDiagnosticReason(error) }
+  const addRecentSearch = useCallback(
+    (query: string) => {
+      const clean = query.trim();
+      if (!clean) return;
+      pendingRecentSearchRemovalKeysRef.current.delete(clean.toLowerCase());
+      retryRecentSearchHistoryRead();
+      setRecentSearches((current) =>
+        normalizeSearchHistory([clean, ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())])
       );
-      if (source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
-        return { kind: 'action-required', group, action: { type: 'yaohuo-login', message: sourceError.message } };
+    },
+    [retryRecentSearchHistoryRead]
+  );
+
+  const removeRecentSearch = useCallback(
+    (query: string) => {
+      if (!recentSearchHistoryHydratedRef.current) {
+        pendingRecentSearchRemovalKeysRef.current.add(query.toLowerCase());
       }
-      if (source === 'nodeseek' && sourceError.kind === 'verification-required') {
-        return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message: sourceError.message } };
+      retryRecentSearchHistoryRead();
+      setRecentSearches((current) => current.filter((item) => item !== query));
+    },
+    [retryRecentSearchHistoryRead]
+  );
+
+  const runRemoteSearchSource = useCallback(
+    async (
+      source: Source,
+      query: string,
+      page: number,
+      signal: AbortSignal,
+      sort: SearchSort,
+      filter?: SourceSearchFilter
+    ): Promise<RemoteSearchSourceResult> => {
+      const trace = beginDiagnosticTrace('search', page > 1 ? 'load-more' : 'run', { source, page });
+      const sourceStatusNotice = authNoticeForSource(source, sessionViewModels, 'search') || undefined;
+      try {
+        markDiagnosticStage(trace, 'guard', { source, page, state: page > 1 ? 'load-more' : 'started' });
+        const activeFilter = filter?.source === source ? filter : undefined;
+        const data = await sourceGateway.searchTopics(
+          {
+            query,
+            source,
+            page,
+            limit: source === 'linuxdo' ? 50 : 30,
+            categories,
+            sort: source === 'v2ex' ? sort : 'relevance',
+            filter: activeFilter,
+            signal
+          },
+          { trace }
+        );
+        const parserSummary = sourceDiagnosticSummary(data);
+        const sourceError =
+          data.errors?.[source] ||
+          (parserSummary?.isParseEmpty
+            ? {
+                kind: 'ordinary' as const,
+                message: '搜索结果返回内容无法解析，请重试。',
+                reason: 'parse_empty',
+                retryable: true
+              }
+            : undefined);
+        const group: SearchGroup = {
+          source,
+          label: sourceLabel(source),
+          items: data.items,
+          authNotice: sourceError ? authNoticeForSourceError(sourceError) || undefined : sourceStatusNotice,
+          error: sourceError?.message,
+          errorKind: sourceError?.kind,
+          hasMore: !sourceError && hasNextSearchPage(data.hasMore, data.nextPage, page),
+          nextPage:
+            !sourceError && hasNextSearchPage(data.hasMore, data.nextPage, page) ? (data.nextPage ?? null) : null
+        };
+        const result: RemoteSearchSourceResult =
+          sourceError?.kind === 'verification-required' && (source === 'nodeseek' || source === 'linuxdo')
+            ? {
+                kind: 'action-required',
+                group,
+                action: {
+                  type: `${source === 'nodeseek' ? 'nodeseek' : 'linuxdo'}-verification`,
+                  message: sourceError.message
+                }
+              }
+            : remoteSearchResult(group);
+        finishDiagnosticTrace(trace, sourceError ? 'failure' : 'success', {
+          source,
+          itemCount: data.items.length,
+          ...(sourceError ? { reason: normalizeDiagnosticReason(sourceError.message) } : {})
+        });
+        return result;
+      } catch (error) {
+        if (signal.aborted) {
+          finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
+          throw error;
+        }
+        const sourceError = sourceErrorFromUnknown(source, error);
+        const group: SearchGroup = {
+          source,
+          label: sourceLabel(source),
+          items: [],
+          error: sourceError.message,
+          errorKind: sourceError.kind,
+          authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice,
+          hasMore: false,
+          nextPage: null
+        };
+        finishDiagnosticTrace(
+          trace,
+          sourceError.kind === 'verification-required' ||
+            sourceError.kind === 'login-required' ||
+            sourceError.kind === 'permission-denied'
+            ? 'blocked'
+            : 'failure',
+          { source, reason: normalizeDiagnosticReason(error) }
+        );
+        if (source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          return { kind: 'action-required', group, action: { type: 'yaohuo-login', message: sourceError.message } };
+        }
+        if (source === 'nodeseek' && sourceError.kind === 'verification-required') {
+          return {
+            kind: 'action-required',
+            group,
+            action: { type: 'nodeseek-verification', message: sourceError.message }
+          };
+        }
+        if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
+          return {
+            kind: 'action-required',
+            group,
+            action: { type: 'linuxdo-verification', message: sourceError.message }
+          };
+        }
+        return { kind: 'failed', group };
       }
-      if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
-        return { kind: 'action-required', group, action: { type: 'linuxdo-verification', message: sourceError.message } };
-      }
-      return { kind: 'failed', group };
-    }
-  }, [categories, linuxDoAuthenticated, sessionViewModels, sourceGateway]);
+    },
+    [categories, linuxDoAuthenticated, sessionViewModels, sourceGateway]
+  );
 
   const submittedSource = submittedSearch?.source === 'all' ? 'v2ex' : submittedSearch?.source || 'v2ex';
   const submittedFilter = submittedSearch ? submittedSearch.filters[submittedSource] : undefined;
-  const submittedSort = submittedSearch ? remoteSearchSort(submittedSearch.source, submittedSearch.filters) : 'relevance';
+  const submittedSort = submittedSearch
+    ? remoteSearchSort(submittedSearch.source, submittedSearch.filters)
+    : 'relevance';
   const singleSearchKey = forumQueryKeys.search({
     authenticated: submittedSource === 'linuxdo' && linuxDoAuthenticated,
     source: submittedSource,
@@ -406,21 +451,23 @@ export function useSearchController({
     scope: sessionEpochs
   });
 
-  const aggregateKeys = aggregateSearchSources.map((source) => forumQueryKeys.search({
-    authenticated: source === 'linuxdo' && linuxDoAuthenticated,
-    source,
-    query: submittedSearch?.query || '',
-    sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
-    scope: sessionEpochs
-  }));
+  const aggregateKeys = aggregateSearchSources.map((source) =>
+    forumQueryKeys.search({
+      authenticated: source === 'linuxdo' && linuxDoAuthenticated,
+      source,
+      query: submittedSearch?.query || '',
+      sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
+      scope: sessionEpochs
+    })
+  );
   const aggregateQueries = useQueries({
     queries: aggregateSearchSources.map((source, index) => ({
       queryKey: aggregateKeys[index],
       enabled: Boolean(
-        searchActive
-        && submittedSearch?.query
-        && submittedSearch.source === 'all'
-        && !isSourceIdentityPending(source, sessionViewModels)
+        searchActive &&
+        submittedSearch?.query &&
+        submittedSearch.source === 'all' &&
+        !isSourceIdentityPending(source, sessionViewModels)
       ),
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const result = await runRemoteSearchSource(
@@ -441,10 +488,10 @@ export function useSearchController({
   const singleSearchQuery = useInfiniteQuery({
     queryKey: singleSearchKey,
     enabled: Boolean(
-      searchActive
-      && submittedSearch?.query
-      && submittedSearch.source !== 'all'
-      && !isSourceIdentityPending(submittedSource, sessionViewModels)
+      searchActive &&
+      submittedSearch?.query &&
+      submittedSearch.source !== 'all' &&
+      !isSourceIdentityPending(submittedSource, sessionViewModels)
     ),
     initialPageParam: 1,
     queryFn: async ({ pageParam, signal }) => {
@@ -463,45 +510,54 @@ export function useSearchController({
     },
     getNextPageParam: (lastPage, _pages, lastPageParam) => {
       const group = groupFromRemoteSearchResult(lastPage);
-      return hasNextSearchPage(group.hasMore, group.nextPage, lastPageParam) ? group.nextPage ?? undefined : undefined;
+      return hasNextSearchPage(group.hasMore, group.nextPage, lastPageParam)
+        ? (group.nextPage ?? undefined)
+        : undefined;
     }
   });
 
-  const aggregateGroups = useMemo(() => aggregateSearchSources.map((source, index): SearchGroup => {
-    const query = aggregateQueries[index];
-    if (query.error instanceof SearchPageError) {
-      const failed = groupFromRemoteSearchResult(query.error.result);
-      if (query.data) {
+  const aggregateGroups = useMemo(
+    () =>
+      aggregateSearchSources.map((source, index): SearchGroup => {
+        const query = aggregateQueries[index];
+        if (query.error instanceof SearchPageError) {
+          const failed = groupFromRemoteSearchResult(query.error.result);
+          if (query.data) {
+            return {
+              ...groupFromRemoteSearchResult(query.data),
+              authNotice: failed.authNotice,
+              error: failed.error,
+              errorKind: failed.errorKind,
+              loading: query.isFetching
+            };
+          }
+          return { ...failed, loading: query.isFetching };
+        }
+        if (query.error) {
+          return {
+            ...searchGroupForUnexpectedError(source, query.error, sessionViewModels),
+            loading: query.isFetching
+          };
+        }
+        if (query.data) {
+          return { ...groupFromRemoteSearchResult(query.data), loading: query.isFetching };
+        }
         return {
-          ...groupFromRemoteSearchResult(query.data),
-          authNotice: failed.authNotice,
-          error: failed.error,
-          errorKind: failed.errorKind,
-          loading: query.isFetching
+          source,
+          label: sourceLabel(source),
+          items: [],
+          authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined,
+          settled: false,
+          loading: Boolean(
+            searchActive &&
+            submittedSearch?.query &&
+            submittedSearch.source === 'all' &&
+            !isSourceIdentityPending(source, sessionViewModels)
+          )
         };
-      }
-      return { ...failed, loading: query.isFetching };
-    }
-    if (query.error) {
-      return { ...searchGroupForUnexpectedError(source, query.error, sessionViewModels), loading: query.isFetching };
-    }
-    if (query.data) {
-      return { ...groupFromRemoteSearchResult(query.data), loading: query.isFetching };
-    }
-    return {
-      source,
-      label: sourceLabel(source),
-      items: [],
-      authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined,
-      settled: false,
-      loading: Boolean(
-        searchActive
-        && submittedSearch?.query
-        && submittedSearch.source === 'all'
-        && !isSourceIdentityPending(source, sessionViewModels)
-      )
-    };
-  }), [aggregateQueries, searchActive, sessionViewModels, submittedSearch?.query, submittedSearch?.source]);
+      }),
+    [aggregateQueries, searchActive, sessionViewModels, submittedSearch?.query, submittedSearch?.source]
+  );
   const singleGroup = useMemo(() => {
     const merged = mergeSearchPages(singleSearchQuery.data?.pages || [], singleSearchQuery.error);
     if (merged) {
@@ -515,13 +571,16 @@ export function useSearchController({
       return { ...groupFromRemoteSearchResult(singleSearchQuery.error.result), loading: singleSearchQuery.isFetching };
     }
     if (singleSearchQuery.error) {
-      return { ...searchGroupForUnexpectedError(submittedSource, singleSearchQuery.error, sessionViewModels), loading: singleSearchQuery.isFetching };
+      return {
+        ...searchGroupForUnexpectedError(submittedSource, singleSearchQuery.error, sessionViewModels),
+        loading: singleSearchQuery.isFetching
+      };
     }
     if (
-      searchActive
-      && submittedSearch?.query
-      && submittedSearch.source !== 'all'
-      && isSourceIdentityPending(submittedSource, sessionViewModels)
+      searchActive &&
+      submittedSearch?.query &&
+      submittedSearch.source !== 'all' &&
+      isSourceIdentityPending(submittedSource, sessionViewModels)
     ) {
       return {
         source: submittedSource,
@@ -533,33 +592,45 @@ export function useSearchController({
       };
     }
     return null;
-  }, [searchActive, sessionViewModels, singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.isFetching, singleSearchQuery.isFetchingNextPage, submittedSearch?.query, submittedSearch?.source, submittedSource]);
-  const baseSearchGroups = submittedSearch?.source === 'all'
-    ? aggregateGroups
-    : singleGroup ? [singleGroup] : [];
+  }, [
+    searchActive,
+    sessionViewModels,
+    singleSearchQuery.data?.pages,
+    singleSearchQuery.error,
+    singleSearchQuery.isFetching,
+    singleSearchQuery.isFetchingNextPage,
+    submittedSearch?.query,
+    submittedSearch?.source,
+    submittedSource
+  ]);
+  const baseSearchGroups = submittedSearch?.source === 'all' ? aggregateGroups : singleGroup ? [singleGroup] : [];
 
   const linuxDoAiVisible = Boolean(
-    submittedSearch?.query
-    && submittedSearch.source === 'linuxdo'
-    && submittedSearch.filters.linuxdo.order === 'relevance'
-    && sessionViewModels.linuxdo.isLoggedIn
+    submittedSearch?.query &&
+    submittedSearch.source === 'linuxdo' &&
+    submittedSearch.filters.linuxdo.order === 'relevance' &&
+    sessionViewModels.linuxdo.isLoggedIn
   );
-  const linuxDoAiFullQuery = linuxDoAiVisible && submittedSearch
-    ? buildDiscourseSearchQuery(submittedSearch.query, submittedSearch.filters.linuxdo, categories)
-    : '';
+  const linuxDoAiFullQuery =
+    linuxDoAiVisible && submittedSearch
+      ? buildDiscourseSearchQuery(submittedSearch.query, submittedSearch.filters.linuxdo, categories)
+      : '';
   const linuxDoAiQuery = useQuery({
     queryKey: forumQueryKeys.semanticSearch(linuxDoAiFullQuery, sessionEpochs),
     enabled: Boolean(
-      searchActive
-      && !linuxDoVerificationActive
-      && linuxDoAiFullQuery
-      && !isSourceIdentityPending('linuxdo', sessionViewModels)
+      searchActive &&
+      !linuxDoVerificationActive &&
+      linuxDoAiFullQuery &&
+      !isSourceIdentityPending('linuxdo', sessionViewModels)
     ),
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
       try {
         markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started' });
-        const result = await sourceGateway.searchSemanticTopics({ source: 'linuxdo', query: linuxDoAiFullQuery, signal }, { trace });
+        const result = await sourceGateway.searchSemanticTopics(
+          { source: 'linuxdo', query: linuxDoAiFullQuery, signal },
+          { trace }
+        );
         if (!result) throw new Error('AI 搜索未返回结果');
         if (signal.aborted) {
           finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
@@ -585,10 +656,7 @@ export function useSearchController({
   }, [linuxDoVerificationActive, queryClient]);
   const linuxDoAiState = useMemo<LinuxDoAiSearchState>(() => {
     if (!linuxDoAiVisible) return { status: 'idle', enabled: false, count: 0 };
-    if (
-      isSourceIdentityPending('linuxdo', sessionViewModels)
-      && !linuxDoAiQuery.data
-    ) {
+    if (isSourceIdentityPending('linuxdo', sessionViewModels) && !linuxDoAiQuery.data) {
       return { status: 'idle', enabled: false, count: 0 };
     }
     if (linuxDoAiQuery.isPending) return { status: 'loading', enabled: false, count: 0 };
@@ -597,67 +665,113 @@ export function useSearchController({
     return count
       ? { status: 'ready', enabled: linuxDoAiEnabled, count }
       : { status: 'empty', enabled: false, count: 0, message: '未找到 AI 结果' };
-  }, [linuxDoAiEnabled, linuxDoAiQuery.data, linuxDoAiQuery.data?.items.length, linuxDoAiQuery.error, linuxDoAiQuery.isError, linuxDoAiQuery.isPending, linuxDoAiVisible, sessionViewModels]);
-  const searchGroups = useMemo(() => linuxDoAiState.enabled
-    ? baseSearchGroups.map((group) => group.source === 'linuxdo'
-      ? { ...group, items: mergeLinuxDoAiTopics(group.items, linuxDoAiQuery.data?.items || [], true) }
-      : group)
-    : baseSearchGroups,
-  [baseSearchGroups, linuxDoAiQuery.data?.items, linuxDoAiState.enabled]);
+  }, [
+    linuxDoAiEnabled,
+    linuxDoAiQuery.data,
+    linuxDoAiQuery.data?.items.length,
+    linuxDoAiQuery.error,
+    linuxDoAiQuery.isError,
+    linuxDoAiQuery.isPending,
+    linuxDoAiVisible,
+    sessionViewModels
+  ]);
+  const searchGroups = useMemo(
+    () =>
+      linuxDoAiState.enabled
+        ? baseSearchGroups.map((group) =>
+            group.source === 'linuxdo'
+              ? { ...group, items: mergeLinuxDoAiTopics(group.items, linuxDoAiQuery.data?.items || [], true) }
+              : group
+          )
+        : baseSearchGroups,
+    [baseSearchGroups, linuxDoAiQuery.data?.items, linuxDoAiState.enabled]
+  );
 
-  const requireNodeSeekSearchVerification = useCallback((message: string, recovery: LinuxDoReadRecovery) => {
-    if (onNodeSeekSearchVerificationRequired) {
-      onNodeSeekSearchVerificationRequired(message, recovery);
-    } else {
-      showNodeSeekVerification(message);
-    }
-  }, [onNodeSeekSearchVerificationRequired, showNodeSeekVerification]);
+  const requireNodeSeekSearchVerification = useCallback(
+    (message: string, recovery: LinuxDoReadRecovery) => {
+      if (onNodeSeekSearchVerificationRequired) {
+        onNodeSeekSearchVerificationRequired(message, recovery);
+      } else {
+        showNodeSeekVerification(message);
+      }
+    },
+    [onNodeSeekSearchVerificationRequired, showNodeSeekVerification]
+  );
 
-  const retrySearchSource = useCallback((source: Source) => {
-    if (!searchActive || isSourceIdentityPending(source, sessionViewModels)) return;
-    if (submittedSearch?.source === 'all') {
-      const index = aggregateSearchSources.indexOf(source);
-      if (index >= 0) void aggregateQueries[index].refetch({ cancelRefetch: false });
-      return;
-    }
-    if (source !== submittedSource) return;
-    if (singleSearchQuery.isFetchNextPageError) {
-      void singleSearchQuery.fetchNextPage({ cancelRefetch: false });
-    } else {
-      void singleSearchQuery.refetch({ cancelRefetch: false });
-    }
-  }, [aggregateQueries, searchActive, sessionViewModels, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.refetch, submittedSearch?.source, submittedSource]);
+  const retrySearchSource = useCallback(
+    (source: Source) => {
+      if (!searchActive || isSourceIdentityPending(source, sessionViewModels)) return;
+      if (submittedSearch?.source === 'all') {
+        const index = aggregateSearchSources.indexOf(source);
+        if (index >= 0) void aggregateQueries[index].refetch({ cancelRefetch: false });
+        return;
+      }
+      if (source !== submittedSource) return;
+      if (singleSearchQuery.isFetchNextPageError) {
+        void singleSearchQuery.fetchNextPage({ cancelRefetch: false });
+      } else {
+        void singleSearchQuery.refetch({ cancelRefetch: false });
+      }
+    },
+    [
+      aggregateQueries,
+      searchActive,
+      sessionViewModels,
+      singleSearchQuery.fetchNextPage,
+      singleSearchQuery.isFetchNextPageError,
+      singleSearchQuery.refetch,
+      submittedSearch?.source,
+      submittedSource
+    ]
+  );
 
-  const loadMoreSearchSource = useCallback(async (source: Source, page: number): Promise<LinuxDoReadResumeOutcome> => {
-    if (
-      !searchActive
-      || submittedSearch?.source === 'all'
-      || source !== submittedSource
-      || singleSearchQuery.isFetchingNextPage
-      || isSourceIdentityPending(source, sessionViewModels)
-    ) {
-      return 'stale';
-    }
-    const last = singleSearchQuery.data?.pages.at(-1);
-    const group = last ? groupFromRemoteSearchResult(last) : null;
-    const retryPage = singleSearchQuery.isFetchNextPageError && singleSearchQuery.error instanceof SearchPageError
-      ? singleSearchQuery.error.page
-      : group?.nextPage;
-    if (retryPage !== page) return 'stale';
-    const result = await singleSearchQuery.fetchNextPage({ cancelRefetch: false });
-    return result.isError ? 'failed' : 'completed';
-  }, [searchActive, sessionViewModels, singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.isFetchingNextPage, submittedSearch?.source, submittedSource]);
+  const loadMoreSearchSource = useCallback(
+    async (source: Source, page: number): Promise<LinuxDoReadResumeOutcome> => {
+      if (
+        !searchActive ||
+        submittedSearch?.source === 'all' ||
+        source !== submittedSource ||
+        singleSearchQuery.isFetchingNextPage ||
+        isSourceIdentityPending(source, sessionViewModels)
+      ) {
+        return 'stale';
+      }
+      const last = singleSearchQuery.data?.pages.at(-1);
+      const group = last ? groupFromRemoteSearchResult(last) : null;
+      const retryPage =
+        singleSearchQuery.isFetchNextPageError && singleSearchQuery.error instanceof SearchPageError
+          ? singleSearchQuery.error.page
+          : group?.nextPage;
+      if (retryPage !== page) return 'stale';
+      const result = await singleSearchQuery.fetchNextPage({ cancelRefetch: false });
+      return result.isError ? 'failed' : 'completed';
+    },
+    [
+      searchActive,
+      sessionViewModels,
+      singleSearchQuery.data?.pages,
+      singleSearchQuery.error,
+      singleSearchQuery.fetchNextPage,
+      singleSearchQuery.isFetchNextPageError,
+      singleSearchQuery.isFetchingNextPage,
+      submittedSearch?.source,
+      submittedSource
+    ]
+  );
 
   useEffect(() => {
     if (
-      !searchActive
-      || !submittedSearch
-      || submittedSearch.source === 'all'
-      || searchQuery.trim() !== submittedSearch.query
-    ) return;
-    const results = [singleSearchQuery.error instanceof SearchPageError
-      ? singleSearchQuery.error.result
-      : singleSearchQuery.data?.pages.at(-1)];
+      !searchActive ||
+      !submittedSearch ||
+      submittedSearch.source === 'all' ||
+      searchQuery.trim() !== submittedSearch.query
+    )
+      return;
+    const results = [
+      singleSearchQuery.error instanceof SearchPageError
+        ? singleSearchQuery.error.result
+        : singleSearchQuery.data?.pages.at(-1)
+    ];
     results.forEach((result) => {
       if (!result || result.kind !== 'action-required') return;
       if (handledSearchActionsRef.current.has(result)) return;
@@ -673,9 +787,9 @@ export function useSearchController({
               : await singleSearchQuery.refetch({ cancelRefetch: false });
             if (resumed.isError) {
               if (
-                resumed.error instanceof SearchPageError
-                && resumed.error.result.kind === 'action-required'
-                && resumed.error.result.action.type === 'linuxdo-verification'
+                resumed.error instanceof SearchPageError &&
+                resumed.error.result.kind === 'action-required' &&
+                resumed.error.result.action.type === 'linuxdo-verification'
               ) {
                 handledSearchActionsRef.current.add(resumed.error.result);
                 return 'verification-required';
@@ -697,9 +811,9 @@ export function useSearchController({
               : await singleSearchQuery.refetch({ cancelRefetch: false });
             if (resumed.isError) {
               if (
-                resumed.error instanceof SearchPageError
-                && resumed.error.result.kind === 'action-required'
-                && resumed.error.result.action.type === 'nodeseek-verification'
+                resumed.error instanceof SearchPageError &&
+                resumed.error.result.kind === 'action-required' &&
+                resumed.error.result.action.type === 'nodeseek-verification'
               ) {
                 handledSearchActionsRef.current.add(resumed.error.result);
                 return 'verification-required';
@@ -730,44 +844,60 @@ export function useSearchController({
     submittedSearch
   ]);
 
-  const runSearch = useCallback(async (options?: SearchRunInput): Promise<LinuxDoReadResumeOutcome> => {
-    if (!searchActive) return 'stale';
-    const runOptions = typeof options === 'string' ? { sourceOverride: options } : options || {};
-    if ('sourceOverride' in runOptions && runOptions.sourceOverride) {
-      retrySearchSource(runOptions.sourceOverride as Source);
-      return 'completed';
-    }
-    const query = (runOptions.query ?? searchQuery).trim();
-    if (!query) {
-      notify('请输入搜索词');
-      return 'completed';
-    }
-    const source = runOptions.source ?? searchSource;
-    const filters = snapshotSearchFilters(runOptions.filters ?? searchFilters);
-    if (runOptions.query !== undefined) setSearchQuery(query);
-    if (runOptions.source !== undefined) setSearchSourceState(source);
-    addRecentSearch(query);
-    setLinuxDoAiEnabled(false);
-    const next = { query, source, filters };
-    const same = submittedSearch
-      && submittedSearch.query === query
-      && submittedSearch.source === source
-      && JSON.stringify(submittedSearch.filters) === JSON.stringify(filters);
-    if (same) {
-      if (source === 'all') {
-        aggregateQueries.forEach((result, index) => {
-          if (!isSourceIdentityPending(aggregateSearchSources[index], sessionViewModels)) {
-            void result.refetch({ cancelRefetch: false });
-          }
-        });
-      } else if (!isSourceIdentityPending(source, sessionViewModels)) {
-        void singleSearchQuery.refetch({ cancelRefetch: false });
+  const runSearch = useCallback(
+    async (options?: SearchRunInput): Promise<LinuxDoReadResumeOutcome> => {
+      if (!searchActive) return 'stale';
+      const runOptions = typeof options === 'string' ? { sourceOverride: options } : options || {};
+      if ('sourceOverride' in runOptions && runOptions.sourceOverride) {
+        retrySearchSource(runOptions.sourceOverride as Source);
+        return 'completed';
       }
-    } else {
-      setSubmittedSearch(next);
-    }
-    return 'completed';
-  }, [addRecentSearch, aggregateQueries, notify, retrySearchSource, searchActive, searchFilters, searchQuery, searchSource, sessionViewModels, singleSearchQuery.refetch, submittedSearch]);
+      const query = (runOptions.query ?? searchQuery).trim();
+      if (!query) {
+        notify('请输入搜索词');
+        return 'completed';
+      }
+      const source = runOptions.source ?? searchSource;
+      const filters = snapshotSearchFilters(runOptions.filters ?? searchFilters);
+      if (runOptions.query !== undefined) setSearchQuery(query);
+      if (runOptions.source !== undefined) setSearchSourceState(source);
+      addRecentSearch(query);
+      setLinuxDoAiEnabled(false);
+      const next = { query, source, filters };
+      const same =
+        submittedSearch &&
+        submittedSearch.query === query &&
+        submittedSearch.source === source &&
+        JSON.stringify(submittedSearch.filters) === JSON.stringify(filters);
+      if (same) {
+        if (source === 'all') {
+          aggregateQueries.forEach((result, index) => {
+            if (!isSourceIdentityPending(aggregateSearchSources[index], sessionViewModels)) {
+              void result.refetch({ cancelRefetch: false });
+            }
+          });
+        } else if (!isSourceIdentityPending(source, sessionViewModels)) {
+          void singleSearchQuery.refetch({ cancelRefetch: false });
+        }
+      } else {
+        setSubmittedSearch(next);
+      }
+      return 'completed';
+    },
+    [
+      addRecentSearch,
+      aggregateQueries,
+      notify,
+      retrySearchSource,
+      searchActive,
+      searchFilters,
+      searchQuery,
+      searchSource,
+      sessionViewModels,
+      singleSearchQuery.refetch,
+      submittedSearch
+    ]
+  );
 
   useEffect(() => {
     if (submittedSearch && searchQuery.trim() !== submittedSearch.query) {
@@ -780,86 +910,105 @@ export function useSearchController({
     if (!sessionViewModels.linuxdo.isLoggedIn) setLinuxDoAiEnabled(false);
   }, [sessionViewModels.linuxdo.isLoggedIn]);
 
-  const setSearchSource = useCallback((source: FeedSource) => {
-    setSearchSourceState(() => source);
-    setLinuxDoAiEnabled(false);
-    setSubmittedSearch((current) => current && current.query === searchQuery.trim()
-      ? { ...current, source, filters: snapshotSearchFilters(searchFilters) }
-      : current
-    );
-  }, [searchFilters, searchQuery]);
+  const setSearchSource = useCallback(
+    (source: FeedSource) => {
+      setSearchSourceState(() => source);
+      setLinuxDoAiEnabled(false);
+      setSubmittedSearch((current) =>
+        current && current.query === searchQuery.trim()
+          ? { ...current, source, filters: snapshotSearchFilters(searchFilters) }
+          : current
+      );
+    },
+    [searchFilters, searchQuery]
+  );
 
-  const applySearchFilter = useCallback((source: Source, filter: SourceSearchFilter) => {
-    const next = { ...searchFilters, [source]: filter };
-    setSearchFilters(next);
-    setSubmittedSearch((submitted) => submitted && submitted.source === source && submitted.query === searchQuery.trim()
-      ? { ...submitted, filters: snapshotSearchFilters(next) }
-      : submitted
-    );
-    setLinuxDoAiEnabled(false);
-  }, [searchFilters, searchQuery]);
+  const applySearchFilter = useCallback(
+    (source: Source, filter: SourceSearchFilter) => {
+      const next = { ...searchFilters, [source]: filter };
+      setSearchFilters(next);
+      setSubmittedSearch((submitted) =>
+        submitted && submitted.source === source && submitted.query === searchQuery.trim()
+          ? { ...submitted, filters: snapshotSearchFilters(next) }
+          : submitted
+      );
+      setLinuxDoAiEnabled(false);
+    },
+    [searchFilters, searchQuery]
+  );
 
-  const searchDiscourseTags = useCallback(async (options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
-    const source = options.source || 'linuxdo';
-    const { source: _source, ...request } = options;
-    const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source });
-    markDiagnosticStage(trace, 'guard', {
-      source,
-      state: 'started',
-      hasQuery: Boolean(options.query?.trim()),
-      selectedCount: options.selectedTags?.length || 0
-    });
-    try {
-      const items = await sourceGateway.searchTagOptions({ source, ...request }, { trace });
-      markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
-      finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
-      return items;
-    } catch (error) {
-      finishDiagnosticTrace(trace, options.signal?.aborted ? 'canceled' : 'failure', {
+  const searchDiscourseTags = useCallback(
+    async (
+      options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'> & { source?: DiscourseSource }
+    ) => {
+      const source = options.source || 'linuxdo';
+      const { source: _source, ...request } = options;
+      const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source });
+      markDiagnosticStage(trace, 'guard', {
         source,
-        reason: options.signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+        state: 'started',
+        hasQuery: Boolean(options.query?.trim()),
+        selectedCount: options.selectedTags?.length || 0
       });
-      throw error;
-    }
-  }, [sourceGateway]);
+      try {
+        const items = await sourceGateway.searchTagOptions({ source, ...request }, { trace });
+        markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
+        finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
+        return items;
+      } catch (error) {
+        finishDiagnosticTrace(trace, options.signal?.aborted ? 'canceled' : 'failure', {
+          source,
+          reason: options.signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+        });
+        throw error;
+      }
+    },
+    [sourceGateway]
+  );
 
-  const searchDiscourseUsers = useCallback(async (options: Omit<Parameters<SourceGateway['searchUserOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
-    const source = options.source || 'linuxdo';
-    const { source: _source, ...request } = options;
-    const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
-    markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
-    try {
-      const items = await sourceGateway.searchUserOptions({ source, ...request }, { trace });
-      markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
-      finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
-      return items;
-    } catch (error) {
-      finishDiagnosticTrace(trace, options.signal?.aborted ? 'canceled' : 'failure', {
-        source,
-        reason: options.signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
-      });
-      throw error;
-    }
-  }, [sourceGateway]);
+  const searchDiscourseUsers = useCallback(
+    async (
+      options: Omit<Parameters<SourceGateway['searchUserOptions']>[0], 'source'> & { source?: DiscourseSource }
+    ) => {
+      const source = options.source || 'linuxdo';
+      const { source: _source, ...request } = options;
+      const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
+      markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
+      try {
+        const items = await sourceGateway.searchUserOptions({ source, ...request }, { trace });
+        markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
+        finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
+        return items;
+      } catch (error) {
+        finishDiagnosticTrace(trace, options.signal?.aborted ? 'canceled' : 'failure', {
+          source,
+          reason: options.signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+        });
+        throw error;
+      }
+    },
+    [sourceGateway]
+  );
 
   const toggleLinuxDoAiSearch = useCallback(() => {
     if (linuxDoAiState.status === 'ready') setLinuxDoAiEnabled((current) => !current);
   }, [linuxDoAiState.status]);
   const retryLinuxDoAiSearch = useCallback(() => {
     if (
-      searchActive
-      && !linuxDoVerificationActive
-      && !isSourceIdentityPending('linuxdo', sessionViewModels)
-      && linuxDoAiQuery.isError
+      searchActive &&
+      !linuxDoVerificationActive &&
+      !isSourceIdentityPending('linuxdo', sessionViewModels) &&
+      linuxDoAiQuery.isError
     ) {
       void linuxDoAiQuery.refetch({ cancelRefetch: false });
     }
   }, [linuxDoAiQuery.isError, linuxDoAiQuery.refetch, linuxDoVerificationActive, searchActive, sessionViewModels]);
   const abortSearchRequests = useCallback(() => {
     void queryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum'
-        && typeof queryKey[2] === 'string'
-        && (queryKey[2].startsWith('search') || queryKey[2] === 'semantic-search')
+      predicate: ({ queryKey }) =>
+        queryKey[0] === 'forum' &&
+        typeof queryKey[2] === 'string' &&
+        (queryKey[2].startsWith('search') || queryKey[2] === 'semantic-search')
     });
   }, [queryClient]);
   useEffect(() => {
@@ -876,14 +1025,15 @@ export function useSearchController({
     retrySearchSource,
     retryLinuxDoAiSearch,
     runSearch,
-    searchBusy: !searchActive || !submittedSearch
-      ? false
-      : submittedSearch.source === 'all'
-        ? aggregateQueries.some((query, index) => (
-          !isSourceIdentityPending(aggregateSearchSources[index], sessionViewModels)
-          && query.isPending
-        ))
-        : singleSearchQuery.isFetching,
+    searchBusy:
+      !searchActive || !submittedSearch
+        ? false
+        : submittedSearch.source === 'all'
+          ? aggregateQueries.some(
+              (query, index) =>
+                !isSourceIdentityPending(aggregateSearchSources[index], sessionViewModels) && query.isPending
+            )
+          : singleSearchQuery.isFetching,
     searchFilters,
     searchGroups,
     searchDiscourseTags,

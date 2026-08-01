@@ -23,7 +23,13 @@ function errorStatus(error: unknown) {
 function classifiedKind(error: unknown): SourceErrorKind {
   if (error && typeof error === 'object' && 'kind' in error) {
     const kind = (error as { kind?: unknown }).kind;
-    if (kind === 'login-required' || kind === 'login-expired' || kind === 'verification-required' || kind === 'permission-denied' || kind === 'ordinary') {
+    if (
+      kind === 'login-required' ||
+      kind === 'login-expired' ||
+      kind === 'verification-required' ||
+      kind === 'permission-denied' ||
+      kind === 'ordinary'
+    ) {
       return kind;
     }
   }
@@ -71,9 +77,7 @@ export function sourceReadRecoveryOutcome(
   if (isCanceledRequest(error)) {
     return 'stale';
   }
-  return sourceErrorFromUnknown(source, error).kind === 'verification-required'
-    ? 'verification-required'
-    : 'failed';
+  return sourceErrorFromUnknown(source, error).kind === 'verification-required' ? 'verification-required' : 'failed';
 }
 
 export function normalizeSourceErrorInfo(error?: SourceErrorInfo | LegacySourceErrorInfo): SourceErrorInfo | undefined {
@@ -106,22 +110,14 @@ export function sourceErrorKind(error?: SourceErrorInfo | LegacySourceErrorInfo)
   return normalizeSourceErrorInfo(error)?.kind || 'ordinary';
 }
 
-export function formatSourceErrorMessages(
-  errors: SourceErrors,
-  sourceLabel: (source: FeedSource) => string
-) {
+export function formatSourceErrorMessages(errors: SourceErrors, sourceLabel: (source: FeedSource) => string) {
   return Object.entries(errors)
     .map(([sourceName, error]) => `${sourceLabel(sourceName as FeedSource)}：${sourceErrorMessage(error)}`)
     .join('；');
 }
 
-export function nodeSeekVerificationErrorMessage(
-  errors: SourceErrors,
-  fallback = 'NodeSeek 需要完成 Cloudflare 验证'
-) {
-  return sourceErrorRequiresVerification(errors.nodeseek)
-    ? sourceErrorMessage(errors.nodeseek) || fallback
-    : '';
+export function nodeSeekVerificationErrorMessage(errors: SourceErrors, fallback = 'NodeSeek 需要完成 Cloudflare 验证') {
+  return sourceErrorRequiresVerification(errors.nodeseek) ? sourceErrorMessage(errors.nodeseek) || fallback : '';
 }
 
 export function nodeSeekVerificationNavigationMessage(source: FeedSource, errors: SourceErrors) {

@@ -55,14 +55,17 @@ export function DetailActionButton({
   const color = active ? activeColor : theme.ink;
   const textColor = active && tone === 'favorite' ? theme.ink : color;
   const activeSoft = alphaColor(activeColor, theme.dark ? 0.13 : 0.07);
-  const visibleCount = typeof count === 'number' ? compact && count > 99 ? '99+' : String(count) : '';
+  const visibleCount = typeof count === 'number' ? (compact && count > 99 ? '99+' : String(count)) : '';
   const iconSize = compact ? 16 : 18;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ busy: pending, disabled, selected: active }}
-      android_ripple={androidRipple(active ? alphaColor(activeColor, theme.dark ? 0.18 : 0.12) : theme.primarySoft, true)}
+      android_ripple={androidRipple(
+        active ? alphaColor(activeColor, theme.dark ? 0.18 : 0.12) : theme.primarySoft,
+        true
+      )}
       disabled={disabled}
       style={[
         styles.detailActionButton,
@@ -82,12 +85,39 @@ export function DetailActionButton({
         {pending ? (
           <ActivityIndicator size="small" color={color} />
         ) : (
-          <Icon size={iconSize} color={color} fill={active ? alphaColor(activeColor, theme.dark ? 0.2 : 0.14) : 'none'} strokeWidth={active ? 2.1 : 1.8} />
+          <Icon
+            size={iconSize}
+            color={color}
+            fill={active ? alphaColor(activeColor, theme.dark ? 0.2 : 0.14) : 'none'}
+            strokeWidth={active ? 2.1 : 1.8}
+          />
         )}
       </View>
       <View style={[styles.detailActionTextBlock, compact && styles.detailActionCompactTextBlock]}>
-        <Text numberOfLines={1} style={[styles.detailActionLabel, compact && styles.detailActionCompactLabel, active && styles.detailActionLabelActive, active && { color: textColor }]}>{label}</Text>
-        {visibleCount ? <Text numberOfLines={1} style={[styles.detailActionCount, compact && styles.detailActionCompactCount, active && styles.detailActionLabelActive, active && { color: textColor }]}>{visibleCount}</Text> : null}
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.detailActionLabel,
+            compact && styles.detailActionCompactLabel,
+            active && styles.detailActionLabelActive,
+            active && { color: textColor }
+          ]}
+        >
+          {label}
+        </Text>
+        {visibleCount ? (
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.detailActionCount,
+              compact && styles.detailActionCompactCount,
+              active && styles.detailActionLabelActive,
+              active && { color: textColor }
+            ]}
+          >
+            {visibleCount}
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );

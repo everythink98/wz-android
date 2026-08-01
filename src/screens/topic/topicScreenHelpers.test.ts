@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildReplyListItems, buildVirtualizedReplyItems, getReplyKey, hasSameYaohuoTopicLayout, topicListItemSpacing, type TopicListItem } from './topicScreenHelpers';
+import {
+  buildReplyListItems,
+  buildVirtualizedReplyItems,
+  getReplyKey,
+  hasSameYaohuoTopicLayout,
+  topicListItemSpacing,
+  type TopicListItem
+} from './topicScreenHelpers';
 import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '../../quotedPosts';
 import type { Reply, TopicDetail } from '../../types';
 
@@ -15,9 +22,18 @@ const replyItem: TopicListItem = {
   reply,
   replyFloor: 2
 };
-const listCases: Array<[string, boolean, TopicListItem[], boolean, TopicListItem[]]> = [
+const listCases: [string, boolean, TopicListItem[], boolean, TopicListItem[]][] = [
   ['visible replies', true, [replyItem], false, [{ type: 'replyControls', key: 'reply-controls' }, replyItem]],
-  ['empty replies', true, [], false, [{ type: 'replyControls', key: 'reply-controls' }, { type: 'emptyReplies', key: 'empty-replies' }]],
+  [
+    'empty replies',
+    true,
+    [],
+    false,
+    [
+      { type: 'replyControls', key: 'reply-controls' },
+      { type: 'emptyReplies', key: 'empty-replies' }
+    ]
+  ],
   ['access notice', true, [replyItem], true, []]
 ];
 
@@ -51,9 +67,12 @@ describe('topic screen helpers', () => {
     expect(getReplyKey({ ...withoutCommentId, contentHtml: '<p>refreshed</p>' })).toBe(getReplyKey(withoutCommentId));
   });
 
-  it.each(listCases)('builds FlashList data for %s', (_label, canShowReplies, replyItems, topicShowsAccessNotice, expected) => {
-    expect(buildReplyListItems({ canShowReplies, replyItems, topicShowsAccessNotice })).toEqual(expected);
-  });
+  it.each(listCases)(
+    'builds FlashList data for %s',
+    (_label, canShowReplies, replyItems, topicShowsAccessNotice, expected) => {
+      expect(buildReplyListItems({ canShowReplies, replyItems, topicShowsAccessNotice })).toEqual(expected);
+    }
+  );
 
   it('[REG-WRITE-005] ignores yaohuo bookmark fields when comparing topic layout', () => {
     const detail: TopicDetail = {
@@ -136,10 +155,7 @@ describe('topic screen helpers', () => {
     const content = expanded.find((item) => item.type === 'replyQuoteContent');
     expect(content).toMatchObject({ first: true, last: true, reference: secondReference });
     expect(expanded.slice(0, -1).map((item, index) => topicListItemSpacing(item, expanded[index + 1]))).toEqual([
-      8,
-      12,
-      0,
-      8
+      8, 12, 0, 8
     ]);
 
     const collapsed = buildVirtualizedReplyItems({ ...common, expandedQuotes: {} });
@@ -190,10 +206,7 @@ describe('topic screen helpers', () => {
     const quotedReply: Reply = {
       ...reply,
       floor: 1,
-      contentHtml: Array.from(
-        { length: 6 },
-        (_, index) => `<p>quote ${index} ${'safe text '.repeat(260)}</p>`
-      ).join('')
+      contentHtml: Array.from({ length: 6 }, (_, index) => `<p>quote ${index} ${'safe text '.repeat(260)}</p>`).join('')
     };
     const firstInstanceKey = replyQuotedPostInstanceKey(getReplyKey(first), reference);
     const secondInstanceKey = replyQuotedPostInstanceKey(getReplyKey(second), reference);
@@ -241,6 +254,8 @@ describe('topic screen helpers', () => {
       },
       primedQuoteContentTokens: new Map([[firstInstanceKey, contentToken!]])
     });
-    expect(changed.filter((item) => item.type === 'replyQuoteContent' && item.instanceKey === firstInstanceKey)).toHaveLength(2);
+    expect(
+      changed.filter((item) => item.type === 'replyQuoteContent' && item.instanceKey === firstInstanceKey)
+    ).toHaveLength(2);
   });
 });

@@ -16,10 +16,12 @@ describe('backup import file reader', () => {
   });
 
   it('rejects oversized picked files before reading text', async () => {
-    await expect(readBackupFileText({
-      uri: 'file:///cache/too-large.json',
-      size: MAX_BACKUP_JSON_BYTES + 1
-    })).rejects.toThrow('备份文件过大');
+    await expect(
+      readBackupFileText({
+        uri: 'file:///cache/too-large.json',
+        size: MAX_BACKUP_JSON_BYTES + 1
+      })
+    ).rejects.toThrow('备份文件过大');
 
     expect(FileSystem.getInfoAsync).not.toHaveBeenCalled();
     expect(FileSystem.readAsStringAsync).not.toHaveBeenCalled();
@@ -34,9 +36,11 @@ describe('backup import file reader', () => {
       uri: 'file:///cache/too-large.json'
     });
 
-    await expect(readBackupFileText({
-      uri: 'file:///cache/too-large.json'
-    })).rejects.toThrow('备份文件过大');
+    await expect(
+      readBackupFileText({
+        uri: 'file:///cache/too-large.json'
+      })
+    ).rejects.toThrow('备份文件过大');
 
     expect(FileSystem.readAsStringAsync).not.toHaveBeenCalled();
   });
@@ -50,9 +54,11 @@ describe('backup import file reader', () => {
       uri: 'file:///cache/unknown-size.json'
     } as unknown as Awaited<ReturnType<typeof FileSystem.getInfoAsync>>);
 
-    await expect(readBackupFileText({
-      uri: 'file:///cache/unknown-size.json'
-    })).rejects.toThrow('备份文件大小无法确认');
+    await expect(
+      readBackupFileText({
+        uri: 'file:///cache/unknown-size.json'
+      })
+    ).rejects.toThrow('备份文件大小无法确认');
 
     expect(FileSystem.readAsStringAsync).not.toHaveBeenCalled();
   });
@@ -67,11 +73,15 @@ describe('backup import file reader', () => {
     });
     vi.mocked(FileSystem.readAsStringAsync).mockResolvedValue('{"version":2}');
 
-    await expect(readBackupFileText({
-      uri: 'file:///cache/backup.json',
-      size: 64
-    })).resolves.toBe('{"version":2}');
+    await expect(
+      readBackupFileText({
+        uri: 'file:///cache/backup.json',
+        size: 64
+      })
+    ).resolves.toBe('{"version":2}');
 
-    expect(FileSystem.readAsStringAsync).toHaveBeenCalledWith('file:///cache/backup.json', { encoding: FileSystem.EncodingType.UTF8 });
+    expect(FileSystem.readAsStringAsync).toHaveBeenCalledWith('file:///cache/backup.json', {
+      encoding: FileSystem.EncodingType.UTF8
+    });
   });
 });

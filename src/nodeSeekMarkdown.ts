@@ -13,10 +13,8 @@ Object.assign(md.options, { maxNesting: 100 });
 
 export function nodeSeekMarkdownToHtml(markdown: unknown) {
   const input = String(markdown || '');
-  const oversized = input.length > MAX_NODESEEK_MARKDOWN_BYTES
-    || new TextEncoder().encode(input).byteLength > MAX_NODESEEK_MARKDOWN_BYTES;
-  return sanitizeContentHtml(
-    oversized ? OVERSIZED_MARKDOWN_NOTICE : md.render(input),
-    NODESEEK_URL
-  );
+  const oversized =
+    input.length > MAX_NODESEEK_MARKDOWN_BYTES ||
+    new TextEncoder().encode(input).byteLength > MAX_NODESEEK_MARKDOWN_BYTES;
+  return sanitizeContentHtml(oversized ? OVERSIZED_MARKDOWN_NOTICE : md.render(input), NODESEEK_URL);
 }

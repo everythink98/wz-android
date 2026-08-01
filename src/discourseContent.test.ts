@@ -12,10 +12,7 @@ import { sanitizeLinuxDoContentHtml } from './localLinuxdo';
 
 describe('portable Discourse content parts', () => {
   it('[REG-TOPIC-056] renders a leading warning marker as semantic Callout content', () => {
-    const html = sanitizeLinuxDoContentHtml(
-      '<blockquote><p>[!warning] 注意！！<br>正文</p></blockquote>',
-      []
-    );
+    const html = sanitizeLinuxDoContentHtml('<blockquote><p>[!warning] 注意！！<br>正文</p></blockquote>', []);
 
     expect(html).not.toContain('[!warning]');
     expect(html).toContain('data-forum-callout="true"');
@@ -28,10 +25,7 @@ describe('portable Discourse content parts', () => {
     const innerHtmlSetter = vi.spyOn(HTMLElement.prototype, 'innerHTML', 'set');
     const clone = vi.spyOn(HTMLElement.prototype, 'clone');
     try {
-      sanitizeLinuxDoContentHtml(
-        '<blockquote><p><strong>[!warning] Title<br>Body</strong></p></blockquote>',
-        []
-      );
+      sanitizeLinuxDoContentHtml('<blockquote><p><strong>[!warning] Title<br>Body</strong></p></blockquote>', []);
 
       expect(innerHtmlSetter).not.toHaveBeenCalled();
       expect(clone).not.toHaveBeenCalled();
@@ -78,23 +72,32 @@ describe('portable Discourse content parts', () => {
   });
 
   it('[REG-TOPIC-056] handles case, unknown fallback, rich titles, empty bodies and fold defaults', () => {
-    const html = sanitizeLinuxDoContentHtml([
-      '<blockquote><p><strong>[!CaUtIoN] <em>请先</em></strong> <a href="/rules">阅读规则</a><br>正文</p></blockquote>',
-      '<blockquote><p>[!custom]- 自定义标题<br><code>折叠正文</code></p></blockquote>',
-      '<blockquote><p>[!__proto__]<br>Prototype key</p></blockquote>',
-      '<blockquote><p>[!constructor]<br>Constructor key</p></blockquote>',
-      '<blockquote><p>[!tip]+</p></blockquote>'
-    ].join(''), []);
+    const html = sanitizeLinuxDoContentHtml(
+      [
+        '<blockquote><p><strong>[!CaUtIoN] <em>请先</em></strong> <a href="/rules">阅读规则</a><br>正文</p></blockquote>',
+        '<blockquote><p>[!custom]- 自定义标题<br><code>折叠正文</code></p></blockquote>',
+        '<blockquote><p>[!__proto__]<br>Prototype key</p></blockquote>',
+        '<blockquote><p>[!constructor]<br>Constructor key</p></blockquote>',
+        '<blockquote><p>[!tip]+</p></blockquote>'
+      ].join(''),
+      []
+    );
 
     expect(html).not.toContain('[!');
     expect(html).toContain('data-forum-callout-type="warning"');
-    expect(html).toContain('<div class="forum-callout-title forum-callout-tone-warning"><strong><em>请先</em></strong> <a href="https://linux.do/rules">阅读规则</a></div>');
+    expect(html).toContain(
+      '<div class="forum-callout-title forum-callout-tone-warning"><strong><em>请先</em></strong> <a href="https://linux.do/rules">阅读规则</a></div>'
+    );
     expect(html).toContain('data-forum-callout-type="note" data-forum-callout-fold="collapsed"');
     expect(html).toContain('<div class="forum-callout-title forum-callout-tone-primary">自定义标题</div>');
     expect(html).toContain('<div class="forum-callout-content"><p><code>折叠正文</code></p></div>');
     expect(html.match(/data-forum-callout-type="note"/g)).toHaveLength(3);
-    expect(html).toContain('<div class="forum-callout-title forum-callout-tone-primary">Note</div><div class="forum-callout-content"><p>Prototype key</p></div>');
-    expect(html).toContain('<div class="forum-callout-title forum-callout-tone-primary">Note</div><div class="forum-callout-content"><p>Constructor key</p></div>');
+    expect(html).toContain(
+      '<div class="forum-callout-title forum-callout-tone-primary">Note</div><div class="forum-callout-content"><p>Prototype key</p></div>'
+    );
+    expect(html).toContain(
+      '<div class="forum-callout-title forum-callout-tone-primary">Note</div><div class="forum-callout-content"><p>Constructor key</p></div>'
+    );
     expect(html).toContain('data-forum-callout-type="tip" data-forum-callout-fold="expanded"');
     expect(html).toContain('<div class="forum-callout-title forum-callout-tone-primary">Tip</div></blockquote>');
   });
@@ -132,10 +135,13 @@ describe('portable Discourse content parts', () => {
   });
 
   it('[REG-TOPIC-056] recognizes a title line break without converting an in-paragraph marker', () => {
-    const html = sanitizeLinuxDoContentHtml([
-      '<blockquote><p>[!warning] Title\nBody <strong>continues</strong></p></blockquote>',
-      '<blockquote><p>Prefix [!warning] stays ordinary</p></blockquote>'
-    ].join(''), []);
+    const html = sanitizeLinuxDoContentHtml(
+      [
+        '<blockquote><p>[!warning] Title\nBody <strong>continues</strong></p></blockquote>',
+        '<blockquote><p>Prefix [!warning] stays ordinary</p></blockquote>'
+      ].join(''),
+      []
+    );
 
     expect(html).toContain('<div class="forum-callout-title forum-callout-tone-warning">Title</div>');
     expect(html).toContain('<div class="forum-callout-content"><p>Body <strong>continues</strong></p></div>');
@@ -143,14 +149,17 @@ describe('portable Discourse content parts', () => {
   });
 
   it('[REG-TOPIC-056] preserves rich bodies and separates ordinary and nested quotes', () => {
-    const html = sanitizeLinuxDoContentHtml([
-      '<blockquote><p>[!warning] Outer<br>Before</p>',
-      '<blockquote><p>[!tip] Nested<br><a href="/guide"><img src="/tip.png" alt="tip">Guide</a></p></blockquote>',
-      '<blockquote><p>Ordinary nested quote</p></blockquote>',
-      '<ul><li>List</li></ul><pre><code>const value = 1;</code></pre>',
-      '<table><tbody><tr><td>Cell</td></tr></tbody></table></blockquote>',
-      '<blockquote><p>Ordinary outer quote</p><blockquote><p>[!success] Done<br>Inside</p></blockquote></blockquote>'
-    ].join(''), []);
+    const html = sanitizeLinuxDoContentHtml(
+      [
+        '<blockquote><p>[!warning] Outer<br>Before</p>',
+        '<blockquote><p>[!tip] Nested<br><a href="/guide"><img src="/tip.png" alt="tip">Guide</a></p></blockquote>',
+        '<blockquote><p>Ordinary nested quote</p></blockquote>',
+        '<ul><li>List</li></ul><pre><code>const value = 1;</code></pre>',
+        '<table><tbody><tr><td>Cell</td></tr></tbody></table></blockquote>',
+        '<blockquote><p>Ordinary outer quote</p><blockquote><p>[!success] Done<br>Inside</p></blockquote></blockquote>'
+      ].join(''),
+      []
+    );
 
     expect(html.match(/data-forum-callout="true"/g)).toHaveLength(3);
     expect(html).toContain('<blockquote><p>Ordinary nested quote</p></blockquote>');
@@ -166,10 +175,7 @@ describe('portable Discourse content parts', () => {
       '<blockquote data-forum-callout="true" data-forum-callout-type="danger"><div class="forum-callout-title">Forged</div><div class="forum-callout-content">Body</div></blockquote>',
       []
     );
-    const forgedTone = sanitizeLinuxDoContentHtml(
-      '<p class="safe forum-callout-tone-danger">Forged tone</p>',
-      []
-    );
+    const forgedTone = sanitizeLinuxDoContentHtml('<p class="safe forum-callout-tone-danger">Forged tone</p>', []);
     const entityForgedTone = sanitizeLinuxDoContentHtml(
       '<p class="safe forum&#45;callout-tone-danger">Entity forged tone</p>',
       []
@@ -178,9 +184,10 @@ describe('portable Discourse content parts', () => {
       '<p CLASS="forum-callout-tone-danger">Uppercase forged tone</p>',
       []
     );
-    const nested = Array.from({ length: 101 }, (_, index) => (
-      `<blockquote><p>[!note] Level ${index + 1}</p>`
-    )).join('') + 'Body' + '</blockquote>'.repeat(101);
+    const nested =
+      Array.from({ length: 101 }, (_, index) => `<blockquote><p>[!note] Level ${index + 1}</p>`).join('') +
+      'Body' +
+      '</blockquote>'.repeat(101);
     const limited = sanitizeLinuxDoContentHtml(nested, []);
 
     expect(forged).toBe('<blockquote><div>Forged</div><div>Body</div></blockquote>');
@@ -221,10 +228,11 @@ describe('portable Discourse content parts', () => {
     const second = { name: 'second', options: [{ id: 'b', label: 'B' }] };
     const html = `<p>before</p>${discoursePollPlaceholder('first')}<p>after</p>`;
 
-    expect(splitDiscourseContentHtml(html, [first, second]).map((part) => part.type === 'poll'
-      ? `poll:${part.poll.name}`
-      : part.html
-    )).toEqual(['<p>before</p>', 'poll:first', '<p>after</p>', 'poll:second']);
+    expect(
+      splitDiscourseContentHtml(html, [first, second]).map((part) =>
+        part.type === 'poll' ? `poll:${part.poll.name}` : part.html
+      )
+    ).toEqual(['<p>before</p>', 'poll:first', '<p>after</p>', 'poll:second']);
   });
 
   it('[REG-PERF-008] skips DOM parsing when ordinary content has no poll placeholder', async () => {
@@ -271,11 +279,13 @@ describe('portable Discourse content parts', () => {
       '2685882'
     );
 
-    expect(metadata.quotedPosts).toEqual([{
-      reference: { source: 'linuxdo', topicId: '2679944', postNumber: 7 },
-      author: { label: 'alice', username: 'alice' },
-      preview: 'Cross-topic preview.'
-    }]);
+    expect(metadata.quotedPosts).toEqual([
+      {
+        reference: { source: 'linuxdo', topicId: '2679944', postNumber: 7 },
+        author: { label: 'alice', username: 'alice' },
+        preview: 'Cross-topic preview.'
+      }
+    ]);
     expect(metadata.html).toBe('<p>Reply body.</p>');
   });
 
@@ -296,13 +306,15 @@ describe('portable Discourse content parts', () => {
       '2685882'
     );
 
-    expect(metadata.quotedPosts).toEqual([{
-      reference: { source: 'linuxdo', topicId: '2679944', postNumber: 7 },
-      author: { label: 'alice', username: 'alice' },
-      preview: 'Cross-topic preview.',
-      topicTitle: 'Referenced topic',
-      topicUrl: 'https://linux.do/t/topic/2679944/7'
-    }]);
+    expect(metadata.quotedPosts).toEqual([
+      {
+        reference: { source: 'linuxdo', topicId: '2679944', postNumber: 7 },
+        author: { label: 'alice', username: 'alice' },
+        preview: 'Cross-topic preview.',
+        topicTitle: 'Referenced topic',
+        topicUrl: 'https://linux.do/t/topic/2679944/7'
+      }
+    ]);
     expect(metadata.html).toBe('<p>Reply body.</p>');
   });
 });

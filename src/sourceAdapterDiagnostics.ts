@@ -27,8 +27,7 @@ function normalizedSummary(input: SourceDiagnosticSummaryInput): SourceDiagnosti
   const missingFloorCount = count(input.missingFloorCount);
   const hasRepeatedCursor = input.hasRepeatedCursor === true;
   const isExpectedEmpty = input.isExpectedEmpty === true;
-  const isParseEmpty = input.isParseEmpty === true
-    || (!isExpectedEmpty && candidateCount > 0 && validCount === 0);
+  const isParseEmpty = input.isParseEmpty === true || (!isExpectedEmpty && candidateCount > 0 && validCount === 0);
   return {
     parserVariant: input.parserVariant,
     candidateCount,
@@ -36,11 +35,12 @@ function normalizedSummary(input: SourceDiagnosticSummaryInput): SourceDiagnosti
     droppedCount,
     partialErrorCount,
     missingFloorCount,
-    hasDegradation: input.hasDegradation === true
-      || partialErrorCount > 0
-      || missingFloorCount > 0
-      || hasRepeatedCursor
-      || isParseEmpty,
+    hasDegradation:
+      input.hasDegradation === true ||
+      partialErrorCount > 0 ||
+      missingFloorCount > 0 ||
+      hasRepeatedCursor ||
+      isParseEmpty,
     hasRepeatedCursor,
     isExpectedEmpty,
     isParseEmpty

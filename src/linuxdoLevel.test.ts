@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  buildLinuxDoLevelProfileFromSummary,
-  getLinuxDoLevelProfile
-} from './linuxdoLevel';
+import { buildLinuxDoLevelProfileFromSummary, getLinuxDoLevelProfile } from './linuxdoLevel';
 
 vi.mock('@react-native-async-storage/async-storage', () => {
   const store = new Map<string, string>();
@@ -38,10 +35,12 @@ describe('linux.do level profile', () => {
       });
     });
 
-    await expect(getLinuxDoLevelProfile({
-      fetcher,
-      signal: controller.signal
-    })).rejects.toThrow('请求已取消');
+    await expect(
+      getLinuxDoLevelProfile({
+        fetcher,
+        signal: controller.signal
+      })
+    ).rejects.toThrow('请求已取消');
 
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
@@ -95,11 +94,7 @@ describe('linux.do level profile', () => {
       achievedCount: 3,
       totalCount: 3
     });
-    expect(profile.requirements.map((item) => item.key)).toEqual([
-      'topics_entered',
-      'posts_read_count',
-      'time_read'
-    ]);
+    expect(profile.requirements.map((item) => item.key)).toEqual(['topics_entered', 'posts_read_count', 'time_read']);
   });
 
   it('infers level 1 only when the official payload omits the trust level', () => {
@@ -155,23 +150,27 @@ describe('linux.do level profile', () => {
     const fetcher = vi.fn(async (input: string) => {
       requests.push(input);
       if (input === 'https://linux.do/my/summary.json') {
-        return new Response(JSON.stringify({
-          user_summary: {
-            user: { username: 'alice', trust_level: 2 },
-            days_visited: 40,
-            likes_given: 10,
-            likes_received: 8,
-            post_count: 5,
-            topics_entered: 300,
-            posts_read_count: 1000,
-            time_read: 12000
+        return new Response(
+          JSON.stringify({
+            user_summary: {
+              user: { username: 'alice', trust_level: 2 },
+              days_visited: 40,
+              likes_given: 10,
+              likes_received: 8,
+              post_count: 5,
+              topics_entered: 300,
+              posts_read_count: 1000,
+              time_read: 12000
+            }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
           }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        );
       }
       if (input === 'https://connect.linux.do/') {
-        return new Response(`
+        return new Response(
+          `
           <div class="card">
             <h2 class="card-title">信任等级 3</h2>
             <span class="badge badge-warning">未达成</span>
@@ -197,9 +196,11 @@ describe('linux.do level profile', () => {
             </div>
             <div class="status-unmet">还未达到 TL3</div>
           </div>
-        `, {
-          headers: { 'content-type': 'text/html' }
-        });
+        `,
+          {
+            headers: { 'content-type': 'text/html' }
+          }
+        );
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -222,10 +223,7 @@ describe('linux.do level profile', () => {
       ['已读帖子', 1500, 20000, false],
       ['被禁言', 1, 0, false]
     ]);
-    expect(requests).toEqual([
-      'https://linux.do/my/summary.json',
-      'https://connect.linux.do/'
-    ]);
+    expect(requests).toEqual(['https://linux.do/my/summary.json', 'https://connect.linux.do/']);
   });
 
   it('falls back to the summary estimate when official connect progress is unavailable', async () => {
@@ -233,20 +231,23 @@ describe('linux.do level profile', () => {
     const fetcher = vi.fn(async (input: string) => {
       requests.push(input);
       if (input === 'https://linux.do/my/summary.json') {
-        return new Response(JSON.stringify({
-          user_summary: {
-            user: { username: 'alice', trust_level: 2 },
-            days_visited: 40,
-            likes_given: 30,
-            likes_received: 20,
-            post_count: 11,
-            topics_entered: 800,
-            posts_read_count: 2000,
-            time_read: 12000
+        return new Response(
+          JSON.stringify({
+            user_summary: {
+              user: { username: 'alice', trust_level: 2 },
+              days_visited: 40,
+              likes_given: 30,
+              likes_received: 20,
+              post_count: 11,
+              topics_entered: 800,
+              posts_read_count: 2000,
+              time_read: 12000
+            }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
           }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        );
       }
       if (input === 'https://connect.linux.do/') {
         return new Response('<html>login required</html>', {
@@ -270,37 +271,40 @@ describe('linux.do level profile', () => {
       note: expect.stringContaining('参考')
     });
     expect(profile.requirements.some((item) => item.key === 'days_visited' && item.required === 50)).toBe(true);
-    expect(requests).toEqual([
-      'https://linux.do/my/summary.json',
-      'https://connect.linux.do/'
-    ]);
+    expect(requests).toEqual(['https://linux.do/my/summary.json', 'https://connect.linux.do/']);
   });
 
   it('reads current account summary and records the previous snapshot delta', async () => {
-    asyncStorage.__store.set('linuxdo-level-snapshot:alice', JSON.stringify({
-      username: 'alice',
-      values: {
-        days_visited: 13,
-        posts_read_count: 80,
-        time_read: 3467
-      }
-    }));
+    asyncStorage.__store.set(
+      'linuxdo-level-snapshot:alice',
+      JSON.stringify({
+        username: 'alice',
+        values: {
+          days_visited: 13,
+          posts_read_count: 80,
+          time_read: 3467
+        }
+      })
+    );
     const fetcher = vi.fn(async (input: string) => {
       expect(input).toBe('https://linux.do/my/summary.json');
-      return new Response(JSON.stringify({
-        user_summary: {
-          user: { username: 'alice', trust_level: 1 },
-          days_visited: 15,
-          likes_given: 1,
-          likes_received: 1,
-          post_count: 3,
-          topics_entered: 20,
-          posts_read_count: 100,
-          time_read: 3600
+      return new Response(
+        JSON.stringify({
+          user_summary: {
+            user: { username: 'alice', trust_level: 1 },
+            days_visited: 15,
+            likes_given: 1,
+            likes_received: 1,
+            post_count: 3,
+            topics_entered: 20,
+            posts_read_count: 100,
+            time_read: 3600
+          }
+        }),
+        {
+          headers: { 'content-type': 'application/json' }
         }
-      }), {
-        headers: { 'content-type': 'application/json' }
-      });
+      );
     });
 
     const profile = await getLinuxDoLevelProfile({
@@ -328,27 +332,33 @@ describe('linux.do level profile', () => {
         });
       }
       if (input === 'https://linux.do/session/current.json') {
-        return new Response(JSON.stringify({
-          current_user: { username: 'alice' }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        return new Response(
+          JSON.stringify({
+            current_user: { username: 'alice' }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
+          }
+        );
       }
       if (input === 'https://linux.do/u/alice/summary.json') {
-        return new Response(JSON.stringify({
-          user_summary: {
-            user: { username: 'alice', trust_level: 1 },
-            days_visited: 15,
-            likes_given: 1,
-            likes_received: 1,
-            post_count: 3,
-            topics_entered: 20,
-            posts_read_count: 100,
-            time_read: 3600
+        return new Response(
+          JSON.stringify({
+            user_summary: {
+              user: { username: 'alice', trust_level: 1 },
+              days_visited: 15,
+              likes_given: 1,
+              likes_received: 1,
+              post_count: 3,
+              topics_entered: 20,
+              posts_read_count: 100,
+              time_read: 3600
+            }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
           }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        );
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -370,10 +380,13 @@ describe('linux.do level profile', () => {
   });
 
   it('reports Cloudflare verification instead of a malformed level payload', async () => {
-    const fetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
-      status: 403,
-      headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<html><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' }
+        })
+    );
 
     const error = await getLinuxDoLevelProfile({
       fetcher
@@ -391,27 +404,33 @@ describe('linux.do level profile', () => {
     const fetcher = vi.fn(async (input: string) => {
       requests.push(input);
       if (input === 'https://linux.do/my/summary.json') {
-        return new Response(JSON.stringify({
-          user_summary: {
-            user: { username: 'alice' },
-            days_visited: 1,
-            likes_given: 0,
-            likes_received: 0,
-            post_count: 0,
-            topics_entered: 1,
-            posts_read_count: 1,
-            time_read: 60
+        return new Response(
+          JSON.stringify({
+            user_summary: {
+              user: { username: 'alice' },
+              days_visited: 1,
+              likes_given: 0,
+              likes_received: 0,
+              post_count: 0,
+              topics_entered: 1,
+              posts_read_count: 1,
+              time_read: 60
+            }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
           }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        );
       }
       if (input === 'https://linux.do/session/current.json') {
-        return new Response(JSON.stringify({
-          current_user: { username: 'alice', trust_level: 1 }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        return new Response(
+          JSON.stringify({
+            current_user: { username: 'alice', trust_level: 1 }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
+          }
+        );
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -434,36 +453,39 @@ describe('linux.do level profile', () => {
       'posts_read_count',
       'time_read'
     ]);
-    expect(requests).toEqual([
-      'https://linux.do/my/summary.json',
-      'https://linux.do/session/current.json'
-    ]);
+    expect(requests).toEqual(['https://linux.do/my/summary.json', 'https://linux.do/session/current.json']);
   });
 
   it('uses the current session username when my summary omits it', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://linux.do/my/summary.json') {
-        return new Response(JSON.stringify({
-          user_summary: {
-            trust_level: 1,
-            days_visited: 3,
-            likes_given: 0,
-            likes_received: 0,
-            post_count: 0,
-            topics_entered: 6,
-            posts_read_count: 40,
-            time_read: 800
+        return new Response(
+          JSON.stringify({
+            user_summary: {
+              trust_level: 1,
+              days_visited: 3,
+              likes_given: 0,
+              likes_received: 0,
+              post_count: 0,
+              topics_entered: 6,
+              posts_read_count: 40,
+              time_read: 800
+            }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
           }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        );
       }
       if (input === 'https://linux.do/session/current.json') {
-        return new Response(JSON.stringify({
-          current_user: { username: 'alice', trust_level: 1 }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        return new Response(
+          JSON.stringify({
+            current_user: { username: 'alice', trust_level: 1 }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
+          }
+        );
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -487,23 +509,29 @@ describe('linux.do level profile', () => {
         });
       }
       if (input === 'https://linux.do/session/current.json') {
-        return new Response(JSON.stringify({
-          current_user: { username: 'alice', trust_level: 1 }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        return new Response(
+          JSON.stringify({
+            current_user: { username: 'alice', trust_level: 1 }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
+          }
+        );
       }
       if (input === 'https://linux.do/u/alice/summary.json') {
-        return new Response(JSON.stringify({
-          user_summary: {
-            username: 'alice',
-            topics_entered: 5,
-            posts_read_count: 30,
-            time_read: 600
+        return new Response(
+          JSON.stringify({
+            user_summary: {
+              username: 'alice',
+              topics_entered: 5,
+              posts_read_count: 30,
+              time_read: 600
+            }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
           }
-        }), {
-          headers: { 'content-type': 'application/json' }
-        });
+        );
       }
       throw new Error(`unexpected ${input}`);
     });

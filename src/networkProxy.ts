@@ -61,8 +61,7 @@ function cleanPort(value: unknown) {
 }
 
 function isInvalidIpv4Literal(value: string) {
-  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)
-    && value.split('.').some((part) => Number(part) > 255);
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) && value.split('.').some((part) => Number(part) > 255);
 }
 
 function cleanProfile(value: unknown): NetworkProxyProfile | null {
@@ -251,7 +250,9 @@ export async function testNetworkProxy(profile: NetworkProxyProfile, module = ne
   }
   return {
     ...result,
-    latencyMs: Number.isFinite(result.latencyMs) ? Math.max(0, Math.round(result.latencyMs || 0)) : Math.max(0, Date.now() - startedAt)
+    latencyMs: Number.isFinite(result.latencyMs)
+      ? Math.max(0, Math.round(result.latencyMs || 0))
+      : Math.max(0, Date.now() - startedAt)
   };
 }
 

@@ -22,15 +22,18 @@ jest.mock('@gorhom/bottom-sheet', () => {
       data?: unknown[];
       keyExtractor?: (item: unknown, index: number) => string;
       renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
-    } & Record<string, unknown>) => ReactModule.createElement(
-      NativeView,
-      props,
-      ...data.map((item, index) => ReactModule.createElement(
+    } & Record<string, unknown>) =>
+      ReactModule.createElement(
         NativeView,
-        { key: keyExtractor?.(item, index) ?? index },
-        renderItem?.({ item, index })
-      ))
-    ),
+        props,
+        ...data.map((item, index) =>
+          ReactModule.createElement(
+            NativeView,
+            { key: keyExtractor?.(item, index) ?? index },
+            renderItem?.({ item, index })
+          )
+        )
+      ),
     BottomSheetTextInput: ReactModule.forwardRef(function BottomSheetTextInput(props: Record<string, unknown>, ref) {
       void ref;
       return ReactModule.createElement(TextInput, props);
@@ -147,10 +150,7 @@ describe('Reply composer local behavior', () => {
   it('labels floor replies and edits with distinct targets, placeholders and submit actions', async () => {
     submitReply.mockClear();
     const replyView = await render(
-      <ReplyHarness
-        initialContent="楼层草稿"
-        replyTarget={{ author: '@bob', commentId: 8, floor: 3 }}
-      />
+      <ReplyHarness initialContent="楼层草稿" replyTarget={{ author: '@bob', commentId: 8, floor: 3 }} />
     );
 
     expect(replyView.getByText('回复 @bob · #3')).toBeTruthy();
@@ -202,7 +202,11 @@ describe('Reply composer local behavior', () => {
     expect(linuxDoView.getByPlaceholderText('输入回复内容').props.value).toBe(':party_parrot:');
 
     await linuxDoView.rerender(
-      <ReplyHarness key="xiaoyinsi" discourseEmojiUrls={{ waving_hand: 'https://forum.xiaoyinsi.com/images/emoji/twitter/waving_hand.png?v=15' }} source="xiaoyinsi" />
+      <ReplyHarness
+        key="xiaoyinsi"
+        discourseEmojiUrls={{ waving_hand: 'https://forum.xiaoyinsi.com/images/emoji/twitter/waving_hand.png?v=15' }}
+        source="xiaoyinsi"
+      />
     );
     await fireEvent.press(linuxDoView.getByLabelText('表情'));
     await fireEvent.press(linuxDoView.getByLabelText('waving hand'));

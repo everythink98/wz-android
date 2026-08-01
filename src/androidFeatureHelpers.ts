@@ -193,10 +193,14 @@ export function stripHtml(html: string | undefined) {
 }
 
 export function filterLibraryRecords(records: TopicRecord[], filter: LibraryFilter) {
-  return records.filter((record) => (
-    (filter.source === 'all' || record.topic.source === filter.source)
-    && (filter.category === 'all' || libraryCategoryKey(record.topic.source, record.topic.categoryId || record.topic.category || '') === filter.category || record.topic.category === filter.category)
-  ));
+  return records.filter(
+    (record) =>
+      (filter.source === 'all' || record.topic.source === filter.source) &&
+      (filter.category === 'all' ||
+        libraryCategoryKey(record.topic.source, record.topic.categoryId || record.topic.category || '') ===
+          filter.category ||
+        record.topic.category === filter.category)
+  );
 }
 
 export function libraryCategoryFilterItems(categories: Category[], source: FeedSource) {
@@ -289,9 +293,7 @@ export function replyLoadMoreLimit({
   replyNextPage?: number | null;
   replyNextOffset?: number | null;
 }) {
-  return source === 'nodeseek'
-    ? nodeSeekReplyPageSize(replyNextPage, replyNextOffset)
-    : REPLY_PAGE_SIZE;
+  return source === 'nodeseek' ? nodeSeekReplyPageSize(replyNextPage, replyNextOffset) : REPLY_PAGE_SIZE;
 }
 
 export function replyCountAfterNewReplySubmit(currentReplyCount: number, loadedReplyCount: number) {
@@ -316,7 +318,7 @@ export function replyRefreshTarget({
   targetReplyIndex?: number;
 }) {
   if (!afterSubmit) {
-    const limit = source === 'nodeseek' ? (loadedReplyCount || REPLY_PAGE_SIZE) : REPLY_PAGE_SIZE;
+    const limit = source === 'nodeseek' ? loadedReplyCount || REPLY_PAGE_SIZE : REPLY_PAGE_SIZE;
     return replyRefreshResult(1, 0, limit);
   }
   const pageSize = source === 'nodeseek' ? nodeSeekReplyPageSize(replyNextPage, replyNextOffset) : REPLY_PAGE_SIZE;

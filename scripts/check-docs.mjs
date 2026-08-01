@@ -29,7 +29,10 @@ function lineNumberAt(text, index) {
 }
 
 function normalizeRepositoryPath(value) {
-  return value.replaceAll('\\', '/').replace(/^\.\//, '').replace(/[?#].*$/, '');
+  return value
+    .replaceAll('\\', '/')
+    .replace(/^\.\//, '')
+    .replace(/[?#].*$/, '');
 }
 
 function isExternalReference(value) {
@@ -121,7 +124,15 @@ export function findBrokenDocReferences(root, markdownFiles) {
         const reference = match[0].replace(/^[('"`]+|[)'"`,;:]+$/g, '');
         if (!isRepositoryPath(root, reference)) continue;
         const normalized = normalizeRepositoryPath(reference);
-        addMissingReference(errors, root, markdownFile, text, block.index + match.index, reference, path.resolve(root, normalized));
+        addMissingReference(
+          errors,
+          root,
+          markdownFile,
+          text,
+          block.index + match.index,
+          reference,
+          path.resolve(root, normalized)
+        );
       }
     }
   }
@@ -163,7 +174,10 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
   if (capabilityIds.length) {
     const capabilityFamilies = [...new Set(capabilityIds.map((id) => id.slice(0, id.lastIndexOf('-'))))];
     const capabilityFamilyPattern = capabilityFamilies.join('|');
-    const capabilityPattern = new RegExp(`(?<![A-Z/-])(${capabilityFamilyPattern})-(\\d+)((?:/(?:(?:${capabilityFamilyPattern})-)?\\d+)*)\\b`, 'g');
+    const capabilityPattern = new RegExp(
+      `(?<![A-Z/-])(${capabilityFamilyPattern})-(\\d+)((?:/(?:(?:${capabilityFamilyPattern})-)?\\d+)*)\\b`,
+      'g'
+    );
     for (const { file, text } of checkedMarkdown) {
       for (const match of text.matchAll(capabilityPattern)) {
         let family = match[1];
@@ -175,7 +189,9 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
         }
         for (const capabilityId of references) {
           if (!knownCapabilities.has(capabilityId)) {
-            errors.push(`${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的能力 ${capabilityId} 不存在`);
+            errors.push(
+              `${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的能力 ${capabilityId} 不存在`
+            );
           }
         }
       }
@@ -193,7 +209,9 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
       }
       for (const regressionId of references) {
         if (!knownRegressionIds.has(regressionId)) {
-          errors.push(`${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的回归 ${regressionId} 不存在`);
+          errors.push(
+            `${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的回归 ${regressionId} 不存在`
+          );
         }
       }
     }
@@ -206,12 +224,16 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
       for (const match of text.matchAll(npmScriptPattern)) {
         const script = packageScripts.has(match[1]) ? match[1] : match[1].replace(/[.!?;:]+$/, '');
         if (!packageScripts.has(script)) {
-          errors.push(`${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的 npm script ${script} 不存在`);
+          errors.push(
+            `${file.replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的 npm script ${script} 不存在`
+          );
         }
       }
     }
   }
-  const expectedFailureFiles = filesBelow(path.join(root, 'tests')).filter((file) => /\.test\.[cm]?[jt]sx?$/.test(file));
+  const expectedFailureFiles = filesBelow(path.join(root, 'tests')).filter((file) =>
+    /\.test\.[cm]?[jt]sx?$/.test(file)
+  );
   for (const file of expectedFailureFiles) {
     const text = readFileSync(file, 'utf8');
     for (const match of text.matchAll(/\b(?:it|test)\.failing\b/g)) {
@@ -243,7 +265,9 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
     for (const term of retiredUserFacingTerms) {
       const index = text.indexOf(term);
       if (index >= 0) {
-        errors.push(`${path.relative(root, file).replaceAll('\\', '/')}:${lineNumberAt(text, index)} 禁止旧用户可见术语：${term}`);
+        errors.push(
+          `${path.relative(root, file).replaceAll('\\', '/')}:${lineNumberAt(text, index)} 禁止旧用户可见术语：${term}`
+        );
       }
     }
   }

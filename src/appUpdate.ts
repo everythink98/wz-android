@@ -97,13 +97,15 @@ function cleanReleaseVersion(tagName: unknown) {
 function isExpectedReleaseAssetUrl(value: string, tagName: string, assetName: string) {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:'
-      && url.hostname === GITHUB_RELEASE_APK_HOST
-      && !url.username
-      && !url.password
-      && !url.search
-      && !url.hash
-      && url.pathname === `${GITHUB_RELEASE_APK_PATH_PREFIX}${tagName.trim()}/${assetName}`;
+    return (
+      url.protocol === 'https:' &&
+      url.hostname === GITHUB_RELEASE_APK_HOST &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      url.pathname === `${GITHUB_RELEASE_APK_PATH_PREFIX}${tagName.trim()}/${assetName}`
+    );
   } catch {
     return false;
   }
@@ -135,7 +137,11 @@ function formatDownloadBytes(value: number) {
   return `${Math.round(bytes)} B`;
 }
 
-export function formatAppUpdateDownloadProgress(version: string, downloadedBytes: number, totalBytes: number): AppUpdateDownloadProgress {
+export function formatAppUpdateDownloadProgress(
+  version: string,
+  downloadedBytes: number,
+  totalBytes: number
+): AppUpdateDownloadProgress {
   const downloaded = Number.isFinite(downloadedBytes) ? Math.max(0, downloadedBytes) : 0;
   const total = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
   const percent = total === null ? null : Math.min(100, Math.max(0, Math.round((downloaded / total) * 100)));
@@ -145,12 +151,15 @@ export function formatAppUpdateDownloadProgress(version: string, downloadedBytes
     totalBytes: total,
     percent,
     percentLabel: percent === null ? '' : `${percent}%`,
-    sizeLabel: total === null ? `已下载 ${formatDownloadBytes(downloaded)}` : `${formatDownloadBytes(downloaded)} / ${formatDownloadBytes(total)}`
+    sizeLabel:
+      total === null
+        ? `已下载 ${formatDownloadBytes(downloaded)}`
+        : `${formatDownloadBytes(downloaded)} / ${formatDownloadBytes(total)}`
   };
 }
 
 function releaseAssetUrl(release: GitHubRelease, tagName: string, assetName: string) {
-  const assets = Array.isArray(release.assets) ? release.assets as GitHubReleaseAsset[] : [];
+  const assets = Array.isArray(release.assets) ? (release.assets as GitHubReleaseAsset[]) : [];
   const asset = assets.find((item) => item.name === assetName);
   if (typeof asset?.browser_download_url !== 'string') {
     throw new Error(`GitHub Release 未找到 ${assetName}。`);
@@ -173,15 +182,15 @@ function parseReleaseManifest(value: unknown, version: string): ReleaseManifest 
   const sha256 = cleanSha256(manifest.sha256);
   const signerSha256 = cleanSha256(manifest.signerSha256);
   if (
-    manifest.apkName !== UPDATE_APK_NAME
-    || manifest.packageName !== CURRENT_ANDROID_PACKAGE
-    || manifest.versionName !== version
-    || typeof manifest.versionCode !== 'number'
-    || !Number.isSafeInteger(manifest.versionCode)
-    || manifest.versionCode <= CURRENT_ANDROID_VERSION_CODE
-    || !sha256
-    || !signerSha256
-    || signerSha256 !== PINNED_RELEASE_SIGNER_SHA256
+    manifest.apkName !== UPDATE_APK_NAME ||
+    manifest.packageName !== CURRENT_ANDROID_PACKAGE ||
+    manifest.versionName !== version ||
+    typeof manifest.versionCode !== 'number' ||
+    !Number.isSafeInteger(manifest.versionCode) ||
+    manifest.versionCode <= CURRENT_ANDROID_VERSION_CODE ||
+    !sha256 ||
+    !signerSha256 ||
+    signerSha256 !== PINNED_RELEASE_SIGNER_SHA256
   ) {
     throw new Error('Release manifest 内容不可信。');
   }
@@ -206,7 +215,11 @@ export function getReleaseManifestUrlFromRelease(currentVersion: string, release
   return releaseAssetUrl(release, release.tag_name, UPDATE_MANIFEST_NAME);
 }
 
-export function getAppUpdateFromRelease(currentVersion: string, release: GitHubRelease, manifestValue: unknown): AppUpdateInfo | null {
+export function getAppUpdateFromRelease(
+  currentVersion: string,
+  release: GitHubRelease,
+  manifestValue: unknown
+): AppUpdateInfo | null {
   const version = cleanReleaseVersion(release.tag_name);
   if (!version || typeof release.tag_name !== 'string') {
     throw new Error('GitHub Release 版本格式不正确。');
@@ -235,11 +248,16 @@ function normalizedInspectionSha(value: unknown) {
 function assertDownloadedApkMatchesUpdate(update: AppUpdateInfo, inspection: ApkInspection) {
   const sha256 = normalizedInspectionSha(inspection.sha256);
   const signerSha256 = normalizedInspectionSha(inspection.signerSha256);
-  const versionCode = typeof inspection.versionCode === 'number' ? inspection.versionCode : Number(inspection.versionCode);
+  const versionCode =
+    typeof inspection.versionCode === 'number' ? inspection.versionCode : Number(inspection.versionCode);
   if (inspection.packageName !== update.packageName) {
     throw new Error('APK 包名不匹配。');
   }
-  if (inspection.versionName !== update.versionName || !Number.isSafeInteger(versionCode) || versionCode !== update.versionCode) {
+  if (
+    inspection.versionName !== update.versionName ||
+    !Number.isSafeInteger(versionCode) ||
+    versionCode !== update.versionCode
+  ) {
     throw new Error('APK 版本不匹配。');
   }
   if (sha256 !== update.sha256) {
@@ -264,25 +282,33 @@ export async function installVerifiedApk(installer: ApkInstaller | undefined, ur
 }
 
 export async function checkGithubAppUpdate(fetcher: Fetcher = fetch, currentVersion = CURRENT_APP_VERSION) {
-  const response = await fetchWithTimeout(GITHUB_LATEST_RELEASE_URL, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28'
-    }
-  }, { fetcher });
+  const response = await fetchWithTimeout(
+    GITHUB_LATEST_RELEASE_URL,
+    {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    },
+    { fetcher }
+  );
   if (!response.ok) {
     throw new Error(`检查更新失败：HTTP ${response.status}`);
   }
-  const release = await response.json() as GitHubRelease;
+  const release = (await response.json()) as GitHubRelease;
   const manifestUrl = getReleaseManifestUrlFromRelease(currentVersion, release);
   if (!manifestUrl) {
     return null;
   }
-  const manifestResponse = await fetchWithTimeout(manifestUrl, {
-    headers: {
-      Accept: 'application/json'
-    }
-  }, { fetcher });
+  const manifestResponse = await fetchWithTimeout(
+    manifestUrl,
+    {
+      headers: {
+        Accept: 'application/json'
+      }
+    },
+    { fetcher }
+  );
   if (!manifestResponse.ok) {
     throw new Error(`检查更新失败：HTTP ${manifestResponse.status}`);
   }

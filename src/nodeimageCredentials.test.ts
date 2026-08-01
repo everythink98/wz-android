@@ -32,20 +32,13 @@ describe('NodeImage credential persistence', () => {
       await allowSave.promise;
       values.set(key, value);
     });
-    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => (
-      values.get(key) || null
-    ));
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       values.delete(key);
     });
 
     const generation = beginNodeImageApiKeyAuthorization();
-    const saving = saveNodeImageApiKeyForGeneration(
-      generation,
-      'late-key',
-      'nodeseek:alice',
-      'nodeseek:alice'
-    );
+    const saving = saveNodeImageApiKeyForGeneration(generation, 'late-key', 'nodeseek:alice', 'nodeseek:alice');
     await saveStarted.promise;
     const clearing = clearNodeImageApiKey();
     allowSave.resolve();
@@ -67,9 +60,7 @@ describe('NodeImage credential persistence', () => {
       }
       values.set(key, value);
     });
-    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => (
-      values.get(key) || null
-    ));
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       values.delete(key);
     });
@@ -95,17 +86,12 @@ describe('NodeImage credential persistence', () => {
       ownership: { kind: 'verified', identityKey: 'nodeseek:bob' },
       version: 1
     });
-    const values = new Map<string, string>([[
-      NODEIMAGE_API_KEY_STORAGE_KEY,
-      previousCredential
-    ]]);
+    const values = new Map<string, string>([[NODEIMAGE_API_KEY_STORAGE_KEY, previousCredential]]);
     const authSaveStarted = Promise.withResolvers<void>();
     const allowAuthSave = Promise.withResolvers<void>();
     let authorizationCurrent = true;
     let writeCount = 0;
-    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => (
-      values.get(key) || null
-    ));
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
     vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
       writeCount += 1;
       if (writeCount === 1) {
@@ -155,12 +141,7 @@ describe('NodeImage credential persistence', () => {
     const loading = loadNodeImageApiKey();
     await firstReadStarted.promise;
     const generation = beginNodeImageApiKeyAuthorization();
-    const saving = saveNodeImageApiKeyForGeneration(
-      generation,
-      'new-key',
-      'nodeseek:alice',
-      'nodeseek:alice'
-    );
+    const saving = saveNodeImageApiKeyForGeneration(generation, 'new-key', 'nodeseek:alice', 'nodeseek:alice');
     await saving;
     allowFirstRead.resolve();
 
@@ -189,12 +170,7 @@ describe('NodeImage credential persistence', () => {
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) || null);
     const generation = beginNodeImageApiKeyAuthorization();
 
-    await saveNodeImageApiKeyForGeneration(
-      generation,
-      'owned-key',
-      'nodeseek:alice',
-      'nodeseek:alice'
-    );
+    await saveNodeImageApiKeyForGeneration(generation, 'owned-key', 'nodeseek:alice', 'nodeseek:alice');
     const credential = await loadNodeImageApiKeyCredential();
 
     expect(nodeImageApiKeyUseStatus(credential, 'nodeseek:alice')).toBe('usable');
@@ -211,12 +187,9 @@ describe('NodeImage credential persistence', () => {
     async (authorizationOwner, settledOwner) => {
       const generation = beginNodeImageApiKeyAuthorization();
 
-      await expect(saveNodeImageApiKeyForGeneration(
-        generation,
-        'must-not-be-written',
-        authorizationOwner,
-        settledOwner
-      )).resolves.toBeUndefined();
+      await expect(
+        saveNodeImageApiKeyForGeneration(generation, 'must-not-be-written', authorizationOwner, settledOwner)
+      ).resolves.toBeUndefined();
 
       expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
       expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();

@@ -44,10 +44,7 @@ describe('source capability catalog', () => {
   });
 
   it('[REG-SOURCE-008] derives managed sessions from their own catalog capability', () => {
-    expect(Object.fromEntries(sourceValues.map((source) => [
-      source,
-      sourceCatalog[source].managedSession
-    ]))).toEqual({
+    expect(Object.fromEntries(sourceValues.map((source) => [source, sourceCatalog[source].managedSession]))).toEqual({
       linuxdo: true,
       nodeseek: true,
       v2ex: false,

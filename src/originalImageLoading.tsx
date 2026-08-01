@@ -32,13 +32,7 @@ function promoteDisplayRevision(identity: string) {
   return revision;
 }
 
-export function OriginalImageUpgradeBoundary({
-  children,
-  enabled
-}: {
-  children: ReactNode;
-  enabled: boolean;
-}) {
+export function OriginalImageUpgradeBoundary({ children, enabled }: { children: ReactNode; enabled: boolean }) {
   const parentEnabled = useContext(OriginalImageUpgradeContext);
   return (
     <OriginalImageUpgradeContext.Provider value={parentEnabled && enabled}>
@@ -72,10 +66,7 @@ export function originalImageDisplayRevision(source: ImageURISource | null) {
   return identity ? displayRevisions.get(identity) || 0 : 0;
 }
 
-export function subscribeOriginalImageDisplay(
-  source: ImageURISource | null,
-  listener: () => void
-) {
+export function subscribeOriginalImageDisplay(source: ImageURISource | null, listener: () => void) {
   const identity = originalImageDisplayIdentity(source);
   if (!identity) {
     return () => {};

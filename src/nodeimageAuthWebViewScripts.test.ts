@@ -17,12 +17,18 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
 
   it('REG-ACCOUNT-040 retries only the ready handshake and still calls cAuth once', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      success: true,
-      data: 'auth-data',
-      wtf: 'auth-wtf',
-      sign: 'auth-sign'
-    }), { status: 200 })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: 'auth-data',
+            wtf: 'auth-wtf',
+            sign: 'auth-sign'
+          }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
     const postMessage = vi.fn();
     Object.defineProperty(window, 'ReactNativeWebView', {
       configurable: true,
@@ -78,12 +84,14 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
 
     window.history.pushState(null, '', '/connect?target=Other');
     await vi.advanceTimersByTimeAsync(1_000);
-    window.dispatchEvent(new MessageEvent('message', {
-      data: JSON.stringify({
-        type: 'nodeimage-connect-start',
-        nonce: NAVIGATION_NONCE
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'nodeimage-connect-start',
+          nonce: NAVIGATION_NONCE
+        })
       })
-    }));
+    );
     await vi.advanceTimersByTimeAsync(0);
 
     expect(postMessage).toHaveBeenCalledTimes(1);
@@ -91,12 +99,18 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
   });
 
   it('requests official NodeSeek auth data only after the native one-shot grant', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      success: true,
-      data: 'auth-data',
-      wtf: 'auth-wtf',
-      sign: 'auth-sign'
-    }), { status: 200 })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: 'auth-data',
+            wtf: 'auth-wtf',
+            sign: 'auth-sign'
+          }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
     const postMessage = vi.fn();
     Object.defineProperty(window, 'ReactNativeWebView', {
       configurable: true,
@@ -114,27 +128,34 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    window.dispatchEvent(new MessageEvent('message', {
-      data: JSON.stringify({
-        type: 'nodeimage-connect-start',
-        nonce: 'ffeeddccbbaa99887766554433221100'
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'nodeimage-connect-start',
+          nonce: 'ffeeddccbbaa99887766554433221100'
+        })
       })
-    }));
+    );
     await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();
 
-    window.dispatchEvent(new MessageEvent('message', {
-      data: JSON.stringify({
-        type: 'nodeimage-connect-start',
-        nonce: AUTH_NONCE
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'nodeimage-connect-start',
+          nonce: AUTH_NONCE
+        })
       })
-    }));
+    );
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(2));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith('/api/cAuth?target=NodeImage', expect.objectContaining({
-      credentials: 'include'
-    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/cAuth?target=NodeImage',
+      expect.objectContaining({
+        credentials: 'include'
+      })
+    );
     expect(JSON.parse(postMessage.mock.calls[1]?.[0] || '{}')).toEqual({
       documentUrl: 'https://www.nodeseek.com/connect?target=NodeImage',
       type: 'nodeimage-auth-data',
@@ -164,10 +185,16 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
 
   it('keeps phase state lexical and never writes browser storage', async () => {
     window.history.pushState(null, '', '/connect?target=NodeImage');
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      success: false,
-      message: 'denied'
-    }), { status: 403 })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            success: false,
+            message: 'denied'
+          }),
+          { status: 403 }
+        )
+    ) as unknown as typeof fetch;
     const postMessage = vi.fn();
     const localStorageWrite = vi.spyOn(Storage.prototype, 'setItem');
     Object.defineProperty(window, 'ReactNativeWebView', {

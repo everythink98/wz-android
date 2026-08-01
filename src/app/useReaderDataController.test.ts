@@ -1,14 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  createEmptyReaderData,
-  recordHistory,
-  toggleFavorite,
-  topicKey,
-  updateFavoriteTopic
-} from '../readerData';
+import { createEmptyReaderData, recordHistory, toggleFavorite, topicKey, updateFavoriteTopic } from '../readerData';
 import { setDiagnosticWriter } from '../diagnostics';
 import type { Topic } from '../types';
-import { loadInitialReaderData, prepareReaderDataCommit, rollbackFailedReaderDataSave } from './useReaderDataController';
+import {
+  loadInitialReaderData,
+  prepareReaderDataCommit,
+  rollbackFailedReaderDataSave
+} from './useReaderDataController';
 
 const topic: Topic = {
   source: 'nodeseek',

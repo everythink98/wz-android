@@ -96,8 +96,12 @@ export function safeNodeSeekTopicUrl(id: string, rawUrl?: unknown) {
   }
 }
 
-export function nodeSeekAccessRequirementFromListRow(row: HTMLElement, title: string): Topic['accessRequirement'] | undefined {
-  const direct = row.querySelectorAll('*')
+export function nodeSeekAccessRequirementFromListRow(
+  row: HTMLElement,
+  title: string
+): Topic['accessRequirement'] | undefined {
+  const direct = row
+    .querySelectorAll('*')
     .map((node) => elementText(node).replace(title, ' ').trim())
     .filter((text) => text && text !== '内版')
     .map((text) => accessRequirementFromText(text))
@@ -107,7 +111,9 @@ export function nodeSeekAccessRequirementFromListRow(row: HTMLElement, title: st
 
 function embeddedCandidates(html: string) {
   const scriptContents = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
-  const dataAttributes = [...html.matchAll(/\sdata-[\w:-]+=["']([^"']*eyJ[A-Za-z0-9+/=]{40,}[^"']*)["']/g)].map((match) => match[1]);
+  const dataAttributes = [...html.matchAll(/\sdata-[\w:-]+=["']([^"']*eyJ[A-Za-z0-9+/=]{40,}[^"']*)["']/g)].map(
+    (match) => match[1]
+  );
   return [...scriptContents, ...dataAttributes].flatMap((content) => content.match(/eyJ[A-Za-z0-9+/=]{40,}/g) || []);
 }
 
@@ -115,17 +121,18 @@ export function extractNodeSeekEmbeddedData(html: string) {
   for (const candidate of embeddedCandidates(html)) {
     try {
       const parsed = JSON.parse(Buffer.from(candidate, 'base64').toString('utf8'));
-      if (isRecord(parsed) && (
-        parsed.user
-        || parsed.currentUser
-        || parsed.current_user
-        || parsed.account
-        || parsed.postData
-        || parsed.rotateTopics
-        || parsed.topicList
-        || parsed.allCategory
-        || parsed.posts
-      )) {
+      if (
+        isRecord(parsed) &&
+        (parsed.user ||
+          parsed.currentUser ||
+          parsed.current_user ||
+          parsed.account ||
+          parsed.postData ||
+          parsed.rotateTopics ||
+          parsed.topicList ||
+          parsed.allCategory ||
+          parsed.posts)
+      ) {
         return parsed;
       }
     } catch {
@@ -144,19 +151,25 @@ function hasReadableNodeSeekListItem(root: ReturnType<typeof parseHtml>) {
 }
 
 function hasReadableNodeSeekTopic(root: ReturnType<typeof parseHtml>) {
-  const contentElement = root.querySelector('.content-item .post-content, .content-item .content, article .post-content, .post-detail .post-content, .post-content');
+  const contentElement = root.querySelector(
+    '.content-item .post-content, .content-item .content, article .post-content, .post-detail .post-content, .post-content'
+  );
   if (!contentElement || !(elementText(contentElement) || contentElement.querySelector('img, video, pre, code'))) {
     return false;
   }
-  const title = elementText(root.querySelector('.post-title a, a.post-title, article .post-title, .post-detail .post-title, .post-title, h1'))
-    || String(root.querySelector('meta[property="og:title"]')?.getAttribute('content') || '').trim()
-    || String(root.querySelector('meta[name="twitter:title"]')?.getAttribute('content') || '').trim()
-    || elementText(root.querySelector('title'));
+  const title =
+    elementText(
+      root.querySelector('.post-title a, a.post-title, article .post-title, .post-detail .post-title, .post-title, h1')
+    ) ||
+    String(root.querySelector('meta[property="og:title"]')?.getAttribute('content') || '').trim() ||
+    String(root.querySelector('meta[name="twitter:title"]')?.getAttribute('content') || '').trim() ||
+    elementText(root.querySelector('title'));
   return Boolean(title && title !== 'NodeSeek');
 }
 
 function hasNodeSeekAccessNotice(root: ReturnType<typeof parseHtml>) {
-  return root.querySelectorAll('.restricted-post, .post-restricted, .empty-state, .notice, .alert')
+  return root
+    .querySelectorAll('.restricted-post, .post-restricted, .empty-state, .notice, .alert')
     .some((node) => Boolean(accessRequirementFromText(elementText(node))));
 }
 
@@ -169,24 +182,36 @@ function hasNodeSeekSearchResultSurface(root: ReturnType<typeof parseHtml>, url?
     return false;
   }
   return Boolean(
-    root.querySelector('form[action*="/search"], input[name="q"]')
-    && root.querySelector('li.post-list-item, .post-list, .empty-state, .notice, .alert')
+    root.querySelector('form[action*="/search"], input[name="q"]') &&
+    root.querySelector('li.post-list-item, .post-list, .empty-state, .notice, .alert')
   );
 }
 
 export function hasReadableNodeSeekHtml(html: string, url?: string) {
   const embedded = extractNodeSeekEmbeddedData(html);
-  if (embedded && (isRecord(embedded.postData) || [embedded.rotateTopics, embedded.topicList, embedded.posts].some((value) => Array.isArray(value) && value.length > 0))) {
+  if (
+    embedded &&
+    (isRecord(embedded.postData) ||
+      [embedded.rotateTopics, embedded.topicList, embedded.posts].some(
+        (value) => Array.isArray(value) && value.length > 0
+      ))
+  ) {
     return true;
   }
   const root = parseHtml(html);
-  return hasReadableNodeSeekListItem(root)
-    || hasReadableNodeSeekTopic(root)
-    || hasNodeSeekAccessNotice(root)
-    || hasNodeSeekSearchResultSurface(root, url);
+  return (
+    hasReadableNodeSeekListItem(root) ||
+    hasReadableNodeSeekTopic(root) ||
+    hasNodeSeekAccessNotice(root) ||
+    hasNodeSeekSearchResultSurface(root, url)
+  );
 }
 
-export function isNodeSeekChallengeResponse(response: Pick<Response, 'status' | 'headers'>, html: string, url?: string) {
+export function isNodeSeekChallengeResponse(
+  response: Pick<Response, 'status' | 'headers'>,
+  html: string,
+  url?: string
+) {
   if (/challenge/i.test(response.headers.get('cf-mitigated') || '')) {
     return true;
   }

@@ -4,12 +4,14 @@ import { buildXiaoyinsiActionRequest } from './xiaoyinsiActions';
 
 describe('小隐寺 Discourse action extensions', () => {
   it('[REG-XIAOYINSI-003] removes a topic bookmark without a bookmark id', () => {
-    expect(buildXiaoyinsiActionRequest({
-      type: 'set-bookmark',
-      targetId: 42,
-      targetType: 'Topic',
-      active: false
-    })).toEqual({
+    expect(
+      buildXiaoyinsiActionRequest({
+        type: 'set-bookmark',
+        targetId: 42,
+        targetType: 'Topic',
+        active: false
+      })
+    ).toEqual({
       path: '/t/42/remove_bookmarks',
       method: 'PUT',
       headers: {},

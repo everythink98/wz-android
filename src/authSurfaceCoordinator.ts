@@ -1,10 +1,6 @@
 import type { SessionSite } from './siteSessionState';
 
-export type AuthSurface =
-  | 'linuxdo-login'
-  | 'nodeimage-auth'
-  | 'nodeseek-login'
-  | 'yaohuo-login';
+export type AuthSurface = 'linuxdo-login' | 'nodeimage-auth' | 'nodeseek-login' | 'yaohuo-login';
 
 export type AuthSurfaceCloseReason =
   | 'authoritative-recovery'
@@ -33,26 +29,15 @@ export type AuthSurfaceRegistry = {
   active: Partial<Record<AuthSurface, AuthSurfaceTicket>>;
 };
 
-export type AuthSurfaceCloseHandlers = Record<
-  AuthSurface,
-  (reason: AuthSurfaceCloseReason) => void
->;
+export type AuthSurfaceCloseHandlers = Record<AuthSurface, (reason: AuthSurfaceCloseReason) => void>;
 
-const AUTH_SURFACES: readonly AuthSurface[] = [
-  'linuxdo-login',
-  'nodeimage-auth',
-  'nodeseek-login',
-  'yaohuo-login'
-];
+const AUTH_SURFACES: readonly AuthSurface[] = ['linuxdo-login', 'nodeimage-auth', 'nodeseek-login', 'yaohuo-login'];
 
 export function createAuthSurfaceRegistry(): AuthSurfaceRegistry {
   return { generation: 0, active: {} };
 }
 
-export function closeOtherAuthSurfaces(
-  openingSurface: AuthSurface,
-  handlers: AuthSurfaceCloseHandlers
-) {
+export function closeOtherAuthSurfaces(openingSurface: AuthSurface, handlers: AuthSurfaceCloseHandlers) {
   for (const surface of AUTH_SURFACES) {
     if (surface !== openingSurface) {
       handlers[surface]('switch-surface');
@@ -60,10 +45,7 @@ export function closeOtherAuthSurfaces(
   }
 }
 
-export function beginAuthSurface(
-  registry: AuthSurfaceRegistry,
-  input: Omit<AuthSurfaceTicket, 'generation'>
-) {
+export function beginAuthSurface(registry: AuthSurfaceRegistry, input: Omit<AuthSurfaceTicket, 'generation'>) {
   const active = registry.active[input.surface];
   if (active) {
     return active;
@@ -94,9 +76,6 @@ export function finishAuthSurface(
   };
 }
 
-export function hasOpenAuthSurfaceForSource(
-  registry: AuthSurfaceRegistry,
-  source: SessionSite
-) {
+export function hasOpenAuthSurfaceForSource(registry: AuthSurfaceRegistry, source: SessionSite) {
   return Object.values(registry.active).some((ticket) => ticket?.source === source);
 }

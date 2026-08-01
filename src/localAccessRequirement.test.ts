@@ -22,11 +22,13 @@ function json(value: unknown) {
 
 describe('Android local access requirement detection', () => {
   it('does not treat ordinary linux.do notification level fields as access requirements', () => {
-    expect(accessRequirementFromObject({
-      id: 1,
-      name: '公开分类',
-      notification_level: 1
-    })).toBeUndefined();
+    expect(
+      accessRequirementFromObject({
+        id: 1,
+        name: '公开分类',
+        notification_level: 1
+      })
+    ).toBeUndefined();
   });
 
   it('keeps explicit access requirement text detection', () => {
@@ -78,7 +80,9 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps the real level in long access requirement text', () => {
-    const requirement = accessRequirementFromText(`${'普通摘要文字'.repeat(16)} 查看本帖需要等级达到 6 级后查看，您的权限不足`);
+    const requirement = accessRequirementFromText(
+      `${'普通摘要文字'.repeat(16)} 查看本帖需要等级达到 6 级后查看，您的权限不足`
+    );
 
     expect(requirement).toMatchObject({
       type: 'level',
@@ -92,13 +96,15 @@ describe('Android local access requirement detection', () => {
       type: 'login',
       label: '需登录'
     });
-    expect(accessRequirementFromObject({
-      accessRequirement: {
-        type: 'permission',
-        label: '需权限',
-        detail: '查看本帖需要Lv5，您的权限不足'
-      }
-    })).toEqual({
+    expect(
+      accessRequirementFromObject({
+        accessRequirement: {
+          type: 'permission',
+          label: '需权限',
+          detail: '查看本帖需要Lv5，您的权限不足'
+        }
+      })
+    ).toEqual({
       type: 'level',
       label: '需等级',
       detail: '查看本帖需要Lv5，您的权限不足'
@@ -108,14 +114,16 @@ describe('Android local access requirement detection', () => {
       label: '需等级',
       detail: 'Lv5'
     });
-    expect(accessRequirementFromObject({
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv5'
-      },
-      requiredLevel: 2
-    })).toEqual({
+    expect(
+      accessRequirementFromObject({
+        accessRequirement: {
+          type: 'level',
+          label: '需等级',
+          detail: 'Lv5'
+        },
+        requiredLevel: 2
+      })
+    ).toEqual({
       type: 'level',
       label: '需等级',
       detail: 'Lv5'
@@ -145,28 +153,34 @@ describe('Android local access requirement detection', () => {
   });
 
   it('does not mark readable linux.do feed topics as requiring a level', async () => {
-    const fetcher = vi.fn(async () => json({
-      categories: [{
-        id: 12,
-        name: '开发调优',
-        notification_level: 1
-      }],
-      topic_list: {
-        topics: [{
-          id: 123,
-          title: '公开可读主题',
-          slug: 'public-topic',
-          category_id: 12,
-          created_at: '2026-05-22T00:00:00.000Z',
-          bumped_at: '2026-05-22T01:00:00.000Z',
-          posts_count: 2,
-          views: 10,
-          notification_level: 1,
-          last_poster_username: 'alice'
-        }]
-      },
-      users: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        categories: [
+          {
+            id: 12,
+            name: '开发调优',
+            notification_level: 1
+          }
+        ],
+        topic_list: {
+          topics: [
+            {
+              id: 123,
+              title: '公开可读主题',
+              slug: 'public-topic',
+              category_id: 12,
+              created_at: '2026-05-22T00:00:00.000Z',
+              bumped_at: '2026-05-22T01:00:00.000Z',
+              posts_count: 2,
+              views: 10,
+              notification_level: 1,
+              last_poster_username: 'alice'
+            }
+          ]
+        },
+        users: []
+      })
+    );
 
     const feed = await getLinuxDoFeed({ fetcher, limit: 1 });
 
@@ -175,27 +189,33 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps linux.do category access requirements on list topics', async () => {
-    const fetcher = vi.fn(async () => json({
-      categories: [{
-        id: 12,
-        name: 'Lv2 分类',
-        required_trust_level: 2
-      }],
-      topic_list: {
-        topics: [{
-          id: 123,
-          title: 'linux.do 限制主题',
-          slug: 'restricted-topic',
-          category_id: 12,
-          created_at: '2026-05-22T00:00:00.000Z',
-          bumped_at: '2026-05-22T01:00:00.000Z',
-          posts_count: 2,
-          views: 10,
-          last_poster_username: 'alice'
-        }]
-      },
-      users: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        categories: [
+          {
+            id: 12,
+            name: 'Lv2 分类',
+            required_trust_level: 2
+          }
+        ],
+        topic_list: {
+          topics: [
+            {
+              id: 123,
+              title: 'linux.do 限制主题',
+              slug: 'restricted-topic',
+              category_id: 12,
+              created_at: '2026-05-22T00:00:00.000Z',
+              bumped_at: '2026-05-22T01:00:00.000Z',
+              posts_count: 2,
+              views: 10,
+              last_poster_username: 'alice'
+            }
+          ]
+        },
+        users: []
+      })
+    );
 
     const feed = await getLinuxDoFeed({ fetcher, limit: 1 });
 
@@ -207,27 +227,33 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps real linux.do category trust levels above Lv2 on list topics', async () => {
-    const fetcher = vi.fn(async () => json({
-      categories: [{
-        id: 12,
-        name: 'Lv4 分类',
-        required_trust_level: 4
-      }],
-      topic_list: {
-        topics: [{
-          id: 123,
-          title: 'linux.do 四级主题',
-          slug: 'level-four-topic',
-          category_id: 12,
-          created_at: '2026-05-22T00:00:00.000Z',
-          bumped_at: '2026-05-22T01:00:00.000Z',
-          posts_count: 2,
-          views: 10,
-          last_poster_username: 'alice'
-        }]
-      },
-      users: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        categories: [
+          {
+            id: 12,
+            name: 'Lv4 分类',
+            required_trust_level: 4
+          }
+        ],
+        topic_list: {
+          topics: [
+            {
+              id: 123,
+              title: 'linux.do 四级主题',
+              slug: 'level-four-topic',
+              category_id: 12,
+              created_at: '2026-05-22T00:00:00.000Z',
+              bumped_at: '2026-05-22T01:00:00.000Z',
+              posts_count: 2,
+              views: 10,
+              last_poster_username: 'alice'
+            }
+          ]
+        },
+        users: []
+      })
+    );
 
     const feed = await getLinuxDoFeed({ fetcher, limit: 1 });
 
@@ -239,28 +265,34 @@ describe('Android local access requirement detection', () => {
   });
 
   it('uses linux.do category levels when a topic only has a generic restricted marker', async () => {
-    const fetcher = vi.fn(async () => json({
-      categories: [{
-        id: 12,
-        name: 'Lv4 分类',
-        required_trust_level: 4
-      }],
-      topic_list: {
-        topics: [{
-          id: 123,
-          title: 'linux.do 四级主题',
-          slug: 'level-four-topic',
-          category_id: 12,
-          read_restricted: true,
-          created_at: '2026-05-22T00:00:00.000Z',
-          bumped_at: '2026-05-22T01:00:00.000Z',
-          posts_count: 2,
-          views: 10,
-          last_poster_username: 'alice'
-        }]
-      },
-      users: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        categories: [
+          {
+            id: 12,
+            name: 'Lv4 分类',
+            required_trust_level: 4
+          }
+        ],
+        topic_list: {
+          topics: [
+            {
+              id: 123,
+              title: 'linux.do 四级主题',
+              slug: 'level-four-topic',
+              category_id: 12,
+              read_restricted: true,
+              created_at: '2026-05-22T00:00:00.000Z',
+              bumped_at: '2026-05-22T01:00:00.000Z',
+              posts_count: 2,
+              views: 10,
+              last_poster_username: 'alice'
+            }
+          ]
+        },
+        users: []
+      })
+    );
 
     const feed = await getLinuxDoFeed({ fetcher, limit: 1 });
 
@@ -272,38 +304,45 @@ describe('Android local access requirement detection', () => {
   });
 
   it('does not mark readable linux.do topic detail as requiring a level', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 123,
-      title: '公开可读主题',
-      slug: 'public-topic',
-      category_id: 12,
-      created_at: '2026-05-22T00:00:00.000Z',
-      bumped_at: '2026-05-22T01:00:00.000Z',
-      posts_count: 2,
-      views: 10,
-      notification_level: 1,
-      categories: [{
-        id: 12,
-        name: '开发调优',
-        notification_level: 1
-      }],
-      post_stream: {
-        stream: [1, 2],
-        posts: [{
-          id: 1,
-          username: 'alice',
-          cooked: '<p>正文</p>',
-          created_at: '2026-05-22T00:00:00.000Z',
-          post_number: 1
-        }, {
-          id: 2,
-          username: 'bob',
-          cooked: '<p>回复</p>',
-          created_at: '2026-05-22T00:01:00.000Z',
-          post_number: 2
-        }]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 123,
+        title: '公开可读主题',
+        slug: 'public-topic',
+        category_id: 12,
+        created_at: '2026-05-22T00:00:00.000Z',
+        bumped_at: '2026-05-22T01:00:00.000Z',
+        posts_count: 2,
+        views: 10,
+        notification_level: 1,
+        categories: [
+          {
+            id: 12,
+            name: '开发调优',
+            notification_level: 1
+          }
+        ],
+        post_stream: {
+          stream: [1, 2],
+          posts: [
+            {
+              id: 1,
+              username: 'alice',
+              cooked: '<p>正文</p>',
+              created_at: '2026-05-22T00:00:00.000Z',
+              post_number: 1
+            },
+            {
+              id: 2,
+              username: 'bob',
+              cooked: '<p>回复</p>',
+              created_at: '2026-05-22T00:01:00.000Z',
+              post_number: 2
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getLinuxDoTopic('123', { fetcher });
 
@@ -312,12 +351,18 @@ describe('Android local access requirement detection', () => {
   });
 
   it('turns linux.do permission errors into restricted topic details', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      errors: ['You are not permitted to view this topic.']
-    }), {
-      status: 403,
-      headers: { 'content-type': 'application/json' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            errors: ['You are not permitted to view this topic.']
+          }),
+          {
+            status: 403,
+            headers: { 'content-type': 'application/json' }
+          }
+        )
+    );
 
     const topic = await getLinuxDoTopic('123', { fetcher });
 
@@ -335,13 +380,19 @@ describe('Android local access requirement detection', () => {
   });
 
   it('uses linux.do error text levels over generic permission fields', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      accessRequirement: 'permission',
-      errors: ['Requires level 5 to view']
-    }), {
-      status: 403,
-      headers: { 'content-type': 'application/json' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            accessRequirement: 'permission',
+            errors: ['Requires level 5 to view']
+          }),
+          {
+            status: 403,
+            headers: { 'content-type': 'application/json' }
+          }
+        )
+    );
 
     const topic = await getLinuxDoTopic('123', { fetcher });
 
@@ -359,22 +410,29 @@ describe('Android local access requirement detection', () => {
   });
 
   it('does not mark readable NodeSeek body text as an access requirement', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 101,
-        title: '登录教程',
-        op: { name: 'alice' },
-        comments: [{
-          commentId: 1,
-          poster: { name: 'alice' },
-          markdown: '这篇公开内容说明需要登录后才能同步某个外部服务。',
-          time: { createdDate: '2026-05-22T00:00:00.000Z' }
-        }]
-      }
-    })).toString('base64');
-    const fetcher = vi.fn(async () => new Response(`<script>${payload}</script>`, {
-      headers: { 'content-type': 'text/html' }
-    }));
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 101,
+          title: '登录教程',
+          op: { name: 'alice' },
+          comments: [
+            {
+              commentId: 1,
+              poster: { name: 'alice' },
+              markdown: '这篇公开内容说明需要登录后才能同步某个外部服务。',
+              time: { createdDate: '2026-05-22T00:00:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(
+      async () =>
+        new Response(`<script>${payload}</script>`, {
+          headers: { 'content-type': 'text/html' }
+        })
+    );
 
     const topic = await getNodeSeekTopic('101', { fetcher });
 
@@ -383,22 +441,28 @@ describe('Android local access requirement detection', () => {
   });
 
   it('does not mark readable yaohuo body text as an access requirement', () => {
-    const topic = parseYaohuoTopicHtml(`
+    const topic = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 登录教程 (阅1) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx">alice</a></div>
       <div class="bbscontent"><!--listS--><p>公开说明：需要登录后才能使用另一个网站。</p><!--listE--></div>
-    `, { id: '1', url: 'https://yaohuo.me/bbs-1.html' });
+    `,
+      { id: '1', url: 'https://yaohuo.me/bbs-1.html' }
+    );
 
     expect(topic.contentHtml).toContain('登录');
     expect(topic.accessRequirement).toBeUndefined();
   });
 
   it('keeps access requirement text from yaohuo topic details', () => {
-    const topic = parseYaohuoTopicHtml(`
+    const topic = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 妖火限制主题 (阅1) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx">alice</a></div>
       <div class="bbscontent"><!--listS--><p>该内容需要等级达到 6 级后查看</p><!--listE--></div>
-    `, { id: '2', url: 'https://yaohuo.me/bbs-2.html' });
+    `,
+      { id: '2', url: 'https://yaohuo.me/bbs-2.html' }
+    );
 
     expect(topic.accessRequirement).toMatchObject({
       type: 'level',
@@ -407,11 +471,14 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps yaohuo login requirement text without marking login tutorials', () => {
-    const topic = parseYaohuoTopicHtml(`
+    const topic = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 妖火登录限制主题 (阅1) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx">alice</a></div>
       <div class="bbscontent"><!--listS--><p>未登录用户无法查看该内容</p><!--listE--></div>
-    `, { id: '3', url: 'https://yaohuo.me/bbs-3.html' });
+    `,
+      { id: '3', url: 'https://yaohuo.me/bbs-3.html' }
+    );
 
     expect(topic.accessRequirement).toMatchObject({
       type: 'login',
@@ -420,12 +487,15 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps access requirement text from compact yaohuo list rows', () => {
-    const feed = parseYaohuoListHtml(`
+    const feed = parseYaohuoListHtml(
+      `
       <div class="list">
         <a href="/bbs-1539321.html">妖火限制主题</a>
         <span>需要等级 6 级后查看</span>
       </div>
-    `, { classId: '201' });
+    `,
+      { classId: '201' }
+    );
 
     expect(feed.items[0].accessRequirement).toMatchObject({
       type: 'level',
@@ -434,13 +504,16 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps real yaohuo list levels without using reply or view counts', () => {
-    const feed = parseYaohuoListHtml(`
+    const feed = parseYaohuoListHtml(
+      `
       <div class="listdata">
         <a href="/bbs-1539321.html">妖火限制主题</a>
         / alice / <a href="/bbs/book_re.aspx?id=1539321&classid=201">4</a>/阅102
         <span>查看本帖需要等级达到 6 级后查看</span>
       </div>
-    `, { classId: '201' });
+    `,
+      { classId: '201' }
+    );
 
     expect(feed.items[0].replyCount).toBe(4);
     expect(feed.items[0].viewCount).toBe(102);
@@ -452,12 +525,15 @@ describe('Android local access requirement detection', () => {
   });
 
   it('does not copy one compact yaohuo row access requirement to sibling topics', () => {
-    const feed = parseYaohuoListHtml(`
+    const feed = parseYaohuoListHtml(
+      `
       <div class="list">
         <div><a href="/bbs-1539321.html">妖火公开主题</a></div>
         <div><a href="/bbs-1539322.html">妖火限制主题</a><span>需要等级 6 级后查看</span></div>
       </div>
-    `, { classId: '201' });
+    `,
+      { classId: '201' }
+    );
 
     expect(feed.items[0].accessRequirement).toBeUndefined();
     expect(feed.items[1].accessRequirement).toMatchObject({
@@ -467,11 +543,14 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps yaohuo detail access requirements outside the main content block', () => {
-    const topic = parseYaohuoTopicHtml(`
+    const topic = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 妖火外层限制主题 (阅1) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx">alice</a></div>
       <div class="notice">当前用户组不可查看该主题</div>
-    `, { id: '4', url: 'https://yaohuo.me/bbs-4.html' });
+    `,
+      { id: '4', url: 'https://yaohuo.me/bbs-4.html' }
+    );
 
     expect(topic.accessRequirement).toMatchObject({
       type: 'permission',
@@ -480,12 +559,18 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps access requirement text from NodeSeek HTML list fallback rows', async () => {
-    const fetcher = vi.fn(async () => new Response(`
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          `
       <div>
         <a href="/post-102-1">受限主题</a>
         <span>需要登录后查看</span>
       </div>
-    `, { headers: { 'content-type': 'text/html' } }));
+    `,
+          { headers: { 'content-type': 'text/html' } }
+        )
+    );
 
     const feed = await getNodeSeekFeed({ fetcher });
 
@@ -496,7 +581,10 @@ describe('Android local access requirement detection', () => {
   });
 
   it('turns the real private NodeSeek rendered page into restricted topic details', async () => {
-    const fetcher = vi.fn(async () => new Response(`
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          `
       <section id="nsk-frame">
         <div id="nsk-body" class="nsk-container">
           <div id="nsk-body-left">
@@ -504,7 +592,10 @@ describe('Android local access requirement detection', () => {
           </div>
         </div>
       </section>
-    `, { status: 404, headers: { 'content-type': 'text/html' } }));
+    `,
+          { status: 404, headers: { 'content-type': 'text/html' } }
+        )
+    );
 
     const topic = await getNodeSeekTopic('777282', { fetcher });
 
@@ -522,14 +613,20 @@ describe('Android local access requirement detection', () => {
   });
 
   it('does not infer NodeSeek view requirements from inside-category HTML list rows', async () => {
-    const fetcher = vi.fn(async () => new Response(`
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          `
       <ul class="post-list">
         <li class="post-list-item">
           <a class="post-title" href="/post-7202-1">新版块“内版”，以及试行版规</a>
           <a href="/categories/inside">内版</a>
         </li>
       </ul>
-    `, { headers: { 'content-type': 'text/html' } }));
+    `,
+          { headers: { 'content-type': 'text/html' } }
+        )
+    );
 
     const feed = await getNodeSeekFeed({ fetcher, category: 'inside' });
 
@@ -542,21 +639,26 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps NodeSeek list read-level requirements from embedded homepage data', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      topicList: [
-        {
-          postId: 760813,
-          title: '求新闻类app分流域名合集',
-          readLevel: 2,
-          op: { name: '江shan-123', userId: 13510 },
-          category: { key: 'inside', name: '内版' },
-          time: { createdDate: '2026-06-04T06:58:05Z' }
-        }
-      ]
-    })).toString('base64');
-    const fetcher = vi.fn(async () => new Response(`<script>${payload}</script>`, {
-      headers: { 'content-type': 'text/html' }
-    }));
+    const payload = Buffer.from(
+      JSON.stringify({
+        topicList: [
+          {
+            postId: 760813,
+            title: '求新闻类app分流域名合集',
+            readLevel: 2,
+            op: { name: '江shan-123', userId: 13510 },
+            category: { key: 'inside', name: '内版' },
+            time: { createdDate: '2026-06-04T06:58:05Z' }
+          }
+        ]
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(
+      async () =>
+        new Response(`<script>${payload}</script>`, {
+          headers: { 'content-type': 'text/html' }
+        })
+    );
 
     const feed = await getNodeSeekFeed({ fetcher });
 
@@ -572,21 +674,26 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps real NodeSeek list read levels above Lv2 from embedded topic fields', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      topicList: [
-        {
-          postId: 760814,
-          title: '需要更高等级的帖子',
-          readLevel: 5,
-          op: { name: 'alice', userId: 13510 },
-          category: { key: 'inside', name: '内版' },
-          time: { createdDate: '2026-06-04T06:58:05Z' }
-        }
-      ]
-    })).toString('base64');
-    const fetcher = vi.fn(async () => new Response(`<script>${payload}</script>`, {
-      headers: { 'content-type': 'text/html' }
-    }));
+    const payload = Buffer.from(
+      JSON.stringify({
+        topicList: [
+          {
+            postId: 760814,
+            title: '需要更高等级的帖子',
+            readLevel: 5,
+            op: { name: 'alice', userId: 13510 },
+            category: { key: 'inside', name: '内版' },
+            time: { createdDate: '2026-06-04T06:58:05Z' }
+          }
+        ]
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(
+      async () =>
+        new Response(`<script>${payload}</script>`, {
+          headers: { 'content-type': 'text/html' }
+        })
+    );
 
     const feed = await getNodeSeekFeed({ fetcher });
 
@@ -601,7 +708,10 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps real NodeSeek list read levels from row text', async () => {
-    const fetcher = vi.fn(async () => new Response(`
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          `
       <ul class="post-list">
         <li class="post-list-item">
           <a class="post-title" href="/post-760815-1">需要六级的帖子</a>
@@ -611,7 +721,10 @@ describe('Android local access requirement detection', () => {
           <span>查看本帖需要等级达到 6 级后查看，您的权限不足</span>
         </li>
       </ul>
-    `, { headers: { 'content-type': 'text/html' } }));
+    `,
+          { headers: { 'content-type': 'text/html' } }
+        )
+    );
 
     const feed = await getNodeSeekFeed({ fetcher });
 
@@ -626,27 +739,32 @@ describe('Android local access requirement detection', () => {
   });
 
   it('does not turn NodeSeek category read levels into topic view requirements', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      allCategory: [
-        {
-          key: 'inside',
-          cn_text: '内版',
-          readLevel: 2
-        }
-      ],
-      topicList: [
-        {
-          postId: 760813,
-          title: '求新闻类app分流域名合集',
-          op: { name: '江shan-123', userId: 13510 },
-          category: { key: 'inside', name: '内版' },
-          time: { createdDate: '2026-06-04T06:58:05Z' }
-        }
-      ]
-    })).toString('base64');
-    const fetcher = vi.fn(async () => new Response(`<script>${payload}</script>`, {
-      headers: { 'content-type': 'text/html' }
-    }));
+    const payload = Buffer.from(
+      JSON.stringify({
+        allCategory: [
+          {
+            key: 'inside',
+            cn_text: '内版',
+            readLevel: 2
+          }
+        ],
+        topicList: [
+          {
+            postId: 760813,
+            title: '求新闻类app分流域名合集',
+            op: { name: '江shan-123', userId: 13510 },
+            category: { key: 'inside', name: '内版' },
+            time: { createdDate: '2026-06-04T06:58:05Z' }
+          }
+        ]
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(
+      async () =>
+        new Response(`<script>${payload}</script>`, {
+          headers: { 'content-type': 'text/html' }
+        })
+    );
 
     const feed = await getNodeSeekFeed({ fetcher, category: 'inside' });
 
@@ -658,20 +776,25 @@ describe('Android local access requirement detection', () => {
   });
 
   it('does not infer NodeSeek view requirements from inside-category embedded topics', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      topicList: [
-        {
-          postId: 760813,
-          title: '求新闻类app分流域名合集',
-          op: { name: '江shan-123', userId: 13510 },
-          category: { key: 'inside', name: '内版' },
-          time: { createdDate: '2026-06-04T06:58:05Z' }
-        }
-      ]
-    })).toString('base64');
-    const fetcher = vi.fn(async () => new Response(`<script>${payload}</script>`, {
-      headers: { 'content-type': 'text/html' }
-    }));
+    const payload = Buffer.from(
+      JSON.stringify({
+        topicList: [
+          {
+            postId: 760813,
+            title: '求新闻类app分流域名合集',
+            op: { name: '江shan-123', userId: 13510 },
+            category: { key: 'inside', name: '内版' },
+            time: { createdDate: '2026-06-04T06:58:05Z' }
+          }
+        ]
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(
+      async () =>
+        new Response(`<script>${payload}</script>`, {
+          headers: { 'content-type': 'text/html' }
+        })
+    );
 
     const feed = await getNodeSeekFeed({ fetcher, category: 'inside' });
 
@@ -684,7 +807,10 @@ describe('Android local access requirement detection', () => {
   });
 
   it('keeps access requirement text from V2EX HTML list rows', async () => {
-    const fetcher = vi.fn(async () => new Response(`
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          `
       <div class="cell">
         <a class="topic-link" href="/t/202#reply1">受限主题</a>
         <a class="node" href="/go/create">分享创造</a>
@@ -692,7 +818,10 @@ describe('Android local access requirement detection', () => {
         <span title="2026-05-20 10:00:00"></span>
         <span>permission denied</span>
       </div>
-    `, { headers: { 'content-type': 'text/html' } }));
+    `,
+          { headers: { 'content-type': 'text/html' } }
+        )
+    );
 
     const feed = await getV2exFeed({ page: 2, limit: 20, fetcher });
 
@@ -706,15 +835,17 @@ describe('Android local access requirement detection', () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/api/topics/show.json')) {
-        return json([{
-          id: 202,
-          title: '受限主题',
-          member: { username: 'alice' },
-          node: { name: 'qna', title: '问与答' },
-          created: 1780558980,
-          replies: 0,
-          content_rendered: ''
-        }]);
+        return json([
+          {
+            id: 202,
+            title: '受限主题',
+            member: { username: 'alice' },
+            node: { name: 'qna', title: '问与答' },
+            created: 1780558980,
+            replies: 0,
+            content_rendered: ''
+          }
+        ]);
       }
       if (url.includes('/api/replies/show.json')) {
         return json([]);
@@ -737,20 +868,23 @@ describe('Android local access requirement detection', () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/api/topics/show.json')) {
-        return json([{
-          id: 204,
-          title: '受限主题',
-          member: { username: 'alice' },
-          node: { name: 'qna', title: '问与答' },
-          created: 1780558980,
-          replies: 0,
-          content_rendered: ''
-        }]);
+        return json([
+          {
+            id: 204,
+            title: '受限主题',
+            member: { username: 'alice' },
+            node: { name: 'qna', title: '问与答' },
+            created: 1780558980,
+            replies: 0,
+            content_rendered: ''
+          }
+        ]);
       }
       if (url.includes('/api/replies/show.json')) {
         return json([]);
       }
-      return new Response(`
+      return new Response(
+        `
         <html>
           <body>
             <div id="Main">
@@ -761,9 +895,11 @@ describe('Android local access requirement detection', () => {
             </div>
           </body>
         </html>
-      `, {
-        headers: { 'content-type': 'text/html' }
-      });
+      `,
+        {
+          headers: { 'content-type': 'text/html' }
+        }
+      );
     });
 
     const topic = await getV2exTopic('204', { fetcher });
@@ -779,20 +915,23 @@ describe('Android local access requirement detection', () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/api/topics/show.json')) {
-        return json([{
-          id: 203,
-          title: '公开空正文主题',
-          member: { username: 'alice' },
-          node: { name: 'qna', title: '问与答' },
-          created: 1780558980,
-          replies: 0,
-          content_rendered: ''
-        }]);
+        return json([
+          {
+            id: 203,
+            title: '公开空正文主题',
+            member: { username: 'alice' },
+            node: { name: 'qna', title: '问与答' },
+            created: 1780558980,
+            replies: 0,
+            content_rendered: ''
+          }
+        ]);
       }
       if (url.includes('/api/replies/show.json')) {
         return json([]);
       }
-      return new Response(`
+      return new Response(
+        `
         <html>
           <body>
             <div id="Main">
@@ -803,9 +942,11 @@ describe('Android local access requirement detection', () => {
             </div>
           </body>
         </html>
-      `, {
-        headers: { 'content-type': 'text/html' }
-      });
+      `,
+        {
+          headers: { 'content-type': 'text/html' }
+        }
+      );
     });
 
     const topic = await getV2exTopic('203', { fetcher });

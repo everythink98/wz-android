@@ -4,7 +4,9 @@ import { decodeHtml, sanitizeContentHtml, textContentFromHtml } from './localHtm
 
 describe('Android local HTML helpers', () => {
   it('extracts visible text without script or style contents', () => {
-    expect(textContentFromHtml('<style>.x{color:red}</style><p>A&nbsp;B<br>C</p><script>alert(1)</script>')).toBe('A B C');
+    expect(textContentFromHtml('<style>.x{color:red}</style><p>A&nbsp;B<br>C</p><script>alert(1)</script>')).toBe(
+      'A B C'
+    );
   });
 
   it('REG-TOPIC-012 does not leak quoted HTML attributes into visible text', () => {
@@ -12,14 +14,17 @@ describe('Android local HTML helpers', () => {
   });
 
   it('removes unsafe link and media protocols from sanitized content', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <a href="javascript:alert(1)">js</a>
       <a href="data:text/html,<script>alert(1)</script>">data</a>
       <a href="vbscript:msgbox(1)">vb</a>
       <img src="data:text/html,hello">
       <img src="vbscript:msgbox(1)">
       <forum-video-sticker src="javascript:alert(1)" data-fallback-src="vbscript:msgbox(1)"></forum-video-sticker>
-    `, 'https://example.com/base/');
+    `,
+      'https://example.com/base/'
+    );
 
     expect(result).not.toContain('javascript:');
     expect(result).not.toContain('data:text/html');
@@ -30,12 +35,15 @@ describe('Android local HTML helpers', () => {
   });
 
   it('keeps allowed sanitized links and converts relative URLs', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <a href="/topic/1">topic</a>
       <a href="mailto:user@example.com">mail</a>
       <img src="images/a.png">
       <img src="//cdn.example.com/a.png">
-    `, 'https://example.com/base/');
+    `,
+      'https://example.com/base/'
+    );
 
     expect(result).toContain('href="https://example.com/topic/1"');
     expect(result).toContain('href="mailto:user@example.com"');
@@ -45,10 +53,14 @@ describe('Android local HTML helpers', () => {
 
   it('[REG-PERF-008] applies a source transform inside the sanitizer parse', () => {
     let transformCount = 0;
-    const result = sanitizeContentHtml('<iframe src="https://embed.example.com/post"></iframe>', 'https://example.com/', (root) => {
-      transformCount += 1;
-      root.querySelector('iframe')?.replaceWith('<p>source transformed</p>');
-    });
+    const result = sanitizeContentHtml(
+      '<iframe src="https://embed.example.com/post"></iframe>',
+      'https://example.com/',
+      (root) => {
+        transformCount += 1;
+        root.querySelector('iframe')?.replaceWith('<p>source transformed</p>');
+      }
+    );
 
     expect(transformCount).toBe(1);
     expect(result).toContain('<p>source transformed</p>');
@@ -63,12 +75,15 @@ describe('Android local HTML helpers', () => {
     try {
       const { sanitizeLinuxDoContentHtml } = await import('./localLinuxdo');
       const before = parse.mock.calls.length;
-      const result = sanitizeLinuxDoContentHtml(`
+      const result = sanitizeLinuxDoContentHtml(
+        `
         <script>alert(1)</script>
         <div class="poll" data-poll-name="choice" onclick="alert(2)"></div>
         <iframe src="https://embed.reddit.com/r/test/comments/abc/title?utm_source=test"></iframe>
         <a href="javascript:alert(3)">unsafe</a>
-      `, [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]);
+      `,
+        [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]
+      );
 
       expect(parse.mock.calls.length - before).toBe(1);
       expect(result).toContain('<forum-discourse-poll name="choice"></forum-discourse-poll>');
@@ -89,10 +104,13 @@ describe('Android local HTML helpers', () => {
     try {
       const { sanitizeXiaoyinsiContentHtml } = await import('./localXiaoyinsi');
       const before = parse.mock.calls.length;
-      const result = sanitizeXiaoyinsiContentHtml(`
+      const result = sanitizeXiaoyinsiContentHtml(
+        `
         <blockquote><p>[!warning] 注意<br>正文</p></blockquote>
         <div class="poll" data-poll-name="choice"></div>
-      `, [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]);
+      `,
+        [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]
+      );
 
       expect(parse.mock.calls.length - before).toBe(1);
       expect(result).toContain('data-forum-callout-type="warning"');
@@ -108,13 +126,15 @@ describe('Android local HTML helpers', () => {
     const normalizeDiscourseCallouts = vi.fn(actual.normalizeDiscourseCallouts);
     vi.resetModules();
     vi.doMock('./discourseContent', async () => ({
-      ...await vi.importActual<typeof import('./discourseContent')>('./discourseContent'),
+      ...(await vi.importActual<typeof import('./discourseContent')>('./discourseContent')),
       normalizeDiscourseCallouts
     }));
     try {
       const { sanitizeLinuxDoContentHtml } = await import('./localLinuxdo');
 
-      expect(sanitizeLinuxDoContentHtml('<blockquote><p>Ordinary quote</p></blockquote>', [])).toContain('Ordinary quote');
+      expect(sanitizeLinuxDoContentHtml('<blockquote><p>Ordinary quote</p></blockquote>', [])).toContain(
+        'Ordinary quote'
+      );
       expect(normalizeDiscourseCallouts).not.toHaveBeenCalled();
 
       const forged = sanitizeLinuxDoContentHtml(
@@ -130,12 +150,15 @@ describe('Android local HTML helpers', () => {
   });
 
   it('turns plain code blocks into terminal blocks for any source', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <p>before</p>
       <pre><code>one two
 three &lt; four</code></pre>
       <p>after</p>
-    `, 'https://example.com/base/');
+    `,
+      'https://example.com/base/'
+    );
 
     expect(result).toContain('<div class="forum-terminal-code">');
     expect(result).toMatch(/one&nbsp;two<br\s*\/?>three&nbsp;&lt;&nbsp;four/);
@@ -146,14 +169,17 @@ three &lt; four</code></pre>
   });
 
   it('keeps Bilibili player iframes while sanitizing their attributes', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <iframe
         src="//player.bilibili.com/player.html?isOutside=true&bvid=BV1GUdgBdESz&p=1"
         onload="alert(1)"
         style="width:100%"
         allowfullscreen="true"
       ></iframe>
-    `, 'https://www.nodeseek.com/post-1-1');
+    `,
+      'https://www.nodeseek.com/post-1-1'
+    );
 
     expect(result).toContain('<iframe');
     expect(result).toContain('src="https://player.bilibili.com/player.html?isOutside=true&bvid=BV1GUdgBdESz&p=1"');
@@ -162,13 +188,16 @@ three &lt; four</code></pre>
   });
 
   it('keeps safe source text color while removing other inline styles', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <p style="color: #e00; background: #fff; border-color: red" onclick="alert(1)">red</p>
       <span style="color: rgb(1, 2, 3)">rgb</span>
       <strong style="color: rebeccapurple">keyword</strong>
       <em style="color: url(javascript:alert(1)); font-weight: bold">bad</em>
       <i style="color: not-a-color">invalid</i>
-    `, 'https://example.com/base/');
+    `,
+      'https://example.com/base/'
+    );
 
     expect(result).toContain('style="color: #e00"');
     expect(result).toContain('style="color: rgb(1, 2, 3)"');
@@ -182,9 +211,12 @@ three &lt; four</code></pre>
   });
 
   it('turns Bilibili video image syntax output into a player iframe', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <p><img src="https://www.bilibili.com/video/BV1GUdgBdESz/?p=2" alt="image"></p>
-    `, 'https://www.nodeseek.com/post-1-1');
+    `,
+      'https://www.nodeseek.com/post-1-1'
+    );
 
     expect(result).toContain('<iframe');
     expect(result).toContain('src="https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&p=2"');
@@ -192,14 +224,17 @@ three &lt; four</code></pre>
   });
 
   it('keeps NodeSeek video stickers as playable sticker elements', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <p>
         <video autoplay="" loop="" muted="" playsinline="" class="sticker" width="100" height="100">
           <source src="/static/image/sticker/emoji/35.webm" type="video/webm">
           <source src="/static/image/sticker/emoji/35.mov" type="video/mp4">
         </video>
       </p>
-    `, 'https://www.nodeseek.com/post-797740-1');
+    `,
+      'https://www.nodeseek.com/post-797740-1'
+    );
 
     expect(result).toContain('<forum-video-sticker');
     expect(result).toContain('class="sticker"');
@@ -212,11 +247,14 @@ three &lt; four</code></pre>
   });
 
   it('keeps ordinary safe videos as playable content blocks', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <video controls onplay="alert(1)" poster="/cover.jpg">
         <source src="/uploads/demo.mp4" type="video/mp4">
       </video>
-    `, 'https://yaohuo.me/bbs-1560017.html');
+    `,
+      'https://yaohuo.me/bbs-1560017.html'
+    );
 
     expect(result).toContain('<forum-video');
     expect(result).toContain('src="https://yaohuo.me/uploads/demo.mp4"');
@@ -227,10 +265,13 @@ three &lt; four</code></pre>
   });
 
   it('drops ordinary videos without a safe http source', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <video src="javascript:alert(1)"></video>
       <video><source src="data:text/html,hello"></video>
-    `, 'https://yaohuo.me/bbs-1560017.html');
+    `,
+      'https://yaohuo.me/bbs-1560017.html'
+    );
 
     expect(result).not.toContain('<forum-video');
     expect(result).not.toContain('javascript:');
@@ -238,9 +279,12 @@ three &lt; four</code></pre>
   });
 
   it('turns untrusted iframes into openable link blocks instead of inline playback', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <iframe src="https://www.youtube.com/embed/demo" onload="alert(1)"></iframe>
-    `, 'https://www.nodeseek.com/post-1-1');
+    `,
+      'https://www.nodeseek.com/post-1-1'
+    );
 
     expect(result).not.toContain('<iframe');
     expect(result).toContain('<a');
@@ -250,12 +294,15 @@ three &lt; four</code></pre>
   });
 
   it('keeps data image sources without allowing data links or non-image data media', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <a href="data:image/png;base64,abc123">image link</a>
       <img src="data:image/png;base64,abc123">
       <img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=">
       <img src="data:text/html,hello">
-    `, 'https://example.com/base/');
+    `,
+      'https://example.com/base/'
+    );
 
     expect(result).toContain('src="data:image/png;base64,abc123"');
     expect(result).not.toContain('data:image/svg+xml');
@@ -264,7 +311,8 @@ three &lt; four</code></pre>
   });
 
   it('removes forum image dimension and file size metadata without stripping ordinary metadata', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <p>
         <a class="lightbox" href="/uploads/default/original/1x/asset-123.png">
           <img src="/uploads/default/original/1x/asset-123.png" alt="photo">
@@ -281,7 +329,9 @@ three &lt; four</code></pre>
           <div>图片1468×946 116 KB</div>
         </a>
       </div>
-    `, 'https://linux.do');
+    `,
+      'https://linux.do'
+    );
 
     expect(result).toContain('<img');
     expect(result).toContain('附件大小 300 KB');
@@ -292,19 +342,23 @@ three &lt; four</code></pre>
   });
 
   it('removes image metadata text that uses the original image label', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <a href="/uploads/default/original/1x/asset-123.png">
         <img src="/uploads/default/original/1x/asset-123.png" alt="image">
         <div>image1244×152 8.4 KB</div>
       </a>
-    `, 'https://linux.do');
+    `,
+      'https://linux.do'
+    );
 
     expect(result).toContain('<img');
     expect(result).not.toContain('image1244×152 8.4 KB');
   });
 
   it('turns Discourse oneboxes into safe link cards', () => {
-    const result = sanitizeContentHtml(`
+    const result = sanitizeContentHtml(
+      `
       <aside class="onebox allowlistedgeneric" data-onebox-src="https://bincheck.io/zh" onclick="alert(1)">
         <header class="source">
           <img src="https://cdn3.ldstatic.com/original/site.svg" class="site-icon" alt="">
@@ -316,7 +370,9 @@ three &lt; four</code></pre>
           <p>免费在线 BIN/IIN 检查器以验证和验证银行识别号的信息</p>
         </article>
       </aside>
-    `, 'https://linux.do');
+    `,
+      'https://linux.do'
+    );
 
     expect(result).toContain('<forum-link-card');
     expect(result).toContain('href="https://bincheck.io/zh"');

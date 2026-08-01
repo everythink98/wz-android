@@ -21,11 +21,12 @@ jest.mock('../../src/components/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
-    Avatar: ({ contentSource }: { contentSource?: string }) => ReactModule.createElement(
-      NativeText,
-      { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
-      '头像'
-    )
+    Avatar: ({ contentSource }: { contentSource?: string }) =>
+      ReactModule.createElement(
+        NativeText,
+        { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
+        '头像'
+      )
   };
 });
 
@@ -120,11 +121,7 @@ describe('Topic card visible behavior', () => {
     const onOpenTopic = jest.fn();
     const onTrailingAction = jest.fn();
     const renderTrailingAction = (current: Topic) => (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="当前主题操作"
-        onPress={() => onTrailingAction(current)}
-      >
+      <Pressable accessibilityRole="button" accessibilityLabel="当前主题操作" onPress={() => onTrailingAction(current)}>
         <Text>操作</Text>
       </Pressable>
     );
@@ -151,5 +148,4 @@ describe('Topic card visible behavior', () => {
     expect(onOpenTopic).toHaveBeenCalledWith(nextTopic);
     expect(onTrailingAction).toHaveBeenCalledWith(nextTopic);
   });
-
 });

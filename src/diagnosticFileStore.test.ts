@@ -5,7 +5,7 @@ const boundary = vi.hoisted(() => ({
   files: new Map<string, Uint8Array>(),
   openCount: 0,
   writeCount: 0,
-  shared: [] as Array<{ content: string; uri: string }>,
+  shared: [] as { content: string; uri: string }[],
   sharingAvailable: true
 }));
 
@@ -17,8 +17,11 @@ vi.mock('expo-file-system', () => {
   class File {
     uri: string;
 
-    constructor(...parts: Array<string | { uri: string }>) {
-      this.uri = parts.map((part) => typeof part === 'string' ? part : part.uri).join('').replace(/([^:])\/{2,}/g, '$1/');
+    constructor(...parts: (string | { uri: string })[]) {
+      this.uri = parts
+        .map((part) => (typeof part === 'string' ? part : part.uri))
+        .join('')
+        .replace(/([^:])\/{2,}/g, '$1/');
     }
 
     get exists() {
@@ -179,19 +182,18 @@ describe('diagnostic file store', () => {
 
     expect(boundary.shared).toHaveLength(1);
     const lines = boundary.shared[0].content.trim().split('\n');
-    expect(JSON.parse(lines[0])).toEqual(expect.objectContaining({
-      androidApiLevel: 35,
-      appVersion: '1.3.54',
-      currentScreen: 'unknown',
-      deviceModel: 'unknown',
-      schemaVersion: 1,
-      type: 'diagnostic-metadata',
-      xiaoyinsiSession: 'authorizing'
-    }));
-    expect(lines.slice(1).map((line) => JSON.parse(line))).toEqual([
-      { sequence: 1 },
-      { sequence: 2 }
-    ]);
+    expect(JSON.parse(lines[0])).toEqual(
+      expect.objectContaining({
+        androidApiLevel: 35,
+        appVersion: '1.3.54',
+        currentScreen: 'unknown',
+        deviceModel: 'unknown',
+        schemaVersion: 1,
+        type: 'diagnostic-metadata',
+        xiaoyinsiSession: 'authorizing'
+      })
+    );
+    expect(lines.slice(1).map((line) => JSON.parse(line))).toEqual([{ sequence: 1 }, { sequence: 2 }]);
     expect(boundary.shared[0].uri).toMatch(/forum-reader-diagnostic-\d+\.txt$/);
     expect(boundary.files.has(boundary.shared[0].uri)).toBe(false);
   });
@@ -255,9 +257,9 @@ describe('diagnostic file store', () => {
   it('installs one global JS error handler that records before delegating', async () => {
     let persistedBeforeDelegate = false;
     const originalHandler = vi.fn(() => {
-      persistedBeforeDelegate = [...boundary.files.entries()].some(([uri, bytes]) => (
-        uri.endsWith('.jsonl') && new TextDecoder().decode(bytes).includes('"operation":"js-error"')
-      ));
+      persistedBeforeDelegate = [...boundary.files.entries()].some(
+        ([uri, bytes]) => uri.endsWith('.jsonl') && new TextDecoder().decode(bytes).includes('"operation":"js-error"')
+      );
     });
     let installedHandler: ((error: unknown, isFatal?: boolean) => void) | undefined;
     const setGlobalHandler = vi.fn((handler: typeof installedHandler) => {

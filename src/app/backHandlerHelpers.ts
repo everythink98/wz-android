@@ -11,7 +11,7 @@ export function selectTopicReturnStrategy({
 }) {
   if (canGoBack && hasReturningTopicRoute) return 'route-pop' as const;
   if (hasSnapshot) return 'snapshot-fallback' as const;
-  return canGoBack ? 'native-pop' as const : 'return-screen' as const;
+  return canGoBack ? ('native-pop' as const) : ('return-screen' as const);
 }
 
 type TopicReturnStrategy = ReturnType<typeof selectTopicReturnStrategy>;

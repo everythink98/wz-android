@@ -140,8 +140,13 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
     const style = fill.getAttribute('style') || '';
     const fallbackCurrent = parseCssNumber(style, '--val');
     const fallbackRequired = parseCssNumber(style, '--max');
-    const parsed = parseCurrentAndRequired(item.querySelector('.tl3-bar-nums')?.text.trim() || '', fallbackCurrent, fallbackRequired);
-    const met = fill.classNames.split(/\s+/).includes('met') || (parsed.required > 0 && parsed.current >= parsed.required);
+    const parsed = parseCurrentAndRequired(
+      item.querySelector('.tl3-bar-nums')?.text.trim() || '',
+      fallbackCurrent,
+      fallbackRequired
+    );
+    const met =
+      fill.classNames.split(/\s+/).includes('met') || (parsed.required > 0 && parsed.current >= parsed.required);
     requirements.push(toConnectRequirement(label, parsed.current, parsed.required, met));
   }
   for (const item of card.querySelectorAll('.tl3-quota-card')) {
@@ -187,7 +192,7 @@ async function loadSnapshot(username: string): Promise<LinuxDoSnapshot | null> {
   }
   try {
     const parsed = JSON.parse(raw);
-    return isRecord(parsed) && isRecord(parsed.values) ? parsed as LinuxDoSnapshot : null;
+    return isRecord(parsed) && isRecord(parsed.values) ? (parsed as LinuxDoSnapshot) : null;
   } catch {
     return null;
   }
@@ -241,18 +246,22 @@ function linuxDoCloudflareError() {
 }
 
 async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
-  const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
-    headers: {
-      Accept: 'application/json,text/plain,*/*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      Referer: `${BASE_URL}/latest`,
-      ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
+  const response = await fetchWithTimeout(
+    `${BASE_URL}${path}`,
+    {
+      headers: {
+        Accept: 'application/json,text/plain,*/*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        Referer: `${BASE_URL}/latest`,
+        ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
+      }
+    },
+    {
+      fetcher: options.fetcher,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs
     }
-  }, {
-    fetcher: options.fetcher,
-    signal: options.signal,
-    timeoutMs: options.timeoutMs
-  });
+  );
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     throw linuxDoCloudflareError();
@@ -275,18 +284,22 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
 }
 
 async function fetchLinuxDoConnectHtml(options: LinuxDoRequestOptions) {
-  const response = await fetchWithTimeout(CONNECT_URL, {
-    headers: {
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      Referer: BASE_URL,
-      ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
+  const response = await fetchWithTimeout(
+    CONNECT_URL,
+    {
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        Referer: BASE_URL,
+        ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
+      }
+    },
+    {
+      fetcher: options.fetcher,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs
     }
-  }, {
-    fetcher: options.fetcher,
-    signal: options.signal,
-    timeoutMs: options.timeoutMs
-  });
+  );
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`Connect 进度读取失败：HTTP ${response.status}`);
@@ -305,7 +318,11 @@ function usernameFromCurrentUser(data: unknown) {
     return null;
   }
   const sessionUser: Record<string, unknown> = { ...user, ...currentUser, username };
-  const sessionTrustLevel = Math.max(trustLevelFromRecord(data) ?? 0, trustLevelFromRecord(user) ?? 0, trustLevelFromRecord(currentUser) ?? 0);
+  const sessionTrustLevel = Math.max(
+    trustLevelFromRecord(data) ?? 0,
+    trustLevelFromRecord(user) ?? 0,
+    trustLevelFromRecord(currentUser) ?? 0
+  );
   if (sessionTrustLevel > 0) {
     sessionUser.trust_level = sessionTrustLevel;
   }

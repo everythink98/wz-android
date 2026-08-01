@@ -70,7 +70,8 @@ jest.mock('@gorhom/bottom-sheet', () => {
       void ref;
       return ReactModule.createElement(TextInput, props);
     }),
-    BottomSheetView: ({ children }: { children?: React.ReactNode }) => ReactModule.createElement(NativeView, null, children)
+    BottomSheetView: ({ children }: { children?: React.ReactNode }) =>
+      ReactModule.createElement(NativeView, null, children)
   };
 });
 
@@ -91,17 +92,30 @@ jest.mock('react-native-webview', () => ({ WebView: () => null }));
 
 jest.mock('react-native-render-html', () => {
   const ReactModule = require('react') as typeof React;
-  const { Pressable: NativePressable, Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
-  const RenderersPropsContext = ReactModule.createContext<Record<string, {
-    onPress?: (event: { stopPropagation: () => void }, href: string) => void;
-  }>>({});
-  const nodeText = (node: { children?: unknown[]; data?: unknown }): string => (
-    `${typeof node.data === 'string' ? node.data : ''}${Array.isArray(node.children)
-      ? node.children.map((child) => nodeText(child as { children?: unknown[]; data?: unknown })).join('')
-      : ''}`
-  );
+  const {
+    Pressable: NativePressable,
+    Text: NativeText,
+    View: NativeView
+  } = require('react-native') as typeof import('react-native');
+  const RenderersPropsContext = ReactModule.createContext<
+    Record<
+      string,
+      {
+        onPress?: (event: { stopPropagation: () => void }, href: string) => void;
+      }
+    >
+  >({});
+  const nodeText = (node: { children?: unknown[]; data?: unknown }): string =>
+    `${typeof node.data === 'string' ? node.data : ''}${
+      Array.isArray(node.children)
+        ? node.children.map((child) => nodeText(child as { children?: unknown[]; data?: unknown })).join('')
+        : ''
+    }`;
   return {
-    RenderHTMLConfigProvider: ({ children, renderersProps = {} }: {
+    RenderHTMLConfigProvider: ({
+      children,
+      renderersProps = {}
+    }: {
       children?: React.ReactNode;
       renderersProps?: Record<string, { onPress?: (event: { stopPropagation: () => void }, href: string) => void }>;
     }) => ReactModule.createElement(RenderersPropsContext.Provider, { value: renderersProps }, children),
@@ -126,15 +140,14 @@ jest.mock('react-native-render-html', () => {
         })
       );
     },
-    TChildrenRenderer: ({ tchildren }: { tchildren: Array<{ children?: unknown[]; data?: unknown; nodeIndex?: number }> }) => ReactModule.createElement(
-      NativeView,
-      null,
-      ...tchildren.map((child, index) => ReactModule.createElement(
-        NativeText,
-        { key: child.nodeIndex ?? index },
-        nodeText(child)
-      ))
-    )
+    TChildrenRenderer: ({ tchildren }: { tchildren: { children?: unknown[]; data?: unknown; nodeIndex?: number }[] }) =>
+      ReactModule.createElement(
+        NativeView,
+        null,
+        ...tchildren.map((child, index) =>
+          ReactModule.createElement(NativeText, { key: child.nodeIndex ?? index }, nodeText(child))
+        )
+      )
   };
 });
 
@@ -175,26 +188,25 @@ jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    Image: ({ source }: { source?: { headers?: Record<string, string>; uri?: string } }) => ReactModule.createElement(
-      NativeView,
-      {
+    Image: ({ source }: { source?: { headers?: Record<string, string>; uri?: string } }) =>
+      ReactModule.createElement(NativeView, {
         accessibilityLabel: source?.uri ? `emoji image ${source.uri}` : 'emoji image',
         testID: source?.headers?.['X-WZ-Forum-Media-Source']
           ? `media-source-${source.headers['X-WZ-Forum-Media-Source']}`
           : undefined
-      }
-    )
+      })
   };
 });
 jest.mock('../../src/components/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
-    Avatar: ({ contentSource }: { contentSource?: string }) => ReactModule.createElement(
-      NativeText,
-      { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
-      '头像'
-    )
+    Avatar: ({ contentSource }: { contentSource?: string }) =>
+      ReactModule.createElement(
+        NativeText,
+        { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
+        '头像'
+      )
   };
 });
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(() => Promise.resolve()) }));
@@ -244,10 +256,12 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     createdAt: '2026-07-14T01:02:03.000Z',
     floor: 2,
     isOp: true,
-    quotedPosts: [{
-      reference: { source: 'nodeseek', topicId: 'topic-1', postNumber: 1 },
-      author: { label: 'quoted-user', username: 'quoted-user' }
-    }],
+    quotedPosts: [
+      {
+        reference: { source: 'nodeseek', topicId: 'topic-1', postNumber: 1 },
+        author: { label: 'quoted-user', username: 'quoted-user' }
+      }
+    ],
     replyTargetAuthor: 'bob',
     upvoteCount: 3,
     likeCount: 4,
@@ -351,9 +365,7 @@ describe('Topic real child components', () => {
   });
 
   it('[REG-TOPIC-026] renders duplicated accepted-answer polls as results without a login action', async () => {
-    const view = await render(
-      <TopicPolls {...pollProps({ canWritePollSource: false, source: undefined })} />
-    );
+    const view = await render(<TopicPolls {...pollProps({ canWritePollSource: false, source: undefined })} />);
 
     expect(view.getByText('只读结果')).toBeTruthy();
     expect(view.getByText('3 人参与')).toBeTruthy();
@@ -421,9 +433,7 @@ describe('Topic real child components', () => {
       signatureHtml: '<p>签名内容</p>'
     };
     const replyView = await render(
-      <ReplyItem
-        {...replyProps({ canWrite: false, contentWidth: 360, reply, source: 'v2ex' })}
-      />
+      <ReplyItem {...replyProps({ canWrite: false, contentWidth: 360, reply, source: 'v2ex' })} />
     );
 
     const replySources = replyView.getAllByTestId('html-source');
@@ -527,10 +537,14 @@ describe('Topic real child components', () => {
       await fireEvent.press(view.getByTestId(`html-link-${label}`));
     }
 
-    expect(onOpenUser.mock.calls.map(([reference]) => reference)).toEqual(entries.map(([, username]) => expect.objectContaining({
-      source: 'nodeseek',
-      username
-    })));
+    expect(onOpenUser.mock.calls.map(([reference]) => reference)).toEqual(
+      entries.map(([, username]) =>
+        expect.objectContaining({
+          source: 'nodeseek',
+          username
+        })
+      )
+    );
     expect(onOpenUser.mock.calls.every(([reference]) => !reference.id)).toBe(true);
     expect(onOpenExternalUrl).not.toHaveBeenCalled();
   });
@@ -547,13 +561,15 @@ describe('Topic real child components', () => {
     const wrongLocalReply = { ...quotedReply, contentHtml: '<p>当前主题同楼层错误内容</p>' };
     const reply: Reply = {
       ...replyProps().reply,
-      quotedPosts: [{
-        reference: { source: 'linuxdo', topicId: '2679944', postNumber: 1 },
-        author: { label: 'quoted-user', username: 'quoted-user' },
-        preview: '引用简介',
-        topicTitle: '跨主题引用标题',
-        topicUrl: 'https://linux.do/t/topic/2679944/1'
-      }]
+      quotedPosts: [
+        {
+          reference: { source: 'linuxdo', topicId: '2679944', postNumber: 1 },
+          author: { label: 'quoted-user', username: 'quoted-user' },
+          preview: '引用简介',
+          topicTitle: '跨主题引用标题',
+          topicUrl: 'https://linux.do/t/topic/2679944/1'
+        }
+      ]
     };
     const props = replyProps({
       loadedQuotedReplies: {
@@ -573,11 +589,13 @@ describe('Topic real child components', () => {
     expect(view.queryByText('完整帖子正文')).toBeNull();
     expect(view.queryByText('当前主题同楼层错误内容')).toBeNull();
     await fireEvent.press(view.getByRole('link', { name: '跨主题引用标题' }));
-    expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'linuxdo',
-      id: '2679944',
-      title: '跨主题引用标题'
-    }));
+    expect(onOpenTopic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'linuxdo',
+        id: '2679944',
+        title: '跨主题引用标题'
+      })
+    );
     await fireEvent.press(view.getByText('展开'));
     expect(onToggleReplyQuote).toHaveBeenCalledWith({
       replyKey: 'comment:22',
@@ -585,9 +603,7 @@ describe('Topic real child components', () => {
       quotedReply
     });
 
-    await view.rerender(
-      <ReplyItem {...props} expandedQuotes={{ 'reply:comment:22:linuxdo:2679944:1': true }} />
-    );
+    await view.rerender(<ReplyItem {...props} expandedQuotes={{ 'reply:comment:22:linuxdo:2679944:1': true }} />);
     expect(view.queryByText('引用简介')).toBeNull();
     expect(view.getByText('完整帖子正文')).toBeTruthy();
     expect(view.queryByText('当前主题同楼层错误内容')).toBeNull();
@@ -599,13 +615,15 @@ describe('Topic real child components', () => {
     const reference = { source: 'linuxdo' as const, topicId: '342888', postNumber: 1 };
     const reply: Reply = {
       ...replyProps().reply,
-      quotedPosts: [{
-        reference,
-        author: { label: author, username: 'long-author' },
-        preview: '引用简介保持可见',
-        topicTitle: title,
-        topicUrl: 'https://linux.do/t/topic/342888/1'
-      }]
+      quotedPosts: [
+        {
+          reference,
+          author: { label: author, username: 'long-author' },
+          preview: '引用简介保持可见',
+          topicTitle: title,
+          topicUrl: 'https://linux.do/t/topic/342888/1'
+        }
+      ]
     };
     const longHtml = '<p>已缓存的引用正文</p>';
     const quotedReply: Reply = {
@@ -660,10 +678,12 @@ describe('Topic real child components', () => {
     };
     const reply: Reply = {
       ...replyProps().reply,
-      quotedPosts: [{
-        reference: { source: 'xiaoyinsi', topicId: '2685882', postNumber: 1 },
-        preview: '不应显示的异站引用'
-      }]
+      quotedPosts: [
+        {
+          reference: { source: 'xiaoyinsi', topicId: '2685882', postNumber: 1 },
+          preview: '不应显示的异站引用'
+        }
+      ]
     };
     const view = await render(
       <ReplyItem
@@ -687,10 +707,12 @@ describe('Topic real child components', () => {
     const onOpenUser = jest.fn();
     const reply: Reply = {
       ...replyProps().reply,
-      quotedPosts: [{
-        reference: { source: 'linuxdo', topicId: 'topic-1', postNumber: 1 },
-        author: { label: 'Alice Display' }
-      }]
+      quotedPosts: [
+        {
+          reference: { source: 'linuxdo', topicId: 'topic-1', postNumber: 1 },
+          author: { label: 'Alice Display' }
+        }
+      ]
     };
     const view = await render(<ReplyItem {...replyProps({ onOpenUser, reply, source: 'linuxdo' })} />);
 
@@ -723,9 +745,7 @@ describe('Topic real child components', () => {
         quotedPosts: [],
         replyTargetAuthor: undefined
       };
-      const view = await render(
-        <ReplyItem {...replyProps({ reply, source })} />
-      );
+      const view = await render(<ReplyItem {...replyProps({ reply, source })} />);
 
       expect(view.getByLabelText('已采纳的解决方案')).toBeTruthy();
       expect(view.getByText('已解决')).toBeTruthy();
@@ -741,7 +761,7 @@ describe('Topic real child components', () => {
   it.each([
     ['linuxdo', 'closed.enabled', '关闭了主题'],
     ['xiaoyinsi', 'closed.disabled', '重新打开了主题']
-  ] as Array<['linuxdo' | 'xiaoyinsi', string, string]>)(
+  ] as ['linuxdo' | 'xiaoyinsi', string, string][])(
     '[REG-TOPIC-026] renders a %s system post as the compact “%s” event',
     async (source, actionCode, expectedAction) => {
       const reply: Reply = {
@@ -760,9 +780,7 @@ describe('Topic real child components', () => {
         systemAction: true
       };
       const view = await render(
-        <ReplyItem
-          {...replyProps({ canUseDiscourseActions: true, reply, replyFloor: 3, source })}
-        />
+        <ReplyItem {...replyProps({ canUseDiscourseActions: true, reply, replyFloor: 3, source })} />
       );
 
       expect(view.getByLabelText(new RegExp(`系统事件.*${expectedAction}`))).toBeTruthy();
@@ -783,7 +801,7 @@ describe('Topic real child components', () => {
     ['linuxdo', '', '更新了主题'],
     ['xiaoyinsi', '<p>topic.mystery</p>', '更新了主题'],
     ['linuxdo', '<p>执行 topic.mystery</p>', '更新了主题']
-  ] as Array<['linuxdo' | 'xiaoyinsi', string, string]>)(
+  ] as ['linuxdo' | 'xiaoyinsi', string, string][])(
     '[REG-TOPIC-026] gives an unknown %s system action a readable fallback',
     async (source, contentHtml, expectedAction) => {
       const reply: Reply = {
@@ -794,9 +812,7 @@ describe('Topic real child components', () => {
         replyTargetAuthor: undefined,
         systemAction: true
       };
-      const view = await render(
-        <ReplyItem {...replyProps({ reply, source })} />
-      );
+      const view = await render(<ReplyItem {...replyProps({ reply, source })} />);
 
       expect(view.getByText(expectedAction)).toBeTruthy();
       expect(view.queryByText('topic.mystery')).toBeNull();
@@ -809,11 +825,11 @@ describe('Topic real child components', () => {
     const view = await render(
       <TopicBodyQuoteCard
         expanded={false}
-        header={(
+        header={
           <Pressable accessibilityLabel="正文引用标题" onPress={onOpenReference}>
             <Text>正文引用作者</Text>
           </Pressable>
-        )}
+        }
         loading={false}
         preview={<Text>正文引用简介</Text>}
         previewTestID="topic-quote-preview-20-1"
@@ -878,9 +894,7 @@ describe('Topic real child components', () => {
       canLike: true
     };
     const view = await render(
-      <ReplyItem
-        {...replyProps({ onDeleteReply, onEditReply, reply: writableReply, source: 'linuxdo' })}
-      />
+      <ReplyItem {...replyProps({ onDeleteReply, onEditReply, reply: writableReply, source: 'linuxdo' })} />
     );
 
     expect(view.getByLabelText('编辑回复')).toBeTruthy();
@@ -999,8 +1013,12 @@ describe('Topic real child components', () => {
 
     expect(view.getByLabelText('heart 2')).toBeTruthy();
     expect(view.getByLabelText('+1 1')).toBeTruthy();
-    expect(view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15')).toBeTruthy();
-    expect(view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15')).toBeTruthy();
+    expect(
+      view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15')
+    ).toBeTruthy();
+    expect(
+      view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15')
+    ).toBeTruthy();
     expect(view.getAllByTestId('media-source-xiaoyinsi')).toHaveLength(2);
     expect(view.getAllByLabelText('avatar source xiaoyinsi').length).toBeGreaterThan(0);
   });
@@ -1018,21 +1036,25 @@ describe('Topic real child components', () => {
       title: 'Callout renderer',
       url: 'https://linux.do/t/topic/callout-topic'
     };
-    const controller = await renderHook(() => useHtmlRenderingController({
-      mediaSessionIdentity: 'linuxdo:0',
-      onOpenExternalUrl,
-      onOpenImagePreview: () => undefined,
-      onOpenTopic: () => undefined,
-      onOpenUser: () => undefined,
-      selectedTopic: discourseTopic,
-      settings: readerData.settings,
-      styles,
-      theme,
-      topicDetail: discourseTopic,
-      topicKey: 'linuxdo:callout-topic',
-      webViewBlockMessage: ''
-    }));
-    const BlockquoteRenderer = controller.result.current.htmlRenderers.blockquote as unknown as React.ComponentType<Record<string, unknown>>;
+    const controller = await renderHook(() =>
+      useHtmlRenderingController({
+        mediaSessionIdentity: 'linuxdo:0',
+        onOpenExternalUrl,
+        onOpenImagePreview: () => undefined,
+        onOpenTopic: () => undefined,
+        onOpenUser: () => undefined,
+        selectedTopic: discourseTopic,
+        settings: readerData.settings,
+        styles,
+        theme,
+        topicDetail: discourseTopic,
+        topicKey: 'linuxdo:callout-topic',
+        webViewBlockMessage: ''
+      })
+    );
+    const BlockquoteRenderer = controller.result.current.htmlRenderers.blockquote as unknown as React.ComponentType<
+      Record<string, unknown>
+    >;
     const InternalRenderer = () => <Text>普通引用 renderer</Text>;
     const canonicalTNode = {
       attributes: {
@@ -1074,22 +1096,29 @@ describe('Topic real child components', () => {
     );
     expect(ordinary.getByText('普通引用 renderer')).toBeTruthy();
 
-    const nodeSeekTopic = { ...discourseTopic, source: 'nodeseek' as const, url: 'https://www.nodeseek.com/post-callout-topic-1' };
-    const nonDiscourseController = await renderHook(() => useHtmlRenderingController({
-      mediaSessionIdentity: 'nodeseek:0',
-      onOpenExternalUrl,
-      onOpenImagePreview: () => undefined,
-      onOpenTopic: () => undefined,
-      onOpenUser: () => undefined,
-      selectedTopic: nodeSeekTopic,
-      settings: readerData.settings,
-      styles,
-      theme,
-      topicDetail: nodeSeekTopic,
-      topicKey: 'nodeseek:callout-topic',
-      webViewBlockMessage: ''
-    }));
-    const NonDiscourseBlockquoteRenderer = nonDiscourseController.result.current.htmlRenderers.blockquote as unknown as React.ComponentType<Record<string, unknown>>;
+    const nodeSeekTopic = {
+      ...discourseTopic,
+      source: 'nodeseek' as const,
+      url: 'https://www.nodeseek.com/post-callout-topic-1'
+    };
+    const nonDiscourseController = await renderHook(() =>
+      useHtmlRenderingController({
+        mediaSessionIdentity: 'nodeseek:0',
+        onOpenExternalUrl,
+        onOpenImagePreview: () => undefined,
+        onOpenTopic: () => undefined,
+        onOpenUser: () => undefined,
+        selectedTopic: nodeSeekTopic,
+        settings: readerData.settings,
+        styles,
+        theme,
+        topicDetail: nodeSeekTopic,
+        topicKey: 'nodeseek:callout-topic',
+        webViewBlockMessage: ''
+      })
+    );
+    const NonDiscourseBlockquoteRenderer = nonDiscourseController.result.current.htmlRenderers
+      .blockquote as unknown as React.ComponentType<Record<string, unknown>>;
     const forged = await render(
       <NonDiscourseBlockquoteRenderer InternalRenderer={InternalRenderer} style={{}} tnode={canonicalTNode} />
     );
@@ -1127,7 +1156,9 @@ describe('Topic real child components', () => {
     const view = await render(
       <View>
         <ReplyComposerSheet {...props} />
-        <Pressable><Text>页面其余内容</Text></Pressable>
+        <Pressable>
+          <Text>页面其余内容</Text>
+        </Pressable>
       </View>
     );
 

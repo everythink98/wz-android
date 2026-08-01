@@ -11,7 +11,7 @@ const LINUXDO_LEVEL_TABS = [
   { value: 'activity', label: '活跃数据' }
 ] as const;
 
-type LinuxDoLevelTab = typeof LINUXDO_LEVEL_TABS[number]['value'];
+type LinuxDoLevelTab = (typeof LINUXDO_LEVEL_TABS)[number]['value'];
 
 function formatActivitySeconds(seconds: number) {
   const minutes = Math.floor(seconds / 60);
@@ -72,17 +72,34 @@ export function LinuxDoLevelPanel({
               <View style={styles.levelTitleBlock}>
                 <Text style={styles.levelEyebrow}>{profile.username}</Text>
                 <Text style={styles.levelTitle}>
-                  LV {profile.currentLevel}{profile.targetLevel !== null ? ` → LV ${profile.targetLevel}` : ''}
+                  LV {profile.currentLevel}
+                  {profile.targetLevel !== null ? ` → LV ${profile.targetLevel}` : ''}
                 </Text>
               </View>
-              <IconButton icon={RefreshCw} label={busy ? '读取中' : '刷新等级'} iconOnly styles={styles} theme={theme} disabled={busy} onPress={onRefresh} />
+              <IconButton
+                icon={RefreshCw}
+                label={busy ? '读取中' : '刷新等级'}
+                iconOnly
+                styles={styles}
+                theme={theme}
+                disabled={busy}
+                onPress={onRefresh}
+              />
             </View>
             <View style={styles.levelMetaRow}>
-              <Text style={styles.levelBadge}>{profile.estimate ? '本机估算' : profile.source === 'connect' ? '官方进度' : '本机数据'}</Text>
-              {profile.totalCount ? <Text style={styles.meta}>完成 {profile.achievedCount} / {profile.totalCount} 项</Text> : null}
+              <Text style={styles.levelBadge}>
+                {profile.estimate ? '本机估算' : profile.source === 'connect' ? '官方进度' : '本机数据'}
+              </Text>
+              {profile.totalCount ? (
+                <Text style={styles.meta}>
+                  完成 {profile.achievedCount} / {profile.totalCount} 项
+                </Text>
+              ) : null}
             </View>
             <Text style={styles.meta}>{profile.note}</Text>
-            <Text style={styles.meta}>上次读取 {new Date(profile.fetchedAt).toLocaleString('zh-CN', { hour12: false })}</Text>
+            <Text style={styles.meta}>
+              上次读取 {new Date(profile.fetchedAt).toLocaleString('zh-CN', { hour12: false })}
+            </Text>
           </View>
           <View style={styles.levelTabRail}>
             {LINUXDO_LEVEL_TABS.map((item) => (
@@ -100,23 +117,34 @@ export function LinuxDoLevelPanel({
           </View>
           {tab === 'progress' ? (
             <View style={styles.levelRequirementList}>
-              {profile.requirements.length ? profile.requirements.map((item) => (
-                <View key={item.key} style={styles.levelRequirementRow}>
-                  <View style={styles.levelRequirementHeader}>
-                    <Text style={styles.levelRequirementLabel}>{item.label}</Text>
-                    <Text style={[styles.levelRequirementValue, item.met ? styles.statusOk : undefined]}>
-                      {item.displayCurrent} / {item.displayRequired}
-                    </Text>
+              {profile.requirements.length ? (
+                profile.requirements.map((item) => (
+                  <View key={item.key} style={styles.levelRequirementRow}>
+                    <View style={styles.levelRequirementHeader}>
+                      <Text style={styles.levelRequirementLabel}>{item.label}</Text>
+                      <Text style={[styles.levelRequirementValue, item.met ? styles.statusOk : undefined]}>
+                        {item.displayCurrent} / {item.displayRequired}
+                      </Text>
+                    </View>
+                    <View style={styles.levelProgressTrack}>
+                      <View
+                        style={[
+                          styles.levelProgressFill,
+                          item.met && styles.levelProgressFillDone,
+                          {
+                            minWidth: item.ratio > 0 ? 2 : 0,
+                            width: item.ratio > 0 ? `${Math.max(2, Math.round(item.ratio * 100))}%` : 0
+                          }
+                        ]}
+                      />
+                    </View>
+                    <View style={styles.levelRequirementFooter}>
+                      <Text style={styles.meta}>{Math.round(item.ratio * 100)}%</Text>
+                      {item.displayChange ? <Text style={styles.levelChangeText}>{item.displayChange}</Text> : null}
+                    </View>
                   </View>
-                  <View style={styles.levelProgressTrack}>
-                    <View style={[styles.levelProgressFill, item.met && styles.levelProgressFillDone, { minWidth: item.ratio > 0 ? 2 : 0, width: item.ratio > 0 ? `${Math.max(2, Math.round(item.ratio * 100))}%` : 0 }]} />
-                  </View>
-                  <View style={styles.levelRequirementFooter}>
-                    <Text style={styles.meta}>{Math.round(item.ratio * 100)}%</Text>
-                    {item.displayChange ? <Text style={styles.levelChangeText}>{item.displayChange}</Text> : null}
-                  </View>
-                </View>
-              )) : (
+                ))
+              ) : (
                 <Text style={styles.meta}>当前等级不提供自动进度，只显示活跃数据。</Text>
               )}
             </View>
@@ -137,7 +165,9 @@ export function LinuxDoLevelPanel({
         <View style={styles.levelEmptyState}>
           {busy ? <ActivityIndicator color={theme.primary} size="small" /> : null}
           <Text style={styles.meta}>{busy ? '正在读取当前账号统计。' : '点击刷新后读取当前账号统计。'}</Text>
-          {!busy ? <IconButton icon={RefreshCw} label="刷新等级" compact styles={styles} theme={theme} onPress={onRefresh} /> : null}
+          {!busy ? (
+            <IconButton icon={RefreshCw} label="刷新等级" compact styles={styles} theme={theme} onPress={onRefresh} />
+          ) : null}
         </View>
       )}
     </View>

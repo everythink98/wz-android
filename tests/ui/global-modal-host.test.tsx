@@ -100,22 +100,23 @@ describe('GlobalModalHost NodeImage authorization boundary', () => {
 
     expect(nodeImageWebViewProps.source).toEqual({ uri: 'https://www.nodeimage.com/' });
     expect(nodeImageWebViewProps.injectedJavaScript).toBe('session-script');
-    expect(view.getByTestId(
-      'nodeimage-auth-touch-shield',
-      { includeHiddenElements: true }
-    )).toBeTruthy();
+    expect(view.getByTestId('nodeimage-auth-touch-shield', { includeHiddenElements: true })).toBeTruthy();
     expect(nodeImageModalProps.actions).toBeUndefined();
     expect(nodeImageWebViewMounts).toBe(1);
 
     await act(async () => {
-      view.rerender(<GlobalModalHost {...({
-        ...baseProps,
-        nodeImageAuthDocument: {
-          injectedJavaScript: 'connect-script',
-          key: '1:nodeseek-cauth',
-          url: 'https://www.nodeseek.com/connect?target=NodeImage'
-        }
-      } as any)} />);
+      view.rerender(
+        <GlobalModalHost
+          {...({
+            ...baseProps,
+            nodeImageAuthDocument: {
+              injectedJavaScript: 'connect-script',
+              key: '1:nodeseek-cauth',
+              url: 'https://www.nodeseek.com/connect?target=NodeImage'
+            }
+          } as any)}
+        />
+      );
     });
 
     expect(nodeImageWebViewProps.source).toEqual({
@@ -125,14 +126,18 @@ describe('GlobalModalHost NodeImage authorization boundary', () => {
     expect(nodeImageWebViewMounts).toBe(2);
 
     await act(async () => {
-      view.rerender(<GlobalModalHost {...({
-        ...baseProps,
-        nodeImageAuthDocument: {
-          injectedJavaScript: 'verify-script',
-          key: '1:nodeimage-verify',
-          url: 'https://www.nodeimage.com/'
-        }
-      } as any)} />);
+      view.rerender(
+        <GlobalModalHost
+          {...({
+            ...baseProps,
+            nodeImageAuthDocument: {
+              injectedJavaScript: 'verify-script',
+              key: '1:nodeimage-verify',
+              url: 'https://www.nodeimage.com/'
+            }
+          } as any)}
+        />
+      );
     });
 
     expect(nodeImageWebViewProps.source).toEqual({ uri: 'https://www.nodeimage.com/' });

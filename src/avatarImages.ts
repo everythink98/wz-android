@@ -23,7 +23,11 @@ export function setDefaultAvatarFetcher(fetcher: AvatarFetcher) {
   };
 }
 
-export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetcher = defaultAvatarFetcher, options: AvatarLoadOptions): Promise<string | null> {
+export async function loadRemoteAvatarSvgText(
+  uri: string,
+  fetcher: AvatarFetcher = defaultAvatarFetcher,
+  options: AvatarLoadOptions
+): Promise<string | null> {
   const clean = normalizeImagePreviewUrl(uri);
   if (!isNodeSeekAvatarUrl(clean)) {
     return null;
@@ -60,14 +64,18 @@ export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetche
 
 async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetcher, options: AvatarLoadOptions) {
   const headers = imageRequestHeadersForUrl(uri, { mediaContext: options.mediaContext });
-  const head = await fetchWithTimeout(uri, {
-    method: 'HEAD',
-    headers
-  }, {
-    fetcher,
-    signal: options.signal,
-    timeoutMs: AVATAR_SVG_TIMEOUT_MS
-  });
+  const head = await fetchWithTimeout(
+    uri,
+    {
+      method: 'HEAD',
+      headers
+    },
+    {
+      fetcher,
+      signal: options.signal,
+      timeoutMs: AVATAR_SVG_TIMEOUT_MS
+    }
+  );
   if (!head.ok) {
     return RETRY_LATER_AVATAR_RESULT;
   }
@@ -82,16 +90,20 @@ async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetch
   if (contentLength && contentLength > MAX_AVATAR_SVG_TEXT_BYTES) {
     return RETRY_LATER_AVATAR_RESULT;
   }
-  const response = await fetchWithTimeout(uri, {
-    headers: {
-      ...headers,
-      Accept: 'image/svg+xml,image/*,*/*;q=0.8'
+  const response = await fetchWithTimeout(
+    uri,
+    {
+      headers: {
+        ...headers,
+        Accept: 'image/svg+xml,image/*,*/*;q=0.8'
+      }
+    },
+    {
+      fetcher,
+      signal: options.signal,
+      timeoutMs: AVATAR_SVG_TIMEOUT_MS
     }
-  }, {
-    fetcher,
-    signal: options.signal,
-    timeoutMs: AVATAR_SVG_TIMEOUT_MS
-  });
+  );
   if (!response.ok) {
     return RETRY_LATER_AVATAR_RESULT;
   }
@@ -123,8 +135,7 @@ function isNodeSeekAvatarUrl(value: string) {
   try {
     const parsed = new URL(value);
     const host = parsed.hostname.toLowerCase();
-    return (host === 'nodeseek.com' || host.endsWith('.nodeseek.com'))
-      && /^\/avatar\/\d+\.png$/i.test(parsed.pathname);
+    return (host === 'nodeseek.com' || host.endsWith('.nodeseek.com')) && /^\/avatar\/\d+\.png$/i.test(parsed.pathname);
   } catch {
     return false;
   }

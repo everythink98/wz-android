@@ -82,19 +82,25 @@ describe('credential vault', () => {
   });
 
   it('continues to read credentials saved before value slots were introduced', async () => {
-    secureStore.__store.set('site-login-credential.nodeseek.summary', JSON.stringify({
-      version: 1,
-      site: 'nodeseek',
-      protection: 'biometric',
-      state: 'saved'
-    }));
-    secureStore.__store.set('site-login-credential.nodeseek.value', JSON.stringify({
-      version: 1,
-      site: 'nodeseek',
-      account: 'legacy-account',
-      password: 'legacy-password',
-      updatedAt: 1
-    }));
+    secureStore.__store.set(
+      'site-login-credential.nodeseek.summary',
+      JSON.stringify({
+        version: 1,
+        site: 'nodeseek',
+        protection: 'biometric',
+        state: 'saved'
+      })
+    );
+    secureStore.__store.set(
+      'site-login-credential.nodeseek.value',
+      JSON.stringify({
+        version: 1,
+        site: 'nodeseek',
+        account: 'legacy-account',
+        password: 'legacy-password',
+        updatedAt: 1
+      })
+    );
 
     await expect(credentialVault.readForFill('nodeseek')).resolves.toMatchObject({
       account: 'legacy-account',
@@ -105,20 +111,24 @@ describe('credential vault', () => {
   it('requires explicit confirmation before falling back to device encryption', async () => {
     vi.mocked(SecureStore.canUseBiometricAuthentication).mockReturnValue(false);
 
-    await expect(credentialVault.save('linuxdo', {
-      account: 'alice',
-      password: 'secret'
-    })).rejects.toMatchObject({
+    await expect(
+      credentialVault.save('linuxdo', {
+        account: 'alice',
+        password: 'secret'
+      })
+    ).rejects.toMatchObject({
       code: 'biometric-unavailable',
       message: '当前设备无法使用用户身份认证，请确认后再使用本机加密保存'
     });
     expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
 
-    await expect(credentialVault.save('linuxdo', {
-      account: 'alice',
-      password: 'secret',
-      allowUnprotected: true
-    })).resolves.toMatchObject({ protection: 'device' });
+    await expect(
+      credentialVault.save('linuxdo', {
+        account: 'alice',
+        password: 'secret',
+        allowUnprotected: true
+      })
+    ).resolves.toMatchObject({ protection: 'device' });
     expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
       'site-login-credential.linuxdo.value.0',
       expect.any(String),
@@ -181,14 +191,20 @@ describe('credential vault', () => {
 
   it('removes a partially written secret when summary persistence fails', async () => {
     vi.mocked(SecureStore.setItemAsync)
-      .mockImplementationOnce(async (key, value) => { secureStore.__store.set(key, value); })
-      .mockImplementationOnce(async (key, value) => { secureStore.__store.set(key, value); })
+      .mockImplementationOnce(async (key, value) => {
+        secureStore.__store.set(key, value);
+      })
+      .mockImplementationOnce(async (key, value) => {
+        secureStore.__store.set(key, value);
+      })
       .mockRejectedValueOnce(new Error('summary write failed'));
 
-    await expect(credentialVault.save('nodeseek', {
-      account: 'private-account',
-      password: 'private-password'
-    })).rejects.toThrow('summary write failed');
+    await expect(
+      credentialVault.save('nodeseek', {
+        account: 'private-account',
+        password: 'private-password'
+      })
+    ).rejects.toThrow('summary write failed');
 
     expect(secureStore.__store.has('site-login-credential.nodeseek.value.0')).toBe(false);
     expect(secureStore.__store.has('site-login-credential.nodeseek.summary')).toBe(false);
@@ -197,13 +213,17 @@ describe('credential vault', () => {
   it('preserves the previous credential when an update fails before switching slots', async () => {
     await credentialVault.save('nodeseek', { account: 'old-account', password: 'old-password' });
     vi.mocked(SecureStore.setItemAsync)
-      .mockImplementationOnce(async (key, value) => { secureStore.__store.set(key, value); })
+      .mockImplementationOnce(async (key, value) => {
+        secureStore.__store.set(key, value);
+      })
       .mockRejectedValueOnce(new Error('summary write failed'));
 
-    await expect(credentialVault.save('nodeseek', {
-      account: 'new-account',
-      password: 'new-password'
-    })).rejects.toThrow('summary write failed');
+    await expect(
+      credentialVault.save('nodeseek', {
+        account: 'new-account',
+        password: 'new-password'
+      })
+    ).rejects.toThrow('summary write failed');
 
     await expect(credentialVault.readForFill('nodeseek')).resolves.toMatchObject({
       account: 'old-account',
@@ -216,10 +236,12 @@ describe('credential vault', () => {
     await credentialVault.save('nodeseek', { account: 'old-account', password: 'old-password' });
     vi.mocked(SecureStore.deleteItemAsync).mockRejectedValueOnce(new Error('cleanup failed'));
 
-    await expect(credentialVault.save('nodeseek', {
-      account: 'new-account',
-      password: 'new-password'
-    })).resolves.toMatchObject({ state: 'saved' });
+    await expect(
+      credentialVault.save('nodeseek', {
+        account: 'new-account',
+        password: 'new-password'
+      })
+    ).resolves.toMatchObject({ state: 'saved' });
 
     expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).toMatchObject({
       slot: 1,
@@ -232,26 +254,33 @@ describe('credential vault', () => {
       password: 'new-password'
     });
     expect(secureStore.__store.has('site-login-credential.nodeseek.value.0')).toBe(false);
-    expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).not.toHaveProperty('cleanupSlots');
+    expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).not.toHaveProperty(
+      'cleanupSlots'
+    );
   });
 
   it('retains every pending cleanup across consecutive updates', async () => {
-    secureStore.__store.set('site-login-credential.nodeseek.summary', JSON.stringify({
-      version: 1,
-      site: 'nodeseek',
-      protection: 'biometric',
-      state: 'saved'
-    }));
-    secureStore.__store.set('site-login-credential.nodeseek.value', JSON.stringify({
-      version: 1,
-      site: 'nodeseek',
-      account: 'legacy-account',
-      password: 'legacy-password',
-      updatedAt: 1
-    }));
+    secureStore.__store.set(
+      'site-login-credential.nodeseek.summary',
+      JSON.stringify({
+        version: 1,
+        site: 'nodeseek',
+        protection: 'biometric',
+        state: 'saved'
+      })
+    );
+    secureStore.__store.set(
+      'site-login-credential.nodeseek.value',
+      JSON.stringify({
+        version: 1,
+        site: 'nodeseek',
+        account: 'legacy-account',
+        password: 'legacy-password',
+        updatedAt: 1
+      })
+    );
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
-      if (key === 'site-login-credential.nodeseek.value'
-        || key === 'site-login-credential.nodeseek.value.0') {
+      if (key === 'site-login-credential.nodeseek.value' || key === 'site-login-credential.nodeseek.value.0') {
         throw new Error('cleanup failed');
       }
       secureStore.__store.delete(key);
@@ -274,8 +303,7 @@ describe('credential vault', () => {
     await credentialVault.save('nodeseek', { account: 'new-account', password: 'new-password' });
     secureStore.__store.delete('site-login-credential.nodeseek.value.1');
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
-      if (key === 'site-login-credential.nodeseek.value.0'
-        || key === 'site-login-credential.nodeseek.value.1') {
+      if (key === 'site-login-credential.nodeseek.value.0' || key === 'site-login-credential.nodeseek.value.1') {
         throw new Error('cleanup failed');
       }
       secureStore.__store.delete(key);
@@ -294,20 +322,28 @@ describe('credential vault', () => {
     });
     await expect(credentialVault.getSummary('nodeseek')).resolves.toMatchObject({ state: 'invalidated' });
     expect(secureStore.__store.has('site-login-credential.nodeseek.value.0')).toBe(false);
-    expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).not.toHaveProperty('cleanupSlots');
+    expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).not.toHaveProperty(
+      'cleanupSlots'
+    );
   });
 
   it('keeps invalidated metadata when rollback cannot delete the secret', async () => {
     vi.mocked(SecureStore.setItemAsync)
-      .mockImplementationOnce(async (key, value) => { secureStore.__store.set(key, value); })
-      .mockImplementationOnce(async (key, value) => { secureStore.__store.set(key, value); })
+      .mockImplementationOnce(async (key, value) => {
+        secureStore.__store.set(key, value);
+      })
+      .mockImplementationOnce(async (key, value) => {
+        secureStore.__store.set(key, value);
+      })
       .mockRejectedValueOnce(new Error('summary write failed'));
     vi.mocked(SecureStore.deleteItemAsync).mockRejectedValueOnce(new Error('cleanup failed'));
 
-    await expect(credentialVault.save('nodeseek', {
-      account: 'private-account',
-      password: 'private-password'
-    })).rejects.toThrow('清理未完成');
+    await expect(
+      credentialVault.save('nodeseek', {
+        account: 'private-account',
+        password: 'private-password'
+      })
+    ).rejects.toThrow('清理未完成');
 
     expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).toMatchObject({
       state: 'invalidated',
@@ -320,15 +356,21 @@ describe('credential vault', () => {
   it('tracks a staged update when switching the summary and rollback cleanup both fail', async () => {
     await credentialVault.save('nodeseek', { account: 'old-account', password: 'old-password' });
     vi.mocked(SecureStore.setItemAsync)
-      .mockImplementationOnce(async (key, value) => { secureStore.__store.set(key, value); })
-      .mockImplementationOnce(async (key, value) => { secureStore.__store.set(key, value); })
+      .mockImplementationOnce(async (key, value) => {
+        secureStore.__store.set(key, value);
+      })
+      .mockImplementationOnce(async (key, value) => {
+        secureStore.__store.set(key, value);
+      })
       .mockRejectedValueOnce(new Error('summary switch failed'));
     vi.mocked(SecureStore.deleteItemAsync).mockRejectedValueOnce(new Error('rollback cleanup failed'));
 
-    await expect(credentialVault.save('nodeseek', {
-      account: 'new-account',
-      password: 'new-password'
-    })).rejects.toThrow('清理未完成');
+    await expect(
+      credentialVault.save('nodeseek', {
+        account: 'new-account',
+        password: 'new-password'
+      })
+    ).rejects.toThrow('清理未完成');
 
     expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).toMatchObject({
       slot: 0,
@@ -341,28 +383,38 @@ describe('credential vault', () => {
       password: 'old-password'
     });
     expect(secureStore.__store.has('site-login-credential.nodeseek.value.1')).toBe(false);
-    expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).not.toHaveProperty('cleanupSlots');
+    expect(JSON.parse(secureStore.__store.get('site-login-credential.nodeseek.summary')!)).not.toHaveProperty(
+      'cleanupSlots'
+    );
   });
 
   it('serializes cleanup metadata writes with a concurrent save', async () => {
-    secureStore.__store.set('site-login-credential.nodeseek.summary', JSON.stringify({
-      version: 1,
-      site: 'nodeseek',
-      protection: 'biometric',
-      state: 'saved',
-      slot: 1,
-      cleanupSlots: [0]
-    }));
+    secureStore.__store.set(
+      'site-login-credential.nodeseek.summary',
+      JSON.stringify({
+        version: 1,
+        site: 'nodeseek',
+        protection: 'biometric',
+        state: 'saved',
+        slot: 1,
+        cleanupSlots: [0]
+      })
+    );
     secureStore.__store.set('site-login-credential.nodeseek.value.0', 'stale-value');
-    secureStore.__store.set('site-login-credential.nodeseek.value.1', JSON.stringify({
-      version: 1,
-      site: 'nodeseek',
-      account: 'old-account',
-      password: 'old-password',
-      updatedAt: 1
-    }));
+    secureStore.__store.set(
+      'site-login-credential.nodeseek.value.1',
+      JSON.stringify({
+        version: 1,
+        site: 'nodeseek',
+        account: 'old-account',
+        password: 'old-password',
+        updatedAt: 1
+      })
+    );
     let releaseCleanup!: () => void;
-    const cleanupGate = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
     vi.mocked(SecureStore.deleteItemAsync).mockImplementationOnce(async (key) => {
       await cleanupGate;
       secureStore.__store.delete(key);
@@ -406,14 +458,18 @@ describe('credential vault', () => {
   });
 
   it('rejects empty and oversized values before writing', async () => {
-    await expect(credentialVault.save('nodeseek', {
-      account: ' ',
-      password: 'secret'
-    })).rejects.toMatchObject({ code: 'invalid-input' });
-    await expect(credentialVault.save('nodeseek', {
-      account: 'alice',
-      password: '密'.repeat(1000)
-    })).rejects.toMatchObject({ code: 'invalid-input' });
+    await expect(
+      credentialVault.save('nodeseek', {
+        account: ' ',
+        password: 'secret'
+      })
+    ).rejects.toMatchObject({ code: 'invalid-input' });
+    await expect(
+      credentialVault.save('nodeseek', {
+        account: 'alice',
+        password: '密'.repeat(1000)
+      })
+    ).rejects.toMatchObject({ code: 'invalid-input' });
     expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
   });
 });

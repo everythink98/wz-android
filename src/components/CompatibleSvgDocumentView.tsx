@@ -24,33 +24,34 @@ const GUARDED_DOCUMENT_ORIGINS = ['*'];
 const SVG_READY_MESSAGE = 'wz-svg-ready';
 const SVG_ERROR_MESSAGE = 'wz-svg-error';
 
-export function CompatibleSvgDocumentView({
-  artifact,
-  style,
-  onLoad,
-  onError
-}: CompatibleSvgDocumentViewProps) {
+export function CompatibleSvgDocumentView({ artifact, style, onLoad, onError }: CompatibleSvgDocumentViewProps) {
   const identity = `${artifact.requestIdentity}\u0000${artifact.documentDataUri}`;
   const settledIdentityRef = useRef(identity);
   const settlementOutcomeRef = useRef<'error' | 'load' | null>(null);
 
   const validDocumentDataUri = isSvgDocumentDataUri(artifact.documentDataUri);
-  const source = useMemo(() => ({
-    baseUrl: 'about:blank',
-    html: compatibleSvgDocumentHtml(validDocumentDataUri ? artifact.documentDataUri : EMPTY_SVG_DATA_URI)
-  }), [artifact.documentDataUri, validDocumentDataUri]);
+  const source = useMemo(
+    () => ({
+      baseUrl: 'about:blank',
+      html: compatibleSvgDocumentHtml(validDocumentDataUri ? artifact.documentDataUri : EMPTY_SVG_DATA_URI)
+    }),
+    [artifact.documentDataUri, validDocumentDataUri]
+  );
 
-  const settle = useCallback((outcome: 'error' | 'load') => {
-    if (settledIdentityRef.current !== identity || settlementOutcomeRef.current) {
-      return;
-    }
-    settlementOutcomeRef.current = outcome;
-    if (outcome === 'load') {
-      onLoad?.();
-    } else {
-      onError?.();
-    }
-  }, [identity, onError, onLoad]);
+  const settle = useCallback(
+    (outcome: 'error' | 'load') => {
+      if (settledIdentityRef.current !== identity || settlementOutcomeRef.current) {
+        return;
+      }
+      settlementOutcomeRef.current = outcome;
+      if (outcome === 'load') {
+        onLoad?.();
+      } else {
+        onError?.();
+      }
+    },
+    [identity, onError, onLoad]
+  );
 
   useLayoutEffect(() => {
     if (settledIdentityRef.current === identity) {
@@ -66,16 +67,21 @@ export function CompatibleSvgDocumentView({
     }
   }, [settle, validDocumentDataUri]);
 
-  const handleNavigation = useCallback((request: CompatibleSvgNavigationRequest) => (
-    request.isTopFrame !== false && isLocalBootstrapDocumentUrl(request.url)
-  ), []);
-  const handleMessage = useCallback((event: CompatibleSvgMessageEvent) => {
-    if (event.nativeEvent.data === SVG_READY_MESSAGE) {
-      settle('load');
-    } else if (event.nativeEvent.data === SVG_ERROR_MESSAGE) {
-      settle('error');
-    }
-  }, [settle]);
+  const handleNavigation = useCallback(
+    (request: CompatibleSvgNavigationRequest) =>
+      request.isTopFrame !== false && isLocalBootstrapDocumentUrl(request.url),
+    []
+  );
+  const handleMessage = useCallback(
+    (event: CompatibleSvgMessageEvent) => {
+      if (event.nativeEvent.data === SVG_READY_MESSAGE) {
+        settle('load');
+      } else if (event.nativeEvent.data === SVG_ERROR_MESSAGE) {
+        settle('error');
+      }
+    },
+    [settle]
+  );
   const handleError = useCallback(() => settle('error'), [settle]);
 
   return (
@@ -160,11 +166,7 @@ function isLocalBootstrapDocumentUrl(value: string) {
 }
 
 function escapeHtmlAttribute(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 const componentStyles = StyleSheet.create({

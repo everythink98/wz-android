@@ -78,12 +78,10 @@ export function shouldAllowBilibiliWebViewNavigation(value: unknown) {
   const url = safeUrl(text, 'https://player.bilibili.com/');
   const host = url?.hostname.toLowerCase();
   return Boolean(
-    url
-    && url.protocol === 'https:'
-    && (
-      (host === BILIBILI_PLAYER_HOST && url.pathname === '/player.html')
-      || (host === 'www.bilibili.com' && url.pathname === '/blackboard/webplayer/mbplayer.html')
-    )
-    && hasBilibiliPlayerId(url)
+    url &&
+    url.protocol === 'https:' &&
+    ((host === BILIBILI_PLAYER_HOST && url.pathname === '/player.html') ||
+      (host === 'www.bilibili.com' && url.pathname === '/blackboard/webplayer/mbplayer.html')) &&
+    hasBilibiliPlayerId(url)
   );
 }

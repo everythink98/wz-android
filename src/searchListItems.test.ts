@@ -58,23 +58,29 @@ describe('Android search list items', () => {
       'yaohuo'
     ]);
     expect(items.filter((item) => item.type === 'topic').map((item) => item.topic.id)).toEqual([
-      'v1', 'v2',
-      'l1', 'l2',
-      'n1', 'n2',
-      'y1', 'y2'
+      'v1',
+      'v2',
+      'l1',
+      'l2',
+      'n1',
+      'n2',
+      'y1',
+      'y2'
     ]);
     expect(items.some((item) => item.type === 'groupLoadMore')).toBe(false);
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '已载入 3 条' });
   });
 
   it('renders the full source list and pagination sentinel without a group header', () => {
-    const groups: SearchGroup[] = [{
-      source: 'linuxdo',
-      label: 'linux.do',
-      items: [topic('1', 'linuxdo'), topic('2', 'linuxdo')],
-      hasMore: true,
-      nextPage: 2
-    }];
+    const groups: SearchGroup[] = [
+      {
+        source: 'linuxdo',
+        label: 'linux.do',
+        items: [topic('1', 'linuxdo'), topic('2', 'linuxdo')],
+        hasMore: true,
+        nextPage: 2
+      }
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'source' });
 
@@ -83,35 +89,42 @@ describe('Android search list items', () => {
   });
 
   it('keeps source auth notices visible instead of treating them as empty results', () => {
-    const groups: SearchGroup[] = [{
-      source: 'nodeseek',
-      label: 'NodeSeek',
-      items: [],
-      authNotice: {
-        kind: 'login-required',
-        message: '未登录搜索，结果可能不完整。',
-        tone: 'warning'
+    const groups: SearchGroup[] = [
+      {
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [],
+        authNotice: {
+          kind: 'login-required',
+          message: '未登录搜索，结果可能不完整。',
+          tone: 'warning'
+        }
       }
-    }];
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'overview' });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice', 'groupEmpty']);
-    expect(items[1]).toMatchObject({ type: 'groupAuthNotice', group: { authNotice: { message: '未登录搜索，结果可能不完整。', tone: 'warning' } } });
+    expect(items[1]).toMatchObject({
+      type: 'groupAuthNotice',
+      group: { authNotice: { message: '未登录搜索，结果可能不完整。', tone: 'warning' } }
+    });
   });
 
   it('shows an unsettled source notice without an empty terminal state', () => {
-    const groups: SearchGroup[] = [{
-      source: 'nodeseek',
-      label: 'NodeSeek',
-      items: [],
-      settled: false,
-      authNotice: {
-        kind: 'verification-required',
-        message: 'NodeSeek 登录状态待确认，已暂停新请求和写入。',
-        tone: 'warning'
+    const groups: SearchGroup[] = [
+      {
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [],
+        settled: false,
+        authNotice: {
+          kind: 'verification-required',
+          message: 'NodeSeek 登录状态待确认，已暂停新请求和写入。',
+          tone: 'warning'
+        }
       }
-    }];
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'overview' });
 
@@ -121,13 +134,15 @@ describe('Android search list items', () => {
 
   it('[REG-SEARCH-017] shows an enabled unsettled request as loading', () => {
     const items = buildSearchListItems({
-      groups: [{
-        source: 'v2ex',
-        label: 'V2EX',
-        items: [],
-        settled: false,
-        loading: true
-      }],
+      groups: [
+        {
+          source: 'v2ex',
+          label: 'V2EX',
+          items: [],
+          settled: false,
+          loading: true
+        }
+      ],
       mode: 'overview'
     });
 
@@ -136,16 +151,18 @@ describe('Android search list items', () => {
   });
 
   it('keeps neutral auth notices out of source result bodies', () => {
-    const groups: SearchGroup[] = [{
-      source: 'nodeseek',
-      label: 'NodeSeek',
-      items: [],
-      authNotice: {
-        kind: 'logged-in',
-        message: '已登录搜索。',
-        tone: 'neutral'
+    const groups: SearchGroup[] = [
+      {
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [],
+        authNotice: {
+          kind: 'logged-in',
+          message: '已登录搜索。',
+          tone: 'neutral'
+        }
       }
-    }];
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'overview' });
 
@@ -155,18 +172,20 @@ describe('Android search list items', () => {
   });
 
   it('renders an auth notice instead of an ordinary error when the same message is also the error', () => {
-    const groups: SearchGroup[] = [{
-      source: 'yaohuo',
-      label: '妖火',
-      items: [],
-      authNotice: {
-        kind: 'login-required',
-        message: '妖火需要登录后使用此功能。',
-        tone: 'warning'
-      },
-      error: '妖火需要登录后使用此功能。',
-      errorKind: 'login-required'
-    }];
+    const groups: SearchGroup[] = [
+      {
+        source: 'yaohuo',
+        label: '妖火',
+        items: [],
+        authNotice: {
+          kind: 'login-required',
+          message: '妖火需要登录后使用此功能。',
+          tone: 'warning'
+        },
+        error: '妖火需要登录后使用此功能。',
+        errorKind: 'login-required'
+      }
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'overview' });
 
@@ -175,17 +194,19 @@ describe('Android search list items', () => {
   });
 
   it('keeps non-neutral auth notices visible when a separate source error also happens', () => {
-    const groups: SearchGroup[] = [{
-      source: 'nodeseek',
-      label: 'NodeSeek',
-      items: [],
-      authNotice: {
-        kind: 'login-required',
-        message: '未登录搜索，结果可能不完整。',
-        tone: 'warning'
-      },
-      error: '请求超时，请稍后重试'
-    }];
+    const groups: SearchGroup[] = [
+      {
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [],
+        authNotice: {
+          kind: 'login-required',
+          message: '未登录搜索，结果可能不完整。',
+          tone: 'warning'
+        },
+        error: '请求超时，请稍后重试'
+      }
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'overview' });
 
@@ -194,14 +215,16 @@ describe('Android search list items', () => {
   });
 
   it('REG-SEARCH-002 keeps loaded topics visible when the next page fails', () => {
-    const groups: SearchGroup[] = [{
-      source: 'v2ex',
-      label: 'V2EX',
-      items: [topic('1', 'v2ex')],
-      error: '第 2 页请求失败',
-      hasMore: true,
-      nextPage: 2
-    }];
+    const groups: SearchGroup[] = [
+      {
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [topic('1', 'v2ex')],
+        error: '第 2 页请求失败',
+        hasMore: true,
+        nextPage: 2
+      }
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'source' });
 
@@ -210,14 +233,16 @@ describe('Android search list items', () => {
   });
 
   it('keeps a first-page partial failure on the whole-source error path', () => {
-    const groups: SearchGroup[] = [{
-      source: 'v2ex',
-      label: 'V2EX',
-      items: [topic('1', 'v2ex')],
-      error: '首屏请求失败',
-      hasMore: false,
-      nextPage: null
-    }];
+    const groups: SearchGroup[] = [
+      {
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [topic('1', 'v2ex')],
+        error: '首屏请求失败',
+        hasMore: false,
+        nextPage: null
+      }
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'source' });
 
@@ -225,23 +250,24 @@ describe('Android search list items', () => {
   });
 
   it('labels verification-required search groups separately from login limits', () => {
-    const groups: SearchGroup[] = [{
-      source: 'nodeseek',
-      label: 'NodeSeek',
-      items: [],
-      authNotice: {
-        kind: 'verification-required',
-        message: 'NodeSeek 要求额外操作',
-        tone: 'warning'
-      },
-      error: 'NodeSeek 要求额外操作',
-      errorKind: 'verification-required'
-    }];
+    const groups: SearchGroup[] = [
+      {
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [],
+        authNotice: {
+          kind: 'verification-required',
+          message: 'NodeSeek 要求额外操作',
+          tone: 'warning'
+        },
+        error: 'NodeSeek 要求额外操作',
+        errorKind: 'verification-required'
+      }
+    ];
 
     const items = buildSearchListItems({ groups, mode: 'overview' });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice']);
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '需验证' });
   });
-
 });

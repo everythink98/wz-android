@@ -100,13 +100,16 @@ describe('REG-OPS-015 release environment boundary', () => {
   });
 
   it('removes mixed-case signing names from ordinary Windows child environments', () => {
-    const ordinary = unsignedReleaseChildEnv({
-      PATH: 'tools',
-      Wz_Android_KeyStore_Path: 'signing/release.jks',
-      wz_android_keystore_password: 'store-secret',
-      WZ_ANDROID_KEY_ALIAS: 'release-key',
-      wZ_aNdRoId_KeY_pAsSwOrD: 'key-secret'
-    }, {});
+    const ordinary = unsignedReleaseChildEnv(
+      {
+        PATH: 'tools',
+        Wz_Android_KeyStore_Path: 'signing/release.jks',
+        wz_android_keystore_password: 'store-secret',
+        WZ_ANDROID_KEY_ALIAS: 'release-key',
+        wZ_aNdRoId_KeY_pAsSwOrD: 'key-secret'
+      },
+      {}
+    );
 
     const ordinaryNames = Object.keys(ordinary).map((name) => name.toUpperCase());
     for (const name of Object.keys(signing)) {
@@ -118,12 +121,19 @@ describe('REG-OPS-015 release environment boundary', () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'wz-release-package-'));
     const packageJsonPath = path.join(directory, 'package.json');
     const original = '{\r\n  "scripts": {\r\n    "android": "expo run:android"\r\n  }\r\n}\r\n';
-    writeFileSync(packageJsonPath, JSON.stringify({
-      scripts: {
-        android: 'expo run:android',
-        ios: 'expo run:ios'
-      }
-    }, null, 2));
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify(
+        {
+          scripts: {
+            android: 'expo run:android',
+            ios: 'expo run:ios'
+          }
+        },
+        null,
+        2
+      )
+    );
 
     try {
       restorePackageJsonAfterPrebuild(packageJsonPath, original);
@@ -137,16 +147,18 @@ describe('REG-OPS-015 release environment boundary', () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'wz-release-package-'));
     const packageJsonPath = path.join(directory, 'package.json');
     const original = '{"scripts":{"android":"expo run:android"}}\n';
-    writeFileSync(packageJsonPath, JSON.stringify({
-      scripts: {
-        android: 'expo run:android',
-        ios: 'custom ios command'
-      }
-    }));
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify({
+        scripts: {
+          android: 'expo run:android',
+          ios: 'custom ios command'
+        }
+      })
+    );
 
     try {
-      expect(() => restorePackageJsonAfterPrebuild(packageJsonPath, original))
-        .toThrow('package.json');
+      expect(() => restorePackageJsonAfterPrebuild(packageJsonPath, original)).toThrow('package.json');
       expect(readFileSync(packageJsonPath, 'utf8')).toBe(original);
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -164,8 +176,7 @@ describe('REG-OPS-015 release environment boundary', () => {
       expect(readFileSync(packageJsonPath, 'utf8')).toBe(original);
 
       writeFileSync(packageJsonPath, '{"scripts":{"ios":"expo run:ios"}}\n');
-      expect(() => restorePackageJsonAfterPrebuild(packageJsonPath, original))
-        .toThrow('package.json');
+      expect(() => restorePackageJsonAfterPrebuild(packageJsonPath, original)).toThrow('package.json');
       expect(readFileSync(packageJsonPath, 'utf8')).toBe(original);
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -181,25 +192,19 @@ describe('REG-OPS-015 release environment boundary', () => {
 
   it('runs unsigned native validation before the only signed build and records provenance', () => {
     const ordinary = unsignedReleaseChildEnv({ PATH: 'tools', ...signing }, {});
-    const calls: Array<{ command: string; args: string[]; options: { cwd: string; env: Record<string, string> } }> = [];
+    const calls: { command: string; args: string[]; options: { cwd: string; env: Record<string, string> } }[] = [];
 
     runReleaseBuildStages({
       androidDir: 'android',
       builtAbis: ['arm64-v8a', 'x86_64'],
       ordinaryEnv: ordinary,
       releaseEnv: signing,
-      run: (
-        command: string,
-        args: string[],
-        options: { cwd: string; env: Record<string, string> }
-      ) => calls.push({ command, args, options })
+      run: (command: string, args: string[], options: { cwd: string; env: Record<string, string> }) =>
+        calls.push({ command, args, options })
     });
 
     expect(calls).toHaveLength(2);
-    expect(calls[0]?.args).toEqual(expect.arrayContaining([
-      ':app:testReleaseUnitTest',
-      ':app:compileReleaseKotlin'
-    ]));
+    expect(calls[0]?.args).toEqual(expect.arrayContaining([':app:testReleaseUnitTest', ':app:compileReleaseKotlin']));
     expect(calls[0]?.args).not.toContain(':app:assembleRelease');
     expect(calls[1]?.args).toContain(':app:assembleRelease');
     for (const name of Object.keys(signing)) {
@@ -207,21 +212,23 @@ describe('REG-OPS-015 release environment boundary', () => {
       expect(calls[1]?.options.env[name]).toBe(signing[name as keyof typeof signing]);
     }
 
-    expect(createReleaseManifest({
-      apkName: 'app-arm64-v8a-release.apk',
-      sha256: 'a'.repeat(64),
-      packageName: 'com.wz.reader',
-      versionName: '1.3.89',
-      versionCode: 1389,
-      signerSha256: 'b'.repeat(64),
-      gitSha: 'c'.repeat(40),
-      packageLockSha256: 'd'.repeat(64),
-      nodeVersion: '22.18.0',
-      npmVersion: '10.9.3',
-      javaVersion: 'openjdk 17',
-      gradleVersion: '8.14.3',
-      builtAbis: ['arm64-v8a', 'x86_64']
-    })).toMatchObject({
+    expect(
+      createReleaseManifest({
+        apkName: 'app-arm64-v8a-release.apk',
+        sha256: 'a'.repeat(64),
+        packageName: 'com.wz.reader',
+        versionName: '1.3.89',
+        versionCode: 1389,
+        signerSha256: 'b'.repeat(64),
+        gitSha: 'c'.repeat(40),
+        packageLockSha256: 'd'.repeat(64),
+        nodeVersion: '22.18.0',
+        npmVersion: '10.9.3',
+        javaVersion: 'openjdk 17',
+        gradleVersion: '8.14.3',
+        builtAbis: ['arm64-v8a', 'x86_64']
+      })
+    ).toMatchObject({
       gitSha: 'c'.repeat(40),
       packageLockSha256: 'd'.repeat(64),
       nodeVersion: '22.18.0',

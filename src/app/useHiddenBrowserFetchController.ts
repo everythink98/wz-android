@@ -389,51 +389,58 @@ export function useHiddenBrowserFetchController({
     error?: string;
   }) => void;
 }) {
-  const handleNodeSeekBrowserFetchMessage = useCallback((event: WebViewMessageEvent) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data) as {
-        type?: string;
-        id?: number;
-        url?: string;
-        html?: string;
-        userAgent?: string;
-        challenge?: boolean;
-        error?: string;
-        failureReason?: 'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
-        httpErrorStatus?: number;
-      };
-      if (
-        data.type === 'nodeseek-browser-fetch'
-        && hasTrustedBrowserFetchMessageOrigin(event.nativeEvent.url, data.url)
-      ) {
-        completeNodeSeekBrowserFetch(data);
+  const handleNodeSeekBrowserFetchMessage = useCallback(
+    (event: WebViewMessageEvent) => {
+      try {
+        const data = JSON.parse(event.nativeEvent.data) as {
+          type?: string;
+          id?: number;
+          url?: string;
+          html?: string;
+          userAgent?: string;
+          challenge?: boolean;
+          error?: string;
+          failureReason?:
+            'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
+          httpErrorStatus?: number;
+        };
+        if (
+          data.type === 'nodeseek-browser-fetch' &&
+          hasTrustedBrowserFetchMessageOrigin(event.nativeEvent.url, data.url)
+        ) {
+          completeNodeSeekBrowserFetch(data);
+        }
+      } catch {
+        // Ignore unrelated messages from the page.
       }
-    } catch {
-      // Ignore unrelated messages from the page.
-    }
-  }, [completeNodeSeekBrowserFetch]);
+    },
+    [completeNodeSeekBrowserFetch]
+  );
 
-  const handleLinuxDoBrowserFetchMessage = useCallback((event: WebViewMessageEvent) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data) as {
-        type?: string;
-        id?: number;
-        url?: string;
-        body?: string;
-        userAgent?: string;
-        challenge?: boolean;
-        error?: string;
-      };
-      if (
-        data.type === 'linuxdo-browser-fetch'
-        && hasTrustedBrowserFetchMessageOrigin(event.nativeEvent.url, data.url)
-      ) {
-        completeLinuxDoBrowserFetch(data);
+  const handleLinuxDoBrowserFetchMessage = useCallback(
+    (event: WebViewMessageEvent) => {
+      try {
+        const data = JSON.parse(event.nativeEvent.data) as {
+          type?: string;
+          id?: number;
+          url?: string;
+          body?: string;
+          userAgent?: string;
+          challenge?: boolean;
+          error?: string;
+        };
+        if (
+          data.type === 'linuxdo-browser-fetch' &&
+          hasTrustedBrowserFetchMessageOrigin(event.nativeEvent.url, data.url)
+        ) {
+          completeLinuxDoBrowserFetch(data);
+        }
+      } catch {
+        // Ignore unrelated messages from the page.
       }
-    } catch {
-      // Ignore unrelated messages from the page.
-    }
-  }, [completeLinuxDoBrowserFetch]);
+    },
+    [completeLinuxDoBrowserFetch]
+  );
 
   return {
     handleLinuxDoBrowserFetchMessage,

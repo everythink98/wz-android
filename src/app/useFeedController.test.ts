@@ -12,7 +12,10 @@ describe('feedOutcomeKind', () => {
     { expected: 'partial', itemCount: 1, errors: { v2ex: { kind: 'permission-denied', message: 'forbidden' } } },
     { expected: 'auth', itemCount: 1, errors: { nodeseek: { kind: 'verification-required', message: 'verify' } } },
     { expected: 'auth', itemCount: 0, errors: { linuxdo: { kind: 'login-expired', message: 'login' } } }
-  ] satisfies Array<{ expected: string; itemCount: number; errors: SourceErrors }>)('classifies $expected without depending on live data', ({ expected, itemCount, errors }) => {
-    expect(feedOutcomeKind(itemCount, errors)).toBe(expected);
-  });
+  ] satisfies { expected: string; itemCount: number; errors: SourceErrors }[])(
+    'classifies $expected without depending on live data',
+    ({ expected, itemCount, errors }) => {
+      expect(feedOutcomeKind(itemCount, errors)).toBe(expected);
+    }
+  );
 });

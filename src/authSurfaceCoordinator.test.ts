@@ -47,12 +47,14 @@ describe('auth surface coordinator', () => {
     });
 
     expect(registry.active['linuxdo-login']).toEqual(ticket);
-    expect(beginAuthSurface(registry, {
-      source: 'linuxdo',
-      surface: 'linuxdo-login',
-      identityKey: 'linuxdo:7',
-      sessionEpoch: 2
-    })).toEqual(ticket);
+    expect(
+      beginAuthSurface(registry, {
+        source: 'linuxdo',
+        surface: 'linuxdo-login',
+        identityKey: 'linuxdo:7',
+        sessionEpoch: 2
+      })
+    ).toEqual(ticket);
     expect(registry.generation).toBe(1);
   });
 

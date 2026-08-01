@@ -1,10 +1,7 @@
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 
 import { absoluteUrl, decodeHtml, parseHtml, textContentFromHtml } from './localHtml';
-import {
-  discourseQuotedPostReferenceFromAttributes,
-  quotedPostReferenceKey
-} from './quotedPosts';
+import { discourseQuotedPostReferenceFromAttributes, quotedPostReferenceKey } from './quotedPosts';
 import type { DiscourseSource } from './sourceCatalog';
 import type { QuotedPostMetadata, TopicPoll } from './types';
 
@@ -100,8 +97,7 @@ function nodeHasMeaningfulContent(node: Node): boolean {
   if (isTextNode(node)) {
     return Boolean(node.rawText.trim());
   }
-  return VISIBLE_EMPTY_ELEMENTS.has(node.rawTagName.toLowerCase())
-    || node.childNodes.some(nodeHasMeaningfulContent);
+  return VISIBLE_EMPTY_ELEMENTS.has(node.rawTagName.toLowerCase()) || node.childNodes.some(nodeHasMeaningfulContent);
 }
 
 function firstMeaningfulNode(nodes: Node[]) {
@@ -143,7 +139,7 @@ function calloutMarker(blockquote: HTMLElement) {
     definition: Object.prototype.hasOwnProperty.call(DISCOURSE_CALLOUT_REGISTRY, key)
       ? DISCOURSE_CALLOUT_REGISTRY[key]
       : DEFAULT_CALLOUT,
-    fold: match[2] === '-' ? 'collapsed' as const : match[2] === '+' ? 'expanded' as const : undefined,
+    fold: match[2] === '-' ? ('collapsed' as const) : match[2] === '+' ? ('expanded' as const) : undefined,
     match,
     paragraph,
     rawMatch,
@@ -242,11 +238,8 @@ function stripForgedCalloutSemantics(root: HTMLElement) {
         node.removeAttribute(name);
       }
     });
-    const classAttributeNames = Object.keys(node.attributes)
-      .filter((name) => name.toLowerCase() === 'class');
-    const className = classAttributeNames
-      .map((name) => String(node.attributes[name] || ''))
-      .join(' ');
+    const classAttributeNames = Object.keys(node.attributes).filter((name) => name.toLowerCase() === 'class');
+    const className = classAttributeNames.map((name) => String(node.attributes[name] || '')).join(' ');
     if (className) {
       const next = className
         .split(/\s+/)
@@ -292,9 +285,10 @@ function normalizeCallout(blockquote: HTMLElement) {
   const title = splitInlineNodes([...marker.paragraph.childNodes]);
   const paragraphIndex = blockquote.childNodes.indexOf(marker.paragraph);
   const remaining = blockquote.childNodes.slice(paragraphIndex + 1);
-  const paragraphBody = title.separated && title.after.some(nodeHasMeaningfulContent)
-    ? marker.paragraph.set_content(title.after)
-    : undefined;
+  const paragraphBody =
+    title.separated && title.after.some(nodeHasMeaningfulContent)
+      ? marker.paragraph.set_content(title.after)
+      : undefined;
   if (!paragraphBody) {
     marker.paragraph.set_content([]);
   }
@@ -350,14 +344,15 @@ export function discourseAvatarUrl(value: unknown, baseUrl: string) {
 
 function quotedAuthorLabelFromTitle(value: string) {
   const text = value.replace(/\s+/g, ' ').trim();
-  return text.match(/^([^:：]{1,64})\s*[:：]/)?.[1]?.trim()
-    || text.match(/([^:：\s]{1,64})\s*[:：]\s*$/)?.[1]?.trim()
-    || '';
+  return (
+    text.match(/^([^:：]{1,64})\s*[:：]/)?.[1]?.trim() || text.match(/([^:：\s]{1,64})\s*[:：]\s*$/)?.[1]?.trim() || ''
+  );
 }
 
 function quotedAuthorLabelFromAvatarUrl(value: string) {
-  const match = value.trim().match(/(?:^|\/)user_avatar\/(?:[^/?#]+\/)?([^/?#]+)\/\d+(?:\/|$)/i)
-    || value.trim().match(/(?:^|\/)letter_avatar\/([^/?#]+)\/\d+(?:\/|$)/i);
+  const match =
+    value.trim().match(/(?:^|\/)user_avatar\/(?:[^/?#]+\/)?([^/?#]+)\/\d+(?:\/|$)/i) ||
+    value.trim().match(/(?:^|\/)letter_avatar\/([^/?#]+)\/\d+(?:\/|$)/i);
   if (!match) {
     return '';
   }
@@ -368,18 +363,18 @@ function quotedAuthorLabelFromAvatarUrl(value: string) {
   }
 }
 
-function discourseQuoteReference(
-  node: ReturnType<typeof parseHtml>,
-  source: DiscourseSource,
-  topicId?: string
-) {
+function discourseQuoteReference(node: ReturnType<typeof parseHtml>, source: DiscourseSource, topicId?: string) {
   if (!/\bquote\b/i.test(String(node.getAttribute('class') || ''))) {
     return null;
   }
-  return discourseQuotedPostReferenceFromAttributes(source, {
-    'data-post': node.getAttribute('data-post'),
-    'data-topic': node.getAttribute('data-topic')
-  }, topicId);
+  return discourseQuotedPostReferenceFromAttributes(
+    source,
+    {
+      'data-post': node.getAttribute('data-post'),
+      'data-topic': node.getAttribute('data-topic')
+    },
+    topicId
+  );
 }
 
 export function discourseQuoteMetadata(html: string, source: DiscourseSource, topicId?: string) {
@@ -391,15 +386,20 @@ export function discourseQuoteMetadata(html: string, source: DiscourseSource, to
       return;
     }
     const username = String(node.getAttribute('data-username') || '').trim();
-    const label = username
-      || String(node.getAttribute('data-display-name') || '').trim()
-      || quotedAuthorLabelFromAvatarUrl(String(node.querySelector('.title img')?.getAttribute('src') || ''))
-      || quotedAuthorLabelFromTitle(textContentFromHtml(node.querySelector('.title')?.toString() || ''));
+    const label =
+      username ||
+      String(node.getAttribute('data-display-name') || '').trim() ||
+      quotedAuthorLabelFromAvatarUrl(String(node.querySelector('.title img')?.getAttribute('src') || '')) ||
+      quotedAuthorLabelFromTitle(textContentFromHtml(node.querySelector('.title')?.toString() || ''));
     const preview = stripDiscourseCalloutMarkersFromExcerpt(
       textContentFromHtml(node.querySelector('blockquote')?.toString() || '')
-    ).replace(/\s+/g, ' ').trim();
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
     const topicLink = node.querySelector('.quote-title__text-content a') || node.querySelector('.title a');
-    const topicTitle = textContentFromHtml(topicLink?.toString() || '').replace(/\s+/g, ' ').trim();
+    const topicTitle = textContentFromHtml(topicLink?.toString() || '')
+      .replace(/\s+/g, ' ')
+      .trim();
     const topicUrl = String(topicLink?.getAttribute('href') || '').trim();
     const key = quotedPostReferenceKey(reference);
     quotedPosts.set(key, {
@@ -415,16 +415,10 @@ export function discourseQuoteMetadata(html: string, source: DiscourseSource, to
   return { html: root.toString(), quotedPosts: [...quotedPosts.values()] };
 }
 
-export type DiscourseContentPart =
-  | { type: 'html'; html: string }
-  | { type: 'poll'; poll: TopicPoll };
+export type DiscourseContentPart = { type: 'html'; html: string } | { type: 'poll'; poll: TopicPoll };
 
 function escapeAttribute(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 export function discoursePollPlaceholder(name: string) {
@@ -446,12 +440,9 @@ export function splitDiscourseContentHtml(
     return pollList.map((poll) => ({ type: 'poll', poll }));
   }
   if (!new RegExp(`<${DISCOURSE_POLL_PLACEHOLDER_TAG}\\b`, 'i').test(clean)) {
-    return [
-      { type: 'html', html: clean },
-      ...pollList.map((poll) => ({ type: 'poll' as const, poll }))
-    ];
+    return [{ type: 'html', html: clean }, ...pollList.map((poll) => ({ type: 'poll' as const, poll }))];
   }
-  const pollsByName = new Map(pollList.flatMap((poll) => poll.name ? [[poll.name, poll] as const] : []));
+  const pollsByName = new Map(pollList.flatMap((poll) => (poll.name ? [[poll.name, poll] as const] : [])));
   const matchedPolls = new Set<TopicPoll>();
   const parts: DiscourseContentPart[] = [];
   let currentHtml = '';
@@ -466,7 +457,9 @@ export function splitDiscourseContentHtml(
     const nodes = parseHtml(`<body>${clean}</body>`).querySelector('body')?.childNodes || [];
     for (const node of nodes) {
       if (contentTagName(node) === DISCOURSE_POLL_PLACEHOLDER_TAG) {
-        const name = String((node as unknown as { getAttribute?: (key: string) => string | undefined }).getAttribute?.('name') || '').trim();
+        const name = String(
+          (node as unknown as { getAttribute?: (key: string) => string | undefined }).getAttribute?.('name') || ''
+        ).trim();
         const poll = pollsByName.get(name);
         if (poll) {
           pushHtml();
@@ -479,7 +472,10 @@ export function splitDiscourseContentHtml(
     }
     pushHtml();
   } catch {
-    const placeholder = new RegExp(`<${DISCOURSE_POLL_PLACEHOLDER_TAG}\\b[^>]*>\\s*</${DISCOURSE_POLL_PLACEHOLDER_TAG}\\s*>`, 'gi');
+    const placeholder = new RegExp(
+      `<${DISCOURSE_POLL_PLACEHOLDER_TAG}\\b[^>]*>\\s*</${DISCOURSE_POLL_PLACEHOLDER_TAG}\\s*>`,
+      'gi'
+    );
     const fallback = clean.replace(placeholder, '').trim();
     if (fallback) {
       parts.push({ type: 'html', html: fallback });

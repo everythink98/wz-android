@@ -46,10 +46,12 @@ describe('writable session gate', () => {
     '[REG-WRITE-023] rejects %s without issuing a stale identity ticket',
     async (status) => {
       const snapshot = { ...confirmed, identityTrust: 'pending' as const };
-      await expect(ensureWritableSessionTicket(
-        () => snapshot,
-        async () => ({ status })
-      )).rejects.toBeInstanceOf(WritableSessionBlockedError);
+      await expect(
+        ensureWritableSessionTicket(
+          () => snapshot,
+          async () => ({ status })
+        )
+      ).rejects.toBeInstanceOf(WritableSessionBlockedError);
     }
   );
 
@@ -74,9 +76,11 @@ describe('writable session gate', () => {
       identityKey: 'nodeseek:anonymous',
       identityTrust: 'pending'
     };
-    await expect(ensureWritableSessionTicket(
-      () => anonymous,
-      async () => ({ status: 'same' })
-    )).rejects.toMatchObject({ reason: 'login_required' });
+    await expect(
+      ensureWritableSessionTicket(
+        () => anonymous,
+        async () => ({ status: 'same' })
+      )
+    ).rejects.toMatchObject({ reason: 'login_required' });
   });
 });

@@ -11,9 +11,7 @@ export function sanitizeNodeSeekUserAgent(userAgent?: string) {
     .trim();
 }
 
-export const DEFAULT_NODESEEK_ANDROID_USER_AGENT = sanitizeNodeSeekUserAgent(
-  DEFAULT_ANDROID_WEBVIEW_USER_AGENT
-);
+export const DEFAULT_NODESEEK_ANDROID_USER_AGENT = sanitizeNodeSeekUserAgent(DEFAULT_ANDROID_WEBVIEW_USER_AGENT);
 
 export function summarizeNodeSeekCookieHeader(header?: string | null) {
   const names = cookieNamesFromHeader(header);

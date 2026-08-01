@@ -101,35 +101,41 @@ export function useTopicSessionController({ notify }: { notify: (message: string
     setQuoteStateVersion((current) => current + 1);
   }, []);
 
-  const toggleReplyComposer = useCallback((open: boolean) => {
-    setReplyComposerOpen(open);
-    if (open) {
+  const toggleReplyComposer = useCallback(
+    (open: boolean) => {
+      setReplyComposerOpen(open);
+      if (open) {
+        setReplyTarget(null);
+        setReplyEditTarget(null);
+        setReplyFace('');
+        return;
+      }
+      setReplyContent((current) => replyContentAfterComposerClose(current, replyEditTarget));
+      setReplyFace('');
       setReplyTarget(null);
       setReplyEditTarget(null);
-      setReplyFace('');
-      return;
-    }
-    setReplyContent((current) => replyContentAfterComposerClose(current, replyEditTarget));
-    setReplyFace('');
-    setReplyTarget(null);
-    setReplyEditTarget(null);
-  }, [replyEditTarget]);
+    },
+    [replyEditTarget]
+  );
 
-  const replyToFloor = useCallback((reply: Reply) => {
-    if (!reply.floor) {
-      notify('当前楼层信息不完整，刷新主题后再试。');
-      return;
-    }
-    setReplyTarget({
-      floor: reply.floor,
-      author: reply.author,
-      authorId: reply.authorId,
-      commentId: reply.commentId
-    });
-    setReplyEditTarget(null);
-    setReplyFace('');
-    setReplyComposerOpen(true);
-  }, [notify]);
+  const replyToFloor = useCallback(
+    (reply: Reply) => {
+      if (!reply.floor) {
+        notify('当前楼层信息不完整，刷新主题后再试。');
+        return;
+      }
+      setReplyTarget({
+        floor: reply.floor,
+        author: reply.author,
+        authorId: reply.authorId,
+        commentId: reply.commentId
+      });
+      setReplyEditTarget(null);
+      setReplyFace('');
+      setReplyComposerOpen(true);
+    },
+    [notify]
+  );
 
   const editReply = useCallback((target: ReplyEditTarget) => {
     setReplyTarget(null);
@@ -165,20 +171,34 @@ export function useTopicSessionController({ notify }: { notify: (message: string
     setQuoteStateVersion((current) => current + 1);
   }, []);
 
-  const snapshot = useCallback((): TopicSnapshot => snapshotFromTopicSession({
-    ...(selectedTopic ? createEmptyTopicSession(selectedTopic) : createInactiveTopicSession()),
-    key: currentTopicKeyRef.current,
-    selectedTopic,
-    commentQuery,
-    replyFilter,
-    replyContent,
-    replyFace,
-    replyComposerOpen,
-    replyTarget,
-    replyEditTarget,
-    expandedQuotes,
-    scrollY: topicScrollYRef.current
-  }), [commentQuery, expandedQuotes, replyComposerOpen, replyContent, replyEditTarget, replyFace, replyFilter, replyTarget, selectedTopic]);
+  const snapshot = useCallback(
+    (): TopicSnapshot =>
+      snapshotFromTopicSession({
+        ...(selectedTopic ? createEmptyTopicSession(selectedTopic) : createInactiveTopicSession()),
+        key: currentTopicKeyRef.current,
+        selectedTopic,
+        commentQuery,
+        replyFilter,
+        replyContent,
+        replyFace,
+        replyComposerOpen,
+        replyTarget,
+        replyEditTarget,
+        expandedQuotes,
+        scrollY: topicScrollYRef.current
+      }),
+    [
+      commentQuery,
+      expandedQuotes,
+      replyComposerOpen,
+      replyContent,
+      replyEditTarget,
+      replyFace,
+      replyFilter,
+      replyTarget,
+      selectedTopic
+    ]
+  );
 
   const restore = useCallback((topicSnapshot: TopicSnapshot) => {
     const session = topicSessionFromSnapshot(topicSnapshot);
@@ -197,18 +217,26 @@ export function useTopicSessionController({ notify }: { notify: (message: string
     setQuoteStateVersion((current) => current + 1);
   }, []);
 
-  const saveRoute = useCallback((routeKey: string) => {
-    if (routeKey) saveTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey, snapshot());
-  }, [snapshot]);
-  const restoreRoute = useCallback((routeKey: string) => {
-    if (activeTopicRouteKeyRef.current === routeKey) return true;
-    const saved = readTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey);
-    if (!saved) return false;
+  const saveRoute = useCallback(
+    (routeKey: string) => {
+      if (routeKey) saveTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey, snapshot());
+    },
+    [snapshot]
+  );
+  const restoreRoute = useCallback(
+    (routeKey: string) => {
+      if (activeTopicRouteKeyRef.current === routeKey) return true;
+      const saved = readTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey);
+      if (!saved) return false;
+      activeTopicRouteKeyRef.current = routeKey;
+      restore(saved);
+      return true;
+    },
+    [restore]
+  );
+  const activateRoute = useCallback((routeKey: string) => {
     activeTopicRouteKeyRef.current = routeKey;
-    restore(saved);
-    return true;
-  }, [restore]);
-  const activateRoute = useCallback((routeKey: string) => { activeTopicRouteKeyRef.current = routeKey; }, []);
+  }, []);
   const forgetRoute = useCallback((routeKey: string) => {
     removeTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey);
     if (activeTopicRouteKeyRef.current === routeKey) activeTopicRouteKeyRef.current = null;
@@ -217,14 +245,20 @@ export function useTopicSessionController({ notify }: { notify: (message: string
     topicRouteSessionStoreRef.current.clear();
     activeTopicRouteKeyRef.current = null;
   }, []);
-  const clearBackStack = useCallback(() => { topicBackStackRef.current = []; }, []);
+  const clearBackStack = useCallback(() => {
+    topicBackStackRef.current = [];
+  }, []);
   const pushBackStack = useCallback((current: TopicSnapshot, nextTopic?: Topic) => {
     topicBackStackRef.current = pushTopicSnapshot(topicBackStackRef.current, current, nextTopic);
   }, []);
   const popBackStack = useCallback(() => topicBackStackRef.current.pop(), []);
   const readBackStack = useCallback(() => [...topicBackStackRef.current], []);
-  const replaceBackStack = useCallback((stack: TopicSnapshot[]) => { topicBackStackRef.current = [...stack]; }, []);
-  const rememberScrollY = useCallback((value: number) => { topicScrollYRef.current = Math.max(0, value); }, []);
+  const replaceBackStack = useCallback((stack: TopicSnapshot[]) => {
+    topicBackStackRef.current = [...stack];
+  }, []);
+  const rememberScrollY = useCallback((value: number) => {
+    topicScrollYRef.current = Math.max(0, value);
+  }, []);
 
   return {
     state: {

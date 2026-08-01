@@ -9,7 +9,14 @@ import {
   useRef,
   useState
 } from 'react';
-import { NavigationContainer, StackActions, createNavigationContainerRef, type NavigatorScreenParams, type Theme, useIsFocused } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  StackActions,
+  createNavigationContainerRef,
+  type NavigatorScreenParams,
+  type Theme,
+  useIsFocused
+} from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
@@ -72,7 +79,7 @@ function topicRouteIdentity(seed?: TopicRouteSeed) {
 
 function topicRouteSource(identity: string) {
   const separator = identity.indexOf(':');
-  return separator > 0 ? identity.slice(0, separator) as Source : undefined;
+  return separator > 0 ? (identity.slice(0, separator) as Source) : undefined;
 }
 
 function topicPresentationMatchesRoute(
@@ -81,11 +88,11 @@ function topicPresentationMatchesRoute(
   sessionEpoch: number
 ) {
   return Boolean(
-    presentation
-    && identity
-    && presentation.identity === identity
-    && presentation.routeSessionEpoch === sessionEpoch
-    && presentation.sessionEpoch === sessionEpoch
+    presentation &&
+    identity &&
+    presentation.identity === identity &&
+    presentation.routeSessionEpoch === sessionEpoch &&
+    presentation.sessionEpoch === sessionEpoch
   );
 }
 
@@ -112,11 +119,8 @@ function TopicRouteScreen({ route }: NativeStackScreenProps<RootStackParamList, 
     expectedIdentity,
     presentation.routeSessionEpoch
   );
-  const visiblePresentation = focused && livePresentationMatchesRoute
-    ? presentation
-    : cachedPresentationMatchesRoute
-      ? cachedPresentation
-      : null;
+  const visiblePresentation =
+    focused && livePresentationMatchesRoute ? presentation : cachedPresentationMatchesRoute ? cachedPresentation : null;
   const interactive = focused && livePresentationMatchesRoute;
 
   useLayoutEffect(() => {
@@ -130,11 +134,9 @@ function TopicRouteScreen({ route }: NativeStackScreenProps<RootStackParamList, 
       setCachedPresentation(presentation);
       return;
     }
-    setCachedPresentation((current) => (
-      topicPresentationMatchesRoute(current, expectedIdentity, presentation.routeSessionEpoch)
-        ? current
-        : null
-    ));
+    setCachedPresentation((current) =>
+      topicPresentationMatchesRoute(current, expectedIdentity, presentation.routeSessionEpoch) ? current : null
+    );
   }, [expectedIdentity, focused, livePresentationMatchesRoute, presentation]);
 
   return (
@@ -290,7 +292,14 @@ function MainTabsHost({
           tabBarButtonTestID: `main-tab-${item.value}`,
           tabBarAccessibilityLabel: item.value === 'more' && moreHasBadge ? '更多，有可用更新' : item.label,
           tabBarIcon: ({ focused }: { focused: boolean }) => (
-            <TabBarIcon focused={focused} icon={item.icon} label={item.label} showBadge={item.value === 'more' && moreHasBadge} styles={styles} theme={theme} />
+            <TabBarIcon
+              focused={focused}
+              icon={item.icon}
+              label={item.label}
+              showBadge={item.value === 'more' && moreHasBadge}
+              styles={styles}
+              theme={theme}
+            />
           )
         };
       }}
@@ -367,36 +376,54 @@ export const AppNavigator = memo(function AppNavigator({
         }}
         onStateChange={publishCurrentScreen}
       >
-        <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', freezeOnBlur: true, contentStyle: { backgroundColor: theme.background } }}>
-        <Stack.Screen name="MainTabs">
-          {() => (
-            <MainTabsHost
-              moreHasBadge={moreHasBadge}
-              renderFeedTab={renderFeedTab}
-              renderLibraryTab={renderLibraryTab}
-              renderMoreTab={renderMoreTab}
-              renderSearchTab={renderSearchTab}
-              styles={styles}
-              theme={theme}
-              onTabPress={onTabPress}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen name="Topic" component={TopicRouteScreen} listeners={({ route }) => ({ transitionEnd: (event) => {
-          if (event.data.closing) {
-            onTopicClosing(route.key);
-          }
-        } })} />
-        <Stack.Screen name="ReadingSettings" options={{ headerShown: true, title: '阅读设置' }}>
-          {renderReadingSettingsScreen}
-        </Stack.Screen>
-        <Stack.Screen name="User" listeners={{ transitionEnd: (event) => {
-          if (event.data.closing) {
-            onUserClosing();
-          }
-        } }}>
-          {renderUserScreen}
-        </Stack.Screen>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            animation: 'slide_from_right',
+            freezeOnBlur: true,
+            contentStyle: { backgroundColor: theme.background }
+          }}
+        >
+          <Stack.Screen name="MainTabs">
+            {() => (
+              <MainTabsHost
+                moreHasBadge={moreHasBadge}
+                renderFeedTab={renderFeedTab}
+                renderLibraryTab={renderLibraryTab}
+                renderMoreTab={renderMoreTab}
+                renderSearchTab={renderSearchTab}
+                styles={styles}
+                theme={theme}
+                onTabPress={onTabPress}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen
+            name="Topic"
+            component={TopicRouteScreen}
+            listeners={({ route }) => ({
+              transitionEnd: (event) => {
+                if (event.data.closing) {
+                  onTopicClosing(route.key);
+                }
+              }
+            })}
+          />
+          <Stack.Screen name="ReadingSettings" options={{ headerShown: true, title: '阅读设置' }}>
+            {renderReadingSettingsScreen}
+          </Stack.Screen>
+          <Stack.Screen
+            name="User"
+            listeners={{
+              transitionEnd: (event) => {
+                if (event.data.closing) {
+                  onUserClosing();
+                }
+              }
+            }}
+          >
+            {renderUserScreen}
+          </Stack.Screen>
         </Stack.Navigator>
       </NavigationContainer>
     </TopicScreenRendererContext.Provider>

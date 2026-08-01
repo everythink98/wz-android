@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react', () => ({
-  useCallback: <T,>(callback: T) => callback,
+  useCallback: <T>(callback: T) => callback,
   useEffect: (effect: () => void) => effect(),
   useLayoutEffect: (effect: () => void) => effect(),
-  useRef: <T,>(value: T) => ({ current: value })
+  useRef: <T>(value: T) => ({ current: value })
 }));
 
 vi.mock('react-native', () => ({
@@ -32,16 +32,12 @@ vi.mock('../linuxdoSession', () => ({
   sanitizeLinuxDoUserAgent: (userAgent: string) => userAgent.trim()
 }));
 
-import {
-  reduceSiteSessionState,
-  type SiteSessionEvent,
-  type SiteSessionState
-} from '../siteSessionState';
+import { reduceSiteSessionState, type SiteSessionEvent, type SiteSessionState } from '../siteSessionState';
 import type { Topic } from '../types';
 import type { AccountReconcileResult } from './useAccountStatusController';
 import { useVerificationController } from './useVerificationController';
 
-const ref = <T,>(current: T) => ({ current });
+const ref = <T>(current: T) => ({ current });
 const recoveryQueryKeyFor = (id: string) => ['forum', 'linuxdo', 'test-recovery', { id }] as const;
 const loggedInSession: SiteSessionState = {
   site: 'linuxdo',
@@ -65,13 +61,15 @@ const anonymousSession: SiteSessionState = {
   isVerifying: false
 };
 
-function createController(options: {
-  linuxDoIdentityPending?: boolean;
-  onBeforeLinuxDoSurfaceOpened?: () => void;
-  onLinuxDoRecoveryBarrierChanged?: (active: boolean) => void;
-  reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
-  selectedTopic?: Topic | null;
-} = {}) {
+function createController(
+  options: {
+    linuxDoIdentityPending?: boolean;
+    onBeforeLinuxDoSurfaceOpened?: () => void;
+    onLinuxDoRecoveryBarrierChanged?: (active: boolean) => void;
+    reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
+    selectedTopic?: Topic | null;
+  } = {}
+) {
   const showLinuxDoPanelRef = ref(false);
   const linuxDoWebViewSessionRef = ref(0);
   const linuxDoWebViewUserAgentRef = ref('');
@@ -81,13 +79,10 @@ function createController(options: {
   const onLoginWebViewFailure = vi.fn();
   const onLinuxDoSurfaceClosed = vi.fn();
   const onLinuxDoSurfaceOpened = vi.fn();
-  const onLinuxDoRecoveryBarrierChanged = vi.fn(
-    options.onLinuxDoRecoveryBarrierChanged
-  );
+  const onLinuxDoRecoveryBarrierChanged = vi.fn(options.onLinuxDoRecoveryBarrierChanged);
   const notify = vi.fn();
   const reconcileAccountStatus = vi.fn(
-    options.reconcileAccountStatus
-      || (async () => ({ status: 'same', session: loggedInSession } as const))
+    options.reconcileAccountStatus || (async () => ({ status: 'same', session: loggedInSession }) as const)
   );
   const setLinuxDoWebViewError = vi.fn();
   const setLinuxDoWebViewUserAgent = vi.fn();
@@ -121,9 +116,7 @@ function createController(options: {
     setLoadingLinuxDoPage: vi.fn(),
     setMountLinuxDoWebView: vi.fn(),
     setShowLinuxDoPanel: vi.fn((value: boolean | ((previous: boolean) => boolean)) => {
-      showLinuxDoPanelRef.current = typeof value === 'function'
-        ? value(showLinuxDoPanelRef.current)
-        : value;
+      showLinuxDoPanelRef.current = typeof value === 'function' ? value(showLinuxDoPanelRef.current) : value;
     }),
     setShowSettingsPanel: vi.fn(),
     showLinuxDoPanelRef,
@@ -132,13 +125,17 @@ function createController(options: {
     updateNodeSeekSession: vi.fn()
   });
   const handleLinuxDoMessage = controller.handleLinuxDoMessage;
-  controller.handleLinuxDoMessage = (event, webViewKey) => handleLinuxDoMessage({
-    ...event,
-    nativeEvent: {
-      ...event.nativeEvent,
-      url: event.nativeEvent.url || 'https://linux.do/latest'
-    }
-  }, webViewKey);
+  controller.handleLinuxDoMessage = (event, webViewKey) =>
+    handleLinuxDoMessage(
+      {
+        ...event,
+        nativeEvent: {
+          ...event.nativeEvent,
+          url: event.nativeEvent.url || 'https://linux.do/latest'
+        }
+      },
+      webViewKey
+    );
   return {
     controller,
     linuxDoWebViewRef,
@@ -166,12 +163,7 @@ afterEach(() => {
 
 describe('linux.do visible verification coordinator', () => {
   it('[REG-ACCOUNT-031] opens the surface without probing identity or accepting page cookies', async () => {
-    const {
-      controller,
-      onLinuxDoSurfaceOpened,
-      reconcileAccountStatus,
-      showLinuxDoPanelRef
-    } = createController();
+    const { controller, onLinuxDoSurfaceOpened, reconcileAccountStatus, showLinuxDoPanelRef } = createController();
 
     await expect(controller.showLinuxDoVerification()).resolves.toBe(true);
     controller.handleLinuxDoMessage({
@@ -191,11 +183,7 @@ describe('linux.do visible verification coordinator', () => {
   });
 
   it('ignores WebView messages from third-party frames', async () => {
-    const {
-      controller,
-      linuxDoWebViewUserAgentRef,
-      setLinuxDoWebViewUserAgent
-    } = createController();
+    const { controller, linuxDoWebViewUserAgentRef, setLinuxDoWebViewUserAgent } = createController();
     await controller.showLinuxDoVerification();
 
     controller.handleLinuxDoMessage({
@@ -213,22 +201,19 @@ describe('linux.do visible verification coordinator', () => {
   });
 
   it('[REG-ACCOUNT-039] uses the canonical Account verifier as the only manual identity proof and authoritatively closes', async () => {
-    const {
-      controller,
-      notify,
-      reconcileAccountStatus,
-      showLinuxDoPanelRef,
-      updateLinuxDoSession
-    } = createController();
+    const { controller, notify, reconcileAccountStatus, showLinuxDoPanelRef, updateLinuxDoSession } =
+      createController();
     await controller.showLinuxDoVerification();
 
     await controller.checkLinuxDoCookie();
 
     expect(reconcileAccountStatus).toHaveBeenCalledOnce();
     expect(reconcileAccountStatus).toHaveBeenCalledWith('linuxdo');
-    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({
-      type: 'session-updated'
-    }));
+    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'session-updated'
+      })
+    );
     expect(updateLinuxDoSession).toHaveBeenCalledWith({
       type: 'verification-succeeded',
       loggedIn: true,
@@ -241,12 +226,7 @@ describe('linux.do visible verification coordinator', () => {
   });
 
   it('[REG-ACCOUNT-031] reports confirmed anonymous without clearing cookies or synthesizing login expiry', async () => {
-    const {
-      controller,
-      setLinuxDoWebViewError,
-      showLinuxDoPanelRef,
-      updateLinuxDoSession
-    } = createController({
+    const { controller, setLinuxDoWebViewError, showLinuxDoPanelRef, updateLinuxDoSession } = createController({
       reconcileAccountStatus: async () => ({
         status: 'anonymous',
         session: anonymousSession
@@ -256,22 +236,17 @@ describe('linux.do visible verification coordinator', () => {
 
     await controller.checkLinuxDoCookie();
 
-    expect(setLinuxDoWebViewError).toHaveBeenCalledWith(
-      'linux.do 当前为未登录状态，请登录后再检测。'
+    expect(setLinuxDoWebViewError).toHaveBeenCalledWith('linux.do 当前为未登录状态，请登录后再检测。');
+    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: expect.stringMatching(/^(?:cleared|login-expired|session-updated)$/)
+      })
     );
-    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({
-      type: expect.stringMatching(/^(?:cleared|login-expired|session-updated)$/)
-    }));
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
   it('[REG-ACCOUNT-031] keeps unknown identity read-only and leaves the panel open for retry', async () => {
-    const {
-      controller,
-      setLinuxDoWebViewError,
-      showLinuxDoPanelRef,
-      updateLinuxDoSession
-    } = createController({
+    const { controller, setLinuxDoWebViewError, showLinuxDoPanelRef, updateLinuxDoSession } = createController({
       reconcileAccountStatus: async () => ({
         status: 'unknown',
         error: 'network unavailable',
@@ -282,12 +257,12 @@ describe('linux.do visible verification coordinator', () => {
 
     await controller.checkLinuxDoCookie();
 
-    expect(setLinuxDoWebViewError).toHaveBeenCalledWith(
-      'linux.do 登录状态暂时无法确认：network unavailable'
+    expect(setLinuxDoWebViewError).toHaveBeenCalledWith('linux.do 登录状态暂时无法确认：network unavailable');
+    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: expect.stringMatching(/^(?:cleared|login-expired|session-updated)$/)
+      })
     );
-    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({
-      type: expect.stringMatching(/^(?:cleared|login-expired|session-updated)$/)
-    }));
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
@@ -314,13 +289,8 @@ describe('linux.do visible verification coordinator', () => {
 
   it('[REG-ACCOUNT-039] reuses the authoritative identity result when an exact read recovery completes', async () => {
     const resume = vi.fn(async () => 'completed' as const);
-    const {
-      controller,
-      onLinuxDoSurfaceClosed,
-      reconcileAccountStatus,
-      showLinuxDoPanelRef,
-      updateLinuxDoSession
-    } = createController();
+    const { controller, onLinuxDoSurfaceClosed, reconcileAccountStatus, showLinuxDoPanelRef, updateLinuxDoSession } =
+      createController();
     await controller.showLinuxDoVerification('需要验证', {
       queryKey: recoveryQueryKeyFor('level'),
       resume
@@ -330,18 +300,16 @@ describe('linux.do visible verification coordinator', () => {
 
     expect(reconcileAccountStatus).toHaveBeenCalledTimes(1);
     expect(resume).toHaveBeenCalledTimes(1);
-    expect(onLinuxDoSurfaceClosed.mock.invocationCallOrder[0]).toBeLessThan(
-      resume.mock.invocationCallOrder[0]
+    expect(onLinuxDoSurfaceClosed.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]);
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'verification-succeeded',
+        loggedIn: true,
+        currentUser: loggedInSession.currentUser,
+        cookieSummary: loggedInSession.cookieSummary
+      })
     );
-    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'verification-succeeded',
-      loggedIn: true,
-      currentUser: loggedInSession.currentUser,
-      cookieSummary: loggedInSession.cookieSummary
-    }));
-    expect(updateLinuxDoSession.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      resume.mock.invocationCallOrder[0]
-    );
+    expect(updateLinuxDoSession.mock.invocationCallOrder.at(-1)).toBeLessThan(resume.mock.invocationCallOrder[0]);
     expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
       authoritativeResult: true,
       reason: 'authoritative-recovery'
@@ -376,12 +344,8 @@ describe('linux.do visible verification coordinator', () => {
   it('keeps a recovery open for another explicit check when verification is still required', async () => {
     vi.useFakeTimers();
     const resume = vi.fn(async () => 'verification-required' as const);
-    const {
-      controller,
-      onLinuxDoRecoveryBarrierChanged,
-      showLinuxDoPanelRef,
-      updateLinuxDoSession
-    } = createController();
+    const { controller, onLinuxDoRecoveryBarrierChanged, showLinuxDoPanelRef, updateLinuxDoSession } =
+      createController();
     await controller.showLinuxDoVerification('需要验证', {
       queryKey: recoveryQueryKeyFor('feed'),
       resume
@@ -414,12 +378,7 @@ describe('linux.do visible verification coordinator', () => {
     const resume = vi.fn(async () => {
       throw new Error('resume exploded');
     });
-    const {
-      controller,
-      notify,
-      onLinuxDoSurfaceClosed,
-      updateLinuxDoSession
-    } = createController();
+    const { controller, notify, onLinuxDoSurfaceClosed, updateLinuxDoSession } = createController();
     await controller.showLinuxDoVerification('需要验证', {
       queryKey: recoveryQueryKeyFor('throwing'),
       resume
@@ -431,9 +390,7 @@ describe('linux.do visible verification coordinator', () => {
       authoritativeResult: true,
       reason: 'authoritative-recovery'
     });
-    expect(notify).toHaveBeenCalledWith(
-      '登录身份已确认，但原页面恢复失败：resume exploded'
-    );
+    expect(notify).toHaveBeenCalledWith('登录身份已确认，但原页面恢复失败：resume exploded');
     expect(updateLinuxDoSession).toHaveBeenCalledWith({
       type: 'check-failed',
       message: '登录身份已确认，但原页面恢复失败：resume exploded'
@@ -454,21 +411,19 @@ describe('linux.do visible verification coordinator', () => {
     const resume = vi.fn(async () => 'completed' as const);
     const { controller, showLinuxDoPanelRef } = createController();
 
-    await expect(controller.showLinuxDoVerification('迟到的恢复', {
-      queryKey: recoveryQueryKeyFor('stale'),
-      resume
-    })).resolves.toBe(false);
+    await expect(
+      controller.showLinuxDoVerification('迟到的恢复', {
+        queryKey: recoveryQueryKeyFor('stale'),
+        resume
+      })
+    ).resolves.toBe(false);
 
     expect(resume).not.toHaveBeenCalled();
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
   it('[REG-ACCOUNT-031] treats App inactive as a temporary unmount, not a logical close', async () => {
-    const {
-      controller,
-      onLinuxDoSurfaceClosed,
-      showLinuxDoPanelRef
-    } = createController();
+    const { controller, onLinuxDoSurfaceClosed, showLinuxDoPanelRef } = createController();
     await controller.showLinuxDoVerification();
 
     controller.stopLinuxDoVerificationForInactiveApp();
@@ -478,11 +433,7 @@ describe('linux.do visible verification coordinator', () => {
   });
 
   it('[REG-ACCOUNT-031] closes a visible surface once and makes hidden repeated closes no-op', async () => {
-    const {
-      controller,
-      onLinuxDoSurfaceClosed,
-      showLinuxDoPanelRef
-    } = createController();
+    const { controller, onLinuxDoSurfaceClosed, showLinuxDoPanelRef } = createController();
     await controller.showLinuxDoVerification();
 
     controller.closeLinuxDoPanel();
@@ -526,11 +477,7 @@ describe('linux.do visible verification coordinator', () => {
 
   it('invalidates a late Account result when the visible WebView session is reset', async () => {
     const deferred = Promise.withResolvers<AccountReconcileResult>();
-    const {
-      controller,
-      notify,
-      updateLinuxDoSession
-    } = createController({
+    const { controller, notify, updateLinuxDoSession } = createController({
       reconcileAccountStatus: () => deferred.promise
     });
     await controller.showLinuxDoVerification();
@@ -541,18 +488,15 @@ describe('linux.do visible verification coordinator', () => {
     await check;
 
     expect(notify).not.toHaveBeenCalledWith('linux.do 登录身份已确认。');
-    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({
-      type: 'verification-succeeded'
-    }));
+    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'verification-succeeded'
+      })
+    );
   });
 
   it('closes as superseded when another site verification replaces it', async () => {
-    const {
-      controller,
-      linuxDoWebViewRef,
-      onLinuxDoSurfaceClosed,
-      showLinuxDoPanelRef
-    } = createController();
+    const { controller, linuxDoWebViewRef, onLinuxDoSurfaceClosed, showLinuxDoPanelRef } = createController();
     await controller.showLinuxDoVerification();
 
     controller.showNodeSeekVerification();
@@ -582,11 +526,7 @@ describe('linux.do visible verification coordinator', () => {
   });
 
   it('reports renderer loss once for the current WebView session', async () => {
-    const {
-      controller,
-      linuxDoWebViewSessionRef,
-      onLoginWebViewFailure
-    } = createController();
+    const { controller, linuxDoWebViewSessionRef, onLoginWebViewFailure } = createController();
     await controller.showLinuxDoVerification();
 
     controller.setLinuxDoWebViewErrorForSession(
@@ -601,10 +541,6 @@ describe('linux.do visible verification coordinator', () => {
     );
 
     expect(onLoginWebViewFailure).toHaveBeenCalledTimes(1);
-    expect(onLoginWebViewFailure).toHaveBeenCalledWith(
-      'linuxdo',
-      9,
-      'renderer_gone'
-    );
+    expect(onLoginWebViewFailure).toHaveBeenCalledWith('linuxdo', 9, 'renderer_gone');
   });
 });

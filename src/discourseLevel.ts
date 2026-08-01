@@ -141,7 +141,9 @@ function rawRequirementValue(summary: DiscourseSummaryInput, key: DiscourseLevel
 
 function levelRequirementsMet(summary: DiscourseSummaryInput, level: number) {
   const requirements = LEVEL_REQUIREMENTS[level];
-  return Boolean(requirements?.length && requirements.every((item) => rawRequirementValue(summary, item.key) >= item.required));
+  return Boolean(
+    requirements?.length && requirements.every((item) => rawRequirementValue(summary, item.key) >= item.required)
+  );
 }
 
 function levelValue(summary: DiscourseSummaryInput, user: Record<string, unknown>) {

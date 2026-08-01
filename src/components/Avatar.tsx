@@ -19,7 +19,10 @@ export function avatarInitial(name?: string) {
   if (!text) {
     return '?';
   }
-  const Segmenter = (globalThis.Intl as unknown as { Segmenter?: new (locale?: string, options?: { granularity: 'grapheme' }) => GraphemeSegmenter } | undefined)?.Segmenter;
+  const Segmenter = (
+    globalThis.Intl as unknown as
+      { Segmenter?: new (locale?: string, options?: { granularity: 'grapheme' }) => GraphemeSegmenter } | undefined
+  )?.Segmenter;
   const segment = Segmenter
     ? new Segmenter(undefined, { granularity: 'grapheme' }).segment(text)[Symbol.iterator]().next().value?.segment
     : Array.from(text)[0];
@@ -59,15 +62,18 @@ export function Avatar({
     };
   }, [fallbackIdentity, mediaContext]);
 
-  const loadSvgFallback = useCallback(async (requestedUri: string) => {
-    const requestedFallbackIdentity = fallbackIdentity;
-    const xml = await loadRemoteAvatarSvgText(requestedUri, undefined, {
-      mediaContext
-    });
-    if (fallbackIdentityRef.current === requestedFallbackIdentity) {
-      setSvgXml(xml);
-    }
-  }, [fallbackIdentity, mediaContext]);
+  const loadSvgFallback = useCallback(
+    async (requestedUri: string) => {
+      const requestedFallbackIdentity = fallbackIdentity;
+      const xml = await loadRemoteAvatarSvgText(requestedUri, undefined, {
+        mediaContext
+      });
+      if (fallbackIdentityRef.current === requestedFallbackIdentity) {
+        setSvgXml(xml);
+      }
+    },
+    [fallbackIdentity, mediaContext]
+  );
 
   const retryOrFailImage = useCallback(() => {
     if (imageRetryCount < MAX_IMAGE_RETRY_COUNT) {
@@ -81,15 +87,15 @@ export function Avatar({
   }, [imageRetryCount, loadSvgFallback, uri]);
 
   return (
-    <View style={[styles.replyAvatar, tiny ? styles.feedAvatarTiny : small ? styles.replyAvatarSmall : styles.topicAvatar]}>
-      <Text style={[styles.replyAvatarText, (small || tiny) && styles.replyAvatarSmallText]}>{avatarInitial(name)}</Text>
+    <View
+      style={[styles.replyAvatar, tiny ? styles.feedAvatarTiny : small ? styles.replyAvatarSmall : styles.topicAvatar]}
+    >
+      <Text style={[styles.replyAvatarText, (small || tiny) && styles.replyAvatarSmallText]}>
+        {avatarInitial(name)}
+      </Text>
       {svgXml ? (
         <View style={StyleSheet.absoluteFillObject}>
-          <SvgXml
-            xml={svgXml}
-            width="100%"
-            height="100%"
-          />
+          <SvgXml xml={svgXml} width="100%" height="100%" />
         </View>
       ) : uri && !imageFailed ? (
         <ExpoImage

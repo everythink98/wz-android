@@ -46,22 +46,24 @@ describe('CompatibleSvgDocumentView', () => {
     expect(html).not.toMatch(/https?:\/\//i);
 
     expect(props.androidLayerType).toBeUndefined();
-    expect(props).toEqual(expect.objectContaining({
-      allowFileAccess: false,
-      allowFileAccessFromFileURLs: false,
-      allowUniversalAccessFromFileURLs: false,
-      cacheEnabled: false,
-      domStorageEnabled: false,
-      geolocationEnabled: false,
-      incognito: false,
-      javaScriptCanOpenWindowsAutomatically: false,
-      javaScriptEnabled: true,
-      mixedContentMode: 'never',
-      pointerEvents: 'none',
-      setSupportMultipleWindows: false,
-      sharedCookiesEnabled: false,
-      thirdPartyCookiesEnabled: false
-    }));
+    expect(props).toEqual(
+      expect.objectContaining({
+        allowFileAccess: false,
+        allowFileAccessFromFileURLs: false,
+        allowUniversalAccessFromFileURLs: false,
+        cacheEnabled: false,
+        domStorageEnabled: false,
+        geolocationEnabled: false,
+        incognito: false,
+        javaScriptCanOpenWindowsAutomatically: false,
+        javaScriptEnabled: true,
+        mixedContentMode: 'never',
+        pointerEvents: 'none',
+        setSupportMultipleWindows: false,
+        sharedCookiesEnabled: false,
+        thirdPartyCookiesEnabled: false
+      })
+    );
     expect(props.containerStyle).toBe(containerStyle);
     expect(props.originWhitelist).toEqual(['*']);
     expect(props.injectedJavaScript).toBeUndefined();
@@ -71,8 +73,10 @@ describe('CompatibleSvgDocumentView', () => {
 
   it('[REG-TOPIC-038] permits only the local bootstrap document and rejects every external navigation scheme', async () => {
     const view = await render(<CompatibleSvgDocumentView artifact={artifact()} />);
-    const guard = view.getByTestId('compatible-svg-document-view').props
-      .onShouldStartLoadWithRequest as (request: { isTopFrame: boolean; url: string }) => boolean;
+    const guard = view.getByTestId('compatible-svg-document-view').props.onShouldStartLoadWithRequest as (request: {
+      isTopFrame: boolean;
+      url: string;
+    }) => boolean;
 
     expect(guard(navigation('about:blank'))).toBe(true);
     expect(guard(navigation('data:text/html;charset=utf-8,%3Chtml%3E'))).toBe(false);
@@ -89,10 +93,7 @@ describe('CompatibleSvgDocumentView', () => {
     const onError = jest.fn();
     const view = await render(
       <React.StrictMode>
-        <CompatibleSvgDocumentView
-          artifact={artifact('https://example.com/not-an-artifact.svg')}
-          onError={onError}
-        />
+        <CompatibleSvgDocumentView artifact={artifact('https://example.com/not-an-artifact.svg')} onError={onError} />
       </React.StrictMode>
     );
     const source = view.getByTestId('compatible-svg-document-view').props.source as { html: string };

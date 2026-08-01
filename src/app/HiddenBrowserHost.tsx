@@ -5,14 +5,8 @@ import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 import type { createStyles } from '../theme';
-import {
-  isLinuxDoBrowserNavigationUrl,
-  isLinuxDoBrowserResultUrl
-} from '../linuxdoFetchFallback';
-import {
-  isNodeSeekBrowserNavigationUrl,
-  isNodeSeekBrowserResultUrl
-} from '../nodeseekFetchFallback';
+import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '../linuxdoFetchFallback';
+import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '../nodeseekFetchFallback';
 import { isGoogleSiteSearchAccessTroubleUrl } from '../googleSearchFallback';
 
 type HiddenBrowserState = {
@@ -54,9 +48,10 @@ export function HiddenBrowserHost({
   const linuxDoBrowserFetchRequest = state.linuxDo.request;
   const nodeSeekBrowserFetchRequest = state.nodeSeek.request;
   const nodeSeekBrowserFetchScript = nodeSeekBrowserFetchRequest
-    ? NODESEEK_BROWSER_FETCH_SCRIPT
-      .replace('__NODESEEK_BROWSER_FETCH_ID__', String(nodeSeekBrowserFetchRequest.id))
-      .replace('__NODESEEK_BROWSER_FETCH_OWNER__', JSON.stringify(nodeSeekBrowserFetchRequest.owner ?? null))
+    ? NODESEEK_BROWSER_FETCH_SCRIPT.replace(
+        '__NODESEEK_BROWSER_FETCH_ID__',
+        String(nodeSeekBrowserFetchRequest.id)
+      ).replace('__NODESEEK_BROWSER_FETCH_OWNER__', JSON.stringify(nodeSeekBrowserFetchRequest.owner ?? null))
     : '';
   const [linuxDoWebViewGeneration, setLinuxDoWebViewGeneration] = useState(0);
   const [nodeSeekWebViewGeneration, setNodeSeekWebViewGeneration] = useState(0);
@@ -70,60 +65,67 @@ export function HiddenBrowserHost({
     if (linuxDoBrowserFetchRequest) {
       failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, blockedMessage);
     }
-  }, [blockedMessage, failLinuxDoBrowserFetchById, failNodeSeekBrowserFetchById, linuxDoBrowserFetchRequest, nodeSeekBrowserFetchRequest]);
-  const handleNodeSeekBrowserNavigation = useCallback((request: { url?: string }) => {
-    const url = request.url || '';
-    if (
-      !url
-      || (
-        nodeSeekBrowserFetchRequest
-        && isNodeSeekBrowserNavigationUrl(url, nodeSeekBrowserFetchRequest.url)
-      )
-    ) {
-      return true;
-    }
-    if (nodeSeekBrowserFetchRequest) {
-      failNodeSeekBrowserFetchById(
-        nodeSeekBrowserFetchRequest.id,
-        isGoogleSiteSearchAccessTroubleUrl(url, 'nodeseek.com', nodeSeekBrowserFetchRequest.url)
-          ? 'Google 搜索环境验证暂时未通过，请稍后重试'
-          : 'NodeSeek 页面跳转到外部地址，已停止读取'
-      );
-    }
-    return false;
-  }, [failNodeSeekBrowserFetchById, nodeSeekBrowserFetchRequest]);
-  const handleLinuxDoBrowserNavigation = useCallback((request: { url?: string }) => {
-    const url = request.url || '';
-    if (
-      !url
-      || (
-        linuxDoBrowserFetchRequest
-        && isLinuxDoBrowserNavigationUrl(url, linuxDoBrowserFetchRequest.url)
-      )
-    ) {
-      return true;
-    }
-    if (linuxDoBrowserFetchRequest) {
-      failLinuxDoBrowserFetchById(
-        linuxDoBrowserFetchRequest.id,
-        isGoogleSiteSearchAccessTroubleUrl(url, 'linux.do', linuxDoBrowserFetchRequest.url)
-          ? 'Google 搜索环境验证暂时未通过，请稍后重试'
-          : 'linux.do 页面跳转到外部地址，已停止读取'
-      );
-    }
-    return false;
-  }, [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]);
+  }, [
+    blockedMessage,
+    failLinuxDoBrowserFetchById,
+    failNodeSeekBrowserFetchById,
+    linuxDoBrowserFetchRequest,
+    nodeSeekBrowserFetchRequest
+  ]);
+  const handleNodeSeekBrowserNavigation = useCallback(
+    (request: { url?: string }) => {
+      const url = request.url || '';
+      if (
+        !url ||
+        (nodeSeekBrowserFetchRequest && isNodeSeekBrowserNavigationUrl(url, nodeSeekBrowserFetchRequest.url))
+      ) {
+        return true;
+      }
+      if (nodeSeekBrowserFetchRequest) {
+        failNodeSeekBrowserFetchById(
+          nodeSeekBrowserFetchRequest.id,
+          isGoogleSiteSearchAccessTroubleUrl(url, 'nodeseek.com', nodeSeekBrowserFetchRequest.url)
+            ? 'Google 搜索环境验证暂时未通过，请稍后重试'
+            : 'NodeSeek 页面跳转到外部地址，已停止读取'
+        );
+      }
+      return false;
+    },
+    [failNodeSeekBrowserFetchById, nodeSeekBrowserFetchRequest]
+  );
+  const handleLinuxDoBrowserNavigation = useCallback(
+    (request: { url?: string }) => {
+      const url = request.url || '';
+      if (!url || (linuxDoBrowserFetchRequest && isLinuxDoBrowserNavigationUrl(url, linuxDoBrowserFetchRequest.url))) {
+        return true;
+      }
+      if (linuxDoBrowserFetchRequest) {
+        failLinuxDoBrowserFetchById(
+          linuxDoBrowserFetchRequest.id,
+          isGoogleSiteSearchAccessTroubleUrl(url, 'linux.do', linuxDoBrowserFetchRequest.url)
+            ? 'Google 搜索环境验证暂时未通过，请稍后重试'
+            : 'linux.do 页面跳转到外部地址，已停止读取'
+        );
+      }
+      return false;
+    },
+    [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]
+  );
   const handleNodeSeekBrowserRenderProcessGone = useCallback(() => {
     setNodeSeekWebViewGeneration((current) => current + 1);
     if (!nodeSeekBrowserFetchRequest) {
       return;
     }
-    failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面读取进程已停止', { skipStopLoading: true });
+    failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面读取进程已停止', {
+      skipStopLoading: true
+    });
   }, [failNodeSeekBrowserFetchById, nodeSeekBrowserFetchRequest]);
   const handleLinuxDoBrowserRenderProcessGone = useCallback(() => {
     setLinuxDoWebViewGeneration((current) => current + 1);
     if (linuxDoBrowserFetchRequest) {
-      failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面读取进程已停止', { skipStopLoading: true });
+      failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面读取进程已停止', {
+        skipStopLoading: true
+      });
     }
   }, [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]);
 
@@ -143,9 +145,7 @@ export function HiddenBrowserHost({
             userAgent={nodeSeekBrowserFetchRequest.userAgent || state.nodeSeek.userAgent}
             onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}
             injectedJavaScriptBeforeContentLoaded={
-              nodeSeekBrowserFetchRequest.owner === 'account'
-                ? nodeSeekBrowserFetchScript
-                : undefined
+              nodeSeekBrowserFetchRequest.owner === 'account' ? nodeSeekBrowserFetchScript : undefined
             }
             containerStyle={styles.hiddenBrowserWebView}
             style={styles.hiddenBrowserWebView}
@@ -154,21 +154,27 @@ export function HiddenBrowserHost({
             }}
             onMessage={handleNodeSeekBrowserFetchMessage}
             onError={(event) => {
-              failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, event.nativeEvent.description || 'NodeSeek 页面加载失败');
+              failNodeSeekBrowserFetchById(
+                nodeSeekBrowserFetchRequest.id,
+                event.nativeEvent.description || 'NodeSeek 页面加载失败'
+              );
             }}
             onHttpError={(event) => {
-              if (!shouldHandleBrowserHttpError(
-                nodeSeekBrowserFetchRequest.url,
-                event.nativeEvent.url,
-                (url) => isNodeSeekBrowserResultUrl(url, nodeSeekBrowserFetchRequest.url)
-              )) {
+              if (
+                !shouldHandleBrowserHttpError(nodeSeekBrowserFetchRequest.url, event.nativeEvent.url, (url) =>
+                  isNodeSeekBrowserResultUrl(url, nodeSeekBrowserFetchRequest.url)
+                )
+              ) {
                 return;
               }
               if (event.nativeEvent.statusCode === 403 || event.nativeEvent.statusCode === 404) {
                 onNodeSeekHttpErrorStatus(nodeSeekBrowserFetchRequest.id, event.nativeEvent.statusCode);
                 return;
               }
-              failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, `NodeSeek 页面返回错误 ${event.nativeEvent.statusCode}`);
+              failNodeSeekBrowserFetchById(
+                nodeSeekBrowserFetchRequest.id,
+                `NodeSeek 页面返回错误 ${event.nativeEvent.statusCode}`
+              );
             }}
             onRenderProcessGone={handleNodeSeekBrowserRenderProcessGone}
             renderError={() => <View style={styles.hiddenBrowserWebView} />}
@@ -195,19 +201,25 @@ export function HiddenBrowserHost({
             }}
             onLoadEnd={() => {
               linuxDoBrowserWebViewRef.current?.injectJavaScript(
-                LINUXDO_BROWSER_FETCH_SCRIPT.replace('__LINUXDO_BROWSER_FETCH_ID__', String(linuxDoBrowserFetchRequest.id))
+                LINUXDO_BROWSER_FETCH_SCRIPT.replace(
+                  '__LINUXDO_BROWSER_FETCH_ID__',
+                  String(linuxDoBrowserFetchRequest.id)
+                )
               );
             }}
             onMessage={handleLinuxDoBrowserFetchMessage}
             onError={(event) => {
-              failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, event.nativeEvent.description || 'linux.do 页面加载失败');
+              failLinuxDoBrowserFetchById(
+                linuxDoBrowserFetchRequest.id,
+                event.nativeEvent.description || 'linux.do 页面加载失败'
+              );
             }}
             onHttpError={(event) => {
-              if (!shouldHandleBrowserHttpError(
-                linuxDoBrowserFetchRequest.url,
-                event.nativeEvent.url,
-                (url) => isLinuxDoBrowserResultUrl(url, linuxDoBrowserFetchRequest.url)
-              )) {
+              if (
+                !shouldHandleBrowserHttpError(linuxDoBrowserFetchRequest.url, event.nativeEvent.url, (url) =>
+                  isLinuxDoBrowserResultUrl(url, linuxDoBrowserFetchRequest.url)
+                )
+              ) {
                 return;
               }
               onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, event.nativeEvent.statusCode);

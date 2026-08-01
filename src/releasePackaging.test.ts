@@ -14,9 +14,13 @@ describe('Android release packaging guards', () => {
     const ciWorkflow = readProjectFile('.github', 'workflows', 'ci.yml');
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const verifyIndex = releaseScript.indexOf("run('npm', ['run', 'verify']);");
-    const prebuildIndex = releaseScript.indexOf("run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean', '--no-install']);");
+    const prebuildIndex = releaseScript.indexOf(
+      "run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean', '--no-install']);"
+    );
 
-    expect(pkg.scripts.verify).toBe('npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && node scripts/check-version.mjs');
+    expect(pkg.scripts.verify).toBe(
+      'npm run lint && npm run format:check && npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && node scripts/check-version.mjs'
+    );
     expect(ciWorkflow).toContain('- run: npm run verify');
     expect(verifyIndex).toBeGreaterThanOrEqual(0);
     expect(prebuildIndex).toBeGreaterThan(verifyIndex);
@@ -71,7 +75,7 @@ describe('Android release packaging guards', () => {
   it('[REG-OPS-016] records Java provenance through the validated parser', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
 
-    expect(releaseScript).toContain("parseJavaVersionOutput(runCapture('java', ['-version'], {");
+    expect(releaseScript).toMatch(/parseJavaVersionOutput\(\s*runCapture\('java', \['-version'\], \{/);
     expect(releaseScript).toContain("failureMessage: '无法读取可信的 Java 版本。'");
     expect(releaseScript).toContain('if (!failureMessage) {');
     expect(releaseScript).not.toContain("firstOutputLine(runCapture('java', ['-version']), 'Java')");
@@ -140,10 +144,12 @@ describe('Android release packaging guards', () => {
     expect(moduleSource).toContain('import android.webkit.WebSettings');
     expect(moduleSource).toContain('WebSettings.getDefaultUserAgent(reactContext)');
     expect(app.expo.plugins).not.toContain('./plugins/withLinuxDoCookieModule');
-    expect(plugin.slice(
-      plugin.indexOf('fun readManagedCookieHeader(exactUrl: String, promise: Promise)'),
-      plugin.indexOf('fun clearManagedLoginCookies(source: String, promise: Promise)')
-    )).not.toContain('flush()');
+    expect(
+      plugin.slice(
+        plugin.indexOf('fun readManagedCookieHeader(exactUrl: String, promise: Promise)'),
+        plugin.indexOf('fun clearManagedLoginCookies(source: String, promise: Promise)')
+      )
+    ).not.toContain('flush()');
     const clearCookiePlan = plugin.slice(
       plugin.indexOf('internal data class ManagedLoginCookieClearPlan'),
       plugin.indexOf('object NetworkProxyRuntime')
@@ -160,10 +166,12 @@ describe('Android release packaging guards', () => {
     expect(clearCookieFlow).toContain('Handler(Looper.getMainLooper())');
     expect(clearCookieFlow).toContain('CountDownLatch');
     expect(clearCookieFlow).toContain('await(5, TimeUnit.SECONDS)');
-    expect(clearCookieFlow.indexOf('await(5, TimeUnit.SECONDS)'))
-      .toBeLessThan(clearCookieFlow.indexOf('cookieManager.flush()'));
-    expect(clearCookieFlow.indexOf('cookieManager.flush()'))
-      .toBeLessThan(clearCookieFlow.indexOf('cookieManager.getCookie(url)'));
+    expect(clearCookieFlow.indexOf('await(5, TimeUnit.SECONDS)')).toBeLessThan(
+      clearCookieFlow.indexOf('cookieManager.flush()')
+    );
+    expect(clearCookieFlow.indexOf('cookieManager.flush()')).toBeLessThan(
+      clearCookieFlow.indexOf('cookieManager.getCookie(url)')
+    );
     expect(plugin).toContain('installExpoImageClient');
     expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory { client }');
     expect(plugin).toContain('installExpoImageClient(appContext, expoImageClient(client))');
@@ -182,7 +190,7 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('builder.dispatcher(dispatcher)');
     expect(plugin).toContain('androidx.webkit:webkit:1.14.0');
     expect(plugin).toContain('testImplementation("junit:junit:4.13.2")');
-    expect(plugin).toContain("fs.writeFileSync(path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt')");
+    expect(plugin).toMatch(/fs\.writeFileSync\(\s*path\.join\(testOutputDir, 'NetworkProxyRuntimeTest\.kt'\)/);
   });
 
   it('[REG-TOPIC-038] generates the isolated single-WebView SVG poster renderer', () => {
@@ -192,8 +200,12 @@ describe('Android release packaging guards', () => {
     expect(app.expo.plugins).toContain('./plugins/withSvgRendererModule');
     expect(plugin).toContain('class SvgRendererModule');
     expect(plugin).toContain('private var webView: WebView? = null');
-    expect(plugin).toContain('fun renderPoster(svgBase64: String, cacheKey: String, timeoutMs: Double, promise: Promise)');
-    expect(plugin).toContain('fun fetchSvgDocument(url: String, headers: ReadableMap, timeoutMs: Double, promise: Promise)');
+    expect(plugin).toContain(
+      'fun renderPoster(svgBase64: String, cacheKey: String, timeoutMs: Double, promise: Promise)'
+    );
+    expect(plugin).toContain(
+      'fun fetchSvgDocument(url: String, headers: ReadableMap, timeoutMs: Double, promise: Promise)'
+    );
     expect(plugin).toContain('boundedSvgBytes(body.source())');
     expect(plugin).toContain('postVisualStateCallback');
     expect(plugin).toContain('blockNetworkLoads = true');
@@ -211,7 +223,9 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('putDouble("documentWidth", prepared.documentDimensions.width)');
     expect(plugin).toContain('putDouble("documentHeight", prepared.documentDimensions.height)');
     expect(plugin).toContain('hasSvgPosterQueueCapacity(active != null, queue.size)');
-    expect(plugin).toContain('isCurrentSvgPageError(current.expectedPageUrl, request.url.toString(), request.isForMainFrame)');
+    expect(plugin).toContain(
+      'isCurrentSvgPageError(current.expectedPageUrl, request.url.toString(), request.isForMainFrame)'
+    );
     expect(plugin).toContain('sha256PosterFileName(request.cacheKey, svg.bytes, dimensions)');
     const rendererRelease = plugin.slice(
       plugin.indexOf('private fun releaseRendererAfterSettle()'),
@@ -220,7 +234,7 @@ describe('Android release packaging guards', () => {
     expect(rendererRelease).toContain('if (queue.isEmpty())');
     expect(rendererRelease).toContain('view.loadUrl("about:blank")');
     expect(rendererRelease.indexOf('webView = null')).toBeLessThan(rendererRelease.indexOf('view.destroy()'));
-    expect(plugin).toContain("fs.copyFileSync(");
+    expect(plugin).toContain('fs.copyFileSync(');
     expect(plugin).toContain("'SvgRendererPolicyTest.kt'");
     expect(plugin).toContain("'SvgRendererInstrumentedTest.kt'");
     expect(plugin).toContain('testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"');
@@ -249,7 +263,9 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('private val webViewProxyOperations = SerializedWebViewProxyOperations()');
     expect(plugin).toContain('proxyServers.requireCurrent(owner)');
     expect(plugin).toContain('restoreWebViewProxyIfStateChanged(proxyServers, generation');
-    expect(plugin).toContain('"WebView 代理清除超时",\n      onTimeoutOrLateCompletion = ::restoreWebViewProxyFromRuntime');
+    expect(plugin).toContain(
+      '"WebView 代理清除超时",\n      onTimeoutOrLateCompletion = ::restoreWebViewProxyFromRuntime'
+    );
     expect(plugin).toContain('private const val PROXY_IDLE_TIMEOUT_MS = 120_000');
     expect(plugin.match(/pipeBoth\(local, remote, copyExecutor, idleTimeoutMs\)/g)).toHaveLength(1);
     expect(plugin).toContain('pipeBoth(local, remote, copyExecutor, idleTimeoutMs, request.contentLength)');
@@ -316,7 +332,9 @@ describe('Android release packaging guards', () => {
 
   it('limits media library permissions to photos', () => {
     const app = JSON.parse(readProjectFile('app.json'));
-    const mediaPlugin = app.expo.plugins.find((plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-media-library');
+    const mediaPlugin = app.expo.plugins.find(
+      (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-media-library'
+    );
 
     expect(mediaPlugin?.[1]?.granularPermissions).toEqual(['photo']);
     expect(app.expo.android.blockedPermissions).toContain('android.permission.READ_MEDIA_AUDIO');

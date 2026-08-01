@@ -3,11 +3,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 
-import {
-  FORUM_CALLOUT_TRANSITION_MS,
-  ForumCallout,
-  forumCalloutPalette
-} from '../../src/components/ForumCallout';
+import { FORUM_CALLOUT_TRANSITION_MS, ForumCallout, forumCalloutPalette } from '../../src/components/ForumCallout';
 import { createEmptyReaderData } from '../../src/readerData';
 import { alphaColor, createTheme } from '../../src/theme';
 
@@ -44,13 +40,7 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
 
   it('uses static header semantics when there is no foldable body', async () => {
     const view = await render(
-      <ForumCallout
-        fold="expanded"
-        theme={lightTheme}
-        title={<Text>只有标题</Text>}
-        titleLabel="只有标题"
-        type="tip"
-      />
+      <ForumCallout fold="expanded" theme={lightTheme} title={<Text>只有标题</Text>} titleLabel="只有标题" type="tip" />
     );
 
     expect(view.getByRole('header', { name: '只有标题' })).toBeTruthy();
@@ -64,14 +54,11 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
         body={<Text>正文保持可见</Text>}
         fold="expanded"
         theme={lightTheme}
-        title={(
-          <Pressable
-            accessibilityRole="link"
-            onPress={(event) => event.stopPropagation()}
-          >
+        title={
+          <Pressable accessibilityRole="link" onPress={(event) => event.stopPropagation()}>
             <Text>标题链接</Text>
           </Pressable>
-        )}
+        }
         titleLabel="带链接的标题"
         type="warning"
       />
@@ -85,18 +72,12 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
   });
 
   it.each([
-    { name: 'light', theme: lightTheme, backgroundAlpha: 0.10, borderAlpha: 0.28 },
+    { name: 'light', theme: lightTheme, backgroundAlpha: 0.1, borderAlpha: 0.28 },
     { name: 'dark', theme: darkTheme, backgroundAlpha: 0.16, borderAlpha: 0.36 }
   ])('uses App warning tone in $name theme', async ({ theme, backgroundAlpha, borderAlpha }) => {
     const palette = forumCalloutPalette('warning', theme);
     const view = await render(
-      <ForumCallout
-        body={<Text>正文</Text>}
-        theme={theme}
-        title={<Text>标题</Text>}
-        titleLabel="标题"
-        type="warning"
-      />
+      <ForumCallout body={<Text>正文</Text>} theme={theme} title={<Text>标题</Text>} titleLabel="标题" type="warning" />
     );
 
     expect(palette).toEqual({

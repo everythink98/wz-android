@@ -60,45 +60,57 @@ const sourceSchema = z.enum(sourceValues as [Source, ...Source[]]);
 const storedStringSchema = z.string().max(MAX_READER_STRING_LENGTH);
 const requiredStoredStringSchema = storedStringSchema.min(1);
 const dateStringSchema = storedStringSchema.refine((value) => dateValue(value) > 0);
-const topicShapeSchema = z.object({
-  source: sourceSchema,
-  id: requiredStoredStringSchema,
-  title: requiredStoredStringSchema,
-  url: requiredStoredStringSchema,
-  createdAt: dateStringSchema,
-  lastReplyAt: dateStringSchema.optional()
-}).passthrough();
-const userProfileShapeSchema = z.object({
-  source: sourceSchema,
-  id: requiredStoredStringSchema,
-  username: requiredStoredStringSchema,
-  url: requiredStoredStringSchema,
-  topics: z.array(z.unknown()).optional()
-}).passthrough();
-const topicRecordSchema = z.object({
-  topic: topicShapeSchema,
-  savedAt: dateStringSchema
-}).passthrough();
-const followedUserRecordSchema = z.object({
-  user: userProfileShapeSchema,
-  followedAt: dateStringSchema
-}).passthrough();
-const readerSettingsSchema = z.object({
-  listDensity: z.unknown().optional(),
-  theme: z.unknown().optional(),
-  fontScale: z.unknown().optional(),
-  lineHeight: z.unknown().optional(),
-  contentWidth: z.unknown().optional(),
-  fontFamily: z.unknown().optional()
-}).passthrough();
-const readerDataSchema = z.object({
-  version: z.literal(readerDataVersion),
-  favorites: z.unknown().optional(),
-  history: z.unknown().optional(),
-  followedUsers: z.unknown().optional(),
-  deletedRecords: z.unknown().optional(),
-  settings: z.unknown().optional()
-}).passthrough();
+const topicShapeSchema = z
+  .object({
+    source: sourceSchema,
+    id: requiredStoredStringSchema,
+    title: requiredStoredStringSchema,
+    url: requiredStoredStringSchema,
+    createdAt: dateStringSchema,
+    lastReplyAt: dateStringSchema.optional()
+  })
+  .passthrough();
+const userProfileShapeSchema = z
+  .object({
+    source: sourceSchema,
+    id: requiredStoredStringSchema,
+    username: requiredStoredStringSchema,
+    url: requiredStoredStringSchema,
+    topics: z.array(z.unknown()).optional()
+  })
+  .passthrough();
+const topicRecordSchema = z
+  .object({
+    topic: topicShapeSchema,
+    savedAt: dateStringSchema
+  })
+  .passthrough();
+const followedUserRecordSchema = z
+  .object({
+    user: userProfileShapeSchema,
+    followedAt: dateStringSchema
+  })
+  .passthrough();
+const readerSettingsSchema = z
+  .object({
+    listDensity: z.unknown().optional(),
+    theme: z.unknown().optional(),
+    fontScale: z.unknown().optional(),
+    lineHeight: z.unknown().optional(),
+    contentWidth: z.unknown().optional(),
+    fontFamily: z.unknown().optional()
+  })
+  .passthrough();
+const readerDataSchema = z
+  .object({
+    version: z.literal(readerDataVersion),
+    favorites: z.unknown().optional(),
+    history: z.unknown().optional(),
+    followedUsers: z.unknown().optional(),
+    deletedRecords: z.unknown().optional(),
+    settings: z.unknown().optional()
+  })
+  .passthrough();
 
 function userProfileUrl(source: Source, id: string, username = '') {
   const cleanId = String(id || '').trim();
@@ -107,9 +119,7 @@ function userProfileUrl(source: Source, id: string, username = '') {
     return '';
   }
   if (source === 'nodeseek') {
-    return /^\d+$/.test(cleanId)
-      ? `https://www.nodeseek.com/space/${encodeURIComponent(cleanId)}`
-      : '';
+    return /^\d+$/.test(cleanId) ? `https://www.nodeseek.com/space/${encodeURIComponent(cleanId)}` : '';
   }
   if (source === 'linuxdo') {
     return `https://linux.do/u/${encodeURIComponent(cleanUsername || cleanId)}`;
@@ -140,11 +150,7 @@ function canonicalTopicUrl(source: Source, id: string) {
 function canonicalTopicAuthorUrl(topic: Topic) {
   const linked = parseForumUserLink(topic.authorUrl || '', sourceCatalog[topic.source].baseUrl);
   if (linked?.source === topic.source) {
-    return userProfileUrl(
-      topic.source,
-      cleanString(linked.id || topic.authorId),
-      cleanString(linked.username)
-    );
+    return userProfileUrl(topic.source, cleanString(linked.id || topic.authorId), cleanString(linked.username));
   }
   const authorId = cleanString(topic.authorId);
   return authorId ? userProfileUrl(topic.source, authorId, authorId) : '';
@@ -181,15 +187,11 @@ function cleanOptionalLabelString(value: unknown) {
 }
 
 function cleanNonNegativeInteger(value: unknown, fallback = 0) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? Math.round(value)
-    : fallback;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : fallback;
 }
 
 function cleanOptionalNonNegativeInteger(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
-    ? Math.round(value)
-    : undefined;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
 }
 
 function sanitizePortableUrl(value: unknown, source?: Source) {
@@ -217,11 +219,15 @@ function accessRequirementSummary(value?: AccessRequirement, topic?: Topic) {
     return undefined;
   }
   const detail = typeof value.detail === 'string' ? value.detail : undefined;
-  const isOldNodeSeekInsideInference = topic?.source === 'nodeseek'
-    && (String(topic.categoryId || '').trim().toLowerCase() === 'inside' || String(topic.category || '').trim() === '内版')
-    && value.type === 'level'
-    && /^lv\s*2$/i.test(String(detail || '').trim())
-    && Boolean(String(topic.excerpt || '').trim());
+  const isOldNodeSeekInsideInference =
+    topic?.source === 'nodeseek' &&
+    (String(topic.categoryId || '')
+      .trim()
+      .toLowerCase() === 'inside' ||
+      String(topic.category || '').trim() === '内版') &&
+    value.type === 'level' &&
+    /^lv\s*2$/i.test(String(detail || '').trim()) &&
+    Boolean(String(topic.excerpt || '').trim());
   if (isOldNodeSeekInsideInference) {
     return undefined;
   }
@@ -248,9 +254,7 @@ function topicSummary(topic: Topic): Topic {
       ? sanitizePortableUrl(topic.authorAvatar, topic.source) || undefined
       : undefined,
     authorLevelLabel: cleanOptionalLabelString(topic.authorLevelLabel),
-    authorUrl: cleanOptionalString(topic.authorUrl)
-      ? canonicalTopicAuthorUrl(topic) || undefined
-      : undefined,
+    authorUrl: cleanOptionalString(topic.authorUrl) ? canonicalTopicAuthorUrl(topic) || undefined : undefined,
     categoryId: cleanOptionalString(topic.categoryId),
     category: cleanOptionalString(topic.category),
     url: canonicalTopicUrl(topic.source, topic.id),
@@ -269,27 +273,26 @@ function userSummary(user: UserProfile): UserProfile {
   const displayName = cleanUserDisplayName(user);
   const topicCount = cleanUserStat(user.source, user.topicCount);
   const replyCount = cleanUserStat(user.source, user.replyCount);
-  const derivedPostCount = topicCount !== undefined && replyCount !== undefined
-    ? topicCount + replyCount
-    : undefined;
-  const postCount = user.source === 'yaohuo'
-    ? derivedPostCount
-    : cleanUserStat(user.source, user.postCount) ?? derivedPostCount;
+  const derivedPostCount = topicCount !== undefined && replyCount !== undefined ? topicCount + replyCount : undefined;
+  const postCount =
+    user.source === 'yaohuo' ? derivedPostCount : (cleanUserStat(user.source, user.postCount) ?? derivedPostCount);
   const topics = Array.isArray(user.topics)
-    ? user.topics.filter(isTopic).map(topicSummary).map((topic) => (
-      user.source === 'yaohuo' && isPollutedYaohuoUserText(topic.author)
-        ? { ...topic, author: displayName || username || id }
-        : topic
-    )).slice(0, 50)
+    ? user.topics
+        .filter(isTopic)
+        .map(topicSummary)
+        .map((topic) =>
+          user.source === 'yaohuo' && isPollutedYaohuoUserText(topic.author)
+            ? { ...topic, author: displayName || username || id }
+            : topic
+        )
+        .slice(0, 50)
     : [];
   return {
     source: user.source,
     id,
     username,
     displayName,
-    avatar: cleanOptionalString(user.avatar)
-      ? sanitizePortableUrl(user.avatar, user.source) || undefined
-      : undefined,
+    avatar: cleanOptionalString(user.avatar) ? sanitizePortableUrl(user.avatar, user.source) || undefined : undefined,
     levelLabel: cleanOptionalLabelString(user.levelLabel),
     url: userProfileUrl(user.source, id, username),
     bio: cleanOptionalString(user.bio),
@@ -311,10 +314,7 @@ function createEmptyDeletedRecords(): DeletedRecords {
 
 function cleanUserDisplayName(user: UserProfile) {
   const displayName = cleanString(user.displayName).trim();
-  if (
-    user.source === 'yaohuo'
-    && isPollutedYaohuoUserText(displayName)
-  ) {
+  if (user.source === 'yaohuo' && isPollutedYaohuoUserText(displayName)) {
     return user.username || user.id;
   }
   return displayName || undefined;
@@ -383,7 +383,10 @@ function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
     next[topicKey(topic)] = {
       topic,
       savedAt,
-      visitCount: typeof candidate.visitCount === 'number' && Number.isFinite(candidate.visitCount) && candidate.visitCount > 0 ? Math.round(candidate.visitCount) : undefined
+      visitCount:
+        typeof candidate.visitCount === 'number' && Number.isFinite(candidate.visitCount) && candidate.visitCount > 0
+          ? Math.round(candidate.visitCount)
+          : undefined
     };
   }
   return next;
@@ -449,9 +452,7 @@ function limitDeletedRecordMap(records: Record<string, string>) {
 }
 
 function normalizeDeletedRecords(value: unknown): DeletedRecords {
-  const base = value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Partial<DeletedRecords>
-    : {};
+  const base = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<DeletedRecords>) : {};
   return {
     favorites: normalizeDeletedRecordMap(base.favorites),
     history: normalizeDeletedRecordMap(base.history),
@@ -461,20 +462,22 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
 
 export function sanitizeReaderSettings(value: unknown): ReaderSettings {
   const parsed = readerSettingsSchema.safeParse(value);
-  const base = parsed.success ? parsed.data as Record<string, unknown> : {};
+  const base = parsed.success ? (parsed.data as Record<string, unknown>) : {};
   return mergeReaderSettings(defaultReaderSettings, base);
 }
 
 export function normalizeFontScale(value: unknown, fallback = 1) {
   return typeof value === 'number' && Number.isFinite(value)
-    ? Math.max(FONT_SCALE_MIN, Math.min(FONT_SCALE_MAX, Math.round(Math.round(value / FONT_SCALE_STEP) * FONT_SCALE_STEP * 100) / 100))
+    ? Math.max(
+        FONT_SCALE_MIN,
+        Math.min(FONT_SCALE_MAX, Math.round(Math.round(value / FONT_SCALE_STEP) * FONT_SCALE_STEP * 100) / 100)
+      )
     : fallback;
 }
 
 export function fontScaleFromSliderPosition(position: number, width: number) {
-  const ratio = Number.isFinite(position) && Number.isFinite(width) && width > 0
-    ? Math.max(0, Math.min(1, position / width))
-    : 0;
+  const ratio =
+    Number.isFinite(position) && Number.isFinite(width) && width > 0 ? Math.max(0, Math.min(1, position / width)) : 0;
   return normalizeFontScale(FONT_SCALE_MIN + ratio * (FONT_SCALE_MAX - FONT_SCALE_MIN));
 }
 
@@ -484,11 +487,20 @@ function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSetti
   }
   const base = value as Record<string, unknown>;
   return {
-    listDensity: base.listDensity === 'compact' || base.listDensity === 'standard' || base.listDensity === 'loose' ? base.listDensity : local.listDensity,
+    listDensity:
+      base.listDensity === 'compact' || base.listDensity === 'standard' || base.listDensity === 'loose'
+        ? base.listDensity
+        : local.listDensity,
     theme: base.theme === 'light' || base.theme === 'dark' ? base.theme : local.theme,
     fontScale: normalizeFontScale(base.fontScale, local.fontScale),
-    lineHeight: base.lineHeight === 'compact' || base.lineHeight === 'standard' || base.lineHeight === 'loose' ? base.lineHeight : local.lineHeight,
-    contentWidth: base.contentWidth === 'narrow' || base.contentWidth === 'standard' || base.contentWidth === 'wide' ? base.contentWidth : local.contentWidth,
+    lineHeight:
+      base.lineHeight === 'compact' || base.lineHeight === 'standard' || base.lineHeight === 'loose'
+        ? base.lineHeight
+        : local.lineHeight,
+    contentWidth:
+      base.contentWidth === 'narrow' || base.contentWidth === 'standard' || base.contentWidth === 'wide'
+        ? base.contentWidth
+        : local.contentWidth,
     fontFamily: base.fontFamily === 'sans' || base.fontFamily === 'serif' ? base.fontFamily : local.fontFamily
   };
 }
@@ -514,7 +526,11 @@ function dateValue(value: string | undefined) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function mergeTimedMap<T>(local: Record<string, T>, remote: Record<string, T>, getTime: (record: T) => string | undefined) {
+function mergeTimedMap<T>(
+  local: Record<string, T>,
+  remote: Record<string, T>,
+  getTime: (record: T) => string | undefined
+) {
   const merged = { ...local };
   for (const [key, remoteRecord] of Object.entries(remote)) {
     const localRecord = merged[key];
@@ -527,10 +543,7 @@ function mergeTimedMap<T>(local: Record<string, T>, remote: Record<string, T>, g
 
 function hasOwnObjectField(value: unknown, key: string) {
   return Boolean(
-    value
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Object.prototype.hasOwnProperty.call(value, key)
+    value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, key)
   );
 }
 
@@ -570,7 +583,12 @@ function mergeTimedMapWithDeleted<T>(
   return { records, deleted };
 }
 
-function markDeleted(deletedRecords: DeletedRecords, section: keyof DeletedRecords, key: string, deletedAt = nowIso()): DeletedRecords {
+function markDeleted(
+  deletedRecords: DeletedRecords,
+  section: keyof DeletedRecords,
+  key: string,
+  deletedAt = nowIso()
+): DeletedRecords {
   return {
     ...deletedRecords,
     [section]: limitDeletedRecordMap({
@@ -593,8 +611,20 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
   const local = sanitizeReaderData(localValue);
   const remote = sanitizeReaderData(remoteValue);
   const remoteSettings = ownObjectField(remoteValue, 'settings');
-  const favorites = mergeTimedMapWithDeleted(local.favorites, remote.favorites, local.deletedRecords.favorites, remote.deletedRecords.favorites, (record) => record.savedAt);
-  const history = mergeTimedMapWithDeleted(local.history, remote.history, local.deletedRecords.history, remote.deletedRecords.history, (record) => record.savedAt);
+  const favorites = mergeTimedMapWithDeleted(
+    local.favorites,
+    remote.favorites,
+    local.deletedRecords.favorites,
+    remote.deletedRecords.favorites,
+    (record) => record.savedAt
+  );
+  const history = mergeTimedMapWithDeleted(
+    local.history,
+    remote.history,
+    local.deletedRecords.history,
+    remote.deletedRecords.history,
+    (record) => record.savedAt
+  );
   const followedUsers = mergeTimedMapWithDeleted(
     local.followedUsers,
     remote.followedUsers,
@@ -689,7 +719,11 @@ export function toggleFollowedUser(data: ReaderData, user: UserProfile) {
   return { ...data, followedUsers: next, deletedRecords };
 }
 
-export function removeRecords(data: ReaderData, section: 'favorites' | 'history', topics: Array<Pick<Topic, 'source' | 'id'>>) {
+export function removeRecords(
+  data: ReaderData,
+  section: 'favorites' | 'history',
+  topics: Pick<Topic, 'source' | 'id'>[]
+) {
   const next = { ...data[section] };
   let deletedRecords = data.deletedRecords;
   for (const topic of topics) {
@@ -706,7 +740,7 @@ export function removeRecords(data: ReaderData, section: 'favorites' | 'history'
   };
 }
 
-export function removeFollowedUsers(data: ReaderData, users: Array<Pick<UserProfile, 'source' | 'id'>>) {
+export function removeFollowedUsers(data: ReaderData, users: Pick<UserProfile, 'source' | 'id'>[]) {
   const next = { ...data.followedUsers };
   let deletedRecords = data.deletedRecords;
   for (const user of users) {
@@ -724,7 +758,11 @@ export function removeFollowedUsers(data: ReaderData, users: Array<Pick<UserProf
 }
 
 export function clearRecords(data: ReaderData, section: 'history') {
-  return removeRecords(data, section, Object.values(data[section]).map((record) => record.topic));
+  return removeRecords(
+    data,
+    section,
+    Object.values(data[section]).map((record) => record.topic)
+  );
 }
 
 export function isUserFollowed(data: ReaderData, user: Pick<UserProfile, 'source' | 'id'>) {

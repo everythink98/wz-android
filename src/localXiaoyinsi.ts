@@ -25,7 +25,14 @@ import {
 } from './localHtml';
 import { annotateSourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { buildDiscourseLevelProfileFromSummary, type DiscourseLevelProfile } from './discourseLevel';
-import { discourseCategories, discourseOriginalPoster, discoursePolls, discoursePostFields, discourseTopicFields, discourseUsersById } from './discourseModel';
+import {
+  discourseCategories,
+  discourseOriginalPoster,
+  discoursePolls,
+  discoursePostFields,
+  discourseTopicFields,
+  discourseUsersById
+} from './discourseModel';
 import {
   discourseAvatarUrl,
   discourseContentNeedsCalloutNormalization,
@@ -66,10 +73,12 @@ function requestHeaders(credentials?: XiaoyinsiApiCredentials) {
   const clean = cleanCredentials(credentials);
   return {
     Accept: 'application/json',
-    ...(clean ? {
-      'User-Api-Key': clean.apiKey,
-      'User-Api-Client-Id': clean.clientId
-    } : {})
+    ...(clean
+      ? {
+          'User-Api-Key': clean.apiKey,
+          'User-Api-Client-Id': clean.clientId
+        }
+      : {})
   };
 }
 
@@ -84,7 +93,10 @@ function errorText(data: unknown, fallback: string) {
     return data.message.trim();
   }
   if (Array.isArray(data.errors)) {
-    const message = data.errors.map((item) => String(item || '').trim()).filter(Boolean).join(' ');
+    const message = data.errors
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .join(' ');
     return message || fallback;
   }
   return fallback;
@@ -92,7 +104,7 @@ function errorText(data: unknown, fallback: string) {
 
 async function fetchXiaoyinsiJson<T>(
   path: string,
-  params: Record<string, string | number | Array<string | number> | undefined> | undefined,
+  params: Record<string, string | number | (string | number)[] | undefined> | undefined,
   options: XiaoyinsiOptions = {}
 ) {
   const url = new URL(path, XIAOYINSI_BASE_URL);
@@ -106,9 +118,13 @@ async function fetchXiaoyinsiJson<T>(
       url.searchParams.set(key, String(value));
     }
   }
-  const response = await fetchWithTimeout(url.toString(), {
-    headers: requestHeaders(options.credentials)
-  }, options);
+  const response = await fetchWithTimeout(
+    url.toString(),
+    {
+      headers: requestHeaders(options.credentials)
+    },
+    options
+  );
   const text = await response.text();
   let data: unknown = {};
   try {
@@ -124,9 +140,7 @@ async function fetchXiaoyinsiJson<T>(
       source: 'xiaoyinsi',
       status: response.status,
       responseFormat: 'json',
-      responseErrorType: isRecord(data) && typeof data.error_type === 'string'
-        ? data.error_type
-        : undefined
+      responseErrorType: isRecord(data) && typeof data.error_type === 'string' ? data.error_type : undefined
     });
     throw error;
   }
@@ -238,7 +252,7 @@ function normalizeTopic(
     category: fields.categoryId ? categories.get(fields.categoryId) || '未分类' : '未分类',
     url: `${XIAOYINSI_BASE_URL}/t/${raw.slug || fields.id}/${fields.id}`,
     createdAt: fields.createdAt,
-    ...(trustLevel ? { authorLevelLabel: trustLevel } : {}),
+    ...(trustLevel ? { authorLevelLabel: trustLevel } : {})
   };
 }
 
@@ -281,12 +295,14 @@ function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {
   };
 }
 
-export async function getXiaoyinsiFeed(options: XiaoyinsiOptions & {
-  page?: number;
-  limit?: number;
-  category?: string;
-  feedFilter?: DiscourseFeedFilter;
-} = {}): Promise<FeedResponse> {
+export async function getXiaoyinsiFeed(
+  options: XiaoyinsiOptions & {
+    page?: number;
+    limit?: number;
+    category?: string;
+    feedFilter?: DiscourseFeedFilter;
+  } = {}
+): Promise<FeedResponse> {
   const page = options.page || 1;
   const limit = options.limit || LIST_PAGE_SIZE;
   const feedFilter = options.feedFilter || 'latest';
@@ -303,31 +319,40 @@ export async function getXiaoyinsiFeed(options: XiaoyinsiOptions & {
   const rawTopics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
   const users = discourseUsersById(data.users);
   const categories = await categoryMapForTopics(data, rawTopics, options);
-  const items = rawTopics.map((raw) => isRecord(raw) ? normalizeTopic(raw, categories, discourseOriginalPoster(raw, users)) : null)
+  const items = rawTopics
+    .map((raw) => (isRecord(raw) ? normalizeTopic(raw, categories, discourseOriginalPoster(raw, users)) : null))
     .filter((item): item is Topic => Boolean(item))
     .slice(0, limit);
   const hasMore = Boolean(isRecord(data.topic_list) && data.topic_list.more_topics_url);
-  return annotateSourceDiagnosticSummary({ items, errors: {}, hasMore, nextPage: hasMore ? page + 1 : null }, {
-    parserVariant: 'xiaoyinsi-discourse-feed',
-    candidateCount: rawTopics.length,
-    validCount: items.length,
-    droppedCount: Math.max(0, rawTopics.length - items.length),
-    isExpectedEmpty: rawTopics.length === 0 && (page > 1 || Boolean(options.category))
-  });
+  return annotateSourceDiagnosticSummary(
+    { items, errors: {}, hasMore, nextPage: hasMore ? page + 1 : null },
+    {
+      parserVariant: 'xiaoyinsi-discourse-feed',
+      candidateCount: rawTopics.length,
+      validCount: items.length,
+      droppedCount: Math.max(0, rawTopics.length - items.length),
+      isExpectedEmpty: rawTopics.length === 0 && (page > 1 || Boolean(options.category))
+    }
+  );
 }
 
 export async function getXiaoyinsiCategories(options: XiaoyinsiOptions = {}): Promise<CategoriesResponse> {
   const data = await fetchXiaoyinsiJson<Record<string, unknown>>('/site.json', undefined, options);
   const categories = Array.isArray(data.categories)
     ? data.categories
-    : isRecord(data.category_list) && Array.isArray(data.category_list.categories) ? data.category_list.categories : [];
+    : isRecord(data.category_list) && Array.isArray(data.category_list.categories)
+      ? data.category_list.categories
+      : [];
   const items = discourseCategories(data, 'xiaoyinsi');
-  return annotateSourceDiagnosticSummary({ items, errors: {} }, {
-    parserVariant: 'xiaoyinsi-discourse-categories',
-    candidateCount: categories.length,
-    validCount: items.length,
-    droppedCount: Math.max(0, categories.length - items.length)
-  });
+  return annotateSourceDiagnosticSummary(
+    { items, errors: {} },
+    {
+      parserVariant: 'xiaoyinsi-discourse-categories',
+      candidateCount: categories.length,
+      validCount: items.length,
+      droppedCount: Math.max(0, categories.length - items.length)
+    }
+  );
 }
 
 export async function getXiaoyinsiEmojiUrls(options: XiaoyinsiOptions = {}) {
@@ -347,7 +372,10 @@ async function topicData(id: string, options: XiaoyinsiOptions) {
   );
 }
 
-export async function getXiaoyinsiTopic(id: string, options: XiaoyinsiOptions & { replyLimit?: number } = {}): Promise<TopicDetail> {
+export async function getXiaoyinsiTopic(
+  id: string,
+  options: XiaoyinsiOptions & { replyLimit?: number } = {}
+): Promise<TopicDetail> {
   const data = await topicData(id, options);
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const [firstPost, ...replyPosts] = posts;
@@ -382,7 +410,11 @@ export async function getXiaoyinsiTopic(id: string, options: XiaoyinsiOptions & 
     ...(firstFields.likeCount === undefined ? {} : { likeCount: firstFields.likeCount }),
     ...(firstFields.liked === undefined ? {} : { liked: firstFields.liked }),
     ...(firstFields.canLike === undefined ? {} : { canLike: firstFields.canLike }),
-    ...(bookmarkId ? { bookmarkId, bookmarked: true } : typeof data.bookmarked === 'boolean' ? { bookmarked: data.bookmarked } : {}),
+    ...(bookmarkId
+      ? { bookmarkId, bookmarked: true }
+      : typeof data.bookmarked === 'boolean'
+        ? { bookmarked: data.bookmarked }
+        : {}),
     ...(polls ? { polls } : {}),
     ...(firstFields.reactionSummary ? { reactionSummary: firstFields.reactionSummary } : {})
   };
@@ -391,23 +423,31 @@ export async function getXiaoyinsiTopic(id: string, options: XiaoyinsiOptions & 
     candidateCount: posts.length,
     validCount: 1 + replies.length,
     droppedCount: Math.max(0, initialReplyPosts.length - replies.length),
-    missingFloorCount: initialReplyPosts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number)).length
+    missingFloorCount: initialReplyPosts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number))
+      .length
   });
 }
 
 async function fetchPosts(id: string, postIds: unknown[], options: XiaoyinsiOptions) {
-  const data = await fetchXiaoyinsiJson<Record<string, unknown>>(`/t/${encodeURIComponent(id)}/posts.json`, {
-    'post_ids[]': postIds.map(String),
-    ...(cleanCredentials(options.credentials) ? { include_raw: 1 } : {})
-  }, options);
+  const data = await fetchXiaoyinsiJson<Record<string, unknown>>(
+    `/t/${encodeURIComponent(id)}/posts.json`,
+    {
+      'post_ids[]': postIds.map(String),
+      ...(cleanCredentials(options.credentials) ? { include_raw: 1 } : {})
+    },
+    options
+  );
   return isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
 }
 
-export async function getXiaoyinsiReplies(id: string, options: XiaoyinsiOptions & {
-  page?: number;
-  limit?: number;
-  offset?: number | null;
-} = {}): Promise<RepliesResponse> {
+export async function getXiaoyinsiReplies(
+  id: string,
+  options: XiaoyinsiOptions & {
+    page?: number;
+    limit?: number;
+    offset?: number | null;
+  } = {}
+): Promise<RepliesResponse> {
   const page = options.page || 1;
   const limit = options.limit || LIST_PAGE_SIZE;
   const data = await topicData(id, options);
@@ -416,33 +456,43 @@ export async function getXiaoyinsiReplies(id: string, options: XiaoyinsiOptions 
   const start = 1 + previousReplyCount;
   const postIds = stream.slice(start, start + limit);
   if (!postIds.length) {
-    return annotateSourceDiagnosticSummary({ items: [], hasMore: false, nextPage: null, totalCount: Math.max(0, stream.length - 1) }, {
-      parserVariant: 'xiaoyinsi-discourse-replies', candidateCount: 0, validCount: 0, droppedCount: 0, isExpectedEmpty: true
-    });
+    return annotateSourceDiagnosticSummary(
+      { items: [], hasMore: false, nextPage: null, totalCount: Math.max(0, stream.length - 1) },
+      {
+        parserVariant: 'xiaoyinsi-discourse-replies',
+        candidateCount: 0,
+        validCount: 0,
+        droppedCount: 0,
+        isExpectedEmpty: true
+      }
+    );
   }
   const posts = await fetchPosts(id, postIds, options);
-  const items = posts.map((post) => normalizePost(post, id))
-    .filter((reply): reply is Reply => Boolean(reply));
+  const items = posts.map((post) => normalizePost(post, id)).filter((reply): reply is Reply => Boolean(reply));
   const hasMore = stream.length > start + postIds.length;
-  return annotateSourceDiagnosticSummary({
-    items,
-    hasMore,
-    nextPage: hasMore ? page + 1 : null,
-    nextOffset: hasMore ? previousReplyCount + postIds.length : null,
-    totalCount: Math.max(0, stream.length - 1)
-  }, {
-    parserVariant: 'xiaoyinsi-discourse-replies',
-    candidateCount: posts.length,
-    validCount: items.length,
-    droppedCount: Math.max(0, posts.length - items.length)
-  });
+  return annotateSourceDiagnosticSummary(
+    {
+      items,
+      hasMore,
+      nextPage: hasMore ? page + 1 : null,
+      nextOffset: hasMore ? previousReplyCount + postIds.length : null,
+      totalCount: Math.max(0, stream.length - 1)
+    },
+    {
+      parserVariant: 'xiaoyinsi-discourse-replies',
+      candidateCount: posts.length,
+      validCount: items.length,
+      droppedCount: Math.max(0, posts.length - items.length)
+    }
+  );
 }
 
 export async function getXiaoyinsiReply(id: string, floor: number, options: XiaoyinsiOptions = {}): Promise<Reply> {
   const data = await topicData(id, options);
-  const embedded = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts)
-    ? data.post_stream.posts.find((post) => isRecord(post) && Number(post.post_number) === floor)
-    : undefined;
+  const embedded =
+    isRecord(data.post_stream) && Array.isArray(data.post_stream.posts)
+      ? data.post_stream.posts.find((post) => isRecord(post) && Number(post.post_number) === floor)
+      : undefined;
   if (embedded) {
     const reply = normalizePost(embedded, id);
     if (reply) {
@@ -455,7 +505,10 @@ export async function getXiaoyinsiReply(id: string, floor: number, options: Xiao
     throw new Error('引用楼层未找到');
   }
   const posts = await fetchPosts(id, [postId], options);
-  const reply = normalizePost(posts.find((post) => isRecord(post) && Number(post.post_number) === floor), id);
+  const reply = normalizePost(
+    posts.find((post) => isRecord(post) && Number(post.post_number) === floor),
+    id
+  );
   if (!reply) {
     throw new Error('引用楼层未找到');
   }
@@ -466,7 +519,9 @@ async function topicsFromSearch(data: Record<string, unknown>, options: Xiaoyins
   const rawTopics = Array.isArray(data.topics) ? data.topics : [];
   const users = discourseUsersById(data.users);
   const postsByTopic = new Map<string, Record<string, unknown>>();
-  (Array.isArray(data.posts) ? data.posts : []).filter(isRecord).forEach((post) => postsByTopic.set(String(post.topic_id), post));
+  (Array.isArray(data.posts) ? data.posts : [])
+    .filter(isRecord)
+    .forEach((post) => postsByTopic.set(String(post.topic_id), post));
   const categories = await categoryMapForTopics(data, rawTopics, options);
   const items: Topic[] = rawTopics.flatMap((raw): Topic[] => {
     if (!isRecord(raw)) {
@@ -475,16 +530,23 @@ async function topicsFromSearch(data: Record<string, unknown>, options: Xiaoyins
     const post = postsByTopic.get(String(raw.id));
     const authorData = discourseOriginalPoster(raw, users) || (Number(post?.post_number) === 1 ? post : undefined);
     const topic = normalizeTopic(raw, categories, authorData, true);
-    return topic ? [{
-      ...topic,
-      excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || topic.excerpt || ''))
-    }] : [];
+    return topic
+      ? [
+          {
+            ...topic,
+            excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || topic.excerpt || ''))
+          }
+        ]
+      : [];
   });
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
   return { items, candidateCount: rawTopics.length, hasMore: Boolean(grouped.more_full_page_results) };
 }
 
-export async function searchXiaoyinsi(query: string, options: XiaoyinsiOptions & { page?: number; limit?: number } = {}): Promise<SearchResponse> {
+export async function searchXiaoyinsi(
+  query: string,
+  options: XiaoyinsiOptions & { page?: number; limit?: number } = {}
+): Promise<SearchResponse> {
   const cleanQuery = query.trim();
   const page = options.page || 1;
   const limit = options.limit || LIST_PAGE_SIZE;
@@ -494,67 +556,87 @@ export async function searchXiaoyinsi(query: string, options: XiaoyinsiOptions &
   const data = await fetchXiaoyinsiJson<Record<string, unknown>>('/search.json', { q: cleanQuery, page }, options);
   const parsed = await topicsFromSearch(data, options);
   const items = parsed.items.slice(0, limit);
-  return annotateSourceDiagnosticSummary({ items, errors: {}, hasMore: parsed.hasMore, nextPage: parsed.hasMore ? page + 1 : null }, {
-    parserVariant: 'xiaoyinsi-discourse-search',
-    candidateCount: parsed.candidateCount,
-    validCount: items.length,
-    droppedCount: Math.max(0, parsed.candidateCount - items.length),
-    isExpectedEmpty: parsed.candidateCount === 0
-  });
+  return annotateSourceDiagnosticSummary(
+    { items, errors: {}, hasMore: parsed.hasMore, nextPage: parsed.hasMore ? page + 1 : null },
+    {
+      parserVariant: 'xiaoyinsi-discourse-search',
+      candidateCount: parsed.candidateCount,
+      validCount: items.length,
+      droppedCount: Math.max(0, parsed.candidateCount - items.length),
+      isExpectedEmpty: parsed.candidateCount === 0
+    }
+  );
 }
 
-export async function searchXiaoyinsiTags(options: XiaoyinsiOptions & {
-  query?: string;
-  categoryId?: string;
-  selectedTags?: string[];
-  limit?: number;
-} = {}): Promise<DiscourseTagOption[]> {
+export async function searchXiaoyinsiTags(
+  options: XiaoyinsiOptions & {
+    query?: string;
+    categoryId?: string;
+    selectedTags?: string[];
+    limit?: number;
+  } = {}
+): Promise<DiscourseTagOption[]> {
   const limit = Math.min(8, Math.max(1, Math.floor(options.limit || 8)));
-  const data = await fetchXiaoyinsiJson<Record<string, unknown>>('/tags/filter/search', {
-    q: options.query?.trim() || '',
-    ...(options.categoryId?.trim() ? { categoryId: options.categoryId.trim() } : {}),
-    ...(options.selectedTags?.length ? { 'selected_tags[]': options.selectedTags } : {})
-  }, options);
+  const data = await fetchXiaoyinsiJson<Record<string, unknown>>(
+    '/tags/filter/search',
+    {
+      q: options.query?.trim() || '',
+      ...(options.categoryId?.trim() ? { categoryId: options.categoryId.trim() } : {}),
+      ...(options.selectedTags?.length ? { 'selected_tags[]': options.selectedTags } : {})
+    },
+    options
+  );
   const results = Array.isArray(data.results) ? data.results : [];
   const seen = new Set<string>();
-  return results.filter(isRecord).flatMap((item) => {
-    const name = String(item.name || item.id || '').trim();
-    if (!name || seen.has(name)) {
-      return [];
-    }
-    seen.add(name);
-    const count = Number(item.count ?? item.topic_count);
-    return [{ name, ...(Number.isInteger(count) && count >= 0 ? { topicCount: count } : {}) }];
-  }).slice(0, limit);
+  return results
+    .filter(isRecord)
+    .flatMap((item) => {
+      const name = String(item.name || item.id || '').trim();
+      if (!name || seen.has(name)) {
+        return [];
+      }
+      seen.add(name);
+      const count = Number(item.count ?? item.topic_count);
+      return [{ name, ...(Number.isInteger(count) && count >= 0 ? { topicCount: count } : {}) }];
+    })
+    .slice(0, limit);
 }
 
-export async function searchXiaoyinsiUsers(options: XiaoyinsiOptions & {
-  term: string;
-  categoryId?: string;
-  limit?: number;
-}): Promise<DiscourseUserOption[]> {
+export async function searchXiaoyinsiUsers(
+  options: XiaoyinsiOptions & {
+    term: string;
+    categoryId?: string;
+    limit?: number;
+  }
+): Promise<DiscourseUserOption[]> {
   const term = options.term.trim();
   if (!term) {
     return [];
   }
-  const data = await fetchXiaoyinsiJson<Record<string, unknown>>('/u/search/users', {
-    term,
-    include_groups: 'false',
-    limit: options.limit || 20,
-    ...(options.categoryId?.trim() ? { category_id: options.categoryId.trim() } : {})
-  }, options);
+  const data = await fetchXiaoyinsiJson<Record<string, unknown>>(
+    '/u/search/users',
+    {
+      term,
+      include_groups: 'false',
+      limit: options.limit || 20,
+      ...(options.categoryId?.trim() ? { category_id: options.categoryId.trim() } : {})
+    },
+    options
+  );
   const users = Array.isArray(data.users) ? data.users : [];
   return users.filter(isRecord).flatMap((user) => {
     const username = String(user.username || '').trim();
     if (!username) {
       return [];
     }
-    return [{
-      id: String(user.id || username),
-      username,
-      ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
-      ...(avatarUrl(user.avatar_template) ? { avatar: avatarUrl(user.avatar_template) } : {})
-    }];
+    return [
+      {
+        id: String(user.id || username),
+        username,
+        ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
+        ...(avatarUrl(user.avatar_template) ? { avatar: avatarUrl(user.avatar_template) } : {})
+      }
+    ];
   });
 }
 
@@ -588,7 +670,11 @@ function normalizeUserAction(raw: unknown, username: string, categories: Categor
   };
 }
 
-export async function getXiaoyinsiUserProfile(id: string, username: string, options: XiaoyinsiOptions = {}): Promise<UserProfile> {
+export async function getXiaoyinsiUserProfile(
+  id: string,
+  username: string,
+  options: XiaoyinsiOptions = {}
+): Promise<UserProfile> {
   const name = (username || id).trim();
   if (!name) {
     throw new Error('小隐寺用户信息不完整');
@@ -598,14 +684,19 @@ export async function getXiaoyinsiUserProfile(id: string, username: string, opti
   const wantsReplies = cursorType !== 'topics';
   const topicPage = cursorType === 'topics' ? parsePositiveInteger(options.cursor) || 0 : 0;
   const replyOffset = parsePositiveInteger(options.cursor) || 0;
-  const data = await fetchXiaoyinsiJson<Record<string, unknown>>(`/u/${encodeURIComponent(name)}/summary.json`, undefined, options);
+  const data = await fetchXiaoyinsiJson<Record<string, unknown>>(
+    `/u/${encodeURIComponent(name)}/summary.json`,
+    undefined,
+    options
+  );
   const summary = isRecord(data.user_summary) ? data.user_summary : {};
   const summaryUser = isRecord(summary.user) ? summary.user : {};
   const dataUser = isRecord(data.user) ? data.user : {};
-  const listedUser = (Array.isArray(data.users) ? data.users : []).find((candidate) => (
-    isRecord(candidate)
-    && (String(candidate.username || '').toLowerCase() === name.toLowerCase() || String(candidate.id || '') === id)
-  ));
+  const listedUser = (Array.isArray(data.users) ? data.users : []).find(
+    (candidate) =>
+      isRecord(candidate) &&
+      (String(candidate.username || '').toLowerCase() === name.toLowerCase() || String(candidate.id || '') === id)
+  );
   const user = { ...(isRecord(listedUser) ? listedUser : {}), ...dataUser, ...summaryUser };
   const resolvedUsername = String(user.username || name).trim();
   let topicData: Record<string, unknown> = {};
@@ -620,45 +711,60 @@ export async function getXiaoyinsiUserProfile(id: string, username: string, opti
   const rawTopics = Array.isArray(topicList.topics) ? topicList.topics : [];
   let rawActions: unknown[] = [];
   if (wantsReplies) {
-    const actions = await fetchXiaoyinsiJson<Record<string, unknown>>('/user_actions.json', {
-      offset: replyOffset,
-      username: resolvedUsername,
-      filter: 5
-    }, options);
+    const actions = await fetchXiaoyinsiJson<Record<string, unknown>>(
+      '/user_actions.json',
+      {
+        offset: replyOffset,
+        username: resolvedUsername,
+        filter: 5
+      },
+      options
+    );
     rawActions = Array.isArray(actions.user_actions) ? actions.user_actions : [];
   }
   const categories = await categoryMapForTopics(topicData, [...rawTopics, ...rawActions], options);
   const topicUsers = discourseUsersById(topicData.users);
-  const topics = rawTopics.map((raw) => isRecord(raw)
-    ? normalizeTopic(raw, categories, discourseOriginalPoster(raw, topicUsers) || user)
-    : null).filter((item): item is Topic => Boolean(item));
-  const replies = rawActions.map((action) => normalizeUserAction(action, resolvedUsername, categories))
+  const topics = rawTopics
+    .map((raw) =>
+      isRecord(raw) ? normalizeTopic(raw, categories, discourseOriginalPoster(raw, topicUsers) || user) : null
+    )
+    .filter((item): item is Topic => Boolean(item));
+  const replies = rawActions
+    .map((action) => normalizeUserAction(action, resolvedUsername, categories))
     .filter((item): item is UserReplyActivity => Boolean(item));
   const trustLevel = levelLabel(user);
-  return annotateSourceDiagnosticSummary({
-    source: 'xiaoyinsi',
-    id: resolvedUsername,
-    username: resolvedUsername,
-    displayName: typeof user.name === 'string' ? user.name : resolvedUsername,
-    avatar: avatarUrl(user.avatar_template),
-    url: userUrl(resolvedUsername),
-    bio: typeof user.bio_raw === 'string' ? user.bio_raw : typeof user.bio_excerpt === 'string' ? user.bio_excerpt : undefined,
-    topicCount: nonNegativeNumber(summary.topic_count) ?? (topics.length || undefined),
-    replyCount: nonNegativeNumber(summary.reply_count),
-    postCount: nonNegativeNumber(summary.post_count),
-    ...(trustLevel ? { levelLabel: trustLevel } : {}),
-    topics: sortTopicsByCreatedAt(topics),
-    hasMoreTopics: Boolean(topicList.more_topics_url),
-    nextTopicsCursor: topicList.more_topics_url ? String(topicPage + 1) : null,
-    replies,
-    hasMoreReplies: rawActions.length >= LIST_PAGE_SIZE,
-    nextRepliesCursor: rawActions.length >= LIST_PAGE_SIZE ? String(replyOffset + LIST_PAGE_SIZE) : null
-  }, {
-    parserVariant: 'xiaoyinsi-discourse-user',
-    candidateCount: 1 + rawTopics.length + rawActions.length,
-    validCount: 1 + topics.length + replies.length,
-    droppedCount: Math.max(0, rawTopics.length + rawActions.length - topics.length - replies.length)
-  });
+  return annotateSourceDiagnosticSummary(
+    {
+      source: 'xiaoyinsi',
+      id: resolvedUsername,
+      username: resolvedUsername,
+      displayName: typeof user.name === 'string' ? user.name : resolvedUsername,
+      avatar: avatarUrl(user.avatar_template),
+      url: userUrl(resolvedUsername),
+      bio:
+        typeof user.bio_raw === 'string'
+          ? user.bio_raw
+          : typeof user.bio_excerpt === 'string'
+            ? user.bio_excerpt
+            : undefined,
+      topicCount: nonNegativeNumber(summary.topic_count) ?? (topics.length || undefined),
+      replyCount: nonNegativeNumber(summary.reply_count),
+      postCount: nonNegativeNumber(summary.post_count),
+      ...(trustLevel ? { levelLabel: trustLevel } : {}),
+      topics: sortTopicsByCreatedAt(topics),
+      hasMoreTopics: Boolean(topicList.more_topics_url),
+      nextTopicsCursor: topicList.more_topics_url ? String(topicPage + 1) : null,
+      replies,
+      hasMoreReplies: rawActions.length >= LIST_PAGE_SIZE,
+      nextRepliesCursor: rawActions.length >= LIST_PAGE_SIZE ? String(replyOffset + LIST_PAGE_SIZE) : null
+    },
+    {
+      parserVariant: 'xiaoyinsi-discourse-user',
+      candidateCount: 1 + rawTopics.length + rawActions.length,
+      validCount: 1 + topics.length + replies.length,
+      droppedCount: Math.max(0, rawTopics.length + rawActions.length - topics.length - replies.length)
+    }
+  );
 }
 
 export async function getXiaoyinsiCurrentUserProfile(options: XiaoyinsiOptions = {}): Promise<UserProfile> {
@@ -669,12 +775,15 @@ export async function getXiaoyinsiCurrentUserProfile(options: XiaoyinsiOptions =
   try {
     data = await fetchXiaoyinsiJson<Record<string, unknown>>('/session/current.json', undefined, options);
   } catch (error) {
-    const candidate = error && typeof error === 'object'
-      ? error as { responseErrorType?: unknown; responseFormat?: unknown; status?: unknown }
-      : {};
-    if (candidate.status === 403
-      && candidate.responseFormat === 'json'
-      && candidate.responseErrorType === 'invalid_access') {
+    const candidate =
+      error && typeof error === 'object'
+        ? (error as { responseErrorType?: unknown; responseFormat?: unknown; status?: unknown })
+        : {};
+    if (
+      candidate.status === 403 &&
+      candidate.responseFormat === 'json' &&
+      candidate.responseErrorType === 'invalid_access'
+    ) {
       throw Object.assign(new Error('小隐寺授权已失效，请重新授权。'), {
         source: 'xiaoyinsi' as const,
         kind: 'login-expired' as const,
@@ -720,9 +829,10 @@ export async function getXiaoyinsiLevelProfile(options: XiaoyinsiOptions = {}): 
   if (!isRecord(data.user_summary)) {
     throw new Error('小隐寺等级数据格式不正确');
   }
-  const listedUser = (Array.isArray(data.users) ? data.users : []).find((candidate) => (
-    isRecord(candidate) && String(candidate.username || '').toLowerCase() === currentUser.username.toLowerCase()
-  ));
+  const listedUser = (Array.isArray(data.users) ? data.users : []).find(
+    (candidate) =>
+      isRecord(candidate) && String(candidate.username || '').toLowerCase() === currentUser.username.toLowerCase()
+  );
   return buildDiscourseLevelProfileFromSummary({
     ...data.user_summary,
     username: currentUser.username,

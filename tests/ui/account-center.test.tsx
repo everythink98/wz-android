@@ -35,28 +35,30 @@ describe('Account center user authentication', () => {
       url: 'https://www.nodeseek.com/space/42',
       topics: []
     };
-    const mixedSessions = createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'logged-in',
-        cookieSummary: ['session'],
-        currentUser,
-        isVerifying: false
-      },
-      linuxdo: {
-        site: 'linuxdo',
-        status: 'verification-required',
-        cookieSummary: [],
-        isVerifying: false,
-        lastError: '需要完成验证'
-      },
-      yaohuo: {
-        site: 'yaohuo',
-        status: 'expired',
-        cookieSummary: ['sid'],
-        isVerifying: false
-      }
-    }));
+    const mixedSessions = createSiteSessionViewModels(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          currentUser,
+          isVerifying: false
+        },
+        linuxdo: {
+          site: 'linuxdo',
+          status: 'verification-required',
+          cookieSummary: [],
+          isVerifying: false,
+          lastError: '需要完成验证'
+        },
+        yaohuo: {
+          site: 'yaohuo',
+          status: 'expired',
+          cookieSummary: ['sid'],
+          isVerifying: false
+        }
+      })
+    );
     const credentials = emptyCredentialSummaries();
     credentials.yaohuo = {
       site: 'yaohuo',

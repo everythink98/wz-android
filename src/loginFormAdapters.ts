@@ -15,11 +15,7 @@ export type LoginFormMessage = {
 };
 
 export type LoginFormFailureReason =
-  | 'untrusted-page'
-  | 'missing-fields'
-  | 'invalid-form'
-  | 'native-setter-unavailable'
-  | 'fill-failed';
+  'untrusted-page' | 'missing-fields' | 'invalid-form' | 'native-setter-unavailable' | 'fill-failed';
 
 export type LoginFormAdapter = {
   site: CredentialSite;
@@ -73,11 +69,13 @@ function matchesConfigUrl(config: LoginFormConfig, url: string) {
   try {
     const expected = new URL(config.loginUrl);
     const actual = new URL(url);
-    return !actual.username
-      && !actual.password
-      && actual.origin === expected.origin
-      && actual.pathname === expected.pathname
-      && actual.search === expected.search;
+    return (
+      !actual.username &&
+      !actual.password &&
+      actual.origin === expected.origin &&
+      actual.pathname === expected.pathname &&
+      actual.search === expected.search
+    );
   } catch {
     return false;
   }
@@ -93,9 +91,7 @@ function safeInjectedJson(value: unknown) {
 function createLoginFormScript(config: LoginFormConfig, attempt: number, credentials?: LoginCredentials) {
   const expectedUrl = new URL(config.loginUrl);
   const mode = credentials ? 'fill' : 'probe';
-  const credentialsDeclaration = credentials
-    ? `const credentials = ${safeInjectedJson(credentials)};`
-    : '';
+  const credentialsDeclaration = credentials ? `const credentials = ${safeInjectedJson(credentials)};` : '';
   return `
 (() => {
   const site = ${safeInjectedJson(config.site)};
@@ -138,7 +134,9 @@ function createLoginFormScript(config: LoginFormConfig, attempt: number, credent
       return;
     }
     ${credentialsDeclaration}
-    ${credentials ? `const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    ${
+      credentials
+        ? `const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (!valueSetter) {
       post(false, "native-setter-unavailable");
       return;
@@ -148,7 +146,9 @@ function createLoginFormScript(config: LoginFormConfig, attempt: number, credent
     account.dispatchEvent(new Event("change", { bubbles: true }));
     valueSetter.call(password, credentials.password);
     password.dispatchEvent(new Event("input", { bubbles: true }));
-    password.dispatchEvent(new Event("change", { bubbles: true }));` : ''}
+    password.dispatchEvent(new Event("change", { bubbles: true }));`
+        : ''
+    }
     post(true);
   } catch {
     post(false, "fill-failed");
@@ -186,12 +186,14 @@ export function isTrustedLoginFormMessageSource(message: LoginFormMessage, nativ
     // Android WebMessageListener reports only sourceOrigin, not the full page URL.
     const expected = new URL(adapter.loginUrl);
     const actual = new URL(nativeUrl);
-    return !actual.username
-      && !actual.password
-      && actual.origin === expected.origin
-      && actual.pathname === '/'
-      && !actual.search
-      && !actual.hash;
+    return (
+      !actual.username &&
+      !actual.password &&
+      actual.origin === expected.origin &&
+      actual.pathname === '/' &&
+      !actual.search &&
+      !actual.hash
+    );
   } catch {
     return false;
   }
@@ -204,19 +206,24 @@ export function parseLoginFormMessage(data: unknown): LoginFormMessage | null {
       return null;
     }
     const message = value as Record<string, unknown>;
-    if ((message.type !== 'login-form-probe' && message.type !== 'login-form-fill')
-      || (message.site !== 'nodeseek' && message.site !== 'linuxdo' && message.site !== 'yaohuo')
-      || !Number.isSafeInteger(message.attempt)
-      || Number(message.attempt) <= 0
-      || typeof message.ok !== 'boolean'
-      || typeof message.url !== 'string') {
+    if (
+      (message.type !== 'login-form-probe' && message.type !== 'login-form-fill') ||
+      (message.site !== 'nodeseek' && message.site !== 'linuxdo' && message.site !== 'yaohuo') ||
+      !Number.isSafeInteger(message.attempt) ||
+      Number(message.attempt) <= 0 ||
+      typeof message.ok !== 'boolean' ||
+      typeof message.url !== 'string'
+    ) {
       return null;
     }
     if (message.ok) {
       if (message.reason !== undefined || !LOGIN_FORM_ADAPTERS[message.site].matchesUrl(message.url)) {
         return null;
       }
-    } else if (typeof message.reason !== 'string' || !LOGIN_FORM_FAILURE_REASONS.has(message.reason as LoginFormFailureReason)) {
+    } else if (
+      typeof message.reason !== 'string' ||
+      !LOGIN_FORM_FAILURE_REASONS.has(message.reason as LoginFormFailureReason)
+    ) {
       return null;
     }
     return {

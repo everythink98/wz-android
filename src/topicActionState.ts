@@ -43,11 +43,11 @@ function nextReactionSummary<T extends TopicDetail | Reply>(item: T, reactionId:
   if (index < 0) {
     return delta > 0 ? [...current, { id: reactionId, count: delta }] : item.reactionSummary;
   }
-  const next = current.map((reaction, reactionIndex) => (
-    reactionIndex === index
-      ? { ...reaction, count: Math.max(0, reaction.count + delta) }
-      : reaction
-  )).filter((reaction) => reaction.count > 0);
+  const next = current
+    .map((reaction, reactionIndex) =>
+      reactionIndex === index ? { ...reaction, count: Math.max(0, reaction.count + delta) } : reaction
+    )
+    .filter((reaction) => reaction.count > 0);
   return next.length ? next : undefined;
 }
 
@@ -73,12 +73,14 @@ function applyInteractionFields<T extends TopicDetail | Reply>(item: T, patch: I
     ...item,
     [activeField]: nextActive,
     [countField]: nextCount(item[countField], delta),
-    ...(patch.type === 'like' && patch.reactionId ? { reactionSummary: nextReactionSummary(item, patch.reactionId, delta) } : {})
+    ...(patch.type === 'like' && patch.reactionId
+      ? { reactionSummary: nextReactionSummary(item, patch.reactionId, delta) }
+      : {})
   };
 }
 
 export function applyInteractionToTopic<T extends TopicDetail | null>(topic: T, patch: InteractionPatch): T {
-  return topic ? applyInteractionFields(topic, patch) as T : topic;
+  return topic ? (applyInteractionFields(topic, patch) as T) : topic;
 }
 
 export function applyInteractionToReplies(replies: Reply[], patch: InteractionPatch) {
@@ -124,10 +126,7 @@ type PollVotePatch = {
   preserveUnknownCounts?: boolean;
 };
 
-function applyPollVoteToPolls(
-  polls: TopicDetail['polls'],
-  patch: PollVotePatch
-) {
+function applyPollVoteToPolls(polls: TopicDetail['polls'], patch: PollVotePatch) {
   if (!polls?.length) {
     return polls;
   }
@@ -150,9 +149,10 @@ function applyPollVoteToPolls(
         ...patch.confirmedPoll
       };
     }
-    const participantCount = typeof poll.participantCount === 'number' && !poll.voted
-      ? nextCount(poll.participantCount, 1)
-      : poll.participantCount;
+    const participantCount =
+      typeof poll.participantCount === 'number' && !poll.voted
+        ? nextCount(poll.participantCount, 1)
+        : poll.participantCount;
     return {
       ...poll,
       ...(participantCount !== undefined ? { participantCount } : {}),
@@ -177,10 +177,7 @@ function applyPollVoteToPolls(
   });
 }
 
-export function applyPollVoteToTopic<T extends TopicDetail | null>(
-  topic: T,
-  patch: PollVotePatch
-): T {
+export function applyPollVoteToTopic<T extends TopicDetail | null>(topic: T, patch: PollVotePatch): T {
   if (!topic?.polls?.length) {
     return topic;
   }
@@ -190,10 +187,7 @@ export function applyPollVoteToTopic<T extends TopicDetail | null>(
   } as T;
 }
 
-export function applyPollVoteToReplies(
-  replies: Reply[],
-  patch: PollVotePatch
-) {
+export function applyPollVoteToReplies(replies: Reply[], patch: PollVotePatch) {
   return replies.map((reply) => {
     const polls = applyPollVoteToPolls(reply.polls, patch);
     return polls === reply.polls ? reply : { ...reply, polls };
@@ -205,10 +199,7 @@ export function discourseBookmarkIdFromActionResult(value: unknown): number | un
     return undefined;
   }
   const record = value as Record<string, unknown>;
-  const nested = record.bookmark && typeof record.bookmark === 'object'
-    ? record.bookmark as Record<string, unknown>
-    : {};
-  return positiveInteger(record.id)
-    ?? positiveInteger(record.bookmark_id)
-    ?? positiveInteger(nested.id);
+  const nested =
+    record.bookmark && typeof record.bookmark === 'object' ? (record.bookmark as Record<string, unknown>) : {};
+  return positiveInteger(record.id) ?? positiveInteger(record.bookmark_id) ?? positiveInteger(nested.id);
 }

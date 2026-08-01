@@ -16,9 +16,10 @@ function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'accou
   });
   const stop = vi.spyOn(window, 'stop').mockImplementation(() => undefined);
 
-  const script = NODESEEK_BROWSER_FETCH_SCRIPT
-    .replace('__NODESEEK_BROWSER_FETCH_ID__', '7')
-    .replace('__NODESEEK_BROWSER_FETCH_OWNER__', JSON.stringify(owner ?? null));
+  const script = NODESEEK_BROWSER_FETCH_SCRIPT.replace('__NODESEEK_BROWSER_FETCH_ID__', '7').replace(
+    '__NODESEEK_BROWSER_FETCH_OWNER__',
+    JSON.stringify(owner ?? null)
+  );
   window.eval(script);
 
   return {
@@ -56,20 +57,25 @@ describe('hidden browser fetch scripts', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     delete (window as typeof window & { __config__?: unknown }).__config__;
-    delete (window as typeof window & {
-      __wzNodeSeekBrowserFetchRequestId?: number;
-    }).__wzNodeSeekBrowserFetchRequestId;
+    delete (
+      window as typeof window & {
+        __wzNodeSeekBrowserFetchRequestId?: number;
+      }
+    ).__wzNodeSeekBrowserFetchRequestId;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
   it('returns rendered NodeSeek search pages even when they have no post list items', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/search?q=plasma%E6%95%99%E7%A8%8B', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/search?q=plasma%E6%95%99%E7%A8%8B',
+      `
       <main>
         <form action="/search"><input name="q" value="plasma教程" /></form>
         <section class="empty-state">没有找到相关帖子</section>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -85,11 +91,15 @@ describe('hidden browser fetch scripts', () => {
   it('[REG-ACCOUNT-037] waits for NodeSeek identity evidence during account probes', () => {
     vi.useFakeTimers();
     try {
-      const { postMessage } = runNodeSeekBrowserFetchScript('/', `
+      const { postMessage } = runNodeSeekBrowserFetchScript(
+        '/',
+        `
         <ul class="post-list">
           <li class="post-list-item">Public topic</li>
         </ul>
-      `, 'account');
+      `,
+        'account'
+      );
 
       expect(postMessage).not.toHaveBeenCalled();
 
@@ -117,11 +127,15 @@ describe('hidden browser fetch scripts', () => {
       value: { user: null }
     });
 
-    const { evaluateAgain, postMessage } = runNodeSeekBrowserFetchScript('/', `
+    const { evaluateAgain, postMessage } = runNodeSeekBrowserFetchScript(
+      '/',
+      `
       <ul class="post-list">
         <li class="post-list-item">Public topic</li>
       </ul>
-    `, 'account');
+    `,
+      'account'
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -133,38 +147,42 @@ describe('hidden browser fetch scripts', () => {
     expect(postMessage).toHaveBeenCalledTimes(1);
   });
 
-  it.each([false, undefined, {}])(
-    '[REG-ACCOUNT-037] keeps an unproven NodeSeek runtime user unknown: %p',
-    (user) => {
-      vi.useFakeTimers();
-      try {
-        Object.defineProperty(window, '__config__', {
-          configurable: true,
-          value: { user }
-        });
+  it.each([false, undefined, {}])('[REG-ACCOUNT-037] keeps an unproven NodeSeek runtime user unknown: %p', (user) => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(window, '__config__', {
+        configurable: true,
+        value: { user }
+      });
 
-        const { postMessage } = runNodeSeekBrowserFetchScript('/', `
+      const { postMessage } = runNodeSeekBrowserFetchScript(
+        '/',
+        `
           <ul class="post-list">
             <li class="post-list-item">Public topic</li>
           </ul>
-        `, 'account');
+        `,
+        'account'
+      );
 
-        expect(postMessage).not.toHaveBeenCalled();
-      } finally {
-        vi.clearAllTimers();
-        vi.useRealTimers();
-      }
+      expect(postMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
     }
-  );
+  });
 
   it('waits for NodeSeek search results instead of returning the bare search form', () => {
     vi.useFakeTimers();
     try {
-      const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=ai', `
+      const { postMessage } = runNodeSeekBrowserFetchScript(
+        '/search?q=ai',
+        `
         <main>
           <form action="/search"><input name="q" value="ai" /></form>
         </main>
-      `);
+      `
+      );
 
       expect(postMessage).not.toHaveBeenCalled();
     } finally {
@@ -176,12 +194,15 @@ describe('hidden browser fetch scripts', () => {
   it('does not treat NodeSeek search page config as post detail data', () => {
     vi.useFakeTimers();
     try {
-      const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=ai', `
+      const { postMessage } = runNodeSeekBrowserFetchScript(
+        '/search?q=ai',
+        `
         <main>
           <script id="temp-script" type="application/json">eyJhbGxDYXRlZ29yeSI6W119</script>
           <form action="/search"><input name="q" value="ai" /></form>
         </main>
-      `);
+      `
+      );
 
       expect(postMessage).not.toHaveBeenCalled();
     } finally {
@@ -193,11 +214,14 @@ describe('hidden browser fetch scripts', () => {
   it('fails bare NodeSeek search pages at the read deadline instead of returning them as empty results', () => {
     vi.useFakeTimers();
     try {
-      const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=ai', `
+      const { postMessage } = runNodeSeekBrowserFetchScript(
+        '/search?q=ai',
+        `
         <main>
           <form action="/search"><input name="q" value="ai" /></form>
         </main>
-      `);
+      `
+      );
 
       vi.advanceTimersByTime(15000);
 
@@ -216,12 +240,15 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('returns interactive Cloudflare challenge pages immediately', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/search?q=plasma%E6%95%99%E7%A8%8B', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/search?q=plasma%E6%95%99%E7%A8%8B',
+      `
       <main>
         <h1>Just a moment...</h1>
         <div class="cf-turnstile"></div>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -235,18 +262,21 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('returns Google search result pages when they contain NodeSeek topic links', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/search?q=site%3Anodeseek.com+codex', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/search?q=site%3Anodeseek.com+codex',
+      `
       <main>
         <a href="https://www.nodeseek.com/post-861593-1">claude code 好用 还是 codex 好用</a>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
     expect(payload).toMatchObject({
       type: 'nodeseek-browser-fetch',
       id: 7,
-      challenge: false,
+      challenge: false
     });
     expect(payload.url).toContain('/search?q=site%3Anodeseek.com+codex');
     expect(payload.html).toContain('post-861593-1');
@@ -254,11 +284,14 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('returns Google search result pages when they contain linux.do topic links', () => {
-    const { postMessage } = runLinuxDoBrowserFetchScript('/search?q=site%3Alinux.do+codex', `
+    const { postMessage } = runLinuxDoBrowserFetchScript(
+      '/search?q=site%3Alinux.do+codex',
+      `
       <main>
         <a href="/url?url=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1424130&amp;sa=U">Codex CLI 讨论</a>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -272,9 +305,12 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('returns raw NodeSeek JSON bodies for browser-fetched API pages', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/session/csrf', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/session/csrf',
+      `
       <pre>{"csrf":"dynamic-token"}</pre>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -303,12 +339,15 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('[REG-VERIFICATION-002] prefers readable NodeSeek content over injected challenge-platform markup', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777280-1', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/post-777280-1',
+      `
       <main>
         <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
         <article class="post-content"><p>正常正文讨论 cf-turnstile</p></article>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -322,7 +361,9 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('returns the real NodeSeek private-post notice without waiting for timeout', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777282-1', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/post-777282-1',
+      `
       <section id="nsk-frame">
         <div id="nsk-body" class="nsk-container">
           <div id="nsk-body-left">
@@ -330,7 +371,8 @@ describe('hidden browser fetch scripts', () => {
           </div>
         </div>
       </section>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -344,11 +386,14 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('returns a clear error instead of sending oversized WebView bridge messages', () => {
-    const { postMessage } = runNodeSeekBrowserFetchScript('/post-777283-1', `
+    const { postMessage } = runNodeSeekBrowserFetchScript(
+      '/post-777283-1',
+      `
       <main>
         <article class="post-content">${'x'.repeat(950000)}</article>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -361,12 +406,15 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('returns only NodeSeek embedded post data when the rendered page is huge', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777284-1', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/post-777284-1',
+      `
       <main>
         <script id="temp-script" type="application/json">eyJwb3N0RGF0YSI6eyJwb3N0SWQiOjc3NzI4NH19</script>
         <article class="post-content">${'x'.repeat(950000)}</article>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -386,21 +434,26 @@ describe('hidden browser fetch scripts', () => {
       value: {
         postData: {
           postId: 777286,
-          comments: [{
-            commentId: 10990421,
-            floorIndex: 9,
-            markdown: '原始 **Markdown**',
-            poster: { uid: 54874, isMe: true }
-          }, {
-            commentId: 10990422,
-            floorIndex: 10,
-            content: '@KWEOO #6 最新版没找到',
-            poster: { uid: 1 }
-          }]
+          comments: [
+            {
+              commentId: 10990421,
+              floorIndex: 9,
+              markdown: '原始 **Markdown**',
+              poster: { uid: 54874, isMe: true }
+            },
+            {
+              commentId: 10990422,
+              floorIndex: 10,
+              content: '@KWEOO #6 最新版没找到',
+              poster: { uid: 1 }
+            }
+          ]
         }
       }
     });
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777286-1', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/post-777286-1',
+      `
       <main>
         <div id="9" data-comment-id="10990421" class="content-item">
           <article class="post-content"><p>渲染后的 Markdown</p></article>
@@ -412,7 +465,8 @@ describe('hidden browser fetch scripts', () => {
           </article>
         </div>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -435,7 +489,9 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('does not wait for vote widgets when NodeSeek embedded post data is ready', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777285-1', `
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/post-777285-1',
+      `
       <main>
         <script id="temp-script" type="application/json">eyJwb3N0RGF0YSI6eyJwb3N0SWQiOjc3NzI4NX19</script>
         <div class="embed-vote">
@@ -444,7 +500,8 @@ describe('hidden browser fetch scripts', () => {
           <label for="vote-1"></label>
         </div>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -455,12 +512,15 @@ describe('hidden browser fetch scripts', () => {
   it('[REG-VERIFICATION-002] does not turn marker text on an incomplete NodeSeek page into a challenge', () => {
     vi.useFakeTimers();
     try {
-      const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=cf-turnstile', `
+      const { postMessage } = runNodeSeekBrowserFetchScript(
+        '/search?q=cf-turnstile',
+        `
         <main>
           <form action="/search"><input name="q" value="cf-turnstile" /></form>
           <p>普通页面文字提到 cf-turnstile 和 challenge-platform。</p>
         </main>
-      `);
+      `
+      );
 
       vi.advanceTimersByTime(15000);
 
@@ -479,12 +539,15 @@ describe('hidden browser fetch scripts', () => {
   });
 
   it('does not send linux.do challenge page HTML through the bridge', () => {
-    const { postMessage } = runLinuxDoBrowserFetchScript('/latest.json', `
+    const { postMessage } = runLinuxDoBrowserFetchScript(
+      '/latest.json',
+      `
       <main>
         <h1>Just a moment...</h1>
         <div class="cf-turnstile"></div>
       </main>
-    `);
+    `
+    );
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -527,9 +590,12 @@ describe('hidden browser fetch scripts', () => {
   it('[REG-VERIFICATION-002] does not turn marker text on an ordinary linux.do HTML page into a challenge', () => {
     vi.useFakeTimers();
     try {
-      const { postMessage } = runLinuxDoBrowserFetchScript('/search?q=cf-turnstile', `
+      const { postMessage } = runLinuxDoBrowserFetchScript(
+        '/search?q=cf-turnstile',
+        `
         <main><article>普通页面文字提到 cf-turnstile 和 challenge-platform。</article></main>
-      `);
+      `
+      );
 
       vi.advanceTimersByTime(8000);
 

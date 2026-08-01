@@ -178,19 +178,23 @@ describe('parseLoginFormMessage', () => {
   it('accepts only complete messages and trusted successful URLs', () => {
     expect(parseLoginFormMessage('{')).toBeNull();
     expect(parseLoginFormMessage({ type: 'login-form-probe', site: 'nodeseek', ok: true })).toBeNull();
-    expect(parseLoginFormMessage({
-      type: 'login-form-probe',
-      site: 'nodeseek',
-      ok: true,
-      url: 'https://evil.example/signIn.html'
-    })).toBeNull();
-    expect(parseLoginFormMessage({
-      type: 'login-form-fill',
-      site: 'linuxdo',
-      ok: false,
-      url: 'https://linux.do/login',
-      reason: 'other'
-    })).toBeNull();
+    expect(
+      parseLoginFormMessage({
+        type: 'login-form-probe',
+        site: 'nodeseek',
+        ok: true,
+        url: 'https://evil.example/signIn.html'
+      })
+    ).toBeNull();
+    expect(
+      parseLoginFormMessage({
+        type: 'login-form-fill',
+        site: 'linuxdo',
+        ok: false,
+        url: 'https://linux.do/login',
+        reason: 'other'
+      })
+    ).toBeNull();
   });
 
   it('requires the native WebView source to match before trusting a successful probe', () => {

@@ -68,10 +68,12 @@ async function loadAndDisplayImage(
   dimensions = { height: 240, width: 320 },
   cacheType: 'none' | 'disk' | 'memory' = 'none'
 ) {
-  await act(() => props.onLoad?.({
-    cacheType,
-    source: { ...dimensions, mediaType: 'image/png', url: props.source?.uri || '' }
-  }));
+  await act(() =>
+    props.onLoad?.({
+      cacheType,
+      source: { ...dimensions, mediaType: 'image/png', url: props.source?.uri || '' }
+    })
+  );
   await act(() => props.onDisplay?.());
 }
 
@@ -94,7 +96,8 @@ jest.mock('expo-image', () => {
         testID: typeof props.testID === 'string' ? props.testID : 'expo-image'
       });
     },
-    useImage: (source: { uri?: string }, options?: unknown, dependencies?: unknown[]) => mockUseImage(source, options, dependencies)
+    useImage: (source: { uri?: string }, options?: unknown, dependencies?: unknown[]) =>
+      mockUseImage(source, options, dependencies)
   };
 });
 
@@ -128,17 +131,23 @@ jest.mock('react-native-render-html', () => ({
     style: {},
     width: props.tnode.attributes.width
   }),
-  useIMGElementStateWithCache: ({ cachedNaturalDimensions, height: specifiedHeight, source, width: specifiedWidth }: {
+  useIMGElementStateWithCache: ({
+    cachedNaturalDimensions,
+    height: specifiedHeight,
+    source,
+    width: specifiedWidth
+  }: {
     cachedNaturalDimensions: { height: number; width: number };
     height?: string;
     source: unknown;
     width?: string;
   }) => {
-    const specified = Number(specifiedWidth) > 0 && Number(specifiedHeight) > 0
-      ? { height: Number(specifiedHeight), width: Number(specifiedWidth) }
-      : cachedNaturalDimensions;
+    const specified =
+      Number(specifiedWidth) > 0 && Number(specifiedHeight) > 0
+        ? { height: Number(specifiedHeight), width: Number(specifiedWidth) }
+        : cachedNaturalDimensions;
     const width = Math.min(specified.width, 320);
-    const height = Math.round(specified.height * width / specified.width);
+    const height = Math.round((specified.height * width) / specified.width);
     return {
       alt: '测试图片',
       containerStyle: {},
@@ -251,76 +260,98 @@ describe('topic block image loading', () => {
     await render(<TopicImageHarness />);
 
     expect(mockUseImage).not.toHaveBeenCalled();
-    expect(mockExpoImageProps).toHaveBeenCalledWith(expect.objectContaining({
-      cachePolicy: 'memory-disk',
-      priority: 'normal',
-      source: expect.objectContaining({ uri: imageUrl })
-    }));
+    expect(mockExpoImageProps).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cachePolicy: 'memory-disk',
+        priority: 'normal',
+        source: expect.objectContaining({ uri: imageUrl })
+      })
+    );
   });
 
   it('[REG-TOPIC-040] requests the smallest responsive candidate that fits the body pixels', async () => {
     const selectedUrl = 'https://img.example.com/body-640.png';
-    await render(<TopicImageHarness attributes={{
-      alt: '响应式图片',
-      src: 'https://img.example.com/fallback-original.png',
-      srcset: `https://img.example.com/body-320.png 320w, ${selectedUrl} 640w, https://img.example.com/original-2000.png 2000w`
-    }} />);
+    await render(
+      <TopicImageHarness
+        attributes={{
+          alt: '响应式图片',
+          src: 'https://img.example.com/fallback-original.png',
+          srcset: `https://img.example.com/body-320.png 320w, ${selectedUrl} 640w, https://img.example.com/original-2000.png 2000w`
+        }}
+      />
+    );
 
     expect(latestImageProps(selectedUrl).source).toEqual(expect.objectContaining({ uri: selectedUrl }));
-    expect(mockExpoImageProps.mock.calls.some(([props]) => (
-      (props as MockExpoImageProps).source?.uri === 'https://img.example.com/original-2000.png'
-    ))).toBe(false);
+    expect(
+      mockExpoImageProps.mock.calls.some(
+        ([props]) => (props as MockExpoImageProps).source?.uri === 'https://img.example.com/original-2000.png'
+      )
+    ).toBe(false);
   });
 
   it('[REG-TOPIC-048] starts the low-priority original only after the display image is shown', async () => {
     const displayUrl = 'https://img.example.com/progressive-display.png';
     const originalUrl = 'https://img.example.com/progressive-original.png';
     mockSourceHeaders = { Referer: 'https://img.example.com/topic' };
-    const screen = await render(<TopicImageHarness attributes={{
-      alt: '渐进图片',
-      'data-original': originalUrl,
-      src: displayUrl
-    }} />);
+    const screen = await render(
+      <TopicImageHarness
+        attributes={{
+          alt: '渐进图片',
+          'data-original': originalUrl,
+          src: displayUrl
+        }}
+      />
+    );
     const displayProps = latestImageProps(displayUrl);
 
-    expect(mockExpoImageProps.mock.calls.some(([props]) => (
-      (props as MockExpoImageProps).source?.uri === originalUrl
-    ))).toBe(false);
-    await act(() => displayProps.onLoad?.({
-      cacheType: 'none',
-      source: { height: 600, mediaType: 'image/png', url: displayUrl, width: 400 }
-    }));
-    expect(mockExpoImageProps.mock.calls.some(([props]) => (
-      (props as MockExpoImageProps).source?.uri === originalUrl
-    ))).toBe(false);
+    expect(
+      mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === originalUrl)
+    ).toBe(false);
+    await act(() =>
+      displayProps.onLoad?.({
+        cacheType: 'none',
+        source: { height: 600, mediaType: 'image/png', url: displayUrl, width: 400 }
+      })
+    );
+    expect(
+      mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === originalUrl)
+    ).toBe(false);
 
     await act(() => displayProps.onDisplay?.());
     const originalProps = latestImageProps(originalUrl);
-    expect(originalProps).toEqual(expect.objectContaining({
-      placeholder: expect.objectContaining({ uri: displayUrl }),
-      priority: 'low',
-      source: expect.objectContaining({
-        headers: expect.objectContaining({ Referer: 'https://img.example.com/topic' }),
-        uri: originalUrl
-      }),
-      testID: 'topic-image-original',
-      transition: 150
-    }));
+    expect(originalProps).toEqual(
+      expect.objectContaining({
+        placeholder: expect.objectContaining({ uri: displayUrl }),
+        priority: 'low',
+        source: expect.objectContaining({
+          headers: expect.objectContaining({ Referer: 'https://img.example.com/topic' }),
+          uri: originalUrl
+        }),
+        testID: 'topic-image-original',
+        transition: 150
+      })
+    );
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
     const dimensionsBeforeUpgrade = StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style);
 
     await act(() => originalProps.onDisplay?.());
 
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject(dimensionsBeforeUpgrade);
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject(
+      dimensionsBeforeUpgrade
+    );
     expect(screen.getByTestId('topic-image-original')).toBeTruthy();
   });
 
   it('[REG-TOPIC-048] does not duplicate a request when display and original URLs match', async () => {
     const sharedUrl = 'https://img.example.com/already-original.png';
-    const screen = await render(<TopicImageHarness attributes={{
-      'data-original': sharedUrl,
-      src: sharedUrl
-    }} />);
+    const screen = await render(
+      <TopicImageHarness
+        attributes={{
+          'data-original': sharedUrl,
+          src: sharedUrl
+        }}
+      />
+    );
 
     await loadAndDisplayImage(latestImageProps(sharedUrl));
 
@@ -330,37 +361,51 @@ describe('topic block image loading', () => {
   it('[REG-TOPIC-048] honors the nearby gate and isolates fullscreen readiness by media epoch', async () => {
     const displayUrl = 'https://img.example.com/gated-display.png';
     const originalUrl = 'https://img.example.com/gated-original.png';
-    const screen = await render(<TopicImageHarness
-      attributes={{ 'data-original': originalUrl, src: displayUrl }}
-      originalImageUpgradeEnabled={false}
-    />);
+    const screen = await render(
+      <TopicImageHarness
+        attributes={{ 'data-original': originalUrl, src: displayUrl }}
+        originalImageUpgradeEnabled={false}
+      />
+    );
 
     await loadAndDisplayImage(latestImageProps(displayUrl));
     expect(screen.queryByTestId('topic-image-original')).toBeNull();
 
-    await act(() => markOriginalImageDisplayed(imageSourceFromUrl(originalUrl, {
-      mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:1' }
-    })));
+    await act(() =>
+      markOriginalImageDisplayed(
+        imageSourceFromUrl(originalUrl, {
+          mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:1' }
+        })
+      )
+    );
     expect(screen.queryByTestId('topic-image-original')).toBeNull();
 
-    await act(() => markOriginalImageDisplayed(imageSourceFromUrl(originalUrl, {
-      mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
-    })));
+    await act(() =>
+      markOriginalImageDisplayed(
+        imageSourceFromUrl(originalUrl, {
+          mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
+        })
+      )
+    );
     await waitFor(() => expect(screen.getByTestId('topic-image-original')).toBeTruthy());
-    expect(latestImageProps(originalUrl).source).toEqual(expect.objectContaining({
-      cacheKey: `yaohuo:2:${originalUrl}`
-    }));
+    expect(latestImageProps(originalUrl).source).toEqual(
+      expect.objectContaining({
+        cacheKey: `yaohuo:2:${originalUrl}`
+      })
+    );
   });
 
   it('[REG-TOPIC-048] raises a tapped original to high priority and keeps the display image on background failure', async () => {
     const displayUrl = 'https://img.example.com/failure-display.png';
     const originalUrl = 'https://img.example.com/failure-original.png';
     const onOpenImagePreview = jest.fn();
-    const screen = await render(<TopicImageHarness
-      attributes={{ alt: '渐进失败图片', 'data-original': originalUrl, src: displayUrl }}
-      originalImageUpgradeEnabled={false}
-      onOpenImagePreview={onOpenImagePreview}
-    />);
+    const screen = await render(
+      <TopicImageHarness
+        attributes={{ alt: '渐进失败图片', 'data-original': originalUrl, src: displayUrl }}
+        originalImageUpgradeEnabled={false}
+        onOpenImagePreview={onOpenImagePreview}
+      />
+    );
 
     await fireEvent.press(screen.getByLabelText('测试图片'));
     expect(latestImageProps(originalUrl).priority).toBe('high');
@@ -372,22 +417,34 @@ describe('topic block image loading', () => {
     expect(screen.queryByText('测试图片')).toBeNull();
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
 
-    await act(() => markOriginalImageDisplayed(imageSourceFromUrl(originalUrl, {
-      mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
-    })));
+    await act(() =>
+      markOriginalImageDisplayed(
+        imageSourceFromUrl(originalUrl, {
+          mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
+        })
+      )
+    );
     await waitFor(() => expect(screen.getByTestId('topic-image-original')).toBeTruthy());
   });
 
   it('keeps one loading indicator until the native image is displayed', async () => {
     const screen = await render(<TopicImageHarness />);
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 240, width: 320 });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 240,
+      width: 320
+    });
     const imageProps = latestImageProps(imageUrl);
-    await act(() => imageProps.onLoad?.({
-      cacheType: 'none',
-      source: { height: 600, mediaType: 'image/png', url: imageUrl, width: 400 }
-    }));
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 480, width: 320 });
+    await act(() =>
+      imageProps.onLoad?.({
+        cacheType: 'none',
+        source: { height: 600, mediaType: 'image/png', url: imageUrl, width: 400 }
+      })
+    );
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 480,
+      width: 320
+    });
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
     await act(() => imageProps.onDisplay?.());
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
@@ -400,41 +457,66 @@ describe('topic block image loading', () => {
     const firstImageProps = latestImageProps(lateImageUrl);
 
     await act(() => firstImageProps.onDisplay?.());
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 240, width: 320 });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 240,
+      width: 320
+    });
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
-    await act(() => firstImageProps.onLoad?.({
-      cacheType: 'memory',
-      source: { height: 600, mediaType: 'image/png', url: lateImageUrl, width: 400 }
-    }));
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 480, width: 320 });
+    await act(() =>
+      firstImageProps.onLoad?.({
+        cacheType: 'memory',
+        source: { height: 600, mediaType: 'image/png', url: lateImageUrl, width: 400 }
+      })
+    );
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 480,
+      width: 320
+    });
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
 
     mockSourceHeaders = { Cookie: 'session=two' };
     await screen.rerender(<TopicImageHarness attributes={{ alt: 'Android 事件顺序图片', src: lateImageUrl }} />);
-    await act(() => firstImageProps.onLoad?.({
-      cacheType: 'none',
-      source: { height: 400, mediaType: 'image/png', url: lateImageUrl, width: 1_600 }
-    }));
+    await act(() =>
+      firstImageProps.onLoad?.({
+        cacheType: 'none',
+        source: { height: 400, mediaType: 'image/png', url: lateImageUrl, width: 1_600 }
+      })
+    );
 
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 480, width: 320 });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 480,
+      width: 320
+    });
   });
 
   it('[REG-TOPIC-004] replaces block thumbnail dimensions with the same request natural dimensions', async () => {
     const thumbnailImageUrl = 'https://img.example.com/block-thumbnail-dimensions.png';
-    const screen = await render(<TopicImageHarness attributes={{
-      alt: '带缩略尺寸的正文图',
-      height: '100',
-      src: thumbnailImageUrl,
-      width: '200'
-    }} />);
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 240, width: 320 });
+    const screen = await render(
+      <TopicImageHarness
+        attributes={{
+          alt: '带缩略尺寸的正文图',
+          height: '100',
+          src: thumbnailImageUrl,
+          width: '200'
+        }}
+      />
+    );
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 240,
+      width: 320
+    });
 
-    await act(() => latestImageProps(thumbnailImageUrl).onLoad?.({
-      cacheType: 'none',
-      source: { height: 400, mediaType: 'image/png', url: thumbnailImageUrl, width: 1_600 }
-    }));
+    await act(() =>
+      latestImageProps(thumbnailImageUrl).onLoad?.({
+        cacheType: 'none',
+        source: { height: 400, mediaType: 'image/png', url: thumbnailImageUrl, width: 1_600 }
+      })
+    );
 
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 80, width: 320 });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 80,
+      width: 320
+    });
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
   });
 
@@ -452,29 +534,35 @@ describe('topic block image loading', () => {
       jest.setSystemTime(1_010);
       await act(() => imageProps.onProgress?.({ loaded: 4096, total: 8192 }));
       jest.setSystemTime(1_020);
-      await act(() => imageProps.onLoad?.({
-        cacheType: 'disk',
-        source: { height: 600, mediaType: 'image/png', url: imageUrl, width: 400 }
-      }));
+      await act(() =>
+        imageProps.onLoad?.({
+          cacheType: 'disk',
+          source: { height: 600, mediaType: 'image/png', url: imageUrl, width: 400 }
+        })
+      );
       jest.setSystemTime(1_030);
       await act(() => imageProps.onDisplay?.());
 
       const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
-      expect(diagnosticEvents[0]).toEqual(expect.objectContaining({
-        candidateKind: 'src',
-        mediaRef: expect.stringMatching(/^media-\d+$/),
-        mediaRole: 'body'
-      }));
-      expect(diagnosticEvents.at(-1)).toEqual(expect.objectContaining({
-        cacheType: 'disk',
-        displayMs: 30,
-        firstProgressMs: 10,
-        loadedBytes: 4096,
-        loadMs: 20,
-        sourceHeight: 600,
-        sourceWidth: 400,
-        totalBytes: 8192
-      }));
+      expect(diagnosticEvents[0]).toEqual(
+        expect.objectContaining({
+          candidateKind: 'src',
+          mediaRef: expect.stringMatching(/^media-\d+$/),
+          mediaRole: 'body'
+        })
+      );
+      expect(diagnosticEvents.at(-1)).toEqual(
+        expect.objectContaining({
+          cacheType: 'disk',
+          displayMs: 30,
+          firstProgressMs: 10,
+          loadedBytes: 4096,
+          loadMs: 20,
+          sourceHeight: 600,
+          sourceWidth: 400,
+          totalBytes: 8192
+        })
+      );
       expect(diagnosticLines.join('')).not.toContain(imageUrl);
     } finally {
       setDiagnosticWriter(null);
@@ -506,30 +594,39 @@ describe('topic block image loading', () => {
   it('[REG-ACCOUNT-029] changes the same image request identity when the media epoch changes', async () => {
     const screen = await render(<TopicImageHarness mediaSessionIdentity="yaohuo:1" />);
     const epochOneProps = latestImageProps(imageUrl);
-    expect(epochOneProps.source).toEqual(expect.objectContaining({
-      cacheKey: `yaohuo:1:${imageUrl}`,
-      uri: imageUrl
-    }));
+    expect(epochOneProps.source).toEqual(
+      expect.objectContaining({
+        cacheKey: `yaohuo:1:${imageUrl}`,
+        uri: imageUrl
+      })
+    );
     await screen.rerender(<TopicImageHarness mediaSessionIdentity="yaohuo:2" />);
     const epochTwoProps = latestImageProps(imageUrl);
-    expect(epochTwoProps.source).toEqual(expect.objectContaining({
-      cacheKey: `yaohuo:2:${imageUrl}`,
-      uri: imageUrl
-    }));
+    expect(epochTwoProps.source).toEqual(
+      expect.objectContaining({
+        cacheKey: `yaohuo:2:${imageUrl}`,
+        uri: imageUrl
+      })
+    );
     expect(epochTwoProps.recyclingKey).not.toBe(epochOneProps.recyclingKey);
 
     await loadAndDisplayImage(epochTwoProps, { height: 300, width: 320 });
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 300, width: 320 });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 300,
+      width: 320
+    });
     await loadAndDisplayImage(epochOneProps, { height: 600, width: 320 });
-    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 300, width: 320 });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 300,
+      width: 320
+    });
   });
 
   it('[REG-ACCOUNT-029] rebuilds the native-managed video source when the media epoch changes', async () => {
     const videoUrl = 'https://yaohuo.me/media/private-topic.mp4';
     const controller = await renderHook(
-      (props: { mediaSessionIdentity: string }) => useHtmlRenderingController(
-        htmlRenderingControllerProps(props.mediaSessionIdentity)
-      ),
+      (props: { mediaSessionIdentity: string }) =>
+        useHtmlRenderingController(htmlRenderingControllerProps(props.mediaSessionIdentity)),
       { initialProps: { mediaSessionIdentity: 'yaohuo:1' } }
     );
     const videoProps = { tnode: { attributes: { src: videoUrl } } };
@@ -540,13 +637,17 @@ describe('topic block image loading', () => {
 
     expect(firstVideo.key).toBe(`yaohuo:1:${videoUrl}`);
     const video = await render(firstVideo);
-    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(expect.objectContaining({
-      headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
-      uri: videoUrl
-    }));
-    expect(mockUseVideoPlayer.mock.calls.at(-1)?.[0]).not.toEqual(expect.objectContaining({
-      headers: expect.objectContaining({ Cookie: expect.any(String) })
-    }));
+    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
+        uri: videoUrl
+      })
+    );
+    expect(mockUseVideoPlayer.mock.calls.at(-1)?.[0]).not.toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ Cookie: expect.any(String) })
+      })
+    );
 
     await controller.rerender({ mediaSessionIdentity: 'yaohuo:2' });
     const secondRenderer = controller.result.current.htmlRenderers[FORUM_VIDEO_TAG] as unknown as (
@@ -555,10 +656,14 @@ describe('topic block image loading', () => {
     const secondVideo = secondRenderer(videoProps);
     expect(secondVideo.key).toBe(`yaohuo:2:${videoUrl}`);
     await video.rerender(secondVideo);
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(expect.objectContaining({
-      headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
-      uri: videoUrl
-    })));
+    await waitFor(() =>
+      expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
+          uri: videoUrl
+        })
+      )
+    );
   });
 
   it('ignores a stale image failure after the request headers change', async () => {
@@ -583,14 +688,23 @@ describe('topic block image loading', () => {
     const cachedImageUrl = 'https://img.example.com/portrait-cache.png';
     const attributes = { alt: '纵向图片', src: cachedImageUrl };
     const firstScreen = await render(<TopicImageHarness attributes={attributes} />);
-    expect(StyleSheet.flatten(firstScreen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 240, width: 320 });
+    expect(StyleSheet.flatten(firstScreen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 240,
+      width: 320
+    });
 
     await loadAndDisplayImage(latestImageProps(cachedImageUrl), { height: 600, width: 400 });
-    expect(StyleSheet.flatten(firstScreen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 480, width: 320 });
+    expect(StyleSheet.flatten(firstScreen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 480,
+      width: 320
+    });
     await firstScreen.unmount();
 
     const secondScreen = await render(<TopicImageHarness attributes={attributes} />);
-    expect(StyleSheet.flatten(secondScreen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 480, width: 320 });
+    expect(StyleSheet.flatten(secondScreen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 480,
+      width: 320
+    });
     expect(secondScreen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
   });
 
@@ -612,16 +726,20 @@ describe('topic block image loading', () => {
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
       expect(screen.queryByTestId('expo-image')).toBeNull();
       const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
-      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
-        area: 'media',
-        phase: 'intent',
-        surface: 'body'
-      }));
-      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
-        area: 'media',
-        outcome: 'failure',
-        terminalReason: 'native-error'
-      }));
+      expect(diagnosticEvents).toContainEqual(
+        expect.objectContaining({
+          area: 'media',
+          phase: 'intent',
+          surface: 'body'
+        })
+      );
+      expect(diagnosticEvents).toContainEqual(
+        expect.objectContaining({
+          area: 'media',
+          outcome: 'failure',
+          terminalReason: 'native-error'
+        })
+      );
       expect(diagnosticLines.join('')).not.toContain(imageUrl);
     } finally {
       setDiagnosticWriter(null);
@@ -641,30 +759,42 @@ describe('topic block image loading', () => {
       const stalledImageProps = latestImageProps(timeoutImageUrl);
 
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
-      expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 240, width: 320 });
+      expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+        height: 240,
+        width: 320
+      });
       await act(async () => {
         jest.advanceTimersByTime(30_000);
       });
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
       expect(screen.getByText('测试图片')).toBeTruthy();
       expect(screen.queryByTestId('expo-image')).toBeNull();
-      await act(() => stalledImageProps.onLoad?.({
-        cacheType: 'none',
-        source: { height: 400, mediaType: 'image/png', url: timeoutImageUrl, width: 1_600 }
-      }));
-      expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 240, width: 320 });
+      await act(() =>
+        stalledImageProps.onLoad?.({
+          cacheType: 'none',
+          source: { height: 400, mediaType: 'image/png', url: timeoutImageUrl, width: 1_600 }
+        })
+      );
+      expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+        height: 240,
+        width: 320
+      });
       expect(screen.getByText('测试图片')).toBeTruthy();
       const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
-      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
-        area: 'media',
-        phase: 'intent',
-        surface: 'body'
-      }));
-      expect(diagnosticEvents).toContainEqual(expect.objectContaining({
-        area: 'media',
-        outcome: 'failure',
-        terminalReason: 'timeout'
-      }));
+      expect(diagnosticEvents).toContainEqual(
+        expect.objectContaining({
+          area: 'media',
+          phase: 'intent',
+          surface: 'body'
+        })
+      );
+      expect(diagnosticEvents).toContainEqual(
+        expect.objectContaining({
+          area: 'media',
+          outcome: 'failure',
+          terminalReason: 'timeout'
+        })
+      );
     } finally {
       setDiagnosticWriter(null);
       jest.useRealTimers();
@@ -673,16 +803,18 @@ describe('topic block image loading', () => {
 
   it('REG-TOPIC-018 renders a Chromium poster after Android rejects an SVG response', async () => {
     const svgImageUrl = 'https://img.example.com/dynamic-report.png';
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>';
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>';
     const onOpenImagePreview = jest.fn();
-    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(svg, {
-      headers: { 'content-type': 'image/svg+xml; charset=utf-8' }
-    }));
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(svg, {
+        headers: { 'content-type': 'image/svg+xml; charset=utf-8' }
+      })
+    );
     try {
-      const screen = await render(<TopicImageHarness
-        attributes={{ alt: '测试图片', src: svgImageUrl }}
-        onOpenImagePreview={onOpenImagePreview}
-      />);
+      const screen = await render(
+        <TopicImageHarness attributes={{ alt: '测试图片', src: svgImageUrl }} onOpenImagePreview={onOpenImagePreview} />
+      );
 
       await act(() => latestImageProps(svgImageUrl).onError?.({ error: 'Cannot load SVG from stream' }));
 
@@ -722,22 +854,23 @@ describe('topic block image loading', () => {
       await act(() => latestImageProps(svgImageUrl).onError?.({ error: 'native SVG failure' }));
       await screen.unmount();
 
-      expect(diagnosticLines.map((line) => JSON.parse(line))).toContainEqual(expect.objectContaining({
-        fallback: 'svg',
-        outcome: 'stale',
-        terminalReason: 'stale'
-      }));
+      expect(diagnosticLines.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          fallback: 'svg',
+          outcome: 'stale',
+          terminalReason: 'stale'
+        })
+      );
       await act(async () => {
-        resolvePendingResponse(new Response(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>',
-          { headers: { 'content-type': 'image/svg+xml' } }
-        ));
+        resolvePendingResponse(
+          new Response('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>', {
+            headers: { 'content-type': 'image/svg+xml' }
+          })
+        );
         await pendingResponse;
       });
       await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(1));
-      const finishEvents = diagnosticLines
-        .map((line) => JSON.parse(line))
-        .filter((event) => event.phase === 'finish');
+      const finishEvents = diagnosticLines.map((line) => JSON.parse(line)).filter((event) => event.phase === 'finish');
       expect(finishEvents).toEqual([
         expect.objectContaining({ fallback: 'svg', outcome: 'stale', terminalReason: 'stale' })
       ]);
@@ -748,19 +881,25 @@ describe('topic block image loading', () => {
   });
 
   it('REG-TOPIC-038 keeps ten complex body images out of the React WebView tree', async () => {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><animate attributeName="opacity" /></svg>';
-    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async () => new Response(svg, {
-      headers: { 'content-type': 'image/svg+xml' }
-    }));
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><animate attributeName="opacity" /></svg>';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
+      async () =>
+        new Response(svg, {
+          headers: { 'content-type': 'image/svg+xml' }
+        })
+    );
     try {
-      await render(<>
-        {Array.from({ length: 10 }, (_, index) => (
-          <TopicImageHarness
-            key={index}
-            attributes={{ alt: `复杂图片 ${index + 1}`, src: `https://img.example.com/complex-${index}.svg` }}
-          />
-        ))}
-      </>);
+      await render(
+        <>
+          {Array.from({ length: 10 }, (_, index) => (
+            <TopicImageHarness
+              key={index}
+              attributes={{ alt: `复杂图片 ${index + 1}`, src: `https://img.example.com/complex-${index}.svg` }}
+            />
+          ))}
+        </>
+      );
       const nativeErrors = mockExpoImageProps.mock.calls
         .map(([props]) => props as MockExpoImageProps)
         .filter((props) => props.source?.uri?.startsWith('https://img.example.com/complex-'))
@@ -781,10 +920,13 @@ describe('topic block image loading', () => {
 
   it('REG-TOPIC-038 rebuilds one evicted poster and then settles if the rebuilt file also fails', async () => {
     const svgImageUrl = 'https://img.example.com/evicted-complex-report.svg';
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><animate attributeName="opacity" /></svg>';
-    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(svg, {
-      headers: { 'content-type': 'image/svg+xml' }
-    }));
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><animate attributeName="opacity" /></svg>';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(svg, {
+        headers: { 'content-type': 'image/svg+xml' }
+      })
+    );
     try {
       const screen = await render(<TopicImageHarness attributes={{ alt: '测试图片', src: svgImageUrl }} />);
 
@@ -815,33 +957,33 @@ describe('topic block image loading', () => {
     const oldResponse = new Promise<Response>((resolve) => {
       resolveOldResponse = resolve;
     });
-    const fetchSpy = jest.spyOn(global, 'fetch')
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
       .mockImplementationOnce(() => oldResponse)
       .mockResolvedValueOnce(new Response(svg, { headers: { 'content-type': 'image/svg+xml' } }));
     try {
       const screen = await render(
-        <TopicImageHarness
-          attributes={{ alt: '测试图片', src: svgImageUrl }}
-          mediaSessionIdentity="yaohuo:1"
-        />
+        <TopicImageHarness attributes={{ alt: '测试图片', src: svgImageUrl }} mediaSessionIdentity="yaohuo:1" />
       );
       const oldImageProps = latestImageProps(svgImageUrl);
       await act(() => oldImageProps.onError?.({ error: 'old native SVG failure' }));
       await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
 
       await screen.rerender(
-        <TopicImageHarness
-          attributes={{ alt: '测试图片', src: svgImageUrl }}
-          mediaSessionIdentity="yaohuo:2"
-        />
+        <TopicImageHarness attributes={{ alt: '测试图片', src: svgImageUrl }} mediaSessionIdentity="yaohuo:2" />
       );
       const currentImageProps = latestImageProps(svgImageUrl);
       await act(() => currentImageProps.onError?.({ error: 'current native SVG failure' }));
       await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(mockExpoImageProps.mock.calls.some(([props]) => (
-        String((props as MockExpoImageProps).source?.uri || '').startsWith('file://')
-        && String((props as MockExpoImageProps).recyclingKey || '').includes('yaohuo:2')
-      ))).toBe(true));
+      await waitFor(() =>
+        expect(
+          mockExpoImageProps.mock.calls.some(
+            ([props]) =>
+              String((props as MockExpoImageProps).source?.uri || '').startsWith('file://') &&
+              String((props as MockExpoImageProps).recyclingKey || '').includes('yaohuo:2')
+          )
+        ).toBe(true)
+      );
 
       await act(async () => {
         resolveOldResponse(new Response(svg, { headers: { 'content-type': 'image/svg+xml' } }));
@@ -849,23 +991,30 @@ describe('topic block image loading', () => {
       });
       await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2));
 
-      expect(mockExpoImageProps.mock.calls.some(([props]) => (
-        String((props as MockExpoImageProps).source?.uri || '').startsWith('file://')
-        && String((props as MockExpoImageProps).recyclingKey || '').includes('yaohuo:1')
-      ))).toBe(false);
+      expect(
+        mockExpoImageProps.mock.calls.some(
+          ([props]) =>
+            String((props as MockExpoImageProps).source?.uri || '').startsWith('file://') &&
+            String((props as MockExpoImageProps).recyclingKey || '').includes('yaohuo:1')
+        )
+      ).toBe(false);
     } finally {
       fetchSpy.mockRestore();
     }
   });
 
   it('keeps inline emoji on the native inline renderer without starting the block loader', async () => {
-    await render(<TopicImageHarness attributes={{
-      alt: 'emoji',
-      class: 'emoji',
-      height: '24',
-      src: 'https://img.example.com/emoji.png',
-      width: '24'
-    }} />);
+    await render(
+      <TopicImageHarness
+        attributes={{
+          alt: 'emoji',
+          class: 'emoji',
+          height: '24',
+          src: 'https://img.example.com/emoji.png',
+          width: '24'
+        }}
+      />
+    );
 
     expect(mockUseImage).not.toHaveBeenCalled();
   });

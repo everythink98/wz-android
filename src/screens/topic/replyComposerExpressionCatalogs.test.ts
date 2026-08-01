@@ -27,9 +27,11 @@ describe('reply composer expression catalogs', () => {
   });
 
   it('builds Discourse emoji insert codes from site-owned url data', () => {
-    expect(discourseEmojiCatalogFromUrlMap({
-      grinning_face: 'https://linux.do/images/emoji/twemoji/grinning_face.png'
-    })[0]).toEqual({
+    expect(
+      discourseEmojiCatalogFromUrlMap({
+        grinning_face: 'https://linux.do/images/emoji/twemoji/grinning_face.png'
+      })[0]
+    ).toEqual({
       code: ':grinning_face:',
       label: 'grinning face',
       imageUrl: 'https://linux.do/images/emoji/twemoji/grinning_face.png'

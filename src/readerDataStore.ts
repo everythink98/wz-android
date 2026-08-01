@@ -58,7 +58,11 @@ export async function saveReaderSettings(settings: ReaderSettings) {
   await AsyncStorage.setItem(READER_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
 }
 
-export async function saveCleanReaderData(clean: ReaderData, previousJson?: string | null, cleanJson = JSON.stringify(clean)) {
+export async function saveCleanReaderData(
+  clean: ReaderData,
+  previousJson?: string | null,
+  cleanJson = JSON.stringify(clean)
+) {
   const json = cleanJson;
   assertBackupJsonSize(json);
   if (json !== previousJson) {
@@ -75,14 +79,9 @@ export async function saveCleanReaderData(clean: ReaderData, previousJson?: stri
           ? AsyncStorage.removeItem(READER_SETTINGS_STORAGE_KEY)
           : AsyncStorage.setItem(READER_SETTINGS_STORAGE_KEY, previousSettings)
       ]);
-      const rollbackErrors = rollbackResults.flatMap((result) => (
-        result.status === 'rejected' ? [result.reason] : []
-      ));
+      const rollbackErrors = rollbackResults.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
       if (rollbackErrors.length) {
-        throw new AggregateError(
-          [error, ...rollbackErrors],
-          '本机资料保存失败，且无法恢复先前快照。'
-        );
+        throw new AggregateError([error, ...rollbackErrors], '本机资料保存失败，且无法恢复先前快照。');
       }
       throw error;
     }

@@ -24,17 +24,11 @@ import {
   takeNodeSeekVerificationRetry,
   type BrowserFetchQueueRequest
 } from './sessionControllerHelpers';
-import {
-  initialForumSessionEpochs,
-  forumQueryKeys
-} from './serverState';
+import { initialForumSessionEpochs, forumQueryKeys } from './serverState';
 
-const ref = <T,>(current: T) => ({ current });
+const ref = <T>(current: T) => ({ current });
 
-function createRequest(
-  id: number,
-  overrides: Partial<BrowserFetchQueueRequest> = {}
-): BrowserFetchQueueRequest {
+function createRequest(id: number, overrides: Partial<BrowserFetchQueueRequest> = {}): BrowserFetchQueueRequest {
   return {
     id,
     url: `https://linux.do/request/${id}`,
@@ -49,33 +43,44 @@ afterEach(() => {
 
 describe('session controller helpers', () => {
   it('invalidates forum queries only for definitive identity transitions', () => {
-    expect(siteSessionEventInvalidatesForumQueries({
-      type: 'session-updated',
-      loggedIn: true
-    })).toBe(true);
-    expect(siteSessionEventInvalidatesForumQueries({
-      type: 'login-detected'
-    })).toBe(true);
-    expect(siteSessionEventInvalidatesForumQueries({
-      type: 'login-expired'
-    })).toBe(true);
-    expect(siteSessionEventInvalidatesForumQueries({
-      type: 'cleared'
-    })).toBe(true);
-    expect(siteSessionEventInvalidatesForumQueries({
-      type: 'verification-started'
-    })).toBe(false);
-    expect(siteSessionEventInvalidatesForumQueries({
-      type: 'check-failed',
-      message: 'offline'
-    })).toBe(false);
+    expect(
+      siteSessionEventInvalidatesForumQueries({
+        type: 'session-updated',
+        loggedIn: true
+      })
+    ).toBe(true);
+    expect(
+      siteSessionEventInvalidatesForumQueries({
+        type: 'login-detected'
+      })
+    ).toBe(true);
+    expect(
+      siteSessionEventInvalidatesForumQueries({
+        type: 'login-expired'
+      })
+    ).toBe(true);
+    expect(
+      siteSessionEventInvalidatesForumQueries({
+        type: 'cleared'
+      })
+    ).toBe(true);
+    expect(
+      siteSessionEventInvalidatesForumQueries({
+        type: 'verification-started'
+      })
+    ).toBe(false);
+    expect(
+      siteSessionEventInvalidatesForumQueries({
+        type: 'check-failed',
+        message: 'offline'
+      })
+    ).toBe(false);
   });
 
   it('increments only the changed source epoch', () => {
-    expect(forumSessionEpochsAfterSourceChange(
-      { ...initialForumSessionEpochs, linuxdo: 2, nodeseek: 3 },
-      'linuxdo'
-    )).toEqual({
+    expect(
+      forumSessionEpochsAfterSourceChange({ ...initialForumSessionEpochs, linuxdo: 2, nodeseek: 3 }, 'linuxdo')
+    ).toEqual({
       ...initialForumSessionEpochs,
       linuxdo: 3,
       nodeseek: 3
@@ -106,14 +111,19 @@ describe('session controller helpers', () => {
     const sourceAbort = vi.fn();
     const aggregateAbort = vi.fn();
     const otherAbort = vi.fn();
-    const pendingRead = (onAbort: () => void) => ({ signal }: { signal: AbortSignal }) => (
-      new Promise<string>((_resolve, reject) => {
-        signal.addEventListener('abort', () => {
-          onAbort();
-          reject(new Error('aborted'));
-        }, { once: true });
-      })
-    );
+    const pendingRead =
+      (onAbort: () => void) =>
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise<string>((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              onAbort();
+              reject(new Error('aborted'));
+            },
+            { once: true }
+          );
+        });
 
     client.setQueryData(sourceKey, 'trusted NodeSeek topic');
     client.setQueryData(aggregateKey, 'trusted aggregate');
@@ -177,12 +187,7 @@ describe('session controller helpers', () => {
   });
   it('atomically seeds the changed account result under the incremented epoch', () => {
     const client = new QueryClient();
-    const probeKey = [
-      'forum',
-      'linuxdo',
-      'account-status-probe',
-      { epoch: 4, generation: 9 }
-    ] as const;
+    const probeKey = ['forum', 'linuxdo', 'account-status-probe', { epoch: 4, generation: 9 }] as const;
     const account = {
       session: {
         site: 'linuxdo',
@@ -200,10 +205,14 @@ describe('session controller helpers', () => {
     );
 
     expect(next.linuxdo).toBe(5);
-    expect(client.getQueryData(forumQueryKeys.accountStatus({
-      sessionEpochs: next,
-      source: 'linuxdo'
-    }))).toEqual(account);
+    expect(
+      client.getQueryData(
+        forumQueryKeys.accountStatus({
+          sessionEpochs: next,
+          source: 'linuxdo'
+        })
+      )
+    ).toEqual(account);
     expect(client.getQueryData(probeKey)).toBeUndefined();
   });
 
@@ -231,26 +240,12 @@ describe('session controller helpers', () => {
   it('handles document errors but ignores static resources and off-site frames', () => {
     const allowed = (url: string) => new URL(url).hostname === 'linux.do';
 
-    expect(shouldHandleBrowserHttpError(
-      'https://linux.do/t/42',
-      'https://linux.do/t/42/',
-      allowed
-    )).toBe(true);
-    expect(shouldHandleBrowserHttpError(
-      'https://linux.do/t/42',
-      'https://linux.do/latest',
-      allowed
-    )).toBe(true);
-    expect(shouldHandleBrowserHttpError(
-      'https://linux.do/t/42',
-      'https://linux.do/assets/app.js',
-      allowed
-    )).toBe(false);
-    expect(shouldHandleBrowserHttpError(
-      'https://linux.do/t/42',
-      'https://cdn.example/app.js',
-      allowed
-    )).toBe(false);
+    expect(shouldHandleBrowserHttpError('https://linux.do/t/42', 'https://linux.do/t/42/', allowed)).toBe(true);
+    expect(shouldHandleBrowserHttpError('https://linux.do/t/42', 'https://linux.do/latest', allowed)).toBe(true);
+    expect(shouldHandleBrowserHttpError('https://linux.do/t/42', 'https://linux.do/assets/app.js', allowed)).toBe(
+      false
+    );
+    expect(shouldHandleBrowserHttpError('https://linux.do/t/42', 'https://cdn.example/app.js', allowed)).toBe(false);
   });
 
   it('takes a pending NodeSeek recovery owner exactly once', () => {
@@ -369,14 +364,15 @@ describe('session controller helpers', () => {
     const currentRef = ref<BrowserFetchQueueRequest | null>(null);
     const queueRef = ref([first, second]);
     const rejectCurrent = vi.fn();
-    const startNext = () => startNextBrowserFetchRequest({
-      currentRef,
-      queueRef,
-      setActiveRequest: vi.fn(),
-      timeoutMs: 15_000,
-      timeoutMessage: 'timeout',
-      rejectCurrent
-    });
+    const startNext = () =>
+      startNextBrowserFetchRequest({
+        currentRef,
+        queueRef,
+        setActiveRequest: vi.fn(),
+        timeoutMs: 15_000,
+        timeoutMessage: 'timeout',
+        rejectCurrent
+      });
 
     startNext();
     vi.advanceTimersByTime(14_000);
@@ -410,9 +406,11 @@ describe('session controller helpers', () => {
       rejectCurrent: vi.fn()
     });
 
-    expect(first.reject).toHaveBeenCalledWith(expect.objectContaining({
-      message: '请求已取消'
-    }));
+    expect(first.reject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '请求已取消'
+      })
+    );
     expect(currentRef.current).toBe(second);
     expect(setActiveRequest).toHaveBeenCalledWith({
       id: 2,
@@ -468,9 +466,11 @@ describe('session controller helpers', () => {
 
     expect(currentRef.current).toBe(active);
     expect(stopLoading).not.toHaveBeenCalled();
-    expect(queued.reject).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'canceled'
-    }));
+    expect(queued.reject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'canceled'
+      })
+    );
     expect(startNext).toHaveBeenCalledTimes(1);
   });
 
@@ -504,10 +504,11 @@ describe('session controller helpers', () => {
     const timed = runBestEffortTask(() => never, 100);
     await vi.advanceTimersByTimeAsync(100);
     await expect(timed).resolves.toBeUndefined();
-    await expect(runBestEffortTask(
-      async () => { throw new Error('best effort failed'); },
-      100
-    )).resolves.toBeUndefined();
+    await expect(
+      runBestEffortTask(async () => {
+        throw new Error('best effort failed');
+      }, 100)
+    ).resolves.toBeUndefined();
   });
 
   it('serializes credential writes for one generation', async () => {
@@ -542,11 +543,7 @@ describe('session controller helpers', () => {
       await first.promise;
       return isCurrent() ? 'old' : 'stale';
     });
-    const queuedOld = enqueueCredentialWriteForGeneration(
-      gate,
-      gate.generation,
-      () => 'queued-old'
-    );
+    const queuedOld = enqueueCredentialWriteForGeneration(gate, gate.generation, () => 'queued-old');
     const replacement = replaceCredentialWrite(gate, () => 'new');
     first.resolve();
 
@@ -561,11 +558,7 @@ describe('session controller helpers', () => {
     advanceCredentialWriteGeneration(gate);
     const task = vi.fn(() => 'must-not-run');
 
-    await expect(enqueueCredentialWriteForGeneration(
-      gate,
-      staleGeneration,
-      task
-    )).resolves.toBeUndefined();
+    await expect(enqueueCredentialWriteForGeneration(gate, staleGeneration, task)).resolves.toBeUndefined();
     expect(task).not.toHaveBeenCalled();
   });
 });

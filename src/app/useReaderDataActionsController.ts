@@ -25,22 +25,34 @@ export function useReaderDataActionsController({
   libraryTab: LibraryTab;
   readerDataRef: MutableRefObject<ReaderData>;
 }) {
-  const toggleTopicFavorite = useCallback((topic: Topic) => {
-    commitReaderData('favorite-toggled', (current) => toggleFavorite(current, topic));
-  }, [commitReaderData]);
+  const toggleTopicFavorite = useCallback(
+    (topic: Topic) => {
+      commitReaderData('favorite-toggled', (current) => toggleFavorite(current, topic));
+    },
+    [commitReaderData]
+  );
 
-  const toggleUserFollow = useCallback((user: UserProfile) => {
-    commitReaderData('follow-toggled', (current) => toggleFollowedUser(current, user));
-  }, [commitReaderData]);
+  const toggleUserFollow = useCallback(
+    (user: UserProfile) => {
+      commitReaderData('follow-toggled', (current) => toggleFollowedUser(current, user));
+    },
+    [commitReaderData]
+  );
 
-  const removeFollowedUser = useCallback((user: UserProfile) => {
-    commitReaderData('follow-removed', (current) => removeFollowedUsers(current, [user]));
-  }, [commitReaderData]);
+  const removeFollowedUser = useCallback(
+    (user: UserProfile) => {
+      commitReaderData('follow-removed', (current) => removeFollowedUsers(current, [user]));
+    },
+    [commitReaderData]
+  );
 
-  const removeLibraryTopic = useCallback((topic: Topic) => {
-    const section = libraryTab === 'history' ? 'history' : 'favorites';
-    commitReaderData('library-topic-removed', (current) => removeRecords(current, section, [topic]));
-  }, [commitReaderData, libraryTab]);
+  const removeLibraryTopic = useCallback(
+    (topic: Topic) => {
+      const section = libraryTab === 'history' ? 'history' : 'favorites';
+      commitReaderData('library-topic-removed', (current) => removeRecords(current, section, [topic]));
+    },
+    [commitReaderData, libraryTab]
+  );
 
   const clearHistory = useCallback(() => {
     const records = readerDataRef.current.history;

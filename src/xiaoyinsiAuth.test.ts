@@ -5,8 +5,12 @@ const fallbackStore = vi.hoisted(() => new Map<string, string>());
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
     getItem: vi.fn(async (key: string) => fallbackStore.get(key) ?? null),
-    removeItem: vi.fn(async (key: string) => { fallbackStore.delete(key); }),
-    setItem: vi.fn(async (key: string, value: string) => { fallbackStore.set(key, value); })
+    removeItem: vi.fn(async (key: string) => {
+      fallbackStore.delete(key);
+    }),
+    setItem: vi.fn(async (key: string, value: string) => {
+      fallbackStore.set(key, value);
+    })
   }
 }));
 
@@ -53,17 +57,19 @@ function json(value: unknown, status = 200, headers: Record<string, string> = {}
 function memoryStore() {
   const values = new Map<string, string>();
   vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => values.get(key) ?? null);
-  vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => { values.set(key, value); });
-  vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => { values.delete(key); });
+  vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+    values.set(key, value);
+  });
+  vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+    values.delete(key);
+  });
   return values;
 }
 
 function keystore(): XiaoyinsiKeystore {
   return {
     getPublicKey: vi.fn(async () => '-----BEGIN PUBLIC KEY-----\nPUBLIC\n-----END PUBLIC KEY-----'),
-    randomHex: vi.fn()
-      .mockResolvedValueOnce('c'.repeat(64))
-      .mockResolvedValue('e'.repeat(64)),
+    randomHex: vi.fn().mockResolvedValueOnce('c'.repeat(64)).mockResolvedValue('e'.repeat(64)),
     decrypt: vi.fn(async () => JSON.stringify({ key: 'user-api-secret', nonce: 'e'.repeat(64), push: false, api: 4 })),
     deleteKey: vi.fn(async () => true)
   };
@@ -74,8 +80,12 @@ describe('xiaoyinsi Device Code auth', () => {
     vi.clearAllMocks();
     fallbackStore.clear();
     vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) => fallbackStore.get(key) ?? null);
-    vi.mocked(AsyncStorage.removeItem).mockImplementation(async (key) => { fallbackStore.delete(key); });
-    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key, value) => { fallbackStore.set(key, value); });
+    vi.mocked(AsyncStorage.removeItem).mockImplementation(async (key) => {
+      fallbackStore.delete(key);
+    });
+    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key, value) => {
+      fallbackStore.set(key, value);
+    });
   });
 
   afterEach(() => {
@@ -85,12 +95,14 @@ describe('xiaoyinsi Device Code auth', () => {
   it('[REG-XIAOYINSI-005] ignores a credential read superseded by a newer authorization mutation', async () => {
     const apiKey = Promise.withResolvers<string | null>();
     const clientId = Promise.withResolvers<string | null>();
-    vi.mocked(SecureStore.getItemAsync).mockImplementation((key) => (
+    vi.mocked(SecureStore.getItemAsync).mockImplementation((key) =>
       key === XIAOYINSI_AUTH_STORAGE_KEYS.apiKey ? apiKey.promise : clientId.promise
-    ));
+    );
     let capturedGeneration = -1;
     const read = loadXiaoyinsiCredentials({
-      captureGeneration: (generation) => { capturedGeneration = generation; }
+      captureGeneration: (generation) => {
+        capturedGeneration = generation;
+      }
     });
     await vi.waitFor(() => expect(SecureStore.getItemAsync).toHaveBeenCalledTimes(2));
 
@@ -151,30 +163,41 @@ describe('xiaoyinsi Device Code auth', () => {
     const store = memoryStore();
     const crypto = keystore();
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
-    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify({
-      deviceCode: 'd'.repeat(64),
-      userCode: 'ABCD2345',
-      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
-      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
-      nonce: 'e'.repeat(64),
-      expiresAt: 601_000,
-      intervalMs: 5_000,
-      createdAt: 1_000
-    }));
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        nonce: 'e'.repeat(64),
+        expiresAt: 601_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
     const pendingFetcher = vi.fn(async (_input: string, init?: RequestInit) => {
       expect(JSON.parse(String(init?.body))).toEqual({ device_code: 'd'.repeat(64) });
       return json({ status: 'authorization_pending' });
     });
 
-    await expect(pollXiaoyinsiDeviceAuth({ fetcher: pendingFetcher, keystore: crypto, now: () => 2_000 })).resolves.toEqual({ status: 'authorization_pending' });
+    await expect(
+      pollXiaoyinsiDeviceAuth({ fetcher: pendingFetcher, keystore: crypto, now: () => 2_000 })
+    ).resolves.toEqual({ status: 'authorization_pending' });
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe(true);
 
-    const networkFetcher = vi.fn(async () => { throw new Error('offline'); });
-    await expect(pollXiaoyinsiDeviceAuth({ fetcher: networkFetcher, keystore: crypto, now: () => 3_000 })).rejects.toThrow('offline');
+    const networkFetcher = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    await expect(
+      pollXiaoyinsiDeviceAuth({ fetcher: networkFetcher, keystore: crypto, now: () => 3_000 })
+    ).rejects.toThrow('offline');
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe(true);
 
     const authorizedFetcher = vi.fn(async () => json({ status: 'authorized', payload: 'encrypted-payload' }));
-    await expect(pollXiaoyinsiDeviceAuth({ fetcher: authorizedFetcher, keystore: crypto, now: () => 4_000 })).resolves.toEqual({
+    await expect(
+      pollXiaoyinsiDeviceAuth({ fetcher: authorizedFetcher, keystore: crypto, now: () => 4_000 })
+    ).resolves.toEqual({
       status: 'authorized',
       credentials: { apiKey: 'user-api-secret', clientId: 'client' }
     });
@@ -183,7 +206,9 @@ describe('xiaoyinsi Device Code auth', () => {
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe(false);
     expect(await loadXiaoyinsiCredentials()).toEqual({ apiKey: 'user-api-secret', clientId: 'client' });
 
-    await expect(pollXiaoyinsiDeviceAuth({ fetcher: authorizedFetcher, keystore: crypto, now: () => 5_000 })).resolves.toEqual({ status: 'idle' });
+    await expect(
+      pollXiaoyinsiDeviceAuth({ fetcher: authorizedFetcher, keystore: crypto, now: () => 5_000 })
+    ).resolves.toEqual({ status: 'idle' });
     expect(authorizedFetcher).toHaveBeenCalledTimes(1);
     expect(crypto.decrypt).toHaveBeenCalledTimes(1);
   });
@@ -193,15 +218,27 @@ describe('xiaoyinsi Device Code auth', () => {
     const crypto = keystore();
     const abortController = new AbortController();
     let finishDecrypt!: (value: string) => void;
-    vi.mocked(crypto.decrypt).mockImplementationOnce(() => new Promise((resolve) => { finishDecrypt = resolve; }));
+    vi.mocked(crypto.decrypt).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishDecrypt = resolve;
+        })
+    );
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, 'old-key');
-    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify({
-      deviceCode: 'd'.repeat(64), userCode: 'ABCD2345', nonce: 'e'.repeat(64),
-      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
-      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
-      expiresAt: 601_000, intervalMs: 5_000, createdAt: 1_000
-    }));
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        nonce: 'e'.repeat(64),
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        expiresAt: 601_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
     const poll = pollXiaoyinsiDeviceAuth({
       fetcher: async () => json({ status: 'authorized', payload: 'cipher' }),
       keystore: crypto,
@@ -222,18 +259,27 @@ describe('xiaoyinsi Device Code auth', () => {
     const crypto = keystore();
     vi.mocked(crypto.decrypt).mockResolvedValue(JSON.stringify({ key: 'stolen', nonce: 'wrong', api: 4 }));
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
-    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify({
-      deviceCode: 'd'.repeat(64), userCode: 'ABCD2345', nonce: 'e'.repeat(64),
-      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
-      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
-      expiresAt: 601_000, intervalMs: 5_000, createdAt: 1_000
-    }));
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        nonce: 'e'.repeat(64),
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        expiresAt: 601_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
 
-    await expect(pollXiaoyinsiDeviceAuth({
-      fetcher: async () => json({ status: 'authorized', payload: 'cipher' }),
-      keystore: crypto,
-      now: () => 2_000
-    })).rejects.toMatchObject({ code: 'nonce-mismatch' });
+    await expect(
+      pollXiaoyinsiDeviceAuth({
+        fetcher: async () => json({ status: 'authorized', payload: 'cipher' }),
+        keystore: crypto,
+        now: () => 2_000
+      })
+    ).rejects.toMatchObject({ code: 'nonce-mismatch' });
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe(false);
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe(false);
   });
@@ -243,18 +289,27 @@ describe('xiaoyinsi Device Code auth', () => {
     const crypto = keystore();
     vi.mocked(crypto.decrypt).mockRejectedValue(new Error('bad ciphertext'));
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
-    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify({
-      deviceCode: 'd'.repeat(64), userCode: 'ABCD2345', nonce: 'e'.repeat(64),
-      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
-      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
-      expiresAt: 601_000, intervalMs: 5_000, createdAt: 1_000
-    }));
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        nonce: 'e'.repeat(64),
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        expiresAt: 601_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
 
-    await expect(pollXiaoyinsiDeviceAuth({
-      fetcher: async () => json({ status: 'authorized', payload: 'invalid-ciphertext' }),
-      keystore: crypto,
-      now: () => 2_000
-    })).rejects.toMatchObject({ code: 'decrypt-failed' });
+    await expect(
+      pollXiaoyinsiDeviceAuth({
+        fetcher: async () => json({ status: 'authorized', payload: 'invalid-ciphertext' }),
+        keystore: crypto,
+        now: () => 2_000
+      })
+    ).rejects.toMatchObject({ code: 'decrypt-failed' });
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe(false);
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe(false);
     expect(crypto.deleteKey).toHaveBeenCalledTimes(1);
@@ -263,7 +318,9 @@ describe('xiaoyinsi Device Code auth', () => {
   it('redacts Device Code secrets and verification query parameters from diagnostic transport events', async () => {
     memoryStore();
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const trace = beginDiagnosticTrace('session', 'request', { source: 'xiaoyinsi' });
     const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
       if (init?.method === 'HEAD') {
@@ -279,11 +336,17 @@ describe('xiaoyinsi Device Code auth', () => {
       });
     });
 
-    await beginXiaoyinsiDeviceAuth({ fetcher: withDiagnosticFetcher(trace, fetcher), keystore: keystore(), now: () => 1_000 });
+    await beginXiaoyinsiDeviceAuth({
+      fetcher: withDiagnosticFetcher(trace, fetcher),
+      keystore: keystore(),
+      now: () => 1_000
+    });
     finishDiagnosticTrace(trace, 'success', { source: 'xiaoyinsi' });
 
     expect(lines.map((line) => JSON.parse(line).endpoint).filter(Boolean)).toEqual(['auth', 'auth', 'auth', 'auth']);
-    expect(lines.join('')).not.toMatch(/ABCD-2345|SAFE1234|request=|d{32,}|e{32,}|BEGIN PUBLIC KEY|user-api-key\/activate/i);
+    expect(lines.join('')).not.toMatch(
+      /ABCD-2345|SAFE1234|request=|d{32,}|e{32,}|BEGIN PUBLIC KEY|user-api-key\/activate/i
+    );
   });
 
   it.each([
@@ -293,29 +356,49 @@ describe('xiaoyinsi Device Code auth', () => {
     const store = memoryStore();
     const crypto = keystore();
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
-    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify({
-      deviceCode: 'd'.repeat(64), userCode: 'ABCD2345', nonce: 'e'.repeat(64),
-      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
-      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
-      expiresAt: 601_000, intervalMs: 5_000, createdAt: 1_000
-    }));
-    await expect(pollXiaoyinsiDeviceAuth({
-      fetcher: async () => json({ status: serverStatus }), keystore: crypto, now: () => 2_000
-    })).resolves.toEqual({ status: expectedStatus });
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        nonce: 'e'.repeat(64),
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        expiresAt: 601_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
+    await expect(
+      pollXiaoyinsiDeviceAuth({
+        fetcher: async () => json({ status: serverStatus }),
+        keystore: crypto,
+        now: () => 2_000
+      })
+    ).resolves.toEqual({ status: expectedStatus });
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe(false);
   });
 
   it('expires locally, cancels cleanly, and never polls while the app is in background', async () => {
     const store = memoryStore();
     const crypto = keystore();
-    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify({
-      deviceCode: 'd'.repeat(64), userCode: 'ABCD2345', nonce: 'e'.repeat(64),
-      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
-      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
-      expiresAt: 2_000, intervalMs: 5_000, createdAt: 1_000
-    }));
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        nonce: 'e'.repeat(64),
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        expiresAt: 2_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
     const fetcher = vi.fn();
-    await expect(pollXiaoyinsiDeviceAuth({ fetcher, keystore: crypto, now: () => 2_001 })).resolves.toEqual({ status: 'expired_token' });
+    await expect(pollXiaoyinsiDeviceAuth({ fetcher, keystore: crypto, now: () => 2_001 })).resolves.toEqual({
+      status: 'expired_token'
+    });
     expect(fetcher).not.toHaveBeenCalled();
     expect(deviceAuthCountdown(5_900, 1_000)).toBe(5);
     expect(nextXiaoyinsiPollDelay('background', 10_000, 5_000, 4_000)).toBeNull();
@@ -340,14 +423,21 @@ describe('xiaoyinsi Device Code auth', () => {
     });
     await expect(verifyXiaoyinsiCredentials({ fetcher: verifyFetcher })).resolves.toMatchObject({ username: 'alice' });
 
-    await expect(revokeXiaoyinsiAuthorization({ fetcher: async () => json({ errors: ['no'] }, 500), keystore: crypto })).rejects.toThrow('HTTP 500');
+    await expect(
+      revokeXiaoyinsiAuthorization({ fetcher: async () => json({ errors: ['no'] }, 500), keystore: crypto })
+    ).rejects.toThrow('HTTP 500');
     expect(await loadXiaoyinsiCredentials()).toEqual({ apiKey: 'secret', clientId: 'client' });
     expect(crypto.deleteKey).not.toHaveBeenCalled();
 
-    await expect(revokeXiaoyinsiAuthorization({ fetcher: async (_input, init) => {
-      expect(init?.method).toBe('POST');
-      return json({ success: 'OK' });
-    }, keystore: crypto })).resolves.toMatchObject({ complete: true });
+    await expect(
+      revokeXiaoyinsiAuthorization({
+        fetcher: async (_input, init) => {
+          expect(init?.method).toBe('POST');
+          return json({ success: 'OK' });
+        },
+        keystore: crypto
+      })
+    ).resolves.toMatchObject({ complete: true });
     expect(await loadXiaoyinsiCredentials()).toBeUndefined();
     expect(crypto.deleteKey).toHaveBeenCalled();
   });
@@ -364,10 +454,12 @@ describe('xiaoyinsi Device Code auth', () => {
       store.delete(key);
     });
 
-    await expect(revokeXiaoyinsiAuthorization({
-      fetcher: async () => json({ success: 'OK' }),
-      keystore: crypto
-    })).resolves.toMatchObject({ complete: false, apiKeyDeleted: false });
+    await expect(
+      revokeXiaoyinsiAuthorization({
+        fetcher: async () => json({ success: 'OK' }),
+        keystore: crypto
+      })
+    ).resolves.toMatchObject({ complete: false, apiKeyDeleted: false });
     expect(crypto.deleteKey).toHaveBeenCalledTimes(1);
   });
 
@@ -376,12 +468,19 @@ describe('xiaoyinsi Device Code auth', () => {
     const crypto = keystore();
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, 'secret');
-    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify({
-      deviceCode: 'd'.repeat(64), userCode: 'ABCD2345', nonce: 'e'.repeat(64),
-      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
-      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
-      expiresAt: 601_000, intervalMs: 5_000, createdAt: 1_000
-    }));
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        nonce: 'e'.repeat(64),
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        expiresAt: 601_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       if (key === XIAOYINSI_AUTH_STORAGE_KEYS.pending) {
         throw new Error('pending delete unavailable');
@@ -389,10 +488,12 @@ describe('xiaoyinsi Device Code auth', () => {
       store.delete(key);
     });
 
-    await expect(revokeXiaoyinsiAuthorization({
-      fetcher: async () => json({ success: 'OK' }),
-      keystore: crypto
-    })).resolves.toMatchObject({ complete: false, pendingDeleted: false });
+    await expect(
+      revokeXiaoyinsiAuthorization({
+        fetcher: async () => json({ success: 'OK' }),
+        keystore: crypto
+      })
+    ).resolves.toMatchObject({ complete: false, pendingDeleted: false });
     expect(store.get('xiaoyinsi-auth.revoked-cleanup')).toBe('1');
     expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).not.toContain('deviceCode');
   });
@@ -434,10 +535,12 @@ describe('xiaoyinsi Device Code auth', () => {
       store.delete(key);
     });
 
-    await expect(revokeXiaoyinsiAuthorization({
-      fetcher: async () => json({ success: 'OK' }),
-      keystore: crypto
-    })).resolves.toMatchObject({
+    await expect(
+      revokeXiaoyinsiAuthorization({
+        fetcher: async () => json({ success: 'OK' }),
+        keystore: crypto
+      })
+    ).resolves.toMatchObject({
       complete: false,
       apiKeyDeleted: false,
       cleanupMarkerPersisted: true
@@ -445,7 +548,9 @@ describe('xiaoyinsi Device Code auth', () => {
     expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('revoked-secret');
     await expect(hasXiaoyinsiRevocationCleanupPending()).resolves.toBe(true);
 
-    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => { store.delete(key); });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      store.delete(key);
+    });
     await expect(retryXiaoyinsiRevocationCleanup({ keystore: crypto })).resolves.toMatchObject({
       complete: true,
       cleanupMarkerPersisted: false
@@ -472,17 +577,21 @@ describe('xiaoyinsi Device Code auth', () => {
       store.delete(key);
     });
 
-    await expect(revokeXiaoyinsiAuthorization({
-      fetcher: async () => json({ success: 'OK' }),
-      keystore: crypto
-    })).resolves.toMatchObject({
+    await expect(
+      revokeXiaoyinsiAuthorization({
+        fetcher: async () => json({ success: 'OK' }),
+        keystore: crypto
+      })
+    ).resolves.toMatchObject({
       complete: false,
       apiKeyDeleted: false,
       cleanupMarkerPersisted: true
     });
     await expect(hasXiaoyinsiRevocationCleanupPending()).resolves.toBe(true);
 
-    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => { store.delete(key); });
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      store.delete(key);
+    });
     await expect(retryXiaoyinsiRevocationCleanup({ keystore: crypto })).resolves.toMatchObject({
       complete: true,
       cleanupMarkerPersisted: false
@@ -493,10 +602,12 @@ describe('xiaoyinsi Device Code auth', () => {
   it('rejects unsupported Device Code capability without creating key material', async () => {
     memoryStore();
     const crypto = keystore();
-    await expect(beginXiaoyinsiDeviceAuth({
-      fetcher: async () => new Response(null, { headers: { 'Auth-Api-Version': '3' } }),
-      keystore: crypto
-    })).rejects.toEqual(new XiaoyinsiAuthError('unsupported', '站点暂不支持 App 授权'));
+    await expect(
+      beginXiaoyinsiDeviceAuth({
+        fetcher: async () => new Response(null, { headers: { 'Auth-Api-Version': '3' } }),
+        keystore: crypto
+      })
+    ).rejects.toEqual(new XiaoyinsiAuthError('unsupported', '站点暂不支持 App 授权'));
     expect(crypto.getPublicKey).not.toHaveBeenCalled();
   });
 

@@ -1,5 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, PixelRatio, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle, type ImageURISource, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import {
+  ActivityIndicator,
+  PixelRatio,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type ImageStyle,
+  type ImageURISource,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle
+} from 'react-native';
 import { useEvent } from 'expo';
 import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
 import { VideoView, useVideoPlayer, type VideoPlayerStatus, type VideoSource } from 'expo-video';
@@ -42,14 +55,33 @@ import type { Topic, TopicDetail, UserReference } from '../types';
 import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
 import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from '../htmlRenderingStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
-import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
+import {
+  FORUM_LINK_CARD_TAG,
+  FORUM_TERMINAL_REPORT_TAG,
+  FORUM_TERMINAL_TAB_TAG,
+  FORUM_VIDEO_STICKER_TAG,
+  FORUM_VIDEO_TAG
+} from '../localHtml';
 import { ForumContentVideo } from '../components/ForumContentVideo';
 import { ForumCallout } from '../components/ForumCallout';
 import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
-import { cachedCompatibleSvgArtifact, compatibleImageRequestIdentity, promoteCachedCompatibleSvgArtifact, recoverCompatibleSvgArtifact, refreshCompatibleSvgPoster, type CompatibleSvgArtifact } from '../compatibleImageSources';
+import {
+  cachedCompatibleSvgArtifact,
+  compatibleImageRequestIdentity,
+  promoteCachedCompatibleSvgArtifact,
+  recoverCompatibleSvgArtifact,
+  refreshCompatibleSvgPoster,
+  type CompatibleSvgArtifact
+} from '../compatibleImageSources';
 import { readManagedCookieHeader } from '../managedCookies';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
-import { beginDiagnosticTrace, diagnosticRef, finishDiagnosticTrace, type DiagnosticFields, type DiagnosticTrace } from '../diagnostics';
+import {
+  beginDiagnosticTrace,
+  diagnosticRef,
+  finishDiagnosticTrace,
+  type DiagnosticFields,
+  type DiagnosticTrace
+} from '../diagnostics';
 import {
   markOriginalImageDisplayed,
   originalImageDisplayIdentity,
@@ -73,9 +105,7 @@ export async function readManagedWebViewCookieHeader(url: string) {
   if (result.status === 'ok') {
     return result.header;
   }
-  throw new Error(result.status === 'unsupported'
-    ? '原生 Cookie 读取能力不可用'
-    : result.message);
+  throw new Error(result.status === 'unsupported' ? '原生 Cookie 读取能力不可用' : result.message);
 }
 
 function isVideoStickerUrl(url: string) {
@@ -88,10 +118,12 @@ function videoStickerRequestHeaders(
   userAgent?: string
 ): Record<string, string> | undefined {
   const headers = imageRequestHeadersForUrl(url, { mediaContext, nodeSeekUserAgent: userAgent });
-  return headers ? {
-    ...headers,
-    Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8'
-  } : undefined;
+  return headers
+    ? {
+        ...headers,
+        Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8'
+      }
+    : undefined;
 }
 
 function domText(node: unknown): string {
@@ -105,9 +137,7 @@ function domText(node: unknown): string {
 }
 
 function tnodeText(tnode: unknown) {
-  return (domText(tnode) || domText((tnode as { domNode?: unknown }).domNode))
-    .replace(/\u00a0/g, ' ')
-    .trim();
+  return (domText(tnode) || domText((tnode as { domNode?: unknown }).domNode)).replace(/\u00a0/g, ' ').trim();
 }
 
 function terminalNodeAttribute(node: unknown, name: string) {
@@ -159,16 +189,32 @@ function terminalTextChildren(tnode: unknown, key: string, style: TextStyle = {}
   const record = tnode as { children?: unknown; data?: unknown; tagName?: unknown; type?: unknown };
   if (record.type === 'text') {
     const text = typeof record.data === 'string' ? record.data : '';
-    return text ? [Object.keys(style).length ? <Text key={key} style={style}>{text}</Text> : text] : [];
+    return text
+      ? [
+          Object.keys(style).length ? (
+            <Text key={key} style={style}>
+              {text}
+            </Text>
+          ) : (
+            text
+          )
+        ]
+      : [];
   }
   if (terminalNodeTagName(tnode) === 'br') {
     return ['\n'];
   }
   const nextStyle = { ...style, ...terminalTextStyle(tnode) };
-  return terminalNodeChildren(tnode).flatMap((child, index) => terminalTextChildren(child, `${key}.${index}`, nextStyle));
+  return terminalNodeChildren(tnode).flatMap((child, index) =>
+    terminalTextChildren(child, `${key}.${index}`, nextStyle)
+  );
 }
 
-export function shouldShowVideoStickerLoading(firstFrameRendered: boolean, loadFailed: boolean, status: VideoPlayerStatus) {
+export function shouldShowVideoStickerLoading(
+  firstFrameRendered: boolean,
+  loadFailed: boolean,
+  status: VideoPlayerStatus
+) {
   return !loadFailed && (status === 'loading' || (status !== 'error' && !firstFrameRendered));
 }
 
@@ -190,11 +236,14 @@ function ForumVideoStickerVideo({
   videoStyle: StyleProp<ViewStyle>;
 }) {
   const [firstFrameRendered, setFirstFrameRendered] = useState(false);
-  const source = useMemo<VideoSource>(() => ({
-    uri: src,
-    ...(headers ? { headers } : {}),
-    contentType: 'progressive'
-  }), [headers, src]);
+  const source = useMemo<VideoSource>(
+    () => ({
+      uri: src,
+      ...(headers ? { headers } : {}),
+      contentType: 'progressive'
+    }),
+    [headers, src]
+  );
   const player = useVideoPlayer(source, (nextPlayer) => {
     nextPlayer.loop = true;
     nextPlayer.muted = true;
@@ -229,10 +278,7 @@ function ForumVideoStickerVideo({
         <ExpoImage
           contentFit="contain"
           recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
-          source={imageSourceFromUrl(
-            fallbackSrc,
-            { mediaContext, nodeSeekUserAgent: headers?.['User-Agent'] }
-          )}
+          source={imageSourceFromUrl(fallbackSrc, { mediaContext, nodeSeekUserAgent: headers?.['User-Agent'] })}
           style={embedStyles.stickerVideoFallback}
         />
       ) : null}
@@ -281,7 +327,9 @@ function bodyImageMetricFields(
 ): DiagnosticFields {
   return {
     ...(metrics.cacheType ? { cacheType: metrics.cacheType } : {}),
-    ...(metrics.firstProgressAt === undefined ? {} : { firstProgressMs: Math.max(0, metrics.firstProgressAt - metrics.startedAt) }),
+    ...(metrics.firstProgressAt === undefined
+      ? {}
+      : { firstProgressMs: Math.max(0, metrics.firstProgressAt - metrics.startedAt) }),
     ...(metrics.loadedAt === undefined ? {} : { loadMs: Math.max(0, metrics.loadedAt - metrics.startedAt) }),
     ...(metrics.loadedBytes === undefined ? {} : { loadedBytes: metrics.loadedBytes }),
     ...(metrics.sourceHeight === undefined ? {} : { sourceHeight: metrics.sourceHeight }),
@@ -330,11 +378,11 @@ function PreviewImageBlock({
   const originalSource = useMemo(() => {
     const cleanOriginalUri = normalizeImagePreviewUrl(originalUri);
     return cleanOriginalUri && cleanOriginalUri !== normalizeImagePreviewUrl(src)
-      ? imageSourceFromUrl(cleanOriginalUri, {
-        baseSource: imageProps.source,
-        mediaContext,
-        nodeSeekUserAgent: nodeSeekMediaUserAgent
-      }) as ImageURISource
+      ? (imageSourceFromUrl(cleanOriginalUri, {
+          baseSource: imageProps.source,
+          mediaContext,
+          nodeSeekUserAgent: nodeSeekMediaUserAgent
+        }) as ImageURISource)
       : null;
   }, [imageProps.source, mediaContext, nodeSeekMediaUserAgent, originalUri, src]);
   const originalRequestIdentity = originalImageDisplayIdentity(originalSource);
@@ -350,43 +398,54 @@ function PreviewImageBlock({
     startedAt: Date.now()
   });
   const bodyDiagnosticRef = useRef<{ fallback: boolean; requestIdentity: string; trace: DiagnosticTrace } | null>(null);
-  const currentBodyTrace = useCallback((fallback = false) => {
-    if (!mountedRef.current) {
-      return null;
-    }
-    const previous = bodyDiagnosticRef.current;
-    if (previous?.requestIdentity !== requestIdentity) {
-      if (previous) {
-        finishDiagnosticTrace(previous.trace, 'stale', { fallback: 'none', terminalReason: 'stale' });
+  const currentBodyTrace = useCallback(
+    (fallback = false) => {
+      if (!mountedRef.current) {
+        return null;
       }
-      bodyDiagnosticRef.current = {
-        fallback,
-        requestIdentity,
-        trace: beginDiagnosticTrace('media', 'load', {
-          candidateKind,
-          mediaClass: forumMediaTargetClass(src, mediaContext.contentSource),
-          mediaRef: diagnosticRef('media', src),
-          mediaRole: 'body',
-          source: mediaContext.contentSource || 'unknown',
-          surface: 'body'
-        }, bodyStartedAtRef.current || Date.now())
-      };
-    } else if (fallback && previous) {
-      previous.fallback = true;
-    }
-    return bodyDiagnosticRef.current;
-  }, [candidateKind, mediaContext.contentSource, requestIdentity, src]);
-  const finishBodyFailure = useCallback((fallback: boolean) => {
-    const diagnostic = currentBodyTrace(fallback);
-    if (diagnostic) {
-      finishDiagnosticTrace(diagnostic.trace, 'failure', {
-        ...bodyImageMetricFields(bodyMetricsRef.current),
-        fallback: fallback ? 'svg' : 'none',
-        terminalReason: fallback ? 'fallback-error' : 'native-error'
-      });
-      bodyDiagnosticRef.current = null;
-    }
-  }, [currentBodyTrace]);
+      const previous = bodyDiagnosticRef.current;
+      if (previous?.requestIdentity !== requestIdentity) {
+        if (previous) {
+          finishDiagnosticTrace(previous.trace, 'stale', { fallback: 'none', terminalReason: 'stale' });
+        }
+        bodyDiagnosticRef.current = {
+          fallback,
+          requestIdentity,
+          trace: beginDiagnosticTrace(
+            'media',
+            'load',
+            {
+              candidateKind,
+              mediaClass: forumMediaTargetClass(src, mediaContext.contentSource),
+              mediaRef: diagnosticRef('media', src),
+              mediaRole: 'body',
+              source: mediaContext.contentSource || 'unknown',
+              surface: 'body'
+            },
+            bodyStartedAtRef.current || Date.now()
+          )
+        };
+      } else if (fallback && previous) {
+        previous.fallback = true;
+      }
+      return bodyDiagnosticRef.current;
+    },
+    [candidateKind, mediaContext.contentSource, requestIdentity, src]
+  );
+  const finishBodyFailure = useCallback(
+    (fallback: boolean) => {
+      const diagnostic = currentBodyTrace(fallback);
+      if (diagnostic) {
+        finishDiagnosticTrace(diagnostic.trace, 'failure', {
+          ...bodyImageMetricFields(bodyMetricsRef.current),
+          fallback: fallback ? 'svg' : 'none',
+          terminalReason: fallback ? 'fallback-error' : 'native-error'
+        });
+        bodyDiagnosticRef.current = null;
+      }
+    },
+    [currentBodyTrace]
+  );
   const [loadedImage, setLoadedImage] = useState<{
     cacheType: ImageLoadEventData['cacheType'];
     dimensions: PreviewImageDimensions;
@@ -406,9 +465,8 @@ function PreviewImageBlock({
       promoteCachedCompatibleSvgArtifact(requestIdentity);
     }
   }, [cachedArtifact, requestIdentity]);
-  const activeArtifact = compatibleSvgArtifact?.requestIdentity === requestIdentity
-    ? compatibleSvgArtifact
-    : cachedArtifact;
+  const activeArtifact =
+    compatibleSvgArtifact?.requestIdentity === requestIdentity ? compatibleSvgArtifact : cachedArtifact;
   const activeFallbackSource = activeArtifact?.posterSource || null;
   const activeImageSource = activeFallbackSource || imageSource;
   const imageLoadIdentity = `${requestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
@@ -428,9 +486,9 @@ function PreviewImageBlock({
     try {
       const artifact = await recoverCompatibleSvgArtifact(imageSource);
       if (
-        !mountedRef.current
-        || requestIdentityRef.current !== requestIdentity
-        || settledRequestIdentityRef.current === requestIdentity
+        !mountedRef.current ||
+        requestIdentityRef.current !== requestIdentity ||
+        settledRequestIdentityRef.current === requestIdentity
       ) {
         return;
       }
@@ -443,9 +501,9 @@ function PreviewImageBlock({
       setFailedRequestIdentity(requestIdentity);
     } catch {
       if (
-        mountedRef.current
-        && requestIdentityRef.current === requestIdentity
-        && settledRequestIdentityRef.current !== requestIdentity
+        mountedRef.current &&
+        requestIdentityRef.current === requestIdentity &&
+        settledRequestIdentityRef.current !== requestIdentity
       ) {
         settledRequestIdentityRef.current = requestIdentity;
         finishBodyFailure(true);
@@ -453,34 +511,37 @@ function PreviewImageBlock({
       }
     }
   }, [finishBodyFailure, imageSource, requestIdentity]);
-  const refreshSvgPoster = useCallback(async (artifact: CompatibleSvgArtifact) => {
-    try {
-      const refreshed = await refreshCompatibleSvgPoster(artifact);
-      if (
-        !mountedRef.current
-        || requestIdentityRef.current !== requestIdentity
-        || settledRequestIdentityRef.current === requestIdentity
-      ) {
-        return;
+  const refreshSvgPoster = useCallback(
+    async (artifact: CompatibleSvgArtifact) => {
+      try {
+        const refreshed = await refreshCompatibleSvgPoster(artifact);
+        if (
+          !mountedRef.current ||
+          requestIdentityRef.current !== requestIdentity ||
+          settledRequestIdentityRef.current === requestIdentity
+        ) {
+          return;
+        }
+        setCompatibleSvgArtifact(refreshed);
+      } catch {
+        if (
+          mountedRef.current &&
+          requestIdentityRef.current === requestIdentity &&
+          settledRequestIdentityRef.current !== requestIdentity
+        ) {
+          settledRequestIdentityRef.current = requestIdentity;
+          finishBodyFailure(true);
+          setFailedRequestIdentity(requestIdentity);
+        }
       }
-      setCompatibleSvgArtifact(refreshed);
-    } catch {
-      if (
-        mountedRef.current
-        && requestIdentityRef.current === requestIdentity
-        && settledRequestIdentityRef.current !== requestIdentity
-      ) {
-        settledRequestIdentityRef.current = requestIdentity;
-        finishBodyFailure(true);
-        setFailedRequestIdentity(requestIdentity);
-      }
-    }
-  }, [finishBodyFailure, requestIdentity]);
+    },
+    [finishBodyFailure, requestIdentity]
+  );
   const handleImageError = useCallback(() => {
     if (
-      !mountedRef.current
-      || requestIdentityRef.current !== requestIdentity
-      || settledRequestIdentityRef.current === requestIdentity
+      !mountedRef.current ||
+      requestIdentityRef.current !== requestIdentity ||
+      settledRequestIdentityRef.current === requestIdentity
     ) {
       return;
     }
@@ -500,7 +561,11 @@ function PreviewImageBlock({
     void recoverSvgArtifact();
   }, [activeArtifact, currentBodyTrace, finishBodyFailure, recoverSvgArtifact, refreshSvgPoster, requestIdentity]);
   const handleImageLoadStart = useCallback(() => {
-    if (mountedRef.current && requestIdentityRef.current === requestIdentity && settledRequestIdentityRef.current !== requestIdentity) {
+    if (
+      mountedRef.current &&
+      requestIdentityRef.current === requestIdentity &&
+      settledRequestIdentityRef.current !== requestIdentity
+    ) {
       if (bodyMetricsRef.current.requestIdentity !== requestIdentity) {
         const startedAt = Date.now();
         bodyStartedAtRef.current = startedAt;
@@ -509,63 +574,70 @@ function PreviewImageBlock({
       currentBodyTrace(Boolean(activeFallbackSource));
     }
   }, [activeFallbackSource, currentBodyTrace, requestIdentity]);
-  const handleImageLoad = useCallback((event: ImageLoadEventData) => {
-    if (
-      !mountedRef.current
-      || requestIdentityRef.current !== requestIdentity
-      || settledRequestIdentityRef.current === requestIdentity
-    ) {
-      return;
-    }
-    const width = Number(event.source.width);
-    const height = Number(event.source.height);
-    if (!(width > 0 && height > 0)) {
-      return;
-    }
-    bodyMetricsRef.current = {
-      ...bodyMetricsRef.current,
-      cacheType: event.cacheType,
-      loadedAt: Date.now(),
-      sourceHeight: height,
-      sourceWidth: width
-    };
-    setLoadedImage({
-      cacheType: event.cacheType,
-      dimensions: { height, width },
-      imageLoadIdentity,
-      requestIdentity
-    });
-  }, [imageLoadIdentity, requestIdentity]);
+  const handleImageLoad = useCallback(
+    (event: ImageLoadEventData) => {
+      if (
+        !mountedRef.current ||
+        requestIdentityRef.current !== requestIdentity ||
+        settledRequestIdentityRef.current === requestIdentity
+      ) {
+        return;
+      }
+      const width = Number(event.source.width);
+      const height = Number(event.source.height);
+      if (!(width > 0 && height > 0)) {
+        return;
+      }
+      bodyMetricsRef.current = {
+        ...bodyMetricsRef.current,
+        cacheType: event.cacheType,
+        loadedAt: Date.now(),
+        sourceHeight: height,
+        sourceWidth: width
+      };
+      setLoadedImage({
+        cacheType: event.cacheType,
+        dimensions: { height, width },
+        imageLoadIdentity,
+        requestIdentity
+      });
+    },
+    [imageLoadIdentity, requestIdentity]
+  );
   const handleImageDisplay = useCallback(() => {
     if (
-      !mountedRef.current
-      || requestIdentityRef.current !== requestIdentity
-      || settledRequestIdentityRef.current === requestIdentity
+      !mountedRef.current ||
+      requestIdentityRef.current !== requestIdentity ||
+      settledRequestIdentityRef.current === requestIdentity
     ) {
       return;
     }
     setDisplayedImageLoadIdentity(imageLoadIdentity);
   }, [imageLoadIdentity, requestIdentity]);
-  const handleImageProgress = useCallback((event: ImageProgressEventData) => {
-    if (!mountedRef.current || requestIdentityRef.current !== requestIdentity || settledRequestIdentityRef.current === requestIdentity) {
-      return;
-    }
-    const loadedBytes = Number(event.loaded);
-    const totalBytes = Number(event.total);
-    bodyMetricsRef.current = {
-      ...bodyMetricsRef.current,
-      ...(bodyMetricsRef.current.firstProgressAt === undefined ? { firstProgressAt: Date.now() } : {}),
-      ...(Number.isFinite(loadedBytes) && loadedBytes >= 0 ? { loadedBytes } : {}),
-      ...(Number.isFinite(totalBytes) && totalBytes >= 0 ? { totalBytes } : {})
-    };
-  }, [requestIdentity]);
+  const handleImageProgress = useCallback(
+    (event: ImageProgressEventData) => {
+      if (
+        !mountedRef.current ||
+        requestIdentityRef.current !== requestIdentity ||
+        settledRequestIdentityRef.current === requestIdentity
+      ) {
+        return;
+      }
+      const loadedBytes = Number(event.loaded);
+      const totalBytes = Number(event.total);
+      bodyMetricsRef.current = {
+        ...bodyMetricsRef.current,
+        ...(bodyMetricsRef.current.firstProgressAt === undefined ? { firstProgressAt: Date.now() } : {}),
+        ...(Number.isFinite(loadedBytes) && loadedBytes >= 0 ? { loadedBytes } : {}),
+        ...(Number.isFinite(totalBytes) && totalBytes >= 0 ? { totalBytes } : {})
+      };
+    },
+    [requestIdentity]
+  );
   const loadFailed = failedRequestIdentity === requestIdentity;
   useEffect(() => {
     const timeout = setTimeout(() => {
-      if (
-        requestIdentityRef.current === requestIdentity
-        && settledRequestIdentityRef.current !== requestIdentity
-      ) {
+      if (requestIdentityRef.current === requestIdentity && settledRequestIdentityRef.current !== requestIdentity) {
         currentBodyTrace();
       }
     }, 10_000);
@@ -584,10 +656,7 @@ function PreviewImageBlock({
   }, [currentBodyTrace, requestIdentity]);
   useEffect(() => {
     const timeout = setTimeout(() => {
-      if (
-        requestIdentityRef.current !== requestIdentity
-        || settledRequestIdentityRef.current === requestIdentity
-      ) {
+      if (requestIdentityRef.current !== requestIdentity || settledRequestIdentityRef.current === requestIdentity) {
         return;
       }
       settledRequestIdentityRef.current = requestIdentity;
@@ -611,10 +680,10 @@ function PreviewImageBlock({
       rememberPreviewImageDimensions(cacheKey, cachedDimensions);
     }
   }, [cacheKey, cachedDimensions]);
-  const activeLoadedImage = loadedImage?.requestIdentity === requestIdentity
-    && loadedImage.imageLoadIdentity === imageLoadIdentity
-    ? loadedImage
-    : null;
+  const activeLoadedImage =
+    loadedImage?.requestIdentity === requestIdentity && loadedImage.imageLoadIdentity === imageLoadIdentity
+      ? loadedImage
+      : null;
   const naturalDimensions = activeLoadedImage
     ? activeLoadedImage.dimensions
     : cachedDimensions || { height: Math.round(contentWidth * 0.75), width: contentWidth };
@@ -647,44 +716,37 @@ function PreviewImageBlock({
     containerStyle,
     trimTrailingBlockSpacing ? { marginBottom: -4 } : null
   ];
-  const imageStateFrameStyle = [{
-    alignItems: 'center' as const,
-    backgroundColor: frameBackgroundColor,
-    borderColor: frameBorderColor,
-    borderWidth: StyleSheet.hairlineWidth,
-    justifyContent: 'center' as const,
-    overflow: 'hidden' as const
-  }, imageState.dimensions];
+  const imageStateFrameStyle = [
+    {
+      alignItems: 'center' as const,
+      backgroundColor: frameBackgroundColor,
+      borderColor: frameBorderColor,
+      borderWidth: StyleSheet.hairlineWidth,
+      justifyContent: 'center' as const,
+      overflow: 'hidden' as const
+    },
+    imageState.dimensions
+  ];
   const imageLoadingOverlayStyle = [StyleSheet.absoluteFillObject, imageStateFrameStyle];
-  const imageDisplayed = Boolean(activeLoadedImage)
-    && displayedImageLoadIdentity === imageLoadIdentity;
-  const cachedOriginalArtifact = originalSource && originalDisplayRevision > 0
-    ? cachedCompatibleSvgArtifact(originalSource)
-    : null;
+  const imageDisplayed = Boolean(activeLoadedImage) && displayedImageLoadIdentity === imageLoadIdentity;
+  const cachedOriginalArtifact =
+    originalSource && originalDisplayRevision > 0 ? cachedCompatibleSvgArtifact(originalSource) : null;
   useEffect(() => {
     if (cachedOriginalArtifact) {
       promoteCachedCompatibleSvgArtifact(originalRequestIdentity);
     }
   }, [cachedOriginalArtifact, originalRequestIdentity]);
   const progressiveSource = cachedOriginalArtifact?.posterSource || originalSource;
-  const progressiveIdentity = progressiveSource
-    ? compatibleImageRequestIdentity(progressiveSource)
-    : '';
+  const progressiveIdentity = progressiveSource ? compatibleImageRequestIdentity(progressiveSource) : '';
   const progressiveIdentityRef = useRef(progressiveIdentity);
-  const originalForced = Boolean(originalRequestIdentity)
-    && forcedOriginalIdentity === originalRequestIdentity;
-  const originalFailed = failedOriginal.identity === progressiveIdentity
-    && failedOriginal.revision === originalDisplayRevision;
-  const originalDisplayed = Boolean(progressiveIdentity)
-    && displayedOriginalIdentity === progressiveIdentity;
+  const originalForced = Boolean(originalRequestIdentity) && forcedOriginalIdentity === originalRequestIdentity;
+  const originalFailed =
+    failedOriginal.identity === progressiveIdentity && failedOriginal.revision === originalDisplayRevision;
+  const originalDisplayed = Boolean(progressiveIdentity) && displayedOriginalIdentity === progressiveIdentity;
   const shouldLoadOriginal = Boolean(
-    progressiveSource
-    && !originalFailed
-    && (
-      originalDisplayRevision > 0
-      || originalForced
-      || (originalUpgradeEnabled && imageDisplayed)
-    )
+    progressiveSource &&
+    !originalFailed &&
+    (originalDisplayRevision > 0 || originalForced || (originalUpgradeEnabled && imageDisplayed))
   );
   useLayoutEffect(() => {
     progressiveIdentityRef.current = progressiveIdentity;
@@ -697,11 +759,16 @@ function PreviewImageBlock({
     const diagnostic = bodyDiagnosticRef.current;
     if (diagnostic?.requestIdentity === requestIdentity) {
       const displayedAt = Date.now();
-      finishDiagnosticTrace(diagnostic.trace, 'success', {
-        ...bodyImageMetricFields(bodyMetricsRef.current, displayedAt, true),
-        fallback: activeFallbackSource ? 'svg' : 'none',
-        terminalReason: activeFallbackSource ? 'fallback-loaded' : 'loaded'
-      }, displayedAt);
+      finishDiagnosticTrace(
+        diagnostic.trace,
+        'success',
+        {
+          ...bodyImageMetricFields(bodyMetricsRef.current, displayedAt, true),
+          fallback: activeFallbackSource ? 'svg' : 'none',
+          terminalReason: activeFallbackSource ? 'fallback-loaded' : 'loaded'
+        },
+        displayedAt
+      );
       bodyDiagnosticRef.current = null;
     }
   }, [activeFallbackSource, imageDisplayed, requestIdentity]);
@@ -715,11 +782,7 @@ function PreviewImageBlock({
         if (originalRequestIdentity) {
           setForcedOriginalIdentity(originalRequestIdentity);
         }
-        onOpenImagePreview(
-          src,
-          activeLoadedImage?.dimensions || cachedDimensions,
-          activeArtifact?.posterSource.uri
-        );
+        onOpenImagePreview(src, activeLoadedImage?.dimensions || cachedDimensions, activeArtifact?.posterSource.uri);
       }}
     >
       <View testID="topic-image-frame" style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
@@ -752,9 +815,9 @@ function PreviewImageBlock({
             transition={150}
             onDisplay={() => {
               if (
-                !mountedRef.current
-                || progressiveIdentityRef.current !== progressiveIdentity
-                || displayedOriginalIdentity === progressiveIdentity
+                !mountedRef.current ||
+                progressiveIdentityRef.current !== progressiveIdentity ||
+                displayedOriginalIdentity === progressiveIdentity
               ) {
                 return;
               }
@@ -763,9 +826,9 @@ function PreviewImageBlock({
             }}
             onError={() => {
               if (
-                !mountedRef.current
-                || progressiveIdentityRef.current !== progressiveIdentity
-                || displayedOriginalIdentity === progressiveIdentity
+                !mountedRef.current ||
+                progressiveIdentityRef.current !== progressiveIdentity ||
+                displayedOriginalIdentity === progressiveIdentity
               ) {
                 return;
               }
@@ -779,7 +842,9 @@ function PreviewImageBlock({
           </View>
         ) : loadFailed && !originalDisplayed ? (
           <View style={imageLoadingOverlayStyle}>
-            <Text numberOfLines={2} style={errorTextStyle}>{imageState.alt || '图片加载失败'}</Text>
+            <Text numberOfLines={2} style={errorTextStyle}>
+              {imageState.alt || '图片加载失败'}
+            </Text>
           </View>
         ) : null}
       </View>
@@ -826,10 +891,13 @@ export function useHtmlRenderingController({
   topicKey: string;
   webViewBlockMessage: string;
 }) {
-  const mediaContext = useMemo<ForumMediaRequestContext>(() => ({
-    contentSource: selectedTopic?.source || null,
-    sessionIdentity: mediaSessionIdentity
-  }), [mediaSessionIdentity, selectedTopic?.source]);
+  const mediaContext = useMemo<ForumMediaRequestContext>(
+    () => ({
+      contentSource: selectedTopic?.source || null,
+      sessionIdentity: mediaSessionIdentity
+    }),
+    [mediaSessionIdentity, selectedTopic?.source]
+  );
   const htmlTopicDetailRef = useRef(topicDetail);
   const htmlTopicDetail = hasSameYaohuoTopicLayout(htmlTopicDetailRef.current, topicDetail)
     ? htmlTopicDetailRef.current
@@ -837,73 +905,73 @@ export function useHtmlRenderingController({
   useLayoutEffect(() => {
     htmlTopicDetailRef.current = htmlTopicDetail;
   }, [htmlTopicDetail]);
-  const [inlineSizedImageState, setInlineSizedImageState] = useState<{ topicKey: string; urls: Record<string, true> }>({ topicKey: '', urls: {} });
+  const [inlineSizedImageState, setInlineSizedImageState] = useState<{ topicKey: string; urls: Record<string, true> }>({
+    topicKey: '',
+    urls: {}
+  });
   const emptyInlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [topicKey]);
-  const inlineSizedImageUrls = inlineSizedImageState.topicKey === topicKey ? inlineSizedImageState.urls : emptyInlineSizedImageUrls;
-  const markInlineSizedImageUrl = useCallback((url: string) => {
-    const clean = normalizeImagePreviewUrl(url).trim();
-    if (!clean) {
-      return;
-    }
-    setInlineSizedImageState((current) => (
-      current.topicKey === topicKey && current.urls[clean]
-        ? current
-        : {
-            topicKey,
-            urls: {
-              ...(current.topicKey === topicKey ? current.urls : {}),
-              [clean]: true
+  const inlineSizedImageUrls =
+    inlineSizedImageState.topicKey === topicKey ? inlineSizedImageState.urls : emptyInlineSizedImageUrls;
+  const markInlineSizedImageUrl = useCallback(
+    (url: string) => {
+      const clean = normalizeImagePreviewUrl(url).trim();
+      if (!clean) {
+        return;
+      }
+      setInlineSizedImageState((current) =>
+        current.topicKey === topicKey && current.urls[clean]
+          ? current
+          : {
+              topicKey,
+              urls: {
+                ...(current.topicKey === topicKey ? current.urls : {}),
+                [clean]: true
+              }
             }
-          }
-    ));
-  }, [topicKey]);
-
-  const topicImageDeriver = useMemo(
-    () => createTopicImageDeriver(),
+      );
+    },
     [topicKey]
   );
 
-  const {
-    htmlBaseStyle,
-    htmlClassesStyles,
-    htmlIgnoredStyles,
-    htmlTagsStyles
-  } = useMemo(() => buildHtmlRenderingStyles({
-    enableDiscourseCallouts: isDiscourseSource(mediaContext.contentSource),
-    settings,
-    theme
-  }), [
-    mediaContext.contentSource,
-    settings.fontFamily,
-    settings.fontScale,
-    settings.lineHeight,
-    theme
-  ]);
-  const openHtmlLink = useCallback((href: string, event?: { stopPropagation?: () => void }) => {
-    event?.stopPropagation?.();
-    if (isPreviewableImageUrl(href)) {
-      onOpenImagePreview(href);
-      return;
-    }
-    const baseUrl = selectedTopic?.url || htmlTopicDetail?.url;
-    const candidates = [
-      ...(selectedTopic ? [selectedTopic] : []),
-      ...(htmlTopicDetail ? [htmlTopicDetail, ...(htmlTopicDetail.replies || [])] : [])
-    ];
-    const appUser = parseForumUserLink(href, baseUrl, candidates);
-    if (appUser) {
-      void onOpenUser(appUser);
-      return;
-    }
-    const appTopic = parseForumTopicLink(href, baseUrl);
-    if (appTopic) {
-      void onOpenTopic(appTopic);
-      return;
-    }
-    if (isHttpOrHttpsUrl(href)) {
-      onOpenExternalUrl(href);
-    }
-  }, [htmlTopicDetail, onOpenExternalUrl, onOpenImagePreview, onOpenTopic, onOpenUser, selectedTopic]);
+  const topicImageDeriver = useMemo(() => createTopicImageDeriver(), [topicKey]);
+
+  const { htmlBaseStyle, htmlClassesStyles, htmlIgnoredStyles, htmlTagsStyles } = useMemo(
+    () =>
+      buildHtmlRenderingStyles({
+        enableDiscourseCallouts: isDiscourseSource(mediaContext.contentSource),
+        settings,
+        theme
+      }),
+    [mediaContext.contentSource, settings.fontFamily, settings.fontScale, settings.lineHeight, theme]
+  );
+  const openHtmlLink = useCallback(
+    (href: string, event?: { stopPropagation?: () => void }) => {
+      event?.stopPropagation?.();
+      if (isPreviewableImageUrl(href)) {
+        onOpenImagePreview(href);
+        return;
+      }
+      const baseUrl = selectedTopic?.url || htmlTopicDetail?.url;
+      const candidates = [
+        ...(selectedTopic ? [selectedTopic] : []),
+        ...(htmlTopicDetail ? [htmlTopicDetail, ...(htmlTopicDetail.replies || [])] : [])
+      ];
+      const appUser = parseForumUserLink(href, baseUrl, candidates);
+      if (appUser) {
+        void onOpenUser(appUser);
+        return;
+      }
+      const appTopic = parseForumTopicLink(href, baseUrl);
+      if (appTopic) {
+        void onOpenTopic(appTopic);
+        return;
+      }
+      if (isHttpOrHttpsUrl(href)) {
+        onOpenExternalUrl(href);
+      }
+    },
+    [htmlTopicDetail, onOpenExternalUrl, onOpenImagePreview, onOpenTopic, onOpenUser, selectedTopic]
+  );
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const BlockquoteRenderer: CustomBlockRenderer = (props) => {
       const renderOrdinaryQuote = () => {
@@ -911,9 +979,7 @@ export function useHtmlRenderingController({
         return (
           <InternalRenderer
             {...internalRendererProps}
-            style={trimsTrailingBlockSpacing(props.tnode)
-              ? { ...props.style, marginBottom: -4 }
-              : props.style}
+            style={trimsTrailingBlockSpacing(props.tnode) ? { ...props.style, marginBottom: -4 } : props.style}
           />
         );
       };
@@ -921,21 +987,19 @@ export function useHtmlRenderingController({
       const type = attributes[DISCOURSE_CALLOUT_TYPE_ATTRIBUTE];
       const foldValue = attributes[DISCOURSE_CALLOUT_FOLD_ATTRIBUTE];
       if (
-        !isDiscourseSource(mediaContext.contentSource)
-        || attributes[DISCOURSE_CALLOUT_ATTRIBUTE] !== 'true'
-        || !isDiscourseCalloutType(type)
-        || (foldValue !== undefined && foldValue !== 'collapsed' && foldValue !== 'expanded')
+        !isDiscourseSource(mediaContext.contentSource) ||
+        attributes[DISCOURSE_CALLOUT_ATTRIBUTE] !== 'true' ||
+        !isDiscourseCalloutType(type) ||
+        (foldValue !== undefined && foldValue !== 'collapsed' && foldValue !== 'expanded')
       ) {
         return renderOrdinaryQuote();
       }
-      const titleNodes = props.tnode.children.filter((child) => (
-        terminalNodeTagName(child) === 'div'
-        && terminalNodeHasClass(child, DISCOURSE_CALLOUT_TITLE_CLASS)
-      ));
-      const contentNodes = props.tnode.children.filter((child) => (
-        terminalNodeTagName(child) === 'div'
-        && terminalNodeHasClass(child, DISCOURSE_CALLOUT_CONTENT_CLASS)
-      ));
+      const titleNodes = props.tnode.children.filter(
+        (child) => terminalNodeTagName(child) === 'div' && terminalNodeHasClass(child, DISCOURSE_CALLOUT_TITLE_CLASS)
+      );
+      const contentNodes = props.tnode.children.filter(
+        (child) => terminalNodeTagName(child) === 'div' && terminalNodeHasClass(child, DISCOURSE_CALLOUT_CONTENT_CLASS)
+      );
       if (titleNodes.length !== 1 || contentNodes.length > 1) {
         return renderOrdinaryQuote();
       }
@@ -1028,10 +1092,7 @@ export function useHtmlRenderingController({
           <ExpoImage
             contentFit="contain"
             recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
-            source={imageSourceFromUrl(
-              fallbackSrc,
-              { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
-            )}
+            source={imageSourceFromUrl(fallbackSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
             style={[styles.inlineForumImage, size]}
           />
         ) : null;
@@ -1041,10 +1102,7 @@ export function useHtmlRenderingController({
           <ExpoImage
             contentFit="contain"
             recyclingKey={`${mediaSessionIdentity}:${src}`}
-            source={imageSourceFromUrl(
-              src,
-              { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
-            )}
+            source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
             style={[styles.inlineForumImage, size]}
           />
         );
@@ -1091,10 +1149,7 @@ export function useHtmlRenderingController({
         <ExpoImage
           contentFit="contain"
           recyclingKey={`${mediaSessionIdentity}:${src}`}
-          source={imageSourceFromUrl(
-            src,
-            { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
-          )}
+          source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
           style={[styles.inlineForumImage, size]}
         />
       );
@@ -1137,24 +1192,48 @@ export function useHtmlRenderingController({
         >
           {site || iconSrc ? (
             <View style={embedStyles.linkCardHeader}>
-              {iconSrc ? <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${iconSrc}`} source={imageSourceFromUrl(iconSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={embedStyles.linkCardIcon} /> : null}
-              {site ? <Text numberOfLines={1} style={[embedStyles.linkCardSite, { color: theme.muted }]}>{site}</Text> : null}
+              {iconSrc ? (
+                <ExpoImage
+                  contentFit="contain"
+                  recyclingKey={`${mediaSessionIdentity}:${iconSrc}`}
+                  source={imageSourceFromUrl(iconSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
+                  style={embedStyles.linkCardIcon}
+                />
+              ) : null}
+              {site ? (
+                <Text numberOfLines={1} style={[embedStyles.linkCardSite, { color: theme.muted }]}>
+                  {site}
+                </Text>
+              ) : null}
             </View>
           ) : null}
           <View style={embedStyles.linkCardBody}>
-            {imageSrc ? <ExpoImage contentFit="cover" recyclingKey={`${mediaSessionIdentity}:${imageSrc}`} source={imageSourceFromUrl(imageSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]} /> : null}
+            {imageSrc ? (
+              <ExpoImage
+                contentFit="cover"
+                recyclingKey={`${mediaSessionIdentity}:${imageSrc}`}
+                source={imageSourceFromUrl(imageSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
+                style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]}
+              />
+            ) : null}
             <View style={embedStyles.linkCardText}>
-              <Text numberOfLines={3} style={[embedStyles.linkCardTitle, { color: theme.primaryStrong }]}>{title}</Text>
-              {description ? <Text numberOfLines={3} style={[embedStyles.linkCardDescription, { color: theme.ink }]}>{description}</Text> : null}
+              <Text numberOfLines={3} style={[embedStyles.linkCardTitle, { color: theme.primaryStrong }]}>
+                {title}
+              </Text>
+              {description ? (
+                <Text numberOfLines={3} style={[embedStyles.linkCardDescription, { color: theme.ink }]}>
+                  {description}
+                </Text>
+              ) : null}
             </View>
           </View>
         </Pressable>
       );
     };
     const TerminalReportRenderer: CustomBlockRenderer = (props) => {
-      const tabNodes = props.tnode.children.filter((child) => (
-        String((child as { tagName?: unknown }).tagName || '').toLowerCase() === FORUM_TERMINAL_TAB_TAG
-      ));
+      const tabNodes = props.tnode.children.filter(
+        (child) => String((child as { tagName?: unknown }).tagName || '').toLowerCase() === FORUM_TERMINAL_TAB_TAG
+      );
       const [activeIndex, setActiveIndex] = useState(0);
       if (!tabNodes.length) {
         return <TChildrenRenderer tchildren={props.tnode.children} />;
@@ -1164,7 +1243,9 @@ export function useHtmlRenderingController({
         <View style={terminalStyles.report}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={terminalStyles.tabRow}>
             {tabNodes.map((tabNode, index) => {
-              const title = String((tabNode as { attributes?: Record<string, string | undefined> }).attributes?.title || `Tab ${index + 1}`);
+              const title = String(
+                (tabNode as { attributes?: Record<string, string | undefined> }).attributes?.title || `Tab ${index + 1}`
+              );
               const active = index === activeIndex;
               return (
                 <Pressable
@@ -1186,7 +1267,12 @@ export function useHtmlRenderingController({
                   ]}
                   onPress={() => setActiveIndex(index)}
                 >
-                  <Text numberOfLines={1} style={[terminalStyles.tabText, { color: active ? theme.primaryStrong : theme.ink }]}>{title}</Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[terminalStyles.tabText, { color: active ? theme.primaryStrong : theme.ink }]}
+                  >
+                    {title}
+                  </Text>
                 </Pressable>
               );
             })}
@@ -1203,11 +1289,16 @@ export function useHtmlRenderingController({
         const { InternalRenderer, ...internalRendererProps } = props;
         return <InternalRenderer {...internalRendererProps} />;
       }
-      const textChildren = terminalTextChildren((props.tnode as { domNode?: unknown }).domNode || props.tnode, 'terminal');
+      const textChildren = terminalTextChildren(
+        (props.tnode as { domNode?: unknown }).domNode || props.tnode,
+        'terminal'
+      );
       return (
         <View style={terminalStyles.codePanel}>
           <ScrollView horizontal>
-            <Text selectable style={terminalStyles.codeText}>{textChildren.length ? textChildren : tnodeText(props.tnode)}</Text>
+            <Text selectable style={terminalStyles.codeText}>
+              {textChildren.length ? textChildren : tnodeText(props.tnode)}
+            </Text>
           </ScrollView>
         </View>
       );
@@ -1229,7 +1320,18 @@ export function useHtmlRenderingController({
         if (!inlineSrc) {
           return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
         }
-        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${inlineSrc}`} source={imageSourceFromUrl(inlineSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return (
+          <ExpoImage
+            contentFit="contain"
+            recyclingKey={`${mediaSessionIdentity}:${inlineSrc}`}
+            source={imageSourceFromUrl(inlineSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
+            style={[
+              styles.inlineForumImage,
+              inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth),
+              inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)
+            ]}
+          />
+        );
       }
       const displaySource = selectImageDisplaySource(attributes, contentWidth, PixelRatio.get());
       if (!displaySource) {
@@ -1237,10 +1339,11 @@ export function useHtmlRenderingController({
       }
       const src = displaySource.uri;
       const originalUri = selectImageOriginalSource(attributes) || src;
-      const imageSource = imageSourceFromUrl(
-        src,
-        { baseSource: imageProps.source, mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent }
-      );
+      const imageSource = imageSourceFromUrl(src, {
+        baseSource: imageProps.source,
+        mediaContext,
+        nodeSeekUserAgent: nodeSeekMediaUserAgent
+      });
       return (
         <PreviewImageBlock
           key={`${mediaSessionIdentity}:${src}`}
@@ -1265,7 +1368,8 @@ export function useHtmlRenderingController({
     };
     const InlineForumImageRenderer: CustomMixedRenderer = (props) => {
       const contentWidth = useContentWidth();
-      const attributes = ((props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {});
+      const attributes =
+        (props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {};
       const src = attributes.src || '';
       const label = attributes.alt || attributes.title || '';
       if (!src) {
@@ -1273,7 +1377,18 @@ export function useHtmlRenderingController({
       }
       const isInlineImage = isInlineForumImage(attributes);
       if (isInlineImage) {
-        return <ExpoImage contentFit="contain" recyclingKey={`${mediaSessionIdentity}:${src}`} source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return (
+          <ExpoImage
+            contentFit="contain"
+            recyclingKey={`${mediaSessionIdentity}:${src}`}
+            source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
+            style={[
+              styles.inlineForumImage,
+              inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth),
+              inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)
+            ]}
+          />
+        );
       }
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };

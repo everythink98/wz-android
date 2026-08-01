@@ -25,9 +25,8 @@ jest.mock('../../src/xiaoyinsiAuth', () => {
     hasXiaoyinsiRevocationCleanupPending: jest.fn(async () => false),
     loadXiaoyinsiCredentials: jest.fn(),
     loadXiaoyinsiPendingAuthorization: jest.fn(),
-    nextXiaoyinsiPollDelay: (appState: string, now: number, lastPollAt: number | null, intervalMs: number) => (
-      appState === 'active' ? lastPollAt === null ? 0 : Math.max(0, lastPollAt + intervalMs - now) : null
-    ),
+    nextXiaoyinsiPollDelay: (appState: string, now: number, lastPollAt: number | null, intervalMs: number) =>
+      appState === 'active' ? (lastPollAt === null ? 0 : Math.max(0, lastPollAt + intervalMs - now)) : null,
     pollXiaoyinsiDeviceAuth: jest.fn(),
     retryXiaoyinsiRevocationCleanup: jest.fn(async () => ({
       complete: true,
@@ -131,18 +130,20 @@ async function renderController(
   return {
     dispatchSiteSessionEvent,
     hook: await (async () => {
-      const hook = await renderHook(() => useXiaoyinsiAuthController({
-        sessionEpochs: initialForumSessionEpochs,
-        dispatchSiteSessionEvent,
-        fetcher,
-        isIdentityPending,
-        notify,
-        sourceGateway
-      }), {
-        wrapper: ({ children }) => (
-          <QueryClientProvider client={appQueryClient}>{children}</QueryClientProvider>
-        )
-      });
+      const hook = await renderHook(
+        () =>
+          useXiaoyinsiAuthController({
+            sessionEpochs: initialForumSessionEpochs,
+            dispatchSiteSessionEvent,
+            fetcher,
+            isIdentityPending,
+            notify,
+            sourceGateway
+          }),
+        {
+          wrapper: ({ children }) => <QueryClientProvider client={appQueryClient}>{children}</QueryClientProvider>
+        }
+      );
       await act(async () => {
         void hook.result.current.refreshAuthorization();
         await Promise.resolve();
@@ -211,7 +212,12 @@ describe('小隐寺授权 controller', () => {
   it('[REG-XIAOYINSI-005] 重新授权开始后忽略迟到的旧 session 复核结果', async () => {
     let resolveVerify!: (profile: Awaited<ReturnType<typeof XiaoyinsiAuth.verifyXiaoyinsiCredentials>>) => void;
     mockLoadCredentials.mockResolvedValue({ apiKey: 'old-key', clientId: 'old-client' });
-    mockVerify.mockImplementationOnce(() => new Promise((resolve) => { resolveVerify = resolve; }));
+    mockVerify.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveVerify = resolve;
+        })
+    );
     mockBegin.mockResolvedValueOnce(pending);
     const { hook, dispatchSiteSessionEvent } = await renderController();
     await waitFor(() => expect(mockVerify).toHaveBeenCalledTimes(1));
@@ -240,7 +246,12 @@ describe('小隐寺授权 controller', () => {
   it('[REG-XIAOYINSI-005] 撤销完成后忽略迟到的旧 session 复核结果', async () => {
     let resolveVerify!: (profile: Awaited<ReturnType<typeof XiaoyinsiAuth.verifyXiaoyinsiCredentials>>) => void;
     mockLoadCredentials.mockResolvedValue({ apiKey: 'old-key', clientId: 'old-client' });
-    mockVerify.mockImplementationOnce(() => new Promise((resolve) => { resolveVerify = resolve; }));
+    mockVerify.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveVerify = resolve;
+        })
+    );
     const { hook, dispatchSiteSessionEvent } = await renderController();
     await waitFor(() => expect(mockVerify).toHaveBeenCalledTimes(1));
 
@@ -278,18 +289,22 @@ describe('小隐寺授权 controller', () => {
 
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
     expect(mockVerify).toHaveBeenCalled();
-    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(expect.objectContaining({
-      site: 'xiaoyinsi',
-      type: 'session-updated',
-      currentUser: expect.objectContaining({ username: 'alice' })
-    }));
+    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        site: 'xiaoyinsi',
+        type: 'session-updated',
+        currentUser: expect.objectContaining({ username: 'alice' })
+      })
+    );
     expect(dispatchSiteSessionEvent.mock.calls.at(-1)?.[0]).not.toHaveProperty('cookieSummary');
     expect(notify).toHaveBeenCalledWith('小隐寺授权成功。');
   });
 
   it('[REG-XIAOYINSI-013] uses the saved User API authorization to refresh the current account level', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
     const { hook, notify, sourceGateway } = await renderController();
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
@@ -315,11 +330,7 @@ describe('小隐寺授权 controller', () => {
 
   it('[REG-ACCOUNT-031] does not refresh the Xiaoyinsi level while identity is pending', async () => {
     mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
-    const { hook, sourceGateway } = await renderController(
-      jest.fn(),
-      jest.fn(),
-      () => true
-    );
+    const { hook, sourceGateway } = await renderController(jest.fn(), jest.fn(), () => true);
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
 
     await expect(hook.result.current.refreshLevel()).resolves.toBe(false);
@@ -434,12 +445,14 @@ describe('小隐寺授权 controller', () => {
 
   it('[REG-ACCOUNT-025] accepts only a typed invalid User API key result as expired', async () => {
     mockLoadCredentials.mockResolvedValue({ apiKey: 'expired-key', clientId: 'client' });
-    mockVerify.mockRejectedValue(Object.assign(new Error('invalid access'), {
-      source: 'xiaoyinsi',
-      kind: 'login-expired',
-      loginRequired: true,
-      reason: 'expired'
-    }));
+    mockVerify.mockRejectedValue(
+      Object.assign(new Error('invalid access'), {
+        source: 'xiaoyinsi',
+        kind: 'login-expired',
+        loginRequired: true,
+        reason: 'expired'
+      })
+    );
     const { hook } = await renderController();
 
     let result: XiaoyinsiAuthorizationReadResult | undefined;
@@ -456,11 +469,7 @@ describe('小隐寺授权 controller', () => {
     });
   });
 
-  const terminalCases: Array<[
-    'access_denied' | 'expired_token',
-    'denied' | 'expired',
-    string
-  ]> = [
+  const terminalCases: ['access_denied' | 'expired_token', 'denied' | 'expired', string][] = [
     ['access_denied', 'denied', '你已拒绝小隐寺授权。'],
     ['expired_token', 'expired', '验证码已过期，请重新授权。']
   ];
@@ -496,7 +505,9 @@ describe('小隐寺授权 controller', () => {
     mockLoadPending.mockResolvedValue(pending);
     mockPoll.mockImplementationOnce((dependencies) => {
       pollSignal = dependencies?.signal;
-      return new Promise((resolve) => { resolvePoll = resolve; });
+      return new Promise((resolve) => {
+        resolvePoll = resolve;
+      });
     });
     const { hook, notify } = await renderController();
     await waitFor(() => expect(mockPoll).toHaveBeenCalledTimes(1));
@@ -609,10 +620,12 @@ describe('小隐寺授权 controller', () => {
 
     expect(hook.result.current.phase).toBe('authorized');
     expect(hook.result.current.message).toBe('重新授权未开始，原授权仍然有效。');
-    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(expect.objectContaining({
-      site: 'xiaoyinsi',
-      type: 'cookie-loaded'
-    }));
+    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        site: 'xiaoyinsi',
+        type: 'cookie-loaded'
+      })
+    );
   });
 
   it('[REG-XIAOYINSI-020] 重新授权被拒绝后旧授权复核暂时失败时保留可信会话', async () => {
@@ -629,10 +642,12 @@ describe('小隐寺授权 controller', () => {
 
     await waitFor(() => expect(hook.result.current.phase).toBe('error'));
     expect(hook.result.current.message).toContain('无法检测小隐寺授权');
-    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(expect.objectContaining({
-      site: 'xiaoyinsi',
-      type: 'check-failed'
-    }));
+    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        site: 'xiaoyinsi',
+        type: 'check-failed'
+      })
+    );
     expect(dispatchSiteSessionEvent).not.toHaveBeenLastCalledWith({
       site: 'xiaoyinsi',
       type: 'cleared'
@@ -641,7 +656,9 @@ describe('小隐寺授权 controller', () => {
 
   it('[REG-XIAOYINSI-005] 服务端撤销成功但本机清理不完整时仍退出登录并明确警告', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     mockLoadCredentials.mockResolvedValue({ apiKey: 'old-key', clientId: 'old-client' });
     mockRevoke.mockResolvedValueOnce(partialCleanup);
     const { hook, dispatchSiteSessionEvent, notify } = await renderController();
@@ -656,7 +673,9 @@ describe('小隐寺授权 controller', () => {
     expect(hook.result.current.message).toContain('服务端授权已撤销');
     expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith({ site: 'xiaoyinsi', type: 'cleared' });
     expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('本机安全材料清理未完成'));
-    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')).toMatchObject({
+    expect(
+      lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')
+    ).toMatchObject({
       store: 'multi-store'
     });
 
@@ -669,14 +688,18 @@ describe('小隐寺授权 controller', () => {
     expect(mockRetryCleanup).toHaveBeenCalledTimes(1);
     expect(mockBegin).not.toHaveBeenCalled();
     expect(hook.result.current.phase).toBe('idle');
-    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')).toMatchObject({
+    expect(
+      lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')
+    ).toMatchObject({
       store: 'multi-store'
     });
   });
 
   it('[REG-XIAOYINSI-005] 重启时先重试撤销清理，不得恢复旧 Device Code', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     mockHasCleanup.mockResolvedValue(true);
     mockRetryCleanup.mockResolvedValueOnce(partialCleanup);
     mockLoadPending.mockResolvedValue(pending);
@@ -684,7 +707,9 @@ describe('小隐寺授权 controller', () => {
 
     await waitFor(() => expect(first.hook.result.current.phase).toBe('cleanup'));
     expect(mockLoadPending).not.toHaveBeenCalled();
-    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')).toMatchObject({
+    expect(
+      lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')
+    ).toMatchObject({
       store: 'multi-store'
     });
     await first.hook.unmount();
@@ -697,7 +722,9 @@ describe('小隐寺授权 controller', () => {
     expect(second.hook.result.current.phase).toBe('idle');
     expect(mockLoadPending).not.toHaveBeenCalled();
     expect(second.dispatchSiteSessionEvent).toHaveBeenLastCalledWith({ site: 'xiaoyinsi', type: 'cleared' });
-    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')).toMatchObject({
+    expect(
+      lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')
+    ).toMatchObject({
       store: 'multi-store'
     });
     await second.hook.unmount();
@@ -713,10 +740,12 @@ describe('小隐寺授权 controller', () => {
     const { hook, dispatchSiteSessionEvent } = await renderController();
 
     await waitFor(() => expect(hook.result.current.phase).toBe('error'));
-    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(expect.objectContaining({
-      site: 'xiaoyinsi',
-      type: 'check-failed'
-    }));
+    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        site: 'xiaoyinsi',
+        type: 'check-failed'
+      })
+    );
   });
 
   it('[REG-XIAOYINSI-019] retries the saved authorization after a transient post-poll session failure', async () => {
@@ -741,7 +770,9 @@ describe('小隐寺授权 controller', () => {
 
   it('授权诊断只记录阶段，不记录 Token、验证码、nonce 或授权 URL 查询参数', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     mockBegin.mockResolvedValueOnce(pending);
     const { hook } = await renderController();
     await waitFor(() => expect(hook.result.current.phase).toBe('idle'));
@@ -752,9 +783,10 @@ describe('小隐寺授权 controller', () => {
     });
 
     const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
-    expect(events.map((event) => event.phase)).toEqual(expect.arrayContaining(['intent', 'guard', 'persist', 'apply', 'finish']));
+    expect(events.map((event) => event.phase)).toEqual(
+      expect.arrayContaining(['intent', 'guard', 'persist', 'apply', 'finish'])
+    );
     expect(events.filter((event) => event.phase === 'finish')).toHaveLength(1);
     expect(lines.join('')).not.toMatch(/old-key|user-api-secret|ABCD-2345|e{32,}|request=safe|user-api-key\/activate/i);
   });
-
 });

@@ -53,18 +53,23 @@ describe('Android feature helpers', () => {
   });
 
   it('highlights html text without touching tags', () => {
-    expect(highlightHtml('<p>Hello <strong>VPS</strong></p>', 'vps hello')).toBe('<p><mark>Hello</mark> <strong><mark>VPS</mark></strong></p>');
+    expect(highlightHtml('<p>Hello <strong>VPS</strong></p>', 'vps hello')).toBe(
+      '<p><mark>Hello</mark> <strong><mark>VPS</mark></strong></p>'
+    );
   });
 
   it('[REG-TOPIC-009] never inserts search highlights into quoted html attributes containing greater-than signs', () => {
-    expect(highlightHtml(
-      '<p><a title="VPS > private link">visible link</a></p>',
-      'link'
-    )).toBe('<p><a title="VPS > private link">visible <mark>link</mark></a></p>');
+    expect(highlightHtml('<p><a title="VPS > private link">visible link</a></p>', 'link')).toBe(
+      '<p><a title="VPS > private link">visible <mark>link</mark></a></p>'
+    );
   });
 
   it('copies rendered reply text without html while keeping visible line breaks', () => {
-    expect(stripHtml('<p>Hello <a href="https://example.com">link</a></p><ul><li>One</li><li>Two</li></ul><pre><code>const x = 1;\n\nconsole.log(x);</code></pre><p><img src="x.png"><img alt="图示" src="y.png"></p>')).toBe('Hello link\nOne\nTwo\nconst x = 1;\n\nconsole.log(x);\n图示');
+    expect(
+      stripHtml(
+        '<p>Hello <a href="https://example.com">link</a></p><ul><li>One</li><li>Two</li></ul><pre><code>const x = 1;\n\nconsole.log(x);</code></pre><p><img src="x.png"><img alt="图示" src="y.png"></p>'
+      )
+    ).toBe('Hello link\nOne\nTwo\nconst x = 1;\n\nconsole.log(x);\n图示');
   });
 
   it('[REG-TOPIC-010] never copies quoted html attribute fragments containing greater-than signs', () => {
@@ -75,21 +80,41 @@ describe('Android feature helpers', () => {
     const records = [
       record({ id: '1', savedAt: '2026-05-23T03:00:00.000Z' }),
       record({ id: '2', savedAt: '2026-05-20T03:00:00.000Z', topic: { ...topic, category: 'App' } }),
-      record({ id: '3', savedAt: '2026-05-10T03:00:00.000Z', topic: { ...topic, category: 'Other', categoryId: 'other' } })
+      record({
+        id: '3',
+        savedAt: '2026-05-10T03:00:00.000Z',
+        topic: { ...topic, category: 'Other', categoryId: 'other' }
+      })
     ];
 
-    expect(filterLibraryRecords(records, { source: 'all', category: 'Daily' }).map((item) => item.topic.id)).toEqual(['1']);
-    expect(groupLibraryRecordsByTime(records, new Date('2026-05-23T12:00:00.000Z')).map((section) => section.label)).toEqual(['今天', '本周', '更早']);
+    expect(filterLibraryRecords(records, { source: 'all', category: 'Daily' }).map((item) => item.topic.id)).toEqual([
+      '1'
+    ]);
+    expect(
+      groupLibraryRecordsByTime(records, new Date('2026-05-23T12:00:00.000Z')).map((section) => section.label)
+    ).toEqual(['今天', '本周', '更早']);
   });
 
   it('filters library records by source-scoped category keys', () => {
     const records = [
-      record({ id: '1', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'nodeseek', category: '日常', categoryId: 'daily' } }),
-      record({ id: '2', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'v2ex', category: '分享创造', categoryId: 'daily' } })
+      record({
+        id: '1',
+        savedAt: '2026-05-20T00:00:00.000Z',
+        topic: { ...topic, source: 'nodeseek', category: '日常', categoryId: 'daily' }
+      }),
+      record({
+        id: '2',
+        savedAt: '2026-05-20T00:00:00.000Z',
+        topic: { ...topic, source: 'v2ex', category: '分享创造', categoryId: 'daily' }
+      })
     ];
 
-    expect(filterLibraryRecords(records, { source: 'all', category: 'v2ex:daily' }).map((item) => item.topic.id)).toEqual(['2']);
-    expect(filterLibraryRecords(records, { source: 'nodeseek', category: 'nodeseek:daily' }).map((item) => item.topic.id)).toEqual(['1']);
+    expect(
+      filterLibraryRecords(records, { source: 'all', category: 'v2ex:daily' }).map((item) => item.topic.id)
+    ).toEqual(['2']);
+    expect(
+      filterLibraryRecords(records, { source: 'nodeseek', category: 'nodeseek:daily' }).map((item) => item.topic.id)
+    ).toEqual(['1']);
   });
 
   it('builds library category filters only from the selected source', () => {
@@ -136,48 +161,56 @@ describe('Android feature helpers', () => {
   });
 
   it('keeps NodeSeek submit refresh on page one when reply pagination is still page-one offset based', () => {
-    expect(replyRefreshTarget({
-      source: 'nodeseek',
-      afterSubmit: true,
-      expectedReplyCount: 61,
-      replyNextPage: 1
-    })).toEqual({
+    expect(
+      replyRefreshTarget({
+        source: 'nodeseek',
+        afterSubmit: true,
+        expectedReplyCount: 61,
+        replyNextPage: 1
+      })
+    ).toEqual({
       page: 1,
       offset: 60
     });
   });
 
   it('refreshes changed replies from the page that currently contains them', () => {
-    expect(replyRefreshTarget({
-      source: 'linuxdo',
-      afterSubmit: true,
-      expectedReplyCount: 91,
-      targetReplyIndex: 35
-    })).toEqual({
+    expect(
+      replyRefreshTarget({
+        source: 'linuxdo',
+        afterSubmit: true,
+        expectedReplyCount: 91,
+        targetReplyIndex: 35
+      })
+    ).toEqual({
       page: 2,
       offset: 30
     });
 
-    expect(replyRefreshTarget({
-      source: 'yaohuo',
-      afterSubmit: true,
-      expectedReplyCount: 91,
-      targetReplyIndex: 35
-    })).toEqual({
+    expect(
+      replyRefreshTarget({
+        source: 'yaohuo',
+        afterSubmit: true,
+        expectedReplyCount: 91,
+        targetReplyIndex: 35
+      })
+    ).toEqual({
       page: 2,
       offset: 0
     });
   });
 
   it('refreshes changed NodeSeek replies from the inferred origin page window', () => {
-    expect(replyRefreshTarget({
-      source: 'nodeseek',
-      afterSubmit: true,
-      expectedReplyCount: 21,
-      replyNextPage: 2,
-      replyNextOffset: 10,
-      targetReplyIndex: 17
-    })).toEqual({
+    expect(
+      replyRefreshTarget({
+        source: 'nodeseek',
+        afterSubmit: true,
+        expectedReplyCount: 21,
+        replyNextPage: 2,
+        replyNextOffset: 10,
+        targetReplyIndex: 17
+      })
+    ).toEqual({
       page: 2,
       offset: 10,
       limit: 10
@@ -185,13 +218,15 @@ describe('Android feature helpers', () => {
   });
 
   it('refreshes new NodeSeek replies from the inferred tail window', () => {
-    expect(replyRefreshTarget({
-      source: 'nodeseek',
-      afterSubmit: true,
-      expectedReplyCount: 21,
-      replyNextPage: 2,
-      replyNextOffset: 10
-    })).toEqual({
+    expect(
+      replyRefreshTarget({
+        source: 'nodeseek',
+        afterSubmit: true,
+        expectedReplyCount: 21,
+        replyNextPage: 2,
+        replyNextOffset: 10
+      })
+    ).toEqual({
       page: 3,
       offset: 20,
       limit: 10
@@ -199,12 +234,14 @@ describe('Android feature helpers', () => {
   });
 
   it('refreshes the currently loaded NodeSeek replies on manual refresh', () => {
-    expect(replyRefreshTarget({
-      source: 'nodeseek',
-      afterSubmit: false,
-      expectedReplyCount: 0,
-      loadedReplyCount: 45
-    })).toEqual({
+    expect(
+      replyRefreshTarget({
+        source: 'nodeseek',
+        afterSubmit: false,
+        expectedReplyCount: 0,
+        loadedReplyCount: 45
+      })
+    ).toEqual({
       page: 1,
       offset: 0,
       limit: 45
@@ -212,12 +249,14 @@ describe('Android feature helpers', () => {
   });
 
   it('refreshes only one loaded NodeSeek origin page on manual refresh', () => {
-    expect(replyRefreshTarget({
-      source: 'nodeseek',
-      afterSubmit: false,
-      expectedReplyCount: 0,
-      loadedReplyCount: 10
-    })).toEqual({
+    expect(
+      replyRefreshTarget({
+        source: 'nodeseek',
+        afterSubmit: false,
+        expectedReplyCount: 0,
+        loadedReplyCount: 10
+      })
+    ).toEqual({
       page: 1,
       offset: 0,
       limit: 10
@@ -225,22 +264,28 @@ describe('Android feature helpers', () => {
   });
 
   it('loads only the next NodeSeek origin reply page when the origin page size is known', () => {
-    expect(replyLoadMoreLimit({
-      source: 'nodeseek',
-      replyNextPage: 2,
-      replyNextOffset: 10
-    })).toBe(10);
+    expect(
+      replyLoadMoreLimit({
+        source: 'nodeseek',
+        replyNextPage: 2,
+        replyNextOffset: 10
+      })
+    ).toBe(10);
 
-    expect(replyLoadMoreLimit({
-      source: 'nodeseek',
-      replyNextPage: 1,
-      replyNextOffset: 30
-    })).toBe(30);
+    expect(
+      replyLoadMoreLimit({
+        source: 'nodeseek',
+        replyNextPage: 1,
+        replyNextOffset: 30
+      })
+    ).toBe(30);
 
-    expect(replyLoadMoreLimit({
-      source: 'linuxdo',
-      replyNextPage: 2,
-      replyNextOffset: 30
-    })).toBe(30);
+    expect(
+      replyLoadMoreLimit({
+        source: 'linuxdo',
+        replyNextPage: 2,
+        replyNextOffset: 30
+      })
+    ).toBe(30);
   });
 });

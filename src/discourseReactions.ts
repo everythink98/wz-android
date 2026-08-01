@@ -14,10 +14,7 @@ function reactionLabel(id: string) {
   return id.replace(/_/g, ' ');
 }
 
-function reactionStat(
-  reaction: ReactionSummary,
-  emojiUrls: DiscourseEmojiUrlMap
-): DiscourseReactionStat {
+function reactionStat(reaction: ReactionSummary, emojiUrls: DiscourseEmojiUrlMap): DiscourseReactionStat {
   const imageUrl = emojiUrls[reaction.id];
   return {
     id: reaction.id,

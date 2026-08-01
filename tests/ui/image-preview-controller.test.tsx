@@ -17,19 +17,24 @@ describe('Image preview controller', () => {
 
   it('REG-TOPIC-006 saves only once when the save button is pressed twice quickly', async () => {
     let finishSave: (() => void) | undefined;
-    mockSaveImageUriToLibrary.mockImplementation(() => new Promise<void>((resolve) => {
-      finishSave = resolve;
-    }));
+    mockSaveImageUriToLibrary.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        })
+    );
     const notify = jest.fn<(message: string) => void>();
     const topicImageDeriver = createTopicImageDeriver();
-    const hook = await renderHook(() => useImagePreviewController({
-      contentSource: null,
-      contentWidth: 360,
-      htmlParts: ['<p><img src="https://images.example/photo.jpg"></p>'],
-      inlineSizedImageUrls: {},
-      notify,
-      topicImageDeriver
-    }));
+    const hook = await renderHook(() =>
+      useImagePreviewController({
+        contentSource: null,
+        contentWidth: 360,
+        htmlParts: ['<p><img src="https://images.example/photo.jpg"></p>'],
+        inlineSizedImageUrls: {},
+        notify,
+        topicImageDeriver
+      })
+    );
 
     await act(() => {
       hook.result.current.openImagePreview('https://images.example/photo.jpg');
@@ -53,15 +58,17 @@ describe('Image preview controller', () => {
     mockSaveImageUriToLibrary.mockResolvedValue();
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
     const displayUrl = 'https://www.nodeseek.com/uploads/private-topic-640.png';
-    const hook = await renderHook(() => useImagePreviewController({
-      contentSource: 'nodeseek',
-      contentWidth: 360,
-      htmlParts: [`<p><a class="lightbox" href="${imageUrl}"><img src="${displayUrl}"></a></p>`],
-      inlineSizedImageUrls: {},
-      nodeSeekMediaUserAgent: 'WZ-Controller-Test',
-      notify: jest.fn(),
-      topicImageDeriver: createTopicImageDeriver()
-    }));
+    const hook = await renderHook(() =>
+      useImagePreviewController({
+        contentSource: 'nodeseek',
+        contentWidth: 360,
+        htmlParts: [`<p><a class="lightbox" href="${imageUrl}"><img src="${displayUrl}"></a></p>`],
+        inlineSizedImageUrls: {},
+        nodeSeekMediaUserAgent: 'WZ-Controller-Test',
+        notify: jest.fn(),
+        topicImageDeriver: createTopicImageDeriver()
+      })
+    );
 
     await act(() => {
       hook.result.current.openImagePreview(displayUrl, { width: 640, height: 360 });
@@ -93,14 +100,16 @@ describe('Image preview controller', () => {
     const originalUrl = 'https://images.example/original.svg';
     const displayUrl = 'https://images.example/display.svg';
     const renderedPoster = 'file:///cache/svg-posters/body-visible.png';
-    const hook = await renderHook(() => useImagePreviewController({
-      contentSource: null,
-      contentWidth: 360,
-      htmlParts: [`<a class="lightbox" href="${originalUrl}"><img src="${displayUrl}"></a>`],
-      inlineSizedImageUrls: {},
-      notify: jest.fn(),
-      topicImageDeriver: createTopicImageDeriver()
-    }));
+    const hook = await renderHook(() =>
+      useImagePreviewController({
+        contentSource: null,
+        contentWidth: 360,
+        htmlParts: [`<a class="lightbox" href="${originalUrl}"><img src="${displayUrl}"></a>`],
+        inlineSizedImageUrls: {},
+        notify: jest.fn(),
+        topicImageDeriver: createTopicImageDeriver()
+      })
+    );
 
     await act(() => {
       hook.result.current.openImagePreview(displayUrl, { width: 640, height: 360 }, renderedPoster);
@@ -116,17 +125,21 @@ describe('Image preview controller', () => {
   it('[REG-TOPIC-040] prepares adjacent preview placeholders with the body width and DPR', async () => {
     const pixelRatioSpy = jest.spyOn(PixelRatio, 'get').mockReturnValue(2);
     const firstDisplayUrl = 'https://images.example/a-640.jpg';
-    const hook = await renderHook(() => useImagePreviewController({
-      contentSource: null,
-      contentWidth: 300,
-      htmlParts: [[
-        '<img src="https://images.example/a-fallback.jpg" data-original="https://images.example/a-original.jpg" srcset="https://images.example/a-320.jpg 320w, https://images.example/a-640.jpg 640w, https://images.example/a-1280.jpg 1280w">',
-        '<img src="https://images.example/b-fallback.jpg" data-original="https://images.example/b-original.jpg" srcset="https://images.example/b-360.jpg 360w, https://images.example/b-720.jpg 720w, https://images.example/b-1440.jpg 1440w">'
-      ].join('')],
-      inlineSizedImageUrls: {},
-      notify: jest.fn(),
-      topicImageDeriver: createTopicImageDeriver()
-    }));
+    const hook = await renderHook(() =>
+      useImagePreviewController({
+        contentSource: null,
+        contentWidth: 300,
+        htmlParts: [
+          [
+            '<img src="https://images.example/a-fallback.jpg" data-original="https://images.example/a-original.jpg" srcset="https://images.example/a-320.jpg 320w, https://images.example/a-640.jpg 640w, https://images.example/a-1280.jpg 1280w">',
+            '<img src="https://images.example/b-fallback.jpg" data-original="https://images.example/b-original.jpg" srcset="https://images.example/b-360.jpg 360w, https://images.example/b-720.jpg 720w, https://images.example/b-1440.jpg 1440w">'
+          ].join('')
+        ],
+        inlineSizedImageUrls: {},
+        notify: jest.fn(),
+        topicImageDeriver: createTopicImageDeriver()
+      })
+    );
 
     await act(() => {
       hook.result.current.openImagePreview(firstDisplayUrl);

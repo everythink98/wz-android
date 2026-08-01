@@ -3,7 +3,8 @@ import type { SiteSessionViewModels } from './siteSessionState';
 
 export type AuthPromptSurface = 'search' | 'read' | 'action';
 export type AuthNoticeTone = 'neutral' | 'warning' | 'danger';
-export type AuthNoticeKind = 'anonymous' | 'logged-in' | 'verified' | 'login-required' | 'login-expired' | 'verification-required';
+export type AuthNoticeKind =
+  'anonymous' | 'logged-in' | 'verified' | 'login-required' | 'login-expired' | 'verification-required';
 export type AuthNotice = {
   kind: AuthNoticeKind;
   message: string;
@@ -16,7 +17,7 @@ export type SearchSessionNoticeItem = {
 };
 export type SearchSessionNoticeLightTone = AuthNoticeTone | 'success';
 
-const searchSessionSources: Array<{ source: Source; label: string }> = [
+const searchSessionSources: { source: Source; label: string }[] = [
   { source: 'nodeseek', label: 'NodeSeek' },
   { source: 'linuxdo', label: 'linux.do' },
   { source: 'yaohuo', label: '妖火' },
@@ -27,19 +28,18 @@ function notice(kind: AuthNoticeKind, message: string, tone: AuthNoticeTone): Au
   return { kind, message, tone };
 }
 
-export function authNoticeForSource(source: FeedSource, sessions: SiteSessionViewModels, surface: AuthPromptSurface): AuthNotice | null {
+export function authNoticeForSource(
+  source: FeedSource,
+  sessions: SiteSessionViewModels,
+  surface: AuthPromptSurface
+): AuthNotice | null {
   if (source === 'all' || source === 'v2ex') {
     return null;
   }
   const session = sessions[source];
   if (session.identityTrust === 'pending') {
-    const label = source === 'nodeseek'
-      ? 'NodeSeek'
-      : source === 'linuxdo'
-        ? 'linux.do'
-        : source === 'yaohuo'
-          ? '妖火'
-          : '小隐寺';
+    const label =
+      source === 'nodeseek' ? 'NodeSeek' : source === 'linuxdo' ? 'linux.do' : source === 'yaohuo' ? '妖火' : '小隐寺';
     return notice(
       'verification-required',
       `${label} 登录状态待确认，已暂停${surface === 'action' ? '写入' : '新请求和写入'}。`,
@@ -56,7 +56,11 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
     if (session.status === 'expired') {
       return notice('login-expired', '小隐寺授权已失效，请重新授权。', 'danger');
     }
-    return notice('anonymous', surface === 'action' ? '请先授权小隐寺后再互动。' : '匿名可阅读，授权后才能互动。', 'neutral');
+    return notice(
+      'anonymous',
+      surface === 'action' ? '请先授权小隐寺后再互动。' : '匿名可阅读，授权后才能互动。',
+      'neutral'
+    );
   }
   if (source === 'nodeseek') {
     if (session.status === 'logged-in') {
@@ -65,9 +69,7 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
     if (session.status === 'verified') {
       return notice(
         'verified',
-        surface === 'search'
-          ? '未登录搜索使用 Google，结果可能不完整。'
-          : '已通过访问验证，登录后可使用完整能力。',
+        surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '已通过访问验证，登录后可使用完整能力。',
         'neutral'
       );
     }
@@ -83,7 +85,11 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
         'danger'
       );
     }
-    return notice('login-required', surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '请先在“更多”里登录并检测 NodeSeek Cookie。', 'warning');
+    return notice(
+      'login-required',
+      surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '请先在“更多”里登录并检测 NodeSeek Cookie。',
+      'warning'
+    );
   }
   if (source === 'yaohuo') {
     if (session.status === 'logged-in') {
@@ -101,7 +107,11 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
     return notice('logged-in', 'linux.do 已登录。', 'neutral');
   }
   if (session.status === 'verified') {
-    return notice('verified', surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '已通过访问验证，登录后可互动。', 'neutral');
+    return notice(
+      'verified',
+      surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '已通过访问验证，登录后可互动。',
+      'neutral'
+    );
   }
   if (session.status === 'verification-required' || session.status === 'verifying') {
     return notice('verification-required', 'linux.do 需要完成验证后继续。', 'warning');
@@ -109,17 +119,23 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
   if (session.status === 'expired') {
     return notice('login-expired', 'linux.do 登录已失效，请重新登录。', 'danger');
   }
-  return notice('anonymous', surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '匿名可阅读，登录后才能互动。', 'neutral');
+  return notice(
+    'anonymous',
+    surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '匿名可阅读，登录后才能互动。',
+    'neutral'
+  );
 }
 
 export function authHintForSource(source: FeedSource, sessions: SiteSessionViewModels, surface: AuthPromptSurface) {
   return authNoticeForSource(source, sessions, surface)?.message || '';
 }
 
-export function searchSessionNoticeItems(source: FeedSource, sessions: SiteSessionViewModels): SearchSessionNoticeItem[] {
-  const sources = source === 'all'
-    ? searchSessionSources
-    : searchSessionSources.filter((item) => item.source === source);
+export function searchSessionNoticeItems(
+  source: FeedSource,
+  sessions: SiteSessionViewModels
+): SearchSessionNoticeItem[] {
+  const sources =
+    source === 'all' ? searchSessionSources : searchSessionSources.filter((item) => item.source === source);
   return sources.flatMap((item) => {
     const notice = authNoticeForSource(item.source, sessions, 'search');
     return notice ? [{ ...item, notice }] : [];

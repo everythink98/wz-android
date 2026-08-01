@@ -7,20 +7,10 @@ import {
   getUserProfile as getForumUserProfile,
   searchTopics as searchForumTopics
 } from '../forumApi';
-import {
-  getYaohuoFeedDirect,
-  getYaohuoRepliesDirect,
-  getYaohuoTopicDirect,
-  searchYaohuoDirect
-} from '../yaohuoApi';
-import {
-  searchLinuxDoSemantic as searchLinuxDoSemanticDirect
-} from '../localLinuxdo';
+import { getYaohuoFeedDirect, getYaohuoRepliesDirect, getYaohuoTopicDirect, searchYaohuoDirect } from '../yaohuoApi';
+import { searchLinuxDoSemantic as searchLinuxDoSemanticDirect } from '../localLinuxdo';
 import { resolveNodeSeekUser as resolveNodeSeekUserDirect } from '../localNodeseek';
-import {
-  getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile,
-  type LinuxDoLevelProfile
-} from '../linuxdoLevel';
+import { getLinuxDoLevelProfile as getLocalLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../linuxdoLevel';
 import {
   getXiaoyinsiLevelProfile as getLocalXiaoyinsiLevelProfile,
   type XiaoyinsiApiCredentials,
@@ -49,22 +39,12 @@ import {
 } from '../diagnostics';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import type { FeedSource, Source, SourceErrors, Topic } from '../types';
-import {
-  isSessionSource,
-  sessionSources,
-  type DiscourseSource,
-  type SessionSource
-} from '../sourceCatalog';
+import { isSessionSource, sessionSources, type DiscourseSource, type SessionSource } from '../sourceCatalog';
 
 export { getCurrentUserProfile } from '../forumApi';
-export {
-  getLinuxDoLevelProfile,
-  type LinuxDoLevelProfile
-} from '../linuxdoLevel';
+export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../linuxdoLevel';
 export type { XiaoyinsiLevelProfile } from '../localXiaoyinsi';
-export {
-  checkYaohuoLoginDirect as checkYaohuoLogin
-} from '../yaohuoApi';
+export { checkYaohuoLoginDirect as checkYaohuoLogin } from '../yaohuoApi';
 
 type GetFeedOptions = Parameters<typeof getForumFeed>[0];
 
@@ -151,7 +131,10 @@ type SourceGatewayDependencies = {
   isSourceAuthenticated?: (source: SessionSource) => boolean;
   isSourceReadBlocked?: (source: SessionSource) => boolean;
   linuxDoUserAgent?: () => string;
-  loadXiaoyinsiCredentialsForSource?: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<XiaoyinsiApiCredentials | undefined>;
+  loadXiaoyinsiCredentialsForSource?: (
+    source: FeedSource,
+    options?: SourceGatewayCredentialLoadOptions
+  ) => Promise<XiaoyinsiApiCredentials | undefined>;
   nodeSeekUserAgent: () => string;
   refreshXiaoyinsiAuthorization?: (trace?: DiagnosticTrace) => Promise<boolean | null>;
 };
@@ -180,13 +163,20 @@ type ManagedGetEmojiUrlsOptions = Omit<
   NonNullable<Parameters<typeof getDiscourseSourceEmojiUrls>[1]>,
   'auth' | 'fetcher'
 > & { source: DiscourseSource };
-type ManagedTagOptionSearchOptions = Omit<DiscourseTagOptionReadOptions, 'auth' | 'fetcher'> & { source: DiscourseSource };
-type ManagedUserOptionSearchOptions = Omit<DiscourseUserOptionReadOptions, 'auth' | 'fetcher'> & { source: DiscourseSource };
+type ManagedTagOptionSearchOptions = Omit<DiscourseTagOptionReadOptions, 'auth' | 'fetcher'> & {
+  source: DiscourseSource;
+};
+type ManagedUserOptionSearchOptions = Omit<DiscourseUserOptionReadOptions, 'auth' | 'fetcher'> & {
+  source: DiscourseSource;
+};
 type ManagedSemanticTopicSearchOptions = Omit<
   NonNullable<Parameters<typeof searchLinuxDoSemanticDirect>[1]>,
   'fetcher' | 'linuxDoAccess'
 > & { query: string; source: 'linuxdo' };
-type ManagedLinuxDoLevelProfileOptions = Omit<Parameters<typeof getLocalLinuxDoLevelProfile>[0], 'fetcher' | 'userAgent'> & {
+type ManagedLinuxDoLevelProfileOptions = Omit<
+  Parameters<typeof getLocalLinuxDoLevelProfile>[0],
+  'fetcher' | 'userAgent'
+> & {
   source: 'linuxdo';
 };
 type ManagedLevelProfileOptions = Omit<XiaoyinsiOptions, 'credentials' | 'fetcher'> & {
@@ -198,10 +188,9 @@ export type SourceGatewayReadContext = {
 };
 
 function summarizeReadResult(result: unknown) {
-  const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
-  const errors = value.errors && typeof value.errors === 'object'
-    ? Object.values(value.errors).filter(Boolean).length
-    : 0;
+  const value = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+  const errors =
+    value.errors && typeof value.errors === 'object' ? Object.values(value.errors).filter(Boolean).length : 0;
   const summary: Record<string, string | number | boolean | null> = {
     resultPresent: result !== null && result !== undefined,
     partialErrorCount: errors
@@ -240,36 +229,37 @@ function summarizeReadResult(result: unknown) {
 }
 
 export function createSourceGateway<Dependencies extends SourceGatewayDependencies>(dependencies: Dependencies) {
-  const read = async <T>(source: FeedSource, operationName: string, operation: (credentials: {
-    discourseAuth?: DiscourseReadAuth;
-    fetcher: Fetcher;
-    linuxDoAuthenticated?: boolean;
-    nodeSeekAuthenticated?: boolean;
-    nodeSeekUserAgent?: string;
-    unavailableSources?: readonly Source[];
-  }) => Promise<T>, context?: SourceGatewayReadContext) => {
+  const read = async <T>(
+    source: FeedSource,
+    operationName: string,
+    operation: (credentials: {
+      discourseAuth?: DiscourseReadAuth;
+      fetcher: Fetcher;
+      linuxDoAuthenticated?: boolean;
+      nodeSeekAuthenticated?: boolean;
+      nodeSeekUserAgent?: string;
+      unavailableSources?: readonly Source[];
+    }) => Promise<T>,
+    context?: SourceGatewayReadContext
+  ) => {
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
-    const identitySources: readonly SessionSource[] = source === 'all'
-      ? sessionSources
-      : isSessionSource(source)
-        ? [source]
-        : [];
-    const sessionEpochs = Object.fromEntries(identitySources.map((identitySource) => [
-      identitySource,
-      dependencies.currentSessionEpoch?.(identitySource)
-    ])) as Partial<Record<SessionSource, number | undefined>>;
+    const identitySources: readonly SessionSource[] =
+      source === 'all' ? sessionSources : isSessionSource(source) ? [source] : [];
+    const sessionEpochs = Object.fromEntries(
+      identitySources.map((identitySource) => [identitySource, dependencies.currentSessionEpoch?.(identitySource)])
+    ) as Partial<Record<SessionSource, number | undefined>>;
     let xiaoyinsiGeneration: number | undefined;
     let hasXiaoyinsiCredentials = false;
-    const credentialGenerationsAreCurrent = () => (
-      identitySources.every((identitySource) => (
-        sessionEpochs[identitySource] === undefined
-        || dependencies.currentSessionEpoch?.(identitySource) === sessionEpochs[identitySource]
-      ))
-      && (xiaoyinsiGeneration === undefined
-        || !dependencies.currentXiaoyinsiCredentialGeneration
-        || dependencies.currentXiaoyinsiCredentialGeneration() === xiaoyinsiGeneration)
-    );
+    const credentialGenerationsAreCurrent = () =>
+      identitySources.every(
+        (identitySource) =>
+          sessionEpochs[identitySource] === undefined ||
+          dependencies.currentSessionEpoch?.(identitySource) === sessionEpochs[identitySource]
+      ) &&
+      (xiaoyinsiGeneration === undefined ||
+        !dependencies.currentXiaoyinsiCredentialGeneration ||
+        dependencies.currentXiaoyinsiCredentialGeneration() === xiaoyinsiGeneration);
     const readIsCurrent = credentialGenerationsAreCurrent;
     const credentialErrors: SourceErrors = {};
     const loadCredential = async <T>(credentialSource: FeedSource, loader: () => Promise<T>) => {
@@ -290,52 +280,62 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
     };
     try {
       const blockedIdentitySources = identitySources.filter(
-        (identitySource) => dependencies.isSourceReadBlocked?.(identitySource) === true
-          || context?.identityBarriers?.includes(identitySource)
+        (identitySource) =>
+          dependencies.isSourceReadBlocked?.(identitySource) === true ||
+          context?.identityBarriers?.includes(identitySource)
       );
-      const linuxDoAuthenticated = (source === 'linuxdo' || source === 'all')
-        && dependencies.isSourceAuthenticated?.('linuxdo') === true
-        && !blockedIdentitySources.includes('linuxdo');
-      const nodeSeekAuthenticated = (source === 'nodeseek' || source === 'all')
-        && dependencies.isSourceAuthenticated?.('nodeseek') === true
-        && !blockedIdentitySources.includes('nodeseek');
+      const linuxDoAuthenticated =
+        (source === 'linuxdo' || source === 'all') &&
+        dependencies.isSourceAuthenticated?.('linuxdo') === true &&
+        !blockedIdentitySources.includes('linuxdo');
+      const nodeSeekAuthenticated =
+        (source === 'nodeseek' || source === 'all') &&
+        dependencies.isSourceAuthenticated?.('nodeseek') === true &&
+        !blockedIdentitySources.includes('nodeseek');
       if (source !== 'all' && blockedIdentitySources.length) {
         throw new Error('登录状态待确认；已暂停该站的新请求');
       }
-      const xiaoyinsiCredentials = (source === 'xiaoyinsi' || source === 'all')
-        && !blockedIdentitySources.includes('xiaoyinsi')
-        ? await loadCredential('xiaoyinsi', async () => dependencies.loadXiaoyinsiCredentialsForSource?.(source, {
-          captureGeneration: (generation) => { xiaoyinsiGeneration = generation; },
-          diagnosticTrace: trace
-        }))
-        : undefined;
-      const discourseAuth: DiscourseReadAuth | undefined = source === 'linuxdo' || source === 'all' || xiaoyinsiCredentials
-        ? {
-            ...(source === 'linuxdo' || source === 'all' ? {
-              linuxdo: {
-                authenticated: linuxDoAuthenticated,
-                userAgent: dependencies.linuxDoUserAgent?.()
-              }
-            } : {}),
-            ...(xiaoyinsiCredentials ? { xiaoyinsi: xiaoyinsiCredentials } : {})
-          }
-        : undefined;
-      const unavailableSources = source === 'all'
-        ? [...new Set([
-          ...Object.keys(credentialErrors) as Source[],
-          ...blockedIdentitySources
-        ])]
-        : [];
+      const xiaoyinsiCredentials =
+        (source === 'xiaoyinsi' || source === 'all') && !blockedIdentitySources.includes('xiaoyinsi')
+          ? await loadCredential('xiaoyinsi', async () =>
+              dependencies.loadXiaoyinsiCredentialsForSource?.(source, {
+                captureGeneration: (generation) => {
+                  xiaoyinsiGeneration = generation;
+                },
+                diagnosticTrace: trace
+              })
+            )
+          : undefined;
+      const discourseAuth: DiscourseReadAuth | undefined =
+        source === 'linuxdo' || source === 'all' || xiaoyinsiCredentials
+          ? {
+              ...(source === 'linuxdo' || source === 'all'
+                ? {
+                    linuxdo: {
+                      authenticated: linuxDoAuthenticated,
+                      userAgent: dependencies.linuxDoUserAgent?.()
+                    }
+                  }
+                : {}),
+              ...(xiaoyinsiCredentials ? { xiaoyinsi: xiaoyinsiCredentials } : {})
+            }
+          : undefined;
+      const unavailableSources =
+        source === 'all'
+          ? [...new Set([...(Object.keys(credentialErrors) as Source[]), ...blockedIdentitySources])]
+          : [];
       hasXiaoyinsiCredentials = Boolean(xiaoyinsiCredentials);
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
       markDiagnosticStage(trace, 'credential', {
         source,
-        hasCredential: Boolean(linuxDoAuthenticated || nodeSeekAuthenticated || (
-          (source === 'yaohuo' || source === 'all')
-          && dependencies.isSourceAuthenticated?.('yaohuo') === true
-        ) || xiaoyinsiCredentials),
+        hasCredential: Boolean(
+          linuxDoAuthenticated ||
+          nodeSeekAuthenticated ||
+          ((source === 'yaohuo' || source === 'all') && dependencies.isSourceAuthenticated?.('yaohuo') === true) ||
+          xiaoyinsiCredentials
+        ),
         isCredentialKnown: blockedIdentitySources.length === 0
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
@@ -350,16 +350,23 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
-      if (source === 'all' && result && typeof result === 'object' && !Array.isArray(result) && unavailableSources.length) {
+      if (
+        source === 'all' &&
+        result &&
+        typeof result === 'object' &&
+        !Array.isArray(result) &&
+        unavailableSources.length
+      ) {
         const aggregateResult = result as { errors?: SourceErrors; items?: unknown[] };
         if (Array.isArray(aggregateResult.items)) {
           const unavailableSourceSet = new Set(unavailableSources);
-          aggregateResult.items = aggregateResult.items.filter((item) => (
-            !item
-            || typeof item !== 'object'
-            || Array.isArray(item)
-            || !unavailableSourceSet.has((item as { source?: Source }).source as Source)
-          ));
+          aggregateResult.items = aggregateResult.items.filter(
+            (item) =>
+              !item ||
+              typeof item !== 'object' ||
+              Array.isArray(item) ||
+              !unavailableSourceSet.has((item as { source?: Source }).source as Source)
+          );
         }
         const aggregateErrors = { ...aggregateResult.errors };
         blockedIdentitySources.forEach((blockedSource) => {
@@ -367,17 +374,19 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         });
         aggregateResult.errors = { ...aggregateErrors, ...credentialErrors };
       }
-      const resultRecord = result && typeof result === 'object' ? result as Record<string, unknown> : {};
-      const resultErrors = resultRecord.errors && typeof resultRecord.errors === 'object'
-        ? resultRecord.errors as Record<string, unknown>
-        : {};
-      const xiaoyinsiResultError = resultErrors.xiaoyinsi && typeof resultErrors.xiaoyinsi === 'object'
-        ? resultErrors.xiaoyinsi as { kind?: unknown }
-        : null;
+      const resultRecord = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+      const resultErrors =
+        resultRecord.errors && typeof resultRecord.errors === 'object'
+          ? (resultRecord.errors as Record<string, unknown>)
+          : {};
+      const xiaoyinsiResultError =
+        resultErrors.xiaoyinsi && typeof resultErrors.xiaoyinsi === 'object'
+          ? (resultErrors.xiaoyinsi as { kind?: unknown })
+          : null;
       if (
-        hasXiaoyinsiCredentials
-        && credentialGenerationsAreCurrent()
-        && (xiaoyinsiResultError?.kind === 'login-expired' || xiaoyinsiResultError?.kind === 'permission-denied')
+        hasXiaoyinsiCredentials &&
+        credentialGenerationsAreCurrent() &&
+        (xiaoyinsiResultError?.kind === 'login-expired' || xiaoyinsiResultError?.kind === 'permission-denied')
       ) {
         await dependencies.refreshXiaoyinsiAuthorization?.(trace).catch(() => false);
         if (!readIsCurrent()) {
@@ -387,9 +396,7 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
       const summary = summarizeReadResult(result);
       markDiagnosticStage(trace, 'parse', { source, ...summary });
       const parseEmpty = summary.isParseEmpty === true;
-      const degraded = parseEmpty
-        || summary.hasDegradation === true
-        || Number(summary.partialErrorCount || 0) > 0;
+      const degraded = parseEmpty || summary.hasDegradation === true || Number(summary.partialErrorCount || 0) > 0;
       if (ownsTrace) {
         finishDiagnosticTrace(
           trace,
@@ -430,10 +437,10 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
       if (
-        source === 'xiaoyinsi'
-        && hasXiaoyinsiCredentials
-        && credentialGenerationsAreCurrent()
-        && (sourceError.kind === 'login-expired' || sourceError.kind === 'permission-denied')
+        source === 'xiaoyinsi' &&
+        hasXiaoyinsiCredentials &&
+        credentialGenerationsAreCurrent() &&
+        (sourceError.kind === 'login-expired' || sourceError.kind === 'permission-denied')
       ) {
         await dependencies.refreshXiaoyinsiAuthorization?.(trace).catch(() => false);
         if (!readIsCurrent()) {
@@ -459,118 +466,208 @@ export function createSourceGateway<Dependencies extends SourceGatewayDependenci
 
   return {
     async hasYaohuoCredential() {
-      return dependencies.isSourceAuthenticated?.('yaohuo') === true
-        && dependencies.isSourceReadBlocked?.('yaohuo') !== true;
+      return (
+        dependencies.isSourceAuthenticated?.('yaohuo') === true && dependencies.isSourceReadBlocked?.('yaohuo') !== true
+      );
     },
     getCategories(options: ManagedGetCategoriesOptions = {}, context?: SourceGatewayReadContext) {
       const source = options.source || 'all';
-      return read(source, 'getCategories', (credentials) => getForumCategories({
-        ...options,
-        ...credentials
-      }), context);
+      return read(
+        source,
+        'getCategories',
+        (credentials) =>
+          getForumCategories({
+            ...options,
+            ...credentials
+          }),
+        context
+      );
     },
     getFeed(options: ManagedGetFeedOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, 'getFeed', (credentials) => getFeed({
-        ...options,
-        ...credentials
-      }), context);
+      return read(
+        options.source,
+        'getFeed',
+        (credentials) =>
+          getFeed({
+            ...options,
+            ...credentials
+          }),
+        context
+      );
     },
     getEmojiUrls({ source, ...options }: ManagedGetEmojiUrlsOptions, context?: SourceGatewayReadContext) {
-      return read(source, 'getEmojiUrls', ({ discourseAuth, fetcher }) => getDiscourseSourceEmojiUrls(source, {
-        ...options,
-        auth: discourseAuth,
-        fetcher
-      }), context);
+      return read(
+        source,
+        'getEmojiUrls',
+        ({ discourseAuth, fetcher }) =>
+          getDiscourseSourceEmojiUrls(source, {
+            ...options,
+            auth: discourseAuth,
+            fetcher
+          }),
+        context
+      );
     },
     searchTopics(options: ManagedSearchTopicsOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, 'searchTopics', (credentials) => searchTopics({
-        ...options,
-        ...credentials
-      }), context);
+      return read(
+        options.source,
+        'searchTopics',
+        (credentials) =>
+          searchTopics({
+            ...options,
+            ...credentials
+          }),
+        context
+      );
     },
     searchTagOptions(request: ManagedTagOptionSearchOptions, context?: SourceGatewayReadContext) {
       const { source, ...options } = request;
-      return read(source, 'searchTagOptions', ({ discourseAuth, fetcher }) => searchDiscourseSourceTagOptions(source, {
-          ...options,
-          auth: discourseAuth,
-          fetcher
-        }), context);
+      return read(
+        source,
+        'searchTagOptions',
+        ({ discourseAuth, fetcher }) =>
+          searchDiscourseSourceTagOptions(source, {
+            ...options,
+            auth: discourseAuth,
+            fetcher
+          }),
+        context
+      );
     },
     searchUserOptions(request: ManagedUserOptionSearchOptions, context?: SourceGatewayReadContext) {
       const { source, ...options } = request;
-      return read(source, 'searchUserOptions', ({ discourseAuth, fetcher }) => searchDiscourseSourceUserOptions(source, {
-          ...options,
-          auth: discourseAuth,
-          fetcher
-        }), context);
+      return read(
+        source,
+        'searchUserOptions',
+        ({ discourseAuth, fetcher }) =>
+          searchDiscourseSourceUserOptions(source, {
+            ...options,
+            auth: discourseAuth,
+            fetcher
+          }),
+        context
+      );
     },
-    searchSemanticTopics({ query, source, ...options }: ManagedSemanticTopicSearchOptions, context?: SourceGatewayReadContext) {
-      return read(source, 'searchSemanticTopics', ({ discourseAuth, fetcher }) => searchLinuxDoSemanticDirect(query, {
-        ...options,
-        fetcher,
-        linuxDoAccess: discourseAuth?.linuxdo
-      }), context);
+    searchSemanticTopics(
+      { query, source, ...options }: ManagedSemanticTopicSearchOptions,
+      context?: SourceGatewayReadContext
+    ) {
+      return read(
+        source,
+        'searchSemanticTopics',
+        ({ discourseAuth, fetcher }) =>
+          searchLinuxDoSemanticDirect(query, {
+            ...options,
+            fetcher,
+            linuxDoAccess: discourseAuth?.linuxdo
+          }),
+        context
+      );
     },
-    getLinuxDoLevelProfile({ source, ...options }: ManagedLinuxDoLevelProfileOptions, context?: SourceGatewayReadContext): Promise<LinuxDoLevelProfile> {
-      return read(source, 'getLevelProfile', ({ discourseAuth, fetcher }) => {
-        if (discourseAuth?.linuxdo?.authenticated !== true) {
-          throw Object.assign(new Error('请先完成 linux.do 登录 / 验证。'), {
-            source: 'linuxdo' as const,
-            loginRequired: true
+    getLinuxDoLevelProfile(
+      { source, ...options }: ManagedLinuxDoLevelProfileOptions,
+      context?: SourceGatewayReadContext
+    ): Promise<LinuxDoLevelProfile> {
+      return read(
+        source,
+        'getLevelProfile',
+        ({ discourseAuth, fetcher }) => {
+          if (discourseAuth?.linuxdo?.authenticated !== true) {
+            throw Object.assign(new Error('请先完成 linux.do 登录 / 验证。'), {
+              source: 'linuxdo' as const,
+              loginRequired: true
+            });
+          }
+          return getLocalLinuxDoLevelProfile({
+            ...options,
+            userAgent: discourseAuth.linuxdo.userAgent,
+            fetcher
           });
-        }
-        return getLocalLinuxDoLevelProfile({
-          ...options,
-          userAgent: discourseAuth.linuxdo.userAgent,
-          fetcher
-        });
-      }, context);
+        },
+        context
+      );
     },
     getTopic(options: ManagedGetTopicOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, 'getTopic', (credentials) => getTopic({
-        ...options,
-        ...credentials
-      }), context);
+      return read(
+        options.source,
+        'getTopic',
+        (credentials) =>
+          getTopic({
+            ...options,
+            ...credentials
+          }),
+        context
+      );
     },
     getReplies(options: ManagedGetRepliesOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, 'getReplies', (credentials) => getReplies({
-        ...options,
-        ...credentials
-      }), context);
+      return read(
+        options.source,
+        'getReplies',
+        (credentials) =>
+          getReplies({
+            ...options,
+            ...credentials
+          }),
+        context
+      );
     },
     getReply(options: ManagedGetReplyOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, 'getReply', (credentials) => getForumReply({
-        ...options,
-        ...credentials
-      }), context);
+      return read(
+        options.source,
+        'getReply',
+        (credentials) =>
+          getForumReply({
+            ...options,
+            ...credentials
+          }),
+        context
+      );
     },
     getUserProfile(options: ManagedGetUserProfileOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, 'getUserProfile', (credentials) => getUserProfile({
-        ...options,
-        ...credentials
-      }), context);
+      return read(
+        options.source,
+        'getUserProfile',
+        (credentials) =>
+          getUserProfile({
+            ...options,
+            ...credentials
+          }),
+        context
+      );
     },
     resolveNodeSeekUser(options: ManagedResolveNodeSeekUserOptions, context?: SourceGatewayReadContext) {
-      return read('nodeseek', 'resolveUser', ({ fetcher, nodeSeekAuthenticated, nodeSeekUserAgent }) => (
-        resolveNodeSeekUserDirect(options.username, {
-          authenticated: nodeSeekAuthenticated,
-          fetcher,
-          nodeSeekUserAgent,
-          signal: options.signal
-        })
-      ), context);
+      return read(
+        'nodeseek',
+        'resolveUser',
+        ({ fetcher, nodeSeekAuthenticated, nodeSeekUserAgent }) =>
+          resolveNodeSeekUserDirect(options.username, {
+            authenticated: nodeSeekAuthenticated,
+            fetcher,
+            nodeSeekUserAgent,
+            signal: options.signal
+          }),
+        context
+      );
     },
-    getLevelProfile({ source, ...options }: ManagedLevelProfileOptions, context?: SourceGatewayReadContext): Promise<XiaoyinsiLevelProfile> {
-      return read(source, 'getLevelProfile', ({ discourseAuth, fetcher }) => {
-        const credentials = discourseAuth?.xiaoyinsi;
-        if (!credentials) {
-          throw Object.assign(new Error('请先授权小隐寺'), {
-            source: 'xiaoyinsi' as const,
-            loginRequired: true
-          });
-        }
-        return getLocalXiaoyinsiLevelProfile({ ...options, credentials, fetcher });
-      }, context);
+    getLevelProfile(
+      { source, ...options }: ManagedLevelProfileOptions,
+      context?: SourceGatewayReadContext
+    ): Promise<XiaoyinsiLevelProfile> {
+      return read(
+        source,
+        'getLevelProfile',
+        ({ discourseAuth, fetcher }) => {
+          const credentials = discourseAuth?.xiaoyinsi;
+          if (!credentials) {
+            throw Object.assign(new Error('请先授权小隐寺'), {
+              source: 'xiaoyinsi' as const,
+              loginRequired: true
+            });
+          }
+          return getLocalXiaoyinsiLevelProfile({ ...options, credentials, fetcher });
+        },
+        context
+      );
     }
   };
 }

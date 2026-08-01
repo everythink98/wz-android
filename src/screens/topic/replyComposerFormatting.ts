@@ -48,7 +48,10 @@ export function replyComposerExpressionGridKey(accessory: ReplyComposerAccessory
 
 function linePrefix(text: string, prefix: string, fallback: string) {
   const value = text || fallback;
-  return value.split('\n').map((line) => `${prefix}${line}`).join('\n');
+  return value
+    .split('\n')
+    .map((line) => `${prefix}${line}`)
+    .join('\n');
 }
 
 function markdownValue(action: ReplyComposerFormatAction, text: string) {
@@ -109,7 +112,7 @@ export function applyReplyComposerFormat({
   return replaceReplyComposerSelection(content, selection, formatted);
 }
 
-function replyComposerFormatActions(source?: Source): Array<{ action: ReplyComposerFormatAction; label: string }> {
+function replyComposerFormatActions(source?: Source): { action: ReplyComposerFormatAction; label: string }[] {
   if (!sourceSupportsTopicAction(source, 'reply')) {
     return [];
   }

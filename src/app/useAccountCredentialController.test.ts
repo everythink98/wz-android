@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react', () => ({
-  useCallback: <T,>(callback: T) => callback,
+  useCallback: <T>(callback: T) => callback,
   useEffect: () => undefined,
-  useRef: <T,>(value: T) => ({ current: value }),
-  useState: <T,>(initial: T) => [initial, vi.fn()]
+  useRef: <T>(value: T) => ({ current: value }),
+  useState: <T>(initial: T) => [initial, vi.fn()]
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -80,7 +80,9 @@ describe('account credential controller ownership', () => {
 
   it('ignores a failure from an older attempt of the same site', () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const { controller } = createController();
     controller.openAccountLogin('nodeseek', true);
     controller.openAccountLogin('nodeseek', true);
@@ -90,9 +92,7 @@ describe('account credential controller ownership', () => {
     const finishes = lines
       .map((line) => JSON.parse(line) as { operation?: string; phase?: string; outcome?: string })
       .filter((event) => event.operation === 'load' && event.phase === 'finish');
-    expect(finishes).toEqual([
-      expect.objectContaining({ outcome: 'stale' })
-    ]);
+    expect(finishes).toEqual([expect.objectContaining({ outcome: 'stale' })]);
   });
 
   it('ignores a form probe from an older attempt of the same site', async () => {
@@ -125,26 +125,30 @@ describe('account credential controller ownership', () => {
 
   it('does not start a fill trace when linux.do rejects opening during close', () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const { controller } = createController({ changeLinuxDoPanel: vi.fn(() => false) });
 
     controller.openAccountLogin('linuxdo', true);
 
-    expect(lines.map((line) => JSON.parse(line) as { operation?: string }))
-      .not.toEqual(expect.arrayContaining([expect.objectContaining({ operation: 'load' })]));
+    expect(lines.map((line) => JSON.parse(line) as { operation?: string })).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ operation: 'load' })])
+    );
   });
 
   it('finishes automatic fill immediately when WebViews are blocked', () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const { controller } = createController({ webViewBlockMessage: 'WebView unavailable' });
 
     controller.openAccountLogin('nodeseek', true);
 
-    expect(lines.map((line) => JSON.parse(line) as { operation?: string; phase?: string; outcome?: string }))
-      .toEqual(expect.arrayContaining([
-        expect.objectContaining({ operation: 'load', phase: 'finish', outcome: 'blocked' })
-      ]));
+    expect(lines.map((line) => JSON.parse(line) as { operation?: string; phase?: string; outcome?: string })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ operation: 'load', phase: 'finish', outcome: 'blocked' })])
+    );
   });
 
   it('does not let a later summary reload suppress a completed save', async () => {
@@ -154,7 +158,11 @@ describe('account credential controller ownership', () => {
       hasCredential: true;
       protection: 'biometric';
     }) => void;
-    mocks.save.mockReturnValue(new Promise((resolve) => { resolveSave = resolve; }));
+    mocks.save.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve;
+      })
+    );
     mocks.getSummary.mockImplementation(async (site: 'nodeseek' | 'linuxdo' | 'yaohuo') => ({
       site,
       state: 'missing',
@@ -189,7 +197,9 @@ describe('account credential controller ownership', () => {
       protection: 'biometric'
     });
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const { controller } = createController();
 
     await controller.handleAccountCenterCommand({
@@ -199,51 +209,64 @@ describe('account credential controller ownership', () => {
       password: 'private-password'
     });
 
-    expect(lines
-      .map((line) => JSON.parse(line) as { operation?: string; phase?: string })
-      .filter((event) => event.operation === 'save')
-      .map((event) => event.phase))
-      .toEqual(['intent', 'guard', 'credential', 'persist', 'apply', 'finish']);
+    expect(
+      lines
+        .map((line) => JSON.parse(line) as { operation?: string; phase?: string })
+        .filter((event) => event.operation === 'save')
+        .map((event) => event.phase)
+    ).toEqual(['intent', 'guard', 'credential', 'persist', 'apply', 'finish']);
   });
 
   it('records biometric cancellation without account or password text', async () => {
     mocks.save.mockRejectedValue(new Error('User canceled the authentication'));
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const { controller } = createController();
 
-    await expect(controller.handleAccountCenterCommand({
-      type: 'save-credential',
-      site: 'nodeseek',
-      account: 'PRIVATE_ACCOUNT_VALUE',
-      password: 'PRIVATE_PASSWORD_VALUE'
-    })).rejects.toThrow('User canceled');
+    await expect(
+      controller.handleAccountCenterCommand({
+        type: 'save-credential',
+        site: 'nodeseek',
+        account: 'PRIVATE_ACCOUNT_VALUE',
+        password: 'PRIVATE_PASSWORD_VALUE'
+      })
+    ).rejects.toThrow('User canceled');
 
-    const events = lines.map((line) => JSON.parse(line) as {
-      operation?: string;
-      phase?: string;
-      outcome?: string;
-      reason?: string;
-      isAuthenticationRequired?: boolean;
-    });
-    expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ operation: 'save', phase: 'intent', isAuthenticationRequired: true }),
-      expect.objectContaining({ operation: 'save', phase: 'credential', isAuthenticationRequired: true }),
-      expect.objectContaining({ operation: 'save', phase: 'finish', outcome: 'canceled', reason: 'canceled' })
-    ]));
+    const events = lines.map(
+      (line) =>
+        JSON.parse(line) as {
+          operation?: string;
+          phase?: string;
+          outcome?: string;
+          reason?: string;
+          isAuthenticationRequired?: boolean;
+        }
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: 'save', phase: 'intent', isAuthenticationRequired: true }),
+        expect.objectContaining({ operation: 'save', phase: 'credential', isAuthenticationRequired: true }),
+        expect.objectContaining({ operation: 'save', phase: 'finish', outcome: 'canceled', reason: 'canceled' })
+      ])
+    );
     expect(lines.join('')).not.toMatch(/PRIVATE_ACCOUNT_VALUE|PRIVATE_PASSWORD_VALUE|User canceled/);
   });
 
   it('drops an older summary reload that finishes after a save', async () => {
-    const resolvers: Array<(value: {
+    const resolvers: ((value: {
       site: 'nodeseek' | 'linuxdo' | 'yaohuo';
       state: 'missing';
       hasCredential: false;
       protection: null;
-    }) => void> = [];
-    mocks.getSummary.mockImplementation((_site: 'nodeseek' | 'linuxdo' | 'yaohuo') => new Promise((resolve) => {
-      resolvers.push((value) => resolve(value));
-    }));
+    }) => void)[] = [];
+    mocks.getSummary.mockImplementation(
+      (_site: 'nodeseek' | 'linuxdo' | 'yaohuo') =>
+        new Promise((resolve) => {
+          resolvers.push((value) => resolve(value));
+        })
+    );
     mocks.save.mockResolvedValue({
       site: 'nodeseek',
       state: 'saved',
@@ -251,7 +274,9 @@ describe('account credential controller ownership', () => {
       protection: 'biometric'
     });
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const { controller } = createController();
 
     const oldReload = controller.reloadCredentialSummaries();
@@ -266,22 +291,26 @@ describe('account credential controller ownership', () => {
     });
 
     await expect(oldReload).resolves.toBe(false);
-    expect(lines.map((line) => JSON.parse(line) as { operation?: string; phase?: string; outcome?: string }))
-      .toEqual(expect.arrayContaining([
+    expect(lines.map((line) => JSON.parse(line) as { operation?: string; phase?: string; outcome?: string })).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({ operation: 'load-summary', phase: 'finish', outcome: 'stale' })
-      ]));
+      ])
+    );
   });
 
   it('drops an older summary reload that finishes after a delete', async () => {
-    const resolvers: Array<(value: {
+    const resolvers: ((value: {
       site: 'nodeseek' | 'linuxdo' | 'yaohuo';
       state: 'saved';
       hasCredential: true;
       protection: 'biometric';
-    }) => void> = [];
-    mocks.getSummary.mockImplementation((_site: 'nodeseek' | 'linuxdo' | 'yaohuo') => new Promise((resolve) => {
-      resolvers.push((value) => resolve(value));
-    }));
+    }) => void)[] = [];
+    mocks.getSummary.mockImplementation(
+      (_site: 'nodeseek' | 'linuxdo' | 'yaohuo') =>
+        new Promise((resolve) => {
+          resolvers.push((value) => resolve(value));
+        })
+    );
     mocks.delete.mockResolvedValue(undefined);
     const { controller } = createController();
 

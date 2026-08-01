@@ -10,23 +10,41 @@ const plugin = require('../plugins/withNetworkProxyModule.js') as {
 };
 const scratchRoots: string[] = [];
 const reviewedDataSource = readFileSync(
-  join(process.cwd(), 'node_modules', 'expo-video', 'android', 'src', 'main', 'java', 'expo', 'modules', 'video', 'utils', 'DataSourceUtils.kt'),
+  join(
+    process.cwd(),
+    'node_modules',
+    'expo-video',
+    'android',
+    'src',
+    'main',
+    'java',
+    'expo',
+    'modules',
+    'video',
+    'utils',
+    'DataSourceUtils.kt'
+  ),
   'utf8'
 )
-  .replace(
-    'import com.facebook.react.modules.network.OkHttpClientProvider',
-    'import okhttp3.OkHttpClient'
-  )
-  .replace(
-    '  val client = OkHttpClientProvider.createClient()',
-    '  val client = OkHttpClient.Builder().build()'
-  );
+  .replace('import com.facebook.react.modules.network.OkHttpClientProvider', 'import okhttp3.OkHttpClient')
+  .replace('  val client = OkHttpClientProvider.createClient()', '  val client = OkHttpClient.Builder().build()');
 
 function expoVideoFixture(source = reviewedDataSource) {
   const projectRoot = mkdtempSync(join(tmpdir(), 'wz-expo-video-plugin-'));
   scratchRoots.push(projectRoot);
   const packageRoot = join(projectRoot, 'node_modules', 'expo-video');
-  const sourcePath = join(packageRoot, 'android', 'src', 'main', 'java', 'expo', 'modules', 'video', 'utils', 'DataSourceUtils.kt');
+  const sourcePath = join(
+    packageRoot,
+    'android',
+    'src',
+    'main',
+    'java',
+    'expo',
+    'modules',
+    'video',
+    'utils',
+    'DataSourceUtils.kt'
+  );
   mkdirSync(dirname(sourcePath), { recursive: true });
   writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '3.0.16' }));
   writeFileSync(sourcePath, source);
@@ -53,26 +71,19 @@ describe('withNetworkProxyModule Expo Video integration', () => {
 
   it('fails before native generation when the locked Expo Video source shape drifts', () => {
     const fixture = expoVideoFixture(
-      reviewedDataSource.replace(
-        'val client = OkHttpClient.Builder().build()',
-        'val client = customVideoClient()'
-      )
+      reviewedDataSource.replace('val client = OkHttpClient.Builder().build()', 'val client = customVideoClient()')
     );
 
-    expect(() => plugin.patchExpoVideoDataSource(fixture.projectRoot))
-      .toThrow('Expo Video DataSource 源码与已审核版本不匹配');
+    expect(() => plugin.patchExpoVideoDataSource(fixture.projectRoot)).toThrow(
+      'Expo Video DataSource 源码与已审核版本不匹配'
+    );
   });
 });
 
 describe('withNetworkProxyModule local relay hardening', () => {
-  const pluginSource = readFileSync(
-    join(process.cwd(), 'plugins', 'withNetworkProxyModule.js'),
-    'utf8'
-  );
+  const pluginSource = readFileSync(join(process.cwd(), 'plugins', 'withNetworkProxyModule.js'), 'utf8');
 
   it('[REG-PROXY-007] binds the relay with the connection cap as its backlog', () => {
-    expect(pluginSource).toContain(
-      'ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))'
-    );
+    expect(pluginSource).toContain('ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))');
   });
 });

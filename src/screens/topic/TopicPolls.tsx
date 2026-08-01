@@ -15,10 +15,14 @@ function pollChoiceRangeLabel(poll: TopicPoll) {
   if (!poll.multiple) {
     return undefined;
   }
-  return [
-    typeof poll.min === 'number' ? `至少 ${poll.min} 项` : undefined,
-    typeof poll.max === 'number' ? `最多 ${poll.max} 项` : undefined
-  ].filter(Boolean).join('，') || undefined;
+  return (
+    [
+      typeof poll.min === 'number' ? `至少 ${poll.min} 项` : undefined,
+      typeof poll.max === 'number' ? `最多 ${poll.max} 项` : undefined
+    ]
+      .filter(Boolean)
+      .join('，') || undefined
+  );
 }
 
 function pollTypeLabel(poll: TopicPoll) {
@@ -79,11 +83,15 @@ export function TopicPolls({
         const pollKey = `${keyPrefix}-${topicPollKey(poll, index)}`;
         const hasCounts = poll.options.some((option) => typeof option.count === 'number');
         const totalVotes = pollTotalVotes(poll);
-        const selectedOptionIds = pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
+        const selectedOptionIds =
+          pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
         const selectedSet = new Set(selectedOptionIds);
         const discoursePollReady = !isDiscourseSource(source) || Boolean(poll.postId && poll.name);
         const pollReadonly = Boolean(poll.readonly || !canVotePollSource);
-        const pollOptionDisabled = actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !canWritePollSource || !discoursePollReady);
+        const pollOptionDisabled =
+          actionBusy ||
+          pollReadonly ||
+          Boolean(poll.closed || poll.voted || !canWritePollSource || !discoursePollReady);
         const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
         const pollStatus = poll.closed
           ? '已关闭'
@@ -115,22 +123,25 @@ export function TopicPolls({
                   : selectionRangeStatus || '提交投票';
         const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
         return (
-          <View key={getMappingKey(pollKey, index)} style={[styles.pollBlock, embeddedInArticle && index === 0 && styles.pollBlockFirstInArticle]}>
+          <View
+            key={getMappingKey(pollKey, index)}
+            style={[styles.pollBlock, embeddedInArticle && index === 0 && styles.pollBlockFirstInArticle]}
+          >
             <View style={styles.pollHeader}>
               <Text style={styles.pollTitle}>{poll.title || '投票'}</Text>
             </View>
             <View style={styles.pollOptionList}>
               {poll.options.map((option, optionIndex) => {
                 const selected = selectedSet.has(option.id);
-                const OptionIcon = poll.multiple
-                  ? selected ? CheckSquare : Square
-                  : selected ? CheckCircle : Circle;
-                const percentValue = hasCounts && totalVotes > 0 && typeof option.count === 'number'
-                  ? Math.round((option.count / totalVotes) * 100)
-                  : undefined;
-                const countText = typeof option.count === 'number'
-                  ? `${option.count} 票${percentValue !== undefined ? ` · ${percentValue}%` : ''}`
-                  : '';
+                const OptionIcon = poll.multiple ? (selected ? CheckSquare : Square) : selected ? CheckCircle : Circle;
+                const percentValue =
+                  hasCounts && totalVotes > 0 && typeof option.count === 'number'
+                    ? Math.round((option.count / totalVotes) * 100)
+                    : undefined;
+                const countText =
+                  typeof option.count === 'number'
+                    ? `${option.count} 票${percentValue !== undefined ? ` · ${percentValue}%` : ''}`
+                    : '';
                 return (
                   <Pressable
                     key={getMappingKey(option.id, optionIndex)}
@@ -138,7 +149,11 @@ export function TopicPolls({
                     accessibilityState={{ checked: selected, disabled: pollOptionDisabled }}
                     android_ripple={androidRipple(theme.primarySoft)}
                     disabled={pollOptionDisabled}
-                    style={[styles.pollOptionRow, optionIndex > 0 && styles.pollOptionDivider, selected && styles.pollOptionRowSelected]}
+                    style={[
+                      styles.pollOptionRow,
+                      optionIndex > 0 && styles.pollOptionDivider,
+                      selected && styles.pollOptionRowSelected
+                    ]}
                     onPress={() => {
                       triggerPressFeedback();
                       onTogglePollSelection(pollKey, poll, option.id);
@@ -169,7 +184,9 @@ export function TopicPolls({
                   </View>
                 ) : null}
                 {pollMetaItems.map((item, index) => (
-                  <Text key={getMappingKey(item, index)} style={styles.pollMetaPill}>{item}</Text>
+                  <Text key={getMappingKey(item, index)} style={styles.pollMetaPill}>
+                    {item}
+                  </Text>
                 ))}
                 <Text style={styles.pollStatePill}>{pollStatus}</Text>
               </View>

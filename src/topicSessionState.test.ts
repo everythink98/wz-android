@@ -70,13 +70,15 @@ describe('topic local session state', () => {
       replyTarget: null
     });
     expect(topicSessionFromSnapshot(snapshot)).toEqual(restoredDraft);
-    expect(topicSessionFromSnapshot({
-      ...snapshot,
-      replyComposerOpen: true,
-      replyEditTarget: session.replyEditTarget,
-      replyFace: session.replyFace,
-      replyTarget: session.replyTarget
-    })).toEqual(restoredDraft);
+    expect(
+      topicSessionFromSnapshot({
+        ...snapshot,
+        replyComposerOpen: true,
+        replyEditTarget: session.replyEditTarget,
+        replyFace: session.replyFace,
+        replyTarget: session.replyTarget
+      })
+    ).toEqual(restoredDraft);
     expect(snapshot).not.toHaveProperty('topicDetail');
     expect(snapshot).not.toHaveProperty('topicReplies');
   });

@@ -70,11 +70,7 @@ export type XiaoyinsiAuthDependencies = {
 };
 
 export type XiaoyinsiAuthErrorCode =
-  | 'unsupported'
-  | 'invalid-response'
-  | 'nonce-mismatch'
-  | 'decrypt-failed'
-  | 'missing-client-id';
+  'unsupported' | 'invalid-response' | 'nonce-mismatch' | 'decrypt-failed' | 'missing-client-id';
 
 export class XiaoyinsiAuthError extends Error {
   readonly code: XiaoyinsiAuthErrorCode;
@@ -132,15 +128,19 @@ async function postJson(
   dependencies: XiaoyinsiAuthDependencies,
   headers: Record<string, string> = {}
 ) {
-  return fetchWithTimeout(`${XIAOYINSI_BASE_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...headers
+  return fetchWithTimeout(
+    `${XIAOYINSI_BASE_URL}${path}`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...headers
+      },
+      body: JSON.stringify(body)
     },
-    body: JSON.stringify(body)
-  }, dependencies);
+    dependencies
+  );
 }
 
 function validVerificationUri(value: unknown) {
@@ -149,37 +149,43 @@ function validVerificationUri(value: unknown) {
   }
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && url.hostname.toLowerCase() === 'forum.xiaoyinsi.com'
-      ? url.toString()
-      : '';
+    return url.protocol === 'https:' && url.hostname.toLowerCase() === 'forum.xiaoyinsi.com' ? url.toString() : '';
   } catch {
     return '';
   }
 }
 
 function normalizeUserCode(value: unknown) {
-  const code = String(value || '').trim().toUpperCase();
+  const code = String(value || '')
+    .trim()
+    .toUpperCase();
   const match = code.match(/^([A-HJ-NP-Z2-9]{4})-?([A-HJ-NP-Z2-9]{4})$/);
   return match ? `${match[1]}-${match[2]}` : '';
 }
 
-function parsePendingResponse(data: Record<string, unknown>, nonce: string, createdAt: number): XiaoyinsiPendingAuthorization {
+function parsePendingResponse(
+  data: Record<string, unknown>,
+  nonce: string,
+  createdAt: number
+): XiaoyinsiPendingAuthorization {
   const deviceCode = String(data.device_code || '').trim();
   const userCode = normalizeUserCode(data.user_code);
   const verificationUri = validVerificationUri(data.verification_uri);
   const verificationUriWithRequest = validVerificationUri(data.verification_uri_with_request);
   const expiresIn = Number(data.expires_in);
   const interval = Number(data.interval);
-  if (!/^[a-f0-9]{64}$/i.test(deviceCode)
-    || !userCode
-    || !verificationUri
-    || !verificationUriWithRequest
-    || !Number.isFinite(expiresIn)
-    || expiresIn <= 0
-    || expiresIn > 600
-    || !Number.isFinite(interval)
-    || interval <= 0
-    || interval > 60) {
+  if (
+    !/^[a-f0-9]{64}$/i.test(deviceCode) ||
+    !userCode ||
+    !verificationUri ||
+    !verificationUriWithRequest ||
+    !Number.isFinite(expiresIn) ||
+    expiresIn <= 0 ||
+    expiresIn > 600 ||
+    !Number.isFinite(interval) ||
+    interval <= 0 ||
+    interval > 60
+  ) {
     throw new XiaoyinsiAuthError('invalid-response', '小隐寺返回了无效的授权信息，请重试。');
   }
   return {
@@ -213,16 +219,16 @@ function parseStoredPending(value: string | null): XiaoyinsiPendingAuthorization
       expiresAt: Number(data.expiresAt),
       intervalMs: Number(data.intervalMs)
     };
-    return /^[a-f0-9]{64}$/i.test(pending.deviceCode)
-      && Boolean(pending.userCode)
-      && pending.verificationUri
-      && pending.verificationUriWithRequest
-      && /^[a-f0-9]{32,256}$/i.test(pending.nonce)
-      && Number.isFinite(pending.createdAt)
-      && Number.isFinite(pending.expiresAt)
-      && pending.expiresAt > pending.createdAt
-      && Number.isFinite(pending.intervalMs)
-      && pending.intervalMs > 0
+    return /^[a-f0-9]{64}$/i.test(pending.deviceCode) &&
+      Boolean(pending.userCode) &&
+      pending.verificationUri &&
+      pending.verificationUriWithRequest &&
+      /^[a-f0-9]{32,256}$/i.test(pending.nonce) &&
+      Number.isFinite(pending.createdAt) &&
+      Number.isFinite(pending.expiresAt) &&
+      pending.expiresAt > pending.createdAt &&
+      Number.isFinite(pending.intervalMs) &&
+      pending.intervalMs > 0
       ? pending
       : undefined;
   } catch {
@@ -239,9 +245,11 @@ export async function loadXiaoyinsiPendingAuthorization() {
   return pending;
 }
 
-export async function loadXiaoyinsiCredentials(options: {
-  captureGeneration?: (generation: number) => void;
-} = {}): Promise<XiaoyinsiApiCredentials | undefined> {
+export async function loadXiaoyinsiCredentials(
+  options: {
+    captureGeneration?: (generation: number) => void;
+  } = {}
+): Promise<XiaoyinsiApiCredentials | undefined> {
   const generation = currentXiaoyinsiCredentialGeneration();
   options.captureGeneration?.(generation);
   let values: [string | null, string | null];
@@ -279,10 +287,14 @@ async function stableClientId(keystore: XiaoyinsiKeystore) {
 }
 
 export async function checkXiaoyinsiDeviceCodeCapability(dependencies: XiaoyinsiAuthDependencies = {}) {
-  const response = await fetchWithTimeout(`${XIAOYINSI_BASE_URL}${AUTH_CAPABILITY_PATH}`, {
-    method: 'HEAD',
-    headers: { Accept: 'application/json' }
-  }, dependencies);
+  const response = await fetchWithTimeout(
+    `${XIAOYINSI_BASE_URL}${AUTH_CAPABILITY_PATH}`,
+    {
+      method: 'HEAD',
+      headers: { Accept: 'application/json' }
+    },
+    dependencies
+  );
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -304,21 +316,21 @@ export async function beginXiaoyinsiDeviceAuth(dependencies: XiaoyinsiAuthDepend
     if (!/^[a-f0-9]{64}$/.test(nonce) || !publicKey.includes('BEGIN PUBLIC KEY')) {
       throw new XiaoyinsiAuthError('invalid-response', '无法创建小隐寺安全授权请求。');
     }
-    const response = await postJson(DEVICE_CODE_PATH, {
-      application_name: APPLICATION_NAME,
-      scopes: 'read,write',
-      client_id: clientId,
-      nonce,
-      public_key: publicKey,
-      padding: 'oaep'
-    }, dependencies);
+    const response = await postJson(
+      DEVICE_CODE_PATH,
+      {
+        application_name: APPLICATION_NAME,
+        scopes: 'read,write',
+        client_id: clientId,
+        nonce,
+        public_key: publicKey,
+        padding: 'oaep'
+      },
+      dependencies
+    );
     const data = await responseJson(response, '小隐寺授权请求返回内容格式不正确。');
     const pending = parsePendingResponse(data, nonce, nowFrom(dependencies));
-    await SecureStore.setItemAsync(
-      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
-      JSON.stringify(pending),
-      secureStoreOptions
-    );
+    await SecureStore.setItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify(pending), secureStoreOptions);
     return pending;
   } catch (error) {
     await clearPending(keystore, true).catch(() => undefined);
@@ -411,10 +423,7 @@ export async function retryXiaoyinsiRevocationCleanup(
   dependencies: Pick<XiaoyinsiAuthDependencies, 'keystore'> = {}
 ): Promise<XiaoyinsiRevocationCleanupResult> {
   const cleanupMarkerPersisted = await hasXiaoyinsiRevocationCleanupPending();
-  return clearRevokedLocalAuthorization(
-    dependencies.keystore || xiaoyinsiKeystore,
-    cleanupMarkerPersisted
-  );
+  return clearRevokedLocalAuthorization(dependencies.keystore || xiaoyinsiKeystore, cleanupMarkerPersisted);
 }
 
 function parseDecryptedPayload(value: string, expectedNonce: string) {
@@ -438,7 +447,9 @@ function parseDecryptedPayload(value: string, expectedNonce: string) {
   return key;
 }
 
-export async function pollXiaoyinsiDeviceAuth(dependencies: XiaoyinsiAuthDependencies = {}): Promise<XiaoyinsiPollResult> {
+export async function pollXiaoyinsiDeviceAuth(
+  dependencies: XiaoyinsiAuthDependencies = {}
+): Promise<XiaoyinsiPollResult> {
   const keystore = dependencies.keystore || xiaoyinsiKeystore;
   const pending = await loadXiaoyinsiPendingAuthorization();
   assertNotCanceled(dependencies);
@@ -531,22 +542,14 @@ export async function revokeXiaoyinsiAuthorization(dependencies: XiaoyinsiAuthDe
   });
   await responseJson(response, '小隐寺撤销授权返回内容格式不正确。');
   const cleanupMarkerPersisted = await persistRevocationCleanupMarker();
-  return clearRevokedLocalAuthorization(
-    dependencies.keystore || xiaoyinsiKeystore,
-    cleanupMarkerPersisted
-  );
+  return clearRevokedLocalAuthorization(dependencies.keystore || xiaoyinsiKeystore, cleanupMarkerPersisted);
 }
 
 export function deviceAuthCountdown(expiresAt: number, now = Date.now()) {
   return Math.max(0, Math.ceil((expiresAt - now) / 1_000));
 }
 
-export function nextXiaoyinsiPollDelay(
-  appState: string,
-  now: number,
-  lastPollAt: number | null,
-  intervalMs: number
-) {
+export function nextXiaoyinsiPollDelay(appState: string, now: number, lastPollAt: number | null, intervalMs: number) {
   if (appState !== 'active') {
     return null;
   }

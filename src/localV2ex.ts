@@ -2,7 +2,17 @@ import { fetchWithTimeout, type Fetcher } from './request';
 import type { SearchSort } from './feedLogic';
 import { searchTimeRangeStartEpoch, type V2exSearchFilter } from './searchFilters';
 import { XMLParser } from 'fast-xml-parser';
-import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail, UserProfile, UserReplyActivity, V2exFeedFilter } from './types';
+import type {
+  CategoriesResponse,
+  FeedResponse,
+  Reply,
+  SearchResponse,
+  Topic,
+  TopicDetail,
+  UserProfile,
+  UserReplyActivity,
+  V2exFeedFilter
+} from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -134,7 +144,10 @@ function normalizeApiTopic(raw: unknown): Topic | null {
   };
 }
 
-function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], fallbackCategory?: string): Topic | null {
+function normalizeHtmlTopic(
+  element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
+  fallbackCategory?: string
+): Topic | null {
   const link = element.querySelector('.topic-link');
   const href = link?.getAttribute('href') || '';
   const id = href.match(/\/t\/(\d+)/)?.[1];
@@ -144,16 +157,20 @@ function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['qu
   }
   const nodeLink = element.querySelector('a.node');
   const categoryId = nodeIdFromHref(nodeLink?.getAttribute('href')) || fallbackCategory;
-  const memberLink = element.querySelector('.topic_info strong a[href^="/member/"]')
-    || element.querySelector('strong a[href^="/member/"]')
-    || element.querySelector('a[href^="/member/"]');
+  const memberLink =
+    element.querySelector('.topic_info strong a[href^="/member/"]') ||
+    element.querySelector('strong a[href^="/member/"]') ||
+    element.querySelector('a[href^="/member/"]');
   const memberHref = memberLink?.getAttribute('href') || '';
   const memberName = elementText(memberLink);
   const avatar = element.querySelector('img.avatar')?.getAttribute('src');
   const timestamp = element.querySelector('span[title]')?.getAttribute('title');
-  const replyBadge = element.querySelector(`td[align="right"] a[href*="/t/${id}#reply"].count_livid,td[align="right"] a[href*="/t/${id}#reply"].count_orange`)
-    || element.querySelector('td[align="right"] .count_livid,td[align="right"] .count_orange')
-    || element.querySelector('.count_livid');
+  const replyBadge =
+    element.querySelector(
+      `td[align="right"] a[href*="/t/${id}#reply"].count_livid,td[align="right"] a[href*="/t/${id}#reply"].count_orange`
+    ) ||
+    element.querySelector('td[align="right"] .count_livid,td[align="right"] .count_orange') ||
+    element.querySelector('.count_livid');
   const countText = replyBadge?.text || href.match(/#reply(\d+)/)?.[1] || '';
   const createdAt = toV2exHtmlIsoString(timestamp) || new Date().toISOString();
   const accessRequirement = accessRequirementFromText(elementText(element).replace(title, ' '));
@@ -249,9 +266,11 @@ function parseV2exViewCount(root: ReturnType<typeof parseHtml>) {
 }
 
 function parseV2exTopicUpvoteCount(root: ReturnType<typeof parseHtml>) {
-  const voteBox = root.querySelectorAll('[id^="topic_"]')
+  const voteBox = root
+    .querySelectorAll('[id^="topic_"]')
     .find((element) => /^topic_\d+_votes$/.test(String(element.getAttribute('id') || '')));
-  const upvoteLink = voteBox?.querySelectorAll('a')
+  const upvoteLink = voteBox
+    ?.querySelectorAll('a')
     .find((element) => /upVoteTopic/i.test(String(element.getAttribute('onclick') || '')));
   return upvoteLink ? parsePositiveInteger(elementText(upvoteLink)) : undefined;
 }
@@ -296,7 +315,8 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
     const floor = parsePositiveInteger(element.querySelector('.no')?.text);
     const createdAt = toV2exHtmlIsoString(element.querySelector('.ago')?.getAttribute('title'));
     const replyContent = element.querySelector('.reply_content')?.innerHTML || '';
-    const thanksCount = element.querySelectorAll('.small')
+    const thanksCount = element
+      .querySelectorAll('.small')
       .map((item) => parseV2exThanksCount(item.innerHTML || item.text))
       .find((count): count is number => typeof count === 'number');
     const replyTargetAuthor = v2exReplyTargetAuthor(replyContent);
@@ -313,9 +333,10 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
     if (floor) {
       repliesByFloor.set(floor, meta);
     }
-    const authorLink = element.querySelector('strong a[href^="/member/"]')
-      || element.querySelector('a.dark[href^="/member/"]')
-      || element.querySelector('a[href^="/member/"]');
+    const authorLink =
+      element.querySelector('strong a[href^="/member/"]') ||
+      element.querySelector('a.dark[href^="/member/"]') ||
+      element.querySelector('a[href^="/member/"]');
     const author = elementText(authorLink);
     const authorHref = authorLink?.getAttribute('href') || '';
     const contentHtml = sanitizeContentHtml(replyContent, BASE_URL);
@@ -367,9 +388,9 @@ function decodeV2exFeedSeenIds(cursor?: string | null) {
   }
   try {
     const parsed = JSON.parse(decodeURIComponent(cursor)) as { seenIds?: unknown };
-    return new Set(Array.isArray(parsed.seenIds)
-      ? parsed.seenIds.map((item) => String(item || '').trim()).filter(Boolean)
-      : []);
+    return new Set(
+      Array.isArray(parsed.seenIds) ? parsed.seenIds.map((item) => String(item || '').trim()).filter(Boolean) : []
+    );
   } catch {
     return new Set<string>();
   }
@@ -387,12 +408,13 @@ function v2exHtmlWindowStart(options: { page: number; limit: number; category?: 
   if (options.category || options.page <= 1) {
     return (options.page - 1) * options.limit;
   }
-  return Math.min(options.limit, HTML_LIST_PAGE_SIZE) + ((options.page - 2) * options.limit);
+  return Math.min(options.limit, HTML_LIST_PAGE_SIZE) + (options.page - 2) * options.limit;
 }
 
 function parseV2exAllTabPage(html: string, limit: number) {
   const root = parseHtml(html);
-  const items = root.querySelectorAll('.cell.item')
+  const items = root
+    .querySelectorAll('.cell.item')
     .map((element) => normalizeHtmlTopic(element))
     .filter(Boolean) as Topic[];
   const hasRecentLink = root.querySelectorAll('a[href]').some((link) => {
@@ -411,7 +433,8 @@ function parseV2exAllTabPage(html: string, limit: number) {
 
 function parseV2exListPage(html: string, page: number, path: string, fallbackCategory?: string) {
   const root = parseHtml(html);
-  const items = root.querySelectorAll('.cell')
+  const items = root
+    .querySelectorAll('.cell')
     .map((element) => normalizeHtmlTopic(element, fallbackCategory))
     .filter(Boolean) as Topic[];
   const hasMore = root.querySelectorAll('a[href]').some((link) => {
@@ -426,9 +449,13 @@ function parseV2exListPage(html: string, page: number, path: string, fallbackCat
 }
 
 async function fetchJson<T>(url: string, options: V2exOptions = {}) {
-  const response = await fetchWithTimeout(url, {
-    headers: { Accept: 'application/json,text/plain,*/*', Referer: BASE_URL }
-  }, options);
+  const response = await fetchWithTimeout(
+    url,
+    {
+      headers: { Accept: 'application/json,text/plain,*/*', Referer: BASE_URL }
+    },
+    options
+  );
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -437,9 +464,13 @@ async function fetchJson<T>(url: string, options: V2exOptions = {}) {
 }
 
 async function fetchText(url: string, options: V2exOptions = {}) {
-  const response = await fetchWithTimeout(url, {
-    headers: { Accept: 'text/html,application/xhtml+xml,*/*', Referer: BASE_URL }
-  }, options);
+  const response = await fetchWithTimeout(
+    url,
+    {
+      headers: { Accept: 'text/html,application/xhtml+xml,*/*', Referer: BASE_URL }
+    },
+    options
+  );
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -452,12 +483,14 @@ async function loadLatest(options: V2exOptions = {}) {
   return Array.isArray(data) ? data : [];
 }
 
-async function fetchHtmlWindow(options: V2exOptions & {
-  page: number;
-  limit: number;
-  category?: string;
-  seenIds?: Set<string>;
-}) {
+async function fetchHtmlWindow(
+  options: V2exOptions & {
+    page: number;
+    limit: number;
+    category?: string;
+    seenIds?: Set<string>;
+  }
+) {
   const path = safeNodePath(options.category);
   if (!path) {
     return null;
@@ -502,12 +535,14 @@ async function fetchHtmlWindow(options: V2exOptions & {
   return { items, hasMore, nextPage: hasMore ? options.page + 1 : null };
 }
 
-export async function getV2exFeed(options: V2exOptions & {
-  page?: number;
-  limit?: number;
-  category?: string;
-  feedFilter?: V2exFeedFilter;
-} = {}): Promise<FeedResponse> {
+export async function getV2exFeed(
+  options: V2exOptions & {
+    page?: number;
+    limit?: number;
+    category?: string;
+    feedFilter?: V2exFeedFilter;
+  } = {}
+): Promise<FeedResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
   const feedFilter = options.category ? 'all' : options.feedFilter || 'all';
@@ -516,13 +551,16 @@ export async function getV2exFeed(options: V2exOptions & {
     const html = await fetchText(`${BASE_URL}/?tab=hot`, options);
     const items = parseV2exAllTabPage(html, limit).items;
     const candidateCount = (html.match(/class=["'][^"']*\bitem\b/gi) || []).length;
-    return annotateSourceDiagnosticSummary({ items, errors: {}, hasMore: false, nextPage: null }, {
-      parserVariant: 'html-hot-feed',
-      candidateCount,
-      validCount: items.length,
-      droppedCount: Math.max(0, candidateCount - items.length),
-      isParseEmpty: candidateCount === 0
-    });
+    return annotateSourceDiagnosticSummary(
+      { items, errors: {}, hasMore: false, nextPage: null },
+      {
+        parserVariant: 'html-hot-feed',
+        candidateCount,
+        validCount: items.length,
+        droppedCount: Math.max(0, candidateCount - items.length),
+        isParseEmpty: candidateCount === 0
+      }
+    );
   }
   if (!options.category && feedFilter === 'latest') {
     const html = await fetchText(`${BASE_URL}/recent?p=${page}`, options);
@@ -547,7 +585,11 @@ export async function getV2exFeed(options: V2exOptions & {
   if (!options.category && page === 1) {
     const html = await fetchText(`${BASE_URL}/?tab=all`, options);
     const result = parseV2exAllTabPage(html, limit);
-    const response = { ...result, nextCursor: result.hasMore ? encodeV2exFeedSeenIds(seenIds, result.items) : null, errors: {} };
+    const response = {
+      ...result,
+      nextCursor: result.hasMore ? encodeV2exFeedSeenIds(seenIds, result.items) : null,
+      errors: {}
+    };
     const candidateCount = (html.match(/class=["'][^"']*\bitem\b/gi) || []).length;
     return annotateSourceDiagnosticSummary(response, {
       parserVariant: 'html-all-feed',
@@ -627,27 +669,32 @@ export async function getV2exFeed(options: V2exOptions & {
 export async function getV2exCategories(options: V2exOptions = {}): Promise<CategoriesResponse> {
   const data = await loadLatest(options);
   const seen = new Set<string>();
-  const items = data.map((topic) => {
-    if (!isRecord(topic) || !isRecord(topic.node)) {
-      return null;
+  const items = data
+    .map((topic) => {
+      if (!isRecord(topic) || !isRecord(topic.node)) {
+        return null;
+      }
+      const id = String(topic.node.name || topic.node.title || '').trim();
+      const name = String(topic.node.title || topic.node.name || '').trim();
+      return id && name ? { source: 'v2ex' as const, id, name } : null;
+    })
+    .filter((item): item is { source: 'v2ex'; id: string; name: string } => {
+      if (!item || seen.has(item.id)) {
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+  return annotateSourceDiagnosticSummary(
+    { items, errors: {} },
+    {
+      parserVariant: 'api-categories',
+      candidateCount: data.length,
+      validCount: items.length,
+      droppedCount: Math.max(0, data.length - items.length),
+      isParseEmpty: data.length === 0
     }
-    const id = String(topic.node.name || topic.node.title || '').trim();
-    const name = String(topic.node.title || topic.node.name || '').trim();
-    return id && name ? { source: 'v2ex' as const, id, name } : null;
-  }).filter((item): item is { source: 'v2ex'; id: string; name: string } => {
-    if (!item || seen.has(item.id)) {
-      return false;
-    }
-    seen.add(item.id);
-    return true;
-  });
-  return annotateSourceDiagnosticSummary({ items, errors: {} }, {
-    parserVariant: 'api-categories',
-    candidateCount: data.length,
-    validCount: items.length,
-    droppedCount: Math.max(0, data.length - items.length),
-    isParseEmpty: data.length === 0
-  });
+  );
 }
 
 function normalizeReply(raw: unknown, index: number): Reply | null {
@@ -678,8 +725,9 @@ function mergeV2exReplyMeta(replies: Reply[], detail: V2exHtmlDetail | null) {
     return replies;
   }
   return replies.map((reply, index) => {
-    const meta = (reply.commentId ? detail.repliesByCommentId.get(reply.commentId) : undefined)
-      || detail.repliesByFloor.get(reply.floor || index + 1);
+    const meta =
+      (reply.commentId ? detail.repliesByCommentId.get(reply.commentId) : undefined) ||
+      detail.repliesByFloor.get(reply.floor || index + 1);
     if (!meta) {
       return reply;
     }
@@ -695,7 +743,8 @@ function mergeV2exReplyMeta(replies: Reply[], detail: V2exHtmlDetail | null) {
 
 function parseV2exMemberTopics(html: string, username: string, avatar?: string) {
   const root = parseHtml(html);
-  return root.querySelectorAll('.cell, .box .item')
+  return root
+    .querySelectorAll('.cell, .box .item')
     .map((element) => normalizeHtmlTopic(element))
     .filter(Boolean)
     .map((topic) => ({
@@ -725,7 +774,8 @@ function v2exMemberActivityDisplayTime(text: string) {
 
 function nextV2exMemberPageCursor(html: string, page: number) {
   const root = parseHtml(html);
-  const pages = root.querySelectorAll('a[href*="?p="], a[href*="&p="]')
+  const pages = root
+    .querySelectorAll('a[href*="?p="], a[href*="&p="]')
     .map((link) => parsePositiveInteger(link.getAttribute('href')))
     .filter((value) => value > page);
   return pages.length ? String(Math.min(...pages)) : null;
@@ -733,7 +783,8 @@ function nextV2exMemberPageCursor(html: string, page: number) {
 
 function parseV2exMemberReplies(html: string, username: string, avatar: string | undefined, page: number) {
   const root = parseHtml(html);
-  const items = root.querySelectorAll('.dock_area')
+  const items = root
+    .querySelectorAll('.dock_area')
     .map((element) => {
       const topicLink = element.querySelector('a[href*="/t/"]');
       const href = topicLink?.getAttribute('href') || '';
@@ -745,7 +796,10 @@ function parseV2exMemberReplies(html: string, username: string, avatar: string |
       const text = elementText(element);
       const categoryLink = element.querySelector('a[href^="/go/"]');
       const categoryId = nodeIdFromHref(categoryLink?.getAttribute('href'));
-      const parts = text.split('›').map((part) => part.trim()).filter(Boolean);
+      const parts = text
+        .split('›')
+        .map((part) => part.trim())
+        .filter(Boolean);
       const category = elementText(categoryLink) || (parts.length >= 2 ? parts[parts.length - 2] : undefined);
       const floor = parsePositiveInteger(href.match(/#reply(\d+)/)?.[1]);
       const createdAt = v2exMemberActivityDate(text);
@@ -778,9 +832,7 @@ function parseV2exMemberReplies(html: string, username: string, avatar: string |
 
 function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
   const data = atomParser.parse(xml);
-  const entries = isRecord(data) && isRecord(data.feed)
-    ? data.feed.entry
-    : [];
+  const entries = isRecord(data) && isRecord(data.feed) ? data.feed.entry : [];
   return (Array.isArray(entries) ? entries : [entries])
     .map((entry) => {
       if (!isRecord(entry)) {
@@ -797,9 +849,7 @@ function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
       if (!id || !title) {
         return null;
       }
-      const createdAt = toIsoString(entry.published)
-        || toIsoString(entry.updated)
-        || new Date().toISOString();
+      const createdAt = toIsoString(entry.published) || toIsoString(entry.updated) || new Date().toISOString();
       const updatedAt = toIsoString(entry.updated) || createdAt;
       const content = isRecord(entry.content)
         ? String(entry.content['#cdata'] || entry.content['#text'] || '')
@@ -832,26 +882,32 @@ async function fetchV2exMemberTopics(username: string, avatar: string | undefine
       (html.match(/class=["'][^"']*\bitem\b/gi) || []).length,
       (html.match(/<a\b[^>]*href=["'][^"']*\/t\//gi) || []).length
     );
-    return annotateSourceDiagnosticSummary({
-      items,
-      nextCursor: nextV2exMemberPageCursor(html, page)
-    }, {
-      parserVariant: 'html-user-topics',
-      candidateCount,
-      validCount: items.length,
-      droppedCount: Math.max(0, candidateCount - items.length),
-      isExpectedEmpty: candidateCount === 0
-    });
+    return annotateSourceDiagnosticSummary(
+      {
+        items,
+        nextCursor: nextV2exMemberPageCursor(html, page)
+      },
+      {
+        parserVariant: 'html-user-topics',
+        candidateCount,
+        validCount: items.length,
+        droppedCount: Math.max(0, candidateCount - items.length),
+        isExpectedEmpty: candidateCount === 0
+      }
+    );
   } catch {
-    return annotateSourceDiagnosticSummary({ items: [] as Topic[], nextCursor: null }, {
-      parserVariant: 'html-user-topics',
-      candidateCount: 0,
-      validCount: 0,
-      droppedCount: 0,
-      partialErrorCount: 1,
-      hasDegradation: true,
-      isExpectedEmpty: true
-    });
+    return annotateSourceDiagnosticSummary(
+      { items: [] as Topic[], nextCursor: null },
+      {
+        parserVariant: 'html-user-topics',
+        candidateCount: 0,
+        validCount: 0,
+        droppedCount: 0,
+        partialErrorCount: 1,
+        hasDegradation: true,
+        isExpectedEmpty: true
+      }
+    );
   }
 }
 
@@ -885,7 +941,11 @@ async function fetchV2exMemberFeedTopics(username: string, avatar: string | unde
   }
 }
 
-export async function getV2exUserProfile(id: string, username: string, options: V2exOptions = {}): Promise<UserProfile> {
+export async function getV2exUserProfile(
+  id: string,
+  username: string,
+  options: V2exOptions = {}
+): Promise<UserProfile> {
   const key = (username || id).trim();
   if (!key) {
     throw new Error('V2EX 用户信息不完整');
@@ -894,20 +954,26 @@ export async function getV2exUserProfile(id: string, username: string, options: 
   const wantsTopics = cursorType !== 'replies';
   const wantsReplies = cursorType !== 'topics';
   const page = parsePositiveInteger(options.cursor) || 1;
-  const memberData = await fetchJson<Record<string, unknown>>(`${BASE_URL}/api/members/show.json?username=${encodeURIComponent(key)}`, options);
+  const memberData = await fetchJson<Record<string, unknown>>(
+    `${BASE_URL}/api/members/show.json?username=${encodeURIComponent(key)}`,
+    options
+  );
   if (isRecord(memberData) && memberData.status === 'notfound') {
     throw new Error('V2EX 用户不存在');
   }
   const resolvedUsername = String(memberData.username || key);
   const avatar = absoluteUrl(memberData.avatar_large || memberData.avatar_normal || memberData.avatar_mini, BASE_URL);
   const levelLabel = v2exMemberLevelLabel(memberData);
-  const topicsPage = wantsTopics ? await fetchV2exMemberTopics(resolvedUsername, avatar, options, page) : { items: [], nextCursor: null };
-  const feedTopics = wantsTopics && !topicsPage.items.length && !options.cursor
-    ? await fetchV2exMemberFeedTopics(resolvedUsername, avatar, options)
-    : topicsPage.items;
-  const profileTopics = sortTopicsByCreatedAt(feedTopics).slice(0, 30).map((topic) => (
-    levelLabel ? { ...topic, authorLevelLabel: topic.authorLevelLabel || levelLabel } : topic
-  ));
+  const topicsPage = wantsTopics
+    ? await fetchV2exMemberTopics(resolvedUsername, avatar, options, page)
+    : { items: [], nextCursor: null };
+  const feedTopics =
+    wantsTopics && !topicsPage.items.length && !options.cursor
+      ? await fetchV2exMemberFeedTopics(resolvedUsername, avatar, options)
+      : topicsPage.items;
+  const profileTopics = sortTopicsByCreatedAt(feedTopics)
+    .slice(0, 30)
+    .map((topic) => (levelLabel ? { ...topic, authorLevelLabel: topic.authorLevelLabel || levelLabel } : topic));
   let replyResult = { items: [] as UserReplyActivity[], nextCursor: null as string | null };
   let replyPartialErrorCount = 0;
   if (wantsReplies) {
@@ -942,9 +1008,8 @@ export async function getV2exUserProfile(id: string, username: string, options: 
   };
   const topicsSummary = sourceDiagnosticSummary(topicsPage);
   const feedSummary = sourceDiagnosticSummary(feedTopics);
-  const partialErrorCount = (topicsSummary?.partialErrorCount || 0)
-    + (feedSummary?.partialErrorCount || 0)
-    + replyPartialErrorCount;
+  const partialErrorCount =
+    (topicsSummary?.partialErrorCount || 0) + (feedSummary?.partialErrorCount || 0) + replyPartialErrorCount;
   const hasUserIdentity = Boolean(memberData.username || memberData.id);
   const candidateCount = 1 + profileTopics.length + replyResult.items.length;
   const validCount = (hasUserIdentity ? 1 : 0) + profileTopics.length + replyResult.items.length;
@@ -960,7 +1025,10 @@ export async function getV2exUserProfile(id: string, username: string, options: 
   });
 }
 
-export async function getV2exTopic(id: string, options: V2exOptions & { replyLimit?: number } = {}): Promise<TopicDetail> {
+export async function getV2exTopic(
+  id: string,
+  options: V2exOptions & { replyLimit?: number } = {}
+): Promise<TopicDetail> {
   let detailHtmlFailed = false;
   const [topicData, replyResult, detailHtml] = await Promise.all([
     fetchJson<unknown[]>(`${BASE_URL}/api/topics/show.json?id=${encodeURIComponent(id)}`, options),
@@ -979,12 +1047,16 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
   const rawTopic = Array.isArray(topicData) && isRecord(topicData[0]) ? topicData[0] : {};
   const htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml) : null;
   const apiContentHtml = sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL);
-  const htmlAccessRequirement = detailHtml && !textContentFromHtml(apiContentHtml) ? v2exHtmlAccessRequirement(detailHtml) : undefined;
-  const apiReplies = 'data' in replyResult && Array.isArray(replyResult.data)
-    ? mergeV2exReplyMeta(replyResult.data.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
-    : [];
+  const htmlAccessRequirement =
+    detailHtml && !textContentFromHtml(apiContentHtml) ? v2exHtmlAccessRequirement(detailHtml) : undefined;
+  const apiReplies =
+    'data' in replyResult && Array.isArray(replyResult.data)
+      ? mergeV2exReplyMeta(replyResult.data.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
+      : [];
   if (!apiReplies.length && 'error' in replyResult && topic.replyCount > 0 && !htmlDetail?.replies.length) {
-    throw replyResult.error instanceof Error ? replyResult.error : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
+    throw replyResult.error instanceof Error
+      ? replyResult.error
+      : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
   }
   const replies = apiReplies.length ? apiReplies : htmlDetail?.replies || [];
   const result = {
@@ -993,16 +1065,16 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
     ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
     replyCount: replies.length || topic.replyCount,
-    contentHtml: appendV2exSupplementHtml(
-      apiContentHtml,
-      htmlDetail?.supplementHtml || ''
-    ),
+    contentHtml: appendV2exSupplementHtml(apiContentHtml, htmlDetail?.supplementHtml || ''),
     replies,
     replyHasMore: false,
     replyNextPage: null,
     ...(!topic.accessRequirement && htmlAccessRequirement ? { accessRequirement: htmlAccessRequirement } : {})
   };
-  const replyCandidates = 'data' in replyResult && Array.isArray(replyResult.data) ? replyResult.data.length : htmlDetail?.replies.length || 0;
+  const replyCandidates =
+    'data' in replyResult && Array.isArray(replyResult.data)
+      ? replyResult.data.length
+      : htmlDetail?.replies.length || 0;
   const partialErrorCount = Number(detailHtmlFailed) + Number('error' in replyResult);
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: apiReplies.length ? 'api-topic' : htmlDetail ? 'html-topic-fallback' : 'api-topic',
@@ -1063,7 +1135,10 @@ function highlightText(highlight: unknown) {
   return '';
 }
 
-export async function searchV2ex(query: string, options: V2exOptions & { limit?: number; page?: number; sort?: SearchSort; filter?: V2exSearchFilter } = {}): Promise<SearchResponse> {
+export async function searchV2ex(
+  query: string,
+  options: V2exOptions & { limit?: number; page?: number; sort?: SearchSort; filter?: V2exSearchFilter } = {}
+): Promise<SearchResponse> {
   const limit = options.limit || 30;
   const page = options.page || 1;
   const from = Math.max(0, page - 1) * limit;
@@ -1096,32 +1171,32 @@ export async function searchV2ex(query: string, options: V2exOptions & { limit?:
   }
   const data = await fetchJson<unknown>(`${SOV2EX_URL}/api/search?${params.toString()}`, options);
   const hits = sov2exHits(data);
-  const items = hits.map((hit) => {
-    const source = isRecord(hit) && isRecord(hit._source) ? hit._source : isRecord(hit) ? hit : {};
-    const id = topicId(source.id);
-    if (!id) {
-      return null;
-    }
-    const createdAt = toIsoString(source.created) || new Date().toISOString();
-    const accessRequirement = accessRequirementFromObject(source);
-    return {
-      source: 'v2ex' as const,
-      id,
-      title: String(source.title || ''),
-      author: String(source.member || source.author || ''),
-      category: typeof source.node === 'string' && !/^\d+$/.test(source.node) ? source.node : undefined,
-      url: `${BASE_URL}/t/${id}`,
-      createdAt,
-      lastReplyAt: createdAt,
-      replyCount: Number(source.replies || 0),
-      excerpt: textExcerpt(highlightText(isRecord(hit) ? hit.highlight : undefined) || source.content || ''),
-      ...(accessRequirement ? { accessRequirement } : {})
-    };
-  }).filter(Boolean) as Topic[];
+  const items = hits
+    .map((hit) => {
+      const source = isRecord(hit) && isRecord(hit._source) ? hit._source : isRecord(hit) ? hit : {};
+      const id = topicId(source.id);
+      if (!id) {
+        return null;
+      }
+      const createdAt = toIsoString(source.created) || new Date().toISOString();
+      const accessRequirement = accessRequirementFromObject(source);
+      return {
+        source: 'v2ex' as const,
+        id,
+        title: String(source.title || ''),
+        author: String(source.member || source.author || ''),
+        category: typeof source.node === 'string' && !/^\d+$/.test(source.node) ? source.node : undefined,
+        url: `${BASE_URL}/t/${id}`,
+        createdAt,
+        lastReplyAt: createdAt,
+        replyCount: Number(source.replies || 0),
+        excerpt: textExcerpt(highlightText(isRecord(hit) ? hit.highlight : undefined) || source.content || ''),
+        ...(accessRequirement ? { accessRequirement } : {})
+      };
+    })
+    .filter(Boolean) as Topic[];
   const total = sov2exTotal(data);
-  const hasMore = typeof total === 'number'
-    ? total > from + hits.length
-    : hits.length >= limit;
+  const hasMore = typeof total === 'number' ? total > from + hits.length : hits.length >= limit;
   const result = {
     items,
     errors: {},

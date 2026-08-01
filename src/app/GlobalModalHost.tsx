@@ -153,7 +153,9 @@ export function GlobalModalHost({
               onMessage={handleNodeImageAuthMessage}
               onError={(event) => {
                 setLoadingNodeImageAuthPage(false);
-                setNodeImageAuthError(`NodeImage 页面加载失败：${event.nativeEvent.description || '请检查网络后关闭重试。'}`);
+                setNodeImageAuthError(
+                  `NodeImage 页面加载失败：${event.nativeEvent.description || '请检查网络后关闭重试。'}`
+                );
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {

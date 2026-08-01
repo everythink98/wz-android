@@ -14,9 +14,7 @@ function libraryRecordKey(record: TopicRecord) {
 }
 
 export function filterFollowedUsersBySource(followedUsers: FollowedUserRecord[], sourceFilter: FeedSource) {
-  return sourceFilter === 'all'
-    ? followedUsers
-    : followedUsers.filter((record) => record.user.source === sourceFilter);
+  return sourceFilter === 'all' ? followedUsers : followedUsers.filter((record) => record.user.source === sourceFilter);
 }
 
 export function createLibraryListItems(records: TopicRecord[]) {
@@ -42,13 +40,13 @@ export function libraryCountLabel({
   if (libraryTab === 'users') {
     return `${userRecords.length} / ${followedUsers.length} 人`;
   }
-  return filteredRecords.length === records.length ? `${records.length} 条` : `${filteredRecords.length} / ${records.length} 条`;
+  return filteredRecords.length === records.length
+    ? `${records.length} 条`
+    : `${filteredRecords.length} / ${records.length} 条`;
 }
 
 export function libraryDataItemKey(item: LibraryDataItem, libraryTab: LibraryTab) {
-  return libraryTab === 'users'
-    ? userKey((item as FollowedUserRecord).user)
-    : (item as LibraryListItem).key;
+  return libraryTab === 'users' ? userKey((item as FollowedUserRecord).user) : (item as LibraryListItem).key;
 }
 
 export function libraryDataItemType(item: LibraryDataItem, libraryTab: LibraryTab) {

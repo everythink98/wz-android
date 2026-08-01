@@ -19,19 +19,21 @@ jest.mock('../../src/legacyCookieSnapshotMigration', () => ({
 }));
 
 function renderSessionController(defaultFetcher: typeof fetch) {
-  return renderHook(() => useSessionController({
-    defaultFetcher,
-    forumSessionEpochsRef: { current: initialForumSessionEpochs },
-    linuxDoBrowserWebViewRef: { current: null },
-    linuxDoWebViewUserAgentRef: { current: '' },
-    nodeSeekBrowserWebViewRef: { current: null },
-    nodeSeekWebViewUserAgentRef: { current: '' },
-    notify: jest.fn(),
-    setLinuxDoWebViewUserAgent: jest.fn(),
-    setNodeSeekWebViewUserAgent: jest.fn(),
-    setWebLoginUserId: jest.fn(),
-    webLoginDetectedRef: { current: false }
-  }));
+  return renderHook(() =>
+    useSessionController({
+      defaultFetcher,
+      forumSessionEpochsRef: { current: initialForumSessionEpochs },
+      linuxDoBrowserWebViewRef: { current: null },
+      linuxDoWebViewUserAgentRef: { current: '' },
+      nodeSeekBrowserWebViewRef: { current: null },
+      nodeSeekWebViewUserAgentRef: { current: '' },
+      notify: jest.fn(),
+      setLinuxDoWebViewUserAgent: jest.fn(),
+      setNodeSeekWebViewUserAgent: jest.fn(),
+      setWebLoginUserId: jest.fn(),
+      webLoginDetectedRef: { current: false }
+    })
+  );
 }
 
 describe('session controller hidden Google flow', () => {

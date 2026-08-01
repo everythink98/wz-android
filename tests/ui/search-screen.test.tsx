@@ -14,9 +14,9 @@ import { QueryTestWrapper } from './QueryTestWrapper';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 
-jest.mock('@react-native-async-storage/async-storage', () => (
+jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-));
+);
 
 function render(element: React.ReactElement) {
   return renderNative(element, { wrapper: QueryTestWrapper });
@@ -75,11 +75,13 @@ jest.mock('@shopify/flash-list', () => {
           onViewableItemsChanged
         } as React.ComponentProps<typeof NativeView>,
         ListHeaderComponent,
-        ...data.map((item, index) => ReactModule.createElement(
-          NativeView,
-          { key: keyExtractor?.(item, index) ?? index },
-          renderItem?.({ item, index })
-        )),
+        ...data.map((item, index) =>
+          ReactModule.createElement(
+            NativeView,
+            { key: keyExtractor?.(item, index) ?? index },
+            renderItem?.({ item, index })
+          )
+        ),
         data.length ? null : ListEmptyComponent
       );
     })
@@ -104,7 +106,11 @@ jest.mock('@react-native-community/datetimepicker', () => {
   return function MockDateTimePicker({ onChange }: { onChange: (event: { type: string }, date?: Date) => void }) {
     return ReactModule.createElement(
       NativePressable,
-      { accessibilityRole: 'button', accessibilityLabel: '确认日期 2026-07-01', onPress: () => onChange({ type: 'set' }, new Date(2026, 6, 1)) },
+      {
+        accessibilityRole: 'button',
+        accessibilityLabel: '确认日期 2026-07-01',
+        onPress: () => onChange({ type: 'set' }, new Date(2026, 6, 1))
+      },
       ReactModule.createElement(NativeText, null, '确认日期')
     );
   };
@@ -116,7 +122,16 @@ const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);
 const categories: Category[] = [
   { source: 'linuxdo', id: '2', name: '技术', slug: 'tech', topicCount: 120 },
-  { source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev', parentId: '2', parentSlug: 'tech', topicCount: 88, readRestricted: true },
+  {
+    source: 'linuxdo',
+    id: '4',
+    name: '开发调优',
+    slug: 'dev',
+    parentId: '2',
+    parentSlug: 'tech',
+    topicCount: 88,
+    readRestricted: true
+  },
   { source: 'nodeseek', id: 'daily', name: '日常' },
   { source: 'yaohuo', id: '177', name: '妖火茶馆' },
   { source: 'xiaoyinsi', id: '7', name: '寺务', slug: 'temple' }
@@ -193,21 +208,35 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
   }
 
   const resultSource: Source = searchSource === 'all' ? 'v2ex' : searchSource;
-  const resultLabel = resultSource === 'v2ex' ? 'V2EX' : resultSource === 'linuxdo' ? 'linux.do' : resultSource === 'nodeseek' ? 'NodeSeek' : '妖火';
+  const resultLabel =
+    resultSource === 'v2ex'
+      ? 'V2EX'
+      : resultSource === 'linuxdo'
+        ? 'linux.do'
+        : resultSource === 'nodeseek'
+          ? 'NodeSeek'
+          : '妖火';
   const resultFirstTopic = resultSource === 'linuxdo' ? linuxTopic : { ...firstTopic, source: resultSource };
-  const resultSecondTopic = resultSource === 'v2ex' ? secondTopic : {
-    ...resultFirstTopic,
-    id: `${resultSource}-search-2`,
-    title: '第二页主题',
-    url: `${resultFirstTopic.url}/2`
-  };
-  const searchGroups = submittedQuery ? [{
-    source: resultSource,
-    label: resultLabel,
-    items: page === 1 ? [resultFirstTopic] : [resultFirstTopic, resultSecondTopic],
-    hasMore: page === 1,
-    nextPage: page === 1 ? 2 : null
-  }] : [];
+  const resultSecondTopic =
+    resultSource === 'v2ex'
+      ? secondTopic
+      : {
+          ...resultFirstTopic,
+          id: `${resultSource}-search-2`,
+          title: '第二页主题',
+          url: `${resultFirstTopic.url}/2`
+        };
+  const searchGroups = submittedQuery
+    ? [
+        {
+          source: resultSource,
+          label: resultLabel,
+          items: page === 1 ? [resultFirstTopic] : [resultFirstTopic, resultSecondTopic],
+          hasMore: page === 1,
+          nextPage: page === 1 ? 2 : null
+        }
+      ]
+    : [];
   const loadMoreSearchSource = (_source: Source, nextPage: number) => setPage(Number(nextPage));
 
   return (
@@ -240,7 +269,7 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
         setPage(1);
       }}
       onSearchFilterApply={(source: Source, filter: SourceSearchFilter) => {
-        setSearchFilters((current) => ({ ...current, [source]: filter } as SearchFilterState));
+        setSearchFilters((current) => ({ ...current, [source]: filter }) as SearchFilterState);
       }}
       onSearchDiscourseTags={async () => [
         { name: '人工智能', topicCount: 12 },
@@ -341,9 +370,7 @@ describe('Search state', () => {
   it('submits a recent search immediately and removes only the selected entry', async () => {
     const onRemoveRecentSearch = jest.fn<(query: string) => void>();
     const onSearch = jest.fn<(queryOverride?: string) => void>();
-    const view = await render(
-      <RecentSearchHarness onRemoveRecentSearch={onRemoveRecentSearch} onSearch={onSearch} />
-    );
+    const view = await render(<RecentSearchHarness onRemoveRecentSearch={onRemoveRecentSearch} onSearch={onSearch} />);
 
     const recentSearchButton = view.getByLabelText('搜索最近记录 codex');
     expect(StyleSheet.flatten(recentSearchButton.props.style).minHeight).toBe(48);
@@ -445,25 +472,35 @@ describe('Search state', () => {
     expect(view.queryByTestId('search-all-sources-settled')).toBeNull();
     expect(view.getByLabelText('搜索结果，等待来源结算').props.accessibilityState.busy).toBe(true);
 
-    await view.rerender(<SearchScreen {...createSearchScreenProps({
-      busy: true,
-      searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic], loading: true }]
-    })} />);
+    await view.rerender(
+      <SearchScreen
+        {...createSearchScreenProps({
+          busy: true,
+          searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic], loading: true }]
+        })}
+      />
+    );
 
     expect(view.getByText('V2EX 搜索中...')).toBeTruthy();
     expect(view.queryByText('第一页主题')).toBeNull();
 
-    await view.rerender(<SearchScreen {...createSearchScreenProps({
-      searchSource: 'v2ex',
-      searchGroups: [{
-        source: 'v2ex',
-        label: 'V2EX',
-        items: [firstTopic],
-        loadingMore: true,
-        hasMore: true,
-        nextPage: 2
-      }]
-    })} />);
+    await view.rerender(
+      <SearchScreen
+        {...createSearchScreenProps({
+          searchSource: 'v2ex',
+          searchGroups: [
+            {
+              source: 'v2ex',
+              label: 'V2EX',
+              items: [firstTopic],
+              loadingMore: true,
+              hasMore: true,
+              nextPage: 2
+            }
+          ]
+        })}
+      />
+    );
 
     expect(view.getByText('正在加载更多 V2EX')).toBeTruthy();
   });
@@ -484,11 +521,12 @@ describe('Search state', () => {
     if (typeof header === 'string') return;
 
     const gap = Number(StyleSheet.flatten(header.props.style)?.gap || 0);
-    const emptyFlowChildren = header.children.filter((child) => (
-      typeof child !== 'string'
-      && child.children.length === 0
-      && StyleSheet.flatten(child.props.style)?.position !== 'absolute'
-    ));
+    const emptyFlowChildren = header.children.filter(
+      (child) =>
+        typeof child !== 'string' &&
+        child.children.length === 0 &&
+        StyleSheet.flatten(child.props.style)?.position !== 'absolute'
+    );
 
     expect(gap * emptyFlowChildren.length).toBe(0);
   });
@@ -570,18 +608,20 @@ describe('Search state', () => {
   it('shows a login-required outcome as guidance instead of a retryable source error', async () => {
     const message = 'linux.do 登录已失效，请重新登录。';
     const view = await renderSearchScreen({
-      searchGroups: [{
-        source: 'linuxdo',
-        label: 'linux.do',
-        items: [],
-        error: message,
-        errorKind: 'login-expired',
-        authNotice: {
-          kind: 'login-expired',
-          message,
-          tone: 'danger'
+      searchGroups: [
+        {
+          source: 'linuxdo',
+          label: 'linux.do',
+          items: [],
+          error: message,
+          errorKind: 'login-expired',
+          authNotice: {
+            kind: 'login-expired',
+            message,
+            tone: 'danger'
+          }
         }
-      }]
+      ]
     });
 
     expect(view.getByText(message)).toBeTruthy();
@@ -630,13 +670,15 @@ describe('Search state', () => {
   it('REG-SEARCH-019 ends an empty source search without a pagination sentinel', async () => {
     const view = await renderSearchScreen({
       searchSource: 'nodeseek',
-      searchGroups: [{
-        source: 'nodeseek',
-        label: 'NodeSeek',
-        items: [],
-        hasMore: true,
-        nextPage: 2
-      }]
+      searchGroups: [
+        {
+          source: 'nodeseek',
+          label: 'NodeSeek',
+          items: [],
+          hasMore: true,
+          nextPage: 2
+        }
+      ]
     });
 
     expect(view.getByText('NodeSeek 没有匹配结果')).toBeTruthy();
@@ -646,13 +688,15 @@ describe('Search state', () => {
   it('loads the active source after a user scroll and never from initial render', async () => {
     const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
     const onSearch = jest.fn<(queryOverride?: string) => void>();
-    const searchGroups: SearchGroup[] = [{
-      source: 'v2ex',
-      label: 'V2EX',
-      items: [firstTopic],
-      hasMore: true,
-      nextPage: 2
-    }];
+    const searchGroups: SearchGroup[] = [
+      {
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [firstTopic],
+        hasMore: true,
+        nextPage: 2
+      }
+    ];
     const props = createSearchScreenProps({
       onLoadMoreSearchSource,
       onSearch,
@@ -673,15 +717,19 @@ describe('Search state', () => {
     expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(1);
     expect(onLoadMoreSearchSource).toHaveBeenLastCalledWith('v2ex', 2);
 
-    await view.rerender(<SearchScreen
-      {...props}
-      searchGroups={[{
-        ...searchGroups[0],
-        items: [firstTopic, secondTopic],
-        hasMore: false,
-        nextPage: null
-      }]}
-    />);
+    await view.rerender(
+      <SearchScreen
+        {...props}
+        searchGroups={[
+          {
+            ...searchGroups[0],
+            items: [firstTopic, secondTopic],
+            hasMore: false,
+            nextPage: null
+          }
+        ]}
+      />
+    );
     expect(view.getByTestId('search-page-loaded-v2ex-page-2')).toBeTruthy();
     expect(view.getByText('已载入 2 条')).toBeTruthy();
 
@@ -693,13 +741,15 @@ describe('Search state', () => {
   it('clears completed pagination feedback before applying a new filter', async () => {
     const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
     const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
-    const searchGroups: SearchGroup[] = [{
-      source: 'v2ex',
-      label: 'V2EX',
-      items: [firstTopic],
-      hasMore: true,
-      nextPage: 2
-    }];
+    const searchGroups: SearchGroup[] = [
+      {
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [firstTopic],
+        hasMore: true,
+        nextPage: 2
+      }
+    ];
     const props = createSearchScreenProps({
       onLoadMoreSearchSource,
       onSearchFilterApply,
@@ -712,15 +762,19 @@ describe('Search state', () => {
 
     await fireEvent(list, 'scrollBeginDrag');
     await fireEvent(list, 'viewableItemsChanged', { viewableItems: visibleSentinels, changed: visibleSentinels });
-    await view.rerender(<SearchScreen
-      {...props}
-      searchGroups={[{
-        ...searchGroups[0],
-        items: [firstTopic, secondTopic],
-        hasMore: false,
-        nextPage: null
-      }]}
-    />);
+    await view.rerender(
+      <SearchScreen
+        {...props}
+        searchGroups={[
+          {
+            ...searchGroups[0],
+            items: [firstTopic, secondTopic],
+            hasMore: false,
+            nextPage: null
+          }
+        ]}
+      />
+    );
     expect(view.getByTestId('search-page-loaded-v2ex-page-2')).toBeTruthy();
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -764,7 +818,12 @@ describe('Search state', () => {
       hasMore: true,
       nextPage: 2
     };
-    const view = await renderSearchScreen({ busy: true, onLoadMoreSearchSource, searchGroups: [group], searchSource: 'v2ex' });
+    const view = await renderSearchScreen({
+      busy: true,
+      onLoadMoreSearchSource,
+      searchGroups: [group],
+      searchSource: 'v2ex'
+    });
     const list = view.getByTestId('search-list');
     const sentinel = visibleLoadMore(group, 2, 2);
 
@@ -783,7 +842,11 @@ describe('Search state', () => {
       nextPage: 2
     };
     const finishedGroup = { ...group, hasMore: false, nextPage: null };
-    const finishedView = await renderSearchScreen({ onLoadMoreSearchSource, searchGroups: [finishedGroup], searchSource: 'v2ex' });
+    const finishedView = await renderSearchScreen({
+      onLoadMoreSearchSource,
+      searchGroups: [finishedGroup],
+      searchSource: 'v2ex'
+    });
     const sentinel = visibleLoadMore(group, 2, 2);
 
     await fireEvent(finishedView.getByTestId('search-complete'), 'scrollBeginDrag');
@@ -810,10 +873,12 @@ describe('Search state', () => {
     expect(view.getByText('正在加载更多 V2EX')).toBeTruthy();
     expect(view.getByTestId('search-load-more-spinner-v2ex')).toBeTruthy();
 
-    await view.rerender(<SearchScreen
-      {...props}
-      searchGroups={[{ ...loadingGroup, loadingMore: false, hasMore: false, nextPage: null }]}
-    />);
+    await view.rerender(
+      <SearchScreen
+        {...props}
+        searchGroups={[{ ...loadingGroup, loadingMore: false, hasMore: false, nextPage: null }]}
+      />
+    );
     expect(view.queryByTestId('search-load-more-v2ex-page-2')).toBeNull();
   });
 
@@ -824,14 +889,16 @@ describe('Search state', () => {
       onLoadMoreSearchSource,
       onRetrySearchSource,
       searchSource: 'v2ex',
-      searchGroups: [{
-        source: 'v2ex',
-        label: 'V2EX',
-        items: [firstTopic],
-        error: '第 2 页请求失败',
-        hasMore: true,
-        nextPage: 2
-      }]
+      searchGroups: [
+        {
+          source: 'v2ex',
+          label: 'V2EX',
+          items: [firstTopic],
+          error: '第 2 页请求失败',
+          hasMore: true,
+          nextPage: 2
+        }
+      ]
     });
 
     expect(view.getByText('第一页主题')).toBeTruthy();
@@ -848,14 +915,16 @@ describe('Search state', () => {
       onLoadMoreSearchSource,
       onRetrySearchSource,
       searchSource: 'v2ex',
-      searchGroups: [{
-        source: 'v2ex',
-        label: 'V2EX',
-        items: [firstTopic],
-        error: '首屏请求失败',
-        hasMore: false,
-        nextPage: null
-      }]
+      searchGroups: [
+        {
+          source: 'v2ex',
+          label: 'V2EX',
+          items: [firstTopic],
+          error: '首屏请求失败',
+          hasMore: false,
+          nextPage: null
+        }
+      ]
     });
 
     expect(view.queryByText('第一页主题')).toBeNull();
@@ -969,11 +1038,11 @@ describe('Search state', () => {
   });
 
   it('REG-SEARCH-001 ignores a stale linux.do tag response after the search term changes', async () => {
-    const oldResponse = Promise.withResolvers<Array<{ name: string }>>();
-    const freshResponse = Promise.withResolvers<Array<{ name: string }>>();
-    const onSearchDiscourseTags = jest.fn(({ query: term }: { query: string }) => (
+    const oldResponse = Promise.withResolvers<{ name: string }[]>();
+    const freshResponse = Promise.withResolvers<{ name: string }[]>();
+    const onSearchDiscourseTags = jest.fn(({ query: term }: { query: string }) =>
       term === 'old' ? oldResponse.promise : freshResponse.promise
-    ));
+    );
     const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -981,7 +1050,9 @@ describe('Search state', () => {
     await fireEvent.changeText(view.getByLabelText('搜索标签'), 'old');
     await waitFor(() => expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({ query: 'old' })));
     await fireEvent.changeText(view.getByLabelText('搜索标签'), 'fresh');
-    await waitFor(() => expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({ query: 'fresh' })));
+    await waitFor(() =>
+      expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({ query: 'fresh' }))
+    );
 
     await act(async () => {
       freshResponse.resolve([{ name: '新候选' }]);
@@ -998,12 +1069,12 @@ describe('Search state', () => {
   });
 
   it('REG-SEARCH-001 removes visible tag and author candidates as soon as their query changes', async () => {
-    const onSearchDiscourseTags = jest.fn(async ({ query: term }: { query: string }) => (
+    const onSearchDiscourseTags = jest.fn(async ({ query: term }: { query: string }) =>
       term === 'old' ? [{ name: '旧标签' }] : [{ name: '新标签' }]
-    ));
-    const onSearchDiscourseUsers = jest.fn(async ({ term }: { term: string }) => (
+    );
+    const onSearchDiscourseUsers = jest.fn(async ({ term }: { term: string }) =>
       term === 'old' ? [{ id: 'old', username: 'old-user' }] : [{ id: 'new', username: 'new-user' }]
-    ));
+    );
     const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags, onSearchDiscourseUsers });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -1036,20 +1107,12 @@ describe('Search state', () => {
   });
 
   it('REG-SEARCH-001 hides tag candidates from the previous category while the new request is pending', async () => {
-    const categoryResponse = Promise.withResolvers<Array<{ name: string }>>();
-    const onSearchDiscourseTags = jest.fn(({
-      categoryId,
-      query: term
-    }: {
-      categoryId?: string;
-      query: string;
-    }) => {
+    const categoryResponse = Promise.withResolvers<{ name: string }[]>();
+    const onSearchDiscourseTags = jest.fn(({ categoryId, query: term }: { categoryId?: string; query: string }) => {
       if (term !== '') {
         return Promise.resolve([]);
       }
-      return categoryId === '4'
-        ? categoryResponse.promise
-        : Promise.resolve([{ name: '旧分类候选' }]);
+      return categoryId === '4' ? categoryResponse.promise : Promise.resolve([{ name: '旧分类候选' }]);
     });
     const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
 
@@ -1060,10 +1123,14 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择分类'));
     await fireEvent.press(view.getByLabelText('分类 技术 / 开发调优'));
     await fireEvent.press(view.getByLabelText('选择标签'));
-    await waitFor(() => expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({
-      categoryId: '4',
-      query: ''
-    })));
+    await waitFor(() =>
+      expect(onSearchDiscourseTags).toHaveBeenCalledWith(
+        expect.objectContaining({
+          categoryId: '4',
+          query: ''
+        })
+      )
+    );
 
     expect(view.queryByLabelText('标签 旧分类候选')).toBeNull();
     await act(async () => {
@@ -1074,14 +1141,10 @@ describe('Search state', () => {
   });
 
   it('REG-SEARCH-001 hides tag candidates from the previous source while the new request is pending', async () => {
-    const xiaoyinsiResponse = Promise.withResolvers<Array<{ name: string }>>();
-    const onSearchDiscourseTags = jest.fn(({
-      source: candidateSource
-    }: {
-      source?: Source;
-    }) => candidateSource === 'xiaoyinsi'
-      ? xiaoyinsiResponse.promise
-      : Promise.resolve([{ name: 'linux.do 专属候选' }]));
+    const xiaoyinsiResponse = Promise.withResolvers<{ name: string }[]>();
+    const onSearchDiscourseTags = jest.fn(({ source: candidateSource }: { source?: Source }) =>
+      candidateSource === 'xiaoyinsi' ? xiaoyinsiResponse.promise : Promise.resolve([{ name: 'linux.do 专属候选' }])
+    );
     const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -1090,16 +1153,24 @@ describe('Search state', () => {
     await fireEvent.press(view.getByText('完成'));
     await fireEvent.press(view.getByTestId('search-filter-close'));
     await act(async () => {
-      view.rerender(<SearchScreen {...createSearchScreenProps({
-        searchSource: 'xiaoyinsi',
-        onSearchDiscourseTags
-      })} />);
+      view.rerender(
+        <SearchScreen
+          {...createSearchScreenProps({
+            searchSource: 'xiaoyinsi',
+            onSearchDiscourseTags
+          })}
+        />
+      );
     });
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByLabelText('选择标签'));
-    await waitFor(() => expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'xiaoyinsi'
-    })));
+    await waitFor(() =>
+      expect(onSearchDiscourseTags).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'xiaoyinsi'
+        })
+      )
+    );
 
     expect(view.queryByLabelText('标签 linux.do 专属候选')).toBeNull();
     await act(async () => {
@@ -1199,20 +1270,23 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('有专家回应'));
     await fireEvent.press(view.getByText('确认筛选'));
 
-    expect(onSearchFilterApply).toHaveBeenCalledWith('linuxdo', expect.objectContaining({
-      tags: ['人工智能', '快问快答'],
-      tagMatch: 'all',
-      visited: ['seen', 'likes'],
-      status: 'solved',
-      dateRelation: 'before',
-      date: '2026-07-01',
-      timeRange: 'all',
-      minPosts: 2,
-      maxPosts: 20,
-      minViews: 100,
-      maxViews: 1000,
-      siteExtension: { source: 'linuxdo', expertResponse: true }
-    }));
+    expect(onSearchFilterApply).toHaveBeenCalledWith(
+      'linuxdo',
+      expect.objectContaining({
+        tags: ['人工智能', '快问快答'],
+        tagMatch: 'all',
+        visited: ['seen', 'likes'],
+        status: 'solved',
+        dateRelation: 'before',
+        date: '2026-07-01',
+        timeRange: 'all',
+        minPosts: 2,
+        maxPosts: 20,
+        minViews: 100,
+        maxViews: 1000,
+        siteExtension: { source: 'linuxdo', expertResponse: true }
+      })
+    );
   });
 
   it('applies the safe standard Discourse filters to 小隐寺 and routes its own candidates', async () => {
@@ -1247,15 +1321,18 @@ describe('Search state', () => {
 
     expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({ source: 'xiaoyinsi' }));
     expect(onSearchDiscourseUsers).toHaveBeenCalledWith(expect.objectContaining({ source: 'xiaoyinsi' }));
-    expect(onSearchFilterApply).toHaveBeenCalledWith('xiaoyinsi', expect.objectContaining({
-      scope: 'title',
-      category: '7',
-      tags: ['公告'],
-      visited: ['seen'],
-      status: 'solved',
-      username: 'alice',
-      order: 'latest'
-    }));
+    expect(onSearchFilterApply).toHaveBeenCalledWith(
+      'xiaoyinsi',
+      expect.objectContaining({
+        scope: 'title',
+        category: '7',
+        tags: ['公告'],
+        visited: ['seen'],
+        status: 'solved',
+        username: 'alice',
+        order: 'latest'
+      })
+    );
   });
 
   it('blocks an invalid linux.do numeric range and explains the field error', async () => {

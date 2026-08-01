@@ -95,7 +95,7 @@ true;
 
 export function linuxDoWebViewProbeScript(probeId: number) {
   const safeProbeId = Number.isInteger(probeId) && probeId > 0 ? probeId : 0;
-  return "window.__WZ_LINUXDO_LOGIN_PROBE_ID__ = " + safeProbeId + ";\n" + LINUXDO_WEBVIEW_PROBE_SCRIPT;
+  return 'window.__WZ_LINUXDO_LOGIN_PROBE_ID__ = ' + safeProbeId + ';\n' + LINUXDO_WEBVIEW_PROBE_SCRIPT;
 }
 
 const NODEIMAGE_API_BASE_URL = 'https://api.nodeimage.com';
@@ -291,10 +291,7 @@ true;
 `;
 }
 
-export function nodeImageAuthPayloadScript(
-  nonce: string,
-  authPayload: NodeImageAuthPayload
-) {
+export function nodeImageAuthPayloadScript(nonce: string, authPayload: NodeImageAuthPayload) {
   const safeNonce = requiredNodeImageAuthNonce(nonce);
   return `
 (() => {

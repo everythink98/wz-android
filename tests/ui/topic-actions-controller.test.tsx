@@ -67,10 +67,7 @@ import {
   type SiteSessionViewModels
 } from '../../src/siteSessionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '../../src/types';
-import {
-  WritableSessionBlockedError,
-  type WritableSessionTicket
-} from '../../src/writableSessionGate';
+import { WritableSessionBlockedError, type WritableSessionTicket } from '../../src/writableSessionGate';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const mockGetItem = jest.mocked(SecureStore.getItemAsync);
@@ -133,13 +130,14 @@ function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): Topi
   return {
     ...detail,
     source,
-    url: source === 'linuxdo'
-      ? 'https://linux.do/t/query-mutation/42'
-      : source === 'xiaoyinsi'
-        ? 'https://xiaoyinsi.com/t/query-mutation/42'
-        : source === 'yaohuo'
-          ? 'https://www.yaohuo.me/bbs/book_view.aspx?id=42&classid=177'
-          : detail.url,
+    url:
+      source === 'linuxdo'
+        ? 'https://linux.do/t/query-mutation/42'
+        : source === 'xiaoyinsi'
+          ? 'https://xiaoyinsi.com/t/query-mutation/42'
+          : source === 'yaohuo'
+            ? 'https://www.yaohuo.me/bbs/book_view.aspx?id=42&classid=177'
+            : detail.url,
     ...patch
   };
 }
@@ -175,46 +173,47 @@ async function renderActions({
   topicDetail?: TopicDetail;
   topicReplies?: Reply[];
 } = {}) {
-  const hook = await renderNativeHook((props: {
-    sessionEpochs: ForumSessionEpochs;
-    topicReplies?: Reply[];
-  }) => {
-    const topicSession = useTopicSessionController({ notify });
-    const actions = useTopicActionsController({
-      sessionEpochs: props.sessionEpochs,
-      discourseActionRuntimeDependencies: {
-        linuxDoUserAgent: () => 'safe-agent',
-        refreshXiaoyinsiAuthorization: async () => true,
-        resetLinuxDoLevelState: jest.fn(),
-        updateLinuxDoSession: jest.fn()
-      },
-      discourseLoginPrompts,
-      ensureNodeImageApiKey,
-      ensureWritableSession: ensureWritableSession || (async (source) => ({
-        source,
-        identityKey: `${source}:test-user`,
-        sessionEpoch: props.sessionEpochs[source]
-      })),
-      fetcher: jest.fn(async () => new Response('{}')),
-      isWritableSessionTicketCurrent: isWritableSessionTicketCurrent || ((ticket) => (
-        ticket.sessionEpoch === props.sessionEpochs[ticket.source]
-      )),
-      nodeSeekWebViewUserAgentRef: { current: 'safe-agent' },
-      notify,
-      reconcileWritableSession,
-      refreshTopicReplies,
-      siteSessionViewModels: siteSessionViewModels || createSiteSessionViewModels(
-        siteSessionStates || loggedInStates(topicDetail.source as ActionSource)
-      ),
-      topicDetail,
-      topicReplies: props.topicReplies ?? topicReplies,
-      topicSession
-    });
-    return { actions, topicSession };
-  }, {
-    initialProps: { sessionEpochs },
-    wrapper: QueryTestWrapper
-  });
+  const hook = await renderNativeHook(
+    (props: { sessionEpochs: ForumSessionEpochs; topicReplies?: Reply[] }) => {
+      const topicSession = useTopicSessionController({ notify });
+      const actions = useTopicActionsController({
+        sessionEpochs: props.sessionEpochs,
+        discourseActionRuntimeDependencies: {
+          linuxDoUserAgent: () => 'safe-agent',
+          refreshXiaoyinsiAuthorization: async () => true,
+          resetLinuxDoLevelState: jest.fn(),
+          updateLinuxDoSession: jest.fn()
+        },
+        discourseLoginPrompts,
+        ensureNodeImageApiKey,
+        ensureWritableSession:
+          ensureWritableSession ||
+          (async (source) => ({
+            source,
+            identityKey: `${source}:test-user`,
+            sessionEpoch: props.sessionEpochs[source]
+          })),
+        fetcher: jest.fn(async () => new Response('{}')),
+        isWritableSessionTicketCurrent:
+          isWritableSessionTicketCurrent || ((ticket) => ticket.sessionEpoch === props.sessionEpochs[ticket.source]),
+        nodeSeekWebViewUserAgentRef: { current: 'safe-agent' },
+        notify,
+        reconcileWritableSession,
+        refreshTopicReplies,
+        siteSessionViewModels:
+          siteSessionViewModels ||
+          createSiteSessionViewModels(siteSessionStates || loggedInStates(topicDetail.source as ActionSource)),
+        topicDetail,
+        topicReplies: props.topicReplies ?? topicReplies,
+        topicSession
+      });
+      return { actions, topicSession };
+    },
+    {
+      initialProps: { sessionEpochs },
+      wrapper: QueryTestWrapper
+    }
+  );
   await act(async () => {
     hook.result.current.topicSession.commands.topic.select(topicDetail);
   });
@@ -266,7 +265,9 @@ describe('topic action query mutations', () => {
   });
 
   afterEach(async () => {
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     setDiagnosticWriter(null);
     jest.restoreAllMocks();
   });
@@ -437,7 +438,11 @@ describe('topic action query mutations', () => {
     await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
 
     await act(async () => {
-      hook.result.current.topicSession.commands.topic.select({ ...detail, id: '99', url: 'https://www.nodeseek.com/post-99-1' });
+      hook.result.current.topicSession.commands.topic.select({
+        ...detail,
+        id: '99',
+        url: 'https://www.nodeseek.com/post-99-1'
+      });
       transport.resolve({ success: true });
       await submission;
     });
@@ -449,7 +454,9 @@ describe('topic action query mutations', () => {
 
   it('REG-LINUXDO-003 records a confirmed reply with a failed follow-up refresh as partial', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const refreshTopicReplies = jest.fn(async (_options?: unknown) => 'failed');
     const notify = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
@@ -464,24 +471,30 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
-    expect(refreshTopicReplies).toHaveBeenCalledWith(expect.objectContaining({
-      afterSubmit: true,
-      diagnosticTrace: expect.any(Object),
-      silent: true
-    }));
+    expect(refreshTopicReplies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        afterSubmit: true,
+        diagnosticTrace: expect.any(Object),
+        silent: true
+      })
+    );
     expect(notify).toHaveBeenCalledWith('回复已提交');
-    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent)).toContainEqual(expect.objectContaining({
-      area: 'reply',
-      operation: 'submit',
-      phase: 'finish',
-      outcome: 'partial',
-      reason: 'refresh_failed'
-    }));
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent)).toContainEqual(
+      expect.objectContaining({
+        area: 'reply',
+        operation: 'submit',
+        phase: 'finish',
+        outcome: 'partial',
+        reason: 'refresh_failed'
+      })
+    );
   });
 
   it('[REG-WRITE-023] settles a server-confirmed write as stale when its ticket changes during refresh', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const refresh = Promise.withResolvers<'completed'>();
     const refreshTopicReplies = jest.fn(async () => refresh.promise);
     let ticketCurrent = true;
@@ -521,9 +534,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(nextDetailKey)).toEqual(nextDetail);
     const finishes = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
-      .filter((event) => event.area === 'reply'
-        && event.operation === 'submit'
-        && event.phase === 'finish');
+      .filter((event) => event.area === 'reply' && event.operation === 'submit' && event.phase === 'finish');
     expect(finishes).toEqual([
       expect.objectContaining({
         outcome: 'stale',
@@ -535,7 +546,9 @@ describe('topic action query mutations', () => {
 
   it('[REG-WRITE-023] preserves server confirmation without writing a newer epoch cache', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const transport = Promise.withResolvers<{ success: true }>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
     let ticketCurrent = true;
@@ -569,9 +582,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(nextDetailKey)).toEqual(nextDetail);
     const finishes = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
-      .filter((event) => event.area === 'topic'
-        && event.operation === 'collection'
-        && event.phase === 'finish');
+      .filter((event) => event.area === 'topic' && event.operation === 'collection' && event.phase === 'finish');
     expect(finishes).toEqual([
       expect.objectContaining({
         outcome: 'stale',
@@ -583,7 +594,9 @@ describe('topic action query mutations', () => {
 
   it('[REG-WRITE-023] preserves a confirmed Yaohuo result when its ticket expires before apply', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     let ticketCurrent = true;
     mockRunYaohuoAction.mockImplementationOnce(async () => {
       ticketCurrent = false;
@@ -617,9 +630,7 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalled();
     const finishes = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
-      .filter((event) => event.area === 'topic'
-        && event.operation === 'favorite'
-        && event.phase === 'finish');
+      .filter((event) => event.area === 'topic' && event.operation === 'favorite' && event.phase === 'finish');
     expect(finishes).toEqual([
       expect.objectContaining({
         outcome: 'stale',
@@ -631,7 +642,9 @@ describe('topic action query mutations', () => {
 
   it('[REG-WRITE-023] preserves a confirmed Discourse result when its ticket expires before apply', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     let ticketCurrent = true;
     mockDiscourseExecute.mockImplementationOnce(async () => {
       ticketCurrent = false;
@@ -657,9 +670,7 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalled();
     const finishes = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
-      .filter((event) => event.area === 'reply'
-        && event.operation === 'submit'
-        && event.phase === 'finish');
+      .filter((event) => event.area === 'reply' && event.operation === 'submit' && event.phase === 'finish');
     expect(finishes).toEqual([
       expect.objectContaining({
         outcome: 'stale',
@@ -677,18 +688,20 @@ describe('topic action query mutations', () => {
       topicDetail: linuxDetail
     });
 
-    await act(async () => { await hook.result.current.actions.checkIn(); });
+    await act(async () => {
+      await hook.result.current.actions.checkIn();
+    });
 
     const attendance = appQueryClient.getMutationCache().getAll().at(-1);
-    expect(attendance?.options.mutationKey).toEqual([
-      'forum', 'nodeseek', 'mutation', 'topic', 'global'
-    ]);
+    expect(attendance?.options.mutationKey).toEqual(['forum', 'nodeseek', 'mutation', 'topic', 'global']);
     expect(attendance?.options.scope).toEqual({ id: 'forum:nodeseek:topic:global' });
   });
 
   it('[REG-WRITE-023] records a late confirmed NodeSeek attendance as stale', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     let ticketCurrent = true;
     mockRunNodeSeekAction.mockImplementationOnce(async () => {
       ticketCurrent = false;
@@ -708,9 +721,7 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalled();
     const finishes = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
-      .filter((event) => event.area === 'topic'
-        && event.operation === 'attendance'
-        && event.phase === 'finish');
+      .filter((event) => event.area === 'topic' && event.operation === 'attendance' && event.phase === 'finish');
     expect(finishes).toEqual([
       expect.objectContaining({
         outcome: 'stale',
@@ -808,7 +819,9 @@ describe('topic action query mutations', () => {
 
   it('[REG-WRITE-023] does not repopulate a cleared old scope after an unconfirmed stale failure', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
     let ticketCurrent = true;
@@ -829,7 +842,9 @@ describe('topic action query mutations', () => {
     const nextScope = { ...initialForumSessionEpochs, nodeseek: 1 };
     const nextDetail = detailFor('nodeseek', { collected: false, title: 'new epoch canary' });
     const { detailKey: nextDetailKey } = seedTopicCache(nextDetail, [], nextScope);
-    await act(async () => { await hook.rerender({ sessionEpochs: nextScope }); });
+    await act(async () => {
+      await hook.rerender({ sessionEpochs: nextScope });
+    });
     ticketCurrent = false;
     appQueryClient.removeQueries({ queryKey: detailKey, exact: true });
     await act(async () => {
@@ -842,9 +857,7 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalled();
     const finishes = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
-      .filter((event) => event.area === 'topic'
-        && event.operation === 'collection'
-        && event.phase === 'finish');
+      .filter((event) => event.area === 'topic' && event.operation === 'collection' && event.phase === 'finish');
     expect(finishes).toEqual([
       expect.objectContaining({
         outcome: 'stale',
@@ -986,68 +999,68 @@ describe('topic action query mutations', () => {
       draft: 'epoch 变化后保留的草稿',
       nextIdentityKey: 'nodeseek:account-a'
     }
-  ])('[REG-WRITE-026] detaches an edit after $caseLabel and keeps its text out of every write path', async ({
-    draft,
-    nextIdentityKey
-  }) => {
-    const nodeSeekDetail = detailFor('nodeseek', {
-      canCreatePost: true,
-      polls: [],
-      replies: [editableReply]
-    });
-    const nextEpochs = { ...initialForumSessionEpochs, nodeseek: 1 };
-    const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
-    let identityKey = 'nodeseek:account-a';
-    let sessionEpoch = 0;
-    const ensureWritableSession = jest.fn(async () => ({
-      source: 'nodeseek' as const,
-      identityKey,
-      sessionEpoch
-    }));
-    const isWritableSessionTicketCurrent = jest.fn((ticket: WritableSessionTicket) => (
-      ticket.identityKey === identityKey && ticket.sessionEpoch === sessionEpoch
-    ));
-    seedTopicCache(nodeSeekDetail, [editableReply]);
-    const hook = await renderActions({
-      ensureNodeImageApiKey,
-      ensureWritableSession,
-      isWritableSessionTicketCurrent,
-      topicDetail: nodeSeekDetail,
-      topicReplies: [editableReply]
-    });
+  ])(
+    '[REG-WRITE-026] detaches an edit after $caseLabel and keeps its text out of every write path',
+    async ({ draft, nextIdentityKey }) => {
+      const nodeSeekDetail = detailFor('nodeseek', {
+        canCreatePost: true,
+        polls: [],
+        replies: [editableReply]
+      });
+      const nextEpochs = { ...initialForumSessionEpochs, nodeseek: 1 };
+      const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
+      let identityKey = 'nodeseek:account-a';
+      let sessionEpoch = 0;
+      const ensureWritableSession = jest.fn(async () => ({
+        source: 'nodeseek' as const,
+        identityKey,
+        sessionEpoch
+      }));
+      const isWritableSessionTicketCurrent = jest.fn(
+        (ticket: WritableSessionTicket) => ticket.identityKey === identityKey && ticket.sessionEpoch === sessionEpoch
+      );
+      seedTopicCache(nodeSeekDetail, [editableReply]);
+      const hook = await renderActions({
+        ensureNodeImageApiKey,
+        ensureWritableSession,
+        isWritableSessionTicketCurrent,
+        topicDetail: nodeSeekDetail,
+        topicReplies: [editableReply]
+      });
 
-    await act(async () => {
-      await hook.result.current.actions.editReply(editableReply);
-      hook.result.current.topicSession.commands.composer.changeContent(draft);
-    });
-    expect(hook.result.current.topicSession.state.replyEditTarget?.ticket.identityKey).toBe(identityKey);
-    const staleSubmitReply = hook.result.current.actions.submitReply;
-    const staleUploadReplyImage = hook.result.current.actions.uploadReplyImage;
+      await act(async () => {
+        await hook.result.current.actions.editReply(editableReply);
+        hook.result.current.topicSession.commands.composer.changeContent(draft);
+      });
+      expect(hook.result.current.topicSession.state.replyEditTarget?.ticket.identityKey).toBe(identityKey);
+      const staleSubmitReply = hook.result.current.actions.submitReply;
+      const staleUploadReplyImage = hook.result.current.actions.uploadReplyImage;
 
-    identityKey = nextIdentityKey;
-    sessionEpoch = 1;
-    await act(async () => {
-      hook.rerender({ sessionEpochs: nextEpochs });
-    });
+      identityKey = nextIdentityKey;
+      sessionEpoch = 1;
+      await act(async () => {
+        hook.rerender({ sessionEpochs: nextEpochs });
+      });
 
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
-    expect(hook.result.current.topicSession.state.replyContent).toBe(draft);
+      expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+      expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+      expect(hook.result.current.topicSession.state.replyContent).toBe(draft);
 
-    await act(async () => {
-      await staleSubmitReply();
-      await staleUploadReplyImage();
-      await hook.result.current.actions.submitReply();
-      await hook.result.current.actions.uploadReplyImage();
-    });
+      await act(async () => {
+        await staleSubmitReply();
+        await staleUploadReplyImage();
+        await hook.result.current.actions.submitReply();
+        await hook.result.current.actions.uploadReplyImage();
+      });
 
-    expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
-    expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
-    expect(mockGetDocument).not.toHaveBeenCalled();
-    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
-    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
-    expect(ensureWritableSession).toHaveBeenCalledTimes(1);
-  });
+      expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
+      expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
+      expect(mockGetDocument).not.toHaveBeenCalled();
+      expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+      expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+      expect(ensureWritableSession).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('[REG-WRITE-026] restores an inactive edit route as a closed draft with no stale or direct write path', async () => {
     const nodeSeekDetail = detailFor('nodeseek', {
@@ -1178,7 +1191,7 @@ describe('topic action query mutations', () => {
       hook.result.current.topicSession.commands.composer.changeContent('跨页权限冲突时保留的正文');
     });
     const current = appQueryClient.getQueryData<{
-      pages: Array<{ items: Reply[]; [key: string]: unknown }>;
+      pages: { items: Reply[]; [key: string]: unknown }[];
       pageParams: unknown[];
     }>(repliesKey);
     appQueryClient.setQueryData(repliesKey, {
@@ -1382,44 +1395,45 @@ describe('topic action query mutations', () => {
   it.each([
     { caseLabel: 'permission revoked', invalidation: 'revoked' as const },
     { caseLabel: 'reply missing', invalidation: 'missing' as const }
-  ])('[REG-WRITE-026] rejects a stale edit before NodeImage credentials and file selection ($caseLabel)', async ({
-    invalidation
-  }) => {
-    const reply: Reply = {
-      author: 'alice',
-      canEdit: true,
-      commentId: 101,
-      contentHtml: '<p>old</p>',
-      contentMarkdown: 'old',
-      createdAt: '2026-07-20T00:01:00.000Z',
-      floor: 2
-    };
-    const nodeSeekDetail = detailFor('nodeseek', { canCreatePost: true, polls: [], replies: [reply] });
-    const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
-    seedTopicCache(nodeSeekDetail, [reply]);
-    const hook = await renderActions({
-      ensureNodeImageApiKey,
-      topicDetail: nodeSeekDetail,
-      topicReplies: [reply]
-    });
+  ])(
+    '[REG-WRITE-026] rejects a stale edit before NodeImage credentials and file selection ($caseLabel)',
+    async ({ invalidation }) => {
+      const reply: Reply = {
+        author: 'alice',
+        canEdit: true,
+        commentId: 101,
+        contentHtml: '<p>old</p>',
+        contentMarkdown: 'old',
+        createdAt: '2026-07-20T00:01:00.000Z',
+        floor: 2
+      };
+      const nodeSeekDetail = detailFor('nodeseek', { canCreatePost: true, polls: [], replies: [reply] });
+      const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
+      seedTopicCache(nodeSeekDetail, [reply]);
+      const hook = await renderActions({
+        ensureNodeImageApiKey,
+        topicDetail: nodeSeekDetail,
+        topicReplies: [reply]
+      });
 
-    await act(async () => {
-      await hook.result.current.actions.editReply(reply);
-    });
-    seedTopicCache(nodeSeekDetail, invalidation === 'missing' ? [] : [{ ...reply, canEdit: false }]);
-    await act(async () => {
-      await hook.result.current.actions.uploadReplyImage();
-    });
+      await act(async () => {
+        await hook.result.current.actions.editReply(reply);
+      });
+      seedTopicCache(nodeSeekDetail, invalidation === 'missing' ? [] : [{ ...reply, canEdit: false }]);
+      await act(async () => {
+        await hook.result.current.actions.uploadReplyImage();
+      });
 
-    expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
-    expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
-    expect(mockGetDocument).not.toHaveBeenCalled();
-    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
-    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
-    expect(hook.result.current.topicSession.state.replyContent).toBe('old');
-  });
+      expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
+      expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
+      expect(mockGetDocument).not.toHaveBeenCalled();
+      expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+      expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+      expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+      expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+      expect(hook.result.current.topicSession.state.replyContent).toBe('old');
+    }
+  );
 
   it('[REG-WRITE-026] rechecks edit permission after NodeImage credentials and before file selection', async () => {
     const reply: Reply = {
@@ -1496,10 +1510,12 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledWith(expect.objectContaining({
-      path: '/posts/101.json',
-      method: 'PUT'
-    }));
+    expect(mockDiscourseExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/posts/101.json',
+        method: 'PUT'
+      })
+    );
     expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
   });
 
@@ -1525,10 +1541,12 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledWith(expect.objectContaining({
-      path: '/posts/101.json',
-      method: 'PUT'
-    }));
+    expect(mockDiscourseExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/posts/101.json',
+        method: 'PUT'
+      })
+    );
     expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
     expect(hook.result.current.topicSession.state.replyContent).toBe('');
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.replies[0]?.contentHtml).toBe('<p>old</p>');
@@ -1557,7 +1575,7 @@ describe('topic action query mutations', () => {
     });
     await waitFor(() => expect(mockDiscourseExecute).toHaveBeenCalledTimes(1));
 
-    const replyCache = appQueryClient.getQueryData<{ pages: Array<{ items: Reply[] }> }>(repliesKey);
+    const replyCache = appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey);
     expect(replyCache?.pages[0]?.items).toEqual([]);
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({ replyCount: 0, replies: [] });
     expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
@@ -1631,12 +1649,14 @@ describe('topic action query mutations', () => {
       transport.resolve({ status: 'confirmed', message: '收藏成功', favoriteId: 987 });
       await favorite;
     });
-    expect(mockRunYaohuoAction).toHaveBeenCalledWith(expect.objectContaining({
-      request: expect.objectContaining({
-        method: 'GET',
-        path: '/bbs/Share.aspx?action=fav&siteid=1000&classid=177&id=42'
+    expect(mockRunYaohuoAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          method: 'GET',
+          path: '/bbs/Share.aspx?action=fav&siteid=1000&classid=177&id=42'
+        })
       })
-    }));
+    );
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({
       bookmarked: true,
       bookmarkId: 987
@@ -1658,13 +1678,15 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.favoriteOnYaohuoSite();
     });
 
-    expect(mockRunYaohuoAction).toHaveBeenCalledWith(expect.objectContaining({
-      request: {
-        method: 'POST',
-        path: '/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
-        headers: { accept: '*/*' }
-      }
-    }));
+    expect(mockRunYaohuoAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: {
+          method: 'POST',
+          path: '/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
+          headers: { accept: '*/*' }
+        }
+      })
+    );
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({ bookmarked: false });
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarkId).toBeUndefined();
   });
@@ -1699,11 +1721,13 @@ describe('topic action query mutations', () => {
   });
 
   it('REG-XIAOYINSI-021 preserves the action error when authorization recovery fails', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(Object.assign(new Error('没有权限执行该操作'), {
-      authorizationCheckRequired: true,
-      source: 'xiaoyinsi',
-      status: 403
-    }));
+    mockDiscourseExecute.mockRejectedValueOnce(
+      Object.assign(new Error('没有权限执行该操作'), {
+        authorizationCheckRequired: true,
+        source: 'xiaoyinsi',
+        status: 403
+      })
+    );
     mockDiscourseRecover.mockRejectedValueOnce(new Error('authorization refresh failed'));
     const xiaDetail = detailFor('xiaoyinsi', {
       canLike: true,
@@ -1725,11 +1749,13 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-XIAOYINSI-022] opens authorization only when recovery confirms expiry', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(Object.assign(new Error('无效的 API key'), {
-      authorizationCheckRequired: true,
-      source: 'xiaoyinsi',
-      status: 401
-    }));
+    mockDiscourseExecute.mockRejectedValueOnce(
+      Object.assign(new Error('无效的 API key'), {
+        authorizationCheckRequired: true,
+        source: 'xiaoyinsi',
+        status: 401
+      })
+    );
     mockDiscourseRecover.mockResolvedValueOnce({ loginRequired: true, phase: 'credential' });
     const showXiaoyinsiLogin = jest.fn();
     const xiaDetail = detailFor('xiaoyinsi', {
@@ -1753,11 +1779,13 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-XIAOYINSI-022] keeps authorization closed when recovery says the grant is still valid', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(Object.assign(new Error('没有权限执行该操作'), {
-      authorizationCheckRequired: true,
-      source: 'xiaoyinsi',
-      status: 403
-    }));
+    mockDiscourseExecute.mockRejectedValueOnce(
+      Object.assign(new Error('没有权限执行该操作'), {
+        authorizationCheckRequired: true,
+        source: 'xiaoyinsi',
+        status: 403
+      })
+    );
     mockDiscourseRecover.mockResolvedValueOnce({ loginRequired: false, phase: 'credential' });
     const showXiaoyinsiLogin = jest.fn();
     const notify = jest.fn();
@@ -1783,11 +1811,13 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-ACCOUNT-026][REG-WRITE-022][REG-WRITE-023] reconciles Yaohuo expiry without clearing Cookie or reopening login', async () => {
-    mockRunYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
+    mockRunYaohuoAction.mockRejectedValueOnce(
+      Object.assign(new Error('妖火登录已失效'), {
+        loginRequired: true,
+        reason: 'expired',
+        source: 'yaohuo'
+      })
+    );
     const reconcileWritableSession = jest.fn(async () => ({ status: 'anonymous' as const }));
     const showYaohuoLogin = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
@@ -1804,10 +1834,12 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-ACCOUNT-026][REG-WRITE-022][REG-WRITE-023] reconciles NodeSeek expiry once without deleting original-site login', async () => {
-    mockRunNodeSeekAction.mockRejectedValueOnce(Object.assign(new Error('NodeSeek 登录已失效'), {
-      loginRequired: true,
-      source: 'nodeseek'
-    }));
+    mockRunNodeSeekAction.mockRejectedValueOnce(
+      Object.assign(new Error('NodeSeek 登录已失效'), {
+        loginRequired: true,
+        source: 'nodeseek'
+      })
+    );
     const reconcileWritableSession = jest.fn(async () => ({ status: 'anonymous' as const }));
     const notify = jest.fn();
     seedTopicCache();
@@ -1826,11 +1858,13 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-WRITE-022][REG-WRITE-023] keeps Yaohuo verification failures pending without reopening login', async () => {
-    mockRunYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('请回到妖火原站完成登录确认'), {
-      loginRequired: true,
-      reason: 'verification',
-      source: 'yaohuo'
-    }));
+    mockRunYaohuoAction.mockRejectedValueOnce(
+      Object.assign(new Error('请回到妖火原站完成登录确认'), {
+        loginRequired: true,
+        reason: 'verification',
+        source: 'yaohuo'
+      })
+    );
     const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
     const showYaohuoLogin = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
@@ -1847,11 +1881,13 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-WRITE-023] rolls back an optimistic Yaohuo favorite when identity reconciliation becomes pending', async () => {
-    mockRunYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('妖火需要完成访问验证'), {
-      loginRequired: true,
-      reason: 'verification',
-      source: 'yaohuo'
-    }));
+    mockRunYaohuoAction.mockRejectedValueOnce(
+      Object.assign(new Error('妖火需要完成访问验证'), {
+        loginRequired: true,
+        reason: 'verification',
+        source: 'yaohuo'
+      })
+    );
     let ticketCurrent = true;
     const reconcileWritableSession = jest.fn(async () => {
       ticketCurrent = false;
@@ -1978,10 +2014,12 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-WRITE-023][REG-WRITE-024] reconciles typed linux.do expiry once without automatic login replay', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(Object.assign(new Error('linux.do 登录已失效'), {
-      loginRequired: true,
-      source: 'linuxdo'
-    }));
+    mockDiscourseExecute.mockRejectedValueOnce(
+      Object.assign(new Error('linux.do 登录已失效'), {
+        loginRequired: true,
+        source: 'linuxdo'
+      })
+    );
     mockDiscourseRecover.mockResolvedValueOnce({
       loginRequired: true,
       message: 'linux.do 登录已失效',
@@ -2011,10 +2049,12 @@ describe('topic action query mutations', () => {
   });
 
   it('[REG-WRITE-024] reconciles typed linux.do verification once without opening login', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
-      reason: 'cloudflare',
-      source: 'linuxdo'
-    }));
+    mockDiscourseExecute.mockRejectedValueOnce(
+      Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
+        reason: 'cloudflare',
+        source: 'linuxdo'
+      })
+    );
     const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
     const showLinuxDoLogin = jest.fn();
     const notify = jest.fn();
@@ -2067,10 +2107,12 @@ describe('topic action query mutations', () => {
     await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
     ticketCurrent = false;
     await act(async () => {
-      transport.reject(Object.assign(new Error('旧 NodeSeek 登录已失效'), {
-        loginRequired: true,
-        source: 'nodeseek'
-      }));
+      transport.reject(
+        Object.assign(new Error('旧 NodeSeek 登录已失效'), {
+          loginRequired: true,
+          source: 'nodeseek'
+        })
+      );
       await action;
     });
 
@@ -2100,11 +2142,13 @@ describe('topic action query mutations', () => {
     await waitFor(() => expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1));
     ticketCurrent = false;
     await act(async () => {
-      transport.reject(Object.assign(new Error('旧妖火登录已失效'), {
-        loginRequired: true,
-        reason: 'expired',
-        source: 'yaohuo'
-      }));
+      transport.reject(
+        Object.assign(new Error('旧妖火登录已失效'), {
+          loginRequired: true,
+          reason: 'expired',
+          source: 'yaohuo'
+        })
+      );
       await action;
     });
 
@@ -2146,10 +2190,12 @@ describe('topic action query mutations', () => {
     await waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
     credentialIsCurrent = false;
     await act(async () => {
-      transport.reject(Object.assign(new Error('旧 linux.do 登录已失效'), {
-        loginRequired: true,
-        source: 'linuxdo'
-      }));
+      transport.reject(
+        Object.assign(new Error('旧 linux.do 登录已失效'), {
+          loginRequired: true,
+          source: 'linuxdo'
+        })
+      );
       await action;
     });
 
@@ -2160,7 +2206,9 @@ describe('topic action query mutations', () => {
 
   it('REG-ACCOUNT-010 does not insert a NodeImage upload completed by a cleared API key', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     let generation = 5;
     const upload = Promise.withResolvers<string>();
     mockCurrentNodeImageGeneration.mockImplementation(() => generation);
@@ -2195,9 +2243,7 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalledWith('图片已插入');
     const finishes = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
-      .filter((event) => event.area === 'reply'
-        && event.operation === 'image-upload'
-        && event.phase === 'finish');
+      .filter((event) => event.area === 'reply' && event.operation === 'image-upload' && event.phase === 'finish');
     expect(finishes).toEqual([
       expect.objectContaining({
         outcome: 'stale',
@@ -2255,17 +2301,14 @@ describe('topic action query mutations', () => {
     expect(mockGetDocument).not.toHaveBeenCalled();
     expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
-    expect(notify).toHaveBeenCalledWith(
-      'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴'
-    );
+    expect(notify).toHaveBeenCalledWith('NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴');
   });
 
   it('[REG-WRITE-023] reports a rejected NodeImage key without authorizing or replaying the upload', async () => {
     mockCurrentNodeImageGeneration.mockReturnValue(5);
-    mockUploadNodeSeekReplyImage.mockRejectedValueOnce(Object.assign(
-      new Error('API Key 无效'),
-      { nodeImageApiKeyExpired: true }
-    ));
+    mockUploadNodeSeekReplyImage.mockRejectedValueOnce(
+      Object.assign(new Error('API Key 无效'), { nodeImageApiKeyExpired: true })
+    );
     mockGetDocument.mockResolvedValueOnce({
       canceled: false,
       assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
@@ -2285,9 +2328,7 @@ describe('topic action query mutations', () => {
     expect(mockUploadNodeSeekReplyImage).toHaveBeenCalledTimes(1);
     expect(ensureNodeImageApiKey).toHaveBeenCalledTimes(1);
     expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
-    expect(notify).toHaveBeenCalledWith(
-      'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴'
-    );
+    expect(notify).toHaveBeenCalledWith('NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴');
     expect(notify).not.toHaveBeenCalledWith('图片已插入');
   });
 
@@ -2376,7 +2417,9 @@ describe('topic action query mutations', () => {
     };
     const topic = detailFor('nodeseek', { polls: [unknownPoll] });
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
     mockFetchNodeSeekVoteInfo.mockRejectedValueOnce(new Error('result refresh failed'));
     const notify = jest.fn();

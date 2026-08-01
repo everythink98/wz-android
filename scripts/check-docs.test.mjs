@@ -24,11 +24,13 @@ async function createFixture(markdown) {
 }
 
 test('allows documented release output paths before generated APKs exist', async () => {
-  const rootDir = await createFixture([
-    'Output directory: `android/app/build/outputs/apk/release/`.',
-    'Published APK: `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`.',
-    'Smoke APK: `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`.'
-  ].join('\n'));
+  const rootDir = await createFixture(
+    [
+      'Output directory: `android/app/build/outputs/apk/release/`.',
+      'Published APK: `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`.',
+      'Smoke APK: `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`.'
+    ].join('\n')
+  );
 
   const errors = findBrokenDocReferences(rootDir, ['docs/guide.md']);
 
@@ -36,11 +38,9 @@ test('allows documented release output paths before generated APKs exist', async
 });
 
 test('reports broken relative Markdown links', async () => {
-  const rootDir = await createFixture([
-    '[existing](../README.md)',
-    '[missing](missing.md)',
-    '[external](https://example.com/docs)'
-  ].join('\n'));
+  const rootDir = await createFixture(
+    ['[existing](../README.md)', '[missing](missing.md)', '[external](https://example.com/docs)'].join('\n')
+  );
 
   const errors = findBrokenDocReferences(rootDir, ['docs/guide.md']);
 
@@ -49,12 +49,14 @@ test('reports broken relative Markdown links', async () => {
 });
 
 test('reports broken backticked repository paths without requiring local-only files', async () => {
-  const rootDir = await createFixture([
-    'Existing: `src/existing.ts`.',
-    'Missing: `src/missing.ts`.',
-    'Local-only baseline: `docs/emulator-baseline.md`.',
-    'Command: `npm run typecheck`.'
-  ].join('\n'));
+  const rootDir = await createFixture(
+    [
+      'Existing: `src/existing.ts`.',
+      'Missing: `src/missing.ts`.',
+      'Local-only baseline: `docs/emulator-baseline.md`.',
+      'Command: `npm run typecheck`.'
+    ].join('\n')
+  );
 
   const errors = findBrokenDocReferences(rootDir, ['docs/guide.md']);
 
@@ -72,11 +74,9 @@ test('reports a broken backticked repository file at the repository root', async
 });
 
 test('reports a broken repository path inside a fenced test command', async () => {
-  const rootDir = await createFixture([
-    '```powershell',
-    'npm test -- src/existing.ts src/missing.test.ts',
-    '```'
-  ].join('\n'));
+  const rootDir = await createFixture(
+    ['```powershell', 'npm test -- src/existing.ts src/missing.test.ts', '```'].join('\n')
+  );
 
   const errors = findBrokenDocReferences(rootDir, ['docs/guide.md']);
 
@@ -114,12 +114,7 @@ async function createKnowledgeFixture({
 
 test('reports duplicate capability definitions in the product map', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `FEED-01` | first |',
-      '| `FEED-01` | duplicate |',
-      '## 四站能力矩阵'
-    ].join('\n')
+    productMap: ['## 能力清单', '| `FEED-01` | first |', '| `FEED-01` | duplicate |', '## 四站能力矩阵'].join('\n')
   });
 
   assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /FEED-01.*重复定义/);
@@ -127,11 +122,7 @@ test('reports duplicate capability definitions in the product map', async () => 
 
 test('reports regression entries that reference an unknown capability', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `FEED-01` | first |',
-      '## 四站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `FEED-01` | first |', '## 四站能力矩阵'].join('\n'),
     regressionCorpus: '`REG-FEED-001` protects `FEED-99`.\n'
   });
 
@@ -140,11 +131,7 @@ test('reports regression entries that reference an unknown capability', async ()
 
 test('reports tracked Markdown references to undefined npm scripts', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `RELEASE-01` | first |',
-      '## 五站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `RELEASE-01` | first |', '## 五站能力矩阵'].join('\n'),
     markdown: ['Run npm run verify.', '运行 npm run missing。', '`npm run verify`'].join('\n'),
     packageScripts: { verify: 'echo ok' }
   });
@@ -157,11 +144,7 @@ test('reports tracked Markdown references to undefined npm scripts', async () =>
 
 test('reports unknown capability references including shorthand without parsing scenario ids', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `ACCOUNT-01` | first |',
-      '## 五站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 五站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
     markdown: '`ACCOUNT-01/99` `LIVE-ACCOUNT-99` `REG-ACCOUNT-001`\n'
   });
@@ -174,12 +157,7 @@ test('reports unknown capability references including shorthand without parsing 
 
 test('reports unknown capability references in cross-family shorthand', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `FEED-01` | first |',
-      '| `ACCOUNT-01` | second |',
-      '## 五站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `FEED-01` | first |', '| `ACCOUNT-01` | second |', '## 五站能力矩阵'].join('\n'),
     markdown: '`ACCOUNT-01/FEED-99`\n'
   });
 
@@ -191,11 +169,7 @@ test('reports unknown capability references in cross-family shorthand', async ()
 
 test('ignores technical identifiers and validates capability numbers of any length', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `ACCOUNT-100` | first |',
-      '## 五站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-100` | first |', '## 五站能力矩阵'].join('\n'),
     markdown: '`API-35` `UTF-16` `ACCOUNT-100` `ACCOUNT-999`\n'
   });
 
@@ -207,11 +181,7 @@ test('ignores technical identifiers and validates capability numbers of any leng
 
 test('reports unknown regression references including shorthand', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `ACCOUNT-01` | first |',
-      '## 五站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 五站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
     markdown: '`REG-ACCOUNT-001/999`\n'
   });
@@ -224,11 +194,7 @@ test('reports unknown regression references including shorthand', async () => {
 
 test('does not validate a local historical baseline as current documentation', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `ACCOUNT-01` | first |',
-      '## 五站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 五站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
     markdown: '`ACCOUNT-01` `REG-ACCOUNT-001` `npm run verify`\n',
     packageScripts: { verify: 'echo ok' }
@@ -243,11 +209,7 @@ test('does not validate a local historical baseline as current documentation', a
 
 test('does not parse a REG id as a product capability id', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `FEED-01` | first |',
-      '## 四站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `FEED-01` | first |', '## 四站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-FEED-001` known issue\n\nProtects `FEED-01`.\n'
   });
 
@@ -256,11 +218,7 @@ test('does not parse a REG id as a product capability id', async () => {
 
 test('requires every expected failing UI test to name its regression id', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `TOPIC-03` | first |',
-      '## 四站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-TOPIC-001` known issue\n',
     expectedFailure: "it.failing('shows the correct reply count', () => {});\n"
   });
@@ -270,11 +228,7 @@ test('requires every expected failing UI test to name its regression id', async 
 
 test('rejects an expected failing UI test that names an unknown regression', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `TOPIC-03` | first |',
-      '## 四站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-TOPIC-001` known issue\n',
     expectedFailure: "it.failing('[REG-TOPIC-999] shows the correct reply count', () => {});\n"
   });
@@ -284,11 +238,7 @@ test('rejects an expected failing UI test that names an unknown regression', asy
 
 test('rejects dynamic or parameterized expected-failure titles that bypass REG mapping', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `TOPIC-03` | first |',
-      '## 四站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-TOPIC-001` known issue\n',
     expectedFailure: [
       "const title = '[REG-TOPIC-001] dynamic';",
@@ -306,11 +256,7 @@ test('rejects dynamic or parameterized expected-failure titles that bypass REG m
 
 test('reports retired user-facing authentication terms in source files', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: [
-      '## 能力清单',
-      '| `ACCOUNT-01` | first |',
-      '## 四站能力矩阵'
-    ].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
     source: "export const label = '身份识别保护';\n"
   });
 

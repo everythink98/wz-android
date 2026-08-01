@@ -10,11 +10,7 @@ export const RELEASE_SIGNING_ENV_NAMES = Object.freeze([
 ]);
 
 const RELEASE_SIGNING_ENV_NAME_SET = new Set(RELEASE_SIGNING_ENV_NAMES);
-const RELEASE_ENV_NAMES = new Set([
-  ...RELEASE_SIGNING_ENV_NAMES,
-  'WZ_ANDROID_SMOKE_DEVICE',
-  'WZ_ANDROID_SMOKE_ABI'
-]);
+const RELEASE_ENV_NAMES = new Set([...RELEASE_SIGNING_ENV_NAMES, 'WZ_ANDROID_SMOKE_DEVICE', 'WZ_ANDROID_SMOKE_ABI']);
 
 function parseEnvValue(value) {
   const trimmed = value.trim();
@@ -119,13 +115,7 @@ export function restorePackageJsonAfterPrebuild(packageJsonPath, originalContent
   }
 }
 
-export function runReleaseBuildStages({
-  androidDir,
-  builtAbis,
-  ordinaryEnv,
-  releaseEnv,
-  run
-}) {
+export function runReleaseBuildStages({ androidDir, builtAbis, ordinaryEnv, releaseEnv, run }) {
   const commonArgs = [
     '-PnewArchEnabled=true',
     `-PreactNativeArchitectures=${builtAbis.join(',')}`,

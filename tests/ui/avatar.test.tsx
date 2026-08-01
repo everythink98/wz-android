@@ -18,7 +18,8 @@ jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    Image: (props: Record<string, unknown>) => ReactModule.createElement(NativeView, { ...props, testID: 'native-avatar' })
+    Image: (props: Record<string, unknown>) =>
+      ReactModule.createElement(NativeView, { ...props, testID: 'native-avatar' })
   };
 });
 
@@ -26,10 +27,11 @@ jest.mock('react-native-svg', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    SvgXml: ({ xml }: { xml: string }) => ReactModule.createElement(NativeView, {
-      accessibilityLabel: xml,
-      testID: 'svg-avatar'
-    })
+    SvgXml: ({ xml }: { xml: string }) =>
+      ReactModule.createElement(NativeView, {
+        accessibilityLabel: xml,
+        testID: 'svg-avatar'
+      })
   };
 });
 
@@ -46,12 +48,7 @@ describe('Avatar image fallback', () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
 
     const view = await render(
-      <Avatar
-        contentSource="nodeseek"
-        name="Alice"
-        styles={styles}
-        uri="https://www.nodeseek.com/avatar/58159.png"
-      />
+      <Avatar contentSource="nodeseek" name="Alice" styles={styles} uri="https://www.nodeseek.com/avatar/58159.png" />
     );
 
     expect(view.getByTestId('native-avatar')).toBeTruthy();
@@ -61,9 +58,7 @@ describe('Avatar image fallback', () => {
   it('retries the native image once before rendering the SVG fallback', async () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue('<svg><path /></svg>');
     const uri = 'https://www.nodeseek.com/avatar/58160.png';
-    const view = await render(
-      <Avatar contentSource="nodeseek" name="Alice" styles={styles} uri={uri} />
-    );
+    const view = await render(<Avatar contentSource="nodeseek" name="Alice" styles={styles} uri={uri} />);
 
     await fireEvent(view.getByTestId('native-avatar'), 'error');
     expect(view.getByTestId('native-avatar')).toBeTruthy();
@@ -75,10 +70,10 @@ describe('Avatar image fallback', () => {
     expect(view.getByLabelText('<svg><path /></svg>')).toBeTruthy();
     expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(1);
     expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledWith(uri, undefined, {
-        mediaContext: {
-          contentSource: 'nodeseek',
-          sessionIdentity: mediaSessionIdentityForSource('nodeseek', initialForumSessionEpochs)
-        }
+      mediaContext: {
+        contentSource: 'nodeseek',
+        sessionIdentity: mediaSessionIdentityForSource('nodeseek', initialForumSessionEpochs)
+      }
     });
   });
 
@@ -91,15 +86,11 @@ describe('Avatar image fallback', () => {
     const secondFallback = new Promise<string | null>((resolve) => {
       resolveSecond = resolve;
     });
-    mockLoadRemoteAvatarSvgText
-      .mockReturnValueOnce(firstFallback)
-      .mockReturnValueOnce(secondFallback);
+    mockLoadRemoteAvatarSvgText.mockReturnValueOnce(firstFallback).mockReturnValueOnce(secondFallback);
     const firstUri = 'https://www.nodeseek.com/avatar/58161.png';
     const secondUri = 'https://www.nodeseek.com/avatar/58162.png';
     const avatar = (uri: string, sessionEpoch: number) => (
-      <ForumSessionEpochProvider
-        sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: sessionEpoch }}
-      >
+      <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: sessionEpoch }}>
         <Avatar contentSource="nodeseek" name="Alice" styles={styles} uri={uri} />
       </ForumSessionEpochProvider>
     );
@@ -130,12 +121,7 @@ describe('Avatar image fallback', () => {
   it('shows the text initial when the native image and SVG fallback both fail', async () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
     const view = await render(
-      <Avatar
-        contentSource="nodeseek"
-        name="Bob"
-        styles={styles}
-        uri="https://www.nodeseek.com/avatar/58163.png"
-      />
+      <Avatar contentSource="nodeseek" name="Bob" styles={styles} uri="https://www.nodeseek.com/avatar/58163.png" />
     );
 
     await fireEvent(view.getByTestId('native-avatar'), 'error');

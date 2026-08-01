@@ -14,10 +14,7 @@ const actionBuilders = {
   xiaoyinsi: buildXiaoyinsiActionRequest
 } satisfies Record<DiscourseSource, DiscourseActionBuilder>;
 
-export function buildDiscourseSourceActionRequest(
-  source: DiscourseSource,
-  action: DiscourseAction
-) {
+export function buildDiscourseSourceActionRequest(source: DiscourseSource, action: DiscourseAction) {
   return actionBuilders[source](action);
 }
 

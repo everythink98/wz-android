@@ -24,10 +24,12 @@ export function isNodeSeekRequestUrl(input: string) {
   try {
     const url = new URL(input);
     const host = url.hostname.toLowerCase();
-    return url.protocol === 'https:'
-      && !url.username
-      && !url.password
-      && (host === 'nodeseek.com' || host.endsWith('.nodeseek.com'));
+    return (
+      url.protocol === 'https:' &&
+      !url.username &&
+      !url.password &&
+      (host === 'nodeseek.com' || host.endsWith('.nodeseek.com'))
+    );
   } catch {
     return false;
   }
@@ -87,10 +89,12 @@ async function fetchNodeSeekThroughWebView(
   directStatus?: number
 ) {
   const inheritedTrace = diagnosticTraceForRequest(init);
-  const trace = inheritedTrace || beginDiagnosticTrace('source', 'transport-fallback', {
-    source: 'nodeseek',
-    reason
-  });
+  const trace =
+    inheritedTrace ||
+    beginDiagnosticTrace('source', 'transport-fallback', {
+      source: 'nodeseek',
+      reason
+    });
   markDiagnosticStage(trace, 'transport', {
     source: 'nodeseek',
     channel: 'direct',
@@ -136,10 +140,12 @@ async function fetchNodeSeekThroughWebView(
 
 async function fetchNodeSeekWebViewOnly(webViewFetcher: Fetcher, url: string, init?: RequestInit) {
   const inheritedTrace = diagnosticTraceForRequest(init);
-  const trace = inheritedTrace || beginDiagnosticTrace('source', 'webview-transport', {
-    source: 'nodeseek',
-    channel: 'webview'
-  });
+  const trace =
+    inheritedTrace ||
+    beginDiagnosticTrace('source', 'webview-transport', {
+      source: 'nodeseek',
+      channel: 'webview'
+    });
   markDiagnosticStage(trace, 'transport', { source: 'nodeseek', channel: 'webview', state: 'start' });
   try {
     cancelRequestTimeoutForFallback(init);

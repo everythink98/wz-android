@@ -4,18 +4,14 @@ import { errorMessage } from './appUtils';
 export type ManagedLoginCookieSource = 'linuxdo' | 'nodeseek' | 'yaohuo';
 
 export type ManagedCookieReadResult =
-  | { status: 'ok'; header: string }
-  | { status: 'unsupported' }
-  | { status: 'error'; message: string };
+  { status: 'ok'; header: string } | { status: 'unsupported' } | { status: 'error'; message: string };
 
 export type ManagedCookieNativeModule = {
   readManagedCookieHeader?: (exactUrl: string) => Promise<unknown>;
   clearManagedLoginCookies?: (source: ManagedLoginCookieSource) => Promise<boolean>;
 };
 
-export function managedCookieSourceForUrl(
-  exactUrl: string
-): ManagedLoginCookieSource | null {
+export function managedCookieSourceForUrl(exactUrl: string): ManagedLoginCookieSource | null {
   try {
     const url = new URL(exactUrl);
     if (url.protocol !== 'https:' || url.username || url.password) {
@@ -62,9 +58,7 @@ export async function readManagedCookieHeader(
     }
     return {
       status: 'error',
-      message: typeof value.message === 'string' && value.message
-        ? value.message
-        : 'WebView Cookie 读取结果无效'
+      message: typeof value.message === 'string' && value.message ? value.message : 'WebView Cookie 读取结果无效'
     };
   } catch (error) {
     return { status: 'error', message: errorMessage(error) };

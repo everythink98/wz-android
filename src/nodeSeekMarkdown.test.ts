@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  MAX_NODESEEK_MARKDOWN_BYTES,
-  nodeSeekMarkdownToHtml
-} from './nodeSeekMarkdown';
+import { MAX_NODESEEK_MARKDOWN_BYTES, nodeSeekMarkdownToHtml } from './nodeSeekMarkdown';
 
 describe('NodeSeek Markdown', () => {
   it('keeps ordinary Markdown and linkify rendering enabled', () => {
@@ -14,9 +11,7 @@ describe('NodeSeek Markdown', () => {
 
   it('[REG-TOPIC-051] returns a fixed safe notice without parsing oversized Markdown', () => {
     const marker = 'must-not-be-rendered.example';
-    const html = nodeSeekMarkdownToHtml(
-      `${'x'.repeat(MAX_NODESEEK_MARKDOWN_BYTES)}${marker}`
-    );
+    const html = nodeSeekMarkdownToHtml(`${'x'.repeat(MAX_NODESEEK_MARKDOWN_BYTES)}${marker}`);
 
     expect(html).toContain('内容过长，无法安全显示');
     expect(html).not.toContain(marker);

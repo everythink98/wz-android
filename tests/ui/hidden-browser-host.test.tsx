@@ -102,9 +102,7 @@ describe('HiddenBrowserHost linux.do transport', () => {
     );
     mockWebViewPropsByUrl.get(url)?.onLoadEnd();
 
-    expect(mockInjectJavaScript).toHaveBeenCalledWith(
-      expect.stringContaining('const requestOwner = "account";')
-    );
+    expect(mockInjectJavaScript).toHaveBeenCalledWith(expect.stringContaining('const requestOwner = "account";'));
   });
 
   it('[REG-SEARCH-014][REG-SEARCH-015] keeps the scoped Google gate scoped and classifies access trouble', async () => {
@@ -143,39 +141,42 @@ describe('HiddenBrowserHost linux.do transport', () => {
     expect(failNodeSeekBrowserFetchById).not.toHaveBeenCalled();
     expect(failLinuxDoBrowserFetchById).not.toHaveBeenCalled();
 
-    expect(mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({
-      url: `${nodeSeekSearch}&sca_esv=Abc_123&emsg=SG_REL&sei=Abc_123-xy`
-    })).toBe(false);
-    expect(mockWebViewPropsByUrl.get(linuxDoSearch)?.onShouldStartLoadWithRequest({
-      url: `${linuxDoSearch}&sca_esv=Abc_123&emsg=SG_REL&sei=Abc_123-xy`
-    })).toBe(false);
-    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(
-      21,
-      'Google 搜索环境验证暂时未通过，请稍后重试'
-    );
-    expect(failLinuxDoBrowserFetchById).toHaveBeenCalledWith(
-      22,
-      'Google 搜索环境验证暂时未通过，请稍后重试'
-    );
+    expect(
+      mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({
+        url: `${nodeSeekSearch}&sca_esv=Abc_123&emsg=SG_REL&sei=Abc_123-xy`
+      })
+    ).toBe(false);
+    expect(
+      mockWebViewPropsByUrl.get(linuxDoSearch)?.onShouldStartLoadWithRequest({
+        url: `${linuxDoSearch}&sca_esv=Abc_123&emsg=SG_REL&sei=Abc_123-xy`
+      })
+    ).toBe(false);
+    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(21, 'Google 搜索环境验证暂时未通过，请稍后重试');
+    expect(failLinuxDoBrowserFetchById).toHaveBeenCalledWith(22, 'Google 搜索环境验证暂时未通过，请稍后重试');
     failNodeSeekBrowserFetchById.mockClear();
     failLinuxDoBrowserFetchById.mockClear();
 
-    expect(mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({
-      url: 'https://www.nodeseek.com/search?q=codex'
-    })).toBe(false);
-    expect(mockWebViewPropsByUrl.get(linuxDoSearch)?.onShouldStartLoadWithRequest({
-      url: 'https://linux.do/search?q=codex'
-    })).toBe(false);
-    expect(mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({
-      url: 'https://www.google.com/search?q=site%3Anodeseek.com+different'
-    })).toBe(false);
-    expect(mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({
-      url: 'https://www.google.com/httpservice/retry/enablejs?sei=Abc_123-xy&next=https%3A%2F%2Fevil.example'
-    })).toBe(false);
-    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(
-      21,
-      'NodeSeek 页面跳转到外部地址，已停止读取'
-    );
+    expect(
+      mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({
+        url: 'https://www.nodeseek.com/search?q=codex'
+      })
+    ).toBe(false);
+    expect(
+      mockWebViewPropsByUrl.get(linuxDoSearch)?.onShouldStartLoadWithRequest({
+        url: 'https://linux.do/search?q=codex'
+      })
+    ).toBe(false);
+    expect(
+      mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({
+        url: 'https://www.google.com/search?q=site%3Anodeseek.com+different'
+      })
+    ).toBe(false);
+    expect(
+      mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({
+        url: 'https://www.google.com/httpservice/retry/enablejs?sei=Abc_123-xy&next=https%3A%2F%2Fevil.example'
+      })
+    ).toBe(false);
+    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(21, 'NodeSeek 页面跳转到外部地址，已停止读取');
   });
 
   it('inspects a main-document 429 instead of failing before DOM classification', async () => {
@@ -281,11 +282,9 @@ describe('HiddenBrowserHost linux.do transport', () => {
       nodeSeekProps?.onRenderProcessGone();
     });
 
-    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(
-      11,
-      'NodeSeek 页面读取进程已停止',
-      { skipStopLoading: true }
-    );
+    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(11, 'NodeSeek 页面读取进程已停止', {
+      skipStopLoading: true
+    });
     expect(failLinuxDoBrowserFetchById).not.toHaveBeenCalled();
     expect(mockWebViewPropsByUrl.get('https://linux.do/latest.json')?.key).toBe(linuxDoKey);
   });

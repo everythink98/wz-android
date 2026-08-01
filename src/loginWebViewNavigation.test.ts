@@ -11,9 +11,13 @@ describe('login WebView navigation guard', () => {
   });
 
   it('REG-ACCOUNT-010 accepts NodeImage bridge messages only from the phase owner', () => {
-    expect(isTrustedNodeImageAuthMessageSource('nodeimage-auth-data', 'https://www.nodeseek.com/connect?target=NodeImage')).toBe(true);
+    expect(
+      isTrustedNodeImageAuthMessageSource('nodeimage-auth-data', 'https://www.nodeseek.com/connect?target=NodeImage')
+    ).toBe(true);
     expect(isTrustedNodeImageAuthMessageSource('nodeimage-api-key', 'https://nodeimage.com/')).toBe(true);
-    expect(isTrustedNodeImageAuthMessageSource('nodeimage-api-key', 'https://www.nodeseek.com/connect?target=NodeImage')).toBe(false);
+    expect(
+      isTrustedNodeImageAuthMessageSource('nodeimage-api-key', 'https://www.nodeseek.com/connect?target=NodeImage')
+    ).toBe(false);
     expect(isTrustedNodeImageAuthMessageSource('nodeimage-auth-data', 'https://nodeimage.com/')).toBe(false);
     expect(isTrustedNodeImageAuthMessageSource('nodeimage-api-key', 'https://evil.example/')).toBe(false);
     expect(isTrustedNodeImageAuthMessageSource('nodeimage-api-key', 'http://nodeimage.com/')).toBe(false);

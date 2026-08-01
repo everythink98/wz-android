@@ -63,11 +63,13 @@ afterEach(() => {
 describe('Network proxy modal', () => {
   it('[REG-PROXY-003] exposes an explicit direct-connection reset after proxy recovery fails', async () => {
     const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
-    const view = await render(proxyModal({
-      applyError: '代理配置读取失败，已阻止网络请求',
-      applyStatus: 'failed',
-      onSetEnabled
-    }));
+    const view = await render(
+      proxyModal({
+        applyError: '代理配置读取失败，已阻止网络请求',
+        applyStatus: 'failed',
+        onSetEnabled
+      })
+    );
 
     await fireEvent.press(view.getByLabelText('重置为直连'));
 
@@ -103,12 +105,14 @@ describe('Network proxy modal', () => {
     await waitFor(() => {
       expect(alert).toHaveBeenCalledWith('服务器代理', '代理保存失败');
     });
-    expect(onUpsertProfile).toHaveBeenCalledWith(expect.objectContaining({
-      name: '公司代理',
-      protocol: 'socks5',
-      host: '127.0.0.1',
-      port: 1080
-    }));
+    expect(onUpsertProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: '公司代理',
+        protocol: 'socks5',
+        host: '127.0.0.1',
+        port: 1080
+      })
+    );
     expect(view.getByPlaceholderText('名称').props.value).toBe('公司代理');
     expect(view.getByPlaceholderText('服务器').props.value).toBe('127.0.0.1');
     expect(view.getByPlaceholderText('端口').props.value).toBe('1080');
@@ -129,16 +133,18 @@ describe('Network proxy modal', () => {
   it('selects and edits existing proxy profiles without losing their identity', async () => {
     const onSelectProfile = jest.fn(async (_id: string) => undefined);
     const onUpsertProfile = jest.fn(async (_profile: NetworkProxyProfile) => undefined);
-    const view = await render(proxyModal({
-      activeProfile: primaryProfile,
-      proxyState: {
-        activeId: primaryProfile.id,
-        enabled: false,
-        profiles: [primaryProfile, backupProfile]
-      },
-      onSelectProfile,
-      onUpsertProfile
-    }));
+    const view = await render(
+      proxyModal({
+        activeProfile: primaryProfile,
+        proxyState: {
+          activeId: primaryProfile.id,
+          enabled: false,
+          profiles: [primaryProfile, backupProfile]
+        },
+        onSelectProfile,
+        onUpsertProfile
+      })
+    );
 
     await fireEvent.press(view.getByText('备用代理'));
     await waitFor(() => {
@@ -153,13 +159,15 @@ describe('Network proxy modal', () => {
     await fireEvent.press(view.getByLabelText('确定'));
 
     await waitFor(() => {
-      expect(onUpsertProfile).toHaveBeenCalledWith(expect.objectContaining({
-        id: backupProfile.id,
-        name: '家庭代理',
-        protocol: 'http',
-        host: 'proxy.example.com',
-        port: 8080
-      }));
+      expect(onUpsertProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: backupProfile.id,
+          name: '家庭代理',
+          protocol: 'http',
+          host: 'proxy.example.com',
+          port: 8080
+        })
+      );
     });
   });
 
@@ -171,12 +179,14 @@ describe('Network proxy modal', () => {
       enabled: false,
       profiles: [primaryProfile]
     };
-    const view = await render(proxyModal({
-      activeProfile: primaryProfile,
-      proxyState,
-      onSetEnabled,
-      onTestProfile
-    }));
+    const view = await render(
+      proxyModal({
+        activeProfile: primaryProfile,
+        proxyState,
+        onSetEnabled,
+        onTestProfile
+      })
+    );
 
     await fireEvent.press(view.getByLabelText('测试代理连通性'));
     await waitFor(() => {
@@ -193,15 +203,17 @@ describe('Network proxy modal', () => {
   it('deletes selected profiles only after destructive confirmation', async () => {
     const onDeleteProfile = jest.fn(async (_id: string) => undefined);
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
-    const view = await render(proxyModal({
-      activeProfile: primaryProfile,
-      proxyState: {
-        activeId: primaryProfile.id,
-        enabled: false,
-        profiles: [primaryProfile, backupProfile]
-      },
-      onDeleteProfile
-    }));
+    const view = await render(
+      proxyModal({
+        activeProfile: primaryProfile,
+        proxyState: {
+          activeId: primaryProfile.id,
+          enabled: false,
+          profiles: [primaryProfile, backupProfile]
+        },
+        onDeleteProfile
+      })
+    );
 
     await fireEvent(view.getByText('备用代理'), 'longPress');
     expect(view.getByLabelText('删除选中的代理')).toBeTruthy();

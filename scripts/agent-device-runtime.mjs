@@ -7,7 +7,9 @@ export const MIN_AGENT_DEVICE_VERSION = '0.19.0';
 export function selectedDeviceName(device = process.env.WZ_ANDROID_TEST_DEVICE || process.env.WZ_ANDROID_SMOKE_DEVICE) {
   const selectedDevice = String(device || '').trim();
   if (!selectedDevice) {
-    throw new Error('必须设置 WZ_ANDROID_TEST_DEVICE（发布 Smoke 可沿用 WZ_ANDROID_SMOKE_DEVICE），不会自动选择、启动或重置其他设备。');
+    throw new Error(
+      '必须设置 WZ_ANDROID_TEST_DEVICE（发布 Smoke 可沿用 WZ_ANDROID_SMOKE_DEVICE），不会自动选择、启动或重置其他设备。'
+    );
   }
   return selectedDevice;
 }
@@ -40,7 +42,10 @@ function agentDeviceCommand() {
   };
 }
 
-export function runAgentDevice(args, { capture = false, cwd = process.cwd(), echoCapture = true, env = process.env } = {}) {
+export function runAgentDevice(
+  args,
+  { capture = false, cwd = process.cwd(), echoCapture = true, env = process.env } = {}
+) {
   const executable = agentDeviceCommand();
   const result = spawnSync(executable.command, [...executable.prefixArgs, ...args], {
     cwd,
@@ -71,7 +76,9 @@ export function capturedAgentDeviceOutput(result) {
 }
 
 function versionParts(version) {
-  const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(.*)$/);
+  const match = String(version)
+    .trim()
+    .match(/^(\d+)\.(\d+)\.(\d+)(.*)$/);
   return match ? { numbers: match.slice(1, 4).map(Number), suffix: match[4] } : null;
 }
 

@@ -25,7 +25,10 @@ function responseMessage(data: Record<string, unknown>, fallback: string) {
     return data.message.trim();
   }
   if (Array.isArray(data.errors)) {
-    const message = data.errors.map((item) => String(item || '').trim()).filter(Boolean).join('；');
+    const message = data.errors
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .join('；');
     if (message) {
       return message;
     }
@@ -66,24 +69,26 @@ export async function runXiaoyinsiAction({
   if (!apiKey || !clientId) {
     throw actionError('请先授权小隐寺', { loginRequired: true });
   }
-  const response = await fetchWithTimeout(`${XIAOYINSI_BASE_URL}${request.path}`, {
-    method: request.method,
-    headers: {
-      Accept: 'application/json,text/plain,*/*',
-      ...request.headers,
-      'User-Api-Key': apiKey,
-      'User-Api-Client-Id': clientId
+  const response = await fetchWithTimeout(
+    `${XIAOYINSI_BASE_URL}${request.path}`,
+    {
+      method: request.method,
+      headers: {
+        Accept: 'application/json,text/plain,*/*',
+        ...request.headers,
+        'User-Api-Key': apiKey,
+        'User-Api-Client-Id': clientId
+      },
+      body: request.body
     },
-    body: request.body
-  }, { fetcher, signal, timeoutMs });
+    { fetcher, signal, timeoutMs }
+  );
   const data = await readJsonResponse(response);
   if (!response.ok) {
     const message = responseMessage(data, `小隐寺请求失败：HTTP ${response.status}`);
     throw actionError(message, {
       status: response.status,
-      ...(response.status === 401 || response.status === 403
-        ? { authorizationCheckRequired: true as const }
-        : {}),
+      ...(response.status === 401 || response.status === 403 ? { authorizationCheckRequired: true as const } : {}),
       ...(response.status === 403 ? { reason: 'permission' as const } : {})
     });
   }

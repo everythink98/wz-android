@@ -22,16 +22,22 @@ describe('yaohuo action request builders', () => {
   it('[REG-ACCOUNT-036] refuses conflicting active sidyaohuo values before reply or delete transport', () => {
     const cookieHeader = 'sidyaohuo=first-session; SIDYAOHUO=second-session';
     const transport = vi.fn();
-    const submitReply = () => transport(buildYaohuoReplyRequest({
-      topicId: '123',
-      classId: '177',
-      content: '正文',
-      sid: extractYaohuoSid(cookieHeader)
-    }));
-    const submitDelete = () => transport(buildYaohuoDeleteReplyRequest({
-      deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&lpage=1&page=1&reid=17080475&id=798458',
-      sid: extractYaohuoSid(cookieHeader)
-    }));
+    const submitReply = () =>
+      transport(
+        buildYaohuoReplyRequest({
+          topicId: '123',
+          classId: '177',
+          content: '正文',
+          sid: extractYaohuoSid(cookieHeader)
+        })
+      );
+    const submitDelete = () =>
+      transport(
+        buildYaohuoDeleteReplyRequest({
+          deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&lpage=1&page=1&reid=17080475&id=798458',
+          sid: extractYaohuoSid(cookieHeader)
+        })
+      );
 
     expect(submitReply).toThrow('妖火登录状态存在冲突，请重新检测登录状态');
     expect(submitDelete).toThrow('妖火登录状态存在冲突，请重新检测登录状态');
@@ -83,14 +89,16 @@ describe('yaohuo action request builders', () => {
   });
 
   it('builds a floor reply request with reply floor and target user id', () => {
-    const params = bodyParams(buildYaohuoReplyRequest({
-      topicId: '123',
-      classId: '177',
-      content: '回复楼层',
-      replyFloor: 4,
-      toUserId: '789',
-      sid: 'abc123'
-    }).body);
+    const params = bodyParams(
+      buildYaohuoReplyRequest({
+        topicId: '123',
+        classId: '177',
+        content: '回复楼层',
+        replyFloor: 4,
+        toUserId: '789',
+        sid: 'abc123'
+      }).body
+    );
 
     expect(params.get('reply')).toBe('4');
     expect(params.get('touserid')).toBe('789');
@@ -98,12 +106,14 @@ describe('yaohuo action request builders', () => {
   });
 
   it('keeps yaohuo face as a separate reply field', () => {
-    const params = bodyParams(buildYaohuoReplyRequest({
-      topicId: '123',
-      classId: '177',
-      content: '正文',
-      face: '淡定.gif'
-    }).body);
+    const params = bodyParams(
+      buildYaohuoReplyRequest({
+        topicId: '123',
+        classId: '177',
+        content: '正文',
+        face: '淡定.gif'
+      }).body
+    );
 
     expect(params.get('content')).toBe('正文');
     expect(params.get('face')).toBe('淡定.gif');
@@ -130,11 +140,13 @@ describe('yaohuo action request builders', () => {
   });
 
   it('builds yaohuo multi-choice vote requests with every selected option id', () => {
-    expect(buildYaohuoVoteRequest({
-      topicId: '123',
-      classId: '177',
-      voteIds: ['55', '56']
-    })).toMatchObject({
+    expect(
+      buildYaohuoVoteRequest({
+        topicId: '123',
+        classId: '177',
+        voteIds: ['55', '56']
+      })
+    ).toMatchObject({
       path: '/bbs/book_view_toVote.aspx?siteid=1000&classid=177&vid=55&vid=56&vpage=1&lpage=2&id=123',
       method: 'GET'
     });
@@ -159,32 +171,42 @@ describe('yaohuo action request builders', () => {
   });
 
   it('rejects yaohuo reply delete links outside yaohuo or without required ids', () => {
-    expect(() => buildYaohuoDeleteReplyRequest({
-      deletePath: 'https://evil.example/bbs/Book_re_del.aspx?action=go&classid=177&reid=17080475&id=798458'
-    })).toThrow('妖火删除链接不正确');
+    expect(() =>
+      buildYaohuoDeleteReplyRequest({
+        deletePath: 'https://evil.example/bbs/Book_re_del.aspx?action=go&classid=177&reid=17080475&id=798458'
+      })
+    ).toThrow('妖火删除链接不正确');
 
-    expect(() => buildYaohuoDeleteReplyRequest({
-      deletePath: '/bbs/Book_re_del.aspx?action=go&classid=177&id=798458'
-    })).toThrow('回复 id 不正确');
+    expect(() =>
+      buildYaohuoDeleteReplyRequest({
+        deletePath: '/bbs/Book_re_del.aspx?action=go&classid=177&id=798458'
+      })
+    ).toThrow('回复 id 不正确');
   });
 
   it('rejects empty reply content and invalid ids', () => {
-    expect(() => buildYaohuoReplyRequest({
-      topicId: '123',
-      classId: '177',
-      content: '   '
-    })).toThrow('请输入回复内容');
+    expect(() =>
+      buildYaohuoReplyRequest({
+        topicId: '123',
+        classId: '177',
+        content: '   '
+      })
+    ).toThrow('请输入回复内容');
 
-    expect(() => buildYaohuoVoteRequest({
-      topicId: '123',
-      classId: '177',
-      voteId: 'bad'
-    })).toThrow('投票 id 不正确');
+    expect(() =>
+      buildYaohuoVoteRequest({
+        topicId: '123',
+        classId: '177',
+        voteId: 'bad'
+      })
+    ).toThrow('投票 id 不正确');
 
-    expect(() => buildYaohuoVoteRequest({
-      topicId: '123',
-      classId: '177',
-      voteIds: []
-    })).toThrow('请选择投票选项');
+    expect(() =>
+      buildYaohuoVoteRequest({
+        topicId: '123',
+        classId: '177',
+        voteIds: []
+      })
+    ).toThrow('请选择投票选项');
   });
 });

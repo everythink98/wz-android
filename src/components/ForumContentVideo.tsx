@@ -19,15 +19,21 @@ export function ForumContentVideo({
   theme: ReaderTheme;
 }) {
   const videoRef = useRef<VideoView>(null);
-  const requestHeaders = useMemo(() => ({
-    ...(imageRequestHeadersForUrl(src, { mediaContext }) || {}),
-    ...(headers || {})
-  }), [headers, mediaContext, src]);
-  const source = useMemo<VideoSource>(() => ({
-    uri: src,
-    ...(Object.keys(requestHeaders).length ? { headers: requestHeaders } : {}),
-    contentType: 'progressive'
-  }), [mediaContext.sessionIdentity, requestHeaders, src]);
+  const requestHeaders = useMemo(
+    () => ({
+      ...(imageRequestHeadersForUrl(src, { mediaContext }) || {}),
+      ...(headers || {})
+    }),
+    [headers, mediaContext, src]
+  );
+  const source = useMemo<VideoSource>(
+    () => ({
+      uri: src,
+      ...(Object.keys(requestHeaders).length ? { headers: requestHeaders } : {}),
+      contentType: 'progressive'
+    }),
+    [mediaContext.sessionIdentity, requestHeaders, src]
+  );
   const player = useVideoPlayer(source);
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const status = useEvent(player, 'statusChange', { status: player.status }).status;

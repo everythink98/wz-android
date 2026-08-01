@@ -6,10 +6,7 @@ const NODESEEK_MENTION_CLASS = 'forum-mention-link';
 const NODESEEK_FLOOR_CLASS = 'forum-floor-link';
 
 function escapeHtmlText(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function escapeHtmlAttribute(value: string) {
@@ -21,7 +18,10 @@ function addHtmlClass(attributes: string, className: string) {
     return attributes;
   }
   if (/\sclass=(["'])(.*?)\1/i.test(attributes)) {
-    return attributes.replace(/\sclass=(["'])(.*?)\1/i, (_match, quote: string, value: string) => ` class=${quote}${value} ${className}${quote}`);
+    return attributes.replace(
+      /\sclass=(["'])(.*?)\1/i,
+      (_match, quote: string, value: string) => ` class=${quote}${value} ${className}${quote}`
+    );
   }
   return `${attributes} class="${className}"`;
 }
@@ -31,9 +31,11 @@ function hrefAttribute(attributes: string) {
 }
 
 function isForumUserMentionHref(href: string) {
-  return /^(?:https?:\/\/(?:www\.)?v2ex\.com)?\/member\/[^/?#"'<>]+/i.test(href)
-    || /^(?:https?:\/\/(?:www\.)?linux\.do)?\/u\/[^?#"'<>]+/i.test(href)
-    || /^(?:https?:\/\/(?:www\.)?yaohuo\.me)?\/(?:bbs\/)?userinfo\.aspx\?[^"'<>]*\b(?:touserid|userid)=\d+/i.test(href);
+  return (
+    /^(?:https?:\/\/(?:www\.)?v2ex\.com)?\/member\/[^/?#"'<>]+/i.test(href) ||
+    /^(?:https?:\/\/(?:www\.)?linux\.do)?\/u\/[^?#"'<>]+/i.test(href) ||
+    /^(?:https?:\/\/(?:www\.)?yaohuo\.me)?\/(?:bbs\/)?userinfo\.aspx\?[^"'<>]*\b(?:touserid|userid)=\d+/i.test(href)
+  );
 }
 
 function mentionLabel(label: string) {
@@ -42,16 +44,20 @@ function mentionLabel(label: string) {
 
 function markForumUserMentions(html: string) {
   return escapeQuotedHtmlTagDelimiters(html)
-    .replace(/@<a\b([^>]*\bhref=(["'])[^"']+\2[^>]*)>([^<]+)<\/a>/gi, (match, attributes: string, _quote: string, label: string) => (
-      isForumUserMentionHref(hrefAttribute(attributes))
-        ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`
-        : match
-    ))
-    .replace(/<a\b([^>]*\bhref=(["'])[^"']+\2[^>]*)>(@[^<]+)<\/a>/gi, (match, attributes: string, _quote: string, label: string) => (
-      isForumUserMentionHref(hrefAttribute(attributes))
-        ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`
-        : match
-    ));
+    .replace(
+      /@<a\b([^>]*\bhref=(["'])[^"']+\2[^>]*)>([^<]+)<\/a>/gi,
+      (match, attributes: string, _quote: string, label: string) =>
+        isForumUserMentionHref(hrefAttribute(attributes))
+          ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`
+          : match
+    )
+    .replace(
+      /<a\b([^>]*\bhref=(["'])[^"']+\2[^>]*)>(@[^<]+)<\/a>/gi,
+      (match, attributes: string, _quote: string, label: string) =>
+        isForumUserMentionHref(hrefAttribute(attributes))
+          ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`
+          : match
+    );
 }
 
 function isNodeSeekHost(hostname: string) {
@@ -87,7 +93,10 @@ function hasClass(className: string, value: string) {
   return className.split(/\s+/).includes(value);
 }
 
-function appendClass(link: { attributes?: Record<string, string | undefined>; setAttribute?: (name: string, value: string) => void }, value: string) {
+function appendClass(
+  link: { attributes?: Record<string, string | undefined>; setAttribute?: (name: string, value: string) => void },
+  value: string
+) {
   const current = String(link.attributes?.class || '').trim();
   if (hasClass(current, value)) {
     return;
@@ -103,19 +112,18 @@ function appendClass(link: { attributes?: Record<string, string | undefined>; se
 }
 
 function isNodeSeekMentionLink(url: URL, label: string) {
-  return url.pathname.replace(/\/+$/, '') === '/member'
-    && Boolean(url.searchParams.get('t'))
-    && /^@\S/.test(label);
+  return url.pathname.replace(/\/+$/, '') === '/member' && Boolean(url.searchParams.get('t')) && /^@\S/.test(label);
 }
 
 function isNodeSeekFloorLink(url: URL, label: string) {
   const floor = label.match(/^#(\d+)$/)?.[1];
-  return Boolean(floor)
-    && /^\/post-\d+-\d+\/?$/i.test(url.pathname)
-    && url.hash === `#${floor}`;
+  return Boolean(floor) && /^\/post-\d+-\d+\/?$/i.test(url.pathname) && url.hash === `#${floor}`;
 }
 
-function linkReferenceInfo(link: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], baseUrl?: string) {
+function linkReferenceInfo(
+  link: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
+  baseUrl?: string
+) {
   const label = elementText(link);
   const href = link.getAttribute('href') || link.attributes?.href || '';
   const url = nodeSeekUrlFromHref(href, baseUrl);
@@ -141,9 +149,10 @@ function leadingReplyReferenceParagraphHtml(
     index += 1;
   }
   const mentionNode = children[index];
-  const mentionInfo = mentionNode && (mentionNode as { rawTagName?: string }).rawTagName === 'a'
-    ? linkReferenceInfo(mentionNode as ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], baseUrl)
-    : undefined;
+  const mentionInfo =
+    mentionNode && (mentionNode as { rawTagName?: string }).rawTagName === 'a'
+      ? linkReferenceInfo(mentionNode as ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], baseUrl)
+      : undefined;
   if (mentionInfo?.type !== 'mention') {
     return undefined;
   }
@@ -152,13 +161,18 @@ function leadingReplyReferenceParagraphHtml(
     index += 1;
   }
   const floorNode = children[index];
-  const floorInfo = floorNode && (floorNode as { rawTagName?: string }).rawTagName === 'a'
-    ? linkReferenceInfo(floorNode as ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], baseUrl)
-    : undefined;
+  const floorInfo =
+    floorNode && (floorNode as { rawTagName?: string }).rawTagName === 'a'
+      ? linkReferenceInfo(floorNode as ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], baseUrl)
+      : undefined;
   if (floorInfo?.type !== 'floor') {
     return undefined;
   }
-  const restHtml = children.slice(index + 1).map((child) => child.toString()).join('').replace(/^\s+/, '');
+  const restHtml = children
+    .slice(index + 1)
+    .map((child) => child.toString())
+    .join('')
+    .replace(/^\s+/, '');
   const referenceHtml = [
     `<${FORUM_REPLY_REFERENCE_TAG}`,
     ` data-mention="${escapeHtmlAttribute(mentionInfo.label)}"`,

@@ -213,7 +213,9 @@ function injectApkInstallerPackage(contents) {
 
 function ensureInstallPermission(manifest) {
   const permissions = manifest.manifest['uses-permission'] || [];
-  if (!permissions.some((permission) => permission.$?.['android:name'] === 'android.permission.REQUEST_INSTALL_PACKAGES')) {
+  if (
+    !permissions.some((permission) => permission.$?.['android:name'] === 'android.permission.REQUEST_INSTALL_PACKAGES')
+  ) {
     permissions.push({ $: { 'android:name': 'android.permission.REQUEST_INSTALL_PACKAGES' } });
   }
   manifest.manifest['uses-permission'] = permissions;
@@ -234,12 +236,14 @@ function ensureFileProvider(manifest, packageName) {
         'android:exported': 'false',
         'android:grantUriPermissions': 'true'
       },
-      'meta-data': [{
-        $: {
-          'android:name': 'android.support.FILE_PROVIDER_PATHS',
-          'android:resource': '@xml/apk_installer_paths'
+      'meta-data': [
+        {
+          $: {
+            'android:name': 'android.support.FILE_PROVIDER_PATHS',
+            'android:resource': '@xml/apk_installer_paths'
+          }
         }
-      }]
+      ]
     });
   }
   application.provider = providers;
@@ -255,37 +259,40 @@ module.exports = function withApkInstaller(config) {
     return config;
   });
 
-  config = withDangerousMod(config, ['android', async (config) => {
-    const packageName = config.android?.package;
-    if (!packageName) {
+  config = withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const packageName = config.android?.package;
+      if (!packageName) {
+        return config;
+      }
+      const outputDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'main',
+        'java',
+        packagePath(packageName)
+      );
+      const xmlDir = path.join(config.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res', 'xml');
+      const testDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'test',
+        'java',
+        packagePath(packageName)
+      );
+      fs.mkdirSync(outputDir, { recursive: true });
+      fs.mkdirSync(xmlDir, { recursive: true });
+      fs.mkdirSync(testDir, { recursive: true });
+      fs.writeFileSync(path.join(outputDir, 'ApkInstallerModule.kt'), apkInstallerModuleSource(packageName));
+      fs.writeFileSync(path.join(outputDir, 'ApkInstallerPackage.kt'), apkInstallerPackageSource(packageName));
+      fs.writeFileSync(path.join(testDir, 'ApkInstallerSignerTest.kt'), apkInstallerTestSource(packageName));
+      fs.writeFileSync(path.join(xmlDir, 'apk_installer_paths.xml'), fileProviderPathsSource());
       return config;
     }
-    const outputDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'main',
-      'java',
-      packagePath(packageName)
-    );
-    const xmlDir = path.join(config.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res', 'xml');
-    const testDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'test',
-      'java',
-      packagePath(packageName)
-    );
-    fs.mkdirSync(outputDir, { recursive: true });
-    fs.mkdirSync(xmlDir, { recursive: true });
-    fs.mkdirSync(testDir, { recursive: true });
-    fs.writeFileSync(path.join(outputDir, 'ApkInstallerModule.kt'), apkInstallerModuleSource(packageName));
-    fs.writeFileSync(path.join(outputDir, 'ApkInstallerPackage.kt'), apkInstallerPackageSource(packageName));
-    fs.writeFileSync(path.join(testDir, 'ApkInstallerSignerTest.kt'), apkInstallerTestSource(packageName));
-    fs.writeFileSync(path.join(xmlDir, 'apk_installer_paths.xml'), fileProviderPathsSource());
-    return config;
-  }]);
+  ]);
 
   return withMainApplication(config, (config) => {
     config.modResults.contents = injectApkInstallerPackage(config.modResults.contents);

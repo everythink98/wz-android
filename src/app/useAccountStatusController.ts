@@ -30,10 +30,7 @@ import {
   readManagedCookieHeader as readManagedCookieHeaderFromNative,
   type ManagedCookieReadResult
 } from '../managedCookies';
-import {
-  cancelForumSourceQueries,
-  removeUnconfirmedForumSourceQueries
-} from './sessionControllerHelpers';
+import { cancelForumSourceQueries, removeUnconfirmedForumSourceQueries } from './sessionControllerHelpers';
 import { sessionSources, type SessionSource } from '../sourceCatalog';
 import type { SourceErrorInfo } from '../types';
 
@@ -79,9 +76,7 @@ function managedCookieHeaderOrThrow(result: ManagedCookieReadResult) {
   if (result.status === 'ok') {
     return result.header;
   }
-  throw new Error(result.status === 'unsupported'
-    ? '当前安装包不支持读取 WebView Cookie'
-    : result.message);
+  throw new Error(result.status === 'unsupported' ? '当前安装包不支持读取 WebView Cookie' : result.message);
 }
 
 function sessionFromEvents(site: StatusSource, events: ScopedSiteSessionEvent[]) {
@@ -97,24 +92,20 @@ function accountStatusViewModel(
   error: unknown,
   identityCheck?: AccountIdentityCheck
 ) {
-  const ownsVisibleWorkflow = identityCheck?.pending === true
-    && (base.status === 'verification-required'
-      || base.status === 'verifying'
-      || base.status === 'authorizing');
-  const remote = !ownsVisibleWorkflow && data?.session
-    ? createSiteSessionViewModel(data.session)
-    : base;
-  const withQueryError = error && !isCanceledStatusQuery(error)
-    ? { ...remote, lastError: errorMessage(error) }
-    : remote;
+  const ownsVisibleWorkflow =
+    identityCheck?.pending === true &&
+    (base.status === 'verification-required' || base.status === 'verifying' || base.status === 'authorizing');
+  const remote = !ownsVisibleWorkflow && data?.session ? createSiteSessionViewModel(data.session) : base;
+  const withQueryError =
+    error && !isCanceledStatusQuery(error) ? { ...remote, lastError: errorMessage(error) } : remote;
   return identityCheck?.pending
     ? {
-      ...withQueryError,
-      canWrite: false,
-      identityTrust: 'pending' as const,
-      summaryLabel: '登录状态待确认',
-      ...(identityCheck.error ? { lastError: identityCheck.error.message } : {})
-    }
+        ...withQueryError,
+        canWrite: false,
+        identityTrust: 'pending' as const,
+        summaryLabel: '登录状态待确认',
+        ...(identityCheck.error ? { lastError: identityCheck.error.message } : {})
+      }
     : withQueryError;
 }
 
@@ -135,10 +126,7 @@ export function useAccountStatusController({
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
-  onAccountIdentityRuntimeChanged: (
-    source: StatusSource,
-    update: AccountIdentityRuntimeUpdate
-  ) => void;
+  onAccountIdentityRuntimeChanged: (source: StatusSource, update: AccountIdentityRuntimeUpdate) => void;
   onAccountStatusChanged: (
     source: StatusSource,
     recoveryQueryKey: readonly unknown[],
@@ -152,10 +140,16 @@ export function useAccountStatusController({
   sessionViewModels: SiteSessionViewModels;
 }) {
   const [identityChecks, setIdentityChecks] = useState<Record<StatusSource, AccountIdentityCheck>>(
-    () => Object.fromEntries(sessionSources.map((source) => [source, {
-      checking: false,
-      pending: true
-    }])) as Record<StatusSource, AccountIdentityCheck>
+    () =>
+      Object.fromEntries(
+        sessionSources.map((source) => [
+          source,
+          {
+            checking: false,
+            pending: true
+          }
+        ])
+      ) as Record<StatusSource, AccountIdentityCheck>
   );
   const activeIdentityReconciliationsRef = useRef(0);
   const [identityReconciliationPending, setIdentityReconciliationPending] = useState(true);
@@ -168,7 +162,7 @@ export function useAccountStatusController({
     const yaohuoStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'yaohuo' });
     const xiaoyinsiStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'xiaoyinsi' });
     return {
-    nodeseek: {
+      nodeseek: {
         enabled: false,
         queryKey: nodeSeekStatusQueryKey,
         queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
@@ -189,12 +183,12 @@ export function useAccountStatusController({
               hasCredential: summary.count > 0
             });
             const currentUser = await getCurrentUserProfile({
-                source: 'nodeseek',
-                nodeSeekAuthenticated: true,
-                fetcher: diagnosticFetcher,
-                nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-                signal
-              });
+              source: 'nodeseek',
+              nodeSeekAuthenticated: true,
+              fetcher: diagnosticFetcher,
+              nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+              signal
+            });
             if (signal.aborted) {
               finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
               return canceledStatusQuery();
@@ -202,15 +196,17 @@ export function useAccountStatusController({
             const checkedAt = new Date().toISOString();
             finishDiagnosticTrace(trace, 'success', { source: 'nodeseek' });
             return {
-              session: sessionFromEvents('nodeseek', [{
-                site: 'nodeseek',
-                type: 'cookie-loaded',
-                cookieSummary: summary.names,
-                hasVerification: summary.count > 0,
-                loggedIn: Boolean(currentUser),
-                currentUser,
-                at: checkedAt
-              }])
+              session: sessionFromEvents('nodeseek', [
+                {
+                  site: 'nodeseek',
+                  type: 'cookie-loaded',
+                  cookieSummary: summary.names,
+                  hasVerification: summary.count > 0,
+                  loggedIn: Boolean(currentUser),
+                  currentUser,
+                  at: checkedAt
+                }
+              ])
             };
           } catch (error) {
             const canceled = signal.aborted || isCanceledStatusQuery(error);
@@ -225,15 +221,17 @@ export function useAccountStatusController({
                 reason: 'expired'
               });
               return {
-                session: sessionFromEvents('nodeseek', [{
-                  site: 'nodeseek',
-                  type: 'cookie-loaded',
-                  cookieSummary,
-                  hasVerification: cookieSummary.length > 0,
-                  loggedIn: false,
-                  currentUser: null,
-                  at: new Date().toISOString()
-                }])
+                session: sessionFromEvents('nodeseek', [
+                  {
+                    site: 'nodeseek',
+                    type: 'cookie-loaded',
+                    cookieSummary,
+                    hasVerification: cookieSummary.length > 0,
+                    loggedIn: false,
+                    currentUser: null,
+                    at: new Date().toISOString()
+                  }
+                ])
               };
             }
             finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
@@ -244,7 +242,7 @@ export function useAccountStatusController({
           }
         }
       },
-    linuxdo: {
+      linuxdo: {
         enabled: false,
         queryKey: linuxDoStatusQueryKey,
         queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
@@ -280,15 +278,17 @@ export function useAccountStatusController({
             }
             finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
             return {
-              session: sessionFromEvents('linuxdo', [{
-                site: 'linuxdo',
-                type: 'cookie-loaded',
-                cookieSummary: cookieSummary.names,
-                hasVerification: cookieSummary.hasClearance,
-                loggedIn: true,
-                currentUser,
-                at: new Date().toISOString()
-              }])
+              session: sessionFromEvents('linuxdo', [
+                {
+                  site: 'linuxdo',
+                  type: 'cookie-loaded',
+                  cookieSummary: cookieSummary.names,
+                  hasVerification: cookieSummary.hasClearance,
+                  loggedIn: true,
+                  currentUser,
+                  at: new Date().toISOString()
+                }
+              ])
             };
           } catch (error) {
             const canceled = signal.aborted || isCanceledStatusQuery(error);
@@ -299,15 +299,17 @@ export function useAccountStatusController({
                 reason: 'expired'
               });
               return {
-                session: sessionFromEvents('linuxdo', [{
-                  site: 'linuxdo',
-                  type: 'cookie-loaded',
-                  cookieSummary: cookieSummary.names,
-                  hasVerification: cookieSummary.hasClearance,
-                  loggedIn: false,
-                  currentUser: null,
-                  at: new Date().toISOString()
-                }])
+                session: sessionFromEvents('linuxdo', [
+                  {
+                    site: 'linuxdo',
+                    type: 'cookie-loaded',
+                    cookieSummary: cookieSummary.names,
+                    hasVerification: cookieSummary.hasClearance,
+                    loggedIn: false,
+                    currentUser: null,
+                    at: new Date().toISOString()
+                  }
+                ])
               };
             }
             finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
@@ -318,7 +320,7 @@ export function useAccountStatusController({
           }
         }
       },
-    yaohuo: {
+      yaohuo: {
         enabled: false,
         queryKey: yaohuoStatusQueryKey,
         queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
@@ -351,15 +353,17 @@ export function useAccountStatusController({
               }
               finishDiagnosticTrace(trace, 'success', { source: 'yaohuo' });
               return {
-                session: sessionFromEvents('yaohuo', [{
-                  site: 'yaohuo',
-                  type: 'cookie-loaded',
-                  cookieSummary,
-                  hasVerification: false,
-                  loggedIn: false,
-                  currentUser: null,
-                  at: new Date().toISOString()
-                }])
+                session: sessionFromEvents('yaohuo', [
+                  {
+                    site: 'yaohuo',
+                    type: 'cookie-loaded',
+                    cookieSummary,
+                    hasVerification: false,
+                    loggedIn: false,
+                    currentUser: null,
+                    at: new Date().toISOString()
+                  }
+                ])
               };
             }
             const verifiedUser = 'currentUser' in check ? check.currentUser : undefined;
@@ -390,15 +394,17 @@ export function useAccountStatusController({
               source: 'yaohuo',
               ...(profileError ? { reason: normalizeDiagnosticReason(profileError) } : {})
             });
-            const events: ScopedSiteSessionEvent[] = [{
-              site: 'yaohuo',
-              type: 'cookie-loaded',
-              cookieSummary,
-              hasVerification: false,
-              loggedIn: true,
-              currentUser,
-              at: new Date().toISOString()
-            }];
+            const events: ScopedSiteSessionEvent[] = [
+              {
+                site: 'yaohuo',
+                type: 'cookie-loaded',
+                cookieSummary,
+                hasVerification: false,
+                loggedIn: true,
+                currentUser,
+                at: new Date().toISOString()
+              }
+            ];
             if (profileError) {
               events.push({
                 site: 'yaohuo',
@@ -420,7 +426,7 @@ export function useAccountStatusController({
           }
         }
       },
-    xiaoyinsi: {
+      xiaoyinsi: {
         enabled: false,
         queryKey: xiaoyinsiStatusQueryKey,
         queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
@@ -431,24 +437,29 @@ export function useAccountStatusController({
               return canceledStatusQuery();
             }
             if (result.authenticated === null) {
-              throw new Error(result.sessionEvent.type === 'check-failed'
-                ? result.sessionEvent.message || '小隐寺状态暂时无法确认'
-                : '小隐寺状态暂时无法确认');
+              throw new Error(
+                result.sessionEvent.type === 'check-failed'
+                  ? result.sessionEvent.message || '小隐寺状态暂时无法确认'
+                  : '小隐寺状态暂时无法确认'
+              );
             }
             finishDiagnosticTrace(trace, 'success', { source: 'xiaoyinsi' });
-            const sessionEvent = result.authenticated === false
-              ? {
-                type: 'cookie-loaded' as const,
-                loggedIn: false,
-                currentUser: null,
-                at: new Date().toISOString()
-              }
-              : result.sessionEvent;
+            const sessionEvent =
+              result.authenticated === false
+                ? {
+                    type: 'cookie-loaded' as const,
+                    loggedIn: false,
+                    currentUser: null,
+                    at: new Date().toISOString()
+                  }
+                : result.sessionEvent;
             return {
-              session: sessionFromEvents('xiaoyinsi', [{
-                ...sessionEvent,
-                site: 'xiaoyinsi'
-              } as ScopedSiteSessionEvent])
+              session: sessionFromEvents('xiaoyinsi', [
+                {
+                  ...sessionEvent,
+                  site: 'xiaoyinsi'
+                } as ScopedSiteSessionEvent
+              ])
             };
           } catch (error) {
             const canceled = signal.aborted || isCanceledStatusQuery(error);
@@ -484,10 +495,30 @@ export function useAccountStatusController({
   };
 
   const accountSessionViewModels: SiteSessionViewModels = {
-    nodeseek: accountStatusViewModel(sessionViewModels.nodeseek, nodeSeekStatus.data, nodeSeekStatus.error, identityChecks.nodeseek),
-    linuxdo: accountStatusViewModel(sessionViewModels.linuxdo, linuxDoStatus.data, linuxDoStatus.error, identityChecks.linuxdo),
-    yaohuo: accountStatusViewModel(sessionViewModels.yaohuo, yaohuoStatus.data, yaohuoStatus.error, identityChecks.yaohuo),
-    xiaoyinsi: accountStatusViewModel(sessionViewModels.xiaoyinsi, xiaoyinsiStatus.data, xiaoyinsiStatus.error, identityChecks.xiaoyinsi)
+    nodeseek: accountStatusViewModel(
+      sessionViewModels.nodeseek,
+      nodeSeekStatus.data,
+      nodeSeekStatus.error,
+      identityChecks.nodeseek
+    ),
+    linuxdo: accountStatusViewModel(
+      sessionViewModels.linuxdo,
+      linuxDoStatus.data,
+      linuxDoStatus.error,
+      identityChecks.linuxdo
+    ),
+    yaohuo: accountStatusViewModel(
+      sessionViewModels.yaohuo,
+      yaohuoStatus.data,
+      yaohuoStatus.error,
+      identityChecks.yaohuo
+    ),
+    xiaoyinsi: accountStatusViewModel(
+      sessionViewModels.xiaoyinsi,
+      xiaoyinsiStatus.data,
+      xiaoyinsiStatus.error,
+      identityChecks.xiaoyinsi
+    )
   };
 
   const probeGenerationRef = useRef<Record<StatusSource, number>>({
@@ -496,186 +527,190 @@ export function useAccountStatusController({
     xiaoyinsi: 0,
     yaohuo: 0
   });
-  const activeProbeRef = useRef<Partial<Record<StatusSource, {
-    generation: number;
-    promise: Promise<AccountReconcileResult>;
-    queryKey: readonly unknown[];
-    surfaceGeneration: number;
-  }>>>({});
-  const beginAccountIdentityCheck = useCallback((
-    source: StatusSource,
-    surfaceGeneration?: number
-  ) => {
-    if (!identityPendingRef.current[source]) {
-      void cancelForumSourceQueries(source);
-    }
-    identityPendingRef.current[source] = true;
-    if (surfaceGeneration !== undefined) {
-      const activeProbe = activeProbeRef.current[source];
-      if (activeProbe && activeProbe.surfaceGeneration < surfaceGeneration) {
-        probeGenerationRef.current[source] = Math.max(
-          probeGenerationRef.current[source] + 1,
-          surfaceGeneration
-        );
-        void appQueryClient.cancelQueries({
-          queryKey: activeProbe.queryKey,
-          exact: true
-        });
-      } else {
-        probeGenerationRef.current[source] = Math.max(
-          probeGenerationRef.current[source],
-          surfaceGeneration
-        );
-      }
-    }
-    setIdentityChecks((current) => ({
-      ...current,
-      [source]: { checking: true, pending: true }
-    }));
-    onAccountIdentityRuntimeChanged(source, { pending: true });
-  }, [onAccountIdentityRuntimeChanged]);
-  const reconcileAccountStatus = useCallback((
-    source: StatusSource,
-    options: { surfaceGeneration?: number } = {}
-  ): Promise<AccountReconcileResult> => {
-    const requestedSurfaceGeneration = options.surfaceGeneration || 0;
-    const activeProbe = activeProbeRef.current[source];
-    if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
-      return activeProbe.promise;
-    }
-    if (activeProbe) {
-      void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
-    }
-    beginAccountIdentityCheck(source);
-    const generation = options.surfaceGeneration === undefined
-      ? probeGenerationRef.current[source] + 1
-      : Math.max(probeGenerationRef.current[source] + 1, options.surfaceGeneration);
-    probeGenerationRef.current[source] = generation;
-    const probeQueryKey = forumQueryKeys.accountStatusProbe({
-      sessionEpochs,
-      generation,
-      source
-    });
-    const promise = (async (): Promise<AccountReconcileResult> => {
-      try {
-      const nextData = await appQueryClient.fetchQuery({
-        queryKey: probeQueryKey,
-        queryFn: statusQueryDefinitions[source].queryFn,
-        staleTime: 0
-      });
-      if (probeGenerationRef.current[source] !== generation || !nextData.session) {
-        return { status: 'stale' as const };
-      }
-      const canonicalQueryKey = statusQueryDefinitions[source].queryKey;
-      const previousData = appQueryClient.getQueryData<StatusQueryData>(canonicalQueryKey);
-      const previousSession = previousData?.session || (
-        sessionViewModels[source].identityTrust === 'confirmed' ? sessionViewModels[source] : undefined
-      );
-      const previousIdentity = previousSession ? accountIdentityKey(previousSession) : undefined;
-      const nextIdentity = accountIdentityKey(nextData.session);
-      if (previousIdentity && previousIdentity !== nextIdentity) {
-        onAccountStatusChanged(source, probeQueryKey, nextData.session);
-        identityPendingRef.current[source] = false;
-        onAccountIdentityRuntimeChanged(source, {
-          identityKey: nextIdentity,
-          pending: false
-        });
-        setIdentityChecks((current) => ({
-          ...current,
-          [source]: { checking: false, pending: false }
-        }));
-        return {
-          status: nextIdentity.endsWith(':anonymous') ? 'anonymous' as const : 'changed' as const,
-          session: nextData.session,
-          partial: nextData.failed
-        };
-      }
-      if (!previousIdentity) {
-        removeUnconfirmedForumSourceQueries(source);
-      }
-      appQueryClient.setQueryData(canonicalQueryKey, nextData);
-      identityPendingRef.current[source] = false;
-      onAccountIdentityRuntimeChanged(source, {
-        identityKey: nextIdentity,
-        pending: false
-      });
-      setIdentityChecks((current) => ({
-        ...current,
-        [source]: { checking: false, pending: false }
-      }));
-      return {
-        status: 'same' as const,
-        session: nextData.session,
-        partial: nextData.failed
-      };
-      } catch (error) {
-      if (probeGenerationRef.current[source] !== generation) {
-        return { status: 'stale' as const };
-      }
-      if (isCanceledStatusQuery(error)) {
-        setIdentityChecks((current) => ({
-          ...current,
-          [source]: { checking: false, pending: true }
-        }));
-        return { status: 'stale' as const };
-      }
-      const message = errorMessage(error);
-      const errorInfo = sourceErrorFromUnknown(source, error);
-      setIdentityChecks((current) => ({
-        ...current,
-        [source]: { checking: false, pending: true, error: errorInfo }
-      }));
-      return { status: 'unknown' as const, error: message, errorInfo };
-      } finally {
-        if (activeProbeRef.current[source]?.generation === generation) {
-          delete activeProbeRef.current[source];
+  const activeProbeRef = useRef<
+    Partial<
+      Record<
+        StatusSource,
+        {
+          generation: number;
+          promise: Promise<AccountReconcileResult>;
+          queryKey: readonly unknown[];
+          surfaceGeneration: number;
         }
-        appQueryClient.removeQueries({ queryKey: probeQueryKey, exact: true });
+      >
+    >
+  >({});
+  const beginAccountIdentityCheck = useCallback(
+    (source: StatusSource, surfaceGeneration?: number) => {
+      if (!identityPendingRef.current[source]) {
+        void cancelForumSourceQueries(source);
       }
-    })();
-    activeProbeRef.current[source] = {
-      generation,
-      promise,
-      queryKey: probeQueryKey,
-      surfaceGeneration: requestedSurfaceGeneration
-    };
-    return promise;
-  }, [
-    beginAccountIdentityCheck,
-    onAccountIdentityRuntimeChanged,
-    onAccountStatusChanged,
-    sessionEpochs,
-    sessionViewModels,
-    statusQueryDefinitions
-  ]);
-  const statusBusy = Object.values(statusQueries).some((query) => query.fetchStatus === 'fetching')
-    || Object.values(identityChecks).some((identityCheck) => identityCheck.checking);
-  const refreshAccountStatus = useCallback(async (options: RefreshAccountStatusOptions = {}) => {
-    activeIdentityReconciliationsRef.current += 1;
-    setIdentityReconciliationPending(true);
-    try {
-      const results = await Promise.all(
-        Object.values(STATUS_DESCRIPTORS).map(async (descriptor) => ({
-          descriptor,
-          result: await reconcileAccountStatus(descriptor.source)
-        }))
-      );
-      if (options.silent) {
-        return;
+      identityPendingRef.current[source] = true;
+      if (surfaceGeneration !== undefined) {
+        const activeProbe = activeProbeRef.current[source];
+        if (activeProbe && activeProbe.surfaceGeneration < surfaceGeneration) {
+          probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source] + 1, surfaceGeneration);
+          void appQueryClient.cancelQueries({
+            queryKey: activeProbe.queryKey,
+            exact: true
+          });
+        } else {
+          probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source], surfaceGeneration);
+        }
       }
-      const failedSites = results.flatMap(({ descriptor, result }) => (
-        result.status === 'unknown' || ('partial' in result && result.partial)
-          ? [descriptor.label]
-          : []
-      ));
-      notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
-    } finally {
-      activeIdentityReconciliationsRef.current -= 1;
-      if (activeIdentityReconciliationsRef.current === 0) {
-        setIdentityReconciliationPending(false);
+      setIdentityChecks((current) => ({
+        ...current,
+        [source]: { checking: true, pending: true }
+      }));
+      onAccountIdentityRuntimeChanged(source, { pending: true });
+    },
+    [onAccountIdentityRuntimeChanged]
+  );
+  const reconcileAccountStatus = useCallback(
+    (source: StatusSource, options: { surfaceGeneration?: number } = {}): Promise<AccountReconcileResult> => {
+      const requestedSurfaceGeneration = options.surfaceGeneration || 0;
+      const activeProbe = activeProbeRef.current[source];
+      if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
+        return activeProbe.promise;
       }
-    }
-  }, [notify, reconcileAccountStatus]);
+      if (activeProbe) {
+        void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
+      }
+      beginAccountIdentityCheck(source);
+      const generation =
+        options.surfaceGeneration === undefined
+          ? probeGenerationRef.current[source] + 1
+          : Math.max(probeGenerationRef.current[source] + 1, options.surfaceGeneration);
+      probeGenerationRef.current[source] = generation;
+      const probeQueryKey = forumQueryKeys.accountStatusProbe({
+        sessionEpochs,
+        generation,
+        source
+      });
+      const promise = (async (): Promise<AccountReconcileResult> => {
+        try {
+          const nextData = await appQueryClient.fetchQuery({
+            queryKey: probeQueryKey,
+            queryFn: statusQueryDefinitions[source].queryFn,
+            staleTime: 0
+          });
+          if (probeGenerationRef.current[source] !== generation || !nextData.session) {
+            return { status: 'stale' as const };
+          }
+          const canonicalQueryKey = statusQueryDefinitions[source].queryKey;
+          const previousData = appQueryClient.getQueryData<StatusQueryData>(canonicalQueryKey);
+          const previousSession =
+            previousData?.session ||
+            (sessionViewModels[source].identityTrust === 'confirmed' ? sessionViewModels[source] : undefined);
+          const previousIdentity = previousSession ? accountIdentityKey(previousSession) : undefined;
+          const nextIdentity = accountIdentityKey(nextData.session);
+          if (previousIdentity && previousIdentity !== nextIdentity) {
+            onAccountStatusChanged(source, probeQueryKey, nextData.session);
+            identityPendingRef.current[source] = false;
+            onAccountIdentityRuntimeChanged(source, {
+              identityKey: nextIdentity,
+              pending: false
+            });
+            setIdentityChecks((current) => ({
+              ...current,
+              [source]: { checking: false, pending: false }
+            }));
+            return {
+              status: nextIdentity.endsWith(':anonymous') ? ('anonymous' as const) : ('changed' as const),
+              session: nextData.session,
+              partial: nextData.failed
+            };
+          }
+          if (!previousIdentity) {
+            removeUnconfirmedForumSourceQueries(source);
+          }
+          appQueryClient.setQueryData(canonicalQueryKey, nextData);
+          identityPendingRef.current[source] = false;
+          onAccountIdentityRuntimeChanged(source, {
+            identityKey: nextIdentity,
+            pending: false
+          });
+          setIdentityChecks((current) => ({
+            ...current,
+            [source]: { checking: false, pending: false }
+          }));
+          return {
+            status: 'same' as const,
+            session: nextData.session,
+            partial: nextData.failed
+          };
+        } catch (error) {
+          if (probeGenerationRef.current[source] !== generation) {
+            return { status: 'stale' as const };
+          }
+          if (isCanceledStatusQuery(error)) {
+            setIdentityChecks((current) => ({
+              ...current,
+              [source]: { checking: false, pending: true }
+            }));
+            return { status: 'stale' as const };
+          }
+          const message = errorMessage(error);
+          const errorInfo = sourceErrorFromUnknown(source, error);
+          setIdentityChecks((current) => ({
+            ...current,
+            [source]: { checking: false, pending: true, error: errorInfo }
+          }));
+          return { status: 'unknown' as const, error: message, errorInfo };
+        } finally {
+          if (activeProbeRef.current[source]?.generation === generation) {
+            delete activeProbeRef.current[source];
+          }
+          appQueryClient.removeQueries({ queryKey: probeQueryKey, exact: true });
+        }
+      })();
+      activeProbeRef.current[source] = {
+        generation,
+        promise,
+        queryKey: probeQueryKey,
+        surfaceGeneration: requestedSurfaceGeneration
+      };
+      return promise;
+    },
+    [
+      beginAccountIdentityCheck,
+      onAccountIdentityRuntimeChanged,
+      onAccountStatusChanged,
+      sessionEpochs,
+      sessionViewModels,
+      statusQueryDefinitions
+    ]
+  );
+  const statusBusy =
+    Object.values(statusQueries).some((query) => query.fetchStatus === 'fetching') ||
+    Object.values(identityChecks).some((identityCheck) => identityCheck.checking);
+  const refreshAccountStatus = useCallback(
+    async (options: RefreshAccountStatusOptions = {}) => {
+      activeIdentityReconciliationsRef.current += 1;
+      setIdentityReconciliationPending(true);
+      try {
+        const results = await Promise.all(
+          Object.values(STATUS_DESCRIPTORS).map(async (descriptor) => ({
+            descriptor,
+            result: await reconcileAccountStatus(descriptor.source)
+          }))
+        );
+        if (options.silent) {
+          return;
+        }
+        const failedSites = results.flatMap(({ descriptor, result }) =>
+          result.status === 'unknown' || ('partial' in result && result.partial) ? [descriptor.label] : []
+        );
+        notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
+      } finally {
+        activeIdentityReconciliationsRef.current -= 1;
+        if (activeIdentityReconciliationsRef.current === 0) {
+          setIdentityReconciliationPending(false);
+        }
+      }
+    },
+    [notify, reconcileAccountStatus]
+  );
 
   return {
     accountIdentityChecks: identityChecks,

@@ -14,7 +14,7 @@ import type { ReadingFilter } from './feedLogic';
 
 const registeredSources = Object.keys(sourceCatalog) as Source[];
 
-export const feedSourceItems: Array<{ value: FeedSource; label: string }> = [
+export const feedSourceItems: { value: FeedSource; label: string }[] = [
   { value: 'all', label: '全部' },
   ...registeredSources.map((source) => ({ value: source, label: sourceCatalog[source].label }))
 ];
@@ -28,7 +28,7 @@ export const feedReadingFilterItems = [
   { value: 'favorite', label: '收藏' }
 ];
 
-export const feedDiscourseFilterItems: Array<{ value: DiscourseFeedFilter; label: string }> = [
+export const feedDiscourseFilterItems: { value: DiscourseFeedFilter; label: string }[] = [
   { value: 'latest', label: '最新' },
   { value: 'hot', label: '热门' },
   { value: 'new-all', label: '新·所有' },
@@ -36,12 +36,12 @@ export const feedDiscourseFilterItems: Array<{ value: DiscourseFeedFilter; label
   { value: 'new-replies', label: '新·回复' }
 ];
 
-export const feedNodeSeekFilterItems: Array<{ value: NodeSeekFeedFilter; label: string }> = [
+export const feedNodeSeekFilterItems: { value: NodeSeekFeedFilter; label: string }[] = [
   { value: 'postTime', label: '新帖子' },
   { value: 'replyTime', label: '新评论' }
 ];
 
-export const feedV2exFilterItems: Array<{ value: V2exFeedFilter; label: string }> = [
+export const feedV2exFilterItems: { value: V2exFeedFilter; label: string }[] = [
   { value: 'all', label: '全部' },
   { value: 'latest', label: '最新' },
   { value: 'hot', label: '最热' }
@@ -66,7 +66,7 @@ export const defaultFeedFilters = Object.fromEntries(
 
 type FeedFilterMenuGroup = {
   title?: string;
-  items: Array<{ value: SourceFeedFilter; label: string }>;
+  items: { value: SourceFeedFilter; label: string }[];
 };
 
 const discourseFilterMenuGroups: FeedFilterMenuGroup[] = [
@@ -109,7 +109,7 @@ export function feedFilterMenuGroupsFor(source: FeedSource) {
     : [];
 }
 
-export function feedFilterItems(source: FeedSource): Array<{ value: SourceFeedFilter; label: string }> {
+export function feedFilterItems(source: FeedSource): { value: SourceFeedFilter; label: string }[] {
   if (source === 'all') {
     return [];
   }
@@ -135,8 +135,7 @@ export function shouldUseFeedFilter(source: FeedSource, category = '') {
     return false;
   }
   const filterKind = sourceCatalog[source].feedFilter;
-  return filterKind === 'discourse'
-    || ((filterKind === 'nodeseek' || filterKind === 'v2ex') && !category);
+  return filterKind === 'discourse' || ((filterKind === 'nodeseek' || filterKind === 'v2ex') && !category);
 }
 
 export function shouldUseReadingFilter(source: FeedSource) {

@@ -15,7 +15,8 @@ export type FeedFilterState = {
         ? V2exFeedFilter
         : never;
 };
-export type SourceErrorKind = 'login-required' | 'login-expired' | 'verification-required' | 'permission-denied' | 'ordinary';
+export type SourceErrorKind =
+  'login-required' | 'login-expired' | 'verification-required' | 'permission-denied' | 'ordinary';
 
 export type SourceErrorInfo = {
   message: string;
@@ -37,7 +38,7 @@ export interface SiteExtensionMap {
 }
 
 export type SiteExtension = {
-  [Site in keyof SiteExtensionMap]: { source: Site } & SiteExtensionMap[Site]
+  [Site in keyof SiteExtensionMap]: { source: Site } & SiteExtensionMap[Site];
 }[keyof SiteExtensionMap];
 
 export interface AccessRequirement {
@@ -241,10 +242,7 @@ interface UserReferenceBase {
   url: string;
 }
 
-export type UserReference = UserReferenceBase & (
-  | { id: string; username?: string }
-  | { id?: string; username: string }
-);
+export type UserReference = UserReferenceBase & ({ id: string; username?: string } | { id?: string; username: string });
 
 export interface UserProfile extends UserReferenceBase {
   id: string;

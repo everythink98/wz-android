@@ -15,12 +15,16 @@ import {
   registerDiagnosticContextFetcher
 } from './diagnostics';
 
-export type LinuxDoHiddenBrowserFailureReason = 'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
+export type LinuxDoHiddenBrowserFailureReason =
+  'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
 
 const LINUXDO_CURRENT_SESSION_URL = 'https://linux.do/session/current.json';
 
 export class LinuxDoHiddenBrowserFailureError extends Error {
-  constructor(public readonly reason: LinuxDoHiddenBrowserFailureReason, message: string) {
+  constructor(
+    public readonly reason: LinuxDoHiddenBrowserFailureReason,
+    message: string
+  ) {
     super(message);
   }
 }
@@ -29,10 +33,9 @@ export function isLinuxDoRequestUrl(input: string) {
   try {
     const url = new URL(input);
     const host = url.hostname.toLowerCase();
-    return url.protocol === 'https:'
-      && !url.username
-      && !url.password
-      && (host === 'linux.do' || host.endsWith('.linux.do'));
+    return (
+      url.protocol === 'https:' && !url.username && !url.password && (host === 'linux.do' || host.endsWith('.linux.do'))
+    );
   } catch {
     return false;
   }
@@ -65,10 +68,12 @@ async function fetchLinuxDoThroughWebView(
   directStatus: number
 ) {
   const inheritedTrace = diagnosticTraceForRequest(init);
-  const trace = inheritedTrace || beginDiagnosticTrace('source', 'transport-fallback', {
-    source: 'linuxdo',
-    reason: 'verification_required'
-  });
+  const trace =
+    inheritedTrace ||
+    beginDiagnosticTrace('source', 'transport-fallback', {
+      source: 'linuxdo',
+      reason: 'verification_required'
+    });
   markDiagnosticStage(trace, 'transport', {
     source: 'linuxdo',
     channel: 'direct',
@@ -109,10 +114,10 @@ async function fetchLinuxDoThroughWebView(
       });
     }
     if (
-      reason === 'canceled'
-      || reason === 'stale'
-      || reason === 'superseded'
-      || (error instanceof LinuxDoHiddenBrowserFailureError && error.reason === 'content-too-large')
+      reason === 'canceled' ||
+      reason === 'stale' ||
+      reason === 'superseded' ||
+      (error instanceof LinuxDoHiddenBrowserFailureError && error.reason === 'content-too-large')
     ) {
       throw error;
     }
@@ -127,11 +132,13 @@ async function fetchLinuxDoWebViewOnly(
   directFailure?: { owner: 'account'; reason: 'network_error' }
 ) {
   const inheritedTrace = diagnosticTraceForRequest(init);
-  const trace = inheritedTrace || beginDiagnosticTrace('source', directFailure ? 'transport-fallback' : 'webview-transport', {
-    source: 'linuxdo',
-    channel: directFailure ? 'direct' : 'webview',
-    ...directFailure
-  });
+  const trace =
+    inheritedTrace ||
+    beginDiagnosticTrace('source', directFailure ? 'transport-fallback' : 'webview-transport', {
+      source: 'linuxdo',
+      channel: directFailure ? 'direct' : 'webview',
+      ...directFailure
+    });
   if (directFailure) {
     markDiagnosticStage(trace, 'transport', {
       source: 'linuxdo',
@@ -210,12 +217,12 @@ export function createLinuxDoWebViewFallbackFetcher({
     } catch (error) {
       const intent = browserFetchIntentFromInit(init);
       if (
-        url === LINUXDO_CURRENT_SESSION_URL
-        && method === 'GET'
-        && intent?.owner === 'account'
-        && intent.priority === 'background'
-        && normalizeDiagnosticReason(error) === 'network_error'
-        && allowWebViewFallback(url)
+        url === LINUXDO_CURRENT_SESSION_URL &&
+        method === 'GET' &&
+        intent?.owner === 'account' &&
+        intent.priority === 'background' &&
+        normalizeDiagnosticReason(error) === 'network_error' &&
+        allowWebViewFallback(url)
       ) {
         return fetchLinuxDoWebViewOnly(webViewFetcher, url, init, {
           owner: 'account',
@@ -234,11 +241,14 @@ export function createLinuxDoWebViewFallbackFetcher({
     }
     const contentType = response.headers.get('content-type') || '';
     const shouldInspectBody = !response.ok && /html/i.test(contentType);
-    if (shouldInspectBody && isCloudflareChallengeResponse({
-      status: response.status,
-      headers: response.headers,
-      bodyText: await response.clone().text()
-    })) {
+    if (
+      shouldInspectBody &&
+      isCloudflareChallengeResponse({
+        status: response.status,
+        headers: response.headers,
+        bodyText: await response.clone().text()
+      })
+    ) {
       return allowWebViewFallback(url)
         ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status)
         : response;

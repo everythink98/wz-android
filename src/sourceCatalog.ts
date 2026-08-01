@@ -1,11 +1,4 @@
-export type TopicActionCapability =
-  | 'reply'
-  | 'like'
-  | 'bookmark'
-  | 'edit'
-  | 'delete'
-  | 'vote'
-  | 'upload';
+export type TopicActionCapability = 'reply' | 'like' | 'bookmark' | 'edit' | 'delete' | 'vote' | 'upload';
 
 export const sourceCatalog = {
   v2ex: {
@@ -81,29 +74,30 @@ export const sourceCatalog = {
 } as const;
 
 export type Source = keyof typeof sourceCatalog;
-export type SourceFamily = typeof sourceCatalog[Source]['family'];
+export type SourceFamily = (typeof sourceCatalog)[Source]['family'];
 export type DiscourseSource = {
-  [Site in Source]: typeof sourceCatalog[Site]['family'] extends 'discourse' ? Site : never
+  [Site in Source]: (typeof sourceCatalog)[Site]['family'] extends 'discourse' ? Site : never;
 }[Source];
 export type FeedFilterSource = {
-  [Site in Source]: typeof sourceCatalog[Site]['feedFilter'] extends 'none' ? never : Site
+  [Site in Source]: (typeof sourceCatalog)[Site]['feedFilter'] extends 'none' ? never : Site;
 }[Source];
 export type SessionSource = {
-  [Site in Source]: typeof sourceCatalog[Site]['managedSession'] extends true ? Site : never
+  [Site in Source]: (typeof sourceCatalog)[Site]['managedSession'] extends true ? Site : never;
 }[Source];
 
-export const sourceValues = (Object.keys(sourceCatalog) as Source[])
-  .sort((left, right) => sourceCatalog[left].sortOrder - sourceCatalog[right].sortOrder);
+export const sourceValues = (Object.keys(sourceCatalog) as Source[]).sort(
+  (left, right) => sourceCatalog[left].sortOrder - sourceCatalog[right].sortOrder
+);
 
-export const aggregateFeedSources = sourceValues
-  .filter((source) => sourceCatalog[source].aggregateFeed);
+export const aggregateFeedSources = sourceValues.filter((source) => sourceCatalog[source].aggregateFeed);
 
 export const aggregateSearchSources = sourceValues
   .filter((source) => sourceCatalog[source].aggregateSearch)
   .sort((left, right) => sourceCatalog[left].searchOrder - sourceCatalog[right].searchOrder);
 
-export const sessionSources = sourceValues
-  .filter((source): source is SessionSource => sourceCatalog[source].managedSession);
+export const sessionSources = sourceValues.filter(
+  (source): source is SessionSource => sourceCatalog[source].managedSession
+);
 
 export function isDiscourseSource(source: Source | null | undefined): source is DiscourseSource {
   return Boolean(source && sourceCatalog[source].family === 'discourse');
@@ -117,10 +111,7 @@ export function isSessionSource(source: Source | null | undefined): source is Se
   return Boolean(source && sourceCatalog[source].managedSession);
 }
 
-export function sourceSupportsTopicAction(
-  source: Source | null | undefined,
-  action: TopicActionCapability
-) {
+export function sourceSupportsTopicAction(source: Source | null | undefined, action: TopicActionCapability) {
   return Boolean(source && (sourceCatalog[source].topicActions as readonly TopicActionCapability[]).includes(action));
 }
 

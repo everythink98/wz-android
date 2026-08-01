@@ -1,33 +1,61 @@
 import { describe, expect, it } from 'vitest';
-import { FORUM_REPLY_REFERENCE_TAG, markNodeSeekReplyReferenceLinks, normalizeRenderableHtml } from './topicContentHtml';
+import {
+  FORUM_REPLY_REFERENCE_TAG,
+  markNodeSeekReplyReferenceLinks,
+  normalizeRenderableHtml
+} from './topicContentHtml';
 
 describe('Android topic content HTML', () => {
   it('normalizes text and existing HTML into renderable content', () => {
     expect(normalizeRenderableHtml('plain < unsafe & text')).toBe('<p>plain &lt; unsafe &amp; text</p>');
     expect(normalizeRenderableHtml('<h2>Title</h2><p>Body</p>')).toBe('<h2>Title</h2><p>Body</p>');
-    expect(normalizeRenderableHtml('see <a href="https://example.com">link</a>')).toBe('see <a href="https://example.com">link</a>');
+    expect(normalizeRenderableHtml('see <a href="https://example.com">link</a>')).toBe(
+      'see <a href="https://example.com">link</a>'
+    );
   });
 
   it('marks V2EX member mentions without changing ordinary member links', () => {
-    expect(normalizeRenderableHtml('@<a href="/member/lijianan">lijianan</a> hi')).toBe('<a href="/member/lijianan" class="forum-user-mention">@lijianan</a> hi');
-    expect(normalizeRenderableHtml('@<a href="/member/lijianan">lijianan</a> @<a href="/member/cc77">cc77</a>')).toBe('<a href="/member/lijianan" class="forum-user-mention">@lijianan</a> <a href="/member/cc77" class="forum-user-mention">@cc77</a>');
-    expect(normalizeRenderableHtml('<a href="/member/lijianan">lijianan</a>')).toBe('<a href="/member/lijianan">lijianan</a>');
+    expect(normalizeRenderableHtml('@<a href="/member/lijianan">lijianan</a> hi')).toBe(
+      '<a href="/member/lijianan" class="forum-user-mention">@lijianan</a> hi'
+    );
+    expect(normalizeRenderableHtml('@<a href="/member/lijianan">lijianan</a> @<a href="/member/cc77">cc77</a>')).toBe(
+      '<a href="/member/lijianan" class="forum-user-mention">@lijianan</a> <a href="/member/cc77" class="forum-user-mention">@cc77</a>'
+    );
+    expect(normalizeRenderableHtml('<a href="/member/lijianan">lijianan</a>')).toBe(
+      '<a href="/member/lijianan">lijianan</a>'
+    );
   });
 
   it('marks Yaohuo user mentions with the app mention style', () => {
-    expect(normalizeRenderableHtml('问问@<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>')).toBe('问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878" class="forum-user-mention">@Max、爱芯i</a>');
-    expect(normalizeRenderableHtml('问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">@Max、爱芯i</a>')).toBe('问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878" class="forum-user-mention">@Max、爱芯i</a>');
-    expect(normalizeRenderableHtml('<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>')).toBe('<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>');
+    expect(
+      normalizeRenderableHtml('问问@<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>')
+    ).toBe(
+      '问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878" class="forum-user-mention">@Max、爱芯i</a>'
+    );
+    expect(
+      normalizeRenderableHtml('问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">@Max、爱芯i</a>')
+    ).toBe(
+      '问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878" class="forum-user-mention">@Max、爱芯i</a>'
+    );
+    expect(normalizeRenderableHtml('<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>')).toBe(
+      '<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>'
+    );
   });
 
   it('marks Linux.do user mentions with the app mention style', () => {
-    expect(normalizeRenderableHtml('<p><a class="mention" href="/u/alice">@alice</a> hello</p>')).toBe('<p><a class="mention forum-user-mention" href="/u/alice">@alice</a> hello</p>');
-    expect(normalizeRenderableHtml('<p><a href="https://linux.do/u/alice/summary">@alice</a> hello</p>')).toBe('<p><a href="https://linux.do/u/alice/summary" class="forum-user-mention">@alice</a> hello</p>');
+    expect(normalizeRenderableHtml('<p><a class="mention" href="/u/alice">@alice</a> hello</p>')).toBe(
+      '<p><a class="mention forum-user-mention" href="/u/alice">@alice</a> hello</p>'
+    );
+    expect(normalizeRenderableHtml('<p><a href="https://linux.do/u/alice/summary">@alice</a> hello</p>')).toBe(
+      '<p><a href="https://linux.do/u/alice/summary" class="forum-user-mention">@alice</a> hello</p>'
+    );
     expect(normalizeRenderableHtml('<p><a href="/u/alice">alice</a></p>')).toBe('<p><a href="/u/alice">alice</a></p>');
   });
 
   it('REG-TOPIC-012 keeps mention recognition intact when another attribute contains a greater-than sign', () => {
-    expect(normalizeRenderableHtml('<p><a title="1 > 0" href="/u/alice">@alice</a> hello</p>')).toBe('<p><a title="1 &gt; 0" href="/u/alice" class="forum-user-mention">@alice</a> hello</p>');
+    expect(normalizeRenderableHtml('<p><a title="1 > 0" href="/u/alice">@alice</a> hello</p>')).toBe(
+      '<p><a title="1 &gt; 0" href="/u/alice" class="forum-user-mention">@alice</a> hello</p>'
+    );
   });
 
   it('extracts leading NodeSeek mention and floor links as a reply reference row', () => {

@@ -34,7 +34,11 @@ function primaryActionFor(view: SiteSessionViewModels[SessionSite], hasCredentia
       return { action: 'none' as const, label: '授权中', disabled: true };
     }
     if (!view.isLoggedIn) {
-      return { action: 'open-login' as const, label: view.status === 'expired' ? '重新授权' : '授权登录', disabled: false };
+      return {
+        action: 'open-login' as const,
+        label: view.status === 'expired' ? '重新授权' : '授权登录',
+        disabled: false
+      };
     }
   }
   if (view.status === 'verifying') {
@@ -75,17 +79,21 @@ export function createSiteAccountViews(
       ? credentials[site]
       : { state: 'missing', hasCredential: false, protection: null };
     const user = session.currentUser;
-    const identityLabel = user?.displayName
-      || user?.username
-      || (site === 'nodeseek' && session.isLoggedIn && nodeSeekUserId ? `用户 ${nodeSeekUserId}` : '')
-      || (session.isLoggedIn ? '身份未识别' : session.summaryLabel);
+    const identityLabel =
+      user?.displayName ||
+      user?.username ||
+      (site === 'nodeseek' && session.isLoggedIn && nodeSeekUserId ? `用户 ${nodeSeekUserId}` : '') ||
+      (session.isLoggedIn ? '身份未识别' : session.summaryLabel);
     const primary = primaryActionFor(session, credential.hasCredential);
-    const credentialLabel = credential.state === 'invalidated'
-      ? '自动填入需重新设置'
-      : credential.hasCredential
-        ? '可自动填入'
-        : '未设置自动填入';
-    const statusAndCredential = supportsCredentialFill ? `${session.summaryLabel} · ${credentialLabel}` : session.summaryLabel;
+    const credentialLabel =
+      credential.state === 'invalidated'
+        ? '自动填入需重新设置'
+        : credential.hasCredential
+          ? '可自动填入'
+          : '未设置自动填入';
+    const statusAndCredential = supportsCredentialFill
+      ? `${session.summaryLabel} · ${credentialLabel}`
+      : session.summaryLabel;
     return {
       site,
       label: sourceLabel(site),
@@ -98,9 +106,10 @@ export function createSiteAccountViews(
       primaryAction: primary.action,
       primaryLabel: primary.label,
       primaryDisabled: primary.disabled,
-      needsAttention: (supportsCredentialFill && credential.state === 'invalidated')
-        || session.status === 'expired'
-        || session.status === 'verification-required',
+      needsAttention:
+        (supportsCredentialFill && credential.state === 'invalidated') ||
+        session.status === 'expired' ||
+        session.status === 'verification-required',
       ...(user ? { user } : {})
     };
   });

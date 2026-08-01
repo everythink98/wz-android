@@ -10,10 +10,7 @@ export type SessionRuntimeSnapshot = {
 };
 export type WritableSessionSnapshot = SessionRuntimeSnapshot;
 
-export type WritableSessionTicket = Pick<
-  WritableSessionSnapshot,
-  'source' | 'identityKey' | 'sessionEpoch'
->;
+export type WritableSessionTicket = Pick<WritableSessionSnapshot, 'source' | 'identityKey' | 'sessionEpoch'>;
 
 export type WritableSessionReconcileResult = {
   status: 'anonymous' | 'changed' | 'same' | 'stale' | 'unknown';
@@ -37,8 +34,7 @@ function ticketFromSnapshot(snapshot: WritableSessionSnapshot): WritableSessionT
 }
 
 function canIssueTicket(snapshot: WritableSessionSnapshot) {
-  return snapshot.authenticated
-    && snapshot.identityTrust === 'confirmed';
+  return snapshot.authenticated && snapshot.identityTrust === 'confirmed';
 }
 
 export async function ensureWritableSessionTicket(
@@ -55,13 +51,14 @@ export async function ensureWritableSessionTicket(
 
   const result = await reconcile();
   if (result.status !== 'same') {
-    const reason = result.status === 'changed'
-      ? 'identity_changed'
-      : result.status === 'anonymous'
-        ? 'login_required'
-        : result.status === 'stale'
-          ? 'stale'
-          : 'identity_pending';
+    const reason =
+      result.status === 'changed'
+        ? 'identity_changed'
+        : result.status === 'anonymous'
+          ? 'login_required'
+          : result.status === 'stale'
+            ? 'stale'
+            : 'identity_pending';
     throw new WritableSessionBlockedError(
       result.status === 'changed'
         ? '账号已切换，请确认当前页面后重试'
@@ -80,23 +77,22 @@ export async function ensureWritableSessionTicket(
     throw new WritableSessionBlockedError('登录状态暂时无法确认，请重试', 'identity_pending');
   }
   if (
-    after.source !== before.source
-    || after.identityKey !== before.identityKey
-    || after.sessionEpoch !== before.sessionEpoch
+    after.source !== before.source ||
+    after.identityKey !== before.identityKey ||
+    after.sessionEpoch !== before.sessionEpoch
   ) {
     throw new WritableSessionBlockedError('登录状态已变化，请重试', 'identity_changed');
   }
   return ticketFromSnapshot(after);
 }
 
-export function validateWritableSessionTicket(
-  ticket: WritableSessionTicket,
-  snapshot: WritableSessionSnapshot
-) {
-  return snapshot.authenticated
-    && !snapshot.authSurfaceOpen
-    && snapshot.identityTrust === 'confirmed'
-    && snapshot.source === ticket.source
-    && snapshot.identityKey === ticket.identityKey
-    && snapshot.sessionEpoch === ticket.sessionEpoch;
+export function validateWritableSessionTicket(ticket: WritableSessionTicket, snapshot: WritableSessionSnapshot) {
+  return (
+    snapshot.authenticated &&
+    !snapshot.authSurfaceOpen &&
+    snapshot.identityTrust === 'confirmed' &&
+    snapshot.source === ticket.source &&
+    snapshot.identityKey === ticket.identityKey &&
+    snapshot.sessionEpoch === ticket.sessionEpoch
+  );
 }

@@ -90,9 +90,7 @@ describe('Android reader data helpers', () => {
       later: {
         [topicKey(topic)]: { topic, savedAt: '2026-05-20T00:00:00.000Z' }
       },
-      savedSearches: [
-        { id: 'all:gpt', query: 'GPT', source: 'all', savedAt: '2026-05-20T01:00:00.000Z' }
-      ]
+      savedSearches: [{ id: 'all:gpt', query: 'GPT', source: 'all', savedAt: '2026-05-20T01:00:00.000Z' }]
     });
 
     expect(data).toEqual(createEmptyReaderData());
@@ -106,13 +104,16 @@ describe('Android reader data helpers', () => {
     };
     const key = topicKey(topic);
     const empty = createEmptyReaderData();
-    const first = recordHistory({
-      ...empty,
-      deletedRecords: {
-        ...empty.deletedRecords,
-        history: { [key]: '2026-05-17T00:00:00.000Z' }
-      }
-    }, detail);
+    const first = recordHistory(
+      {
+        ...empty,
+        deletedRecords: {
+          ...empty.deletedRecords,
+          history: { [key]: '2026-05-17T00:00:00.000Z' }
+        }
+      },
+      detail
+    );
     const data = recordHistory(first, { ...detail, title: 'Updated topic' });
 
     expect(data.history[key].topic).toEqual({ ...topic, title: 'Updated topic' });
@@ -378,7 +379,9 @@ describe('Android reader data helpers', () => {
     const data = toggleFollowedUser(createEmptyReaderData(), partialProfile);
 
     expect(data.followedUsers[userKey(partialProfile)]?.user.url).toBe('https://www.v2ex.com/member/neo');
-    expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe('https://www.v2ex.com/member/neo');
+    expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe(
+      'https://www.v2ex.com/member/neo'
+    );
   });
 
   it('[REG-USER-002] restores a missing Xiaoyinsi profile url to the Xiaoyinsi user page', () => {
@@ -394,7 +397,9 @@ describe('Android reader data helpers', () => {
     const data = toggleFollowedUser(createEmptyReaderData(), partialProfile);
 
     expect(data.followedUsers[userKey(partialProfile)]?.user.url).toBe('https://forum.xiaoyinsi.com/u/temple-user');
-    expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe('https://forum.xiaoyinsi.com/u/temple-user');
+    expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe(
+      'https://forum.xiaoyinsi.com/u/temple-user'
+    );
   });
 
   it('drops polluted yaohuo followed user display names during sanitizing', () => {
@@ -413,15 +418,17 @@ describe('Android reader data helpers', () => {
             topicCount: 1659,
             replyCount: 3698222,
             postCount: 3699881,
-            topics: [{
-              ...topic,
-              source: 'yaohuo',
-              id: '1540797',
-              author: '369256小时前正在论坛查询标题:醒图7小时前查看更多动态人气值4,443空间人气6今日人气留言板',
-              authorId: '36925',
-              authorUrl: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=36925',
-              url: 'https://yaohuo.me/bbs/book_view.aspx?siteid=1000&classid=201&id=1540797'
-            }]
+            topics: [
+              {
+                ...topic,
+                source: 'yaohuo',
+                id: '1540797',
+                author: '369256小时前正在论坛查询标题:醒图7小时前查看更多动态人气值4,443空间人气6今日人气留言板',
+                authorId: '36925',
+                authorUrl: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=36925',
+                url: 'https://yaohuo.me/bbs/book_view.aspx?siteid=1000&classid=201&id=1540797'
+              }
+            ]
           },
           followedAt: '2026-05-28T15:31:33.012Z'
         }
@@ -735,7 +742,8 @@ describe('Android reader data helpers', () => {
       label: 'a NodeSeek URL with userinfo, token variants and a fragment',
       source: 'nodeseek' as const,
       id: 'unsafe-url',
-      suppliedUrl: 'https://user:pass@www.nodeseek.com/post-723704-1?access_token=secret&auth_token=secret&csrf_token=secret&ok=1#reply',
+      suppliedUrl:
+        'https://user:pass@www.nodeseek.com/post-723704-1?access_token=secret&auth_token=secret&csrf_token=secret&ok=1#reply',
       expectedUrl: 'https://www.nodeseek.com/post-unsafe-url-1'
     },
     {

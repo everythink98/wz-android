@@ -28,15 +28,28 @@ jest.mock('react-native-gesture-handler', () => {
   return {
     Gesture: {
       Pan: () => ({
-        minDistance() { return this; },
-        runOnJS() { return this; },
-        onBegin() { return this; },
-        onUpdate() { return this; },
-        onEnd() { return this; },
-        onFinalize() { return this; }
+        minDistance() {
+          return this;
+        },
+        runOnJS() {
+          return this;
+        },
+        onBegin() {
+          return this;
+        },
+        onUpdate() {
+          return this;
+        },
+        onEnd() {
+          return this;
+        },
+        onFinalize() {
+          return this;
+        }
       })
     },
-    GestureDetector: ({ children }: { children: React.ReactNode }) => ReactModule.createElement(ReactModule.Fragment, null, children),
+    GestureDetector: ({ children }: { children: React.ReactNode }) =>
+      ReactModule.createElement(ReactModule.Fragment, null, children),
     ScrollView: require('react-native').ScrollView
   };
 });
@@ -68,22 +81,24 @@ const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
-const authorizedXiaoyinsiSessions = createSiteSessionViewModels(createSiteSessionStates({
-  xiaoyinsi: {
-    site: 'xiaoyinsi',
-    status: 'logged-in',
-    cookieSummary: [],
-    isVerifying: false,
-    currentUser: {
-      source: 'xiaoyinsi',
-      id: 'alice',
-      username: 'alice',
-      displayName: 'Alice',
-      url: 'https://forum.xiaoyinsi.com/u/alice',
-      topics: []
+const authorizedXiaoyinsiSessions = createSiteSessionViewModels(
+  createSiteSessionStates({
+    xiaoyinsi: {
+      site: 'xiaoyinsi',
+      status: 'logged-in',
+      cookieSummary: [],
+      isVerifying: false,
+      currentUser: {
+        source: 'xiaoyinsi',
+        id: 'alice',
+        username: 'alice',
+        displayName: 'Alice',
+        url: 'https://forum.xiaoyinsi.com/u/alice',
+        topics: []
+      }
     }
-  }
-}));
+  })
+);
 
 function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): ComponentProps<typeof MoreScreen> {
   return {
@@ -213,32 +228,40 @@ describe('More screen state and actions', () => {
       versionCode: 68,
       signerSha256: 'b'.repeat(64)
     };
-    await view.rerender(<MoreScreen {...moreProps({
-      appUpdateInfo,
-      appUpdateMessage: '发现新版 1.4.0',
-      onCheckAppUpdate,
-      onDownloadAppUpdate
-    })} />);
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          appUpdateInfo,
+          appUpdateMessage: '发现新版 1.4.0',
+          onCheckAppUpdate,
+          onDownloadAppUpdate
+        })}
+      />
+    );
     expect(view.getByText('有新版本')).toBeTruthy();
     expect(view.getByText('修复已知问题')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('下载并安装'));
     expect(onDownloadAppUpdate).toHaveBeenCalledTimes(1);
 
-    await view.rerender(<MoreScreen {...moreProps({
-      appUpdateBusy: true,
-      appUpdateDownloading: true,
-      appUpdateDownloadProgress: {
-        title: '正在下载 1.4.0',
-        downloadedBytes: 1024,
-        totalBytes: 2048,
-        percent: 50,
-        percentLabel: '50%',
-        sizeLabel: '1 KB / 2 KB'
-      },
-      appUpdateInfo,
-      onCheckAppUpdate,
-      onDownloadAppUpdate
-    })} />);
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          appUpdateBusy: true,
+          appUpdateDownloading: true,
+          appUpdateDownloadProgress: {
+            title: '正在下载 1.4.0',
+            downloadedBytes: 1024,
+            totalBytes: 2048,
+            percent: 50,
+            percentLabel: '50%',
+            sizeLabel: '1 KB / 2 KB'
+          },
+          appUpdateInfo,
+          onCheckAppUpdate,
+          onDownloadAppUpdate
+        })}
+      />
+    );
     expect(view.getByText('正在下载 1.4.0')).toBeTruthy();
     expect(view.getByText('50%')).toBeTruthy();
     expect(view.getByLabelText('下载中').props.accessibilityState.disabled).toBe(true);
@@ -296,22 +319,30 @@ describe('More screen state and actions', () => {
       expiresAt: 601_000,
       intervalMs: 5_000
     };
-    const view = await render(<MoreScreen {...moreProps({
-      xiaoyinsiAuth: {
-        ...moreProps().xiaoyinsiAuth,
-        pending,
-        phase: 'waiting',
-        secondsRemaining: 599,
-        onCancel,
-        onOpenBrowser
-      }
-    })} />);
+    const view = await render(
+      <MoreScreen
+        {...moreProps({
+          xiaoyinsiAuth: {
+            ...moreProps().xiaoyinsiAuth,
+            pending,
+            phase: 'waiting',
+            secondsRemaining: 599,
+            onCancel,
+            onOpenBrowser
+          }
+        })}
+      />
+    );
 
     expect(await view.findByLabelText('小隐寺授权验证码 ABCD-2345')).toBeTruthy();
     expect(view.getByText('剩余 09:59 · 返回阅坛后会自动继续检测')).toBeTruthy();
     expect(view.queryByPlaceholderText('账号')).toBeNull();
     expect(view.queryByPlaceholderText('密码')).toBeNull();
-    expect(view.getByText('系统浏览器只打开一次性小隐寺授权页；阅坛登录态只由独立 User API Key 维护，不读取浏览器 Cookie，也不打开登录 WebView。')).toBeTruthy();
+    expect(
+      view.getByText(
+        '系统浏览器只打开一次性小隐寺授权页；阅坛登录态只由独立 User API Key 维护，不读取浏览器 Cookie，也不打开登录 WebView。'
+      )
+    ).toBeTruthy();
     await fireEvent.press(view.getByLabelText('复制验证码并前往授权页'));
     await fireEvent.press(view.getByLabelText('取消'));
     expect(onOpenBrowser).toHaveBeenCalledTimes(1);
@@ -320,7 +351,9 @@ describe('More screen state and actions', () => {
 
   it('[REG-XIAOYINSI-013][REG-XIAOYINSI-014] puts the level entry after authorization management for an authorized 小隐寺 account', async () => {
     const onRefreshXiaoyinsiLevel = jest.fn();
-    const view = await render(<MoreScreen {...moreProps({ onRefreshXiaoyinsiLevel, sessionViewModels: authorizedXiaoyinsiSessions })} />);
+    const view = await render(
+      <MoreScreen {...moreProps({ onRefreshXiaoyinsiLevel, sessionViewModels: authorizedXiaoyinsiSessions })} />
+    );
 
     await fireEvent.press(view.getByLabelText('展开账号中心'));
     await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
@@ -346,16 +379,29 @@ describe('More screen state and actions', () => {
       estimate: false,
       note: '小隐寺当前账号统计',
       requirements: [],
-      activity: { daysVisited: 5, topicsEntered: 20, postsReadCount: 120, timeRead: 3660, likesGiven: 8, likesReceived: 9, postCount: 10, topicCount: 2 },
+      activity: {
+        daysVisited: 5,
+        topicsEntered: 20,
+        postsReadCount: 120,
+        timeRead: 3660,
+        likesGiven: 8,
+        likesReceived: 9,
+        postCount: 10,
+        topicCount: 2
+      },
       achievedCount: 0,
       totalCount: 0,
       fetchedAt: '2026-07-26T01:00:00.000Z'
     };
-    const view = await render(<MoreScreen {...moreProps({
-      onRefreshXiaoyinsiLevel,
-      sessionViewModels: authorizedXiaoyinsiSessions,
-      xiaoyinsiLevelError: '限制 10 秒后再试'
-    })} />);
+    const view = await render(
+      <MoreScreen
+        {...moreProps({
+          onRefreshXiaoyinsiLevel,
+          sessionViewModels: authorizedXiaoyinsiSessions,
+          xiaoyinsiLevelError: '限制 10 秒后再试'
+        })}
+      />
+    );
 
     await fireEvent.press(view.getByLabelText('展开账号中心'));
     await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
@@ -367,19 +413,27 @@ describe('More screen state and actions', () => {
     await fireEvent.press(view.getByLabelText('刷新等级'));
     expect(onRefreshXiaoyinsiLevel).toHaveBeenCalledTimes(1);
 
-    await view.rerender(<MoreScreen {...moreProps({
-      onRefreshXiaoyinsiLevel,
-      sessionViewModels: authorizedXiaoyinsiSessions,
-      xiaoyinsiLevelBusy: true,
-      xiaoyinsiLevelProfile: levelProfile
-    })} />);
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          onRefreshXiaoyinsiLevel,
+          sessionViewModels: authorizedXiaoyinsiSessions,
+          xiaoyinsiLevelBusy: true,
+          xiaoyinsiLevelProfile: levelProfile
+        })}
+      />
+    );
     expect(view.queryByTestId('xiaoyinsi-level-settled')).toBeNull();
 
-    await view.rerender(<MoreScreen {...moreProps({
-      onRefreshXiaoyinsiLevel,
-      sessionViewModels: authorizedXiaoyinsiSessions,
-      xiaoyinsiLevelProfile: levelProfile
-    })} />);
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          onRefreshXiaoyinsiLevel,
+          sessionViewModels: authorizedXiaoyinsiSessions,
+          xiaoyinsiLevelProfile: levelProfile
+        })}
+      />
+    );
     expect(view.getByTestId('xiaoyinsi-level-settled')).toBeTruthy();
     expect(view.queryAllByText('限制 10 秒后再试')).toHaveLength(0);
     expect(view.getAllByText('LV 2 → LV 3')).not.toHaveLength(0);
@@ -387,22 +441,26 @@ describe('More screen state and actions', () => {
 
   it('[REG-XIAOYINSI-005] exposes persisted revocation cleanup before any stale logged-in controls', async () => {
     const onBegin = jest.fn();
-    const view = await render(<MoreScreen {...moreProps({
-      sessionViewModels: {
-        ...sessionViewModels,
-        xiaoyinsi: {
-          ...sessionViewModels.xiaoyinsi,
-          isLoggedIn: true,
-          canWrite: true
-        }
-      },
-      xiaoyinsiAuth: {
-        ...moreProps().xiaoyinsiAuth,
-        message: '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。',
-        phase: 'cleanup',
-        onBegin
-      }
-    })} />);
+    const view = await render(
+      <MoreScreen
+        {...moreProps({
+          sessionViewModels: {
+            ...sessionViewModels,
+            xiaoyinsi: {
+              ...sessionViewModels.xiaoyinsi,
+              isLoggedIn: true,
+              canWrite: true
+            }
+          },
+          xiaoyinsiAuth: {
+            ...moreProps().xiaoyinsiAuth,
+            message: '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。',
+            phase: 'cleanup',
+            onBegin
+          }
+        })}
+      />
+    );
 
     await fireEvent.press(await view.findByLabelText('重试本机清理'));
     expect(view.queryByLabelText('重新授权')).toBeNull();

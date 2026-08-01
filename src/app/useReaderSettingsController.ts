@@ -22,14 +22,14 @@ export function applyReaderSettingsPatch(current: ReaderData, patch: Partial<Rea
 export function useReaderSettingsController({
   commitReaderData
 }: {
-  commitReaderData: (
-    mutationReason: ReaderDataMutationReason,
-    updater: (current: ReaderData) => ReaderData
-  ) => void;
+  commitReaderData: (mutationReason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
 }) {
-  const updateSettings = useCallback((patch: Partial<ReaderSettings>) => {
-    commitReaderData('settings-updated', (current) => applyReaderSettingsPatch(current, patch));
-  }, [commitReaderData]);
+  const updateSettings = useCallback(
+    (patch: Partial<ReaderSettings>) => {
+      commitReaderData('settings-updated', (current) => applyReaderSettingsPatch(current, patch));
+    },
+    [commitReaderData]
+  );
 
   return { updateSettings };
 }

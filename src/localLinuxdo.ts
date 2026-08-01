@@ -5,7 +5,21 @@ import {
   type BrowserFetchPriority
 } from './browserFetchIntent';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from './request';
-import type { CategoriesResponse, DiscourseFeedFilter, DiscourseTagOption, DiscourseUserOption, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, UserProfile, UserReplyActivity } from './types';
+import type {
+  CategoriesResponse,
+  DiscourseFeedFilter,
+  DiscourseTagOption,
+  DiscourseUserOption,
+  FeedResponse,
+  Reply,
+  RepliesResponse,
+  SearchResponse,
+  Topic,
+  TopicDetail,
+  TopicPoll,
+  UserProfile,
+  UserReplyActivity
+} from './types';
 import {
   accessRequirementFromObject,
   accessRequirementFromText,
@@ -23,9 +37,7 @@ import {
 } from './localHtml';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
 import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from './googleSearchFallback';
-import {
-  DEFAULT_LINUXDO_ANDROID_USER_AGENT
-} from './linuxdoSession';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from './linuxdoSession';
 import {
   LINUXDO_BASE_URL as BASE_URL,
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
@@ -38,7 +50,14 @@ import {
 } from './localLinuxdoHelpers';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from './discourseReactions';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
-import { discourseCategories, discourseOriginalPoster, discoursePolls, discoursePostFields, discourseTopicFields, discourseUsersById } from './discourseModel';
+import {
+  discourseCategories,
+  discourseOriginalPoster,
+  discoursePolls,
+  discoursePostFields,
+  discourseTopicFields,
+  discourseUsersById
+} from './discourseModel';
 import {
   discourseContentNeedsCalloutNormalization,
   discoursePollPlaceholder,
@@ -113,7 +132,10 @@ function categoryMapFromData(data: unknown) {
   return map;
 }
 
-function topicsNeedCategoryMap(topics: unknown[], categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>) {
+function topicsNeedCategoryMap(
+  topics: unknown[],
+  categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>
+) {
   return topics.some((topic) => isRecord(topic) && topic.category_id && !categoryMap.has(String(topic.category_id)));
 }
 
@@ -140,11 +162,17 @@ async function categoryMapForTopics(
 
 function linuxDoLevelLabel(raw?: Record<string, unknown>) {
   const value = raw?.trust_level ?? raw?.trustLevel;
-  const level = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  const level =
+    typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
   return Number.isInteger(level) && level >= 0 ? `Lv${level}` : undefined;
 }
 
-function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string | null, authorData?: Record<string, unknown>): Topic | null {
+function normalizeTopic(
+  raw: unknown,
+  categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(),
+  author?: string | null,
+  authorData?: Record<string, unknown>
+): Topic | null {
   if (!isRecord(raw)) {
     return null;
   }
@@ -155,7 +183,10 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   const createdAt = fields.createdAt;
   const lastReplyAt = fields.lastReplyAt;
   const category = fields.categoryId ? categoryMap.get(fields.categoryId) : undefined;
-  const accessRequirement = preferredLinuxDoAccessRequirement(accessRequirementFromObject(raw), category?.accessRequirement);
+  const accessRequirement = preferredLinuxDoAccessRequirement(
+    accessRequirementFromObject(raw),
+    category?.accessRequirement
+  );
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
   const authorName = author || String(createdBy.username || (author === null ? '' : raw.last_poster_username) || '');
   const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
@@ -226,7 +257,10 @@ function linuxDoErrorText(data: unknown, fallback = '') {
     return data.message;
   }
   if (Array.isArray(data.errors)) {
-    return data.errors.map((item) => String(item || '').trim()).filter(Boolean).join(' ');
+    return data.errors
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .join(' ');
   }
   return fallback;
 }
@@ -272,11 +306,7 @@ function boostCountFromPost(value: Record<string, unknown>) {
 }
 
 function escapeLinuxDoContentAttribute(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function redditSourceUrl(value: unknown) {
@@ -340,15 +370,17 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
     authorUrl: userUrl(fields.author),
     contentHtml: quotedReferences.html,
     ...(quotedReferences.quotedPosts.length ? { quotedPosts: quotedReferences.quotedPosts } : {}),
-    ...(rawBoostCount || needsApproval ? {
-      siteExtension: {
-        source: 'linuxdo' as const,
-        ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
-        ...(needsApproval ? { needsApproval: true } : {})
-      }
-    } : {}),
+    ...(rawBoostCount || needsApproval
+      ? {
+          siteExtension: {
+            source: 'linuxdo' as const,
+            ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
+            ...(needsApproval ? { needsApproval: true } : {})
+          }
+        }
+      : {}),
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
-    ...(polls ? { polls } : {}),
+    ...(polls ? { polls } : {})
   };
 }
 
@@ -366,28 +398,30 @@ async function hydrateEditableReplyContent(replies: Reply[], options: LinuxDoOpt
   if (!replies.some((reply) => reply.canEdit && reply.commentId && !reply.contentMarkdown)) {
     return replies;
   }
-  return Promise.all(replies.map(async (reply) => {
-    if (!reply.canEdit || reply.contentMarkdown || !reply.commentId) {
-      return reply;
-    }
-    try {
-      const data = await fetchLinuxDoJson<Record<string, unknown>>(`/posts/${reply.commentId}.json`, undefined, options);
-      if (data.can_edit === false) {
+  return Promise.all(
+    replies.map(async (reply) => {
+      if (!reply.canEdit || reply.contentMarkdown || !reply.commentId) {
+        return reply;
+      }
+      try {
+        const data = await fetchLinuxDoJson<Record<string, unknown>>(
+          `/posts/${reply.commentId}.json`,
+          undefined,
+          options
+        );
+        if (data.can_edit === false) {
+          return removeReplyEdit(reply);
+        }
+        const contentMarkdown = typeof data.raw === 'string' ? data.raw : '';
+        return contentMarkdown.trim() ? { ...reply, contentMarkdown } : removeReplyEdit(reply);
+      } catch {
         return removeReplyEdit(reply);
       }
-      const contentMarkdown = typeof data.raw === 'string' ? data.raw : '';
-      return contentMarkdown.trim() ? { ...reply, contentMarkdown } : removeReplyEdit(reply);
-    } catch {
-      return removeReplyEdit(reply);
-    }
-  }));
+    })
+  );
 }
 
-function linuxDoHeaders(
-  access: LinuxDoOptions['linuxDoAccess'],
-  referer = `${BASE_URL}/latest`,
-  csrfToken?: string
-) {
+function linuxDoHeaders(access: LinuxDoOptions['linuxDoAccess'], referer = `${BASE_URL}/latest`, csrfToken?: string) {
   const loggedIn = access?.authenticated === true;
   return {
     Accept: 'application/json, text/javascript, */*; q=0.01',
@@ -403,7 +437,7 @@ function linuxDoHeaders(
 
 async function fetchLinuxDoJson<T>(
   path: string,
-  params: Record<string, string | number | Array<string | number>> | undefined,
+  params: Record<string, string | number | (string | number)[]> | undefined,
   options: LinuxDoOptions = {},
   requestOptions: { referer?: string; csrfToken?: string } = {}
 ) {
@@ -415,9 +449,16 @@ async function fetchLinuxDoJson<T>(
       url.searchParams.set(key, String(value));
     }
   }
-  const response = await fetchWithTimeout(url.toString(), withBrowserFetchIntent({
-    headers: linuxDoHeaders(options.linuxDoAccess, requestOptions.referer, requestOptions.csrfToken)
-  }, options.browserFetchIntent || { owner: 'feed', priority: 'foreground' }), options);
+  const response = await fetchWithTimeout(
+    url.toString(),
+    withBrowserFetchIntent(
+      {
+        headers: linuxDoHeaders(options.linuxDoAccess, requestOptions.referer, requestOptions.csrfToken)
+      },
+      options.browserFetchIntent || { owner: 'feed', priority: 'foreground' }
+    ),
+    options
+  );
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     throw new LinuxDoCloudflareError();
@@ -443,7 +484,10 @@ async function fetchLinuxDoJson<T>(
   }
   if (!response.ok) {
     const message = linuxDoErrorText(data, `HTTP ${response.status}`);
-    const accessRequirement = preferredLinuxDoAccessRequirement(accessRequirementFromObject(data), accessRequirementFromText(message));
+    const accessRequirement = preferredLinuxDoAccessRequirement(
+      accessRequirementFromObject(data),
+      accessRequirementFromText(message)
+    );
     const error = new Error(message);
     Object.assign(error, {
       status: response.status,
@@ -461,12 +505,14 @@ function topicStreamState(data: unknown) {
   return { stream, embeddedPostCount: embeddedPosts.length };
 }
 
-export async function getLinuxDoFeed(options: LinuxDoOptions & {
-  page?: number;
-  limit?: number;
-  category?: string;
-  linuxDoFilter?: DiscourseFeedFilter;
-} = {}): Promise<FeedResponse> {
+export async function getLinuxDoFeed(
+  options: LinuxDoOptions & {
+    page?: number;
+    limit?: number;
+    category?: string;
+    linuxDoFilter?: DiscourseFeedFilter;
+  } = {}
+): Promise<FeedResponse> {
   options = linuxDoOptionsWithBrowserIntent(options, 'feed', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
@@ -480,14 +526,20 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
   let droppedCount = 0;
   let categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>();
   while (collected.length < limit + 1) {
-    const data = await fetchLinuxDoJson<Record<string, unknown>>(linuxDoFeedPath(linuxDoFilter), linuxDoFeedParams(listPage, options.category, linuxDoFilter), options);
+    const data = await fetchLinuxDoJson<Record<string, unknown>>(
+      linuxDoFeedPath(linuxDoFilter),
+      linuxDoFeedParams(listPage, options.category, linuxDoFilter),
+      options
+    );
     const topics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
     categoryMap = await categoryMapForTopics(data, topics, categoryMap, options);
     const users = discourseUsersById(data.users);
-    const items = topics.map((topic) => {
-      const authorData = isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined;
-      return normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
-    }).filter(Boolean) as Topic[];
+    const items = topics
+      .map((topic) => {
+        const authorData = isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined;
+        return normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
+      })
+      .filter(Boolean) as Topic[];
     droppedCount += Math.max(0, topics.length - items.length);
     if (!items.length) {
       break;
@@ -523,7 +575,11 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
 export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promise<CategoriesResponse> {
   options = linuxDoOptionsWithBrowserIntent(options, 'feed', 'foreground');
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
-  const categories = Array.isArray(data.categories) ? data.categories : isRecord(data.category_list) && Array.isArray(data.category_list.categories) ? data.category_list.categories : [];
+  const categories = Array.isArray(data.categories)
+    ? data.categories
+    : isRecord(data.category_list) && Array.isArray(data.category_list.categories)
+      ? data.category_list.categories
+      : [];
   const result = {
     items: discourseCategories(data, 'linuxdo', { includeParentSlug: true }),
     errors: {}
@@ -537,20 +593,26 @@ export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promis
   });
 }
 
-export async function searchLinuxDoTags(options: LinuxDoOptions & {
-  query?: string;
-  categoryId?: string;
-  selectedTags?: string[];
-  limit?: number;
-} = {}): Promise<DiscourseTagOption[]> {
+export async function searchLinuxDoTags(
+  options: LinuxDoOptions & {
+    query?: string;
+    categoryId?: string;
+    selectedTags?: string[];
+    limit?: number;
+  } = {}
+): Promise<DiscourseTagOption[]> {
   options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const limit = Math.min(8, Math.max(1, Math.floor(options.limit || 8)));
-  const data = await fetchLinuxDoJson<Record<string, unknown>>('/tags/filter/search', {
-    q: options.query?.trim() || '',
-    limit,
-    ...(options.categoryId?.trim() ? { categoryId: options.categoryId.trim() } : {}),
-    ...(options.selectedTags?.length ? { 'selected_tags[]': options.selectedTags } : {})
-  }, options);
+  const data = await fetchLinuxDoJson<Record<string, unknown>>(
+    '/tags/filter/search',
+    {
+      q: options.query?.trim() || '',
+      limit,
+      ...(options.categoryId?.trim() ? { categoryId: options.categoryId.trim() } : {}),
+      ...(options.selectedTags?.length ? { 'selected_tags[]': options.selectedTags } : {})
+    },
+    options
+  );
   const results = Array.isArray(data.results) ? data.results : [];
   const seen = new Set<string>();
   return results.filter(isRecord).flatMap((item) => {
@@ -564,34 +626,42 @@ export async function searchLinuxDoTags(options: LinuxDoOptions & {
   });
 }
 
-export async function searchLinuxDoUsers(options: LinuxDoOptions & {
-  term: string;
-  categoryId?: string;
-  limit?: number;
-}): Promise<DiscourseUserOption[]> {
+export async function searchLinuxDoUsers(
+  options: LinuxDoOptions & {
+    term: string;
+    categoryId?: string;
+    limit?: number;
+  }
+): Promise<DiscourseUserOption[]> {
   options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const term = options.term.trim();
   if (!term) {
     return [];
   }
-  const data = await fetchLinuxDoJson<Record<string, unknown>>('/u/search/users', {
-    term,
-    include_groups: 'false',
-    limit: options.limit || 20,
-    ...(options.categoryId?.trim() ? { category_id: options.categoryId.trim() } : {})
-  }, options);
+  const data = await fetchLinuxDoJson<Record<string, unknown>>(
+    '/u/search/users',
+    {
+      term,
+      include_groups: 'false',
+      limit: options.limit || 20,
+      ...(options.categoryId?.trim() ? { category_id: options.categoryId.trim() } : {})
+    },
+    options
+  );
   const users = Array.isArray(data.users) ? data.users : [];
   return users.filter(isRecord).flatMap((user) => {
     const username = String(user.username || '').trim();
     if (!username) {
       return [];
     }
-    return [{
-      id: String(user.id || username),
-      username,
-      ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
-      ...(avatarUrl(user.avatar_template) ? { avatar: avatarUrl(user.avatar_template) } : {})
-    }];
+    return [
+      {
+        id: String(user.id || username),
+        username,
+        ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
+        ...(avatarUrl(user.avatar_template) ? { avatar: avatarUrl(user.avatar_template) } : {})
+      }
+    ];
   });
 }
 
@@ -599,7 +669,10 @@ async function topicData(id: string, options: LinuxDoOptions) {
   return fetchLinuxDoJson<Record<string, unknown>>(`/t/${encodeURIComponent(id)}.json`, undefined, options);
 }
 
-export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { replyLimit?: number } = {}): Promise<TopicDetail> {
+export async function getLinuxDoTopic(
+  id: string,
+  options: LinuxDoOptions & { replyLimit?: number } = {}
+): Promise<TopicDetail> {
   options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   let data: Record<string, unknown>;
   try {
@@ -610,26 +683,29 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
       throw error;
     }
     const contentHtml = accessRequirement.detail || (error instanceof Error ? error.message : accessRequirement.label);
-    return annotateSourceDiagnosticSummary({
-      source: 'linuxdo',
-      id,
-      title: '受限帖子',
-      author: '',
-      url: `${BASE_URL}/t/${id}`,
-      createdAt: new Date().toISOString(),
-      lastReplyAt: new Date().toISOString(),
-      replyCount: 0,
-      contentHtml,
-      replies: [],
-      replyHasMore: false,
-      replyNextPage: null,
-      accessRequirement
-    }, {
-      parserVariant: 'access-restricted-topic',
-      candidateCount: 1,
-      validCount: 1,
-      droppedCount: 0
-    });
+    return annotateSourceDiagnosticSummary(
+      {
+        source: 'linuxdo',
+        id,
+        title: '受限帖子',
+        author: '',
+        url: `${BASE_URL}/t/${id}`,
+        createdAt: new Date().toISOString(),
+        lastReplyAt: new Date().toISOString(),
+        replyCount: 0,
+        contentHtml,
+        replies: [],
+        replyHasMore: false,
+        replyNextPage: null,
+        accessRequirement
+      },
+      {
+        parserVariant: 'access-restricted-topic',
+        candidateCount: 1,
+        validCount: 1,
+        droppedCount: 0
+      }
+    );
   }
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const [firstPost, ...replyPosts] = posts;
@@ -645,7 +721,10 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const replyLimit = options.replyLimit || 30;
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
   const replies = await hydrateEditableReplyContent(
-    replyPosts.slice(0, replyLimit).map((post) => normalizePost(post, topic.id)).filter(Boolean) as Reply[],
+    replyPosts
+      .slice(0, replyLimit)
+      .map((post) => normalizePost(post, topic.id))
+      .filter(Boolean) as Reply[],
     options
   );
   const totalPosts = stream.length || topic.replyCount + 1;
@@ -671,7 +750,11 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     ...(polls ? { polls } : {}),
     ...(firstPostFields?.reactionSummary ? { reactionSummary: firstPostFields.reactionSummary } : {}),
     ...(firstPostBoostCount ? { siteExtension: { source: 'linuxdo' as const, boostCount: firstPostBoostCount } } : {}),
-    ...(positiveNumber(data.bookmark_id) ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true } : typeof data.bookmarked === 'boolean' ? { bookmarked: data.bookmarked } : {})
+    ...(positiveNumber(data.bookmark_id)
+      ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true }
+      : typeof data.bookmarked === 'boolean'
+        ? { bookmarked: data.bookmarked }
+        : {})
   };
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'discourse-topic',
@@ -683,15 +766,22 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
 }
 
 async function fetchPosts(id: string, postIds: unknown[], options: LinuxDoOptions) {
-  const data = await fetchLinuxDoJson<Record<string, unknown>>(`/t/${encodeURIComponent(id)}/posts.json`, { 'post_ids[]': postIds.map(String) }, options);
+  const data = await fetchLinuxDoJson<Record<string, unknown>>(
+    `/t/${encodeURIComponent(id)}/posts.json`,
+    { 'post_ids[]': postIds.map(String) },
+    options
+  );
   return isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
 }
 
-export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
-  page?: number;
-  limit?: number;
-  offset?: number | null;
-} = {}): Promise<RepliesResponse> {
+export async function getLinuxDoReplies(
+  id: string,
+  options: LinuxDoOptions & {
+    page?: number;
+    limit?: number;
+    offset?: number | null;
+  } = {}
+): Promise<RepliesResponse> {
   options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
@@ -700,19 +790,21 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   const firstPageReplyCount = streamState.embeddedPostCount
     ? Math.min(limit, Math.max(streamState.embeddedPostCount - 1, 0))
     : limit;
-  const previousReplyCount = page > 1
-    ? typeof options.offset === 'number' ? options.offset : firstPageReplyCount + ((page - 2) * limit)
-    : 0;
+  const previousReplyCount =
+    page > 1 ? (typeof options.offset === 'number' ? options.offset : firstPageReplyCount + (page - 2) * limit) : 0;
   const start = 1 + previousReplyCount;
   const postIds = stream.slice(start, start + limit);
   if (!postIds.length) {
-    return annotateSourceDiagnosticSummary({ items: [], hasMore: false, nextPage: null }, {
-      parserVariant: 'discourse-replies',
-      candidateCount: 0,
-      validCount: 0,
-      droppedCount: 0,
-      isExpectedEmpty: true
-    });
+    return annotateSourceDiagnosticSummary(
+      { items: [], hasMore: false, nextPage: null },
+      {
+        parserVariant: 'discourse-replies',
+        candidateCount: 0,
+        validCount: 0,
+        droppedCount: 0,
+        isExpectedEmpty: true
+      }
+    );
   }
   const posts = await fetchPosts(id, postIds, options);
   const hasMore = stream.length > start + limit;
@@ -739,7 +831,8 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
 export async function getLinuxDoReply(id: string, floor: number, options: LinuxDoOptions = {}): Promise<Reply> {
   options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const data = await topicData(id, options);
-  const embeddedPosts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
+  const embeddedPosts =
+    isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const embedded = embeddedPosts.find((post) => isRecord(post) && post.post_number === floor);
   if (embedded) {
     const reply = normalizePost(embedded, id);
@@ -787,7 +880,10 @@ async function linuxDoCsrfToken(options: LinuxDoOptions) {
   }
 }
 
-async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, options: LinuxDoOptions): Promise<{ items: Topic[]; hasMore: boolean }> {
+async function topicsFromLinuxDoSearchData(
+  data: Record<string, unknown>,
+  options: LinuxDoOptions
+): Promise<{ items: Topic[]; hasMore: boolean }> {
   const users = discourseUsersById(data.users);
   const postsByTopicId = new Map<string, Record<string, unknown>>();
   if (Array.isArray(data.posts)) {
@@ -795,17 +891,22 @@ async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, option
   }
   const topics = Array.isArray(data.topics) ? data.topics : [];
   const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
-  const items = topics.map((topic) => {
-    const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
-    const authorData = (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined)
-      || (Number(post?.post_number) === 1 ? post : undefined);
-    const author = String(authorData?.username || '').trim();
-    const normalized = normalizeTopic(topic, categoryMap, author || null, authorData);
-    return normalized ? {
-      ...normalized,
-      excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || normalized.excerpt || ''))
-    } : null;
-  }).filter(Boolean) as Topic[];
+  const items = topics
+    .map((topic) => {
+      const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
+      const authorData =
+        (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined) ||
+        (Number(post?.post_number) === 1 ? post : undefined);
+      const author = String(authorData?.username || '').trim();
+      const normalized = normalizeTopic(topic, categoryMap, author || null, authorData);
+      return normalized
+        ? {
+            ...normalized,
+            excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || normalized.excerpt || ''))
+          }
+        : null;
+    })
+    .filter(Boolean) as Topic[];
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
   const result = {
     items,
@@ -864,12 +965,19 @@ function parseLinuxDoGoogleSearchTopics(html: string) {
 }
 
 async function fetchLinuxDoGoogleSearchText(query: string, page: number, options: LinuxDoOptions = {}) {
-  const response = await fetchWithTimeout(googleSiteSearchUrl('linux.do', query, page), withBrowserFetchIntent({
-    headers: {
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
-      'User-Agent': DEFAULT_LINUXDO_ANDROID_USER_AGENT
-    }
-  }, options.browserFetchIntent || { owner: 'search', priority: 'foreground' }), options);
+  const response = await fetchWithTimeout(
+    googleSiteSearchUrl('linux.do', query, page),
+    withBrowserFetchIntent(
+      {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
+          'User-Agent': DEFAULT_LINUXDO_ANDROID_USER_AGENT
+        }
+      },
+      options.browserFetchIntent || { owner: 'search', priority: 'foreground' }
+    ),
+    options
+  );
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -877,17 +985,23 @@ async function fetchLinuxDoGoogleSearchText(query: string, page: number, options
   return text;
 }
 
-async function searchLinuxDoGoogle(query: string, options: LinuxDoOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
+async function searchLinuxDoGoogle(
+  query: string,
+  options: LinuxDoOptions & { limit?: number; page?: number } = {}
+): Promise<SearchResponse> {
   const cleanQuery = query.trim();
   const page = options.page || 1;
   if (!cleanQuery) {
-    return annotateSourceDiagnosticSummary({ items: [], errors: {}, hasMore: false, nextPage: null }, {
-      parserVariant: 'google-search',
-      candidateCount: 0,
-      validCount: 0,
-      droppedCount: 0,
-      isExpectedEmpty: true
-    });
+    return annotateSourceDiagnosticSummary(
+      { items: [], errors: {}, hasMore: false, nextPage: null },
+      {
+        parserVariant: 'google-search',
+        candidateCount: 0,
+        validCount: 0,
+        droppedCount: 0,
+        isExpectedEmpty: true
+      }
+    );
   }
   const html = await fetchLinuxDoGoogleSearchText(cleanQuery, page, options);
   const nextPage = hasGoogleSiteSearchNextPage(html, 'linux.do', page + 1) ? page + 1 : null;
@@ -931,10 +1045,15 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   let candidateCount = 0;
   let droppedCount = 0;
   while (collected.length < needed) {
-    const data = await fetchLinuxDoJson<Record<string, unknown>>('/search', {
-      q: cleanQuery,
-      page: searchPage
-    }, options, { referer: searchReferer, csrfToken });
+    const data = await fetchLinuxDoJson<Record<string, unknown>>(
+      '/search',
+      {
+        q: cleanQuery,
+        page: searchPage
+      },
+      options,
+      { referer: searchReferer, csrfToken }
+    );
     const result = await topicsFromLinuxDoSearchData(data, options);
     const pageSummary = sourceDiagnosticSummary(result);
     candidateCount += pageSummary?.candidateCount || result.items.length;
@@ -972,30 +1091,45 @@ export async function searchLinuxDoSemantic(query: string, options: LinuxDoOptio
   options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const cleanQuery = query.trim();
   if (!cleanQuery) {
-    return annotateSourceDiagnosticSummary({ items: [], errors: {}, hasMore: false, nextPage: null }, {
-      parserVariant: 'discourse-ai-search',
-      candidateCount: 0,
-      validCount: 0,
-      droppedCount: 0,
-      isExpectedEmpty: true
-    });
+    return annotateSourceDiagnosticSummary(
+      { items: [], errors: {}, hasMore: false, nextPage: null },
+      {
+        parserVariant: 'discourse-ai-search',
+        candidateCount: 0,
+        validCount: 0,
+        droppedCount: 0,
+        isExpectedEmpty: true
+      }
+    );
   }
-  const data = await fetchLinuxDoJson<Record<string, unknown>>('/discourse-ai/embeddings/semantic-search', {
-    q: cleanQuery
-  }, options, { referer: `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}` });
+  const data = await fetchLinuxDoJson<Record<string, unknown>>(
+    '/discourse-ai/embeddings/semantic-search',
+    {
+      q: cleanQuery
+    },
+    options,
+    { referer: `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}` }
+  );
   const parsed = await topicsFromLinuxDoSearchData(data, options);
   const items = parsed.items.map((topic) => ({ ...topic, isAiGenerated: true }));
   const summary = sourceDiagnosticSummary(parsed);
-  return annotateSourceDiagnosticSummary({ items, errors: {}, hasMore: false, nextPage: null }, {
-    parserVariant: 'discourse-ai-search',
-    candidateCount: summary?.candidateCount || items.length,
-    validCount: items.length,
-    droppedCount: summary?.droppedCount || 0,
-    isExpectedEmpty: items.length === 0
-  });
+  return annotateSourceDiagnosticSummary(
+    { items, errors: {}, hasMore: false, nextPage: null },
+    {
+      parserVariant: 'discourse-ai-search',
+      candidateCount: summary?.candidateCount || items.length,
+      validCount: items.length,
+      droppedCount: summary?.droppedCount || 0,
+      isExpectedEmpty: items.length === 0
+    }
+  );
 }
 
-export async function getLinuxDoUserProfile(id: string, username: string, options: LinuxDoOptions = {}): Promise<UserProfile> {
+export async function getLinuxDoUserProfile(
+  id: string,
+  username: string,
+  options: LinuxDoOptions = {}
+): Promise<UserProfile> {
   options = linuxDoOptionsWithBrowserIntent(options, 'user', 'foreground');
   const name = (username || id).trim();
   if (!name) {
@@ -1005,15 +1139,20 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
   const wantsTopics = cursorType !== 'replies';
   const wantsReplies = cursorType !== 'topics';
   const replyOffset = parsePositiveInteger(options.cursor);
-  const data = await fetchLinuxDoJson<Record<string, unknown>>(`/u/${encodeURIComponent(name)}/summary.json`, undefined, options);
+  const data = await fetchLinuxDoJson<Record<string, unknown>>(
+    `/u/${encodeURIComponent(name)}/summary.json`,
+    undefined,
+    options
+  );
   const summary = isRecord(data.user_summary) ? data.user_summary : {};
   const summaryUser = isRecord(summary.user) ? summary.user : {};
   const dataUser = isRecord(data.user) ? data.user : {};
   const listedUsers = Array.isArray(data.users) ? data.users.filter(isRecord) : [];
-  const listedUser = listedUsers.find((item) => String(item.username || item.name || '').toLowerCase() === name.toLowerCase())
-    || listedUsers.find((item) => String(item.id || '') === String(summaryUser.id || dataUser.id || id))
-    || listedUsers[0]
-    || {};
+  const listedUser =
+    listedUsers.find((item) => String(item.username || item.name || '').toLowerCase() === name.toLowerCase()) ||
+    listedUsers.find((item) => String(item.id || '') === String(summaryUser.id || dataUser.id || id)) ||
+    listedUsers[0] ||
+    {};
   const user = { ...listedUser, ...dataUser, ...summaryUser };
   const resolvedUsername = String(user.username || name);
   const displayName = typeof user.name === 'string' ? user.name : resolvedUsername;
@@ -1024,11 +1163,15 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
   let partialErrorCount = 0;
   if (wantsReplies) {
     const readUserActions = async () => {
-      const actionData = await fetchLinuxDoJson<Record<string, unknown>>('/user_actions.json', {
-        offset: replyOffset,
-        username: resolvedUsername,
-        filter: 5
-      }, options);
+      const actionData = await fetchLinuxDoJson<Record<string, unknown>>(
+        '/user_actions.json',
+        {
+          offset: replyOffset,
+          username: resolvedUsername,
+          filter: 5
+        },
+        options
+      );
       return Array.isArray(actionData.user_actions) ? actionData.user_actions : [];
     };
     if (cursorType === 'replies') {
@@ -1041,10 +1184,19 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
       }
     }
   }
-  const categoryMap = await categoryMapForTopics(data, [...rawTopics, ...rawUserActions], categoryMapFromData(data), options);
-  const topics = rawTopics.map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user)).filter(Boolean) as Topic[];
+  const categoryMap = await categoryMapForTopics(
+    data,
+    [...rawTopics, ...rawUserActions],
+    categoryMapFromData(data),
+    options
+  );
+  const topics = rawTopics
+    .map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user))
+    .filter(Boolean) as Topic[];
   const visibleTopics = sortTopicsByCreatedAt(topics);
-  const replies = rawUserActions.map((action) => normalizeUserActionReply(action, categoryMap, resolvedUsername, user)).filter(Boolean) as UserReplyActivity[];
+  const replies = rawUserActions
+    .map((action) => normalizeUserActionReply(action, categoryMap, resolvedUsername, user))
+    .filter(Boolean) as UserReplyActivity[];
   const result: UserProfile = {
     source: 'linuxdo',
     id: resolvedUsername,
@@ -1052,7 +1204,12 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
     displayName,
     avatar,
     url: userUrl(resolvedUsername),
-    bio: typeof user.bio_raw === 'string' ? user.bio_raw : typeof user.bio_excerpt === 'string' ? user.bio_excerpt : undefined,
+    bio:
+      typeof user.bio_raw === 'string'
+        ? user.bio_raw
+        : typeof user.bio_excerpt === 'string'
+          ? user.bio_excerpt
+          : undefined,
     topicCount: nonNegativeNumber(summary.topic_count) ?? (visibleTopics.length || undefined),
     replyCount: nonNegativeNumber(summary.reply_count),
     postCount: nonNegativeNumber(summary.post_count),
@@ -1073,7 +1230,8 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
     validCount,
     droppedCount: Math.max(0, candidateCount - validCount),
     partialErrorCount,
-    missingFloorCount: rawUserActions.filter((action) => isRecord(action) && !parsePositiveInteger(action.post_number)).length,
+    missingFloorCount: rawUserActions.filter((action) => isRecord(action) && !parsePositiveInteger(action.post_number))
+      .length,
     hasRepeatedCursor: result.nextTopicsCursor === options.cursor || result.nextRepliesCursor === options.cursor,
     isParseEmpty: !hasUserIdentity && visibleTopics.length === 0 && replies.length === 0
   });
@@ -1081,15 +1239,22 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
 
 export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOptions = {}): Promise<UserProfile> {
   options = linuxDoOptionsWithBrowserIntent(options, 'account', 'background');
-  const response = await fetchWithTimeout(`${BASE_URL}/session/current.json`, withBrowserFetchIntent({
-    headers: {
-      Accept: 'application/json, text/javascript, */*; q=0.01',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      Referer: BASE_URL,
-      'User-Agent': options.linuxDoUserAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
-      'X-Requested-With': 'XMLHttpRequest'
-    }
-  }, options.browserFetchIntent || { owner: 'account', priority: 'background' }), options);
+  const response = await fetchWithTimeout(
+    `${BASE_URL}/session/current.json`,
+    withBrowserFetchIntent(
+      {
+        headers: {
+          Accept: 'application/json, text/javascript, */*; q=0.01',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          Referer: BASE_URL,
+          'User-Agent': options.linuxDoUserAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      },
+      options.browserFetchIntent || { owner: 'account', priority: 'background' }
+    ),
+    options
+  );
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     throw new LinuxDoCloudflareError();

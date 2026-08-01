@@ -85,10 +85,21 @@ export function LinuxDoVerifyModal({
     const timeout = setTimeout(() => {
       setWebViewNeedsRemount(true);
       onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-      onSetLinuxDoWebViewError('linux.do 页面打开超时：请检查模拟器网络后刷新页面。', linuxDoWebViewKey, credentialAttempt);
+      onSetLinuxDoWebViewError(
+        'linux.do 页面打开超时：请检查模拟器网络后刷新页面。',
+        linuxDoWebViewKey,
+        credentialAttempt
+      );
     }, LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS);
     return () => clearTimeout(timeout);
-  }, [credentialAttempt, linuxDoWebViewKey, loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
+  }, [
+    credentialAttempt,
+    linuxDoWebViewKey,
+    loadingLinuxDoPage,
+    onSetLinuxDoWebViewError,
+    onSetLoadingLinuxDoPage,
+    showLinuxDoPanel
+  ]);
   return (
     <LoginWebViewModal
       visible={showLinuxDoPanel}
@@ -100,14 +111,26 @@ export function LinuxDoVerifyModal({
       styles={styles}
       theme={theme}
       onClose={() => onShowLinuxDoPanelChange(false)}
-      actions={(
+      actions={
         <View style={styles.actions}>
-          {credentialSaved ? <AppButton label="填入已保存登录信息" styles={styles} disabled={credentialFillPending} onPress={onRequestCredentialFill} /> : null}
-          <AppButton label={checking ? '检测中' : '检测状态'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
+          {credentialSaved ? (
+            <AppButton
+              label="填入已保存登录信息"
+              styles={styles}
+              disabled={credentialFillPending}
+              onPress={onRequestCredentialFill}
+            />
+          ) : null}
+          <AppButton
+            label={checking ? '检测中' : '检测状态'}
+            styles={styles}
+            disabled={checking}
+            onPress={onCheckLinuxDoCookie}
+          />
           <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLinuxDoCookie} />
           <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
         </View>
-      )}
+      }
     >
       {showLinuxDoPanel && mountLinuxDoWebView && !webViewBlockMessage && !webViewNeedsRemount ? (
         <WebView
@@ -151,7 +174,11 @@ export function LinuxDoVerifyModal({
           }}
           onError={(event) => {
             onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-            onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`, linuxDoWebViewKey, credentialAttempt);
+            onSetLinuxDoWebViewError(
+              `linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`,
+              linuxDoWebViewKey,
+              credentialAttempt
+            );
           }}
           renderError={() => <View style={styles.webViewErrorPlaceholder} />}
           onRenderProcessGone={() => {

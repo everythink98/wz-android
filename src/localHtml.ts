@@ -54,9 +54,10 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
     const text = value.trim();
     const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)
       ? `${text}Z`
-      : text.replace(/^(\d{4}-\d{1,2}-\d{1,2})\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([+-]\d{2}:?\d{2})?$/, (_match, date, clock, zone = '') => (
-        `${date}T${clock}${zone || defaultTimezone}`
-      ));
+      : text.replace(
+          /^(\d{4}-\d{1,2}-\d{1,2})\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([+-]\d{2}:?\d{2})?$/,
+          (_match, date, clock, zone = '') => `${date}T${clock}${zone || defaultTimezone}`
+        );
     time = Date.parse(normalized);
   }
   return Number.isFinite(time) ? new Date(time).toISOString() : '';
@@ -105,11 +106,13 @@ export function escapeQuotedHtmlTagDelimiters(value: unknown) {
 }
 
 export function textContentFromHtml(value: unknown) {
-  return decodeHtml(escapeQuotedHtmlTagDelimiters(value)
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]*>/g, ' '))
+  return decodeHtml(
+    escapeQuotedHtmlTagDelimiters(value)
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]*>/g, ' ')
+  )
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -135,9 +138,16 @@ export function hasRenderableHtmlContent(value: unknown) {
     return true;
   }
   try {
-    return Boolean(parseHtml(value).querySelector(`img, iframe, video, ${FORUM_VIDEO_TAG}, ${FORUM_VIDEO_STICKER_TAG}, ${FORUM_LINK_CARD_TAG}, ${FORUM_TERMINAL_REPORT_TAG}`));
+    return Boolean(
+      parseHtml(value).querySelector(
+        `img, iframe, video, ${FORUM_VIDEO_TAG}, ${FORUM_VIDEO_STICKER_TAG}, ${FORUM_LINK_CARD_TAG}, ${FORUM_TERMINAL_REPORT_TAG}`
+      )
+    );
   } catch {
-    return new RegExp(`<(?:img|iframe|video|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_LINK_CARD_TAG}|${FORUM_TERMINAL_REPORT_TAG})\\b`, 'i').test(String(value || ''));
+    return new RegExp(
+      `<(?:img|iframe|video|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_LINK_CARD_TAG}|${FORUM_TERMINAL_REPORT_TAG})\\b`,
+      'i'
+    ).test(String(value || ''));
   }
 }
 
@@ -173,26 +183,158 @@ function sanitizedHttpMediaUrl(value: unknown, baseUrl: string) {
   }
 }
 
-const safeCssColorPattern = /^(?:#[0-9a-f]{3,8}|rgba?\(\s*(?:\d{1,3}\s*,\s*){2}\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)|hsla?\(\s*\d{1,3}(?:deg)?\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$/i;
+const safeCssColorPattern =
+  /^(?:#[0-9a-f]{3,8}|rgba?\(\s*(?:\d{1,3}\s*,\s*){2}\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)|hsla?\(\s*\d{1,3}(?:deg)?\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$/i;
 const safeCssColorKeywords = new Set([
-  'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque', 'black', 'blanchedalmond',
-  'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue', 'chartreuse', 'chocolate', 'coral', 'cornflowerblue',
-  'cornsilk', 'crimson', 'cyan', 'darkblue', 'darkcyan', 'darkgoldenrod', 'darkgray', 'darkgreen', 'darkgrey',
-  'darkkhaki', 'darkmagenta', 'darkolivegreen', 'darkorange', 'darkorchid', 'darkred', 'darksalmon', 'darkseagreen',
-  'darkslateblue', 'darkslategray', 'darkslategrey', 'darkturquoise', 'darkviolet', 'deeppink', 'deepskyblue',
-  'dimgray', 'dimgrey', 'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen', 'fuchsia', 'gainsboro',
-  'ghostwhite', 'gold', 'goldenrod', 'gray', 'green', 'greenyellow', 'grey', 'honeydew', 'hotpink', 'indianred',
-  'indigo', 'ivory', 'khaki', 'lavender', 'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue', 'lightcoral',
-  'lightcyan', 'lightgoldenrodyellow', 'lightgray', 'lightgreen', 'lightgrey', 'lightpink', 'lightsalmon',
-  'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey', 'lightsteelblue', 'lightyellow', 'lime',
-  'limegreen', 'linen', 'magenta', 'maroon', 'mediumaquamarine', 'mediumblue', 'mediumorchid', 'mediumpurple',
-  'mediumseagreen', 'mediumslateblue', 'mediumspringgreen', 'mediumturquoise', 'mediumvioletred', 'midnightblue',
-  'mintcream', 'mistyrose', 'moccasin', 'navajowhite', 'navy', 'oldlace', 'olive', 'olivedrab', 'orange',
-  'orangered', 'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise', 'palevioletred', 'papayawhip',
-  'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple', 'rebeccapurple', 'red', 'rosybrown',
-  'royalblue', 'saddlebrown', 'salmon', 'sandybrown', 'seagreen', 'seashell', 'sienna', 'silver', 'skyblue',
-  'slateblue', 'slategray', 'slategrey', 'snow', 'springgreen', 'steelblue', 'tan', 'teal', 'thistle',
-  'tomato', 'transparent', 'turquoise', 'violet', 'wheat', 'white', 'whitesmoke', 'yellow', 'yellowgreen'
+  'aliceblue',
+  'antiquewhite',
+  'aqua',
+  'aquamarine',
+  'azure',
+  'beige',
+  'bisque',
+  'black',
+  'blanchedalmond',
+  'blue',
+  'blueviolet',
+  'brown',
+  'burlywood',
+  'cadetblue',
+  'chartreuse',
+  'chocolate',
+  'coral',
+  'cornflowerblue',
+  'cornsilk',
+  'crimson',
+  'cyan',
+  'darkblue',
+  'darkcyan',
+  'darkgoldenrod',
+  'darkgray',
+  'darkgreen',
+  'darkgrey',
+  'darkkhaki',
+  'darkmagenta',
+  'darkolivegreen',
+  'darkorange',
+  'darkorchid',
+  'darkred',
+  'darksalmon',
+  'darkseagreen',
+  'darkslateblue',
+  'darkslategray',
+  'darkslategrey',
+  'darkturquoise',
+  'darkviolet',
+  'deeppink',
+  'deepskyblue',
+  'dimgray',
+  'dimgrey',
+  'dodgerblue',
+  'firebrick',
+  'floralwhite',
+  'forestgreen',
+  'fuchsia',
+  'gainsboro',
+  'ghostwhite',
+  'gold',
+  'goldenrod',
+  'gray',
+  'green',
+  'greenyellow',
+  'grey',
+  'honeydew',
+  'hotpink',
+  'indianred',
+  'indigo',
+  'ivory',
+  'khaki',
+  'lavender',
+  'lavenderblush',
+  'lawngreen',
+  'lemonchiffon',
+  'lightblue',
+  'lightcoral',
+  'lightcyan',
+  'lightgoldenrodyellow',
+  'lightgray',
+  'lightgreen',
+  'lightgrey',
+  'lightpink',
+  'lightsalmon',
+  'lightseagreen',
+  'lightskyblue',
+  'lightslategray',
+  'lightslategrey',
+  'lightsteelblue',
+  'lightyellow',
+  'lime',
+  'limegreen',
+  'linen',
+  'magenta',
+  'maroon',
+  'mediumaquamarine',
+  'mediumblue',
+  'mediumorchid',
+  'mediumpurple',
+  'mediumseagreen',
+  'mediumslateblue',
+  'mediumspringgreen',
+  'mediumturquoise',
+  'mediumvioletred',
+  'midnightblue',
+  'mintcream',
+  'mistyrose',
+  'moccasin',
+  'navajowhite',
+  'navy',
+  'oldlace',
+  'olive',
+  'olivedrab',
+  'orange',
+  'orangered',
+  'orchid',
+  'palegoldenrod',
+  'palegreen',
+  'paleturquoise',
+  'palevioletred',
+  'papayawhip',
+  'peachpuff',
+  'peru',
+  'pink',
+  'plum',
+  'powderblue',
+  'purple',
+  'rebeccapurple',
+  'red',
+  'rosybrown',
+  'royalblue',
+  'saddlebrown',
+  'salmon',
+  'sandybrown',
+  'seagreen',
+  'seashell',
+  'sienna',
+  'silver',
+  'skyblue',
+  'slateblue',
+  'slategray',
+  'slategrey',
+  'snow',
+  'springgreen',
+  'steelblue',
+  'tan',
+  'teal',
+  'thistle',
+  'tomato',
+  'transparent',
+  'turquoise',
+  'violet',
+  'wheat',
+  'white',
+  'whitesmoke',
+  'yellow',
+  'yellowgreen'
 ]);
 
 function safeCssColor(value: string) {
@@ -236,26 +378,25 @@ function classTokens(value: string | undefined) {
 function removeForumImageMetadata(root: HTMLElement) {
   root.querySelectorAll('div').forEach((node) => {
     const text = decodeHtml(node.text).replace(/\s+/g, ' ').trim();
-    const looksLikeImageMetadata = classTokens(node.getAttribute('class')).includes('meta') || imageMetadataPrefixPattern.test(text);
-    if (!node.querySelector('img') && looksLikeImageMetadata && imageDimensionPattern.test(text) && imageFileSizePattern.test(text)) {
+    const looksLikeImageMetadata =
+      classTokens(node.getAttribute('class')).includes('meta') || imageMetadataPrefixPattern.test(text);
+    if (
+      !node.querySelector('img') &&
+      looksLikeImageMetadata &&
+      imageDimensionPattern.test(text) &&
+      imageFileSizePattern.test(text)
+    ) {
       node.remove();
     }
   });
 }
 
 function escapeHtmlAttribute(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function escapeHtmlText(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function oneboxText(node: HTMLElement | null | undefined, maxLength: number) {
@@ -283,7 +424,8 @@ function sanitizeDiscourseOneboxes(root: HTMLElement, baseUrl: string) {
     const links = node.querySelectorAll('a');
     const sourceLink = node.querySelector('header a') || links[0];
     const titleLink = node.querySelector('h3 a') || links[1] || sourceLink;
-    const rawHref = node.getAttribute('data-onebox-src') || titleLink?.getAttribute('href') || sourceLink?.getAttribute('href') || '';
+    const rawHref =
+      node.getAttribute('data-onebox-src') || titleLink?.getAttribute('href') || sourceLink?.getAttribute('href') || '';
     const href = sanitizedUrlAttribute('href', rawHref, baseUrl);
     if (!href) {
       node.remove();
@@ -317,7 +459,9 @@ function sanitizeIframes(root: HTMLElement, baseUrl: string) {
       node.setAttribute('allowfullscreen', 'true');
       return;
     }
-    node.replaceWith(`<a class="embed-link" href="${escapeHtmlAttribute(embed.sourceUrl)}">嵌入内容 · ${escapeHtmlAttribute(embed.displayDomain)}</a>`);
+    node.replaceWith(
+      `<a class="embed-link" href="${escapeHtmlAttribute(embed.sourceUrl)}">嵌入内容 · ${escapeHtmlAttribute(embed.displayDomain)}</a>`
+    );
   });
 }
 
@@ -462,9 +606,7 @@ function normalizeTerminalText(value: string) {
   while (lines.length && !lines[lines.length - 1].trim()) {
     lines.pop();
   }
-  const nonEmptyIndents = lines
-    .filter((line) => line.trim())
-    .map((line) => line.match(/^ */)?.[0].length || 0);
+  const nonEmptyIndents = lines.filter((line) => line.trim()).map((line) => line.match(/^ */)?.[0].length || 0);
   const indent = nonEmptyIndents.length ? Math.min(...nonEmptyIndents) : 0;
   return indent ? lines.map((line) => line.slice(Math.min(indent, line.length))).join('\n') : lines.join('\n');
 }
@@ -485,7 +627,9 @@ function anserEntryStyle(entry: Anser.AnserJsonEntry) {
 }
 
 function ansiTerminalHtml(value: string) {
-  return Anser.ansiToJson(value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]/g, '').replace(/\t/g, '    '), { remove_empty: true })
+  return Anser.ansiToJson(value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]/g, '').replace(/\t/g, '    '), {
+    remove_empty: true
+  })
     .map((entry) => {
       const html = terminalTextHtml(entry.content);
       const styleAttr = terminalStyleAttribute(anserEntryStyle(entry));
@@ -512,22 +656,30 @@ function terminalReportHtml(sections: string[]) {
 
 function nodeSeekTerminalText(node: HTMLElement) {
   const xtermRows = node.querySelector('.xterm-rows');
-  const source = xtermRows
-    || node.querySelector('.terminal-container')
-    || node.querySelector('pre')
-    || node.querySelector('code')
-    || node.querySelector('textarea')
-    || node;
+  const source =
+    xtermRows ||
+    node.querySelector('.terminal-container') ||
+    node.querySelector('pre') ||
+    node.querySelector('code') ||
+    node.querySelector('textarea') ||
+    node;
   const text = xtermRows
-    ? xtermRows.querySelectorAll('.xterm-row').map((row) => row.text).join('\n')
+    ? xtermRows
+        .querySelectorAll('.xterm-row')
+        .map((row) => row.text)
+        .join('\n')
     : source.text;
   return normalizeTerminalText(text || '');
 }
 
 function rgbHex(red: number, green: number, blue: number) {
-  return `#${[red, green, blue].map((value) => (
-    Math.max(0, Math.min(255, value || 0)).toString(16).padStart(2, '0')
-  )).join('')}`;
+  return `#${[red, green, blue]
+    .map((value) =>
+      Math.max(0, Math.min(255, value || 0))
+        .toString(16)
+        .padStart(2, '0')
+    )
+    .join('')}`;
 }
 
 function xtermColor(index: number) {
@@ -615,9 +767,10 @@ function xtermNodeHtml(node: unknown): string {
   }
   const element = node as Partial<HTMLElement>;
   if (typeof element.getAttribute === 'function') {
-    const html = Array.isArray(element.childNodes) && element.childNodes.length
-      ? element.childNodes.map(xtermNodeHtml).join('')
-      : terminalTextHtml(element.text || '');
+    const html =
+      Array.isArray(element.childNodes) && element.childNodes.length
+        ? element.childNodes.map(xtermNodeHtml).join('')
+        : terminalTextHtml(element.text || '');
     const style = elementTerminalStyle(element as HTMLElement);
     const styleAttr = terminalStyleAttribute(style);
     return html && styleAttr ? `<span${styleAttr}>${html}</span>` : html;
@@ -638,9 +791,7 @@ function nodeSeekMagicTabContentHtml(body: HTMLElement) {
   if (xtermRows) {
     return xtermRowsTerminalHtml(xtermRows);
   }
-  const hasTerminalContent = Boolean(
-    body.querySelector('.terminal-container, pre, code, textarea')
-  );
+  const hasTerminalContent = Boolean(body.querySelector('.terminal-container, pre, code, textarea'));
   if (hasTerminalContent) {
     const text = nodeSeekTerminalText(body);
     if (text) {
@@ -672,32 +823,39 @@ function sanitizeNodeSeekMagicTabs(root: HTMLElement) {
 }
 
 function terminalTextFromAnsiCodeHtml(value: string) {
-  return normalizeTerminalText(String(value || '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<span\b[^>]*\bdata-ansicode=["']?27["']?[^>]*>\s*<\/span>/gi, '\x1B')
-    .replace(/<span\b[^>]*\bdata-ansicode=["']?\d+["']?[^>]*>\s*<\/span>/gi, '')
-    .replace(/<\/?span\b[^>]*>/gi, '')
-    .replace(/<[^>]*>/g, ''));
+  return normalizeTerminalText(
+    String(value || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<span\b[^>]*\bdata-ansicode=["']?27["']?[^>]*>\s*<\/span>/gi, '\x1B')
+      .replace(/<span\b[^>]*\bdata-ansicode=["']?\d+["']?[^>]*>\s*<\/span>/gi, '')
+      .replace(/<\/?span\b[^>]*>/gi, '')
+      .replace(/<[^>]*>/g, '')
+  );
 }
 
 function terminalTextFromCodeHtml(value: string) {
-  return normalizeTerminalText(decodeHtml(String(value || '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]*>/g, '')));
+  return normalizeTerminalText(
+    decodeHtml(
+      String(value || '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]*>/g, '')
+    )
+  );
 }
 
 function sanitizeNodeSeekAnsiCodeBlocksHtml(html: unknown) {
   const source = String(html || '');
   return source
-    .replace(/<pre\b[^>]*>\s*<code\b(?=[^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_match, body) => (
+    .replace(/<pre\b[^>]*>\s*<code\b(?=[^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_match, body) =>
       terminalCodeBlockHtml(terminalTextFromAnsiCodeHtml(body))
-    ))
-    .replace(/<code\b(?=[^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>/gi, (_match, body) => (
+    )
+    .replace(/<code\b(?=[^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>/gi, (_match, body) =>
       terminalCodeBlockHtml(terminalTextFromAnsiCodeHtml(body))
-    ));
+    );
 }
 
-const terminalSectionPattern = /<(?:p|div)\b[^>]*>\s*((?:💻|🎬|🌐|📍)[^<]{0,40})\s*<\/(?:p|div)>\s*<div class="forum-terminal-code">([\s\S]*?)<\/div>/g;
+const terminalSectionPattern =
+  /<(?:p|div)\b[^>]*>\s*((?:💻|🎬|🌐|📍)[^<]{0,40})\s*<\/(?:p|div)>\s*<div class="forum-terminal-code">([\s\S]*?)<\/div>/g;
 
 function sanitizeNodeSeekAnsiReportSectionsHtml(html: unknown) {
   const source = String(html || '');
@@ -705,7 +863,9 @@ function sanitizeNodeSeekAnsiReportSectionsHtml(html: unknown) {
   if (matches.length < 2) {
     return source;
   }
-  const tabs = matches.map((match) => terminalTabHtml(decodeHtml(match[1]).trim(), `<div class="forum-terminal-code">${match[2]}</div>`));
+  const tabs = matches.map((match) =>
+    terminalTabHtml(decodeHtml(match[1]).trim(), `<div class="forum-terminal-code">${match[2]}</div>`)
+  );
   const first = matches[0];
   const last = matches[matches.length - 1];
   const start = first.index ?? 0;
@@ -715,7 +875,9 @@ function sanitizeNodeSeekAnsiReportSectionsHtml(html: unknown) {
 
 function sanitizePlainCodeBlocks(root: HTMLElement) {
   root.querySelectorAll('pre').forEach((node) => {
-    const match = String(node.innerHTML || '').match(/^\s*<code\b(?![^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>\s*$/i);
+    const match = String(node.innerHTML || '').match(
+      /^\s*<code\b(?![^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>\s*$/i
+    );
     const text = match ? terminalTextFromCodeHtml(match[1]) : '';
     if (text) {
       node.replaceWith(terminalCodeBlockHtml(text));
@@ -723,11 +885,7 @@ function sanitizePlainCodeBlocks(root: HTMLElement) {
   });
 }
 
-export function sanitizeContentHtml(
-  html: unknown,
-  baseUrl: string,
-  transformRoot?: (root: HTMLElement) => void
-) {
+export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoot?: (root: HTMLElement) => void) {
   const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
   transformRoot?.(root);
   for (const selector of ['script', 'style', 'noscript']) {
@@ -760,10 +918,17 @@ export function sanitizeContentHtml(
         }
         continue;
       }
-      if (lower === 'href' || lower === 'src' || lower === 'data-fallback-src' || lower === 'image-src' || lower === 'icon-src') {
-        const next = tagName === FORUM_VIDEO_TAG && lower === 'src'
-          ? sanitizedHttpMediaUrl(value, baseUrl)
-          : sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, baseUrl);
+      if (
+        lower === 'href' ||
+        lower === 'src' ||
+        lower === 'data-fallback-src' ||
+        lower === 'image-src' ||
+        lower === 'icon-src'
+      ) {
+        const next =
+          tagName === FORUM_VIDEO_TAG && lower === 'src'
+            ? sanitizedHttpMediaUrl(value, baseUrl)
+            : sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, baseUrl);
         if (next) {
           node.setAttribute(name, next);
         } else {
@@ -785,7 +950,9 @@ export function sanitizeContentHtml(
 }
 
 export function parsePositiveInteger(value: unknown) {
-  const match = String(value || '').replace(/,/g, '').match(/\d+/);
+  const match = String(value || '')
+    .replace(/,/g, '')
+    .match(/\d+/);
   return match ? Number(match[0]) : 0;
 }
 
@@ -813,18 +980,20 @@ const accessRequirementLevelPattern = new RegExp(ACCESS_REQUIREMENT_LEVEL_PATTER
 const accessRequirementLoginPattern = new RegExp(ACCESS_REQUIREMENT_LOGIN_PATTERN_SOURCE, 'i');
 const accessRequirementPermissionPattern = new RegExp(ACCESS_REQUIREMENT_PERMISSION_PATTERN_SOURCE, 'i');
 const accessRequirementNoticeStartPattern = new RegExp(`^(?:${ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE})`, 'i');
-const accessRequirementEmbeddedPermissionPattern = new RegExp(ACCESS_REQUIREMENT_EMBEDDED_PERMISSION_PATTERN_SOURCE, 'i');
+const accessRequirementEmbeddedPermissionPattern = new RegExp(
+  ACCESS_REQUIREMENT_EMBEDDED_PERMISSION_PATTERN_SOURCE,
+  'i'
+);
 
 export function sortTopicsByTime<T extends { lastReplyAt?: string; createdAt: string }>(items: T[]) {
-  return [...items].sort((left, right) => (
-    Date.parse(right.lastReplyAt || right.createdAt || '') - Date.parse(left.lastReplyAt || left.createdAt || '')
-  ));
+  return [...items].sort(
+    (left, right) =>
+      Date.parse(right.lastReplyAt || right.createdAt || '') - Date.parse(left.lastReplyAt || left.createdAt || '')
+  );
 }
 
 export function sortTopicsByCreatedAt<T extends { createdAt: string }>(items: T[]) {
-  return [...items].sort((left, right) => (
-    Date.parse(right.createdAt || '') - Date.parse(left.createdAt || '')
-  ));
+  return [...items].sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''));
 }
 
 export function accessRequirementFromText(value: unknown) {
@@ -863,7 +1032,9 @@ export function accessRequirementFromNoticeText(
 }
 
 function accessRequirementFromToken(value: unknown): AccessRequirement | undefined {
-  const token = String(value || '').trim().toLowerCase();
+  const token = String(value || '')
+    .trim()
+    .toLowerCase();
   if (token === 'login' || token === 'required_login' || token === 'login_required') {
     return { type: 'login', label: '需登录' };
   }
@@ -1024,5 +1195,7 @@ export function accessRequirementFromObject(value: unknown) {
 }
 
 export function elementText(element: HTMLElement | null | undefined) {
-  return decodeHtml(element?.text || '').replace(/\s+/g, ' ').trim();
+  return decodeHtml(element?.text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

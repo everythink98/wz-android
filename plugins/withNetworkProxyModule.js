@@ -3332,7 +3332,10 @@ function injectNetworkProxyInstall(contents) {
   if (!loadPattern.test(contents)) {
     throw new Error('无法注入 NetworkProxyRuntime：MainApplication 模板不匹配。');
   }
-  return contents.replace(loadPattern, (match, indent) => `${indent}NetworkProxyRuntime.install(applicationContext)${match}`);
+  return contents.replace(
+    loadPattern,
+    (match, indent) => `${indent}NetworkProxyRuntime.install(applicationContext)${match}`
+  );
 }
 
 function injectWebkitDependency(contents) {
@@ -3343,7 +3346,10 @@ function injectWebkitDependency(contents) {
   if (!dependenciesPattern.test(contents)) {
     throw new Error('无法注入 androidx.webkit 依赖：app build.gradle 模板不匹配。');
   }
-  return contents.replace(dependenciesPattern, (match) => `${match}\n    implementation("androidx.webkit:webkit:1.14.0")`);
+  return contents.replace(
+    dependenciesPattern,
+    (match) => `${match}\n    implementation("androidx.webkit:webkit:1.14.0")`
+  );
 }
 
 function injectNetworkProxyTestSupport(contents) {
@@ -3360,7 +3366,10 @@ function injectNetworkProxyTestSupport(contents) {
     if (!androidPattern.test(next)) {
       throw new Error('无法配置代理原生测试：app build.gradle 模板不匹配。');
     }
-    next = next.replace(androidPattern, (match) => `${match}\n    testOptions { unitTests.returnDefaultValues = true }`);
+    next = next.replace(
+      androidPattern,
+      (match) => `${match}\n    testOptions { unitTests.returnDefaultValues = true }`
+    );
   }
   return next;
 }
@@ -3371,36 +3380,42 @@ function withNetworkProxyModule(config) {
     return config;
   });
 
-  config = withDangerousMod(config, ['android', async (config) => {
-    const packageName = config.android?.package;
-    if (!packageName) {
+  config = withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const packageName = config.android?.package;
+      if (!packageName) {
+        return config;
+      }
+      patchExpoVideoDataSource(config.modRequest.projectRoot);
+      const outputDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'main',
+        'java',
+        packagePath(packageName)
+      );
+      fs.mkdirSync(outputDir, { recursive: true });
+      fs.writeFileSync(path.join(outputDir, 'NetworkProxyRuntime.kt'), networkProxyRuntimeSource(packageName));
+      fs.writeFileSync(path.join(outputDir, 'NetworkProxyModule.kt'), networkProxyModuleSource(packageName));
+      fs.writeFileSync(path.join(outputDir, 'NetworkProxyPackage.kt'), networkProxyPackageSource(packageName));
+      const testOutputDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'test',
+        'java',
+        packagePath(packageName)
+      );
+      fs.mkdirSync(testOutputDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt'),
+        networkProxyRuntimeTestSource(packageName)
+      );
       return config;
     }
-    patchExpoVideoDataSource(config.modRequest.projectRoot);
-    const outputDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'main',
-      'java',
-      packagePath(packageName)
-    );
-    fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(path.join(outputDir, 'NetworkProxyRuntime.kt'), networkProxyRuntimeSource(packageName));
-    fs.writeFileSync(path.join(outputDir, 'NetworkProxyModule.kt'), networkProxyModuleSource(packageName));
-    fs.writeFileSync(path.join(outputDir, 'NetworkProxyPackage.kt'), networkProxyPackageSource(packageName));
-    const testOutputDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'test',
-      'java',
-      packagePath(packageName)
-    );
-    fs.mkdirSync(testOutputDir, { recursive: true });
-    fs.writeFileSync(path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt'), networkProxyRuntimeTestSource(packageName));
-    return config;
-  }]);
+  ]);
 
   return withMainApplication(config, (config) => {
     config.modResults.contents = injectNetworkProxyInstall(injectNetworkProxyPackage(config.modResults.contents));

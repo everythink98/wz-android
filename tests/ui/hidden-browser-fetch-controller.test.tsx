@@ -22,50 +22,56 @@ describe('hidden browser fetch controller', () => {
     {
       type: 'nodeseek-browser-fetch',
       payloadUrl: 'https://www.nodeseek.com/post-1-1',
-      selectHandler: (controller: ReturnType<typeof useHiddenBrowserFetchController>) => controller.handleNodeSeekBrowserFetchMessage,
+      selectHandler: (controller: ReturnType<typeof useHiddenBrowserFetchController>) =>
+        controller.handleNodeSeekBrowserFetchMessage,
       selectCompletion: (_linuxDo: jest.Mock, nodeSeek: jest.Mock) => nodeSeek
     },
     {
       type: 'linuxdo-browser-fetch',
       payloadUrl: 'https://linux.do/latest.json',
-      selectHandler: (controller: ReturnType<typeof useHiddenBrowserFetchController>) => controller.handleLinuxDoBrowserFetchMessage,
+      selectHandler: (controller: ReturnType<typeof useHiddenBrowserFetchController>) =>
+        controller.handleLinuxDoBrowserFetchMessage,
       selectCompletion: (linuxDo: jest.Mock, _nodeSeek: jest.Mock) => linuxDo
     }
-  ])('[REG-ACCOUNT-011] rejects a $type message forged by a different document origin', async ({
-    payloadUrl,
-    selectCompletion,
-    selectHandler,
-    type
-  }) => {
-    const completeLinuxDoBrowserFetch = jest.fn();
-    const completeNodeSeekBrowserFetch = jest.fn();
-    const hook = await renderHook(() => useHiddenBrowserFetchController({
-      completeLinuxDoBrowserFetch,
-      completeNodeSeekBrowserFetch
-    }));
+  ])(
+    '[REG-ACCOUNT-011] rejects a $type message forged by a different document origin',
+    async ({ payloadUrl, selectCompletion, selectHandler, type }) => {
+      const completeLinuxDoBrowserFetch = jest.fn();
+      const completeNodeSeekBrowserFetch = jest.fn();
+      const hook = await renderHook(() =>
+        useHiddenBrowserFetchController({
+          completeLinuxDoBrowserFetch,
+          completeNodeSeekBrowserFetch
+        })
+      );
 
-    await act(async () => {
-      selectHandler(hook.result.current)(browserMessage('https://evil.example/frame', {
-        type,
-        id: 1,
-        url: payloadUrl
-      }));
-      await Promise.resolve();
-    });
+      await act(async () => {
+        selectHandler(hook.result.current)(
+          browserMessage('https://evil.example/frame', {
+            type,
+            id: 1,
+            url: payloadUrl
+          })
+        );
+        await Promise.resolve();
+      });
 
-    expect(selectCompletion(completeLinuxDoBrowserFetch, completeNodeSeekBrowserFetch)).not.toHaveBeenCalled();
+      expect(selectCompletion(completeLinuxDoBrowserFetch, completeNodeSeekBrowserFetch)).not.toHaveBeenCalled();
 
-    await act(async () => {
-      selectHandler(hook.result.current)(browserMessage(new URL(payloadUrl).origin, {
-        type,
-        id: 1,
-        url: payloadUrl
-      }));
-      await Promise.resolve();
-    });
+      await act(async () => {
+        selectHandler(hook.result.current)(
+          browserMessage(new URL(payloadUrl).origin, {
+            type,
+            id: 1,
+            url: payloadUrl
+          })
+        );
+        await Promise.resolve();
+      });
 
-    expect(selectCompletion(completeLinuxDoBrowserFetch, completeNodeSeekBrowserFetch)).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 1, type, url: payloadUrl })
-    );
-  });
+      expect(selectCompletion(completeLinuxDoBrowserFetch, completeNodeSeekBrowserFetch)).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, type, url: payloadUrl })
+      );
+    }
+  );
 });

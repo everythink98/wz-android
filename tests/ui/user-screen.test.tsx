@@ -12,7 +12,13 @@ jest.mock('@shopify/flash-list', () => {
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ReactModule.forwardRef(function FlashList(
-      { data = [], keyExtractor, ListFooterComponent, renderItem, testID }: {
+      {
+        data = [],
+        keyExtractor,
+        ListFooterComponent,
+        renderItem,
+        testID
+      }: {
         data?: unknown[];
         keyExtractor?: (item: unknown, index: number) => string;
         ListFooterComponent?: React.ReactNode;
@@ -25,11 +31,13 @@ jest.mock('@shopify/flash-list', () => {
       return ReactModule.createElement(
         NativeView,
         { testID },
-        ...data.map((item, index) => ReactModule.createElement(
-          NativeView,
-          { key: keyExtractor?.(item, index) ?? index },
-          renderItem?.({ item, index })
-        )),
+        ...data.map((item, index) =>
+          ReactModule.createElement(
+            NativeView,
+            { key: keyExtractor?.(item, index) ?? index },
+            renderItem?.({ item, index })
+          )
+        ),
         ListFooterComponent
       );
     })
@@ -44,22 +52,24 @@ jest.mock('../../src/components/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
-    Avatar: ({ contentSource }: { contentSource?: string }) => ReactModule.createElement(
-      NativeText,
-      { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
-      '头像'
-    )
+    Avatar: ({ contentSource }: { contentSource?: string }) =>
+      ReactModule.createElement(
+        NativeText,
+        { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
+        '头像'
+      )
   };
 });
 jest.mock('../../src/components/TopicCard', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
-    MemoizedTopicCard: ({ onOpenTopic, topic }: { onOpenTopic: (topic: Topic) => void; topic: Topic }) => ReactModule.createElement(
-      NativePressable,
-      { accessibilityRole: 'button', onPress: () => onOpenTopic(topic) },
-      ReactModule.createElement(NativeText, null, topic.title)
-    )
+    MemoizedTopicCard: ({ onOpenTopic, topic }: { onOpenTopic: (topic: Topic) => void; topic: Topic }) =>
+      ReactModule.createElement(
+        NativePressable,
+        { accessibilityRole: 'button', onPress: () => onOpenTopic(topic) },
+        ReactModule.createElement(NativeText, null, topic.title)
+      )
   };
 });
 
@@ -87,17 +97,19 @@ const profile: UserProfile = {
   replyCount: 1,
   topics: [topic],
   hasMoreTopics: true,
-  replies: [{
-    source: 'linuxdo',
-    id: 'reply-1',
-    topicId: 'reply-topic',
-    topicTitle: '回复所在主题',
-    topicUrl: 'https://linux.do/t/reply-topic',
-    url: 'https://linux.do/t/reply-topic/2',
-    author: 'alice',
-    floor: 2,
-    excerpt: '回复摘要'
-  }],
+  replies: [
+    {
+      source: 'linuxdo',
+      id: 'reply-1',
+      topicId: 'reply-topic',
+      topicTitle: '回复所在主题',
+      topicUrl: 'https://linux.do/t/reply-topic',
+      url: 'https://linux.do/t/reply-topic/2',
+      author: 'alice',
+      floor: 2,
+      excerpt: '回复摘要'
+    }
+  ],
   hasMoreReplies: true
 };
 
@@ -150,11 +162,13 @@ describe('User screen behavior', () => {
 
   it('keeps a failed user source visible and allows refresh', async () => {
     const onRefresh = jest.fn<() => void>();
-    const view = await render(userScreen({
-      error: { kind: 'login-expired', message: 'linux.do 登录已失效，请重新登录。' },
-      profile: null,
-      onRefresh
-    }));
+    const view = await render(
+      userScreen({
+        error: { kind: 'login-expired', message: 'linux.do 登录已失效，请重新登录。' },
+        profile: null,
+        onRefresh
+      })
+    );
 
     expect(view.getByText('linux.do 登录已失效，请重新登录。')).toBeTruthy();
     expect(view.getByText('Alice')).toBeTruthy();
@@ -165,13 +179,15 @@ describe('User screen behavior', () => {
   it('[REG-LINUXDO-007] exposes Account recovery actions on a blocked linux.do User route', async () => {
     const onRefresh = jest.fn();
     const onCheckLinuxDoStatus = jest.fn();
-    const view = await render(userScreen({
-      error: { kind: 'ordinary', message: 'Network request failed' },
-      identityBlocked: true,
-      onCheckLinuxDoStatus,
-      onRefresh,
-      profile: null
-    }));
+    const view = await render(
+      userScreen({
+        error: { kind: 'ordinary', message: 'Network request failed' },
+        identityBlocked: true,
+        onCheckLinuxDoStatus,
+        onRefresh,
+        profile: null
+      })
+    );
 
     expect(view.getByText('Network request failed')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('重试检测'));
@@ -181,11 +197,13 @@ describe('User screen behavior', () => {
   });
 
   it('[REG-LINUXDO-007] labels an active User identity probe', async () => {
-    const view = await render(userScreen({
-      busy: true,
-      identityChecking: true,
-      profile: null
-    }));
+    const view = await render(
+      userScreen({
+        busy: true,
+        identityChecking: true,
+        profile: null
+      })
+    );
 
     expect(view.getByText('正在确认 L 站访问状态')).toBeTruthy();
     expect(view.queryByText('正在读取用户主页...')).toBeNull();
@@ -199,12 +217,14 @@ describe('User screen behavior', () => {
       url: 'https://www.nodeseek.com/member?t=xy'
     };
     const onOpenOriginal = jest.fn<() => void>();
-    const view = await render(userScreen({
-      busy: true,
-      profile: null,
-      requestedUser,
-      onOpenOriginal
-    }));
+    const view = await render(
+      userScreen({
+        busy: true,
+        profile: null,
+        requestedUser,
+        onOpenOriginal
+      })
+    );
 
     expect(view.getByText('xy')).toBeTruthy();
     expect(view.queryByLabelText('关注')).toBeNull();

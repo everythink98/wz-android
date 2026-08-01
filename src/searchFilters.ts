@@ -8,7 +8,8 @@ export type SearchKeywordOperator = 'or' | 'and';
 export type DiscourseSearchOrder = 'relevance' | 'latest';
 export type DiscourseTagMatch = 'any' | 'all';
 export type DiscourseVisitedFilter = 'seen' | 'bookmarks' | 'likes' | 'posted' | 'created';
-export type DiscourseSearchStatus = '' | 'open' | 'closed' | 'public' | 'archived' | 'noreplies' | 'single_user' | 'solved' | 'unsolved';
+export type DiscourseSearchStatus =
+  '' | 'open' | 'closed' | 'public' | 'archived' | 'noreplies' | 'single_user' | 'solved' | 'unsolved';
 export type DiscourseDateRelation = 'before' | 'after';
 export type NodeSeekSearchSort = 'replyTime' | 'postTime';
 
@@ -50,14 +51,14 @@ type DiscourseSearchExtension<Site extends DiscourseSource> = Site extends keyof
 
 export type DiscourseSearchFilter<Site extends DiscourseSource = DiscourseSource> = Site extends DiscourseSource
   ? DiscourseSearchFilterFields & {
-    source: Site;
-    status: DiscourseSearchStatus;
-  } & DiscourseSearchExtension<Site>
+      source: Site;
+      status: DiscourseSearchStatus;
+    } & DiscourseSearchExtension<Site>
   : never;
 
 export function isDiscourseSearchFilter(filter: SourceSearchFilter): filter is DiscourseSearchFilter {
   return isDiscourseSource(filter.source);
-};
+}
 
 export type NodeSeekSearchFilter = {
   source: 'nodeseek';
@@ -70,11 +71,7 @@ export type YaohuoSearchFilter = {
   category: string;
 };
 
-export type SourceSearchFilter =
-  | V2exSearchFilter
-  | DiscourseSearchFilter
-  | NodeSeekSearchFilter
-  | YaohuoSearchFilter;
+export type SourceSearchFilter = V2exSearchFilter | DiscourseSearchFilter | NodeSeekSearchFilter | YaohuoSearchFilter;
 
 type SearchFilterForSource<Site extends Source> = Site extends DiscourseSource
   ? DiscourseSearchFilter<Site>
@@ -114,19 +111,19 @@ function defaultSearchFilter(source: Source): SourceSearchFilter {
   }
   if (sourceCatalog[source].searchFilter === 'v2ex') {
     return {
-    source: 'v2ex',
-    sort: 'relevance',
-    timeRange: 'all',
-    node: '',
-    username: '',
-    operator: 'or'
+      source: 'v2ex',
+      sort: 'relevance',
+      timeRange: 'all',
+      node: '',
+      username: '',
+      operator: 'or'
     };
   }
   if (sourceCatalog[source].searchFilter === 'nodeseek') {
     return {
-    source: 'nodeseek',
-    category: '',
-    sort: 'replyTime'
+      source: 'nodeseek',
+      category: '',
+      sort: 'replyTime'
     };
   }
   return {
@@ -139,7 +136,7 @@ export const DEFAULT_SEARCH_FILTERS = Object.fromEntries(
   (Object.keys(sourceCatalog) as Source[]).map((source) => [source, defaultSearchFilter(source)])
 ) as SearchFilterState;
 
-export const searchTimeRangeItems: Array<{ value: SearchTimeRange; label: string }> = [
+export const searchTimeRangeItems: { value: SearchTimeRange; label: string }[] = [
   { value: 'all', label: '不限时间' },
   { value: 'day', label: '24小时' },
   { value: 'week', label: '7天' },
@@ -161,9 +158,11 @@ function categoryForFilter(categories: Category[], source: Source, id: string) {
 
 export function defaultSearchFilterForSource<T extends Source>(source: T): SearchFilterState[T] {
   const filter = DEFAULT_SEARCH_FILTERS[source];
-  return (isDiscourseSearchFilter(filter)
-    ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
-    : { ...filter }) as SearchFilterState[T];
+  return (
+    isDiscourseSearchFilter(filter)
+      ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
+      : { ...filter }
+  ) as SearchFilterState[T];
 }
 
 export function searchFilterForSource(filters: SearchFilterState, source: Source): SourceSearchFilter {
@@ -231,11 +230,7 @@ export function discourseSearchFilterError(filter: DiscourseSearchFilter) {
   return '';
 }
 
-export function buildDiscourseSearchQuery(
-  query: string,
-  filter: DiscourseSearchFilter,
-  categories: Category[]
-) {
+export function buildDiscourseSearchQuery(query: string, filter: DiscourseSearchFilter, categories: Category[]) {
   const parts = [query.trim()];
   if (filter.scope === 'title') {
     parts.push('in:title');

@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, useWindowDimensions } from 'react-native';
-import BottomSheet, {
-  BottomSheetBackdrop,
-  BottomSheetView,
-  type BottomSheetBackdropProps
-} from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetBackdrop, BottomSheetView, type BottomSheetBackdropProps } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReplyEditTarget, ReplyTarget } from '../../appTypes';
 import type { DiscourseEmojiUrlMap } from '../../discourseReactions';
@@ -50,30 +46,36 @@ export function ReplyComposerSheet({
   const bottomSheetRef = useRef<BottomSheet>(null);
   const [focusSignal, setFocusSignal] = useState(0);
   const maxDynamicContentSize = Math.round(height * 0.58);
-  const renderBackdrop = useCallback((props: BottomSheetBackdropProps) => (
-    <BottomSheetBackdrop
-      {...props}
-      appearsOnIndex={0}
-      disappearsOnIndex={-1}
-      opacity={theme.dark ? 0.56 : 0.38}
-      pressBehavior="close"
-    />
-  ), [theme.dark]);
+  const renderBackdrop = useCallback(
+    (props: BottomSheetBackdropProps) => (
+      <BottomSheetBackdrop
+        {...props}
+        appearsOnIndex={0}
+        disappearsOnIndex={-1}
+        opacity={theme.dark ? 0.56 : 0.38}
+        pressBehavior="close"
+      />
+    ),
+    [theme.dark]
+  );
   const close = useCallback(() => {
     Keyboard.dismiss();
     onReplyComposerOpenChange(false);
   }, [onReplyComposerOpenChange]);
-  const handleReplyComposerOpenChange = useCallback((open: boolean) => {
-    if (open) {
-      onReplyComposerOpenChange(true);
-      return;
-    }
-    close();
-  }, [close, onReplyComposerOpenChange]);
-  const bottomSheetContentStyle = useMemo(() => [
-    styles.replyComposerBottomSheetContent,
-    { paddingBottom: Math.max(10, insets.bottom + 10) }
-  ], [insets.bottom, styles.replyComposerBottomSheetContent]);
+  const handleReplyComposerOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        onReplyComposerOpenChange(true);
+        return;
+      }
+      close();
+    },
+    [close, onReplyComposerOpenChange]
+  );
+  const bottomSheetContentStyle = useMemo(
+    () => [styles.replyComposerBottomSheetContent, { paddingBottom: Math.max(10, insets.bottom + 10) }],
+    [insets.bottom, styles.replyComposerBottomSheetContent]
+  );
 
   useEffect(() => {
     if (!visible) {

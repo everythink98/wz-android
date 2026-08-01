@@ -25,26 +25,34 @@ describe('Android app utils', () => {
   });
 
   it('formats level access requirements with explicit Lv labels for lists', () => {
-    expect(forumAccessRequirementText({
-      type: 'level',
-      label: '需等级',
-      detail: 'trust level 2'
-    })).toBe('需 Lv2');
-    expect(forumAccessRequirementText({
-      type: 'level',
-      label: '需等级',
-      detail: '回复 4 查看 102 查看本帖需要等级达到 6 级后查看'
-    })).toBe('需 Lv6');
-    expect(forumAccessRequirementText({
-      type: 'level',
-      label: '需等级',
-      detail: 'Minimum level of 5 required'
-    })).toBe('需 Lv5');
-    expect(forumAccessRequirementText({
-      type: 'permission',
-      label: '需权限',
-      detail: '权限不足'
-    })).toBe('需权限');
+    expect(
+      forumAccessRequirementText({
+        type: 'level',
+        label: '需等级',
+        detail: 'trust level 2'
+      })
+    ).toBe('需 Lv2');
+    expect(
+      forumAccessRequirementText({
+        type: 'level',
+        label: '需等级',
+        detail: '回复 4 查看 102 查看本帖需要等级达到 6 级后查看'
+      })
+    ).toBe('需 Lv6');
+    expect(
+      forumAccessRequirementText({
+        type: 'level',
+        label: '需等级',
+        detail: 'Minimum level of 5 required'
+      })
+    ).toBe('需 Lv5');
+    expect(
+      forumAccessRequirementText({
+        type: 'permission',
+        label: '需权限',
+        detail: '权限不足'
+      })
+    ).toBe('需权限');
   });
 
   it('distinguishes expired yaohuo login from access verification', () => {
@@ -71,7 +79,9 @@ describe('Android app utils', () => {
   });
 
   it('recognizes four-site topic links that should stay inside the app', () => {
-    expect(parseForumTopicLink('https://www.nodeseek.com/post-123-2#reply', 'https://www.nodeseek.com/post-99-1')).toMatchObject({
+    expect(
+      parseForumTopicLink('https://www.nodeseek.com/post-123-2#reply', 'https://www.nodeseek.com/post-99-1')
+    ).toMatchObject({
       source: 'nodeseek',
       id: '123',
       title: 'NodeSeek 主题',
@@ -95,7 +105,9 @@ describe('Android app utils', () => {
       title: 'V2EX 主题',
       url: 'https://www.v2ex.com/t/789'
     });
-    expect(parseForumTopicLink('book_re.aspx?id=321&classid=177&reply=1', 'https://www.yaohuo.me/bbs-1.html')).toMatchObject({
+    expect(
+      parseForumTopicLink('book_re.aspx?id=321&classid=177&reply=1', 'https://www.yaohuo.me/bbs-1.html')
+    ).toMatchObject({
       source: 'yaohuo',
       id: '321',
       title: '妖火主题',
@@ -103,7 +115,9 @@ describe('Android app utils', () => {
       category: '妖火茶馆',
       url: 'https://www.yaohuo.me/bbs-321.html'
     });
-    expect(parseForumTopicLink('https://www.yaohuo.me/bbs/view.aspx?id=654&classid=213', 'https://www.yaohuo.me/bbs-1.html')).toMatchObject({
+    expect(
+      parseForumTopicLink('https://www.yaohuo.me/bbs/view.aspx?id=654&classid=213', 'https://www.yaohuo.me/bbs-1.html')
+    ).toMatchObject({
       source: 'yaohuo',
       id: '654',
       title: '妖火主题',
@@ -111,7 +125,9 @@ describe('Android app utils', () => {
       category: '悬赏问答',
       url: 'https://www.yaohuo.me/bbs-654.html'
     });
-    expect(parseForumTopicLink('/bbs/book_view.aspx?id=655&classid=201', 'https://www.yaohuo.me/bbs-1.html')).toMatchObject({
+    expect(
+      parseForumTopicLink('/bbs/book_view.aspx?id=655&classid=201', 'https://www.yaohuo.me/bbs-1.html')
+    ).toMatchObject({
       source: 'yaohuo',
       id: '655',
       title: '妖火主题',
@@ -138,10 +154,18 @@ describe('Android app utils', () => {
     ] as const;
 
     for (const [source, id, target] of targets) {
-      expect(parseInternalTopicOpenLink(`exp+wz-android://open-topic?url=${encodeURIComponent(target)}`)).toMatchObject({ source, id });
+      expect(parseInternalTopicOpenLink(`exp+wz-android://open-topic?url=${encodeURIComponent(target)}`)).toMatchObject(
+        { source, id }
+      );
     }
-    expect(parseInternalTopicOpenLink(`exp+wz-android://open-topic?url=${encodeURIComponent('https://example.com/t/123456')}`)).toBeNull();
-    expect(parseInternalTopicOpenLink('exp+wz-android://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081')).toBeNull();
+    expect(
+      parseInternalTopicOpenLink(
+        `exp+wz-android://open-topic?url=${encodeURIComponent('https://example.com/t/123456')}`
+      )
+    ).toBeNull();
+    expect(
+      parseInternalTopicOpenLink('exp+wz-android://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081')
+    ).toBeNull();
   });
 
   it('does not treat ordinary external links or non-topic forum links as app topics', () => {
@@ -221,14 +245,20 @@ describe('Android app utils', () => {
   });
 
   it('[REG-TOPIC-039] keeps NodeSeek member mentions internal when the numeric user id hint is absent', () => {
-    expect(parseForumUserLink('https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85', 'https://www.nodeseek.com/post-793572-1', [
-      {
-        author: '电动面包',
-        authorId: '32398',
-        authorAvatar: 'https://www.nodeseek.com/avatar/32398.png',
-        authorUrl: 'https://www.nodeseek.com/space/32398'
-      }
-    ])).toMatchObject({
+    expect(
+      parseForumUserLink(
+        'https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85',
+        'https://www.nodeseek.com/post-793572-1',
+        [
+          {
+            author: '电动面包',
+            authorId: '32398',
+            authorAvatar: 'https://www.nodeseek.com/avatar/32398.png',
+            authorUrl: 'https://www.nodeseek.com/space/32398'
+          }
+        ]
+      )
+    ).toMatchObject({
       source: 'nodeseek',
       id: '32398',
       username: '电动面包',
@@ -236,37 +266,60 @@ describe('Android app utils', () => {
       avatar: 'https://www.nodeseek.com/avatar/32398.png',
       url: 'https://www.nodeseek.com/space/32398'
     });
-    expect(parseForumUserLink('https://www.nodeseek.com/member?t=jasperwill', 'https://www.nodeseek.com/post-793572-1')).toMatchObject({
+    expect(
+      parseForumUserLink('https://www.nodeseek.com/member?t=jasperwill', 'https://www.nodeseek.com/post-793572-1')
+    ).toMatchObject({
       source: 'nodeseek',
       username: 'jasperwill',
       displayName: 'jasperwill',
       url: 'https://www.nodeseek.com/member?t=jasperwill'
     });
-    expect(parseForumUserLink('https://www.nodeseek.com/member?t=missing', 'https://www.nodeseek.com/post-793572-1', [
-      { author: 'jasperwill', authorId: '54270', authorUrl: 'https://www.nodeseek.com/space/54270' }
-    ])).toMatchObject({ source: 'nodeseek', username: 'missing' });
-    expect(parseForumUserLink('https://www.nodeseek.com/member?t=broken', 'https://www.nodeseek.com/post-793572-1', [
-      { author: 'broken', authorId: 'not-a-uid', authorUrl: 'https://www.nodeseek.com/space/not-a-uid' }
-    ])).toMatchObject({ source: 'nodeseek', username: 'broken' });
-    expect(parseForumUserLink('https://www.nodeseek.com/member?t=', 'https://www.nodeseek.com/post-793572-1')).toBeNull();
-    expect(parseForumUserLink('https://www.nodeseek.com/member?q=xy', 'https://www.nodeseek.com/post-793572-1')).toBeNull();
-    expect(parseForumUserLink('https://www.nodeseek.com.evil.example/member?t=xy', 'https://www.nodeseek.com/post-793572-1')).toBeNull();
+    expect(
+      parseForumUserLink('https://www.nodeseek.com/member?t=missing', 'https://www.nodeseek.com/post-793572-1', [
+        { author: 'jasperwill', authorId: '54270', authorUrl: 'https://www.nodeseek.com/space/54270' }
+      ])
+    ).toMatchObject({ source: 'nodeseek', username: 'missing' });
+    expect(
+      parseForumUserLink('https://www.nodeseek.com/member?t=broken', 'https://www.nodeseek.com/post-793572-1', [
+        { author: 'broken', authorId: 'not-a-uid', authorUrl: 'https://www.nodeseek.com/space/not-a-uid' }
+      ])
+    ).toMatchObject({ source: 'nodeseek', username: 'broken' });
+    expect(
+      parseForumUserLink('https://www.nodeseek.com/member?t=', 'https://www.nodeseek.com/post-793572-1')
+    ).toBeNull();
+    expect(
+      parseForumUserLink('https://www.nodeseek.com/member?q=xy', 'https://www.nodeseek.com/post-793572-1')
+    ).toBeNull();
+    expect(
+      parseForumUserLink('https://www.nodeseek.com.evil.example/member?t=xy', 'https://www.nodeseek.com/post-793572-1')
+    ).toBeNull();
   });
 
   it('recognizes Yaohuo user links as app users', () => {
-    expect(parseForumUserLink('/bbs/userinfo.aspx?touserid=30878', 'https://www.yaohuo.me/bbs-1540797.html')).toMatchObject({
+    expect(
+      parseForumUserLink('/bbs/userinfo.aspx?touserid=30878', 'https://www.yaohuo.me/bbs-1540797.html')
+    ).toMatchObject({
       source: 'yaohuo',
       id: '30878',
       username: '30878',
       url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=30878'
     });
-    expect(parseForumUserLink('https://www.yaohuo.me/userinfo.aspx?userid=42', 'https://www.yaohuo.me/bbs-1540797.html')).toMatchObject({
+    expect(
+      parseForumUserLink('https://www.yaohuo.me/userinfo.aspx?userid=42', 'https://www.yaohuo.me/bbs-1540797.html')
+    ).toMatchObject({
       source: 'yaohuo',
       id: '42',
       url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=42'
     });
-    expect(parseForumUserLink('https://www.yaohuo.me/bbs/userinfo.aspx', 'https://www.yaohuo.me/bbs-1540797.html')).toBeNull();
-    expect(parseForumUserLink('https://evil.example/bbs/userinfo.aspx?touserid=30878', 'https://www.yaohuo.me/bbs-1540797.html')).toBeNull();
+    expect(
+      parseForumUserLink('https://www.yaohuo.me/bbs/userinfo.aspx', 'https://www.yaohuo.me/bbs-1540797.html')
+    ).toBeNull();
+    expect(
+      parseForumUserLink(
+        'https://evil.example/bbs/userinfo.aspx?touserid=30878',
+        'https://www.yaohuo.me/bbs-1540797.html'
+      )
+    ).toBeNull();
   });
 
   it('REG-USER-003 keeps bare-domain Yaohuo user links inside the app', () => {
@@ -278,24 +331,30 @@ describe('Android app utils', () => {
   });
 
   it('uses active time for V2EX list display time', () => {
-    expect(topicListDisplayTime({
-      source: 'v2ex',
-      createdAt: '2026-05-24T08:50:00.000Z',
-      lastReplyAt: '2026-05-24T06:00:00.000Z'
-    })).toBe('2026-05-24T06:00:00.000Z');
-    expect(topicListDisplayTime({
-      source: 'linuxdo',
-      createdAt: '2026-05-24T08:50:00.000Z',
-      lastReplyAt: '2026-05-24T09:00:00.000Z'
-    })).toBe('2026-05-24T09:00:00.000Z');
+    expect(
+      topicListDisplayTime({
+        source: 'v2ex',
+        createdAt: '2026-05-24T08:50:00.000Z',
+        lastReplyAt: '2026-05-24T06:00:00.000Z'
+      })
+    ).toBe('2026-05-24T06:00:00.000Z');
+    expect(
+      topicListDisplayTime({
+        source: 'linuxdo',
+        createdAt: '2026-05-24T08:50:00.000Z',
+        lastReplyAt: '2026-05-24T09:00:00.000Z'
+      })
+    ).toBe('2026-05-24T09:00:00.000Z');
   });
 
   it('uses source-provided list time text before formatting relative time', () => {
-    expect(topicListDisplayTimeText({
-      source: 'yaohuo',
-      createdAt: '2026-05-24T23:30:00.000Z',
-      lastReplyAt: '2026-05-24T23:30:00.000Z',
-      displayTimeText: '今天 午夜'
-    })).toBe('今天 午夜');
+    expect(
+      topicListDisplayTimeText({
+        source: 'yaohuo',
+        createdAt: '2026-05-24T23:30:00.000Z',
+        lastReplyAt: '2026-05-24T23:30:00.000Z',
+        displayTimeText: '今天 午夜'
+      })
+    ).toBe('今天 午夜');
   });
 });

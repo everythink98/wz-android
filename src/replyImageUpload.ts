@@ -52,9 +52,7 @@ export function replyImageMarkupForSource(source: Source, url: string, name: str
   if (!cleanUrl) {
     throw new Error('图片上传返回缺少地址');
   }
-  return source === 'yaohuo'
-    ? `[img]${cleanUrl}[/img]`
-    : `![${safeImageAlt(name)}](${cleanUrl})`;
+  return source === 'yaohuo' ? `[img]${cleanUrl}[/img]` : `![${safeImageAlt(name)}](${cleanUrl})`;
 }
 
 export function appendReplyImageMarkup(content: string, markup: string) {
@@ -66,13 +64,14 @@ export function appendReplyImageMarkup(content: string, markup: string) {
 }
 
 export function yaohuoImageUrlFromUploadResponse(data: unknown) {
-  const record = data && typeof data === 'object' ? data as Record<string, unknown> : {};
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
   const payload = record.data;
-  const url = typeof payload === 'string'
-    ? payload
-    : payload && typeof payload === 'object'
-      ? String((payload as Record<string, unknown>).url || '')
-      : String(record.url || '');
+  const url =
+    typeof payload === 'string'
+      ? payload
+      : payload && typeof payload === 'object'
+        ? String((payload as Record<string, unknown>).url || '')
+        : String(record.url || '');
   const cleanUrl = url.trim();
   if (!cleanUrl) {
     throw new Error('图床返回缺少图片地址');
@@ -81,10 +80,10 @@ export function yaohuoImageUrlFromUploadResponse(data: unknown) {
 }
 
 export function nodeImageUrlFromUploadResponse(data: unknown) {
-  const record = data && typeof data === 'object' ? data as Record<string, unknown> : {};
-  const links = record.links && typeof record.links === 'object' ? record.links as Record<string, unknown> : {};
-  const dataRecord = record.data && typeof record.data === 'object' ? record.data as Record<string, unknown> : {};
-  const image = record.image && typeof record.image === 'object' ? record.image as Record<string, unknown> : {};
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  const links = record.links && typeof record.links === 'object' ? (record.links as Record<string, unknown>) : {};
+  const dataRecord = record.data && typeof record.data === 'object' ? (record.data as Record<string, unknown>) : {};
+  const image = record.image && typeof record.image === 'object' ? (record.image as Record<string, unknown>) : {};
   const url = String(links.direct || dataRecord.url || image.url || record.url || '').trim();
   if (!url) {
     throw new Error('NodeImage 返回缺少图片地址');
@@ -104,8 +103,8 @@ export function nodeImageUploadErrorMessage(data: unknown, status: number) {
 }
 
 export function nodeImageApiKeyFromResponse(data: unknown) {
-  const record = data && typeof data === 'object' ? data as Record<string, unknown> : {};
-  const dataRecord = record.data && typeof record.data === 'object' ? record.data as Record<string, unknown> : {};
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+  const dataRecord = record.data && typeof record.data === 'object' ? (record.data as Record<string, unknown>) : {};
   return String(record.api_key || record.apiKey || dataRecord.api_key || dataRecord.apiKey || '').trim();
 }
 
@@ -132,18 +131,22 @@ export async function uploadNodeSeekReplyImage({
   }
   const body = new FormData();
   appendFileToFormData(body, 'image', file);
-  const response = await fetchWithTimeout(NODEIMAGE_UPLOAD_URL, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'X-API-Key': cleanApiKey
+  const response = await fetchWithTimeout(
+    NODEIMAGE_UPLOAD_URL,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'X-API-Key': cleanApiKey
+      },
+      body
     },
-    body
-  }, {
-    fetcher,
-    signal,
-    timeoutMs
-  });
+    {
+      fetcher,
+      signal,
+      timeoutMs
+    }
+  );
   let data: unknown = null;
   try {
     data = await response.json();
@@ -191,14 +194,18 @@ export async function uploadYaohuoReplyImage({
 }) {
   const body = new FormData();
   appendFileToFormData(body, 'image', file);
-  const response = await fetchWithTimeout(YAOHUO_IMAGE_BED_UPLOAD_URL, {
-    method: 'POST',
-    body
-  }, {
-    fetcher,
-    signal,
-    timeoutMs
-  });
+  const response = await fetchWithTimeout(
+    YAOHUO_IMAGE_BED_UPLOAD_URL,
+    {
+      method: 'POST',
+      body
+    },
+    {
+      fetcher,
+      signal,
+      timeoutMs
+    }
+  );
   let data: unknown = null;
   try {
     data = await response.json();
@@ -252,5 +259,10 @@ function imageMimeTypeFromName(name: string) {
 }
 
 function safeImageAlt(name: string) {
-  return String(name || 'image').replace(/[\r\n[\]<>]/g, ' ').replace(/\s+/g, ' ').trim() || 'image';
+  return (
+    String(name || 'image')
+      .replace(/[\r\n[\]<>]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || 'image'
+  );
 }

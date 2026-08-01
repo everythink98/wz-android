@@ -11,13 +11,22 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './yaohuoApi';
-import { parseYaohuoCurrentUserHtml, parseYaohuoFavoriteRecordId, parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml, parseYaohuoTopicHtml } from './localYaohuo';
+import {
+  parseYaohuoCurrentUserHtml,
+  parseYaohuoFavoriteRecordId,
+  parseYaohuoListHtml,
+  parseYaohuoRepliesHtml,
+  parseYaohuoSearchHtml,
+  parseYaohuoTopicHtml
+} from './localYaohuo';
 import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
   it('[REG-ACCOUNT-029] fetches yaohuo through the native read-only cookie jar', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
+    const yaohuoFetcher = vi.fn(
+      async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')
+    );
 
     const result = await getYaohuoFeedDirect({
       category: '177',
@@ -34,19 +43,26 @@ describe('Android direct yaohuo API', () => {
         })
       })
     );
-    expect((yaohuoFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
-    expect(yaohuoFetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      headers: expect.not.objectContaining({
-        'Sec-CH-UA': expect.anything(),
-        'Sec-CH-UA-Mobile': expect.anything(),
-        'Sec-CH-UA-Platform': expect.anything()
+    expect((yaohuoFetcher.mock.calls as unknown as [string, RequestInit?][])[0]?.[1]?.headers).not.toHaveProperty(
+      'Cookie'
+    );
+    expect(yaohuoFetcher).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.not.objectContaining({
+          'Sec-CH-UA': expect.anything(),
+          'Sec-CH-UA-Mobile': expect.anything(),
+          'Sec-CH-UA-Platform': expect.anything()
+        })
       })
-    }));
+    );
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
   });
 
   it('uses the all-category yaohuo feed when category is blank', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
+    const yaohuoFetcher = vi.fn(
+      async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')
+    );
 
     await getYaohuoFeedDirect({
       category: '',
@@ -61,7 +77,9 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps all-category yaohuo pagination on the all feed URL', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
+    const yaohuoFetcher = vi.fn(
+      async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')
+    );
 
     await getYaohuoFeedDirect({
       page: 2,
@@ -75,13 +93,16 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps yaohuo search pagination metadata', () => {
-    const result = parseYaohuoSearchHtml(`
+    const result = parseYaohuoSearchHtml(
+      `
       <div class="listdata"><a href="/bbs-123.html">搜索结果</a>/alice/阅1/05-20 10:00</div>
       <a href="/bbs/book_list.aspx?action=search&page=2">下一页</a>
-    `, {
-      page: 1,
-      limit: 1
-    });
+    `,
+      {
+        page: 1,
+        limit: 1
+      }
+    );
 
     expect(result.items.map((item) => item.id)).toEqual(['123']);
     expect(result.hasMore).toBe(true);
@@ -89,10 +110,13 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps yaohuo search results returned by the official page without local keyword filtering', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response(`
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response(`
       <div class="listdata"><a href="/bbs-321.html">安卓手机免流设置</a>/alice/阅1/05-20 10:00</div>
       <div class="listdata"><a href="/bbs-322.html">怎么把别的设备消息转过来？</a>/bob/阅1/05-19 10:00</div>
-    `));
+    `)
+    );
 
     const result = await searchYaohuoDirect({
       query: '安卓手机免',
@@ -103,9 +127,12 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps the selected yaohuo board on search results when the result link omits classid', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response(`
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response(`
       <div class="listdata"><a href="/bbs-321.html">妖火茶馆搜索结果</a>/alice/阅1/05-20 10:00</div>
-    `));
+    `)
+    );
 
     const result = await searchYaohuoDirect({
       query: '茶馆',
@@ -124,14 +151,17 @@ describe('Android direct yaohuo API', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));
     try {
-      const result = parseYaohuoSearchHtml(`
+      const result = parseYaohuoSearchHtml(
+        `
         <div class="listdata line1"><a href="/bbs-1539321.html">旧搜索结果</a>/alice/阅1 <span class="right">昨天 00:05</span></div>
         <div class="listdata line2"><a href="/bbs-1539322.html">新搜索结果</a>/bob/阅1 <span class="right">今天 23:50</span></div>
         <div class="listdata line1"><a href="/bbs-1539323.html">下午搜索结果</a>/carol/阅1 <span class="right">下午 3:20</span></div>
-      `, {
-        page: 1,
-        limit: 30
-      });
+      `,
+        {
+          page: 1,
+          limit: 30
+        }
+      );
 
       expect(result.items.map((item) => item.id)).toEqual(['1539321', '1539322', '1539323']);
       expect(result.items[0].createdAt).toBe('2026-05-23T16:05:00.000Z');
@@ -143,7 +173,10 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('fetches later yaohuo search pages through the search pagination endpoint', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-456.html">第二页结果</a>/alice/阅1/05-20 10:00</div>'));
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response('<div class="listdata"><a href="/bbs-456.html">第二页结果</a>/alice/阅1/05-20 10:00</div>')
+    );
 
     const result = await searchYaohuoDirect({
       query: '免流',
@@ -171,75 +204,88 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('parses yaohuo compact numbered list rows', () => {
-    const result = parseYaohuoListHtml(`
+    const result = parseYaohuoListHtml(
+      `
       <div class="title">【妖火论坛】</div>
       <div class="list">
         1.<a href="/bbs-1422771.html">忙了三四天，成亲了</a><br>
         2.<a href="/bbs-1423356.html">giffgaff卡免流教程</a><br>
       </div>
-    `, {
-      classId: '177',
-      page: 1,
-      limit: 30
-    });
+    `,
+      {
+        classId: '177',
+        page: 1,
+        limit: 30
+      }
+    );
 
-    expect(result.items.map((item) => item.title)).toEqual([
-      '忙了三四天，成亲了',
-      'giffgaff卡免流教程'
-    ]);
+    expect(result.items.map((item) => item.title)).toEqual(['忙了三四天，成亲了', 'giffgaff卡免流教程']);
   });
 
   it('ignores off-site links that look like yaohuo topic links', () => {
-    const result = parseYaohuoListHtml(`
+    const result = parseYaohuoListHtml(
+      `
       <div class="listdata"><a href="https://evil.example/bbs-1539321.html">伪主题</a>/alice/阅1/05-20 10:00</div>
       <div class="listdata"><a href="/bbs-1539322.html">站内主题</a>/bob/阅1/05-20 10:01</div>
-    `, {
-      classId: '177',
-      page: 1,
-      limit: 30
-    });
+    `,
+      {
+        classId: '177',
+        page: 1,
+        limit: 30
+      }
+    );
 
     expect(result.items.map((item) => item.id)).toEqual(['1539322']);
   });
 
   it('parses current yaohuo listdata rows with multiple classes', () => {
-    const result = parseYaohuoListHtml(`
+    const result = parseYaohuoListHtml(
+      `
       <!--listS-->
       <div class="listdata line1">1.<img src="/NetImages/file.gif" alt="附"/><a class="topic-link" href="/bbs-1539321.html">局停后应急方案</a><br/><span class="louzhunicheng">畫家李問</span>/<a class="topic-link" href="/bbs/book_re.aspx?actoin=class&amp;siteid=1000&amp;classid=177&amp;id=1539321&amp;getTotal=0&amp;lpage=1">0</a>回/39阅 <span class="right">今天 午夜<span></div>
       <div class="listdata line2">2.<a class="topic-link" href="/bbs-1539320.html">dnshe域名互助</a><br/><span class="louzhunicheng">冷眸阳少</span>/<a class="topic-link" href="/bbs/book_re.aspx?actoin=class&amp;siteid=1000&amp;classid=177&amp;id=1539320&amp;getTotal=0&amp;lpage=1">0</a>回/37阅 <span class="right">今天 午夜<span></div>
       <!--listE-->
-    `, {
-      classId: '177',
-      page: 1,
-      limit: 30
-    });
+    `,
+      {
+        classId: '177',
+        page: 1,
+        limit: 30
+      }
+    );
 
     expect(result.items).toHaveLength(2);
-    expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({
-      source: 'yaohuo',
-      id: '1539321',
-      title: '局停后应急方案',
-      author: '畫家李問',
-      categoryId: '177',
-      category: '妖火茶馆',
-      replyCount: 0,
-      viewCount: 39
-    })]));
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'yaohuo',
+          id: '1539321',
+          title: '局停后应急方案',
+          author: '畫家李問',
+          categoryId: '177',
+          category: '妖火茶馆',
+          replyCount: 0,
+          viewCount: 39
+        })
+      ])
+    );
   });
 
   it('parses yaohuo relative list times as real Beijing times', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));
     try {
-      const result = parseYaohuoListHtml(`
+      const result = parseYaohuoListHtml(
+        `
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">午夜主题</a>/alice/阅1 <span class="right">今天 午夜</span></div>
         <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">深夜主题</a>/bob/阅1 <span class="right">今天 23:50</span></div>
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539323.html">昨天主题</a>/carol/阅1 <span class="right">昨天 00:05</span></div>
         <div class="listdata line2"><a class="topic-link" href="/bbs-1539324.html">下午主题</a>/dave/阅1 <span class="right">下午 3:20</span></div>
-      `, {
-        page: 1,
-        limit: 30
-      });
+      `,
+        {
+          page: 1,
+          limit: 30
+        }
+      );
 
       expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2026-05-24T16:00:00.000Z');
       expect(result.items.find((item) => item.id === '1539321')?.displayTimeText).toBe('今天 午夜');
@@ -255,12 +301,15 @@ describe('Android direct yaohuo API', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T07:30:00+08:00'));
     try {
-      const result = parseYaohuoListHtml(`
+      const result = parseYaohuoListHtml(
+        `
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">午夜主题</a>/alice/阅1 <span class="right">今天 午夜</span></div>
-      `, {
-        page: 1,
-        limit: 30
-      });
+      `,
+        {
+          page: 1,
+          limit: 30
+        }
+      );
 
       expect(result.items[0].createdAt).toBe('2026-05-24T16:00:00.000Z');
       expect(result.items[0].lastReplyAt).toBe('2026-05-24T16:00:00.000Z');
@@ -274,15 +323,18 @@ describe('Android direct yaohuo API', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T09:30:00+08:00'));
     try {
-      const result = parseYaohuoListHtml(`
+      const result = parseYaohuoListHtml(
+        `
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">分钟主题</a>/alice/阅1 <span class="right">20分钟前</span></div>
         <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">小时主题</a>/bob/阅1 <span class="right">7小时前</span></div>
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539323.html">天主题</a>/carol/阅1 <span class="right">2天前</span></div>
-      `, {
-        page: 1,
-        limit: 30,
-        preserveOrder: true
-      });
+      `,
+        {
+          page: 1,
+          limit: 30,
+          preserveOrder: true
+        }
+      );
 
       expect(result.items.map((item) => item.createdAt)).toEqual([
         '2026-05-25T01:10:00.000Z',
@@ -298,18 +350,22 @@ describe('Android direct yaohuo API', () => {
   it('uses one Beijing clock snapshot for all rows in a single yaohuo list parse', () => {
     const firstNow = new Date('2026-05-25T01:00:00+08:00').getTime();
     const secondNow = new Date('2026-05-26T01:00:00+08:00').getTime();
-    const nowSpy = vi.spyOn(Date, 'now')
+    const nowSpy = vi
+      .spyOn(Date, 'now')
       .mockReturnValueOnce(firstNow)
       .mockReturnValueOnce(secondNow)
       .mockReturnValue(secondNow);
     try {
-      const result = parseYaohuoListHtml(`
+      const result = parseYaohuoListHtml(
+        `
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">第一条</a>/alice/阅1 <span class="right">1小时前</span></div>
         <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">第二条</a>/bob/阅1 <span class="right">1小时前</span></div>
-      `, {
-        page: 1,
-        limit: 30
-      });
+      `,
+        {
+          page: 1,
+          limit: 30
+        }
+      );
 
       expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2026-05-24T16:00:00.000Z');
       expect(result.items.find((item) => item.id === '1539322')?.createdAt).toBe('2026-05-24T16:00:00.000Z');
@@ -322,15 +378,18 @@ describe('Android direct yaohuo API', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));
     try {
-      const result = parseYaohuoListHtml(`
+      const result = parseYaohuoListHtml(
+        `
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">第一条同时间</a>/alice/阅1 <span class="right">今天 午夜</span></div>
         <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">第二条同时间</a>/bob/阅1 <span class="right">今天 午夜</span></div>
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539323.html">更新主题</a>/carol/阅1 <span class="right">今天 23:50</span></div>
         <div class="listdata line2"><a class="topic-link" href="/bbs-1539324.html">旧主题</a>/dave/阅1 <span class="right">昨天 00:05</span></div>
-      `, {
-        page: 1,
-        limit: 30
-      });
+      `,
+        {
+          page: 1,
+          limit: 30
+        }
+      );
 
       expect(result.items.map((item) => item.id)).toEqual(['1539323', '1539321', '1539322', '1539324']);
     } finally {
@@ -339,15 +398,18 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('uses yaohuo class ids from list row links before falling back to the selected class', () => {
-    const result = parseYaohuoListHtml(`
+    const result = parseYaohuoListHtml(
+      `
       <div class="listdata line1">
         <a class="topic-link" href="/bbs-1539321.html">悬赏主题</a>/alice/
         <a href="/bbs/book_re.aspx?classid=213&amp;id=1539321">0</a>回/1阅 <span class="right">05-20 10:00</span>
       </div>
-    `, {
-      page: 1,
-      limit: 30
-    });
+    `,
+      {
+        page: 1,
+        limit: 30
+      }
+    );
 
     expect(result.items[0]).toMatchObject({
       id: '1539321',
@@ -360,14 +422,17 @@ describe('Android direct yaohuo API', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:30:00+08:00'));
     try {
-      const result = parseYaohuoListHtml(`
+      const result = parseYaohuoListHtml(
+        `
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">跨年主题</a>/alice/阅1/12-31 23:50</div>
         <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">新年主题</a>/bob/阅1/01-01 00:10</div>
-      `, {
-        classId: '177',
-        page: 1,
-        limit: 30
-      });
+      `,
+        {
+          classId: '177',
+          page: 1,
+          limit: 30
+        }
+      );
 
       expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2025-12-31T15:50:00.000Z');
       expect(result.items.find((item) => item.id === '1539322')?.createdAt).toBe('2025-12-31T16:10:00.000Z');
@@ -382,14 +447,17 @@ describe('Android direct yaohuo API', () => {
     const yearSpy = vi.spyOn(Date.prototype, 'getFullYear').mockReturnValue(2025);
     const monthSpy = vi.spyOn(Date.prototype, 'getMonth').mockReturnValue(11);
     try {
-      const result = parseYaohuoListHtml(`
+      const result = parseYaohuoListHtml(
+        `
         <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">跨年主题</a>/alice/阅1/12-31 23:50</div>
         <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">新年主题</a>/bob/阅1/01-01 00:10</div>
-      `, {
-        classId: '177',
-        page: 1,
-        limit: 30
-      });
+      `,
+        {
+          classId: '177',
+          page: 1,
+          limit: 30
+        }
+      );
 
       expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2025-12-31T15:50:00.000Z');
       expect(result.items.find((item) => item.id === '1539322')?.createdAt).toBe('2025-12-31T16:10:00.000Z');
@@ -401,29 +469,35 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('skips yaohuo non-topic links that only contain unrelated numeric parameters', () => {
-    const result = parseYaohuoListHtml(`
+    const result = parseYaohuoListHtml(
+      `
       <div class="listdata line1">
         <a class="topic-link" href="/bbs/view.aspx?classid=177&amp;siteid=1000">收藏入口</a>/alice/阅9/05-20 10:00
       </div>
-    `, {
-      classId: '177',
-      page: 1,
-      limit: 30
-    });
+    `,
+      {
+        classId: '177',
+        page: 1,
+        limit: 30
+      }
+    );
 
     expect(result.items).toEqual([]);
   });
 
   it('does not parse slash-separated yaohuo numeric fields as views without the view marker', () => {
-    const result = parseYaohuoListHtml(`
+    const result = parseYaohuoListHtml(
+      `
       <div class="listdata line1">
         <a class="topic-link" href="/bbs-1539321.html">妖火主题</a>/alice/10/100 <span class="right">05-20 10:00</span>
       </div>
-    `, {
-      classId: '177',
-      page: 1,
-      limit: 30
-    });
+    `,
+      {
+        classId: '177',
+        page: 1,
+        limit: 30
+      }
+    );
 
     expect(result.items[0]).toMatchObject({
       id: '1539321',
@@ -432,14 +506,17 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('checks login from the exact top2 self-account navigation without sending Cookie to a server', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response(`
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response(`
       <div class="top2">
         <a href="/myfile.aspx">我的地盘</a>
         <a href="/bbs/userinfo.aspx?touserid=7">火友</a>
         <a href="/bbs/book_list_search.aspx">帖子</a>
         <a href="/bbs/messagelist.aspx">信箱</a>
       </div>
-    `));
+    `)
+    );
 
     const result = await checkYaohuoLoginDirect({
       yaohuoFetcher
@@ -456,9 +533,12 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('[REG-ACCOUNT-019] keeps an ordinary Yaohuo content page unknown without current-user proof', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response(`
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response(`
       <div class="listdata"><a href="/bbs-123.html">公开主题</a>/访客/阅1/05-20 10:00</div>
-    `));
+    `)
+    );
 
     const result = await checkYaohuoLoginDirect({
       yaohuoFetcher
@@ -502,7 +582,7 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('[REG-ACCOUNT-037] keeps an incomplete Yaohuo login page unknown', async () => {
-    const yaohuoFetcher = vi.fn(async (input: string) => (
+    const yaohuoFetcher = vi.fn(async (input: string) =>
       input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2'
         ? new Response('<div class="listdata"><a href="/bbs-123.html">公开主题</a></div>')
         : new Response(`
@@ -510,7 +590,7 @@ describe('Android direct yaohuo API', () => {
             <input id="logname" name="logname" />
           </form>
         `)
-    ));
+    );
 
     await expect(checkYaohuoLoginDirect({ yaohuoFetcher })).resolves.toMatchObject({
       ok: false,
@@ -521,14 +601,17 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('[REG-ACCOUNT-020] recognizes the complete Yaohuo self-account navigation returned to a logged-in WebView', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response(`
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response(`
       <div class="top2">
         <a href="/myfile.aspx">我的地盘</a>
         <a href="/bbs/userinfo.aspx?touserid=42">空间</a>
         <a href="/bbs/book_list_search.aspx">帖子</a>
         <a href="/bbs/messagelist.aspx">信箱</a>
       </div>
-    `));
+    `)
+    );
 
     const result = await checkYaohuoLoginDirect({
       yaohuoFetcher
@@ -545,44 +628,54 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('[REG-ACCOUNT-020] keeps a partial top2 user link unknown', () => {
-    expect(parseYaohuoCurrentUserHtml(`
+    expect(
+      parseYaohuoCurrentUserHtml(`
       <div class="top2">
         <a href="/bbs/userinfo.aspx?touserid=42">空间</a>
         <a href="/bbs-123.html">公开主题</a>
       </div>
-    `)).toBeNull();
+    `)
+    ).toBeNull();
   });
 
   it('[REG-ACCOUNT-019] returns an explicit Yaohuo guest page as expired instead of throwing', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('请先登录网站 <a href="/waplogin.aspx">登录</a>', {
-      status: 200
-    }));
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response('请先登录网站 <a href="/waplogin.aspx">登录</a>', {
+          status: 200
+        })
+    );
 
-    await expect(checkYaohuoLoginDirect({
-      yaohuoFetcher
-    })).resolves.toMatchObject({
+    await expect(
+      checkYaohuoLoginDirect({
+        yaohuoFetcher
+      })
+    ).resolves.toMatchObject({
       ok: false,
       loginRequired: true,
       reason: 'expired'
     });
   });
 
-  it.each([401, 403, 404])('[REG-ACCOUNT-025] keeps Yaohuo HTTP %i unknown instead of clearing login state', async (status) => {
-    const yaohuoFetcher = vi.fn(async () => new Response('', { status }));
-    let failure: unknown;
+  it.each([401, 403, 404])(
+    '[REG-ACCOUNT-025] keeps Yaohuo HTTP %i unknown instead of clearing login state',
+    async (status) => {
+      const yaohuoFetcher = vi.fn(async () => new Response('', { status }));
+      let failure: unknown;
 
-    try {
-      await checkYaohuoLoginDirect({
-        yaohuoFetcher
-      });
-    } catch (error) {
-      failure = error;
+      try {
+        await checkYaohuoLoginDirect({
+          yaohuoFetcher
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).toMatchObject({ message: `HTTP ${status}` });
+      expect(failure).not.toMatchObject({ loginRequired: true });
     }
-
-    expect(failure).toBeInstanceOf(Error);
-    expect(failure).toMatchObject({ message: `HTTP ${status}` });
-    expect(failure).not.toMatchObject({ loginRequired: true });
-  });
+  );
 
   it('[REG-ACCOUNT-019] does not infer the current Yaohuo user from a public profile card', () => {
     const currentUser = parseYaohuoCurrentUserHtml(`
@@ -616,8 +709,12 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('[REG-ACCOUNT-031] does not accept legacy top welcome or logout text as identity proof', () => {
-    const currentUser = parseYaohuoCurrentUserHtml('<div class="top">火友的<a href="/bbs/userinfo.aspx?touserid=7">空间</a> <a href="/bbs/logout.aspx">退出</a></div>');
-    const fallbackUser = parseYaohuoCurrentUserHtml('<div class="top"><a href="/bbs/userinfo.aspx?touserid=8">我的地盘</a> <a href="/bbs/logout.aspx">退出</a></div>');
+    const currentUser = parseYaohuoCurrentUserHtml(
+      '<div class="top">火友的<a href="/bbs/userinfo.aspx?touserid=7">空间</a> <a href="/bbs/logout.aspx">退出</a></div>'
+    );
+    const fallbackUser = parseYaohuoCurrentUserHtml(
+      '<div class="top"><a href="/bbs/userinfo.aspx?touserid=8">我的地盘</a> <a href="/bbs/logout.aspx">退出</a></div>'
+    );
 
     expect(currentUser).toBeNull();
     expect(fallbackUser).toBeNull();
@@ -625,36 +722,47 @@ describe('Android direct yaohuo API', () => {
 
   it('passes cancellation signals through direct yaohuo fetches', async () => {
     const controller = new AbortController();
-    const yaohuoFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response('<div class="listdata"></div>'));
+    const yaohuoFetcher = vi.fn(
+      async (_input: string, _init?: RequestInit) => new Response('<div class="listdata"></div>')
+    );
 
     await getYaohuoFeedDirect({
       yaohuoFetcher,
       signal: controller.signal
     });
 
-    expect(yaohuoFetcher.mock.calls[0][1]).toEqual(expect.objectContaining({
-      signal: expect.any(AbortSignal)
-    }));
+    expect(yaohuoFetcher.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        signal: expect.any(AbortSignal)
+      })
+    );
   });
 
   it('[REG-VERIFICATION-003] uses the Android WebView provider identity for yaohuo read requests', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
+    const yaohuoFetcher = vi.fn(
+      async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')
+    );
 
     await getYaohuoFeedDirect({
       yaohuoFetcher
     });
 
-    expect(yaohuoFetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      credentials: 'include',
-      redirect: 'follow',
-      headers: expect.objectContaining({
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        Referer: 'https://www.yaohuo.me/bbs/',
-        'Sec-Fetch-Site': 'same-origin',
-        'User-Agent': 'native-provider-user-agent'
+    expect(yaohuoFetcher).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        credentials: 'include',
+        redirect: 'follow',
+        headers: expect.objectContaining({
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          Referer: 'https://www.yaohuo.me/bbs/',
+          'Sec-Fetch-Site': 'same-origin',
+          'User-Agent': 'native-provider-user-agent'
+        })
       })
-    }));
-    expect((yaohuoFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
+    );
+    expect((yaohuoFetcher.mock.calls as unknown as [string, RequestInit?][])[0]?.[1]?.headers).not.toHaveProperty(
+      'Cookie'
+    );
   });
 
   it('fetches yaohuo topic and replies from Android before local parsing', async () => {
@@ -670,9 +778,13 @@ describe('Android direct yaohuo API', () => {
     };
     const yaohuoFetcher = vi.fn(async (input: string) => {
       if (input.includes('book_re.aspx')) {
-        return new Response('<div class="line1">[沙发] 回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>');
+        return new Response(
+          '<div class="line1">[沙发] 回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>'
+        );
       }
-      return new Response('<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>更多回帖(1)<a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>');
+      return new Response(
+        '<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>更多回帖(1)<a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>'
+      );
     });
 
     const detail = await getYaohuoTopicDirect({
@@ -682,7 +794,11 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(yaohuoFetcher).toHaveBeenNthCalledWith(1, 'https://www.yaohuo.me/bbs-123.html', expect.any(Object));
-    expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=1', expect.any(Object));
+    expect(yaohuoFetcher).toHaveBeenNthCalledWith(
+      2,
+      'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=1',
+      expect.any(Object)
+    );
     expect(detail.replyCount).toBe(1);
     expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
   });
@@ -710,7 +826,9 @@ describe('Android direct yaohuo API', () => {
       if (input.includes('/bbs/book_re.aspx')) {
         return new Response('');
       }
-      return new Response('<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div><a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>');
+      return new Response(
+        '<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div><a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>'
+      );
     });
 
     const detail = await getYaohuoTopicDirect({
@@ -718,8 +836,9 @@ describe('Android direct yaohuo API', () => {
       yaohuoFetcher
     });
 
-    const favoriteUrl = vi.mocked(yaohuoFetcher).mock.calls
-      .map(([input]) => String(input))
+    const favoriteUrl = vi
+      .mocked(yaohuoFetcher)
+      .mock.calls.map(([input]) => String(input))
       .find((input) => input.includes('/bbs/favlist.aspx'));
     expect(favoriteUrl).toBeTruthy();
     expect(new URL(favoriteUrl || '').searchParams.get('key')).toBe('妖火帖子');
@@ -744,7 +863,9 @@ describe('Android direct yaohuo API', () => {
       if (input.includes('/bbs/book_re.aspx')) {
         return new Response('');
       }
-      return new Response('<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div><a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>');
+      return new Response(
+        '<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div><a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>'
+      );
     });
 
     const detail = await getYaohuoTopicDirect({
@@ -788,10 +909,12 @@ describe('Android direct yaohuo API', () => {
     };
     const yaohuoFetcher = vi.fn(async () => new Response(''));
 
-    await expect(getYaohuoTopicDirect({
-      topic,
-      yaohuoFetcher
-    })).rejects.toThrow('妖火链接不属于 www.yaohuo.me');
+    await expect(
+      getYaohuoTopicDirect({
+        topic,
+        yaohuoFetcher
+      })
+    ).rejects.toThrow('妖火链接不属于 www.yaohuo.me');
 
     expect(yaohuoFetcher).not.toHaveBeenCalled();
   });
@@ -812,7 +935,9 @@ describe('Android direct yaohuo API', () => {
       if (input.includes('book_re.aspx')) {
         return new Response('');
       }
-      return new Response('<div class="content">[标题] 妖火资源帖 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>');
+      return new Response(
+        '<div class="content">[标题] 妖火资源帖 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>'
+      );
     });
 
     const detail = await getYaohuoTopicDirect({
@@ -820,7 +945,11 @@ describe('Android direct yaohuo API', () => {
       yaohuoFetcher
     });
 
-    expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://www.yaohuo.me/bbs/book_re.aspx?id=456&classid=201&page=1', expect.any(Object));
+    expect(yaohuoFetcher).toHaveBeenNthCalledWith(
+      2,
+      'https://www.yaohuo.me/bbs/book_re.aspx?id=456&classid=201&page=1',
+      expect.any(Object)
+    );
     expect(detail).toMatchObject({
       categoryId: '201',
       category: '资源分享'
@@ -828,46 +957,56 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('reads yaohuo topic author level from the original poster row only', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 妖火等级主题 (阅1) [时间] 2026-05-20 10:00</div>
       <div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>
       <div class="louzhuxinxi subtitle">[楼主]<a href="/bbs/userinfo.aspx?touserid=36925">一葉知秋</a>(4级水面的小草)[荣誉]</div>
-    `, {
-      id: '1559685',
-      url: 'https://www.yaohuo.me/bbs-1559685.html'
-    });
+    `,
+      {
+        id: '1559685',
+        url: 'https://www.yaohuo.me/bbs-1559685.html'
+      }
+    );
 
     expect(detail.author).toBe('一葉知秋');
     expect(detail.authorLevelLabel).toBe('4级水面的小草');
   });
 
   it('[REG-VERIFICATION-002] does not treat an ordinary Yaohuo discussion about access verification as a challenge page', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 访问验证实现讨论 (阅1) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
       <div class="bbscontent"><!--listS-->
         <p>这里讨论访问验证，“请先登录网站”只是错误提示示例，变量是 <code>window.CAPTCHA_CONFIG = {}</code>。</p>
       <!--listE--></div>
-    `, {
-      id: '1559686',
-      url: 'https://www.yaohuo.me/bbs-1559686.html'
-    });
+    `,
+      {
+        id: '1559686',
+        url: 'https://www.yaohuo.me/bbs-1559686.html'
+      }
+    );
 
     expect(detail.title).toBe('访问验证实现讨论');
     expect(detail.contentHtml).toContain('CAPTCHA_CONFIG');
   });
 
   it('does not treat yaohuo reply user ids as author levels', () => {
-    const result = parseYaohuoRepliesHtml(`
+    const result = parseYaohuoRepliesHtml(
+      `
       <div class="line1">[261楼][回]口乞..<a href="/bbs/userinfo.aspx?touserid=45264">孟婆烤串</a>(45264) 06-28 23:22</div>
-    `, { page: 1, limit: 30 });
+    `,
+      { page: 1, limit: 30 }
+    );
 
     expect(result.items[0]).toMatchObject({ author: '孟婆烤串', authorId: '45264' });
     expect(result.items[0].authorLevelLabel).toBeUndefined();
   });
 
   it('maps yaohuo vote options to unified polls with state', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 妖火投票 (阅2) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
       <div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>
@@ -877,26 +1016,31 @@ describe('Android direct yaohuo API', () => {
       </div>
       <span>已投票</span>
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
-    `, {
-      id: '123',
-      url: 'https://www.yaohuo.me/bbs-123.html'
-    });
+    `,
+      {
+        id: '123',
+        url: 'https://www.yaohuo.me/bbs-123.html'
+      }
+    );
 
-    expect(detail.polls).toEqual([{
-      id: 'yaohuo-123',
-      title: '投票',
-      voted: true,
-      closed: false,
-      multiple: false,
-      options: [
-        { id: '55', label: '选项 A', count: 2, selected: false },
-        { id: '56', label: '选项 B', count: 5, selected: true }
-      ]
-    }]);
+    expect(detail.polls).toEqual([
+      {
+        id: 'yaohuo-123',
+        title: '投票',
+        voted: true,
+        closed: false,
+        multiple: false,
+        options: [
+          { id: '55', label: '选项 A', count: 2, selected: false },
+          { id: '56', label: '选项 B', count: 5, selected: true }
+        ]
+      }
+    ]);
   });
 
   it('maps yaohuo vote options wrapped in block elements with vote suffix counts', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 妖火投票 (阅2) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
       <div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>
@@ -905,10 +1049,12 @@ describe('Android direct yaohuo API', () => {
         <ul><li><a href="/bbs/book_view_toVote.aspx?vid=56">[投票] 选项 B(3票)</a></li></ul>
       </div>
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
-    `, {
-      id: '123',
-      url: 'https://www.yaohuo.me/bbs-123.html'
-    });
+    `,
+      {
+        id: '123',
+        url: 'https://www.yaohuo.me/bbs-123.html'
+      }
+    );
 
     expect(detail.polls?.[0].options).toEqual([
       { id: '55', label: '选项 A', count: 2, selected: false },
@@ -917,7 +1063,8 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('maps yaohuo multi-choice polls to selectable polls with choice limits', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 妖火多选投票 (阅2) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
       <div class="bbscontent"><!--listS--><p>多选，可选2项</p><!--listE--></div>
@@ -926,10 +1073,12 @@ describe('Android direct yaohuo API', () => {
         <a href="/bbs/book_view_toVote.aspx?vid=56">[投票] 选项 B (5)</a>
       </div>
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
-    `, {
-      id: '123',
-      url: 'https://www.yaohuo.me/bbs-123.html'
-    });
+    `,
+      {
+        id: '123',
+        url: 'https://www.yaohuo.me/bbs-123.html'
+      }
+    );
 
     expect(detail.polls?.[0]).toMatchObject({
       id: 'yaohuo-123',
@@ -940,7 +1089,8 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps yaohuo resource download content rendered outside the main post block', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 软件资源 (阅2) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
       <div class="bbscontent">
@@ -950,10 +1100,12 @@ describe('Android direct yaohuo API', () => {
       <div class="download">下载地址：<a href="https://pan.quark.cn/s/abc">夸克网盘</a><br>提取码：1234</div>
       更多回帖(1)
       <a href="/bbs/book_list.aspx?classid=201">资源分享</a>
-    `, {
-      id: '456',
-      url: 'https://www.yaohuo.me/bbs-456.html'
-    });
+    `,
+      {
+        id: '456',
+        url: 'https://www.yaohuo.me/bbs-456.html'
+      }
+    );
 
     expect(detail.contentHtml).toContain('软件说明');
     expect(detail.contentHtml).toContain('版本介绍：免登录使用修图特权。');
@@ -965,7 +1117,8 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps yaohuo video-only topic content', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 视频主题 (阅2) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
       <div class="bbscontent">
@@ -973,10 +1126,12 @@ describe('Android direct yaohuo API', () => {
       </div>
       更多回帖(1)
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
-    `, {
-      id: '1560017',
-      url: 'https://www.yaohuo.me/bbs-1560017.html'
-    });
+    `,
+      {
+        id: '1560017',
+        url: 'https://www.yaohuo.me/bbs-1560017.html'
+      }
+    );
 
     expect(detail.contentHtml).toContain('<forum-video');
     expect(detail.contentHtml).toContain('src="https://www.yaohuo.me/uploads/demo.mp4"');
@@ -984,7 +1139,8 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps yaohuo video blocks after the marked post body', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="content">[标题] 视频主题 (阅2) [时间] 2026-05-20 10:00</div>
       <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
       <div class="bbscontent">
@@ -993,10 +1149,12 @@ describe('Android direct yaohuo API', () => {
       <video controls><source src="/uploads/after-body.mp4" type="video/mp4"></video>
       更多回帖(1)
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
-    `, {
-      id: '1560017',
-      url: 'https://www.yaohuo.me/bbs-1560017.html'
-    });
+    `,
+      {
+        id: '1560017',
+        url: 'https://www.yaohuo.me/bbs-1560017.html'
+      }
+    );
 
     expect(detail.contentHtml).toContain('正文');
     expect(detail.contentHtml).toContain('src="https://www.yaohuo.me/uploads/after-body.mp4"');
@@ -1004,7 +1162,8 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps yaohuo activity reward status in topic content', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div class="rectangle-container">
         <div class="notification-text"><i><svg></svg></i><span><span>派币</span><span>550000</span>已结束</span></div>
       </div>
@@ -1013,10 +1172,12 @@ describe('Android direct yaohuo API', () => {
         <div class="Postinfo"><span>[标题]</span>49元开京东Plus会员<span>(阅45708)</span><br><span>[时间]<span>2025-10-28 01:20</span></span><span id="stamp-badge">获赏<span>1586</span></span></div>
         <div class="bbscontent"><!--listS-->618期间开通双倍积分哦！<!--listE--></div>
       </div>
-    `, {
-      id: '1478784',
-      url: 'https://www.yaohuo.me/bbs-1478784.html'
-    });
+    `,
+      {
+        id: '1478784',
+        url: 'https://www.yaohuo.me/bbs-1478784.html'
+      }
+    );
 
     expect(detail).toMatchObject({
       title: '49元开京东Plus会员',
@@ -1031,7 +1192,8 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('keeps yaohuo markdown resource body when the bbscontent wrapper is malformed', () => {
-    const detail = parseYaohuoTopicHtml(`
+    const detail = parseYaohuoTopicHtml(
+      `
       <div id="book-view-content" class="content">
         <div class="Postinfo"><span>[标题]</span>Hypic醒图国际版 v8.7.0 免登录使用所有特权<span>(阅276)</span><br/><span>[时间]<span>2026-05-28 16:54</span></span></div>
         <div class="dashed"></div>
@@ -1057,10 +1219,12 @@ describe('Android direct yaohuo API', () => {
         </div></div></div></div>
         <div class="louzhuxinxi subtitle"><span>[楼主]</span><a href="/bbs/userinfo.aspx?touserid=36925">李慕婉o</a></div>
         更多回帖(1)
-    `, {
-      id: '1540797',
-      url: 'https://www.yaohuo.me/bbs-1540797.html'
-    });
+    `,
+      {
+        id: '1540797',
+        url: 'https://www.yaohuo.me/bbs-1540797.html'
+      }
+    );
 
     expect(detail.contentHtml).toContain('应用简介');
     expect(detail.contentHtml).toContain('Hypic（醒图国际版）');
@@ -1083,11 +1247,15 @@ describe('Android direct yaohuo API', () => {
       yaohuoFetcher
     });
 
-    expect(yaohuoFetcher).toHaveBeenCalledWith('https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3', expect.any(Object));
+    expect(yaohuoFetcher).toHaveBeenCalledWith(
+      'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3',
+      expect.any(Object)
+    );
   });
 
   it('parses yaohuo activity replies from list-reply rows with real floors and rewards', () => {
-    const result = parseYaohuoRepliesHtml(`
+    const result = parseYaohuoRepliesHtml(
+      `
       <div class="recontent">
         <div class="list-reply line1" id="floor-1732" data-floor="1732">
           <span class="dinglouwenzi">[<span class="floornumber0" title="原1732楼">顶楼</span>]</span>
@@ -1099,7 +1267,9 @@ describe('Android direct yaohuo API', () => {
           <span class="retime">11-06 08:14</span>
         </div>
       </div>
-    `, { page: 1, limit: 30 });
+    `,
+      { page: 1, limit: 30 }
+    );
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
@@ -1136,36 +1306,49 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('uses the page offset as the fallback floor for yaohuo replies without floor labels', () => {
-    const result = parseYaohuoRepliesHtml('<div class="line1">回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>', {
-      page: 3,
-      limit: 30
-    });
+    const result = parseYaohuoRepliesHtml(
+      '<div class="line1">回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>',
+      {
+        page: 3,
+        limit: 30
+      }
+    );
 
     expect(result.items[0]).toMatchObject({ author: 'bob', floor: 61 });
   });
 
   it('surfaces yaohuo verification responses without clearing cookies', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<script>window.CAPTCHA_CONFIG={}</script>', {
-      status: 200
-    }));
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response('<script>window.CAPTCHA_CONFIG={}</script>', {
+          status: 200
+        })
+    );
 
-    await expect(searchYaohuoDirect({
-      query: '测试',
-      yaohuoFetcher
-    })).rejects.toMatchObject({
+    await expect(
+      searchYaohuoDirect({
+        query: '测试',
+        yaohuoFetcher
+      })
+    ).rejects.toMatchObject({
       loginRequired: true,
       reason: 'verification'
     });
   });
 
   it('surfaces non-200 yaohuo verification pages as HTTP errors', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<script>window.CAPTCHA_CONFIG={}</script>', {
-      status: 403
-    }));
+    const yaohuoFetcher = vi.fn(
+      async () =>
+        new Response('<script>window.CAPTCHA_CONFIG={}</script>', {
+          status: 403
+        })
+    );
 
-    await expect(getYaohuoFeedDirect({
-      yaohuoFetcher
-    })).rejects.toMatchObject({
+    await expect(
+      getYaohuoFeedDirect({
+        yaohuoFetcher
+      })
+    ).rejects.toMatchObject({
       message: 'HTTP 403',
       status: 403
     });

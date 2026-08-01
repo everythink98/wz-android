@@ -59,11 +59,9 @@ export function pushTopicSession(stack: TopicSession[], current: TopicSession, n
 }
 
 export function pushTopicSnapshot(stack: TopicSnapshot[], current: TopicSnapshot, nextTopic?: Topic) {
-  return pushTopicSession(
-    stack.map(topicSessionFromSnapshot),
-    topicSessionFromSnapshot(current),
-    nextTopic
-  ).map(snapshotFromTopicSession);
+  return pushTopicSession(stack.map(topicSessionFromSnapshot), topicSessionFromSnapshot(current), nextTopic).map(
+    snapshotFromTopicSession
+  );
 }
 
 export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {

@@ -24,25 +24,31 @@ describe('Android remote avatar images', () => {
       });
     });
 
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/58159.png', fetcher, {
-      mediaContext: nodeSeekMediaContext
-    })).resolves.toBe(
-      '<svg viewBox="0 0 32 32"></svg>'
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/58159.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBe('<svg viewBox="0 0 32 32"></svg>');
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/avatar/58159.png',
+      expect.objectContaining({
+        method: 'HEAD',
+        headers: expect.objectContaining({
+          'User-Agent': 'native-provider-user-agent',
+          'X-WZ-Forum-Media-Source': 'nodeseek'
+        })
+      })
     );
-    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/avatar/58159.png', expect.objectContaining({
-      method: 'HEAD',
-      headers: expect.objectContaining({
-        'User-Agent': 'native-provider-user-agent',
-        'X-WZ-Forum-Media-Source': 'nodeseek'
+    expect(fetcher).toHaveBeenLastCalledWith(
+      'https://www.nodeseek.com/avatar/58159.png',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: 'image/svg+xml,image/*,*/*;q=0.8',
+          'User-Agent': 'native-provider-user-agent',
+          'X-WZ-Forum-Media-Source': 'nodeseek'
+        })
       })
-    }));
-    expect(fetcher).toHaveBeenLastCalledWith('https://www.nodeseek.com/avatar/58159.png', expect.objectContaining({
-      headers: expect.objectContaining({
-        Accept: 'image/svg+xml,image/*,*/*;q=0.8',
-        'User-Agent': 'native-provider-user-agent',
-        'X-WZ-Forum-Media-Source': 'nodeseek'
-      })
-    }));
+    );
   });
 
   it('uses the configured default fetcher for NodeSeek SVG avatar probes', async () => {
@@ -59,7 +65,11 @@ describe('Android remote avatar images', () => {
     const resetFetcher = setDefaultAvatarFetcher(fetcher);
 
     try {
-      await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/63000.png', undefined, { mediaContext: nodeSeekMediaContext })).resolves.toBe('<svg></svg>');
+      await expect(
+        loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/63000.png', undefined, {
+          mediaContext: nodeSeekMediaContext
+        })
+      ).resolves.toBe('<svg></svg>');
       expect(fetcher).toHaveBeenCalledTimes(2);
     } finally {
       resetFetcher();
@@ -78,23 +88,33 @@ describe('Android remote avatar images', () => {
       });
     });
 
-    await expect(Promise.all([
-      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62001.png', fetcher, { mediaContext: nodeSeekMediaContext }),
-      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62001.png', fetcher, { mediaContext: nodeSeekMediaContext })
-    ])).resolves.toEqual([
-      '<svg viewBox="0 0 32 32"></svg>',
-      '<svg viewBox="0 0 32 32"></svg>'
-    ]);
+    await expect(
+      Promise.all([
+        loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62001.png', fetcher, {
+          mediaContext: nodeSeekMediaContext
+        }),
+        loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62001.png', fetcher, {
+          mediaContext: nodeSeekMediaContext
+        })
+      ])
+    ).resolves.toEqual(['<svg viewBox="0 0 32 32"></svg>', '<svg viewBox="0 0 32 32"></svg>']);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls.filter((call) => call[1]?.method === 'HEAD')).toHaveLength(1);
   });
 
   it('keeps regular bitmap avatars on the native Image path', async () => {
-    const fetcher = vi.fn(async () => new Response(null, {
-      headers: { 'content-type': 'image/png' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response(null, {
+          headers: { 'content-type': 'image/png' }
+        })
+    );
 
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/55849.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/55849.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
@@ -108,19 +128,32 @@ describe('Android remote avatar images', () => {
       });
     });
 
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62004.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBe(
-      '<svg viewBox="0 0 32 32"></svg>'
-    );
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62004.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBe('<svg viewBox="0 0 32 32"></svg>');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('caches bitmap avatar checks as null results', async () => {
-    const fetcher = vi.fn(async () => new Response(null, {
-      headers: { 'content-type': 'image/png' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response(null, {
+          headers: { 'content-type': 'image/png' }
+        })
+    );
 
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62002.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62002.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62002.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62002.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
@@ -128,12 +161,22 @@ describe('Android remote avatar images', () => {
     const fetcher = vi
       .fn()
       .mockRejectedValueOnce(new Error('network'))
-      .mockResolvedValueOnce(new Response(null, {
-        headers: { 'content-type': 'image/png' }
-      }));
+      .mockResolvedValueOnce(
+        new Response(null, {
+          headers: { 'content-type': 'image/png' }
+        })
+      );
 
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62003.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62003.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62003.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62003.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
@@ -149,37 +192,60 @@ describe('Android remote avatar images', () => {
       return imageReads === 1
         ? new Response('temporarily unavailable', { status: 503 })
         : new Response('<svg viewBox="0 0 32 32"></svg>', {
-          headers: { 'content-type': 'image/svg+xml' }
-        });
+            headers: { 'content-type': 'image/svg+xml' }
+          });
     });
 
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62005.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62005.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBe(
-      '<svg viewBox="0 0 32 32"></svg>'
-    );
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62005.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62005.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBe('<svg viewBox="0 0 32 32"></svg>');
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
   it('rejects oversized SVG avatar responses without caching them as bitmap results', async () => {
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(new Response(null, {
-        headers: { 'content-type': 'image/svg+xml', 'content-length': String(65 * 1024) }
-      }))
-      .mockResolvedValueOnce(new Response(null, {
-        headers: { 'content-type': 'image/png' }
-      }));
+      .mockResolvedValueOnce(
+        new Response(null, {
+          headers: { 'content-type': 'image/svg+xml', 'content-length': String(65 * 1024) }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          headers: { 'content-type': 'image/png' }
+        })
+      );
 
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62006.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
-    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62006.png', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62006.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62006.png', fetcher, {
+        mediaContext: nodeSeekMediaContext
+      })
+    ).resolves.toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('settles canceled SVG avatar probes without throwing', async () => {
     const controller = new AbortController();
-    const fetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-    }));
+    const fetcher = vi.fn(
+      (_input: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          );
+        })
+    );
 
     const request = loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62007.png', fetcher, {
       mediaContext: nodeSeekMediaContext,
@@ -193,7 +259,9 @@ describe('Android remote avatar images', () => {
   it('does not fetch SVG text for non-NodeSeek avatar URLs', async () => {
     const fetcher = vi.fn();
 
-    await expect(loadRemoteAvatarSvgText('https://cdn.example.com/avatar.svg', fetcher, { mediaContext: nodeSeekMediaContext })).resolves.toBeNull();
+    await expect(
+      loadRemoteAvatarSvgText('https://cdn.example.com/avatar.svg', fetcher, { mediaContext: nodeSeekMediaContext })
+    ).resolves.toBeNull();
     expect(fetcher).not.toHaveBeenCalled();
   });
 });

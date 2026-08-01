@@ -14,37 +14,47 @@ describe('Android back handler helpers', () => {
   });
 
   it('[REG-PERF-002] prefers a returning topic route over a snapshot when native pop is available', () => {
-    expect(selectTopicReturnStrategy({
-      canGoBack: true,
-      hasReturningTopicRoute: true,
-      hasSnapshot: true
-    })).toBe('route-pop');
+    expect(
+      selectTopicReturnStrategy({
+        canGoBack: true,
+        hasReturningTopicRoute: true,
+        hasSnapshot: true
+      })
+    ).toBe('route-pop');
   });
 
   it('[REG-PERF-002] uses a topic snapshot only when the route is missing or cannot be popped', () => {
-    expect(selectTopicReturnStrategy({
-      canGoBack: true,
-      hasReturningTopicRoute: false,
-      hasSnapshot: true
-    })).toBe('snapshot-fallback');
-    expect(selectTopicReturnStrategy({
-      canGoBack: false,
-      hasReturningTopicRoute: true,
-      hasSnapshot: true
-    })).toBe('snapshot-fallback');
+    expect(
+      selectTopicReturnStrategy({
+        canGoBack: true,
+        hasReturningTopicRoute: false,
+        hasSnapshot: true
+      })
+    ).toBe('snapshot-fallback');
+    expect(
+      selectTopicReturnStrategy({
+        canGoBack: false,
+        hasReturningTopicRoute: true,
+        hasSnapshot: true
+      })
+    ).toBe('snapshot-fallback');
   });
 
   it('uses ordinary native or screen navigation when no snapshot exists', () => {
-    expect(selectTopicReturnStrategy({
-      canGoBack: true,
-      hasReturningTopicRoute: false,
-      hasSnapshot: false
-    })).toBe('native-pop');
-    expect(selectTopicReturnStrategy({
-      canGoBack: false,
-      hasReturningTopicRoute: false,
-      hasSnapshot: false
-    })).toBe('return-screen');
+    expect(
+      selectTopicReturnStrategy({
+        canGoBack: true,
+        hasReturningTopicRoute: false,
+        hasSnapshot: false
+      })
+    ).toBe('native-pop');
+    expect(
+      selectTopicReturnStrategy({
+        canGoBack: false,
+        hasReturningTopicRoute: false,
+        hasSnapshot: false
+      })
+    ).toBe('return-screen');
   });
 
   it('[REG-PERF-002][REG-PERF-008] dispatches native pop before restoring the returning Topic route', () => {

@@ -44,7 +44,9 @@ describe('image library saving', () => {
     vi.mocked(FileSystem.deleteAsync).mockResolvedValue(undefined);
     vi.mocked(FileSystem.writeAsStringAsync).mockResolvedValue(undefined);
     vi.mocked(MediaLibrary.saveToLibraryAsync).mockResolvedValue(undefined);
-    vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({ granted: true } as MediaLibrary.PermissionResponse);
+    vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({
+      granted: true
+    } as MediaLibrary.PermissionResponse);
     vi.mocked(FileSystem.getInfoAsync).mockResolvedValue({
       exists: true,
       isDirectory: false,
@@ -55,28 +57,41 @@ describe('image library saving', () => {
   });
 
   it('rejects failed remote image downloads and deletes the temporary file', async () => {
-    const fetcher = vi.fn<Fetcher>(async () => new Response('missing', {
-      headers: { 'content-type': 'text/html' },
-      status: 404
-    }));
+    const fetcher = vi.fn<Fetcher>(
+      async () =>
+        new Response('missing', {
+          headers: { 'content-type': 'text/html' },
+          status: 404
+        })
+    );
 
-    await expect(saveImageUriToLibrary('https://cdn.example.com/missing.jpg', publicMediaOptions, fetcher)).rejects.toThrow('图片下载失败');
+    await expect(
+      saveImageUriToLibrary('https://cdn.example.com/missing.jpg', publicMediaOptions, fetcher)
+    ).rejects.toThrow('图片下载失败');
 
-    expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/missing.jpg', expect.objectContaining({
-      signal: expect.any(AbortSignal)
-    }));
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://cdn.example.com/missing.jpg',
+      expect.objectContaining({
+        signal: expect.any(AbortSignal)
+      })
+    );
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg', { idempotent: true });
   });
 
   it('rejects non-image remote responses and deletes the temporary file', async () => {
-    const fetcher = vi.fn<Fetcher>(async () => new Response('<html></html>', {
-      headers: { 'content-type': 'text/html' },
-      status: 200
-    }));
+    const fetcher = vi.fn<Fetcher>(
+      async () =>
+        new Response('<html></html>', {
+          headers: { 'content-type': 'text/html' },
+          status: 200
+        })
+    );
 
-    await expect(saveImageUriToLibrary('https://cdn.example.com/file.jpg', publicMediaOptions, fetcher)).rejects.toThrow('下载内容不是图片');
+    await expect(
+      saveImageUriToLibrary('https://cdn.example.com/file.jpg', publicMediaOptions, fetcher)
+    ).rejects.toThrow('下载内容不是图片');
 
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
@@ -84,7 +99,9 @@ describe('image library saving', () => {
   });
 
   it('rejects unsupported image URL schemes before downloading', async () => {
-    await expect(saveImageUriToLibrary('javascript:alert(1)', publicMediaOptions)).rejects.toThrow('图片地址不支持保存');
+    await expect(saveImageUriToLibrary('javascript:alert(1)', publicMediaOptions)).rejects.toThrow(
+      '图片地址不支持保存'
+    );
 
     expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
@@ -97,9 +114,13 @@ describe('image library saving', () => {
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({ granted: false } as MediaLibrary.PermissionResponse);
+    vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({
+      granted: false
+    } as MediaLibrary.PermissionResponse);
 
-    await expect(saveImageUriToLibrary('https://cdn.example.com/private-title-91827.jpg', publicMediaOptions)).rejects.toThrow('没有图片保存权限');
+    await expect(
+      saveImageUriToLibrary('https://cdn.example.com/private-title-91827.jpg', publicMediaOptions)
+    ).rejects.toThrow('没有图片保存权限');
 
     const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(events).toEqual([
@@ -114,22 +135,30 @@ describe('image library saving', () => {
     await saveImageUriToLibrary('data:image/png;base64,abc123', publicMediaOptions);
 
     expect(MediaLibrary.requestPermissionsAsync).toHaveBeenCalledWith(false, ['photo']);
-    expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'abc123', { encoding: FileSystem.EncodingType.Base64 });
+    expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'abc123', {
+      encoding: FileSystem.EncodingType.Base64
+    });
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png');
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', { idempotent: true });
   });
 
   it('saves remote images through the provided fetcher', async () => {
-    const fetcher = vi.fn<Fetcher>(async () => new Response('image-bytes', {
-      headers: { 'content-type': 'image/jpeg' },
-      status: 200
-    }));
+    const fetcher = vi.fn<Fetcher>(
+      async () =>
+        new Response('image-bytes', {
+          headers: { 'content-type': 'image/jpeg' },
+          status: 200
+        })
+    );
 
     await saveImageUriToLibrary('https://cdn.example.com/photo.jpg', publicMediaOptions, fetcher);
 
-    expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/photo.jpg', expect.objectContaining({
-      signal: expect.any(AbortSignal)
-    }));
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://cdn.example.com/photo.jpg',
+      expect.objectContaining({
+        signal: expect.any(AbortSignal)
+      })
+    );
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
       'file:///cache/forum-image-1234.jpg',
@@ -140,10 +169,13 @@ describe('image library saving', () => {
   });
 
   it('REG-TOPIC-019 keeps NodeSeek media credentials when saving a protected image', async () => {
-    const fetcher = vi.fn<Fetcher>(async () => new Response('image-bytes', {
-      headers: { 'content-type': 'image/png' },
-      status: 200
-    }));
+    const fetcher = vi.fn<Fetcher>(
+      async () =>
+        new Response('image-bytes', {
+          headers: { 'content-type': 'image/png' },
+          status: 200
+        })
+    );
 
     await saveImageUriToLibrary(
       'https://www.nodeseek.com/uploads/private-topic.png',
@@ -167,14 +199,17 @@ describe('image library saving', () => {
         signal: expect.any(AbortSignal)
       })
     );
-    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
+    expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('REG-TOPIC-015 preserves modern remote image extensions when saving', async () => {
-    const fetcher = vi.fn<Fetcher>(async () => new Response('avif-bytes', {
-      headers: { 'content-type': 'image/avif' },
-      status: 200
-    }));
+    const fetcher = vi.fn<Fetcher>(
+      async () =>
+        new Response('avif-bytes', {
+          headers: { 'content-type': 'image/avif' },
+          status: 200
+        })
+    );
 
     await saveImageUriToLibrary('https://cdn.example.com/photo.avif#original', publicMediaOptions, fetcher);
 
@@ -188,10 +223,13 @@ describe('image library saving', () => {
 
   it('REG-TOPIC-015 prefers the response image type when the URL suffix is misleading', async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
-    const fetcher = vi.fn<Fetcher>(async () => new Response(svg, {
-      headers: { 'content-type': 'image/svg+xml; charset=utf-8' },
-      status: 200
-    }));
+    const fetcher = vi.fn<Fetcher>(
+      async () =>
+        new Response(svg, {
+          headers: { 'content-type': 'image/svg+xml; charset=utf-8' },
+          status: 200
+        })
+    );
 
     await saveImageUriToLibrary('https://cdn.example.com/dynamic-report.png', publicMediaOptions, fetcher);
 
@@ -205,10 +243,13 @@ describe('image library saving', () => {
 
   it('REG-TOPIC-015 recognizes the legacy SVG response type used by the compatible preview', async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
-    const fetcher = vi.fn<Fetcher>(async () => new Response(svg, {
-      headers: { 'content-type': 'application/svg+xml' },
-      status: 200
-    }));
+    const fetcher = vi.fn<Fetcher>(
+      async () =>
+        new Response(svg, {
+          headers: { 'content-type': 'application/svg+xml' },
+          status: 200
+        })
+    );
 
     await saveImageUriToLibrary('https://cdn.example.com/dynamic-report.png', publicMediaOptions, fetcher);
 
@@ -225,7 +266,10 @@ describe('image library saving', () => {
     try {
       const save = saveImageUriToLibrary('https://cdn.example.com/stuck.jpg', publicMediaOptions, fetcher);
       const observed = Promise.race([
-        save.then(() => 'saved', (error: unknown) => error instanceof Error ? error.message : String(error)),
+        save.then(
+          () => 'saved',
+          (error: unknown) => (error instanceof Error ? error.message : String(error))
+        ),
         new Promise<string>((resolve) => setTimeout(() => resolve('still-pending'), 16_000))
       ]);
 

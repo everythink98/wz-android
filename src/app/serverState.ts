@@ -21,10 +21,7 @@ function sessionEpochKey(source: FeedSource, epochs: ForumSessionEpochs) {
   return isSessionSource(source) ? epochs[source] : 0;
 }
 
-function identityBarrierKey(
-  source: FeedSource,
-  barriers: readonly ForumIdentityBarrierSource[] = []
-) {
+function identityBarrierKey(source: FeedSource, barriers: readonly ForumIdentityBarrierSource[] = []) {
   return source === 'all' ? [...new Set(barriers)].sort() : [];
 }
 
@@ -35,12 +32,16 @@ export const forumQueryKeys = {
     source: FeedSource,
     scope: ForumSessionEpochs = initialForumSessionEpochs,
     identityBarriers: readonly ForumIdentityBarrierSource[] = []
-  ) => (
-    ['forum', source, 'categories', {
-      identityBarriers: identityBarrierKey(source, identityBarriers),
-      sessionEpoch: sessionEpochKey(source, scope)
-    }] as const
-  ),
+  ) =>
+    [
+      'forum',
+      source,
+      'categories',
+      {
+        identityBarriers: identityBarrierKey(source, identityBarriers),
+        sessionEpoch: sessionEpochKey(source, scope)
+      }
+    ] as const,
   feed: ({
     category,
     feedFilter,
@@ -53,12 +54,18 @@ export const forumQueryKeys = {
     identityBarriers?: readonly ForumIdentityBarrierSource[];
     scope: ForumSessionEpochs;
     source: FeedSource;
-  }) => ['forum', source, 'feed', {
-    category: category || null,
-    identityBarriers: identityBarrierKey(source, identityBarriers),
-    sessionEpoch: sessionEpochKey(source, scope),
-    feedFilter: feedFilter || null
-  }] as const,
+  }) =>
+    [
+      'forum',
+      source,
+      'feed',
+      {
+        category: category || null,
+        identityBarriers: identityBarrierKey(source, identityBarriers),
+        sessionEpoch: sessionEpochKey(source, scope),
+        feedFilter: feedFilter || null
+      }
+    ] as const,
   search: ({
     authenticated,
     filter,
@@ -73,13 +80,19 @@ export const forumQueryKeys = {
     scope: ForumSessionEpochs;
     sort: string;
     source: Source;
-  }) => ['forum', source, 'search', {
-    authenticated: source === 'linuxdo' && authenticated === true,
-    sessionEpoch: sessionEpochKey(source, scope),
-    filter: filter || null,
-    query,
-    sort
-  }] as const,
+  }) =>
+    [
+      'forum',
+      source,
+      'search',
+      {
+        authenticated: source === 'linuxdo' && authenticated === true,
+        sessionEpoch: sessionEpochKey(source, scope),
+        filter: filter || null,
+        query,
+        sort
+      }
+    ] as const,
   searchTags: ({
     categoryId,
     query,
@@ -92,12 +105,18 @@ export const forumQueryKeys = {
     scope: ForumSessionEpochs;
     selectedTags: string[];
     source: Source;
-  }) => ['forum', source, 'search-tags', {
-    categoryId: categoryId || null,
-    sessionEpoch: sessionEpochKey(source, scope),
-    query,
-    selectedTags
-  }] as const,
+  }) =>
+    [
+      'forum',
+      source,
+      'search-tags',
+      {
+        categoryId: categoryId || null,
+        sessionEpoch: sessionEpochKey(source, scope),
+        query,
+        selectedTags
+      }
+    ] as const,
   searchUsers: ({
     categoryId,
     scope,
@@ -108,30 +127,32 @@ export const forumQueryKeys = {
     scope: ForumSessionEpochs;
     source: Source;
     term: string;
-  }) => ['forum', source, 'search-users', {
-    categoryId: categoryId || null,
-    sessionEpoch: sessionEpochKey(source, scope),
-    term
-  }] as const,
-  semanticSearch: (query: string, scope: ForumSessionEpochs) => (
-    ['forum', 'linuxdo', 'semantic-search', { sessionEpoch: scope.linuxdo, query }] as const
-  ),
-  topic: ({
-    scope,
-    source,
-    topicId
-  }: {
-    scope: ForumSessionEpochs;
-    source: Source;
-    topicId: string;
-  }) => ['forum', source, 'topic', {
-    sessionEpoch: sessionEpochKey(source, scope),
-    topicId
-  }] as const,
+  }) =>
+    [
+      'forum',
+      source,
+      'search-users',
+      {
+        categoryId: categoryId || null,
+        sessionEpoch: sessionEpochKey(source, scope),
+        term
+      }
+    ] as const,
+  semanticSearch: (query: string, scope: ForumSessionEpochs) =>
+    ['forum', 'linuxdo', 'semantic-search', { sessionEpoch: scope.linuxdo, query }] as const,
+  topic: ({ scope, source, topicId }: { scope: ForumSessionEpochs; source: Source; topicId: string }) =>
+    [
+      'forum',
+      source,
+      'topic',
+      {
+        sessionEpoch: sessionEpochKey(source, scope),
+        topicId
+      }
+    ] as const,
   replies: (topicQueryKey: readonly unknown[]) => [...topicQueryKey, 'replies'] as const,
-  replyRefresh: (repliesQueryKey: readonly unknown[], page: number, offset: number | null, limit: number) => (
-    [...repliesQueryKey, 'refresh', { limit, offset, page }] as const
-  ),
+  replyRefresh: (repliesQueryKey: readonly unknown[], page: number, offset: number | null, limit: number) =>
+    [...repliesQueryKey, 'refresh', { limit, offset, page }] as const,
   reply: ({
     postNumber,
     scope,
@@ -142,41 +163,40 @@ export const forumQueryKeys = {
     scope: ForumSessionEpochs;
     source: Source;
     topicId: string;
-  }) => ['forum', source, 'topic-reply', {
-    sessionEpoch: sessionEpochKey(source, scope),
-    postNumber,
-    topicId
-  }] as const,
-  user: ({
-    scope,
-    source,
-    userId
-  }: {
-    scope: ForumSessionEpochs;
-    source: Source;
-    userId: string;
-  }) => ['forum', source, 'user', {
-    sessionEpoch: sessionEpochKey(source, scope),
-    userId
-  }] as const,
-  userResolution: ({
-    scope,
-    username
-  }: {
-    scope: ForumSessionEpochs;
-    username: string;
-  }) => ['forum', 'nodeseek', 'user-resolution', {
-    sessionEpoch: scope.nodeseek,
-    username: username.trim()
-  }] as const,
+  }) =>
+    [
+      'forum',
+      source,
+      'topic-reply',
+      {
+        sessionEpoch: sessionEpochKey(source, scope),
+        postNumber,
+        topicId
+      }
+    ] as const,
+  user: ({ scope, source, userId }: { scope: ForumSessionEpochs; source: Source; userId: string }) =>
+    [
+      'forum',
+      source,
+      'user',
+      {
+        sessionEpoch: sessionEpochKey(source, scope),
+        userId
+      }
+    ] as const,
+  userResolution: ({ scope, username }: { scope: ForumSessionEpochs; username: string }) =>
+    [
+      'forum',
+      'nodeseek',
+      'user-resolution',
+      {
+        sessionEpoch: scope.nodeseek,
+        username: username.trim()
+      }
+    ] as const,
   userLane: (userKey: readonly unknown[], lane: 'topics' | 'replies') => [...userKey, lane] as const,
-  accountStatus: ({
-    sessionEpochs,
-    source
-  }: {
-    sessionEpochs: ForumSessionEpochs;
-    source: Source;
-  }) => ['forum', source, 'account-status', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const,
+  accountStatus: ({ sessionEpochs, source }: { sessionEpochs: ForumSessionEpochs; source: Source }) =>
+    ['forum', source, 'account-status', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const,
   accountStatusProbe: ({
     sessionEpochs,
     generation,
@@ -185,24 +205,23 @@ export const forumQueryKeys = {
     sessionEpochs: ForumSessionEpochs;
     generation: number;
     source: Source;
-  }) => ['forum', source, 'account-status-probe', {
-    sessionEpoch: sessionEpochKey(source, sessionEpochs),
-    generation
-  }] as const,
+  }) =>
+    [
+      'forum',
+      source,
+      'account-status-probe',
+      {
+        sessionEpoch: sessionEpochKey(source, sessionEpochs),
+        generation
+      }
+    ] as const,
   level: (source: Source) => ['forum', source, 'level'] as const,
-  levelProfile: ({
-    sessionEpochs,
-    source
-  }: {
-    sessionEpochs: ForumSessionEpochs;
-    source: Source;
-  }) => ['forum', source, 'level', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const
+  levelProfile: ({ sessionEpochs, source }: { sessionEpochs: ForumSessionEpochs; source: Source }) =>
+    ['forum', source, 'level', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const
 };
 
 export const forumMutationKeys = {
-  topic: (source: Source, topicId: string) => (
-    ['forum', source, 'mutation', 'topic', topicId] as const
-  )
+  topic: (source: Source, topicId: string) => ['forum', source, 'mutation', 'topic', topicId] as const
 };
 
 export function createAppQueryClient() {

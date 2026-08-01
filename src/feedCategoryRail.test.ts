@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { feedCategoryItems, feedDiscourseFilterItems, feedFilterItems, feedFilterLabel, feedReadingFilterItems, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseFeedFilter, shouldUseReadingFilter } from './feedCategoryRail';
+import {
+  feedCategoryItems,
+  feedDiscourseFilterItems,
+  feedFilterItems,
+  feedFilterLabel,
+  feedReadingFilterItems,
+  shouldAllowFeedRemotePagination,
+  shouldLoadCategoriesForSource,
+  shouldUseFeedFilter,
+  shouldUseReadingFilter
+} from './feedCategoryRail';
 import type { Category } from './types';
 
 const categories: Category[] = [
@@ -11,12 +21,7 @@ const categories: Category[] = [
 describe('Android feed category rail', () => {
   it('keeps only the common reading filters for the all feed', () => {
     expect(shouldUseReadingFilter('all')).toBe(true);
-    expect(feedReadingFilterItems.map((item) => item.label)).toEqual([
-      '全部',
-      '未读',
-      '已读',
-      '收藏'
-    ]);
+    expect(feedReadingFilterItems.map((item) => item.label)).toEqual(['全部', '未读', '已读', '收藏']);
   });
 
   it('offers one portable list-filter model to every Discourse source', () => {
@@ -72,7 +77,9 @@ describe('Android feed category rail', () => {
 
   it('requests a source category refresh only until that source has categories', () => {
     expect(shouldLoadCategoriesForSource(categories, 'linuxdo')).toBe(true);
-    expect(shouldLoadCategoriesForSource([...categories, { source: 'linuxdo', id: '4', name: '开发调优' }], 'linuxdo')).toBe(false);
+    expect(
+      shouldLoadCategoriesForSource([...categories, { source: 'linuxdo', id: '4', name: '开发调优' }], 'linuxdo')
+    ).toBe(false);
     expect(shouldLoadCategoriesForSource(categories, 'all')).toBe(false);
   });
 

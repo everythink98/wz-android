@@ -32,7 +32,9 @@ export function isLinuxDoUncategorizedCategory(category: unknown) {
     return false;
   }
   const name = String(category.name || '').trim();
-  const slug = String(category.slug || '').trim().toLowerCase();
+  const slug = String(category.slug || '')
+    .trim()
+    .toLowerCase();
   return name === LINUXDO_UNCATEGORIZED_CATEGORY_NAME || slug === 'uncategorized';
 }
 

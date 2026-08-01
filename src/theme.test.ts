@@ -152,7 +152,12 @@ describe('Android reader theme safety rails', () => {
     expect(styles.quotePanelState.minHeight).toBeGreaterThanOrEqual(48);
     expect(styles.topicContentInner.gap).toBe(0);
     expect(styles.quoteRowTop).toMatchObject({ borderBottomWidth: 0, paddingBottom: 8 });
-    expect(styles.quoteRowContinuation).toMatchObject({ borderBottomWidth: 0, borderTopWidth: 0, paddingBottom: 0, paddingTop: 0 });
+    expect(styles.quoteRowContinuation).toMatchObject({
+      borderBottomWidth: 0,
+      borderTopWidth: 0,
+      paddingBottom: 0,
+      paddingTop: 0
+    });
     expect(styles.quoteRowBottom).toMatchObject({ borderTopWidth: 0, paddingTop: 0 });
   });
 

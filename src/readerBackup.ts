@@ -14,9 +14,7 @@ function stripSensitive(value: unknown, depth = 0): unknown {
     return undefined;
   }
   if (Array.isArray(value)) {
-    return value
-      .map((item) => stripSensitive(item, depth + 1))
-      .filter((item) => item !== undefined);
+    return value.map((item) => stripSensitive(item, depth + 1)).filter((item) => item !== undefined);
   }
   if (!value || typeof value !== 'object') {
     return value;

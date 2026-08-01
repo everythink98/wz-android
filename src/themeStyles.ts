@@ -1065,7 +1065,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderRadius: 8,
       minHeight: 40,
       gap: 5,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.10 : 0.045),
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.1 : 0.045),
       borderColor: theme.line,
       paddingHorizontal: 10,
       paddingVertical: 0
@@ -1245,7 +1245,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '600',
       lineHeight: 16,
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.07),
-      borderColor: alphaColor(theme.danger, theme.dark ? 0.38 : 0.20),
+      borderColor: alphaColor(theme.danger, theme.dark ? 0.38 : 0.2),
       borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 7,
@@ -1908,7 +1908,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingVertical: 3
     },
     pollStatePill: {
-      backgroundColor: alphaColor(theme.ink, theme.dark ? 0.10 : 0.04),
+      backgroundColor: alphaColor(theme.ink, theme.dark ? 0.1 : 0.04),
       borderColor: alphaColor(theme.ink, theme.dark ? 0.16 : 0.08),
       borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
@@ -2164,7 +2164,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       width: '100%',
       overflow: 'hidden',
       backgroundColor: theme.surface,
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.34 : 0.20),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.34 : 0.2),
       borderLeftWidth: 3,
       borderRadius: 8,
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -2379,7 +2379,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     levelSummary: {
       gap: 7,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.09 : 0.035),
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.10),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.1),
       borderRadius: radiusMd,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,

@@ -198,57 +198,72 @@ function ImagePreviewModalContent({
     });
   }, []);
 
-  const handleIndexChange = useCallback((index: number) => {
-    if (!mountedRef.current) {
-      return;
-    }
-    const nextIndex = clampIndex(index, previewCount);
-    const previousIndex = activeIndexRef.current;
-    if (nextIndex === previousIndex) {
-      return;
-    }
-    zoomRefs.current.get(previousIndex)?.reset(false);
-    requestedIndexRef.current = nextIndex;
-    activeIndexRef.current = nextIndex;
-    setActiveZoomed(false);
-    setAnimatedSvgZoomSuspended(false);
-    setPagerScrollEnabled(true);
-    pagerRef.current?.setScrollEnabled(true);
-    setActiveIndex(nextIndex);
-    onSelect(nextIndex);
-  }, [onSelect, previewCount]);
+  const handleIndexChange = useCallback(
+    (index: number) => {
+      if (!mountedRef.current) {
+        return;
+      }
+      const nextIndex = clampIndex(index, previewCount);
+      const previousIndex = activeIndexRef.current;
+      if (nextIndex === previousIndex) {
+        return;
+      }
+      zoomRefs.current.get(previousIndex)?.reset(false);
+      requestedIndexRef.current = nextIndex;
+      activeIndexRef.current = nextIndex;
+      setActiveZoomed(false);
+      setAnimatedSvgZoomSuspended(false);
+      setPagerScrollEnabled(true);
+      pagerRef.current?.setScrollEnabled(true);
+      setActiveIndex(nextIndex);
+      onSelect(nextIndex);
+    },
+    [onSelect, previewCount]
+  );
 
-  const handlePageSelected = useCallback((event: PagerViewOnPageSelectedEvent) => {
-    handleIndexChange(event.nativeEvent.position);
-  }, [handleIndexChange]);
+  const handlePageSelected = useCallback(
+    (event: PagerViewOnPageSelectedEvent) => {
+      handleIndexChange(event.nativeEvent.position);
+    },
+    [handleIndexChange]
+  );
 
-  const moveToIndex = useCallback((index: number) => {
-    const nextIndex = clampIndex(index, previewCount);
-    if (nextIndex === activeIndexRef.current) {
-      return;
-    }
-    zoomRefs.current.get(activeIndexRef.current)?.reset(false);
-    setActiveZoomed(false);
-    setAnimatedSvgZoomSuspended(false);
-    setPagerScrollEnabled(true);
-    pagerRef.current?.setScrollEnabled(true);
-    pagerRef.current?.setPage(nextIndex);
-  }, [previewCount]);
+  const moveToIndex = useCallback(
+    (index: number) => {
+      const nextIndex = clampIndex(index, previewCount);
+      if (nextIndex === activeIndexRef.current) {
+        return;
+      }
+      zoomRefs.current.get(activeIndexRef.current)?.reset(false);
+      setActiveZoomed(false);
+      setAnimatedSvgZoomSuspended(false);
+      setPagerScrollEnabled(true);
+      pagerRef.current?.setScrollEnabled(true);
+      pagerRef.current?.setPage(nextIndex);
+    },
+    [previewCount]
+  );
 
-  const moveFromIndex = useCallback((startIndex: number, delta: number) => {
-    if (activeIndexRef.current !== startIndex) {
-      return;
-    }
-    moveToIndex(startIndex + delta);
-  }, [moveToIndex]);
+  const moveFromIndex = useCallback(
+    (startIndex: number, delta: number) => {
+      if (activeIndexRef.current !== startIndex) {
+        return;
+      }
+      moveToIndex(startIndex + delta);
+    },
+    [moveToIndex]
+  );
 
-  const handleAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
-    if (event.nativeEvent.actionName === 'increment') {
-      moveToIndex(activeIndex + 1);
-    } else if (event.nativeEvent.actionName === 'decrement') {
-      moveToIndex(activeIndex - 1);
-    }
-  }, [activeIndex, moveToIndex]);
+  const handleAccessibilityAction = useCallback(
+    (event: AccessibilityActionEvent) => {
+      if (event.nativeEvent.actionName === 'increment') {
+        moveToIndex(activeIndex + 1);
+      } else if (event.nativeEvent.actionName === 'decrement') {
+        moveToIndex(activeIndex - 1);
+      }
+    },
+    [activeIndex, moveToIndex]
+  );
 
   const handleSave = useCallback(async () => {
     if (saving) {
@@ -290,87 +305,99 @@ function ImagePreviewModalContent({
     setAnimatedSvgZoomSuspended(zoomed);
   }, []);
 
-  const handleVerticalPull = useCallback(({ released, translateY, velocityY }: VerticalPullState) => {
-    'worklet';
-    const distance = Math.max(0, translateY);
-    pullTranslateY.value = distance;
-    overlayOpacity.value = Math.max(0.2, 1 - distance / Math.max(1, height * 0.5));
-    if (!released) {
-      return;
-    }
-    if (distance >= height * PULL_CLOSE_DISTANCE_RATIO || velocityY >= PULL_CLOSE_VELOCITY) {
-      if (!closing.value) {
-        closing.value = true;
-        scheduleOnRN(onClose);
-      }
-      return;
-    }
-    pullTranslateY.value = withTiming(0);
-    overlayOpacity.value = withTiming(1);
-  }, [closing, height, onClose, overlayOpacity, pullTranslateY]);
-
-  const pullToCloseGesture = useMemo(() => Gesture.Pan()
-    .enabled(pagerScrollEnabled)
-    .maxPointers(1)
-    .activeOffsetY(12)
-    .failOffsetX([-12, 12])
-    .onUpdate((event) => {
+  const handleVerticalPull = useCallback(
+    ({ released, translateY, velocityY }: VerticalPullState) => {
       'worklet';
-      handleVerticalPull({
-        released: false,
-        translateY: Math.max(0, event.translationY),
-        velocityY: event.velocityY
-      });
-    })
-    .onEnd((event) => {
-      'worklet';
-      handleVerticalPull({
-        released: true,
-        translateY: Math.max(0, event.translationY),
-        velocityY: event.velocityY
-      });
-    })
-    .onFinalize((_event, success) => {
-      'worklet';
-      if (!success) {
-        pullTranslateY.value = withTiming(0);
-        overlayOpacity.value = withTiming(1);
-      }
-    }), [handleVerticalPull, overlayOpacity, pagerScrollEnabled, pullTranslateY]);
-  const horizontalPageGesture = useMemo(() => Gesture.Pan()
-    .enabled(pagerScrollEnabled)
-    .maxPointers(1)
-    .activeOffsetX([-12, 12])
-    .failOffsetY([-12, 12])
-    .onEnd((event) => {
-      'worklet';
-      const horizontalDistance = Math.abs(event.translationX);
-      const verticalDistance = Math.abs(event.translationY);
-      const horizontalVelocity = Math.abs(event.velocityX);
-      const verticalVelocity = Math.abs(event.velocityY);
-      if (
-        horizontalDistance <= verticalDistance
-        || (
-          horizontalDistance < width * PAGE_SWIPE_DISTANCE_RATIO
-          && (horizontalVelocity < PAGE_SWIPE_VELOCITY || horizontalVelocity <= verticalVelocity)
-        )
-      ) {
+      const distance = Math.max(0, translateY);
+      pullTranslateY.value = distance;
+      overlayOpacity.value = Math.max(0.2, 1 - distance / Math.max(1, height * 0.5));
+      if (!released) {
         return;
       }
-      const signedMovement = horizontalDistance > 1 ? event.translationX : event.velocityX;
-      if (signedMovement !== 0) {
-        scheduleOnRN(moveFromIndex, activeIndex, signedMovement < 0 ? 1 : -1);
+      if (distance >= height * PULL_CLOSE_DISTANCE_RATIO || velocityY >= PULL_CLOSE_VELOCITY) {
+        if (!closing.value) {
+          closing.value = true;
+          scheduleOnRN(onClose);
+        }
+        return;
       }
-    }), [activeIndex, moveFromIndex, pagerScrollEnabled, width]);
+      pullTranslateY.value = withTiming(0);
+      overlayOpacity.value = withTiming(1);
+    },
+    [closing, height, onClose, overlayOpacity, pullTranslateY]
+  );
+
+  const pullToCloseGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(pagerScrollEnabled)
+        .maxPointers(1)
+        .activeOffsetY(12)
+        .failOffsetX([-12, 12])
+        .onUpdate((event) => {
+          'worklet';
+          handleVerticalPull({
+            released: false,
+            translateY: Math.max(0, event.translationY),
+            velocityY: event.velocityY
+          });
+        })
+        .onEnd((event) => {
+          'worklet';
+          handleVerticalPull({
+            released: true,
+            translateY: Math.max(0, event.translationY),
+            velocityY: event.velocityY
+          });
+        })
+        .onFinalize((_event, success) => {
+          'worklet';
+          if (!success) {
+            pullTranslateY.value = withTiming(0);
+            overlayOpacity.value = withTiming(1);
+          }
+        }),
+    [handleVerticalPull, overlayOpacity, pagerScrollEnabled, pullTranslateY]
+  );
+  const horizontalPageGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(pagerScrollEnabled)
+        .maxPointers(1)
+        .activeOffsetX([-12, 12])
+        .failOffsetY([-12, 12])
+        .onEnd((event) => {
+          'worklet';
+          const horizontalDistance = Math.abs(event.translationX);
+          const verticalDistance = Math.abs(event.translationY);
+          const horizontalVelocity = Math.abs(event.velocityX);
+          const verticalVelocity = Math.abs(event.velocityY);
+          if (
+            horizontalDistance <= verticalDistance ||
+            (horizontalDistance < width * PAGE_SWIPE_DISTANCE_RATIO &&
+              (horizontalVelocity < PAGE_SWIPE_VELOCITY || horizontalVelocity <= verticalVelocity))
+          ) {
+            return;
+          }
+          const signedMovement = horizontalDistance > 1 ? event.translationX : event.velocityX;
+          if (signedMovement !== 0) {
+            scheduleOnRN(moveFromIndex, activeIndex, signedMovement < 0 ? 1 : -1);
+          }
+        }),
+    [activeIndex, moveFromIndex, pagerScrollEnabled, width]
+  );
   const pagerGesture = useMemo(
     () => Gesture.Simultaneous(pullToCloseGesture, horizontalPageGesture, Gesture.Native()),
     [horizontalPageGesture, pullToCloseGesture]
   );
 
   const backgroundStyle = useAnimatedStyle(() => ({ opacity: overlayOpacity.value }), [overlayOpacity]);
-  const pagerPullStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: pullTranslateY.value }]
-  }), [pullTranslateY]);
+  const pagerPullStyle = useAnimatedStyle(
+    () => ({
+      transform: [{ translateY: pullTranslateY.value }]
+    }),
+    [pullTranslateY]
+  );
 
   if (!preview || previewCount === 0) {
     return null;
@@ -447,10 +474,17 @@ function ImagePreviewModalContent({
         {chromeVisible ? (
           <>
             <View pointerEvents="box-none" style={[styles.imagePreviewTopBar, { top: Math.max(insets.top, 12) }]}>
-              <Pressable accessibilityRole="button" accessibilityLabel="关闭图片预览" style={styles.imagePreviewClose} onPress={onClose}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="关闭图片预览"
+                style={styles.imagePreviewClose}
+                onPress={onClose}
+              >
                 <X size={22} color={theme.onOverlay} strokeWidth={1.8} />
               </Pressable>
-              <Text accessibilityLiveRegion="polite" style={styles.imagePreviewCount}>{activeIndex + 1}/{previewCount}</Text>
+              <Text accessibilityLiveRegion="polite" style={styles.imagePreviewCount}>
+                {activeIndex + 1}/{previewCount}
+              </Text>
               <View style={componentStyles.chromeSpacer} />
             </View>
             <View pointerEvents="box-none" style={[componentStyles.bottomBar, { bottom: Math.max(insets.bottom, 16) }]}>
@@ -493,18 +527,15 @@ function PreviewPagerPage({
   theme,
   width
 }: PreviewPageProps) {
-  const originalSource = useMemo(() => imageSourceFromUrl(
-    item.originalUri,
-    { mediaContext, nodeSeekUserAgent }
-  ) as ImageURISource, [item.originalUri, mediaContext, nodeSeekUserAgent]);
-  const displaySource = useMemo(() => imageSourceFromUrl(
-    item.displayUri,
-    { mediaContext, nodeSeekUserAgent }
-  ) as ImageURISource, [item.displayUri, mediaContext, nodeSeekUserAgent]);
-  const displayedBeforeMount = useMemo(
-    () => originalImageDisplayRevision(originalSource) > 0,
-    [originalSource]
+  const originalSource = useMemo(
+    () => imageSourceFromUrl(item.originalUri, { mediaContext, nodeSeekUserAgent }) as ImageURISource,
+    [item.originalUri, mediaContext, nodeSeekUserAgent]
   );
+  const displaySource = useMemo(
+    () => imageSourceFromUrl(item.displayUri, { mediaContext, nodeSeekUserAgent }) as ImageURISource,
+    [item.displayUri, mediaContext, nodeSeekUserAgent]
+  );
+  const displayedBeforeMount = useMemo(() => originalImageDisplayRevision(originalSource) > 0, [originalSource]);
   const requestIdentity = compatibleImageRequestIdentity(originalSource);
   const resolutionIdentity = previewResolutionIdentity(mediaContext.sessionIdentity, item.originalUri);
   const [retryVersion, setRetryVersion] = useState(0);
@@ -525,9 +556,8 @@ function PreviewPagerPage({
       promoteCachedCompatibleSvgArtifact(requestIdentity);
     }
   }, [cachedArtifact, requestIdentity]);
-  const knownArtifact = compatibleSvgArtifact?.requestIdentity === requestIdentity
-    ? compatibleSvgArtifact
-    : cachedArtifact;
+  const knownArtifact =
+    compatibleSvgArtifact?.requestIdentity === requestIdentity ? compatibleSvgArtifact : cachedArtifact;
   const activeArtifact = active ? knownArtifact : null;
   const activeAnimatedArtifact = activeArtifact?.animated ? activeArtifact : null;
   const sourceIdentity = `${requestIdentity}\u0000${retryVersion}`;
@@ -551,109 +581,126 @@ function PreviewPagerPage({
     status: 'loading'
   });
   const status = imageState.sourceIdentity === sourceIdentity ? imageState.status : 'loading';
-  const suppressLoadingOverlay = displayedBeforeMount
-    && !knownArtifact
-    && !nativeFailedRef.current
-    && retryVersion === 0;
-  const setCurrentStatus = useCallback((nextStatus: PreviewStatus) => {
-    setImageState({ sourceIdentity, status: nextStatus });
-  }, [sourceIdentity]);
-  const attachZoomRef = useCallback((reference: ResumableZoomRefType | null) => {
-    zoomRef.current = reference;
-    onRegisterZoom(index, reference);
-  }, [index, onRegisterZoom]);
+  const suppressLoadingOverlay =
+    displayedBeforeMount && !knownArtifact && !nativeFailedRef.current && retryVersion === 0;
+  const setCurrentStatus = useCallback(
+    (nextStatus: PreviewStatus) => {
+      setImageState({ sourceIdentity, status: nextStatus });
+    },
+    [sourceIdentity]
+  );
+  const attachZoomRef = useCallback(
+    (reference: ResumableZoomRefType | null) => {
+      zoomRef.current = reference;
+      onRegisterZoom(index, reference);
+    },
+    [index, onRegisterZoom]
+  );
   const settleZoomGesture = useCallback(() => {
     onZoomGestureSettled(index, zoomRef.current?.getState().scale ?? 1);
   }, [index, onZoomGestureSettled]);
 
-  const finishActiveDiagnostic = useCallback((
-    outcome: 'failure' | 'stale' | 'success',
-    fallback: boolean,
-    terminalReason: string,
-    fields: DiagnosticFields = {},
-    finishedAt = Date.now()
-  ) => {
-    const diagnostic = previewDiagnosticRef.current;
-    if (!diagnostic) {
-      return;
-    }
-    finishDiagnosticTrace(diagnostic.trace, outcome, {
-      ...fields,
-      fallback: fallback || diagnostic.fallback ? 'svg' : 'none',
-      terminalReason
-    }, finishedAt);
-    previewDiagnosticRef.current = null;
-  }, []);
-
-  const currentDiagnostic = useCallback((fallback = false) => {
-    if (!activeRef.current) {
-      return null;
-    }
-    if (!previewDiagnosticRef.current) {
-      previewDiagnosticRef.current = {
-        fallback,
-        trace: beginDiagnosticTrace('media', 'load', {
-          candidateKind: 'lightbox',
-          mediaClass: forumMediaTargetClass(item.originalUri, mediaContext.contentSource),
-          mediaRef: diagnosticRef('media', item.originalUri),
-          mediaRole: 'preview-active',
-          source: mediaContext.contentSource || 'unknown',
-          surface: 'preview'
-        }, loadMetricsRef.current.startedAt)
-      };
-    } else if (fallback) {
-      previewDiagnosticRef.current.fallback = true;
-    }
-    return previewDiagnosticRef.current;
-  }, [item.originalUri, mediaContext.contentSource]);
-
-  const settleLoaded = useCallback((fallback: boolean) => {
-    if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
-      return;
-    }
-    settledRef.current = true;
-    recoveringRef.current = false;
-    if (activeRef.current) {
-      const displayedAt = Date.now();
-      finishActiveDiagnostic(
-        'success',
-        fallback,
-        fallback ? 'fallback-loaded' : 'loaded',
-        previewImageMetricFields(loadMetricsRef.current, displayedAt, true),
-        displayedAt
+  const finishActiveDiagnostic = useCallback(
+    (
+      outcome: 'failure' | 'stale' | 'success',
+      fallback: boolean,
+      terminalReason: string,
+      fields: DiagnosticFields = {},
+      finishedAt = Date.now()
+    ) => {
+      const diagnostic = previewDiagnosticRef.current;
+      if (!diagnostic) {
+        return;
+      }
+      finishDiagnosticTrace(
+        diagnostic.trace,
+        outcome,
+        {
+          ...fields,
+          fallback: fallback || diagnostic.fallback ? 'svg' : 'none',
+          terminalReason
+        },
+        finishedAt
       );
-    }
-    markOriginalImageDisplayed(originalSource);
-    setCurrentStatus('loaded');
-  }, [finishActiveDiagnostic, originalSource, setCurrentStatus, sourceIdentity]);
+      previewDiagnosticRef.current = null;
+    },
+    []
+  );
 
-  const settleFailure = useCallback((fallback: boolean, terminalReason: 'fallback-error' | 'native-error' | 'timeout') => {
-    if (
-      !mountedRef.current
-      || !activeRef.current
-      || sourceIdentityRef.current !== sourceIdentity
-    ) {
-      return;
-    }
-    nativeFailedRef.current = true;
-    settledRef.current = true;
-    recoveringRef.current = false;
-    finishActiveDiagnostic(
-      'failure',
-      fallback,
-      terminalReason,
-      previewImageMetricFields(loadMetricsRef.current)
-    );
-    setCurrentStatus('failed');
-  }, [finishActiveDiagnostic, setCurrentStatus, sourceIdentity]);
+  const currentDiagnostic = useCallback(
+    (fallback = false) => {
+      if (!activeRef.current) {
+        return null;
+      }
+      if (!previewDiagnosticRef.current) {
+        previewDiagnosticRef.current = {
+          fallback,
+          trace: beginDiagnosticTrace(
+            'media',
+            'load',
+            {
+              candidateKind: 'lightbox',
+              mediaClass: forumMediaTargetClass(item.originalUri, mediaContext.contentSource),
+              mediaRef: diagnosticRef('media', item.originalUri),
+              mediaRole: 'preview-active',
+              source: mediaContext.contentSource || 'unknown',
+              surface: 'preview'
+            },
+            loadMetricsRef.current.startedAt
+          )
+        };
+      } else if (fallback) {
+        previewDiagnosticRef.current.fallback = true;
+      }
+      return previewDiagnosticRef.current;
+    },
+    [item.originalUri, mediaContext.contentSource]
+  );
+
+  const settleLoaded = useCallback(
+    (fallback: boolean) => {
+      if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+        return;
+      }
+      settledRef.current = true;
+      recoveringRef.current = false;
+      if (activeRef.current) {
+        const displayedAt = Date.now();
+        finishActiveDiagnostic(
+          'success',
+          fallback,
+          fallback ? 'fallback-loaded' : 'loaded',
+          previewImageMetricFields(loadMetricsRef.current, displayedAt, true),
+          displayedAt
+        );
+      }
+      markOriginalImageDisplayed(originalSource);
+      setCurrentStatus('loaded');
+    },
+    [finishActiveDiagnostic, originalSource, setCurrentStatus, sourceIdentity]
+  );
+
+  const settleFailure = useCallback(
+    (fallback: boolean, terminalReason: 'fallback-error' | 'native-error' | 'timeout') => {
+      if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+        return;
+      }
+      nativeFailedRef.current = true;
+      settledRef.current = true;
+      recoveringRef.current = false;
+      finishActiveDiagnostic('failure', fallback, terminalReason, previewImageMetricFields(loadMetricsRef.current));
+      setCurrentStatus('failed');
+    },
+    [finishActiveDiagnostic, setCurrentStatus, sourceIdentity]
+  );
 
   const recoverSvgArtifact = useCallback(async () => {
     if (
-      !mountedRef.current
-      || !activeRef.current
-      || sourceIdentityRef.current !== sourceIdentity
-      || settledRef.current
-      || recoveringRef.current
+      !mountedRef.current ||
+      !activeRef.current ||
+      sourceIdentityRef.current !== sourceIdentity ||
+      settledRef.current ||
+      recoveringRef.current
     ) {
       return;
     }
@@ -664,11 +711,11 @@ function PreviewPagerPage({
     try {
       const artifact = await recoverCompatibleSvgArtifact(originalSource);
       if (
-        !mountedRef.current
-        || !activeRef.current
-        || sourceIdentityRef.current !== sourceIdentity
-        || settledRef.current
-        || generation !== requestGenerationRef.current
+        !mountedRef.current ||
+        !activeRef.current ||
+        sourceIdentityRef.current !== sourceIdentity ||
+        settledRef.current ||
+        generation !== requestGenerationRef.current
       ) {
         return;
       }
@@ -691,57 +738,61 @@ function PreviewPagerPage({
         settleFailure(true, 'fallback-error');
       }
     }
-  }, [currentDiagnostic, onResolution, originalSource, resolutionIdentity, setCurrentStatus, settleFailure, sourceIdentity]);
+  }, [
+    currentDiagnostic,
+    onResolution,
+    originalSource,
+    resolutionIdentity,
+    setCurrentStatus,
+    settleFailure,
+    sourceIdentity
+  ]);
 
-  const refreshSvgPoster = useCallback(async (artifact: CompatibleSvgArtifact, terminalOnFailure: boolean) => {
-    if (
-      !mountedRef.current
-      || !activeRef.current
-      || sourceIdentityRef.current !== sourceIdentity
-    ) {
-      return;
-    }
-    if (posterRefreshRef.current.sourceIdentity !== sourceIdentity) {
-      posterRefreshRef.current = { attempted: false, inFlight: false, sourceIdentity };
-    }
-    if (posterRefreshRef.current.inFlight) {
-      return;
-    }
-    if (posterRefreshRef.current.attempted) {
-      if (terminalOnFailure) {
-        settleFailure(true, 'fallback-error');
-      }
-      return;
-    }
-    posterRefreshRef.current.attempted = true;
-    posterRefreshRef.current.inFlight = true;
-    if (settledRef.current) {
-      settledRef.current = false;
-      loadMetricsRef.current = { sourceIdentity, startedAt: Date.now() };
-    }
-    currentDiagnostic(true);
-    setCurrentStatus('loading');
-    try {
-      const refreshed = await refreshCompatibleSvgPoster(artifact);
-      if (
-        !mountedRef.current
-        || sourceIdentityRef.current !== sourceIdentity
-      ) {
+  const refreshSvgPoster = useCallback(
+    async (artifact: CompatibleSvgArtifact, terminalOnFailure: boolean) => {
+      if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
         return;
       }
-      setCompatibleSvgArtifact(refreshed);
-      setResolution(refreshed.dimensions);
-      onResolution(resolutionIdentity, refreshed.dimensions);
-    } catch {
-      if (terminalOnFailure) {
-        settleFailure(true, 'fallback-error');
+      if (posterRefreshRef.current.sourceIdentity !== sourceIdentity) {
+        posterRefreshRef.current = { attempted: false, inFlight: false, sourceIdentity };
       }
-    } finally {
-      if (posterRefreshRef.current.sourceIdentity === sourceIdentity) {
-        posterRefreshRef.current.inFlight = false;
+      if (posterRefreshRef.current.inFlight) {
+        return;
       }
-    }
-  }, [currentDiagnostic, onResolution, resolutionIdentity, setCurrentStatus, settleFailure, sourceIdentity]);
+      if (posterRefreshRef.current.attempted) {
+        if (terminalOnFailure) {
+          settleFailure(true, 'fallback-error');
+        }
+        return;
+      }
+      posterRefreshRef.current.attempted = true;
+      posterRefreshRef.current.inFlight = true;
+      if (settledRef.current) {
+        settledRef.current = false;
+        loadMetricsRef.current = { sourceIdentity, startedAt: Date.now() };
+      }
+      currentDiagnostic(true);
+      setCurrentStatus('loading');
+      try {
+        const refreshed = await refreshCompatibleSvgPoster(artifact);
+        if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
+          return;
+        }
+        setCompatibleSvgArtifact(refreshed);
+        setResolution(refreshed.dimensions);
+        onResolution(resolutionIdentity, refreshed.dimensions);
+      } catch {
+        if (terminalOnFailure) {
+          settleFailure(true, 'fallback-error');
+        }
+      } finally {
+        if (posterRefreshRef.current.sourceIdentity === sourceIdentity) {
+          posterRefreshRef.current.inFlight = false;
+        }
+      }
+    },
+    [currentDiagnostic, onResolution, resolutionIdentity, setCurrentStatus, settleFailure, sourceIdentity]
+  );
 
   useLayoutEffect(() => {
     activeRef.current = active;
@@ -848,35 +899,36 @@ function PreviewPagerPage({
       >
         <View testID={`preview-zoom-content-${index}`} style={[componentStyles.previewPage, imageSize]}>
           {activeAnimatedArtifact ? (
-          <ExpoImage
-            key={`${sourceIdentity}:${activeAnimatedArtifact.posterRevision}:continuity`}
-            testID={animatedSvgZoomSuspended || readySvgViewIdentity !== svgViewIdentity
-              ? `preview-continuity-${index}`
-              : undefined}
-            cachePolicy="memory-disk"
-            contentFit="contain"
-            pointerEvents="none"
-            priority="high"
-            recyclingKey={`${mediaContext.sessionIdentity}:${sourceIdentity}:${activeAnimatedArtifact.posterRevision}:continuity`}
-            source={activeAnimatedArtifact.posterSource}
-            style={[
-              StyleSheet.absoluteFill,
-              readySvgViewIdentity === svgViewIdentity
-                && (!animatedSvgZoomSuspended || !animatedSvgPosterReady)
-                ? componentStyles.hiddenMedia
-                : null
-            ]}
-            onDisplay={() => {
-              if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
-                return;
+            <ExpoImage
+              key={`${sourceIdentity}:${activeAnimatedArtifact.posterRevision}:continuity`}
+              testID={
+                animatedSvgZoomSuspended || readySvgViewIdentity !== svgViewIdentity
+                  ? `preview-continuity-${index}`
+                  : undefined
               }
-              setDisplayedSvgPosterIdentity(svgPosterIdentity);
-            }}
-            onError={() => {
-              setDisplayedSvgPosterIdentity((identity) => identity === svgPosterIdentity ? '' : identity);
-              void refreshSvgPoster(activeAnimatedArtifact, false);
-            }}
-          />
+              cachePolicy="memory-disk"
+              contentFit="contain"
+              pointerEvents="none"
+              priority="high"
+              recyclingKey={`${mediaContext.sessionIdentity}:${sourceIdentity}:${activeAnimatedArtifact.posterRevision}:continuity`}
+              source={activeAnimatedArtifact.posterSource}
+              style={[
+                StyleSheet.absoluteFill,
+                readySvgViewIdentity === svgViewIdentity && (!animatedSvgZoomSuspended || !animatedSvgPosterReady)
+                  ? componentStyles.hiddenMedia
+                  : null
+              ]}
+              onDisplay={() => {
+                if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                  return;
+                }
+                setDisplayedSvgPosterIdentity(svgPosterIdentity);
+              }}
+              onError={() => {
+                setDisplayedSvgPosterIdentity((identity) => (identity === svgPosterIdentity ? '' : identity));
+                void refreshSvgPoster(activeAnimatedArtifact, false);
+              }}
+            />
           ) : knownArtifact ? (
             <ExpoImage
               key={`${sourceIdentity}:${knownArtifact.posterRevision}:${active ? 'active' : 'warm'}:poster`}
@@ -935,11 +987,7 @@ function PreviewPagerPage({
                 }
               }}
               onLoadStart={() => {
-                if (
-                  !mountedRef.current
-                  || sourceIdentityRef.current !== sourceIdentity
-                  || settledRef.current
-                ) {
+                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
                   return;
                 }
                 if (!previewDiagnosticRef.current) {
@@ -978,8 +1026,7 @@ function PreviewPagerPage({
               artifact={activeAnimatedArtifact}
               style={[
                 StyleSheet.absoluteFill,
-                readySvgViewIdentity === svgViewIdentity
-                  && (!animatedSvgZoomSuspended || !animatedSvgPosterReady)
+                readySvgViewIdentity === svgViewIdentity && (!animatedSvgZoomSuspended || !animatedSvgPosterReady)
                   ? null
                   : componentStyles.hiddenMedia
               ]}
@@ -1004,7 +1051,12 @@ function PreviewPagerPage({
       {active && status === 'failed' ? (
         <View accessibilityRole="alert" style={styles.imagePreviewState}>
           <Text style={styles.imagePreviewStateText}>图片加载失败</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="重试加载图片" style={styles.imagePreviewTextButton} onPress={retry}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="重试加载图片"
+            style={styles.imagePreviewTextButton}
+            onPress={retry}
+          >
             <Text style={styles.imagePreviewButtonText}>重试</Text>
           </Pressable>
         </View>
@@ -1028,7 +1080,9 @@ function previewImageMetricFields(
 ): DiagnosticFields {
   return {
     ...(metrics.cacheType ? { cacheType: metrics.cacheType } : {}),
-    ...(metrics.firstProgressAt === undefined ? {} : { firstProgressMs: Math.max(0, metrics.firstProgressAt - metrics.startedAt) }),
+    ...(metrics.firstProgressAt === undefined
+      ? {}
+      : { firstProgressMs: Math.max(0, metrics.firstProgressAt - metrics.startedAt) }),
     ...(metrics.loadedAt === undefined ? {} : { loadMs: Math.max(0, metrics.loadedAt - metrics.startedAt) }),
     ...(metrics.loadedBytes === undefined ? {} : { loadedBytes: metrics.loadedBytes }),
     ...(metrics.sourceHeight === undefined ? {} : { sourceHeight: metrics.sourceHeight }),

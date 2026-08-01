@@ -1,26 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  linuxDoReactionStats
-} from './linuxdoReactions';
+import { linuxDoReactionStats } from './linuxdoReactions';
 
 describe('linux.do reaction presentation', () => {
   it('renders reaction ids from the provided catalog and keeps boosts as text', () => {
-    const stats = linuxDoReactionStats({
-      likeCount: 9,
-      reactionSummary: [
-        { id: 'heart', count: 9 },
-        { id: '+1', count: 2 },
-        { id: 'distorted_face', count: 1 },
-        { id: 'tieba_087', count: 1 }
-      ],
-      siteExtension: { source: 'linuxdo', boostCount: 3 }
-    }, {
-      heart: 'https://linux.do/images/emoji/twemoji/heart.png',
-      '+1': 'https://linux.do/images/emoji/twemoji/+1.png',
-      distorted_face: 'https://linux.do/images/emoji/twemoji/distorted_face.png',
-      tieba_087: 'https://cdn3.ldstatic.com/original/3X/2/e/tieba.png'
-    });
+    const stats = linuxDoReactionStats(
+      {
+        likeCount: 9,
+        reactionSummary: [
+          { id: 'heart', count: 9 },
+          { id: '+1', count: 2 },
+          { id: 'distorted_face', count: 1 },
+          { id: 'tieba_087', count: 1 }
+        ],
+        siteExtension: { source: 'linuxdo', boostCount: 3 }
+      },
+      {
+        heart: 'https://linux.do/images/emoji/twemoji/heart.png',
+        '+1': 'https://linux.do/images/emoji/twemoji/+1.png',
+        distorted_face: 'https://linux.do/images/emoji/twemoji/distorted_face.png',
+        tieba_087: 'https://cdn3.ldstatic.com/original/3X/2/e/tieba.png'
+      }
+    );
 
     expect(stats).toEqual([
       {
@@ -56,25 +57,32 @@ describe('linux.do reaction presentation', () => {
   });
 
   it('uses likeCount as a heart reaction only when heart is absent', () => {
-    expect(linuxDoReactionStats({
-      likeCount: 4,
-      reactionSummary: [{ id: '+1', count: 2 }]
-    }).map((stat) => stat.id)).toEqual(['heart', '+1']);
+    expect(
+      linuxDoReactionStats({
+        likeCount: 4,
+        reactionSummary: [{ id: '+1', count: 2 }]
+      }).map((stat) => stat.id)
+    ).toEqual(['heart', '+1']);
 
-    expect(linuxDoReactionStats({
-      likeCount: 4,
-      reactionSummary: [{ id: 'heart', count: 4 }]
-    })).toHaveLength(1);
+    expect(
+      linuxDoReactionStats({
+        likeCount: 4,
+        reactionSummary: [{ id: 'heart', count: 4 }]
+      })
+    ).toHaveLength(1);
   });
 
   it('falls back to text for unknown custom reactions', () => {
-    expect(linuxDoReactionStats({
-      reactionSummary: [{ id: 'unknown_custom', count: 1 }]
-    })).toEqual([{
-      id: 'unknown_custom',
-      label: 'unknown custom',
-      value: 1
-    }]);
+    expect(
+      linuxDoReactionStats({
+        reactionSummary: [{ id: 'unknown_custom', count: 1 }]
+      })
+    ).toEqual([
+      {
+        id: 'unknown_custom',
+        label: 'unknown custom',
+        value: 1
+      }
+    ]);
   });
-
 });

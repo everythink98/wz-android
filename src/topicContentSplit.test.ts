@@ -40,7 +40,10 @@ describe('Android topic content splitting', () => {
     }));
     try {
       const { splitTopicContentHtml: splitWithFallback } = await import('./topicContentSplit');
-      const chunks = splitWithFallback('<p>before</p><iframe src="https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz"></iframe><p>after</p>', 1);
+      const chunks = splitWithFallback(
+        '<p>before</p><iframe src="https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz"></iframe><p>after</p>',
+        1
+      );
 
       expect(chunks).toEqual([
         '<p>before</p>',
@@ -64,7 +67,10 @@ describe('Android topic content splitting', () => {
     }));
     try {
       const { splitTopicContentHtml: splitWithFallback } = await import('./topicContentSplit');
-      const chunks = splitWithFallback('<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video><p>after</p>', 1);
+      const chunks = splitWithFallback(
+        '<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video><p>after</p>',
+        1
+      );
 
       expect(chunks).toEqual([
         '<p>before</p>',
@@ -88,7 +94,10 @@ describe('Android topic content splitting', () => {
     }));
     try {
       const { splitTopicContentHtml: splitWithFallback } = await import('./topicContentSplit');
-      const chunks = splitWithFallback('<p>before</p><forum-link-card href="https://example.com" title="Example"></forum-link-card><p>after</p>', 1);
+      const chunks = splitWithFallback(
+        '<p>before</p><forum-link-card href="https://example.com" title="Example"></forum-link-card><p>after</p>',
+        1
+      );
 
       expect(chunks).toEqual([
         '<p>before</p>',
@@ -112,7 +121,8 @@ describe('Android topic content splitting', () => {
     }));
     try {
       const { splitTopicContentHtml: splitWithFallback } = await import('./topicContentSplit');
-      const report = '<forum-terminal-report><forum-terminal-tab title="基本信息"><div>one</div></forum-terminal-tab><forum-terminal-tab title="回程路由"><div>two</div></forum-terminal-tab></forum-terminal-report>';
+      const report =
+        '<forum-terminal-report><forum-terminal-tab title="基本信息"><div>one</div></forum-terminal-tab><forum-terminal-tab title="回程路由"><div>two</div></forum-terminal-tab></forum-terminal-report>';
       const chunks = splitWithFallback(`<p>before</p>${report}<p>after</p>`, 1);
 
       expect(chunks).toEqual(['<p>before</p>', report, '<p>after</p>']);
@@ -128,7 +138,9 @@ describe('Android topic content splitting', () => {
   });
 
   it('does not treat mixed content as a standalone video block', () => {
-    expect(forumVideoBlockFromHtml('<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>')).toBeNull();
+    expect(
+      forumVideoBlockFromHtml('<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>')
+    ).toBeNull();
   });
 
   it('[REG-PERF-008] skips DOM parsing when a content chunk has no native video tag', async () => {

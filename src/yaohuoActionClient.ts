@@ -3,11 +3,7 @@ import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from './androidWebViewUserAgent';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { elementText, parseHtml, textContentFromHtml } from './localHtml';
 import { parseYaohuoFavoriteRecordId, yaohuoLoginRequirementReason } from './localYaohuo';
-import {
-  YAOHUO_BASE_URL,
-  YAOHUO_BBS_REFERER,
-  YAOHUO_LOGIN_URL
-} from './localYaohuoHelpers';
+import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL } from './localYaohuoHelpers';
 
 const YAOHUO_ACTION_HEADERS = {
   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -17,9 +13,7 @@ const YAOHUO_ACTION_HEADERS = {
   'sec-fetch-dest': 'document',
   'sec-fetch-mode': 'navigate',
   'sec-fetch-site': 'same-origin',
-  ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT
-    ? { 'user-agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT }
-    : {})
+  ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT ? { 'user-agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT } : {})
 };
 const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
 const YAOHUO_ACTION_SUCCESS_PATTERN = /^评论成功$/;
@@ -29,14 +23,11 @@ const YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN = /^\/bbs\/favlist\.aspx$/i;
 const YAOHUO_ACTION_UNKNOWN_MESSAGE = '操作结果无法确认，请刷新原帖核对';
 
 export type YaohuoActionResult =
-  | { status: 'confirmed'; message: string; favoriteId?: number }
-  | { status: 'unknown'; message: string };
+  { status: 'confirmed'; message: string; favoriteId?: number } | { status: 'unknown'; message: string };
 
 function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired') {
   const error = new Error(
-    reason === 'verification'
-      ? '妖火需要完成访问验证，请在登录页完成验证后重试'
-      : '妖火登录已失效，请重新登录'
+    reason === 'verification' ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录'
   );
   Object.assign(error, {
     source: 'yaohuo',
@@ -70,10 +61,12 @@ function assertYaohuoActionSuccess(message: string) {
 }
 
 function deleteConfirmationPath(html: string) {
-  const link = parseHtml(html).querySelectorAll('a[href]').find((item) => {
-    const href = item.getAttribute('href') || '';
-    return /book_re_del\.aspx/i.test(href) && /确定删除|确认删除/.test(elementText(item));
-  });
+  const link = parseHtml(html)
+    .querySelectorAll('a[href]')
+    .find((item) => {
+      const href = item.getAttribute('href') || '';
+      return /book_re_del\.aspx/i.test(href) && /确定删除|确认删除/.test(elementText(item));
+    });
   const href = link?.getAttribute('href');
   if (!href) {
     return '';
@@ -81,11 +74,13 @@ function deleteConfirmationPath(html: string) {
   try {
     const url = new URL(href.replace(/&amp;/gi, '&'), YAOHUO_BASE_URL);
     const host = url.hostname.toLowerCase();
-    if (host !== 'www.yaohuo.me'
-      || !YAOHUO_REPLY_DELETE_PATH_PATTERN.test(url.pathname)
-      || url.searchParams.get('action')?.toLowerCase() !== 'godel'
-      || !url.searchParams.get('reid')
-      || !url.searchParams.get('id')) {
+    if (
+      host !== 'www.yaohuo.me' ||
+      !YAOHUO_REPLY_DELETE_PATH_PATTERN.test(url.pathname) ||
+      url.searchParams.get('action')?.toLowerCase() !== 'godel' ||
+      !url.searchParams.get('reid') ||
+      !url.searchParams.get('id')
+    ) {
       return '';
     }
     url.protocol = 'https:';
@@ -98,16 +93,17 @@ function deleteConfirmationPath(html: string) {
 
 function isFavoriteEntryRequest(request: YaohuoActionRequest) {
   const url = new URL(request.path, YAOHUO_BASE_URL);
-  return request.method === 'GET'
-    && YAOHUO_FAVORITE_ENTRY_PATH_PATTERN.test(url.pathname)
-    && url.searchParams.get('action')?.toLowerCase() === 'fav';
+  return (
+    request.method === 'GET' &&
+    YAOHUO_FAVORITE_ENTRY_PATH_PATTERN.test(url.pathname) &&
+    url.searchParams.get('action')?.toLowerCase() === 'fav'
+  );
 }
 
 function isFavoriteSuccessUrl(responseUrl: string) {
   try {
     const url = new URL(responseUrl);
-    return url.origin === new URL(YAOHUO_BASE_URL).origin
-      && YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN.test(url.pathname);
+    return url.origin === new URL(YAOHUO_BASE_URL).origin && YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN.test(url.pathname);
   } catch {
     return false;
   }
@@ -115,9 +111,11 @@ function isFavoriteSuccessUrl(responseUrl: string) {
 
 function isFavoriteDeleteRequest(request: YaohuoActionRequest) {
   const url = new URL(request.path, YAOHUO_BASE_URL);
-  return request.method === 'POST'
-    && YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN.test(url.pathname)
-    && url.searchParams.get('action')?.toLowerCase() === 'delete';
+  return (
+    request.method === 'POST' &&
+    YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN.test(url.pathname) &&
+    url.searchParams.get('action')?.toLowerCase() === 'delete'
+  );
 }
 
 function favoriteDeleteMessage(text: string) {
@@ -128,9 +126,9 @@ function favoriteDeleteMessage(text: string) {
     throw new Error('取消收藏结果无法确认，请刷新原帖核对');
   }
   if (result.success !== true) {
-    throw new Error(typeof result.message === 'string' && result.message.trim()
-      ? result.message.trim()
-      : '取消收藏失败');
+    throw new Error(
+      typeof result.message === 'string' && result.message.trim() ? result.message.trim() : '取消收藏失败'
+    );
   }
   return '已取消原站收藏';
 }
@@ -148,18 +146,22 @@ async function fetchYaohuoActionHtml({
   signal?: AbortSignal;
   timeoutMs?: number;
 }) {
-  const response = await fetchWithTimeout(`${YAOHUO_BASE_URL}${path}`, {
-    method: request.method,
-    headers: {
-      ...YAOHUO_ACTION_HEADERS,
-      ...request.headers
+  const response = await fetchWithTimeout(
+    `${YAOHUO_BASE_URL}${path}`,
+    {
+      method: request.method,
+      headers: {
+        ...YAOHUO_ACTION_HEADERS,
+        ...request.headers
+      },
+      body: request.method === 'POST' ? request.body : undefined
     },
-    body: request.method === 'POST' ? request.body : undefined
-  }, {
-    fetcher,
-    signal,
-    timeoutMs
-  });
+    {
+      fetcher,
+      signal,
+      timeoutMs
+    }
+  );
   const html = await response.text();
   const responseUrl = response.url || '';
 

@@ -32,9 +32,7 @@ const user: UserProfile = {
 
 describe('user screen list items', () => {
   it('keeps profile content out of the virtualized list data', () => {
-    expect(createUserListItems('topics', [topic], [reply])).toEqual([
-      { type: 'topic', key: 'nodeseek:101', topic }
-    ]);
+    expect(createUserListItems('topics', [topic], [reply])).toEqual([{ type: 'topic', key: 'nodeseek:101', topic }]);
     expect(createUserListItems('replies', [topic], [reply])).toEqual([
       { type: 'reply', key: 'nodeseek:reply:comment-201', reply }
     ]);
@@ -56,9 +54,6 @@ describe('user screen list items', () => {
   it('keeps virtualized list keys unique when a source returns duplicate ids', () => {
     const items = createUserListItems('replies', [], [reply, { ...reply }]);
 
-    expect(items.map(userListItemKey)).toEqual([
-      'nodeseek:reply:comment-201',
-      'nodeseek:reply:comment-201:2'
-    ]);
+    expect(items.map(userListItemKey)).toEqual(['nodeseek:reply:comment-201', 'nodeseek:reply:comment-201:2']);
   });
 });

@@ -16,9 +16,13 @@ describe('release workflow trust gates', () => {
     const nodeGateIndex = releaseScript.indexOf('assertReleaseNode22(process.versions.node)');
     const cleanGateIndex = releaseScript.indexOf('const gitSha = cleanGitSha()');
     const signingPreflightIndex = releaseScript.indexOf('verifyReleaseSigningEnv(configuredReleaseEnv)');
-    const versionGateIndex = releaseScript.indexOf("run('node', ['scripts/check-version.mjs', '--require-previous-release']);");
+    const versionGateIndex = releaseScript.indexOf(
+      "run('node', ['scripts/check-version.mjs', '--require-previous-release']);"
+    );
     const verifyIndex = releaseScript.indexOf("run('npm', ['run', 'verify']);");
-    const resolvedKeystoreIndex = releaseScript.indexOf('resolveReleaseKeystorePath(rootDir, releaseEnv.WZ_ANDROID_KEYSTORE_PATH)');
+    const resolvedKeystoreIndex = releaseScript.indexOf(
+      'resolveReleaseKeystorePath(rootDir, releaseEnv.WZ_ANDROID_KEYSTORE_PATH)'
+    );
     const absoluteKeystoreEnvIndex = releaseScript.indexOf('WZ_ANDROID_KEYSTORE_PATH: keystorePath');
 
     expect(resolvedKeystoreIndex).toBeGreaterThanOrEqual(0);
@@ -34,9 +38,15 @@ describe('release workflow trust gates', () => {
   it('[REG-OPS-015] scopes signing secrets to the final assembly and records build provenance', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const packageJson = JSON.parse(readProjectFile('package.json'));
-    const packageSnapshotIndex = releaseScript.indexOf('const packageJsonBeforePrebuild = readFileSync(packageJsonPath');
-    const prebuildIndex = releaseScript.indexOf("['expo', 'prebuild', '--platform', 'android', '--clean', '--no-install']");
-    const packageRestoreIndex = releaseScript.indexOf('restorePackageJsonAfterPrebuild(packageJsonPath, packageJsonBeforePrebuild)');
+    const packageSnapshotIndex = releaseScript.indexOf(
+      'const packageJsonBeforePrebuild = readFileSync(packageJsonPath'
+    );
+    const prebuildIndex = releaseScript.indexOf(
+      "['expo', 'prebuild', '--platform', 'android', '--clean', '--no-install']"
+    );
+    const packageRestoreIndex = releaseScript.indexOf(
+      'restorePackageJsonAfterPrebuild(packageJsonPath, packageJsonBeforePrebuild)'
+    );
     const buildStagesIndex = releaseScript.indexOf('runReleaseBuildStages({');
 
     expect(packageJson.scripts).not.toHaveProperty('ios');

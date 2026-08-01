@@ -20,73 +20,82 @@ import {
 import { splitDiscourseContentHtml } from './discourseContent';
 import { textContentFromHtml } from './localHtml';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
-import { getNodeSeekCurrentUserProfile, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, resolveNodeSeekUser } from './localNodeseek';
+import {
+  getNodeSeekCurrentUserProfile,
+  getNodeSeekReplies,
+  getNodeSeekTopic,
+  getNodeSeekUserProfile,
+  resolveNodeSeekUser
+} from './localNodeseek';
 import { setRequestTimeoutsActive } from './request';
 import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { DEFAULT_SEARCH_FILTERS } from './searchFilters';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  setDiagnosticWriter,
-  withDiagnosticFetcher
-} from './diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter, withDiagnosticFetcher } from './diagnostics';
 
-const nodeSeekPayload = Buffer.from(JSON.stringify({
-  rotateTopics: [{
-    postId: 101,
-    titleText: 'NodeSeek topic',
-    titleLink: '/post-101-1',
-    op: { name: 'alice', avatar: '/avatar.png' },
-    category: { key: 'tech', name: '技术' },
-    time: { createdDate: '2026-05-20T00:00:00.000Z' },
-    updatedDate: '2026-05-20T01:00:00.000Z',
-    comments: 2,
-    views: '1.2k',
-    content: 'NodeSeek body'
-  }],
-  allCategory: [
-    { key: 'tech', cn_text: '技术' },
-    { key: 'admin', cn_text: '管理', adminOnly: true }
-  ]
-})).toString('base64');
-
-const nodeSeekTopicPayload = Buffer.from(JSON.stringify({
-  postData: {
-    postId: 101,
-    title: 'NodeSeek topic',
-    op: { name: 'alice' },
-    category: { key: 'tech', name: '技术' },
-    comments: [
+const nodeSeekPayload = Buffer.from(
+  JSON.stringify({
+    rotateTopics: [
       {
-        commentId: 1,
-        poster: { name: 'alice' },
-        markdown: '正文 **内容**',
-        time: { createdDate: '2026-05-20T00:00:00.000Z' }
-      },
-      {
-        commentId: 2,
-        poster: { name: 'bob' },
-        markdown: '回复内容',
-        time: { createdDate: '2026-05-20T00:01:00.000Z' }
+        postId: 101,
+        titleText: 'NodeSeek topic',
+        titleLink: '/post-101-1',
+        op: { name: 'alice', avatar: '/avatar.png' },
+        category: { key: 'tech', name: '技术' },
+        time: { createdDate: '2026-05-20T00:00:00.000Z' },
+        updatedDate: '2026-05-20T01:00:00.000Z',
+        comments: 2,
+        views: '1.2k',
+        content: 'NodeSeek body'
       }
+    ],
+    allCategory: [
+      { key: 'tech', cn_text: '技术' },
+      { key: 'admin', cn_text: '管理', adminOnly: true }
     ]
-  }
-})).toString('base64');
+  })
+).toString('base64');
 
-const nodeSeekReplyPagePayload = Buffer.from(JSON.stringify({
-  postData: {
-    postId: 101,
-    title: 'NodeSeek topic',
-    comments: [
-      {
-        commentId: 2,
-        poster: { name: 'bob' },
-        markdown: '回复内容',
-        time: { createdDate: '2026-05-20T00:01:00.000Z' }
-      }
-    ]
-  }
-})).toString('base64');
+const nodeSeekTopicPayload = Buffer.from(
+  JSON.stringify({
+    postData: {
+      postId: 101,
+      title: 'NodeSeek topic',
+      op: { name: 'alice' },
+      category: { key: 'tech', name: '技术' },
+      comments: [
+        {
+          commentId: 1,
+          poster: { name: 'alice' },
+          markdown: '正文 **内容**',
+          time: { createdDate: '2026-05-20T00:00:00.000Z' }
+        },
+        {
+          commentId: 2,
+          poster: { name: 'bob' },
+          markdown: '回复内容',
+          time: { createdDate: '2026-05-20T00:01:00.000Z' }
+        }
+      ]
+    }
+  })
+).toString('base64');
+
+const nodeSeekReplyPagePayload = Buffer.from(
+  JSON.stringify({
+    postData: {
+      postId: 101,
+      title: 'NodeSeek topic',
+      comments: [
+        {
+          commentId: 2,
+          poster: { name: 'bob' },
+          markdown: '回复内容',
+          time: { createdDate: '2026-05-20T00:01:00.000Z' }
+        }
+      ]
+    }
+  })
+).toString('base64');
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), {
@@ -140,19 +149,23 @@ describe('Android local sources', () => {
   });
 
   it('converts NodeSeek Bilibili image syntax into embeddable player HTML', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 102,
-        title: 'NodeSeek video topic',
-        op: { name: 'alice' },
-        comments: [{
-          commentId: 1,
-          poster: { name: 'alice' },
-          markdown: '![image](https://www.bilibili.com/video/BV1GUdgBdESz/?p=2)',
-          time: { createdDate: '2026-05-20T00:00:00.000Z' }
-        }]
-      }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 102,
+          title: 'NodeSeek video topic',
+          op: { name: 'alice' },
+          comments: [
+            {
+              commentId: 1,
+              poster: { name: 'alice' },
+              markdown: '![image](https://www.bilibili.com/video/BV1GUdgBdESz/?p=2)',
+              time: { createdDate: '2026-05-20T00:00:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
 
     const topic = await getNodeSeekTopic('102', { fetcher });
@@ -163,12 +176,26 @@ describe('Android local sources', () => {
   });
 
   it('does not infer a NodeSeek next page when the list exactly reaches the limit', async () => {
-    const exactPagePayload = Buffer.from(JSON.stringify({
-      rotateTopics: [
-        { postId: 201, titleText: 'NodeSeek one', titleLink: '/post-201-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:01:00.000Z' } },
-        { postId: 200, titleText: 'NodeSeek two', titleLink: '/post-200-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:00:00.000Z' } }
-      ]
-    })).toString('base64');
+    const exactPagePayload = Buffer.from(
+      JSON.stringify({
+        rotateTopics: [
+          {
+            postId: 201,
+            titleText: 'NodeSeek one',
+            titleLink: '/post-201-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-20T00:01:00.000Z' }
+          },
+          {
+            postId: 200,
+            titleText: 'NodeSeek two',
+            titleLink: '/post-200-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-20T00:00:00.000Z' }
+          }
+        ]
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${exactPagePayload}</script>`));
 
     const feed = await getFeed({ source: 'nodeseek', limit: 2, fetcher });
@@ -179,12 +206,20 @@ describe('Android local sources', () => {
   });
 
   it('shows NodeSeek embedded list comments as replies excluding the original post', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      rotateTopics: [
-        { postId: 202, titleText: 'NodeSeek no replies', titleLink: '/post-202-1', op: { name: 'alice' }, comments: 1 },
-        { postId: 203, titleText: 'NodeSeek replies', titleLink: '/post-203-1', op: { name: 'bob' }, comments: 4 }
-      ]
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        rotateTopics: [
+          {
+            postId: 202,
+            titleText: 'NodeSeek no replies',
+            titleLink: '/post-202-1',
+            op: { name: 'alice' },
+            comments: 1
+          },
+          { postId: 203, titleText: 'NodeSeek replies', titleLink: '/post-203-1', op: { name: 'bob' }, comments: 4 }
+        ]
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
 
     const feed = await getFeed({ source: 'nodeseek', fetcher });
@@ -193,58 +228,82 @@ describe('Android local sources', () => {
   });
 
   it('keeps NodeSeek detail reply metadata from embedded comments', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      user: {
-        member_id: 48872,
-        member_name: '凡想世界',
-        avatar: '/avatar/48872.png'
-      },
-      postData: {
-        postId: 204,
-        title: 'NodeSeek detail metadata',
-        views: '2.2k',
-        collectionCount: 4,
-        collected: false,
-        locked: 0,
-        op: { uid: 9891, name: 'alice' },
-        category: 'daily',
-        categoryWord: '日常',
-        categoryLink: '/categories/daily',
-        comments: [
-          {
-            commentId: 10,
-            floorIndex: 0,
-            poster: { name: 'alice', uid: 9891, isOp: true, info: '楼主', avatar: '/avatar/9891.png', profile: '/space/9891', roles: [{ name: 'admin', display_text: '管理' }] },
-            markdown: '正文',
-            time: { createdDate: '2026-05-20T00:00:00.000Z' },
-            upvoteCount: 1,
-            likeCount: 0,
-            dislikeCount: 0
-          },
-          {
-            commentId: 12,
-            floorIndex: 15,
-            hot: true,
-            pined: true,
-            poster: { name: 'bob', uid: 42, isMe: true, avatar: '/avatar/42.png', profile: '/space/42', roles: [{ name: 'active', display_text: '活跃' }] },
-            markdown: '热门回复',
-            signature: '签名 **内容**',
-            time: { createdDate: '2026-05-20T00:15:00.000Z' },
-            upvoteCount: 0,
-            likeCount: 2,
-            dislikeCount: 1,
-            disliked: true
-          },
-          {
-            commentId: 11,
-            floorIndex: 1,
-            poster: { name: 'alice', uid: 9891, isOp: true, info: '楼主', avatar: '/avatar/9891.png', profile: '/space/9891' },
-            markdown: '楼主回复',
-            time: { createdDate: '2026-05-20T00:01:00.000Z' }
-          }
-        ]
-      }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        user: {
+          member_id: 48872,
+          member_name: '凡想世界',
+          avatar: '/avatar/48872.png'
+        },
+        postData: {
+          postId: 204,
+          title: 'NodeSeek detail metadata',
+          views: '2.2k',
+          collectionCount: 4,
+          collected: false,
+          locked: 0,
+          op: { uid: 9891, name: 'alice' },
+          category: 'daily',
+          categoryWord: '日常',
+          categoryLink: '/categories/daily',
+          comments: [
+            {
+              commentId: 10,
+              floorIndex: 0,
+              poster: {
+                name: 'alice',
+                uid: 9891,
+                isOp: true,
+                info: '楼主',
+                avatar: '/avatar/9891.png',
+                profile: '/space/9891',
+                roles: [{ name: 'admin', display_text: '管理' }]
+              },
+              markdown: '正文',
+              time: { createdDate: '2026-05-20T00:00:00.000Z' },
+              upvoteCount: 1,
+              likeCount: 0,
+              dislikeCount: 0
+            },
+            {
+              commentId: 12,
+              floorIndex: 15,
+              hot: true,
+              pined: true,
+              poster: {
+                name: 'bob',
+                uid: 42,
+                isMe: true,
+                avatar: '/avatar/42.png',
+                profile: '/space/42',
+                roles: [{ name: 'active', display_text: '活跃' }]
+              },
+              markdown: '热门回复',
+              signature: '签名 **内容**',
+              time: { createdDate: '2026-05-20T00:15:00.000Z' },
+              upvoteCount: 0,
+              likeCount: 2,
+              dislikeCount: 1,
+              disliked: true
+            },
+            {
+              commentId: 11,
+              floorIndex: 1,
+              poster: {
+                name: 'alice',
+                uid: 9891,
+                isOp: true,
+                info: '楼主',
+                avatar: '/avatar/9891.png',
+                profile: '/space/9891'
+              },
+              markdown: '楼主回复',
+              time: { createdDate: '2026-05-20T00:01:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
 
     const topic = await getNodeSeekTopic('204', { fetcher });
@@ -286,29 +345,31 @@ describe('Android local sources', () => {
   });
 
   it('uses NodeSeek embedded replyCount when the first page only has 10 replies', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 207,
-        title: 'NodeSeek embedded reply count',
-        op: { name: 'alice' },
-        replyCount: 12,
-        comments: [
-          {
-            commentId: 1,
-            poster: { name: 'alice' },
-            markdown: '正文',
-            time: { createdDate: '2026-05-20T00:00:00.000Z' }
-          },
-          ...Array.from({ length: 10 }, (_, index) => ({
-            commentId: index + 2,
-            floorIndex: index + 1,
-            poster: { name: `user-${index + 1}` },
-            markdown: `回复 ${index + 1}`,
-            time: { createdDate: '2026-05-20T00:01:00.000Z' }
-          }))
-        ]
-      }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 207,
+          title: 'NodeSeek embedded reply count',
+          op: { name: 'alice' },
+          replyCount: 12,
+          comments: [
+            {
+              commentId: 1,
+              poster: { name: 'alice' },
+              markdown: '正文',
+              time: { createdDate: '2026-05-20T00:00:00.000Z' }
+            },
+            ...Array.from({ length: 10 }, (_, index) => ({
+              commentId: index + 2,
+              floorIndex: index + 1,
+              poster: { name: `user-${index + 1}` },
+              markdown: `回复 ${index + 1}`,
+              time: { createdDate: '2026-05-20T00:01:00.000Z' }
+            }))
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
 
     const topic = await getNodeSeekTopic('207', { fetcher });
@@ -318,14 +379,18 @@ describe('Android local sources', () => {
   });
 
   it('does not use NodeSeek rendered pager page numbers as replyCount', async () => {
-    const replies = Array.from({ length: 10 }, (_, index) => `
+    const replies = Array.from(
+      { length: 10 },
+      (_, index) => `
       <li id="${index + 1}" data-comment-id="${index + 2}" class="content-item">
         <div class="author-info"><a href="/space/${index + 2}" class="author-name">user-${index + 1}</a></div>
         <time datetime="2026-05-20T00:01:00.000Z"></time>
         <article class="post-content"><p>回复 ${index + 1}</p></article>
       </li>
-    `).join('');
-    const fetcher = vi.fn(async () => html(`
+    `
+    ).join('');
+    const fetcher = vi.fn(async () =>
+      html(`
       <h1>NodeSeek rendered reply count</h1>
       <div class="nsk-pager post-top-pager">12</div>
       <div id="0" data-comment-id="1" class="content-item">
@@ -334,7 +399,8 @@ describe('Android local sources', () => {
         <article class="post-content"><p>正文</p></article>
       </div>
       <ul>${replies}</ul>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('208', { fetcher });
 
@@ -343,32 +409,34 @@ describe('Android local sources', () => {
   });
 
   it('uses rendered NodeSeek html for display and markdown only for editing', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 205,
-        title: 'NodeSeek rendered content',
-        op: { uid: 9891, name: 'alice' },
-        category: 'daily',
-        categoryWord: '日常',
-        comments: [
-          {
-            commentId: 20,
-            poster: { name: 'alice', uid: 9891, isOp: true },
-            markdown: '[Markdown 正文](/markdown-post-1)',
-            content: '<p><a href="/post-1">正文链接</a></p>',
-            time: { createdDate: '2026-05-20T00:00:00.000Z' }
-          },
-          {
-            commentId: 21,
-            poster: { name: 'bob', uid: 42, isMe: true },
-            markdown: '[Markdown 回复](/markdown-post-2)',
-            content: '<p><a href="/post-2">回复链接</a></p>',
-            signature: '<p><a href="/space/42">个人签名</a></p>',
-            time: { createdDate: '2026-05-20T00:01:00.000Z' }
-          }
-        ]
-      }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 205,
+          title: 'NodeSeek rendered content',
+          op: { uid: 9891, name: 'alice' },
+          category: 'daily',
+          categoryWord: '日常',
+          comments: [
+            {
+              commentId: 20,
+              poster: { name: 'alice', uid: 9891, isOp: true },
+              markdown: '[Markdown 正文](/markdown-post-1)',
+              content: '<p><a href="/post-1">正文链接</a></p>',
+              time: { createdDate: '2026-05-20T00:00:00.000Z' }
+            },
+            {
+              commentId: 21,
+              poster: { name: 'bob', uid: 42, isMe: true },
+              markdown: '[Markdown 回复](/markdown-post-2)',
+              content: '<p><a href="/post-2">回复链接</a></p>',
+              signature: '<p><a href="/space/42">个人签名</a></p>',
+              time: { createdDate: '2026-05-20T00:01:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
 
     const topic = await getNodeSeekTopic('205', { fetcher });
@@ -387,34 +455,37 @@ describe('Android local sources', () => {
   });
 
   it('does not escape rendered NodeSeek html even when it arrives in markdown fields', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 206,
-        title: 'NodeSeek html markdown fields',
-        op: { uid: 9891, name: 'alice' },
-        comments: [
-          {
-            commentId: 30,
-            poster: { name: 'alice', uid: 9891 },
-            markdown: '<p><a href="/post-1">正文链接</a></p>',
-            time: { createdDate: '2026-05-20T00:00:00.000Z' }
-          },
-          {
-            commentId: 31,
-            poster: { name: 'bob', uid: 42, isMe: true },
-            markdown: '<p><a href="/post-2">回复链接</a></p>',
-            time: { createdDate: '2026-05-20T00:01:00.000Z' }
-          },
-          {
-            commentId: 32,
-            poster: { name: 'carol', uid: 43 },
-            content: 'plain rendered fallback',
-            markdown: '![xhj032](https://www.nodeseek.com/static/image/smiley/xhj032.png)\n\n[@电动面包](https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85) [#4](https://www.nodeseek.com/post-793572-1#4) 后续正文',
-            time: { createdDate: '2026-05-20T00:02:00.000Z' }
-          }
-        ]
-      }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 206,
+          title: 'NodeSeek html markdown fields',
+          op: { uid: 9891, name: 'alice' },
+          comments: [
+            {
+              commentId: 30,
+              poster: { name: 'alice', uid: 9891 },
+              markdown: '<p><a href="/post-1">正文链接</a></p>',
+              time: { createdDate: '2026-05-20T00:00:00.000Z' }
+            },
+            {
+              commentId: 31,
+              poster: { name: 'bob', uid: 42, isMe: true },
+              markdown: '<p><a href="/post-2">回复链接</a></p>',
+              time: { createdDate: '2026-05-20T00:01:00.000Z' }
+            },
+            {
+              commentId: 32,
+              poster: { name: 'carol', uid: 43 },
+              content: 'plain rendered fallback',
+              markdown:
+                '![xhj032](https://www.nodeseek.com/static/image/smiley/xhj032.png)\n\n[@电动面包](https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85) [#4](https://www.nodeseek.com/post-793572-1#4) 后续正文',
+              time: { createdDate: '2026-05-20T00:02:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
 
     const topic = await getNodeSeekTopic('206', { fetcher });
@@ -425,7 +496,9 @@ describe('Android local sources', () => {
     expect(topic.replies[0].contentHtml).not.toContain('&lt;p');
     expect(topic.replies[0]).not.toHaveProperty('contentMarkdown');
     expect(topic.replies[1].contentHtml).toContain('src="https://www.nodeseek.com/static/image/smiley/xhj032.png"');
-    expect(topic.replies[1].contentHtml).toContain('<a href="https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85">@电动面包</a>');
+    expect(topic.replies[1].contentHtml).toContain(
+      '<a href="https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85">@电动面包</a>'
+    );
     expect(topic.replies[1].contentHtml).toContain('<a href="https://www.nodeseek.com/post-793572-1#4">#4</a>');
     expect(topic.replies[1].contentHtml).not.toContain('plain rendered fallback');
   });
@@ -435,15 +508,17 @@ describe('Android local sources', () => {
       if (input.includes('/latest.json')) {
         return json({
           topic_list: {
-            topics: [{
-              id: 42,
-              title: 'linux.do list topic',
-              slug: 'linux-list-topic',
-              created_at: '2026-05-20T00:00:00.000Z',
-              posts_count: 1,
-              posters: [{ user_id: 7, description: 'Original Poster' }],
-              notification_level: 1
-            }]
+            topics: [
+              {
+                id: 42,
+                title: 'linux.do list topic',
+                slug: 'linux-list-topic',
+                created_at: '2026-05-20T00:00:00.000Z',
+                posts_count: 1,
+                posters: [{ user_id: 7, description: 'Original Poster' }],
+                notification_level: 1
+              }
+            ]
           },
           users: [{ id: 7, username: 'alice', trust_level: 4 }]
         });
@@ -458,8 +533,22 @@ describe('Android local sources', () => {
           notification_level: 1,
           post_stream: {
             posts: [
-              { id: 100, post_number: 1, username: 'alice', trust_level: 4, cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
-              { id: 101, post_number: 2, username: 'bob', trust_level: 2, cooked: '<p>reply</p>', created_at: '2026-05-20T00:01:00.000Z' }
+              {
+                id: 100,
+                post_number: 1,
+                username: 'alice',
+                trust_level: 4,
+                cooked: '<p>body</p>',
+                created_at: '2026-05-20T00:00:00.000Z'
+              },
+              {
+                id: 101,
+                post_number: 2,
+                username: 'bob',
+                trust_level: 2,
+                cooked: '<p>reply</p>',
+                created_at: '2026-05-20T00:01:00.000Z'
+              }
             ]
           }
         });
@@ -478,19 +567,26 @@ describe('Android local sources', () => {
   it('reads V2EX Pro labels from topic and reply API members', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([{
-          id: 810,
-          title: 'V2EX Pro topic',
-          url: 'https://www.v2ex.com/t/810',
-          created: 1780000000,
-          replies: 1,
-          member: { username: 'neo', pro: 1 },
-          content_rendered: '<p>detail body</p>'
-        }]);
+        return json([
+          {
+            id: 810,
+            title: 'V2EX Pro topic',
+            url: 'https://www.v2ex.com/t/810',
+            created: 1780000000,
+            replies: 1,
+            member: { username: 'neo', pro: 1 },
+            content_rendered: '<p>detail body</p>'
+          }
+        ]);
       }
       if (input.includes('/api/replies/show.json')) {
         return json([
-          { id: 7001, member: { username: 'alice', pro: true }, content_rendered: '<p>first reply</p>', created: 1780000100 }
+          {
+            id: 7001,
+            member: { username: 'alice', pro: true },
+            content_rendered: '<p>first reply</p>',
+            created: 1780000100
+          }
         ]);
       }
       if (input === 'https://www.v2ex.com/t/810') {
@@ -506,21 +602,23 @@ describe('Android local sources', () => {
   });
 
   it('loads NodeSeek vote info from nsapp vote links in topic content', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 759903,
-        title: 'NodeSeek poll topic',
-        op: { name: 'alice' },
-        comments: [
-          {
-            commentId: 10,
-            poster: { name: 'alice' },
-            markdown: '提交投票 nsapp://vote?id=2443',
-            time: { createdDate: '2026-06-03T00:00:00.000Z' }
-          }
-        ]
-      }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 759903,
+          title: 'NodeSeek poll topic',
+          op: { name: 'alice' },
+          comments: [
+            {
+              commentId: 10,
+              poster: { name: 'alice' },
+              markdown: '提交投票 nsapp://vote?id=2443',
+              time: { createdDate: '2026-06-03T00:00:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
       if (input.includes('/api/vote/info/2443')) {
         if (new Headers(init?.headers).get('x-dynamic-sign') !== 'a'.repeat(40)) {
@@ -548,37 +646,43 @@ describe('Android local sources', () => {
     const voteRequest = fetcher.mock.calls.find(([input]) => input.includes('/api/vote/info/2443'));
     expect(new Headers(voteRequest?.[1]?.headers).get('x-dynamic-sign')).toBe('a'.repeat(40));
 
-    expect(topic.polls).toEqual([{
-      id: '2443',
-      title: '公开投票',
-      public: true,
-      closed: false,
-      multiple: true,
-      voted: true,
-      options: [
-        { id: '71', label: '选项 A', count: 2, selected: false },
-        { id: '72', label: '选项 B', count: 5, selected: true }
-      ]
-    }]);
+    expect(topic.polls).toEqual([
+      {
+        id: '2443',
+        title: '公开投票',
+        public: true,
+        closed: false,
+        multiple: true,
+        voted: true,
+        options: [
+          { id: '71', label: '选项 A', count: 2, selected: false },
+          { id: '72', label: '选项 B', count: 5, selected: true }
+        ]
+      }
+    ]);
     expect(topic.contentHtml).not.toContain('nsapp://vote?id=2443');
     expect(topic.contentHtml).not.toContain('提交投票');
     expect(topic.contentHtml).toContain('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
   });
 
   it('[REG-WRITE-007] hides NodeSeek vote counts until the current user has voted', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 759903,
-        title: 'NodeSeek unvoted poll topic',
-        op: { name: 'alice' },
-        comments: [{
-          commentId: 10,
-          poster: { name: 'alice' },
-          markdown: '提交投票 nsapp://vote?id=2443',
-          time: { createdDate: '2026-06-03T00:00:00.000Z' }
-        }]
-      }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 759903,
+          title: 'NodeSeek unvoted poll topic',
+          op: { name: 'alice' },
+          comments: [
+            {
+              commentId: 10,
+              poster: { name: 'alice' },
+              markdown: '提交投票 nsapp://vote?id=2443',
+              time: { createdDate: '2026-06-03T00:00:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/vote/info/2443')) {
         return json({
@@ -601,34 +705,41 @@ describe('Android local sources', () => {
 
     const topic = await getNodeSeekTopic('759903', { fetcher });
 
-    expect(topic.polls).toEqual([{
-      id: '2443',
-      title: '未投票时隐藏结果',
-      public: false,
-      closed: true,
-      multiple: true,
-      voted: false,
-      options: [
-        { id: '71', label: '选项 A', selected: false },
-        { id: '72', label: '选项 B', selected: false }
-      ]
-    }]);
+    expect(topic.polls).toEqual([
+      {
+        id: '2443',
+        title: '未投票时隐藏结果',
+        public: false,
+        closed: true,
+        multiple: true,
+        voted: false,
+        options: [
+          { id: '71', label: '选项 A', selected: false },
+          { id: '72', label: '选项 B', selected: false }
+        ]
+      }
+    ]);
   });
 
   it('[REG-WRITE-007] keeps failed NodeSeek vote markers and reports a partial topic', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 759903,
-        title: 'NodeSeek partial poll topic',
-        op: { name: 'alice' },
-        comments: [{
-          commentId: 10,
-          poster: { name: 'alice' },
-          markdown: '提交投票 nsapp://vote?id=2443\n\n提交投票 nsapp://vote?id=2444\n\n提交投票 nsapp://vote?id=2445',
-          time: { createdDate: '2026-06-03T00:00:00.000Z' }
-        }]
-      }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 759903,
+          title: 'NodeSeek partial poll topic',
+          op: { name: 'alice' },
+          comments: [
+            {
+              commentId: 10,
+              poster: { name: 'alice' },
+              markdown:
+                '提交投票 nsapp://vote?id=2443\n\n提交投票 nsapp://vote?id=2444\n\n提交投票 nsapp://vote?id=2445',
+              time: { createdDate: '2026-06-03T00:00:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/vote/info/2443')) {
         return json({
@@ -661,7 +772,8 @@ describe('Android local sources', () => {
   });
 
   it('maps rendered NodeSeek vote forms to unified polls and removes the raw form from content', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <h1>Rendered NodeSeek poll topic</h1>
       <div id="0" data-comment-id="100" class="content-item">
         <div class="author-info"><a href="/space/9891" class="author-name">alice</a></div>
@@ -675,27 +787,31 @@ describe('Android local sources', () => {
           </form>
         </article>
       </div>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('759903', { fetcher });
 
-    expect(topic.polls).toEqual([{
-      id: '2443',
-      title: '常用系统',
-      multiple: false,
-      voted: true,
-      options: [
-        { id: '71', label: 'Debian', count: 13, selected: false },
-        { id: '72', label: 'ArchLinux', count: 5, selected: true }
-      ]
-    }]);
+    expect(topic.polls).toEqual([
+      {
+        id: '2443',
+        title: '常用系统',
+        multiple: false,
+        voted: true,
+        options: [
+          { id: '71', label: 'Debian', count: 13, selected: false },
+          { id: '72', label: 'ArchLinux', count: 5, selected: true }
+        ]
+      }
+    ]);
     expect(topic.contentHtml).not.toContain('<form');
     expect(topic.contentHtml).not.toContain('Debian');
     expect(topic.contentHtml).toContain('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
   });
 
   it('maps hydrated NodeSeek embedded vote panels from the rendered page', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <h1>Rendered NodeSeek embedded poll topic</h1>
       <div id="0" data-comment-id="100" class="content-item">
         <div class="author-info"><a href="/space/9891" class="author-name">alice</a></div>
@@ -730,21 +846,24 @@ describe('Android local sources', () => {
           <p><span>nsapp://vote?id=2443</span></p>
         </article>
       </div>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('759903', { fetcher });
 
-    expect(topic.polls).toEqual([{
-      id: '2443',
-      title: '常用系统',
-      multiple: false,
-      public: true,
-      voted: true,
-      options: [
-        { id: '71', label: 'Debian', count: 13, selected: false },
-        { id: '72', label: 'ArchLinux', count: 5, selected: true }
-      ]
-    }]);
+    expect(topic.polls).toEqual([
+      {
+        id: '2443',
+        title: '常用系统',
+        multiple: false,
+        public: true,
+        voted: true,
+        options: [
+          { id: '71', label: 'Debian', count: 13, selected: false },
+          { id: '72', label: 'ArchLinux', count: 5, selected: true }
+        ]
+      }
+    ]);
     expect(topic.contentHtml).not.toContain('pure-form');
     expect(topic.contentHtml).not.toContain('vote-panel');
     expect(topic.contentHtml).not.toContain('embed-vote');
@@ -752,7 +871,8 @@ describe('Android local sources', () => {
   });
 
   it('[REG-WRITE-010] removes an adjacent NodeSeek poll marker leak without splitting the surrounding paragraph', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <h1>NodeSeek mixed poll paragraph</h1>
       <div id="0" data-comment-id="100" class="content-item">
         <div class="author-info"><a href="/space/9891" class="author-name">alice</a></div>
@@ -780,7 +900,8 @@ describe('Android local sources', () => {
           </p>
         </article>
       </div>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('819647', { fetcher });
     const placeholder = '<forum-nodeseek-poll id="2674"></forum-nodeseek-poll>';
@@ -799,7 +920,8 @@ describe('Android local sources', () => {
   });
 
   it('keeps NodeSeek detail metadata from rendered HTML fallback', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <h1>Rendered NodeSeek detail</h1>
       <div id="0" data-comment-id="100" class="content-item">
         <div class="author-info"><a href="/space/9891" class="author-name">alice</a><span class="is-poster">楼主</span><span class="nsk-badge role-tag role-admin"><span>管理</span></span></div>
@@ -838,7 +960,8 @@ describe('Android local sources', () => {
           </div>
         </li>
       </ul>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('205', { fetcher });
 
@@ -878,9 +1001,11 @@ describe('Android local sources', () => {
         time: { createdDate: `2026-05-20T00:${String(index + 1).padStart(2, '0')}:00.000Z` }
       }))
     ];
-    const payload = Buffer.from(JSON.stringify({
-      postData: { postId: 723704, title: 'NodeSeek topic', comments }
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: { postId: 723704, title: 'NodeSeek topic', comments }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
 
     const topic = await getNodeSeekTopic('723704', { fetcher, replyLimit: 30 });
@@ -898,26 +1023,30 @@ describe('Android local sources', () => {
   });
 
   it('keeps NodeSeek reply pagination open when page one links to another reply page', async () => {
-    const pageOnePayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723704,
-        title: 'NodeSeek topic',
-        comments: [
-          { poster: { name: 'alice' }, markdown: '正文' },
-          { poster: { name: 'reply 1' }, markdown: '回复 1' }
-        ]
-      }
-    })).toString('base64');
-    const pageTwoPayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723704,
-        title: 'NodeSeek topic',
-        comments: [
-          { poster: { name: 'reply 2' }, markdown: '回复 2' },
-          { poster: { name: 'reply 3' }, markdown: '回复 3' }
-        ]
-      }
-    })).toString('base64');
+    const pageOnePayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723704,
+          title: 'NodeSeek topic',
+          comments: [
+            { poster: { name: 'alice' }, markdown: '正文' },
+            { poster: { name: 'reply 1' }, markdown: '回复 1' }
+          ]
+        }
+      })
+    ).toString('base64');
+    const pageTwoPayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723704,
+          title: 'NodeSeek topic',
+          comments: [
+            { poster: { name: 'reply 2' }, markdown: '回复 2' },
+            { poster: { name: 'reply 3' }, markdown: '回复 3' }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/post-723704-2')) {
         return html(`<script>${pageTwoPayload}</script>`);
@@ -941,7 +1070,8 @@ describe('Android local sources', () => {
   });
 
   it('[REG-TOPIC-036] continues rendered NodeSeek floors from the page offset when floor markers are missing', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-723704-2">NodeSeek topic</a>
       <div class="content-item">
         <a href="/space/1" class="author-name">alice</a>
@@ -955,7 +1085,8 @@ describe('Android local sources', () => {
         <a href="/space/3" class="author-name">carol</a>
         <article class="post-content"><p>回复 32</p></article>
       </li>
-    `));
+    `)
+    );
 
     const replies = await getNodeSeekReplies('723704', {
       fetcher,
@@ -969,29 +1100,33 @@ describe('Android local sources', () => {
   });
 
   it('does not fill normal NodeSeek replies from following origin pages', async () => {
-    const pageOnePayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723704,
-        title: 'NodeSeek topic',
-        comments: [
-          { poster: { name: 'alice' }, markdown: '正文' },
-          ...Array.from({ length: 10 }, (_, index) => ({
-            poster: { name: `reply ${index + 1}` },
-            markdown: `回复 ${index + 1}`
-          }))
-        ]
-      }
-    })).toString('base64');
-    const pageTwoPayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723704,
-        title: 'NodeSeek topic',
-        comments: [
-          { poster: { name: 'reply 11' }, markdown: '回复 11' },
-          { poster: { name: 'reply 12' }, markdown: '回复 12' }
-        ]
-      }
-    })).toString('base64');
+    const pageOnePayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723704,
+          title: 'NodeSeek topic',
+          comments: [
+            { poster: { name: 'alice' }, markdown: '正文' },
+            ...Array.from({ length: 10 }, (_, index) => ({
+              poster: { name: `reply ${index + 1}` },
+              markdown: `回复 ${index + 1}`
+            }))
+          ]
+        }
+      })
+    ).toString('base64');
+    const pageTwoPayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723704,
+          title: 'NodeSeek topic',
+          comments: [
+            { poster: { name: 'reply 11' }, markdown: '回复 11' },
+            { poster: { name: 'reply 12' }, markdown: '回复 12' }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/post-723704-2')) {
         return html(`<script>${pageTwoPayload}</script>`);
@@ -1001,36 +1136,42 @@ describe('Android local sources', () => {
 
     const replies = await getNodeSeekReplies('723704', { fetcher, page: 1, offset: 0, limit: 30 });
 
-    expect(replies.items.map((item) => item.author)).toEqual(Array.from({ length: 10 }, (_, index) => `reply ${index + 1}`));
+    expect(replies.items.map((item) => item.author)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `reply ${index + 1}`)
+    );
     expect(replies.hasMore).toBe(true);
     expect(replies.nextPage).toBe(2);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('fills NodeSeek replies from following origin pages only when requested', async () => {
-    const pageOnePayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723704,
-        title: 'NodeSeek topic',
-        comments: [
-          { poster: { name: 'alice' }, markdown: '正文' },
-          ...Array.from({ length: 10 }, (_, index) => ({
-            poster: { name: `reply ${index + 1}` },
-            markdown: `回复 ${index + 1}`
-          }))
-        ]
-      }
-    })).toString('base64');
-    const pageTwoPayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723704,
-        title: 'NodeSeek topic',
-        comments: [
-          { poster: { name: 'reply 11' }, markdown: '回复 11' },
-          { poster: { name: 'reply 12' }, markdown: '回复 12' }
-        ]
-      }
-    })).toString('base64');
+    const pageOnePayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723704,
+          title: 'NodeSeek topic',
+          comments: [
+            { poster: { name: 'alice' }, markdown: '正文' },
+            ...Array.from({ length: 10 }, (_, index) => ({
+              poster: { name: `reply ${index + 1}` },
+              markdown: `回复 ${index + 1}`
+            }))
+          ]
+        }
+      })
+    ).toString('base64');
+    const pageTwoPayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723704,
+          title: 'NodeSeek topic',
+          comments: [
+            { poster: { name: 'reply 11' }, markdown: '回复 11' },
+            { poster: { name: 'reply 12' }, markdown: '回复 12' }
+          ]
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/post-723704-2')) {
         return html(`<script>${pageTwoPayload}</script>`);
@@ -1051,17 +1192,25 @@ describe('Android local sources', () => {
   });
 
   it('prefers rendered NodeSeek topic content over stale embedded postData while keeping edit metadata', async () => {
-    const stalePayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723705,
-        title: 'stale embedded title',
-        comments: [
-          { commentId: 100, poster: { name: 'alice' }, content: '<p>stale body</p>', markdown: 'stale body' },
-          { commentId: 101, poster: { name: 'bob', isMe: true }, content: '<p>stale reply</p>', markdown: 'editable reply markdown' }
-        ]
-      }
-    })).toString('base64');
-    const fetcher = vi.fn(async () => html(`
+    const stalePayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723705,
+          title: 'stale embedded title',
+          comments: [
+            { commentId: 100, poster: { name: 'alice' }, content: '<p>stale body</p>', markdown: 'stale body' },
+            {
+              commentId: 101,
+              poster: { name: 'bob', isMe: true },
+              content: '<p>stale reply</p>',
+              markdown: 'editable reply markdown'
+            }
+          ]
+        }
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(async () =>
+      html(`
       <script>${stalePayload}</script>
       <a class="post-title" href="/post-723705-1">Rendered topic title</a>
       <div id="0" data-comment-id="100" class="content-item">
@@ -1074,7 +1223,8 @@ describe('Android local sources', () => {
         <time datetime="2026-05-22T15:59:06.000Z"></time>
         <article class="post-content"><p>fresh rendered reply</p></article>
       </li>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('723705', { fetcher });
 
@@ -1090,7 +1240,8 @@ describe('Android local sources', () => {
   });
 
   it('turns NodeSeek magic tabs into readable mixed report tabs', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-812712-1">[NQ] ZOUTER HK BGP Global - Lite新款 留档</a>
       <div id="0" data-comment-id="812712" class="content-item">
         <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
@@ -1124,7 +1275,8 @@ describe('Android local sources', () => {
           <p>项目地址 <a href="https://github.com/xykt/HardwareQuality">HardwareQuality</a></p>
         </article>
       </div>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('812712', { fetcher });
 
@@ -1144,7 +1296,9 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).toContain('color: rgb(34, 211, 238)');
     expect(topic.contentHtml).toContain('color: #00ff00; background-color: #000087');
     expect(topic.contentHtml).toContain('color: #34d399');
-    expect(topic.contentHtml).toMatch(/硬件质量体检报告<\/span><br\s*\/?><span style="color: #00ff00; background-color: #000087">KVM&nbsp;虚拟机/);
+    expect(topic.contentHtml).toMatch(
+      /硬件质量体检报告<\/span><br\s*\/?><span style="color: #00ff00; background-color: #000087">KVM&nbsp;虚拟机/
+    );
     expect(topic.contentHtml).toContain('https://i.111666.best/image/network.webp');
     expect(topic.contentHtml).toContain('https://i.111666.best/image/route.webp');
     expect(topic.contentHtml).toContain('alt="网络质量报告"');
@@ -1161,7 +1315,8 @@ describe('Android local sources', () => {
   });
 
   it('cleans NodeSeek ansi code reports without showing source markup', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-812712-1">[NQ] ZOUTER HK BGP Global - Lite新款 留档</a>
       <div id="0" data-comment-id="812712" class="content-item">
         <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
@@ -1179,7 +1334,8 @@ describe('Android local sources', () => {
           <pre><code class="language-ansi">线路 \u001b[38;5;46;48;5;18mCMIN2\u001b[0m</code></pre>
         </article>
       </div>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('812712', { fetcher });
 
@@ -1209,7 +1365,8 @@ describe('Android local sources', () => {
   });
 
   it('renders NodeSeek plain code reports as terminal blocks', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-814058-1">[留一下档🫠]LAX.AS3.Pro.TINY</a>
       <div id="0" data-comment-id="814058" class="content-item">
         <div class="author-info"><a href="/space/79544498" class="author-name">79544498</a></div>
@@ -1225,7 +1382,8 @@ describe('Android local sources', () => {
 ------------------------基础信息查询--感谢所有开源项目------------------</code></pre>
         </article>
       </div>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('814058', { fetcher });
 
@@ -1238,17 +1396,25 @@ describe('Android local sources', () => {
   });
 
   it('keeps embedded NodeSeek replies when only the topic body is rendered', async () => {
-    const embeddedPayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723707,
-        title: 'embedded title',
-        comments: [
-          { commentId: 100, poster: { name: 'alice' }, content: '<p>embedded body</p>', markdown: 'embedded body' },
-          { commentId: 101, poster: { name: 'bob' }, content: '<p>embedded reply</p>', markdown: 'embedded reply markdown' }
-        ]
-      }
-    })).toString('base64');
-    const fetcher = vi.fn(async () => html(`
+    const embeddedPayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723707,
+          title: 'embedded title',
+          comments: [
+            { commentId: 100, poster: { name: 'alice' }, content: '<p>embedded body</p>', markdown: 'embedded body' },
+            {
+              commentId: 101,
+              poster: { name: 'bob' },
+              content: '<p>embedded reply</p>',
+              markdown: 'embedded reply markdown'
+            }
+          ]
+        }
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(async () =>
+      html(`
       <script>${embeddedPayload}</script>
       <a class="post-title" href="/post-723707-1">Rendered topic body</a>
       <div id="0" data-comment-id="100" class="content-item">
@@ -1256,7 +1422,8 @@ describe('Android local sources', () => {
         <time datetime="2026-05-22T15:55:11.000Z"></time>
         <article class="post-content"><p>fresh rendered body</p></article>
       </div>
-    `));
+    `)
+    );
 
     const topic = await getNodeSeekTopic('723707', { fetcher });
     const replies = await getNodeSeekReplies('723707', { fetcher, page: 1, offset: 0, limit: 30 });
@@ -1267,17 +1434,20 @@ describe('Android local sources', () => {
   });
 
   it('prefers rendered NodeSeek replies over stale embedded postData when refreshing replies', async () => {
-    const stalePayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 723706,
-        title: 'NodeSeek topic',
-        comments: [
-          { commentId: 100, poster: { name: 'alice' }, markdown: '正文' },
-          { commentId: 101, poster: { name: 'old reply' }, markdown: '旧回复' }
-        ]
-      }
-    })).toString('base64');
-    const fetcher = vi.fn(async () => html(`
+    const stalePayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 723706,
+          title: 'NodeSeek topic',
+          comments: [
+            { commentId: 100, poster: { name: 'alice' }, markdown: '正文' },
+            { commentId: 101, poster: { name: 'old reply' }, markdown: '旧回复' }
+          ]
+        }
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(async () =>
+      html(`
       <script>${stalePayload}</script>
       <a class="post-title" href="/post-723706-1">Rendered replies</a>
       <div id="0" data-comment-id="100" class="content-item">
@@ -1290,7 +1460,8 @@ describe('Android local sources', () => {
         <time datetime="2026-05-22T15:59:06.000Z"></time>
         <article class="post-content"><p>新回复</p></article>
       </li>
-    `));
+    `)
+    );
 
     const replies = await getNodeSeekReplies('723706', { fetcher, page: 1, offset: 0, limit: 30 });
 
@@ -1303,29 +1474,32 @@ describe('Android local sources', () => {
   });
 
   it('keeps NodeSeek edit metadata when refreshing rendered replies', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 806638,
-        title: 'NodeSeek reply refresh metadata',
-        comments: [
-          {
-            commentId: 100,
-            floorIndex: 0,
-            poster: { name: 'gijia', uid: 18478, profile: '/space/18478' },
-            markdown: '论坛邮箱！',
-            time: { createdDate: '2026-07-04T06:06:00.000Z' }
-          },
-          {
-            commentId: 812345,
-            floorIndex: 12,
-            poster: { name: '凡想世界', uid: 54874, isMe: true, profile: '/space/54874' },
-            markdown: 'Bd',
-            time: { createdDate: '2026-07-04T06:34:00.000Z' }
-          }
-        ]
-      }
-    })).toString('base64');
-    const fetcher = vi.fn(async () => html(`
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 806638,
+          title: 'NodeSeek reply refresh metadata',
+          comments: [
+            {
+              commentId: 100,
+              floorIndex: 0,
+              poster: { name: 'gijia', uid: 18478, profile: '/space/18478' },
+              markdown: '论坛邮箱！',
+              time: { createdDate: '2026-07-04T06:06:00.000Z' }
+            },
+            {
+              commentId: 812345,
+              floorIndex: 12,
+              poster: { name: '凡想世界', uid: 54874, isMe: true, profile: '/space/54874' },
+              markdown: 'Bd',
+              time: { createdDate: '2026-07-04T06:34:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(async () =>
+      html(`
       <script>${payload}</script>
       <a class="post-title" href="/post-806638-1">NodeSeek reply refresh metadata</a>
       <div id="0" data-comment-id="100" class="content-item">
@@ -1338,7 +1512,8 @@ describe('Android local sources', () => {
         <time datetime="2026-07-04T06:34:00.000Z"></time>
         <article class="post-content"><p>Bd</p></article>
       </div>
-    `));
+    `)
+    );
 
     const replies = await getNodeSeekReplies('806638', { fetcher, page: 1, offset: 0, limit: 30 });
 
@@ -1387,68 +1562,76 @@ describe('Android local sources', () => {
   });
 
   it('maps linux.do Discourse polls from topic JSON', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 42,
-      title: 'linux.do poll topic',
-      slug: 'linux-poll-topic',
-      created_at: '2026-06-03T00:00:00.000Z',
-      posts_count: 1,
-      post_stream: {
-        stream: [1001],
-        posts: [{
-          id: 1001,
-          username: 'alice',
-          cooked: [
-            '<p>投票前</p>',
-            '<div class="poll" data-poll-name="poll"><ul><li>原始方案 A</li><li>原始方案 B</li></ul><div class="poll-info">0 投票人</div></div>',
-            '<p>投票后</p>',
-            '<iframe src="https://embed.reddit.com/r/OpenAI/comments/abc123/topic/?embed=true"></iframe>'
-          ].join(''),
-          created_at: '2026-06-03T00:00:00.000Z',
-          post_number: 1,
-          polls: [{
-            id: 88,
-            name: 'poll',
-            title: '选择方向',
-            type: 'multiple',
-            status: 'open',
-            public: true,
-            voters: 2,
-            min: 2,
-            max: 3,
-            options: [
-              { id: 'a1', html: '方案 A', votes: 0 },
-              { id: 'b2', html: '方案 B', votes: 4 },
-              { id: 'c3', html: '方案 C', votes: null }
-            ]
-          }],
-          polls_votes: {
-            poll: ['b2']
-          }
-        }]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 42,
+        title: 'linux.do poll topic',
+        slug: 'linux-poll-topic',
+        created_at: '2026-06-03T00:00:00.000Z',
+        posts_count: 1,
+        post_stream: {
+          stream: [1001],
+          posts: [
+            {
+              id: 1001,
+              username: 'alice',
+              cooked: [
+                '<p>投票前</p>',
+                '<div class="poll" data-poll-name="poll"><ul><li>原始方案 A</li><li>原始方案 B</li></ul><div class="poll-info">0 投票人</div></div>',
+                '<p>投票后</p>',
+                '<iframe src="https://embed.reddit.com/r/OpenAI/comments/abc123/topic/?embed=true"></iframe>'
+              ].join(''),
+              created_at: '2026-06-03T00:00:00.000Z',
+              post_number: 1,
+              polls: [
+                {
+                  id: 88,
+                  name: 'poll',
+                  title: '选择方向',
+                  type: 'multiple',
+                  status: 'open',
+                  public: true,
+                  voters: 2,
+                  min: 2,
+                  max: 3,
+                  options: [
+                    { id: 'a1', html: '方案 A', votes: 0 },
+                    { id: 'b2', html: '方案 B', votes: 4 },
+                    { id: 'c3', html: '方案 C', votes: null }
+                  ]
+                }
+              ],
+              polls_votes: {
+                poll: ['b2']
+              }
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '42', fetcher });
 
-    expect(topic.polls).toEqual([{
-      id: '88',
-      name: 'poll',
-      postId: '1001',
-      title: '选择方向',
-      public: true,
-      closed: false,
-      multiple: true,
-      participantCount: 2,
-      min: 2,
-      max: 3,
-      voted: true,
-      options: [
-        { id: 'a1', label: '方案 A', count: 0, selected: false },
-        { id: 'b2', label: '方案 B', count: 4, selected: true },
-        { id: 'c3', label: '方案 C', selected: false }
-      ]
-    }]);
+    expect(topic.polls).toEqual([
+      {
+        id: '88',
+        name: 'poll',
+        postId: '1001',
+        title: '选择方向',
+        public: true,
+        closed: false,
+        multiple: true,
+        participantCount: 2,
+        min: 2,
+        max: 3,
+        voted: true,
+        options: [
+          { id: 'a1', label: '方案 A', count: 0, selected: false },
+          { id: 'b2', label: '方案 B', count: 4, selected: true },
+          { id: 'c3', label: '方案 C', selected: false }
+        ]
+      }
+    ]);
     expect(topic.contentHtml).toContain('<forum-discourse-poll name="poll"></forum-discourse-poll>');
     expect(topic.contentHtml).not.toContain('原始方案 A');
     expect(topic.contentHtml).not.toContain('0 投票人');
@@ -1464,23 +1647,27 @@ describe('Android local sources', () => {
 
   it('[REG-PERF-008] lets a queued Back cancellation win before Topic DOM parsing', async () => {
     const controller = new AbortController();
-    const fetcher = vi.fn(async () => json({
-      id: 44,
-      title: 'cancel before parse',
-      slug: 'cancel-before-parse',
-      created_at: '2026-06-03T00:00:00.000Z',
-      posts_count: 1,
-      post_stream: {
-        stream: [1001],
-        posts: [{
-          id: 1001,
-          username: 'alice',
-          cooked: '<p>ordinary safe body</p>',
-          created_at: '2026-06-03T00:00:00.000Z',
-          post_number: 1
-        }]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 44,
+        title: 'cancel before parse',
+        slug: 'cancel-before-parse',
+        created_at: '2026-06-03T00:00:00.000Z',
+        posts_count: 1,
+        post_stream: {
+          stream: [1001],
+          posts: [
+            {
+              id: 1001,
+              username: 'alice',
+              cooked: '<p>ordinary safe body</p>',
+              created_at: '2026-06-03T00:00:00.000Z',
+              post_number: 1
+            }
+          ]
+        }
+      })
+    );
 
     const pending = getTopic({ source: 'linuxdo', id: '44', fetcher, signal: controller.signal });
     setTimeout(() => controller.abort(), 0);
@@ -1489,95 +1676,99 @@ describe('Android local sources', () => {
   });
 
   it('maps linux.do Discourse polls from reply posts', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 43,
-      title: 'linux.do reply poll topic',
-      slug: 'linux-reply-poll-topic',
-      created_at: '2026-06-03T00:00:00.000Z',
-      posts_count: 2,
-      post_stream: {
-        stream: [1001, 1002],
-        posts: [
-          {
-            id: 1001,
-            username: 'alice',
-            cooked: '<p>正文</p>',
-            created_at: '2026-06-03T00:00:00.000Z',
-            post_number: 1
-          },
-          {
-            id: 1002,
-            username: 'bob',
-            cooked: '<p>回复投票前</p><div class="poll" data-poll-name="reply-poll"><p>原始回复选项</p></div><p>回复投票后</p>',
-            created_at: '2026-06-03T00:01:00.000Z',
-            post_number: 2,
-            polls: [{
-              id: 89,
-              name: 'reply-poll',
-              title: '回复里的评分',
-              type: 'number',
-              status: 'open',
-              options: [
-                { id: '1', html: '1 分', votes: 2 },
-                { id: '2', html: '2 分', votes: 3 }
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 43,
+        title: 'linux.do reply poll topic',
+        slug: 'linux-reply-poll-topic',
+        created_at: '2026-06-03T00:00:00.000Z',
+        posts_count: 2,
+        post_stream: {
+          stream: [1001, 1002],
+          posts: [
+            {
+              id: 1001,
+              username: 'alice',
+              cooked: '<p>正文</p>',
+              created_at: '2026-06-03T00:00:00.000Z',
+              post_number: 1
+            },
+            {
+              id: 1002,
+              username: 'bob',
+              cooked:
+                '<p>回复投票前</p><div class="poll" data-poll-name="reply-poll"><p>原始回复选项</p></div><p>回复投票后</p>',
+              created_at: '2026-06-03T00:01:00.000Z',
+              post_number: 2,
+              polls: [
+                {
+                  id: 89,
+                  name: 'reply-poll',
+                  title: '回复里的评分',
+                  type: 'number',
+                  status: 'open',
+                  options: [
+                    { id: '1', html: '1 分', votes: 2 },
+                    { id: '2', html: '2 分', votes: 3 }
+                  ]
+                }
               ]
-            }]
-          }
-        ]
-      }
-    }));
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '43', fetcher });
 
-    expect(topic.replies[0].polls).toEqual([{
-      id: '89',
-      name: 'reply-poll',
-      postId: '1002',
-      title: '回复里的评分',
-      type: 'number',
-      closed: false,
-      multiple: false,
-      readonly: true,
-      voted: false,
-      options: [
-        { id: '1', label: '1 分', count: 2, selected: false },
-        { id: '2', label: '2 分', count: 3, selected: false }
-      ]
-    }]);
-    expect(topic.replies[0].contentHtml).not.toContain('原始回复选项');
-    expect(splitDiscourseContentHtml(topic.replies[0].contentHtml, topic.replies[0].polls).map((part) => part.type)).toEqual([
-      'html',
-      'poll',
-      'html'
+    expect(topic.replies[0].polls).toEqual([
+      {
+        id: '89',
+        name: 'reply-poll',
+        postId: '1002',
+        title: '回复里的评分',
+        type: 'number',
+        closed: false,
+        multiple: false,
+        readonly: true,
+        voted: false,
+        options: [
+          { id: '1', label: '1 分', count: 2, selected: false },
+          { id: '2', label: '2 分', count: 3, selected: false }
+        ]
+      }
     ]);
+    expect(topic.replies[0].contentHtml).not.toContain('原始回复选项');
+    expect(
+      splitDiscourseContentHtml(topic.replies[0].contentHtml, topic.replies[0].polls).map((part) => part.type)
+    ).toEqual(['html', 'poll', 'html']);
   });
 
   it('keeps linux.do tags and topic status markers from Discourse lists', async () => {
-    const fetcher = vi.fn(async () => json({
-      topic_list: {
-        topics: [{
-          id: 406,
-          title: 'linux.do solved tagged topic',
-          slug: 'linux-status-topic',
-          category_id: 4,
-          created_at: '2026-06-04T00:00:00.000Z',
-          bumped_at: '2026-06-04T00:10:00.000Z',
-          posts_count: 2,
-          closed: true,
-          archived: true,
-          pinned: true,
-          slow_mode_seconds: 300,
-          has_accepted_answer: true,
-          tags: [
-            { name: '人工智能' },
-            { name: '快问快答' }
+    const fetcher = vi.fn(async () =>
+      json({
+        topic_list: {
+          topics: [
+            {
+              id: 406,
+              title: 'linux.do solved tagged topic',
+              slug: 'linux-status-topic',
+              category_id: 4,
+              created_at: '2026-06-04T00:00:00.000Z',
+              bumped_at: '2026-06-04T00:10:00.000Z',
+              posts_count: 2,
+              closed: true,
+              archived: true,
+              pinned: true,
+              slow_mode_seconds: 300,
+              has_accepted_answer: true,
+              tags: [{ name: '人工智能' }, { name: '快问快答' }]
+            }
           ]
-        }]
-      },
-      categories: [
-        { id: 4, name: '开发调优' }
-      ]
-    }));
+        },
+        categories: [{ id: 4, name: '开发调优' }]
+      })
+    );
 
     const feed = await getFeed({ source: 'linuxdo', limit: 1, fetcher });
 
@@ -1606,27 +1797,31 @@ describe('Android local sources', () => {
           posts_count: 1,
           post_stream: {
             stream: [19367641],
-            posts: [{
-              id: 19367641,
-              post_number: 1,
-              username: 'chancat',
-              cooked: '<p>body</p>',
-              created_at: '2026-06-20T11:15:45.437Z'
-            }]
+            posts: [
+              {
+                id: 19367641,
+                post_number: 1,
+                username: 'chancat',
+                cooked: '<p>body</p>',
+                created_at: '2026-06-20T11:15:45.437Z'
+              }
+            ]
           }
         });
       }
       return json({
         topic_list: {
-          topics: [{
-            id: 2438917,
-            title: rawTitle,
-            unicode_title: displayTitle,
-            slug: 'topic',
-            created_at: '2026-06-20T11:15:45.437Z',
-            bumped_at: '2026-06-20T11:15:45.437Z',
-            posts_count: 1
-          }]
+          topics: [
+            {
+              id: 2438917,
+              title: rawTitle,
+              unicode_title: displayTitle,
+              slug: 'topic',
+              created_at: '2026-06-20T11:15:45.437Z',
+              bumped_at: '2026-06-20T11:15:45.437Z',
+              posts_count: 1
+            }
+          ]
         },
         users: []
       });
@@ -1650,26 +1845,30 @@ describe('Android local sources', () => {
           posts_count: 1,
           post_stream: {
             stream: [19367642],
-            posts: [{
-              id: 19367642,
-              post_number: 1,
-              username: 'chancat',
-              cooked: '<p>body</p>',
-              created_at: '2026-06-20T11:15:45.437Z'
-            }]
+            posts: [
+              {
+                id: 19367642,
+                post_number: 1,
+                username: 'chancat',
+                cooked: '<p>body</p>',
+                created_at: '2026-06-20T11:15:45.437Z'
+              }
+            ]
           }
         });
       }
       return json({
         topic_list: {
-          topics: [{
-            id: 2438918,
-            title: '&#129765;完辣，ai又来抢饭碗啦，装机仔下岗',
-            slug: 'topic',
-            created_at: '2026-06-20T11:15:45.437Z',
-            bumped_at: '2026-06-20T11:15:45.437Z',
-            posts_count: 1
-          }]
+          topics: [
+            {
+              id: 2438918,
+              title: '&#129765;完辣，ai又来抢饭碗啦，装机仔下岗',
+              slug: 'topic',
+              created_at: '2026-06-20T11:15:45.437Z',
+              bumped_at: '2026-06-20T11:15:45.437Z',
+              posts_count: 1
+            }
+          ]
         },
         users: []
       });
@@ -1683,55 +1882,59 @@ describe('Android local sources', () => {
   });
 
   it('keeps linux.do accepted answers and special reply markers from topic JSON', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 407,
-      title: 'linux.do accepted answer topic',
-      slug: 'linux-accepted-answer-topic',
-      created_at: '2026-06-04T00:00:00.000Z',
-      posts_count: 2,
-      closed: true,
-      pinned: true,
-      slow_mode_seconds: 120,
-      tags: [{ name: '人工智能' }],
-      accepted_answers: [{
-        id: 2002,
-        post_number: 2,
-        username: 'bob'
-      }],
-      post_stream: {
-        stream: [2001, 2002],
-        posts: [
-          {
-            id: 2001,
-            post_number: 1,
-            username: 'alice',
-            cooked: '<p>body</p>',
-            created_at: '2026-06-04T00:00:00.000Z',
-            reactions: [
-              { id: 'heart', count: 2 },
-              { id: 'laughing', count: 1 }
-            ],
-            boosts: [{ id: 7 }]
-          },
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 407,
+        title: 'linux.do accepted answer topic',
+        slug: 'linux-accepted-answer-topic',
+        created_at: '2026-06-04T00:00:00.000Z',
+        posts_count: 2,
+        closed: true,
+        pinned: true,
+        slow_mode_seconds: 120,
+        tags: [{ name: '人工智能' }],
+        accepted_answers: [
           {
             id: 2002,
             post_number: 2,
-            username: 'bob',
-            cooked: '<p>answer</p>',
-            created_at: '2026-06-04T00:02:00.000Z',
-            accepted_answer: true,
-            wiki: true,
-            hidden: true,
-            post_type: 2,
-            action_code: 'closed.enabled',
-            needs_category_expert_approval: true,
-            post_folding_status: { status: 'folded' },
-            reactions: [{ id: 'distorted_face', count: 3 }],
-            boosts: [{ id: 9 }, { id: 10 }]
+            username: 'bob'
           }
-        ]
-      }
-    }));
+        ],
+        post_stream: {
+          stream: [2001, 2002],
+          posts: [
+            {
+              id: 2001,
+              post_number: 1,
+              username: 'alice',
+              cooked: '<p>body</p>',
+              created_at: '2026-06-04T00:00:00.000Z',
+              reactions: [
+                { id: 'heart', count: 2 },
+                { id: 'laughing', count: 1 }
+              ],
+              boosts: [{ id: 7 }]
+            },
+            {
+              id: 2002,
+              post_number: 2,
+              username: 'bob',
+              cooked: '<p>answer</p>',
+              created_at: '2026-06-04T00:02:00.000Z',
+              accepted_answer: true,
+              wiki: true,
+              hidden: true,
+              post_type: 2,
+              action_code: 'closed.enabled',
+              needs_category_expert_approval: true,
+              post_folding_status: { status: 'folded' },
+              reactions: [{ id: 'distorted_face', count: 3 }],
+              boosts: [{ id: 9 }, { id: 10 }]
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '407', fetcher });
 
@@ -1761,36 +1964,38 @@ describe('Android local sources', () => {
   });
 
   it('uses linux.do boost_count when the boosts array is empty', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 408,
-      title: 'linux.do boost fallback topic',
-      slug: 'linux-boost-fallback-topic',
-      created_at: '2026-06-04T00:00:00.000Z',
-      posts_count: 2,
-      post_stream: {
-        stream: [2011, 2012],
-        posts: [
-          {
-            id: 2011,
-            post_number: 1,
-            username: 'alice',
-            cooked: '<p>body</p>',
-            created_at: '2026-06-04T00:00:00.000Z',
-            boosts: [],
-            boost_count: 4
-          },
-          {
-            id: 2012,
-            post_number: 2,
-            username: 'bob',
-            cooked: '<p>reply</p>',
-            created_at: '2026-06-04T00:02:00.000Z',
-            boosts: [],
-            boost_count: 5
-          }
-        ]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 408,
+        title: 'linux.do boost fallback topic',
+        slug: 'linux-boost-fallback-topic',
+        created_at: '2026-06-04T00:00:00.000Z',
+        posts_count: 2,
+        post_stream: {
+          stream: [2011, 2012],
+          posts: [
+            {
+              id: 2011,
+              post_number: 1,
+              username: 'alice',
+              cooked: '<p>body</p>',
+              created_at: '2026-06-04T00:00:00.000Z',
+              boosts: [],
+              boost_count: 4
+            },
+            {
+              id: 2012,
+              post_number: 2,
+              username: 'bob',
+              cooked: '<p>reply</p>',
+              created_at: '2026-06-04T00:02:00.000Z',
+              boosts: [],
+              boost_count: 5
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '408', fetcher });
 
@@ -1799,16 +2004,20 @@ describe('Android local sources', () => {
   });
 
   it('requests linux.do latest feed by creation time', async () => {
-    const fetcher = vi.fn(async () => json({
-      topic_list: {
-        topics: []
-      },
-      users: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        topic_list: {
+          topics: []
+        },
+        users: []
+      })
+    );
 
     await getFeed({ source: 'linuxdo', limit: 2, fetcher });
 
-    expect((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]).toBe('https://linux.do/latest.json?order=created&ascending=false');
+    expect((fetcher.mock.calls as unknown as [string][])[0]?.[0]).toBe(
+      'https://linux.do/latest.json?order=created&ascending=false'
+    );
   });
 
   it('stops linux.do feed pagination when an empty page still advertises more topics', async () => {
@@ -1839,25 +2048,29 @@ describe('Android local sources', () => {
       { filter: 'new-topics', path: '/new.json', subset: 'topics', order: null, ascending: null },
       { filter: 'new-replies', path: '/new.json', subset: 'replies', order: null, ascending: null }
     ] as const;
-    const fetcher = vi.fn(async () => json({
-      topic_list: {
-        topics: [{
-          id: 500,
-          title: 'linux.do filtered topic',
-          slug: 'linux-filtered-topic',
-          created_at: '2026-05-21T00:00:00.000Z',
-          bumped_at: '2026-05-21T00:00:00.000Z',
-          posts_count: 1
-        }]
-      },
-      users: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        topic_list: {
+          topics: [
+            {
+              id: 500,
+              title: 'linux.do filtered topic',
+              slug: 'linux-filtered-topic',
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:00:00.000Z',
+              posts_count: 1
+            }
+          ]
+        },
+        users: []
+      })
+    );
 
     for (const item of cases) {
       await getFeed({ source: 'linuxdo', category: '11', feedFilter: item.filter, limit: 1, fetcher });
     }
 
-    const urls = (fetcher.mock.calls as unknown as Array<[string]>).map(([input]) => new URL(input));
+    const urls = (fetcher.mock.calls as unknown as [string][]).map(([input]) => new URL(input));
     expect(urls.map((url) => url.pathname)).toEqual(cases.map((item) => item.path));
     urls.forEach((url, index) => {
       expect(url.searchParams.get('category')).toBe('11');
@@ -1871,22 +2084,22 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/site.json')) {
         return json({
-          categories: [
-            { id: 4, name: '开发调优' }
-          ]
+          categories: [{ id: 4, name: '开发调优' }]
         });
       }
       return json({
         topic_list: {
-          topics: [{
-            id: 404,
-            title: 'linux.do mapped category',
-            slug: 'mapped-category',
-            category_id: 4,
-            created_at: '2026-05-21T00:00:00.000Z',
-            bumped_at: '2026-05-21T00:00:00.000Z',
-            posts_count: 1
-          }]
+          topics: [
+            {
+              id: 404,
+              title: 'linux.do mapped category',
+              slug: 'mapped-category',
+              category_id: 4,
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:00:00.000Z',
+              posts_count: 1
+            }
+          ]
         },
         users: []
       });
@@ -1905,9 +2118,7 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/site.json')) {
         return json({
-          categories: [
-            { id: 4, name: '开发调优' }
-          ]
+          categories: [{ id: 4, name: '开发调优' }]
         });
       }
       return json({
@@ -1936,19 +2147,23 @@ describe('Android local sources', () => {
   });
 
   it('labels linux.do feed topics without a category as uncategorized', async () => {
-    const fetcher = vi.fn(async () => json({
-      topic_list: {
-        topics: [{
-          id: 405,
-          title: 'linux.do uncategorized',
-          slug: 'uncategorized',
-          created_at: '2026-05-21T00:00:00.000Z',
-          bumped_at: '2026-05-21T00:00:00.000Z',
-          posts_count: 1
-        }]
-      },
-      users: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        topic_list: {
+          topics: [
+            {
+              id: 405,
+              title: 'linux.do uncategorized',
+              slug: 'uncategorized',
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:00:00.000Z',
+              posts_count: 1
+            }
+          ]
+        },
+        users: []
+      })
+    );
 
     const feed = await getFeed({ source: 'linuxdo', limit: 1, fetcher });
 
@@ -1959,25 +2174,31 @@ describe('Android local sources', () => {
   });
 
   it('does not expose linux.do uncategorized as a category tab option', async () => {
-    const fetcher = vi.fn(async () => json({
-      categories: [{
-        id: 1,
-        name: '未分类',
-        slug: 'uncategorized'
-      }, {
-        id: 2,
-        name: '技术',
-        slug: 'tech'
-      }, {
-        id: 4,
-        name: '开发调优',
-        slug: 'dev',
-        description_text: '只用于原站说明',
-        parent_category_id: 2,
-        topic_count: 88,
-        read_restricted: true
-      }]
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        categories: [
+          {
+            id: 1,
+            name: '未分类',
+            slug: 'uncategorized'
+          },
+          {
+            id: 2,
+            name: '技术',
+            slug: 'tech'
+          },
+          {
+            id: 4,
+            name: '开发调优',
+            slug: 'dev',
+            description_text: '只用于原站说明',
+            parent_category_id: 2,
+            topic_count: 88,
+            read_restricted: true
+          }
+        ]
+      })
+    );
 
     const categories = await getCategories({ source: 'linuxdo', fetcher });
 
@@ -1995,15 +2216,17 @@ describe('Android local sources', () => {
   });
 
   it('REG-USER-005 preserves explicit zero statistics for a new linux.do user', async () => {
-    const fetcher = vi.fn(async () => json({
-      user_summary: {
-        topic_count: 0,
-        reply_count: 0,
-        post_count: 0,
-        user: { id: 7, username: 'newbie', name: 'Newbie' }
-      },
-      topics: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        user_summary: {
+          topic_count: 0,
+          reply_count: 0,
+          post_count: 0,
+          user: { id: 7, username: 'newbie', name: 'Newbie' }
+        },
+        topics: []
+      })
+    );
 
     const profile = await getLinuxDoUserProfile('newbie', 'newbie', {
       cursorType: 'topics',
@@ -2057,20 +2280,25 @@ describe('Android local sources', () => {
       displayName: 'xy',
       url: 'https://www.nodeseek.com/space/8052'
     });
-    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/api/account/find/xy', expect.objectContaining({
-      signal: expect.any(AbortSignal),
-      headers: expect.objectContaining({ 'User-Agent': 'NodeSeek WebView UA' })
-    }));
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/api/account/find/xy',
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        headers: expect.objectContaining({ 'User-Agent': 'NodeSeek WebView UA' })
+      })
+    );
     expect(browserFetchIntentFromInit(fetcher.mock.calls[0]?.[1])).toEqual({ owner: 'user', priority: 'foreground' });
   });
 
   it('[REG-TOPIC-039] rejects a known logged-out username resolution before transport', async () => {
     const fetcher = vi.fn();
 
-    await expect(resolveNodeSeekUser('alice', {
-      authenticated: false,
-      fetcher
-    })).rejects.toMatchObject({
+    await expect(
+      resolveNodeSeekUser('alice', {
+        authenticated: false,
+        fetcher
+      })
+    ).rejects.toMatchObject({
       source: 'nodeseek',
       loginRequired: true
     });
@@ -2078,18 +2306,22 @@ describe('Android local sources', () => {
   });
 
   it('[REG-TOPIC-039] accepts one unique case-insensitive NodeSeek username match', async () => {
-    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => json({
-      success: true,
-      memberList: [
-        { member_id: 7, member_name: 'ALIce' },
-        { member_id: 8, member_name: 'alice-other' }
-      ]
-    }));
+    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
+      json({
+        success: true,
+        memberList: [
+          { member_id: 7, member_name: 'ALIce' },
+          { member_id: 8, member_name: 'alice-other' }
+        ]
+      })
+    );
 
-    await expect(resolveNodeSeekUser('  Alice  ', {
-      authenticated: true,
-      fetcher
-    })).resolves.toMatchObject({
+    await expect(
+      resolveNodeSeekUser('  Alice  ', {
+        authenticated: true,
+        fetcher
+      })
+    ).resolves.toMatchObject({
       id: '7',
       username: 'ALIce',
       url: 'https://www.nodeseek.com/space/7'
@@ -2098,61 +2330,79 @@ describe('Android local sources', () => {
   });
 
   it('[REG-TOPIC-039] prefers a strict NodeSeek username match over case-insensitive alternatives', async () => {
-    const fetcher = vi.fn(async () => json({
-      success: true,
-      memberList: [
-        { member_id: 7, member_name: 'ALICE' },
-        { member_id: 8, member_name: 'Alice' }
-      ]
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        success: true,
+        memberList: [
+          { member_id: 7, member_name: 'ALICE' },
+          { member_id: 8, member_name: 'Alice' }
+        ]
+      })
+    );
 
-    await expect(resolveNodeSeekUser('Alice', {
-      authenticated: true,
-      fetcher
-    })).resolves.toMatchObject({ id: '8', username: 'Alice' });
+    await expect(
+      resolveNodeSeekUser('Alice', {
+        authenticated: true,
+        fetcher
+      })
+    ).resolves.toMatchObject({ id: '8', username: 'Alice' });
   });
 
   it('[REG-TOPIC-039] rejects ambiguous case-insensitive NodeSeek username matches', async () => {
-    const fetcher = vi.fn(async () => json({
-      success: true,
-      memberList: [
-        { member_id: 7, member_name: 'ALICE' },
-        { member_id: 8, member_name: 'alice' }
-      ]
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        success: true,
+        memberList: [
+          { member_id: 7, member_name: 'ALICE' },
+          { member_id: 8, member_name: 'alice' }
+        ]
+      })
+    );
 
-    await expect(resolveNodeSeekUser('Alice', {
-      authenticated: true,
-      fetcher
-    })).rejects.toThrow('用户名解析失败');
+    await expect(
+      resolveNodeSeekUser('Alice', {
+        authenticated: true,
+        fetcher
+      })
+    ).rejects.toThrow('用户名解析失败');
   });
 
   it('[REG-TOPIC-039] rejects conflicting strict NodeSeek username matches', async () => {
-    const fetcher = vi.fn(async () => json({
-      success: true,
-      memberList: [
-        { member_id: 7, member_name: 'Alice' },
-        { member_id: 8, member_name: 'Alice' }
-      ]
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        success: true,
+        memberList: [
+          { member_id: 7, member_name: 'Alice' },
+          { member_id: 8, member_name: 'Alice' }
+        ]
+      })
+    );
 
-    await expect(resolveNodeSeekUser('Alice', {
-      authenticated: true,
-      fetcher
-    })).rejects.toThrow('用户名解析失败');
+    await expect(
+      resolveNodeSeekUser('Alice', {
+        authenticated: true,
+        fetcher
+      })
+    ).rejects.toThrow('用户名解析失败');
   });
 
   it('[REG-TOPIC-039] encodes a Unicode NodeSeek username in the resolver path', async () => {
-    const fetcher = vi.fn(async (_input: string) => json({
-      success: true,
-      memberList: [{ member_id: 1414, member_name: '男朋友' }]
-    }));
+    const fetcher = vi.fn(async (_input: string) =>
+      json({
+        success: true,
+        memberList: [{ member_id: 1414, member_name: '男朋友' }]
+      })
+    );
 
-    await expect(resolveNodeSeekUser('男朋友', {
-      authenticated: true,
-      fetcher
-    })).resolves.toMatchObject({ id: '1414', username: '男朋友' });
-    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://www.nodeseek.com/api/account/find/${encodeURIComponent('男朋友')}`);
+    await expect(
+      resolveNodeSeekUser('男朋友', {
+        authenticated: true,
+        fetcher
+      })
+    ).resolves.toMatchObject({ id: '1414', username: '男朋友' });
+    expect(fetcher.mock.calls[0]?.[0]).toBe(
+      `https://www.nodeseek.com/api/account/find/${encodeURIComponent('男朋友')}`
+    );
   });
 
   it('[REG-TOPIC-039] rejects a non-numeric NodeSeek profile id before transport', async () => {
@@ -2163,37 +2413,47 @@ describe('Android local sources', () => {
   });
 
   it('[REG-TOPIC-039] rejects a NodeSeek profile response for a different canonical UID', async () => {
-    const fetcher = vi.fn(async () => json({
-      success: true,
-      detail: { member_id: 8, member_name: 'alice' }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        success: true,
+        detail: { member_id: 8, member_name: 'alice' }
+      })
+    );
 
-    await expect(getNodeSeekUserProfile('7', {
-      cursorType: 'topics',
-      fetcher
-    })).rejects.toThrow('身份不匹配');
+    await expect(
+      getNodeSeekUserProfile('7', {
+        cursorType: 'topics',
+        fetcher
+      })
+    ).rejects.toThrow('身份不匹配');
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('[REG-TOPIC-039] rejects an unsuccessful NodeSeek username response even if it contains candidates', async () => {
-    const fetcher = vi.fn(async () => json({
-      success: false,
-      memberList: [{ member_id: 7, member_name: 'alice' }]
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        success: false,
+        memberList: [{ member_id: 7, member_name: 'alice' }]
+      })
+    );
 
-    await expect(resolveNodeSeekUser('alice', {
-      authenticated: true,
-      fetcher
-    })).rejects.toThrow('用户名解析失败');
+    await expect(
+      resolveNodeSeekUser('alice', {
+        authenticated: true,
+        fetcher
+      })
+    ).rejects.toThrow('用户名解析失败');
   });
 
   it('[REG-TOPIC-039] surfaces NodeSeek username lookup rate limiting without selecting a fallback user', async () => {
     const fetcher = vi.fn(async () => new Response('rate limited', { status: 429 }));
 
-    await expect(resolveNodeSeekUser('alice', {
-      authenticated: true,
-      fetcher
-    })).rejects.toThrow('HTTP 429');
+    await expect(
+      resolveNodeSeekUser('alice', {
+        authenticated: true,
+        fetcher
+      })
+    ).rejects.toThrow('HTTP 429');
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
@@ -2204,17 +2464,26 @@ describe('Android local sources', () => {
   ])('[REG-TOPIC-039] rejects %s when resolving a NodeSeek username', async (_label, payload) => {
     const fetcher = vi.fn(async () => json(payload));
 
-    await expect(resolveNodeSeekUser('alice', {
-      authenticated: true,
-      fetcher
-    })).rejects.toThrow('用户名解析失败');
+    await expect(
+      resolveNodeSeekUser('alice', {
+        authenticated: true,
+        fetcher
+      })
+    ).rejects.toThrow('用户名解析失败');
   });
 
   it('[REG-TOPIC-039] cancels NodeSeek username resolution through its AbortSignal', async () => {
     const controller = new AbortController();
-    const fetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
-    }));
+    const fetcher = vi.fn(
+      (_input: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+            { once: true }
+          );
+        })
+    );
 
     const pending = resolveNodeSeekUser('alice', {
       authenticated: true,
@@ -2230,10 +2499,12 @@ describe('Android local sources', () => {
   it('[REG-TOPIC-039] rejects an empty NodeSeek username before transport', async () => {
     const fetcher = vi.fn();
 
-    await expect(resolveNodeSeekUser('   ', {
-      authenticated: true,
-      fetcher
-    })).rejects.toThrow('用户名不能为空');
+    await expect(
+      resolveNodeSeekUser('   ', {
+        authenticated: true,
+        fetcher
+      })
+    ).rejects.toThrow('用户名不能为空');
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -2247,8 +2518,20 @@ describe('Android local sources', () => {
         return json({
           post_stream: {
             posts: [
-              { id: 40, post_number: 4, username: 'reply 4', cooked: '<p>4</p>', created_at: '2026-05-20T00:04:00.000Z' },
-              { id: 50, post_number: 5, username: 'reply 5', cooked: '<p>5</p>', created_at: '2026-05-20T00:05:00.000Z' }
+              {
+                id: 40,
+                post_number: 4,
+                username: 'reply 4',
+                cooked: '<p>4</p>',
+                created_at: '2026-05-20T00:04:00.000Z'
+              },
+              {
+                id: 50,
+                post_number: 5,
+                username: 'reply 5',
+                cooked: '<p>5</p>',
+                created_at: '2026-05-20T00:05:00.000Z'
+              }
             ]
           }
         });
@@ -2295,13 +2578,15 @@ describe('Android local sources', () => {
           posts_count: 1,
           post_stream: {
             stream: [11],
-            posts: [{
-              id: 11,
-              post_number: 1,
-              username: 'alice',
-              cooked: '<p>Complete cross-topic first paragraph.</p><p>Complete cross-topic second paragraph.</p>',
-              created_at: '2026-05-20T00:00:00.000Z'
-            }]
+            posts: [
+              {
+                id: 11,
+                post_number: 1,
+                username: 'alice',
+                cooked: '<p>Complete cross-topic first paragraph.</p><p>Complete cross-topic second paragraph.</p>',
+                created_at: '2026-05-20T00:00:00.000Z'
+              }
+            ]
           }
         });
       }
@@ -2312,13 +2597,16 @@ describe('Android local sources', () => {
         posts_count: 1,
         post_stream: {
           stream: [1],
-          posts: [{
-            id: 1,
-            post_number: 1,
-            username: 'bob',
-            cooked: '<aside data-post="1" class="quote" data-topic="920" data-username="alice"><blockquote><p>Short cross-topic preview.</p></blockquote></aside><p>Topic body</p>',
-            created_at: '2026-05-20T00:00:00.000Z'
-          }]
+          posts: [
+            {
+              id: 1,
+              post_number: 1,
+              username: 'bob',
+              cooked:
+                '<aside data-post="1" class="quote" data-topic="920" data-username="alice"><blockquote><p>Short cross-topic preview.</p></blockquote></aside><p>Topic body</p>',
+              created_at: '2026-05-20T00:00:00.000Z'
+            }
+          ]
         }
       });
     });
@@ -2329,110 +2617,141 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).toContain('data-topic="920"');
     expect(topic.contentHtml).toContain('Short cross-topic preview.');
     expect(topic.contentHtml).not.toContain('Complete cross-topic second paragraph.');
-    expect(completePost.contentHtml).toBe('<p>Complete cross-topic first paragraph.</p><p>Complete cross-topic second paragraph.</p>');
+    expect(completePost.contentHtml).toBe(
+      '<p>Complete cross-topic first paragraph.</p><p>Complete cross-topic second paragraph.</p>'
+    );
   });
 
   it('keeps a linux.do reply quote preview and loads the same-topic complete post separately', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 910,
-      title: 'linux.do quoted author',
-      created_at: '2026-05-20T00:00:00.000Z',
-      posts_count: 2,
-      post_stream: {
-        stream: [1, 2],
-        posts: [
-          { id: 1, post_number: 1, username: 'alice', cooked: '<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>', created_at: '2026-05-20T00:00:00.000Z' },
-          {
-            id: 2,
-            post_number: 2,
-            username: 'bob',
-            cooked: '<aside data-post="1" class="quote" data-topic="910" data-username="alice"><blockquote><p>Short preview.</p></blockquote></aside><p>Reply</p>',
-            created_at: '2026-05-20T00:02:00.000Z'
-          }
-        ]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 910,
+        title: 'linux.do quoted author',
+        created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: 2,
+        post_stream: {
+          stream: [1, 2],
+          posts: [
+            {
+              id: 1,
+              post_number: 1,
+              username: 'alice',
+              cooked: '<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>',
+              created_at: '2026-05-20T00:00:00.000Z'
+            },
+            {
+              id: 2,
+              post_number: 2,
+              username: 'bob',
+              cooked:
+                '<aside data-post="1" class="quote" data-topic="910" data-username="alice"><blockquote><p>Short preview.</p></blockquote></aside><p>Reply</p>',
+              created_at: '2026-05-20T00:02:00.000Z'
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '910', fetcher });
     const completePost = await getReply({ source: 'linuxdo', id: '910', floor: 1, fetcher });
 
     expect(topic.replies[0]).toMatchObject({
-      quotedPosts: [{
-        reference: { source: 'linuxdo', topicId: '910', postNumber: 1 },
-        author: { label: 'alice', username: 'alice' },
-        preview: 'Short preview.'
-      }],
+      quotedPosts: [
+        {
+          reference: { source: 'linuxdo', topicId: '910', postNumber: 1 },
+          author: { label: 'alice', username: 'alice' },
+          preview: 'Short preview.'
+        }
+      ],
       contentHtml: '<p>Reply</p>'
     });
-    expect(completePost.contentHtml).toBe('<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>');
+    expect(completePost.contentHtml).toBe(
+      '<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>'
+    );
   });
 
   it('[REG-TOPIC-053] keeps a linux.do reply quote target topic instead of treating it as a local floor', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 2685882,
-      title: 'Topic with cross-topic reply quote',
-      created_at: '2026-07-31T00:00:00.000Z',
-      posts_count: 2,
-      post_stream: {
-        stream: [1, 2],
-        posts: [
-          { id: 1, post_number: 7, username: 'local', cooked: '<p>Wrong local floor.</p>', created_at: '2026-07-31T00:00:00.000Z' },
-          {
-            id: 2,
-            post_number: 8,
-            username: 'bob',
-            cooked: '<aside data-post="7" class="quote" data-topic="2679944" data-username="alice"><div class="title"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/2679944/7">Referenced topic</a></div></div><blockquote><p>Cross-topic preview.</p></blockquote></aside><p>Reply body.</p>',
-            created_at: '2026-07-31T00:02:00.000Z'
-          }
-        ]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 2685882,
+        title: 'Topic with cross-topic reply quote',
+        created_at: '2026-07-31T00:00:00.000Z',
+        posts_count: 2,
+        post_stream: {
+          stream: [1, 2],
+          posts: [
+            {
+              id: 1,
+              post_number: 7,
+              username: 'local',
+              cooked: '<p>Wrong local floor.</p>',
+              created_at: '2026-07-31T00:00:00.000Z'
+            },
+            {
+              id: 2,
+              post_number: 8,
+              username: 'bob',
+              cooked:
+                '<aside data-post="7" class="quote" data-topic="2679944" data-username="alice"><div class="title"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/2679944/7">Referenced topic</a></div></div><blockquote><p>Cross-topic preview.</p></blockquote></aside><p>Reply body.</p>',
+              created_at: '2026-07-31T00:02:00.000Z'
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '2685882', fetcher });
 
     expect(topic.replies[0]).toMatchObject({
       floor: 8,
       contentHtml: '<p>Reply body.</p>',
-      quotedPosts: [{
-        reference: { source: 'linuxdo', topicId: '2679944', postNumber: 7 },
-        author: { label: 'alice', username: 'alice' },
-        preview: 'Cross-topic preview.',
-        topicTitle: 'Referenced topic',
-        topicUrl: 'https://linux.do/t/topic/2679944/7'
-      }]
+      quotedPosts: [
+        {
+          reference: { source: 'linuxdo', topicId: '2679944', postNumber: 7 },
+          author: { label: 'alice', username: 'alice' },
+          preview: 'Cross-topic preview.',
+          topicTitle: 'Referenced topic',
+          topicUrl: 'https://linux.do/t/topic/2679944/7'
+        }
+      ]
     });
   });
 
   it('keeps linux.do reply quote author names from quote avatar URLs', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 911,
-      title: 'linux.do quoted author avatar',
-      created_at: '2026-05-20T00:00:00.000Z',
-      posts_count: 2,
-      post_stream: {
-        stream: [1, 2],
-        posts: [
-          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
-          {
-            id: 2,
-            post_number: 2,
-            username: 'bob',
-            cooked: '<aside data-post="1" class="quote" data-topic="911"><div class="title"><img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/911/1">Quoted topic</a></div></div><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
-            created_at: '2026-05-20T00:02:00.000Z'
-          }
-        ]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 911,
+        title: 'linux.do quoted author avatar',
+        created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: 2,
+        post_stream: {
+          stream: [1, 2],
+          posts: [
+            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+            {
+              id: 2,
+              post_number: 2,
+              username: 'bob',
+              cooked:
+                '<aside data-post="1" class="quote" data-topic="911"><div class="title"><img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/911/1">Quoted topic</a></div></div><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
+              created_at: '2026-05-20T00:02:00.000Z'
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '911', fetcher });
 
-    expect(topic.replies[0].quotedPosts).toEqual([{
-      reference: { source: 'linuxdo', topicId: '911', postNumber: 1 },
-      author: { label: 'alice' },
-      preview: 'Original text',
-      topicTitle: 'Quoted topic',
-      topicUrl: 'https://linux.do/t/topic/911/1'
-    }]);
+    expect(topic.replies[0].quotedPosts).toEqual([
+      {
+        reference: { source: 'linuxdo', topicId: '911', postNumber: 1 },
+        author: { label: 'alice' },
+        preview: 'Original text',
+        topicTitle: 'Quoted topic',
+        topicUrl: 'https://linux.do/t/topic/911/1'
+      }
+    ]);
   });
 
   it('refreshes linux.do reply stream when reloading the first reply page', async () => {
@@ -2491,40 +2810,40 @@ describe('Android local sources', () => {
         });
       }
       return json({
-      id: 900,
-      title: 'linux.do logged in topic',
-      slug: 'linux-do-logged-in-topic',
-      created_at: '2026-05-20T00:00:00.000Z',
-      posts_count: 2,
-      views: 10,
-      bookmarked: true,
-      bookmark_id: 700,
-      post_stream: {
-        stream: [1001, 1002],
-        posts: [
-          {
-            id: 1001,
-            post_number: 1,
-            username: 'alice',
-            cooked: '<p>topic</p>',
-            created_at: '2026-05-20T00:00:00.000Z',
-            like_count: 3,
-            actions_summary: [{ id: 2, acted: true, can_act: false }]
-          },
-          {
-            id: 1002,
-            post_number: 2,
-            username: 'bob',
-            cooked: '<p>reply</p>',
-            created_at: '2026-05-20T00:01:00.000Z',
-            can_edit: true,
-            like_count: 1,
-            can_delete: true,
-            actions_summary: [{ id: 2, acted: false, can_act: true }]
-          }
-        ]
-      }
-    });
+        id: 900,
+        title: 'linux.do logged in topic',
+        slug: 'linux-do-logged-in-topic',
+        created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: 2,
+        views: 10,
+        bookmarked: true,
+        bookmark_id: 700,
+        post_stream: {
+          stream: [1001, 1002],
+          posts: [
+            {
+              id: 1001,
+              post_number: 1,
+              username: 'alice',
+              cooked: '<p>topic</p>',
+              created_at: '2026-05-20T00:00:00.000Z',
+              like_count: 3,
+              actions_summary: [{ id: 2, acted: true, can_act: false }]
+            },
+            {
+              id: 1002,
+              post_number: 2,
+              username: 'bob',
+              cooked: '<p>reply</p>',
+              created_at: '2026-05-20T00:01:00.000Z',
+              can_edit: true,
+              like_count: 1,
+              can_delete: true,
+              actions_summary: [{ id: 2, acted: false, can_act: true }]
+            }
+          ]
+        }
+      });
     });
 
     const topic = await getTopic({ source: 'linuxdo', id: '900', fetcher });
@@ -2549,45 +2868,47 @@ describe('Android local sources', () => {
   });
 
   it('marks own linux.do posts unlikable while keeping other posts likable', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 902,
-      title: 'linux.do own post like permissions',
-      slug: 'linux-do-own-post-like-permissions',
-      created_at: '2026-05-20T00:00:00.000Z',
-      posts_count: 3,
-      views: 10,
-      post_stream: {
-        stream: [2101, 2102, 2103],
-        posts: [
-          {
-            id: 2101,
-            post_number: 1,
-            username: 'everythink',
-            cooked: '<p>topic</p>',
-            created_at: '2026-05-20T00:00:00.000Z',
-            yours: true,
-            actions_summary: [{ id: 2, acted: false, can_act: true }]
-          },
-          {
-            id: 2102,
-            post_number: 2,
-            username: 'everythink',
-            cooked: '<p>own reply</p>',
-            created_at: '2026-05-20T00:01:00.000Z',
-            yours: true,
-            actions_summary: [{ id: 2, acted: false, can_act: true }]
-          },
-          {
-            id: 2103,
-            post_number: 3,
-            username: 'alice',
-            cooked: '<p>other reply</p>',
-            created_at: '2026-05-20T00:02:00.000Z',
-            actions_summary: [{ id: 2, acted: false, can_act: true }]
-          }
-        ]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 902,
+        title: 'linux.do own post like permissions',
+        slug: 'linux-do-own-post-like-permissions',
+        created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: 3,
+        views: 10,
+        post_stream: {
+          stream: [2101, 2102, 2103],
+          posts: [
+            {
+              id: 2101,
+              post_number: 1,
+              username: 'everythink',
+              cooked: '<p>topic</p>',
+              created_at: '2026-05-20T00:00:00.000Z',
+              yours: true,
+              actions_summary: [{ id: 2, acted: false, can_act: true }]
+            },
+            {
+              id: 2102,
+              post_number: 2,
+              username: 'everythink',
+              cooked: '<p>own reply</p>',
+              created_at: '2026-05-20T00:01:00.000Z',
+              yours: true,
+              actions_summary: [{ id: 2, acted: false, can_act: true }]
+            },
+            {
+              id: 2103,
+              post_number: 3,
+              username: 'alice',
+              cooked: '<p>other reply</p>',
+              created_at: '2026-05-20T00:02:00.000Z',
+              actions_summary: [{ id: 2, acted: false, can_act: true }]
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '902', fetcher });
 
@@ -2597,42 +2918,44 @@ describe('Android local sources', () => {
   });
 
   it('omits linux.do replies that the original site marks as deleted', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 901,
-      title: 'linux.do deleted reply topic',
-      slug: 'linux-do-deleted-reply-topic',
-      created_at: '2026-05-20T00:00:00.000Z',
-      posts_count: 3,
-      views: 10,
-      post_stream: {
-        stream: [2001, 2002, 2003],
-        posts: [
-          {
-            id: 2001,
-            post_number: 1,
-            username: 'alice',
-            cooked: '<p>topic</p>',
-            created_at: '2026-05-20T00:00:00.000Z'
-          },
-          {
-            id: 2002,
-            post_number: 2,
-            username: 'bob',
-            cooked: '<p>visible reply</p>',
-            created_at: '2026-05-20T00:01:00.000Z'
-          },
-          {
-            id: 2003,
-            post_number: 3,
-            username: 'everythink',
-            cooked: '<p>(帖子已被作者删除)</p>',
-            created_at: '2026-05-20T00:02:00.000Z',
-            deleted_at: '2026-05-20T00:03:00.000Z',
-            user_deleted: true
-          }
-        ]
-      }
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 901,
+        title: 'linux.do deleted reply topic',
+        slug: 'linux-do-deleted-reply-topic',
+        created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: 3,
+        views: 10,
+        post_stream: {
+          stream: [2001, 2002, 2003],
+          posts: [
+            {
+              id: 2001,
+              post_number: 1,
+              username: 'alice',
+              cooked: '<p>topic</p>',
+              created_at: '2026-05-20T00:00:00.000Z'
+            },
+            {
+              id: 2002,
+              post_number: 2,
+              username: 'bob',
+              cooked: '<p>visible reply</p>',
+              created_at: '2026-05-20T00:01:00.000Z'
+            },
+            {
+              id: 2003,
+              post_number: 3,
+              username: 'everythink',
+              cooked: '<p>(帖子已被作者删除)</p>',
+              created_at: '2026-05-20T00:02:00.000Z',
+              deleted_at: '2026-05-20T00:03:00.000Z',
+              user_deleted: true
+            }
+          ]
+        }
+      })
+    );
 
     const topic = await getTopic({ source: 'linuxdo', id: '901', fetcher });
 
@@ -2644,16 +2967,18 @@ describe('Android local sources', () => {
   });
 
   it('uses NodeSeek updatedDate as last reply time when embedded topic comments are empty', async () => {
-    const emptyTopicPayload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 101,
-        title: 'NodeSeek topic',
-        op: { name: 'alice' },
-        createdDate: '2026-05-20T00:00:00.000Z',
-        updatedDate: '2026-05-20T01:00:00.000Z',
-        comments: []
-      }
-    })).toString('base64');
+    const emptyTopicPayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 101,
+          title: 'NodeSeek topic',
+          op: { name: 'alice' },
+          createdDate: '2026-05-20T00:00:00.000Z',
+          updatedDate: '2026-05-20T01:00:00.000Z',
+          comments: []
+        }
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${emptyTopicPayload}</script>`));
 
     const topic = await getTopic({ source: 'nodeseek', id: '101', fetcher });
@@ -2773,7 +3098,12 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: '安卓手机免', fetcher, nodeSeekAuthenticated: true });
+    const search = await searchTopics({
+      source: 'nodeseek',
+      query: '安卓手机免',
+      fetcher,
+      nodeSeekAuthenticated: true
+    });
 
     expect(search.items.map((item) => item.id)).toEqual(['701', '702']);
   });
@@ -2852,8 +3182,20 @@ describe('Android local sources', () => {
     });
 
     const first = await searchTopics({ source: 'nodeseek', query: 'codex', limit: 1, fetcher });
-    const second = await searchTopics({ source: 'nodeseek', query: 'codex', page: first.nextPage ?? 2, limit: 1, fetcher });
-    const third = await searchTopics({ source: 'nodeseek', query: 'codex', page: second.nextPage ?? 3, limit: 1, fetcher });
+    const second = await searchTopics({
+      source: 'nodeseek',
+      query: 'codex',
+      page: first.nextPage ?? 2,
+      limit: 1,
+      fetcher
+    });
+    const third = await searchTopics({
+      source: 'nodeseek',
+      query: 'codex',
+      page: second.nextPage ?? 3,
+      limit: 1,
+      fetcher
+    });
 
     expect(first.items.map((item) => item.id)).toEqual(['861593']);
     expect(first.nextPage).toBe(2);
@@ -2869,15 +3211,19 @@ describe('Android local sources', () => {
   });
 
   it('keeps empty NodeSeek site search results empty instead of filtering the latest feed', async () => {
-    const latestPayload = Buffer.from(JSON.stringify({
-      rotateTopics: [{
-        postId: 303,
-        titleText: 'xyz latest incidental match',
-        titleLink: '/post-303-1',
-        op: { name: 'alice' },
-        time: { createdDate: '2026-05-21T00:00:00.000Z' }
-      }]
-    })).toString('base64');
+    const latestPayload = Buffer.from(
+      JSON.stringify({
+        rotateTopics: [
+          {
+            postId: 303,
+            titleText: 'xyz latest incidental match',
+            titleLink: '/post-303-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-21T00:00:00.000Z' }
+          }
+        ]
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/search?') && input.includes('q=xyz')) {
         return html('<ul class="post-list"></ul>');
@@ -2894,16 +3240,21 @@ describe('Android local sources', () => {
   });
 
   it('REG-SEARCH-018 keeps empty NodeSeek search pages empty when shell links and embedded topics remain', async () => {
-    const stalePayload = Buffer.from(JSON.stringify({
-      rotateTopics: [{
-        postId: 305,
-        titleText: 'stale shell result',
-        titleLink: '/post-305-1',
-        op: { name: 'alice' },
-        time: { createdDate: '2026-05-21T00:00:00.000Z' }
-      }]
-    })).toString('base64');
-    const fetcher = vi.fn(async () => html(`
+    const stalePayload = Buffer.from(
+      JSON.stringify({
+        rotateTopics: [
+          {
+            postId: 305,
+            titleText: 'stale shell result',
+            titleLink: '/post-305-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-21T00:00:00.000Z' }
+          }
+        ]
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(async () =>
+      html(`
       <script>${stalePayload}</script>
       <form action="/search"><input name="q" value="missing" /></form>
       <ul class="post-list"></ul>
@@ -2912,7 +3263,8 @@ describe('Android local sources', () => {
         <a href="/post-302-1">shell link two</a>
         <a href="/post-303-1">shell link three</a>
       </footer>
-    `));
+    `)
+    );
 
     const search = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekAuthenticated: true });
 
@@ -2935,19 +3287,25 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(searchTopics({ source: 'nodeseek', query: 'retry', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
+    await expect(
+      searchTopics({ source: 'nodeseek', query: 'retry', fetcher, nodeSeekAuthenticated: true })
+    ).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
   });
 
   it('surfaces NodeSeek site search failures instead of filtering the latest feed', async () => {
-    const latestPayload = Buffer.from(JSON.stringify({
-      rotateTopics: [{
-        postId: 304,
-        titleText: 'failure latest incidental match',
-        titleLink: '/post-304-1',
-        op: { name: 'alice' },
-        time: { createdDate: '2026-05-21T00:00:00.000Z' }
-      }]
-    })).toString('base64');
+    const latestPayload = Buffer.from(
+      JSON.stringify({
+        rotateTopics: [
+          {
+            postId: 304,
+            titleText: 'failure latest incidental match',
+            titleLink: '/post-304-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-21T00:00:00.000Z' }
+          }
+        ]
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/search?') && input.includes('q=failure')) {
         throw new Error('NodeSeek search failed');
@@ -2955,7 +3313,9 @@ describe('Android local sources', () => {
       return html(`<script>${latestPayload}</script>`);
     });
 
-    await expect(searchTopics({ source: 'nodeseek', query: 'failure', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow('NodeSeek search failed');
+    await expect(
+      searchTopics({ source: 'nodeseek', query: 'failure', fetcher, nodeSeekAuthenticated: true })
+    ).rejects.toThrow('NodeSeek search failed');
     const callUrls = fetcher.mock.calls.map((call) => call[0]);
     expect(callUrls).toContain('https://www.nodeseek.com/search?q=failure');
     expect(callUrls).not.toContain('https://www.nodeseek.com/');
@@ -3016,24 +3376,54 @@ describe('Android local sources', () => {
       `);
     });
 
-    const first = await searchTopics({ source: 'nodeseek', query: 'GPT', limit: 1, fetcher, nodeSeekAuthenticated: true });
-    const second = await searchTopics({ source: 'nodeseek', query: 'GPT', page: first.nextPage ?? 2, limit: 1, fetcher, nodeSeekAuthenticated: true });
+    const first = await searchTopics({
+      source: 'nodeseek',
+      query: 'GPT',
+      limit: 1,
+      fetcher,
+      nodeSeekAuthenticated: true
+    });
+    const second = await searchTopics({
+      source: 'nodeseek',
+      query: 'GPT',
+      page: first.nextPage ?? 2,
+      limit: 1,
+      fetcher,
+      nodeSeekAuthenticated: true
+    });
 
     expect(first.items.map((item) => item.id)).toEqual(['202']);
     expect(first.hasMore).toBe(true);
     expect(first.nextPage).toBe(2);
     expect(second.items.map((item) => item.id)).toEqual(['203']);
-    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.nodeseek.com/search?q=GPT&page=2');
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain(
+      'https://www.nodeseek.com/search?q=GPT&page=2'
+    );
   });
 
   it('prefers rendered NodeSeek search rows over stale embedded shell topics', async () => {
-    const staleEmbeddedPayload = Buffer.from(JSON.stringify({
-      rotateTopics: [
-        { postId: 201, titleText: 'stale search page one', titleLink: '/post-201-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T02:00:00.000Z' } },
-        { postId: 200, titleText: 'stale search page one older', titleLink: '/post-200-1', op: { name: 'bob' }, time: { createdDate: '2026-05-20T01:00:00.000Z' } }
-      ]
-    })).toString('base64');
-    const fetcher = vi.fn(async () => html(`
+    const staleEmbeddedPayload = Buffer.from(
+      JSON.stringify({
+        rotateTopics: [
+          {
+            postId: 201,
+            titleText: 'stale search page one',
+            titleLink: '/post-201-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-20T02:00:00.000Z' }
+          },
+          {
+            postId: 200,
+            titleText: 'stale search page one older',
+            titleLink: '/post-200-1',
+            op: { name: 'bob' },
+            time: { createdDate: '2026-05-20T01:00:00.000Z' }
+          }
+        ]
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(async () =>
+      html(`
       <script>${staleEmbeddedPayload}</script>
       <ul class="post-list">
         <li class="post-list-item">
@@ -3051,9 +3441,17 @@ describe('Android local sources', () => {
           </div>
         </li>
       </ul>
-    `));
+    `)
+    );
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', page: 2, limit: 2, fetcher, nodeSeekAuthenticated: true });
+    const search = await searchTopics({
+      source: 'nodeseek',
+      query: 'GPT',
+      page: 2,
+      limit: 2,
+      fetcher,
+      nodeSeekAuthenticated: true
+    });
 
     expect(search.items.map((item) => item.id)).toEqual(['199', '198']);
   });
@@ -3154,8 +3552,20 @@ describe('Android local sources', () => {
     });
 
     const first = await searchTopics({ source: 'linuxdo', query: 'codex', limit: 1, fetcher });
-    const second = await searchTopics({ source: 'linuxdo', query: 'codex', page: first.nextPage ?? 2, limit: 1, fetcher });
-    const third = await searchTopics({ source: 'linuxdo', query: 'codex', page: second.nextPage ?? 3, limit: 1, fetcher });
+    const second = await searchTopics({
+      source: 'linuxdo',
+      query: 'codex',
+      page: first.nextPage ?? 2,
+      limit: 1,
+      fetcher
+    });
+    const third = await searchTopics({
+      source: 'linuxdo',
+      query: 'codex',
+      page: second.nextPage ?? 3,
+      limit: 1,
+      fetcher
+    });
 
     expect(first.items.map((item) => item.id)).toEqual(['1424130']);
     expect(first.nextPage).toBe(2);
@@ -3163,7 +3573,11 @@ describe('Android local sources', () => {
     expect(second.nextPage).toBe(3);
     expect(third.items.map((item) => item.id)).toEqual(['1577486']);
     expect(third.hasMore).toBe(false);
-    expect(fetcher.mock.calls.map((call) => new URL(String(call[0])).searchParams.get('start'))).toEqual([null, '10', '20']);
+    expect(fetcher.mock.calls.map((call) => new URL(String(call[0])).searchParams.get('start'))).toEqual([
+      null,
+      '10',
+      '20'
+    ]);
   });
 
   it('keeps empty linux.do search responses empty instead of falling back to latest topics', async () => {
@@ -3221,23 +3635,36 @@ describe('Android local sources', () => {
     });
 
     const first = await searchTopics({
-      source: 'linuxdo', query: 'keyword', limit: 1, fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: 'keyword',
+      limit: 1,
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
     const second = await searchTopics({
-      source: 'linuxdo', query: 'keyword', page: first.nextPage ?? 2, limit: 1, fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: 'keyword',
+      page: first.nextPage ?? 2,
+      limit: 1,
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
 
-    expect(first.items).toEqual([expect.objectContaining({
-      id: '501',
-      author: 'author-501',
-      authorAvatar: 'https://linux.do/user_avatar/linux.do/author-501/96/1.png'
-    })]);
+    expect(first.items).toEqual([
+      expect.objectContaining({
+        id: '501',
+        author: 'author-501',
+        authorAvatar: 'https://linux.do/user_avatar/linux.do/author-501/96/1.png'
+      })
+    ]);
     expect(first.hasMore).toBe(true);
     expect(first.nextPage).toBe(2);
     expect(second.items.map((item) => item.id)).toEqual(['502']);
-    const searchCalls = fetcher.mock.calls.map((call) => new URL(String(call[0]))).filter((url) => url.pathname === '/search');
+    const searchCalls = fetcher.mock.calls
+      .map((call) => new URL(String(call[0])))
+      .filter((url) => url.pathname === '/search');
     expect(searchCalls.map((url) => url.searchParams.get('page'))).toEqual(['1', '1']);
   });
 
@@ -3250,34 +3677,43 @@ describe('Android local sources', () => {
       expect(url.pathname).toBe('/search');
       return json({
         grouped_search_result: { more_full_page_results: false },
-        topics: [{
-          id: 506,
-          title: 'cf-turnstile integration notes',
-          slug: 'cf-turnstile-integration-notes',
-          created_at: '2026-05-21T00:00:00.000Z',
-          bumped_at: '2026-05-21T00:00:00.000Z',
-          posts_count: 1
-        }],
-        posts: [{
-          id: 1506,
-          topic_id: 506,
-          post_number: 1,
-          username: 'author-506',
-          blurb: 'ordinary discussion about challenge-platform behavior'
-        }],
+        topics: [
+          {
+            id: 506,
+            title: 'cf-turnstile integration notes',
+            slug: 'cf-turnstile-integration-notes',
+            created_at: '2026-05-21T00:00:00.000Z',
+            bumped_at: '2026-05-21T00:00:00.000Z',
+            posts_count: 1
+          }
+        ],
+        posts: [
+          {
+            id: 1506,
+            topic_id: 506,
+            post_number: 1,
+            username: 'author-506',
+            blurb: 'ordinary discussion about challenge-platform behavior'
+          }
+        ],
         users: []
       });
     });
 
     const result = await searchTopics({
-      source: 'linuxdo', query: 'cf-turnstile', fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: 'cf-turnstile',
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
 
-    expect(result.items).toEqual([expect.objectContaining({
-      id: '506',
-      title: 'cf-turnstile integration notes'
-    })]);
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: '506',
+        title: 'cf-turnstile integration notes'
+      })
+    ]);
   });
 
   it('[REG-SEARCH-013] keeps linux.do reply matches without claiming the reply author is the OP', async () => {
@@ -3289,44 +3725,50 @@ describe('Android local sources', () => {
       if (url.pathname === '/search') {
         return json({
           grouped_search_result: { more_full_page_results: false },
-          topics: [{
-            id: 504,
-            title: 'reply-only match',
-            slug: 'reply-only-match',
-            created_at: '2026-05-21T00:00:00.000Z',
-            bumped_at: '2026-05-21T00:01:00.000Z',
-            posts_count: 2,
-            posters: [],
-            last_poster_username: 'last-replier'
-          }, {
-            id: 505,
-            title: 'reply match with topic creator',
-            slug: 'reply-match-with-topic-creator',
-            created_at: '2026-05-21T00:00:00.000Z',
-            bumped_at: '2026-05-21T00:01:00.000Z',
-            posts_count: 2,
-            posters: [],
-            last_poster_username: 'another-last-replier',
-            details: {
-              created_by: {
-                username: 'topic-owner',
-                avatar_template: '/user_avatar/linux.do/topic-owner/{size}/1.png'
+          topics: [
+            {
+              id: 504,
+              title: 'reply-only match',
+              slug: 'reply-only-match',
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:01:00.000Z',
+              posts_count: 2,
+              posters: [],
+              last_poster_username: 'last-replier'
+            },
+            {
+              id: 505,
+              title: 'reply match with topic creator',
+              slug: 'reply-match-with-topic-creator',
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:01:00.000Z',
+              posts_count: 2,
+              posters: [],
+              last_poster_username: 'another-last-replier',
+              details: {
+                created_by: {
+                  username: 'topic-owner',
+                  avatar_template: '/user_avatar/linux.do/topic-owner/{size}/1.png'
+                }
               }
             }
-          }],
-          posts: [{
-            topic_id: 504,
-            post_number: 2,
-            username: 'reply-author',
-            avatar_template: '/user_avatar/linux.do/reply-author/{size}/1.png',
-            blurb: 'matching reply'
-          }, {
-            topic_id: 505,
-            post_number: 2,
-            username: 'another-reply-author',
-            avatar_template: '/user_avatar/linux.do/another-reply-author/{size}/1.png',
-            blurb: 'another matching reply'
-          }],
+          ],
+          posts: [
+            {
+              topic_id: 504,
+              post_number: 2,
+              username: 'reply-author',
+              avatar_template: '/user_avatar/linux.do/reply-author/{size}/1.png',
+              blurb: 'matching reply'
+            },
+            {
+              topic_id: 505,
+              post_number: 2,
+              username: 'another-reply-author',
+              avatar_template: '/user_avatar/linux.do/another-reply-author/{size}/1.png',
+              blurb: 'another matching reply'
+            }
+          ],
           users: []
         });
       }
@@ -3334,8 +3776,11 @@ describe('Android local sources', () => {
     });
 
     const search = await searchTopics({
-      source: 'linuxdo', query: 'reply-only', fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: 'reply-only',
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
 
     expect(search.items).toEqual([
@@ -3381,9 +3826,7 @@ describe('Android local sources', () => {
               posts_count: 1
             }
           ],
-          posts: [
-            { topic_id: 902, blurb: '官方搜索认为这个话题相关。' }
-          ],
+          posts: [{ topic_id: 902, blurb: '官方搜索认为这个话题相关。' }],
           users: []
         });
       }
@@ -3391,8 +3834,11 @@ describe('Android local sources', () => {
     });
 
     const search = await searchTopics({
-      source: 'linuxdo', query: '安卓手机免', fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: '安卓手机免',
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
 
     expect(search.items.map((item) => item.id)).toEqual(['901', '902']);
@@ -3409,21 +3855,26 @@ describe('Android local sources', () => {
       expect(url.searchParams.get('page')).toBe('1');
       expect(url.searchParams.has('type_filter')).toBe(false);
       return json({
-        topics: [{
-          id: 605,
-          title: 'linux latest keyword',
-          slug: 'linux-latest-keyword',
-          created_at: '2026-05-21T00:00:00.000Z',
-          bumped_at: '2026-05-21T00:00:00.000Z',
-          posts_count: 1
-        }],
+        topics: [
+          {
+            id: 605,
+            title: 'linux latest keyword',
+            slug: 'linux-latest-keyword',
+            created_at: '2026-05-21T00:00:00.000Z',
+            bumped_at: '2026-05-21T00:00:00.000Z',
+            posts_count: 1
+          }
+        ],
         users: []
       });
     });
 
     const search = await searchTopics({
-      source: 'linuxdo', query: 'keyword', fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: 'keyword',
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
 
     expect(search.items.map((item) => item.id)).toEqual(['605']);
@@ -3432,48 +3883,57 @@ describe('Android local sources', () => {
     expect(calls).not.toContain('https://linux.do/discourse-ai/embeddings/semantic-search');
     const searchCall = fetcher.mock.calls.find((call) => new URL(String(call[0])).pathname === '/search');
     const init = searchCall?.[1];
-    expect(init).toEqual(expect.objectContaining({
-      headers: expect.objectContaining({
-        Accept: 'application/json, text/javascript, */*; q=0.01',
-        'Discourse-Present': 'true',
-        Referer: 'https://linux.do/search?expanded=true&q=keyword',
-        'X-CSRF-Token': 'csrf-token',
-        'X-Requested-With': 'XMLHttpRequest'
+    expect(init).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: 'application/json, text/javascript, */*; q=0.01',
+          'Discourse-Present': 'true',
+          Referer: 'https://linux.do/search?expanded=true&q=keyword',
+          'X-CSRF-Token': 'csrf-token',
+          'X-Requested-With': 'XMLHttpRequest'
+        })
       })
-    }));
+    );
   });
 
   it('maps linux.do search result category ids through site categories', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/search?')) {
         return json({
-          topics: [{
-            id: 701,
-            title: 'linux category keyword',
-            slug: 'linux-category-keyword',
-            category_id: 4,
-            created_at: '2026-05-21T00:00:00.000Z',
-            bumped_at: '2026-05-21T00:00:00.000Z',
-            posts_count: 1
-          }],
+          topics: [
+            {
+              id: 701,
+              title: 'linux category keyword',
+              slug: 'linux-category-keyword',
+              category_id: 4,
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:00:00.000Z',
+              posts_count: 1
+            }
+          ],
           users: []
         });
       }
       if (input.includes('linux.do/site.json')) {
         return json({
-          categories: [{
-            id: 4,
-            name: '开发调优',
-            slug: 'dev'
-          }]
+          categories: [
+            {
+              id: 4,
+              name: '开发调优',
+              slug: 'dev'
+            }
+          ]
         });
       }
       throw new Error(`unexpected ${input}`);
     });
 
     const search = await searchTopics({
-      source: 'linuxdo', query: 'keyword', fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: 'keyword',
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
 
     expect(search.items[0]).toMatchObject({
@@ -3513,8 +3973,11 @@ describe('Android local sources', () => {
     });
 
     const search = await searchTopics({
-      source: 'linuxdo', query: 'keyword', fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: 'keyword',
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
 
     expect(search.items.map((item) => item.id)).toEqual(['801', '802']);
@@ -3527,14 +3990,16 @@ describe('Android local sources', () => {
       }
       if (input.includes('/search?')) {
         return json({
-          topics: [{
-            id: 601,
-            title: 'linux logged in keyword',
-            slug: 'linux-logged-in-keyword',
-            created_at: '2026-05-21T00:00:00.000Z',
-            bumped_at: '2026-05-21T00:00:00.000Z',
-            posts_count: 1
-          }],
+          topics: [
+            {
+              id: 601,
+              title: 'linux logged in keyword',
+              slug: 'linux-logged-in-keyword',
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:00:00.000Z',
+              posts_count: 1
+            }
+          ],
           users: []
         });
       }
@@ -3542,8 +4007,11 @@ describe('Android local sources', () => {
     });
 
     const search = await searchTopics({
-      source: 'linuxdo', query: 'keyword', fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+      source: 'linuxdo',
+      query: 'keyword',
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
     });
 
     expect(search.items.map((item) => item.id)).toEqual(['601']);
@@ -3553,15 +4021,17 @@ describe('Android local sources', () => {
     expect(url.searchParams.get('q')).toBe('keyword');
     expect(url.searchParams.get('page')).toBe('1');
     expect(url.searchParams.has('type_filter')).toBe(false);
-    expect(init).toEqual(expect.objectContaining({
-      headers: expect.objectContaining({
-        'Discourse-Logged-In': 'true',
-        Referer: 'https://linux.do/search?expanded=true&q=keyword',
-        'User-Agent': 'LinuxDo WebView UA',
-        'X-CSRF-Token': 'csrf-token',
-        'X-Requested-With': 'XMLHttpRequest'
+    expect(init).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'Discourse-Logged-In': 'true',
+          Referer: 'https://linux.do/search?expanded=true&q=keyword',
+          'User-Agent': 'LinuxDo WebView UA',
+          'X-CSRF-Token': 'csrf-token',
+          'X-Requested-With': 'XMLHttpRequest'
+        })
       })
-    }));
+    );
     expect(init?.headers).not.toHaveProperty('Cookie');
   });
 
@@ -3574,12 +4044,15 @@ describe('Android local sources', () => {
       nodeSeekUserAgent: 'NodeSeek WebView UA'
     });
 
-    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=postTime', expect.objectContaining({
-      headers: expect.objectContaining({
-        'User-Agent': 'NodeSeek WebView UA'
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/?sortBy=postTime',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'User-Agent': 'NodeSeek WebView UA'
+        })
       })
-    }));
-    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]?.headers).not.toHaveProperty('cookie');
+    );
+    expect((fetcher.mock.calls as unknown as [string, RequestInit?][])[0]?.[1]?.headers).not.toHaveProperty('cookie');
   });
 
   it('reads the NodeSeek feed by latest replies when requested', async () => {
@@ -3595,9 +4068,11 @@ describe('Android local sources', () => {
   });
 
   it('[REG-SOURCE-005] marks visible NodeSeek reads ahead of background account refresh', async () => {
-    const accountPayload = Buffer.from(JSON.stringify({
-      user: { uid: 42, username: 'alice' }
-    })).toString('base64');
+    const accountPayload = Buffer.from(
+      JSON.stringify({
+        user: { uid: 42, username: 'alice' }
+      })
+    ).toString('base64');
     const visibleFetcher = vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`));
     const accountFetcher = vi.fn(async () => html(`<script>${accountPayload}</script>`));
 
@@ -3605,10 +4080,11 @@ describe('Android local sources', () => {
     await getCategories({ source: 'nodeseek', fetcher: visibleFetcher });
     await getNodeSeekCurrentUserProfile({ fetcher: accountFetcher });
 
-    const visibleIntents = (visibleFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)
-      .map(([, init]) => browserFetchIntentFromInit(init));
+    const visibleIntents = (visibleFetcher.mock.calls as unknown as [string, RequestInit?][]).map(([, init]) =>
+      browserFetchIntentFromInit(init)
+    );
     const accountIntent = browserFetchIntentFromInit(
-      (accountFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]
+      (accountFetcher.mock.calls as unknown as [string, RequestInit?][])[0]?.[1]
     );
 
     expect(visibleIntents).toEqual([
@@ -3619,23 +4095,24 @@ describe('Android local sources', () => {
   });
 
   it('[REG-SOURCE-005] marks visible linux.do reads ahead of background account refresh', async () => {
-    const visibleFetcher = vi.fn(async (input: string) => (
-      new URL(input).pathname === '/site.json'
-        ? json({ categories: [] })
-        : json({ topic_list: { topics: [] } })
-    ));
-    const accountFetcher = vi.fn(async () => json({
-      current_user: { id: 42, username: 'alice', name: 'Alice' }
-    }));
+    const visibleFetcher = vi.fn(async (input: string) =>
+      new URL(input).pathname === '/site.json' ? json({ categories: [] }) : json({ topic_list: { topics: [] } })
+    );
+    const accountFetcher = vi.fn(async () =>
+      json({
+        current_user: { id: 42, username: 'alice', name: 'Alice' }
+      })
+    );
 
     await getFeed({ source: 'linuxdo', fetcher: visibleFetcher });
     await getCategories({ source: 'linuxdo', fetcher: visibleFetcher });
     await getLinuxDoCurrentUserProfile({ fetcher: accountFetcher });
 
-    const visibleIntents = (visibleFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)
-      .map(([, init]) => browserFetchIntentFromInit(init));
+    const visibleIntents = (visibleFetcher.mock.calls as unknown as [string, RequestInit?][]).map(([, init]) =>
+      browserFetchIntentFromInit(init)
+    );
     const accountIntent = browserFetchIntentFromInit(
-      (accountFetcher.mock.calls as unknown as Array<[string, RequestInit?]>)[0]?.[1]
+      (accountFetcher.mock.calls as unknown as [string, RequestInit?][])[0]?.[1]
     );
 
     expect(visibleIntents).toEqual([
@@ -3646,19 +4123,23 @@ describe('Android local sources', () => {
   });
 
   it('[REG-ACCOUNT-037] uses rendered NodeSeek guest controls for account probes', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <ul class="post-list">
         <li class="post-list-item">
           <div class="post-title"><a href="/post-743010-1">Public topic</a></div>
         </li>
       </ul>
-    `));
-    const webViewFetcher = vi.fn(async () => html(`
+    `)
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <header>
         <a class="btn" href="/signIn.html">登录</a>
         <a class="btn" href="/register.html">注册</a>
       </header>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -3673,16 +4154,20 @@ describe('Android local sources', () => {
   });
 
   it('[REG-ACCOUNT-037] accepts only the bridged explicit-null NodeSeek account state as anonymous', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <ul class="post-list">
         <li class="post-list-item">
           <div class="post-title"><a href="/post-743010-1">Public topic</a></div>
         </li>
       </ul>
-    `));
-    const webViewFetcher = vi.fn(async () => html(`
+    `)
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <meta name="nodeseekAccountState" content="anonymous">
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -3697,12 +4182,14 @@ describe('Android local sources', () => {
   });
 
   it('[REG-ACCOUNT-037] keeps explicit direct NodeSeek account evidence on the fast path', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <header>
         <a class="btn" href="/signIn.html">登录</a>
         <a class="btn" href="/register.html">注册</a>
       </header>
-    `));
+    `)
+    );
     const webViewFetcher = vi.fn(async () => {
       throw new Error('WebView should not run for explicit direct identity evidence');
     });
@@ -3720,10 +4207,13 @@ describe('Android local sources', () => {
   });
 
   it('reports NodeSeek Cloudflare HTML as a verification requirement', async () => {
-    const fetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
-      status: 403,
-      headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+        })
+    );
 
     await expect(getFeed({ source: 'nodeseek', fetcher })).rejects.toMatchObject({
       source: 'nodeseek',
@@ -3735,7 +4225,9 @@ describe('Android local sources', () => {
   });
 
   it('reports Chinese NodeSeek Cloudflare HTML as a verification requirement', async () => {
-    const fetcher = vi.fn(async () => html('<html><title>请稍候…</title><body>正在进行安全验证。本网站使用安全服务防护恶意自动程序。</body></html>'));
+    const fetcher = vi.fn(async () =>
+      html('<html><title>请稍候…</title><body>正在进行安全验证。本网站使用安全服务防护恶意自动程序。</body></html>')
+    );
 
     await expect(getFeed({ source: 'nodeseek', fetcher })).rejects.toMatchObject({
       source: 'nodeseek',
@@ -3745,12 +4237,14 @@ describe('Android local sources', () => {
   });
 
   it('uses normal fetch for NodeSeek when the HTML is already readable', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-743010-1">NodeSeek normal detail</a>
       <div class="content-item">
         <article class="post-content"><p>正常正文</p></article>
       </div>
-    `));
+    `)
+    );
     const webViewFetcher = vi.fn(async () => html('<html>webview fallback should not be used</html>'));
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
@@ -3781,7 +4275,8 @@ describe('Android local sources', () => {
   });
 
   it('uses normal fetch for readable NodeSeek lists that include challenge scripts', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
       <ul class="post-list">
         <li class="post-list-item">
@@ -3789,15 +4284,18 @@ describe('Android local sources', () => {
           <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
         </li>
       </ul>
-    `));
-    const webViewFetcher = vi.fn(async () => html(`
+    `)
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <ul class="post-list">
         <li class="post-list-item">
           <div class="post-title"><a href="/post-743014-1">NodeSeek WebView list row</a></div>
           <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
         </li>
       </ul>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -3810,19 +4308,23 @@ describe('Android local sources', () => {
   });
 
   it('uses normal fetch for readable NodeSeek details that include challenge scripts', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <div class="cf-turnstile"></div>
       <a class="post-title" href="/post-743015-1">NodeSeek direct detail</a>
       <div class="content-item">
         <article class="post-content"><p>直接正文讨论“正在进行安全验证”提示</p></article>
       </div>
-    `));
-    const webViewFetcher = vi.fn(async () => html(`
+    `)
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-743015-1">NodeSeek WebView detail</a>
       <div class="content-item">
         <article class="post-content"><p>兜底正文</p></article>
       </div>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -3835,30 +4337,36 @@ describe('Android local sources', () => {
   });
 
   it('uses normal fetch for readable embedded NodeSeek details that include challenge scripts', async () => {
-    const directPayload = Buffer.from(JSON.stringify({
-      postData: {
-        title: 'NodeSeek direct embedded detail',
-        op: { name: 'alice' },
-        comments: [
-          {
-            commentId: 1,
-            poster: { name: 'alice' },
-            markdown: '直接嵌入正文',
-            time: { createdDate: '2026-05-21T00:00:00.000Z' }
-          }
-        ]
-      }
-    })).toString('base64');
-    const normalFetcher = vi.fn(async () => html(`
+    const directPayload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          title: 'NodeSeek direct embedded detail',
+          op: { name: 'alice' },
+          comments: [
+            {
+              commentId: 1,
+              poster: { name: 'alice' },
+              markdown: '直接嵌入正文',
+              time: { createdDate: '2026-05-21T00:00:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <script>${directPayload}</script>
       <div class="cf-turnstile"></div>
-    `));
-    const webViewFetcher = vi.fn(async () => html(`
+    `)
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-743016-1">NodeSeek WebView embedded detail</a>
       <div class="content-item">
         <article class="post-content"><p>兜底正文</p></article>
       </div>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -3871,10 +4379,12 @@ describe('Android local sources', () => {
   });
 
   it('[REG-VERIFICATION-002] does not send NodeSeek JSON business responses to the verification WebView', async () => {
-    const normalFetcher = vi.fn(async () => json({
-      ok: true,
-      message: 'ordinary API data mentioning cf-turnstile and challenge-platform'
-    }));
+    const normalFetcher = vi.fn(async () =>
+      json({
+        ok: true,
+        message: 'ordinary API data mentioning cf-turnstile and challenge-platform'
+      })
+    );
     const webViewFetcher = vi.fn(async () => json({ ok: false, message: 'unexpected fallback' }));
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
@@ -3888,11 +4398,13 @@ describe('Android local sources', () => {
   });
 
   it('[REG-VERIFICATION-002] does not treat plain Cloudflare discussion text as a NodeSeek challenge page', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <html><body><article>
         Ordinary documentation mentioning cf-turnstile and challenge-platform.
       </article></body></html>
-    `));
+    `)
+    );
     const webViewFetcher = vi.fn(async () => html('<html>unexpected fallback</html>'));
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
@@ -3906,11 +4418,13 @@ describe('Android local sources', () => {
   });
 
   it('[REG-VERIFICATION-002] does not treat Chinese verification discussion text as a NodeSeek challenge page', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <html><body><article>
         普通文档讨论“正在进行安全验证”和“安全服务防护恶意自动程序”的提示文案。
       </article></body></html>
-    `));
+    `)
+    );
     const webViewFetcher = vi.fn(async () => html('<html>unexpected fallback</html>'));
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
@@ -3925,17 +4439,24 @@ describe('Android local sources', () => {
 
   it('retries NodeSeek through the WebView fallback only after Cloudflare', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
-    const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
-      status: 403,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
-    const webViewFetcher = vi.fn(async () => html(`
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-743011-1">NodeSeek fallback detail</a>
       <div class="content-item">
         <article class="post-content"><p>兜底正文</p></article>
       </div>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -3946,11 +4467,9 @@ describe('Android local sources', () => {
     expect(topic.title).toBe('NodeSeek fallback detail');
     expect(normalFetcher).toHaveBeenCalledTimes(1);
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
-    const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
     expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743011-1');
-    const events = lines
-      .map((line) => JSON.parse(line))
-      .filter(({ operation }) => operation === 'transport-fallback');
+    const events = lines.map((line) => JSON.parse(line)).filter(({ operation }) => operation === 'transport-fallback');
     expect(events).toEqual([
       expect.objectContaining({ phase: 'intent', source: 'nodeseek', reason: 'verification_required' }),
       expect.objectContaining({ phase: 'transport', channel: 'direct', status: 403, reason: 'verification_required' }),
@@ -3964,13 +4483,19 @@ describe('Android local sources', () => {
     vi.useFakeTimers();
     let resolveFallback: ((response: Response) => void) | undefined;
     try {
-      const normalFetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
-        status: 403,
-        headers: { 'cf-mitigated': 'challenge' }
-      }));
-      const webViewFetcher = vi.fn(() => new Promise<Response>((resolve) => {
-        resolveFallback = resolve;
-      }));
+      const normalFetcher = vi.fn(
+        async () =>
+          new Response('<html><div class="cf-turnstile"></div></html>', {
+            status: 403,
+            headers: { 'cf-mitigated': 'challenge' }
+          })
+      );
+      const webViewFetcher = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFallback = resolve;
+          })
+      );
       const fetcher = createNodeSeekWebViewFallbackFetcher({
         defaultFetcher: normalFetcher,
         webViewFetcher
@@ -3984,20 +4509,26 @@ describe('Android local sources', () => {
       });
       let outcome: { topic?: Awaited<typeof topicPromise>; error?: unknown } | undefined;
       void topicPromise.then(
-        (topic) => { outcome = { topic }; },
-        (error) => { outcome = { error }; }
+        (topic) => {
+          outcome = { topic };
+        },
+        (error) => {
+          outcome = { error };
+        }
       );
 
       await vi.advanceTimersByTimeAsync(200);
       expect(webViewFetcher).toHaveBeenCalledTimes(1);
       expect(outcome).toBeUndefined();
 
-      resolveFallback?.(html(`
+      resolveFallback?.(
+        html(`
         <a class="post-title" href="/post-743023-1">NodeSeek queued fallback detail</a>
         <div class="content-item">
           <article class="post-content"><p>fallback timeout starts after dispatch</p></article>
         </div>
-      `));
+      `)
+      );
       await expect(topicPromise).resolves.toMatchObject({
         title: 'NodeSeek queued fallback detail'
       });
@@ -4009,14 +4540,18 @@ describe('Android local sources', () => {
 
   it('keeps NodeSeek direct and WebView fallback stages on the caller trace', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const trace = beginDiagnosticTrace('topic', 'open');
     const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
-      defaultFetcher: async () => new Response('<html><div class="cf-turnstile"></div></html>', {
-        status: 403,
-        headers: { 'cf-mitigated': 'challenge' }
-      }),
-      webViewFetcher: async () => html(`
+      defaultFetcher: async () =>
+        new Response('<html><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        }),
+      webViewFetcher: async () =>
+        html(`
         <a class="post-title" href="/post-743019-1">NodeSeek shared trace detail</a>
         <div class="content-item"><article class="post-content"><p>正文</p></article></div>
       `)
@@ -4034,39 +4569,48 @@ describe('Android local sources', () => {
     expect(new Set(events.map((event) => event.traceId))).toEqual(new Set([trace.traceId]));
     expect(events.filter((event) => event.phase === 'intent')).toHaveLength(1);
     expect(events.filter((event) => event.phase === 'finish')).toHaveLength(1);
-    expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ phase: 'transport', channel: 'direct', state: 'fallback' }),
-      expect.objectContaining({ phase: 'transport', channel: 'webview', state: 'finish' })
-    ]));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'transport', channel: 'direct', state: 'fallback' }),
+        expect.objectContaining({ phase: 'transport', channel: 'webview', state: 'finish' })
+      ])
+    );
   });
 
   it('keeps NodeSeek edit metadata when replies use the WebView fallback', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      postData: {
-        postId: 806638,
-        comments: [
-          {
-            commentId: 100,
-            floorIndex: 0,
-            poster: { name: 'gijia', uid: 18478 },
-            markdown: '论坛邮箱！',
-            time: { createdDate: '2026-07-04T06:06:00.000Z' }
-          },
-          {
-            commentId: 812345,
-            floorIndex: 12,
-            poster: { name: '凡想世界', uid: 54874, isMe: true },
-            markdown: 'Bd',
-            time: { createdDate: '2026-07-04T06:34:00.000Z' }
-          }
-        ]
-      }
-    })).toString('base64');
-    const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
-      status: 403,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
-    const webViewFetcher = vi.fn(async () => html(`<script id="temp-script" type="application/json">${payload}</script>`));
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 806638,
+          comments: [
+            {
+              commentId: 100,
+              floorIndex: 0,
+              poster: { name: 'gijia', uid: 18478 },
+              markdown: '论坛邮箱！',
+              time: { createdDate: '2026-07-04T06:06:00.000Z' }
+            },
+            {
+              commentId: 812345,
+              floorIndex: 12,
+              poster: { name: '凡想世界', uid: 54874, isMe: true },
+              markdown: 'Bd',
+              time: { createdDate: '2026-07-04T06:34:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`<script id="temp-script" type="application/json">${payload}</script>`)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -4089,17 +4633,26 @@ describe('Android local sources', () => {
   it('retries NodeSeek topic details through the WebView fallback when normal fetch stalls', async () => {
     vi.useFakeTimers();
     try {
-      const normalFetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => {
-          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-        }, { once: true });
-      }));
-      const webViewFetcher = vi.fn(async () => html(`
+      const normalFetcher = vi.fn(
+        (_input: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              'abort',
+              () => {
+                reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+              },
+              { once: true }
+            );
+          })
+      );
+      const webViewFetcher = vi.fn(async () =>
+        html(`
         <a class="post-title" href="/post-743012-1">NodeSeek slow fallback detail</a>
         <div class="content-item">
           <article class="post-content"><p>慢请求兜底正文</p></article>
         </div>
-      `));
+      `)
+      );
       const fetcher = createNodeSeekWebViewFallbackFetcher({
         defaultFetcher: normalFetcher,
         webViewFetcher
@@ -4112,7 +4665,7 @@ describe('Android local sources', () => {
       expect(topic.title).toBe('NodeSeek slow fallback detail');
       expect(normalFetcher).toHaveBeenCalledTimes(1);
       expect(webViewFetcher).toHaveBeenCalledTimes(1);
-      const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+      const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
       expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743012-1');
     } finally {
       vi.clearAllTimers();
@@ -4131,7 +4684,10 @@ describe('Android local sources', () => {
     let resolveChallengeBody: ((value: string) => void) | undefined;
     const response = html(directHtml);
     vi.spyOn(response, 'clone').mockReturnValue({
-      text: () => new Promise<string>((resolve) => { resolveChallengeBody = resolve; })
+      text: () =>
+        new Promise<string>((resolve) => {
+          resolveChallengeBody = resolve;
+        })
     } as Response);
     const normalFetcher = vi.fn(async () => response);
     const webViewFetcher = vi.fn(async () => html('<html>offline fallback must not run</html>'));
@@ -4146,8 +4702,12 @@ describe('Android local sources', () => {
       });
       let outcome: { topic?: Awaited<typeof topicPromise>; error?: unknown } | undefined;
       void topicPromise.then(
-        (topic) => { outcome = { topic }; },
-        (error) => { outcome = { error }; }
+        (topic) => {
+          outcome = { topic };
+        },
+        (error) => {
+          outcome = { error };
+        }
       );
       await vi.advanceTimersByTimeAsync(0);
       expect(resolveChallengeBody).toBeTypeOf('function');
@@ -4175,14 +4735,16 @@ describe('Android local sources', () => {
     vi.useFakeTimers();
     try {
       const normalFetcher = vi.fn(() => new Promise<Response>(() => undefined));
-      const webViewFetcher = vi.fn(async () => html(`
+      const webViewFetcher = vi.fn(async () =>
+        html(`
         <ul class="post-list">
           <li class="post-list-item">
             <div class="post-title"><a href="/post-743018-1">NodeSeek slow fallback list row</a></div>
             <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
           </li>
         </ul>
-      `));
+      `)
+      );
       const fetcher = createNodeSeekWebViewFallbackFetcher({
         defaultFetcher: normalFetcher,
         webViewFetcher
@@ -4195,7 +4757,7 @@ describe('Android local sources', () => {
 
       expect(feed.items.map((item) => item.title)).toEqual(['NodeSeek slow fallback list row']);
       expect(normalFetcher).toHaveBeenCalledTimes(1);
-      const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+      const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
       expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/?sortBy=postTime');
     } finally {
       vi.clearAllTimers();
@@ -4207,13 +4769,10 @@ describe('Android local sources', () => {
     vi.useFakeTimers();
     try {
       const linuxDoPending = Promise.withResolvers<Response>();
-      const sharedDefaultFetcher = vi.fn((input: string | URL | Request) => (
-        String(input).startsWith('https://linux.do/')
-          ? linuxDoPending.promise
-          : new Promise<Response>(() => undefined)
-      ));
-      const linuxDoRequest = sharedDefaultFetcher('https://linux.do/latest.json')
-        .then((response) => response.text());
+      const sharedDefaultFetcher = vi.fn((input: string | URL | Request) =>
+        String(input).startsWith('https://linux.do/') ? linuxDoPending.promise : new Promise<Response>(() => undefined)
+      );
+      const linuxDoRequest = sharedDefaultFetcher('https://linux.do/latest.json').then((response) => response.text());
       const legacyGlobalRecovery = vi.fn(() => {
         linuxDoPending.reject(new Error('shared OkHttp dispatcher was cancelled'));
       });
@@ -4267,16 +4826,21 @@ describe('Android local sources', () => {
   });
 
   it('falls back independently for repeated NodeSeek Cloudflare challenge responses', async () => {
-    const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
-      status: 403,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
-    const webViewFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-743021-1">NodeSeek Cloudflare fallback detail</a>
       <div class="content-item">
         <article class="post-content"><p>cloudflare fallback body</p></article>
       </div>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -4319,32 +4883,41 @@ describe('Android local sources', () => {
     });
 
     const aiSearch = await searchTopics({ source: 'nodeseek', query: 'ai', fetcher, nodeSeekAuthenticated: true });
-    const codexSearch = await searchTopics({ source: 'nodeseek', query: 'codex', fetcher, nodeSeekAuthenticated: true });
+    const codexSearch = await searchTopics({
+      source: 'nodeseek',
+      query: 'codex',
+      fetcher,
+      nodeSeekAuthenticated: true
+    });
 
     expect(aiSearch.items.map((item) => item.id)).toEqual(['809']);
     expect(codexSearch.items.map((item) => item.id)).toEqual(['810']);
     expect(normalFetcher).toHaveBeenCalledTimes(2);
     expect(webViewFetcher).not.toHaveBeenCalled();
-    const normalCalls = normalFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    const normalCalls = normalFetcher.mock.calls as unknown as [string, RequestInit?][];
     expect(normalCalls[0]?.[0]).toBe('https://www.nodeseek.com/search?q=ai');
     expect(normalCalls[1]?.[0]).toBe('https://www.nodeseek.com/search?q=codex');
   });
 
   it('uses direct fetch for empty NodeSeek search pages that include challenge scripts', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html(`
       <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
       <form action="/search"><input name="q" value="missing"></form>
       <div class="post-list"></div>
       <div class="empty-state">没有找到相关内容</div>
-    `));
-    const webViewFetcher = vi.fn(async () => html(`
+    `)
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <ul class="post-list">
         <li class="post-list-item">
           <div class="post-title"><a href="/post-743017-1">NodeSeek WebView search row</a></div>
           <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
         </li>
       </ul>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -4357,15 +4930,19 @@ describe('Android local sources', () => {
   });
 
   it('uses the NodeSeek WebView fallback when soft challenge markers have no readable content', async () => {
-    const normalFetcher = vi.fn(async () => html('<html><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></html>'));
-    const webViewFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(async () =>
+      html('<html><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></html>')
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <ul class="post-list">
         <li class="post-list-item">
           <div class="post-title"><a href="/post-743018-1">soft challenge WebView search result</a></div>
           <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
         </li>
       </ul>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -4378,18 +4955,23 @@ describe('Android local sources', () => {
   });
 
   it('uses the NodeSeek WebView fallback for search only after Cloudflare', async () => {
-    const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
-      status: 403,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
-    const webViewFetcher = vi.fn(async () => html(`
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
+    const webViewFetcher = vi.fn(async () =>
+      html(`
       <ul class="post-list">
         <li class="post-list-item">
           <div class="post-title"><a href="/post-811-1">cf WebView search result</a></div>
           <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
         </li>
       </ul>
-    `));
+    `)
+    );
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -4400,12 +4982,13 @@ describe('Android local sources', () => {
     expect(result.items.map((item) => item.id)).toEqual(['811']);
     expect(normalFetcher).toHaveBeenCalledTimes(1);
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
-    const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
     expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/search?q=cf');
   });
 
   it('reads rendered NodeSeek WebView rows without picking footer post links', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <ul>
         <li class="post-list-item">
           <a href="/space/48872"><img src="/avatar/48872.png" alt="我是ikun"></a>
@@ -4424,7 +5007,8 @@ describe('Android local sources', () => {
         </li>
       </ul>
       <footer><a href="/post-6800-1"><li>Premium Provider</li></a></footer>
-    `));
+    `)
+    );
 
     const feed = await getFeed({ source: 'nodeseek', fetcher });
 
@@ -4442,23 +5026,28 @@ describe('Android local sources', () => {
   });
 
   it('keeps NodeSeek feed in the origin post-time order', async () => {
-    const payload = Buffer.from(JSON.stringify({
-      rotateTopics: [{
-        postId: 201,
-        titleText: 'Newer post first',
-        titleLink: '/post-201-1',
-        op: { name: 'alice' },
-        time: { createdDate: '2026-05-20T02:00:00.000Z' },
-        updatedDate: '2026-05-20T02:00:00.000Z'
-      }, {
-        postId: 200,
-        titleText: 'Older post with newer reply',
-        titleLink: '/post-200-1',
-        op: { name: 'bob' },
-        time: { createdDate: '2026-05-20T01:00:00.000Z' },
-        updatedDate: '2026-05-20T03:00:00.000Z'
-      }]
-    })).toString('base64');
+    const payload = Buffer.from(
+      JSON.stringify({
+        rotateTopics: [
+          {
+            postId: 201,
+            titleText: 'Newer post first',
+            titleLink: '/post-201-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-20T02:00:00.000Z' },
+            updatedDate: '2026-05-20T02:00:00.000Z'
+          },
+          {
+            postId: 200,
+            titleText: 'Older post with newer reply',
+            titleLink: '/post-200-1',
+            op: { name: 'bob' },
+            time: { createdDate: '2026-05-20T01:00:00.000Z' },
+            updatedDate: '2026-05-20T03:00:00.000Z'
+          }
+        ]
+      })
+    ).toString('base64');
     const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
 
     const feed = await getFeed({ source: 'nodeseek', limit: 2, fetcher });
@@ -4467,13 +5056,28 @@ describe('Android local sources', () => {
   });
 
   it('prefers rendered NodeSeek list rows over stale embedded shell topics', async () => {
-    const staleEmbeddedPayload = Buffer.from(JSON.stringify({
-      rotateTopics: [
-        { postId: 201, titleText: 'stale page one', titleLink: '/post-201-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T02:00:00.000Z' } },
-        { postId: 200, titleText: 'stale page one older', titleLink: '/post-200-1', op: { name: 'bob' }, time: { createdDate: '2026-05-20T01:00:00.000Z' } }
-      ]
-    })).toString('base64');
-    const fetcher = vi.fn(async () => html(`
+    const staleEmbeddedPayload = Buffer.from(
+      JSON.stringify({
+        rotateTopics: [
+          {
+            postId: 201,
+            titleText: 'stale page one',
+            titleLink: '/post-201-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-20T02:00:00.000Z' }
+          },
+          {
+            postId: 200,
+            titleText: 'stale page one older',
+            titleLink: '/post-200-1',
+            op: { name: 'bob' },
+            time: { createdDate: '2026-05-20T01:00:00.000Z' }
+          }
+        ]
+      })
+    ).toString('base64');
+    const fetcher = vi.fn(async () =>
+      html(`
       <script>${staleEmbeddedPayload}</script>
       <ul class="post-list">
         <li class="post-list-item">
@@ -4491,7 +5095,8 @@ describe('Android local sources', () => {
           </div>
         </li>
       </ul>
-    `));
+    `)
+    );
 
     const feed = await getFeed({ source: 'nodeseek', page: 2, limit: 2, fetcher });
 
@@ -4499,7 +5104,8 @@ describe('Android local sources', () => {
   });
 
   it('reads rendered NodeSeek category links when embedded category data is absent', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <nav>
         <a href="/categories/daily">日常</a>
         <a href="/categories/%E0%A4%A">坏分类</a>
@@ -4511,7 +5117,8 @@ describe('Android local sources', () => {
           <a href="/categories/daily">日常</a>
         </li>
       </ul>
-    `));
+    `)
+    );
 
     const categories = await getCategories({ source: 'nodeseek', fetcher });
 
@@ -4522,7 +5129,8 @@ describe('Android local sources', () => {
   });
 
   it('reads rendered NodeSeek topic pages when embedded postData is absent', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <main>
         <article class="post-detail">
           <h1 class="post-title">cloudflare果然挂了</h1>
@@ -4541,7 +5149,8 @@ describe('Android local sources', () => {
           </div>
         </section>
       </main>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743001', fetcher });
 
@@ -4566,7 +5175,8 @@ describe('Android local sources', () => {
   });
 
   it('keeps rendered NodeSeek image and video stickers in replies', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <main>
         <article class="post-detail">
           <h1 class="post-title">sticker topic</h1>
@@ -4594,13 +5204,16 @@ describe('Android local sources', () => {
           </div>
         </section>
       </main>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '797740', fetcher });
 
     expect(topic.replies[0].contentHtml).toContain('<forum-video-sticker');
     expect(topic.replies[0].contentHtml).toContain('src="https://www.nodeseek.com/static/image/sticker/emoji/35.webm"');
-    expect(topic.replies[0].contentHtml).toContain('data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/35.png"');
+    expect(topic.replies[0].contentHtml).toContain(
+      'data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/35.png"'
+    );
     expect(topic.replies[0].contentHtml).toContain('class="sticker"');
     expect(topic.replies[0].contentHtml).not.toContain('<video');
     expect(topic.replies[1].contentHtml).toContain('src="https://www.nodeseek.com/static/image/sticker/ac/01.png"');
@@ -4608,7 +5221,8 @@ describe('Android local sources', () => {
   });
 
   it('reads rendered NodeSeek topic title from meta fallback', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <html>
         <head>
           <meta property="og:title" content="NodeSeek meta title" />
@@ -4619,7 +5233,8 @@ describe('Android local sources', () => {
           </div>
         </body>
       </html>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743012', fetcher });
 
@@ -4628,7 +5243,8 @@ describe('Android local sources', () => {
   });
 
   it('reads rendered NodeSeek topic bodies from content containers inside topic rows', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <html>
         <head>
           <meta property="og:title" content="NodeSeek content container title" />
@@ -4639,7 +5255,8 @@ describe('Android local sources', () => {
           </div>
         </body>
       </html>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743019', fetcher });
 
@@ -4649,7 +5266,8 @@ describe('Android local sources', () => {
   });
 
   it('does not treat readable NodeSeek content containers as restricted because of page notices', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <html>
         <head>
           <meta property="og:title" content="NodeSeek content container title" />
@@ -4661,7 +5279,8 @@ describe('Android local sources', () => {
           </div>
         </body>
       </html>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743021', fetcher });
 
@@ -4671,7 +5290,8 @@ describe('Android local sources', () => {
   });
 
   it('shows NodeSeek restricted topic notices instead of a parse failure', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <html>
         <head><title>NodeSeek</title></head>
         <body>
@@ -4682,7 +5302,8 @@ describe('Android local sources', () => {
           </div>
         </body>
       </html>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743013', fetcher });
 
@@ -4695,7 +5316,8 @@ describe('Android local sources', () => {
   });
 
   it('reads NodeSeek restricted notices wrapped in rendered topic containers', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <html>
         <head><title>NodeSeek</title></head>
         <body>
@@ -4704,7 +5326,8 @@ describe('Android local sources', () => {
           </div>
         </body>
       </html>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743018', fetcher });
 
@@ -4717,7 +5340,8 @@ describe('Android local sources', () => {
   });
 
   it('reads NodeSeek restricted notices when an empty body placeholder is present', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <html>
         <head><title>NodeSeek</title></head>
         <body>
@@ -4727,7 +5351,8 @@ describe('Android local sources', () => {
           </div>
         </body>
       </html>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743020', fetcher });
 
@@ -4740,7 +5365,8 @@ describe('Android local sources', () => {
   });
 
   it('does not parse non-topic NodeSeek shell pages as restricted topics', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <html>
         <head><title>NodeSeek maintenance</title></head>
         <body>
@@ -4751,33 +5377,38 @@ describe('Android local sources', () => {
           </div>
         </body>
       </html>
-    `));
+    `)
+    );
 
     await expect(getTopic({ source: 'nodeseek', id: '743016', fetcher })).rejects.toThrow('NodeSeek 主题解析失败');
   });
 
   it('does not parse generic NodeSeek content containers as topic body', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <html>
         <head><title>NodeSeek error</title></head>
         <body>
           <div class="content">临时错误页，不是主题正文。</div>
         </body>
       </html>
-    `));
+    `)
+    );
 
     await expect(getTopic({ source: 'nodeseek', id: '743017', fetcher })).rejects.toThrow('NodeSeek 主题解析失败');
   });
 
   it('does not mark normal NodeSeek body text as access restricted', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <main>
         <article class="post-detail">
           <h1 class="post-title">NodeSeek normal permission discussion</h1>
           <div class="post-content"><p>这里讨论等级查看和登录提示文案，但帖子本身可以正常阅读。</p></div>
         </article>
       </main>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743014', fetcher });
 
@@ -4787,7 +5418,8 @@ describe('Android local sources', () => {
   });
 
   it('does not mark normal NodeSeek topics as restricted because of page notices', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <main>
         <div class="notice">请登录后回复该主题。</div>
         <article class="post-detail">
@@ -4795,7 +5427,8 @@ describe('Android local sources', () => {
           <div class="post-content"><p>正文可以正常阅读。</p></div>
         </article>
       </main>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743015', fetcher });
 
@@ -4805,7 +5438,8 @@ describe('Android local sources', () => {
   });
 
   it('does not treat rendered NodeSeek category links as topic authors', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <main>
         <article class="post-detail">
           <h1 class="post-title">NodeSeek category author regression</h1>
@@ -4816,7 +5450,8 @@ describe('Android local sources', () => {
           <div class="post-content"><p>body</p></div>
         </article>
       </main>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743002', fetcher });
 
@@ -4830,7 +5465,8 @@ describe('Android local sources', () => {
   });
 
   it('reads rendered NodeSeek content-item authors and replies', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-743001-1">【求助】Claude使用Google pay绑定国内visa信用卡订阅有风险吗？</a>
       <div id="0" data-comment-id="10232616" class="content-item">
         <div class="author-info"><a href="/space/48872"><img src="/avatar/48872.png" alt="我是ikun"></a><a href="/space/48872" class="author-name">我是ikun</a><span class="is-poster">楼主</span></div>
@@ -4845,7 +5481,8 @@ describe('Android local sources', () => {
         <a href="#1" class="floor-link">#1</a>
         <article class="post-content"><p>都用 Google Pay 了肯定没风险</p></article>
       </li>
-    `));
+    `)
+    );
 
     const topic = await getTopic({ source: 'nodeseek', id: '743001', fetcher });
 
@@ -4867,7 +5504,8 @@ describe('Android local sources', () => {
   });
 
   it('refreshes NodeSeek replies from rendered topic HTML when embedded postData is absent', async () => {
-    const fetcher = vi.fn(async () => html(`
+    const fetcher = vi.fn(async () =>
+      html(`
       <a class="post-title" href="/post-743003-1">NodeSeek rendered replies</a>
       <div id="0" data-comment-id="10232700" class="content-item">
         <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
@@ -4884,7 +5522,8 @@ describe('Android local sources', () => {
         <time datetime="2026-05-22T16:01:06.000Z"></time>
         <article class="post-content"><p>新增回复</p></article>
       </li>
-    `));
+    `)
+    );
 
     const replies = await getNodeSeekReplies('743003', {
       fetcher,
@@ -4908,41 +5547,58 @@ describe('Android local sources', () => {
   it('reads V2EX public JSON, HTML pages, topic detail, and SOV2EX search directly', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/?tab=all') {
-        return html('<div class="cell item"><a href="/member/neo"><img class="avatar" src="//cdn.v2ex.com/a.png" alt="neo"></a><span class="item_title"><a class="topic-link" href="/t/121#reply3">V2EX latest</a></span><span class="topic_info"><a class="node" href="/go/create">分享创造</a> &nbsp;•&nbsp; <strong><a href="/member/neo">neo</a></strong> &nbsp;•&nbsp; <span title="2026-05-28 20:35:00 +08:00"></span></span><td width="70" align="right"><a href="/t/121#reply3" class="count_livid">3</a></td></div><a href="/recent">更多新主题</a>');
+        return html(
+          '<div class="cell item"><a href="/member/neo"><img class="avatar" src="//cdn.v2ex.com/a.png" alt="neo"></a><span class="item_title"><a class="topic-link" href="/t/121#reply3">V2EX latest</a></span><span class="topic_info"><a class="node" href="/go/create">分享创造</a> &nbsp;•&nbsp; <strong><a href="/member/neo">neo</a></strong> &nbsp;•&nbsp; <span title="2026-05-28 20:35:00 +08:00"></span></span><td width="70" align="right"><a href="/t/121#reply3" class="count_livid">3</a></td></div><a href="/recent">更多新主题</a>'
+        );
       }
       if (input.includes('/api/topics/latest.json')) {
-        return json([{
-          id: 121,
-          title: 'V2EX latest',
-          url: 'https://www.v2ex.com/t/121',
-          created: 1780000000,
-          last_touched: 1780000100,
-          replies: 3,
-          node: { name: 'create', title: '分享创造' },
-          member: { username: 'neo', avatar_normal: '//cdn.v2ex.com/a.png' },
-          content: 'latest body'
-        }]);
+        return json([
+          {
+            id: 121,
+            title: 'V2EX latest',
+            url: 'https://www.v2ex.com/t/121',
+            created: 1780000000,
+            last_touched: 1780000100,
+            replies: 3,
+            node: { name: 'create', title: '分享创造' },
+            member: { username: 'neo', avatar_normal: '//cdn.v2ex.com/a.png' },
+            content: 'latest body'
+          }
+        ]);
       }
       if (input.includes('/recent?p=2')) {
-        return html('<div class="cell"><a class="topic-link" href="/t/122#reply1">V2EX page 2</a><a class="node" href="/go/create">分享创造</a><a href="/member/bob">bob</a><span title="2026-05-20 10:00:00"></span><a class="count_livid">1</a></div><a href="/recent?p=3">下一页</a>');
+        return html(
+          '<div class="cell"><a class="topic-link" href="/t/122#reply1">V2EX page 2</a><a class="node" href="/go/create">分享创造</a><a href="/member/bob">bob</a><span title="2026-05-20 10:00:00"></span><a class="count_livid">1</a></div><a href="/recent?p=3">下一页</a>'
+        );
       }
       if (input.includes('/api/topics/show.json')) {
-        return json([{
-          id: 121,
-          title: 'V2EX detail',
-          url: 'https://www.v2ex.com/t/121',
-          created: 1780000000,
-          replies: 1,
-          node: { name: 'create', title: '分享创造' },
-          member: { username: 'neo' },
-          content_rendered: '<p>detail</p>'
-        }]);
+        return json([
+          {
+            id: 121,
+            title: 'V2EX detail',
+            url: 'https://www.v2ex.com/t/121',
+            created: 1780000000,
+            replies: 1,
+            node: { name: 'create', title: '分享创造' },
+            member: { username: 'neo' },
+            content_rendered: '<p>detail</p>'
+          }
+        ]);
       }
       if (input.includes('/api/replies/show.json')) {
         return json([{ member: { username: 'bob' }, content_rendered: '<p>reply</p>', created: 1780000200 }]);
       }
       if (input.includes('sov2ex.com')) {
-        return json({ hits: { hits: [{ _source: { id: 121, title: 'V2EX search', member: 'neo', created: '2026-05-20T00:00:00', replies: 1 }, highlight: { title: ['V2EX search'] } }] } });
+        return json({
+          hits: {
+            hits: [
+              {
+                _source: { id: 121, title: 'V2EX search', member: 'neo', created: '2026-05-20T00:00:00', replies: 1 },
+                highlight: { title: ['V2EX search'] }
+              }
+            ]
+          }
+        });
       }
       return json({});
     });
@@ -4956,7 +5612,9 @@ describe('Android local sources', () => {
     expect(second.items[0]).toMatchObject({ id: '122', author: 'bob' });
     expect(topic.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
     expect(search.items[0]).toMatchObject({ id: '121', title: 'V2EX search' });
-    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/feed|http:\/\/10\.0\.2\.2|http:\/\/127\.0\.0\.1:3000/);
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(
+      /\/api\/feed|http:\/\/10\.0\.2\.2|http:\/\/127\.0\.0\.1:3000/
+    );
   });
 
   it('reads the V2EX all feed from the origin all tab instead of the latest API', async () => {
@@ -5134,16 +5792,18 @@ describe('Android local sources', () => {
   it('does not let stale V2EX last_touched predate topic creation on Android', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([{
-          id: 701,
-          title: 'Fresh V2EX topic',
-          url: 'https://www.v2ex.com/t/701',
-          created: 1780000500,
-          last_touched: 1780000000,
-          replies: 0,
-          node: { name: 'create', title: '分享创造' },
-          member: { username: 'neo' }
-        }]);
+        return json([
+          {
+            id: 701,
+            title: 'Fresh V2EX topic',
+            url: 'https://www.v2ex.com/t/701',
+            created: 1780000500,
+            last_touched: 1780000000,
+            replies: 0,
+            node: { name: 'create', title: '分享创造' },
+            member: { username: 'neo' }
+          }
+        ]);
       }
       if (input.includes('/api/replies/show.json')) {
         return json([]);
@@ -5163,22 +5823,29 @@ describe('Android local sources', () => {
   it('enriches V2EX topic details from the origin HTML without login-only actions', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([{
-          id: 810,
-          title: 'V2EX enriched detail',
-          url: 'https://www.v2ex.com/t/810',
-          created: 1780000000,
-          last_touched: 1780000200,
-          replies: 1,
-          node: { name: 'create', title: '分享创造' },
-          member: { username: 'neo' },
-          content_rendered: '<p>detail body</p>'
-        }]);
+        return json([
+          {
+            id: 810,
+            title: 'V2EX enriched detail',
+            url: 'https://www.v2ex.com/t/810',
+            created: 1780000000,
+            last_touched: 1780000200,
+            replies: 1,
+            node: { name: 'create', title: '分享创造' },
+            member: { username: 'neo' },
+            content_rendered: '<p>detail body</p>'
+          }
+        ]);
       }
       if (input.includes('/api/replies/show.json')) {
         return json([
           { id: 7001, member: { username: 'alice' }, content_rendered: '<p>first reply</p>', created: 1780000100 },
-          { id: 7002, member: { username: 'neo' }, content_rendered: '@<a href="/member/alice">alice</a> answer', created: 1780000200 }
+          {
+            id: 7002,
+            member: { username: 'neo' },
+            content_rendered: '@<a href="/member/alice">alice</a> answer',
+            created: 1780000200
+          }
         ]);
       }
       if (input === 'https://www.v2ex.com/t/810') {
@@ -5228,14 +5895,16 @@ describe('Android local sources', () => {
   it('REG-TOPIC-016 keeps the V2EX thanks count when an icon attribute contains a quoted greater-than sign', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([{
-          id: 815,
-          title: 'V2EX quoted icon attribute',
-          url: 'https://www.v2ex.com/t/815',
-          created: 1780000000,
-          replies: 1,
-          member: { username: 'neo' }
-        }]);
+        return json([
+          {
+            id: 815,
+            title: 'V2EX quoted icon attribute',
+            url: 'https://www.v2ex.com/t/815',
+            created: 1780000000,
+            replies: 1,
+            member: { username: 'neo' }
+          }
+        ]);
       }
       if (input.includes('/api/replies/show.json')) {
         return json([]);
@@ -5260,20 +5929,24 @@ describe('Android local sources', () => {
   it('ignores malformed V2EX reply target links without dropping replies', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([{
-          id: 814,
-          title: 'V2EX malformed reply target',
-          url: 'https://www.v2ex.com/t/814',
-          created: 1780000000,
-          replies: 1,
-          member: { username: 'neo' }
-        }]);
+        return json([
+          {
+            id: 814,
+            title: 'V2EX malformed reply target',
+            url: 'https://www.v2ex.com/t/814',
+            created: 1780000000,
+            replies: 1,
+            member: { username: 'neo' }
+          }
+        ]);
       }
       if (input.includes('/api/replies/show.json')) {
         return json([]);
       }
       if (input === 'https://www.v2ex.com/t/814') {
-        return html('<div id="r_8001" class="cell"><span class="no">1</span><div class="reply_content">@<a href="/member/%E0%A4%A">bad</a> reply</div></div>');
+        return html(
+          '<div id="r_8001" class="cell"><span class="no">1</span><div class="reply_content">@<a href="/member/%E0%A4%A">bad</a> reply</div></div>'
+        );
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -5287,16 +5960,18 @@ describe('Android local sources', () => {
   it('falls back to V2EX origin HTML replies when the public replies API times out', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
-        return json([{
-          id: 811,
-          title: 'V2EX fallback detail',
-          url: 'https://www.v2ex.com/t/811',
-          created: 1780000000,
-          replies: 2,
-          node: { name: 'create', title: '分享创造' },
-          member: { username: 'neo' },
-          content_rendered: '<p>detail body</p>'
-        }]);
+        return json([
+          {
+            id: 811,
+            title: 'V2EX fallback detail',
+            url: 'https://www.v2ex.com/t/811',
+            created: 1780000000,
+            replies: 2,
+            node: { name: 'create', title: '分享创造' },
+            member: { username: 'neo' },
+            content_rendered: '<p>detail body</p>'
+          }
+        ]);
       }
       if (input.includes('/api/replies/show.json')) {
         throw new Error('请求超时，请稍后重试');
@@ -5387,22 +6062,38 @@ describe('Android local sources', () => {
     `;
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/?tab=all') {
-        return html(`${Array.from({ length: 20 }, (_, index) => item(900 - index, `all ${index}`, `2026-05-20 00:${String(59 - index).padStart(2, '0')}:00`)).join('')}<a href="/recent">更多新主题</a>`);
+        return html(
+          `${Array.from({ length: 20 }, (_, index) => item(900 - index, `all ${index}`, `2026-05-20 00:${String(59 - index).padStart(2, '0')}:00`)).join('')}<a href="/recent">更多新主题</a>`
+        );
       }
       if (input === 'https://www.v2ex.com/recent?p=1') {
-        return html(`${Array.from({ length: 20 }, (_, index) => item(850 - index, `recent p1 ${index}`, `2026-05-20 00:${String(39 - index).padStart(2, '0')}:00`)).join('')}<a href="/recent?p=2">下一页</a>`);
+        return html(
+          `${Array.from({ length: 20 }, (_, index) => item(850 - index, `recent p1 ${index}`, `2026-05-20 00:${String(39 - index).padStart(2, '0')}:00`)).join('')}<a href="/recent?p=2">下一页</a>`
+        );
       }
       if (input === 'https://www.v2ex.com/recent?p=2') {
-        return html(`${Array.from({ length: 20 }, (_, index) => item(800 - index, `recent p2 ${index}`, `2026-05-19 23:${String(59 - index).padStart(2, '0')}:00`)).join('')}<a href="/recent?p=3">下一页</a>`);
+        return html(
+          `${Array.from({ length: 20 }, (_, index) => item(800 - index, `recent p2 ${index}`, `2026-05-19 23:${String(59 - index).padStart(2, '0')}:00`)).join('')}<a href="/recent?p=3">下一页</a>`
+        );
       }
       if (input === 'https://www.v2ex.com/recent?p=3') {
-        return html(Array.from({ length: 20 }, (_, index) => item(700 - index, `recent p3 ${index}`, `2026-05-19 22:${String(59 - index).padStart(2, '0')}:00`)).join(''));
+        return html(
+          Array.from({ length: 20 }, (_, index) =>
+            item(700 - index, `recent p3 ${index}`, `2026-05-19 22:${String(59 - index).padStart(2, '0')}:00`)
+          ).join('')
+        );
       }
       throw new Error(`unexpected ${input}`);
     });
 
     const first = await getFeed({ source: 'v2ex', limit: 30, fetcher });
-    const second = await getFeed({ source: 'v2ex', page: first.nextPage ?? 2, cursor: first.nextCursor ?? undefined, limit: 30, fetcher });
+    const second = await getFeed({
+      source: 'v2ex',
+      page: first.nextPage ?? 2,
+      cursor: first.nextCursor ?? undefined,
+      limit: 30,
+      fetcher
+    });
 
     expect(first.items).toHaveLength(20);
     expect(second.items.map((topic) => topic.id).slice(0, 3)).toEqual(['850', '849', '848']);
@@ -5410,13 +6101,23 @@ describe('Android local sources', () => {
   });
 
   it('reads V2EX search hits when SOV2EX returns a top-level hits array', async () => {
-    const fetcher = vi.fn(async () => json({
-      total: 1,
-      hits: [{
-        _source: { id: 934576, title: 'GPT search result', member: 'neo', created: '2026-05-20T00:00:00', replies: 2 },
-        highlight: { title: ['GPT search result'] }
-      }]
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        total: 1,
+        hits: [
+          {
+            _source: {
+              id: 934576,
+              title: 'GPT search result',
+              member: 'neo',
+              created: '2026-05-20T00:00:00',
+              replies: 2
+            },
+            highlight: { title: ['GPT search result'] }
+          }
+        ]
+      })
+    );
 
     const search = await searchTopics({ source: 'v2ex', query: 'gpt', fetcher });
 
@@ -5430,15 +6131,17 @@ describe('Android local sources', () => {
       return json({
         hits: {
           total: { value: 2 },
-          hits: [{
-            _source: {
-              id: from === '0' ? 934576 : 934577,
-              title: from === '0' ? 'GPT first V2EX result' : 'GPT second V2EX result',
-              member: 'neo',
-              created: '2026-05-20T00:00:00',
-              replies: 2
+          hits: [
+            {
+              _source: {
+                id: from === '0' ? 934576 : 934577,
+                title: from === '0' ? 'GPT first V2EX result' : 'GPT second V2EX result',
+                member: 'neo',
+                created: '2026-05-20T00:00:00',
+                replies: 2
+              }
             }
-          }]
+          ]
         }
       });
     });
@@ -5463,7 +6166,7 @@ describe('Android local sources', () => {
     await searchTopics({ source: 'v2ex', query: 'gpt', sort: 'time', fetcher });
 
     expect(fetcher.mock.calls.length).toBe(2);
-    const calls = fetcher.mock.calls as unknown as Array<[string, unknown?]>;
+    const calls = fetcher.mock.calls as unknown as [string, unknown?][];
     const relevanceCall = calls[0];
     const timeCall = calls[1];
     expect(relevanceCall).toBeTruthy();
@@ -5498,7 +6201,7 @@ describe('Android local sources', () => {
       vi.useRealTimers();
     }
 
-    const url = new URL((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0] || '');
+    const url = new URL((fetcher.mock.calls as unknown as [string][])[0]?.[0] || '');
     expect(url.searchParams.get('sort')).toBe('created');
     expect(url.searchParams.get('order')).toBe('0');
     expect(url.searchParams.get('node')).toBe('qna');
@@ -5508,9 +6211,9 @@ describe('Android local sources', () => {
   });
 
   it('passes linux.do site filters through Discourse search syntax', async () => {
-    const fetcher = vi.fn(async (input: string) => (
+    const fetcher = vi.fn(async (input: string) =>
       input.includes('/session/csrf.json') ? json({ csrf: 'csrf-token' }) : json({ topics: [], posts: [] })
-    ));
+    );
 
     await searchTopics({
       source: 'linuxdo',
@@ -5530,7 +6233,9 @@ describe('Android local sources', () => {
       fetcher
     });
 
-    const url = new URL((fetcher.mock.calls as unknown as Array<[string]>).find((call) => new URL(call[0]).pathname === '/search')?.[0] || '');
+    const url = new URL(
+      (fetcher.mock.calls as unknown as [string][]).find((call) => new URL(call[0]).pathname === '/search')?.[0] || ''
+    );
     expect(url.searchParams.get('q')).toBe('AI in:title category:4 tags:人工智能 @alice order:latest');
   });
 
@@ -5550,7 +6255,7 @@ describe('Android local sources', () => {
     });
 
     expect(fetcher.mock.calls.length).toBeGreaterThan(0);
-    const calls = fetcher.mock.calls as unknown as Array<[string, unknown?]>;
+    const calls = fetcher.mock.calls as unknown as [string, unknown?][];
     const url = new URL(calls[0]?.[0] || '');
     expect(url.searchParams.get('q')).toBe('GPT');
     expect(url.searchParams.get('category')).toBe('tech');
@@ -5560,10 +6265,13 @@ describe('Android local sources', () => {
   });
 
   it('tags linux.do Cloudflare topic errors so the app can open verification', async () => {
-    const fetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
-      status: 403,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<html><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
 
     const error = await getTopic({ source: 'linuxdo', id: '123', fetcher }).catch((caught) => caught);
 
@@ -5577,23 +6285,30 @@ describe('Android local sources', () => {
 
   it('retries a linux.do JSON read once through the WebView fallback after Cloudflare', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
-    const normalFetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
-      status: 403,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
-    const webViewFetcher = vi.fn(async () => json({
-      id: 42,
-      title: 'linux.do WebView fallback topic',
-      created_at: '2026-05-21T00:00:00.000Z',
-      posts_count: 1,
-      post_stream: {
-        stream: [1],
-        posts: [
-          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-21T00:00:00.000Z' }
-        ]
-      }
-    }));
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('<html><div class="cf-turnstile"></div></html>', {
+          status: 403,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
+    const webViewFetcher = vi.fn(async () =>
+      json({
+        id: 42,
+        title: 'linux.do WebView fallback topic',
+        created_at: '2026-05-21T00:00:00.000Z',
+        posts_count: 1,
+        post_stream: {
+          stream: [1],
+          posts: [
+            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-21T00:00:00.000Z' }
+          ]
+        }
+      })
+    );
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -5604,11 +6319,9 @@ describe('Android local sources', () => {
     expect(topic.title).toBe('linux.do WebView fallback topic');
     expect(normalFetcher).toHaveBeenCalledTimes(1);
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
-    const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
     expect(webViewCalls[0]?.[0]).toBe('https://linux.do/t/42.json');
-    const events = lines
-      .map((line) => JSON.parse(line))
-      .filter(({ operation }) => operation === 'transport-fallback');
+    const events = lines.map((line) => JSON.parse(line)).filter(({ operation }) => operation === 'transport-fallback');
     expect(events).toEqual([
       expect.objectContaining({ phase: 'intent', source: 'linuxdo', reason: 'verification_required' }),
       expect.objectContaining({ phase: 'transport', channel: 'direct', status: 403, reason: 'verification_required' }),
@@ -5620,17 +6333,21 @@ describe('Android local sources', () => {
 
   it('[REG-LINUXDO-007] settles the canonical Account probe through one hidden read after a direct network error', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const normalFetcher = vi.fn(async () => {
       throw new TypeError('Network request failed');
     });
-    const webViewFetcher = vi.fn(async () => json({
-      current_user: {
-        id: 42,
-        username: 'alice',
-        name: 'Alice'
-      }
-    }));
+    const webViewFetcher = vi.fn(async () =>
+      json({
+        current_user: {
+          id: 42,
+          username: 'alice',
+          name: 'Alice'
+        }
+      })
+    );
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
       webViewFetcher
@@ -5641,14 +6358,12 @@ describe('Android local sources', () => {
     expect(currentUser).toMatchObject({ source: 'linuxdo', username: 'alice' });
     expect(normalFetcher).toHaveBeenCalledTimes(1);
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
-    const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
     expect(browserFetchIntentFromInit(webViewCalls[0]?.[1])).toEqual({
       owner: 'account',
       priority: 'background'
     });
-    const events = lines
-      .map((line) => JSON.parse(line))
-      .filter(({ operation }) => operation === 'transport-fallback');
+    const events = lines.map((line) => JSON.parse(line)).filter(({ operation }) => operation === 'transport-fallback');
     expect(events).toEqual([
       expect.objectContaining({ phase: 'intent', channel: 'direct', owner: 'account', reason: 'network_error' }),
       expect.objectContaining({ phase: 'transport', channel: 'direct', owner: 'account', reason: 'network_error' }),
@@ -5656,9 +6371,11 @@ describe('Android local sources', () => {
       expect.objectContaining({ phase: 'transport', channel: 'webview', owner: 'account', status: 200 }),
       expect.objectContaining({ phase: 'finish', channel: 'webview', owner: 'account', outcome: 'success' })
     ]);
-    expect(JSON.stringify(events, (key, value) => (
-      ['time', 'appSessionId', 'traceId', 'durationMs'].includes(key) ? undefined : value
-    ))).not.toMatch(/session\/current|https?:|cookie|alice|42/iu);
+    expect(
+      JSON.stringify(events, (key, value) =>
+        ['time', 'appSessionId', 'traceId', 'durationMs'].includes(key) ? undefined : value
+      )
+    ).not.toMatch(/session\/current|https?:|cookie|alice|42/iu);
   });
 
   it('[REG-LINUXDO-007] preserves trusted CF evidence returned by the hidden Account probe', async () => {
@@ -5666,10 +6383,13 @@ describe('Android local sources', () => {
       defaultFetcher: vi.fn(async () => {
         throw new TypeError('Network request failed');
       }),
-      webViewFetcher: vi.fn(async () => new Response('<div class="cf-turnstile"></div>', {
-        status: 403,
-        headers: { 'cf-mitigated': 'challenge' }
-      }))
+      webViewFetcher: vi.fn(
+        async () =>
+          new Response('<div class="cf-turnstile"></div>', {
+            status: 403,
+            headers: { 'cf-mitigated': 'challenge' }
+          })
+      )
     });
 
     const error = await getLinuxDoCurrentUserProfile({ fetcher }).catch((caught) => caught);
@@ -5692,16 +6412,54 @@ describe('Android local sources', () => {
   });
 
   it.each([
-    ['timeout', 'https://linux.do/session/current.json', { owner: 'account', priority: 'background' } as const, new Error('请求超时'), 'GET'],
-    ['cancel', 'https://linux.do/session/current.json', { owner: 'account', priority: 'background' } as const, new Error('请求已取消'), 'GET'],
-    ['foreground Account', 'https://linux.do/session/current.json', { owner: 'account', priority: 'foreground' } as const, new TypeError('Network request failed'), 'GET'],
-    ['topic owner', 'https://linux.do/session/current.json', { owner: 'topic', priority: 'foreground' } as const, new TypeError('Network request failed'), 'GET'],
-    ['other URL', 'https://linux.do/latest.json', { owner: 'account', priority: 'background' } as const, new TypeError('Network request failed'), 'GET'],
-    ['write', 'https://linux.do/session/current.json', { owner: 'account', priority: 'background' } as const, new TypeError('Network request failed'), 'POST']
+    [
+      'timeout',
+      'https://linux.do/session/current.json',
+      { owner: 'account', priority: 'background' } as const,
+      new Error('请求超时'),
+      'GET'
+    ],
+    [
+      'cancel',
+      'https://linux.do/session/current.json',
+      { owner: 'account', priority: 'background' } as const,
+      new Error('请求已取消'),
+      'GET'
+    ],
+    [
+      'foreground Account',
+      'https://linux.do/session/current.json',
+      { owner: 'account', priority: 'foreground' } as const,
+      new TypeError('Network request failed'),
+      'GET'
+    ],
+    [
+      'topic owner',
+      'https://linux.do/session/current.json',
+      { owner: 'topic', priority: 'foreground' } as const,
+      new TypeError('Network request failed'),
+      'GET'
+    ],
+    [
+      'other URL',
+      'https://linux.do/latest.json',
+      { owner: 'account', priority: 'background' } as const,
+      new TypeError('Network request failed'),
+      'GET'
+    ],
+    [
+      'write',
+      'https://linux.do/session/current.json',
+      { owner: 'account', priority: 'background' } as const,
+      new TypeError('Network request failed'),
+      'POST'
+    ]
   ])('[REG-LINUXDO-007] does not use Account fallback for %s', async (_case, url, intent, directError, method) => {
     const webViewFetcher = vi.fn();
     const fetcher = createLinuxDoWebViewFallbackFetcher({
-      defaultFetcher: vi.fn(async () => { throw directError; }),
+      defaultFetcher: vi.fn(async () => {
+        throw directError;
+      }),
       webViewFetcher: webViewFetcher as never
     });
 
@@ -5740,10 +6498,13 @@ describe('Android local sources', () => {
   });
 
   it('REG-LINUXDO-001 keeps a confirmed direct challenge typed when the hidden renderer cannot inspect it', async () => {
-    const normalFetcher = vi.fn(async () => new Response('challenge', {
-      status: 429,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('challenge', {
+          status: 429,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
     const webViewFetcher = vi.fn(async () => {
       throw new Error('linux.do 页面读取进程已停止');
     });
@@ -5758,10 +6519,13 @@ describe('Android local sources', () => {
   });
 
   it('REG-LINUXDO-001 keeps a confirmed direct challenge typed after an explicit renderer failure', async () => {
-    const normalFetcher = vi.fn(async () => new Response('challenge', {
-      status: 429,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('challenge', {
+          status: 429,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
     const webViewFetcher = vi.fn(async () => {
       throw new LinuxDoHiddenBrowserFailureError('renderer', 'renderer stopped');
     });
@@ -5776,10 +6540,13 @@ describe('Android local sources', () => {
   });
 
   it('REG-LINUXDO-001 preserves an explicit hidden-browser size failure', async () => {
-    const normalFetcher = vi.fn(async () => new Response('challenge', {
-      status: 429,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('challenge', {
+          status: 429,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
     const webViewFetcher = vi.fn(async () => {
       throw new LinuxDoHiddenBrowserFailureError('content-too-large', 'response exceeds bridge limit');
     });
@@ -5796,10 +6563,13 @@ describe('Android local sources', () => {
   });
 
   it('REG-LINUXDO-001 preserves a final ordinary 429 returned by the hidden WebView', async () => {
-    const normalFetcher = vi.fn(async () => new Response('challenge', {
-      status: 429,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('challenge', {
+          status: 429,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
     const webViewFetcher = vi.fn(async () => new Response('rate limited', { status: 429 }));
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
@@ -5813,10 +6583,13 @@ describe('Android local sources', () => {
   });
 
   it('REG-LINUXDO-002 never replays a linux.do write through the hidden WebView', async () => {
-    const normalFetcher = vi.fn(async () => new Response('challenge', {
-      status: 429,
-      headers: { 'cf-mitigated': 'challenge' }
-    }));
+    const normalFetcher = vi.fn(
+      async () =>
+        new Response('challenge', {
+          status: 429,
+          headers: { 'cf-mitigated': 'challenge' }
+        })
+    );
     const webViewFetcher = vi.fn(async () => new Response('unexpected replay', { status: 200 }));
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
@@ -5863,30 +6636,38 @@ describe('Android local sources', () => {
   });
 
   it('reports non-JSON linux.do HTTP errors with the HTTP status', async () => {
-    const fetcher = vi.fn(async () => new Response('<html>upstream unavailable</html>', {
-      status: 503,
-      headers: { 'content-type': 'text/html' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<html>upstream unavailable</html>', {
+          status: 503,
+          headers: { 'content-type': 'text/html' }
+        })
+    );
 
     await expect(getFeed({ source: 'linuxdo', fetcher })).rejects.toThrow('HTTP 503');
   });
 
   it('reports malformed linux.do JSON with a readable message', async () => {
-    const fetcher = vi.fn(async () => new Response('<html>not json</html>', {
-      status: 200,
-      headers: { 'content-type': 'text/html' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<html>not json</html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html' }
+        })
+    );
 
     await expect(getFeed({ source: 'linuxdo', fetcher })).rejects.toThrow('linux.do 返回内容格式不正确');
   });
 
   it('loads selectable linux.do tags with category and current selections', async () => {
-    const fetcher = vi.fn(async () => json({
-      results: [
-        { id: '人工智能', name: '人工智能', count: 12 },
-        { id: '快问快答', name: '快问快答', count: 3 }
-      ]
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        results: [
+          { id: '人工智能', name: '人工智能', count: 12 },
+          { id: '快问快答', name: '快问快答', count: 3 }
+        ]
+      })
+    );
 
     const tags = await searchLinuxDoTags({
       query: '人',
@@ -5901,40 +6682,51 @@ describe('Android local sources', () => {
       { name: '人工智能', topicCount: 12 },
       { name: '快问快答', topicCount: 3 }
     ]);
-    const url = new URL(String((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]));
+    const url = new URL(String((fetcher.mock.calls as unknown as [string][])[0]?.[0]));
     expect(url.pathname).toBe('/tags/filter/search');
     expect(url.searchParams.get('q')).toBe('人');
     expect(url.searchParams.get('categoryId')).toBe('4');
     expect(url.searchParams.getAll('selected_tags[]')).toEqual(['快问快答']);
     expect(url.searchParams.get('limit')).toBe('8');
     expect(url.searchParams.has('filterForInput')).toBe(false);
-    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]).toEqual(expect.objectContaining({
-      headers: expect.objectContaining({
-        'Discourse-Logged-In': 'true',
-        'User-Agent': 'LinuxDo WebView UA'
+    expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'Discourse-Logged-In': 'true',
+          'User-Agent': 'LinuxDo WebView UA'
+        })
       })
-    }));
-    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]?.headers).not.toHaveProperty('Cookie');
+    );
+    expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
   it('loads selectable linux.do authors without groups', async () => {
-    const fetcher = vi.fn(async () => json({
-      users: [{ id: 7, username: 'alice', name: 'Alice', avatar_template: '/user_avatar/linux.do/alice/{size}/1.png' }],
-      groups: [{ id: 2, name: 'staff' }]
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        users: [
+          { id: 7, username: 'alice', name: 'Alice', avatar_template: '/user_avatar/linux.do/alice/{size}/1.png' }
+        ],
+        groups: [{ id: 2, name: 'staff' }]
+      })
+    );
 
     const users = await searchLinuxDoUsers({
-      term: 'ali', categoryId: '4', limit: 20, fetcher,
+      term: 'ali',
+      categoryId: '4',
+      limit: 20,
+      fetcher,
       linuxDoAccess: testLinuxDoAccess()
     });
 
-    expect(users).toEqual([{
-      id: '7',
-      username: 'alice',
-      displayName: 'Alice',
-      avatar: 'https://linux.do/user_avatar/linux.do/alice/96/1.png'
-    }]);
-    const url = new URL(String((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]));
+    expect(users).toEqual([
+      {
+        id: '7',
+        username: 'alice',
+        displayName: 'Alice',
+        avatar: 'https://linux.do/user_avatar/linux.do/alice/96/1.png'
+      }
+    ]);
+    const url = new URL(String((fetcher.mock.calls as unknown as [string][])[0]?.[0]));
     expect(url.pathname).toBe('/u/search/users');
     expect(url.searchParams.get('term')).toBe('ali');
     expect(url.searchParams.get('include_groups')).toBe('false');
@@ -5943,28 +6735,34 @@ describe('Android local sources', () => {
   });
 
   it('loads linux.do semantic results with an AI marker', async () => {
-    const fetcher = vi.fn(async () => json({
-      topics: [{
-        id: 88,
-        title: 'AI semantic result',
-        slug: 'ai-semantic-result',
-        created_at: '2026-07-17T00:00:00.000Z',
-        bumped_at: '2026-07-17T00:00:00.000Z',
-        posts_count: 2
-      }],
-      posts: [{ topic_id: 88, blurb: '[!important]+ semantic match' }],
-      users: []
-    }));
+    const fetcher = vi.fn(async () =>
+      json({
+        topics: [
+          {
+            id: 88,
+            title: 'AI semantic result',
+            slug: 'ai-semantic-result',
+            created_at: '2026-07-17T00:00:00.000Z',
+            bumped_at: '2026-07-17T00:00:00.000Z',
+            posts_count: 2
+          }
+        ],
+        posts: [{ topic_id: 88, blurb: '[!important]+ semantic match' }],
+        users: []
+      })
+    );
 
     const result = await searchLinuxDoSemantic('AI tags:人工智能', {
       fetcher,
       linuxDoAccess: testLinuxDoAccess()
     });
 
-    expect(result.items).toEqual([expect.objectContaining({ id: '88', excerpt: 'semantic match', isAiGenerated: true })]);
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: '88', excerpt: 'semantic match', isAiGenerated: true })
+    ]);
     expect(result.hasMore).toBe(false);
     expect(result.nextPage).toBeNull();
-    const url = new URL(String((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]));
+    const url = new URL(String((fetcher.mock.calls as unknown as [string][])[0]?.[0]));
     expect(url.pathname).toBe('/discourse-ai/embeddings/semantic-search');
     expect(url.searchParams.get('q')).toBe('AI tags:人工智能');
   });
@@ -5983,15 +6781,20 @@ describe('Android local sources', () => {
   });
 
   it.each([403, 404, 429])('preserves HTTP %s from the linux.do semantic endpoint', async (status) => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: [`HTTP ${status}`] }), {
-      status,
-      headers: { 'content-type': 'application/json' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ errors: [`HTTP ${status}`] }), {
+          status,
+          headers: { 'content-type': 'application/json' }
+        })
+    );
 
-    await expect(searchLinuxDoSemantic('AI', {
-      fetcher,
-      linuxDoAccess: testLinuxDoAccess()
-    })).rejects.toMatchObject({ status });
+    await expect(
+      searchLinuxDoSemantic('AI', {
+        fetcher,
+        linuxDoAccess: testLinuxDoAccess()
+      })
+    ).rejects.toMatchObject({ status });
   });
 
   it('preserves a network failure from the linux.do semantic endpoint', async () => {
@@ -5999,9 +6802,11 @@ describe('Android local sources', () => {
       throw new Error('network down');
     });
 
-    await expect(searchLinuxDoSemantic('AI', {
-      fetcher,
-      linuxDoAccess: testLinuxDoAccess()
-    })).rejects.toThrow('network down');
+    await expect(
+      searchLinuxDoSemantic('AI', {
+        fetcher,
+        linuxDoAccess: testLinuxDoAccess()
+      })
+    ).rejects.toThrow('network down');
   });
 });

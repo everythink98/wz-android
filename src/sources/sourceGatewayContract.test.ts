@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Category, DiscourseTagOption, DiscourseUserOption, FeedResponse, SearchResponse, Source, Topic } from '../types';
+import type {
+  Category,
+  DiscourseTagOption,
+  DiscourseUserOption,
+  FeedResponse,
+  SearchResponse,
+  Source,
+  Topic
+} from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { getYaohuoTopicDirect } from '../yaohuoApi';
@@ -10,7 +18,17 @@ const forumMocks = vi.hoisted(() => ({
   getFeed: vi.fn(async (): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
   getReplies: vi.fn(async () => ({ items: [], hasMore: false, nextPage: null })),
   getReply: vi.fn(),
-  getTopic: vi.fn(async ({ id, source }) => ({ source, id, title: '', author: '', url: '', createdAt: '', replyCount: 0, contentHtml: '', replies: [] })),
+  getTopic: vi.fn(async ({ id, source }) => ({
+    source,
+    id,
+    title: '',
+    author: '',
+    url: '',
+    createdAt: '',
+    replyCount: 0,
+    contentHtml: '',
+    replies: []
+  })),
   getUserProfile: vi.fn(async ({ id, source }) => ({ source, id, username: id, displayName: id, url: '', topics: [] })),
   searchTopics: vi.fn(async (): Promise<SearchResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null }))
 }));
@@ -116,10 +134,12 @@ describe('source gateway read contract', () => {
     const aggregate = await gateway.getFeed({ source: 'all' });
     expect(aggregate.items).toEqual([publicTopic]);
     expect(aggregate.errors).toEqual({});
-    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'all',
-      unavailableSources: ['nodeseek']
-    }));
+    expect(forumMocks.getFeed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'all',
+        unavailableSources: ['nodeseek']
+      })
+    );
 
     forumMocks.getCategories.mockResolvedValueOnce({
       items: [publicCategory, stalePrivateCategory],
@@ -187,11 +207,16 @@ describe('source gateway read contract', () => {
 
   it('[REG-TOPIC-039] records safe diagnostics for NodeSeek username resolution', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const privateUsername = 'private-resolver-user';
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ memberList: [privateUsername] }), {
-      headers: { 'content-type': 'application/json' }
-    }));
+    const fetcher = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ memberList: [privateUsername] }), {
+          headers: { 'content-type': 'application/json' }
+        })
+    );
     nodeSeekMocks.resolveNodeSeekUser.mockImplementationOnce(async (username, options) => {
       await options.fetcher(`https://www.nodeseek.com/api/account/find/${encodeURIComponent(username)}`, {
         signal: options.signal
@@ -275,19 +300,22 @@ describe('source gateway read contract', () => {
       nodeSeekUserAgent: () => 'NodeSeek UA'
     });
 
-    await expect(gateway.getFeed(
-      { source: 'all' },
-      { identityBarriers: ['nodeseek'] }
-    )).resolves.toMatchObject({ items: [publicTopic] });
-    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'all',
-      unavailableSources: ['nodeseek']
-    }));
+    await expect(gateway.getFeed({ source: 'all' }, { identityBarriers: ['nodeseek'] })).resolves.toMatchObject({
+      items: [publicTopic]
+    });
+    expect(forumMocks.getFeed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'all',
+        unavailableSources: ['nodeseek']
+      })
+    );
   });
 
   it('[REG-TOPIC-027] routes emoji reads through managed credentials, fetcher, diagnostics, and cancellation', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const signal = new AbortController().signal;
     const fetcher = vi.fn(async () => new Response('{}'));
     linuxDoMocks.getLinuxDoEmojiUrls.mockImplementationOnce(async (options) => {
@@ -305,32 +333,38 @@ describe('source gateway read contract', () => {
       heart: 'https://linux.do/heart.png'
     });
 
-    expect(linuxDoMocks.getLinuxDoEmojiUrls).toHaveBeenCalledWith(expect.objectContaining({
-      linuxDoAccess: { authenticated: true, userAgent: 'LinuxDo UA' },
-      signal
-    }));
+    expect(linuxDoMocks.getLinuxDoEmojiUrls).toHaveBeenCalledWith(
+      expect.objectContaining({
+        linuxDoAccess: { authenticated: true, userAgent: 'LinuxDo UA' },
+        signal
+      })
+    );
     expect(fetcher).toHaveBeenCalledWith('https://linux.do/emojis.json', { signal });
     expect(lines.map((line) => JSON.parse(line).operation)).toEqual(expect.arrayContaining(['getEmojiUrls']));
   });
 
   it('records one safe partial diagnostic trace for an owned feed read', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'nodeseek',
       nodeSeekUserAgent: () => 'NodeSeek UA'
     });
     forumMocks.getFeed.mockResolvedValueOnce({
-      items: [{
-        source: 'nodeseek',
-        id: 'private-topic-id',
-        title: 'private title',
-        author: 'private author',
-        url: 'https://www.nodeseek.com/private-topic-id',
-        createdAt: '2026-07-10T00:00:00.000Z',
-        replyCount: 0
-      }],
+      items: [
+        {
+          source: 'nodeseek',
+          id: 'private-topic-id',
+          title: 'private title',
+          author: 'private author',
+          url: 'https://www.nodeseek.com/private-topic-id',
+          createdAt: '2026-07-10T00:00:00.000Z',
+          replyCount: 0
+        }
+      ],
       errors: { linuxdo: { kind: 'ordinary', message: 'private upstream message' } },
       hasMore: true,
       nextPage: 2
@@ -340,13 +374,7 @@ describe('source gateway read contract', () => {
 
     const serialized = lines.join('');
     const events = lines.map((line) => JSON.parse(line));
-    expect(events.map(({ phase }) => phase)).toEqual([
-      'intent',
-      'credential',
-      'transport',
-      'parse',
-      'finish'
-    ]);
+    expect(events.map(({ phase }) => phase)).toEqual(['intent', 'credential', 'transport', 'parse', 'finish']);
     expect(events.at(-2)).toMatchObject({
       phase: 'parse',
       itemCount: 1,
@@ -355,10 +383,12 @@ describe('source gateway read contract', () => {
     });
     expect(events.at(-1)).toMatchObject({ phase: 'finish', outcome: 'partial' });
     expect(events.find(({ phase }) => phase === 'transport')).toMatchObject({ channel: 'direct', state: 'start' });
-    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({
-      nodeSeekAuthenticated: true,
-      nodeSeekUserAgent: 'NodeSeek UA'
-    }));
+    expect(forumMocks.getFeed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nodeSeekAuthenticated: true,
+        nodeSeekUserAgent: 'NodeSeek UA'
+      })
+    );
     expect(new Set(events.map(({ traceId }) => traceId))).toHaveProperty('size', 1);
     expect(serialized).not.toContain('private-topic-id');
     expect(serialized).not.toContain('private upstream message');
@@ -366,7 +396,9 @@ describe('source gateway read contract', () => {
 
   it('records LinuxDo credential presence without exposing credential contents', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'linuxdo',
@@ -413,7 +445,9 @@ describe('source gateway read contract', () => {
 
   it('does not probe a private Cookie snapshot before an all-source read', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
@@ -425,7 +459,9 @@ describe('source gateway read contract', () => {
     });
 
     expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source: 'all' }));
-    expect(lines.map((line) => JSON.parse(line)).find(({ phase, source }) => phase === 'credential' && source === 'all')).toMatchObject({
+    expect(
+      lines.map((line) => JSON.parse(line)).find(({ phase, source }) => phase === 'credential' && source === 'all')
+    ).toMatchObject({
       source: 'all',
       hasCredential: false,
       isCredentialKnown: true
@@ -459,7 +495,9 @@ describe('source gateway read contract', () => {
     });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
-      loadXiaoyinsiCredentialsForSource: vi.fn(async () => { throw new Error('Xiaoyinsi credential store failed'); }),
+      loadXiaoyinsiCredentialsForSource: vi.fn(async () => {
+        throw new Error('Xiaoyinsi credential store failed');
+      }),
       nodeSeekUserAgent: () => ''
     });
 
@@ -469,17 +507,21 @@ describe('source gateway read contract', () => {
         xiaoyinsi: { kind: 'ordinary', message: 'Xiaoyinsi credential store failed' }
       }
     });
-    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'all',
-      unavailableSources: ['xiaoyinsi']
-    }));
+    expect(forumMocks.getFeed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'all',
+        unavailableSources: ['xiaoyinsi']
+      })
+    );
     await expect(gateway.getFeed({ source: 'nodeseek' })).resolves.toBeDefined();
     await expect(gateway.getFeed({ source: 'xiaoyinsi' })).rejects.toThrow('Xiaoyinsi credential store failed');
   });
 
   it('adds gateway stages without finishing a caller-owned trace', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const trace = beginDiagnosticTrace('feed', 'refresh', { source: 'v2ex' });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
@@ -488,32 +530,37 @@ describe('source gateway read contract', () => {
 
     await gateway.getFeed({ source: 'v2ex' }, { trace });
 
-    expect(lines.map((line) => JSON.parse(line).phase)).toEqual([
-      'intent',
-      'credential',
-      'transport',
-      'parse'
-    ]);
+    expect(lines.map((line) => JSON.parse(line).phase)).toEqual(['intent', 'credential', 'transport', 'parse']);
     finishDiagnosticTrace(trace, 'success');
     expect(lines.map((line) => JSON.parse(line).phase).filter((phase) => phase === 'finish')).toHaveLength(1);
   });
 
   it('classifies an unexpected HTTP-success parse-empty adapter result as a failure', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getFeed.mockResolvedValueOnce(annotateSourceDiagnosticSummary({
-      items: [], errors: {}, hasMore: false, nextPage: null
-    }, {
-      parserVariant: 'rendered-list',
-      candidateCount: 2,
-      validCount: 0,
-      droppedCount: 2,
-      isExpectedEmpty: false
-    }));
+    forumMocks.getFeed.mockResolvedValueOnce(
+      annotateSourceDiagnosticSummary(
+        {
+          items: [],
+          errors: {},
+          hasMore: false,
+          nextPage: null
+        },
+        {
+          parserVariant: 'rendered-list',
+          candidateCount: 2,
+          validCount: 0,
+          droppedCount: 2,
+          isExpectedEmpty: false
+        }
+      )
+    );
 
     await gateway.getFeed({ source: 'nodeseek' });
 
@@ -531,20 +578,30 @@ describe('source gateway read contract', () => {
 
   it('does not report a legal empty search page as parse-empty', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.searchTopics.mockResolvedValueOnce(annotateSourceDiagnosticSummary({
-      items: [], errors: {}, hasMore: false, nextPage: null
-    }, {
-      parserVariant: 'sov2ex-search',
-      candidateCount: 0,
-      validCount: 0,
-      droppedCount: 0,
-      isExpectedEmpty: true
-    }));
+    forumMocks.searchTopics.mockResolvedValueOnce(
+      annotateSourceDiagnosticSummary(
+        {
+          items: [],
+          errors: {},
+          hasMore: false,
+          nextPage: null
+        },
+        {
+          parserVariant: 'sov2ex-search',
+          candidateCount: 0,
+          validCount: 0,
+          droppedCount: 0,
+          isExpectedEmpty: true
+        }
+      )
+    );
 
     await gateway.searchTopics({ source: 'v2ex', query: 'no-result' });
 
@@ -556,21 +613,31 @@ describe('source gateway read contract', () => {
 
   it('defers a caller-owned parse-empty terminal until controller apply and upgrades success to failure', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const trace = beginDiagnosticTrace('feed', 'load', { source: 'nodeseek' });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getFeed.mockResolvedValueOnce(annotateSourceDiagnosticSummary({
-      items: [], errors: {}, hasMore: false, nextPage: null
-    }, {
-      parserVariant: 'embedded-list',
-      candidateCount: 1,
-      validCount: 0,
-      droppedCount: 1,
-      isExpectedEmpty: false
-    }));
+    forumMocks.getFeed.mockResolvedValueOnce(
+      annotateSourceDiagnosticSummary(
+        {
+          items: [],
+          errors: {},
+          hasMore: false,
+          nextPage: null
+        },
+        {
+          parserVariant: 'embedded-list',
+          candidateCount: 1,
+          validCount: 0,
+          droppedCount: 1,
+          isExpectedEmpty: false
+        }
+      )
+    );
 
     await gateway.getFeed({ source: 'nodeseek' }, { trace });
     expect(lines.map((line) => JSON.parse(line).phase)).not.toContain('finish');
@@ -587,22 +654,34 @@ describe('source gateway read contract', () => {
 
   it('upgrades a caller-owned successful valid result with adapter degradation to partial', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const trace = beginDiagnosticTrace('user', 'open', { source: 'v2ex' });
     const gateway = createSourceGateway({
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockResolvedValueOnce(annotateSourceDiagnosticSummary({
-      source: 'v2ex', id: 'user', username: 'user', displayName: 'user', url: '', topics: []
-    }, {
-      parserVariant: 'api-user',
-      candidateCount: 1,
-      validCount: 1,
-      droppedCount: 0,
-      partialErrorCount: 1,
-      hasDegradation: true
-    }));
+    forumMocks.getUserProfile.mockResolvedValueOnce(
+      annotateSourceDiagnosticSummary(
+        {
+          source: 'v2ex',
+          id: 'user',
+          username: 'user',
+          displayName: 'user',
+          url: '',
+          topics: []
+        },
+        {
+          parserVariant: 'api-user',
+          candidateCount: 1,
+          validCount: 1,
+          droppedCount: 0,
+          partialErrorCount: 1,
+          hasDegradation: true
+        }
+      )
+    );
 
     await gateway.getUserProfile({ source: 'v2ex', id: 'user' }, { trace });
     markDiagnosticStage(trace, 'apply', { itemCount: 1 });
@@ -614,7 +693,9 @@ describe('source gateway read contract', () => {
 
   it('marks a Yaohuo topic trace partial when optional favorite state is unavailable', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const trace = beginDiagnosticTrace('topic', 'open', { source: 'yaohuo' });
     const topic: Topic = {
       source: 'yaohuo',
@@ -629,18 +710,23 @@ describe('source gateway read contract', () => {
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    vi.mocked(getYaohuoTopicDirect).mockResolvedValueOnce(annotateSourceDiagnosticSummary({
-      ...topic,
-      contentHtml: '<p>private body</p>',
-      replies: []
-    }, {
-      parserVariant: 'html-topic-with-replies',
-      candidateCount: 1,
-      validCount: 1,
-      droppedCount: 0,
-      partialErrorCount: 1,
-      hasDegradation: true
-    }));
+    vi.mocked(getYaohuoTopicDirect).mockResolvedValueOnce(
+      annotateSourceDiagnosticSummary(
+        {
+          ...topic,
+          contentHtml: '<p>private body</p>',
+          replies: []
+        },
+        {
+          parserVariant: 'html-topic-with-replies',
+          candidateCount: 1,
+          validCount: 1,
+          droppedCount: 0,
+          partialErrorCount: 1,
+          hasDegradation: true
+        }
+      )
+    );
 
     await gateway.getTopic({ source: 'yaohuo', id: topic.id, topic }, { trace });
     markDiagnosticStage(trace, 'apply', { itemCount: 1 });
@@ -649,7 +735,9 @@ describe('source gateway read contract', () => {
     const serialized = lines.join('');
     const terminal = lines.map((line) => JSON.parse(line)).filter(({ phase }) => phase === 'finish');
     expect(terminal).toEqual([expect.objectContaining({ outcome: 'partial' })]);
-    expect(serialized).not.toMatch(/private-topic-id|private title|private author|private body|yaohuo\.me|sidyaohuo=secret/);
+    expect(serialized).not.toMatch(
+      /private-topic-id|private title|private author|private body|yaohuo\.me|sidyaohuo=secret/
+    );
   });
 
   it.each<Source>(['v2ex', 'linuxdo', 'nodeseek'])('keeps all five reads behind the gateway for %s', async (source) => {
@@ -679,22 +767,26 @@ describe('source gateway read contract', () => {
       query: 'codex'
     });
 
-    expect(forumMocks.searchTopics).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'linuxdo',
-      query: 'codex',
-      linuxDoAuthenticated: true,
-      discourseAuth: {
-        linuxdo: {
-          authenticated: true,
-          userAgent: 'linux.do UA'
+    expect(forumMocks.searchTopics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'linuxdo',
+        query: 'codex',
+        linuxDoAuthenticated: true,
+        discourseAuth: {
+          linuxdo: {
+            authenticated: true,
+            userAgent: 'linux.do UA'
+          }
         }
-      }
-    }));
+      })
+    );
   });
 
   it('keeps linux.do search candidates and AI reads behind the managed gateway', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const fetcher = vi.fn();
     const gateway = createSourceGateway({
       fetcher,
@@ -712,15 +804,34 @@ describe('source gateway read contract', () => {
     await gateway.searchUserOptions({ source: 'linuxdo', term: 'ali', categoryId: '4' });
     await gateway.searchSemanticTopics({ source: 'linuxdo', query: 'AI tags:人工智能' });
 
-    expect(linuxDoMocks.searchLinuxDoTags).toHaveBeenCalledWith(expect.objectContaining({
-      query: '人', categoryId: '4', selectedTags: ['快问快答'], fetcher: expect.any(Function)
-    }));
-    expect(linuxDoMocks.searchLinuxDoUsers).toHaveBeenCalledWith(expect.objectContaining({
-      term: 'ali', categoryId: '4', fetcher: expect.any(Function)
-    }));
-    expect(linuxDoMocks.searchLinuxDoSemantic).toHaveBeenCalledWith('AI tags:人工智能', expect.objectContaining({ fetcher: expect.any(Function) }));
+    expect(linuxDoMocks.searchLinuxDoTags).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: '人',
+        categoryId: '4',
+        selectedTags: ['快问快答'],
+        fetcher: expect.any(Function)
+      })
+    );
+    expect(linuxDoMocks.searchLinuxDoUsers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        term: 'ali',
+        categoryId: '4',
+        fetcher: expect.any(Function)
+      })
+    );
+    expect(linuxDoMocks.searchLinuxDoSemantic).toHaveBeenCalledWith(
+      'AI tags:人工智能',
+      expect.objectContaining({ fetcher: expect.any(Function) })
+    );
     const tagEvents = lines.map((line) => JSON.parse(line)).filter(({ traceId }) => traceId === tagTrace.traceId);
-    expect(tagEvents.map(({ phase }) => phase)).toEqual(['intent', 'credential', 'transport', 'parse', 'apply', 'finish']);
+    expect(tagEvents.map(({ phase }) => phase)).toEqual([
+      'intent',
+      'credential',
+      'transport',
+      'parse',
+      'apply',
+      'finish'
+    ]);
     expect(tagEvents.find(({ phase }) => phase === 'parse')).toMatchObject({ itemCount: 1 });
     expect(new Set(tagEvents.map(({ traceId }) => traceId))).toHaveProperty('size', 1);
     expect(lines.join('')).not.toContain('快问快答');
@@ -746,19 +857,58 @@ describe('source gateway read contract', () => {
     await gateway.getUserProfile({ source: 'nodeseek', id: 'user-1' });
 
     expect(currentSessionEpoch).toHaveBeenCalledWith('nodeseek');
-    expect(forumMocks.getCategories).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', fetcher: expect.any(Function), nodeSeekAuthenticated: true, nodeSeekUserAgent: 'NodeSeek UA' }));
-    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', fetcher: expect.any(Function), nodeSeekAuthenticated: true, nodeSeekUserAgent: 'NodeSeek UA' }));
-    expect(forumMocks.searchTopics).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', fetcher: expect.any(Function), nodeSeekAuthenticated: true, nodeSeekUserAgent: 'NodeSeek UA' }));
-    expect(forumMocks.getTopic).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', fetcher: expect.any(Function), nodeSeekAuthenticated: true, nodeSeekUserAgent: 'NodeSeek UA' }));
-    expect(forumMocks.getReplies).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', fetcher: expect.any(Function), nodeSeekAuthenticated: true, nodeSeekUserAgent: 'NodeSeek UA' }));
-    expect(forumMocks.getReply).toHaveBeenCalledWith(expect.objectContaining({ source: 'linuxdo', id: 'topic-1', floor: 2, fetcher: expect.any(Function) }));
-    expect(forumMocks.getUserProfile).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'nodeseek',
-      id: 'user-1',
-      fetcher: expect.any(Function),
-      nodeSeekAuthenticated: true,
-      nodeSeekUserAgent: 'NodeSeek UA'
-    }));
+    expect(forumMocks.getCategories).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'nodeseek',
+        fetcher: expect.any(Function),
+        nodeSeekAuthenticated: true,
+        nodeSeekUserAgent: 'NodeSeek UA'
+      })
+    );
+    expect(forumMocks.getFeed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'nodeseek',
+        fetcher: expect.any(Function),
+        nodeSeekAuthenticated: true,
+        nodeSeekUserAgent: 'NodeSeek UA'
+      })
+    );
+    expect(forumMocks.searchTopics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'nodeseek',
+        fetcher: expect.any(Function),
+        nodeSeekAuthenticated: true,
+        nodeSeekUserAgent: 'NodeSeek UA'
+      })
+    );
+    expect(forumMocks.getTopic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'nodeseek',
+        fetcher: expect.any(Function),
+        nodeSeekAuthenticated: true,
+        nodeSeekUserAgent: 'NodeSeek UA'
+      })
+    );
+    expect(forumMocks.getReplies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'nodeseek',
+        fetcher: expect.any(Function),
+        nodeSeekAuthenticated: true,
+        nodeSeekUserAgent: 'NodeSeek UA'
+      })
+    );
+    expect(forumMocks.getReply).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'linuxdo', id: 'topic-1', floor: 2, fetcher: expect.any(Function) })
+    );
+    expect(forumMocks.getUserProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'nodeseek',
+        id: 'user-1',
+        fetcher: expect.any(Function),
+        nodeSeekAuthenticated: true,
+        nodeSeekUserAgent: 'NodeSeek UA'
+      })
+    );
   });
 
   it.each(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const)(
@@ -800,11 +950,13 @@ describe('source gateway read contract', () => {
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
+    forumMocks.getUserProfile.mockRejectedValueOnce(
+      Object.assign(new Error('妖火登录已失效'), {
+        loginRequired: true,
+        reason: 'expired',
+        source: 'yaohuo'
+      })
+    );
 
     await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
       kind: 'login-expired',
@@ -826,11 +978,13 @@ describe('source gateway read contract', () => {
     const read = gateway.getUserProfile({ source: 'yaohuo', id: '7' });
     await vi.waitFor(() => expect(forumMocks.getUserProfile).toHaveBeenCalledTimes(1));
     generation += 1;
-    response.reject(Object.assign(new Error('旧妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
+    response.reject(
+      Object.assign(new Error('旧妖火登录已失效'), {
+        loginRequired: true,
+        reason: 'expired',
+        source: 'yaohuo'
+      })
+    );
 
     await expect(read).rejects.toThrow('请求已取消');
   });
@@ -840,11 +994,13 @@ describe('source gateway read contract', () => {
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
+    forumMocks.getUserProfile.mockRejectedValueOnce(
+      Object.assign(new Error('妖火登录已失效'), {
+        loginRequired: true,
+        reason: 'expired',
+        source: 'yaohuo'
+      })
+    );
 
     await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
       kind: 'login-expired',
@@ -857,12 +1013,14 @@ describe('source gateway read contract', () => {
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockRejectedValueOnce(Object.assign(new Error('妖火需要完成访问验证'), {
-      loginRequired: true,
-      reason: 'verification',
-      source: 'yaohuo',
-      verificationRequired: true
-    }));
+    forumMocks.getUserProfile.mockRejectedValueOnce(
+      Object.assign(new Error('妖火需要完成访问验证'), {
+        loginRequired: true,
+        reason: 'verification',
+        source: 'yaohuo',
+        verificationRequired: true
+      })
+    );
 
     await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
       kind: 'verification-required',
@@ -882,12 +1040,20 @@ describe('source gateway read contract', () => {
     await gateway.searchTagOptions({ source: 'xiaoyinsi', query: '公', selectedTags: [] });
     await gateway.searchUserOptions({ source: 'xiaoyinsi', term: 'ali' });
 
-    expect(xiaoyinsiMocks.searchXiaoyinsiTags).toHaveBeenCalledWith(expect.objectContaining({
-      query: '公', credentials, fetcher: expect.any(Function)
-    }));
-    expect(xiaoyinsiMocks.searchXiaoyinsiUsers).toHaveBeenCalledWith(expect.objectContaining({
-      term: 'ali', credentials, fetcher: expect.any(Function)
-    }));
+    expect(xiaoyinsiMocks.searchXiaoyinsiTags).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: '公',
+        credentials,
+        fetcher: expect.any(Function)
+      })
+    );
+    expect(xiaoyinsiMocks.searchXiaoyinsiUsers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        term: 'ali',
+        credentials,
+        fetcher: expect.any(Function)
+      })
+    );
   });
 
   it('[REG-XIAOYINSI-007] rechecks 小隐寺 authorization after an authenticated read returns 403', async () => {
@@ -898,10 +1064,12 @@ describe('source gateway read contract', () => {
       nodeSeekUserAgent: () => '',
       refreshXiaoyinsiAuthorization
     });
-    forumMocks.getTopic.mockRejectedValueOnce(Object.assign(new Error('没有权限读取主题'), {
-      source: 'xiaoyinsi',
-      status: 403
-    }));
+    forumMocks.getTopic.mockRejectedValueOnce(
+      Object.assign(new Error('没有权限读取主题'), {
+        source: 'xiaoyinsi',
+        status: 403
+      })
+    );
 
     await expect(gateway.getTopic({ source: 'xiaoyinsi', id: '42' })).rejects.toMatchObject({
       kind: 'permission-denied'
@@ -925,10 +1093,12 @@ describe('source gateway read contract', () => {
       nodeSeekUserAgent: () => '',
       refreshXiaoyinsiAuthorization
     });
-    forumMocks.getTopic.mockRejectedValueOnce(Object.assign(new Error('旧授权没有权限读取主题'), {
-      source: 'xiaoyinsi',
-      status: 403
-    }));
+    forumMocks.getTopic.mockRejectedValueOnce(
+      Object.assign(new Error('旧授权没有权限读取主题'), {
+        source: 'xiaoyinsi',
+        status: 403
+      })
+    );
 
     await expect(gateway.getTopic({ source: 'xiaoyinsi', id: '42' })).rejects.toThrow('请求已取消');
     expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
@@ -943,9 +1113,11 @@ describe('source gateway read contract', () => {
       nodeSeekUserAgent: () => '',
       refreshXiaoyinsiAuthorization
     });
-    xiaoyinsiMocks.getXiaoyinsiLevelProfile.mockRejectedValueOnce(Object.assign(new Error('授权已失效'), {
-      status: 403
-    }));
+    xiaoyinsiMocks.getXiaoyinsiLevelProfile.mockRejectedValueOnce(
+      Object.assign(new Error('授权已失效'), {
+        status: 403
+      })
+    );
     const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
 
     await expect(gateway.getLevelProfile({ source: 'xiaoyinsi' }, { trace })).rejects.toMatchObject({

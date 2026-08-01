@@ -32,15 +32,7 @@ import {
 import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
 
 export type XiaoyinsiAuthPhase =
-  | 'idle'
-  | 'requesting'
-  | 'waiting'
-  | 'authorized'
-  | 'denied'
-  | 'expired'
-  | 'cleanup'
-  | 'unsupported'
-  | 'error';
+  'idle' | 'requesting' | 'waiting' | 'authorized' | 'denied' | 'expired' | 'cleanup' | 'unsupported' | 'error';
 
 export type XiaoyinsiAuthorizationReadResult = {
   authenticated: boolean | null;
@@ -192,207 +184,228 @@ export function useXiaoyinsiAuthController({
     appQueryClient.removeQueries({ queryKey: forumQueryKeys.level('xiaoyinsi') });
   }, []);
 
-  const dispatch = useCallback((event: SiteSessionEvent) => {
-    dispatchSiteSessionEvent({ ...event, site: 'xiaoyinsi' } as ScopedSiteSessionEvent);
-  }, [dispatchSiteSessionEvent]);
+  const dispatch = useCallback(
+    (event: SiteSessionEvent) => {
+      dispatchSiteSessionEvent({ ...event, site: 'xiaoyinsi' } as ScopedSiteSessionEvent);
+    },
+    [dispatchSiteSessionEvent]
+  );
 
-  const runAuthorizationRefresh = useCallback(async (
-    parentTrace?: DiagnosticTrace,
-    options: {
-      allowDuringMutation?: boolean;
-      sessionEventType?: 'cookie-loaded' | 'session-updated';
-      signal?: AbortSignal;
-    } = {},
-    publishSessionEvent: (event: SiteSessionEvent) => void = () => undefined
-  ) => {
-    const {
-      allowDuringMutation = false,
-      sessionEventType = 'cookie-loaded',
-      signal
-    } = options;
-    const ownsTrace = !parentTrace;
-    const trace = parentTrace || beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
-    const finish = (outcome: Parameters<typeof finishDiagnosticTrace>[1], fields: Parameters<typeof finishDiagnosticTrace>[2] = {}) => {
-      if (ownsTrace) {
-        finishDiagnosticTrace(trace, outcome, { source: 'xiaoyinsi', ...fields });
-      }
-    };
-    if (!allowDuringMutation && (authorizationMutationRef.current || busyRef.current)) {
-      markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'busy' });
-      finish('blocked', { reason: 'busy' });
-      return false;
-    }
-    const refreshGeneration = invalidateAuthorizationRefresh();
-    const isCurrent = () => (
-      mountedRef.current
-      && !signal?.aborted
-      && refreshGeneration === refreshGenerationRef.current
-    );
-    const stopIfStale = () => {
-      if (isCurrent()) {
+  const runAuthorizationRefresh = useCallback(
+    async (
+      parentTrace?: DiagnosticTrace,
+      options: {
+        allowDuringMutation?: boolean;
+        sessionEventType?: 'cookie-loaded' | 'session-updated';
+        signal?: AbortSignal;
+      } = {},
+      publishSessionEvent: (event: SiteSessionEvent) => void = () => undefined
+    ) => {
+      const { allowDuringMutation = false, sessionEventType = 'cookie-loaded', signal } = options;
+      const ownsTrace = !parentTrace;
+      const trace = parentTrace || beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
+      const finish = (
+        outcome: Parameters<typeof finishDiagnosticTrace>[1],
+        fields: Parameters<typeof finishDiagnosticTrace>[2] = {}
+      ) => {
+        if (ownsTrace) {
+          finishDiagnosticTrace(trace, outcome, { source: 'xiaoyinsi', ...fields });
+        }
+      };
+      if (!allowDuringMutation && (authorizationMutationRef.current || busyRef.current)) {
+        markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'busy' });
+        finish('blocked', { reason: 'busy' });
         return false;
       }
-      const canceled = Boolean(signal?.aborted);
-      finish(canceled ? 'canceled' : 'stale', { reason: canceled ? 'canceled' : 'stale' });
-      return true;
-    };
-    markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
-    try {
-      const cleanupPending = await hasXiaoyinsiRevocationCleanupPending();
-      if (stopIfStale()) {
-        return false;
-      }
-      if (cleanupPending) {
-        const cleanup = await retryXiaoyinsiRevocationCleanup();
+      const refreshGeneration = invalidateAuthorizationRefresh();
+      const isCurrent = () =>
+        mountedRef.current && !signal?.aborted && refreshGeneration === refreshGenerationRef.current;
+      const stopIfStale = () => {
+        if (isCurrent()) {
+          return false;
+        }
+        const canceled = Boolean(signal?.aborted);
+        finish(canceled ? 'canceled' : 'stale', { reason: canceled ? 'canceled' : 'stale' });
+        return true;
+      };
+      markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
+      try {
+        const cleanupPending = await hasXiaoyinsiRevocationCleanupPending();
         if (stopIfStale()) {
           return false;
+        }
+        if (cleanupPending) {
+          const cleanup = await retryXiaoyinsiRevocationCleanup();
+          if (stopIfStale()) {
+            return false;
+          }
+          setPending(null);
+          publishSessionEvent({ type: 'cleared' });
+          setPhase(cleanup.complete ? 'idle' : 'cleanup');
+          setMessage(
+            cleanup.complete
+              ? '撤销后的本机授权材料已清理。'
+              : '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。'
+          );
+          markDiagnosticStage(trace, 'persist', {
+            source: 'xiaoyinsi',
+            store: 'multi-store',
+            state: cleanup.complete ? 'cleared' : 'partial'
+          });
+          markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: cleanup.complete ? 'cleared' : 'cleanup' });
+          finish(cleanup.complete ? 'success' : 'partial', {
+            state: cleanup.complete ? 'cleared' : 'cleanup',
+            ...(cleanup.complete ? {} : { reason: 'storage_error' })
+          });
+          return cleanup.complete ? false : null;
+        }
+        const savedPending = await loadXiaoyinsiPendingAuthorization();
+        if (stopIfStale()) {
+          return false;
+        }
+        if (savedPending && savedPending.expiresAt > Date.now()) {
+          setPending(savedPending);
+          setPhase('waiting');
+          publishSessionEvent({ type: 'authorization-started' });
+          markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'pending' });
+          finish('noop', { state: 'pending' });
+          return false;
+        }
+        if (savedPending) {
+          await cancelXiaoyinsiDeviceAuth().catch(() => undefined);
+          if (stopIfStale()) {
+            return false;
+          }
         }
         setPending(null);
-        publishSessionEvent({ type: 'cleared' });
-        setPhase(cleanup.complete ? 'idle' : 'cleanup');
-        setMessage(cleanup.complete
-          ? '撤销后的本机授权材料已清理。'
-          : '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。');
-        markDiagnosticStage(trace, 'persist', {
-          source: 'xiaoyinsi',
-          store: 'multi-store',
-          state: cleanup.complete ? 'cleared' : 'partial'
-        });
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: cleanup.complete ? 'cleared' : 'cleanup' });
-        finish(cleanup.complete ? 'success' : 'partial', {
-          state: cleanup.complete ? 'cleared' : 'cleanup',
-          ...(cleanup.complete ? {} : { reason: 'storage_error' })
-        });
-        return cleanup.complete ? false : null;
-      }
-      const savedPending = await loadXiaoyinsiPendingAuthorization();
-      if (stopIfStale()) {
-        return false;
-      }
-      if (savedPending && savedPending.expiresAt > Date.now()) {
-        setPending(savedPending);
-        setPhase('waiting');
-        publishSessionEvent({ type: 'authorization-started' });
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'pending' });
-        finish('noop', { state: 'pending' });
-        return false;
-      }
-      if (savedPending) {
-        await cancelXiaoyinsiDeviceAuth().catch(() => undefined);
+        const result = await checkXiaoyinsiAuthorization({ fetcher, sessionEventType, signal, trace });
         if (stopIfStale()) {
           return false;
         }
-      }
-      setPending(null);
-      const result = await checkXiaoyinsiAuthorization({ fetcher, sessionEventType, signal, trace });
-      if (stopIfStale()) {
-        return false;
-      }
-      if (result.sessionEvent) {
-        publishSessionEvent(result.sessionEvent);
-      }
-      if (result.authenticated) {
-        setPhase('authorized');
+        if (result.sessionEvent) {
+          publishSessionEvent(result.sessionEvent);
+        }
+        if (result.authenticated) {
+          setPhase('authorized');
+          setMessage('');
+          markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'logged-in' });
+          finish('success', { state: 'logged-in' });
+          return true;
+        }
+        if (result.authenticated === null) {
+          setPhase('error');
+          setMessage(
+            `无法检测小隐寺授权：${result.sessionEvent?.type === 'check-failed' ? result.sessionEvent.message : '未知错误'}`
+          );
+          markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'error' });
+          finish('failure', { reason: result.reason || 'unknown', state: 'error' });
+          return null;
+        }
+        if (result.sessionEvent?.type === 'login-expired') {
+          setPhase('expired');
+          setMessage('授权已失效，请重新授权。');
+          markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'expired' });
+          finish('blocked', { reason: 'login_required', state: 'expired' });
+          return false;
+        }
+        setPhase('idle');
         setMessage('');
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'logged-in' });
-        finish('success', { state: 'logged-in' });
-        return true;
-      }
-      if (result.authenticated === null) {
-        setPhase('error');
-        setMessage(`无法检测小隐寺授权：${result.sessionEvent?.type === 'check-failed' ? result.sessionEvent.message : '未知错误'}`);
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'error' });
-        finish('failure', { reason: result.reason || 'unknown', state: 'error' });
-        return null;
-      }
-      if (result.sessionEvent?.type === 'login-expired') {
-        setPhase('expired');
-        setMessage('授权已失效，请重新授权。');
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'expired' });
-        finish('blocked', { reason: 'login_required', state: 'expired' });
+        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'cleared' });
+        finish('noop', { reason: 'missing_credential' });
+        return false;
+      } catch (error) {
+        if (stopIfStale() || isCancelledError(error) || isCanceledRequest(error)) {
+          return false;
+        }
+        if (isXiaoyinsiLoginExpiredError(error)) {
+          publishSessionEvent({ type: 'login-expired', message: '小隐寺授权已失效' });
+          setPhase('expired');
+          setMessage('授权已失效，请重新授权。');
+          markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'expired' });
+          finish('blocked', { reason: 'login_required', state: 'expired' });
+        } else {
+          publishSessionEvent({ type: 'check-failed', message: errorMessage(error) });
+          setPhase('error');
+          setMessage(`无法检测小隐寺授权：${errorMessage(error)}`);
+          markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'error' });
+          finish('failure', { reason: normalizeDiagnosticReason(error), state: 'error' });
+          return null;
+        }
         return false;
       }
-      setPhase('idle');
-      setMessage('');
-      markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'cleared' });
-      finish('noop', { reason: 'missing_credential' });
-      return false;
-    } catch (error) {
-      if (stopIfStale() || isCancelledError(error) || isCanceledRequest(error)) {
-        return false;
-      }
-      if (isXiaoyinsiLoginExpiredError(error)) {
-        publishSessionEvent({ type: 'login-expired', message: '小隐寺授权已失效' });
-        setPhase('expired');
-        setMessage('授权已失效，请重新授权。');
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'expired' });
-        finish('blocked', { reason: 'login_required', state: 'expired' });
-      } else {
-        publishSessionEvent({ type: 'check-failed', message: errorMessage(error) });
-        setPhase('error');
-        setMessage(`无法检测小隐寺授权：${errorMessage(error)}`);
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'error' });
-        finish('failure', { reason: normalizeDiagnosticReason(error), state: 'error' });
-        return null;
-      }
-      return false;
-    }
-  }, [fetcher, invalidateAuthorizationRefresh]);
+    },
+    [fetcher, invalidateAuthorizationRefresh]
+  );
 
-  const refreshAuthorization = useCallback((
-    parentTrace?: DiagnosticTrace,
-    options: {
-      allowDuringMutation?: boolean;
-      sessionEventType?: 'cookie-loaded' | 'session-updated';
-      signal?: AbortSignal;
-    } = {}
-  ) => {
-    // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- Imperative authorization event callback, never passed to a React state setter.
-    return runAuthorizationRefresh(parentTrace, options, dispatch);
-  }, [dispatch, runAuthorizationRefresh]);
+  const refreshAuthorization = useCallback(
+    (
+      parentTrace?: DiagnosticTrace,
+      options: {
+        allowDuringMutation?: boolean;
+        sessionEventType?: 'cookie-loaded' | 'session-updated';
+        signal?: AbortSignal;
+      } = {}
+    ) => {
+      // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- Imperative authorization event callback, never passed to a React state setter.
+      return runAuthorizationRefresh(parentTrace, options, dispatch);
+    },
+    [dispatch, runAuthorizationRefresh]
+  );
 
-  const readAuthorization = useCallback(async (
-    parentTrace?: DiagnosticTrace,
-    options: { signal?: AbortSignal } = {}
-  ): Promise<XiaoyinsiAuthorizationReadResult> => {
-    const ownsTrace = !parentTrace;
-    const trace = parentTrace || beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
-    markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
-    try {
-      const result = await checkXiaoyinsiAuthorization({ fetcher, signal: options.signal, trace });
-      const state = result.authenticated
-        ? 'logged-in'
-        : result.authenticated === null
-          ? 'error'
-          : result.sessionEvent?.type === 'login-expired'
-            ? 'expired'
-            : 'cleared';
-      markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state });
-      if (ownsTrace) {
-        finishDiagnosticTrace(
-          trace,
-          result.authenticated ? 'success' : result.authenticated === null ? 'failure' : state === 'expired' ? 'blocked' : 'noop',
-          { source: 'xiaoyinsi', ...(result.reason ? { reason: result.reason } : {}), state }
-        );
+  const readAuthorization = useCallback(
+    async (
+      parentTrace?: DiagnosticTrace,
+      options: { signal?: AbortSignal } = {}
+    ): Promise<XiaoyinsiAuthorizationReadResult> => {
+      const ownsTrace = !parentTrace;
+      const trace = parentTrace || beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
+      markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
+      try {
+        const result = await checkXiaoyinsiAuthorization({ fetcher, signal: options.signal, trace });
+        const state = result.authenticated
+          ? 'logged-in'
+          : result.authenticated === null
+            ? 'error'
+            : result.sessionEvent?.type === 'login-expired'
+              ? 'expired'
+              : 'cleared';
+        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state });
+        if (ownsTrace) {
+          finishDiagnosticTrace(
+            trace,
+            result.authenticated
+              ? 'success'
+              : result.authenticated === null
+                ? 'failure'
+                : state === 'expired'
+                  ? 'blocked'
+                  : 'noop',
+            { source: 'xiaoyinsi', ...(result.reason ? { reason: result.reason } : {}), state }
+          );
+        }
+        return result;
+      } catch (error) {
+        if (ownsTrace) {
+          finishDiagnosticTrace(trace, 'canceled', { source: 'xiaoyinsi', reason: 'canceled' });
+        }
+        throw error;
       }
-      return result;
-    } catch (error) {
-      if (ownsTrace) {
-        finishDiagnosticTrace(trace, 'canceled', { source: 'xiaoyinsi', reason: 'canceled' });
-      }
-      throw error;
-    }
-  }, [fetcher]);
+    },
+    [fetcher]
+  );
 
-  const restoreExistingAuthorization = useCallback(async (restoredMessage: string, trace?: DiagnosticTrace) => {
-    // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- This is an event callback, not a React state updater.
-    const restored = await refreshAuthorization(trace, { allowDuringMutation: true });
-    if (restored && mountedRef.current) {
-      // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- This callback runs from authorization events, not inside a React updater.
-      setMessage(restoredMessage);
-    }
-    return restored;
-  }, [refreshAuthorization]);
+  const restoreExistingAuthorization = useCallback(
+    async (restoredMessage: string, trace?: DiagnosticTrace) => {
+      // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- This is an event callback, not a React state updater.
+      const restored = await refreshAuthorization(trace, { allowDuringMutation: true });
+      if (restored && mountedRef.current) {
+        // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- This callback runs from authorization events, not inside a React updater.
+        setMessage(restoredMessage);
+      }
+      return restored;
+    },
+    [refreshAuthorization]
+  );
 
   const refreshLevel = useCallback(async () => {
     if (isIdentityPending?.()) {
@@ -477,7 +490,11 @@ export function useXiaoyinsiAuthController({
             setMessage(`本机安全材料清理失败，请重试：${errorMessage(error)}`);
             dispatch({ type: 'cleared' });
           }
-          finishDiagnosticTrace(trace, 'failure', { source: 'xiaoyinsi', reason: normalizeDiagnosticReason(error), state: 'cleanup' });
+          finishDiagnosticTrace(trace, 'failure', {
+            source: 'xiaoyinsi',
+            reason: normalizeDiagnosticReason(error),
+            state: 'cleanup'
+          });
           return null;
         }
         if (!mountedRef.current) {
@@ -487,9 +504,11 @@ export function useXiaoyinsiAuthController({
         setPending(null);
         dispatch({ type: 'cleared' });
         setPhase(cleanup.complete ? 'idle' : 'cleanup');
-        setMessage(cleanup.complete
-          ? '本机授权材料已清理，请再次点击授权登录。'
-          : '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。');
+        setMessage(
+          cleanup.complete
+            ? '本机授权材料已清理，请再次点击授权登录。'
+            : '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。'
+        );
         markDiagnosticStage(trace, 'persist', {
           source: 'xiaoyinsi',
           store: 'multi-store',
@@ -569,7 +588,10 @@ export function useXiaoyinsiAuthController({
         setPhase(unsupported ? 'unsupported' : 'error');
         setMessage(unsupported ? error.message : `无法开始小隐寺授权：${errorMessage(error)}`);
         dispatch({ type: 'cleared' });
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: unsupported ? 'unsupported-source' : 'error' });
+        markDiagnosticStage(trace, 'apply', {
+          source: 'xiaoyinsi',
+          state: unsupported ? 'unsupported-source' : 'error'
+        });
         finishDiagnosticTrace(trace, unsupported ? 'blocked' : 'failure', {
           source: 'xiaoyinsi',
           reason: unsupported ? 'unsupported' : normalizeDiagnosticReason(error)
@@ -585,7 +607,10 @@ export function useXiaoyinsiAuthController({
   }, [dispatch, fetcher, invalidateAuthorizationRefresh, phase, restoreExistingAuthorization]);
 
   const runPoll = useCallback(async () => {
-    const trace = beginDiagnosticTrace('session', 'check', { source: 'xiaoyinsi', flow: appState === 'active' ? 'foreground' : 'background' });
+    const trace = beginDiagnosticTrace('session', 'check', {
+      source: 'xiaoyinsi',
+      flow: appState === 'active' ? 'foreground' : 'background'
+    });
     if (!pending) {
       markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'not-loaded' });
       finishDiagnosticTrace(trace, 'noop', { source: 'xiaoyinsi', reason: 'not_ready' });
@@ -643,7 +668,11 @@ export function useXiaoyinsiAuthController({
       if (result.status === 'access_denied') {
         const restored = await restoreExistingAuthorization('已拒绝重新授权，原授权仍然有效。', trace);
         if (restored) {
-          finishDiagnosticTrace(trace, 'blocked', { source: 'xiaoyinsi', reason: 'permission_denied', state: 'restored' });
+          finishDiagnosticTrace(trace, 'blocked', {
+            source: 'xiaoyinsi',
+            reason: 'permission_denied',
+            state: 'restored'
+          });
           return;
         }
         if (restored === null) {
@@ -700,7 +729,9 @@ export function useXiaoyinsiAuthController({
     if (delay === null) {
       return;
     }
-    const timer = setTimeout(() => { void runPoll(); }, delay);
+    const timer = setTimeout(() => {
+      void runPoll();
+    }, delay);
     return () => clearTimeout(timer);
   }, [appState, pending, pollRevision, runPoll]);
 
@@ -719,7 +750,12 @@ export function useXiaoyinsiAuthController({
     markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
     try {
       await Clipboard.setStringAsync(pending.userCode);
-      markDiagnosticStage(trace, 'transport', { source: 'xiaoyinsi', endpoint: 'external', channel: 'native', state: 'start' });
+      markDiagnosticStage(trace, 'transport', {
+        source: 'xiaoyinsi',
+        endpoint: 'external',
+        channel: 'native',
+        state: 'start'
+      });
       await Linking.openURL(pending.verificationUriWithRequest);
       setMessage('验证码已复制，请在小隐寺授权页粘贴并确认。');
       markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'open' });
@@ -795,7 +831,11 @@ export function useXiaoyinsiAuthController({
     busyRef.current = true;
     try {
       const credentials = await loadXiaoyinsiCredentials();
-      markDiagnosticStage(trace, 'credential', { source: 'xiaoyinsi', store: 'secure-store', hasCredential: Boolean(credentials) });
+      markDiagnosticStage(trace, 'credential', {
+        source: 'xiaoyinsi',
+        store: 'secure-store',
+        hasCredential: Boolean(credentials)
+      });
       const cleanup = await revokeXiaoyinsiAuthorization({ fetcher: withDiagnosticFetcher(trace, fetcher) });
       if (!mountedRef.current) {
         finishDiagnosticTrace(trace, 'stale', { source: 'xiaoyinsi', reason: 'stale' });
@@ -808,7 +848,11 @@ export function useXiaoyinsiAuthController({
       setPhase(cleanup.complete ? 'idle' : 'cleanup');
       setMessage(revokedMessage);
       dispatch({ type: 'cleared' });
-      markDiagnosticStage(trace, 'persist', { source: 'xiaoyinsi', store: 'multi-store', state: cleanup.complete ? 'cleared' : 'partial' });
+      markDiagnosticStage(trace, 'persist', {
+        source: 'xiaoyinsi',
+        store: 'multi-store',
+        state: cleanup.complete ? 'cleared' : 'partial'
+      });
       markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: cleanup.complete ? 'cleared' : 'cleanup' });
       finishDiagnosticTrace(trace, cleanup.complete ? 'success' : 'partial', {
         source: 'xiaoyinsi',
@@ -828,20 +872,38 @@ export function useXiaoyinsiAuthController({
     }
   }, [dispatch, fetcher, invalidateAuthorizationRefresh, notify]);
 
-  return useMemo(() => ({
-    beginAuthorization,
-    cancelAuthorization,
-    levelBusy: levelQuery.isFetching,
-    levelError: levelQuery.error ? errorMessage(levelQuery.error) : '',
-    levelProfile: levelQuery.data ?? null,
-    message,
-    openAuthorizationBrowser,
-    pending,
-    phase,
-    readAuthorization,
-    refreshAuthorization,
-    refreshLevel,
-    revokeAuthorization,
-    secondsRemaining
-  }), [beginAuthorization, cancelAuthorization, levelQuery.data, levelQuery.error, levelQuery.isFetching, message, openAuthorizationBrowser, pending, phase, readAuthorization, refreshAuthorization, refreshLevel, revokeAuthorization, secondsRemaining]);
+  return useMemo(
+    () => ({
+      beginAuthorization,
+      cancelAuthorization,
+      levelBusy: levelQuery.isFetching,
+      levelError: levelQuery.error ? errorMessage(levelQuery.error) : '',
+      levelProfile: levelQuery.data ?? null,
+      message,
+      openAuthorizationBrowser,
+      pending,
+      phase,
+      readAuthorization,
+      refreshAuthorization,
+      refreshLevel,
+      revokeAuthorization,
+      secondsRemaining
+    }),
+    [
+      beginAuthorization,
+      cancelAuthorization,
+      levelQuery.data,
+      levelQuery.error,
+      levelQuery.isFetching,
+      message,
+      openAuthorizationBrowser,
+      pending,
+      phase,
+      readAuthorization,
+      refreshAuthorization,
+      refreshLevel,
+      revokeAuthorization,
+      secondsRemaining
+    ]
+  );
 }

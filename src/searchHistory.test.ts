@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_RECENT_SEARCHES, MAX_SEARCH_HISTORY_QUERY_LENGTH, mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory, searchHistoryFromRaw } from './searchHistory';
+import {
+  MAX_RECENT_SEARCHES,
+  MAX_SEARCH_HISTORY_QUERY_LENGTH,
+  mergeLoadedSearchHistory,
+  normalizeSearchHistory,
+  sameSearchHistory,
+  searchHistoryFromRaw
+} from './searchHistory';
 
 describe('search history helpers', () => {
   it('loads only clean deduplicated search terms from storage', () => {
     const longQuery = 'x'.repeat(MAX_SEARCH_HISTORY_QUERY_LENGTH + 20);
 
-    expect(searchHistoryFromRaw(JSON.stringify([
-      '  AI  ',
-      '',
-      'ai',
-      123,
-      longQuery,
-      'linux'
-    ]))).toEqual([
+    expect(searchHistoryFromRaw(JSON.stringify(['  AI  ', '', 'ai', 123, longQuery, 'linux']))).toEqual([
       'AI',
       'x'.repeat(MAX_SEARCH_HISTORY_QUERY_LENGTH),
       'linux'

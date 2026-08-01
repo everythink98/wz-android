@@ -78,11 +78,7 @@ export function cancelRequestTimeoutForFallback(init: RequestInit | undefined) {
 export async function fetchWithTimeout(
   input: string,
   init: RequestInit = {},
-  {
-    fetcher = fetch,
-    signal,
-    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS
-  }: FetchWithTimeoutOptions = {}
+  { fetcher = fetch, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS }: FetchWithTimeoutOptions = {}
 ) {
   const controller = new AbortController();
   let timedOut = false;
@@ -105,15 +101,16 @@ export async function fetchWithTimeout(
     }
     controller.signal.addEventListener('abort', rejectAborted, { once: true });
   });
-  const timeoutPromise = timeoutMs > 0
-    ? new Promise<never>((_resolve, reject) => {
-      cancelTimeout = scheduleRequestTimeout(() => {
-        timedOut = true;
-        controller.abort();
-        reject(new Error(REQUEST_TIMEOUT_MESSAGE));
-      }, timeoutMs);
-    })
-    : undefined;
+  const timeoutPromise =
+    timeoutMs > 0
+      ? new Promise<never>((_resolve, reject) => {
+          cancelTimeout = scheduleRequestTimeout(() => {
+            timedOut = true;
+            controller.abort();
+            reject(new Error(REQUEST_TIMEOUT_MESSAGE));
+          }, timeoutMs);
+        })
+      : undefined;
   try {
     const fetchPromise = Promise.resolve()
       .then(() => {
@@ -134,7 +131,9 @@ export async function fetchWithTimeout(
         }
         throw error;
       });
-    return await Promise.race(timeoutPromise ? [fetchPromise, abortPromise, timeoutPromise] : [fetchPromise, abortPromise]);
+    return await Promise.race(
+      timeoutPromise ? [fetchPromise, abortPromise, timeoutPromise] : [fetchPromise, abortPromise]
+    );
   } finally {
     cancelTimeout?.();
     for (const item of signals) {

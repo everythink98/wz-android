@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View
+} from 'react-native';
 import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '../../credentialVault';
 import type { CredentialSite } from '../../credentialVault';
@@ -193,9 +204,7 @@ function AccountAction({
         onPress();
       }}
     >
-      <Text style={[styles.buttonText, accountStyles.actionTextQuiet]}>
-        {label}
-      </Text>
+      <Text style={[styles.buttonText, accountStyles.actionTextQuiet]}>{label}</Text>
       {disclosure ? <ChevronRight size={15} color={theme.primary} strokeWidth={1.8} /> : null}
     </Pressable>
   );
@@ -285,14 +294,15 @@ function CredentialEditor({
       setEditing(false);
     } catch (error) {
       if (error instanceof CredentialVaultError && error.code === 'biometric-unavailable' && !allowUnprotected) {
-        Alert.alert(
-          '无法使用用户身份认证',
-          '继续后将使用 Android 本机加密保存，但填入时不会再次进行用户身份认证。',
-          [
-            { text: '取消', style: 'cancel' },
-            { text: '继续保存', onPress: () => { void persist(true); } }
-          ]
-        );
+        Alert.alert('无法使用用户身份认证', '继续后将使用 Android 本机加密保存，但填入时不会再次进行用户身份认证。', [
+          { text: '取消', style: 'cancel' },
+          {
+            text: '继续保存',
+            onPress: () => {
+              void persist(true);
+            }
+          }
+        ]);
       } else {
         Alert.alert('无法保存登录信息', messageFromError(error));
       }
@@ -303,27 +313,23 @@ function CredentialEditor({
   };
 
   const confirmDelete = () => {
-    Alert.alert(
-      '删除已保存登录信息？',
-      '只删除保存的账号密码，不会退出当前网站登录。',
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '删除',
-          style: 'destructive',
-          onPress: () => {
-            setBusy(true);
-            void Promise.resolve(onCommand({ type: 'delete-credential', site }))
-              .then(() => {
-                clearDraft();
-                setEditing(false);
-              })
-              .catch((error) => Alert.alert('无法删除登录信息', messageFromError(error)))
-              .finally(() => setBusy(false));
-          }
+    Alert.alert('删除已保存登录信息？', '只删除保存的账号密码，不会退出当前网站登录。', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () => {
+          setBusy(true);
+          void Promise.resolve(onCommand({ type: 'delete-credential', site }))
+            .then(() => {
+              clearDraft();
+              setEditing(false);
+            })
+            .catch((error) => Alert.alert('无法删除登录信息', messageFromError(error)))
+            .finally(() => setBusy(false));
         }
-      ]
-    );
+      }
+    ]);
   };
 
   return (
@@ -335,15 +341,17 @@ function CredentialEditor({
             {view.credential.state === 'invalidated'
               ? '需要重新设置'
               : view.credential.hasCredential
-              ? `已设置 · ${view.credential.protection === 'biometric' ? '用户身份认证' : 'Android 本机加密'}`
-              : '未设置，登录失效时可快速填入'}
+                ? `已设置 · ${view.credential.protection === 'biometric' ? '用户身份认证' : 'Android 本机加密'}`
+                : '未设置，登录失效时可快速填入'}
           </Text>
         </View>
         {!editing ? (
           <AccountAction
             compact
             disclosure
-            label={view.credential.state === 'invalidated' ? '重新设置' : view.credential.hasCredential ? '管理' : '设置'}
+            label={
+              view.credential.state === 'invalidated' ? '重新设置' : view.credential.hasCredential ? '管理' : '设置'
+            }
             accountStyles={accountStyles}
             styles={styles}
             theme={theme}
@@ -413,7 +421,14 @@ function CredentialEditor({
             </ScrollView>
             <View style={styles.searchFilterActions}>
               {view.credential.state !== 'missing' ? (
-                <AppButton compact label="删除" variant="danger" styles={styles} disabled={busy} onPress={confirmDelete} />
+                <AppButton
+                  compact
+                  label="删除"
+                  variant="danger"
+                  styles={styles}
+                  disabled={busy}
+                  onPress={confirmDelete}
+                />
               ) : null}
               <View style={styles.flex} />
               <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeEditor} />
@@ -423,7 +438,9 @@ function CredentialEditor({
                 variant="primary"
                 styles={styles}
                 disabled={busy || !account.trim() || !password}
-                onPress={() => { void persist(); }}
+                onPress={() => {
+                  void persist();
+                }}
               />
             </View>
           </View>
@@ -474,7 +491,10 @@ export function AccountCenterPanel({
   onExpandedChange: (expanded: boolean) => void;
 }) {
   const [expandedSite, setExpandedSite] = useState<SessionSite>('nodeseek');
-  const views = useMemo(() => createSiteAccountViews(sessions, credentials, nodeSeekUserId), [credentials, nodeSeekUserId, sessions]);
+  const views = useMemo(
+    () => createSiteAccountViews(sessions, credentials, nodeSeekUserId),
+    [credentials, nodeSeekUserId, sessions]
+  );
   const accountStyles = useMemo(() => createAccountCenterStyles(theme), [theme]);
   const selectedView = views.find((view) => view.site === expandedSite) ?? views[0]!;
   const primary = primaryCommand(selectedView);
@@ -508,36 +528,41 @@ export function AccountCenterPanel({
           styles={styles}
           theme={theme}
           disabled={statusBusy}
-          onPress={() => { void onCommand({ type: 'refresh' }); }}
+          onPress={() => {
+            void onCommand({ type: 'refresh' });
+          }}
         />
       </View>
       <View style={accountStyles.siteTabs}>
-          {views.map((view) => {
-            const selected = selectedView.site === view.site;
-            return (
-              <Pressable
-                key={view.site}
-                testID={`account-site-${view.site}`}
-                accessibilityRole="tab"
-                accessibilityLabel={`${view.label}，${view.statusLabel}${selected ? '，已选择' : ''}`}
-                accessibilityState={{ selected }}
-                android_ripple={androidRipple(theme.primarySoft)}
-                style={({ pressed }) => [
-                  accountStyles.siteTab,
-                  selected && accountStyles.siteTabSelected,
-                  pressed && accountStyles.siteTabPressed
-                ]}
-                onPress={() => {
-                  triggerPressFeedback();
-                  setExpandedSite(view.site);
-                }}
+        {views.map((view) => {
+          const selected = selectedView.site === view.site;
+          return (
+            <Pressable
+              key={view.site}
+              testID={`account-site-${view.site}`}
+              accessibilityRole="tab"
+              accessibilityLabel={`${view.label}，${view.statusLabel}${selected ? '，已选择' : ''}`}
+              accessibilityState={{ selected }}
+              android_ripple={androidRipple(theme.primarySoft)}
+              style={({ pressed }) => [
+                accountStyles.siteTab,
+                selected && accountStyles.siteTabSelected,
+                pressed && accountStyles.siteTabPressed
+              ]}
+              onPress={() => {
+                triggerPressFeedback();
+                setExpandedSite(view.site);
+              }}
+            >
+              <Text
+                numberOfLines={1}
+                style={[accountStyles.siteTabText, selected && accountStyles.siteTabTextSelected]}
               >
-                <Text numberOfLines={1} style={[accountStyles.siteTabText, selected && accountStyles.siteTabTextSelected]}>
-                  {view.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+                {view.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
       <View style={accountStyles.siteDetail}>
         <View style={accountStyles.accountPanel}>
@@ -554,12 +579,20 @@ export function AccountCenterPanel({
               <AccountAction
                 compact
                 disclosure
-                label={waitingForForm ? '等待登录表单' : selectedView.primaryAction === 'open-user' ? '查看主页' : selectedView.primaryLabel}
+                label={
+                  waitingForForm
+                    ? '等待登录表单'
+                    : selectedView.primaryAction === 'open-user'
+                      ? '查看主页'
+                      : selectedView.primaryLabel
+                }
                 accountStyles={accountStyles}
                 styles={styles}
                 theme={theme}
                 disabled={selectedView.primaryDisabled || waitingForForm}
-                onPress={() => { void onCommand(primary); }}
+                onPress={() => {
+                  void onCommand(primary);
+                }}
               />
             ) : null}
           </View>
@@ -584,7 +617,9 @@ export function AccountCenterPanel({
                 accountStyles={accountStyles}
                 styles={styles}
                 theme={theme}
-                onPress={() => { void onCommand({ type: 'open-login', site: selectedView.site }); }}
+                onPress={() => {
+                  void onCommand({ type: 'open-login', site: selectedView.site });
+                }}
               />
               {selectedView.credential.hasCredential ? (
                 <AccountAction
@@ -594,15 +629,15 @@ export function AccountCenterPanel({
                   styles={styles}
                   theme={theme}
                   disabled={waitingForForm}
-                  onPress={() => { void onCommand({ type: 'open-login-with-fill', site: selectedView.site }); }}
+                  onPress={() => {
+                    void onCommand({ type: 'open-login-with-fill', site: selectedView.site });
+                  }}
                 />
               ) : null}
             </View>
           ) : null}
           {siteContent[selectedView.site] ? (
-            <View style={accountStyles.accountFeatures}>
-              {siteContent[selectedView.site]}
-            </View>
+            <View style={accountStyles.accountFeatures}>{siteContent[selectedView.site]}</View>
           ) : null}
         </View>
       </View>

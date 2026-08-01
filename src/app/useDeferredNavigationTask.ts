@@ -44,11 +44,17 @@ export function useDeferredNavigationTask() {
     interactionTaskRef.current = handle;
   }, []);
 
-  const runAfterNavigationInteractions = useCallback((task: () => void) => {
-    cancelDeferredNavigationTask();
-    transitionTaskRef.current = task;
-    transitionFallbackTimerRef.current = setTimeout(flushDeferredNavigationTask, NAVIGATION_DEFERRED_TASK_FALLBACK_MS);
-  }, [cancelDeferredNavigationTask, flushDeferredNavigationTask]);
+  const runAfterNavigationInteractions = useCallback(
+    (task: () => void) => {
+      cancelDeferredNavigationTask();
+      transitionTaskRef.current = task;
+      transitionFallbackTimerRef.current = setTimeout(
+        flushDeferredNavigationTask,
+        NAVIGATION_DEFERRED_TASK_FALLBACK_MS
+      );
+    },
+    [cancelDeferredNavigationTask, flushDeferredNavigationTask]
+  );
 
   return {
     cancelDeferredNavigationTask,

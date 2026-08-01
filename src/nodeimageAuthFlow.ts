@@ -2,16 +2,11 @@ import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from './appUrls';
 import type { NodeImageAuthPayload } from './loginWebViewScripts';
 import { nodeImageApiKeyFromResponse } from './replyImageUpload';
 
-export type NodeImageAuthPhase =
-  | 'nodeimage-session'
-  | 'nodeseek-cauth'
-  | 'nodeimage-verify';
+export type NodeImageAuthPhase = 'nodeimage-session' | 'nodeseek-cauth' | 'nodeimage-verify';
 
 const NODEIMAGE_NONCE_BYTES = 16;
 
-export function cancelNodeImageAuthOpening(
-  slot: { current: Promise<string | null> | null }
-) {
+export function cancelNodeImageAuthOpening(slot: { current: Promise<string | null> | null }) {
   slot.current = null;
 }
 
@@ -70,9 +65,7 @@ export function closeNodeImageAuthOpening(
   void finish();
 }
 
-export async function createNodeImageAuthNonce(
-  secureRandomHex?: (byteCount: number) => Promise<string>
-) {
+export async function createNodeImageAuthNonce(secureRandomHex?: (byteCount: number) => Promise<string>) {
   const cryptoSource = globalThis.crypto;
   if (!cryptoSource || typeof cryptoSource.getRandomValues !== 'function') {
     try {
@@ -103,13 +96,10 @@ export function nodeImageAuthBridgeEvidenceMatchesPhase(
   rawDocumentUrl: string
 ): boolean {
   try {
-    const expectedUrl = new URL(
-      phase === 'nodeseek-cauth' ? NODEIMAGE_AUTH_URL : NODEIMAGE_URL
-    );
+    const expectedUrl = new URL(phase === 'nodeseek-cauth' ? NODEIMAGE_AUTH_URL : NODEIMAGE_URL);
     const sourceUrl = secureNodeImageAuthUrl(rawSourceUrl);
     const documentUrl = secureNodeImageAuthUrl(rawDocumentUrl);
-    return sourceUrl.origin === expectedUrl.origin
-      && documentUrl.href === expectedUrl.href;
+    return sourceUrl.origin === expectedUrl.origin && documentUrl.href === expectedUrl.href;
   } catch {
     return false;
   }
@@ -129,13 +119,15 @@ export function nodeImageAuthFlowCanAcceptMessage(
   },
   credentialGeneration: number
 ) {
-  return !flow.terminal
-    && Boolean(flow.ownerIdentityKey)
-    && flow.ownerSessionEpoch !== null
-    && runtime.identityTrust === 'confirmed'
-    && runtime.identityKey === flow.ownerIdentityKey
-    && runtime.sessionEpoch === flow.ownerSessionEpoch
-    && credentialGeneration === flow.credentialGeneration;
+  return (
+    !flow.terminal &&
+    Boolean(flow.ownerIdentityKey) &&
+    flow.ownerSessionEpoch !== null &&
+    runtime.identityTrust === 'confirmed' &&
+    runtime.identityKey === flow.ownerIdentityKey &&
+    runtime.sessionEpoch === flow.ownerSessionEpoch &&
+    credentialGeneration === flow.credentialGeneration
+  );
 }
 
 export function terminateNodeImageAuthFlow(flow: { terminal: boolean }) {
@@ -176,9 +168,7 @@ export async function processNodeImageAuthMessage(
     complete: (apiKey: string) => void | Promise<void>;
     connectTarget: { postMessage: (message: string) => void } | null;
     fail: (message: string) => void;
-    mark: (
-      state: 'connect-finished' | 'connect-started' | 'session-expired' | 'session-reused'
-    ) => void;
+    mark: (state: 'connect-finished' | 'connect-started' | 'session-expired' | 'session-reused') => void;
     mountCurrentPhase: () => void;
   }
 ) {
@@ -203,27 +193,16 @@ export async function processNodeImageAuthMessage(
   if (data.nonce !== flow.nonce) {
     return;
   }
-  if (!nodeImageAuthBridgeEvidenceMatchesPhase(
-    flow.phase,
-    message.sourceUrl,
-    String(data.documentUrl || '')
-  )) {
+  if (!nodeImageAuthBridgeEvidenceMatchesPhase(flow.phase, message.sourceUrl, String(data.documentUrl || ''))) {
     return;
   }
   const messageType = String(data.type || '');
-  const expectedMessage = flow.phase === 'nodeimage-session'
-    ? [
-        'nodeimage-session-key',
-        'nodeimage-session-expired',
-        'nodeimage-session-error'
-      ].includes(messageType)
-    : flow.phase === 'nodeseek-cauth'
-      ? [
-          'nodeimage-connect-ready',
-          'nodeimage-auth-data',
-          'nodeimage-auth-error'
-        ].includes(messageType)
-      : messageType === 'nodeimage-api-key';
+  const expectedMessage =
+    flow.phase === 'nodeimage-session'
+      ? ['nodeimage-session-key', 'nodeimage-session-expired', 'nodeimage-session-error'].includes(messageType)
+      : flow.phase === 'nodeseek-cauth'
+        ? ['nodeimage-connect-ready', 'nodeimage-auth-data', 'nodeimage-auth-error'].includes(messageType)
+        : messageType === 'nodeimage-api-key';
   if (!expectedMessage) {
     return;
   }
@@ -265,17 +244,16 @@ export async function processNodeImageAuthMessage(
   }
   if (flow.phase === 'nodeseek-cauth') {
     if (messageType === 'nodeimage-connect-ready') {
-      if (
-        !effects.connectTarget
-        || !claimNodeImageConnectAttempt(flow)
-      ) {
+      if (!effects.connectTarget || !claimNodeImageConnectAttempt(flow)) {
         return;
       }
       effects.mark('connect-started');
-      effects.connectTarget.postMessage(JSON.stringify({
-        nonce: flow.nonce,
-        type: 'nodeimage-connect-start'
-      }));
+      effects.connectTarget.postMessage(
+        JSON.stringify({
+          nonce: flow.nonce,
+          type: 'nodeimage-connect-start'
+        })
+      );
       return;
     }
     if (!flow.connectStarted) {
@@ -320,20 +298,11 @@ export async function processNodeImageAuthMessage(
   }
 }
 
-export function nextNodeImageAuthPhase(
-  phase: NodeImageAuthPhase,
-  messageType: string
-): NodeImageAuthPhase | null {
-  if (
-    phase === 'nodeimage-session'
-    && messageType === 'nodeimage-session-expired'
-  ) {
+export function nextNodeImageAuthPhase(phase: NodeImageAuthPhase, messageType: string): NodeImageAuthPhase | null {
+  if (phase === 'nodeimage-session' && messageType === 'nodeimage-session-expired') {
     return 'nodeseek-cauth';
   }
-  if (
-    phase === 'nodeseek-cauth'
-    && messageType === 'nodeimage-auth-data'
-  ) {
+  if (phase === 'nodeseek-cauth' && messageType === 'nodeimage-auth-data') {
     return 'nodeimage-verify';
   }
   return null;
@@ -341,32 +310,19 @@ export function nextNodeImageAuthPhase(
 
 function rawAuthorityHasUserinfo(rawUrl: string) {
   const authorityStart = rawUrl.indexOf('://') + 3;
-  const authorityEnd = rawUrl
-    .slice(authorityStart)
-    .search(/[/?#\\]/);
-  const authority = authorityEnd < 0
-    ? rawUrl.slice(authorityStart)
-    : rawUrl.slice(authorityStart, authorityStart + authorityEnd);
+  const authorityEnd = rawUrl.slice(authorityStart).search(/[/?#\\]/);
+  const authority =
+    authorityEnd < 0 ? rawUrl.slice(authorityStart) : rawUrl.slice(authorityStart, authorityStart + authorityEnd);
   return authority.includes('@');
 }
 
 function secureNodeImageAuthUrl(rawUrl: string) {
   const value = String(rawUrl || '');
-  if (
-    value !== value.trim()
-    || !/^https:\/\//i.test(value)
-    || rawAuthorityHasUserinfo(value)
-    || value.includes('#')
-  ) {
+  if (value !== value.trim() || !/^https:\/\//i.test(value) || rawAuthorityHasUserinfo(value) || value.includes('#')) {
     throw new Error('unsafe NodeImage authorization URL');
   }
   const url = new URL(value);
-  if (
-    url.protocol !== 'https:'
-    || url.username
-    || url.password
-    || url.port
-  ) {
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) {
     throw new Error('unsafe NodeImage authorization URL');
   }
   return url;

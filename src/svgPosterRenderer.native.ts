@@ -31,9 +31,9 @@ export async function fetchBoundedSvgDocument(
     return null;
   }
   if (
-    typeof result.base64 !== 'string'
-    || result.base64.length > 1_398_104
-    || !/^[a-z0-9+/]+={0,2}$/i.test(result.base64)
+    typeof result.base64 !== 'string' ||
+    result.base64.length > 1_398_104 ||
+    !/^[a-z0-9+/]+={0,2}$/i.test(result.base64)
   ) {
     throw new Error('SVG 有界读取结果无效');
   }

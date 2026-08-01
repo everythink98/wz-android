@@ -10,19 +10,25 @@ const temporaryRepositories: string[] = [];
 
 function writeVersions(repository: string, version: string, versionCode: number) {
   writeFileSync(path.join(repository, 'package.json'), JSON.stringify({ version }));
-  writeFileSync(path.join(repository, 'app.json'), JSON.stringify({
-    expo: {
-      version,
-      android: { versionCode }
-    }
-  }));
+  writeFileSync(
+    path.join(repository, 'app.json'),
+    JSON.stringify({
+      expo: {
+        version,
+        android: { versionCode }
+      }
+    })
+  );
 }
 
 function createRepository(version: string, versionCode: number) {
   const repository = mkdtempSync(path.join(tmpdir(), 'wz-version-check-'));
   temporaryRepositories.push(repository);
   mkdirSync(path.join(repository, 'scripts'));
-  copyFileSync(path.join(projectRoot, 'scripts', 'check-version.mjs'), path.join(repository, 'scripts', 'check-version.mjs'));
+  copyFileSync(
+    path.join(projectRoot, 'scripts', 'check-version.mjs'),
+    path.join(repository, 'scripts', 'check-version.mjs')
+  );
   writeVersions(repository, version, versionCode);
   execFileSync('git', ['init', '--quiet'], { cwd: repository });
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repository });
@@ -90,10 +96,12 @@ describe('Android release version gate', () => {
     temporaryRepositories.push(cloneRoot);
     const shallow = path.join(cloneRoot, 'repository');
     execFileSync('git', ['clone', '--quiet', '--depth', '2', pathToFileURL(source).href, shallow]);
-    expect(execFileSync('git', ['describe', '--tags', '--abbrev=0', '--match', 'v*'], {
-      cwd: shallow,
-      encoding: 'utf8'
-    }).trim()).toBe('v1.0.0');
+    expect(
+      execFileSync('git', ['describe', '--tags', '--abbrev=0', '--match', 'v*'], {
+        cwd: shallow,
+        encoding: 'utf8'
+      }).trim()
+    ).toBe('v1.0.0');
 
     const result = runVersionCheck(shallow, '--require-previous-release');
 

@@ -11,9 +11,7 @@ export function sanitizeLinuxDoUserAgent(userAgent?: string) {
     .trim();
 }
 
-export const DEFAULT_LINUXDO_ANDROID_USER_AGENT = sanitizeLinuxDoUserAgent(
-  DEFAULT_ANDROID_WEBVIEW_USER_AGENT
-);
+export const DEFAULT_LINUXDO_ANDROID_USER_AGENT = sanitizeLinuxDoUserAgent(DEFAULT_ANDROID_WEBVIEW_USER_AGENT);
 
 export function summarizeLinuxDoCookieHeader(header?: string | null) {
   const names = cookieNamesFromHeader(header);

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { dateTime } from './appUtils';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, feedRequestKey, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, removeReply, shouldReuseFeedStateForRequest } from './feedLogic';
+import {
+  applyFeedFilter,
+  feedRequestKey,
+  mergeFeedResponses,
+  mergeReplies,
+  mergeTopics,
+  nextFeedPageState,
+  removeReply,
+  shouldReuseFeedStateForRequest
+} from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -40,27 +49,43 @@ describe('Android feed logic helpers', () => {
   });
 
   it('keeps a deleted reply out of refresh merges', () => {
-    const deleted: Reply = { commentId: 2, floor: 2, author: 'b', createdAt: '2026-05-20T00:02:00.000Z', contentHtml: '<p>deleted</p>' };
-    const kept: Reply = { commentId: 3, floor: 3, author: 'c', createdAt: '2026-05-20T00:03:00.000Z', contentHtml: '<p>kept</p>' };
+    const deleted: Reply = {
+      commentId: 2,
+      floor: 2,
+      author: 'b',
+      createdAt: '2026-05-20T00:02:00.000Z',
+      contentHtml: '<p>deleted</p>'
+    };
+    const kept: Reply = {
+      commentId: 3,
+      floor: 3,
+      author: 'c',
+      createdAt: '2026-05-20T00:03:00.000Z',
+      contentHtml: '<p>kept</p>'
+    };
     const refreshedDeleted: Reply = { ...deleted, contentHtml: '<p>stale deleted</p>' };
     const refreshedKept: Reply = { ...kept, contentHtml: '<p>fresh kept</p>' };
 
-    expect(mergeReplies(
-      removeReply([deleted, kept], deleted),
-      removeReply([refreshedDeleted, refreshedKept], deleted)
-    )).toEqual([refreshedKept]);
+    expect(
+      mergeReplies(removeReply([deleted, kept], deleted), removeReply([refreshedDeleted, refreshedKept], deleted))
+    ).toEqual([refreshedKept]);
     expect(removeReply([deleted, kept], { floor: 2 })).toEqual([kept]);
   });
 
   it('fills missing access requirements when merging duplicate topics', () => {
-    const merged = mergeTopics([topic], [{
-      ...topic,
-      accessRequirement: {
-        type: 'permission',
-        label: '需权限',
-        detail: 'This topic is private.'
-      }
-    }]);
+    const merged = mergeTopics(
+      [topic],
+      [
+        {
+          ...topic,
+          accessRequirement: {
+            type: 'permission',
+            label: '需权限',
+            detail: 'This topic is private.'
+          }
+        }
+      ]
+    );
 
     expect(merged).toHaveLength(1);
     expect(merged[0].accessRequirement).toEqual({
@@ -71,21 +96,28 @@ describe('Android feed logic helpers', () => {
   });
 
   it('updates stale level access requirements when a duplicate topic has a newer real level', () => {
-    const merged = mergeTopics([{
-      ...topic,
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv2'
-      }
-    }], [{
-      ...topic,
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv5'
-      }
-    }]);
+    const merged = mergeTopics(
+      [
+        {
+          ...topic,
+          accessRequirement: {
+            type: 'level',
+            label: '需等级',
+            detail: 'Lv2'
+          }
+        }
+      ],
+      [
+        {
+          ...topic,
+          accessRequirement: {
+            type: 'level',
+            label: '需等级',
+            detail: 'Lv5'
+          }
+        }
+      ]
+    );
 
     expect(merged).toHaveLength(1);
     expect(merged[0].accessRequirement).toEqual({
@@ -96,20 +128,27 @@ describe('Android feed logic helpers', () => {
   });
 
   it('keeps an explicit level when a duplicate topic only has a generic level marker', () => {
-    const merged = mergeTopics([{
-      ...topic,
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv5'
-      }
-    }], [{
-      ...topic,
-      accessRequirement: {
-        type: 'level',
-        label: '需等级'
-      }
-    }]);
+    const merged = mergeTopics(
+      [
+        {
+          ...topic,
+          accessRequirement: {
+            type: 'level',
+            label: '需等级',
+            detail: 'Lv5'
+          }
+        }
+      ],
+      [
+        {
+          ...topic,
+          accessRequirement: {
+            type: 'level',
+            label: '需等级'
+          }
+        }
+      ]
+    );
 
     expect(merged).toHaveLength(1);
     expect(merged[0].accessRequirement).toEqual({
@@ -156,18 +195,21 @@ describe('Android feed logic helpers', () => {
       url: 'https://yaohuo.me/bbs-1.html'
     };
 
-    const merged = mergeFeedResponses({
-      items: [baseItem],
-      errors: {},
-      hasMore: true,
-      nextCursor: 'base-cursor',
-      nextPage: null
-    }, {
-      items: [yaohuoItem],
-      errors: {},
-      hasMore: true,
-      nextPage: 2
-    });
+    const merged = mergeFeedResponses(
+      {
+        items: [baseItem],
+        errors: {},
+        hasMore: true,
+        nextCursor: 'base-cursor',
+        nextPage: null
+      },
+      {
+        items: [yaohuoItem],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      }
+    );
 
     expect(merged.nextCursor).toBe('base-cursor');
     expect(merged.nextPage).toBe(2);
@@ -188,18 +230,21 @@ describe('Android feed logic helpers', () => {
       url: 'https://yaohuo.me/bbs-2.html'
     };
 
-    const merged = mergeFeedResponses({
-      items: [yaohuoItem],
-      errors: {},
-      hasMore: true,
-      nextPage: 2
-    }, {
-      items: [baseItem],
-      errors: {},
-      hasMore: true,
-      nextCursor: 'base-cursor-reverse',
-      nextPage: null
-    });
+    const merged = mergeFeedResponses(
+      {
+        items: [yaohuoItem],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      },
+      {
+        items: [baseItem],
+        errors: {},
+        hasMore: true,
+        nextCursor: 'base-cursor-reverse',
+        nextPage: null
+      }
+    );
 
     expect(merged.nextCursor).toBe('base-cursor-reverse');
     expect(merged.nextPage).toBe(2);
@@ -207,19 +252,23 @@ describe('Android feed logic helpers', () => {
   });
 
   it('keeps feed pagination when an empty load-more response still advances', () => {
-    const next = nextFeedPageState({
-      items: [topic],
-      page: 1,
-      hasMore: true
-    }, {
-      items: [{ ...topic }],
-      errors: {},
-      hasMore: true,
-      nextPage: 6
-    }, {
-      requestedPage: 2,
-      reset: false
-    });
+    const next = nextFeedPageState(
+      {
+        items: [topic],
+        page: 1,
+        hasMore: true
+      },
+      {
+        items: [{ ...topic }],
+        errors: {},
+        hasMore: true,
+        nextPage: 6
+      },
+      {
+        requestedPage: 2,
+        reset: false
+      }
+    );
 
     expect(next.items).toEqual([topic]);
     expect(next.hasMore).toBe(true);
@@ -239,61 +288,110 @@ describe('Android feed logic helpers', () => {
     const xiaoyinsiLatest = feedRequestKey('xiaoyinsi', '', 'latest');
     const xiaoyinsiHot = feedRequestKey('xiaoyinsi', '', 'hot');
 
-    expect(shouldReuseFeedStateForRequest({
-      items: [topic],
-      requestKey: linuxDoAll
-    }, linuxDoAll)).toBe(true);
-    expect(shouldReuseFeedStateForRequest({
-      items: [topic],
-      requestKey: linuxDoAll
-    }, linuxDoCategory)).toBe(false);
-    expect(shouldReuseFeedStateForRequest({
-      items: [],
-      requestKey: linuxDoAll
-    }, linuxDoAll)).toBe(false);
-    expect(shouldReuseFeedStateForRequest({
-      items: [topic],
-      refreshing: true,
-      requestKey: linuxDoAll
-    }, linuxDoAll)).toBe(false);
-    expect(shouldReuseFeedStateForRequest({
-      items: [topic],
-      requestKey: linuxDoNewAll
-    }, linuxDoNewTopics)).toBe(false);
-    expect(shouldReuseFeedStateForRequest({
-      items: [topic],
-      requestKey: linuxDoNewTopics
-    }, linuxDoNewReplies)).toBe(false);
-    expect(shouldReuseFeedStateForRequest({
-      items: [topic],
-      requestKey: nodeSeekNewTopics
-    }, nodeSeekNewReplies)).toBe(false);
-    expect(shouldReuseFeedStateForRequest({
-      items: [topic],
-      requestKey: v2exAll
-    }, v2exHot)).toBe(false);
-    expect(shouldReuseFeedStateForRequest({
-      items: [topic],
-      requestKey: xiaoyinsiLatest
-    }, xiaoyinsiHot)).toBe(false);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [topic],
+          requestKey: linuxDoAll
+        },
+        linuxDoAll
+      )
+    ).toBe(true);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [topic],
+          requestKey: linuxDoAll
+        },
+        linuxDoCategory
+      )
+    ).toBe(false);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [],
+          requestKey: linuxDoAll
+        },
+        linuxDoAll
+      )
+    ).toBe(false);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [topic],
+          refreshing: true,
+          requestKey: linuxDoAll
+        },
+        linuxDoAll
+      )
+    ).toBe(false);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [topic],
+          requestKey: linuxDoNewAll
+        },
+        linuxDoNewTopics
+      )
+    ).toBe(false);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [topic],
+          requestKey: linuxDoNewTopics
+        },
+        linuxDoNewReplies
+      )
+    ).toBe(false);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [topic],
+          requestKey: nodeSeekNewTopics
+        },
+        nodeSeekNewReplies
+      )
+    ).toBe(false);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [topic],
+          requestKey: v2exAll
+        },
+        v2exHot
+      )
+    ).toBe(false);
+    expect(
+      shouldReuseFeedStateForRequest(
+        {
+          items: [topic],
+          requestKey: xiaoyinsiLatest
+        },
+        xiaoyinsiHot
+      )
+    ).toBe(false);
   });
 
   it('stops feed pagination when a load-more response does not advance', () => {
-    const next = nextFeedPageState({
-      items: [topic],
-      page: 1,
-      hasMore: true,
-      nextCursor: 'cursor-before'
-    }, {
-      items: [{ ...topic }],
-      errors: {},
-      hasMore: true,
-      nextPage: 2,
-      nextCursor: 'cursor-before'
-    }, {
-      requestedPage: 2,
-      reset: false
-    });
+    const next = nextFeedPageState(
+      {
+        items: [topic],
+        page: 1,
+        hasMore: true,
+        nextCursor: 'cursor-before'
+      },
+      {
+        items: [{ ...topic }],
+        errors: {},
+        hasMore: true,
+        nextPage: 2,
+        nextCursor: 'cursor-before'
+      },
+      {
+        requestedPage: 2,
+        reset: false
+      }
+    );
 
     expect(next.items).toEqual([topic]);
     expect(next.hasMore).toBe(false);
@@ -302,47 +400,54 @@ describe('Android feed logic helpers', () => {
   });
 
   it('keeps feed pagination on reset when a cursor response still has more', () => {
-    const next = nextFeedPageState({
-      items: [topic],
-      page: 3,
-      hasMore: true,
-      nextCursor: 'cursor-before'
-    }, {
-      items: [topic],
-      errors: {},
-      hasMore: true,
-      nextPage: null,
-      nextCursor: 'cursor-before'
-    }, {
-      requestedPage: 1,
-      reset: true
-    });
+    const next = nextFeedPageState(
+      {
+        items: [topic],
+        page: 3,
+        hasMore: true,
+        nextCursor: 'cursor-before'
+      },
+      {
+        items: [topic],
+        errors: {},
+        hasMore: true,
+        nextPage: null,
+        nextCursor: 'cursor-before'
+      },
+      {
+        requestedPage: 1,
+        reset: true
+      }
+    );
 
     expect(next.hasMore).toBe(true);
     expect(next.nextCursor).toBe('cursor-before');
   });
 
   it('preserves feed pagination when a load-more response has errors', () => {
-    const next = nextFeedPageState({
-      items: [topic],
-      page: 1,
-      hasMore: true,
-      nextCursor: 'cursor-before'
-    }, {
-      items: [{ ...topic, id: '2', url: 'https://example.com/2' }],
-      errors: { v2ex: { kind: 'ordinary', message: '读取失败' } },
-      hasMore: true,
-      nextPage: 3,
-      nextCursor: 'cursor-after'
-    }, {
-      requestedPage: 2,
-      reset: false
-    });
+    const next = nextFeedPageState(
+      {
+        items: [topic],
+        page: 1,
+        hasMore: true,
+        nextCursor: 'cursor-before'
+      },
+      {
+        items: [{ ...topic, id: '2', url: 'https://example.com/2' }],
+        errors: { v2ex: { kind: 'ordinary', message: '读取失败' } },
+        hasMore: true,
+        nextPage: 3,
+        nextCursor: 'cursor-after'
+      },
+      {
+        requestedPage: 2,
+        reset: false
+      }
+    );
 
     expect(next.items.map((item) => item.id)).toEqual(['1', '2']);
     expect(next.hasMore).toBe(true);
     expect(next.page).toBe(1);
     expect(next.nextCursor).toBe('cursor-before');
   });
-
 });

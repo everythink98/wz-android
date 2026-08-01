@@ -9,42 +9,42 @@ export interface DiscourseActionRequest {
 
 export type DiscourseAction =
   | {
-    type: 'reply';
-    topicId: string | number;
-    content: string;
-    replyToPostNumber?: string | number;
-  }
+      type: 'reply';
+      topicId: string | number;
+      content: string;
+      replyToPostNumber?: string | number;
+    }
   | {
-    type: 'set-like';
-    postId: string | number;
-    active: boolean;
-  }
+      type: 'set-like';
+      postId: string | number;
+      active: boolean;
+    }
   | {
-    type: 'edit-post';
-    postId: string | number;
-    content: string;
-  }
+      type: 'edit-post';
+      postId: string | number;
+      content: string;
+    }
   | {
-    type: 'delete-post';
-    postId: string | number;
-  }
+      type: 'delete-post';
+      postId: string | number;
+    }
   | {
-    type: 'set-bookmark';
-    targetId: string | number;
-    targetType: 'Topic' | 'Post';
-    active: boolean;
-    bookmarkId?: string | number;
-  }
+      type: 'set-bookmark';
+      targetId: string | number;
+      targetType: 'Topic' | 'Post';
+      active: boolean;
+      bookmarkId?: string | number;
+    }
   | {
-    type: 'vote';
-    postId: string | number;
-    pollName: string;
-    optionIds: string[];
-  }
+      type: 'vote';
+      postId: string | number;
+      pollName: string;
+      optionIds: string[];
+    }
   | {
-    type: 'upload';
-    file: NormalizedReplyImageAsset;
-  };
+      type: 'upload';
+      file: NormalizedReplyImageAsset;
+    };
 
 function positiveInteger(value: string | number, name: string) {
   const text = String(value).trim();
@@ -135,17 +135,17 @@ export function buildDiscourseActionRequest(action: DiscourseAction): DiscourseA
     const postId = positiveInteger(action.postId, '帖子 id');
     return action.active
       ? {
-        path: '/post_actions',
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ id: postId, post_action_type_id: '2' }).toString()
-      }
+          path: '/post_actions',
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ id: postId, post_action_type_id: '2' }).toString()
+        }
       : {
-        path: `/post_actions/${postId}?post_action_type_id=2`,
-        method: 'DELETE',
-        headers: {},
-        body: undefined
-      };
+          path: `/post_actions/${postId}?post_action_type_id=2`,
+          method: 'DELETE',
+          headers: {},
+          body: undefined
+        };
   }
   const params = new URLSearchParams({
     topic_id: positiveInteger(action.topicId, '主题 id'),
@@ -163,7 +163,7 @@ export function buildDiscourseActionRequest(action: DiscourseAction): DiscourseA
 }
 
 export function discourseImageUrlFromUploadResponse(data: unknown, baseUrl: string, siteName: string) {
-  const record = data && typeof data === 'object' ? data as Record<string, unknown> : {};
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
   const markdown = typeof record.markdown === 'string' ? record.markdown : '';
   const markdownUrl = markdown.match(/\]\(([^)]+)\)/)?.[1];
   const rawUrl = String(markdownUrl || record.short_url || record.url || '').trim();

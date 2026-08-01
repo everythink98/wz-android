@@ -4,16 +4,20 @@ import { createEmptyReaderData } from '../../src/readerData';
 import { exportReaderBackupJson } from '../../src/readerBackup';
 import { useBackupStatusController } from '../../src/app/useBackupStatusController';
 
-const mockGetDocumentAsync = jest.fn<(...args: unknown[]) => Promise<{
-  canceled: boolean;
-  assets: Array<{ uri: string; size: number }>;
-}>>();
+const mockGetDocumentAsync = jest.fn<
+  (...args: unknown[]) => Promise<{
+    canceled: boolean;
+    assets: { uri: string; size: number }[];
+  }>
+>();
 const mockDeleteAsync = jest.fn<(...args: unknown[]) => Promise<void>>();
-const mockGetInfoAsync = jest.fn<(...args: unknown[]) => Promise<{
-  exists: boolean;
-  isDirectory: boolean;
-  size: number;
-}>>();
+const mockGetInfoAsync = jest.fn<
+  (...args: unknown[]) => Promise<{
+    exists: boolean;
+    isDirectory: boolean;
+    size: number;
+  }>
+>();
 const mockReadAsStringAsync = jest.fn<(...args: unknown[]) => Promise<string>>();
 const mockWriteAsStringAsync = jest.fn<(...args: unknown[]) => Promise<void>>();
 const mockIsSharingAvailableAsync = jest.fn<() => Promise<boolean>>();
@@ -59,12 +63,14 @@ describe('Backup status controller', () => {
     const readerDataRef = { current };
     const notify = jest.fn<(message: string) => void>();
     const replaceReaderData = jest.fn(async () => undefined);
-    const hook = await renderHook(() => useBackupStatusController({
-      notify,
-      readerDataRef,
-      replaceReaderData,
-      waitForReaderDataSave: jest.fn(async () => undefined)
-    }));
+    const hook = await renderHook(() =>
+      useBackupStatusController({
+        notify,
+        readerDataRef,
+        replaceReaderData,
+        waitForReaderDataSave: jest.fn(async () => undefined)
+      })
+    );
 
     await act(async () => {
       await hook.result.current.importBackupFile();
@@ -83,12 +89,14 @@ describe('Backup status controller', () => {
     const readerDataRef = { current: createEmptyReaderData() };
     const notify = jest.fn<(message: string) => void>();
     const replaceReaderData = jest.fn(async () => undefined);
-    const hook = await renderHook(() => useBackupStatusController({
-      notify,
-      readerDataRef,
-      replaceReaderData,
-      waitForReaderDataSave: jest.fn(async () => undefined)
-    }));
+    const hook = await renderHook(() =>
+      useBackupStatusController({
+        notify,
+        readerDataRef,
+        replaceReaderData,
+        waitForReaderDataSave: jest.fn(async () => undefined)
+      })
+    );
 
     await act(async () => {
       await hook.result.current.importBackupFile();
@@ -136,12 +144,14 @@ describe('Backup status controller', () => {
     mockReadAsStringAsync.mockResolvedValue(exportReaderBackupJson(imported));
     const notify = jest.fn<(message: string) => void>();
     const replaceReaderData = jest.fn(async () => undefined);
-    const hook = await renderHook(() => useBackupStatusController({
-      notify,
-      readerDataRef: { current },
-      replaceReaderData,
-      waitForReaderDataSave: jest.fn(async () => undefined)
-    }));
+    const hook = await renderHook(() =>
+      useBackupStatusController({
+        notify,
+        readerDataRef: { current },
+        replaceReaderData,
+        waitForReaderDataSave: jest.fn(async () => undefined)
+      })
+    );
 
     await act(async () => {
       await hook.result.current.importBackupFile();
@@ -165,12 +175,14 @@ describe('Backup status controller', () => {
     const readerDataRef = { current: createEmptyReaderData() };
     const notify = jest.fn<(message: string) => void>();
     const waitForReaderDataSave = jest.fn(async () => undefined);
-    const hook = await renderHook(() => useBackupStatusController({
-      notify,
-      readerDataRef,
-      replaceReaderData: jest.fn(async () => undefined),
-      waitForReaderDataSave
-    }));
+    const hook = await renderHook(() =>
+      useBackupStatusController({
+        notify,
+        readerDataRef,
+        replaceReaderData: jest.fn(async () => undefined),
+        waitForReaderDataSave
+      })
+    );
 
     await act(async () => {
       await hook.result.current.exportBackupFile();
@@ -191,12 +203,14 @@ describe('Backup status controller', () => {
   it('reports an export sharing failure and still removes the temporary file', async () => {
     mockShareAsync.mockRejectedValue(new Error('用户取消了系统分享'));
     const notify = jest.fn<(message: string) => void>();
-    const hook = await renderHook(() => useBackupStatusController({
-      notify,
-      readerDataRef: { current: createEmptyReaderData() },
-      replaceReaderData: jest.fn(async () => undefined),
-      waitForReaderDataSave: jest.fn(async () => undefined)
-    }));
+    const hook = await renderHook(() =>
+      useBackupStatusController({
+        notify,
+        readerDataRef: { current: createEmptyReaderData() },
+        replaceReaderData: jest.fn(async () => undefined),
+        waitForReaderDataSave: jest.fn(async () => undefined)
+      })
+    );
 
     await act(async () => {
       await hook.result.current.exportBackupFile();

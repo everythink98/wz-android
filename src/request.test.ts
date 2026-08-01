@@ -7,20 +7,27 @@ describe('Android request helpers', () => {
   it('[REG-ACCOUNT-029] always enables the native read-only cookie jar without changing the request', async () => {
     const fetcher = vi.fn(async () => new Response('{}'));
 
-    await fetchWithTimeout('https://example.com/account', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { Cookie: 'session=explicit' },
-      body: 'payload'
-    }, { fetcher });
+    await fetchWithTimeout(
+      'https://example.com/account',
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Cookie: 'session=explicit' },
+        body: 'payload'
+      },
+      { fetcher }
+    );
 
-    expect(fetcher).toHaveBeenCalledWith('https://example.com/account', expect.objectContaining({
-      method: 'POST',
-      credentials: 'include',
-      headers: { Cookie: 'session=explicit' },
-      body: 'payload',
-      signal: expect.any(AbortSignal)
-    }));
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://example.com/account',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: { Cookie: 'session=explicit' },
+        body: 'payload',
+        signal: expect.any(AbortSignal)
+      })
+    );
   });
 
   it('passes an abort signal to the fetcher', async () => {
@@ -28,17 +35,25 @@ describe('Android request helpers', () => {
 
     await fetchWithTimeout('https://example.com/feed.json', { headers: { accept: 'application/json' } }, { fetcher });
 
-    expect(fetcher).toHaveBeenCalledWith('https://example.com/feed.json', expect.objectContaining({
-      headers: { accept: 'application/json' },
-      signal: expect.any(AbortSignal)
-    }));
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://example.com/feed.json',
+      expect.objectContaining({
+        headers: { accept: 'application/json' },
+        signal: expect.any(AbortSignal)
+      })
+    );
   });
 
   it('rejects with a clear timeout message when a request exceeds the timeout', async () => {
     vi.useFakeTimers();
-    const fetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-    }));
+    const fetcher = vi.fn(
+      (_input: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          );
+        })
+    );
 
     try {
       const request = fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, timeoutMs: 1000 });
@@ -101,9 +116,14 @@ describe('Android request helpers', () => {
 
   it('rejects with a clear cancel message when the caller aborts the request', async () => {
     const controller = new AbortController();
-    const fetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-    }));
+    const fetcher = vi.fn(
+      (_input: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          );
+        })
+    );
 
     const request = fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, signal: controller.signal });
     controller.abort();
@@ -134,7 +154,9 @@ describe('Android request helpers', () => {
     });
 
     try {
-      await expect(fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, signal, timeoutMs: 1000 })).rejects.toThrow('sync failure');
+      await expect(
+        fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, signal, timeoutMs: 1000 })
+      ).rejects.toThrow('sync failure');
 
       expect(clearTimeoutSpy).toHaveBeenCalled();
       expect(signal.removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));

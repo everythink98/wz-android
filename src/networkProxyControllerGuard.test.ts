@@ -7,14 +7,13 @@ const proxyMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react', () => ({
-  useCallback: <T,>(callback: T) => callback,
-  useEffect: (effect: () => void | (() => void)) => { effect(); },
-  useMemo: <T,>(factory: () => T) => factory(),
-  useRef: <T,>(value: T) => ({ current: value }),
-  useState: <T,>(initial: T | (() => T)) => [
-    typeof initial === 'function' ? (initial as () => T)() : initial,
-    vi.fn()
-  ]
+  useCallback: <T>(callback: T) => callback,
+  useEffect: (effect: () => void | (() => void)) => {
+    effect();
+  },
+  useMemo: <T>(factory: () => T) => factory(),
+  useRef: <T>(value: T) => ({ current: value }),
+  useState: <T>(initial: T | (() => T)) => [typeof initial === 'function' ? (initial as () => T)() : initial, vi.fn()]
 }));
 
 vi.mock('react-native', () => ({ NativeModules: { NetworkProxyModule: {} } }));
@@ -23,7 +22,7 @@ vi.mock('expo-secure-store', () => ({
   setItemAsync: vi.fn()
 }));
 vi.mock('./networkProxy', async () => ({
-  ...await vi.importActual<typeof import('./networkProxy')>('./networkProxy'),
+  ...(await vi.importActual<typeof import('./networkProxy')>('./networkProxy')),
   loadNetworkProxyState: proxyMocks.loadNetworkProxyState
 }));
 
@@ -54,19 +53,23 @@ describe('network proxy controller guard', () => {
 
   it('records only safe state when loading a saved proxy', async () => {
     const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     proxyMocks.loadNetworkProxyState.mockResolvedValueOnce({
       enabled: true,
       activeId: 'private-profile-id',
-      profiles: [{
-        id: 'private-profile-id',
-        name: 'private name',
-        protocol: 'socks5',
-        host: 'private.proxy.example',
-        port: 1080,
-        username: 'private-user',
-        password: 'private-pass'
-      }]
+      profiles: [
+        {
+          id: 'private-profile-id',
+          name: 'private name',
+          protocol: 'socks5',
+          host: 'private.proxy.example',
+          port: 1080,
+          username: 'private-user',
+          password: 'private-pass'
+        }
+      ]
     });
 
     useNetworkProxyController({ notify: vi.fn() });
@@ -115,7 +118,9 @@ describe('network proxy controller guard', () => {
 
     expect(source).toContain('const [networkProxyContentReady, setNetworkProxyContentReady] = useState(false);');
     expect(source).toContain('setDefaultAvatarFetcher(networkProxyFetcher)');
-    expect(source).toContain("networkProxyState.enabled && (networkProxyApplyStatus === 'loading' || networkProxyApplyStatus === 'applying')");
-    expect(source).toContain('{networkProxyContentReady ? (');
+    expect(source).toMatch(
+      /networkProxyState\.enabled\s*&&\s*\(networkProxyApplyStatus === 'loading'\s*\|\|\s*networkProxyApplyStatus === 'applying'\)/
+    );
+    expect(source).toMatch(/\{networkProxyContentReady\s*\?\s*\(/);
   });
 });

@@ -50,12 +50,13 @@ const discourseActionRuntimes = {
         credentialReady: true,
         credentialSource: 'managed-cookie-jar',
         csrfSource: 'session-endpoint',
-        execute: (request: DiscourseActionRequest, signal?: AbortSignal) => runLinuxDoAction({
-          fetcher: context.fetcher,
-          userAgent: context.linuxDoUserAgent(),
-          request,
-          signal
-        }),
+        execute: (request: DiscourseActionRequest, signal?: AbortSignal) =>
+          runLinuxDoAction({
+            fetcher: context.fetcher,
+            userAgent: context.linuxDoUserAgent(),
+            request,
+            signal
+          }),
         recover: async (error: unknown) => {
           if (!hasFlag(error, 'loginRequired')) {
             return { loginRequired: false, phase: 'transport' as const };
@@ -76,14 +77,17 @@ const discourseActionRuntimes = {
         credentialSource: 'secure-store',
         csrfSource: 'none',
         isCredentialCurrent,
-        ...(credentials ? {
-          execute: (request: DiscourseActionRequest, signal?: AbortSignal) => runXiaoyinsiAction({
-            credentials,
-            fetcher: context.fetcher,
-            request,
-            signal
-          })
-        } : {}),
+        ...(credentials
+          ? {
+              execute: (request: DiscourseActionRequest, signal?: AbortSignal) =>
+                runXiaoyinsiAction({
+                  credentials,
+                  fetcher: context.fetcher,
+                  request,
+                  signal
+                })
+            }
+          : {}),
         recover: async (error: unknown) => {
           if (!isCredentialCurrent()) {
             return { loginRequired: false, phase: 'credential' as const, stale: true };
@@ -101,7 +105,7 @@ const discourseActionRuntimes = {
           }
           return {
             loginRequired: hasFlag(error, 'loginRequired') || authorizationStillValid === false,
-            phase: authorizationCheckRequired ? 'credential' as const : 'transport' as const
+            phase: authorizationCheckRequired ? ('credential' as const) : ('transport' as const)
           };
         }
       };

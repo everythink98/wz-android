@@ -18,7 +18,9 @@ vi.mock('react-native-svg', () => ({
 
 describe('Android avatar initials', () => {
   it('keeps emoji initials as complete characters', async () => {
-    const { avatarInitial } = await import('./Avatar') as typeof import('./Avatar') & { avatarInitial?: (name?: string) => string };
+    const { avatarInitial } = (await import('./Avatar')) as typeof import('./Avatar') & {
+      avatarInitial?: (name?: string) => string;
+    };
 
     expect(avatarInitial?.('🔥妖火')).toBe('🔥');
     expect(avatarInitial?.('👨‍💻dev')).toBe('👨‍💻');

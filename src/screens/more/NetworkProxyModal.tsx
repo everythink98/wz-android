@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Keyboard, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Animated,
+  Easing,
+  Keyboard,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View
+} from 'react-native';
 import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton, EmptyText, SettingRail } from '../../components/AppControls';
@@ -254,18 +266,19 @@ export function NetworkProxyModal({
     });
   };
 
-  const testProfile = (profile: NetworkProxyProfile) => void run(async () => {
-    setTestingId(profile.id);
-    try {
-      const result = await onTestProfile(profile);
-      setTestResults((current) => ({
-        ...current,
-        [profile.id]: `${result.latencyMs} ms`
-      }));
-    } finally {
-      setTestingId(null);
-    }
-  });
+  const testProfile = (profile: NetworkProxyProfile) =>
+    void run(async () => {
+      setTestingId(profile.id);
+      try {
+        const result = await onTestProfile(profile);
+        setTestResults((current) => ({
+          ...current,
+          [profile.id]: `${result.latencyMs} ms`
+        }));
+      } finally {
+        setTestingId(null);
+      }
+    });
 
   const deleteSelectedProfiles = () => {
     Alert.alert('删除代理', `确定删除选中的 ${selectedIds.length} 个代理？`, [
@@ -273,19 +286,25 @@ export function NetworkProxyModal({
       {
         text: '删除',
         style: 'destructive',
-        onPress: () => void run(async () => {
-          for (const id of selectedIds) {
-            await onDeleteProfile(id);
-          }
-          setSelectedIds([]);
-        })
+        onPress: () =>
+          void run(async () => {
+            for (const id of selectedIds) {
+              await onDeleteProfile(id);
+            }
+            setSelectedIds([]);
+          })
       }
     ]);
   };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={selecting ? () => setSelectedIds([]) : onClose}>
-      <View style={[styles.loginWebViewModal, { backgroundColor: pageColor, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View
+        style={[
+          styles.loginWebViewModal,
+          { backgroundColor: pageColor, paddingTop: insets.top, paddingBottom: insets.bottom }
+        ]}
+      >
         <View style={[styles.loginWebViewHeader, proxyStyles.header, { backgroundColor: theme.background }]}>
           <Pressable
             accessibilityRole="button"
@@ -294,7 +313,11 @@ export function NetworkProxyModal({
             style={proxyStyles.headerIcon}
             onPress={selecting ? () => setSelectedIds([]) : onClose}
           >
-            {selecting ? <X size={24} color={theme.ink} strokeWidth={2.2} /> : <ArrowLeft size={24} color={theme.ink} strokeWidth={2.2} />}
+            {selecting ? (
+              <X size={24} color={theme.ink} strokeWidth={2.2} />
+            ) : (
+              <ArrowLeft size={24} color={theme.ink} strokeWidth={2.2} />
+            )}
           </Pressable>
           <Text style={[styles.loginWebViewTitle, proxyStyles.headerTitle]} numberOfLines={1}>
             {selecting ? selectedIds.length : '服务器代理'}
@@ -310,7 +333,9 @@ export function NetworkProxyModal({
             >
               <Trash2 size={23} color={theme.ink} strokeWidth={2} />
             </Pressable>
-          ) : <View style={proxyStyles.headerIcon} />}
+          ) : (
+            <View style={proxyStyles.headerIcon} />
+          )}
         </View>
         {applyError ? (
           <View style={styles.errorBox}>
@@ -322,156 +347,253 @@ export function NetworkProxyModal({
                 label="重置为直连"
                 variant="ghost"
                 styles={styles}
-                onPress={() => { void run(() => onSetEnabled(false)); }}
+                onPress={() => {
+                  void run(() => onSetEnabled(false));
+                }}
               />
             ) : null}
           </View>
         ) : null}
-      <ScrollView style={[styles.flex, { backgroundColor: pageColor }]} contentContainerStyle={proxyStyles.content}>
-        <View style={[proxyStyles.card, proxyStyles.switchCard, { backgroundColor: cardColor }]}>
-          <Text style={[proxyStyles.switchLabel, { color: theme.ink }]}>使用代理</Text>
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityState={{ checked: displayedEnabled, disabled: switchDisabled }}
-            disabled={switchDisabled}
-            hitSlop={8}
-            style={[proxyStyles.toggleTrack, { backgroundColor: displayedEnabled ? accentBaseColor : theme.lineStrong, opacity: switchDisabled ? 0.72 : 1 }]}
-            onPress={() => toggleEnabled(!displayedEnabled)}
-          >
-            <Animated.View style={[proxyStyles.toggleThumb, { backgroundColor: theme.surface, transform: [{ translateX: switchTranslateX }] }]} />
-          </Pressable>
-        </View>
+        <ScrollView style={[styles.flex, { backgroundColor: pageColor }]} contentContainerStyle={proxyStyles.content}>
+          <View style={[proxyStyles.card, proxyStyles.switchCard, { backgroundColor: cardColor }]}>
+            <Text style={[proxyStyles.switchLabel, { color: theme.ink }]}>使用代理</Text>
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityState={{ checked: displayedEnabled, disabled: switchDisabled }}
+              disabled={switchDisabled}
+              hitSlop={8}
+              style={[
+                proxyStyles.toggleTrack,
+                {
+                  backgroundColor: displayedEnabled ? accentBaseColor : theme.lineStrong,
+                  opacity: switchDisabled ? 0.72 : 1
+                }
+              ]}
+              onPress={() => toggleEnabled(!displayedEnabled)}
+            >
+              <Animated.View
+                style={[
+                  proxyStyles.toggleThumb,
+                  { backgroundColor: theme.surface, transform: [{ translateX: switchTranslateX }] }
+                ]}
+              />
+            </Pressable>
+          </View>
 
-        <View style={[proxyStyles.card, { backgroundColor: cardColor }]}>
-          <Text style={[proxyStyles.cardTitle, { color: accentColor }]}>代理连接</Text>
-          {!proxyState.profiles.length ? <EmptyText text="还没有代理配置" styles={styles} /> : null}
-          {proxyState.profiles.map((profile) => {
-            const active = profile.id === proxyState.activeId;
-            const latency = testResults[profile.id];
-            const selected = selectedIds.includes(profile.id);
-            const activeApplying = active && (applyStatus === 'applying' || pendingEnabled !== null);
-            const activeDisplayedEnabled = active && displayedEnabled;
-            let status = `${protocolLabel(profile.protocol)}${profile.username ? ' · 已填写账号' : ''}`;
-            if (active) {
-              status = '已选择，未开启';
-            }
-            if (activeDisplayedEnabled) {
-              status = applyStatus === 'failed' ? '代理异常' : `已连接${latency ? `, 连通性: ${latency}` : ''}`;
-            }
-            if (activeApplying) {
-              status = displayedEnabled ? '正在开启代理...' : '正在关闭代理...';
-            }
-            if (testingId === profile.id) {
-              status = '正在测试连通性...';
-            }
-            const canTestLatency = !selecting && testingId !== profile.id && applyStatus !== 'applying' && pendingEnabled === null;
-            const statusText = canTestLatency
-              ? activeDisplayedEnabled
-                ? `✓ ${status}`
-                : `${status}${latency ? ` · 连通性: ${latency}` : ' · 连通性测试'}`
-              : status;
-            return (
-              <Pressable
-                key={profile.id}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active || selected }}
-                android_ripple={androidRipple(theme.primarySoft)}
-                style={[proxyStyles.proxyRow, active && !selecting && { backgroundColor: accentSoftColor }]}
-                onLongPress={() => setSelectedIds([profile.id])}
-                onPress={() => chooseProfile(profile)}
-              >
-                {selecting ? (
-                  <View style={[proxyStyles.checkCircle, { borderColor: theme.lineStrong }, selected && { backgroundColor: accentBaseColor, borderColor: accentBaseColor }]}>
-                    {selected ? <Check size={13} color={theme.onPrimary} strokeWidth={2.4} /> : null}
+          <View style={[proxyStyles.card, { backgroundColor: cardColor }]}>
+            <Text style={[proxyStyles.cardTitle, { color: accentColor }]}>代理连接</Text>
+            {!proxyState.profiles.length ? <EmptyText text="还没有代理配置" styles={styles} /> : null}
+            {proxyState.profiles.map((profile) => {
+              const active = profile.id === proxyState.activeId;
+              const latency = testResults[profile.id];
+              const selected = selectedIds.includes(profile.id);
+              const activeApplying = active && (applyStatus === 'applying' || pendingEnabled !== null);
+              const activeDisplayedEnabled = active && displayedEnabled;
+              let status = `${protocolLabel(profile.protocol)}${profile.username ? ' · 已填写账号' : ''}`;
+              if (active) {
+                status = '已选择，未开启';
+              }
+              if (activeDisplayedEnabled) {
+                status = applyStatus === 'failed' ? '代理异常' : `已连接${latency ? `, 连通性: ${latency}` : ''}`;
+              }
+              if (activeApplying) {
+                status = displayedEnabled ? '正在开启代理...' : '正在关闭代理...';
+              }
+              if (testingId === profile.id) {
+                status = '正在测试连通性...';
+              }
+              const canTestLatency =
+                !selecting && testingId !== profile.id && applyStatus !== 'applying' && pendingEnabled === null;
+              const statusText = canTestLatency
+                ? activeDisplayedEnabled
+                  ? `✓ ${status}`
+                  : `${status}${latency ? ` · 连通性: ${latency}` : ' · 连通性测试'}`
+                : status;
+              return (
+                <Pressable
+                  key={profile.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active || selected }}
+                  android_ripple={androidRipple(theme.primarySoft)}
+                  style={[proxyStyles.proxyRow, active && !selecting && { backgroundColor: accentSoftColor }]}
+                  onLongPress={() => setSelectedIds([profile.id])}
+                  onPress={() => chooseProfile(profile)}
+                >
+                  {selecting ? (
+                    <View
+                      style={[
+                        proxyStyles.checkCircle,
+                        { borderColor: theme.lineStrong },
+                        selected && { backgroundColor: accentBaseColor, borderColor: accentBaseColor }
+                      ]}
+                    >
+                      {selected ? <Check size={13} color={theme.onPrimary} strokeWidth={2.4} /> : null}
+                    </View>
+                  ) : null}
+                  <View style={styles.flex}>
+                    <View style={proxyStyles.addressLine}>
+                      <Text style={[proxyStyles.proxyAddress, { color: theme.ink }]} numberOfLines={1}>
+                        {profile.name}
+                      </Text>
+                      {active ? (
+                        <View
+                          style={[
+                            proxyStyles.currentBadge,
+                            { backgroundColor: accentSoftColor, borderColor: accentBorderColor }
+                          ]}
+                        >
+                          <Text style={[proxyStyles.currentBadgeText, { color: accentColor }]}>当前</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    {canTestLatency ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="测试代理连通性"
+                        disabled={busy}
+                        style={proxyStyles.statusHit}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          testProfile(profile);
+                        }}
+                      >
+                        <Text style={[styles.meta, { color: accentColor }]} numberOfLines={1}>
+                          {profile.host}:{profile.port} · {statusText}
+                        </Text>
+                      </Pressable>
+                    ) : (
+                      <Text
+                        style={[styles.meta, activeApplying || activeDisplayedEnabled ? { color: accentColor } : null]}
+                        numberOfLines={1}
+                      >
+                        {profile.host}:{profile.port} · {statusText}
+                      </Text>
+                    )}
                   </View>
-                ) : null}
-                <View style={styles.flex}>
-                  <View style={proxyStyles.addressLine}>
-                    <Text style={[proxyStyles.proxyAddress, { color: theme.ink }]} numberOfLines={1}>{profile.name}</Text>
-                    {active ? (
-                      <View style={[proxyStyles.currentBadge, { backgroundColor: accentSoftColor, borderColor: accentBorderColor }]}>
-                        <Text style={[proxyStyles.currentBadgeText, { color: accentColor }]}>当前</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  {canTestLatency ? (
+                  {!selecting ? (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="测试代理连通性"
-                      disabled={busy}
-                      style={proxyStyles.statusHit}
-                      onPress={(event) => {
-                        event.stopPropagation();
-                        testProfile(profile);
-                      }}
+                      accessibilityLabel="编辑代理"
+                      android_ripple={androidRipple(theme.primarySoft, true)}
+                      style={proxyStyles.infoButton}
+                      onPress={() => openEdit(profile)}
                     >
-                      <Text style={[styles.meta, { color: accentColor }]} numberOfLines={1}>{profile.host}:{profile.port} · {statusText}</Text>
+                      <Info size={21} color={theme.muted} strokeWidth={1.8} />
                     </Pressable>
-                  ) : (
-                    <Text style={[styles.meta, activeApplying || activeDisplayedEnabled ? { color: accentColor } : null]} numberOfLines={1}>{profile.host}:{profile.port} · {statusText}</Text>
-                  )}
+                  ) : null}
+                </Pressable>
+              );
+            })}
+            <Pressable
+              accessibilityRole="button"
+              android_ripple={androidRipple(theme.primarySoft)}
+              disabled={busy}
+              style={[proxyStyles.addRow, { borderTopColor: theme.line }]}
+              onPress={openCreate}
+            >
+              <Text style={[proxyStyles.addRowText, { color: theme.ink }]}>添加代理</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+        <Modal transparent visible={draftMode !== null} animationType="fade" onRequestClose={closeDraft}>
+          <View style={styles.searchFilterModalRoot}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="关闭代理表单"
+              disabled={busy}
+              style={styles.searchFilterBackdrop}
+              onPress={closeDraft}
+            />
+            <View style={[styles.searchFilterSheet, draftKeyboardInset ? { marginBottom: draftKeyboardInset } : null]}>
+              <View style={styles.searchFilterHandle} />
+              <View style={styles.searchFilterHeader}>
+                <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
+              </View>
+              <ScrollView
+                style={styles.searchFilterBody}
+                contentContainerStyle={[styles.searchFilterBodyInner, proxyStyles.sheetBody]}
+                keyboardShouldPersistTaps="handled"
+              >
+                <SettingRail
+                  title="类型"
+                  items={[
+                    { value: 'http', label: 'HTTP' },
+                    { value: 'socks5', label: 'SOCKS5' }
+                  ]}
+                  value={draft.protocol}
+                  styles={styles}
+                  onChange={(value) => setDraft((current) => ({ ...current, protocol: value as NetworkProxyProtocol }))}
+                />
+                <ProxyInput
+                  label="名称"
+                  value={draft.name}
+                  error={visibleErrors.name}
+                  styles={styles}
+                  theme={theme}
+                  onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
+                />
+                <View style={proxyStyles.fieldRow}>
+                  <ProxyInput
+                    label="服务器"
+                    value={draft.host}
+                    error={visibleErrors.host}
+                    styles={styles}
+                    theme={theme}
+                    autoCapitalize="none"
+                    style={proxyStyles.fieldMain}
+                    onChangeText={(host) => setDraft((current) => ({ ...current, host }))}
+                  />
+                  <ProxyInput
+                    label="端口"
+                    value={draft.port}
+                    error={visibleErrors.port}
+                    styles={styles}
+                    theme={theme}
+                    keyboardType="number-pad"
+                    style={proxyStyles.portField}
+                    onChangeText={(port) => setDraft((current) => ({ ...current, port }))}
+                  />
                 </View>
-                {!selecting ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="编辑代理"
-                    android_ripple={androidRipple(theme.primarySoft, true)}
-                    style={proxyStyles.infoButton}
-                    onPress={() => openEdit(profile)}
-                  >
-                    <Info size={21} color={theme.muted} strokeWidth={1.8} />
-                  </Pressable>
-                ) : null}
-              </Pressable>
-            );
-          })}
-          <Pressable
-            accessibilityRole="button"
-            android_ripple={androidRipple(theme.primarySoft)}
-            disabled={busy}
-            style={[proxyStyles.addRow, { borderTopColor: theme.line }]}
-            onPress={openCreate}
-          >
-            <Text style={[proxyStyles.addRowText, { color: theme.ink }]}>添加代理</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
-      <Modal transparent visible={draftMode !== null} animationType="fade" onRequestClose={closeDraft}>
-        <View style={styles.searchFilterModalRoot}>
-          <Pressable accessibilityRole="button" accessibilityLabel="关闭代理表单" disabled={busy} style={styles.searchFilterBackdrop} onPress={closeDraft} />
-          <View style={[styles.searchFilterSheet, draftKeyboardInset ? { marginBottom: draftKeyboardInset } : null]}>
-            <View style={styles.searchFilterHandle} />
-            <View style={styles.searchFilterHeader}>
-              <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
-            </View>
-            <ScrollView style={styles.searchFilterBody} contentContainerStyle={[styles.searchFilterBodyInner, proxyStyles.sheetBody]} keyboardShouldPersistTaps="handled">
-              <SettingRail
-                title="类型"
-                items={[
-                  { value: 'http', label: 'HTTP' },
-                  { value: 'socks5', label: 'SOCKS5' }
-                ]}
-                value={draft.protocol}
-                styles={styles}
-                onChange={(value) => setDraft((current) => ({ ...current, protocol: value as NetworkProxyProtocol }))}
-              />
-              <ProxyInput label="名称" value={draft.name} error={visibleErrors.name} styles={styles} theme={theme} onChangeText={(name) => setDraft((current) => ({ ...current, name }))} />
-              <View style={proxyStyles.fieldRow}>
-                <ProxyInput label="服务器" value={draft.host} error={visibleErrors.host} styles={styles} theme={theme} autoCapitalize="none" style={proxyStyles.fieldMain} onChangeText={(host) => setDraft((current) => ({ ...current, host }))} />
-                <ProxyInput label="端口" value={draft.port} error={visibleErrors.port} styles={styles} theme={theme} keyboardType="number-pad" style={proxyStyles.portField} onChangeText={(port) => setDraft((current) => ({ ...current, port }))} />
+                <View style={proxyStyles.fieldRow}>
+                  <ProxyInput
+                    label="用户名"
+                    value={draft.username}
+                    error={visibleErrors.username}
+                    styles={styles}
+                    theme={theme}
+                    autoCapitalize="none"
+                    placeholder="可空"
+                    style={proxyStyles.fieldMain}
+                    onChangeText={(username) => setDraft((current) => ({ ...current, username }))}
+                  />
+                  <ProxyInput
+                    label="密码"
+                    value={draft.password}
+                    error={visibleErrors.password}
+                    styles={styles}
+                    theme={theme}
+                    autoCapitalize="none"
+                    placeholder="可空"
+                    secureTextEntry
+                    style={proxyStyles.fieldMain}
+                    onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
+                  />
+                </View>
+              </ScrollView>
+              <View style={styles.searchFilterActions}>
+                <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeDraft} />
+                <AppButton
+                  compact
+                  label={busy ? '保存中' : '确定'}
+                  variant="primary"
+                  styles={styles}
+                  disabled={busy}
+                  onPress={saveDraft}
+                />
               </View>
-              <View style={proxyStyles.fieldRow}>
-                <ProxyInput label="用户名" value={draft.username} error={visibleErrors.username} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" style={proxyStyles.fieldMain} onChangeText={(username) => setDraft((current) => ({ ...current, username }))} />
-                <ProxyInput label="密码" value={draft.password} error={visibleErrors.password} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" secureTextEntry style={proxyStyles.fieldMain} onChangeText={(password) => setDraft((current) => ({ ...current, password }))} />
-              </View>
-            </ScrollView>
-            <View style={styles.searchFilterActions}>
-              <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeDraft} />
-              <AppButton compact label={busy ? '保存中' : '确定'} variant="primary" styles={styles} disabled={busy} onPress={saveDraft} />
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
       </View>
     </Modal>
   );

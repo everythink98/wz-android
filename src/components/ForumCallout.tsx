@@ -29,9 +29,7 @@ import { alphaColor, androidRipple, type ReaderTheme } from '../theme';
 
 export const FORUM_CALLOUT_TRANSITION_MS = 100;
 
-const CALLOUT_LAYOUT = LinearTransition
-  .duration(FORUM_CALLOUT_TRANSITION_MS)
-  .reduceMotion(ReduceMotion.System);
+const CALLOUT_LAYOUT = LinearTransition.duration(FORUM_CALLOUT_TRANSITION_MS).reduceMotion(ReduceMotion.System);
 
 const CALLOUT_ICONS = {
   note: SquarePen,
@@ -60,7 +58,7 @@ function toneColor(tone: DiscourseCalloutTone, theme: ReaderTheme) {
 export function forumCalloutPalette(type: DiscourseCalloutType, theme: ReaderTheme) {
   const color = toneColor(DISCOURSE_CALLOUT_REGISTRY[type].tone, theme);
   return {
-    backgroundColor: alphaColor(color, theme.dark ? 0.16 : 0.10),
+    backgroundColor: alphaColor(color, theme.dark ? 0.16 : 0.1),
     borderColor: alphaColor(color, theme.dark ? 0.36 : 0.28),
     color
   };
@@ -107,11 +105,7 @@ export function ForumCallout({
   return (
     <Animated.View
       layout={CALLOUT_LAYOUT}
-      style={[
-        calloutStyles.callout,
-        palette,
-        trimTrailingBlockSpacing ? calloutStyles.trimTrailing : null
-      ]}
+      style={[calloutStyles.callout, palette, trimTrailingBlockSpacing ? calloutStyles.trimTrailing : null]}
       testID="forum-callout"
     >
       {foldable ? (
@@ -126,12 +120,7 @@ export function ForumCallout({
           {header}
         </Pressable>
       ) : (
-        <View
-          accessible
-          accessibilityLabel={titleLabel}
-          accessibilityRole="header"
-          style={calloutStyles.header}
-        >
+        <View accessible accessibilityLabel={titleLabel} accessibilityRole="header" style={calloutStyles.header}>
           {header}
         </View>
       )}

@@ -3,11 +3,7 @@ import type { BrowserFetchIntent } from '../browserFetchIntent';
 import type { DiagnosticTrace } from '../diagnostics';
 import type { SessionSite, SiteSessionEvent } from '../siteSessionState';
 import type { FeedSource, Source } from '../types';
-import {
-  appQueryClient,
-  forumQueryKeys,
-  type ForumSessionEpochs
-} from './serverState';
+import { appQueryClient, forumQueryKeys, type ForumSessionEpochs } from './serverState';
 import type { LinuxDoReadRecovery } from './useVerificationController';
 
 export type BrowserFetchRequestCleanupTarget = {
@@ -38,17 +34,22 @@ export type CredentialWriteGate = {
   queue: Promise<void>;
 };
 
-export type ForumQueryInvalidatingSessionEvent = Extract<SiteSessionEvent, {
-  type: 'session-updated' | 'login-detected' | 'login-expired' | 'cleared';
-}>;
+export type ForumQueryInvalidatingSessionEvent = Extract<
+  SiteSessionEvent,
+  {
+    type: 'session-updated' | 'login-detected' | 'login-expired' | 'cleared';
+  }
+>;
 
 export function siteSessionEventInvalidatesForumQueries(
   event: SiteSessionEvent
 ): event is ForumQueryInvalidatingSessionEvent {
-  return event.type === 'session-updated'
-    || event.type === 'login-detected'
-    || event.type === 'login-expired'
-    || event.type === 'cleared';
+  return (
+    event.type === 'session-updated' ||
+    event.type === 'login-detected' ||
+    event.type === 'login-expired' ||
+    event.type === 'cleared'
+  );
 }
 
 export function resetForumSourceQueries(
@@ -60,27 +61,24 @@ export function resetForumSourceQueries(
     ? client.getQueryCache().find({ queryKey: preserveRecoveryQueryKey, exact: true })
     : undefined;
   const isObservedAccountStatus = Boolean(
-    preservedQuery?.queryKey[2] === 'account-status'
-    && preservedQuery.getObserversCount() > 0
+    preservedQuery?.queryKey[2] === 'account-status' && preservedQuery.getObserversCount() > 0
   );
   const canPreserve = Boolean(
-    preservedQuery
-    && (preservedQuery.isActive() || isObservedAccountStatus)
-    && preservedQuery.queryKey[0] === 'forum'
-    && (preservedQuery.queryKey[1] === source || preservedQuery.queryKey[1] === 'all')
+    preservedQuery &&
+    (preservedQuery.isActive() || isObservedAccountStatus) &&
+    preservedQuery.queryKey[0] === 'forum' &&
+    (preservedQuery.queryKey[1] === source || preservedQuery.queryKey[1] === 'all')
   );
   const affectedSources: FeedSource[] = [source, 'all'];
   for (const affectedSource of affectedSources) {
     const filters = {
-      predicate: (query: { queryKey: readonly unknown[] }) => (
-        query.queryKey[0] === 'forum'
-        && query.queryKey[1] === affectedSource
-        && (!canPreserve || query !== preservedQuery)
-      )
+      predicate: (query: { queryKey: readonly unknown[] }) =>
+        query.queryKey[0] === 'forum' &&
+        query.queryKey[1] === affectedSource &&
+        (!canPreserve || query !== preservedQuery)
     };
     void client.resetQueries({
-      predicate: (query) => filters.predicate(query)
-        && query.queryKey[2] === 'account-status'
+      predicate: (query) => filters.predicate(query) && query.queryKey[2] === 'account-status'
     });
     void client.cancelQueries(filters);
     client.removeQueries(filters);
@@ -88,31 +86,23 @@ export function resetForumSourceQueries(
   return canPreserve;
 }
 
-export function cancelForumSourceQueries(
-  source: Source,
-  client: QueryClient = appQueryClient
-) {
+export function cancelForumSourceQueries(source: Source, client: QueryClient = appQueryClient) {
   return client.cancelQueries({
-    predicate: ({ queryKey }) => (
-      queryKey[0] === 'forum'
-      && (queryKey[1] === source || queryKey[1] === 'all')
-      && queryKey[2] !== 'account-status'
-      && queryKey[2] !== 'account-status-probe'
-    )
+    predicate: ({ queryKey }) =>
+      queryKey[0] === 'forum' &&
+      (queryKey[1] === source || queryKey[1] === 'all') &&
+      queryKey[2] !== 'account-status' &&
+      queryKey[2] !== 'account-status-probe'
   });
 }
 
-export function removeUnconfirmedForumSourceQueries(
-  source: Source,
-  client: QueryClient = appQueryClient
-) {
+export function removeUnconfirmedForumSourceQueries(source: Source, client: QueryClient = appQueryClient) {
   client.removeQueries({
-    predicate: ({ queryKey }) => (
-      queryKey[0] === 'forum'
-      && queryKey[1] === source
-      && queryKey[2] !== 'account-status'
-      && queryKey[2] !== 'account-status-probe'
-    )
+    predicate: ({ queryKey }) =>
+      queryKey[0] === 'forum' &&
+      queryKey[1] === source &&
+      queryKey[2] !== 'account-status' &&
+      queryKey[2] !== 'account-status-probe'
   });
 }
 
@@ -134,24 +124,19 @@ export function commitExpiredAccountStatusQuery(
 ) {
   const committedData = client.getQueryData(recoveryQueryKey);
   const isExpiredResult = Boolean(
-    committedData
-    && typeof committedData === 'object'
-    && 'session' in committedData
-    && committedData.session
-    && typeof committedData.session === 'object'
-    && 'status' in committedData.session
-    && committedData.session.status === 'expired'
+    committedData &&
+    typeof committedData === 'object' &&
+    'session' in committedData &&
+    committedData.session &&
+    typeof committedData.session === 'object' &&
+    'status' in committedData.session &&
+    committedData.session.status === 'expired'
   );
   if (!isExpiredResult) {
     resetForumSourceQueries(source, client, recoveryQueryKey);
     return forumSessionEpochsAfterSourceChange(currentEpochs, source);
   }
-  return commitChangedAccountStatusQuery(
-    source,
-    currentEpochs,
-    recoveryQueryKey,
-    client
-  );
+  return commitChangedAccountStatusQuery(source, currentEpochs, recoveryQueryKey, client);
 }
 
 export function commitChangedAccountStatusQuery(
@@ -164,10 +149,13 @@ export function commitChangedAccountStatusQuery(
   resetForumSourceQueries(source, client);
   const nextEpochs = forumSessionEpochsAfterSourceChange(currentEpochs, source);
   if (committedData !== undefined) {
-    client.setQueryData(forumQueryKeys.accountStatus({
-      sessionEpochs: nextEpochs,
-      source
-    }), committedData);
+    client.setQueryData(
+      forumQueryKeys.accountStatus({
+        sessionEpochs: nextEpochs,
+        source
+      }),
+      committedData
+    );
   }
   return nextEpochs;
 }
@@ -277,9 +265,11 @@ function sameBrowserDocumentUrl(left: string, right: string) {
   try {
     const leftUrl = new URL(left);
     const rightUrl = new URL(right);
-    return leftUrl.origin === rightUrl.origin
-      && normalizeBrowserPath(leftUrl.pathname) === normalizeBrowserPath(rightUrl.pathname)
-      && leftUrl.search === rightUrl.search;
+    return (
+      leftUrl.origin === rightUrl.origin &&
+      normalizeBrowserPath(leftUrl.pathname) === normalizeBrowserPath(rightUrl.pathname) &&
+      leftUrl.search === rightUrl.search
+    );
   } catch {
     return left === right;
   }
@@ -397,7 +387,9 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
     currentRef.current = null;
     setActiveRequest(null);
   }
-  const settled = settleBrowserFetchRequestOnce(request, () => request.reject(message instanceof Error ? message : new Error(message)));
+  const settled = settleBrowserFetchRequestOnce(request, () =>
+    request.reject(message instanceof Error ? message : new Error(message))
+  );
   if (!settled) {
     return;
   }
@@ -436,7 +428,9 @@ export async function runBestEffortTask(task: () => Promise<void>, timeoutMs: nu
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      Promise.resolve().then(task).catch(() => undefined),
+      Promise.resolve()
+        .then(task)
+        .catch(() => undefined),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, timeoutMs);
       })
@@ -495,7 +489,10 @@ export function enqueueCredentialWriteForGeneration<T>(
       const result = await task({ isCurrent });
       return isCurrent() ? result : undefined;
     });
-  gate.queue = run.then(() => undefined, () => undefined);
+  gate.queue = run.then(
+    () => undefined,
+    () => undefined
+  );
   return run;
 }
 

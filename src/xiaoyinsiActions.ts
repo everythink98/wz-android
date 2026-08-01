@@ -1,8 +1,4 @@
-import {
-  buildDiscourseActionRequest,
-  type DiscourseAction,
-  type DiscourseActionRequest
-} from './discourseActions';
+import { buildDiscourseActionRequest, type DiscourseAction, type DiscourseActionRequest } from './discourseActions';
 
 function positiveInteger(value: string | number, name: string) {
   const text = String(value).trim();
@@ -13,12 +9,7 @@ function positiveInteger(value: string | number, name: string) {
 }
 
 export function buildXiaoyinsiActionRequest(action: DiscourseAction): DiscourseActionRequest {
-  if (
-    action.type === 'set-bookmark'
-    && !action.active
-    && !action.bookmarkId
-    && action.targetType === 'Topic'
-  ) {
+  if (action.type === 'set-bookmark' && !action.active && !action.bookmarkId && action.targetType === 'Topic') {
     return {
       path: `/t/${positiveInteger(action.targetId, '收藏对象 id')}/remove_bookmarks`,
       method: 'PUT',

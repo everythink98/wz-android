@@ -26,9 +26,9 @@ const replyWithoutImage: Reply = {
 
 describe('Android topic derived data', () => {
   it('filters image replies through a cached HTML image deriver', () => {
-    const extractImageUrls = vi.fn((html: string) => (
+    const extractImageUrls = vi.fn((html: string) =>
       html.includes('cdn.example.com') ? ['https://cdn.example.com/a.jpg'] : []
-    ));
+    );
     const deriver = createTopicImageDeriver({ extractImageUrls });
 
     const first = filterRepliesWithImages([replyWithImage, replyWithoutImage], {}, deriver);
@@ -49,8 +49,12 @@ describe('Android topic derived data', () => {
 
     const html = '<p><img src="https://cdn.example.com/smile.png"></p>';
 
-    expect(deriver.markInlineSizedImages(html, inlineSizedImageUrls)).toBe('<p><img src="https://cdn.example.com/smile.png"></p><!-- inline:https://cdn.example.com/smile.png -->');
-    expect(deriver.markInlineSizedImages(html, inlineSizedImageUrls)).toBe('<p><img src="https://cdn.example.com/smile.png"></p><!-- inline:https://cdn.example.com/smile.png -->');
+    expect(deriver.markInlineSizedImages(html, inlineSizedImageUrls)).toBe(
+      '<p><img src="https://cdn.example.com/smile.png"></p><!-- inline:https://cdn.example.com/smile.png -->'
+    );
+    expect(deriver.markInlineSizedImages(html, inlineSizedImageUrls)).toBe(
+      '<p><img src="https://cdn.example.com/smile.png"></p><!-- inline:https://cdn.example.com/smile.png -->'
+    );
     expect(markInlineSizedImageHtml).toHaveBeenCalledTimes(1);
   });
 
@@ -72,56 +76,49 @@ describe('Android topic derived data', () => {
       'https://cdn.example.com/b.png': true as const
     };
 
-    expect(inlineSizedImageSignatureForHtml('<p><img src="https://cdn.example.com/a.png"></p>', inlineSizedImageUrls)).toBe('https://cdn.example.com/a.png');
+    expect(
+      inlineSizedImageSignatureForHtml('<p><img src="https://cdn.example.com/a.png"></p>', inlineSizedImageUrls)
+    ).toBe('https://cdn.example.com/a.png');
     expect(inlineSizedImageSignatureForHtml('<p>no image</p>', inlineSizedImageUrls)).toBe('');
   });
 
   it('includes reply signatures in inline-sized image signatures', () => {
     const inlineSizedImageUrls = { 'https://cdn.example.com/sign.png': true as const };
 
-    expect(inlineSizedImageSignatureForReply({
-      contentHtml: '<p>body</p>',
-      signatureHtml: '<p><img src="https://cdn.example.com/sign.png"></p>'
-    }, inlineSizedImageUrls)).toBe('https://cdn.example.com/sign.png');
+    expect(
+      inlineSizedImageSignatureForReply(
+        {
+          contentHtml: '<p>body</p>',
+          signatureHtml: '<p><img src="https://cdn.example.com/sign.png"></p>'
+        },
+        inlineSizedImageUrls
+      )
+    ).toBe('https://cdn.example.com/sign.png');
   });
 
   it('[REG-PERF-007] skips inline image scans for changed replies and stable maps', () => {
     const scanned = vi.fn();
-    const countedMap = () => new Proxy({ 'https://cdn.example.com/a.jpg': true as const }, {
-      ownKeys(target) {
-        scanned();
-        return Reflect.ownKeys(target);
-      }
-    });
+    const countedMap = () =>
+      new Proxy(
+        { 'https://cdn.example.com/a.jpg': true as const },
+        {
+          ownKeys(target) {
+            scanned();
+            return Reflect.ownKeys(target);
+          }
+        }
+      );
     const firstMap = countedMap();
     const secondMap = countedMap();
 
-    expect(sameInlineSizedImagesForReply(
-      replyWithImage,
-      { ...replyWithImage },
-      firstMap,
-      secondMap
-    )).toBe(false);
-    expect(sameInlineSizedImagesForReply(
-      replyWithImage,
-      replyWithImage,
-      firstMap,
-      firstMap
-    )).toBe(true);
-    expect(sameInlineSizedImagesForHtml(
-      replyWithImage.contentHtml,
-      replyWithImage.contentHtml,
-      firstMap,
-      firstMap
-    )).toBe(true);
+    expect(sameInlineSizedImagesForReply(replyWithImage, { ...replyWithImage }, firstMap, secondMap)).toBe(false);
+    expect(sameInlineSizedImagesForReply(replyWithImage, replyWithImage, firstMap, firstMap)).toBe(true);
+    expect(
+      sameInlineSizedImagesForHtml(replyWithImage.contentHtml, replyWithImage.contentHtml, firstMap, firstMap)
+    ).toBe(true);
     expect(scanned).not.toHaveBeenCalled();
 
-    expect(sameInlineSizedImagesForReply(
-      replyWithImage,
-      replyWithImage,
-      firstMap,
-      secondMap
-    )).toBe(true);
+    expect(sameInlineSizedImagesForReply(replyWithImage, replyWithImage, firstMap, secondMap)).toBe(true);
     expect(scanned).toHaveBeenCalledTimes(2);
   });
 
@@ -143,7 +140,8 @@ describe('Android topic derived data', () => {
     };
     const emojiOnly = {
       ...replyWithoutImage,
-      contentHtml: '<p><img class="emoji" src="https://linux.do/images/emoji/twitter/slight_smile.png" alt=":slight_smile:" title=":slight_smile:" width="20" height="20"></p>'
+      contentHtml:
+        '<p><img class="emoji" src="https://linux.do/images/emoji/twitter/slight_smile.png" alt=":slight_smile:" title=":slight_smile:" width="20" height="20"></p>'
     };
     const deriver = createTopicImageDeriver();
 

@@ -26,7 +26,15 @@ vi.mock('react-native', () => ({ View: () => null }));
 vi.mock('../components/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 vi.mock('../components/AppControls', () => ({ triggerPressFeedback: vi.fn() }));
 
-import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigateMainTab, openReadingSettingsFromCurrentTopic, previousTopicRouteKey, shouldUpdateAppRootScreen } from './AppNavigator';
+import {
+  AppNavigator,
+  currentTopicRouteKey,
+  navigateAppScreen,
+  navigateMainTab,
+  openReadingSettingsFromCurrentTopic,
+  previousTopicRouteKey,
+  shouldUpdateAppRootScreen
+} from './AppNavigator';
 
 describe('AppNavigator', () => {
   it('skips parent-only rerenders when its navigation props are unchanged', () => {
@@ -76,7 +84,11 @@ describe('navigateMainTab', () => {
       throw new Error('Topic navigation was not handled');
     }
     const topicState = router.getRehydratedState(topicResult, options);
-    const mainTabsResult = router.getStateForAction(topicState, RouterStackActions.popTo('MainTabs', { screen: 'more' }), options);
+    const mainTabsResult = router.getStateForAction(
+      topicState,
+      RouterStackActions.popTo('MainTabs', { screen: 'more' }),
+      options
+    );
     if (!mainTabsResult) {
       throw new Error('MainTabs pop was not handled');
     }
@@ -111,11 +123,7 @@ describe('navigateMainTab', () => {
     expect(state.routes.map((route) => route.name)).toEqual(['MainTabs', 'Topic', 'User', 'Topic']);
     expect(state.routes[1]?.key).not.toBe(state.routes[3]?.key);
 
-    for (const expectedRoutes of [
-      ['MainTabs', 'Topic', 'User'],
-      ['MainTabs', 'Topic'],
-      ['MainTabs']
-    ]) {
+    for (const expectedRoutes of [['MainTabs', 'Topic', 'User'], ['MainTabs', 'Topic'], ['MainTabs']]) {
       const result = router.getStateForAction(state, RouterStackActions.pop(1), options);
       if (!result) {
         throw new Error('Stack pop was not handled');

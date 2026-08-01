@@ -4,8 +4,7 @@ import { accessRequirementFromNoticeText, textContentFromHtml } from './localHtm
 
 export function nodeSeekUserIdFromValue(value?: string) {
   const text = String(value || '').trim();
-  return text.match(/(?:^|\/)space\/(\d+)(?:[/?#]|$)/)?.[1]
-    || (/^\d+$/.test(text) ? text : '');
+  return text.match(/(?:^|\/)space\/(\d+)(?:[/?#]|$)/)?.[1] || (/^\d+$/.test(text) ? text : '');
 }
 
 function nodeSeekAuthorId(authorId?: string, authorUrl?: string) {
@@ -42,11 +41,13 @@ function discourseUserReference(
   const linked = authorUrl ? parseForumUserLink(authorUrl) : null;
   const username = authorId?.trim() || (linked?.source === source ? linked.username : undefined);
   const reference = username ? userReferenceFromUsername(source, username, displayName || username) : null;
-  return reference ? {
-    ...reference,
-    avatar,
-    url: linked?.source === source ? linked.url : reference.url
-  } : null;
+  return reference
+    ? {
+        ...reference,
+        avatar,
+        url: linked?.source === source ? linked.url : reference.url
+      }
+    : null;
 }
 
 function detailContentLooksRestricted(topic: Topic | TopicDetail) {
@@ -71,12 +72,20 @@ function shouldUseFallbackAccessRequirement(topic: Topic | TopicDetail, fallback
     return true;
   }
   if (topic.accessRequirement.type === 'level' && fallback.accessRequirement.type === 'level') {
-    return !accessRequirementLevelValue(topic.accessRequirement) && Boolean(accessRequirementLevelValue(fallback.accessRequirement));
+    return (
+      !accessRequirementLevelValue(topic.accessRequirement) &&
+      Boolean(accessRequirementLevelValue(fallback.accessRequirement))
+    );
   }
-  return accessRequirementSpecificity(fallback.accessRequirement) > accessRequirementSpecificity(topic.accessRequirement);
+  return (
+    accessRequirementSpecificity(fallback.accessRequirement) > accessRequirementSpecificity(topic.accessRequirement)
+  );
 }
 
-export function topicWithAuthorFallback<T extends Topic | TopicDetail>(topic: T | null, fallback?: Topic | null): T | null {
+export function topicWithAuthorFallback<T extends Topic | TopicDetail>(
+  topic: T | null,
+  fallback?: Topic | null
+): T | null {
   if (!topic) {
     return topic;
   }
@@ -87,16 +96,17 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(topic: T 
     ? { accessRequirement: fallback.accessRequirement }
     : {};
   const hasRestrictedPlaceholder = Boolean(topic.accessRequirement && topic.title === '受限帖子');
-  const fallbackTopicFields = hasRestrictedPlaceholder ? {
-    title: fallback.title || topic.title,
-    author: fallback.author || topic.author,
-    authorLevelLabel: fallback.authorLevelLabel || topic.authorLevelLabel,
-    categoryId: fallback.categoryId || topic.categoryId,
-    category: fallback.category || topic.category
-  } : {};
-  const replyCountFields = topic.source === 'nodeseek' && fallback.replyCount > topic.replyCount
-    ? { replyCount: fallback.replyCount }
+  const fallbackTopicFields = hasRestrictedPlaceholder
+    ? {
+        title: fallback.title || topic.title,
+        author: fallback.author || topic.author,
+        authorLevelLabel: fallback.authorLevelLabel || topic.authorLevelLabel,
+        categoryId: fallback.categoryId || topic.categoryId,
+        category: fallback.category || topic.category
+      }
     : {};
+  const replyCountFields =
+    topic.source === 'nodeseek' && fallback.replyCount > topic.replyCount ? { replyCount: fallback.replyCount } : {};
   if (topic.source !== 'nodeseek') {
     const hasFallbackFields = Object.keys(fallbackTopicFields).length > 0;
     return Object.keys(accessRequirementFields).length || hasFallbackFields
@@ -106,11 +116,15 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(topic: T 
   const hasReplyCountFields = Object.keys(replyCountFields).length > 0;
   const fallbackAuthorId = nodeSeekAuthorId(fallback.authorId, fallback.authorUrl);
   if (topic.authorId && !hasRestrictedPlaceholder) {
-    return Object.keys(accessRequirementFields).length || hasReplyCountFields ? { ...topic, ...accessRequirementFields, ...replyCountFields } : topic;
+    return Object.keys(accessRequirementFields).length || hasReplyCountFields
+      ? { ...topic, ...accessRequirementFields, ...replyCountFields }
+      : topic;
   }
   const authorId = topic.authorId || fallbackAuthorId;
   if (!authorId && !hasRestrictedPlaceholder) {
-    return Object.keys(accessRequirementFields).length || hasReplyCountFields ? { ...topic, ...accessRequirementFields, ...replyCountFields } : topic;
+    return Object.keys(accessRequirementFields).length || hasReplyCountFields
+      ? { ...topic, ...accessRequirementFields, ...replyCountFields }
+      : topic;
   }
   return {
     ...topic,
@@ -141,9 +155,13 @@ export function userFromTopic(topic: Topic | TopicDetail): UserReference | null 
     ...identity,
     displayName: username,
     avatar: topic.authorAvatar,
-    url: topic.authorUrl || (topic.source === 'nodeseek'
-      ? id ? `https://www.nodeseek.com/space/${id}` : `https://www.nodeseek.com/member?t=${encodeURIComponent(username || '')}`
-      : '')
+    url:
+      topic.authorUrl ||
+      (topic.source === 'nodeseek'
+        ? id
+          ? `https://www.nodeseek.com/space/${id}`
+          : `https://www.nodeseek.com/member?t=${encodeURIComponent(username || '')}`
+        : '')
   };
 }
 
@@ -166,8 +184,12 @@ export function userFromReply(reply: Reply, source?: Source): UserReference | nu
     ...identity,
     displayName: username,
     avatar: reply.authorAvatar,
-    url: reply.authorUrl || (source === 'nodeseek'
-      ? id ? `https://www.nodeseek.com/space/${id}` : `https://www.nodeseek.com/member?t=${encodeURIComponent(username || '')}`
-      : '')
+    url:
+      reply.authorUrl ||
+      (source === 'nodeseek'
+        ? id
+          ? `https://www.nodeseek.com/space/${id}`
+          : `https://www.nodeseek.com/member?t=${encodeURIComponent(username || '')}`
+        : '')
   };
 }

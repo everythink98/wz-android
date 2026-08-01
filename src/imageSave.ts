@@ -111,9 +111,11 @@ export async function saveImageUriToLibrary(
   parentTrace?: DiagnosticTrace
 ) {
   const dataImage = dataImageFileFromUrl(uri);
-  const trace = parentTrace || beginDiagnosticTrace('media', 'save-image', {
-    channel: dataImage ? 'data' : isHttpOrHttpsUrl(uri) ? 'remote' : 'unsupported'
-  });
+  const trace =
+    parentTrace ||
+    beginDiagnosticTrace('media', 'save-image', {
+      channel: dataImage ? 'data' : isHttpOrHttpsUrl(uri) ? 'remote' : 'unsupported'
+    });
   const ownsTrace = !parentTrace;
   try {
     if (!dataImage && !isHttpOrHttpsUrl(uri)) {

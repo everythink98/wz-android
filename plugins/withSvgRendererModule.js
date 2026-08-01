@@ -1413,7 +1413,8 @@ function injectSvgRendererTestSupport(contents) {
     }
     next = next.replace(
       dependenciesPattern,
-      (match) => `${match}\n    androidTestImplementation("androidx.test:runner:1.6.2")\n    androidTestImplementation("androidx.test.ext:junit:1.2.1")`
+      (match) =>
+        `${match}\n    androidTestImplementation("androidx.test:runner:1.6.2")\n    androidTestImplementation("androidx.test.ext:junit:1.2.1")`
     );
   }
   if (!next.includes('unitTests.returnDefaultValues = true')) {
@@ -1421,7 +1422,10 @@ function injectSvgRendererTestSupport(contents) {
     if (!androidPattern.test(next)) {
       throw new Error('无法配置 SVG renderer 原生测试：app build.gradle 模板不匹配。');
     }
-    next = next.replace(androidPattern, (match) => `${match}\n    testOptions { unitTests.returnDefaultValues = true }`);
+    next = next.replace(
+      androidPattern,
+      (match) => `${match}\n    testOptions { unitTests.returnDefaultValues = true }`
+    );
   }
   if (!next.includes('testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"')) {
     const defaultConfigPattern = /defaultConfig\s*\{/;
@@ -1442,87 +1446,73 @@ module.exports = function withSvgRendererModule(config) {
     return config;
   });
 
-  config = withDangerousMod(config, ['android', async (config) => {
-    const packageName = config.android?.package;
-    if (!packageName) {
+  config = withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const packageName = config.android?.package;
+      if (!packageName) {
+        return config;
+      }
+      const outputDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'main',
+        'java',
+        packagePath(packageName)
+      );
+      const testOutputDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'test',
+        'java',
+        packagePath(packageName)
+      );
+      const testResourceDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'test',
+        'resources',
+        'svg_renderer'
+      );
+      const instrumentedTestOutputDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'androidTest',
+        'java',
+        packagePath(packageName)
+      );
+      const instrumentedTestAssetDir = path.join(
+        config.modRequest.platformProjectRoot,
+        'app',
+        'src',
+        'androidTest',
+        'assets',
+        'svg_renderer'
+      );
+      const fixturePath = path.join(config.modRequest.projectRoot, 'tests', 'fixtures', 'complex-svg-document.svg');
+      if (!fs.existsSync(fixturePath)) {
+        throw new Error('缺少 SVG renderer 共享 fixture，拒绝生成 Android 工程。');
+      }
+      fs.mkdirSync(outputDir, { recursive: true });
+      fs.mkdirSync(testOutputDir, { recursive: true });
+      fs.mkdirSync(testResourceDir, { recursive: true });
+      fs.mkdirSync(instrumentedTestOutputDir, { recursive: true });
+      fs.mkdirSync(instrumentedTestAssetDir, { recursive: true });
+      fs.writeFileSync(path.join(outputDir, 'SvgRendererModule.kt'), svgRendererModuleSource(packageName));
+      fs.writeFileSync(path.join(testOutputDir, 'SvgRendererPolicyTest.kt'), svgRendererTestSource(packageName));
+      fs.writeFileSync(
+        path.join(instrumentedTestOutputDir, 'SvgRendererInstrumentedTest.kt'),
+        svgRendererInstrumentedTestSource(packageName)
+      );
+      fs.copyFileSync(fixturePath, path.join(testResourceDir, 'complex-svg-document.svg'));
+      fs.copyFileSync(fixturePath, path.join(instrumentedTestAssetDir, 'complex-svg-document.svg'));
       return config;
     }
-    const outputDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'main',
-      'java',
-      packagePath(packageName)
-    );
-    const testOutputDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'test',
-      'java',
-      packagePath(packageName)
-    );
-    const testResourceDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'test',
-      'resources',
-      'svg_renderer'
-    );
-    const instrumentedTestOutputDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'androidTest',
-      'java',
-      packagePath(packageName)
-    );
-    const instrumentedTestAssetDir = path.join(
-      config.modRequest.platformProjectRoot,
-      'app',
-      'src',
-      'androidTest',
-      'assets',
-      'svg_renderer'
-    );
-    const fixturePath = path.join(
-      config.modRequest.projectRoot,
-      'tests',
-      'fixtures',
-      'complex-svg-document.svg'
-    );
-    if (!fs.existsSync(fixturePath)) {
-      throw new Error('缺少 SVG renderer 共享 fixture，拒绝生成 Android 工程。');
-    }
-    fs.mkdirSync(outputDir, { recursive: true });
-    fs.mkdirSync(testOutputDir, { recursive: true });
-    fs.mkdirSync(testResourceDir, { recursive: true });
-    fs.mkdirSync(instrumentedTestOutputDir, { recursive: true });
-    fs.mkdirSync(instrumentedTestAssetDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(outputDir, 'SvgRendererModule.kt'),
-      svgRendererModuleSource(packageName)
-    );
-    fs.writeFileSync(
-      path.join(testOutputDir, 'SvgRendererPolicyTest.kt'),
-      svgRendererTestSource(packageName)
-    );
-    fs.writeFileSync(
-      path.join(instrumentedTestOutputDir, 'SvgRendererInstrumentedTest.kt'),
-      svgRendererInstrumentedTestSource(packageName)
-    );
-    fs.copyFileSync(
-      fixturePath,
-      path.join(testResourceDir, 'complex-svg-document.svg')
-    );
-    fs.copyFileSync(
-      fixturePath,
-      path.join(instrumentedTestAssetDir, 'complex-svg-document.svg')
-    );
-    return config;
-  }]);
+  ]);
 
   return withMainApplication(config, (config) => {
     config.modResults.contents = injectSvgRendererPackage(config.modResults.contents);

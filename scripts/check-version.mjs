@@ -19,11 +19,12 @@ const requirePreviousRelease = process.argv.includes('--require-previous-release
 
 if (requirePreviousRelease) {
   try {
-    const isShallow = execFileSync('git', ['rev-parse', '--is-shallow-repository'], {
-      cwd: rootDir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    }).trim() === 'true';
+    const isShallow =
+      execFileSync('git', ['rev-parse', '--is-shallow-repository'], {
+        cwd: rootDir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim() === 'true';
     if (isShallow) {
       errors.push('正式发布不能从浅克隆校验上一正式版本。');
     }
@@ -41,19 +42,15 @@ if (!Number.isInteger(versionCode) || versionCode < 1) {
 
 let previousTag = '';
 try {
-  previousTag = execFileSync('git', [
-    'describe',
-    '--tags',
-    '--abbrev=0',
-    '--match',
-    'v*',
-    '--exclude',
-    `v${appVersion}`
-  ], {
-    cwd: rootDir,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore']
-  }).trim();
+  previousTag = execFileSync(
+    'git',
+    ['describe', '--tags', '--abbrev=0', '--match', 'v*', '--exclude', `v${appVersion}`],
+    {
+      cwd: rootDir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }
+  ).trim();
 } catch {
   const message = '未找到上一正式版本 tag，跳过 versionCode 递增校验。';
   if (requirePreviousRelease) {
@@ -65,11 +62,13 @@ try {
 
 if (previousTag) {
   try {
-    const previousAppJson = JSON.parse(execFileSync('git', ['show', `${previousTag}:app.json`], {
-      cwd: rootDir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    }));
+    const previousAppJson = JSON.parse(
+      execFileSync('git', ['show', `${previousTag}:app.json`], {
+        cwd: rootDir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    );
     const previousVersion = previousAppJson.expo?.version;
     const previousVersionCode = previousAppJson.expo?.android?.versionCode;
     if (!Number.isInteger(previousVersionCode) || previousVersionCode < 1) {

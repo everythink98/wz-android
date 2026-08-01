@@ -9,7 +9,11 @@ import { highlightHtml, stripHtml } from '../../androidFeatureHelpers';
 import { formatDateTime, parseForumTopicLink } from '../../appUtils';
 import { imageSourceFromUrl } from '../../htmlImages';
 import { splitDiscourseContentHtml } from '../../discourseContent';
-import { discourseReactionStats, type DiscourseEmojiUrlMap, type DiscourseReactionStat } from '../../discourseReactions';
+import {
+  discourseReactionStats,
+  type DiscourseEmojiUrlMap,
+  type DiscourseReactionStat
+} from '../../discourseReactions';
 import { linuxDoReactionStats } from '../../linuxdoReactions';
 import { canToggleDiscourseLike } from '../../discoursePermissions';
 import { isDiscourseSource } from '../../sourceCatalog';
@@ -32,9 +36,12 @@ import { getReplyKey, stableTextHash, type TopicListItem } from './topicScreenHe
 import { useForumMediaRequestContext } from '../../mediaSessionEpoch';
 
 type NodeSeekStat = { label: string; value: number };
-type ReplyItemSection = Extract<TopicListItem, {
-  type: 'replyStart' | 'replyQuoteSummary' | 'replyQuoteContent' | 'replyEnd';
-}>;
+type ReplyItemSection = Extract<
+  TopicListItem,
+  {
+    type: 'replyStart' | 'replyQuoteSummary' | 'replyQuoteContent' | 'replyEnd';
+  }
+>;
 
 function topicForQuotedPost(quote: QuotedPostMetadata, baseUrl?: string): Topic | null {
   if (!quote.topicUrl) return null;
@@ -56,11 +63,12 @@ export function nodeSeekReactionStats(item: Pick<Reply | TopicDetail, 'upvoteCou
   ].filter((stat): stat is NodeSeekStat => Boolean(stat));
 }
 
-export function nodeSeekTopicReactionStats(item: Pick<TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount' | 'collectionCount'>) {
-  return [
-    ...nodeSeekReactionStats(item),
-    visibleNodeSeekStat('原站收藏', item.collectionCount)
-  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
+export function nodeSeekTopicReactionStats(
+  item: Pick<TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount' | 'collectionCount'>
+) {
+  return [...nodeSeekReactionStats(item), visibleNodeSeekStat('原站收藏', item.collectionCount)].filter(
+    (stat): stat is NodeSeekStat => Boolean(stat)
+  );
 }
 
 export function NodeSeekStatPill({
@@ -111,7 +119,9 @@ export function DiscourseReactionPill({
           contentFit="contain"
         />
       ) : (
-        <Text style={styles.linuxDoReactionLabel} numberOfLines={1}>{stat.label}</Text>
+        <Text style={styles.linuxDoReactionLabel} numberOfLines={1}>
+          {stat.label}
+        </Text>
       )}
       <Text style={styles.linuxDoReactionCount}>{stat.value}</Text>
     </View>
@@ -122,7 +132,12 @@ function NodeSeekActionPlaceholder({ styles }: { styles: ReturnType<typeof creat
   return (
     <View
       pointerEvents="none"
-      style={[styles.detailActionButton, styles.replyDetailActionButton, styles.replyCompactActionButton, { opacity: 0 }]}
+      style={[
+        styles.detailActionButton,
+        styles.replyDetailActionButton,
+        styles.replyCompactActionButton,
+        { opacity: 0 }
+      ]}
     />
   );
 }
@@ -214,17 +229,23 @@ export function ReplyItem({
   const isDiscourse = isDiscourseSource(source);
   const isQuoteContent = section?.type === 'replyQuoteContent';
   const replyQuotes = useMemo(
-    () => isQuoteContent ? [] : section?.type === 'replyQuoteSummary' ? [section.quote] : quotedPostsForSource(reply, source),
+    () =>
+      isQuoteContent
+        ? []
+        : section?.type === 'replyQuoteSummary'
+          ? [section.quote]
+          : quotedPostsForSource(reply, source),
     [isQuoteContent, reply, section, source]
   );
   const rendersReplyBody = !section || section.type === 'replyEnd';
   const highlightedHtml = useMemo(
-    () => rendersReplyBody ? highlightHtml(reply.contentHtml, query) : '',
+    () => (rendersReplyBody ? highlightHtml(reply.contentHtml, query) : ''),
     [query, rendersReplyBody, reply.contentHtml]
   );
-  const discourseContentParts = useMemo(() => (
-    rendersReplyBody && isDiscourse ? splitDiscourseContentHtml(highlightedHtml, reply.polls) : []
-  ), [highlightedHtml, isDiscourse, rendersReplyBody, reply.polls]);
+  const discourseContentParts = useMemo(
+    () => (rendersReplyBody && isDiscourse ? splitDiscourseContentHtml(highlightedHtml, reply.polls) : []),
+    [highlightedHtml, isDiscourse, rendersReplyBody, reply.polls]
+  );
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const copyReplyTextToClipboard = useCallback(() => {
     const htmlParts = quotedPostsForSource(reply, source).flatMap(({ reference }) => {
@@ -244,19 +265,31 @@ export function ReplyItem({
     void Clipboard.setStringAsync(replyCopyText)
       .then(() => ToastAndroid.show('评论已复制', ToastAndroid.SHORT))
       .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT));
-  }, [expandedQuotes, loadedQuotedReplies, repliesByFloor, reply, reply.contentHtml, replyInstanceKey, source, topicId]);
+  }, [
+    expandedQuotes,
+    loadedQuotedReplies,
+    repliesByFloor,
+    reply,
+    reply.contentHtml,
+    replyInstanceKey,
+    source,
+    topicId
+  ]);
   if (section?.type === 'replyQuoteContent') {
-    const bodyStyle = section.first
-      ? [styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody]
-      : undefined;
+    const bodyStyle = section.first ? [styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody] : undefined;
     return (
       <View
         style={[styles.replyCard, styles.replyCardMiddle]}
         testID={section.measureForMaterialization ? `reply-quote-materialization-${section.key}` : undefined}
-        onLayout={section.measureForMaterialization && onQuoteContentLayout ? () => onQuoteContentLayout({
-          contentToken: section.contentToken,
-          instanceKey: section.instanceKey
-        }) : undefined}
+        onLayout={
+          section.measureForMaterialization && onQuoteContentLayout
+            ? () =>
+                onQuoteContentLayout({
+                  contentToken: section.contentToken,
+                  instanceKey: section.instanceKey
+                })
+            : undefined
+        }
       >
         <View style={styles.replyContentArea}>
           <View
@@ -265,9 +298,11 @@ export function ReplyItem({
               styles.replyQuoteBox,
               section.last ? styles.quoteRowBottom : styles.quoteRowContinuation
             ]}
-            testID={section.first
-              ? `reply-quote-complete-${replyFloor}-${section.reference.topicId}-${section.reference.postNumber}`
-              : undefined}
+            testID={
+              section.first
+                ? `reply-quote-complete-${replyFloor}-${section.reference.topicId}-${section.reference.postNumber}`
+                : undefined
+            }
           >
             <View style={bodyStyle}>
               {section.content.type === 'poll' ? (
@@ -303,21 +338,23 @@ export function ReplyItem({
     );
   }
   const replyUser = userFromReply(reply, source);
-  const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
+  const isTopicAuthorReply = Boolean(
+    reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor)
+  );
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
   const canUseNodeSeekInteractions = reply.canLike !== false;
-  const canUseDiscoursePostActions = isDiscourse && Boolean(
-    canWrite
-    || (canUseDiscourseActions
-      && (reply.canEdit || reply.canDelete || canToggleDiscourseLike(reply)))
-  );
+  const canUseDiscoursePostActions =
+    isDiscourse &&
+    Boolean(
+      canWrite || (canUseDiscourseActions && (reply.canEdit || reply.canDelete || canToggleDiscourseLike(reply)))
+    );
   const discourseReplyReactionStats = isDiscourse
-    ? source === 'linuxdo' ? linuxDoReactionStats(reply, discourseEmojiUrls) : discourseReactionStats(reply, discourseEmojiUrls)
+    ? source === 'linuxdo'
+      ? linuxDoReactionStats(reply, discourseEmojiUrls)
+      : discourseReactionStats(reply, discourseEmojiUrls)
     : [];
   const replyTargetUsername = isDiscourse ? reply.replyTargetUsername : reply.replyTargetAuthor;
-  const replyTargetUser = source && replyTargetUsername
-    ? userReferenceFromUsername(source, replyTargetUsername)
-    : null;
+  const replyTargetUser = source && replyTargetUsername ? userReferenceFromUsername(source, replyTargetUsername) : null;
   if (reply.systemAction) {
     const actionText = systemActionText(reply);
     const author = reply.author || '系统';
@@ -331,7 +368,9 @@ export function ReplyItem({
         <Avatar contentSource={source || null} small name={author} uri={reply.authorAvatar} styles={styles} />
         <View style={styles.replyAuthorBlock}>
           <View style={styles.replyAuthorNameRow}>
-            <Text style={styles.replyAuthor} numberOfLines={1}>{author}</Text>
+            <Text style={styles.replyAuthor} numberOfLines={1}>
+              {author}
+            </Text>
             <Text style={styles.replySystemEventText}>{actionText}</Text>
           </View>
           <Text style={styles.replyTime}>{createdAt}</Text>
@@ -344,12 +383,14 @@ export function ReplyItem({
   const showQuotes = !section || section.type === 'replyQuoteSummary';
   const showTail = !section || section.type === 'replyEnd';
   return (
-    <View style={[
-      styles.replyCard,
-      section?.type === 'replyStart' && styles.replyCardStart,
-      section?.type === 'replyQuoteSummary' && styles.replyCardMiddle,
-      section?.type === 'replyEnd' && styles.replyCardEnd
-    ]}>
+    <View
+      style={[
+        styles.replyCard,
+        section?.type === 'replyStart' && styles.replyCardStart,
+        section?.type === 'replyQuoteSummary' && styles.replyCardMiddle,
+        section?.type === 'replyEnd' && styles.replyCardEnd
+      ]}
+    >
       {showStart ? (
         <>
           {reply.acceptedAnswer ? (
@@ -371,17 +412,33 @@ export function ReplyItem({
             <Avatar contentSource={source || null} small name={reply.author} uri={reply.authorAvatar} styles={styles} />
             <View style={styles.replyAuthorBlock}>
               <View style={styles.replyAuthorNameRow}>
-                <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
-                {reply.authorLevelLabel ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]} numberOfLines={1}>{reply.authorLevelLabel}</Text> : null}
+                <Text style={styles.replyAuthor} numberOfLines={1}>
+                  {reply.author || '未知作者'}
+                </Text>
+                {reply.authorLevelLabel ? (
+                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]} numberOfLines={1}>
+                    {reply.authorLevelLabel}
+                  </Text>
+                ) : null}
                 {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
-                {reply.hot ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text> : null}
-                {reply.pinned ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text> : null}
-                {reply.wiki ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text> : null}
-                {reply.hidden ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text> : null}
-                {reply.folded ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text> : null}
-                {reply.siteExtension?.source === 'linuxdo' && reply.siteExtension.needsApproval
-                  ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text>
-                  : null}
+                {reply.hot ? (
+                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text>
+                ) : null}
+                {reply.pinned ? (
+                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text>
+                ) : null}
+                {reply.wiki ? (
+                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text>
+                ) : null}
+                {reply.hidden ? (
+                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text>
+                ) : null}
+                {reply.folded ? (
+                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text>
+                ) : null}
+                {reply.siteExtension?.source === 'linuxdo' && reply.siteExtension.needsApproval ? (
+                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text>
+                ) : null}
               </View>
               <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
             </View>
@@ -394,257 +451,439 @@ export function ReplyItem({
       ) : null}
       {showQuotes || showTail ? (
         <View style={styles.replyContentArea} testID="reply-content-area">
-        {showQuotes && replyQuotes.length ? (
-          <View style={styles.quoteStack}>
-            {replyQuotes.map((quote, index) => {
-              const { reference } = quote;
-              const key = replyQuotedPostInstanceKey(replyInstanceKey, reference);
-              const quotedReply = section?.type === 'replyQuoteSummary'
-                ? section.quotedReply
-                : replyForQuotedPost(reference, source, topicId, repliesByFloor, loadedQuotedReplies);
-              const quotedAuthorName = quotedReply?.author || quote.author?.label || '未知作者';
-              const quotedUser = quotedReply
-                ? userFromReply(quotedReply, reference.source)
-                : quote.author?.username
-                  ? userReferenceFromUsername(reference.source, quote.author.username, quote.author.label)
-                  : null;
-              const quotedTopic = reference.source !== source || reference.topicId !== topicId
-                ? topicForQuotedPost(quote, topicBaseUrl)
-                : null;
-              const expanded = section?.type === 'replyQuoteSummary'
-                ? section.expanded
-                : Boolean(expandedQuotes[key]);
-              const loading = section?.type === 'replyQuoteSummary'
-                ? section.loading
-                : Boolean(loadingQuotedFloors[key]);
-              const completeQuotedPost = !section && expanded ? quotedReply : undefined;
-              const hasVirtualContent = section?.type === 'replyQuoteSummary' && section.hasContent;
-              return (
-                <View
-                  key={getMappingKey(key, index)}
-                  style={[styles.quoteBox, styles.replyQuoteBox, hasVirtualContent && styles.quoteRowTop]}
-                  testID={`reply-quote-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
-                >
-                  <View style={styles.quoteHeader}>
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={!quotedUser}
-                      style={styles.quoteAuthorSummary}
-                      onPress={() => {
-                        if (quotedUser) {
-                          onOpenUser(quotedUser);
-                        }
-                      }}
-                    >
-                      <Avatar contentSource={reference.source} small name={quotedAuthorName} uri={quotedReply?.authorAvatar} styles={styles} />
-                      <View style={styles.quoteAuthorTextBlock}>
-                        <Text style={styles.quoteAuthorText} numberOfLines={1}>{quotedAuthorName}</Text>
-                        <Text style={styles.replyMeta}>引用 #{reference.postNumber}</Text>
-                      </View>
-                    </Pressable>
-                    <AppButton
-                      compact
-                      label={loading ? '读取' : expanded ? '收起' : '展开'}
-                      variant="ghost"
-                      styles={styles}
-                      disabled={loading}
-                      onPress={() => onToggleReplyQuote({
-                        replyKey: replyInstanceKey,
-                        reference,
-                        quotedReply
-                      })}
-                    />
-                  </View>
-                  {quotedTopic ? (
-                    <Pressable
-                      accessibilityRole="link"
-                      style={styles.quoteTopicLink}
-                      onPress={() => onOpenTopic(quotedTopic)}
-                    >
-                      <Text style={styles.quoteTopicLinkText} numberOfLines={2}>{quotedTopic.title}</Text>
-                    </Pressable>
-                  ) : null}
-                  {quote.preview && !hasVirtualContent && !completeQuotedPost ? (
-                    <Text style={styles.quotePreviewText} testID={`reply-quote-preview-${replyFloor}-${reference.topicId}-${reference.postNumber}`}>
-                      {quote.preview}
-                    </Text>
-                  ) : null}
-                  {completeQuotedPost ? (
-                    <View
-                      style={[styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody]}
-                      testID={`reply-quote-complete-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
-                    >
-                      {(isDiscourse
-                        ? splitDiscourseContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
-                        : [{ type: 'html' as const, html: completeQuotedPost.contentHtml }]
-                      ).map((part) => part.type === 'poll' ? (
-                        <TopicPolls
-                          embeddedInArticle
-                          key={`quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
-                          actionBusy={actionBusy}
-                          canWritePollSource={false}
-                          keyPrefix={`quote-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
-                          onTogglePollSelection={onTogglePollSelection}
-                          onVotePoll={onVotePoll}
-                          pollSelections={pollSelections}
-                          polls={[part.poll]}
-                          source={source}
+          {showQuotes && replyQuotes.length ? (
+            <View style={styles.quoteStack}>
+              {replyQuotes.map((quote, index) => {
+                const { reference } = quote;
+                const key = replyQuotedPostInstanceKey(replyInstanceKey, reference);
+                const quotedReply =
+                  section?.type === 'replyQuoteSummary'
+                    ? section.quotedReply
+                    : replyForQuotedPost(reference, source, topicId, repliesByFloor, loadedQuotedReplies);
+                const quotedAuthorName = quotedReply?.author || quote.author?.label || '未知作者';
+                const quotedUser = quotedReply
+                  ? userFromReply(quotedReply, reference.source)
+                  : quote.author?.username
+                    ? userReferenceFromUsername(reference.source, quote.author.username, quote.author.label)
+                    : null;
+                const quotedTopic =
+                  reference.source !== source || reference.topicId !== topicId
+                    ? topicForQuotedPost(quote, topicBaseUrl)
+                    : null;
+                const expanded =
+                  section?.type === 'replyQuoteSummary' ? section.expanded : Boolean(expandedQuotes[key]);
+                const loading =
+                  section?.type === 'replyQuoteSummary' ? section.loading : Boolean(loadingQuotedFloors[key]);
+                const completeQuotedPost = !section && expanded ? quotedReply : undefined;
+                const hasVirtualContent = section?.type === 'replyQuoteSummary' && section.hasContent;
+                return (
+                  <View
+                    key={getMappingKey(key, index)}
+                    style={[styles.quoteBox, styles.replyQuoteBox, hasVirtualContent && styles.quoteRowTop]}
+                    testID={`reply-quote-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
+                  >
+                    <View style={styles.quoteHeader}>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={!quotedUser}
+                        style={styles.quoteAuthorSummary}
+                        onPress={() => {
+                          if (quotedUser) {
+                            onOpenUser(quotedUser);
+                          }
+                        }}
+                      >
+                        <Avatar
+                          contentSource={reference.source}
+                          small
+                          name={quotedAuthorName}
+                          uri={quotedReply?.authorAvatar}
                           styles={styles}
-                          theme={theme}
                         />
-                      ) : (
-                        <Pressable key={`quote-html-${stableTextHash(part.html)}`} delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
-                          <MemoizedTopicContentBlock
-                            baseUrl={topicBaseUrl}
-                            compact
-                            contentWidth={Math.max(220, replyContentWidth - 24)}
-                            inlineSizedImageUrls={inlineSizedImageUrls}
-                            html={part.html}
-                            topicImageDeriver={topicImageDeriver}
-                          />
-                        </Pressable>
-                      ))}
+                        <View style={styles.quoteAuthorTextBlock}>
+                          <Text style={styles.quoteAuthorText} numberOfLines={1}>
+                            {quotedAuthorName}
+                          </Text>
+                          <Text style={styles.replyMeta}>引用 #{reference.postNumber}</Text>
+                        </View>
+                      </Pressable>
+                      <AppButton
+                        compact
+                        label={loading ? '读取' : expanded ? '收起' : '展开'}
+                        variant="ghost"
+                        styles={styles}
+                        disabled={loading}
+                        onPress={() =>
+                          onToggleReplyQuote({
+                            replyKey: replyInstanceKey,
+                            reference,
+                            quotedReply
+                          })
+                        }
+                      />
                     </View>
+                    {quotedTopic ? (
+                      <Pressable
+                        accessibilityRole="link"
+                        style={styles.quoteTopicLink}
+                        onPress={() => onOpenTopic(quotedTopic)}
+                      >
+                        <Text style={styles.quoteTopicLinkText} numberOfLines={2}>
+                          {quotedTopic.title}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    {quote.preview && !hasVirtualContent && !completeQuotedPost ? (
+                      <Text
+                        style={styles.quotePreviewText}
+                        testID={`reply-quote-preview-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
+                      >
+                        {quote.preview}
+                      </Text>
+                    ) : null}
+                    {completeQuotedPost ? (
+                      <View
+                        style={[styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody]}
+                        testID={`reply-quote-complete-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
+                      >
+                        {(isDiscourse
+                          ? splitDiscourseContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
+                          : [{ type: 'html' as const, html: completeQuotedPost.contentHtml }]
+                        ).map((part) =>
+                          part.type === 'poll' ? (
+                            <TopicPolls
+                              embeddedInArticle
+                              key={`quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
+                              actionBusy={actionBusy}
+                              canWritePollSource={false}
+                              keyPrefix={`quote-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
+                              onTogglePollSelection={onTogglePollSelection}
+                              onVotePoll={onVotePoll}
+                              pollSelections={pollSelections}
+                              polls={[part.poll]}
+                              source={source}
+                              styles={styles}
+                              theme={theme}
+                            />
+                          ) : (
+                            <Pressable
+                              key={`quote-html-${stableTextHash(part.html)}`}
+                              delayLongPress={450}
+                              onLongPress={copyReplyTextToClipboard}
+                            >
+                              <MemoizedTopicContentBlock
+                                baseUrl={topicBaseUrl}
+                                compact
+                                contentWidth={Math.max(220, replyContentWidth - 24)}
+                                inlineSizedImageUrls={inlineSizedImageUrls}
+                                html={part.html}
+                                topicImageDeriver={topicImageDeriver}
+                              />
+                            </Pressable>
+                          )
+                        )}
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+          {showTail ? (
+            <>
+              {reply.replyTargetAuthor ? (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!replyTargetUser}
+                  hitSlop={12}
+                  style={styles.replyTargetPill}
+                  onPress={() => {
+                    if (replyTargetUser) {
+                      onOpenUser(replyTargetUser);
+                    }
+                  }}
+                >
+                  <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
+                </Pressable>
+              ) : null}
+              {isDiscourse ? (
+                <View style={styles.replyBody}>
+                  {discourseContentParts.map((part, index) =>
+                    part.type === 'poll' ? (
+                      <TopicPolls
+                        key={`poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
+                        actionBusy={actionBusy}
+                        canWritePollSource={canUseDiscourseActions}
+                        keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
+                        onTogglePollSelection={onTogglePollSelection}
+                        onVotePoll={onVotePoll}
+                        pollSelections={pollSelections}
+                        polls={[part.poll]}
+                        source={source}
+                        styles={styles}
+                        theme={theme}
+                      />
+                    ) : (
+                      <Pressable
+                        key={`html-${stableTextHash(part.html)}`}
+                        delayLongPress={450}
+                        onLongPress={copyReplyTextToClipboard}
+                      >
+                        <MemoizedTopicContentBlock
+                          baseUrl={topicBaseUrl}
+                          compact
+                          contentWidth={replyContentWidth}
+                          inlineSizedImageUrls={inlineSizedImageUrls}
+                          html={part.html}
+                          trimTrailingBlockSpacing={index === discourseContentParts.length - 1}
+                          topicImageDeriver={topicImageDeriver}
+                        />
+                      </Pressable>
+                    )
+                  )}
+                </View>
+              ) : (
+                <>
+                  <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
+                    <MemoizedTopicContentBlock
+                      baseUrl={topicBaseUrl}
+                      compact
+                      contentWidth={replyContentWidth}
+                      inlineSizedImageUrls={inlineSizedImageUrls}
+                      html={highlightedHtml}
+                      trimTrailingBlockSpacing
+                      topicImageDeriver={topicImageDeriver}
+                    />
+                  </Pressable>
+                  <TopicPolls
+                    actionBusy={actionBusy}
+                    canWritePollSource={false}
+                    keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
+                    onTogglePollSelection={onTogglePollSelection}
+                    onVotePoll={onVotePoll}
+                    pollSelections={pollSelections}
+                    polls={reply.polls || []}
+                    source={source}
+                    styles={styles}
+                    theme={theme}
+                  />
+                </>
+              )}
+              {reply.signatureHtml ? (
+                <View style={styles.replySignature}>
+                  <MemoizedTopicContentBlock
+                    baseUrl={topicBaseUrl}
+                    compact
+                    contentWidth={replyContentWidth}
+                    inlineSizedImageUrls={inlineSizedImageUrls}
+                    html={reply.signatureHtml}
+                    trimTrailingBlockSpacing
+                    topicImageDeriver={topicImageDeriver}
+                  />
+                </View>
+              ) : null}
+              {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
+                <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
+              ) : null}
+              {isDiscourse && discourseReplyReactionStats.length ? (
+                <View style={styles.replyStatRail}>
+                  {discourseReplyReactionStats.map((stat, index) => (
+                    <DiscourseReactionPill
+                      compact
+                      contentSource={source || null}
+                      key={getMappingKey(stat.id, index)}
+                      stat={stat}
+                      styles={styles}
+                    />
+                  ))}
+                </View>
+              ) : null}
+              {reply.acceptedAnswer ? (
+                <View accessible accessibilityLabel="解决方案" style={styles.replyAcceptedSolution}>
+                  <CheckCircle color={theme.primary} size={16} strokeWidth={2.2} />
+                  <Text style={styles.replyAcceptedSolutionText}>解决方案</Text>
+                </View>
+              ) : null}
+              {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (
+                <View style={styles.replyStatRail}>
+                  {nodeSeekReplyReactionStats.map((stat, index) => (
+                    <NodeSeekStatPill
+                      compact
+                      key={getMappingKey(stat.label, index)}
+                      label={stat.label}
+                      value={stat.value}
+                      styles={styles}
+                    />
+                  ))}
+                </View>
+              ) : null}
+              {canWrite && source === 'nodeseek' ? (
+                <View style={styles.replyActionRow}>
+                  <DetailActionButton
+                    alignStart
+                    compact
+                    accessibilityLabel="回复"
+                    icon={MessageCircle}
+                    label="回复"
+                    styles={styles}
+                    theme={theme}
+                    disabled={actionBusy}
+                    onPress={() => onReplyToFloor(reply)}
+                  />
+                  {reply.canEdit ? (
+                    <DetailActionButton
+                      alignStart
+                      compact
+                      accessibilityLabel="编辑回复"
+                      icon={Pencil}
+                      label="编辑"
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onEditReply(reply)}
+                    />
+                  ) : canUseNodeSeekInteractions ? (
+                    <DetailActionButton
+                      alignStart
+                      compact
+                      active={Boolean(reply.upvoted)}
+                      tone="success"
+                      accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'}
+                      count={reply.upvoteCount}
+                      icon={ThumbsUp}
+                      label="赞"
+                      pending={isActionPending(reply.commentId, 'upvote')}
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onInteract('upvote', reply.commentId)}
+                    />
+                  ) : (
+                    <NodeSeekActionPlaceholder styles={styles} />
+                  )}
+                  {canUseNodeSeekInteractions ? (
+                    <DetailActionButton
+                      alignStart
+                      compact
+                      active={Boolean(reply.liked)}
+                      tone="warning"
+                      accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'}
+                      count={reply.likeCount}
+                      icon={Drumstick}
+                      label="鸡腿"
+                      pending={isActionPending(reply.commentId, 'like')}
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onInteract('like', reply.commentId)}
+                    />
+                  ) : (
+                    <NodeSeekActionPlaceholder styles={styles} />
+                  )}
+                  {canUseNodeSeekInteractions ? (
+                    <DetailActionButton
+                      alignStart
+                      compact
+                      active={Boolean(reply.disliked)}
+                      tone="danger"
+                      accessibilityLabel={reply.disliked ? '已反对' : '反对'}
+                      count={reply.dislikeCount}
+                      icon={ThumbsDown}
+                      label="反对"
+                      pending={isActionPending(reply.commentId, 'dislike')}
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onInteract('dislike', reply.commentId)}
+                    />
+                  ) : (
+                    <NodeSeekActionPlaceholder styles={styles} />
+                  )}
+                </View>
+              ) : null}
+              {canWrite && source === 'yaohuo' ? (
+                <View style={styles.replyActionRow}>
+                  <DetailActionButton
+                    alignStart
+                    accessibilityLabel="回复"
+                    icon={MessageCircle}
+                    label="回复"
+                    styles={styles}
+                    theme={theme}
+                    disabled={actionBusy}
+                    onPress={() => onReplyToFloor(reply)}
+                  />
+                  {reply.canDelete ? (
+                    <DetailActionButton
+                      alignStart
+                      accessibilityLabel="删除回复"
+                      icon={Trash2}
+                      label="删除"
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onDeleteReply(reply)}
+                    />
                   ) : null}
                 </View>
-              );
-            })}
-          </View>
-        ) : null}
-        {showTail ? (
-          <>
-        {reply.replyTargetAuthor ? (
-          <Pressable
-            accessibilityRole="button"
-            disabled={!replyTargetUser}
-            hitSlop={12}
-            style={styles.replyTargetPill}
-            onPress={() => {
-              if (replyTargetUser) {
-                onOpenUser(replyTargetUser);
-              }
-            }}
-          >
-            <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
-          </Pressable>
-        ) : null}
-        {isDiscourse ? (
-          <View style={styles.replyBody}>
-            {discourseContentParts.map((part, index) => part.type === 'poll' ? (
-              <TopicPolls
-                key={`poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
-                actionBusy={actionBusy}
-                canWritePollSource={canUseDiscourseActions}
-                keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
-                onTogglePollSelection={onTogglePollSelection}
-                onVotePoll={onVotePoll}
-                pollSelections={pollSelections}
-                polls={[part.poll]}
-                source={source}
-                styles={styles}
-                theme={theme}
-              />
-            ) : (
-              <Pressable key={`html-${stableTextHash(part.html)}`} delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
-                <MemoizedTopicContentBlock
-                  baseUrl={topicBaseUrl}
-                  compact
-                  contentWidth={replyContentWidth}
-                  inlineSizedImageUrls={inlineSizedImageUrls}
-                  html={part.html}
-                  trimTrailingBlockSpacing={index === discourseContentParts.length - 1}
-                  topicImageDeriver={topicImageDeriver}
-                />
-              </Pressable>
-            ))}
-          </View>
-        ) : (
-          <>
-            <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
-              <MemoizedTopicContentBlock
-                baseUrl={topicBaseUrl}
-                compact
-                contentWidth={replyContentWidth}
-                inlineSizedImageUrls={inlineSizedImageUrls}
-                html={highlightedHtml}
-                trimTrailingBlockSpacing
-                topicImageDeriver={topicImageDeriver}
-              />
-            </Pressable>
-            <TopicPolls
-              actionBusy={actionBusy}
-              canWritePollSource={false}
-              keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
-              onTogglePollSelection={onTogglePollSelection}
-              onVotePoll={onVotePoll}
-              pollSelections={pollSelections}
-              polls={reply.polls || []}
-              source={source}
-              styles={styles}
-              theme={theme}
-            />
-          </>
-        )}
-        {reply.signatureHtml ? (
-          <View style={styles.replySignature}>
-            <MemoizedTopicContentBlock
-              baseUrl={topicBaseUrl}
-              compact
-              contentWidth={replyContentWidth}
-              inlineSizedImageUrls={inlineSizedImageUrls}
-              html={reply.signatureHtml}
-              trimTrailingBlockSpacing
-              topicImageDeriver={topicImageDeriver}
-            />
-          </View>
-        ) : null}
-        {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
-          <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
-        ) : null}
-        {isDiscourse && discourseReplyReactionStats.length ? (
-          <View style={styles.replyStatRail}>
-            {discourseReplyReactionStats.map((stat, index) => (
-              <DiscourseReactionPill compact contentSource={source || null} key={getMappingKey(stat.id, index)} stat={stat} styles={styles} />
-            ))}
-          </View>
-        ) : null}
-        {reply.acceptedAnswer ? (
-          <View accessible accessibilityLabel="解决方案" style={styles.replyAcceptedSolution}>
-            <CheckCircle color={theme.primary} size={16} strokeWidth={2.2} />
-            <Text style={styles.replyAcceptedSolutionText}>解决方案</Text>
-          </View>
-        ) : null}
-        {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (
-          <View style={styles.replyStatRail}>
-            {nodeSeekReplyReactionStats.map((stat, index) => (
-              <NodeSeekStatPill compact key={getMappingKey(stat.label, index)} label={stat.label} value={stat.value} styles={styles} />
-            ))}
-          </View>
-        ) : null}
-        {canWrite && source === 'nodeseek' ? (
-          <View style={styles.replyActionRow}>
-            <DetailActionButton alignStart compact accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            {reply.canEdit ? <DetailActionButton alignStart compact accessibilityLabel="编辑回复" icon={Pencil} label="编辑" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onEditReply(reply)} /> : canUseNodeSeekInteractions ? <DetailActionButton alignStart compact active={Boolean(reply.upvoted)} tone="success" accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'} count={reply.upvoteCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} /> : <NodeSeekActionPlaceholder styles={styles} />}
-            {canUseNodeSeekInteractions ? <DetailActionButton alignStart compact active={Boolean(reply.liked)} tone="warning" accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'} count={reply.likeCount} icon={Drumstick} label="鸡腿" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} /> : <NodeSeekActionPlaceholder styles={styles} />}
-            {canUseNodeSeekInteractions ? <DetailActionButton alignStart compact active={Boolean(reply.disliked)} tone="danger" accessibilityLabel={reply.disliked ? '已反对' : '反对'} count={reply.dislikeCount} icon={ThumbsDown} label="反对" pending={isActionPending(reply.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} /> : <NodeSeekActionPlaceholder styles={styles} />}
-          </View>
-        ) : null}
-        {canWrite && source === 'yaohuo' ? (
-          <View style={styles.replyActionRow}>
-            <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            {reply.canDelete ? <DetailActionButton alignStart accessibilityLabel="删除回复" icon={Trash2} label="删除" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onDeleteReply(reply)} /> : null}
-          </View>
-        ) : null}
-        {canUseDiscoursePostActions ? (
-          <View style={styles.replyActionRow}>
-            {canWrite ? <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} /> : null}
-            {reply.canEdit ? <DetailActionButton alignStart accessibilityLabel="编辑回复" icon={Pencil} label="编辑" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onEditReply(reply)} /> : null}
-            {canToggleDiscourseLike(reply) ? <DetailActionButton alignStart active={Boolean(reply.liked)} tone="success" accessibilityLabel={reply.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} /> : null}
-            {reply.canDelete ? <DetailActionButton alignStart accessibilityLabel="删除回复" icon={Trash2} label="删除" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onDeleteReply(reply)} /> : null}
-          </View>
-        ) : null}
-          </>
-        ) : null}
+              ) : null}
+              {canUseDiscoursePostActions ? (
+                <View style={styles.replyActionRow}>
+                  {canWrite ? (
+                    <DetailActionButton
+                      alignStart
+                      accessibilityLabel="回复"
+                      icon={MessageCircle}
+                      label="回复"
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onReplyToFloor(reply)}
+                    />
+                  ) : null}
+                  {reply.canEdit ? (
+                    <DetailActionButton
+                      alignStart
+                      accessibilityLabel="编辑回复"
+                      icon={Pencil}
+                      label="编辑"
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onEditReply(reply)}
+                    />
+                  ) : null}
+                  {canToggleDiscourseLike(reply) ? (
+                    <DetailActionButton
+                      alignStart
+                      active={Boolean(reply.liked)}
+                      tone="success"
+                      accessibilityLabel={reply.liked ? '取消赞' : '点赞'}
+                      icon={ThumbsUp}
+                      label="赞"
+                      pending={isActionPending(reply.commentId, 'like')}
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onInteract('like', reply.commentId)}
+                    />
+                  ) : null}
+                  {reply.canDelete ? (
+                    <DetailActionButton
+                      alignStart
+                      accessibilityLabel="删除回复"
+                      icon={Trash2}
+                      label="删除"
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onDeleteReply(reply)}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+            </>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -655,65 +894,63 @@ function sameReplyItemSection(previous: ReplyItemSection | undefined, next: Repl
   if (previous === next) return true;
   if (!previous || !next || previous.type !== next.type || previous.key !== next.key) return false;
   if (previous.type === 'replyQuoteSummary' && next.type === 'replyQuoteSummary') {
-    return previous.quote === next.quote
-      && previous.quotedReply === next.quotedReply
-      && previous.expanded === next.expanded
-      && previous.loading === next.loading
-      && previous.hasContent === next.hasContent;
+    return (
+      previous.quote === next.quote &&
+      previous.quotedReply === next.quotedReply &&
+      previous.expanded === next.expanded &&
+      previous.loading === next.loading &&
+      previous.hasContent === next.hasContent
+    );
   }
   if (previous.type === 'replyQuoteContent' && next.type === 'replyQuoteContent') {
-    return previous.first === next.first
-      && previous.last === next.last
-      && previous.contentToken === next.contentToken
-      && previous.measureForMaterialization === next.measureForMaterialization
-      && previous.content.type === next.content.type
-      && (previous.content.type === 'html' && next.content.type === 'html'
+    return (
+      previous.first === next.first &&
+      previous.last === next.last &&
+      previous.contentToken === next.contentToken &&
+      previous.measureForMaterialization === next.measureForMaterialization &&
+      previous.content.type === next.content.type &&
+      (previous.content.type === 'html' && next.content.type === 'html'
         ? previous.content.html === next.content.html
         : previous.content.type === 'poll' && next.content.type === 'poll'
           ? previous.content.poll === next.content.poll
-          : false);
+          : false)
+    );
   }
   return true;
 }
 
 export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   if (
-    previous.actionBusy !== next.actionBusy
-    || previous.canUseDiscourseActions !== next.canUseDiscourseActions
-    || previous.canWrite !== next.canWrite
-    || previous.contentWidth !== next.contentWidth
-    || previous.isActionPending !== next.isActionPending
-    || previous.isNew !== next.isNew
-    || previous.discourseEmojiUrls !== next.discourseEmojiUrls
-    || previous.onDeleteReply !== next.onDeleteReply
-    || previous.onEditReply !== next.onEditReply
-    || previous.onInteract !== next.onInteract
-    || previous.onOpenTopic !== next.onOpenTopic
-    || previous.onOpenUser !== next.onOpenUser
-    || previous.onQuoteContentLayout !== next.onQuoteContentLayout
-    || previous.onReplyToFloor !== next.onReplyToFloor
-    || previous.onTogglePollSelection !== next.onTogglePollSelection
-    || previous.onToggleReplyQuote !== next.onToggleReplyQuote
-    || previous.onVotePoll !== next.onVotePoll
-    || previous.pollSelections !== next.pollSelections
-    || previous.query !== next.query
-    || previous.replyFloor !== next.replyFloor
-    || !sameReplyItemSection(previous.section, next.section)
-    || previous.source !== next.source
-    || previous.styles !== next.styles
-    || previous.theme !== next.theme
-    || previous.topicAuthor !== next.topicAuthor
-    || previous.topicBaseUrl !== next.topicBaseUrl
-    || previous.topicId !== next.topicId
-    || previous.topicImageDeriver !== next.topicImageDeriver
-    || (next.section?.type === 'replyQuoteContent'
-      && previous.inlineSizedImageUrls !== next.inlineSizedImageUrls)
-    || !sameInlineSizedImagesForReply(
-      previous.reply,
-      next.reply,
-      previous.inlineSizedImageUrls,
-      next.inlineSizedImageUrls
-    )
+    previous.actionBusy !== next.actionBusy ||
+    previous.canUseDiscourseActions !== next.canUseDiscourseActions ||
+    previous.canWrite !== next.canWrite ||
+    previous.contentWidth !== next.contentWidth ||
+    previous.isActionPending !== next.isActionPending ||
+    previous.isNew !== next.isNew ||
+    previous.discourseEmojiUrls !== next.discourseEmojiUrls ||
+    previous.onDeleteReply !== next.onDeleteReply ||
+    previous.onEditReply !== next.onEditReply ||
+    previous.onInteract !== next.onInteract ||
+    previous.onOpenTopic !== next.onOpenTopic ||
+    previous.onOpenUser !== next.onOpenUser ||
+    previous.onQuoteContentLayout !== next.onQuoteContentLayout ||
+    previous.onReplyToFloor !== next.onReplyToFloor ||
+    previous.onTogglePollSelection !== next.onTogglePollSelection ||
+    previous.onToggleReplyQuote !== next.onToggleReplyQuote ||
+    previous.onVotePoll !== next.onVotePoll ||
+    previous.pollSelections !== next.pollSelections ||
+    previous.query !== next.query ||
+    previous.replyFloor !== next.replyFloor ||
+    !sameReplyItemSection(previous.section, next.section) ||
+    previous.source !== next.source ||
+    previous.styles !== next.styles ||
+    previous.theme !== next.theme ||
+    previous.topicAuthor !== next.topicAuthor ||
+    previous.topicBaseUrl !== next.topicBaseUrl ||
+    previous.topicId !== next.topicId ||
+    previous.topicImageDeriver !== next.topicImageDeriver ||
+    (next.section?.type === 'replyQuoteContent' && previous.inlineSizedImageUrls !== next.inlineSizedImageUrls) ||
+    !sameInlineSizedImagesForReply(previous.reply, next.reply, previous.inlineSizedImageUrls, next.inlineSizedImageUrls)
   ) {
     return false;
   }
@@ -722,10 +959,15 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     const previousKey = replyQuotedPostInstanceKey(getReplyKey(previous.reply), reference);
     const nextKey = replyQuotedPostInstanceKey(getReplyKey(next.reply), reference);
     if (
-      Boolean(previous.expandedQuotes[previousKey]) !== Boolean(next.expandedQuotes[nextKey])
-      || Boolean(previous.loadingQuotedFloors[previousKey]) !== Boolean(next.loadingQuotedFloors[nextKey])
-      || replyForQuotedPost(reference, previous.source, previous.topicId, previous.repliesByFloor, previous.loadedQuotedReplies)
-        !== replyForQuotedPost(reference, next.source, next.topicId, next.repliesByFloor, next.loadedQuotedReplies)
+      Boolean(previous.expandedQuotes[previousKey]) !== Boolean(next.expandedQuotes[nextKey]) ||
+      Boolean(previous.loadingQuotedFloors[previousKey]) !== Boolean(next.loadingQuotedFloors[nextKey]) ||
+      replyForQuotedPost(
+        reference,
+        previous.source,
+        previous.topicId,
+        previous.repliesByFloor,
+        previous.loadedQuotedReplies
+      ) !== replyForQuotedPost(reference, next.source, next.topicId, next.repliesByFloor, next.loadedQuotedReplies)
     ) {
       return false;
     }
