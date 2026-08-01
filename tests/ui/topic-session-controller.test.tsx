@@ -10,13 +10,14 @@ import {
 } from '../../src/app/serverState';
 import { useTopicController } from '../../src/app/useTopicController';
 import { useTopicSessionController } from '../../src/app/useTopicSessionController';
+import { executeTopicReturnStrategy } from '../../src/app/backHandlerHelpers';
 import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
 import { LinuxDoCloudflareError } from '../../src/cloudflareChallenge';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
 import { createEmptyReaderData } from '../../src/readerData';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
-import type { Screen } from '../../src/appTypes';
+import type { Screen, TopicSnapshot } from '../../src/appTypes';
 import type { Reply, Topic, TopicDetail } from '../../src/types';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
@@ -59,18 +60,74 @@ describe('topic route sessions', () => {
     expect(routeHandled).toBe(true);
     expect(hook.result.current.state.replyContent).toBe('current draft');
   });
+
+  it('[REG-PERF-008] dispatches native pop before restoring the previous Topic session', async () => {
+    const secondTopic: Topic = {
+      ...firstTopic,
+      id: '2',
+      title: 'Still loading',
+      url: 'https://www.nodeseek.com/post-2-1'
+    };
+    const hook = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn() }));
+
+    await act(async () => {
+      hook.result.current.commands.topic.select(firstTopic);
+      hook.result.current.commands.navigation.activateRoute('topic-route-1');
+      hook.result.current.commands.composer.changeContent('first draft');
+    });
+    await act(async () => {
+      hook.result.current.commands.navigation.saveRoute('topic-route-1');
+      hook.result.current.commands.navigation.pushBackStack(hook.result.current.snapshot(), secondTopic);
+      hook.result.current.commands.topic.select(secondTopic);
+      hook.result.current.commands.navigation.activateRoute('topic-route-2');
+      hook.result.current.commands.composer.changeContent('loading draft');
+    });
+
+    const fallbackSnapshot = hook.result.current.commands.navigation.popBackStack();
+    const calls: string[] = [];
+    await act(async () => {
+      executeTopicReturnStrategy({
+        canGoBack: true,
+        strategy: 'route-pop',
+        goBack: () => calls.push('pop'),
+        restoreReturningRoute: () => {
+          calls.push('restore-route');
+          return hook.result.current.commands.navigation.restoreRoute('topic-route-1');
+        },
+        restoreSnapshot: () => {
+          calls.push('restore-fallback');
+          if (fallbackSnapshot) hook.result.current.restore(fallbackSnapshot);
+        },
+        returnToScreen: () => calls.push('return-screen')
+      });
+    });
+
+    expect(calls).toEqual(['pop', 'restore-route']);
+    expect(hook.result.current.state.selectedTopic).toEqual(firstTopic);
+    expect(hook.result.current.state.replyContent).toBe('first draft');
+
+    await act(async () => {
+      hook.result.current.commands.composer.changeContent('current draft');
+      hook.result.current.commands.navigation.restoreRoute('topic-route-1');
+    });
+    expect(hook.result.current.state.replyContent).toBe('current draft');
+  });
 });
 
 function renderTopicController({
+  getCurrentTopicRouteKey = () => null,
   getIdentityBarriers = () => [],
   getSessionEpochs = () => initialForumSessionEpochs,
   notify = jest.fn(),
+  onPushTopicScreen,
   sourceGateway,
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
 }: {
+  getCurrentTopicRouteKey?: () => string | null;
   getIdentityBarriers?: () => ForumIdentityBarrierSource[];
   getSessionEpochs?: () => ForumSessionEpochs;
   notify?: (message: string) => void;
+  onPushTopicScreen?: (topic: Topic, snapshot: TopicSnapshot) => void;
   sourceGateway: Partial<SourceGateway>;
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
 }) {
@@ -88,7 +145,13 @@ function renderTopicController({
       getCurrentScreen: () => screenRef.current,
       notify,
       onNodeSeekTopicVerificationRequired: jest.fn(),
-      pushTopicScreen: jest.fn(),
+      pushTopicScreen: jest.fn<(_topic: Topic) => boolean>((_topic) => {
+        const routeKey = getCurrentTopicRouteKey();
+        if (routeKey) session.commands.navigation.saveRoute(routeKey);
+        onPushTopicScreen?.(_topic, session.snapshot());
+        setScreen('topic');
+        return true;
+      }),
       readerData,
       readerDataRef: { current: readerData },
       reopenExistingTopicScreenRef: { current: false },
@@ -145,6 +208,44 @@ describe('topic query controller', () => {
 
     await waitFor(() => expect(firstSignal?.aborted).toBe(true));
     await waitFor(() => expect(hook.result.current.controller.topicDetail?.id).toBe('2'));
+  });
+
+  it('[REG-PERF-008] saves the current route identity before selecting a nested Topic', async () => {
+    const secondTopic = { ...firstTopic, id: '2', title: 'Second', url: 'https://www.nodeseek.com/post-2-1' };
+    const pushedSnapshots: TopicSnapshot[] = [];
+    let currentRouteKey: string | null = null;
+    const hook = await renderTopicController({
+      getCurrentTopicRouteKey: () => currentRouteKey,
+      onPushTopicScreen: (_topic, snapshot) => pushedSnapshots.push(snapshot),
+      sourceGateway: { getTopic: jest.fn<SourceGateway['getTopic']>(async ({ id }) => (
+        id === firstTopic.id ? firstDetail : { ...firstDetail, ...secondTopic }
+      )) }
+    });
+
+    await act(async () => { await hook.result.current.controller.openTopic(firstTopic); });
+    currentRouteKey = 'topic-route-a';
+    await act(async () => {
+      hook.result.current.session.commands.navigation.activateRoute(currentRouteKey!);
+      hook.result.current.session.commands.composer.changeContent('A draft');
+    });
+    await waitFor(() => expect(hook.result.current.session.state.replyContent).toBe('A draft'));
+    await act(async () => { await hook.result.current.controller.openTopic(secondTopic); });
+
+    expect(pushedSnapshots[1]).toMatchObject({
+      key: 'nodeseek:1',
+      selectedTopic: firstTopic,
+      replyContent: 'A draft'
+    });
+
+    currentRouteKey = 'topic-route-b';
+    await act(async () => {
+      hook.result.current.session.commands.navigation.activateRoute(currentRouteKey!);
+      expect(hook.result.current.session.commands.navigation.restoreRoute('topic-route-a')).toBe(true);
+    });
+    currentRouteKey = 'topic-route-a';
+    await act(async () => { await hook.result.current.controller.openTopic(secondTopic); });
+
+    expect(pushedSnapshots).toHaveLength(3);
   });
 
   it('isolates cached detail when the credential scope changes', async () => {
@@ -758,7 +859,7 @@ describe('topic query controller', () => {
     await appQueryClient.cancelQueries({ queryKey: unrelatedKey, exact: true });
   });
 
-  it('[REG-TOPIC-007] deduplicates concurrent quote observers through one exact Query key', async () => {
+  it('[REG-TOPIC-007][REG-TOPIC-053] deduplicates cross-topic reply quotes by their complete reference', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const quoted: Reply = { author: 'carol', floor: 2, contentHtml: '<p>quoted</p>', createdAt: '' };
@@ -770,26 +871,143 @@ describe('topic query controller', () => {
         getReply
       }
     });
-    const options = {
-      instanceKey: 'topic:1:linuxdo:1:2',
-      reference: { source: 'linuxdo' as const, topicId: '1', postNumber: 2 }
-    };
+    const reference = { source: 'linuxdo' as const, topicId: '2679944', postNumber: 2 };
 
     await act(async () => { await hook.result.current.controller.openTopic(linuxTopic); });
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(linuxDetail));
     await act(async () => {
       await Promise.all([
-        hook.result.current.controller.toggleTopicBodyQuote(options),
-        hook.result.current.controller.toggleTopicBodyQuote(options)
+        hook.result.current.controller.toggleReplyQuote({ replyKey: 'comment:30', reference }),
+        hook.result.current.controller.toggleReplyQuote({ replyKey: 'comment:80', reference })
       ]);
     });
     await waitFor(() => expect(getReply).toHaveBeenCalledTimes(1));
+    expect(getReply).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'linuxdo',
+      id: '2679944',
+      floor: 2
+    }), expect.any(Object));
     await act(async () => {
       pending.resolve(quoted);
       await pending.promise;
     });
 
-    await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:1:2']).toEqual(quoted));
+    await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:2679944:2']).toEqual(quoted));
+    expect(hook.result.current.session.state.expandedQuotes).toMatchObject({
+      'reply:comment:30:linuxdo:2679944:2': true,
+      'reply:comment:80:linuxdo:2679944:2': true
+    });
+    expect(getReply).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-054] reuses a cached target opening post when expanding its quote', async () => {
+    const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/topic/2685882' };
+    const linuxDetail = { ...firstDetail, ...linuxTopic };
+    const cachedTarget: TopicDetail = {
+      source: 'linuxdo',
+      id: '342888',
+      title: '盘点 L 站的徽章',
+      author: 'Jenhy',
+      authorAvatar: 'https://cdn.ldstatic.com/avatar.png',
+      url: 'https://linux.do/t/topic/342888',
+      createdAt: '2026-02-17T00:00:00.000Z',
+      replyCount: 0,
+      contentHtml: '<p>已访问主题的完整正文</p>',
+      replies: []
+    };
+    const networkReply: Reply = {
+      author: 'network',
+      floor: 1,
+      contentHtml: '<p>不应重复请求</p>',
+      createdAt: ''
+    };
+    const getReply = jest.fn<SourceGateway['getReply']>(async () => networkReply);
+    const targetTopicKey = forumQueryKeys.topic({
+      source: 'linuxdo',
+      topicId: cachedTarget.id,
+      scope: initialForumSessionEpochs
+    });
+    appQueryClient.setQueryData(targetTopicKey, cachedTarget);
+    const hook = await renderTopicController({
+      sourceGateway: {
+        getTopic: jest.fn<SourceGateway['getTopic']>(async () => linuxDetail),
+        getReply
+      }
+    });
+    const reference = { source: 'linuxdo' as const, topicId: cachedTarget.id, postNumber: 1 };
+
+    await act(async () => { await hook.result.current.controller.openTopic(linuxTopic); });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(linuxDetail));
+    await act(async () => {
+      await hook.result.current.controller.toggleReplyQuote({ replyKey: 'comment:22', reference });
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:342888:1']).toMatchObject({
+      author: 'Jenhy',
+      authorAvatar: cachedTarget.authorAvatar,
+      contentHtml: cachedTarget.contentHtml,
+      floor: 1
+    }));
+    expect(hook.result.current.session.state.expandedQuotes['reply:comment:22:linuxdo:342888:1']).toBe(true);
+    expect(getReply).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-054] restores an expanded cross-topic reply quote from its epoch cache', async () => {
+    const parentTopic: Topic = {
+      ...firstTopic,
+      source: 'linuxdo',
+      id: '2685882',
+      url: 'https://linux.do/t/topic/2685882'
+    };
+    const reference = { source: 'linuxdo' as const, topicId: '342888', postNumber: 2 };
+    const quotingReply: Reply = {
+      ...firstReply,
+      commentId: 44,
+      floor: 2,
+      quotedPosts: [{ reference }]
+    };
+    const parentDetail: TopicDetail = { ...firstDetail, ...parentTopic, replies: [quotingReply] };
+    const targetTopic: Topic = {
+      ...parentTopic,
+      id: reference.topicId,
+      title: 'Target',
+      url: 'https://linux.do/t/topic/342888'
+    };
+    const targetDetail: TopicDetail = { ...parentDetail, ...targetTopic, replies: [] };
+    const quoted: Reply = {
+      author: 'quoted',
+      contentHtml: '<p>cached complete quote</p>',
+      createdAt: '',
+      floor: reference.postNumber
+    };
+    const getReply = jest.fn<SourceGateway['getReply']>(async () => quoted);
+    const hook = await renderTopicController({
+      sourceGateway: {
+        getTopic: jest.fn<SourceGateway['getTopic']>(async ({ id }) => (
+          id === parentTopic.id ? parentDetail : targetDetail
+        )),
+        getReply
+      }
+    });
+
+    await act(async () => { await hook.result.current.controller.openTopic(parentTopic); });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(parentDetail));
+    await act(async () => {
+      await hook.result.current.controller.toggleReplyQuote({
+        replyKey: 'comment:44',
+        reference
+      });
+    });
+    await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:342888:2']).toEqual(quoted));
+    const parentSnapshot = hook.result.current.session.snapshot();
+
+    await act(async () => { await hook.result.current.controller.openTopic(targetTopic); });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(targetDetail));
+    await act(async () => { hook.result.current.session.restore(parentSnapshot); });
+
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(parentDetail));
+    await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:342888:2']).toEqual(quoted));
+    expect(hook.result.current.session.state.expandedQuotes['reply:comment:44:linuxdo:342888:2']).toBe(true);
     expect(getReply).toHaveBeenCalledTimes(1);
   });
 

@@ -321,6 +321,17 @@ export const FeedScreen = memo(function FeedScreen({
     if (!routeSource || routeSource !== feedSource) {
       return renderFeedLoadingScene();
     }
+    if (feedItems.length === 0 && !identityError && (busy || identityChecking)) {
+      return (
+        <View style={styles.content}>
+          <LoadingState
+            text={identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'}
+            styles={styles}
+            theme={theme}
+          />
+        </View>
+      );
+    }
     const identityNotice = identityError ? (
       <View style={styles.errorBox}>
         <Text style={styles.errorText}>{identityError.message}</Text>

@@ -19,19 +19,26 @@ type TopicReturnStrategy = ReturnType<typeof selectTopicReturnStrategy>;
 export function executeTopicReturnStrategy({
   canGoBack,
   goBack,
+  restoreReturningRoute,
   restoreSnapshot,
   returnToScreen,
   strategy
 }: {
   canGoBack: boolean;
   goBack: () => void;
+  restoreReturningRoute: () => boolean;
   restoreSnapshot: () => void;
   returnToScreen: () => void;
   strategy: TopicReturnStrategy;
 }) {
-  if (strategy === 'route-pop' || strategy === 'native-pop') {
+  if (strategy === 'route-pop') {
     goBack();
-    return strategy === 'route-pop' ? 'route-pop' : 'native-back';
+    if (!restoreReturningRoute()) restoreSnapshot();
+    return 'route-pop';
+  }
+  if (strategy === 'native-pop') {
+    goBack();
+    return 'native-back';
   }
   if (strategy === 'snapshot-fallback') {
     restoreSnapshot();

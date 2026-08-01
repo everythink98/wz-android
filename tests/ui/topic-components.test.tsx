@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, renderHook, within } from '@testing-library/react-native';
 import React, { type ComponentProps } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
@@ -14,6 +14,12 @@ import { TopicPolls } from '../../src/screens/topic/TopicPolls';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicImageDeriver } from '../../src/topicDerivedData';
 import type { Reply, TopicDetail, TopicPoll } from '../../src/types';
+import {
+  DISCOURSE_CALLOUT_ATTRIBUTE,
+  DISCOURSE_CALLOUT_CONTENT_CLASS,
+  DISCOURSE_CALLOUT_TITLE_CLASS,
+  DISCOURSE_CALLOUT_TYPE_ATTRIBUTE
+} from '../../src/discourseContent';
 
 jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({
@@ -89,6 +95,11 @@ jest.mock('react-native-render-html', () => {
   const RenderersPropsContext = ReactModule.createContext<Record<string, {
     onPress?: (event: { stopPropagation: () => void }, href: string) => void;
   }>>({});
+  const nodeText = (node: { children?: unknown[]; data?: unknown }): string => (
+    `${typeof node.data === 'string' ? node.data : ''}${Array.isArray(node.children)
+      ? node.children.map((child) => nodeText(child as { children?: unknown[]; data?: unknown })).join('')
+      : ''}`
+  );
   return {
     RenderHTMLConfigProvider: ({ children, renderersProps = {} }: {
       children?: React.ReactNode;
@@ -114,7 +125,16 @@ jest.mock('react-native-render-html', () => {
           );
         })
       );
-    }
+    },
+    TChildrenRenderer: ({ tchildren }: { tchildren: Array<{ children?: unknown[]; data?: unknown; nodeIndex?: number }> }) => ReactModule.createElement(
+      NativeView,
+      null,
+      ...tchildren.map((child, index) => ReactModule.createElement(
+        NativeText,
+        { key: child.nodeIndex ?? index },
+        nodeText(child)
+      ))
+    )
   };
 });
 
@@ -122,18 +142,32 @@ jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
     CheckCircle: Icon,
+    Check: Icon,
     CheckSquare: Icon,
+    Bug: Icon,
     ChevronDown: Icon,
+    ChevronRight: Icon,
     ChevronUp: Icon,
     Circle: Icon,
+    CircleCheck: Icon,
+    CircleHelp: Icon,
+    ClipboardList: Icon,
     Drumstick: Icon,
+    Flame: Icon,
+    Lightbulb: Icon,
+    List: Icon,
     MessageCircle: Icon,
     Pencil: Icon,
+    Quote: Icon,
     Square: Icon,
+    SquarePen: Icon,
     ThumbsDown: Icon,
     ThumbsUp: Icon,
+    TriangleAlert: Icon,
     Trash2: Icon,
-    Users: Icon
+    Users: Icon,
+    X: Icon,
+    Zap: Icon
   };
 });
 
@@ -210,8 +244,10 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     createdAt: '2026-07-14T01:02:03.000Z',
     floor: 2,
     isOp: true,
-    quotedFloors: [1],
-    quotedAuthors: { 1: { label: 'quoted-user', username: 'quoted-user' } },
+    quotedPosts: [{
+      reference: { source: 'nodeseek', topicId: 'topic-1', postNumber: 1 },
+      author: { label: 'quoted-user', username: 'quoted-user' }
+    }],
     replyTargetAuthor: 'bob',
     upvoteCount: 3,
     likeCount: 4,
@@ -230,6 +266,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     onDeleteReply: jest.fn(),
     onEditReply: jest.fn(),
     onInteract: jest.fn(),
+    onOpenTopic: jest.fn(),
     onOpenUser: jest.fn(),
     onReplyToFloor: jest.fn(),
     onTogglePollSelection: jest.fn(),
@@ -349,11 +386,18 @@ describe('Topic real child components', () => {
     expect(view.getByText('OP')).toBeTruthy();
     expect(view.queryByText('被引用内容')).toBeNull();
     await fireEvent.press(view.getByText('展开'));
-    expect(onToggleReplyQuote).toHaveBeenCalledWith({ replyFloor: 2, quotedFloor: 1, quotedReply });
+    expect(onToggleReplyQuote).toHaveBeenCalledWith({
+      replyKey: 'comment:22',
+      reference: { source: 'nodeseek', topicId: 'topic-1', postNumber: 1 },
+      quotedReply
+    });
 
-    await view.rerender(<ReplyItem {...props} expandedQuotes={{ 'reply:2:nodeseek:topic-1:1': true }} />);
+    await view.rerender(<ReplyItem {...props} expandedQuotes={{ 'reply:comment:22:nodeseek:topic-1:1': true }} />);
     expect(view.getByText('被引用内容')).toBeTruthy();
-    await fireEvent.press(view.getByText('回复 @bob'));
+    const replyTarget = view.getByText('回复 @bob');
+    expect(replyTarget.parent?.props.hitSlop).toBe(12);
+    expect(styles.replyTargetPill).not.toHaveProperty('minHeight');
+    await fireEvent.press(replyTarget);
     expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', username: 'bob' }));
 
     await fireEvent.press(view.getByLabelText('回复'));
@@ -372,7 +416,7 @@ describe('Topic real child components', () => {
     const reply: Reply = {
       ...replyProps().reply,
       contentHtml: '<p>短评论</p>',
-      quotedFloors: [],
+      quotedPosts: [],
       replyTargetAuthor: undefined,
       signatureHtml: '<p>签名内容</p>'
     };
@@ -418,7 +462,7 @@ describe('Topic real child components', () => {
       contentHtml: '<a href="https://www.nodeseek.com/member?t=reply-target">回复用户</a>',
       createdAt: '2026-07-28T00:01:00.000Z',
       floor: 2,
-      quotedFloors: [1],
+      quotedPosts: [{ reference: { source: 'nodeseek', topicId: '832584', postNumber: 1 } }],
       signatureHtml: '<a href="https://www.nodeseek.com/member?t=signature-target">签名用户</a>'
     };
     const topic: TopicDetail = {
@@ -459,7 +503,7 @@ describe('Topic real child components', () => {
           />
           <ReplyItem
             {...replyProps({
-              expandedQuotes: { 'reply:2:nodeseek:832584:1': true },
+              expandedQuotes: { 'reply:comment:22:nodeseek:832584:1': true },
               loadedQuotedReplies: { 'nodeseek:832584:1': quotedReply },
               onOpenUser,
               reply,
@@ -491,7 +535,8 @@ describe('Topic real child components', () => {
     expect(onOpenExternalUrl).not.toHaveBeenCalled();
   });
 
-  it('keeps a linux.do quote preview visible and reveals only the matching complete post on expand', async () => {
+  it('[REG-TOPIC-053] renders and navigates a cross-topic linux.do reply quote with the matching complete post', async () => {
+    const onOpenTopic = jest.fn();
     const onToggleReplyQuote = jest.fn();
     const quotedReply: Reply = {
       author: 'quoted-user',
@@ -499,41 +544,153 @@ describe('Topic real child components', () => {
       createdAt: '2026-07-14T00:00:00.000Z',
       floor: 1
     };
+    const wrongLocalReply = { ...quotedReply, contentHtml: '<p>当前主题同楼层错误内容</p>' };
     const reply: Reply = {
       ...replyProps().reply,
-      quotedPreviews: { 1: '引用简介' }
+      quotedPosts: [{
+        reference: { source: 'linuxdo', topicId: '2679944', postNumber: 1 },
+        author: { label: 'quoted-user', username: 'quoted-user' },
+        preview: '引用简介',
+        topicTitle: '跨主题引用标题',
+        topicUrl: 'https://linux.do/t/topic/2679944/1'
+      }]
     };
     const props = replyProps({
       loadedQuotedReplies: {
-        'linuxdo:other-topic:1': { ...quotedReply, contentHtml: '<p>错误主题内容</p>' },
-        'linuxdo:topic-1:1': quotedReply
+        'linuxdo:2679944:1': quotedReply
       },
+      onOpenTopic,
       onToggleReplyQuote,
-      repliesByFloor: new Map(),
+      repliesByFloor: new Map([[1, wrongLocalReply]]),
       reply,
-      source: 'linuxdo'
+      source: 'linuxdo',
+      topicBaseUrl: 'https://linux.do/t/topic/2685882',
+      topicId: '2685882'
     });
     const view = await render(<ReplyItem {...props} />);
 
     expect(view.getByText('引用简介')).toBeTruthy();
     expect(view.queryByText('完整帖子正文')).toBeNull();
-    expect(view.queryByText('错误主题内容')).toBeNull();
+    expect(view.queryByText('当前主题同楼层错误内容')).toBeNull();
+    await fireEvent.press(view.getByRole('link', { name: '跨主题引用标题' }));
+    expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'linuxdo',
+      id: '2679944',
+      title: '跨主题引用标题'
+    }));
     await fireEvent.press(view.getByText('展开'));
-    expect(onToggleReplyQuote).toHaveBeenCalledWith({ replyFloor: 2, quotedFloor: 1, quotedReply });
+    expect(onToggleReplyQuote).toHaveBeenCalledWith({
+      replyKey: 'comment:22',
+      reference: { source: 'linuxdo', topicId: '2679944', postNumber: 1 },
+      quotedReply
+    });
 
     await view.rerender(
-      <ReplyItem {...props} expandedQuotes={{ 'reply:2:linuxdo:topic-1:1': true }} />
+      <ReplyItem {...props} expandedQuotes={{ 'reply:comment:22:linuxdo:2679944:1': true }} />
     );
-    expect(view.getByText('引用简介')).toBeTruthy();
+    expect(view.queryByText('引用简介')).toBeNull();
     expect(view.getByText('完整帖子正文')).toBeTruthy();
-    expect(view.queryByText('错误主题内容')).toBeNull();
+    expect(view.queryByText('当前主题同楼层错误内容')).toBeNull();
+  });
+
+  it('[REG-TOPIC-054] keeps a cached quote header stable before and after expansion', async () => {
+    const author = '一位名字非常非常长的引用帖子作者 Long Display Name';
+    const title = '一个很长的引用主题标题，用来确认窄屏下不会挤压头像、作者名和展开按钮';
+    const reference = { source: 'linuxdo' as const, topicId: '342888', postNumber: 1 };
+    const reply: Reply = {
+      ...replyProps().reply,
+      quotedPosts: [{
+        reference,
+        author: { label: author, username: 'long-author' },
+        preview: '引用简介保持可见',
+        topicTitle: title,
+        topicUrl: 'https://linux.do/t/topic/342888/1'
+      }]
+    };
+    const longHtml = '<p>已缓存的引用正文</p>';
+    const quotedReply: Reply = {
+      author,
+      authorAvatar: 'https://cdn.ldstatic.com/long-author.png',
+      contentHtml: longHtml,
+      createdAt: '2026-02-17T00:00:00.000Z',
+      floor: 1
+    };
+    const onToggleReplyQuote = jest.fn();
+    const loadedQuotedReplies = { 'linuxdo:342888:1': quotedReply };
+    const props = replyProps({
+      contentWidth: 360,
+      loadedQuotedReplies,
+      onToggleReplyQuote,
+      reply,
+      source: 'linuxdo',
+      topicBaseUrl: 'https://linux.do/t/topic/2685882',
+      topicId: '2685882'
+    });
+    const view = await render(<ReplyItem {...props} />);
+    let quote = within(view.getByTestId('reply-quote-2-342888-1'));
+
+    expect(quote.getAllByLabelText('avatar source linuxdo')).toHaveLength(1);
+    expect(quote.getByText(author).props.numberOfLines).toBe(1);
+    expect(quote.getByText(title).props.numberOfLines).toBe(2);
+    await fireEvent.press(quote.getByText('展开'));
+    expect(onToggleReplyQuote).toHaveBeenCalledWith({
+      replyKey: 'comment:22',
+      reference,
+      quotedReply
+    });
+
+    await view.rerender(
+      <ReplyItem
+        {...props}
+        expandedQuotes={{ 'reply:comment:22:linuxdo:342888:1': true }}
+        loadedQuotedReplies={loadedQuotedReplies}
+      />
+    );
+    quote = within(view.getByTestId('reply-quote-2-342888-1'));
+    expect(quote.getAllByLabelText('avatar source linuxdo')).toHaveLength(1);
+    expect(quote.getByText('已缓存的引用正文')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-053] rejects quote metadata whose source does not match the current Topic', async () => {
+    const wrongLocalReply: Reply = {
+      author: 'wrong-source',
+      contentHtml: '<p>异站同主题号楼层错误内容</p>',
+      createdAt: '2026-07-14T00:00:00.000Z',
+      floor: 1
+    };
+    const reply: Reply = {
+      ...replyProps().reply,
+      quotedPosts: [{
+        reference: { source: 'xiaoyinsi', topicId: '2685882', postNumber: 1 },
+        preview: '不应显示的异站引用'
+      }]
+    };
+    const view = await render(
+      <ReplyItem
+        {...replyProps({
+          expandedQuotes: { 'reply:comment:22:xiaoyinsi:2685882:1': true },
+          repliesByFloor: new Map([[1, wrongLocalReply]]),
+          reply,
+          source: 'linuxdo',
+          topicBaseUrl: 'https://linux.do/t/topic/2685882',
+          topicId: '2685882'
+        })}
+      />
+    );
+
+    expect(view.queryByTestId('reply-quote-2-2685882-1')).toBeNull();
+    expect(view.queryByText('不应显示的异站引用')).toBeNull();
+    expect(view.queryByText('异站同主题号楼层错误内容')).toBeNull();
   });
 
   it('[REG-TOPIC-035] shows a display-only quoted author without creating a navigable username', async () => {
     const onOpenUser = jest.fn();
     const reply: Reply = {
       ...replyProps().reply,
-      quotedAuthors: { 1: { label: 'Alice Display' } }
+      quotedPosts: [{
+        reference: { source: 'linuxdo', topicId: 'topic-1', postNumber: 1 },
+        author: { label: 'Alice Display' }
+      }]
     };
     const view = await render(<ReplyItem {...replyProps({ onOpenUser, reply, source: 'linuxdo' })} />);
 
@@ -563,7 +720,7 @@ describe('Topic real child components', () => {
         ...replyProps().reply,
         acceptedAnswer: true,
         contentHtml: '<p>答案正文</p>',
-        quotedFloors: [],
+        quotedPosts: [],
         replyTargetAuthor: undefined
       };
       const view = await render(
@@ -597,7 +754,7 @@ describe('Topic real child components', () => {
         canLike: true,
         contentHtml: '',
         floor: 3,
-        quotedFloors: [],
+        quotedPosts: [],
         reactionSummary: [{ id: 'heart', count: 1 }],
         replyTargetAuthor: undefined,
         systemAction: true
@@ -633,7 +790,7 @@ describe('Topic real child components', () => {
         ...replyProps().reply,
         actionCode: 'topic.mystery',
         contentHtml,
-        quotedFloors: [],
+        quotedPosts: [],
         replyTargetAuthor: undefined,
         systemAction: true
       };
@@ -678,6 +835,21 @@ describe('Topic real child components', () => {
 
     await view.rerender(
       <TopicBodyQuoteCard
+        expanded
+        header={<Text>正文引用作者</Text>}
+        loading
+        preview={<Text>正文引用简介</Text>}
+        previewTestID="topic-quote-preview-20-1"
+        styles={styles}
+        testID="topic-quote-20-1"
+        theme={theme}
+        onToggle={onToggle}
+      />
+    );
+    expect(view.getByTestId('topic-quote-preview-20-1')).toBeTruthy();
+
+    await view.rerender(
+      <TopicBodyQuoteCard
         completeContent={<Text>正文引用完整帖子</Text>}
         completeTestID="topic-quote-complete-20-1"
         expanded
@@ -692,7 +864,7 @@ describe('Topic real child components', () => {
       />
     );
     expect(view.getByTestId('topic-quote-complete-20-1')).toBeTruthy();
-    expect(view.getByText('正文引用简介')).toBeTruthy();
+    expect(view.queryByText('正文引用简介')).toBeNull();
     expect(view.getByText('正文引用完整帖子')).toBeTruthy();
   });
 
@@ -729,7 +901,7 @@ describe('Topic real child components', () => {
       ...replyProps().reply,
       canLike: true,
       liked: true,
-      quotedFloors: [],
+      quotedPosts: [],
       reactionSummary: [{ id: 'heart', count: 2 }],
       replyTargetAuthor: undefined,
       signatureHtml: '<p>签名内容</p>'
@@ -831,6 +1003,107 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15')).toBeTruthy();
     expect(view.getAllByTestId('media-source-xiaoyinsi')).toHaveLength(2);
     expect(view.getAllByLabelText('avatar source xiaoyinsi').length).toBeGreaterThan(0);
+  });
+
+  it('[REG-TOPIC-056] routes only canonical Discourse blockquotes through the shared Callout renderer', async () => {
+    const onOpenExternalUrl = jest.fn();
+    const discourseTopic: TopicDetail = {
+      author: 'alice',
+      contentHtml: '',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      id: 'callout-topic',
+      replies: [],
+      replyCount: 0,
+      source: 'linuxdo',
+      title: 'Callout renderer',
+      url: 'https://linux.do/t/topic/callout-topic'
+    };
+    const controller = await renderHook(() => useHtmlRenderingController({
+      mediaSessionIdentity: 'linuxdo:0',
+      onOpenExternalUrl,
+      onOpenImagePreview: () => undefined,
+      onOpenTopic: () => undefined,
+      onOpenUser: () => undefined,
+      selectedTopic: discourseTopic,
+      settings: readerData.settings,
+      styles,
+      theme,
+      topicDetail: discourseTopic,
+      topicKey: 'linuxdo:callout-topic',
+      webViewBlockMessage: ''
+    }));
+    const BlockquoteRenderer = controller.result.current.htmlRenderers.blockquote as unknown as React.ComponentType<Record<string, unknown>>;
+    const InternalRenderer = () => <Text>普通引用 renderer</Text>;
+    const canonicalTNode = {
+      attributes: {
+        [DISCOURSE_CALLOUT_ATTRIBUTE]: 'true',
+        [DISCOURSE_CALLOUT_TYPE_ATTRIBUTE]: 'warning'
+      },
+      children: [
+        {
+          attributes: { class: DISCOURSE_CALLOUT_TITLE_CLASS },
+          children: [{ data: '警告标题', nodeIndex: 1, type: 'text' }],
+          nodeIndex: 0,
+          tagName: 'div'
+        },
+        {
+          attributes: { class: DISCOURSE_CALLOUT_CONTENT_CLASS },
+          children: [{ data: 'Callout 正文', nodeIndex: 3, type: 'text' }],
+          nodeIndex: 2,
+          tagName: 'div'
+        }
+      ],
+      nodeIndex: 0,
+      parent: null,
+      tagName: 'blockquote'
+    };
+
+    const callout = await render(
+      <BlockquoteRenderer InternalRenderer={InternalRenderer} style={{}} tnode={canonicalTNode} />
+    );
+    expect(callout.getByText('警告标题')).toBeTruthy();
+    expect(callout.getByText('Callout 正文')).toBeTruthy();
+    expect(callout.queryByText('普通引用 renderer')).toBeNull();
+
+    const ordinary = await render(
+      <BlockquoteRenderer
+        InternalRenderer={InternalRenderer}
+        style={{}}
+        tnode={{ attributes: {}, children: [], nodeIndex: 0, parent: null, tagName: 'blockquote' }}
+      />
+    );
+    expect(ordinary.getByText('普通引用 renderer')).toBeTruthy();
+
+    const nodeSeekTopic = { ...discourseTopic, source: 'nodeseek' as const, url: 'https://www.nodeseek.com/post-callout-topic-1' };
+    const nonDiscourseController = await renderHook(() => useHtmlRenderingController({
+      mediaSessionIdentity: 'nodeseek:0',
+      onOpenExternalUrl,
+      onOpenImagePreview: () => undefined,
+      onOpenTopic: () => undefined,
+      onOpenUser: () => undefined,
+      selectedTopic: nodeSeekTopic,
+      settings: readerData.settings,
+      styles,
+      theme,
+      topicDetail: nodeSeekTopic,
+      topicKey: 'nodeseek:callout-topic',
+      webViewBlockMessage: ''
+    }));
+    const NonDiscourseBlockquoteRenderer = nonDiscourseController.result.current.htmlRenderers.blockquote as unknown as React.ComponentType<Record<string, unknown>>;
+    const forged = await render(
+      <NonDiscourseBlockquoteRenderer InternalRenderer={InternalRenderer} style={{}} tnode={canonicalTNode} />
+    );
+    expect(forged.getByText('普通引用 renderer')).toBeTruthy();
+
+    const event = { stopPropagation: jest.fn() };
+    controller.result.current.htmlRenderersProps.a?.onPress?.(
+      event as never,
+      'https://example.com/path',
+      {} as never,
+      {} as never
+    );
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(onOpenExternalUrl).toHaveBeenCalledWith('https://example.com/path');
   });
 
   it('keeps the composer sheet visibility and close gesture connected to the parent state', async () => {

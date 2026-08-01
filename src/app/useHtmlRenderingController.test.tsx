@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const readManagedCookieHeader = vi.hoisted(() => vi.fn());
+const reanimatedTransition = vi.hoisted(() => {
+  const reduceMotion = vi.fn();
+  const transition = { reduceMotion };
+  reduceMotion.mockReturnValue(transition);
+  return {
+    duration: vi.fn(() => transition),
+    reduceMotion
+  };
+});
 
 vi.mock('../managedCookies', () => ({
   readManagedCookieHeader
@@ -25,6 +34,14 @@ vi.mock('react-native-webview', () => ({
   WebView: 'WebView'
 }));
 
+vi.mock('react-native-reanimated', () => {
+  return {
+    default: { View: 'AnimatedView' },
+    LinearTransition: { duration: reanimatedTransition.duration },
+    ReduceMotion: { System: 'system' }
+  };
+});
+
 vi.mock('expo-image', () => ({
   Image: 'ExpoImage',
   useImage: vi.fn()
@@ -44,8 +61,23 @@ vi.mock('expo-video', () => ({
 }));
 
 vi.mock('lucide-react-native', () => ({
+  Bug: 'Bug',
+  Check: 'Check',
+  ChevronDown: 'ChevronDown',
+  ChevronRight: 'ChevronRight',
+  CircleCheck: 'CircleCheck',
+  CircleHelp: 'CircleHelp',
+  ClipboardList: 'ClipboardList',
+  Flame: 'Flame',
+  Lightbulb: 'Lightbulb',
+  List: 'List',
   Maximize2: 'Maximize2',
-  Play: 'Play'
+  Play: 'Play',
+  Quote: 'Quote',
+  SquarePen: 'SquarePen',
+  TriangleAlert: 'TriangleAlert',
+  X: 'X',
+  Zap: 'Zap'
 }));
 
 vi.mock('react-native-render-html', () => ({
@@ -55,11 +87,18 @@ vi.mock('react-native-render-html', () => ({
 }));
 
 import {
+  cachedPreviewImageDimensions,
   readManagedWebViewCookieHeader,
+  rememberPreviewImageDimensions,
   shouldShowVideoStickerLoading
 } from './useHtmlRenderingController';
 
 describe('HTML topic media loading state', () => {
+  it('[REG-TOPIC-056] configures the Callout layout transition with system Reduce Motion', () => {
+    expect(reanimatedTransition.duration).toHaveBeenCalledWith(100);
+    expect(reanimatedTransition.reduceMotion).toHaveBeenCalledWith('system');
+  });
+
   it('keeps video sticker loading visible until the first rendered frame', () => {
     expect(shouldShowVideoStickerLoading(false, false, 'idle')).toBe(true);
     expect(shouldShowVideoStickerLoading(false, false, 'readyToPlay')).toBe(true);
@@ -86,5 +125,27 @@ describe('HTML topic media loading state', () => {
     await expect(readManagedWebViewCookieHeader(
       'https://www.nodeseek.com/uploads/private/video.webm'
     )).rejects.toThrow('原生 Cookie 读取能力不可用');
+  });
+
+  it('[REG-PERF-007][REG-PERF-009] bounds preview dimensions with pure reads and committed promotion', () => {
+    rememberPreviewImageDimensions('nodeseek:1:https://img.example.com/shared.png', { height: 4, width: 5 });
+    expect(cachedPreviewImageDimensions('nodeseek:2:https://img.example.com/shared.png')).toBeUndefined();
+
+    for (let index = 0; index < 512; index += 1) {
+      rememberPreviewImageDimensions(`session:lru-${index}`, { height: index + 1, width: index + 2 });
+    }
+    const firstDimensions = cachedPreviewImageDimensions('session:lru-0');
+    expect(firstDimensions).toEqual({ height: 1, width: 2 });
+
+    rememberPreviewImageDimensions('session:lru-overflow', { height: 9, width: 10 });
+
+    expect(cachedPreviewImageDimensions('session:lru-0')).toBeUndefined();
+    const promotedDimensions = cachedPreviewImageDimensions('session:lru-1');
+    expect(promotedDimensions).toEqual({ height: 2, width: 3 });
+    rememberPreviewImageDimensions('session:lru-1', promotedDimensions!);
+    rememberPreviewImageDimensions('session:lru-second-overflow', { height: 11, width: 12 });
+
+    expect(cachedPreviewImageDimensions('session:lru-1')).toEqual({ height: 2, width: 3 });
+    expect(cachedPreviewImageDimensions('session:lru-2')).toBeUndefined();
   });
 });

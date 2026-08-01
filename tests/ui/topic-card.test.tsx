@@ -3,7 +3,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { createEmptyReaderData } from '../../src/readerData';
-import { TopicCard } from '../../src/components/TopicCard';
+import { MemoizedTopicCard, TopicCard } from '../../src/components/TopicCard';
 import { createStyles, createTheme } from '../../src/theme';
 import type { Topic } from '../../src/types';
 
@@ -114,6 +114,42 @@ describe('Topic card visible behavior', () => {
     await fireEvent.press(view.getByLabelText('本机取消收藏'));
     expect(onTrailingAction).toHaveBeenCalledTimes(1);
     expect(onOpenTopic).not.toHaveBeenCalled();
+  });
+
+  it('[REG-FEED-012] updates card actions when a new immutable payload keeps the same visible text', async () => {
+    const onOpenTopic = jest.fn();
+    const onTrailingAction = jest.fn();
+    const renderTrailingAction = (current: Topic) => (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="当前主题操作"
+        onPress={() => onTrailingAction(current)}
+      >
+        <Text>操作</Text>
+      </Pressable>
+    );
+    const nextTopic = {
+      ...topic,
+      url: 'https://linux.do/t/topic-card-2',
+      categoryId: '99',
+      authorId: '9001'
+    };
+    const commonProps = {
+      onOpenTopic,
+      readerState: { favorite: false, listDensity: 'standard' as const, read: false },
+      renderTrailingAction,
+      styles,
+      testID: 'memoized-topic-card',
+      theme
+    };
+    const view = await render(<MemoizedTopicCard {...commonProps} topic={topic} />);
+
+    await view.rerender(<MemoizedTopicCard {...commonProps} topic={nextTopic} />);
+    await fireEvent.press(view.getByTestId('memoized-topic-card'));
+    await fireEvent.press(view.getByLabelText('当前主题操作'));
+
+    expect(onOpenTopic).toHaveBeenCalledWith(nextTopic);
+    expect(onTrailingAction).toHaveBeenCalledWith(nextTopic);
   });
 
 });

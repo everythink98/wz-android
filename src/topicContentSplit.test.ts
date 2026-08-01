@@ -130,4 +130,26 @@ describe('Android topic content splitting', () => {
   it('does not treat mixed content as a standalone video block', () => {
     expect(forumVideoBlockFromHtml('<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>')).toBeNull();
   });
+
+  it('[REG-PERF-008] skips DOM parsing when a content chunk has no native video tag', async () => {
+    const parseHtml = vi.fn(() => {
+      throw new Error('ordinary chunks should not be parsed for video metadata');
+    });
+    vi.resetModules();
+    vi.doMock('./localHtml', () => ({
+      FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
+      FORUM_VIDEO_TAG: 'forum-video',
+      parseHtml
+    }));
+    try {
+      const { forumVideoBlockFromHtml: detectVideo } = await import('./topicContentSplit');
+
+      expect(detectVideo('<p>ordinary content</p>')).toBeNull();
+      expect(parseHtml).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock('./localHtml');
+      vi.resetModules();
+    }
+  });
 });

@@ -1,11 +1,26 @@
-import { createContext, memo, type ReactNode, useContext } from 'react';
-import { NavigationContainer, StackActions, createNavigationContainerRef, type NavigatorScreenParams, type Theme } from '@react-navigation/native';
+import {
+  createContext,
+  memo,
+  type ReactNode,
+  type RefObject,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
+import { NavigationContainer, StackActions, createNavigationContainerRef, type NavigatorScreenParams, type Theme, useIsFocused } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { FlashListRef } from '@shopify/flash-list';
+import { View } from 'react-native';
 import { TabBarIcon, tabNavItems } from '../components/NavBar';
 import { triggerPressFeedback } from '../components/AppControls';
 import type { createStyles, ReaderTheme } from '../theme';
 import type { Screen } from '../appTypes';
+import { OriginalImageUpgradeBoundary } from '../originalImageLoading';
+import type { TopicListItem } from '../screens/TopicScreen';
+import type { Source } from '../types';
 
 export type MainTabParamList = {
   feed: undefined;
@@ -14,19 +29,134 @@ export type MainTabParamList = {
   more: undefined;
 };
 
+export type TopicRouteSeed = {
+  source: Source;
+  topicId: string;
+};
+
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
-  Topic: undefined;
+  Topic: TopicRouteSeed | undefined;
   ReadingSettings: undefined;
   User: undefined;
 };
 
+export type TopicRouteRenderRequest = {
+  listRef: RefObject<FlashListRef<TopicListItem> | null>;
+  routeKey: string;
+  routeSource?: Source;
+  seed?: TopicRouteSeed;
+};
+
+export type TopicRoutePresentation = {
+  content: ReactNode;
+  identity: string;
+  loadingContent: ReactNode;
+  routeSessionEpoch: number;
+  sessionEpoch: number;
+};
+
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
-const TopicScreenRendererContext = createContext<() => ReactNode>(() => null);
+const TopicScreenRendererContext = createContext<(request: TopicRouteRenderRequest) => TopicRoutePresentation>(() => ({
+  content: null,
+  identity: '',
+  loadingContent: null,
+  routeSessionEpoch: 0,
+  sessionEpoch: 0
+}));
 
-function TopicRouteScreen() {
-  return useContext(TopicScreenRendererContext)();
+function topicRouteIdentity(seed?: TopicRouteSeed) {
+  return seed ? `${seed.source}:${seed.topicId}` : '';
+}
+
+function topicRouteSource(identity: string) {
+  const separator = identity.indexOf(':');
+  return separator > 0 ? identity.slice(0, separator) as Source : undefined;
+}
+
+function topicPresentationMatchesRoute(
+  presentation: TopicRoutePresentation | null,
+  identity: string,
+  sessionEpoch: number
+) {
+  return Boolean(
+    presentation
+    && identity
+    && presentation.identity === identity
+    && presentation.routeSessionEpoch === sessionEpoch
+    && presentation.sessionEpoch === sessionEpoch
+  );
+}
+
+function TopicRouteScreen({ route }: NativeStackScreenProps<RootStackParamList, 'Topic'>) {
+  const renderTopicScreen = useContext(TopicScreenRendererContext);
+  const focused = useIsFocused();
+  const listRef = useRef<FlashListRef<TopicListItem> | null>(null);
+  const seededIdentity = topicRouteIdentity(route.params);
+  const [capturedIdentity, setCapturedIdentity] = useState('');
+  const [cachedPresentation, setCachedPresentation] = useState<TopicRoutePresentation | null>(null);
+  const expectedIdentity = seededIdentity || capturedIdentity;
+  const routeSource = route.params?.source || topicRouteSource(capturedIdentity);
+  const presentation = useMemo(
+    () => renderTopicScreen({ listRef, routeKey: route.key, routeSource, seed: route.params }),
+    [renderTopicScreen, route.key, route.params, routeSource]
+  );
+  const livePresentationMatchesRoute = topicPresentationMatchesRoute(
+    presentation,
+    expectedIdentity,
+    presentation.routeSessionEpoch
+  );
+  const cachedPresentationMatchesRoute = topicPresentationMatchesRoute(
+    cachedPresentation,
+    expectedIdentity,
+    presentation.routeSessionEpoch
+  );
+  const visiblePresentation = focused && livePresentationMatchesRoute
+    ? presentation
+    : cachedPresentationMatchesRoute
+      ? cachedPresentation
+      : null;
+  const interactive = focused && livePresentationMatchesRoute;
+
+  useLayoutEffect(() => {
+    if (!seededIdentity && !capturedIdentity && focused && presentation.identity) {
+      setCapturedIdentity(presentation.identity);
+    }
+  }, [capturedIdentity, focused, presentation.identity, seededIdentity]);
+
+  useLayoutEffect(() => {
+    if (focused && livePresentationMatchesRoute) {
+      setCachedPresentation(presentation);
+      return;
+    }
+    setCachedPresentation((current) => (
+      topicPresentationMatchesRoute(current, expectedIdentity, presentation.routeSessionEpoch)
+        ? current
+        : null
+    ));
+  }, [expectedIdentity, focused, livePresentationMatchesRoute, presentation]);
+
+  return (
+    <TopicRouteInteractionBoundary interactive={interactive}>
+      {visiblePresentation?.content || presentation.loadingContent}
+    </TopicRouteInteractionBoundary>
+  );
+}
+
+function TopicRouteInteractionBoundary({ children, interactive }: { children: ReactNode; interactive: boolean }) {
+  return (
+    <OriginalImageUpgradeBoundary enabled={interactive}>
+      <View
+        accessibilityElementsHidden={!interactive}
+        importantForAccessibility={interactive ? 'auto' : 'no-hide-descendants'}
+        pointerEvents={interactive ? 'auto' : 'none'}
+        style={{ flex: 1 }}
+      >
+        {children}
+      </View>
+    </OriginalImageUpgradeBoundary>
+  );
 }
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
@@ -120,11 +250,11 @@ export function isReadingSettingsScreen() {
   return navigationRef.getCurrentRoute()?.name === 'ReadingSettings';
 }
 
-export function pushTopicRoute() {
+export function pushTopicRoute(seed?: TopicRouteSeed) {
   if (!navigationRef.isReady()) {
     return false;
   }
-  navigationRef.dispatch(StackActions.push('Topic'));
+  navigationRef.dispatch(StackActions.push('Topic', seed));
   return true;
 }
 
@@ -212,14 +342,14 @@ export const AppNavigator = memo(function AppNavigator({
   renderMoreTab: () => ReactNode;
   renderReadingSettingsScreen: () => ReactNode;
   renderSearchTab: () => ReactNode;
-  renderTopicScreen: () => ReactNode;
+  renderTopicScreen: (request: TopicRouteRenderRequest) => TopicRoutePresentation;
   renderUserScreen: () => ReactNode;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onReady: () => void;
   onScreenChange: (screen: Screen, routeKey: string) => void;
   onTabPress: (target: keyof MainTabParamList) => void;
-  onTopicClosing: () => void;
+  onTopicClosing: (routeKey: string) => void;
   onUserClosing: () => void;
 }) {
   const publishCurrentScreen = () => {
@@ -252,11 +382,11 @@ export const AppNavigator = memo(function AppNavigator({
             />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Topic" component={TopicRouteScreen} listeners={{ transitionEnd: (event) => {
+        <Stack.Screen name="Topic" component={TopicRouteScreen} listeners={({ route }) => ({ transitionEnd: (event) => {
           if (event.data.closing) {
-            onTopicClosing();
+            onTopicClosing(route.key);
           }
-        } }} />
+        } })} />
         <Stack.Screen name="ReadingSettings" options={{ headerShown: true, title: '阅读设置' }}>
           {renderReadingSettingsScreen}
         </Stack.Screen>

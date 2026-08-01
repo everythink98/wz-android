@@ -404,14 +404,16 @@ export function linkDiagnosticRefs(kind: string, rawValues: readonly unknown[]) 
     refs = new Map();
     referenceMaps.set(safeKind, refs);
   }
-  const linkedRef = values.map((value) => refs?.get(value)).find(Boolean) || `${safeKind}-${refs.size + 1}`;
-  values.forEach((value) => refs?.set(value, linkedRef));
-  let issued = issuedReferences.get(safeKind);
-  if (!issued) {
-    issued = new Set();
-    issuedReferences.set(safeKind, issued);
+  let linkedRef = '';
+  for (const value of values) {
+    linkedRef = readReferenceMapping(refs, value) || '';
+    if (linkedRef) {
+      break;
+    }
   }
-  issued.add(linkedRef);
+  linkedRef ||= nextReference(safeKind);
+  values.forEach((value) => rememberReferenceMapping(refs, value, linkedRef));
+  rememberIssuedReference(safeKind, linkedRef);
   return linkedRef;
 }
 
@@ -518,8 +520,51 @@ function safeFields(fields: DiagnosticFields) {
   return safe;
 }
 
+const RAW_REFERENCE_LIMIT = 4_096;
+const ISSUED_REFERENCE_LIMIT = 8_192;
 const referenceMaps = new Map<string, Map<string | number | boolean | null, string>>();
 const issuedReferences = new Map<string, Set<string>>();
+const referenceSequences = new Map<string, number>();
+
+function nextReference(kind: string) {
+  const sequence = (referenceSequences.get(kind) || 0) + 1;
+  referenceSequences.set(kind, sequence);
+  return `${kind}-${sequence}`;
+}
+
+function readReferenceMapping(
+  refs: Map<string | number | boolean | null, string>,
+  value: string | number | boolean | null
+) {
+  const reference = refs.get(value);
+  if (reference) {
+    refs.delete(value);
+    refs.set(value, reference);
+  }
+  return reference;
+}
+
+function rememberReferenceMapping(
+  refs: Map<string | number | boolean | null, string>,
+  value: string | number | boolean | null,
+  reference: string
+) {
+  refs.delete(value);
+  refs.set(value, reference);
+  if (refs.size > RAW_REFERENCE_LIMIT) {
+    refs.delete(refs.keys().next().value!);
+  }
+}
+
+function rememberIssuedReference(kind: string, reference: string) {
+  const issued = issuedReferences.get(kind) || new Set<string>();
+  issued.delete(reference);
+  issued.add(reference);
+  if (issued.size > ISSUED_REFERENCE_LIMIT) {
+    issued.delete(issued.values().next().value!);
+  }
+  issuedReferences.set(kind, issued);
+}
 
 function createTrace(area: DiagnosticArea, operation: string, startedAt: number): DiagnosticTrace {
   return {
@@ -542,16 +587,14 @@ function referenceFor(kind: string, raw: unknown) {
     refs = new Map();
     referenceMaps.set(safeKind, refs);
   }
-  const current = refs.get(value);
-  if (current) return current;
-  const next = `${safeKind}-${refs.size + 1}`;
-  refs.set(value, next);
-  let issued = issuedReferences.get(safeKind);
-  if (!issued) {
-    issued = new Set();
-    issuedReferences.set(safeKind, issued);
+  const current = readReferenceMapping(refs, value);
+  if (current) {
+    rememberIssuedReference(safeKind, current);
+    return current;
   }
-  issued.add(next);
+  const next = nextReference(safeKind);
+  rememberReferenceMapping(refs, value, next);
+  rememberIssuedReference(safeKind, next);
   return next;
 }
 

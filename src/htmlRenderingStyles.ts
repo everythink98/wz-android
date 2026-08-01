@@ -3,6 +3,7 @@ import type { TNode } from 'react-native-render-html';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlTagsStyles } from './appTypes';
 import type { ReaderSettings } from './readerData';
 import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from './theme';
+import { DISCOURSE_CALLOUT_TITLE_CLASS, DISCOURSE_CALLOUT_TONE_CLASS_PREFIX } from './discourseContent';
 
 export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['color', 'fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
 export const HTML_REPLY_CONTENT_CLASS = 'forum-reply-content';
@@ -23,9 +24,11 @@ export function trimsTrailingBlockSpacing(tnode: TNode) {
 }
 
 export function buildHtmlRenderingStyles({
+  enableDiscourseCallouts = false,
   settings,
   theme
 }: {
+  enableDiscourseCallouts?: boolean;
   settings: ReaderSettings;
   theme: ReaderTheme;
 }) {
@@ -154,7 +157,17 @@ export function buildHtmlRenderingStyles({
       paddingHorizontal: 5,
       paddingVertical: 1,
       textDecorationLine: 'none'
-    }
+    },
+    ...(enableDiscourseCallouts ? {
+      [DISCOURSE_CALLOUT_TITLE_CLASS]: {
+        fontWeight: '700'
+      },
+      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}primary`]: { color: theme.primary },
+      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}success`]: { color: theme.success },
+      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}warning`]: { color: theme.warning },
+      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}danger`]: { color: theme.danger },
+      [`${DISCOURSE_CALLOUT_TONE_CLASS_PREFIX}muted`]: { color: theme.muted }
+    } : {})
   };
   const htmlIgnoredStyles: HtmlIgnoredStyles = [
     'backgroundColor',

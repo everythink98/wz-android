@@ -83,6 +83,7 @@ import java.net.ProxySelector
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.nio.charset.Charset
 import java.util.Locale
@@ -94,6 +95,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
@@ -126,9 +128,17 @@ internal interface ProxyTlsConnection {
   fun inputStream(): InputStream
 }
 
-private data class ProxyTarget(val host: String, val port: Int)
+internal data class ProxyTarget(val host: String, val port: Int)
+internal data class LocalProxyRequest(
+  val method: String,
+  val requestTarget: String,
+  val version: String,
+  val target: ProxyTarget,
+  val contentLength: Long
+)
 private const val BLOCKED_PROXY_PORT = 9
 private const val MAX_PROXY_CONNECTIONS = 16
+private const val PROXY_IDLE_TIMEOUT_MS = 120_000
 private const val LOG_TAG = "WzNetworkProxy"
 
 private class PlatformProxyTlsConnection(
@@ -493,13 +503,14 @@ class NetworkProxySelector : ProxySelector() {
 internal class LocalNetworkProxyServer(
   private val upstream: NetworkProxyProfile,
   maxConnections: Int = MAX_PROXY_CONNECTIONS,
+  private val idleTimeoutMs: Int = PROXY_IDLE_TIMEOUT_MS,
   private val socketConnector: (Socket, String, Int) -> Unit = { socket, host, port ->
     socket.connect(InetSocketAddress(host, port), 15_000)
   },
   private val tlsConnectionFactory: (Socket, String, Int) -> ProxyTlsConnection =
     ::createPlatformProxyTlsConnection
 ) {
-  private val serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+  private val serverSocket = ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))
   private val acceptExecutor = Executors.newSingleThreadExecutor()
   private val connectionExecutor = ThreadPoolExecutor(
     maxConnections,
@@ -512,6 +523,11 @@ internal class LocalNetworkProxyServer(
   private val sockets = ConcurrentHashMap.newKeySet<Socket>()
   private val socketLock = Any()
   @Volatile private var running = true
+
+  init {
+    require(maxConnections > 0)
+    require(idleTimeoutMs > 0)
+  }
 
   val port: Int
     get() = serverSocket.localPort
@@ -584,7 +600,9 @@ internal class LocalNetworkProxyServer(
       socket.close()
     } catch (_: IOException) {
     } finally {
-      sockets.remove(socket)
+      synchronized(socketLock) {
+        sockets.remove(socket)
+      }
     }
   }
 
@@ -605,41 +623,31 @@ internal class LocalNetworkProxyServer(
         try {
           local.soTimeout = 30_000
           val header = readHeaderBlock(local.getInputStream())
-          val requestLine = header.lineSequence().firstOrNull()?.trim().orEmpty()
-          val parts = requestLine.split(" ")
-          if (parts.size < 3) {
-            writeProxyError(local.getOutputStream(), 400, "Bad Request")
-            return
-          }
-          val method = parts[0].uppercase(Locale.US)
-          if (method == "CONNECT") {
-            val target = parseHostPort(parts[1], 443)
-            val remote = connectToTarget(target)
+          val request = parseLocalProxyRequest(header)
+          if (request.method == "CONNECT") {
+            val remote = connectToTarget(request.target)
             try {
               local.getOutputStream().write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray(HEADER_CHARSET))
-              local.soTimeout = 0
-              pipeBoth(local, remote, copyExecutor)
+              pipeBoth(local, remote, copyExecutor, idleTimeoutMs)
             } finally {
               closeOwned(remote)
             }
             return
           }
 
-          val target = targetFromHttpRequest(parts[1], header)
           val remote = if (upstream.protocol == "http") {
             connectPlainOwned(upstream.host, upstream.port)
           } else {
-            connectViaSocks5(target)
+            connectViaSocks5(request.target)
           }
           try {
             val outboundHeader = if (upstream.protocol == "http") {
               headerWithHttpProxyAuthorization(header)
             } else {
-              originHeaderForDirectRequest(header, parts, target)
+              originHeaderForDirectRequest(header, request)
             }
             remote.getOutputStream().write(outboundHeader.toByteArray(HEADER_CHARSET))
-            local.soTimeout = 0
-            pipeBoth(local, remote, copyExecutor)
+            pipeBoth(local, remote, copyExecutor, idleTimeoutMs, request.contentLength)
           } finally {
             closeOwned(remote)
           }
@@ -656,7 +664,9 @@ internal class LocalNetworkProxyServer(
         }
       }
     } finally {
-      sockets.remove(client)
+      synchronized(socketLock) {
+        sockets.remove(client)
+      }
     }
   }
 
@@ -668,8 +678,9 @@ internal class LocalNetworkProxyServer(
     try {
       socket.soTimeout = 15_000
       val builder = StringBuilder()
-      builder.append("CONNECT ").append(target.host).append(":").append(target.port).append(" HTTP/1.1\\r\\n")
-      builder.append("Host: ").append(target.host).append(":").append(target.port).append("\\r\\n")
+      val authorityHost = if (target.host.contains(":")) "[" + target.host + "]" else target.host
+      builder.append("CONNECT ").append(authorityHost).append(":").append(target.port).append(" HTTP/1.1\\r\\n")
+      builder.append("Host: ").append(authorityHost).append(":").append(target.port).append("\\r\\n")
       httpProxyAuthorizationHeader()?.let { builder.append(it).append("\\r\\n") }
       builder.append("Proxy-Connection: Keep-Alive\\r\\n\\r\\n")
       socket.getOutputStream().write(builder.toString().toByteArray(HEADER_CHARSET))
@@ -798,23 +809,31 @@ internal class LocalNetworkProxyServer(
     val lines = header.trimEnd().split("\\r\\n")
     val builder = StringBuilder()
     lines.forEachIndexed { index, line ->
-      if (index == 0 || !line.startsWith("Proxy-Authorization:", ignoreCase = true)) {
+      if (
+        index == 0
+        || (
+          !line.startsWith("Proxy-Authorization:", ignoreCase = true)
+          && !isPersistentConnectionHeader(line)
+        )
+      ) {
         builder.append(line).append("\\r\\n")
       }
     }
     httpProxyAuthorizationHeader()?.let { builder.append(it).append("\\r\\n") }
+    builder.append("Connection: close\\r\\n")
+    builder.append("Proxy-Connection: close\\r\\n")
     builder.append("\\r\\n")
     return builder.toString()
   }
 
-  private fun originHeaderForDirectRequest(header: String, parts: List<String>, target: ProxyTarget): String {
-    val requestPath = originRequestPath(parts[1])
+  private fun originHeaderForDirectRequest(header: String, request: LocalProxyRequest): String {
+    val requestPath = originRequestPath(request.requestTarget)
     val lines = header.trimEnd().split("\\r\\n")
     val builder = StringBuilder()
-    builder.append(parts[0]).append(" ").append(requestPath).append(" ").append(parts[2]).append("\\r\\n")
+    builder.append(request.method).append(" ").append(requestPath).append(" ").append(request.version).append("\\r\\n")
     var hasHost = false
     lines.drop(1).forEach { line ->
-      if (line.startsWith("Proxy-", ignoreCase = true)) {
+      if (line.startsWith("Proxy-", ignoreCase = true) || isPersistentConnectionHeader(line)) {
         return@forEach
       }
       if (line.startsWith("Host:", ignoreCase = true)) {
@@ -823,11 +842,17 @@ internal class LocalNetworkProxyServer(
       builder.append(line).append("\\r\\n")
     }
     if (!hasHost) {
-      builder.append("Host: ").append(target.host).append("\\r\\n")
+      builder.append("Host: ").append(request.target.host).append("\\r\\n")
     }
+    builder.append("Connection: close\\r\\n")
     builder.append("\\r\\n")
     return builder.toString()
   }
+
+  private fun isPersistentConnectionHeader(line: String): Boolean =
+    line.startsWith("Connection:", ignoreCase = true)
+      || line.startsWith("Keep-Alive:", ignoreCase = true)
+      || line.startsWith("Proxy-Connection:", ignoreCase = true)
 
   private fun httpProxyAuthorizationHeader(): String? {
     val user = upstream.username ?: ""
@@ -873,8 +898,10 @@ internal class LocalNetworkProxyServer(
 
 private val HEADER_CHARSET: Charset = Charsets.ISO_8859_1
 private val IPV4_PATTERN = Regex("^\\\\d{1,3}(\\\\.\\\\d{1,3}){3}$")
+private val HTTP_REQUEST_LINE_PATTERN = Regex("^([A-Za-z]+) ([^\\\\s]+) (HTTP/1\\\\.[01])$")
+private val HTTP_HEADER_NAME_PATTERN = Regex("^[A-Za-z0-9_-]+$")
 
-private fun readHeaderBlock(input: InputStream): String {
+internal fun readHeaderBlock(input: InputStream): String {
   val buffer = ByteArrayOutputStream()
   var matched = 0
   while (buffer.size() < 64 * 1024) {
@@ -918,46 +945,232 @@ private fun readByte(input: InputStream): Int {
   return value
 }
 
-private fun parseHostPort(value: String, defaultPort: Int): ProxyTarget {
-  val clean = value.trim()
-  if (clean.startsWith("[")) {
-    val close = clean.indexOf(']')
-    if (close < 0) {
-      throw IllegalArgumentException("Invalid IPv6 host")
-    }
-    val host = clean.substring(1, close)
-    val port = if (clean.length > close + 2 && clean[close + 1] == ':') {
-      clean.substring(close + 2).toIntOrNull() ?: defaultPort
-    } else {
-      defaultPort
-    }
-    return ProxyTarget(host, port)
+internal fun parseLocalProxyRequest(header: String): LocalProxyRequest {
+  if (!header.endsWith("\\r\\n\\r\\n")) {
+    throw IllegalArgumentException("Incomplete proxy request")
   }
-  val colon = clean.lastIndexOf(':')
-  if (colon > 0 && clean.indexOf(':') == colon) {
-    val host = clean.substring(0, colon)
-    val port = clean.substring(colon + 1).toIntOrNull() ?: defaultPort
-    return ProxyTarget(host, port)
+  val lines = header.removeSuffix("\\r\\n\\r\\n").split("\\r\\n")
+  val match = HTTP_REQUEST_LINE_PATTERN.matchEntire(lines.firstOrNull().orEmpty())
+    ?: throw IllegalArgumentException("Invalid proxy request line")
+  val method = match.groupValues[1].uppercase(Locale.US)
+  val requestTarget = match.groupValues[2]
+  val version = match.groupValues[3]
+  val headerLines = lines.drop(1)
+  val hostHeader = singleHostHeader(headerLines)
+  var contentLength = 0L
+  val target = if (method == "CONNECT") {
+    val connectTarget = parseStrictAuthority(requestTarget, 443, requireExplicitPort = true)
+    if (parseStrictAuthority(hostHeader, 443, requireExplicitPort = false) != connectTarget) {
+      throw IllegalArgumentException("CONNECT target and Host differ")
+    }
+    connectTarget
+  } else {
+    contentLength = fixedRequestContentLength(headerLines)
+    val uri = try {
+      URI(requestTarget)
+    } catch (error: Exception) {
+      throw IllegalArgumentException("Invalid HTTP proxy target", error)
+    }
+    if (
+      !uri.scheme.equals("http", ignoreCase = true)
+      || uri.rawAuthority.isNullOrBlank()
+      || uri.rawUserInfo != null
+      || uri.rawAuthority.contains("@")
+      || uri.rawFragment != null
+    ) {
+      throw IllegalArgumentException("Only absolute HTTP proxy targets are allowed")
+    }
+    val targetHost = uri.host ?: throw IllegalArgumentException("HTTP target host is missing")
+    val httpTarget = ProxyTarget(normalizePublicTargetHost(targetHost), if (uri.port == -1) 80 else uri.port)
+    if (httpTarget.port != 80) {
+      throw IllegalArgumentException("Plain HTTP proxy target must use port 80")
+    }
+    if (parseStrictAuthority(hostHeader, 80, requireExplicitPort = false) != httpTarget) {
+      throw IllegalArgumentException("HTTP target and Host differ")
+    }
+    httpTarget
   }
-  return ProxyTarget(clean, defaultPort)
+  return LocalProxyRequest(method, requestTarget, version, target, contentLength)
 }
 
-private fun targetFromHttpRequest(requestTarget: String, header: String): ProxyTarget {
-  try {
-    val uri = URI(requestTarget)
-    val host = uri.host
-    if (!host.isNullOrBlank()) {
-      val defaultPort = if (uri.scheme.equals("https", ignoreCase = true)) 443 else 80
-      return ProxyTarget(host, if (uri.port > 0) uri.port else defaultPort)
+private fun fixedRequestContentLength(lines: List<String>): Long {
+  var contentLength: String? = null
+  for (line in lines) {
+    val separator = line.indexOf(':')
+    val name = line.substring(0, separator)
+    val value = line.substring(separator + 1).trim()
+    if (name.equals("Transfer-Encoding", ignoreCase = true)) {
+      throw IllegalArgumentException("Transfer-Encoding is not allowed")
     }
-  } catch (_: Exception) {
+    if (name.equals("Content-Length", ignoreCase = true)) {
+      if (contentLength != null) {
+        throw IllegalArgumentException("Multiple Content-Length headers are not allowed")
+      }
+      contentLength = value
+    }
   }
-  val hostHeader = header.lineSequence()
-    .firstOrNull { it.startsWith("Host:", ignoreCase = true) }
-    ?.substringAfter(':')
-    ?.trim()
-    .orEmpty()
-  return parseHostPort(hostHeader, 80)
+  val value = contentLength ?: return 0
+  if (value.isEmpty() || !value.all(Char::isDigit)) {
+    throw IllegalArgumentException("Invalid Content-Length")
+  }
+  return value.toLongOrNull()
+    ?: throw IllegalArgumentException("Invalid Content-Length")
+}
+
+private fun singleHostHeader(lines: List<String>): String {
+  val hosts = mutableListOf<String>()
+  for (line in lines) {
+    val separator = line.indexOf(':')
+    if (separator <= 0 || !HTTP_HEADER_NAME_PATTERN.matches(line.substring(0, separator))) {
+      throw IllegalArgumentException("Invalid proxy header")
+    }
+    val value = line.substring(separator + 1).trim()
+    if (value.any { character ->
+        (character.code < 0x20 && character != '\\t') || character.code == 0x7f
+      }) {
+      throw IllegalArgumentException("Invalid proxy header value")
+    }
+    if (line.substring(0, separator).equals("Host", ignoreCase = true)) {
+      hosts.add(value)
+    }
+  }
+  if (hosts.size != 1) {
+    throw IllegalArgumentException("Exactly one Host header is required")
+  }
+  return hosts.single()
+}
+
+private fun parseStrictAuthority(
+  value: String,
+  expectedPort: Int,
+  requireExplicitPort: Boolean
+): ProxyTarget {
+  if (
+    value.isBlank()
+    || value != value.trim()
+    || value.contains("@")
+    || value.any { it.code <= 0x20 || it.code == 0x7f }
+  ) {
+    throw IllegalArgumentException("Invalid proxy authority")
+  }
+  val (host, portText) = if (value.startsWith("[")) {
+    val close = value.indexOf(']')
+    if (close <= 1 || value.indexOf(']', close + 1) >= 0) {
+      throw IllegalArgumentException("Invalid IPv6 authority")
+    }
+    val remainder = value.substring(close + 1)
+    if (remainder.isNotEmpty() && !remainder.startsWith(":")) {
+      throw IllegalArgumentException("Invalid IPv6 authority")
+    }
+    value.substring(1, close) to remainder.removePrefix(":").ifEmpty { null }
+  } else {
+    val firstColon = value.indexOf(':')
+    val lastColon = value.lastIndexOf(':')
+    if (firstColon != lastColon) {
+      throw IllegalArgumentException("IPv6 authorities must use brackets")
+    }
+    if (firstColon < 0) value to null else value.substring(0, firstColon) to value.substring(firstColon + 1)
+  }
+  if (requireExplicitPort && portText == null) {
+    throw IllegalArgumentException("Proxy authority port is required")
+  }
+  val port = portText?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.toIntOrNull()
+    ?: if (portText == null) expectedPort else throw IllegalArgumentException("Invalid proxy authority port")
+  if (port != expectedPort) {
+    throw IllegalArgumentException("Proxy authority port is not allowed")
+  }
+  return ProxyTarget(normalizePublicTargetHost(host), port)
+}
+
+private fun normalizePublicTargetHost(host: String): String {
+  val clean = stripIpv6Brackets(host)
+  if (
+    clean.isBlank()
+    || clean != clean.trim()
+    || clean.contains("@")
+    || clean.contains("%")
+    || clean.any { it.code <= 0x20 || it.code == 0x7f }
+  ) {
+    throw IllegalArgumentException("Invalid proxy target host")
+  }
+  val literal = when {
+    IPV4_PATTERN.matches(clean) -> {
+      val parts = clean.split(".")
+      if (parts.any { part -> part.length > 1 && part.startsWith("0") }) {
+        throw IllegalArgumentException("Non-canonical IPv4 target")
+      }
+      val octets = parts.map { part ->
+        part.toIntOrNull()?.takeIf { it in 0..255 }
+          ?: throw IllegalArgumentException("Invalid IPv4 target")
+      }
+      InetAddress.getByAddress(octets.map(Int::toByte).toByteArray())
+    }
+    clean.all { it.isDigit() || it == '.' } ->
+      throw IllegalArgumentException("Invalid IPv4 target")
+    clean.contains(":") -> try {
+      InetAddress.getByName(clean)
+    } catch (error: Exception) {
+      throw IllegalArgumentException("Invalid IPv6 target", error)
+    }
+    else -> null
+  }
+  if (literal != null) {
+    val bytes = literal.address
+    val hasIpv4CompatiblePrefix =
+      bytes.size == 16 && (0 until 12).all { index -> bytes[index] == 0.toByte() }
+    val hasIpv4MappedPrefix =
+      bytes.size == 16
+        && (0 until 10).all { index -> bytes[index] == 0.toByte() }
+        && bytes[10] == 0xff.toByte()
+        && bytes[11] == 0xff.toByte()
+    val isIpv4EmbeddedIpv6 = clean.contains(":") && (
+      bytes.size == 4
+        || hasIpv4CompatiblePrefix
+        || hasIpv4MappedPrefix
+      )
+    if (isIpv4EmbeddedIpv6) {
+      throw IllegalArgumentException("IPv4-embedded IPv6 proxy targets are not allowed")
+    }
+    val isUniqueLocalIpv6 = bytes.size == 16 && (bytes[0].toInt() and 0xfe) == 0xfc
+    if (
+      literal.isAnyLocalAddress
+      || literal.isLoopbackAddress
+      || literal.isSiteLocalAddress
+      || literal.isLinkLocalAddress
+      || literal.isMulticastAddress
+      || isUniqueLocalIpv6
+    ) {
+      throw IllegalArgumentException("Local or private proxy targets are not allowed")
+    }
+    return clean.lowercase(Locale.US)
+  }
+  val ascii = try {
+    IDN.toASCII(clean, IDN.USE_STD3_ASCII_RULES).lowercase(Locale.US).removeSuffix(".")
+  } catch (error: Exception) {
+    throw IllegalArgumentException("Invalid proxy target host", error)
+  }
+  if (
+    ascii.isBlank()
+    || ascii.length > 253
+    || looksLikeNonCanonicalIpv4(ascii)
+    || ascii == "localhost"
+    || ascii.endsWith(".localhost")
+    || ascii.split(".").any { label ->
+      label.isEmpty() || label.length > 63 || label.startsWith("-") || label.endsWith("-")
+    }
+  ) {
+    throw IllegalArgumentException("Invalid proxy target host")
+  }
+  return ascii
+}
+
+private fun looksLikeNonCanonicalIpv4(host: String): Boolean {
+  val parts = host.split(".")
+  return parts.size in 1..4
+    && parts.all { part ->
+      part.matches(Regex("^\\\\d+$"))
+        || part.matches(Regex("^0[xX][0-9A-Fa-f]+$"))
+    }
 }
 
 private fun originRequestPath(requestTarget: String): String {
@@ -977,54 +1190,129 @@ private fun writeProxyError(output: OutputStream, status: Int, message: String) 
   output.write(body)
 }
 
-private fun pipeBoth(left: Socket, right: Socket, executor: ExecutorService) {
+internal fun pipeBoth(
+  left: Socket,
+  right: Socket,
+  executor: ExecutorService,
+  idleTimeoutMs: Int,
+  leftByteLimit: Long? = null
+) {
   right.use { remote ->
+    val idleDeadline = TunnelIdleDeadline(idleTimeoutMs)
     val latch = CountDownLatch(2)
+    fun closeTunnel() {
+      try {
+        left.close()
+      } catch (_: IOException) {
+      }
+      try {
+        remote.close()
+      } catch (_: IOException) {
+      }
+    }
     fun submitCopy(copy: () -> Unit) {
       try {
         executor.execute {
           try {
             copy()
+          } catch (_: SocketTimeoutException) {
+            closeTunnel()
+          } catch (_: IOException) {
+            closeTunnel()
           } finally {
             latch.countDown()
           }
         }
       } catch (_: RejectedExecutionException) {
+        closeTunnel()
         latch.countDown()
       }
     }
     submitCopy {
-      try {
-        copySocket(left.getInputStream(), remote.getOutputStream(), remote)
-      } catch (_: Exception) {
-      }
+      copySocket(left, remote, idleDeadline, leftByteLimit)
     }
     submitCopy {
-      try {
-        copySocket(remote.getInputStream(), left.getOutputStream(), left)
-      } catch (_: Exception) {
-      }
+      copySocket(remote, left, idleDeadline)
     }
     try {
-      latch.await()
+      while (latch.count > 0) {
+        val waitTimeoutMs = idleDeadline.remainingTimeoutMs()
+        if (latch.await(waitTimeoutMs.toLong(), TimeUnit.MILLISECONDS)) break
+      }
+    } catch (_: SocketTimeoutException) {
+      closeTunnel()
     } catch (_: InterruptedException) {
       Thread.currentThread().interrupt()
+      closeTunnel()
     }
   }
 }
 
-private fun copySocket(input: InputStream, output: OutputStream, outputSocket: Socket) {
+private class TunnelIdleDeadline(idleTimeoutMs: Int) {
+  private val timeoutNanos = TimeUnit.MILLISECONDS.toNanos(idleTimeoutMs.toLong())
+  private val lastActivityNanos = AtomicLong(System.nanoTime())
+
+  fun recordActivity() {
+    val now = System.nanoTime()
+    while (true) {
+      val previous = lastActivityNanos.get()
+      if (now <= previous || lastActivityNanos.compareAndSet(previous, now)) {
+        return
+      }
+    }
+  }
+
+  @Throws(SocketTimeoutException::class)
+  fun remainingTimeoutMs(): Int {
+    val elapsedNanos = System.nanoTime() - lastActivityNanos.get()
+    val remainingNanos = timeoutNanos - elapsedNanos
+    if (remainingNanos <= 0) {
+      throw SocketTimeoutException("Proxy tunnel idle timeout")
+    }
+    return ((remainingNanos + 999_999L) / 1_000_000L)
+      .coerceIn(1L, Int.MAX_VALUE.toLong())
+      .toInt()
+  }
+}
+
+@Throws(IOException::class)
+private fun copySocket(
+  inputSocket: Socket,
+  outputSocket: Socket,
+  idleDeadline: TunnelIdleDeadline,
+  byteLimit: Long? = null
+) {
+  val input = inputSocket.getInputStream()
+  val output = outputSocket.getOutputStream()
   try {
     val buffer = ByteArray(16 * 1024)
-    while (true) {
-      val read = input.read(buffer)
-      if (read <= 0) {
+    var remaining = byteLimit
+    while (remaining == null || remaining > 0) {
+      val read = try {
+        inputSocket.soTimeout = idleDeadline.remainingTimeoutMs()
+        input.read(
+          buffer,
+          0,
+          remaining?.coerceAtMost(buffer.size.toLong())?.toInt() ?: buffer.size
+        )
+      } catch (_: SocketTimeoutException) {
+        inputSocket.soTimeout = idleDeadline.remainingTimeoutMs()
+        continue
+      }
+      if (read < 0) {
+        if (remaining != null) {
+          throw EOFException("Request body ended before Content-Length")
+        }
         break
       }
+      if (read == 0) continue
+      idleDeadline.recordActivity()
       output.write(buffer, 0, read)
       output.flush()
+      if (remaining != null) {
+        remaining -= read
+      }
     }
-  } catch (_: IOException) {
   } finally {
     try {
       outputSocket.shutdownOutput()
@@ -1530,12 +1818,15 @@ function networkProxyRuntimeTestSource(packageName) {
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.InetAddress
 import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -1566,6 +1857,52 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NetworkProxyRuntimeTest {
+  private class BlockingWriteSocket(private val writesStarted: CountDownLatch) : Socket() {
+    private val closedState = AtomicBoolean(false)
+    private val closed = CountDownLatch(1)
+    private val emittedInput = AtomicBoolean(false)
+    private val input = object : InputStream() {
+      override fun read(): Int {
+        if (emittedInput.compareAndSet(false, true)) return 1
+        closed.await()
+        throw SocketException("socket closed")
+      }
+
+      override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        val value = read()
+        buffer[offset] = value.toByte()
+        return 1
+      }
+    }
+    private val output = object : OutputStream() {
+      override fun write(value: Int) {
+        writesStarted.countDown()
+        closed.await()
+        throw SocketException("socket closed")
+      }
+
+      override fun write(buffer: ByteArray, offset: Int, length: Int) {
+        if (length == 0) return
+        write(buffer[offset].toInt())
+      }
+    }
+
+    override fun getInputStream() = input
+
+    override fun getOutputStream() = output
+
+    override fun setSoTimeout(timeout: Int) = Unit
+
+    override fun shutdownOutput() = Unit
+
+    override fun close() {
+      if (closedState.compareAndSet(false, true)) closed.countDown()
+    }
+
+    override fun isClosed() = closedState.get()
+  }
+
   private fun responseFor(request: Request): Response = Response.Builder()
     .request(request)
     .protocol(Protocol.HTTP_1_1)
@@ -2380,6 +2717,75 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
+  fun regProxy007StopOverlapsConnectionWorkerCleanupWithoutBackgroundFailure() {
+    val connectorStarted = CountDownLatch(1)
+    val connectorReleased = CountDownLatch(1)
+    val stopFinished = CountDownLatch(1)
+    val connectionWorker = AtomicReference<Thread?>()
+    val backgroundFailure = AtomicReference<Throwable?>(null)
+    val previousUncaughtHandler = Thread.getDefaultUncaughtExceptionHandler()
+    val stopExecutor = Executors.newSingleThreadExecutor()
+    val server = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", 1, null, null),
+      socketConnector = { socket, _, _ ->
+        connectionWorker.set(Thread.currentThread())
+        connectorStarted.countDown()
+        while (!socket.isClosed) {
+          try {
+            Thread.sleep(5)
+          } catch (_: InterruptedException) {
+            if (!socket.isClosed) throw SocketException("connector interrupted before stop")
+            Thread.currentThread().interrupt()
+          }
+        }
+        connectorReleased.countDown()
+        throw SocketException("closed by proxy stop")
+      }
+    )
+    Thread.setDefaultUncaughtExceptionHandler { _, error ->
+      backgroundFailure.compareAndSet(null, error)
+    }
+    server.start()
+    val client = Socket("127.0.0.1", server.port)
+    try {
+      client.getOutputStream().apply {
+        write("GET http://example.invalid/ HTTP/1.1\\r\\nHost: example.invalid\\r\\n\\r\\n".toByteArray())
+        flush()
+      }
+      assertTrue("the connection worker must begin", connectorStarted.await(2, TimeUnit.SECONDS))
+
+      stopExecutor.execute {
+        try {
+          server.stop()
+        } catch (error: Throwable) {
+          backgroundFailure.compareAndSet(null, error)
+        } finally {
+          stopFinished.countDown()
+        }
+      }
+
+      assertTrue("stop must release the active connection worker", connectorReleased.await(2, TimeUnit.SECONDS))
+      assertTrue("stop must finish while the worker unwinds", stopFinished.await(2, TimeUnit.SECONDS))
+      val worker = requireNotNull(connectionWorker.get())
+      worker.join(2_000)
+      assertFalse("the connection worker must terminate before cleanup is asserted", worker.isAlive)
+      client.soTimeout = 2_000
+      val clientClosed = try {
+        client.getInputStream().read() == -1
+      } catch (_: SocketException) {
+        true
+      }
+      assertTrue("stop must close the accepted client", clientClosed)
+      assertNull("worker cleanup must not escape a background exception", backgroundFailure.get())
+    } finally {
+      client.close()
+      server.stop()
+      stopExecutor.shutdownNow()
+      Thread.setDefaultUncaughtExceptionHandler(previousUncaughtHandler)
+    }
+  }
+
+  @Test
   fun stopClosesUpstreamSocketsForEstablishedTunnels() {
     val upstreamListener = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     val upstreamExecutor = Executors.newSingleThreadExecutor()
@@ -2482,25 +2888,424 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
-  fun rejectsClientsBeyondTheConnectionLimit() {
+  fun regProxy007RejectsUnsafeLocalRelayTargets() {
+    fun request(line: String, host: String): String =
+      line + "\\r\\nHost: " + host + "\\r\\n\\r\\n"
+
+    assertEquals(
+      ProxyTarget("example.invalid", 443),
+      parseLocalProxyRequest(request(
+        "CONNECT example.invalid:443 HTTP/1.1",
+        "example.invalid:443"
+      )).target
+    )
+    assertEquals(
+      ProxyTarget("8.8.8.8", 80),
+      parseLocalProxyRequest(request(
+        "GET http://8.8.8.8/path HTTP/1.1",
+        "8.8.8.8"
+      )).target
+    )
+
+    val unsafe = listOf(
+      request("CONNECT example.invalid:444 HTTP/1.1", "example.invalid:444"),
+      request("CONNECT example.invalid HTTP/1.1", "example.invalid"),
+      request("GET https://example.invalid/ HTTP/1.1", "example.invalid"),
+      request("GET http://example.invalid:8080/ HTTP/1.1", "example.invalid:8080"),
+      request("GET http://user@example.invalid/ HTTP/1.1", "example.invalid"),
+      request("GET http:///missing-host HTTP/1.1", ""),
+      request("GET http://example.invalid/ HTTP/2", "example.invalid"),
+      request("GET  http://example.invalid/ HTTP/1.1", "example.invalid"),
+      request("GET http://example.invalid/ HTTP/1.1", "different.invalid"),
+      "POST http://example.invalid/ HTTP/1.1\\r\\nHost: example.invalid\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n",
+      "POST http://example.invalid/ HTTP/1.1\\r\\nHost: example.invalid\\r\\nContent-Length: 4\\r\\nContent-Length: 4\\r\\n\\r\\n",
+      "POST http://example.invalid/ HTTP/1.1\\r\\nHost: example.invalid\\r\\nContent-Length: 4, 4\\r\\n\\r\\n",
+      request("GET http://localhost/ HTTP/1.1", "localhost"),
+      request("GET http://127.0.0.1/ HTTP/1.1", "127.0.0.1"),
+      request("GET http://001.1.1.1/ HTTP/1.1", "001.1.1.1"),
+      request("GET http://017.1.1.1/ HTTP/1.1", "017.1.1.1"),
+      request("GET http://0177.0.0.1/ HTTP/1.1", "0177.0.0.1"),
+      request("GET http://0x7f000001/ HTTP/1.1", "0x7f000001"),
+      request("GET http://0x7f.0x0.0x0.0x1/ HTTP/1.1", "0x7f.0x0.0x0.0x1"),
+      request("GET http://10.0.0.1/ HTTP/1.1", "10.0.0.1"),
+      request("GET http://172.16.0.1/ HTTP/1.1", "172.16.0.1"),
+      request("GET http://192.168.0.1/ HTTP/1.1", "192.168.0.1"),
+      request("GET http://169.254.1.1/ HTTP/1.1", "169.254.1.1"),
+      request("GET http://224.0.0.1/ HTTP/1.1", "224.0.0.1"),
+      request("CONNECT [::]:443 HTTP/1.1", "[::]:443"),
+      request("CONNECT [::1]:443 HTTP/1.1", "[::1]:443"),
+      request("CONNECT [fe80::1]:443 HTTP/1.1", "[fe80::1]:443"),
+      request("CONNECT [fc00::1]:443 HTTP/1.1", "[fc00::1]:443"),
+      request("CONNECT [ff02::1]:443 HTTP/1.1", "[ff02::1]:443"),
+      request(
+        "CONNECT bad" + 0.toChar() + ".invalid:443 HTTP/1.1",
+        "bad.invalid:443"
+      )
+    )
+
+    unsafe.forEach { header ->
+      assertThrows(IllegalArgumentException::class.java) {
+        parseLocalProxyRequest(header)
+      }
+    }
+  }
+
+  @Test
+  fun regProxy007RejectsIpv4EmbeddedIpv6Targets() {
+    fun request(authority: String): String =
+      "CONNECT " + authority + " HTTP/1.1\\r\\nHost: " + authority + "\\r\\n\\r\\n"
+
+    assertEquals(
+      ProxyTarget("2001:db8::1", 443),
+      parseLocalProxyRequest(request("[2001:db8::1]:443")).target
+    )
+
+    listOf(
+      "[::127.0.0.1]:443",
+      "[::10.0.0.1]:443",
+      "[::8.8.8.8]:443",
+      "[::ffff:127.0.0.1]:443",
+      "[::ffff:10.0.0.1]:443",
+      "[::ffff:8.8.8.8]:443",
+      "[0:0:0:0:0:ffff:7f00:1]:443"
+    ).forEach { authority ->
+      assertThrows(IllegalArgumentException::class.java) {
+        parseLocalProxyRequest(request(authority))
+      }
+    }
+  }
+
+  @Test
+  fun regProxy007FormatsIpv6AuthorityForHttpUpstreamConnect() {
+    val received = AtomicReference("")
+    val upstreamListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+    val upstreamExecutor = Executors.newSingleThreadExecutor()
+    upstreamExecutor.execute {
+      upstreamListener.accept().use { accepted ->
+        received.set(readHeaderBlock(accepted.getInputStream()))
+        accepted.getOutputStream().apply {
+          write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray())
+          flush()
+        }
+      }
+    }
     val server = LocalNetworkProxyServer(
-      NetworkProxyProfile("http", "127.0.0.1", 1, null, null),
-      maxConnections = 1
+      NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null)
     )
     server.start()
-    val first = Socket("127.0.0.1", server.port)
-    val second = Socket("127.0.0.1", server.port)
     try {
-      first.getOutputStream().write("G".toByteArray())
-      Thread.sleep(100)
-
-      second.soTimeout = 2_000
-      val response = second.getInputStream().bufferedReader().readText()
-
-      assertTrue("connections beyond the limit must be rejected locally", response.contains("503 Busy"))
+      Socket("127.0.0.1", server.port).use { client ->
+        client.soTimeout = 2_000
+        client.getOutputStream().apply {
+          write(
+            (
+              "CONNECT [2001:db8::1]:443 HTTP/1.1\\r\\n"
+                + "Host: [2001:db8::1]:443\\r\\n\\r\\n"
+            ).toByteArray()
+          )
+          flush()
+        }
+        assertTrue(readHeaderBlock(client.getInputStream()).startsWith("HTTP/1.1 200 "))
+      }
+      assertTrue(received.get().startsWith("CONNECT [2001:db8::1]:443 HTTP/1.1\\r\\n"))
+      assertTrue(received.get().contains("Host: [2001:db8::1]:443\\r\\n"))
     } finally {
-      first.close()
-      second.close()
+      server.stop()
+      upstreamListener.close()
+      upstreamExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regProxy007EnforcesThe64KiBHeaderLimit() {
+    val prefix = "GET http://example.invalid/ HTTP/1.1\\r\\nHost: example.invalid\\r\\nX-Fill: "
+    val suffix = "\\r\\n\\r\\n"
+    val fillSize = 64 * 1024 -
+      prefix.toByteArray(Charsets.ISO_8859_1).size -
+      suffix.toByteArray(Charsets.ISO_8859_1).size
+    val exact = prefix + "a".repeat(fillSize) + suffix
+    val oversized = prefix + "a".repeat(fillSize + 1) + suffix
+
+    assertEquals(64 * 1024, exact.toByteArray(Charsets.ISO_8859_1).size)
+    assertEquals(exact, readHeaderBlock(ByteArrayInputStream(exact.toByteArray(Charsets.ISO_8859_1))))
+    assertThrows(java.io.IOException::class.java) {
+      readHeaderBlock(ByteArrayInputStream(oversized.toByteArray(Charsets.ISO_8859_1)))
+    }
+  }
+
+  @Test
+  fun regProxy007DoesNotForwardAPipelinedSecondTarget() {
+    val received = AtomicReference("")
+    val upstreamListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+    val upstreamExecutor = Executors.newSingleThreadExecutor()
+    upstreamExecutor.execute {
+      upstreamListener.accept().use { accepted ->
+        accepted.soTimeout = 500
+        val input = accepted.getInputStream()
+        val firstHeader = readHeaderBlock(input)
+        val extra = ByteArrayOutputStream()
+        try {
+          while (true) {
+            val value = input.read()
+            if (value < 0) break
+            extra.write(value)
+          }
+        } catch (_: SocketTimeoutException) {
+        }
+        received.set(firstHeader + extra.toString(Charsets.ISO_8859_1.name()))
+        accepted.getOutputStream().apply {
+          write("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n".toByteArray())
+          flush()
+        }
+      }
+    }
+    val server = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null)
+    )
+    server.start()
+    val client = Socket("127.0.0.1", server.port)
+    try {
+      client.soTimeout = 2_000
+      client.getOutputStream().apply {
+        write((
+          "POST http://example.invalid/ HTTP/1.1\\r\\n" +
+          "Host: example.invalid\\r\\n" +
+          "Connection: keep-alive\\r\\n" +
+          "Proxy-Connection: keep-alive\\r\\n" +
+          "Keep-Alive: timeout=5\\r\\n" +
+          "Content-Length: 4\\r\\n\\r\\n" +
+          "body" +
+          "GET http://127.0.0.1/ HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n"
+        ).toByteArray())
+        flush()
+      }
+      client.getInputStream().readBytes()
+
+      assertTrue(received.get().contains("example.invalid"))
+      assertTrue(received.get().endsWith("\\r\\n\\r\\nbody"))
+      assertTrue(received.get().contains("Connection: close\\r\\n"))
+      assertTrue(received.get().contains("Proxy-Connection: close\\r\\n"))
+      assertFalse(received.get().contains("keep-alive", ignoreCase = true))
+      assertFalse(received.get().contains("127.0.0.1"))
+    } finally {
+      client.close()
+      server.stop()
+      upstreamListener.close()
+      upstreamExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regProxy007RejectedCopySubmissionClosesTunnel() {
+    val leftListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+    val rightListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+    val leftPeer = Socket("127.0.0.1", leftListener.localPort)
+    val left = leftListener.accept()
+    val rightPeer = Socket("127.0.0.1", rightListener.localPort)
+    val right = rightListener.accept()
+    val copyExecutor = java.util.concurrent.ThreadPoolExecutor(
+      1,
+      1,
+      0L,
+      TimeUnit.MILLISECONDS,
+      java.util.concurrent.SynchronousQueue<Runnable>()
+    )
+    val runner = Executors.newSingleThreadExecutor()
+    val finished = CountDownLatch(1)
+    runner.execute {
+      try {
+        pipeBoth(left, right, copyExecutor, 10_000)
+      } finally {
+        finished.countDown()
+      }
+    }
+    try {
+      assertTrue("a rejected copy direction must release the tunnel", finished.await(2, TimeUnit.SECONDS))
+      assertTrue("a rejected copy direction must close the client socket", left.isClosed)
+      assertTrue("a rejected copy direction must close the upstream socket", right.isClosed)
+    } finally {
+      leftPeer.close()
+      rightPeer.close()
+      left.close()
+      right.close()
+      leftListener.close()
+      rightListener.close()
+      copyExecutor.shutdownNow()
+      runner.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regProxy008BlockedWritesCannotOutliveTheSharedIdleDeadline() {
+    val writesStarted = CountDownLatch(2)
+    val left = BlockingWriteSocket(writesStarted)
+    val right = BlockingWriteSocket(writesStarted)
+    val copyExecutor = Executors.newFixedThreadPool(2)
+    val runner = Executors.newSingleThreadExecutor()
+    val finished = CountDownLatch(1)
+    runner.execute {
+      try {
+        pipeBoth(left, right, copyExecutor, 100)
+      } finally {
+        finished.countDown()
+      }
+    }
+    try {
+      assertTrue("both copy directions must enter write", writesStarted.await(2, TimeUnit.SECONDS))
+      assertTrue("blocked writes must not outlive the tunnel deadline", finished.await(2, TimeUnit.SECONDS))
+      assertTrue("the idle deadline must close the client socket", left.isClosed)
+      assertTrue("the idle deadline must close the upstream socket", right.isClosed)
+    } finally {
+      left.close()
+      right.close()
+      copyExecutor.shutdownNow()
+      runner.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regProxy007OneWayActivityKeepsTunnelAliveUntilBothDirectionsAreIdle() {
+    val leftListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+    val rightListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+    val leftPeer = Socket("127.0.0.1", leftListener.localPort)
+    val left = leftListener.accept()
+    val rightPeer = Socket("127.0.0.1", rightListener.localPort)
+    val right = rightListener.accept()
+    val copyExecutor = Executors.newFixedThreadPool(2)
+    val runner = Executors.newSingleThreadExecutor()
+    val finished = CountDownLatch(1)
+    runner.execute {
+      try {
+        pipeBoth(left, right, copyExecutor, 400)
+      } finally {
+        finished.countDown()
+      }
+    }
+    try {
+      leftPeer.soTimeout = 2_000
+      repeat(10) { value ->
+        rightPeer.getOutputStream().apply {
+          write(value)
+          flush()
+        }
+        assertEquals(value, leftPeer.getInputStream().read())
+        Thread.sleep(50)
+      }
+
+      assertFalse(
+        "one-way activity must keep the tunnel open",
+        finished.await(100, TimeUnit.MILLISECONDS)
+      )
+      assertTrue(
+        "the tunnel must close after both directions become idle",
+        finished.await(2, TimeUnit.SECONDS)
+      )
+      assertTrue("shared idle timeout must close the client socket", left.isClosed)
+      assertTrue("shared idle timeout must close the upstream socket", right.isClosed)
+    } finally {
+      leftPeer.close()
+      rightPeer.close()
+      left.close()
+      right.close()
+      leftListener.close()
+      rightListener.close()
+      copyExecutor.shutdownNow()
+      runner.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regProxy007IdleTunnelClosesBothSockets() {
+    val upstreamListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+    val upstreamExecutor = Executors.newSingleThreadExecutor()
+    val upstreamClosed = CountDownLatch(1)
+    upstreamExecutor.execute {
+      upstreamListener.accept().use { accepted ->
+        accepted.soTimeout = 2_000
+        val reader = accepted.getInputStream().bufferedReader()
+        while (!reader.readLine().isNullOrEmpty()) {
+        }
+        accepted.getOutputStream().apply {
+          write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray())
+          flush()
+        }
+        try {
+          if (reader.read() == -1) {
+            upstreamClosed.countDown()
+          }
+        } catch (_: SocketException) {
+          upstreamClosed.countDown()
+        }
+      }
+    }
+    val server = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null),
+      idleTimeoutMs = 100
+    )
+    server.start()
+    val client = Socket("127.0.0.1", server.port)
+    try {
+      client.soTimeout = 2_000
+      client.getOutputStream().apply {
+        write("CONNECT example.invalid:443 HTTP/1.1\\r\\nHost: example.invalid:443\\r\\n\\r\\n".toByteArray())
+        flush()
+      }
+      val reader = client.getInputStream().bufferedReader()
+      assertTrue(reader.readLine().contains("200 Connection Established"))
+      while (!reader.readLine().isNullOrEmpty()) {
+      }
+      val clientClosed = try {
+        reader.read() == -1
+      } catch (_: SocketException) {
+        true
+      } catch (_: SocketTimeoutException) {
+        false
+      }
+
+      assertTrue("idle timeout must close the client tunnel", clientClosed)
+      assertTrue("idle timeout must close the upstream tunnel", upstreamClosed.await(2, TimeUnit.SECONDS))
+    } finally {
+      client.close()
+      server.stop()
+      upstreamListener.close()
+      upstreamExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regProxy007RejectsThe17thConnection() {
+    val connectionStarted = CountDownLatch(16)
+    val releaseConnections = CountDownLatch(1)
+    val server = LocalNetworkProxyServer(
+      NetworkProxyProfile("http", "127.0.0.1", 1, null, null),
+      socketConnector = { _, _, _ ->
+        connectionStarted.countDown()
+        releaseConnections.await()
+        throw SocketException("released test connection")
+      }
+    )
+    server.start()
+    val held = (1..16).map {
+      Socket("127.0.0.1", server.port).also { client ->
+        client.getOutputStream().apply {
+          write("CONNECT example.invalid:443 HTTP/1.1\\r\\nHost: example.invalid:443\\r\\n\\r\\n".toByteArray())
+          flush()
+        }
+      }
+    }
+    var overflow: Socket? = null
+    try {
+      assertTrue("all sixteen connection workers must be occupied", connectionStarted.await(10, TimeUnit.SECONDS))
+
+      overflow = Socket("127.0.0.1", server.port)
+      overflow.soTimeout = 2_000
+      val response = overflow.getInputStream().bufferedReader().readText()
+
+      assertTrue("the seventeenth connection must be rejected locally", response.contains("503 Busy"))
+    } finally {
+      releaseConnections.countDown()
+      held.forEach(Socket::close)
+      overflow?.close()
       server.stop()
     }
   }

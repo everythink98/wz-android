@@ -240,6 +240,26 @@ describe('network proxy controller', () => {
     expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-PROXY-007] does not restart an enabled proxy when only its saved name changes', async () => {
+    mockLoadNetworkProxyState.mockResolvedValue({
+      enabled: true,
+      activeId: profileA.id,
+      profiles: [profileA]
+    });
+    const hook = await renderHook(() => useNetworkProxyController({ notify: jest.fn() }));
+    await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
+
+    await act(async () => {
+      await hook.result.current.upsertProxyProfile({ ...profileA, name: 'Renamed' });
+    });
+
+    expect(mockSaveNetworkProxyState).toHaveBeenCalledWith(expect.objectContaining({
+      profiles: [expect.objectContaining({ id: profileA.id, name: 'Renamed' })]
+    }));
+    expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.applyStatus).toBe('applied');
+  });
+
   it('[REG-PROXY-002] settles rapid enable then disable commands in order', async () => {
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: false,

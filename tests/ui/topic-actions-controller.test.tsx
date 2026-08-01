@@ -110,6 +110,16 @@ const detail: TopicDetail = {
   polls: [poll]
 };
 
+const editableReply: Reply = {
+  author: 'alice',
+  canEdit: true,
+  commentId: 101,
+  contentHtml: '<p>old</p>',
+  contentMarkdown: 'old',
+  createdAt: '2026-07-20T00:01:00.000Z',
+  floor: 2
+};
+
 type ActionSource = Exclude<Source, 'v2ex'>;
 
 function loggedInStates(source: ActionSource = 'nodeseek') {
@@ -165,7 +175,10 @@ async function renderActions({
   topicDetail?: TopicDetail;
   topicReplies?: Reply[];
 } = {}) {
-  const hook = await renderNativeHook((props: { sessionEpochs: ForumSessionEpochs }) => {
+  const hook = await renderNativeHook((props: {
+    sessionEpochs: ForumSessionEpochs;
+    topicReplies?: Reply[];
+  }) => {
     const topicSession = useTopicSessionController({ notify });
     const actions = useTopicActionsController({
       sessionEpochs: props.sessionEpochs,
@@ -194,7 +207,7 @@ async function renderActions({
         siteSessionStates || loggedInStates(topicDetail.source as ActionSource)
       ),
       topicDetail,
-      topicReplies,
+      topicReplies: props.topicReplies ?? topicReplies,
       topicSession
     });
     return { actions, topicSession };
@@ -204,6 +217,9 @@ async function renderActions({
   });
   await act(async () => {
     hook.result.current.topicSession.commands.topic.select(topicDetail);
+  });
+  await act(async () => {
+    hook.result.current.topicSession.commands.composer.toggle(true);
   });
   return hook;
 }
@@ -959,6 +975,534 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({ bookmarked: true });
   });
 
+  it.each([
+    {
+      caseLabel: 'the account identity and epoch change',
+      draft: '保留给新账号的草稿',
+      nextIdentityKey: 'nodeseek:account-b'
+    },
+    {
+      caseLabel: 'only the session epoch changes',
+      draft: 'epoch 变化后保留的草稿',
+      nextIdentityKey: 'nodeseek:account-a'
+    }
+  ])('[REG-WRITE-026] detaches an edit after $caseLabel and keeps its text out of every write path', async ({
+    draft,
+    nextIdentityKey
+  }) => {
+    const nodeSeekDetail = detailFor('nodeseek', {
+      canCreatePost: true,
+      polls: [],
+      replies: [editableReply]
+    });
+    const nextEpochs = { ...initialForumSessionEpochs, nodeseek: 1 };
+    const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
+    let identityKey = 'nodeseek:account-a';
+    let sessionEpoch = 0;
+    const ensureWritableSession = jest.fn(async () => ({
+      source: 'nodeseek' as const,
+      identityKey,
+      sessionEpoch
+    }));
+    const isWritableSessionTicketCurrent = jest.fn((ticket: WritableSessionTicket) => (
+      ticket.identityKey === identityKey && ticket.sessionEpoch === sessionEpoch
+    ));
+    seedTopicCache(nodeSeekDetail, [editableReply]);
+    const hook = await renderActions({
+      ensureNodeImageApiKey,
+      ensureWritableSession,
+      isWritableSessionTicketCurrent,
+      topicDetail: nodeSeekDetail,
+      topicReplies: [editableReply]
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.editReply(editableReply);
+      hook.result.current.topicSession.commands.composer.changeContent(draft);
+    });
+    expect(hook.result.current.topicSession.state.replyEditTarget?.ticket.identityKey).toBe(identityKey);
+    const staleSubmitReply = hook.result.current.actions.submitReply;
+    const staleUploadReplyImage = hook.result.current.actions.uploadReplyImage;
+
+    identityKey = nextIdentityKey;
+    sessionEpoch = 1;
+    await act(async () => {
+      hook.rerender({ sessionEpochs: nextEpochs });
+    });
+
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe(draft);
+
+    await act(async () => {
+      await staleSubmitReply();
+      await staleUploadReplyImage();
+      await hook.result.current.actions.submitReply();
+      await hook.result.current.actions.uploadReplyImage();
+    });
+
+    expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
+    expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+    expect(ensureWritableSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-WRITE-026] restores an inactive edit route as a closed draft with no stale or direct write path', async () => {
+    const nodeSeekDetail = detailFor('nodeseek', {
+      canCreatePost: true,
+      polls: [],
+      replies: [editableReply]
+    });
+    const otherTopic = detailFor('nodeseek', {
+      id: '43',
+      title: 'Other route',
+      url: 'https://www.nodeseek.com/post-43-1',
+      polls: [],
+      replies: []
+    });
+    const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
+    const ensureWritableSession = jest.fn(async () => ({
+      source: 'nodeseek' as const,
+      identityKey: 'nodeseek:account-a',
+      sessionEpoch: 0
+    }));
+    seedTopicCache(nodeSeekDetail, [editableReply]);
+    const hook = await renderActions({
+      ensureNodeImageApiKey,
+      ensureWritableSession,
+      topicDetail: nodeSeekDetail,
+      topicReplies: [editableReply]
+    });
+
+    await act(async () => {
+      hook.result.current.topicSession.commands.navigation.activateRoute('topic-route-a');
+      await hook.result.current.actions.editReply(editableReply);
+      hook.result.current.topicSession.commands.composer.changeContent('同账号返回后保留的草稿');
+    });
+    const staleSubmitReply = hook.result.current.actions.submitReply;
+    const staleUploadReplyImage = hook.result.current.actions.uploadReplyImage;
+
+    await act(async () => {
+      hook.result.current.topicSession.commands.navigation.saveRoute('topic-route-a');
+      hook.result.current.topicSession.commands.navigation.activateRoute('topic-route-b');
+      hook.result.current.topicSession.commands.topic.select(otherTopic);
+    });
+    expect(hook.result.current.topicSession.state.selectedTopic?.id).toBe('43');
+
+    let routeRestored = false;
+    await act(async () => {
+      routeRestored = hook.result.current.topicSession.commands.navigation.restoreRoute('topic-route-a');
+    });
+
+    expect(routeRestored).toBe(true);
+    expect(hook.result.current.topicSession.state.selectedTopic?.id).toBe(nodeSeekDetail.id);
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('同账号返回后保留的草稿');
+
+    await act(async () => {
+      await staleSubmitReply();
+      await staleUploadReplyImage();
+      await hook.result.current.actions.submitReply();
+      await hook.result.current.actions.uploadReplyImage();
+    });
+
+    expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
+    expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+    expect(ensureWritableSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-WRITE-026] rechecks the exact cached reply permission before editing', async () => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    seedTopicCache(xiaDetail, [reply]);
+    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('不能以旧权限提交的正文');
+    });
+    seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+
+    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyContent).toBe('不能以旧权限提交的正文');
+
+    seedTopicCache(xiaDetail, [reply]);
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('缓存已不存在的正文');
+    });
+    seedTopicCache(xiaDetail, []);
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+
+    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyContent).toBe('缓存已不存在的正文');
+  });
+
+  it('[REG-WRITE-026] fails closed on conflicting duplicate edit permissions across cached pages', async () => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const { repliesKey } = seedTopicCache(xiaDetail, [reply]);
+    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('跨页权限冲突时保留的正文');
+    });
+    const current = appQueryClient.getQueryData<{
+      pages: Array<{ items: Reply[]; [key: string]: unknown }>;
+      pageParams: unknown[];
+    }>(repliesKey);
+    appQueryClient.setQueryData(repliesKey, {
+      ...current,
+      pages: [
+        { ...current?.pages[0], items: [reply] },
+        { ...current?.pages[0], items: [{ ...reply, canEdit: false }] }
+      ],
+      pageParams: [null, 2]
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+
+    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('跨页权限冲突时保留的正文');
+  });
+
+  it('[REG-WRITE-026] immediately detaches an edit when refreshed replies revoke or remove it', async () => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: true, polls: [], replies: [reply] });
+    seedTopicCache(xiaDetail, [reply]);
+    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('权限撤回后保留的草稿');
+    });
+    await act(async () => {
+      hook.rerender({
+        sessionEpochs: initialForumSessionEpochs,
+        topicReplies: [{ ...reply, canEdit: false }]
+      });
+    });
+
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('权限撤回后保留的草稿');
+
+    await act(async () => {
+      hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicReplies: [reply] });
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('回复消失后保留的草稿');
+    });
+    await act(async () => {
+      hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicReplies: [] });
+    });
+
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('回复消失后保留的草稿');
+    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+  });
+
+  it('[REG-WRITE-026] rechecks edit permission after query cancellation and before transport', async () => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const cancellation = Promise.withResolvers<void>();
+    const cancelQueries = jest
+      .spyOn(appQueryClient, 'cancelQueries')
+      .mockImplementation(async () => cancellation.promise);
+    seedTopicCache(xiaDetail, [reply]);
+    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('取消查询期间失效的正文');
+    });
+    let submission!: Promise<void>;
+
+    await act(async () => {
+      submission = hook.result.current.actions.submitReply();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(cancelQueries).toHaveBeenCalledTimes(2));
+    seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
+    await act(async () => {
+      cancellation.resolve();
+      await submission;
+    });
+
+    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyContent).toBe('取消查询期间失效的正文');
+  });
+
+  it('[REG-WRITE-026] rechecks edit permission after Discourse runtime preparation and before transport', async () => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const runtimePreparation = Promise.withResolvers<Awaited<ReturnType<typeof prepareDiscourseActionRuntime>>>();
+    mockPrepareDiscourseActionRuntime.mockImplementationOnce(() => runtimePreparation.promise);
+    seedTopicCache(xiaDetail, [reply]);
+    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('凭据准备期间失效的正文');
+    });
+    let submission!: Promise<void>;
+
+    await act(async () => {
+      submission = hook.result.current.actions.submitReply();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockPrepareDiscourseActionRuntime).toHaveBeenCalledTimes(1));
+    seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
+    await act(async () => {
+      runtimePreparation.resolve({
+        credentialReady: true,
+        credentialSource: 'secure-store',
+        csrfSource: 'none',
+        execute: mockDiscourseExecute,
+        isCredentialCurrent: () => true,
+        recover: mockDiscourseRecover
+      });
+      await submission;
+    });
+
+    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('凭据准备期间失效的正文');
+  });
+
+  it('[REG-WRITE-026] rechecks upload edit permission after Discourse runtime preparation and before transport', async () => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const runtimePreparation = Promise.withResolvers<Awaited<ReturnType<typeof prepareDiscourseActionRuntime>>>();
+    mockPrepareDiscourseActionRuntime.mockImplementationOnce(() => runtimePreparation.promise);
+    mockGetDocument.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+    });
+    seedTopicCache(xiaDetail, [reply]);
+    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('上传凭据准备期间失效的正文');
+    });
+    let upload!: Promise<void>;
+
+    await act(async () => {
+      upload = hook.result.current.actions.uploadReplyImage();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockPrepareDiscourseActionRuntime).toHaveBeenCalledTimes(1));
+    seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
+    await act(async () => {
+      runtimePreparation.resolve({
+        credentialReady: true,
+        credentialSource: 'secure-store',
+        csrfSource: 'none',
+        execute: mockDiscourseExecute,
+        isCredentialCurrent: () => true,
+        recover: mockDiscourseRecover
+      });
+      await upload;
+    });
+
+    expect(mockGetDocument).toHaveBeenCalledTimes(1);
+    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('上传凭据准备期间失效的正文');
+  });
+
+  it.each([
+    { caseLabel: 'permission revoked', invalidation: 'revoked' as const },
+    { caseLabel: 'reply missing', invalidation: 'missing' as const }
+  ])('[REG-WRITE-026] rejects a stale edit before NodeImage credentials and file selection ($caseLabel)', async ({
+    invalidation
+  }) => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const nodeSeekDetail = detailFor('nodeseek', { canCreatePost: true, polls: [], replies: [reply] });
+    const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
+    seedTopicCache(nodeSeekDetail, [reply]);
+    const hook = await renderActions({
+      ensureNodeImageApiKey,
+      topicDetail: nodeSeekDetail,
+      topicReplies: [reply]
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+    });
+    seedTopicCache(nodeSeekDetail, invalidation === 'missing' ? [] : [{ ...reply, canEdit: false }]);
+    await act(async () => {
+      await hook.result.current.actions.uploadReplyImage();
+    });
+
+    expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
+    expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('old');
+  });
+
+  it('[REG-WRITE-026] rechecks edit permission after NodeImage credentials and before file selection', async () => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const nodeSeekDetail = detailFor('nodeseek', { canCreatePost: true, polls: [], replies: [reply] });
+    const apiKey = Promise.withResolvers<string | null>();
+    const ensureNodeImageApiKey = jest.fn(() => apiKey.promise);
+    seedTopicCache(nodeSeekDetail, [reply]);
+    const hook = await renderActions({
+      ensureNodeImageApiKey,
+      topicDetail: nodeSeekDetail,
+      topicReplies: [reply]
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+    });
+    let upload!: Promise<void>;
+    await act(async () => {
+      upload = hook.result.current.actions.uploadReplyImage();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(ensureNodeImageApiKey).toHaveBeenCalledTimes(1));
+    seedTopicCache(nodeSeekDetail, [{ ...reply, canEdit: false }]);
+    await act(async () => {
+      apiKey.resolve('must-not-authorize-picker');
+      await upload;
+    });
+
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('old');
+  });
+
+  it('[REG-WRITE-026] derives edit cache keys from the issued ticket epoch', async () => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const ticketEpochs = { ...initialForumSessionEpochs, xiaoyinsi: 7 };
+    const { repliesKey } = seedTopicCache(xiaDetail, [reply], ticketEpochs);
+    const hook = await renderActions({
+      ensureWritableSession: async () => ({
+        source: 'xiaoyinsi',
+        identityKey: 'xiaoyinsi:account-a',
+        sessionEpoch: 7
+      }),
+      isWritableSessionTicketCurrent: () => true,
+      topicDetail: xiaDetail,
+      topicReplies: [reply]
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('ticket epoch body');
+    });
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+
+    expect(mockDiscourseExecute).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/posts/101.json',
+      method: 'PUT'
+    }));
+    expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
+  });
+
   it('[REG-XIAOYINSI-007] closes an edit composer, keeps unconfirmed content out of cache, and refreshes only replies', async () => {
     const reply: Reply = {
       author: 'alice',
@@ -973,7 +1517,7 @@ describe('topic action query mutations', () => {
     const { detailKey, repliesKey } = seedTopicCache(xiaDetail, [reply]);
     const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
     await act(async () => {
-      hook.result.current.topicSession.commands.composer.editReply(reply);
+      await hook.result.current.actions.editReply(reply);
       hook.result.current.topicSession.commands.composer.changeContent('server must confirm this body');
     });
 

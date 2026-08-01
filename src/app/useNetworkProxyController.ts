@@ -49,7 +49,9 @@ function sameNetworkProxyProfile(left: NetworkProxyProfile, right: NetworkProxyP
 
 function networkProxyApplyKey(state: NetworkProxyState) {
   const profile = state.enabled ? activeNetworkProxyProfile(state) : null;
-  return profile ? JSON.stringify(profile) : '';
+  return profile
+    ? JSON.stringify([profile.protocol, profile.host, profile.port, profile.username, profile.password])
+    : '';
 }
 
 function enqueueProxyEnabledTransition(

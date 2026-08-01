@@ -88,6 +88,20 @@ export interface QuotedAuthorReference {
   username?: string;
 }
 
+export interface QuotedPostReference {
+  source: Source;
+  topicId: string;
+  postNumber: number;
+}
+
+export interface QuotedPostMetadata {
+  reference: QuotedPostReference;
+  author?: QuotedAuthorReference;
+  preview?: string;
+  topicTitle?: string;
+  topicUrl?: string;
+}
+
 export interface Reply {
   author: string;
   authorId?: string;
@@ -97,9 +111,7 @@ export interface Reply {
   contentHtml: string;
   createdAt: string;
   floor?: number;
-  quotedFloors?: number[];
-  quotedAuthors?: Record<number, QuotedAuthorReference>;
-  quotedPreviews?: Record<number, string>;
+  quotedPosts?: QuotedPostMetadata[];
   commentId?: number;
   upvoteCount?: number;
   likeCount?: number;

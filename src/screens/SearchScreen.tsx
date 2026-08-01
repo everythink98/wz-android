@@ -189,6 +189,7 @@ function FilterTextField({
     <View style={styles.searchFilterField}>
       <Text style={styles.searchFilterLabel}>{label}</Text>
       <TextInput
+        accessibilityLabel={label}
         style={styles.input}
         value={value}
         onChangeText={onChange}

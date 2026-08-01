@@ -13,7 +13,6 @@ import {
   View,
   useWindowDimensions
 } from 'react-native';
-import type { FlashListRef } from '@shopify/flash-list';
 import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
@@ -36,7 +35,7 @@ import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
-import { AppNavigator, currentTopicRouteKey, isReadingSettingsScreen, navigateAppScreen, navigationRef, openReadingSettingsFromCurrentTopic, previousTopicRouteKey, pushTopicRoute, shouldUpdateAppRootScreen, type MainTabParamList } from './AppNavigator';
+import { AppNavigator, currentTopicRouteKey, isReadingSettingsScreen, navigateAppScreen, navigationRef, openReadingSettingsFromCurrentTopic, previousTopicRouteKey, pushTopicRoute, shouldUpdateAppRootScreen, type MainTabParamList, type TopicRouteRenderRequest } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
 import { useSessionController } from './useSessionController';
@@ -94,9 +93,10 @@ import { MoreScreen } from '../screens/MoreScreen';
 import { AppearancePanel } from '../screens/more/MorePanels';
 import { SearchScreen } from '../screens/SearchScreen';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '../screens/TopicScreen';
+import { LoadingState } from '../components/AppControls';
 import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
 import { UserScreen } from '../screens/UserScreen';
-import type { TopicListItem } from '../screens/TopicScreen';
+import { isSessionSource } from '../sourceCatalog';
 import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
 import { setRequestTimeoutsActive } from '../request';
 import { focusManager } from '@tanstack/react-query';
@@ -204,7 +204,6 @@ export function AppRoot() {
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
   const checkingRequestIdRef = useRef(0);
-  const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const userReturnScreenRef = useRef<Exclude<Screen, 'user'>>('feed');
   const userReturnTopicRef = useRef<UserReturnTopic | null>(null);
@@ -510,7 +509,6 @@ export function AppRoot() {
   const changeReplyFilter = topicView.changeReplyFilter;
   const clearTopicBackStack = topicNavigation.clearBackStack;
   const clearTopicRoutes = topicNavigation.clearRoutes;
-  const editReply = topicComposer.editReply;
   const forgetTopicRoute = topicNavigation.forgetRoute;
   const popTopicBackStack = topicNavigation.popBackStack;
   const readTopicBackStack = topicNavigation.readBackStack;
@@ -521,12 +519,15 @@ export function AppRoot() {
   const saveTopicRoute = topicNavigation.saveRoute;
   const stopTopicWork = topicLifecycle.stopWork;
   const toggleReplyComposer = topicComposer.toggle;
-  const pushTopicScreen = useCallback(() => {
+  const pushTopicScreen = useCallback((topic: Topic) => {
     const routeKey = currentTopicRouteKey();
     if (routeKey) {
       saveTopicRoute(routeKey);
     }
-    pushTopicRoute();
+    return pushTopicRoute({
+      source: topic.source,
+      topicId: topic.id
+    });
   }, [saveTopicRoute]);
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const showLoginPanelRef = useRef(showLoginPanel);
@@ -1565,6 +1566,7 @@ export function AppRoot() {
     checkIn,
     collectOnNodeSeekSite,
     deleteReply,
+    editReply,
     favoriteOnYaohuoSite,
     interact,
     optimisticTopicActions,
@@ -1719,13 +1721,14 @@ export function AppRoot() {
       canGoBack,
       strategy,
       goBack: () => navigationRef.goBack(),
+      restoreReturningRoute: () => Boolean(returningRouteKey && restoreTopicRoute(returningRouteKey)),
       restoreSnapshot: () => {
         if (previousTopic) restoreTopicSnapshot(previousTopic);
       },
       returnToScreen: () => changeScreen(topicReturnScreenRef.current)
     });
     finishDiagnosticTrace(trace, 'success', { state });
-  }, [abortTopicReadRequests, cancelDeferredNavigationTask, changeScreen, forgetTopicRoute, popTopicBackStack, restoreTopicSnapshot]);
+  }, [abortTopicReadRequests, cancelDeferredNavigationTask, changeScreen, forgetTopicRoute, popTopicBackStack, restoreTopicRoute, restoreTopicSnapshot]);
 
   const goBackFromUser = useCallback((parentTrace?: DiagnosticTrace) => {
     const trace = parentTrace || beginDiagnosticTrace('navigation', 'user-back');
@@ -2313,6 +2316,7 @@ export function AppRoot() {
   const stableFavoriteOnYaohuoSite = useLatestCallback(favoriteOnYaohuoSite);
   const stableInteract = useLatestCallback(interact);
   const stableLoadMoreReplies = useLatestCallback(loadMoreReplies);
+  const stableOpenTopic = useLatestCallback(openTopic);
   const stableOpenUser = useLatestCallback(openUser);
   const stableRefreshTopicReplies = useLatestCallback(refreshTopicReplies);
   const stableRefreshWholeTopic = useLatestCallback(refreshCurrentTopic);
@@ -2363,7 +2367,6 @@ export function AppRoot() {
       topicError: topicIdentityError || topicError || null,
       identityBlocked: Boolean(selectedTopicIdentityCheck?.pending),
       identityChecking: Boolean(selectedTopicIdentityCheck?.checking),
-      topicScrollRef,
       unreadReplyCount,
       onBack: goBackFromTopic,
       onCommentQueryChange: changeCommentQuery,
@@ -2377,6 +2380,7 @@ export function AppRoot() {
       onVotePoll: stableVotePoll,
       onLoadMoreReplies: stableLoadMoreReplies,
       onOpenOriginal: openExternalUrl,
+      onOpenTopic: stableOpenTopic,
       onOpenReadingSettings: openReadingSettingsFromTopic,
       onReplyComposerOpenChange: toggleReplyComposer,
       onReplyContentChange: changeReplyContent,
@@ -2438,6 +2442,7 @@ export function AppRoot() {
     stableDeleteReply,
     stableInteract,
     stableLoadMoreReplies,
+    stableOpenTopic,
     stableOpenUser,
     stableRefreshTopicReplies,
     stableRefreshWholeTopic,
@@ -2463,7 +2468,6 @@ export function AppRoot() {
     topicFavorite,
     topicImageDeriver,
     topicReplies,
-    topicScrollRef,
     unreadReplyCount
   ]);
 
@@ -2531,12 +2535,29 @@ export function AppRoot() {
       <AppearancePanel settings={readerData.settings} showSettingsPanel styles={styles} onUpdateSettings={updateSettings} />
     </ScrollView>
   ), [readerData.settings, styles, updateSettings]);
-  const renderTopicScreen = useCallback(() => (
-    <TopicScreen {...topicProps} />
-  ), [topicProps]);
+  const renderTopicScreen = useCallback(({ listRef, routeSource }: TopicRouteRenderRequest) => {
+    const presentationRouteSource = routeSource || selectedTopic?.source;
+    const routeSessionEpoch = presentationRouteSource && isSessionSource(presentationRouteSource)
+      ? forumSessionEpochs[presentationRouteSource]
+      : 0;
+    const sessionEpoch = selectedTopic && isSessionSource(selectedTopic.source)
+      ? forumSessionEpochs[selectedTopic.source]
+      : 0;
+    return {
+      content: <TopicScreen {...topicProps} topicScrollRef={listRef} />,
+      identity: selectedTopic ? `${selectedTopic.source}:${selectedTopic.id}` : '',
+      loadingContent: <LoadingState text="正在读取主题..." styles={styles} theme={theme} />,
+      routeSessionEpoch,
+      sessionEpoch
+    };
+  }, [forumSessionEpochs, selectedTopic, styles, theme, topicProps]);
   const renderUserScreen = useCallback(() => (
     <UserScreen {...userProps} />
   ), [userProps]);
+  const handleTopicClosing = useCallback((routeKey: string) => {
+    forgetTopicRoute(routeKey);
+    flushDeferredNavigationTask();
+  }, [flushDeferredNavigationTask, forgetTopicRoute]);
 
   const handleMainTabPress = useCallback((targetScreen: keyof MainTabParamList) => {
     if (screen === targetScreen) {
@@ -2642,7 +2663,7 @@ export function AppRoot() {
                 onReady={handleNavigationReady}
                 onScreenChange={handleNavigationScreenChange}
                 onTabPress={handleMainTabPress}
-                onTopicClosing={flushDeferredNavigationTask}
+                onTopicClosing={handleTopicClosing}
                 onUserClosing={flushDeferredNavigationTask}
                 />
               </YaohuoFavoriteStateProvider>

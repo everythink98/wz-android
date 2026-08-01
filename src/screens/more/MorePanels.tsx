@@ -128,6 +128,7 @@ export function NodeSeekLoginPanel({
     }
     const timeout = setTimeout(() => {
       setWebViewSettledForReplay(true);
+      setWebViewNeedsRemount(true);
       onWebViewState('timeout', credentialAttempt);
       onSetLoadingLoginPage(false);
       setWebViewError('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。');
@@ -193,6 +194,7 @@ export function NodeSeekLoginPanel({
           {showManualNodeImageKey ? (
             <>
               <TextInput
+                accessibilityLabel="NodeImage API Key 输入"
                 autoCapitalize="none"
                 autoCorrect={false}
                 placeholder="NodeImage API Key"
@@ -242,7 +244,7 @@ export function NodeSeekLoginPanel({
           </View>
         )}
       >
-        {showLoginPanel && accountExpanded && !webViewBlockMessage ? (
+        {showLoginPanel && accountExpanded && !webViewBlockMessage && !webViewNeedsRemount ? (
             <WebView
               key={`nodeseek-login-${webViewKey}`}
               ref={webViewRef}
@@ -362,6 +364,7 @@ export function YaohuoLoginPanel({
       return undefined;
     }
     const timeout = setTimeout(() => {
+      setWebViewNeedsRemount(true);
       onWebViewState('timeout', credentialAttempt);
       onSetLoadingYaohuoLoginPage(false);
       setWebViewError('妖火页面打开超时：请检查模拟器网络后刷新页面。');
@@ -410,47 +413,49 @@ export function YaohuoLoginPanel({
         {showYaohuoLoginPanel && accountExpanded && !webViewBlockMessage ? (
           <View style={styles.flex}>
             {yaohuoLoginPrompt ? <Text style={styles.meta}>{yaohuoLoginPrompt}</Text> : null}
-            <WebView
-              style={styles.flex}
-              key={`yaohuo-login-${webViewKey}`}
-              ref={yaohuoWebViewRef}
-              source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.yaohuo.loginUrl : yaohuoSession.isLoggedIn ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
-              javaScriptCanOpenWindowsAutomatically={false}
-              sharedCookiesEnabled
-              thirdPartyCookiesEnabled
-              setSupportMultipleWindows={false}
-              onLoadEnd={(event) => {
-                onSetLoadingYaohuoLoginPage(false);
-                if ('code' in event.nativeEvent) {
-                  return;
-                }
-                onWebViewState('ready', credentialAttempt);
-                setWebViewError('');
-                if (loginFormMode) {
-                  yaohuoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.yaohuo.probeScript(credentialAttempt));
-                }
-              }}
-              onLoadStart={() => {
-                onWebViewState('start', credentialAttempt);
-                setWebViewError('');
-                setWebViewNeedsRemount(false);
-                onSetLoadingYaohuoLoginPage(true);
-              }}
-              onMessage={(event) => { onLoginFormMessage(event); }}
-              onError={(event) => {
-                onWebViewState('error', credentialAttempt);
-                onSetLoadingYaohuoLoginPage(false);
-                setWebViewError(`妖火页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
-              }}
-              renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-              onRenderProcessGone={() => {
-                onWebViewState('renderer-gone', credentialAttempt);
-                onSetLoadingYaohuoLoginPage(false);
-                setWebViewNeedsRemount(true);
-                setWebViewError('妖火登录页面已停止，请刷新页面重试。');
-              }}
-              onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
-            />
+            {!webViewNeedsRemount ? (
+              <WebView
+                style={styles.flex}
+                key={`yaohuo-login-${webViewKey}`}
+                ref={yaohuoWebViewRef}
+                source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.yaohuo.loginUrl : yaohuoSession.isLoggedIn ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
+                javaScriptCanOpenWindowsAutomatically={false}
+                sharedCookiesEnabled
+                thirdPartyCookiesEnabled
+                setSupportMultipleWindows={false}
+                onLoadEnd={(event) => {
+                  onSetLoadingYaohuoLoginPage(false);
+                  if ('code' in event.nativeEvent) {
+                    return;
+                  }
+                  onWebViewState('ready', credentialAttempt);
+                  setWebViewError('');
+                  if (loginFormMode) {
+                    yaohuoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.yaohuo.probeScript(credentialAttempt));
+                  }
+                }}
+                onLoadStart={() => {
+                  onWebViewState('start', credentialAttempt);
+                  setWebViewError('');
+                  setWebViewNeedsRemount(false);
+                  onSetLoadingYaohuoLoginPage(true);
+                }}
+                onMessage={(event) => { onLoginFormMessage(event); }}
+                onError={(event) => {
+                  onWebViewState('error', credentialAttempt);
+                  onSetLoadingYaohuoLoginPage(false);
+                  setWebViewError(`妖火页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
+                }}
+                renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+                onRenderProcessGone={() => {
+                  onWebViewState('renderer-gone', credentialAttempt);
+                  onSetLoadingYaohuoLoginPage(false);
+                  setWebViewNeedsRemount(true);
+                  setWebViewError('妖火登录页面已停止，请刷新页面重试。');
+                }}
+                onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
+              />
+            ) : null}
           </View>
         ) : null}
       </LoginWebViewModal>

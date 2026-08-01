@@ -23,13 +23,14 @@ import { createStyles, type ReaderTheme } from '../theme';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
+  promoteCachedCompatibleSvgArtifact,
   recoverCompatibleSvgArtifact,
   refreshCompatibleSvgPoster,
   type CompatibleSvgArtifact
 } from '../compatibleImageSources';
 import { useForumMediaRequestContext } from '../mediaSessionEpoch';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '../mediaRequestContext';
-import { markOriginalImageDisplayed } from '../originalImageLoading';
+import { markOriginalImageDisplayed, originalImageDisplayRevision } from '../originalImageLoading';
 import {
   beginDiagnosticTrace,
   diagnosticRef,
@@ -500,6 +501,10 @@ function PreviewPagerPage({
     item.displayUri,
     { mediaContext, nodeSeekUserAgent }
   ) as ImageURISource, [item.displayUri, mediaContext, nodeSeekUserAgent]);
+  const displayedBeforeMount = useMemo(
+    () => originalImageDisplayRevision(originalSource) > 0,
+    [originalSource]
+  );
   const requestIdentity = compatibleImageRequestIdentity(originalSource);
   const resolutionIdentity = previewResolutionIdentity(mediaContext.sessionIdentity, item.originalUri);
   const [retryVersion, setRetryVersion] = useState(0);
@@ -515,6 +520,11 @@ function PreviewPagerPage({
   const posterRefreshRef = useRef({ attempted: false, inFlight: false, sourceIdentity: '' });
   const requestGenerationRef = useRef(0);
   const cachedArtifact = useMemo(() => cachedCompatibleSvgArtifact(originalSource), [originalSource]);
+  useEffect(() => {
+    if (cachedArtifact) {
+      promoteCachedCompatibleSvgArtifact(requestIdentity);
+    }
+  }, [cachedArtifact, requestIdentity]);
   const knownArtifact = compatibleSvgArtifact?.requestIdentity === requestIdentity
     ? compatibleSvgArtifact
     : cachedArtifact;
@@ -541,6 +551,10 @@ function PreviewPagerPage({
     status: 'loading'
   });
   const status = imageState.sourceIdentity === sourceIdentity ? imageState.status : 'loading';
+  const suppressLoadingOverlay = displayedBeforeMount
+    && !knownArtifact
+    && !nativeFailedRef.current
+    && retryVersion === 0;
   const setCurrentStatus = useCallback((nextStatus: PreviewStatus) => {
     setImageState({ sourceIdentity, status: nextStatus });
   }, [sourceIdentity]);
@@ -921,7 +935,11 @@ function PreviewPagerPage({
                 }
               }}
               onLoadStart={() => {
-                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+                if (
+                  !mountedRef.current
+                  || sourceIdentityRef.current !== sourceIdentity
+                  || settledRef.current
+                ) {
                   return;
                 }
                 if (!previewDiagnosticRef.current) {
@@ -977,7 +995,7 @@ function PreviewPagerPage({
           </View>
         </View>
       ) : null}
-      {active && status === 'loading' ? (
+      {active && status === 'loading' && !suppressLoadingOverlay ? (
         <View accessibilityLiveRegion="polite" pointerEvents="none" style={styles.imagePreviewState}>
           <ActivityIndicator color={theme.onOverlay} />
           <Text style={styles.imagePreviewStateText}>图片加载中...</Text>

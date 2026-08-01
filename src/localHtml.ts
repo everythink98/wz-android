@@ -723,8 +723,13 @@ function sanitizePlainCodeBlocks(root: HTMLElement) {
   });
 }
 
-export function sanitizeContentHtml(html: unknown, baseUrl: string) {
+export function sanitizeContentHtml(
+  html: unknown,
+  baseUrl: string,
+  transformRoot?: (root: HTMLElement) => void
+) {
   const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
+  transformRoot?.(root);
   for (const selector of ['script', 'style', 'noscript']) {
     root.querySelectorAll(selector).forEach((node) => node.remove());
   }

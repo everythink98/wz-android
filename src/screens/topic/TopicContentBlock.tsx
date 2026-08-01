@@ -3,7 +3,7 @@ import { RenderHTMLSource } from 'react-native-render-html';
 import { flowInlineImagesInMixedParagraphs } from '../../htmlImages';
 import { HTML_REPLY_CONTENT_CLASS, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from '../../htmlRenderingStyles';
 import { markNodeSeekReplyReferenceLinks, normalizeRenderableHtml } from '../../topicContentHtml';
-import { inlineSizedImageSignatureForHtml, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../../topicDerivedData';
+import { sameInlineSizedImagesForHtml, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../../topicDerivedData';
 import { OriginalImageUpgradeBoundary } from '../../originalImageLoading';
 
 export function TopicContentBlock({
@@ -53,9 +53,13 @@ export const MemoizedTopicContentBlock = memo(TopicContentBlock, (previous, next
   previous.baseUrl === next.baseUrl
   && previous.compact === next.compact
   && previous.contentWidth === next.contentWidth
-  && previous.html === next.html
   && previous.originalImageUpgradeEnabled === next.originalImageUpgradeEnabled
   && previous.trimTrailingBlockSpacing === next.trimTrailingBlockSpacing
   && previous.topicImageDeriver === next.topicImageDeriver
-  && inlineSizedImageSignatureForHtml(previous.html || '<p></p>', previous.inlineSizedImageUrls) === inlineSizedImageSignatureForHtml(next.html || '<p></p>', next.inlineSizedImageUrls)
+  && sameInlineSizedImagesForHtml(
+    previous.html,
+    next.html,
+    previous.inlineSizedImageUrls,
+    next.inlineSizedImageUrls
+  )
 ));

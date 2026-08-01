@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseForumUserLink } from './appUtils';
 import { accessRequirementFromText, decodeHtml } from './localHtml';
 import { sourceCatalog, sourceValues } from './sourceCatalog';
 import type { AccessRequirement, Category, Source, Topic, UserProfile } from './types';
@@ -46,7 +47,6 @@ export interface ReaderData {
   settings: ReaderSettings;
 }
 
-const sensitiveUrlParamPattern = /(^|[^a-z0-9])(cookie|token|password|secret|authorization|auth|session|sidyaohuo|sid|csrf)([^a-z0-9]|$)/i;
 const defaultReaderSettings: ReaderSettings = {
   listDensity: 'standard',
   theme: 'light',
@@ -100,27 +100,54 @@ const readerDataSchema = z.object({
   settings: z.unknown().optional()
 }).passthrough();
 
-function userProfileUrl(source: Source, id: string, fallback = '') {
+function userProfileUrl(source: Source, id: string, username = '') {
   const cleanId = String(id || '').trim();
-  if (fallback) {
-    return fallback;
-  }
-  if (!cleanId) {
+  const cleanUsername = String(username || '').trim();
+  if (!cleanId && !cleanUsername) {
     return '';
   }
   if (source === 'nodeseek') {
-    return `https://www.nodeseek.com/space/${encodeURIComponent(cleanId)}`;
+    return /^\d+$/.test(cleanId)
+      ? `https://www.nodeseek.com/space/${encodeURIComponent(cleanId)}`
+      : '';
   }
   if (source === 'linuxdo') {
-    return `https://linux.do/u/${encodeURIComponent(cleanId)}`;
+    return `https://linux.do/u/${encodeURIComponent(cleanUsername || cleanId)}`;
   }
   if (source === 'v2ex') {
-    return `https://www.v2ex.com/member/${encodeURIComponent(cleanId)}`;
+    return `https://www.v2ex.com/member/${encodeURIComponent(cleanUsername || cleanId)}`;
   }
   if (source === 'xiaoyinsi') {
-    return `https://forum.xiaoyinsi.com/u/${encodeURIComponent(cleanId)}`;
+    return `https://forum.xiaoyinsi.com/u/${encodeURIComponent(cleanUsername || cleanId)}`;
   }
   return `https://www.yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(cleanId)}`;
+}
+
+function canonicalTopicUrl(source: Source, id: string) {
+  const encodedId = encodeURIComponent(String(id || '').trim());
+  if (!encodedId) {
+    return '';
+  }
+  if (source === 'nodeseek') {
+    return `${sourceCatalog[source].baseUrl}/post-${encodedId}-1`;
+  }
+  if (source === 'yaohuo') {
+    return `${sourceCatalog[source].baseUrl}/bbs-${encodedId}.html`;
+  }
+  return `${sourceCatalog[source].baseUrl}/t/${encodedId}`;
+}
+
+function canonicalTopicAuthorUrl(topic: Topic) {
+  const linked = parseForumUserLink(topic.authorUrl || '', sourceCatalog[topic.source].baseUrl);
+  if (linked?.source === topic.source) {
+    return userProfileUrl(
+      topic.source,
+      cleanString(linked.id || topic.authorId),
+      cleanString(linked.username)
+    );
+  }
+  const authorId = cleanString(topic.authorId);
+  return authorId ? userProfileUrl(topic.source, authorId, authorId) : '';
 }
 
 function nowIso() {
@@ -165,11 +192,7 @@ function cleanOptionalNonNegativeInteger(value: unknown) {
     : undefined;
 }
 
-function isSensitiveUrlParamKey(key: string) {
-  return sensitiveUrlParamPattern.test(key.replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
-}
-
-function sanitizeTopicUrl(value: unknown, source?: Source) {
+function sanitizePortableUrl(value: unknown, source?: Source) {
   try {
     const raw = cleanString(value).trim();
     if (!raw) {
@@ -182,11 +205,7 @@ function sanitizeTopicUrl(value: unknown, source?: Source) {
     url.username = '';
     url.password = '';
     url.hash = '';
-    for (const key of [...url.searchParams.keys()]) {
-      if (isSensitiveUrlParamKey(key)) {
-        url.searchParams.delete(key);
-      }
-    }
+    url.search = '';
     return url.toString();
   } catch {
     return '';
@@ -225,12 +244,16 @@ function topicSummary(topic: Topic): Topic {
     title: decodeHtml(cleanString(topic.title)),
     author: cleanString(topic.author),
     authorId: cleanOptionalString(topic.authorId),
-    authorAvatar: cleanOptionalString(topic.authorAvatar) ? sanitizeTopicUrl(topic.authorAvatar) : undefined,
+    authorAvatar: cleanOptionalString(topic.authorAvatar)
+      ? sanitizePortableUrl(topic.authorAvatar, topic.source) || undefined
+      : undefined,
     authorLevelLabel: cleanOptionalLabelString(topic.authorLevelLabel),
-    authorUrl: cleanOptionalString(topic.authorUrl) ? sanitizeTopicUrl(topic.authorUrl) : undefined,
+    authorUrl: cleanOptionalString(topic.authorUrl)
+      ? canonicalTopicAuthorUrl(topic) || undefined
+      : undefined,
     categoryId: cleanOptionalString(topic.categoryId),
     category: cleanOptionalString(topic.category),
-    url: sanitizeTopicUrl(topic.url, topic.source),
+    url: canonicalTopicUrl(topic.source, topic.id),
     createdAt: cleanString(topic.createdAt),
     lastReplyAt: cleanOptionalString(topic.lastReplyAt),
     replyCount: cleanNonNegativeInteger(topic.replyCount),
@@ -264,9 +287,11 @@ function userSummary(user: UserProfile): UserProfile {
     id,
     username,
     displayName,
-    avatar: cleanOptionalString(user.avatar) ? sanitizeTopicUrl(user.avatar) : undefined,
+    avatar: cleanOptionalString(user.avatar)
+      ? sanitizePortableUrl(user.avatar, user.source) || undefined
+      : undefined,
     levelLabel: cleanOptionalLabelString(user.levelLabel),
-    url: sanitizeTopicUrl(userProfileUrl(user.source, id, user.url)),
+    url: userProfileUrl(user.source, id, username),
     bio: cleanOptionalString(user.bio),
     joinedAt: cleanOptionalString(user.joinedAt),
     topicCount,

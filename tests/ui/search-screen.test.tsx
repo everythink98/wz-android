@@ -1327,9 +1327,9 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByText('按时间'));
     await fireEvent.press(view.getByText('30天'));
-    await fireEvent.changeText(view.getByPlaceholderText('例如 qna / jobs'), 'qna');
+    await fireEvent.changeText(view.getByLabelText('节点'), 'qna');
     await fireEvent.press(view.getByLabelText('展开 V2EX 更多筛选'));
-    await fireEvent.changeText(view.getByPlaceholderText('V2EX 用户名'), 'alice');
+    await fireEvent.changeText(view.getByLabelText('作者'), 'alice');
     await fireEvent.press(view.getByText('全部关键词'));
     await fireEvent.press(view.getByText('确认筛选'));
 

@@ -4,7 +4,7 @@ import {
   type BrowserFetchOwner,
   type BrowserFetchPriority
 } from './browserFetchIntent';
-import { fetchWithTimeout, type Fetcher } from './request';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from './request';
 import type { CategoriesResponse, DiscourseFeedFilter, DiscourseTagOption, DiscourseUserOption, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, UserProfile, UserReplyActivity } from './types';
 import {
   accessRequirementFromObject,
@@ -39,7 +39,13 @@ import {
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from './discourseReactions';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { discourseCategories, discourseOriginalPoster, discoursePolls, discoursePostFields, discourseTopicFields, discourseUsersById } from './discourseModel';
-import { discoursePollPlaceholder, discourseQuoteMetadata } from './discourseContent';
+import {
+  discourseContentNeedsCalloutNormalization,
+  discoursePollPlaceholder,
+  discourseQuoteMetadata,
+  normalizeDiscourseCallouts,
+  stripDiscourseCalloutMarkersFromExcerpt
+} from './discourseContent';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;
@@ -205,7 +211,7 @@ function normalizeUserActionReply(
     category: category?.name,
     createdAt: toIsoString(raw.created_at || raw.createdAt) || undefined,
     ...(floor ? { floor } : {}),
-    excerpt: textExcerpt(raw.excerpt || raw.content || raw.markdown || '')
+    excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(raw.excerpt || raw.content || raw.markdown || ''))
   };
 }
 
@@ -291,24 +297,28 @@ function redditSourceUrl(value: unknown) {
 }
 
 export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | undefined) {
-  const root = parseHtml(html);
   const pollNames = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
-  root.querySelectorAll('.poll').forEach((node) => {
-    const name = String(node.getAttribute('data-poll-name') || '').trim();
-    if (name && pollNames.has(name)) {
-      node.replaceWith(discoursePollPlaceholder(name));
+  const normalizeCallouts = discourseContentNeedsCalloutNormalization(html);
+  return sanitizeContentHtml(html, BASE_URL, (root) => {
+    root.querySelectorAll('.poll').forEach((node) => {
+      const name = String(node.getAttribute('data-poll-name') || '').trim();
+      if (name && pollNames.has(name)) {
+        node.replaceWith(discoursePollPlaceholder(name));
+      }
+    });
+    root.querySelectorAll('iframe').forEach((node) => {
+      const href = redditSourceUrl(node.getAttribute('src'));
+      if (!href) {
+        return;
+      }
+      node.replaceWith(
+        `<${FORUM_LINK_CARD_TAG} href="${escapeLinuxDoContentAttribute(href)}" site="Reddit" title="Reddit 帖子" description="在 Reddit 中查看原帖"></${FORUM_LINK_CARD_TAG}>`
+      );
+    });
+    if (normalizeCallouts) {
+      normalizeDiscourseCallouts(root);
     }
   });
-  root.querySelectorAll('iframe').forEach((node) => {
-    const href = redditSourceUrl(node.getAttribute('src'));
-    if (!href) {
-      return;
-    }
-    node.replaceWith(
-      `<${FORUM_LINK_CARD_TAG} href="${escapeLinuxDoContentAttribute(href)}" site="Reddit" title="Reddit 帖子" description="在 Reddit 中查看原帖"></${FORUM_LINK_CARD_TAG}>`
-    );
-  });
-  return sanitizeContentHtml(root.toString(), BASE_URL);
 }
 
 function normalizePost(raw: unknown, topicId?: string): Reply | null {
@@ -319,7 +329,7 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
   const { cookedHtml, ...replyFields } = fields;
   const polls = discoursePolls(raw);
   const contentHtml = sanitizeLinuxDoContentHtml(cookedHtml, polls);
-  const quotedReferences = discourseQuoteMetadata(contentHtml, topicId);
+  const quotedReferences = discourseQuoteMetadata(contentHtml, 'linuxdo', topicId);
   const rawBoostCount = boostCountFromPost(raw);
   const needsApproval = raw.needs_category_expert_approval === true;
   const authorLevelLabel = linuxDoLevelLabel(raw);
@@ -329,9 +339,7 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
     authorAvatar: avatarUrl(raw.avatar_template),
     authorUrl: userUrl(fields.author),
     contentHtml: quotedReferences.html,
-    ...(quotedReferences.floors.length ? { quotedFloors: quotedReferences.floors } : {}),
-    ...(Object.keys(quotedReferences.authors).length ? { quotedAuthors: quotedReferences.authors } : {}),
-    ...(Object.keys(quotedReferences.previews).length ? { quotedPreviews: quotedReferences.previews } : {}),
+    ...(quotedReferences.quotedPosts.length ? { quotedPosts: quotedReferences.quotedPosts } : {}),
     ...(rawBoostCount || needsApproval ? {
       siteExtension: {
         source: 'linuxdo' as const,
@@ -644,9 +652,14 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const replyHasMore = totalPosts > replies.length + 1;
   const polls = discoursePolls(firstPost);
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  if (options.signal?.aborted) {
+    throw new Error(REQUEST_CANCELED_MESSAGE);
+  }
+  const sanitizedContentHtml = sanitizeLinuxDoContentHtml(firstPostFields.cookedHtml, polls);
   const result = {
     ...topic,
-    contentHtml: sanitizeLinuxDoContentHtml(firstPostFields.cookedHtml, polls),
+    contentHtml: sanitizedContentHtml,
     replies,
     replyHasMore,
     replyNextPage: replyHasMore ? 2 : null,
@@ -788,7 +801,10 @@ async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, option
       || (Number(post?.post_number) === 1 ? post : undefined);
     const author = String(authorData?.username || '').trim();
     const normalized = normalizeTopic(topic, categoryMap, author || null, authorData);
-    return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
+    return normalized ? {
+      ...normalized,
+      excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(post?.blurb || normalized.excerpt || ''))
+    } : null;
   }).filter(Boolean) as Topic[];
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
   const result = {
@@ -841,7 +857,7 @@ function parseLinuxDoGoogleSearchTopics(html: string) {
       createdAt: now,
       lastReplyAt: now,
       replyCount: 0,
-      excerpt: textExcerpt(text.replace(title, ' '))
+      excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(text.replace(title, ' ')))
     });
   }
   return items;

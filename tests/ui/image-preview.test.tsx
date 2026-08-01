@@ -461,6 +461,40 @@ describe('Image preview', () => {
     expect(view.getByLabelText('保存图片')).toBeTruthy();
   });
 
+  it('[REG-TOPIC-052] reopens a previously displayed original without restoring its spinner', async () => {
+    jest.useFakeTimers();
+    try {
+      const preview = previewProps([previewItem('https://example.com/reopen-displayed.png')]);
+      const props = callbacks();
+      const view = await render(
+        <ImagePreviewModal preview={preview} styles={styles} theme={theme} {...props} />
+      );
+      const firstImage = view.getByTestId('preview-image-0');
+      const recyclingKey = firstImage.props.recyclingKey;
+
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+      await fireEvent(firstImage, 'display');
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      expect(originalImageDisplayRevision(firstImage.props.source)).toBeGreaterThan(0);
+
+      await view.rerender(<ImagePreviewModal preview={null} styles={styles} theme={theme} {...props} />);
+      await view.rerender(<ImagePreviewModal preview={preview} styles={styles} theme={theme} {...props} />);
+
+      const reopenedImage = view.getByTestId('preview-image-0');
+      expect(reopenedImage.props.recyclingKey).toBe(recyclingKey);
+      expect(view.queryByText('图片加载中...')).toBeNull();
+      await fireEvent(reopenedImage, 'loadStart');
+      expect(view.queryByText('图片加载中...')).toBeNull();
+
+      await act(async () => jest.advanceTimersByTime(30_000));
+      expect(view.getByText('图片加载失败')).toBeTruthy();
+      await fireEvent.press(view.getByText('重试'));
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('shows an already displayed adjacent page without restoring its spinner', async () => {
     const view = await render(
       <ImagePreviewModal
@@ -1083,6 +1117,7 @@ describe('Image preview', () => {
 
       await fireEvent(first.getByTestId('preview-image-0'), 'error');
       await waitFor(() => first.getByTestId('preview-svg-poster-0'));
+      await fireEvent(first.getByTestId('preview-svg-poster-0'), 'display');
       await first.unmount();
 
       const view = await render(

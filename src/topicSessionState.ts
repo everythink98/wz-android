@@ -67,32 +67,34 @@ export function pushTopicSnapshot(stack: TopicSnapshot[], current: TopicSnapshot
 }
 
 export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
+  const snapshotsEditAsDraft = Boolean(session.replyEditTarget);
   return {
     key: session.key,
     selectedTopic: session.selectedTopic,
     commentQuery: session.commentQuery,
     replyFilter: session.replyFilter,
     replyContent: session.replyContent,
-    replyFace: session.replyFace,
-    replyComposerOpen: session.replyComposerOpen,
-    replyTarget: session.replyTarget,
-    replyEditTarget: session.replyEditTarget,
+    replyFace: snapshotsEditAsDraft ? '' : session.replyFace,
+    replyComposerOpen: snapshotsEditAsDraft ? false : session.replyComposerOpen,
+    replyTarget: snapshotsEditAsDraft ? null : session.replyTarget,
+    replyEditTarget: null,
     expandedQuotes: session.expandedQuotes,
     scrollY: session.scrollY
   };
 }
 
 export function topicSessionFromSnapshot(snapshot: TopicSnapshot): TopicSession {
+  const restoresEdit = Boolean(snapshot.replyEditTarget);
   return {
     key: snapshot.key || (snapshot.selectedTopic ? topicKey(snapshot.selectedTopic) : ''),
     selectedTopic: snapshot.selectedTopic,
     commentQuery: snapshot.commentQuery,
     replyFilter: snapshot.replyFilter,
     replyContent: snapshot.replyContent,
-    replyFace: snapshot.replyFace || '',
-    replyComposerOpen: snapshot.replyComposerOpen,
-    replyTarget: snapshot.replyTarget,
-    replyEditTarget: snapshot.replyEditTarget || null,
+    replyFace: restoresEdit ? '' : snapshot.replyFace || '',
+    replyComposerOpen: restoresEdit ? false : snapshot.replyComposerOpen,
+    replyTarget: restoresEdit ? null : snapshot.replyTarget,
+    replyEditTarget: null,
     expandedQuotes: snapshot.expandedQuotes,
     scrollY: snapshot.scrollY || 0
   };

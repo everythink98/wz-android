@@ -45,6 +45,16 @@ describe('portable Discourse fields', () => {
     })).toBeNull();
   });
 
+  it('[REG-TOPIC-056] removes Callout protocol markers from shared Discourse topic excerpts', () => {
+    expect(discourseTopicFields({
+      id: 42,
+      title: 'Callout topic',
+      created_at: '2026-01-02T03:04:05Z',
+      posts_count: 1,
+      excerpt: '[!warning]- 注意 正文'
+    })?.excerpt).toBe('注意 正文');
+  });
+
   it('resolves the original poster from a Discourse topic list payload', () => {
     const users = discourseUsersById([
       { id: 1, username: 'last-replier' },

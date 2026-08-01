@@ -5,12 +5,15 @@ import React, { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import {
   AppNavigator,
+  currentTopicRouteKey,
   navigateAppScreen,
   navigationRef,
   openReadingSettingsScreen,
+  pushTopicRoute,
   type MainTabParamList
 } from '../../src/app/AppNavigator';
 import { createEmptyReaderData } from '../../src/readerData';
+import { useOriginalImageUpgradeEnabled } from '../../src/originalImageLoading';
 import { createStyles, createTheme } from '../../src/theme';
 
 jest.mock('lucide-react-native', () => {
@@ -21,6 +24,26 @@ jest.mock('lucide-react-native', () => {
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
+
+function topicPresentation(
+  content: React.ReactNode,
+  identity = 'linuxdo:topic-42',
+  routeSessionEpoch = 0,
+  sessionEpoch = routeSessionEpoch
+) {
+  return {
+    content,
+    identity,
+    loadingContent: <Text>主题加载中</Text>,
+    routeSessionEpoch,
+    sessionEpoch
+  };
+}
+
+function OriginalUpgradeProbe({ label }: { label: string }) {
+  const enabled = useOriginalImageUpgradeEnabled();
+  return <Text>{`${label} originals ${enabled ? 'active' : 'paused'}`}</Text>;
+}
 
 function StatefulTab({ label }: { label: string }) {
   const [value, setValue] = useState('');
@@ -46,7 +69,7 @@ describe('App navigator UI state', () => {
         renderMoreTab={() => <StatefulTab label="更多" />}
         renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
         renderSearchTab={() => <StatefulTab label="搜索" />}
-        renderTopicScreen={() => <Text>主题详情页面</Text>}
+        renderTopicScreen={() => topicPresentation(<Text>主题详情页面</Text>)}
         renderUserScreen={() => <Text>用户详情页面</Text>}
         styles={styles}
         theme={theme}
@@ -106,7 +129,7 @@ describe('App navigator UI state', () => {
         renderMoreTab={() => <StatefulTab label="更多" />}
         renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
         renderSearchTab={() => <StatefulTab label="搜索" />}
-        renderTopicScreen={() => <Text>固定主题 topic-42</Text>}
+        renderTopicScreen={() => topicPresentation(<Text>固定主题 topic-42</Text>)}
         renderUserScreen={() => <Text>固定用户 alice</Text>}
         styles={styles}
         theme={theme}
@@ -141,6 +164,252 @@ describe('App navigator UI state', () => {
     await waitFor(() => expect(view.getByLabelText(`${originLabel}状态`).props.value).toBe(`${origin}-state`));
   });
 
+  it('[REG-PERF-008] keeps each native Topic route bound to its own presentation', async () => {
+    let showPresentation: (presentation: string) => void = () => {
+      throw new Error('Topic presentation harness is not ready');
+    };
+    const renderTopicScreenSpy = jest.fn<(routeKey: string) => void>();
+    const Harness = () => {
+      const [activePresentation, setActivePresentation] = useState('A ready');
+      showPresentation = setActivePresentation;
+      const renderTopicScreen = ({ routeKey }: { routeKey: string }) => {
+        renderTopicScreenSpy(routeKey);
+        return topicPresentation(
+          <Text>{activePresentation}</Text>,
+          activePresentation.startsWith('A') ? 'linuxdo:A' : 'linuxdo:B'
+        );
+      };
+      return (
+        <AppNavigator
+          moreHasBadge={false}
+          navigationTheme={DefaultTheme}
+          renderFeedTab={() => <StatefulTab label="首页" />}
+          renderLibraryTab={() => <StatefulTab label="收藏" />}
+          renderMoreTab={() => <StatefulTab label="更多" />}
+          renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
+          renderSearchTab={() => <StatefulTab label="搜索" />}
+          renderTopicScreen={renderTopicScreen}
+          renderUserScreen={() => <Text>用户详情页面</Text>}
+          styles={styles}
+          theme={theme}
+          onReady={jest.fn()}
+          onScreenChange={jest.fn()}
+          onTabPress={jest.fn()}
+          onTopicClosing={jest.fn()}
+          onUserClosing={jest.fn()}
+        />
+      );
+    };
+    const view = await render(<Harness />);
+
+    await waitFor(() => expect(view.getByText('首页页面')).toBeTruthy());
+    await act(async () => {
+      expect(navigateAppScreen('topic')).toBe(true);
+    });
+    await waitFor(() => expect(view.getByText('A ready')).toBeTruthy());
+    const topicAKey = currentTopicRouteKey();
+    expect(topicAKey).toEqual(expect.any(String));
+
+    await act(async () => {
+      showPresentation('B loading');
+      expect(pushTopicRoute({ source: 'linuxdo', topicId: 'B' })).toBe(true);
+    });
+    await waitFor(() => expect(view.getByText('B loading')).toBeTruthy());
+    const topicBKey = currentTopicRouteKey();
+    expect(topicBKey).toEqual(expect.any(String));
+    expect(topicBKey).not.toBe(topicAKey);
+
+    await act(async () => {
+      navigationRef.goBack();
+    });
+    await waitFor(() => {
+      expect(currentTopicRouteKey()).toBe(topicAKey);
+      expect(view.getByText('A ready', { includeHiddenElements: true })).toBeTruthy();
+      expect(view.queryByText('B loading', { includeHiddenElements: true })).toBeNull();
+      expect(renderTopicScreenSpy).toHaveBeenCalledWith(topicAKey);
+      expect(renderTopicScreenSpy).toHaveBeenCalledWith(topicBKey);
+    });
+    await act(async () => showPresentation('A ready'));
+    await waitFor(() => expect(view.getByText('A ready')).toBeTruthy());
+  });
+
+  it('[REG-TOPIC-057] rejects stale Topic content and accepts the replacement session epoch', async () => {
+    let invalidateEpochZero: () => void = () => {
+      throw new Error('Topic epoch harness is not ready');
+    };
+    let publishEpochOne: () => void = () => {
+      throw new Error('Topic epoch harness is not ready');
+    };
+    const Harness = () => {
+      const [routeEpoch, setRouteEpoch] = useState(0);
+      const [contentEpoch, setContentEpoch] = useState(0);
+      invalidateEpochZero = () => setRouteEpoch(1);
+      publishEpochOne = () => setContentEpoch(1);
+      return (
+        <AppNavigator
+          moreHasBadge={false}
+          navigationTheme={DefaultTheme}
+          renderFeedTab={() => <StatefulTab label="首页" />}
+          renderLibraryTab={() => <StatefulTab label="收藏" />}
+          renderMoreTab={() => <StatefulTab label="更多" />}
+          renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
+          renderSearchTab={() => <StatefulTab label="搜索" />}
+          renderTopicScreen={() => topicPresentation(
+            <Text>{`A epoch ${contentEpoch}`}</Text>,
+            'linuxdo:A',
+            routeEpoch,
+            contentEpoch
+          )}
+          renderUserScreen={() => <Text>用户详情页面</Text>}
+          styles={styles}
+          theme={theme}
+          onReady={jest.fn()}
+          onScreenChange={jest.fn()}
+          onTabPress={jest.fn()}
+          onTopicClosing={jest.fn()}
+          onUserClosing={jest.fn()}
+        />
+      );
+    };
+    const view = await render(<Harness />);
+
+    await waitFor(() => expect(view.getByText('首页页面')).toBeTruthy());
+    await act(async () => {
+      expect(navigateAppScreen('topic')).toBe(true);
+    });
+    await waitFor(() => expect(view.getByText('A epoch 0')).toBeTruthy());
+
+    await act(async () => invalidateEpochZero());
+    await waitFor(() => {
+      expect(view.getByText('主题加载中', { includeHiddenElements: true })).toBeTruthy();
+      expect(view.queryByText('A epoch 0', { includeHiddenElements: true })).toBeNull();
+      expect(view.queryByText('A epoch 1', { includeHiddenElements: true })).toBeNull();
+    });
+
+    await act(async () => publishEpochOne());
+    await waitFor(() => {
+      expect(view.getByText('A epoch 1')).toBeTruthy();
+      expect(view.queryByText('A epoch 0', { includeHiddenElements: true })).toBeNull();
+      expect(view.queryByText('主题加载中', { includeHiddenElements: true })).toBeNull();
+    });
+  });
+
+  it('[REG-TOPIC-057] invalidates an inactive Topic route before it is restored', async () => {
+    let showTopicB: () => void = () => {
+      throw new Error('Topic epoch harness is not ready');
+    };
+    let invalidateTopicA: () => void = () => {
+      throw new Error('Topic epoch harness is not ready');
+    };
+    let restoreTopicA: () => void = () => {
+      throw new Error('Topic epoch harness is not ready');
+    };
+    const Harness = () => {
+      const [activeTopic, setActiveTopic] = useState({ source: 'linuxdo', id: 'A', sessionEpoch: 0 });
+      const [topicAEpoch, setTopicAEpoch] = useState(0);
+      showTopicB = () => setActiveTopic({ source: 'nodeseek', id: 'B', sessionEpoch: 0 });
+      invalidateTopicA = () => setTopicAEpoch(1);
+      restoreTopicA = () => setActiveTopic({ source: 'linuxdo', id: 'A', sessionEpoch: 1 });
+      return (
+        <AppNavigator
+          moreHasBadge={false}
+          navigationTheme={DefaultTheme}
+          renderFeedTab={() => <StatefulTab label="首页" />}
+          renderLibraryTab={() => <StatefulTab label="收藏" />}
+          renderMoreTab={() => <StatefulTab label="更多" />}
+          renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
+          renderSearchTab={() => <StatefulTab label="搜索" />}
+          renderTopicScreen={({ routeSource, seed }) => topicPresentation(
+            <Text>{`${activeTopic.id} epoch ${activeTopic.sessionEpoch}`}</Text>,
+            `${activeTopic.source}:${activeTopic.id}`,
+            (seed?.source || routeSource || activeTopic.source) === 'linuxdo' ? topicAEpoch : 0,
+            activeTopic.sessionEpoch
+          )}
+          renderUserScreen={() => <Text>用户详情页面</Text>}
+          styles={styles}
+          theme={theme}
+          onReady={jest.fn()}
+          onScreenChange={jest.fn()}
+          onTabPress={jest.fn()}
+          onTopicClosing={jest.fn()}
+          onUserClosing={jest.fn()}
+        />
+      );
+    };
+    const view = await render(<Harness />);
+
+    await waitFor(() => expect(view.getByText('首页页面')).toBeTruthy());
+    await act(async () => {
+      expect(navigateAppScreen('topic')).toBe(true);
+    });
+    await waitFor(() => expect(view.getByText('A epoch 0')).toBeTruthy());
+
+    await act(async () => {
+      showTopicB();
+      expect(pushTopicRoute({ source: 'nodeseek', topicId: 'B' })).toBe(true);
+    });
+    await waitFor(() => expect(view.getByText('B epoch 0')).toBeTruthy());
+    await act(async () => invalidateTopicA());
+    await waitFor(() => {
+      expect(view.queryByText('A epoch 0', { includeHiddenElements: true })).toBeNull();
+      expect(view.getByText('主题加载中', { includeHiddenElements: true })).toBeTruthy();
+    });
+
+    await act(async () => navigationRef.goBack());
+    await waitFor(() => expect(view.getByText('主题加载中', { includeHiddenElements: true })).toBeTruthy());
+    await act(async () => restoreTopicA());
+    await waitFor(() => {
+      expect(view.getByText('A epoch 1')).toBeTruthy();
+      expect(view.queryByText('A epoch 0', { includeHiddenElements: true })).toBeNull();
+    });
+  });
+
+  it('[REG-PERF-008] pauses original-image upgrades on an inactive Topic route', async () => {
+    let showTopicB: () => void = () => {
+      throw new Error('Topic image harness is not ready');
+    };
+    const Harness = () => {
+      const [topicId, setTopicId] = useState('A');
+      showTopicB = () => setTopicId('B');
+      return (
+        <AppNavigator
+          moreHasBadge={false}
+          navigationTheme={DefaultTheme}
+          renderFeedTab={() => <StatefulTab label="首页" />}
+          renderLibraryTab={() => <StatefulTab label="收藏" />}
+          renderMoreTab={() => <StatefulTab label="更多" />}
+          renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
+          renderSearchTab={() => <StatefulTab label="搜索" />}
+          renderTopicScreen={() => topicPresentation(<OriginalUpgradeProbe label={topicId} />, `linuxdo:${topicId}`)}
+          renderUserScreen={() => <Text>用户详情页面</Text>}
+          styles={styles}
+          theme={theme}
+          onReady={jest.fn()}
+          onScreenChange={jest.fn()}
+          onTabPress={jest.fn()}
+          onTopicClosing={jest.fn()}
+          onUserClosing={jest.fn()}
+        />
+      );
+    };
+    const view = await render(<Harness />);
+
+    await waitFor(() => expect(view.getByText('首页页面')).toBeTruthy());
+    await act(async () => {
+      expect(pushTopicRoute({ source: 'linuxdo', topicId: 'A' })).toBe(true);
+    });
+    await waitFor(() => expect(view.getByText('A originals active')).toBeTruthy());
+
+    await act(async () => {
+      showTopicB();
+      expect(pushTopicRoute({ source: 'linuxdo', topicId: 'B' })).toBe(true);
+    });
+    await waitFor(() => {
+      expect(view.getByText('B originals active')).toBeTruthy();
+      expect(view.getByText('A originals paused', { includeHiddenElements: true })).toBeTruthy();
+    });
+  });
+
   it('[REG-TOPIC-002] returns from topic reading settings without losing the topic route', async () => {
     const StatefulTopic = () => {
       const [value, setValue] = useState('');
@@ -163,7 +432,7 @@ describe('App navigator UI state', () => {
         renderMoreTab={() => <StatefulTab label="更多" />}
         renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
         renderSearchTab={() => <StatefulTab label="搜索" />}
-        renderTopicScreen={() => <StatefulTopic />}
+        renderTopicScreen={() => topicPresentation(<StatefulTopic />)}
         renderUserScreen={() => <Text>用户详情页面</Text>}
         styles={styles}
         theme={theme}

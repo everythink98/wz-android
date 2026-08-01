@@ -163,7 +163,13 @@ describe('Reply composer local behavior', () => {
       <ReplyHarness
         key="edit"
         initialContent="待编辑正文"
-        replyEditTarget={{ commentId: 9, contentMarkdown: '待编辑正文', floor: 4 }}
+        replyEditTarget={{
+          commentId: 9,
+          contentMarkdown: '待编辑正文',
+          floor: 4,
+          topicId: '1',
+          ticket: { source: 'linuxdo', identityKey: 'linuxdo:alice', sessionEpoch: 1 }
+        }}
       />
     );
     expect(replyView.getByText('编辑 #4')).toBeTruthy();

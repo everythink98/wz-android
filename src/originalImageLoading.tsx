@@ -3,8 +3,34 @@ import type { ImageURISource } from 'react-native';
 import { compatibleImageRequestIdentity } from './compatibleImageSources';
 
 const OriginalImageUpgradeContext = createContext(true);
+const MAX_DISPLAY_REVISIONS = 512;
 const displayRevisions = new Map<string, number>();
-const displayListeners = new Set<() => void>();
+const displayListeners = new Map<string, Set<() => void>>();
+
+function pruneDisplayRevisions() {
+  while (displayRevisions.size > MAX_DISPLAY_REVISIONS) {
+    let removableIdentity = '';
+    for (const identity of displayRevisions.keys()) {
+      if (!displayListeners.has(identity)) {
+        removableIdentity = identity;
+        break;
+      }
+    }
+    if (!removableIdentity) {
+      return;
+    }
+    displayRevisions.delete(removableIdentity);
+  }
+}
+
+function promoteDisplayRevision(identity: string) {
+  const revision = displayRevisions.get(identity) || 0;
+  if (revision) {
+    displayRevisions.delete(identity);
+    displayRevisions.set(identity, revision);
+  }
+  return revision;
+}
 
 export function OriginalImageUpgradeBoundary({
   children,
@@ -13,8 +39,9 @@ export function OriginalImageUpgradeBoundary({
   children: ReactNode;
   enabled: boolean;
 }) {
+  const parentEnabled = useContext(OriginalImageUpgradeContext);
   return (
-    <OriginalImageUpgradeContext.Provider value={enabled}>
+    <OriginalImageUpgradeContext.Provider value={parentEnabled && enabled}>
       {children}
     </OriginalImageUpgradeContext.Provider>
   );
@@ -33,8 +60,11 @@ export function markOriginalImageDisplayed(source: ImageURISource | null) {
   if (!identity) {
     return;
   }
-  displayRevisions.set(identity, (displayRevisions.get(identity) || 0) + 1);
-  displayListeners.forEach((listener) => listener());
+  const revision = (displayRevisions.get(identity) || 0) + 1;
+  displayRevisions.delete(identity);
+  displayRevisions.set(identity, revision);
+  pruneDisplayRevisions();
+  displayListeners.get(identity)?.forEach((listener) => listener());
 }
 
 export function originalImageDisplayRevision(source: ImageURISource | null) {
@@ -42,23 +72,31 @@ export function originalImageDisplayRevision(source: ImageURISource | null) {
   return identity ? displayRevisions.get(identity) || 0 : 0;
 }
 
-export function useOriginalImageDisplayRevision(source: ImageURISource | null) {
+export function subscribeOriginalImageDisplay(
+  source: ImageURISource | null,
+  listener: () => void
+) {
   const identity = originalImageDisplayIdentity(source);
-  return useSyncExternalStore(
-    (listener) => {
-      displayListeners.add(listener);
-      return () => displayListeners.delete(listener);
-    },
-    () => identity ? displayRevisions.get(identity) || 0 : 0,
-    () => 0
-  );
+  if (!identity) {
+    return () => {};
+  }
+  promoteDisplayRevision(identity);
+  const listeners = displayListeners.get(identity) || new Set<() => void>();
+  listeners.add(listener);
+  displayListeners.set(identity, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) {
+      displayListeners.delete(identity);
+      pruneDisplayRevisions();
+    }
+  };
 }
 
-export function isOriginalImageUpgradeNearViewport(
-  layout: { height: number; y: number },
-  viewport: { height: number; offsetY: number },
-  preloadDistance: number
-) {
-  return layout.y + layout.height >= viewport.offsetY - preloadDistance
-    && layout.y <= viewport.offsetY + viewport.height + preloadDistance;
+export function useOriginalImageDisplayRevision(source: ImageURISource | null) {
+  return useSyncExternalStore(
+    (listener) => subscribeOriginalImageDisplay(source, listener),
+    () => originalImageDisplayRevision(source),
+    () => 0
+  );
 }

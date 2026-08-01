@@ -87,7 +87,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     topicContentInner: {
       alignItems: 'center',
-      gap: 10,
+      gap: 0,
       padding: 16,
       paddingTop: 18,
       paddingBottom: 96
@@ -1393,7 +1393,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       flex: 1,
       justifyContent: 'center',
-      minHeight: 36,
+      minHeight: 48,
       minWidth: 0,
       borderRadius: 6,
       paddingHorizontal: 4
@@ -1437,8 +1437,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     appearanceStepButton: {
       alignItems: 'center',
       justifyContent: 'center',
-      width: 44,
-      height: 44,
+      width: 48,
+      height: 48,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderRadius: 8,
@@ -1456,7 +1456,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     appearanceSlider: {
       flex: 1,
-      height: 44,
+      height: 48,
       justifyContent: 'center',
       minWidth: 0
     },
@@ -2619,6 +2619,18 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingHorizontal: 0,
       paddingTop: 16
     },
+    replyCardStart: {
+      borderBottomWidth: 0,
+      paddingBottom: 0
+    },
+    replyCardMiddle: {
+      borderBottomWidth: 0,
+      paddingBottom: 0,
+      paddingTop: 0
+    },
+    replyCardEnd: {
+      paddingTop: 0
+    },
     replyAcceptedNotice: {
       minHeight: 28,
       alignItems: 'center',
@@ -2669,7 +2681,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     replyHead: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 10
+      gap: 10,
+      minHeight: 48
     },
     replyAvatar: {
       alignItems: 'center',
@@ -2921,17 +2934,36 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingVertical: 10
     },
     quoteBox: {
-      gap: 6,
+      gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderRadius: radiusSm,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
-      paddingVertical: 8
+      paddingVertical: 10
     },
     replyQuoteBox: {
       backgroundColor: replyNeutralSurface,
       borderColor: replyNeutralBorder
+    },
+    quoteRowTop: {
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
+      borderBottomWidth: 0,
+      paddingBottom: 8
+    },
+    quoteRowContinuation: {
+      borderBottomWidth: 0,
+      borderRadius: 0,
+      borderTopWidth: 0,
+      paddingBottom: 0,
+      paddingTop: 0
+    },
+    quoteRowBottom: {
+      borderTopLeftRadius: 0,
+      borderTopRightRadius: 0,
+      borderTopWidth: 0,
+      paddingTop: 0
     },
     quoteHeader: {
       alignItems: 'center',
@@ -2943,7 +2975,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       flexDirection: 'row',
       gap: 8,
-      minHeight: 44,
+      minHeight: 48,
       justifyContent: 'space-between'
     },
     quoteAuthorSummary: {
@@ -2951,13 +2983,15 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flex: 1,
       flexDirection: 'row',
       gap: 8,
+      minHeight: 48,
       minWidth: 0
     },
     quotePanelState: {
       alignItems: 'center',
       flexDirection: 'row',
       flexShrink: 0,
-      gap: 6
+      gap: 6,
+      minHeight: 48
     },
     quotePanelStateText: {
       color: theme.primary,
@@ -2987,6 +3021,17 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontSize: 13,
       fontWeight: '600',
       lineHeight: 18
+    },
+    quoteTopicLink: {
+      justifyContent: 'center',
+      minHeight: 48
+    },
+    quoteTopicLinkText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(14 * fontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(21 * fontScale)
     },
     quotePreviewText: {
       color: theme.ink,

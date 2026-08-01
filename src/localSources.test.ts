@@ -1462,6 +1462,32 @@ describe('Android local sources', () => {
     ]);
   });
 
+  it('[REG-PERF-008] lets a queued Back cancellation win before Topic DOM parsing', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn(async () => json({
+      id: 44,
+      title: 'cancel before parse',
+      slug: 'cancel-before-parse',
+      created_at: '2026-06-03T00:00:00.000Z',
+      posts_count: 1,
+      post_stream: {
+        stream: [1001],
+        posts: [{
+          id: 1001,
+          username: 'alice',
+          cooked: '<p>ordinary safe body</p>',
+          created_at: '2026-06-03T00:00:00.000Z',
+          post_number: 1
+        }]
+      }
+    }));
+
+    const pending = getTopic({ source: 'linuxdo', id: '44', fetcher, signal: controller.signal });
+    setTimeout(() => controller.abort(), 0);
+
+    await expect(pending).rejects.toThrow('请求已取消');
+  });
+
   it('maps linux.do Discourse polls from reply posts', async () => {
     const fetcher = vi.fn(async () => json({
       id: 43,
@@ -2331,12 +2357,50 @@ describe('Android local sources', () => {
     const completePost = await getReply({ source: 'linuxdo', id: '910', floor: 1, fetcher });
 
     expect(topic.replies[0]).toMatchObject({
-      quotedFloors: [1],
-      quotedAuthors: { 1: { label: 'alice', username: 'alice' } },
-      quotedPreviews: { 1: 'Short preview.' },
+      quotedPosts: [{
+        reference: { source: 'linuxdo', topicId: '910', postNumber: 1 },
+        author: { label: 'alice', username: 'alice' },
+        preview: 'Short preview.'
+      }],
       contentHtml: '<p>Reply</p>'
     });
     expect(completePost.contentHtml).toBe('<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>');
+  });
+
+  it('[REG-TOPIC-053] keeps a linux.do reply quote target topic instead of treating it as a local floor', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 2685882,
+      title: 'Topic with cross-topic reply quote',
+      created_at: '2026-07-31T00:00:00.000Z',
+      posts_count: 2,
+      post_stream: {
+        stream: [1, 2],
+        posts: [
+          { id: 1, post_number: 7, username: 'local', cooked: '<p>Wrong local floor.</p>', created_at: '2026-07-31T00:00:00.000Z' },
+          {
+            id: 2,
+            post_number: 8,
+            username: 'bob',
+            cooked: '<aside data-post="7" class="quote" data-topic="2679944" data-username="alice"><div class="title"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/2679944/7">Referenced topic</a></div></div><blockquote><p>Cross-topic preview.</p></blockquote></aside><p>Reply body.</p>',
+            created_at: '2026-07-31T00:02:00.000Z'
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '2685882', fetcher });
+
+    expect(topic.replies[0]).toMatchObject({
+      floor: 8,
+      contentHtml: '<p>Reply body.</p>',
+      quotedPosts: [{
+        reference: { source: 'linuxdo', topicId: '2679944', postNumber: 7 },
+        author: { label: 'alice', username: 'alice' },
+        preview: 'Cross-topic preview.',
+        topicTitle: 'Referenced topic',
+        topicUrl: 'https://linux.do/t/topic/2679944/7'
+      }]
+    });
   });
 
   it('keeps linux.do reply quote author names from quote avatar URLs', async () => {
@@ -2362,8 +2426,13 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'linuxdo', id: '911', fetcher });
 
-    expect(topic.replies[0].quotedFloors).toEqual([1]);
-    expect(topic.replies[0].quotedAuthors).toEqual({ 1: { label: 'alice' } });
+    expect(topic.replies[0].quotedPosts).toEqual([{
+      reference: { source: 'linuxdo', topicId: '911', postNumber: 1 },
+      author: { label: 'alice' },
+      preview: 'Original text',
+      topicTitle: 'Quoted topic',
+      topicUrl: 'https://linux.do/t/topic/911/1'
+    }]);
   });
 
   it('refreshes linux.do reply stream when reloading the first reply page', async () => {
@@ -5883,7 +5952,7 @@ describe('Android local sources', () => {
         bumped_at: '2026-07-17T00:00:00.000Z',
         posts_count: 2
       }],
-      posts: [{ topic_id: 88, blurb: 'semantic match' }],
+      posts: [{ topic_id: 88, blurb: '[!important]+ semantic match' }],
       users: []
     }));
 
@@ -5892,7 +5961,7 @@ describe('Android local sources', () => {
       linuxDoAccess: testLinuxDoAccess()
     });
 
-    expect(result.items).toEqual([expect.objectContaining({ id: '88', isAiGenerated: true })]);
+    expect(result.items).toEqual([expect.objectContaining({ id: '88', excerpt: 'semantic match', isAiGenerated: true })]);
     expect(result.hasMore).toBe(false);
     expect(result.nextPage).toBeNull();
     const url = new URL(String((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]));

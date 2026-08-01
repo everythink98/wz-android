@@ -171,7 +171,7 @@ describe('Android App security review guards', () => {
     expect(exported).not.toContain('connect.sid');
     expect(exported).not.toContain('password');
     expect(exported).not.toContain('sidyaohuo');
-    expect(exported).toContain('ok=1');
+    expect(exported).toContain('https://www.nodeseek.com/post-1-1');
   });
 
   it('does not export server proxy settings in Android backup JSON', () => {
@@ -233,6 +233,6 @@ describe('Android App security review guards', () => {
     expect(imported).not.toContain(fakeSecret);
     expect(imported).not.toContain('authorization');
     expect(imported).not.toContain('session=');
-    expect(imported).toContain('safe=1');
+    expect(imported).toContain('https://linux.do/t/1');
   });
 });

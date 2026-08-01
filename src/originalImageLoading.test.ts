@@ -1,21 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ImageURISource } from 'react-native';
 import {
-  isOriginalImageUpgradeNearViewport,
   markOriginalImageDisplayed,
-  originalImageDisplayRevision
+  originalImageDisplayRevision,
+  subscribeOriginalImageDisplay
 } from './originalImageLoading';
 
 describe('original image progressive loading', () => {
-  it('[REG-TOPIC-048] gates upgrades to the viewport and its preload distance', () => {
-    const viewport = { height: 600, offsetY: 1_000 };
-
-    expect(isOriginalImageUpgradeNearViewport({ height: 100, y: 180 }, viewport, 720)).toBe(true);
-    expect(isOriginalImageUpgradeNearViewport({ height: 100, y: 179 }, viewport, 720)).toBe(false);
-    expect(isOriginalImageUpgradeNearViewport({ height: 100, y: 2_320 }, viewport, 720)).toBe(true);
-    expect(isOriginalImageUpgradeNearViewport({ height: 100, y: 2_321 }, viewport, 720)).toBe(false);
-  });
-
   it('[REG-TOPIC-048] isolates displayed originals by the complete media request identity', () => {
     const url = 'https://img.example.com/session-isolated-original.png';
     const epochOne = {
@@ -34,5 +25,58 @@ describe('original image progressive loading', () => {
     markOriginalImageDisplayed(epochOne);
     expect(originalImageDisplayRevision(epochOne)).toBe(1);
     expect(originalImageDisplayRevision(epochTwo)).toBe(0);
+  });
+
+  it('[REG-PERF-007] notifies only listeners for the displayed media identity', () => {
+    const sourceA = { uri: 'https://img.example.com/notified-original-a.png' };
+    const sourceB = { uri: 'https://img.example.com/notified-original-b.png' };
+    const listenerA = vi.fn();
+    const listenerB = vi.fn();
+    const unsubscribeA = subscribeOriginalImageDisplay(sourceA, listenerA);
+    const unsubscribeB = subscribeOriginalImageDisplay(sourceB, listenerB);
+
+    markOriginalImageDisplayed(sourceA);
+
+    expect(listenerA).toHaveBeenCalledTimes(1);
+    expect(listenerB).not.toHaveBeenCalled();
+    unsubscribeA();
+    unsubscribeB();
+  });
+
+  it('[REG-PERF-007][REG-PERF-009] keeps snapshot reads pure and promotes committed subscriptions', () => {
+    const sources = Array.from({ length: 514 }, (_, index) => ({
+      uri: `https://img.example.com/lru-original-${index}.png`
+    }));
+
+    sources.slice(0, 512).forEach(markOriginalImageDisplayed);
+    expect(originalImageDisplayRevision(sources[0])).toBe(1);
+    markOriginalImageDisplayed(sources[512]);
+
+    expect(originalImageDisplayRevision(sources[0])).toBe(0);
+    expect(originalImageDisplayRevision(sources[1])).toBe(1);
+
+    const unsubscribe = subscribeOriginalImageDisplay(sources[1], () => {});
+    unsubscribe();
+    markOriginalImageDisplayed(sources[513]);
+
+    expect(originalImageDisplayRevision(sources[1])).toBe(1);
+    expect(originalImageDisplayRevision(sources[2])).toBe(0);
+  });
+
+  it('[REG-PERF-007] retains active revision listeners until they unsubscribe', () => {
+    const activeSource = { uri: 'https://img.example.com/active-original.png' };
+    markOriginalImageDisplayed(activeSource);
+    const unsubscribe = subscribeOriginalImageDisplay(activeSource, () => {});
+
+    Array.from({ length: 512 }, (_, index) => ({
+      uri: `https://img.example.com/active-pressure-${index}.png`
+    })).forEach(markOriginalImageDisplayed);
+    expect(originalImageDisplayRevision(activeSource)).toBe(1);
+
+    unsubscribe();
+    Array.from({ length: 512 }, (_, index) => ({
+      uri: `https://img.example.com/post-unsubscribe-pressure-${index}.png`
+    })).forEach(markOriginalImageDisplayed);
+    expect(originalImageDisplayRevision(activeSource)).toBe(0);
   });
 });
