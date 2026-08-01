@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
-import { mergeTopics } from '@/feedLogic';
+import { mergeTopics } from '@/domain/forum/feed';
 import {
   beginDiagnosticTrace,
   diagnosticRef,
@@ -22,9 +22,9 @@ import type {
 } from '@/domain/forum/models';
 import type { Screen } from '@/ui/navigation/types';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
+import { forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
 
 type UserLane = 'topics' | 'replies';
 

@@ -17,7 +17,7 @@ import {
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import type { XiaoyinsiAuthorizationReadResult } from './useXiaoyinsiAuthController';
-import { appQueryClient, forumQueryKeys } from './serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   beginDiagnosticTrace,
@@ -34,7 +34,7 @@ import {
 import { cancelForumSourceQueries, removeUnconfirmedForumSourceQueries } from './sessionControllerHelpers';
 import { sessionSources, type SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SourceErrorInfo } from '@/domain/forum/models';
-import type { AccountReconcileResult } from '@/features/account/model/sessionContracts';
+import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
 
 const NODESEEK_ACCOUNT_URL = 'https://www.nodeseek.com/';
 const LINUXDO_ACCOUNT_URL = 'https://linux.do/session/current.json';

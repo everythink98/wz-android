@@ -3,12 +3,12 @@ import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React, { useState } from 'react';
 import { Platform } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { FeedScreen } from '@/screens/FeedScreen';
+import { FeedScreen } from '@/features/feed/FeedScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { defaultFeedFilters } from '@/feedCategoryRail';
-import type { ReadingFilter } from '@/feedLogic';
+import { defaultFeedFilters } from '@/domain/forum/feedOptions';
+import type { ReadingFilter } from '@/domain/forum/feed';
 import type { Category, FeedFilterState, FeedSource, SourceFeedFilter, Topic } from '@/domain/forum/models';
 
 let mockTabViewProps: {

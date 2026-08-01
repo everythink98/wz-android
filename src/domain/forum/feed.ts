@@ -1,12 +1,7 @@
 import { categoryKey, topicKey, type ReaderData } from '@/domain/reader/readerData';
-import type { Category, FeedResponse, FeedSource, Reply, SourceFeedFilter, Topic } from '@/domain/forum/models';
-import {
-  accessRequirementLevelValue,
-  accessRequirementSpecificity,
-  dateTime,
-  sourceLabel
-} from '@/domain/forum/presentation';
-import { sourceCatalog } from '@/domain/forum/sourceCatalog';
+import type { Category, FeedResponse, FeedSource, Reply, SourceFeedFilter, Topic } from './models';
+import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, sourceLabel } from './presentation';
+import { sourceCatalog } from './sourceCatalog';
 
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
 export type SearchSort = 'relevance' | 'time';

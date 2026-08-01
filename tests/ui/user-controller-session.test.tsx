@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import { appQueryClient, type ForumIdentityBarrierSource } from '@/app/serverState';
+import { appQueryClient, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/app/sessionControllerHelpers';
-import { useUserController } from '@/app/useUserController';
-import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
+import { useUserController } from '@/features/user/useUserController';
+import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';

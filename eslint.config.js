@@ -36,6 +36,11 @@ module.exports = defineConfig([
     files: [
       'src/app/AppRoot.tsx',
       'src/app/use*Controller.{ts,tsx}',
+      'src/features/*/use*Controller.{ts,tsx}',
+      'src/features/library/LibraryScreen.tsx',
+      'src/features/search/SearchFilterSheet.tsx',
+      'src/features/search/SearchScreen.tsx',
+      'src/features/user/UserScreen.tsx',
       'src/ui/content/ForumContentVideo.tsx',
       'src/screens/LibraryScreen.tsx',
       'src/screens/SearchScreen.tsx',

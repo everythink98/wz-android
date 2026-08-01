@@ -3,9 +3,9 @@ import { act, fireEvent, render as renderNative, waitFor } from '@testing-librar
 import React, { useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from '@/searchFilters';
-import type { SearchGroup } from '@/searchListItems';
-import { SearchScreen } from '@/screens/SearchScreen';
+import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from '@/domain/forum/searchFilters';
+import type { SearchGroup } from '@/features/search/listItems';
+import { SearchScreen } from '@/features/search/SearchScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';

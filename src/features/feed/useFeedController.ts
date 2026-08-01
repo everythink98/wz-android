@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import type { Screen } from '@/ui/navigation/types';
 import type { ReadGateway } from '@/sources/readGateway';
 import {
@@ -9,8 +9,8 @@ import {
   shouldLoadCategoriesForSource,
   shouldUseFeedFilter,
   shouldUseReadingFilter
-} from '@/feedCategoryRail';
-import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '@/feedLogic';
+} from '@/domain/forum/feedOptions';
+import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '@/domain/forum/feed';
 import { categoryKey, topicKey, type ReaderData } from '@/domain/reader/readerData';
 import {
   beginDiagnosticTrace,
@@ -43,8 +43,8 @@ import type {
   Topic
 } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
-import { useCommittedRef } from './useCommittedRef';
+import { forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 type FeedPageParam = { cursor?: string; page: number };
 type FeedPage = FeedResponse & FeedPageParam;

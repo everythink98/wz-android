@@ -25,7 +25,7 @@ import {
   type BrowserFetchQueueRequest
 } from './sessionControllerHelpers';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys } from './serverState';
+import { forumQueryKeys } from '@/platform/query/serverState';
 
 const ref = <T>(current: T) => ({ current });
 

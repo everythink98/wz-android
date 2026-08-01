@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { ReadGateway } from '@/sources/readGateway';
-import { recordHistory, topicKey, updateFavoriteTopic, type ReaderData } from '@/domain/reader/readerData';
-import { isSameReply, mergeReplies, removeReply, replyKey as replyIdentityKey } from '@/feedLogic';
+import {
+  recordHistory,
+  topicKey,
+  updateFavoriteTopic,
+  type ReaderData,
+  type ReaderDataMutationReason
+} from '@/domain/reader/readerData';
+import { isSameReply, mergeReplies, removeReply, replyKey as replyIdentityKey } from '@/domain/forum/feed';
 import { isCanceledRequest } from '@/platform/network/errors';
 import {
   replyCountAfterNewReplySubmit,
@@ -20,7 +26,6 @@ import {
 import type { RepliesResponse, Reply, Source, SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
 import type { Screen } from '@/ui/navigation/types';
 import type { TopicRepliesRefreshOptions } from '@/features/topic/model/types';
-import type { ReaderDataMutationReason } from './useReaderDataController';
 import {
   quotedPostReferenceKey,
   quotedPostsForSource,
@@ -37,11 +42,11 @@ import {
   markDiagnosticStage,
   normalizeDiagnosticReason
 } from '@/platform/diagnostics/diagnostics';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
+import { forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;

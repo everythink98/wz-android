@@ -15,7 +15,7 @@ jest.mock('@/platform/storage/readerDataStore', () => ({
   saveReaderSettings: () => mockSaveReaderSettings()
 }));
 
-import { useReaderDataController } from '@/app/useReaderDataController';
+import { useReaderDataController } from '@/features/library/useReaderDataController';
 
 const topic: Topic = {
   source: 'nodeseek',

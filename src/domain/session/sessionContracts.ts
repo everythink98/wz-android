@@ -1,6 +1,5 @@
-import type { QueryKey } from '@tanstack/react-query';
 import type { SourceErrorInfo } from '@/domain/forum/models';
-import type { SiteSessionState } from '@/domain/session/siteSessionState';
+import type { SiteSessionState } from './siteSessionState';
 
 export type AccountReconcileResult =
   | { status: 'anonymous' | 'changed' | 'same'; session: SiteSessionState; partial?: boolean }
@@ -10,6 +9,6 @@ export type AccountReconcileResult =
 export type LinuxDoReadResumeOutcome = 'completed' | 'failed' | 'verification-required' | 'stale';
 
 export type LinuxDoReadRecovery = {
-  queryKey: QueryKey;
+  queryKey: readonly unknown[];
   resume: () => Promise<LinuxDoReadResumeOutcome>;
 };

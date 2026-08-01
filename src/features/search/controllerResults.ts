@@ -1,6 +1,6 @@
-import type { SearchGroup } from '@/searchListItems';
-import type { SearchSort } from '@/feedLogic';
-import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/searchFilters';
+import type { SearchGroup } from './listItems';
+import type { SearchSort } from '@/domain/forum/feed';
+import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/searchFilters';
 import type { FeedSource, Source, Topic } from '@/domain/forum/models';
 
 export type SearchHistoryWriteQueue = {

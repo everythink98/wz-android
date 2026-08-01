@@ -1,6 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import type { SearchSort } from '@/feedLogic';
-import { searchTimeRangeStartEpoch, type V2exSearchFilter } from '@/searchFilters';
+import type { SearchSort } from '@/domain/forum/feed';
+import { searchTimeRangeStartEpoch, type V2exSearchFilter } from '@/domain/forum/searchFilters';
 import { XMLParser } from 'fast-xml-parser';
 import type {
   CategoriesResponse,

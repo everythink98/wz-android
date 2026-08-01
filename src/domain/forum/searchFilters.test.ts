@@ -5,8 +5,8 @@ import {
   discourseSearchFilterError,
   filterSearchResponseItems,
   searchFilterSummary
-} from '@/searchFilters';
-import type { Category } from '@/domain/forum/models';
+} from './searchFilters';
+import type { Category } from './models';
 
 const categories: Category[] = [
   { source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' },

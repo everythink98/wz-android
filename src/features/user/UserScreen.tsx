@@ -1,4 +1,4 @@
-import type { UserStyles } from '@/features/user/styles';
+import type { UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
@@ -19,7 +19,7 @@ import {
   userListItemType,
   type UserActivityTab,
   type UserListItem
-} from '@/screens/user/userScreenItems';
+} from './userScreenItems';
 
 const USER_LIST_POSITION_PROPS = { disabled: true };
 

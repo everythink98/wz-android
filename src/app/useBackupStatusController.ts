@@ -2,12 +2,11 @@ import { useCallback, useRef, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import type { ReaderData } from '@/domain/reader/readerData';
+import type { ReaderData, ReaderDataMutationReason } from '@/domain/reader/readerData';
 import { exportReaderBackupJson, importReaderBackupJson } from '@/domain/reader/readerBackup';
 import { safeFileName } from '@/platform/storage/backupFiles';
 import { readBackupFileText } from '@/platform/storage/backupImportFile';
 import { runBackupOperation } from '@/platform/storage/backupOperation';
-import type { ReaderDataMutationReason } from './useReaderDataController';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,

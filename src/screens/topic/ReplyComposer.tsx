@@ -25,7 +25,7 @@ import {
   YAOHUO_FACE_ITEMS,
   type ReplyComposerInsertExpression
 } from '@/screens/topic/replyComposerExpressionCatalogs';
-import { useCommittedRef } from '@/app/useCommittedRef';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 
 type ReplyComposerInputHandle = {

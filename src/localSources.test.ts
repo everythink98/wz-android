@@ -32,7 +32,7 @@ import {
 } from '@/sources/nodeseek/reader';
 import { setRequestTimeoutsActive } from '@/platform/network/request';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
-import { DEFAULT_SEARCH_FILTERS } from '@/searchFilters';
+import { DEFAULT_SEARCH_FILTERS } from '@/domain/forum/searchFilters';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,

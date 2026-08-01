@@ -22,8 +22,8 @@ import { WebView } from 'react-native-webview';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
 import type { TopicRecord } from '@/domain/reader/readerData';
-import { useReaderDataController } from './useReaderDataController';
-import { useReaderDataActionsController } from './useReaderDataActionsController';
+import { useReaderDataController } from '@/features/library/useReaderDataController';
+import { useReaderDataActionsController } from '@/features/library/useReaderDataActionsController';
 import { useReaderSettingsController } from './useReaderSettingsController';
 import { useBackupStatusController } from './useBackupStatusController';
 import { useDiagnosticLogController } from './useDiagnosticLogController';
@@ -32,9 +32,9 @@ import type {
   AccountReconcileResult,
   LinuxDoReadRecovery,
   LinuxDoReadResumeOutcome
-} from '@/features/account/model/sessionContracts';
+} from '@/domain/session/sessionContracts';
 import { useAppUpdateController } from './useAppUpdateController';
-import { useFeedController } from './useFeedController';
+import { useFeedController } from '@/features/feed/useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
 import {
@@ -51,12 +51,12 @@ import {
   type TopicRouteRenderRequest
 } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
-import { useSearchController } from './useSearchController';
+import { useSearchController } from '@/features/search/useSearchController';
 import { useSessionController } from './useSessionController';
 import { useNetworkProxyController } from './useNetworkProxyController';
 import { useTopicController } from './useTopicController';
 import { filterTopicSessionReplies, useTopicSessionController } from './useTopicSessionController';
-import { useUserController } from './useUserController';
+import { useUserController } from '@/features/user/useUserController';
 import { useLinuxDoIdentityVerificationPrompt, useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
@@ -68,7 +68,7 @@ import { markCurrentNodeSeekOwnRepliesUnlikable } from './topicActionControllerH
 import { shareTopicWithClipboardFallback } from './topicActionHelpers';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useDeferredNavigationTask } from './useDeferredNavigationTask';
-import { useCommitRefValue } from './useCommittedRef';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import {
@@ -96,25 +96,25 @@ import { createUserStyles } from '@/features/user/styles';
 import { createLibraryStyles } from '@/features/library/styles';
 import { createAccountStyles } from '@/features/account/styles';
 import { createMoreStyles } from '@/features/more/styles';
-import type { LibraryTab } from '@/feedLogic';
+import type { LibraryTab } from '@/domain/forum/feed';
 import { errorMessage } from '@/platform/network/errors';
 import { parseInternalTopicOpenLink } from '@/domain/forum/links';
-import { FeedScreen } from '@/screens/FeedScreen';
-import { LibraryScreen } from '@/screens/LibraryScreen';
+import { FeedScreen } from '@/features/feed/FeedScreen';
+import { LibraryScreen } from '@/features/library/LibraryScreen';
 import { MoreScreen } from '@/screens/MoreScreen';
 import { AppearancePanel } from '@/screens/more/MorePanels';
-import { SearchScreen } from '@/screens/SearchScreen';
+import { SearchScreen } from '@/features/search/SearchScreen';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '@/screens/TopicScreen';
 import { LoadingState } from '@/ui/controls/AppControls';
 import { hasSameYaohuoTopicLayout } from '@/screens/topic/topicScreenHelpers';
-import { UserScreen } from '@/screens/UserScreen';
+import { UserScreen } from '@/features/user/UserScreen';
 import { isSessionSource } from '@/domain/forum/sourceCatalog';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import type { Screen } from '@/ui/navigation/types';
 import type { TopicSnapshot } from '@/features/topic/model/types';
 import { setRequestTimeoutsActive } from '@/platform/network/request';
 import { focusManager } from '@tanstack/react-query';
-import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from './serverState';
+import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   createSiteSessionViewModels,

@@ -1,14 +1,14 @@
-import type { LibraryStyles } from '@/features/library/styles';
+import type { LibraryStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star, Trash2, type LucideIcon } from 'lucide-react-native';
 import type { FeedSource, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import { type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
-import { type LibraryTab } from '@/feedLogic';
-import { filterLibraryRecords, libraryCategoryFilterItems } from '@/features/library/model/libraryFilters';
+import { type LibraryTab } from '@/domain/forum/feed';
+import { filterLibraryRecords, libraryCategoryFilterItems } from './model/libraryFilters';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
-import { feedSources } from '@/feedCategoryRail';
+import { feedSources } from '@/domain/forum/feedOptions';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, EmptyText, PillRail, TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/AppControls';
@@ -23,7 +23,7 @@ import {
   libraryDataItemType,
   type LibraryDataItem,
   type LibraryListItem
-} from '@/screens/library/libraryScreenItems';
+} from './libraryScreenItems';
 
 const LIBRARY_TAB_ITEMS = [
   { value: 'favorites', label: '帖子' },

@@ -2,14 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { aggregateSearchSources, type DiscourseSource } from '@/domain/forum/sourceCatalog';
-import { mergeTopics, type SearchSort } from '@/feedLogic';
+import { mergeTopics, type SearchSort } from '@/domain/forum/feed';
 import {
   buildDiscourseSearchQuery,
   DEFAULT_SEARCH_FILTERS,
   type SearchFilterState,
   type SourceSearchFilter
-} from '@/searchFilters';
-import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '@/searchHistory';
+} from '@/domain/forum/searchFilters';
+import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from './history';
 import type { ReadGateway } from '@/sources/readGateway';
 import {
   beginDiagnosticTrace,
@@ -32,7 +32,7 @@ import {
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source } from '@/domain/forum/models';
 import type { Screen } from '@/ui/navigation/types';
-import type { SearchGroup } from '@/searchListItems';
+import type { SearchGroup } from './listItems';
 import {
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
@@ -45,10 +45,10 @@ import {
   type LinuxDoAiSearchState,
   type RemoteSearchSourceResult,
   type SearchRunOptions
-} from '@/searchControllerResults';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/features/account/model/sessionContracts';
+} from './controllerResults';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys } from './serverState';
+import { forumQueryKeys } from '@/platform/query/serverState';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 type SearchRunInput = Source | Partial<SearchRunOptions>;

@@ -9,7 +9,7 @@ import type {
   TopicPoll
 } from '@/domain/forum/models';
 import { accessRequirementFromNoticeText, textContentFromHtml } from '@/domain/forum/html';
-import { replyKey } from '@/feedLogic';
+import { replyKey } from '@/domain/forum/feed';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { splitTopicContentHtml } from '@/domain/forum/topicContentSplit';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';

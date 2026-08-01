@@ -3,7 +3,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import type { Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { UserScreen } from '@/screens/UserScreen';
+import { UserScreen } from '@/features/user/UserScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from './styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';

@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Topic, UserProfile, UserReplyActivity } from '@/domain/forum/models';
-import {
-  createUserListItems,
-  userListInstanceKey,
-  userListItemKey,
-  userListItemType
-} from '@/screens/user/userScreenItems';
+import { createUserListItems, userListInstanceKey, userListItemKey, userListItemType } from './userScreenItems';
 
 const topic: Topic = {
   source: 'nodeseek',

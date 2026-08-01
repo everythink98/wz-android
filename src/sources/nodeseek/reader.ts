@@ -8,7 +8,7 @@ import {
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from '@/sources/searchFallback';
-import type { NodeSeekSearchFilter } from '@/searchFilters';
+import type { NodeSeekSearchFilter } from '@/domain/forum/searchFilters';
 import type {
   Category,
   FeedResponse,

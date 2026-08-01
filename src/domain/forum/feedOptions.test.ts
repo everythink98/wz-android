@@ -9,8 +9,8 @@ import {
   shouldLoadCategoriesForSource,
   shouldUseFeedFilter,
   shouldUseReadingFilter
-} from '@/feedCategoryRail';
-import type { Category } from '@/domain/forum/models';
+} from './feedOptions';
+import type { Category } from './models';
 
 const categories: Category[] = [
   { source: 'v2ex', id: 'apple', name: 'Apple' },

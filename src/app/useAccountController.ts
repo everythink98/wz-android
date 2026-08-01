@@ -24,14 +24,14 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
-import { forumQueryKeys } from './serverState';
+import { forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type {
   LinuxDoReadRecovery,
   LinuxDoReadResumeOutcome,
   AccountReconcileResult
-} from '@/features/account/model/sessionContracts';
-import { useCommitRefValue } from './useCommittedRef';
+} from '@/domain/session/sessionContracts';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
 const NODESEEK_MESSAGE_HOSTS = ['nodeseek.com'];
 

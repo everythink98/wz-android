@@ -29,7 +29,7 @@ import {
   XiaoyinsiAuthError,
   type XiaoyinsiPendingAuthorization
 } from '@/sources/xiaoyinsi/auth';
-import { appQueryClient, forumQueryKeys } from './serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 
 export type XiaoyinsiAuthPhase =

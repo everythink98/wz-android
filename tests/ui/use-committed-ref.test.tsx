@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { render } from '@testing-library/react-native';
 import { Suspense, useCallback, useLayoutEffect } from 'react';
 import { Text } from 'react-native';
-import { useCommittedRef } from '@/app/useCommittedRef';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const NEVER_SETTLES = new Promise<void>(() => undefined);
 

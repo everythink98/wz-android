@@ -50,7 +50,7 @@ import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authActionMessageForSource } from '@/domain/session/siteSessionPrompts';
-import { useCommittedRef } from './useCommittedRef';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -61,7 +61,7 @@ import {
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
 import type { TopicSessionController } from './useTopicSessionController';
-import { forumMutationKeys, forumQueryKeys } from './serverState';
+import { forumMutationKeys, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeDependencies } from './discourseActionRuntime';
 import {

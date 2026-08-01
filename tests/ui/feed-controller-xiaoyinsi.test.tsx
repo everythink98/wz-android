@@ -1,15 +1,15 @@
 import { afterEach } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { useLayoutEffect } from 'react';
-import { useFeedController } from '@/app/useFeedController';
+import { useFeedController } from '@/features/feed/useFeedController';
 import type { Screen } from '@/ui/navigation/types';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { ReadGateway } from '@/sources/readGateway';
-import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/app/serverState';
+import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/app/sessionControllerHelpers';
-import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
+import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { sessionSources } from '@/domain/forum/sourceCatalog';
 import type { Category, SourceErrors, Topic } from '@/domain/forum/models';
 import { QueryTestWrapper } from './QueryTestWrapper';

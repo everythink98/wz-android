@@ -47,6 +47,16 @@ export interface ReaderData {
   settings: ReaderSettings;
 }
 
+export type ReaderDataMutationReason =
+  | 'backup-imported'
+  | 'favorite-toggled'
+  | 'follow-removed'
+  | 'follow-toggled'
+  | 'history-cleared'
+  | 'history-recorded'
+  | 'library-topic-removed'
+  | 'settings-updated';
+
 const defaultReaderSettings: ReaderSettings = {
   listDensity: 'standard',
   theme: 'light',

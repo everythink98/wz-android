@@ -47,7 +47,7 @@ import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeRecovery } fr
 import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { useTopicActionsController } from '@/app/useTopicActionsController';
 import { useTopicSessionController } from '@/app/useTopicSessionController';
-import { appQueryClient, forumQueryKeys } from '@/app/serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import { uploadNodeSeekReplyImageWithApiKey } from '@/sources/nodeimage/upload';

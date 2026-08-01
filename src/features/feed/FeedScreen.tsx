@@ -1,4 +1,4 @@
-import type { FeedStyles } from '@/features/feed/styles';
+import type { FeedStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
@@ -31,13 +31,13 @@ import {
   feedSourceItems,
   shouldUseFeedFilter,
   shouldUseReadingFilter
-} from '@/feedCategoryRail';
+} from '@/domain/forum/feedOptions';
 import {
   shouldAllowFeedAutoLoadRequest,
   shouldLoadMoreFeedFromScroll,
   shouldShowFeedFloatingActions
-} from '@/feedFloatingActions';
-import type { ReadingFilter } from '@/feedLogic';
+} from './floatingActions';
+import type { ReadingFilter } from '@/domain/forum/feed';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import {

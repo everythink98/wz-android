@@ -4,7 +4,8 @@ import {
   createEmptyReaderData,
   sanitizeReaderSettings,
   sanitizeReaderData,
-  type ReaderData
+  type ReaderData,
+  type ReaderDataMutationReason
 } from '@/domain/reader/readerData';
 import { loadReaderData, saveCleanReaderData, saveReaderSettings } from '@/platform/storage/readerDataStore';
 import {
@@ -14,16 +15,6 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
-
-export type ReaderDataMutationReason =
-  | 'backup-imported'
-  | 'favorite-toggled'
-  | 'follow-removed'
-  | 'follow-toggled'
-  | 'history-cleared'
-  | 'history-recorded'
-  | 'library-topic-removed'
-  | 'settings-updated';
 
 function prepareSettingsOnlyCommit(current: ReaderData, updated: ReaderData) {
   if (

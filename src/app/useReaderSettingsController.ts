@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
-import type { ReaderData, ReaderSettings } from '@/domain/reader/readerData';
-import type { ReaderDataMutationReason } from './useReaderDataController';
+import type { ReaderData, ReaderDataMutationReason, ReaderSettings } from '@/domain/reader/readerData';
 
 export function applyReaderSettingsPatch(current: ReaderData, patch: Partial<ReaderSettings>) {
   const hasChanges = Object.entries(patch).some(

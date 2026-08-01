@@ -4,9 +4,9 @@ import type { LinuxDoLevelProfile, ReadGateway } from '@/sources/readGateway';
 import { useAccountController } from '@/app/useAccountController';
 import type { Screen } from '@/ui/navigation/types';
 import type { SiteSessionState } from '@/domain/session/siteSessionState';
-import { appQueryClient } from '@/app/serverState';
+import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
+import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { QueryTestWrapper } from './QueryTestWrapper';
 
 const ref = <T,>(current: T) => ({ current });

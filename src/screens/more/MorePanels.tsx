@@ -21,7 +21,7 @@ import { LoginWebViewModal } from '@/features/account/components/LoginWebViewMod
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '@/loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '@/loginFormAdapters';
 import { LinuxDoLevelPanel } from '@/screens/more/LinuxDoLevelPanel';
-import { useCommittedRef } from '@/app/useCommittedRef';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';

@@ -1,12 +1,12 @@
 import { QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { createAppQueryClient, forumQueryKeys } from './serverState';
-import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { initialForumSessionEpochs } from './sessionEpochs';
 import {
   commitChangedAccountStatusQuery,
   commitExpiredAccountStatusQuery,
   resetForumSourceQueries
-} from './sessionControllerHelpers';
+} from '@/app/sessionControllerHelpers';
 
 describe('forum server state', () => {
   it('deduplicates concurrent reads and keeps the successful value for the same structured key', async () => {

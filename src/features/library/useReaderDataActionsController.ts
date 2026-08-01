@@ -5,11 +5,11 @@ import {
   removeRecords,
   toggleFavorite,
   toggleFollowedUser,
-  type ReaderData
+  type ReaderData,
+  type ReaderDataMutationReason
 } from '@/domain/reader/readerData';
-import type { LibraryTab } from '@/feedLogic';
+import type { LibraryTab } from '@/domain/forum/feed';
 import type { Topic, UserProfile } from '@/domain/forum/models';
-import type { ReaderDataMutationReason } from './useReaderDataController';
 
 type CommitReaderData = (
   mutationReason: ReaderDataMutationReason,

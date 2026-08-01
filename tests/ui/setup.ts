@@ -1,6 +1,6 @@
 import { notifyManager } from '@tanstack/react-query';
 import { act } from 'react';
-import { appQueryClient } from '@/app/serverState';
+import { appQueryClient } from '@/platform/query/serverState';
 
 notifyManager.setNotifyFunction((callback) => {
   const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;

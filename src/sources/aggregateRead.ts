@@ -49,13 +49,13 @@ import {
   sortTopicsByCreatedAt,
   type SearchExpression,
   type SearchSort
-} from '@/feedLogic';
+} from '@/domain/forum/feed';
 import {
   buildDiscourseSearchQuery,
   filterSearchResponseItems,
   isDiscourseSearchFilter,
   type SourceSearchFilter
-} from '@/searchFilters';
+} from '@/domain/forum/searchFilters';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import type {
   CategoriesResponse,

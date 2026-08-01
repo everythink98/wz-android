@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import * as SecureStore from 'expo-secure-store';
 import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
 import { sanitizeLinuxDoUserAgent, LINUXDO_USER_AGENT_STORAGE_KEY } from '@/sources/linuxdo/session';
-import { useCommitRefValue } from './useCommittedRef';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import type { Fetcher } from '@/platform/network/request';
 import {
   createNodeSeekWebViewFallbackFetcher,
@@ -33,7 +33,7 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
-import { appQueryClient } from './serverState';
+import { appQueryClient } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   createSiteSessionViewModels,

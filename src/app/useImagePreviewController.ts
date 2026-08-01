@@ -19,7 +19,7 @@ import {
   markDiagnosticStage,
   normalizeDiagnosticReason
 } from '@/platform/diagnostics/diagnostics';
-import { useCommittedRef } from './useCommittedRef';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();

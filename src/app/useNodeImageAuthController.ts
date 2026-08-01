@@ -35,7 +35,7 @@ import {
 } from '@/sources/nodeimage/credentials';
 import type { UserProfile } from '@/domain/forum/models';
 import { nativeSecureRandomHex } from '@/platform/android/xiaoyinsiKeystore';
-import type { AccountReconcileResult } from '@/features/account/model/sessionContracts';
+import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 
 export type NodeImageAuthDocument = {

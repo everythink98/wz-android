@@ -8,7 +8,7 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticReason
 } from '@/platform/diagnostics/diagnostics';
-import { useCommittedRef } from './useCommittedRef';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 export function useDiagnosticLogController({
   getCurrentScreen,

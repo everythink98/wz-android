@@ -1,8 +1,8 @@
 import { QueryClient } from '@tanstack/react-query';
-import type { SourceSearchFilter } from '@/searchFilters';
+import type { SourceSearchFilter } from '@/domain/forum/searchFilters';
 import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import type { FeedSource, Source } from '@/domain/forum/models';
-import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from './sessionEpochs';
 
 export type ForumIdentityBarrierSource = SessionSource;
 

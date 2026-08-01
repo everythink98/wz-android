@@ -3,9 +3,9 @@ import type { BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import type { SessionSite, SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { FeedSource, Source } from '@/domain/forum/models';
-import { appQueryClient, forumQueryKeys } from './serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import type { LinuxDoReadRecovery } from '@/features/account/model/sessionContracts';
+import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;

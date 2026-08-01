@@ -20,7 +20,7 @@ const serverStateMocks = vi.hoisted(() => ({
   recoveryActive: vi.fn(() => true)
 }));
 
-vi.mock('./serverState', () => ({
+vi.mock('@/platform/query/serverState', () => ({
   appQueryClient: {
     getQueryCache: () => ({
       find: () => ({ isActive: serverStateMocks.recoveryActive })
@@ -38,7 +38,7 @@ import {
   type SiteSessionState
 } from '@/domain/session/siteSessionState';
 import type { Topic } from '@/domain/forum/models';
-import type { AccountReconcileResult } from '@/features/account/model/sessionContracts';
+import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
 import { useVerificationController } from './useVerificationController';
 
 const ref = <T>(current: T) => ({ current });

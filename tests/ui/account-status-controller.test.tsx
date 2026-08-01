@@ -12,7 +12,7 @@ import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sourc
 import { useAccountStatusController } from '@/app/useAccountStatusController';
 import { useLinuxDoIdentityVerificationPrompt } from '@/app/useVerificationController';
 import type { XiaoyinsiAuthorizationReadResult } from '@/app/useXiaoyinsiAuthController';
-import { appQueryClient, forumQueryKeys } from '@/app/serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { commitChangedAccountStatusQuery } from '@/app/sessionControllerHelpers';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';

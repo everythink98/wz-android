@@ -15,14 +15,14 @@ import {
   type DiagnosticOutcome,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
-import { useCommitRefValue } from './useCommittedRef';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { shouldOpenLoginWebViewUrl } from '@/loginWebViewNavigation';
-import { appQueryClient } from './serverState';
+import { appQueryClient } from '@/platform/query/serverState';
 import type {
   AccountReconcileResult,
   LinuxDoReadRecovery,
   LinuxDoReadResumeOutcome
-} from '@/features/account/model/sessionContracts';
+} from '@/domain/session/sessionContracts';
 import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
 
 const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
