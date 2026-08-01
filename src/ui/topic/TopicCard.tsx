@@ -1,20 +1,20 @@
-import type { SharedStyles } from '../theme/sharedStyles';
+import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle } from 'lucide-react-native';
 import type { Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
-import { highlightTextParts } from '../text/highlight';
+import { highlightTextParts } from '@/ui/text/highlight';
 import {
   androidRipple,
   sourceBadgeColorStyle,
   topicTagColorStyle,
   topicTagTextColorStyle,
   type ReaderTheme
-} from '../theme/tokens';
+} from '@/ui/theme/tokens';
 import type { TopicListItemState } from '@/domain/forum/topicListItemState';
-import { Avatar } from '../avatar/Avatar';
+import { Avatar } from '@/ui/avatar/Avatar';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
 

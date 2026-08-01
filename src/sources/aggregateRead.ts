@@ -34,7 +34,7 @@ import {
   getDiscourseSourceUserProfile,
   searchDiscourseSourceTopics,
   type DiscourseReadAuth
-} from '@/sources/discourseRead';
+} from './discourseRead';
 import {
   aggregateFeedSources,
   aggregateSearchSources,
@@ -56,7 +56,7 @@ import {
   isDiscourseSearchFilter,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
-import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { sourceErrorFromUnknown } from './sourceErrors';
 import type {
   CategoriesResponse,
   Category,
@@ -81,7 +81,7 @@ import {
   copySourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,
   sourceDiagnosticSummary
-} from '@/sources/diagnostics';
+} from './diagnostics';
 
 const allFeedSources = aggregateFeedSources;
 

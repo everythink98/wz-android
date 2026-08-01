@@ -2,8 +2,8 @@ import type { LoginWebViewStyles } from './loginWebViewStyles';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Modal, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { type ReaderTheme } from '../theme/tokens';
-import { AppButton } from '../controls/AppControls';
+import { type ReaderTheme } from '@/ui/theme/tokens';
+import { AppButton } from '@/ui/controls/AppControls';
 
 export function LoginWebViewModal({
   actions,

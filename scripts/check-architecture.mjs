@@ -94,6 +94,29 @@ function moduleParts(relativeFile) {
   return relativeFile.split('/');
 }
 
+function ownershipUnit(relativeFile) {
+  const [root, owner] = moduleParts(relativeFile);
+  if (root === 'app') return root;
+  return owner && relativeFile.includes('/') && moduleParts(relativeFile).length > 2 ? `${root}/${owner}` : root;
+}
+
+function importStyleIssue(fromFile, toFile, specifier) {
+  const sameUnit = ownershipUnit(fromFile) === ownershipUnit(toFile);
+  if (sameUnit && specifier.startsWith('@/')) {
+    return {
+      code: 'import-style',
+      message: `${fromFile} 在同一模块内应使用相对路径导入 ${toFile}`
+    };
+  }
+  if (!sameUnit && specifier.startsWith('.')) {
+    return {
+      code: 'import-style',
+      message: `${fromFile} 跨模块应使用 @/ 导入 ${toFile}`
+    };
+  }
+  return null;
+}
+
 function dependencyIssue(fromFile, toFile) {
   const fromParts = moduleParts(fromFile);
   const toParts = moduleParts(toFile);
@@ -198,6 +221,8 @@ export function analyzeArchitecture(srcDir) {
       if (!target) continue;
       const toFile = relativePath(resolvedSrcDir, target);
       graph.get(fromFile).add(toFile);
+      const styleIssue = importStyleIssue(fromFile, toFile, specifier);
+      if (styleIssue) issues.push(styleIssue);
       const issue = dependencyIssue(fromFile, toFile);
       if (issue) issues.push(issue);
     }

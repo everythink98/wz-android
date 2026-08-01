@@ -6,7 +6,7 @@ import {
   getTopic as getForumTopic,
   getUserProfile as getForumUserProfile,
   searchTopics as searchForumTopics
-} from '@/sources/aggregateRead';
+} from './aggregateRead';
 import {
   getYaohuoFeedDirect,
   getYaohuoRepliesDirect,
@@ -32,9 +32,9 @@ import {
   type DiscourseReadAuth,
   type DiscourseTagOptionReadOptions,
   type DiscourseUserOptionReadOptions
-} from '@/sources/discourseRead';
+} from './discourseRead';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
-import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { sourceErrorFromUnknown } from './sourceErrors';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -45,7 +45,7 @@ import {
   type DiagnosticFields,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnostics';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from './diagnostics';
 import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
 import {
   isSessionSource,
@@ -54,7 +54,7 @@ import {
   type SessionSource
 } from '@/domain/forum/sourceCatalog';
 
-export { getCurrentUserProfile } from '@/sources/aggregateRead';
+export { getCurrentUserProfile } from './aggregateRead';
 export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 export type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/reader';
 export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/sources/yaohuo/reader';

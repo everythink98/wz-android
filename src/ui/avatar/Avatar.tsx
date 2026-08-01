@@ -1,4 +1,4 @@
-import type { SharedStyles } from '../theme/sharedStyles';
+import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';

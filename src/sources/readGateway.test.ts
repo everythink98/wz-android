@@ -6,7 +6,7 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { getFeed, getReplies, getTopic, getUserProfile, searchTopics } from '@/sources/readGateway';
+import { getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './readGateway';
 import type { Topic } from '@/domain/forum/models';
 
 describe('source gateway reads', () => {

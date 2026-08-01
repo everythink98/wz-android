@@ -56,6 +56,16 @@ test('rejects reverse, cross-feature, and cross-provider imports', () => {
   assert.ok(codes.includes('cross-provider'));
 });
 
+test('enforces relative imports inside an owner and aliases across owners', () => {
+  const srcDir = architectureFixture({
+    'features/feed/screen.ts': 'export type Feed = { id: string };',
+    'features/feed/controller.ts': "import type { Feed } from '@/features/feed/screen'; export type Controller = Feed;",
+    'features/search/controller.ts': "import type { Feed } from '../feed/screen'; export type SearchController = Feed;"
+  });
+
+  assert.equal(analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'import-style').length, 2);
+});
+
 test('detects dependency cycles', () => {
   const srcDir = architectureFixture({
     'domain/left.ts': "import type { Right } from './right'; export type Left = Right;",

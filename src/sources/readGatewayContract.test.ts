@@ -14,7 +14,7 @@ import {
   markDiagnosticStage,
   setDiagnosticWriter
 } from '@/platform/diagnostics/diagnostics';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from './diagnostics';
 import { getYaohuoTopicDirect } from '@/sources/yaohuo/reader';
 
 const forumMocks = vi.hoisted(() => ({
@@ -61,7 +61,7 @@ vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn()
 }));
-vi.mock('@/sources/aggregateRead', () => forumMocks);
+vi.mock('./aggregateRead', () => forumMocks);
 vi.mock('@/sources/linuxdo/reader', () => linuxDoMocks);
 vi.mock('@/sources/nodeseek/reader', () => nodeSeekMocks);
 vi.mock('@/sources/linuxdo/level', () => linuxDoLevelMocks);
@@ -74,7 +74,7 @@ vi.mock('@/sources/yaohuo/reader', () => ({
   searchYaohuoDirect: vi.fn()
 }));
 
-import { createReadGateway, getFeed, getReplies, getTopic, getUserProfile, searchTopics } from '@/sources/readGateway';
+import { createReadGateway, getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './readGateway';
 
 describe('source gateway read contract', () => {
   beforeEach(() => {
