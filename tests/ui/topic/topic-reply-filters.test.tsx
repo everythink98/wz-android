@@ -13,6 +13,7 @@ import { TopicScreen } from '@/features/topic/TopicScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import type { InteractionType } from '@/domain/forum/topicActionState';
+import type { TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
@@ -225,12 +226,12 @@ jest.mock('@/features/topic/components/TopicPolls', () => {
   } = require('react-native') as typeof import('react-native');
   return {
     TopicPolls: ({
-      canWritePollSource,
+      decisionFor,
       onVotePoll,
       polls,
       source
     }: {
-      canWritePollSource: boolean;
+      decisionFor?: TopicActionDecisionFor;
       onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
       polls: TopicPoll[];
       source?: TopicDetail['source'];
@@ -239,11 +240,12 @@ jest.mock('@/features/topic/components/TopicPolls', () => {
       if (!poll) {
         return null;
       }
+      const canVote = decisionFor?.({ action: 'vote', poll }).allowed === true;
       return ReactModule.createElement(
         NativeView,
         { testID: `topic-poll-${source}` },
-        ReactModule.createElement(NativeText, null, canWritePollSource ? '可投票' : '只读投票'),
-        canWritePollSource
+        ReactModule.createElement(NativeText, null, canVote ? '可投票' : '只读投票'),
+        canVote
           ? ReactModule.createElement(
               NativePressable,
               {
@@ -458,13 +460,27 @@ function TopicFilterHarness({
     <View>
       <TopicScreen
         actionBusy={false}
-        sourceActionAvailability={{
-          linuxdo: canUseLinuxDoActions,
-          nodeseek: canUseNodeSeekActions,
-          v2ex: false,
-          xiaoyinsi: canUseXiaoyinsiActions,
-          yaohuo: canUseYaohuoActions
-        }}
+        decisionFor={
+          (({ action }) => {
+            const source = topicDetail?.source || selectedTopic?.source;
+            const sourceAllowed = {
+              linuxdo: canUseLinuxDoActions,
+              nodeseek: canUseNodeSeekActions,
+              v2ex: false,
+              xiaoyinsi: canUseXiaoyinsiActions,
+              yaohuo: canUseYaohuoActions
+            }[source || 'v2ex'];
+            const allowed =
+              sourceAllowed &&
+              !(source === 'yaohuo' && action === 'like') &&
+              !(
+                source === 'xiaoyinsi' &&
+                (action === 'reply' || action === 'upload') &&
+                topicDetail?.canCreatePost !== true
+              );
+            return { allowed, reason: allowed ? 'allowed' : 'login-required' };
+          }) satisfies TopicActionDecisionFor
+        }
         commentQuery={commentQuery}
         contentWidth={720}
         expandedQuotes={expandedQuotes}

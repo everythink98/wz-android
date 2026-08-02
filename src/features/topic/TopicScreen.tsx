@@ -4,7 +4,7 @@ import { ChevronLeft, MoreHorizontal, Star } from 'lucide-react-native';
 
 import { sourceLabel } from '@/domain/forum/presentation';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
-import { isDiscourseSource, sourceUsesTopicCreatePermission, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { replyImageUploadSupported } from '@/sources/imageUpload';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -28,6 +28,7 @@ export const TopicLoadingState = memo(function TopicLoadingState() {
 export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
   const {
     actionBusy,
+    decisionFor,
     getDiscourseEmojiUrls,
     identityBlocked = false,
     identityChecking = false,
@@ -51,7 +52,6 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
     replyFace,
     replyTarget,
     selectedTopic,
-    sourceActionAvailability,
     topic,
     topicError,
     topicFavorite
@@ -103,15 +103,17 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
     return <EmptyText text="未选择主题" styles={styles} />;
   }
 
-  const canUseCurrentSourceActions = Boolean(topic && sourceActionAvailability[topic.source]);
-  const canUseDiscourseInteractions = Boolean(topic && isDiscourseSource(topic.source) && canUseCurrentSourceActions);
-  const canWrite = Boolean(
-    topic &&
-    ((topic.source === 'nodeseek' && canUseCurrentSourceActions) ||
-      (topic.source === 'yaohuo' && canUseCurrentSourceActions) ||
-      (canUseDiscourseInteractions && (!sourceUsesTopicCreatePermission(topic.source) || topic.canCreatePost === true)))
+  const canWrite = decisionFor({ action: 'reply' }).allowed;
+  const canUseDiscourseInteractions = Boolean(
+    topic && isDiscourseSource(topic.source) && decisionFor({ action: 'like' }).allowed
   );
-  const canOpenReplyComposer = canWrite || Boolean(canUseDiscourseInteractions && replyEditTarget);
+  const canOpenReplyComposer =
+    canWrite ||
+    Boolean(
+      canUseDiscourseInteractions &&
+      replyEditTarget &&
+      decisionFor({ action: 'edit', objectAllowed: true, targetPresent: true }).allowed
+    );
   const topicReadableError = topicError ? readableTopicError(topicError.message) : '';
   const topicAuthNotice = topicError ? authNoticeForSourceError(topicError) : null;
   const topicAuthNoticeBoxStyle =

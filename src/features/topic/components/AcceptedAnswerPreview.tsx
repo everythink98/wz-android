@@ -118,7 +118,6 @@ export function AcceptedAnswerPreview({
                   part.type === 'poll' ? (
                     <TopicPolls
                       actionBusy={false}
-                      canWritePollSource={false}
                       embeddedInArticle
                       key={`accepted-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
                       keyPrefix={`accepted-answer-${floor}`}

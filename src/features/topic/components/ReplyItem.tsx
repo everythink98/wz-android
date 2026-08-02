@@ -26,7 +26,6 @@ import {
   type DiscourseReactionStat
 } from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
-import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   quotedPostsForSource,
@@ -45,6 +44,7 @@ import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { getReplyKey, stableTextHash, type TopicListItem } from '../model/screenHelpers';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
+import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 
 type NodeSeekStat = { label: string; value: number };
 type ReplyItemSection = Extract<
@@ -166,8 +166,7 @@ function systemActionText(reply: Pick<Reply, 'actionCode' | 'contentHtml'>) {
 
 export function ReplyItem({
   actionBusy,
-  canUseDiscourseActions,
-  canWrite,
+  decisionFor,
   contentWidth,
   expandedQuotes,
   isActionPending,
@@ -201,8 +200,7 @@ export function ReplyItem({
   onToggleReplyQuote
 }: {
   actionBusy: boolean;
-  canUseDiscourseActions: boolean;
-  canWrite: boolean;
+  decisionFor: TopicActionDecisionFor;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
   isActionPending: (targetId: string | number | undefined, action: TopicActionStateKind) => boolean;
@@ -320,7 +318,6 @@ export function ReplyItem({
                 <TopicPolls
                   embeddedInArticle
                   actionBusy={actionBusy}
-                  canWritePollSource={false}
                   keyPrefix={`quote-${replyFloor}-${section.reference.topicId}-${section.reference.postNumber}`}
                   onTogglePollSelection={onTogglePollSelection}
                   onVotePoll={onVotePoll}
@@ -353,12 +350,12 @@ export function ReplyItem({
     reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor)
   );
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
-  const canUseNodeSeekInteractions = reply.canLike !== false;
-  const canUseDiscoursePostActions =
-    isDiscourse &&
-    Boolean(
-      canWrite || (canUseDiscourseActions && (reply.canEdit || reply.canDelete || canToggleDiscourseLike(reply)))
-    );
+  const canReply = decisionFor({ action: 'reply' }).allowed;
+  const canEdit = decisionFor({ action: 'edit', reply }).allowed;
+  const canDelete = decisionFor({ action: 'delete', reply }).allowed;
+  const canLike = decisionFor({ action: 'like', reply }).allowed;
+  const canUseNodeSeekInteractions = source === 'nodeseek' && canLike;
+  const canUseDiscoursePostActions = isDiscourse && Boolean(canReply || canEdit || canDelete || canLike);
   const discourseReplyReactionStats = isDiscourse
     ? source === 'linuxdo'
       ? linuxDoReactionStats(reply, discourseEmojiUrls)
@@ -566,7 +563,6 @@ export function ReplyItem({
                               embeddedInArticle
                               key={`quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
                               actionBusy={actionBusy}
-                              canWritePollSource={false}
                               keyPrefix={`quote-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
                               onTogglePollSelection={onTogglePollSelection}
                               onVotePoll={onVotePoll}
@@ -624,7 +620,7 @@ export function ReplyItem({
                       <TopicPolls
                         key={`poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
                         actionBusy={actionBusy}
-                        canWritePollSource={canUseDiscourseActions}
+                        decisionFor={decisionFor}
                         keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
                         onTogglePollSelection={onTogglePollSelection}
                         onVotePoll={onVotePoll}
@@ -668,7 +664,7 @@ export function ReplyItem({
                   </Pressable>
                   <TopicPolls
                     actionBusy={actionBusy}
-                    canWritePollSource={false}
+                    decisionFor={decisionFor}
                     keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
                     onTogglePollSelection={onTogglePollSelection}
                     onVotePoll={onVotePoll}
@@ -715,7 +711,7 @@ export function ReplyItem({
                   <Text style={styles.replyAcceptedSolutionText}>解决方案</Text>
                 </View>
               ) : null}
-              {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (
+              {source === 'nodeseek' && !canReply && !canLike && nodeSeekReplyReactionStats.length ? (
                 <View style={styles.replyStatRail}>
                   {nodeSeekReplyReactionStats.map((stat, index) => (
                     <NodeSeekStatPill
@@ -728,7 +724,7 @@ export function ReplyItem({
                   ))}
                 </View>
               ) : null}
-              {canWrite && source === 'nodeseek' ? (
+              {(canReply || canEdit || canLike) && source === 'nodeseek' ? (
                 <View style={styles.replyActionRow}>
                   <DetailActionButton
                     alignStart
@@ -741,7 +737,7 @@ export function ReplyItem({
                     disabled={actionBusy}
                     onPress={() => onReplyToFloor(reply)}
                   />
-                  {reply.canEdit ? (
+                  {canEdit ? (
                     <DetailActionButton
                       alignStart
                       compact
@@ -812,7 +808,7 @@ export function ReplyItem({
                   )}
                 </View>
               ) : null}
-              {canWrite && source === 'yaohuo' ? (
+              {(canReply || canDelete) && source === 'yaohuo' ? (
                 <View style={styles.replyActionRow}>
                   <DetailActionButton
                     alignStart
@@ -824,7 +820,7 @@ export function ReplyItem({
                     disabled={actionBusy}
                     onPress={() => onReplyToFloor(reply)}
                   />
-                  {reply.canDelete ? (
+                  {canDelete ? (
                     <DetailActionButton
                       alignStart
                       accessibilityLabel="删除回复"
@@ -840,7 +836,7 @@ export function ReplyItem({
               ) : null}
               {canUseDiscoursePostActions ? (
                 <View style={styles.replyActionRow}>
-                  {canWrite ? (
+                  {canReply ? (
                     <DetailActionButton
                       alignStart
                       accessibilityLabel="回复"
@@ -852,7 +848,7 @@ export function ReplyItem({
                       onPress={() => onReplyToFloor(reply)}
                     />
                   ) : null}
-                  {reply.canEdit ? (
+                  {canEdit ? (
                     <DetailActionButton
                       alignStart
                       accessibilityLabel="编辑回复"
@@ -864,7 +860,7 @@ export function ReplyItem({
                       onPress={() => onEditReply(reply)}
                     />
                   ) : null}
-                  {canToggleDiscourseLike(reply) ? (
+                  {canLike ? (
                     <DetailActionButton
                       alignStart
                       active={Boolean(reply.liked)}
@@ -879,7 +875,7 @@ export function ReplyItem({
                       onPress={() => onInteract('like', reply.commentId)}
                     />
                   ) : null}
-                  {reply.canDelete ? (
+                  {canDelete ? (
                     <DetailActionButton
                       alignStart
                       accessibilityLabel="删除回复"
@@ -933,8 +929,7 @@ function sameReplyItemSection(previous: ReplyItemSection | undefined, next: Repl
 export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   if (
     previous.actionBusy !== next.actionBusy ||
-    previous.canUseDiscourseActions !== next.canUseDiscourseActions ||
-    previous.canWrite !== next.canWrite ||
+    previous.decisionFor !== next.decisionFor ||
     previous.contentWidth !== next.contentWidth ||
     previous.isActionPending !== next.isActionPending ||
     previous.isNew !== next.isNew ||

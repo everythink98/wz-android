@@ -352,7 +352,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
       >
         <TopicScreen
           actionBusy={actions.actionBusy}
-          sourceActionAvailability={actions.sourceActionAvailability}
+          decisionFor={actions.decisionFor}
           contentWidth={runtime.contentWidth}
           htmlBaseStyle={html.htmlBaseStyle}
           htmlClassesStyles={html.htmlClassesStyles}

@@ -15,6 +15,11 @@ import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import type { Reply, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type {
+  TopicActionDecision,
+  TopicActionDecisionFor,
+  TopicActionDecisionRequest
+} from '@/features/topic/actions/topicActionDecision';
 import {
   DISCOURSE_CALLOUT_ATTRIBUTE,
   DISCOURSE_CALLOUT_CONTENT_CLASS,
@@ -233,10 +238,29 @@ const multiplePoll: TopicPoll = {
   ]
 };
 
+const deniedDecision = (reason: TopicActionDecision['reason']): TopicActionDecision => ({
+  allowed: false,
+  reason
+});
+
+const allowReplyTargetActions: TopicActionDecisionFor = ({ action, reply }) => {
+  const allowed =
+    action === 'edit'
+      ? reply?.canEdit === true
+      : action === 'delete'
+        ? reply?.canDelete === true
+        : reply?.canLike !== false;
+  return allowed ? { allowed: true, reason: 'allowed' } : deniedDecision('object-forbidden');
+};
+
+const denyAllActions: TopicActionDecisionFor = () => deniedDecision('unsupported');
+const allowInteractionsOnly: TopicActionDecisionFor = (request: TopicActionDecisionRequest) =>
+  request.action === 'reply' ? deniedDecision('object-forbidden') : allowReplyTargetActions(request);
+
 function pollProps(overrides: Partial<ComponentProps<typeof TopicPolls>> = {}): ComponentProps<typeof TopicPolls> {
   return {
     actionBusy: false,
-    canWritePollSource: true,
+    decisionFor: () => ({ allowed: true, reason: 'allowed' }),
     keyPrefix: 'topic',
     onTogglePollSelection: jest.fn(),
     onVotePoll: jest.fn(),
@@ -270,8 +294,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
   };
   return {
     actionBusy: false,
-    canUseDiscourseActions: false,
-    canWrite: true,
+    decisionFor: allowReplyTargetActions,
     contentWidth: 720,
     expandedQuotes: {},
     inlineSizedImageUrls: {},
@@ -353,7 +376,7 @@ describe('Topic real child components', () => {
   });
 
   it('keeps unsupported and unauthenticated polls visibly read-only', async () => {
-    const view = await render(<TopicPolls {...pollProps({ canWritePollSource: false, source: 'v2ex' })} />);
+    const view = await render(<TopicPolls {...pollProps({ decisionFor: denyAllActions, source: 'v2ex' })} />);
 
     expect(view.getByText('只读结果')).toBeTruthy();
     expect(view.getByText('3 人参与')).toBeTruthy();
@@ -361,12 +384,14 @@ describe('Topic real child components', () => {
     expect(view.getAllByRole('checkbox').every((option) => option.props.accessibilityState.disabled)).toBe(true);
     expect(view.queryByText('提交投票')).toBeNull();
 
-    await view.rerender(<TopicPolls {...pollProps({ canWritePollSource: false, source: 'nodeseek' })} />);
+    await view.rerender(
+      <TopicPolls {...pollProps({ decisionFor: () => deniedDecision('login-required'), source: 'nodeseek' })} />
+    );
     expect(view.getByLabelText('登录后投票').props.accessibilityState.disabled).toBe(true);
   });
 
   it('[REG-TOPIC-026] renders duplicated accepted-answer polls as results without a login action', async () => {
-    const view = await render(<TopicPolls {...pollProps({ canWritePollSource: false, source: undefined })} />);
+    const view = await render(<TopicPolls {...pollProps({ decisionFor: denyAllActions, source: undefined })} />);
 
     expect(view.getByText('只读结果')).toBeTruthy();
     expect(view.getByText('3 人参与')).toBeTruthy();
@@ -434,7 +459,7 @@ describe('Topic real child components', () => {
       signatureHtml: '<p>签名内容</p>'
     };
     const replyView = await render(
-      <ReplyItem {...replyProps({ canWrite: false, contentWidth: 360, reply, source: 'v2ex' })} />
+      <ReplyItem {...replyProps({ contentWidth: 360, decisionFor: denyAllActions, reply, source: 'v2ex' })} />
     );
 
     const replySources = replyView.getAllByTestId('html-source');
@@ -779,9 +804,7 @@ describe('Topic real child components', () => {
         replyTargetAuthor: undefined,
         systemAction: true
       };
-      const view = await render(
-        <ReplyItem {...replyProps({ canUseDiscourseActions: true, reply, replyFloor: 3, source })} />
-      );
+      const view = await render(<ReplyItem {...replyProps({ reply, replyFloor: 3, source })} />);
 
       expect(view.getByLabelText(new RegExp(`系统事件.*${expectedAction}`))).toBeTruthy();
       expect(view.getByText(expectedAction)).toBeTruthy();
@@ -923,7 +946,6 @@ describe('Topic real child components', () => {
     const view = await render(
       <ReplyItem
         {...replyProps({
-          canUseDiscourseActions: true,
           discourseEmojiUrls: {
             heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15'
           },
@@ -941,8 +963,7 @@ describe('Topic real child components', () => {
     await view.rerender(
       <ReplyItem
         {...replyProps({
-          canUseDiscourseActions: false,
-          canWrite: false,
+          decisionFor: denyAllActions,
           reply: {
             ...fullReply,
             canLike: false,
@@ -972,8 +993,7 @@ describe('Topic real child components', () => {
     const view = await render(
       <ReplyItem
         {...replyProps({
-          canUseDiscourseActions: true,
-          canWrite: false,
+          decisionFor: allowInteractionsOnly,
           reply: writableReply,
           source: 'xiaoyinsi'
         })}
@@ -999,8 +1019,7 @@ describe('Topic real child components', () => {
     const view = await render(
       <ReplyItem
         {...replyProps({
-          canUseDiscourseActions: false,
-          canWrite: false,
+          decisionFor: denyAllActions,
           discourseEmojiUrls: {
             heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15',
             '+1': 'https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15'

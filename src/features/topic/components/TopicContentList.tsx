@@ -22,15 +22,7 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronRight, Drumstick, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type {
-  Reply,
-  Source,
-  SourceErrorInfo,
-  Topic,
-  TopicDetail,
-  TopicPoll,
-  UserReference
-} from '@/domain/forum/models';
+import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserReference } from '@/domain/forum/models';
 import type {
   HtmlBaseStyle,
   HtmlClassesStyles,
@@ -94,12 +86,8 @@ import {
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
 } from '@/domain/forum/quotedPosts';
-import {
-  isDiscourseSource,
-  sourceSupportsTopicAction,
-  sourceUsesTopicCreatePermission,
-  type DiscourseSource
-} from '@/domain/forum/sourceCatalog';
+import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 import { TopicPolls } from './TopicPolls';
 import { AcceptedAnswerPreview } from './AcceptedAnswerPreview';
 import { DetailActionButton } from './TopicActionBar';
@@ -287,7 +275,7 @@ function topicListItemType(item: TopicListItem) {
 
 export const TopicContentList = memo(function TopicContentList({
   actionBusy,
-  sourceActionAvailability,
+  decisionFor,
   contentWidth,
   htmlBaseStyle,
   htmlClassesStyles,
@@ -339,7 +327,7 @@ export const TopicContentList = memo(function TopicContentList({
   topicImageDeriver
 }: {
   actionBusy: boolean;
-  sourceActionAvailability: Record<Source, boolean>;
+  decisionFor: TopicActionDecisionFor;
   contentWidth: number;
   htmlBaseStyle: HtmlBaseStyle;
   htmlClassesStyles: HtmlClassesStyles;
@@ -422,16 +410,23 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
-  const canUseCurrentSourceActions = Boolean(topic && sourceActionAvailability[topic.source]);
-  const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseCurrentSourceActions);
-  const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseCurrentSourceActions);
-  const canUseDiscourseInteractions = Boolean(topic && isDiscourseSource(topic.source) && canUseCurrentSourceActions);
-  const canWriteDiscourse = Boolean(
+  const canWriteNodeSeek = Boolean(
     topic &&
-    canUseDiscourseInteractions &&
-    (!sourceUsesTopicCreatePermission(topic.source) || topic.canCreatePost === true)
+    topic.source === 'nodeseek' &&
+    decisionFor({ action: 'like', objectAllowed: topic.canLike !== false, targetPresent: Boolean(topic.commentId) })
+      .allowed
   );
-  const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteDiscourse;
+  const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && decisionFor({ action: 'bookmark' }).allowed);
+  const canUseDiscourseInteractions = Boolean(
+    topic &&
+    isDiscourseSource(topic.source) &&
+    decisionFor({
+      action: 'like',
+      objectAllowed: canToggleDiscourseLike(topic),
+      targetPresent: Boolean(topic.commentId)
+    }).allowed
+  );
+  const canWrite = decisionFor({ action: 'reply' }).allowed;
   const replyTotalCount = item?.replyCount ?? replies.length;
   const replyDisplayCount =
     replyFilter === 'author' || replyFilter === 'images' || replyHighlightQuery.trim()
@@ -703,9 +698,6 @@ export const TopicContentList = memo(function TopicContentList({
     }
     loadAcceptedAnswer();
   }, [acceptedAnswer, acceptedAnswerLoading, loadAcceptedAnswer]);
-  const canWriteTopicPollSource = Boolean(
-    topic && sourceSupportsTopicAction(topic.source, 'vote') && canUseCurrentSourceActions
-  );
   const discourseTopicReactionStats = useMemo(
     () =>
       topic && isDiscourseSource(topic.source)
@@ -890,7 +882,7 @@ export const TopicContentList = memo(function TopicContentList({
       return (
         <TopicPolls
           actionBusy={actionBusy}
-          canWritePollSource={canWriteTopicPollSource}
+          decisionFor={decisionFor}
           embeddedInArticle
           keyPrefix="topic"
           onTogglePollSelection={togglePollSelection}
@@ -939,7 +931,6 @@ export const TopicContentList = memo(function TopicContentList({
                       embeddedInArticle
                       key={`topic-quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
                       actionBusy={actionBusy}
-                      canWritePollSource={false}
                       keyPrefix={`topic-quote-${reference.topicId}-${reference.postNumber}`}
                       onTogglePollSelection={togglePollSelection}
                       onVotePoll={onVotePoll}
@@ -989,8 +980,8 @@ export const TopicContentList = memo(function TopicContentList({
     };
   }, [
     actionBusy,
-    canWriteTopicPollSource,
     contentWidth,
+    decisionFor,
     expandedQuotes,
     genericHtmlRenderers,
     inlineSizedImageUrls,
@@ -1051,7 +1042,7 @@ export const TopicContentList = memo(function TopicContentList({
             <View style={styles.articleBody}>
               <TopicPolls
                 actionBusy={actionBusy}
-                canWritePollSource={canWriteTopicPollSource}
+                decisionFor={decisionFor}
                 embeddedInArticle
                 keyPrefix="topic"
                 onTogglePollSelection={togglePollSelection}
@@ -1112,8 +1103,8 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [
       actionBusy,
-      canWriteTopicPollSource,
       contentWidth,
+      decisionFor,
       htmlRenderersProps,
       inlineSizedImageUrls,
       mediaContext,
@@ -1144,7 +1135,7 @@ export const TopicContentList = memo(function TopicContentList({
                 <View style={styles.articleBody}>
                   <TopicPolls
                     actionBusy={actionBusy}
-                    canWritePollSource={canWriteTopicPollSource}
+                    decisionFor={decisionFor}
                     embeddedInArticle
                     keyPrefix="topic"
                     onTogglePollSelection={togglePollSelection}
@@ -1281,20 +1272,18 @@ export const TopicContentList = memo(function TopicContentList({
                 ) : null}
                 {canUseDiscourseInteractions ? (
                   <View style={styles.topicPrimaryActions}>
-                    {canToggleDiscourseLike(topic) ? (
-                      <DetailActionButton
-                        active={Boolean(topic?.liked)}
-                        tone="success"
-                        accessibilityLabel={topic?.liked ? '取消赞' : '点赞'}
-                        icon={ThumbsUp}
-                        label="赞"
-                        pending={isOptimisticActionPending(topic?.commentId, 'like')}
-                        styles={styles}
-                        theme={theme}
-                        disabled={actionBusy}
-                        onPress={() => onInteract('like', topic?.commentId)}
-                      />
-                    ) : null}
+                    <DetailActionButton
+                      active={Boolean(topic?.liked)}
+                      tone="success"
+                      accessibilityLabel={topic?.liked ? '取消赞' : '点赞'}
+                      icon={ThumbsUp}
+                      label="赞"
+                      pending={isOptimisticActionPending(topic?.commentId, 'like')}
+                      styles={styles}
+                      theme={theme}
+                      disabled={actionBusy}
+                      onPress={() => onInteract('like', topic?.commentId)}
+                    />
                     <DetailActionButton
                       active={Boolean(topic?.bookmarked)}
                       tone="favorite"
@@ -1323,9 +1312,9 @@ export const TopicContentList = memo(function TopicContentList({
     actionBusy,
     canUseDiscourseInteractions,
     canWriteNodeSeek,
-    canWriteTopicPollSource,
     canWriteYaohuo,
     contentWidth,
+    decisionFor,
     detailTopicStateKey,
     discourseTopicReactionStats,
     inlineSizedImageUrls,
@@ -1426,8 +1415,7 @@ export const TopicContentList = memo(function TopicContentList({
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <MemoizedReplyItem
             actionBusy={actionBusy}
-            canUseDiscourseActions={canUseDiscourseInteractions}
-            canWrite={canWrite}
+            decisionFor={decisionFor}
             contentWidth={contentWidth}
             expandedQuotes={expandedQuotes}
             isActionPending={isOptimisticActionPending}
@@ -1465,10 +1453,10 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [
       actionBusy,
-      canUseDiscourseInteractions,
       canWrite,
       commentQuery,
       contentWidth,
+      decisionFor,
       expandedQuotes,
       inlineSizedImageUrls,
       item?.author,

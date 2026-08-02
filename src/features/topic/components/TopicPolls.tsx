@@ -3,10 +3,11 @@ import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
 import type { Source, TopicPoll } from '@/domain/forum/models';
-import { isDiscourseSource, sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
+import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { pollParticipationLabel, pollTotalVotes } from '@/domain/forum/topicPollDisplay';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, triggerPressFeedback } from '@/ui/controls/AppControls';
+import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 
 function topicPollKey(poll: TopicPoll, index: number) {
   return poll.id || poll.name || `poll-${index}`;
@@ -49,7 +50,7 @@ function pollSelectionRangeStatus(poll: TopicPoll, selectedCount: number) {
 
 export function TopicPolls({
   actionBusy,
-  canWritePollSource,
+  decisionFor,
   embeddedInArticle,
   keyPrefix,
   onTogglePollSelection,
@@ -61,7 +62,7 @@ export function TopicPolls({
   theme
 }: {
   actionBusy: boolean;
-  canWritePollSource: boolean;
+  decisionFor?: TopicActionDecisionFor;
   embeddedInArticle?: boolean;
   keyPrefix: string;
   onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
@@ -76,11 +77,14 @@ export function TopicPolls({
   if (!polls.length) {
     return null;
   }
-  const canVotePollSource = sourceSupportsTopicAction(source, 'vote');
-  const showPollSubmit = canVotePollSource;
   return (
     <View style={styles.pollStack}>
       {polls.map((poll, index) => {
+        const decision = decisionFor?.({ action: 'vote', poll }) || {
+          allowed: false,
+          reason: 'unsupported' as const
+        };
+        const showPollSubmit = decision.reason !== 'unsupported';
         const pollKey = `${keyPrefix}-${topicPollKey(poll, index)}`;
         const hasCounts = poll.options.some((option) => typeof option.count === 'number');
         const totalVotes = pollTotalVotes(poll);
@@ -88,11 +92,9 @@ export function TopicPolls({
           pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
         const selectedSet = new Set(selectedOptionIds);
         const discoursePollReady = !isDiscourseSource(source) || Boolean(poll.postId && poll.name);
-        const pollReadonly = Boolean(poll.readonly || !canVotePollSource);
+        const pollReadonly = Boolean(poll.readonly || decision.reason === 'unsupported');
         const pollOptionDisabled =
-          actionBusy ||
-          pollReadonly ||
-          Boolean(poll.closed || poll.voted || !canWritePollSource || !discoursePollReady);
+          actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !decision.allowed || !discoursePollReady);
         const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
         const pollStatus = poll.closed
           ? '已关闭'
@@ -100,11 +102,15 @@ export function TopicPolls({
             ? '已投票'
             : pollReadonly
               ? '只读结果'
-              : !canWritePollSource
+              : decision.reason === 'login-required'
                 ? '未登录'
-                : !discoursePollReady
-                  ? '信息不完整'
-                  : '可投票';
+                : decision.reason === 'identity-pending' || decision.reason === 'pending'
+                  ? '状态确认中'
+                  : !decision.allowed
+                    ? '不可操作'
+                    : !discoursePollReady
+                      ? '信息不完整'
+                      : '可投票';
         const pollMetaItems = [
           pollTypeLabel(poll),
           pollChoiceRangeLabel(poll),
@@ -117,11 +123,15 @@ export function TopicPolls({
             ? '已投票'
             : pollReadonly
               ? '只读结果'
-              : !canWritePollSource
+              : decision.reason === 'login-required'
                 ? '登录后投票'
-                : !discoursePollReady
-                  ? '刷新后投票'
-                  : selectionRangeStatus || '提交投票';
+                : decision.reason === 'identity-pending' || decision.reason === 'pending'
+                  ? '请稍后重试'
+                  : !decision.allowed
+                    ? '不可操作'
+                    : !discoursePollReady
+                      ? '刷新后投票'
+                      : selectionRangeStatus || '提交投票';
         const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
         return (
           <View

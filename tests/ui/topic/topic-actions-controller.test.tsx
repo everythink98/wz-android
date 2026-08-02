@@ -269,7 +269,7 @@ describe('topic action query mutations', () => {
     jest.restoreAllMocks();
   });
 
-  it('[REG-WRITE-016] uses refreshed account status for Discourse action availability', async () => {
+  it('[REG-WRITE-016] uses refreshed account status for the current Topic action decision', async () => {
     const workflowStates = loggedInStates('linuxdo');
     const accountStates = createSiteSessionStates({
       linuxdo: { ...workflowStates.linuxdo, status: 'verifying', isVerifying: true },
@@ -284,8 +284,10 @@ describe('topic action query mutations', () => {
       topicDetail: detailFor('linuxdo')
     });
 
-    expect(hook.result.current.actions.sourceActionAvailability.linuxdo).toBe(false);
-    expect(hook.result.current.actions.sourceActionAvailability.xiaoyinsi).toBe(true);
+    expect(hook.result.current.actions.decisionFor({ action: 'reply' })).toEqual({
+      allowed: false,
+      reason: 'login-required'
+    });
   });
 
   it('[REG-WRITE-023] blocks before optimistic state and transport when identity is unknown', async () => {

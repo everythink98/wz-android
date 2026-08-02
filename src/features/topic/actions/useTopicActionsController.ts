@@ -42,7 +42,12 @@ import { topicKey } from '@/domain/reader/readerData';
 import type { Fetcher } from '@/platform/network/request';
 import { errorMessage } from '@/platform/network/errors';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
-import { isDiscourseSource, isSessionSource, sourceValues, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import {
+  isDiscourseSource,
+  isSessionSource,
+  sourceUsesTopicCreatePermission,
+  type DiscourseSource
+} from '@/domain/forum/sourceCatalog';
 import { normalizeReplyImageAsset, replyImageMarkupForSource, replyImageUploadSupported } from '@/sources/imageUpload';
 import { isNodeImageApiKeyExpiredError, uploadNodeSeekReplyImageWithApiKey } from '@/sources/nodeimage/upload';
 import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
@@ -84,6 +89,12 @@ import {
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import { YAOHUO_BASE_URL } from '@/sources/yaohuo/protocol';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import {
+  decideTopicAction,
+  topicActionDecisionMessage,
+  type TopicActionDecisionFor,
+  type TopicActionDecisionRequest
+} from './topicActionDecision';
 
 type Ref<T> = { current: T };
 type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unknown>;
@@ -91,6 +102,7 @@ type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unkno
 type MutationVariables = {
   actionKey: string;
   busy: boolean;
+  decision: TopicActionDecisionRequest;
   ticket: WritableSessionTicket;
   detailKey: QueryKey;
   repliesKey: QueryKey;
@@ -228,14 +240,60 @@ export function useTopicActionsController({
     [mutationSource, mutationTopicId]
   );
   const mutationScope = `forum:${mutationSource}:topic:${mutationTopicId}`;
-  const sourceActionAvailability = Object.fromEntries(
-    sourceValues.map((source) => [source, isSessionSource(source) && siteSessionViewModels[source].canWrite])
-  ) as Record<Source, boolean>;
-
+  const baseDecisionFor = useCallback<TopicActionDecisionFor>(
+    (request) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic) as TopicDetail | null;
+      const account =
+        actionTopic && isSessionSource(actionTopic.source) ? siteSessionViewModels[actionTopic.source] : undefined;
+      let objectAllowed = request.objectAllowed;
+      let targetPresent = request.targetPresent;
+      let alreadyComplete = request.alreadyComplete;
+      if (request.action === 'reply' || request.action === 'upload') {
+        objectAllowed ??=
+          Boolean(request.reply?.canEdit) ||
+          Boolean(
+            actionTopic && (!sourceUsesTopicCreatePermission(actionTopic.source) || actionTopic.canCreatePost === true)
+          );
+      } else if (request.action === 'edit') {
+        objectAllowed ??= request.reply?.canEdit === true;
+        targetPresent ??= Boolean(request.reply?.commentId && request.reply.contentMarkdown);
+      } else if (request.action === 'delete') {
+        objectAllowed ??= request.reply?.canDelete === true;
+        targetPresent ??= Boolean(request.reply?.commentId || request.reply?.deletePath || request.reply?.floor);
+      } else if (request.action === 'like' && request.reply) {
+        objectAllowed ??= isDiscourseSource(actionTopic?.source)
+          ? canToggleDiscourseLike(request.reply)
+          : request.reply.canLike !== false;
+        targetPresent ??= Boolean(request.reply.commentId);
+      } else if (request.action === 'vote') {
+        objectAllowed ??= !request.poll?.closed;
+        targetPresent ??= Boolean(request.poll);
+        alreadyComplete ??= request.poll?.voted === true;
+      }
+      return decideTopicAction({
+        account,
+        action: request.action,
+        alreadyComplete,
+        objectAllowed,
+        pending: request.pending,
+        targetPresent,
+        topic: actionTopic
+      });
+    },
+    [selectedTopic, siteSessionViewModels, topicDetail]
+  );
   const mutation = useMutation<unknown, unknown, MutationVariables>({
     mutationKey,
     scope: { id: mutationScope },
     mutationFn: async (variables) => {
+      const decision = baseDecisionFor(variables.decision);
+      if (!decision.allowed) {
+        throw new HandledMutationError(
+          topicActionDecisionMessage(decision),
+          'blocked',
+          decision.reason === 'identity-pending' ? 'identity_pending' : 'permission_denied'
+        );
+      }
       if (!isWritableSessionTicketCurrent(variables.ticket)) {
         throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
       }
@@ -348,6 +406,16 @@ export function useTopicActionsController({
           ])
       ),
     [pendingVariables]
+  );
+  const decisionFor = useCallback<TopicActionDecisionFor>(
+    (request) =>
+      baseDecisionFor({
+        ...request,
+        pending:
+          request.pending === true ||
+          Boolean(request.actionKey && pendingVariables.some((variables) => variables?.actionKey === request.actionKey))
+      }),
+    [baseDecisionFor, pendingVariables]
   );
 
   const cacheKeys = useCallback((actionTopic: TopicDetail, ticket?: WritableSessionTicket) => {
@@ -462,7 +530,19 @@ export function useTopicActionsController({
             pending.topicId === actionTopic.id
           );
         });
-      if (duplicate || pendingActionReservationsRef.current.has(reservationKey)) return false;
+      const decision = decisionFor({
+        ...variables.decision,
+        pending: duplicate || pendingActionReservationsRef.current.has(reservationKey)
+      });
+      if (!decision.allowed) {
+        const message = topicActionDecisionMessage(decision);
+        if (message) notify(message);
+        finishDiagnosticTrace(variables.trace, 'blocked', {
+          source: actionTopic.source,
+          reason: decision.reason
+        });
+        return false;
+      }
       pendingActionReservationsRef.current.add(reservationKey);
       try {
         if (!isSessionSource(actionTopic.source)) {
@@ -518,7 +598,7 @@ export function useTopicActionsController({
         pendingActionReservationsRef.current.delete(reservationKey);
       }
     },
-    [cacheKeys, detachReplyEdit, ensureWritableSession, mutation.mutateAsync, notify, queryClient]
+    [cacheKeys, decisionFor, detachReplyEdit, ensureWritableSession, mutation.mutateAsync, notify, queryClient]
   );
 
   const assertWritableTicket = useCallback(
@@ -735,6 +815,11 @@ export function useTopicActionsController({
       await executeMutation(actionTopic as TopicDetail, {
         actionKey: topicEditReplyActionKey(actionTopicKey, replyEditTarget.commentId),
         busy: true,
+        decision: {
+          action: 'edit',
+          objectAllowed: true,
+          targetPresent: Boolean(replyEditTarget.commentId && replyEditTarget.contentMarkdown)
+        },
         editTarget: replyEditTarget,
         trace,
         task: (ticket) => {
@@ -806,6 +891,7 @@ export function useTopicActionsController({
     await executeMutation(actionTopic as TopicDetail, {
       actionKey: topicReplyActionKey(actionTopicKey),
       busy: true,
+      decision: { action: 'reply' },
       trace,
       task: (ticket) =>
         isYaohuoActionTopic(actionTopic)
@@ -918,6 +1004,7 @@ export function useTopicActionsController({
       await executeMutation(actionTopic as TopicDetail, {
         actionKey: topicDeleteReplyActionKey(actionTopicKey, reply),
         busy: true,
+        decision: { action: 'delete', reply },
         trace,
         task: (ticket) =>
           isYaohuoActionTopic(actionTopic)
@@ -1029,6 +1116,10 @@ export function useTopicActionsController({
     await executeMutation(actionTopic as TopicDetail, {
       actionKey: `${topicReplyActionKey(actionTopicKey)}:image`,
       busy: true,
+      decision: {
+        action: 'upload',
+        objectAllowed: Boolean(replyEditTarget) || canSubmitReplyToTopic(actionTopic)
+      },
       ...(replyEditTarget ? { editTarget: replyEditTarget } : {}),
       trace,
       task: async (ticket) => {
@@ -1165,6 +1256,11 @@ export function useTopicActionsController({
         await executeMutation(actionTopic as TopicDetail, {
           actionKey,
           busy: false,
+          decision: {
+            action: 'like',
+            objectAllowed: canToggleDiscourseLike(target),
+            targetPresent: Boolean(commentId)
+          },
           trace,
           applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
           task: (ticket) =>
@@ -1197,6 +1293,11 @@ export function useTopicActionsController({
       await executeMutation(actionTopic as TopicDetail, {
         actionKey,
         busy: false,
+        decision: {
+          action: 'like',
+          objectAllowed: target?.canLike !== false,
+          targetPresent: Boolean(commentId)
+        },
         trace,
         applyOptimistic: () => updateInteraction(actionTopic as TopicDetail, patch),
         task: (ticket) =>
@@ -1244,6 +1345,7 @@ export function useTopicActionsController({
     await executeMutation(actionDetail, {
       actionKey: yaohuoFavoriteActionKey(topicKey(actionTopic)),
       busy: false,
+      decision: { action: 'bookmark', targetPresent: !bookmarked || Boolean(actionDetail.bookmarkId) },
       trace,
       applyOptimistic: () => patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId),
       task: (ticket) =>
@@ -1292,6 +1394,7 @@ export function useTopicActionsController({
         action: 'collection'
       }),
       busy: false,
+      decision: { action: 'bookmark' },
       trace,
       applyOptimistic: patch,
       task: (ticket) =>
@@ -1323,6 +1426,7 @@ export function useTopicActionsController({
     await executeMutation(actionDetail, {
       actionKey: topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: actionTopic.id, action: 'bookmark' }),
       busy: false,
+      decision: { action: 'bookmark' },
       trace,
       applyOptimistic: () => patch(!bookmarked, bookmarked ? undefined : actionDetail.bookmarkId),
       task: (ticket) =>
@@ -1359,6 +1463,7 @@ export function useTopicActionsController({
         await executeMutation(actionTopic as TopicDetail, {
           actionKey: topicPollVoteActionKey(topicKey(actionTopic), poll),
           busy: true,
+          decision: { action: 'vote', poll, targetPresent: optionIds.length > 0 },
           trace,
           task: async (ticket) => {
             if (isNodeSeekActionTopic(actionTopic)) {
@@ -1484,12 +1589,12 @@ export function useTopicActionsController({
     actionBusy,
     bookmarkOnDiscourseSite,
     collectOnNodeSeekSite,
+    decisionFor,
     deleteReply,
     editReply,
     favoriteOnYaohuoSite,
     interact,
     optimisticTopicActions,
-    sourceActionAvailability,
     submitReply,
     uploadReplyImage,
     votePoll
