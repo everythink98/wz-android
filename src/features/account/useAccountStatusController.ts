@@ -1,32 +1,21 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { isCancelledError, useQuery, type QueryFunctionContext } from '@tanstack/react-query';
-import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
-import { summarizeYaohuoCookieHeader } from '@/sources/yaohuo/session';
-import { summarizeNodeSeekCookieHeader } from '@/sources/nodeseek/session';
-import { summarizeLinuxDoCookieHeader } from '@/sources/linuxdo/session';
 import {
-  createSiteSessionStates,
   createSiteSessionViewModel,
-  reduceSiteSessionState,
   siteSessionIdentityKey,
-  type ScopedSiteSessionEvent,
+  type AccountStatusObservation,
   type SiteSessionState,
   type SiteSessionViewModel,
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
-import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import type { Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { readAccountStatus } from '@/sources/accountRead';
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  withDiagnosticFetcher
-} from '@/platform/diagnostics/diagnostics';
-import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   readManagedCookieHeader as readManagedCookieHeaderFromNative,
   type ManagedCookieReadResult
@@ -36,15 +25,8 @@ import { sessionSources, type SessionSource } from '@/domain/forum/sourceCatalog
 import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
 
-const NODESEEK_ACCOUNT_URL = 'https://www.nodeseek.com/';
-const LINUXDO_ACCOUNT_URL = 'https://linux.do/session/current.json';
-const YAOHUO_ACCOUNT_URL = 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
 type RefreshAccountStatusOptions = { silent?: boolean };
 type StatusSource = SessionSource;
-type StatusQueryData = {
-  failed?: boolean;
-  session?: SiteSessionState;
-};
 export type AccountIdentityRuntimeUpdate = {
   identityKey?: string;
   pending: boolean;
@@ -66,27 +48,9 @@ function isCanceledStatusQuery(error: unknown) {
   return isCancelledError(error) || isCanceledRequest(error);
 }
 
-function canceledStatusQuery(): never {
-  throw new Error(REQUEST_CANCELED_MESSAGE);
-}
-
-function managedCookieHeaderOrThrow(result: ManagedCookieReadResult) {
-  if (result.status === 'ok') {
-    return result.header;
-  }
-  throw new Error(result.status === 'unsupported' ? '当前安装包不支持读取 WebView Cookie' : result.message);
-}
-
-function sessionFromEvents(site: StatusSource, events: ScopedSiteSessionEvent[]) {
-  return events.reduce<SiteSessionState>(
-    (state, { site: _site, ...event }) => reduceSiteSessionState(state, event),
-    createSiteSessionStates()[site]
-  );
-}
-
 function accountStatusViewModel(
   base: SiteSessionViewModel,
-  data: StatusQueryData | undefined,
+  data: AccountStatusObservation | undefined,
   error: unknown,
   identityCheck?: AccountIdentityCheck
 ) {
@@ -139,15 +103,10 @@ export function useAccountStatusController({
 }) {
   const [identityChecks, setIdentityChecks] = useState<Record<StatusSource, AccountIdentityCheck>>(
     () =>
-      Object.fromEntries(
-        sessionSources.map((source) => [
-          source,
-          {
-            checking: false,
-            pending: true
-          }
-        ])
-      ) as Record<StatusSource, AccountIdentityCheck>
+      Object.fromEntries(sessionSources.map((source) => [source, { checking: false, pending: true }])) as Record<
+        StatusSource,
+        AccountIdentityCheck
+      >
   );
   const activeIdentityReconciliationsRef = useRef(0);
   const [identityReconciliationPending, setIdentityReconciliationPending] = useState(true);
@@ -155,320 +114,24 @@ export function useAccountStatusController({
     Object.fromEntries(sessionSources.map((source) => [source, true])) as Record<StatusSource, boolean>
   );
   const statusQueryDefinitions = useMemo(() => {
-    const nodeSeekStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'nodeseek' });
-    const linuxDoStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'linuxdo' });
-    const yaohuoStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'yaohuo' });
-    const xiaoyinsiStatusQueryKey = forumQueryKeys.accountStatus({ sessionEpochs, source: 'xiaoyinsi' });
+    const definition = (source: StatusSource) => ({
+      enabled: false,
+      queryKey: forumQueryKeys.accountStatus({ sessionEpochs, source }),
+      queryFn: ({ signal }: QueryFunctionContext) =>
+        readAccountStatus(source, {
+          fetcher,
+          linuxDoUserAgent: linuxDoUserAgentRef.current,
+          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+          readManagedCookieHeader,
+          readXiaoyinsiAuthorization,
+          signal
+        })
+    });
     return {
-      nodeseek: {
-        enabled: false,
-        queryKey: nodeSeekStatusQueryKey,
-        queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
-          const trace = beginDiagnosticTrace('session', 'refresh', { source: 'nodeseek' });
-          let cookieSummary: string[] = [];
-          try {
-            const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
-            const cookieRead = await readManagedCookieHeader(NODESEEK_ACCOUNT_URL);
-            const cookieHeader = managedCookieHeaderOrThrow(cookieRead);
-            if (signal.aborted) {
-              finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
-              return canceledStatusQuery();
-            }
-            const summary = summarizeNodeSeekCookieHeader(cookieHeader);
-            cookieSummary = summary.names;
-            markDiagnosticStage(trace, 'credential', {
-              source: 'nodeseek',
-              hasCredential: summary.count > 0
-            });
-            const currentUser = await getCurrentUserProfile({
-              source: 'nodeseek',
-              nodeSeekAuthenticated: true,
-              fetcher: diagnosticFetcher,
-              nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-              signal
-            });
-            if (signal.aborted) {
-              finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
-              return canceledStatusQuery();
-            }
-            const checkedAt = new Date().toISOString();
-            finishDiagnosticTrace(trace, 'success', { source: 'nodeseek' });
-            return {
-              session: sessionFromEvents('nodeseek', [
-                {
-                  site: 'nodeseek',
-                  type: 'cookie-loaded',
-                  cookieSummary: summary.names,
-                  hasVerification: summary.count > 0,
-                  loggedIn: Boolean(currentUser),
-                  currentUser,
-                  at: checkedAt
-                }
-              ])
-            };
-          } catch (error) {
-            const canceled = signal.aborted || isCanceledStatusQuery(error);
-            const sourceError = canceled ? undefined : sourceErrorFromUnknown('nodeseek', error);
-            if (sourceError?.kind === 'login-expired') {
-              if (signal.aborted) {
-                finishDiagnosticTrace(trace, 'stale', { source: 'nodeseek', reason: 'stale' });
-                return canceledStatusQuery();
-              }
-              finishDiagnosticTrace(trace, 'success', {
-                source: 'nodeseek',
-                reason: 'expired'
-              });
-              return {
-                session: sessionFromEvents('nodeseek', [
-                  {
-                    site: 'nodeseek',
-                    type: 'cookie-loaded',
-                    cookieSummary,
-                    hasVerification: cookieSummary.length > 0,
-                    loggedIn: false,
-                    currentUser: null,
-                    at: new Date().toISOString()
-                  }
-                ])
-              };
-            }
-            finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
-              source: 'nodeseek',
-              reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
-            });
-            throw error;
-          }
-        }
-      },
-      linuxdo: {
-        enabled: false,
-        queryKey: linuxDoStatusQueryKey,
-        queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
-          const trace = beginDiagnosticTrace('session', 'refresh', { source: 'linuxdo' });
-          let cookieSummary: ReturnType<typeof summarizeLinuxDoCookieHeader> = {
-            hasClearance: false,
-            hasSessionCandidate: false,
-            names: []
-          };
-          try {
-            const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
-            const cookieRead = await readManagedCookieHeader(LINUXDO_ACCOUNT_URL);
-            const cookieHeader = managedCookieHeaderOrThrow(cookieRead);
-            if (signal.aborted) {
-              finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
-              return canceledStatusQuery();
-            }
-            cookieSummary = summarizeLinuxDoCookieHeader(cookieHeader);
-            const userAgent = linuxDoUserAgentRef.current;
-            markDiagnosticStage(trace, 'credential', {
-              source: 'linuxdo',
-              hasCredential: Boolean(cookieHeader)
-            });
-            const currentUser = await getCurrentUserProfile({
-              source: 'linuxdo',
-              fetcher: diagnosticFetcher,
-              discourseAuth: { linuxdo: { userAgent } },
-              signal
-            });
-            if (signal.aborted) {
-              finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
-              return canceledStatusQuery();
-            }
-            finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
-            return {
-              session: sessionFromEvents('linuxdo', [
-                {
-                  site: 'linuxdo',
-                  type: 'cookie-loaded',
-                  cookieSummary: cookieSummary.names,
-                  hasVerification: cookieSummary.hasClearance,
-                  loggedIn: true,
-                  currentUser,
-                  at: new Date().toISOString()
-                }
-              ])
-            };
-          } catch (error) {
-            const canceled = signal.aborted || isCanceledStatusQuery(error);
-            const sourceError = canceled ? undefined : sourceErrorFromUnknown('linuxdo', error);
-            if (sourceError?.kind === 'login-expired') {
-              finishDiagnosticTrace(trace, 'success', {
-                source: 'linuxdo',
-                reason: 'expired'
-              });
-              return {
-                session: sessionFromEvents('linuxdo', [
-                  {
-                    site: 'linuxdo',
-                    type: 'cookie-loaded',
-                    cookieSummary: cookieSummary.names,
-                    hasVerification: cookieSummary.hasClearance,
-                    loggedIn: false,
-                    currentUser: null,
-                    at: new Date().toISOString()
-                  }
-                ])
-              };
-            }
-            finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
-              source: 'linuxdo',
-              reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
-            });
-            throw error;
-          }
-        }
-      },
-      yaohuo: {
-        enabled: false,
-        queryKey: yaohuoStatusQueryKey,
-        queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
-          const trace = beginDiagnosticTrace('session', 'refresh', { source: 'yaohuo' });
-          try {
-            const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
-            const cookieRead = await readManagedCookieHeader(YAOHUO_ACCOUNT_URL);
-            const cookieHeader = managedCookieHeaderOrThrow(cookieRead);
-            if (signal.aborted) {
-              finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
-              return canceledStatusQuery();
-            }
-            const cookieSummary = summarizeYaohuoCookieHeader(cookieHeader).names;
-            markDiagnosticStage(trace, 'credential', {
-              source: 'yaohuo',
-              hasCredential: Boolean(cookieHeader)
-            });
-            const check = await checkYaohuoLogin({
-              yaohuoFetcher: diagnosticFetcher,
-              signal
-            });
-            const expired = 'reason' in check && check.reason === 'expired';
-            if (!check.ok && !expired) {
-              throw new Error(check.message || '妖火登录状态暂时无法确认。');
-            }
-            if (expired) {
-              if (signal.aborted) {
-                finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
-                return canceledStatusQuery();
-              }
-              finishDiagnosticTrace(trace, 'success', { source: 'yaohuo' });
-              return {
-                session: sessionFromEvents('yaohuo', [
-                  {
-                    site: 'yaohuo',
-                    type: 'cookie-loaded',
-                    cookieSummary,
-                    hasVerification: false,
-                    loggedIn: false,
-                    currentUser: null,
-                    at: new Date().toISOString()
-                  }
-                ])
-              };
-            }
-            const verifiedUser = 'currentUser' in check ? check.currentUser : undefined;
-            if (!verifiedUser) {
-              throw new Error('妖火登录状态暂时无法确认。');
-            }
-            let currentUser = verifiedUser;
-            let profileError: unknown;
-            try {
-              currentUser = await getUserProfile({
-                source: 'yaohuo',
-                id: verifiedUser.id,
-                username: verifiedUser.username,
-                fetcher: diagnosticFetcher,
-                signal
-              });
-            } catch (error) {
-              if (signal.aborted || isCanceledStatusQuery(error)) {
-                throw error;
-              }
-              profileError = error;
-            }
-            if (signal.aborted) {
-              finishDiagnosticTrace(trace, 'stale', { source: 'yaohuo', reason: 'stale' });
-              return canceledStatusQuery();
-            }
-            finishDiagnosticTrace(trace, profileError ? 'partial' : 'success', {
-              source: 'yaohuo',
-              ...(profileError ? { reason: normalizeDiagnosticReason(profileError) } : {})
-            });
-            const events: ScopedSiteSessionEvent[] = [
-              {
-                site: 'yaohuo',
-                type: 'cookie-loaded',
-                cookieSummary,
-                hasVerification: false,
-                loggedIn: true,
-                currentUser,
-                at: new Date().toISOString()
-              }
-            ];
-            if (profileError) {
-              events.push({
-                site: 'yaohuo',
-                type: 'check-failed',
-                message: errorMessage(profileError)
-              });
-            }
-            return {
-              failed: Boolean(profileError),
-              session: sessionFromEvents('yaohuo', events)
-            };
-          } catch (error) {
-            const canceled = signal.aborted || isCanceledStatusQuery(error);
-            finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
-              source: 'yaohuo',
-              reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
-            });
-            throw error;
-          }
-        }
-      },
-      xiaoyinsi: {
-        enabled: false,
-        queryKey: xiaoyinsiStatusQueryKey,
-        queryFn: async ({ signal }: QueryFunctionContext): Promise<StatusQueryData> => {
-          const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
-          try {
-            const result = await readXiaoyinsiAuthorization(trace, { signal });
-            if (!result.sessionEvent) {
-              return canceledStatusQuery();
-            }
-            if (result.authenticated === null) {
-              throw new Error(
-                result.sessionEvent.type === 'check-failed'
-                  ? result.sessionEvent.message || '小隐寺状态暂时无法确认'
-                  : '小隐寺状态暂时无法确认'
-              );
-            }
-            finishDiagnosticTrace(trace, 'success', { source: 'xiaoyinsi' });
-            const sessionEvent =
-              result.authenticated === false
-                ? {
-                    type: 'cookie-loaded' as const,
-                    loggedIn: false,
-                    currentUser: null,
-                    at: new Date().toISOString()
-                  }
-                : result.sessionEvent;
-            return {
-              session: sessionFromEvents('xiaoyinsi', [
-                {
-                  ...sessionEvent,
-                  site: 'xiaoyinsi'
-                } as ScopedSiteSessionEvent
-              ])
-            };
-          } catch (error) {
-            const canceled = signal.aborted || isCanceledStatusQuery(error);
-            finishDiagnosticTrace(trace, canceled ? 'canceled' : 'failure', {
-              source: 'xiaoyinsi',
-              reason: canceled ? 'canceled' : normalizeDiagnosticReason(error)
-            });
-            throw error;
-          }
-        }
-      }
+      linuxdo: definition('linuxdo'),
+      nodeseek: definition('nodeseek'),
+      xiaoyinsi: definition('xiaoyinsi'),
+      yaohuo: definition('yaohuo')
     };
   }, [
     fetcher,
@@ -476,10 +139,7 @@ export function useAccountStatusController({
     nodeSeekUserAgentRef,
     readManagedCookieHeader,
     readXiaoyinsiAuthorization,
-    sessionEpochs.linuxdo,
-    sessionEpochs.nodeseek,
-    sessionEpochs.xiaoyinsi,
-    sessionEpochs.yaohuo
+    sessionEpochs
   ]);
   const nodeSeekStatus = useQuery(statusQueryDefinitions.nodeseek);
   const linuxDoStatus = useQuery(statusQueryDefinitions.linuxdo);
@@ -540,18 +200,13 @@ export function useAccountStatusController({
   >({});
   const beginAccountIdentityCheck = useCallback(
     (source: StatusSource, surfaceGeneration?: number) => {
-      if (!identityPendingRef.current[source]) {
-        void cancelForumSourceQueries(source);
-      }
+      if (!identityPendingRef.current[source]) void cancelForumSourceQueries(source);
       identityPendingRef.current[source] = true;
       if (surfaceGeneration !== undefined) {
         const activeProbe = activeProbeRef.current[source];
         if (activeProbe && activeProbe.surfaceGeneration < surfaceGeneration) {
           probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source] + 1, surfaceGeneration);
-          void appQueryClient.cancelQueries({
-            queryKey: activeProbe.queryKey,
-            exact: true
-          });
+          void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
         } else {
           probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source], surfaceGeneration);
         }
@@ -568,23 +223,15 @@ export function useAccountStatusController({
     (source: StatusSource, options: { surfaceGeneration?: number } = {}): Promise<AccountReconcileResult> => {
       const requestedSurfaceGeneration = options.surfaceGeneration || 0;
       const activeProbe = activeProbeRef.current[source];
-      if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
-        return activeProbe.promise;
-      }
-      if (activeProbe) {
-        void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
-      }
+      if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) return activeProbe.promise;
+      if (activeProbe) void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
       beginAccountIdentityCheck(source);
       const generation =
         options.surfaceGeneration === undefined
           ? probeGenerationRef.current[source] + 1
           : Math.max(probeGenerationRef.current[source] + 1, options.surfaceGeneration);
       probeGenerationRef.current[source] = generation;
-      const probeQueryKey = forumQueryKeys.accountStatusProbe({
-        sessionEpochs,
-        generation,
-        source
-      });
+      const probeQueryKey = forumQueryKeys.accountStatusProbe({ sessionEpochs, generation, source });
       const promise = (async (): Promise<AccountReconcileResult> => {
         try {
           const nextData = await appQueryClient.fetchQuery({
@@ -592,11 +239,9 @@ export function useAccountStatusController({
             queryFn: statusQueryDefinitions[source].queryFn,
             staleTime: 0
           });
-          if (probeGenerationRef.current[source] !== generation || !nextData.session) {
-            return { status: 'stale' as const };
-          }
+          if (probeGenerationRef.current[source] !== generation || !nextData.session) return { status: 'stale' };
           const canonicalQueryKey = statusQueryDefinitions[source].queryKey;
-          const previousData = appQueryClient.getQueryData<StatusQueryData>(canonicalQueryKey);
+          const previousData = appQueryClient.getQueryData<AccountStatusObservation>(canonicalQueryKey);
           const previousSession =
             previousData?.session ||
             (sessionViewModels[source].identityTrust === 'confirmed' ? sessionViewModels[source] : undefined);
@@ -605,10 +250,7 @@ export function useAccountStatusController({
           if (previousIdentity && previousIdentity !== nextIdentity) {
             onAccountStatusChanged(source, probeQueryKey, nextData.session);
             identityPendingRef.current[source] = false;
-            onAccountIdentityRuntimeChanged(source, {
-              identityKey: nextIdentity,
-              pending: false
-            });
+            onAccountIdentityRuntimeChanged(source, { identityKey: nextIdentity, pending: false });
             setIdentityChecks((current) => ({
               ...current,
               [source]: { checking: false, pending: false }
@@ -619,34 +261,23 @@ export function useAccountStatusController({
               partial: nextData.failed
             };
           }
-          if (!previousIdentity) {
-            removeUnconfirmedForumSourceQueries(source);
-          }
+          if (!previousIdentity) removeUnconfirmedForumSourceQueries(source);
           appQueryClient.setQueryData(canonicalQueryKey, nextData);
           identityPendingRef.current[source] = false;
-          onAccountIdentityRuntimeChanged(source, {
-            identityKey: nextIdentity,
-            pending: false
-          });
+          onAccountIdentityRuntimeChanged(source, { identityKey: nextIdentity, pending: false });
           setIdentityChecks((current) => ({
             ...current,
             [source]: { checking: false, pending: false }
           }));
-          return {
-            status: 'same' as const,
-            session: nextData.session,
-            partial: nextData.failed
-          };
+          return { status: 'same', session: nextData.session, partial: nextData.failed };
         } catch (error) {
-          if (probeGenerationRef.current[source] !== generation) {
-            return { status: 'stale' as const };
-          }
+          if (probeGenerationRef.current[source] !== generation) return { status: 'stale' };
           if (isCanceledStatusQuery(error)) {
             setIdentityChecks((current) => ({
               ...current,
               [source]: { checking: false, pending: true }
             }));
-            return { status: 'stale' as const };
+            return { status: 'stale' };
           }
           const message = errorMessage(error);
           const errorInfo = sourceErrorFromUnknown(source, error);
@@ -654,11 +285,9 @@ export function useAccountStatusController({
             ...current,
             [source]: { checking: false, pending: true, error: errorInfo }
           }));
-          return { status: 'unknown' as const, error: message, errorInfo };
+          return { status: 'unknown', error: message, errorInfo };
         } finally {
-          if (activeProbeRef.current[source]?.generation === generation) {
-            delete activeProbeRef.current[source];
-          }
+          if (activeProbeRef.current[source]?.generation === generation) delete activeProbeRef.current[source];
           appQueryClient.removeQueries({ queryKey: probeQueryKey, exact: true });
         }
       })();
@@ -693,18 +322,14 @@ export function useAccountStatusController({
             result: await reconcileAccountStatus(descriptor.source)
           }))
         );
-        if (options.silent) {
-          return;
-        }
+        if (options.silent) return;
         const failedSites = results.flatMap(({ descriptor, result }) =>
           result.status === 'unknown' || ('partial' in result && result.partial) ? [descriptor.label] : []
         );
         notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
       } finally {
         activeIdentityReconciliationsRef.current -= 1;
-        if (activeIdentityReconciliationsRef.current === 0) {
-          setIdentityReconciliationPending(false);
-        }
+        if (activeIdentityReconciliationsRef.current === 0) setIdentityReconciliationPending(false);
       }
     },
     [notify, reconcileAccountStatus]

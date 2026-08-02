@@ -44,6 +44,7 @@ import { useSessionReadGateway } from './useSessionReadGateway';
 import { useVerificationController } from './useVerificationController';
 import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
 import { useXiaoyinsiLevelController } from './useXiaoyinsiLevelController';
+import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
 
 export function useAccountRuntime({
   appActive,
@@ -218,6 +219,10 @@ export function useAccountRuntime({
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
     webLoginDetectedRef
+  });
+  const { handleLinuxDoBrowserFetchMessage, handleNodeSeekBrowserFetchMessage } = useHiddenBrowserFetchController({
+    completeLinuxDoBrowserFetch: session.completeLinuxDoBrowserFetch,
+    completeNodeSeekBrowserFetch: session.completeNodeSeekBrowserFetch
   });
   const xiaoyinsiAuth = useXiaoyinsiAuthController({
     dispatchSiteSessionEvent: session.dispatchSiteSessionEvent,
@@ -612,7 +617,8 @@ export function useAccountRuntime({
       reconcileAccountStatus,
       refreshAccountStatus,
       retainableIdentityBarriers,
-      statusBusy: status.statusBusy
+      statusBusy: status.statusBusy,
+      updateLinuxDoSession: session.updateLinuxDoSession
     },
     write: {
       ensureWritableSession,
@@ -642,6 +648,10 @@ export function useAccountRuntime({
       closeTopmostSurface,
       closeYaohuoLoginPanel,
       finishAuthSurfaceTicket,
+      failLinuxDoBrowserFetchById: session.failLinuxDoBrowserFetchById,
+      failNodeSeekBrowserFetchById: session.failNodeSeekBrowserFetchById,
+      handleLinuxDoBrowserFetchMessage,
+      handleNodeSeekBrowserFetchMessage,
       hiddenBrowserFetchRequests: session.hiddenBrowserFetchRequests,
       linuxDoBrowserWebViewRef,
       linuxDoWebViewError,
@@ -651,6 +661,8 @@ export function useAccountRuntime({
       loadingLoginPage,
       loadingYaohuoLoginPage,
       mountLinuxDoWebView,
+      markLinuxDoBrowserFetchHttpError: session.markLinuxDoBrowserFetchHttpError,
+      markNodeSeekBrowserFetchHttpError: session.markNodeSeekBrowserFetchHttpError,
       linuxDoWebViewUserAgent,
       linuxDoWebViewUserAgentRef,
       nodeSeekBrowserWebViewRef,
@@ -674,7 +686,6 @@ export function useAccountRuntime({
       nodeSeekLoginPanelRequestRef,
       requestNodeSeekVerification,
       setChecking
-    },
-    session
+    }
   };
 }

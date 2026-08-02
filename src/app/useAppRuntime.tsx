@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { useReaderRuntime } from './useReaderRuntime';
 import { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
-import { useHiddenBrowserFetchController } from '@/features/account/useHiddenBrowserFetchController';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import type { FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
@@ -82,7 +81,8 @@ export function useAppRuntime() {
     readGateway,
     reconcileAccountStatus,
     retainableIdentityBarriers: retainableAccountIdentityBarriers,
-    statusBusy
+    statusBusy,
+    updateLinuxDoSession
   } = accountRuntime.read;
   const { ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession, resetLinuxDoLevelState } =
     accountRuntime.write;
@@ -142,6 +142,10 @@ export function useAppRuntime() {
     changeYaohuoLoginPanel,
     closePanels: closeAccountPanels,
     closeTopmostSurface: closeTopmostAccountSurface,
+    failLinuxDoBrowserFetchById,
+    failNodeSeekBrowserFetchById,
+    handleLinuxDoBrowserFetchMessage,
+    handleNodeSeekBrowserFetchMessage,
     hiddenBrowserFetchRequests,
     linuxDoBrowserWebViewRef,
     linuxDoWebViewError,
@@ -153,6 +157,8 @@ export function useAppRuntime() {
     loadingLoginPage,
     loadingYaohuoLoginPage,
     mountLinuxDoWebView,
+    markLinuxDoBrowserFetchHttpError,
+    markNodeSeekBrowserFetchHttpError,
     nodeSeekBrowserWebViewRef,
     nodeSeekWebViewUserAgent,
     nodeSeekWebViewUserAgentRef,
@@ -176,15 +182,6 @@ export function useAppRuntime() {
     yaohuoLoginPrompt,
     yaohuoWebViewRef
   } = accountRuntime.hosts;
-  const {
-    completeLinuxDoBrowserFetch,
-    completeNodeSeekBrowserFetch,
-    failLinuxDoBrowserFetchById,
-    failNodeSeekBrowserFetchById,
-    markLinuxDoBrowserFetchHttpError,
-    markNodeSeekBrowserFetchHttpError,
-    updateLinuxDoSession
-  } = accountRuntime.session;
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek, webLoginUserId);
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
@@ -220,11 +217,6 @@ export function useAppRuntime() {
     screen,
     statusBusy,
     themeDark: theme.dark
-  });
-
-  const { handleLinuxDoBrowserFetchMessage, handleNodeSeekBrowserFetchMessage } = useHiddenBrowserFetchController({
-    completeLinuxDoBrowserFetch,
-    completeNodeSeekBrowserFetch
   });
 
   useAppBackHandler({ changeScreen, closeTopmostAccountSurface, getCurrentScreen });

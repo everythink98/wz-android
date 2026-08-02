@@ -11,6 +11,11 @@ export type ManagedCookieNativeModule = {
   clearManagedLoginCookies?: (source: ManagedLoginCookieSource) => Promise<boolean>;
 };
 
+export function managedCookieHeaderOrThrow(result: ManagedCookieReadResult) {
+  if (result.status === 'ok') return result.header;
+  throw new Error(result.status === 'unsupported' ? '当前安装包不支持读取 WebView Cookie' : result.message);
+}
+
 export function managedCookieSourceForUrl(exactUrl: string): ManagedLoginCookieSource | null {
   try {
     const url = new URL(exactUrl);

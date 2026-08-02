@@ -16,6 +16,11 @@ export type SiteSessionState = {
   lastError?: string;
 };
 
+export type AccountStatusObservation = {
+  failed?: boolean;
+  session: SiteSessionState;
+};
+
 export type SiteSessionStates = Record<SessionSite, SiteSessionState>;
 export type SiteSessionViewModel = {
   site: SessionSite;
@@ -97,6 +102,10 @@ export function createSiteSessionStates(states?: Partial<SiteSessionStates>): Si
   return Object.fromEntries(
     sessionSources.map((site) => [site, states?.[site] || createSiteState(site, 'anonymous')])
   ) as SiteSessionStates;
+}
+
+export function siteSessionStateFromEvents(site: SessionSite, events: SiteSessionEvent[]) {
+  return events.reduce<SiteSessionState>(reduceSiteSessionState, createSiteSessionStates()[site]);
 }
 
 function currentUserForSite(site: SessionSite, currentUser: UserProfile | null | undefined, loggedIn?: boolean) {
