@@ -42,6 +42,7 @@
 - Replay 默认 retries 为 0；单个 `.ad` 首次失败即停止，普通执行失败由外层继续其他独立文件并在最后汇总，清理失败则立即中止后续文件以避免污染，只有全部通过才输出 `DEVICE_REPLAY_PASS`。带 `--record-video` 的 tracked Replay 不自行执行 `close`：test harness 必须先停止并拉回视频，再由 cleanup 关闭 session。诊断性重跑不能覆盖第一次失败。禁止在 CI 使用 `replay -u`：本机 0.19.0 仍可能重写脚本，而 0.19.1 起该参数已退役为 no-op；统一根据 divergence 建议人工修改并审查 diff。
 - Agent Live 不是 CI。它只在 `npm run verify` 和相关 Replay 之后按 `targeted` 或 `full` Profile 执行；CF、动态目标、授权、恢复、不可逆写入和失败续跑规则以 `tests/live/agent-live.md` 为准。
 - React Doctor 单独扫描全仓并阻断 blocking error；它依赖外部 CLI，不并入确定性的 `npm run verify`，也不替代任何行为测试。
+- `npm run check:architecture` 检查真实源码的组合链、依赖方向、route ownership、旧路径、barrel 和循环；`npm run test:architecture` 用合法/非法 fixture 证明规则本身会接受与拒绝预期输入。两者只提供 `STATIC_PASS`，route 草稿、滚动、inactive gate 和返回优先级仍必须由 RNTL/Replay 证明。
 - 历史逃逸事故及负向控制见 `docs/regression-corpus.md`。
 
 ## 改动影响面回归
@@ -76,7 +77,7 @@
 | 首页 / 分类 / 搜索 / 详情 / 回复 / 用户页 | 用户触发或分页门禁、credential 是否存在、direct / WebView 通道、HTTP 元数据、解析数量、partial、合并前后数量、stale / cancel / apply | 搜索词、标题、作者、正文、真实 topic / user / cursor、URL path / query | 同一 `traceId` 的 start / 阶段 / 唯一终态；HTTP 200 解析为空、partial source failure、重复 cursor、旧请求丢弃 |
 | 回复 / 编辑 / 删除 / 互动 / 投票 / 上传 | 权限门禁、credential / CSRF 来源枚举、请求阶段、乐观更新、rollback、本地 commit、成功后刷新是否失败 | Cookie、token、CSRF / API Key 值、正文、真实目标 ID、投票选项内容、上传文件名 / 路径 / URL | 重复写、缺 credential、乐观回滚、写成功但刷新失败、授权刷新；正文只断言长度，投票只断言选择数量 |
 | Session / Cookie / WebView / 代理 | generation、store 空 / timeout / error、会话状态迁移、WebView 队列与 renderer gone、代理 load / apply / save 状态 | Cookie 名称和值、header、WebView HTML / message、代理地址 / 账号 / 密码 | stale generation、fallback / timeout、代理 apply 失败、日志中无伪造 secret |
-| 本机资料 / 备份 / 更新 / 图片 / 导航 | save queue、superseded、persist、rollback、备份取消 / 解析 / 合并、更新检查 / 下载 / 校验、图片权限 / 下载 / MediaLibrary、route / snapshot / back 决策 | 任意对象序列化、备份内容、文件名 / 路径、图片 URL、页面内容 | 保存失败回滚、损坏 / 超限备份、分享取消、更新失败、权限失败、复杂返回链 |
+| 本机资料 / 备份 / 更新 / 图片 / 导航 | save queue、superseded、persist、rollback、备份取消 / 解析 / 合并、更新检查 / 下载 / 校验、图片权限 / 下载 / MediaLibrary、route identity / native stack / back 优先级 | 任意对象序列化、备份内容、文件名 / 路径、图片 URL、页面内容 | 保存失败回滚、损坏 / 超限备份、分享取消、更新失败、权限失败、复杂返回链 |
 | 导出与隐私 | 两份 1 MiB 轮转、旧到新 JSON Lines、固定元数据头、系统分享、临时文件删除 | 未列入白名单的任意字段 | 伪造 secret、ID、标题、正文、URL、路径贯穿写入和导出后均不存在；日志故障静默降级 |
 
 诊断日志的合理目标是把多数业务问题定位到模块和失败阶段。纯视觉错位仍需截图，特定内容解析问题仍需原帖链接；native crash / ANR、GPU 和内存问题不以本地 JS 业务日志作为唯一证据。
@@ -109,7 +110,7 @@
 
 > `REG-PERF-009` 补充详情图片 cache 矩阵：正文尺寸、原图 revision 与 compatible SVG artifact 的 render/getSnapshot read 不得提升全局 LRU；只有已提交 effect/subscription、显示/recovery 或写入可以改变淘汰顺序。三个编号单测必须同时固定 speculative read 不提升与 committed activity 提升，既有容量、完整媒体 identity、active listener 和 recovery single-flight 不变。
 
-> `REG-TOPIC-053/054/055` 补充详情/回复矩阵：评论跨主题引用必须保留 `source + topicId + postNumber` 和可用的内部目标链接，不得命中当前主题同楼层；parser、两站 adapter、ReplyItem 与 Query controller 四层共同固定。超长完整引用必须拆成父 FlashList 的稳定 data rows，由同一 render window 挂载；目标首帖已有同 epoch Topic cache 时零重复 transport，返回 route 从同 epoch reply cache 恢复 active observer；实例 key 绑定 reply entity，同楼层不同 commentId 必须隔离。冷引用先只进入 2 个正文 rows，首个实际 row layout 后下一帧才放开其余 rows；primed token 绑定实例和内容，折叠重开直接全量，内容或 route 变化重新测量。完整正文出现后不重复简介，loading/error 仍保留简介；同一 immutable Reply 的正文不得重复拆分，头像位、长作者/标题和连续卡片间距不得在加载或滚动时跳变。匹配模拟器需在精确主题上滚过文字、链接和图片，再收起并二次展开，以 gfxinfo 最慢帧和节点规模对照逃逸基线，工具 settle 时长不能代替帧证据；不得用缩小 `720px` 图片 render window 换取展开数字。`REG-PERF-008` 补充导航/长正文矩阵：A ready → B Loading 时，两个 native Topic route 必须各自绑定稳定的 `source + topicId` identity、当前 generation presentation 与独立 list ref；返回只见 A，inactive B 非交互且暂停原图升级，epoch 失效后不复用。opening-body chunk 必须是 FlashList data；普通内容只保留必要的一次结构 parse，非正文状态变化不得重拆，解析前必须让已排队的取消胜出。返回 helper 的调用顺序只能固定控制流，不能代替可见 UI 和匹配 APK 的转场证据。
+> `REG-TOPIC-053/054/055` 补充详情/回复矩阵：评论跨主题引用必须保留 `source + topicId + postNumber` 和可用的内部目标链接，不得命中当前主题同楼层；parser、两站 adapter、ReplyItem 与 Query controller 四层共同固定。超长完整引用必须拆成父 FlashList 的稳定 data rows，由同一 render window 挂载；目标首帖已有同 epoch Topic cache 时零重复 transport，返回 route 从同 epoch reply cache 恢复 active observer；实例 key 绑定 reply entity，同楼层不同 commentId 必须隔离。冷引用先只进入 2 个正文 rows，首个实际 row layout 后下一帧才放开其余 rows；primed token 绑定实例和内容，折叠重开直接全量，内容或 route 变化重新测量。完整正文出现后不重复简介，loading/error 仍保留简介；同一 immutable Reply 的正文不得重复拆分，头像位、长作者/标题和连续卡片间距不得在加载或滚动时跳变。匹配模拟器需在精确主题上滚过文字、链接和图片，再收起并二次展开，以 gfxinfo 最慢帧和节点规模对照逃逸基线，工具 settle 时长不能代替帧证据；不得用缩小 `720px` 图片 render window 换取展开数字。`REG-PERF-008` 补充导航/长正文矩阵：A ready → B Loading 时，两个 native Topic route 必须各自绑定稳定的 `source + topicId` identity、当前 Query generation 与独立 list ref；返回只见 A，inactive B 非交互且暂停原图升级，epoch 失效后不复用。opening-body chunk 必须是 FlashList data；普通内容只保留必要的一次结构 parse，非正文状态变化不得重拆，解析前必须让已排队的取消胜出。route-local `beforeRemove` 的调用顺序只能固定控制流，不能代替可见 UI 和匹配 APK 的转场证据。
 
 `REG-SEARCH-018` 补充 NodeSeek 搜索验收：诊断候选必须与 adapter 当前选择的解析面同源；页面已有正式 `.post-list` 时，只统计列表内部候选，不能因页面其他区域的 `post-*` 链接或页面壳中的 stale embedded topics 生成 `parse_empty`。只有搜索表单而结果面尚未出现时仍必须报“结果没有加载完成”并允许重试。最低测试使用同一 fixture 同时固定空结果、诊断摘要及既有未完成页面负向路径；设备保留当前登录态分别查询问题词与普通词，不要求纯数字词直达帖子。
 

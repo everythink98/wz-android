@@ -42,6 +42,7 @@
 
 - App 支持 NodeSeek、linux.do、V2EX、妖火和小隐寺；五站共享阅读主干，互动能力按原站真实支持范围提供。
 - App 的读取 controller 统一经 `src/sources/readGateway.ts` 进入来源层；写操作目前由 `src/features/topic/actions/useTopicActionsController.ts` 按 capability 调用各站 action client。
+- App 组合固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`；六个 route entry 自持页面生命周期，账号跨 route 状态只归 `src/features/account/useAccountRuntime.ts`。
 - NodeSeek、linux.do、妖火 Cookie 只由网站 WebView 与 Android `CookieManager` 持有；小隐寺 User API Key / Client ID、保存的账号密码和服务器代理配置使用 SecureStore；小隐寺 RSA 私钥只存在 Android Keystore。以上敏感材料都不进入备份 JSON，代理启用失败不能静默直连。
 - `App.tsx` 是真实 Expo bootstrap。
 - `android/` 是生成目录；长期原生配置只改 `app.json` 与 `plugins/`。
@@ -51,10 +52,10 @@
 ## 按旅程定位
 
 - 先在 `docs/product-map.md` 选择受影响能力 ID；如果触及共享 seam，按地图展开关联能力，不能只回归最初入口。
-- 启动、首页、搜索：`src/app/AppRoot.tsx`、`src/features/feed/`、`src/features/search/`、`src/domain/forum/feed.ts` 与 `src/domain/forum/feedOptions.ts`。
+- 启动与组合：`src/app/AppRoot.tsx`、`src/app/AppComposition.tsx`、`src/app/AppRoutes.tsx`、`src/app/AppNavigator.tsx` 和 `src/app/useAppRuntime.tsx`；首页与搜索分别从 `src/features/feed/FeedRoute.tsx`、`src/features/search/SearchRoute.tsx` 进入。
 - 来源读取：`src/sources/readGateway.ts` 及其后的读取实现；互动写入：`src/features/topic/actions/useTopicActionsController.ts` 及各站 action client。
-- 详情与返回：`src/features/topic/TopicRoute.tsx`、`src/features/topic/useTopicSessionController.ts`、`src/features/topic/useTopicController.ts`、`src/features/topic/useTopicRouteBeforeRemove.ts`、`src/features/topic/TopicScreen.tsx` 与 `src/features/user/UserRoute.tsx`。
-- 账号与登录恢复：原三站使用账号/session controller、Cookie bridge 与 App 内 WebView；小隐寺使用独立 Device Code controller 与 Android Keystore，系统浏览器仅承载一次性授权页，不属于 App 会话。
+- 详情与返回：`src/features/topic/TopicRoute.tsx`、`src/features/topic/useTopicSessionController.ts`、`src/features/topic/useTopicController.ts`、`src/features/topic/useTopicRouteBeforeRemove.ts`、`src/features/topic/TopicScreen.tsx`、`src/features/topic/components/TopicContentList.tsx` 与 `src/features/user/UserRoute.tsx`。
+- 账号与登录恢复：`src/features/account/useAccountRuntime.ts` 是唯一跨 controller owner；原三站使用其 session/controller、Cookie bridge 与 App 内 WebView，小隐寺使用独立 Device Code controller 与 Android Keystore，系统浏览器仅承载一次性授权页，不属于 App 会话。
 - 本机资料与备份：reader data、backup module 与相关 controller。
 - 发布：`scripts/release-android.mjs`、`scripts/check-version.mjs` 和 `scripts/smoke-android.mjs`。
 
