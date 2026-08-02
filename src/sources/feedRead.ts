@@ -1,5 +1,5 @@
 import { getNodeSeekCategories, getNodeSeekFeed } from '@/sources/nodeseek/reader';
-import { yaohuoCategoriesResponse } from '@/sources/yaohuo/parser';
+import { yaohuoCategoriesResponse } from '@/sources/yaohuo/feedParser';
 import { getV2exCategories, getV2exFeed } from '@/sources/v2ex/reader';
 import { getYaohuoFeedDirect } from '@/sources/yaohuo/reader';
 import { getDiscourseSourceCategories, getDiscourseSourceFeed, type DiscourseReadAuth } from './discourseRead';

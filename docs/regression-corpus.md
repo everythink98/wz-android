@@ -2174,7 +2174,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `USER-01`、`LIBRARY-02` |
 | 用户症状 | 新用户明确有 0 主题、0 回复或 0 帖子时，App 隐藏统计，用户看到的状态与来源不一致。 |
 | 触发条件 | linux.do、小隐寺、NodeSeek 或妖火 adapter 用 truthy 判断数字，0 被转成 undefined。 |
-| 根因 seam | `src/sources/linuxdo/account.ts`、`src/sources/xiaoyinsi/account.ts`、`src/sources/nodeseek/protocol.ts`、`src/sources/yaohuo/parser.ts` 的可选非负统计归一化。 |
+| 根因 seam | `src/sources/linuxdo/account.ts`、`src/sources/xiaoyinsi/account.ts`、`src/sources/nodeseek/protocol.ts`、`src/sources/yaohuo/normalization.ts` 的可选非负统计归一化。 |
 | 必须保持的行为 | 来源明确返回的有限非负 0 必须保留；字段缺失仍为 undefined；负数拒绝。妖火两个组成统计均已定义时，包括 0，派生总数。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts`、`src/sources/xiaoyinsi/reader.test.ts`、`src/sources/yaohuo/parser.test.ts` 分别固定四站显式零统计。 |
 | 最低可靠自动测试层 | `UNIT_PASS`。 |

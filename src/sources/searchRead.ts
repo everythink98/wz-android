@@ -1,5 +1,5 @@
 import { searchNodeSeek } from '@/sources/nodeseek/reader';
-import { searchV2ex } from '@/sources/v2ex/reader';
+import { searchV2ex } from '@/sources/v2ex/search';
 import { searchYaohuoDirect } from '@/sources/yaohuo/reader';
 import { searchDiscourseSourceTopics, type DiscourseReadAuth } from './discourseRead';
 import { aggregateSearchSources, isDiscourseSource } from '@/domain/forum/sourceCatalog';

@@ -4,7 +4,8 @@ import {
   getNodeSeekTopic,
   getNodeSeekUserProfile
 } from '@/sources/nodeseek/reader';
-import { parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from '@/sources/yaohuo/parser';
+import { parseYaohuoListHtml } from '@/sources/yaohuo/feedParser';
+import { parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from '@/sources/yaohuo/userParser';
 import {
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
@@ -14,7 +15,8 @@ import {
   yaohuoUserProfileReplyListUrl,
   yaohuoUserProfileTopicListUrl
 } from '@/sources/yaohuo/protocol';
-import { getV2exTopic, getV2exUserProfile } from '@/sources/v2ex/reader';
+import { getV2exTopic } from '@/sources/v2ex/reader';
+import { getV2exUserProfile } from '@/sources/v2ex/account';
 import { checkYaohuoLoginDirect } from '@/sources/yaohuo/reader';
 import {
   getDiscourseSourceCurrentUserProfile,

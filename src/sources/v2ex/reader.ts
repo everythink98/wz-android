@@ -1,16 +1,10 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import type { SearchSort } from '@/domain/forum/feed';
-import { searchTimeRangeStartEpoch, type V2exSearchFilter } from '@/domain/forum/searchFilters';
-import { XMLParser } from 'fast-xml-parser';
 import type {
   CategoriesResponse,
   FeedResponse,
   Reply,
-  SearchResponse,
   Topic,
   TopicDetail,
-  UserProfile,
-  UserReplyActivity,
   V2exFeedFilter
 } from '@/domain/forum/models';
 import {
@@ -23,34 +17,25 @@ import {
   parsePositiveInteger,
   parseHtml,
   sanitizeContentHtml,
-  sortTopicsByCreatedAt,
   sortTopicsByTime,
   textExcerpt,
   textContentFromHtml,
   toIsoString
 } from '@/domain/forum/html';
 import {
-  SOV2EX_URL,
   V2EX_BASE_URL as BASE_URL,
   safeV2exNodePath as safeNodePath,
   safeV2exTopicUrl as safeTopicUrl,
   v2exMemberUrl as memberUrl,
   v2exNodeIdFromHref as nodeIdFromHref
-} from './parser';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
+} from './protocol';
+import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 
 const HTML_LIST_PAGE_SIZE = 20;
 const V2EX_FEED_CURSOR_LIMIT = 200;
 const V2EX_HTML_TIMEZONE = '+08:00';
-const atomParser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: '',
-  textNodeName: '#text',
-  cdataPropName: '#cdata',
-  trimValues: true
-});
 
-interface V2exOptions {
+export interface V2exOptions {
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
@@ -101,12 +86,12 @@ function toV2exHtmlIsoString(value: unknown) {
   return toIsoString(value, V2EX_HTML_TIMEZONE);
 }
 
-function topicId(value: unknown) {
+export function topicId(value: unknown) {
   const text = String(value || '').trim();
   return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
 }
 
-function v2exMemberLevelLabel(member: Record<string, unknown>) {
+export function v2exMemberLevelLabel(member: Record<string, unknown>) {
   return member.pro === true || Number(member.pro) > 0 ? 'Pro' : undefined;
 }
 
@@ -144,7 +129,7 @@ function normalizeApiTopic(raw: unknown): Topic | null {
   };
 }
 
-function normalizeHtmlTopic(
+export function normalizeHtmlTopic(
   element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
   fallbackCategory?: string
 ): Topic | null {
@@ -448,7 +433,7 @@ function parseV2exListPage(html: string, page: number, path: string, fallbackCat
   return { items, hasMore };
 }
 
-async function fetchJson<T>(url: string, options: V2exOptions = {}) {
+export async function fetchJson<T>(url: string, options: V2exOptions = {}) {
   const response = await fetchWithTimeout(
     url,
     {
@@ -463,7 +448,7 @@ async function fetchJson<T>(url: string, options: V2exOptions = {}) {
   return data as T;
 }
 
-async function fetchText(url: string, options: V2exOptions = {}) {
+export async function fetchText(url: string, options: V2exOptions = {}) {
   const response = await fetchWithTimeout(
     url,
     {
@@ -741,290 +726,6 @@ function mergeV2exReplyMeta(replies: Reply[], detail: V2exHtmlDetail | null) {
   });
 }
 
-function parseV2exMemberTopics(html: string, username: string, avatar?: string) {
-  const root = parseHtml(html);
-  return root
-    .querySelectorAll('.cell, .box .item')
-    .map((element) => normalizeHtmlTopic(element))
-    .filter(Boolean)
-    .map((topic) => ({
-      ...topic,
-      author: topic?.author || username,
-      authorId: username,
-      authorAvatar: topic?.authorAvatar || avatar,
-      authorUrl: memberUrl(username)
-    })) as Topic[];
-}
-
-function v2exMemberActivityDate(text: string) {
-  const match = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
-  if (!match) {
-    return '';
-  }
-  const year = new Date().getFullYear();
-  const month = Number(match[1]);
-  const day = Number(match[2]);
-  const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
-}
-
-function v2exMemberActivityDisplayTime(text: string) {
-  return text.match(/^\s*(.+?)\s*回复了/)?.[1]?.trim() || '';
-}
-
-function nextV2exMemberPageCursor(html: string, page: number) {
-  const root = parseHtml(html);
-  const pages = root
-    .querySelectorAll('a[href*="?p="], a[href*="&p="]')
-    .map((link) => parsePositiveInteger(link.getAttribute('href')))
-    .filter((value) => value > page);
-  return pages.length ? String(Math.min(...pages)) : null;
-}
-
-function parseV2exMemberReplies(html: string, username: string, avatar: string | undefined, page: number) {
-  const root = parseHtml(html);
-  const items = root
-    .querySelectorAll('.dock_area')
-    .map((element) => {
-      const topicLink = element.querySelector('a[href*="/t/"]');
-      const href = topicLink?.getAttribute('href') || '';
-      const topicId = href.match(/\/t\/(\d+)/)?.[1] || '';
-      const topicTitle = elementText(topicLink);
-      if (!topicId || !topicTitle) {
-        return null;
-      }
-      const text = elementText(element);
-      const categoryLink = element.querySelector('a[href^="/go/"]');
-      const categoryId = nodeIdFromHref(categoryLink?.getAttribute('href'));
-      const parts = text
-        .split('›')
-        .map((part) => part.trim())
-        .filter(Boolean);
-      const category = elementText(categoryLink) || (parts.length >= 2 ? parts[parts.length - 2] : undefined);
-      const floor = parsePositiveInteger(href.match(/#reply(\d+)/)?.[1]);
-      const createdAt = v2exMemberActivityDate(text);
-      const topicUrl = safeTopicUrl(topicId, href.split('#')[0]);
-      const displayTimeText = v2exMemberActivityDisplayTime(text);
-      return {
-        source: 'v2ex' as const,
-        id: `${topicId}:${floor || 0}`,
-        topicId,
-        topicTitle,
-        topicUrl,
-        url: safeTopicUrl(topicId, href),
-        author: username,
-        authorId: username,
-        authorUrl: memberUrl(username),
-        categoryId,
-        category,
-        ...(avatar ? { authorAvatar: avatar } : {}),
-        ...(createdAt ? { createdAt } : {}),
-        ...(displayTimeText ? { displayTimeText } : {}),
-        ...(floor ? { floor } : {})
-      };
-    })
-    .filter(Boolean) as UserReplyActivity[];
-  return {
-    items,
-    nextCursor: nextV2exMemberPageCursor(html, page)
-  };
-}
-
-function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
-  const data = atomParser.parse(xml);
-  const entries = isRecord(data) && isRecord(data.feed) ? data.feed.entry : [];
-  return (Array.isArray(entries) ? entries : [entries])
-    .map((entry) => {
-      if (!isRecord(entry)) {
-        return null;
-      }
-      const links = Array.isArray(entry.link) ? entry.link : [entry.link];
-      const link = links.find((item) => isRecord(item) && typeof item.href === 'string') || {};
-      const href = isRecord(link) ? String(link.href || '') : '';
-      const id = href.match(/\/t\/(\d+)/)?.[1] || String(entry.id || '').match(/\/t\/(\d+)/)?.[1];
-      const rawTitle = String(entry.title || '').trim();
-      const titleMatch = rawTitle.match(/^\[([^\]]+)\]\s*(.+)$/);
-      const category = titleMatch ? titleMatch[1].trim() : undefined;
-      const title = (titleMatch ? titleMatch[2] : rawTitle).trim();
-      if (!id || !title) {
-        return null;
-      }
-      const createdAt = toIsoString(entry.published) || toIsoString(entry.updated) || new Date().toISOString();
-      const updatedAt = toIsoString(entry.updated) || createdAt;
-      const content = isRecord(entry.content)
-        ? String(entry.content['#cdata'] || entry.content['#text'] || '')
-        : String(entry.content || '');
-      return {
-        source: 'v2ex' as const,
-        id,
-        title,
-        author: username,
-        authorId: username,
-        authorAvatar: avatar,
-        authorUrl: memberUrl(username),
-        category,
-        url: safeTopicUrl(id, href),
-        createdAt,
-        lastReplyAt: updatedAt,
-        replyCount: Number.parseInt(href.match(/#reply(\d+)/)?.[1] || '0', 10) || 0,
-        excerpt: textExcerpt(content)
-      };
-    })
-    .filter(Boolean) as Topic[];
-}
-
-async function fetchV2exMemberTopics(username: string, avatar: string | undefined, options: V2exOptions, page = 1) {
-  const pageQuery = page > 1 ? `?p=${encodeURIComponent(String(page))}` : '';
-  try {
-    const html = await fetchText(`${memberUrl(username)}/topics${pageQuery}`, options);
-    const items = parseV2exMemberTopics(html, username, avatar).slice(0, 30);
-    const candidateCount = Math.max(
-      (html.match(/class=["'][^"']*\bitem\b/gi) || []).length,
-      (html.match(/<a\b[^>]*href=["'][^"']*\/t\//gi) || []).length
-    );
-    return annotateSourceDiagnosticSummary(
-      {
-        items,
-        nextCursor: nextV2exMemberPageCursor(html, page)
-      },
-      {
-        parserVariant: 'html-user-topics',
-        candidateCount,
-        validCount: items.length,
-        droppedCount: Math.max(0, candidateCount - items.length),
-        isExpectedEmpty: candidateCount === 0
-      }
-    );
-  } catch {
-    return annotateSourceDiagnosticSummary(
-      { items: [] as Topic[], nextCursor: null },
-      {
-        parserVariant: 'html-user-topics',
-        candidateCount: 0,
-        validCount: 0,
-        droppedCount: 0,
-        partialErrorCount: 1,
-        hasDegradation: true,
-        isExpectedEmpty: true
-      }
-    );
-  }
-}
-
-async function fetchV2exMemberReplies(username: string, avatar: string | undefined, options: V2exOptions, page = 1) {
-  const pageQuery = page > 1 ? `?p=${encodeURIComponent(String(page))}` : '';
-  const html = await fetchText(`${memberUrl(username)}/replies${pageQuery}`, options);
-  return parseV2exMemberReplies(html, username, avatar, page);
-}
-
-async function fetchV2exMemberFeedTopics(username: string, avatar: string | undefined, options: V2exOptions) {
-  try {
-    const xml = await fetchText(`${BASE_URL}/feed/member/${encodeURIComponent(username)}.xml`, options);
-    const topics = xml ? parseV2exAtomFeed(xml, username, avatar).slice(0, 30) : [];
-    return annotateSourceDiagnosticSummary(topics, {
-      parserVariant: 'atom-user-topics',
-      candidateCount: topics.length,
-      validCount: topics.length,
-      droppedCount: 0,
-      isExpectedEmpty: topics.length === 0
-    });
-  } catch {
-    return annotateSourceDiagnosticSummary([] as Topic[], {
-      parserVariant: 'atom-user-topics',
-      candidateCount: 0,
-      validCount: 0,
-      droppedCount: 0,
-      partialErrorCount: 1,
-      hasDegradation: true,
-      isExpectedEmpty: true
-    });
-  }
-}
-
-export async function getV2exUserProfile(
-  id: string,
-  username: string,
-  options: V2exOptions = {}
-): Promise<UserProfile> {
-  const key = (username || id).trim();
-  if (!key) {
-    throw new Error('V2EX 用户信息不完整');
-  }
-  const cursorType = options.cursorType;
-  const wantsTopics = cursorType !== 'replies';
-  const wantsReplies = cursorType !== 'topics';
-  const page = parsePositiveInteger(options.cursor) || 1;
-  const memberData = await fetchJson<Record<string, unknown>>(
-    `${BASE_URL}/api/members/show.json?username=${encodeURIComponent(key)}`,
-    options
-  );
-  if (isRecord(memberData) && memberData.status === 'notfound') {
-    throw new Error('V2EX 用户不存在');
-  }
-  const resolvedUsername = String(memberData.username || key);
-  const avatar = absoluteUrl(memberData.avatar_large || memberData.avatar_normal || memberData.avatar_mini, BASE_URL);
-  const levelLabel = v2exMemberLevelLabel(memberData);
-  const topicsPage = wantsTopics
-    ? await fetchV2exMemberTopics(resolvedUsername, avatar, options, page)
-    : { items: [], nextCursor: null };
-  const feedTopics =
-    wantsTopics && !topicsPage.items.length && !options.cursor
-      ? await fetchV2exMemberFeedTopics(resolvedUsername, avatar, options)
-      : topicsPage.items;
-  const profileTopics = sortTopicsByCreatedAt(feedTopics)
-    .slice(0, 30)
-    .map((topic) => (levelLabel ? { ...topic, authorLevelLabel: topic.authorLevelLabel || levelLabel } : topic));
-  let replyResult = { items: [] as UserReplyActivity[], nextCursor: null as string | null };
-  let replyPartialErrorCount = 0;
-  if (wantsReplies) {
-    if (options.cursorType === 'replies') {
-      replyResult = await fetchV2exMemberReplies(resolvedUsername, avatar, options, page);
-    } else {
-      try {
-        replyResult = await fetchV2exMemberReplies(resolvedUsername, avatar, options, page);
-      } catch {
-        replyPartialErrorCount += 1;
-      }
-    }
-  }
-  const result: UserProfile = {
-    source: 'v2ex',
-    id: resolvedUsername,
-    username: resolvedUsername,
-    displayName: resolvedUsername,
-    avatar,
-    ...(levelLabel ? { levelLabel } : {}),
-    url: memberUrl(resolvedUsername),
-    bio: typeof memberData.tagline === 'string' ? memberData.tagline : undefined,
-    topics: profileTopics,
-    topicCount: profileTopics.length || undefined,
-    postCount: profileTopics.length || undefined,
-    hasMoreTopics: Boolean(topicsPage.nextCursor),
-    nextTopicsCursor: topicsPage.nextCursor,
-    replies: replyResult.items,
-    replyCount: replyResult.items.length || undefined,
-    hasMoreReplies: Boolean(replyResult.nextCursor),
-    nextRepliesCursor: replyResult.nextCursor
-  };
-  const topicsSummary = sourceDiagnosticSummary(topicsPage);
-  const feedSummary = sourceDiagnosticSummary(feedTopics);
-  const partialErrorCount =
-    (topicsSummary?.partialErrorCount || 0) + (feedSummary?.partialErrorCount || 0) + replyPartialErrorCount;
-  const hasUserIdentity = Boolean(memberData.username || memberData.id);
-  const candidateCount = 1 + profileTopics.length + replyResult.items.length;
-  const validCount = (hasUserIdentity ? 1 : 0) + profileTopics.length + replyResult.items.length;
-  return annotateSourceDiagnosticSummary(result, {
-    parserVariant: !topicsPage.items.length && profileTopics.length ? 'atom-user-topics' : 'api-user',
-    candidateCount,
-    validCount,
-    droppedCount: (topicsSummary?.droppedCount || 0) + (feedSummary?.droppedCount || 0),
-    partialErrorCount,
-    missingFloorCount: replyResult.items.filter((reply) => !reply.floor).length,
-    hasRepeatedCursor: result.nextTopicsCursor === options.cursor || result.nextRepliesCursor === options.cursor,
-    isParseEmpty: !hasUserIdentity && profileTopics.length === 0 && replyResult.items.length === 0
-  });
-}
-
 export async function getV2exTopic(
   id: string,
   options: V2exOptions & { replyLimit?: number } = {}
@@ -1082,133 +783,5 @@ export async function getV2exTopic(
     validCount: 1 + replies.length,
     droppedCount: Math.max(0, replyCandidates - replies.length),
     partialErrorCount
-  });
-}
-
-function sov2exHits(data: unknown) {
-  if (Array.isArray(data)) {
-    return data;
-  }
-  if (isRecord(data) && Array.isArray(data.hits)) {
-    return data.hits;
-  }
-  if (isRecord(data) && isRecord(data.hits) && Array.isArray(data.hits.hits)) {
-    return data.hits.hits;
-  }
-  if (isRecord(data) && Array.isArray(data.data)) {
-    return data.data;
-  }
-  return [];
-}
-
-function sov2exTotal(data: unknown) {
-  if (!isRecord(data)) {
-    return undefined;
-  }
-  if (typeof data.total === 'number') {
-    return data.total;
-  }
-  if (isRecord(data.hits)) {
-    if (typeof data.hits.total === 'number') {
-      return data.hits.total;
-    }
-    if (isRecord(data.hits.total) && typeof data.hits.total.value === 'number') {
-      return data.hits.total.value;
-    }
-  }
-  return undefined;
-}
-
-function highlightText(highlight: unknown) {
-  if (!isRecord(highlight)) {
-    return '';
-  }
-  for (const key of ['title', 'content', 'reply_list.content', 'postscript_list.content']) {
-    const value = highlight[key];
-    if (Array.isArray(value) && value.length) {
-      return value.join(' ');
-    }
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
-  return '';
-}
-
-export async function searchV2ex(
-  query: string,
-  options: V2exOptions & { limit?: number; page?: number; sort?: SearchSort; filter?: V2exSearchFilter } = {}
-): Promise<SearchResponse> {
-  const limit = options.limit || 30;
-  const page = options.page || 1;
-  const from = Math.max(0, page - 1) * limit;
-  const activeSort = options.filter?.sort || options.sort;
-  const params = new URLSearchParams({
-    q: query,
-    size: String(limit),
-    from: String(from),
-    version: '1.0.1'
-  });
-  if (activeSort === 'time') {
-    params.set('sort', 'created');
-    params.set('order', '0');
-  } else {
-    params.set('sort', 'sumup');
-  }
-  const filter = options.filter;
-  if (filter?.node.trim()) {
-    params.set('node', filter.node.trim());
-  }
-  if (filter?.username.trim()) {
-    params.set('username', filter.username.trim().replace(/^@+/, ''));
-  }
-  if (filter?.operator === 'and') {
-    params.set('operator', 'and');
-  }
-  const gte = filter ? searchTimeRangeStartEpoch(filter.timeRange) : undefined;
-  if (gte !== undefined) {
-    params.set('gte', String(gte));
-  }
-  const data = await fetchJson<unknown>(`${SOV2EX_URL}/api/search?${params.toString()}`, options);
-  const hits = sov2exHits(data);
-  const items = hits
-    .map((hit) => {
-      const source = isRecord(hit) && isRecord(hit._source) ? hit._source : isRecord(hit) ? hit : {};
-      const id = topicId(source.id);
-      if (!id) {
-        return null;
-      }
-      const createdAt = toIsoString(source.created) || new Date().toISOString();
-      const accessRequirement = accessRequirementFromObject(source);
-      return {
-        source: 'v2ex' as const,
-        id,
-        title: String(source.title || ''),
-        author: String(source.member || source.author || ''),
-        category: typeof source.node === 'string' && !/^\d+$/.test(source.node) ? source.node : undefined,
-        url: `${BASE_URL}/t/${id}`,
-        createdAt,
-        lastReplyAt: createdAt,
-        replyCount: Number(source.replies || 0),
-        excerpt: textExcerpt(highlightText(isRecord(hit) ? hit.highlight : undefined) || source.content || ''),
-        ...(accessRequirement ? { accessRequirement } : {})
-      };
-    })
-    .filter(Boolean) as Topic[];
-  const total = sov2exTotal(data);
-  const hasMore = typeof total === 'number' ? total > from + hits.length : hits.length >= limit;
-  const result = {
-    items,
-    errors: {},
-    hasMore,
-    nextPage: hasMore ? page + 1 : null
-  };
-  return annotateSourceDiagnosticSummary(result, {
-    parserVariant: 'sov2ex-search',
-    candidateCount: hits.length,
-    validCount: items.length,
-    droppedCount: Math.max(0, hits.length - items.length),
-    isExpectedEmpty: hits.length === 0,
-    hasRepeatedCursor: result.nextPage === page
   });
 }

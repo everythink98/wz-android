@@ -1,15 +1,9 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
 import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from '@/domain/forum/models';
-import {
-  checkYaohuoLoginHtml,
-  ensureYaohuoHtmlLoggedIn,
-  parseYaohuoListHtml,
-  parseYaohuoFavoriteRecordId,
-  parseYaohuoRepliesHtml,
-  parseYaohuoSearchHtml,
-  parseYaohuoTopicHtml
-} from './parser';
+import { checkYaohuoLoginHtml, ensureYaohuoHtmlLoggedIn } from './sessionParser';
+import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
+import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesHtml, parseYaohuoTopicHtml } from './topicParser';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL, requireYaohuoRequestUrl } from './protocol';
 import {
   annotateSourceDiagnosticSummary,

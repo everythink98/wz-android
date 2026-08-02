@@ -2,7 +2,8 @@ import type { YaohuoActionRequest } from './actionRequest';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { elementText, parseHtml, textContentFromHtml } from '@/domain/forum/html';
-import { parseYaohuoFavoriteRecordId, yaohuoLoginRequirementReason } from './parser';
+import { parseYaohuoFavoriteRecordId } from './topicParser';
+import { yaohuoLoginRequirementReason } from './sessionParser';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL } from './protocol';
 
 const YAOHUO_ACTION_HEADERS = {

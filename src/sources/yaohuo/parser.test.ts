@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  parseYaohuoListHtml,
-  parseYaohuoRepliesHtml,
-  parseYaohuoUserProfileHtml,
-  parseYaohuoUserRepliesHtml
-} from './parser';
+import { parseYaohuoListHtml } from './feedParser';
+import { parseYaohuoRepliesHtml } from './topicParser';
+import { parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './userParser';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 describe('yaohuo reply parsing', () => {

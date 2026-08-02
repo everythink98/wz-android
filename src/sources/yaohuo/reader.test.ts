@@ -11,14 +11,9 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './reader';
-import {
-  parseYaohuoCurrentUserHtml,
-  parseYaohuoFavoriteRecordId,
-  parseYaohuoListHtml,
-  parseYaohuoRepliesHtml,
-  parseYaohuoSearchHtml,
-  parseYaohuoTopicHtml
-} from './parser';
+import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
+import { parseYaohuoCurrentUserHtml } from './sessionParser';
+import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesHtml, parseYaohuoTopicHtml } from './topicParser';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { Topic } from '@/domain/forum/models';
 
