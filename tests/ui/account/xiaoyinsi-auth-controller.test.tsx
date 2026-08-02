@@ -50,6 +50,7 @@ jest.mock('@/sources/xiaoyinsi/auth', () => {
 
 import * as XiaoyinsiAuth from '@/sources/xiaoyinsi/auth';
 import { useXiaoyinsiAuthController } from '@/features/account/useXiaoyinsiAuthController';
+import { useXiaoyinsiLevelController } from '@/features/account/useXiaoyinsiLevelController';
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -130,15 +131,21 @@ async function renderController(
     dispatchSiteSessionEvent,
     hook: await (async () => {
       const hook = await renderHook(
-        () =>
-          useXiaoyinsiAuthController({
-            sessionEpochs: initialForumSessionEpochs,
+        () => {
+          const auth = useXiaoyinsiAuthController({
             dispatchSiteSessionEvent,
             fetcher,
+            notify
+          });
+          const level = useXiaoyinsiLevelController({
+            authorizationPhase: auth.phase,
             isIdentityPending,
             notify,
-            readGateway
-          }),
+            readGateway,
+            sessionEpochs: initialForumSessionEpochs
+          });
+          return { ...auth, ...level };
+        },
         {
           wrapper: ({ children }) => <QueryClientProvider client={appQueryClient}>{children}</QueryClientProvider>
         }

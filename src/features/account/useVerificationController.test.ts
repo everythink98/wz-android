@@ -37,7 +37,6 @@ import {
   type SiteSessionEvent,
   type SiteSessionState
 } from '@/domain/session/siteSessionState';
-import type { Topic } from '@/domain/forum/models';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
 import { useVerificationController } from './useVerificationController';
 
@@ -67,11 +66,9 @@ const anonymousSession: SiteSessionState = {
 
 function createController(
   options: {
-    linuxDoIdentityPending?: boolean;
     onBeforeLinuxDoSurfaceOpened?: () => void;
     onLinuxDoRecoveryBarrierChanged?: (active: boolean) => void;
     reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
-    selectedTopic?: Topic | null;
   } = {}
 ) {
   const showLinuxDoPanelRef = ref(false);
@@ -91,10 +88,8 @@ function createController(
   const setLinuxDoWebViewError = vi.fn();
   const setLinuxDoWebViewUserAgent = vi.fn();
   const updateLinuxDoSession = vi.fn<(event: SiteSessionEvent) => void>();
-  const openTopic = vi.fn(async () => undefined);
   const controller = useVerificationController({
     changeNodeSeekLoginPanel: vi.fn(),
-    changeScreen: vi.fn(),
     checkingRequestIdRef: ref(0),
     closeYaohuoLoginPanel: vi.fn(),
     linuxDoPanelClosingSessionRef: ref<number | null>(null),
@@ -103,16 +98,13 @@ function createController(
     linuxDoWebViewRef: linuxDoWebViewRef as never,
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
-    linuxDoIdentityPending: options.linuxDoIdentityPending,
     notify,
     onBeforeLinuxDoSurfaceOpened: options.onBeforeLinuxDoSurfaceOpened,
     onLoginWebViewFailure,
     onLinuxDoRecoveryBarrierChanged,
     onLinuxDoSurfaceClosed,
     onLinuxDoSurfaceOpened,
-    openTopicRef: ref(openTopic),
     reconcileAccountStatus,
-    selectedTopic: options.selectedTopic || null,
     setChecking: vi.fn(),
     setLinuxDoWebViewError,
     setLinuxDoWebViewKey: vi.fn(),
@@ -122,9 +114,7 @@ function createController(
     setShowLinuxDoPanel: vi.fn((value: boolean | ((previous: boolean) => boolean)) => {
       showLinuxDoPanelRef.current = typeof value === 'function' ? value(showLinuxDoPanelRef.current) : value;
     }),
-    setShowSettingsPanel: vi.fn(),
     showLinuxDoPanelRef,
-    topicDetail: null,
     updateLinuxDoSession,
     updateNodeSeekSession: vi.fn()
   });
@@ -146,7 +136,6 @@ function createController(
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
     notify,
-    openTopic,
     onLoginWebViewFailure,
     onLinuxDoRecoveryBarrierChanged,
     onLinuxDoSurfaceClosed,
@@ -267,27 +256,6 @@ describe('linux.do visible verification coordinator', () => {
         type: expect.stringMatching(/^(?:cleared|login-expired|session-updated)$/)
       })
     );
-    expect(showLinuxDoPanelRef.current).toBe(true);
-  });
-
-  it('[REG-LINUXDO-007] opens identity verification instead of retrying a Topic query that has not started', async () => {
-    const selectedTopic: Topic = {
-      source: 'linuxdo',
-      id: '42',
-      title: 'Topic',
-      author: 'alice',
-      url: 'https://linux.do/t/42',
-      createdAt: '2026-07-29T00:00:00.000Z',
-      replyCount: 0
-    };
-    const { controller, openTopic, showLinuxDoPanelRef } = createController({
-      linuxDoIdentityPending: true,
-      selectedTopic
-    });
-
-    await controller.verifyLinuxDoFromTopic();
-
-    expect(openTopic).not.toHaveBeenCalled();
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 

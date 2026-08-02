@@ -346,31 +346,6 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
-  it('serializes mutations for the same topic without a handwritten queue', async () => {
-    const firstTransport = Promise.withResolvers<unknown>();
-    mockRunNodeSeekAction
-      .mockImplementationOnce(async () => firstTransport.promise)
-      .mockResolvedValueOnce({ success: true });
-    const hook = await renderActions();
-    let first!: Promise<void>;
-    let second!: Promise<void>;
-
-    await act(async () => {
-      first = hook.result.current.actions.checkIn();
-      second = hook.result.current.actions.checkIn();
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
-
-    await act(async () => {
-      firstTransport.resolve({ success: true });
-      await first;
-      await second;
-    });
-    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(2);
-    expect(mockRunNodeSeekAction.mock.calls.every(([options]) => options.signal === undefined)).toBe(true);
-  });
-
   it('[REG-WRITE-019] rejects a duplicate reply submit before a second scoped transport is queued', async () => {
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
@@ -674,80 +649,6 @@ describe('topic action query mutations', () => {
         serverConfirmed: true
       })
     ]);
-  });
-
-  it('[REG-WRITE-015] uses the fixed NodeSeek global mutation identity for attendance after leaving another source', async () => {
-    const linuxDetail = detailFor('linuxdo');
-    mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
-    const hook = await renderActions({
-      siteSessionStates: loggedInStates('nodeseek'),
-      topicDetail: linuxDetail
-    });
-
-    await act(async () => {
-      await hook.result.current.actions.checkIn();
-    });
-
-    const attendance = appQueryClient.getMutationCache().getAll().at(-1);
-    expect(attendance?.options.mutationKey).toEqual(['forum', 'nodeseek', 'mutation', 'topic', 'global']);
-    expect(attendance?.options.scope).toEqual({ id: 'forum:nodeseek:topic:global' });
-  });
-
-  it('[REG-WRITE-023] records a late confirmed NodeSeek attendance as stale', async () => {
-    const lines: string[] = [];
-    setDiagnosticWriter((line) => {
-      lines.push(line);
-    });
-    let ticketCurrent = true;
-    mockRunNodeSeekAction.mockImplementationOnce(async () => {
-      ticketCurrent = false;
-      return { success: true };
-    });
-    const notify = jest.fn();
-    const hook = await renderActions({
-      isWritableSessionTicketCurrent: () => ticketCurrent,
-      notify,
-      siteSessionStates: loggedInStates('nodeseek')
-    });
-
-    await act(async () => {
-      await hook.result.current.actions.checkIn();
-    });
-
-    expect(notify).not.toHaveBeenCalled();
-    const finishes = lines
-      .map((line) => JSON.parse(line) as DiagnosticEvent)
-      .filter((event) => event.area === 'topic' && event.operation === 'attendance' && event.phase === 'finish');
-    expect(finishes).toEqual([
-      expect.objectContaining({
-        outcome: 'stale',
-        reason: 'stale',
-        serverConfirmed: true
-      })
-    ]);
-  });
-
-  it.each([
-    ['ordinary', new Error('签到网络失败')],
-    ['permission-denied', Object.assign(new Error('当前账号不能签到'), { status: 403 })]
-  ])('[REG-WRITE-024] leaves identity unchanged for %s NodeSeek attendance failure', async (_kind, error) => {
-    mockRunNodeSeekAction.mockRejectedValueOnce(error);
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
-    const notify = jest.fn();
-    const hook = await renderActions({
-      notify,
-      reconcileWritableSession,
-      siteSessionStates: loggedInStates('nodeseek')
-    });
-
-    await act(async () => {
-      await hook.result.current.actions.checkIn();
-    });
-
-    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledWith(error.message);
   });
 
   it('rolls an optimistic interaction back when its transport fails', async () => {

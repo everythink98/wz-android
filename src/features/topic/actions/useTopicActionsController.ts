@@ -3,7 +3,6 @@ import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useMutation, useMutationState, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
 import {
-  buildNodeSeekAttendanceRequest,
   buildNodeSeekCollectionRequest,
   buildNodeSeekEditReplyRequest,
   buildNodeSeekInteractionRequest,
@@ -105,11 +104,6 @@ type MutationVariables = {
   applyResult?: (result: unknown, variables: MutationVariables) => void;
   afterSuccess?: (result: unknown, variables: MutationVariables) => Promise<boolean>;
   successMessage?: string | ((result: unknown) => string);
-};
-
-type AttendanceMutationVariables = {
-  ticket: WritableSessionTicket;
-  trace: DiagnosticTrace;
 };
 
 const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE = 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
@@ -562,35 +556,7 @@ export function useTopicActionsController({
     [assertWritableTicket, fetcher, nodeSeekWebViewUserAgentRef, notify, reconcileWritableSession]
   );
 
-  const attendanceMutation = useMutation<unknown, unknown, AttendanceMutationVariables>({
-    mutationKey: forumMutationKeys.topic('nodeseek', 'global'),
-    scope: { id: 'forum:nodeseek:topic:global' },
-    mutationFn: ({ ticket, trace }) =>
-      runNodeSeekRequest(buildNodeSeekAttendanceRequest({ random: false }), trace, ticket),
-    onSuccess: (_result, variables) => {
-      if (!isWritableSessionTicketCurrent(variables.ticket)) {
-        finishDiagnosticTrace(variables.trace, 'stale', {
-          source: 'nodeseek',
-          reason: 'stale',
-          serverConfirmed: true
-        });
-        return;
-      }
-      notify('签到请求已提交');
-      finishDiagnosticTrace(variables.trace, 'success', { source: 'nodeseek', serverConfirmed: true });
-    },
-    onError: (error, variables) => {
-      const current = isWritableSessionTicketCurrent(variables.ticket);
-      const failure = mutationFailure(error);
-      if (current && !(error instanceof HandledMutationError)) notify(failure.message);
-      finishDiagnosticTrace(variables.trace, current ? failure.outcome : 'stale', {
-        source: 'nodeseek',
-        reason: current ? failure.reason : 'stale',
-        ...(failure.serverConfirmed ? { serverConfirmed: true } : {})
-      });
-    }
-  });
-  const actionBusy = attendanceMutation.isPending || pendingVariables.some((variables) => variables?.busy !== false);
+  const actionBusy = pendingVariables.some((variables) => variables?.busy !== false);
 
   const runYaohuoRequest = useCallback(
     async (
@@ -1163,26 +1129,6 @@ export function useTopicActionsController({
     topicDetail
   ]);
 
-  const checkIn = useCallback(async () => {
-    const trace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });
-    try {
-      const ticket = await ensureWritableSession('nodeseek');
-      await attendanceMutation.mutateAsync({
-        ticket,
-        trace
-      });
-    } catch (error) {
-      if (error instanceof WritableSessionBlockedError) {
-        notify(error.message);
-        finishDiagnosticTrace(trace, 'blocked', {
-          source: 'nodeseek',
-          reason: error.reason
-        });
-      }
-      // Error reporting and diagnostics are owned by the mutation callbacks.
-    }
-  }, [attendanceMutation.mutateAsync, ensureWritableSession, notify]);
-
   const interact = useCallback(
     async (type: InteractionType, commentId?: number) => {
       const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -1531,7 +1477,6 @@ export function useTopicActionsController({
   return {
     actionBusy,
     bookmarkOnDiscourseSite,
-    checkIn,
     collectOnNodeSeekSite,
     deleteReply,
     editReply,

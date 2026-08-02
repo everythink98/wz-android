@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
-import type { SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
+import type { SourceErrorInfo } from '@/domain/forum/models';
 import { errorMessage } from '@/platform/network/errors';
-import type { Screen } from '@/ui/navigation/types';
 import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from './credentialDiagnostics';
 import {
@@ -97,27 +96,23 @@ export function useVerificationController({
   linuxDoWebViewRef,
   linuxDoWebViewSessionRef,
   linuxDoWebViewUserAgentRef,
-  linuxDoIdentityPending = false,
   notify,
   onBeforeLinuxDoSurfaceOpened = () => undefined,
   onLoginWebViewFailure,
   onLinuxDoRecoveryBarrierChanged = () => undefined,
   onLinuxDoSurfaceClosed = () => undefined,
   onLinuxDoSurfaceOpened = () => undefined,
-  openTopicRef,
+  onNodeSeekVerificationOpened = () => undefined,
+  onVerificationOpened = () => undefined,
   reconcileAccountStatus,
-  selectedTopic,
   setChecking,
   setLinuxDoWebViewError,
   setLinuxDoWebViewKey,
   setLinuxDoWebViewUserAgent,
   setLoadingLinuxDoPage,
   setMountLinuxDoWebView,
-  changeScreen,
   setShowLinuxDoPanel,
-  setShowSettingsPanel,
   showLinuxDoPanelRef,
-  topicDetail,
   updateLinuxDoSession,
   updateNodeSeekSession
 }: {
@@ -130,27 +125,23 @@ export function useVerificationController({
   linuxDoWebViewRef: Ref<WebView | null>;
   linuxDoWebViewSessionRef: Ref<number>;
   linuxDoWebViewUserAgentRef: Ref<string>;
-  linuxDoIdentityPending?: boolean;
   notify: (message: string) => void;
   onBeforeLinuxDoSurfaceOpened?: () => void;
   onLoginWebViewFailure: (site: 'linuxdo', attempt: number, reason: LoginWebViewFailureReason) => void;
   onLinuxDoRecoveryBarrierChanged?: (active: boolean) => void;
   onLinuxDoSurfaceClosed?: (options: { authoritativeResult: boolean; reason: AuthSurfaceCloseReason }) => void;
   onLinuxDoSurfaceOpened?: () => void;
-  openTopicRef: Ref<((topic: Topic, refresh?: boolean) => Promise<unknown>) | null>;
+  onNodeSeekVerificationOpened?: () => void;
+  onVerificationOpened?: () => void;
   reconcileAccountStatus: (source: 'linuxdo') => Promise<AccountReconcileResult>;
-  selectedTopic: Topic | null;
   setChecking: Dispatch<SetStateAction<boolean>>;
   setLinuxDoWebViewError: Dispatch<SetStateAction<string>>;
   setLinuxDoWebViewKey: Dispatch<SetStateAction<number>>;
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setLoadingLinuxDoPage: Dispatch<SetStateAction<boolean>>;
   setMountLinuxDoWebView: Dispatch<SetStateAction<boolean>>;
-  changeScreen: (screen: Screen) => void;
   setShowLinuxDoPanel: Dispatch<SetStateAction<boolean>>;
-  setShowSettingsPanel: Dispatch<SetStateAction<boolean>>;
   showLinuxDoPanelRef: Ref<boolean>;
-  topicDetail: TopicDetail | null;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
   updateNodeSeekSession: (event: SiteSessionEvent) => void;
 }) {
@@ -437,21 +428,21 @@ export function useVerificationController({
   const showNodeSeekVerification = useCallback(
     (message = 'NodeSeek 需要完成 Cloudflare 验证') => {
       closeLinuxDoPanel(true, 'switch-surface');
-      changeScreen('more');
+      onVerificationOpened();
+      onNodeSeekVerificationOpened();
       changeNodeSeekLoginPanel(true);
       closeYaohuoLoginPanel('switch-surface');
-      setShowSettingsPanel(false);
       updateNodeSeekSession({ type: 'verification-required', message });
       notify(message);
       return true;
     },
     [
       changeNodeSeekLoginPanel,
-      changeScreen,
       closeLinuxDoPanel,
       closeYaohuoLoginPanel,
       notify,
-      setShowSettingsPanel,
+      onNodeSeekVerificationOpened,
+      onVerificationOpened,
       updateNodeSeekSession
     ]
   );
@@ -558,7 +549,7 @@ export function useVerificationController({
       }
       changeNodeSeekLoginPanel(false, 'switch-surface');
       closeYaohuoLoginPanel('switch-surface');
-      setShowSettingsPanel(false);
+      onVerificationOpened();
       if (!changeLinuxDoPanel(true)) {
         return false;
       }
@@ -574,21 +565,12 @@ export function useVerificationController({
       invalidateLinuxDoCheck,
       linuxDoPanelClosingSessionRef,
       notify,
-      setShowSettingsPanel,
+      onVerificationOpened,
       startLinuxDoVerificationTrace,
       updateLinuxDoSession
     ]
   );
   useCommitRefValue(showLinuxDoVerificationRef, showLinuxDoVerification);
-
-  const verifyLinuxDoFromTopic = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (detail?.source === 'linuxdo' && !linuxDoIdentityPending) {
-      await openTopicRef.current?.(detail, true);
-      return;
-    }
-    await showLinuxDoVerification();
-  }, [openTopicRef, linuxDoIdentityPending, selectedTopic, showLinuxDoVerification, topicDetail]);
 
   const handleLinuxDoMessage = useCallback(
     (event: WebViewMessageEvent, webViewKey?: number) => {
@@ -894,7 +876,6 @@ export function useVerificationController({
     setLoadingLinuxDoPageForSession,
     showLinuxDoVerification,
     showNodeSeekVerification,
-    stopLinuxDoVerificationForInactiveApp,
-    verifyLinuxDoFromTopic
+    stopLinuxDoVerificationForInactiveApp
   };
 }

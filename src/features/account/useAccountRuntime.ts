@@ -1,0 +1,563 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { WebView } from 'react-native-webview';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import type { Fetcher } from '@/platform/network/request';
+import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { errorMessage } from '@/platform/network/errors';
+import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { sessionSources, siteSessionIdentityKey, type SessionSite } from '@/domain/session/siteSessionState';
+import {
+  beginAuthSurface,
+  closeOtherAuthSurfaces,
+  createAuthSurfaceRegistry,
+  finishAuthSurface,
+  hasOpenAuthSurfaceForSource,
+  type AuthSurface,
+  type AuthSurfaceCloseReason
+} from '@/domain/session/authSurfaceCoordinator';
+import type { AccountReconcileResult, CredentialSite } from '@/domain/session/sessionContracts';
+import type { Screen } from '@/ui/navigation/types';
+import {
+  ensureWritableSessionTicket,
+  validateWritableSessionTicket,
+  type SessionRuntimeSnapshot,
+  type WritableSessionSnapshot,
+  type WritableSessionTicket
+} from '@/domain/session/writableSessionGate';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import { useAccountStatusController } from './useAccountStatusController';
+import { useAccountController } from './useAccountController';
+import { useAccountCredentialController } from './useAccountCredentialController';
+import type { LoginWebViewFailureReason } from './credentialDiagnostics';
+import { useNodeImageAuthController } from './useNodeImageAuthController';
+import { useNodeSeekCheckInController } from './useNodeSeekCheckInController';
+import { useSessionController } from './useSessionController';
+import { useSessionReadGateway } from './useSessionReadGateway';
+import { useVerificationController } from './useVerificationController';
+import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
+import { useXiaoyinsiLevelController } from './useXiaoyinsiLevelController';
+
+export function useAccountRuntime({
+  fetcher,
+  notify,
+  onNodeSeekLoginPanelClosed,
+  onNodeSeekVerificationOpened,
+  onVerificationOpened,
+  screen,
+  webViewBlockMessage
+}: {
+  fetcher: Fetcher;
+  notify: (message: string) => void;
+  onNodeSeekLoginPanelClosed: () => void;
+  onNodeSeekVerificationOpened: () => void;
+  onVerificationOpened: () => void;
+  screen: Screen;
+  webViewBlockMessage: string;
+}) {
+  const webViewRef = useRef<WebView>(null);
+  const yaohuoWebViewRef = useRef<WebView>(null);
+  const linuxDoWebViewRef = useRef<WebView>(null);
+  const nodeSeekBrowserWebViewRef = useRef<WebView>(null);
+  const linuxDoBrowserWebViewRef = useRef<WebView>(null);
+  const nodeSeekLoginPanelRequestRef = useRef(0);
+  const yaohuoLoginPanelRequestRef = useRef(0);
+  const checkingRequestIdRef = useRef(0);
+  const linuxDoWebViewSessionRef = useRef(0);
+  const linuxDoPanelClosingSessionRef = useRef<number | null>(null);
+  const linuxDoWebViewMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+  const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
+  const webLoginDetectedRef = useRef(false);
+  const prepareAuthSurfaceOpenRef = useRef<(surface: AuthSurface) => void>(() => undefined);
+  const credentialFailureHandlerRef = useRef<
+    (site: CredentialSite, attempt: number, reason: LoginWebViewFailureReason) => void
+  >(() => undefined);
+  const credentialClearIntentHandlerRef = useRef<(site: CredentialSite) => void>(() => undefined);
+  const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
+  const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+  const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
+  const [loadingLoginPage, setLoadingLoginPage] = useState(true);
+  const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
+  const [loadingLinuxDoPage, setLoadingLinuxDoPage] = useState(true);
+  const [linuxDoWebViewError, setLinuxDoWebViewError] = useState('');
+  const [linuxDoWebViewKey, setLinuxDoWebViewKey] = useState(0);
+  const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [showLoginPanel, setShowLoginPanel] = useState(false);
+  const showLoginPanelRef = useRef(showLoginPanel);
+  const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
+  const showYaohuoLoginPanelRef = useRef(showYaohuoLoginPanel);
+  const [yaohuoLoginPrompt, setYaohuoLoginPrompt] = useState('');
+  const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
+  const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
+  useCommitRefValue(showLoginPanelRef, showLoginPanel);
+  useCommitRefValue(showYaohuoLoginPanelRef, showYaohuoLoginPanel);
+  useCommitRefValue(showLinuxDoPanelRef, showLinuxDoPanel);
+  const handleCredentialLoginWebViewFailure = useCallback(
+    (site: CredentialSite, attempt: number, reason: LoginWebViewFailureReason) =>
+      credentialFailureHandlerRef.current(site, attempt, reason),
+    []
+  );
+  const handleClearCredentialLoginIntent = useCallback((site: CredentialSite) => {
+    credentialClearIntentHandlerRef.current(site);
+  }, []);
+  const forumSessionEpochsRef = useRef<ForumSessionEpochs>(initialForumSessionEpochs);
+  const authSurfaceRegistryRef = useRef(createAuthSurfaceRegistry());
+  const linuxDoRecoveryBarrierRef = useRef(false);
+  const [authBarrierRevision, setAuthBarrierRevision] = useState(0);
+  const [linuxDoRecoveryBarrier, setLinuxDoRecoveryBarrierState] = useState(false);
+  const accountIdentityKeysRef = useRef<Record<SessionSite, string>>({
+    linuxdo: 'linuxdo:anonymous',
+    nodeseek: 'nodeseek:anonymous',
+    xiaoyinsi: 'xiaoyinsi:anonymous',
+    yaohuo: 'yaohuo:anonymous'
+  });
+  const accountIdentityPendingRef = useRef<Record<SessionSite, boolean>>({
+    ...Object.fromEntries(sessionSources.map((source) => [source, true]))
+  } as Record<SessionSite, boolean>);
+  const accountIdentityEstablishedRef = useRef<Record<SessionSite, boolean>>({
+    ...Object.fromEntries(sessionSources.map((source) => [source, false]))
+  } as Record<SessionSite, boolean>);
+  const beginAccountIdentityCheckRef = useRef<(source: SessionSite, surfaceGeneration?: number) => void>(
+    () => undefined
+  );
+  const reconcileAccountStatusRef = useRef<
+    (source: SessionSite, options?: { surfaceGeneration?: number }) => Promise<AccountReconcileResult>
+  >(async () => ({ status: 'stale' }));
+
+  const commitAccountIdentityRuntime = useCallback(
+    (source: SessionSite, update: { identityKey?: string; pending: boolean }) => {
+      accountIdentityPendingRef.current[source] = update.pending;
+      if (update.identityKey) {
+        accountIdentityKeysRef.current[source] = update.identityKey;
+        if (!update.pending) {
+          accountIdentityEstablishedRef.current[source] = true;
+        }
+      }
+    },
+    []
+  );
+  const readSessionRuntimeSnapshot = useCallback((source: SessionSite): SessionRuntimeSnapshot => {
+    const identityKey = accountIdentityKeysRef.current[source];
+    const pending = accountIdentityPendingRef.current[source];
+    return {
+      source,
+      authenticated: identityKey !== `${source}:anonymous`,
+      authSurfaceOpen:
+        hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source) ||
+        (source === 'linuxdo' && linuxDoRecoveryBarrierRef.current),
+      identityKey,
+      identityTrust: pending ? 'pending' : identityKey === `${source}:anonymous` ? 'none' : 'confirmed',
+      sessionEpoch: forumSessionEpochsRef.current[source]
+    };
+  }, []);
+  const updateLinuxDoRecoveryBarrier = useCallback((active: boolean) => {
+    linuxDoRecoveryBarrierRef.current = active;
+    setLinuxDoRecoveryBarrierState(active);
+  }, []);
+  const beginAuthSurfaceTicket = useCallback((surface: AuthSurface, source: SessionSite, checkIdentity = true) => {
+    const wasOpen = Boolean(authSurfaceRegistryRef.current.active[surface]);
+    const ticket = beginAuthSurface(authSurfaceRegistryRef.current, {
+      source,
+      surface,
+      identityKey: accountIdentityKeysRef.current[source],
+      sessionEpoch: forumSessionEpochsRef.current[source]
+    });
+    if (!wasOpen) setAuthBarrierRevision((current) => current + 1);
+    if (checkIdentity) beginAccountIdentityCheckRef.current(source, ticket.generation);
+    return ticket;
+  }, []);
+  const finishAuthSurfaceTicket = useCallback(
+    (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
+      const ticket = finishAuthSurface(authSurfaceRegistryRef.current, surface, reason);
+      if (ticket) setAuthBarrierRevision((current) => current + 1);
+      if (!ticket?.shouldReconcile) return null;
+      const reconciliation = reconcileAccountStatusRef
+        .current(ticket.source, { surfaceGeneration: ticket.generation })
+        .catch((error): AccountReconcileResult => ({
+          status: 'unknown',
+          error: errorMessage(error),
+          errorInfo: sourceErrorFromUnknown(ticket.source, error)
+        }));
+      void reconciliation.then((result) => {
+        if (result.status === 'changed') {
+          const username =
+            result.session?.currentUser?.displayName || result.session?.currentUser?.username || '新账号';
+          notify(`已切换为 ${username}，正在刷新该站数据`);
+        } else if (result.status === 'anonymous') {
+          notify('已退出登录，已切换为匿名模式');
+        } else if (result.status === 'unknown') {
+          notify('登录状态待确认；已暂停该站写入，请稍后重试');
+        }
+      });
+      return reconciliation;
+    },
+    [notify]
+  );
+
+  const session = useSessionController({
+    defaultFetcher: fetcher,
+    forumSessionEpochsRef,
+    linuxDoBrowserWebViewRef,
+    linuxDoWebViewUserAgentRef,
+    nodeSeekBrowserWebViewRef,
+    nodeSeekWebViewUserAgentRef,
+    notify,
+    setLinuxDoWebViewUserAgent,
+    setNodeSeekWebViewUserAgent,
+    setWebLoginUserId,
+    webLoginDetectedRef
+  });
+  const xiaoyinsiAuth = useXiaoyinsiAuthController({
+    dispatchSiteSessionEvent: session.dispatchSiteSessionEvent,
+    fetcher,
+    notify
+  });
+  const readGateway = useSessionReadGateway({
+    fetcher: session.forumFetchWithWebViewFallback,
+    forumSessionEpochsRef,
+    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    readSessionRuntimeSnapshot,
+    refreshXiaoyinsiAuthorization: xiaoyinsiAuth.refreshAuthorization
+  });
+  const status = useAccountStatusController({
+    sessionEpochs: session.forumSessionEpochs,
+    fetcher: session.forumFetchWithWebViewFallback,
+    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    onAccountIdentityRuntimeChanged: commitAccountIdentityRuntime,
+    onAccountStatusChanged: session.commitAccountStatusChange,
+    readXiaoyinsiAuthorization: xiaoyinsiAuth.readAuthorization,
+    sessionViewModels: session.siteSessionViewModels
+  });
+  const reconcileAccountStatus = status.reconcileAccountStatus;
+  useCommitRefValue(beginAccountIdentityCheckRef, status.beginAccountIdentityCheck);
+  useCommitRefValue(reconcileAccountStatusRef, reconcileAccountStatus);
+
+  const accountIdentityKeys = useMemo<Record<SessionSite, string>>(
+    () => ({
+      linuxdo: siteSessionIdentityKey(status.accountSessionViewModels.linuxdo),
+      nodeseek: siteSessionIdentityKey(status.accountSessionViewModels.nodeseek),
+      xiaoyinsi: siteSessionIdentityKey(status.accountSessionViewModels.xiaoyinsi),
+      yaohuo: siteSessionIdentityKey(status.accountSessionViewModels.yaohuo)
+    }),
+    [status.accountSessionViewModels]
+  );
+  useCommitRefValue(accountIdentityKeysRef, accountIdentityKeys);
+  const accountIdentityPending = useMemo<Record<SessionSite, boolean>>(
+    () => ({
+      linuxdo: status.accountSessionViewModels.linuxdo.identityTrust === 'pending',
+      nodeseek: status.accountSessionViewModels.nodeseek.identityTrust === 'pending',
+      xiaoyinsi: status.accountSessionViewModels.xiaoyinsi.identityTrust === 'pending',
+      yaohuo: status.accountSessionViewModels.yaohuo.identityTrust === 'pending'
+    }),
+    [status.accountSessionViewModels]
+  );
+  useCommitRefValue(accountIdentityPendingRef, accountIdentityPending);
+  const identityBarriers = useMemo<ForumIdentityBarrierSource[]>(() => {
+    void authBarrierRevision;
+    return sessionSources.filter(
+      (source) =>
+        accountIdentityPending[source] ||
+        hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source) ||
+        (source === 'linuxdo' && linuxDoRecoveryBarrier)
+    );
+  }, [accountIdentityPending, authBarrierRevision, linuxDoRecoveryBarrier]);
+  const retainableIdentityBarriers = useMemo(
+    () => identityBarriers.filter((source) => accountIdentityEstablishedRef.current[source]),
+    [identityBarriers]
+  );
+  const xiaoyinsiLevel = useXiaoyinsiLevelController({
+    authorizationPhase: xiaoyinsiAuth.phase,
+    isIdentityPending: () => accountIdentityPendingRef.current.xiaoyinsi,
+    notify,
+    readGateway,
+    sessionEpochs: session.forumSessionEpochs
+  });
+
+  const resetLinuxDoLevelState = useCallback(() => {
+    void appQueryClient.cancelQueries({ queryKey: forumQueryKeys.level('linuxdo') });
+    appQueryClient.removeQueries({ queryKey: forumQueryKeys.level('linuxdo') });
+  }, []);
+  const beginNodeImageSurface = useCallback(
+    () => beginAuthSurfaceTicket('nodeimage-auth', 'nodeseek', false),
+    [beginAuthSurfaceTicket]
+  );
+  const finishNodeImageSurface = useCallback(
+    (reason: AuthSurfaceCloseReason) => finishAuthSurfaceTicket('nodeimage-auth', reason),
+    [finishAuthSurfaceTicket]
+  );
+  const prepareNodeImageSurface = useCallback(() => prepareAuthSurfaceOpenRef.current('nodeimage-auth'), []);
+  const readNodeImageRuntime = useCallback(() => readSessionRuntimeSnapshot('nodeseek'), [readSessionRuntimeSnapshot]);
+  const reconcileNodeImageAccount = useCallback(
+    (surfaceGeneration: number) => reconcileAccountStatus('nodeseek', { surfaceGeneration }),
+    [reconcileAccountStatus]
+  );
+  const nodeImage = useNodeImageAuthController({
+    beginSurface: beginNodeImageSurface,
+    finishSurface: finishNodeImageSurface,
+    notify,
+    prepareSurfaceOpen: prepareNodeImageSurface,
+    readRuntime: readNodeImageRuntime,
+    reconcileAccountStatus: reconcileNodeImageAccount
+  });
+  const closeYaohuoLoginPanel = useCallback(
+    (reason: AuthSurfaceCloseReason = 'close-button') => {
+      if (!showYaohuoLoginPanelRef.current) return;
+      showYaohuoLoginPanelRef.current = false;
+      handleClearCredentialLoginIntent('yaohuo');
+      yaohuoLoginPanelRequestRef.current += 1;
+      yaohuoWebViewRef.current?.stopLoading();
+      setShowYaohuoLoginPanel(false);
+      setYaohuoLoginPrompt('');
+      setLoadingYaohuoLoginPage(false);
+      finishAuthSurfaceTicket('yaohuo-login', reason);
+    },
+    [finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
+  );
+  const changeYaohuoLoginPanel = useCallback(
+    (visible: boolean, closeReason: AuthSurfaceCloseReason = 'close-button') => {
+      if (visible) {
+        if (showYaohuoLoginPanelRef.current) return;
+        prepareAuthSurfaceOpenRef.current('yaohuo-login');
+        showYaohuoLoginPanelRef.current = true;
+        beginAuthSurfaceTicket('yaohuo-login', 'yaohuo');
+        yaohuoLoginPanelRequestRef.current += 1;
+        setLoadingYaohuoLoginPage(true);
+        setShowYaohuoLoginPanel(true);
+        yaohuoWebViewRef.current?.reload();
+        return;
+      }
+      closeYaohuoLoginPanel(closeReason);
+    },
+    [beginAuthSurfaceTicket, closeYaohuoLoginPanel]
+  );
+  const changeNodeSeekLoginPanel = useCallback(
+    (visible: boolean, closeReason: AuthSurfaceCloseReason = 'close-button') => {
+      const wasVisible = showLoginPanelRef.current;
+      if (visible === wasVisible) return;
+      if (visible) prepareAuthSurfaceOpenRef.current('nodeseek-login');
+      showLoginPanelRef.current = visible;
+      nodeSeekLoginPanelRequestRef.current += 1;
+      if (visible) {
+        beginAuthSurfaceTicket('nodeseek-login', 'nodeseek');
+      } else {
+        handleClearCredentialLoginIntent('nodeseek');
+        onNodeSeekLoginPanelClosed();
+      }
+      webViewRef.current?.stopLoading();
+      setLoadingLoginPage(visible);
+      setShowLoginPanel(visible);
+      if (!visible) finishAuthSurfaceTicket('nodeseek-login', closeReason);
+    },
+    [beginAuthSurfaceTicket, finishAuthSurfaceTicket, handleClearCredentialLoginIntent, onNodeSeekLoginPanelClosed]
+  );
+  const verification = useVerificationController({
+    changeNodeSeekLoginPanel,
+    checkingRequestIdRef,
+    closeYaohuoLoginPanel,
+    linuxDoPanelClosingSessionRef,
+    linuxDoPanelCloseSettleTimerRef,
+    linuxDoWebViewMountTimerRef,
+    linuxDoWebViewRef,
+    linuxDoWebViewSessionRef,
+    linuxDoWebViewUserAgentRef,
+    notify,
+    onBeforeLinuxDoSurfaceOpened: () => prepareAuthSurfaceOpenRef.current('linuxdo-login'),
+    onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
+    onLinuxDoRecoveryBarrierChanged: updateLinuxDoRecoveryBarrier,
+    onLinuxDoSurfaceClosed: ({ authoritativeResult, reason }) => {
+      finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason);
+    },
+    onLinuxDoSurfaceOpened: () => beginAuthSurfaceTicket('linuxdo-login', 'linuxdo'),
+    onNodeSeekVerificationOpened,
+    onVerificationOpened,
+    reconcileAccountStatus,
+    setChecking,
+    setLinuxDoWebViewError,
+    setLinuxDoWebViewKey,
+    setLinuxDoWebViewUserAgent,
+    setLoadingLinuxDoPage,
+    setMountLinuxDoWebView,
+    setShowLinuxDoPanel,
+    showLinuxDoPanelRef,
+    updateLinuxDoSession: session.updateLinuxDoSession,
+    updateNodeSeekSession: session.updateNodeSeekSession
+  });
+  const closeLinuxDoPanel = verification.closeLinuxDoPanel;
+  const closeNodeImageAuthPanel = nodeImage.panel.close;
+  const prepareAuthSurfaceOpen = useCallback(
+    (openingSurface: AuthSurface) => {
+      closeOtherAuthSurfaces(openingSurface, {
+        'linuxdo-login': (reason) => closeLinuxDoPanel(true, reason),
+        'nodeimage-auth': closeNodeImageAuthPanel,
+        'nodeseek-login': (reason) => changeNodeSeekLoginPanel(false, reason),
+        'yaohuo-login': closeYaohuoLoginPanel
+      });
+    },
+    [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]
+  );
+  useCommitRefValue(prepareAuthSurfaceOpenRef, prepareAuthSurfaceOpen);
+  const previousLinuxDoPanelVisibleRef = useRef(showLinuxDoPanel);
+  useEffect(() => {
+    if (previousLinuxDoPanelVisibleRef.current && !showLinuxDoPanel) {
+      handleClearCredentialLoginIntent('linuxdo');
+    }
+    previousLinuxDoPanelVisibleRef.current = showLinuxDoPanel;
+  }, [handleClearCredentialLoginIntent, showLinuxDoPanel]);
+
+  const account = useAccountController({
+    checkingRequestIdRef,
+    clearLinuxDoLoginState: session.clearLinuxDoLoginState,
+    clearNodeSeekLoginState: session.clearNodeSeekLoginState,
+    clearYaohuoLoginState: session.clearYaohuoLoginState,
+    sessionEpochs: session.forumSessionEpochs,
+    nodeSeekLoginPanelRequestRef,
+    nodeSeekWebViewUserAgentRef,
+    notify,
+    onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
+    linuxDoVerificationActive: showLinuxDoPanel,
+    linuxDoIdentityPending: accountIdentityPending.linuxdo,
+    resetLinuxDoLevelState,
+    resetLinuxDoWebView: verification.resetLinuxDoWebView,
+    reconcileAccountStatus,
+    setChecking,
+    setNodeSeekWebViewUserAgent,
+    screen,
+    showLinuxDoVerification: verification.showLinuxDoVerification,
+    readGateway,
+    showLoginPanelRef,
+    showYaohuoLoginPanel,
+    webViewRef,
+    yaohuoLoginPanelRequestRef,
+    yaohuoWebViewRef
+  });
+  const credentials = useAccountCredentialController({
+    changeLinuxDoPanel: verification.changeLinuxDoPanel,
+    changeNodeSeekLoginPanel,
+    changeYaohuoLoginPanel,
+    linuxDoWebViewRef,
+    notify,
+    onOpenXiaoyinsiAuthorization: () => void xiaoyinsiAuth.beginAuthorization(),
+    refreshAccountStatus: status.refreshAccountStatus,
+    setYaohuoLoginPrompt,
+    webViewRef,
+    webViewBlockMessage,
+    yaohuoWebViewRef
+  });
+  useCommitRefValue(credentialFailureHandlerRef, credentials.finishCredentialFillForLoginFailure);
+  useCommitRefValue(credentialClearIntentHandlerRef, credentials.clearCredentialLoginIntent);
+  const closePanels = useCallback(() => {
+    changeNodeSeekLoginPanel(false, 'navigation-away');
+    closeNodeImageAuthPanel('navigation-away');
+    closeYaohuoLoginPanel('navigation-away');
+    closeLinuxDoPanel(true, 'navigation-away');
+  }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
+
+  const readWritableSessionSnapshot = useCallback(
+    (source: SessionSite): WritableSessionSnapshot => readSessionRuntimeSnapshot(source),
+    [readSessionRuntimeSnapshot]
+  );
+  const reconcileWritableSession = useCallback((source: SessionSite) => reconcileAccountStatusRef.current(source), []);
+  const ensureWritableSession = useCallback(
+    (source: SessionSite) =>
+      ensureWritableSessionTicket(
+        () => readWritableSessionSnapshot(source),
+        () => reconcileWritableSession(source)
+      ),
+    [readWritableSessionSnapshot, reconcileWritableSession]
+  );
+  const isWritableSessionTicketCurrent = useCallback(
+    (ticket: WritableSessionTicket) =>
+      validateWritableSessionTicket(ticket, readWritableSessionSnapshot(ticket.source)),
+    [readWritableSessionSnapshot]
+  );
+  const nodeSeekCheckIn = useNodeSeekCheckInController({
+    ensureWritableSession,
+    fetcher,
+    isWritableSessionTicketCurrent,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    reconcileWritableSession
+  });
+
+  return {
+    read: {
+      accountIdentityChecks: status.accountIdentityChecks,
+      accountIdentityPending,
+      accountSessionViewModels: status.accountSessionViewModels,
+      forumFetchWithWebViewFallback: session.forumFetchWithWebViewFallback,
+      forumSessionEpochs: session.forumSessionEpochs,
+      identityBarriers,
+      identityReconciliationPending: status.identityReconciliationPending,
+      readGateway,
+      readSessionRuntimeSnapshot,
+      reconcileAccountStatus,
+      refreshAccountStatus: status.refreshAccountStatus,
+      retainableIdentityBarriers,
+      statusBusy: status.statusBusy
+    },
+    write: {
+      ensureWritableSession,
+      isWritableSessionTicketCurrent,
+      reconcileWritableSession,
+      resetLinuxDoLevelState
+    },
+    center: {
+      account,
+      checking,
+      checkIn: nodeSeekCheckIn.checkIn,
+      checkInBusy: nodeSeekCheckIn.busy,
+      credentials,
+      nodeImage,
+      webLoginUserId,
+      xiaoyinsiAuth,
+      xiaoyinsiLevel
+    },
+    hosts: {
+      authSurfaceRegistryRef,
+      beginAuthSurfaceTicket,
+      changeNodeSeekLoginPanel,
+      changeYaohuoLoginPanel,
+      closePanels,
+      closeYaohuoLoginPanel,
+      finishAuthSurfaceTicket,
+      hiddenBrowserFetchRequests: session.hiddenBrowserFetchRequests,
+      linuxDoBrowserWebViewRef,
+      linuxDoWebViewError,
+      linuxDoWebViewKey,
+      linuxDoWebViewRef,
+      loadingLinuxDoPage,
+      loadingLoginPage,
+      loadingYaohuoLoginPage,
+      mountLinuxDoWebView,
+      linuxDoWebViewUserAgent,
+      linuxDoWebViewUserAgentRef,
+      nodeSeekBrowserWebViewRef,
+      nodeSeekWebViewUserAgent,
+      nodeSeekWebViewUserAgentRef,
+      setLinuxDoWebViewUserAgent,
+      setLoadingLoginPage,
+      setLoadingYaohuoLoginPage,
+      setNodeSeekWebViewUserAgent,
+      setYaohuoLoginPrompt,
+      showLinuxDoPanel,
+      showLoginPanel,
+      showYaohuoLoginPanel,
+      updateLinuxDoRecoveryBarrier,
+      verification,
+      webViewRef,
+      yaohuoLoginPanelRequestRef,
+      yaohuoLoginPrompt,
+      yaohuoWebViewRef,
+      nodeSeekLoginPanelRequestRef,
+      setChecking
+    },
+    session
+  };
+}

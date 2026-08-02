@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isCancelledError, useQuery } from '@tanstack/react-query';
+import { isCancelledError } from '@tanstack/react-query';
 import { AppState, Linking, type AppStateStatus } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
@@ -14,7 +14,6 @@ import {
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { ScopedSiteSessionEvent, SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { XiaoyinsiAuthPhase, XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
-import type { ReadGateway } from '@/sources/readGateway';
 import {
   beginXiaoyinsiDeviceAuth,
   cancelXiaoyinsiDeviceAuth,
@@ -30,8 +29,6 @@ import {
   XiaoyinsiAuthError,
   type XiaoyinsiPendingAuthorization
 } from '@/sources/xiaoyinsi/auth';
-import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
-import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 
 type XiaoyinsiAuthorizationCheckResult = XiaoyinsiAuthorizationReadResult & {
   reason?: string;
@@ -112,19 +109,13 @@ async function checkXiaoyinsiAuthorization({
 }
 
 export function useXiaoyinsiAuthController({
-  sessionEpochs,
   dispatchSiteSessionEvent,
   fetcher,
-  isIdentityPending,
-  notify,
-  readGateway
+  notify
 }: {
-  sessionEpochs: ForumSessionEpochs;
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   fetcher: Fetcher;
-  isIdentityPending?: () => boolean;
   notify: (message: string) => void;
-  readGateway: Pick<ReadGateway, 'getLevelProfile'>;
 }) {
   const [phase, setPhase] = useState<XiaoyinsiAuthPhase>('idle');
   const [pending, setPending] = useState<XiaoyinsiPendingAuthorization | null>(null);
@@ -140,42 +131,9 @@ export function useXiaoyinsiAuthController({
   const refreshGenerationRef = useRef(0);
   const authorizationMutationRef = useRef(false);
 
-  const levelQuery = useQuery({
-    enabled: false,
-    queryKey: forumQueryKeys.levelProfile({ sessionEpochs, source: 'xiaoyinsi' }),
-    queryFn: async ({ signal }) => {
-      const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
-      markDiagnosticStage(trace, 'guard', { source: 'xiaoyinsi', state: 'ready' });
-      try {
-        const profile = await readGateway.getLevelProfile({ source: 'xiaoyinsi', signal }, { trace });
-        markDiagnosticStage(trace, 'apply', { source: 'xiaoyinsi', state: 'loaded' });
-        finishDiagnosticTrace(trace, 'success', { source: 'xiaoyinsi' });
-        return profile;
-      } catch (error) {
-        const canceled = signal.aborted || isCancelledError(error) || isCanceledRequest(error);
-        const reason = canceled ? 'canceled' : normalizeDiagnosticReason(error);
-        finishDiagnosticTrace(
-          trace,
-          canceled
-            ? 'canceled'
-            : reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied'
-              ? 'blocked'
-              : 'failure',
-          { source: 'xiaoyinsi', reason }
-        );
-        throw error;
-      }
-    }
-  });
-
   const invalidateAuthorizationRefresh = useCallback(() => {
     refreshGenerationRef.current += 1;
     return refreshGenerationRef.current;
-  }, []);
-
-  const resetLevelQuery = useCallback(() => {
-    void appQueryClient.cancelQueries({ queryKey: forumQueryKeys.level('xiaoyinsi') });
-    appQueryClient.removeQueries({ queryKey: forumQueryKeys.level('xiaoyinsi') });
   }, []);
 
   const dispatch = useCallback(
@@ -401,19 +359,6 @@ export function useXiaoyinsiAuthController({
     [refreshAuthorization]
   );
 
-  const refreshLevel = useCallback(async () => {
-    if (isIdentityPending?.()) {
-      return false;
-    }
-    const result = await levelQuery.refetch({ cancelRefetch: false });
-    if (result.error) return false;
-    if (result.data) {
-      notify('小隐寺等级已更新。');
-      return true;
-    }
-    return false;
-  }, [isIdentityPending, levelQuery.refetch, notify]);
-
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -422,16 +367,8 @@ export function useXiaoyinsiAuthController({
       pollAbortRef.current?.abort();
       pollAbortRef.current = null;
       invalidateAuthorizationRefresh();
-      resetLevelQuery();
     };
-  }, [invalidateAuthorizationRefresh, resetLevelQuery]);
-
-  useEffect(() => {
-    if (phase === 'authorized') {
-      return;
-    }
-    resetLevelQuery();
-  }, [phase, resetLevelQuery]);
+  }, [invalidateAuthorizationRefresh]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -870,32 +807,24 @@ export function useXiaoyinsiAuthController({
     () => ({
       beginAuthorization,
       cancelAuthorization,
-      levelBusy: levelQuery.isFetching,
-      levelError: levelQuery.error ? errorMessage(levelQuery.error) : '',
-      levelProfile: levelQuery.data ?? null,
       message,
       openAuthorizationBrowser,
       pending,
       phase,
       readAuthorization,
       refreshAuthorization,
-      refreshLevel,
       revokeAuthorization,
       secondsRemaining
     }),
     [
       beginAuthorization,
       cancelAuthorization,
-      levelQuery.data,
-      levelQuery.error,
-      levelQuery.isFetching,
       message,
       openAuthorizationBrowser,
       pending,
       phase,
       readAuthorization,
       refreshAuthorization,
-      refreshLevel,
       revokeAuthorization,
       secondsRemaining
     ]

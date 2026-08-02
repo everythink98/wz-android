@@ -13,16 +13,17 @@ export function useSessionReadGateway({
   linuxDoUserAgentRef,
   nodeSeekUserAgentRef,
   readSessionRuntimeSnapshot,
-  refreshXiaoyinsiAuthorizationRef
+  refreshXiaoyinsiAuthorization
 }: {
   fetcher: Fetcher;
   forumSessionEpochsRef: { current: ForumSessionEpochs };
   linuxDoUserAgentRef: { current: string };
   nodeSeekUserAgentRef: { current: string };
   readSessionRuntimeSnapshot: (source: SessionSite) => SessionRuntimeSnapshot;
-  refreshXiaoyinsiAuthorizationRef: {
-    current: ((trace?: DiagnosticTrace, options?: { signal?: AbortSignal }) => Promise<boolean | null>) | null;
-  };
+  refreshXiaoyinsiAuthorization: (
+    trace?: DiagnosticTrace,
+    options?: { signal?: AbortSignal }
+  ) => Promise<boolean | null>;
 }) {
   return useMemo(
     () =>
@@ -43,8 +44,7 @@ export function useSessionReadGateway({
           return generation === currentXiaoyinsiCredentialGeneration() ? credentials : undefined;
         },
         nodeSeekUserAgent: () => nodeSeekUserAgentRef.current,
-        refreshXiaoyinsiAuthorization: (trace) =>
-          refreshXiaoyinsiAuthorizationRef.current?.(trace) ?? Promise.resolve(null)
+        refreshXiaoyinsiAuthorization
       }),
     [
       fetcher,
@@ -52,7 +52,7 @@ export function useSessionReadGateway({
       linuxDoUserAgentRef,
       nodeSeekUserAgentRef,
       readSessionRuntimeSnapshot,
-      refreshXiaoyinsiAuthorizationRef
+      refreshXiaoyinsiAuthorization
     ]
   );
 }

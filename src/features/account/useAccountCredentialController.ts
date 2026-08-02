@@ -36,12 +36,10 @@ type WebViewRef = RefObject<WebView | null>;
 export function useAccountCredentialController({
   changeLinuxDoPanel,
   changeNodeSeekLoginPanel,
-  changeScreen,
   changeYaohuoLoginPanel,
   linuxDoWebViewRef,
   notify,
   onOpenXiaoyinsiAuthorization,
-  openUser,
   refreshAccountStatus,
   setYaohuoLoginPrompt,
   webViewRef,
@@ -50,12 +48,10 @@ export function useAccountCredentialController({
 }: {
   changeLinuxDoPanel: (visible: boolean) => boolean;
   changeNodeSeekLoginPanel: (visible: boolean) => void;
-  changeScreen: (screen: 'more') => void;
   changeYaohuoLoginPanel: (visible: boolean) => void;
   linuxDoWebViewRef: WebViewRef;
   notify: (message: string) => void;
   onOpenXiaoyinsiAuthorization: () => void;
-  openUser: (user: Extract<AccountCenterCommand, { type: 'open-user' }>['user']) => Promise<unknown>;
   refreshAccountStatus: () => Promise<unknown>;
   setYaohuoLoginPrompt: (message: string) => void;
   webViewRef: WebViewRef;
@@ -146,7 +142,6 @@ export function useAccountCredentialController({
   const openAccountLogin = useCallback(
     (site: SessionSite, fill: boolean) => {
       if (site === 'xiaoyinsi') {
-        changeScreen('more');
         onOpenXiaoyinsiAuthorization();
         return;
       }
@@ -157,7 +152,6 @@ export function useAccountCredentialController({
       if (!fill) {
         clearCredentialLoginIntent(site);
       }
-      changeScreen('more');
       let opened = true;
       if (site === 'nodeseek') {
         changeNodeSeekLoginPanel(true);
@@ -203,7 +197,6 @@ export function useAccountCredentialController({
     [
       changeLinuxDoPanel,
       changeNodeSeekLoginPanel,
-      changeScreen,
       changeYaohuoLoginPanel,
       clearCredentialLoginIntent,
       finishCredentialFillTrace,
@@ -318,13 +311,9 @@ export function useAccountCredentialController({
   );
 
   const handleAccountCenterCommand = useCallback(
-    async (command: AccountCenterCommand) => {
+    async (command: Exclude<AccountCenterCommand, { type: 'open-user' }>) => {
       if (command.type === 'refresh') {
         await refreshAccountStatus();
-        return;
-      }
-      if (command.type === 'open-user') {
-        await openUser(command.user);
         return;
       }
       if (command.type === 'open-login' || command.type === 'open-login-with-fill') {
@@ -413,7 +402,7 @@ export function useAccountCredentialController({
         summaryRevisionRef.current += 1;
       }
     },
-    [notify, openAccountLogin, openUser, refreshAccountStatus]
+    [notify, openAccountLogin, refreshAccountStatus]
   );
 
   return {
