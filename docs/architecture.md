@@ -25,7 +25,7 @@
 | `src/features/` | Feed、Search、Topic、User、Library、Account、More 用户旅程的 controller、screen、局部组件与样式 |
 | `src/sources/` | `readGateway`、聚合读取、Discourse 协议与五站独立 parser/reader/account/action adapter |
 | `src/platform/` | Query、网络、存储、诊断、媒体、更新和 Android bridge |
-| `src/ui/` | 跨旅程复用的 primitive、TopicCard、Avatar、导航控件和主题 token |
+| `src/ui/` | 跨旅程复用的 primitive、TopicCard、Avatar、导航控件和主题 token/context |
 | `src/platform/query/serverState.ts` | TanStack Query 的唯一 client，以及五站类型化 query/mutation key |
 | `src/sources/readGateway.ts` | App 统一来源读取入口，隐藏五站读取 adapter 差异 |
 | `src/sources/discourseRead.ts`、`src/sources/discourseActions.ts` | 标准 Discourse 读取与写请求的组合入口；站点鉴权和 transport 仍独立 |
