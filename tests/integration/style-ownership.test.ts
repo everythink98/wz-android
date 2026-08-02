@@ -17,6 +17,7 @@ import { createHtmlRendererStyles } from '@/features/topic/rendering/htmlStyles'
 import { createUserStyles } from '@/features/user/styles';
 import { createLibraryStyles } from '@/features/library/styles';
 import { createMoreAccountStyles } from '@/features/more/accountStyles';
+import { createAccountHostStyles } from '@/features/account/accountHostStyles';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { createMoreStyles } from '@/features/more/styles';
 import { createExpandableStyles } from '@/ui/controls/ExpandableControls';
@@ -262,16 +263,17 @@ describe('Android reader theme safety rails', () => {
   it('keeps required dividers and hidden WebView boundaries intact', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
+    const accountHostStyles = createAccountHostStyles(theme, settings);
 
     expect(styles.feedFixedHeader.borderBottomWidth).toBe(StyleSheet.hairlineWidth);
-    expect(styles.hiddenBrowserWebViewHost).toMatchObject({
+    expect(accountHostStyles.hiddenBrowserWebViewHost).toMatchObject({
       position: 'absolute',
       width: 1,
       height: 1,
       overflow: 'hidden',
       opacity: 0
     });
-    expect(styles.hiddenBrowserWebView).toMatchObject({
+    expect(accountHostStyles.hiddenBrowserWebView).toMatchObject({
       flex: 0,
       width: 1,
       height: 1,
