@@ -89,7 +89,6 @@ function StatefulTopicRoute({ navigation, route }: NativeStackScreenProps<RootSt
   const [composerOpen, setComposerOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   useTopicRouteBeforeRemove({
-    navigation,
     imagePreviewOpen,
     replyComposerOpen: composerOpen,
     closeImagePreview: () => setImagePreviewOpen(false),

@@ -19,6 +19,7 @@ import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 type UserLane = 'topics' | 'replies';
 
@@ -116,8 +117,7 @@ export function useUserController({
   user: UserReference;
 }) {
   const queryClient = useQueryClient();
-  const activeRef = useRef(active);
-  activeRef.current = active;
+  const activeRef = useCommittedRef(active);
   const handledUserErrorAtRef = useRef<Record<'resolution' | 'profile' | UserLane, number>>({
     profile: 0,
     resolution: 0,

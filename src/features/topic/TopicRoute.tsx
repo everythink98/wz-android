@@ -22,6 +22,7 @@ import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { WritableSessionReconcileResult, WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificationPrompt';
@@ -243,7 +244,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     notify: runtime.notify,
     topicImageDeriver: html.topicImageDeriver
   });
-  openImagePreviewRef.current = imagePreviewController.openImagePreview;
+  useCommitRefValue(openImagePreviewRef, imagePreviewController.openImagePreview);
   const discourseActionRuntimeDependencies = useMemo(
     () => ({
       linuxDoUserAgent: () => runtime.account.linuxDoUserAgentRef.current,
@@ -287,7 +288,6 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   });
   const closeReplyComposer = useCallback(() => topicComposer.toggle(false), [topicComposer]);
   useTopicRouteBeforeRemove({
-    navigation,
     imagePreviewOpen: Boolean(imagePreviewController.imagePreview),
     replyComposerOpen,
     closeImagePreview: imagePreviewController.closeImagePreview,

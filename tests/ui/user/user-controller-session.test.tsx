@@ -138,7 +138,7 @@ describe('user query controller', () => {
         expect.anything()
       )
     );
-    expect(hook.result.current.userProfile).toMatchObject({ id: '8052', username: 'xy' });
+    await waitFor(() => expect(hook.result.current.userProfile).toMatchObject({ id: '8052', username: 'xy' }));
 
     await act(async () => {
       await hook.result.current.loadMoreUserTopics();
