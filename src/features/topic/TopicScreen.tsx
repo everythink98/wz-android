@@ -1,4 +1,4 @@
-import { memo, type ComponentProps, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { ChevronLeft, MoreHorizontal, Star } from 'lucide-react-native';
 
@@ -15,47 +15,25 @@ import { ReplyComposerSheet } from './components/ReplyComposerSheet';
 import { TopicContentList } from './components/TopicContentList';
 import { TopicMenu } from './components/TopicMenu';
 import { readableTopicError } from './model/screenHelpers';
+import type { TopicScreenPresentation } from './useTopicPresentation';
 
 const EMPTY_DISCOURSE_EMOJI_URLS: DiscourseEmojiUrlMap = {};
-
-type TopicScreenProps = Omit<ComponentProps<typeof TopicContentList>, 'discourseEmojiUrls' | 'headerState'>;
 
 export const TopicLoadingState = memo(function TopicLoadingState() {
   const { styles, theme } = useReaderStyles(createTopicStyles);
   return <LoadingState text="正在读取主题..." styles={styles} theme={theme} />;
 });
 
-export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
+export const TopicScreen = memo(function TopicScreen({ presentation }: { presentation: TopicScreenPresentation }) {
   const {
-    actionBusy,
-    decisionFor,
-    getDiscourseEmojiUrls,
-    identityBlocked = false,
-    identityChecking = false,
-    onBack,
-    onOpenOriginal,
-    onOpenReadingSettings,
-    onRefreshTopic,
-    onRefreshWholeTopic,
-    onReplyComposerOpenChange,
-    onReplyContentChange,
-    onReplyFaceChange,
-    onShareTopic,
-    onSubmitReply,
-    onToggleFavorite,
-    onUploadReplyImage,
-    onVerifyLinuxDo,
-    onVerifyNodeSeek,
-    replyComposerOpen,
-    replyContent,
-    replyEditTarget,
-    replyFace,
-    replyTarget,
-    selectedTopic,
-    topic,
-    topicError,
-    topicFavorite
-  } = props;
+    chrome,
+    composer,
+    content,
+    content: {
+      actions: { busy: actionBusy, decisionFor },
+      article: { error: topicError, selectedTopic, topic }
+    }
+  } = presentation;
   const { styles, theme } = useReaderStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const itemSource = topic?.source;
@@ -79,7 +57,8 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
       return undefined;
     }
     const controller = new AbortController();
-    getDiscourseEmojiUrls({ source: itemSource, signal: controller.signal })
+    chrome
+      .getDiscourseEmojiUrls({ source: itemSource, signal: controller.signal })
       .then((urls) => {
         if (!controller.signal.aborted) {
           setDiscourseEmojiCatalog({ source: itemSource, urls });
@@ -91,7 +70,7 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
         }
       });
     return () => controller.abort();
-  }, [getDiscourseEmojiUrls, itemSource, topic]);
+  }, [chrome.getDiscourseEmojiUrls, itemSource, topic]);
 
   const runTopicMenuAction = useCallback((action: () => void) => {
     triggerPressFeedback();
@@ -111,7 +90,7 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
     canWrite ||
     Boolean(
       canUseDiscourseInteractions &&
-      replyEditTarget &&
+      composer.editTarget &&
       decisionFor({ action: 'edit', objectAllowed: true, targetPresent: true }).allowed
     );
   const topicReadableError = topicError ? readableTopicError(topicError.message) : '';
@@ -136,23 +115,29 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
             {topicAuthNotice?.message || topicReadableError}
           </Text>
           <View style={styles.actions}>
-            {item.source === 'linuxdo' && identityBlocked ? (
-              <AppButton label="检查 L 站状态" styles={styles} onPress={onVerifyLinuxDo} />
+            {item.source === 'linuxdo' && chrome.identityBlocked ? (
+              <AppButton label="检查 L 站状态" styles={styles} onPress={chrome.verifyLinuxDo} />
             ) : null}
-            {item.source === 'linuxdo' && !identityBlocked && topicError.kind === 'verification-required' ? (
-              <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} />
+            {item.source === 'linuxdo' && !chrome.identityBlocked && topicError.kind === 'verification-required' ? (
+              <AppButton label="去验证" styles={styles} onPress={chrome.verifyLinuxDo} />
             ) : null}
             {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? (
-              <AppButton label="去验证" styles={styles} onPress={onVerifyNodeSeek} />
+              <AppButton label="去验证" styles={styles} onPress={chrome.verifyNodeSeek} />
             ) : null}
-            <AppButton label={identityBlocked ? '重试检测' : '重试'} styles={styles} onPress={onRefreshWholeTopic} />
+            <AppButton
+              label={chrome.identityBlocked ? '重试检测' : '重试'}
+              styles={styles}
+              onPress={chrome.refreshTopic}
+            />
           </View>
         </View>
       ) : null}
-      {topic && identityChecking ? <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} /> : null}
+      {topic && chrome.identityChecking ? (
+        <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} />
+      ) : null}
       {!topic && !topicError ? (
         <LoadingState
-          text={identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'}
+          text={chrome.identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'}
           styles={styles}
           theme={theme}
         />
@@ -163,7 +148,7 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
   return (
     <View style={styles.topicScreenRoot}>
       <View style={styles.topicTopBar}>
-        <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
+        <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={chrome.back} />
         <Text style={styles.topicTopHint} numberOfLines={1}>
           {sourceLabel(item.source)}
           {item.category ? ' · ' + item.category : ''}
@@ -173,12 +158,12 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
             iconOnly
             ghost
             icon={Star}
-            label={topicFavorite ? '已收藏' : '收藏'}
+            label={chrome.favorite ? '已收藏' : '收藏'}
             styles={styles}
             theme={theme}
-            active={topicFavorite}
+            active={chrome.favorite}
             activeColor={theme.favorite}
-            onPress={() => onToggleFavorite(item)}
+            onPress={chrome.toggleFavorite}
           />
           <IconButton
             iconOnly
@@ -192,14 +177,14 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
           />
         </View>
       </View>
-      <TopicContentList {...props} discourseEmojiUrls={discourseEmojiUrls} headerState={headerState} />
+      <TopicContentList presentation={content} discourseEmojiUrls={discourseEmojiUrls} headerState={headerState} />
       <TopicMenu
-        onOpenOriginal={onOpenOriginal}
-        onOpenReadingSettings={onOpenReadingSettings}
-        onRefreshTopic={onRefreshTopic}
-        onRefreshWholeTopic={onRefreshWholeTopic}
+        onOpenOriginal={chrome.openOriginal}
+        onOpenReadingSettings={chrome.openReadingSettings}
+        onRefreshTopic={chrome.refreshReplies}
+        onRefreshWholeTopic={chrome.refreshTopic}
         onRequestClose={() => setTopicMenuOpen(false)}
-        onShareTopic={onShareTopic}
+        onShareTopic={chrome.share}
         runTopicMenuAction={runTopicMenuAction}
         styles={styles}
         theme={theme}
@@ -209,19 +194,19 @@ export const TopicScreen = memo(function TopicScreen(props: TopicScreenProps) {
       <ReplyComposerSheet
         actionBusy={actionBusy}
         discourseEmojiUrls={discourseEmojiUrls}
-        replyContent={replyContent}
-        replyFace={replyFace}
-        replyEditTarget={replyEditTarget}
-        replyTarget={replyTarget}
+        replyContent={composer.content}
+        replyFace={composer.face}
+        replyEditTarget={composer.editTarget}
+        replyTarget={composer.target}
         source={topic?.source}
         styles={styles}
         theme={theme}
-        visible={Boolean(canOpenReplyComposer && replyComposerOpen)}
-        onReplyComposerOpenChange={onReplyComposerOpenChange}
-        onReplyContentChange={onReplyContentChange}
-        onReplyFaceChange={onReplyFaceChange}
-        onSubmitReply={onSubmitReply}
-        onUploadReplyImage={replyImageUploadSupported(topic?.source) ? onUploadReplyImage : undefined}
+        visible={Boolean(canOpenReplyComposer && composer.open)}
+        onReplyComposerOpenChange={composer.toggle}
+        onReplyContentChange={composer.changeContent}
+        onReplyFaceChange={composer.changeFace}
+        onSubmitReply={composer.submit}
+        onUploadReplyImage={replyImageUploadSupported(topic?.source) ? composer.uploadImage : undefined}
       />
     </View>
   );

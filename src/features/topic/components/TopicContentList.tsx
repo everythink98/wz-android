@@ -1,16 +1,7 @@
 import { createTopicStyles, type TopicStyles } from '../styles';
-import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View
-} from 'react-native';
-import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type LayoutChangeEvent, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { FlashList, type ListRenderItem } from '@shopify/flash-list';
 import {
   HTMLContentModel,
   HTMLElementModel,
@@ -22,16 +13,9 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronRight, Drumstick, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserReference } from '@/domain/forum/models';
-import type {
-  HtmlBaseStyle,
-  HtmlClassesStyles,
-  HtmlIgnoredStyles,
-  HtmlRenderers,
-  HtmlRenderersProps,
-  HtmlTagsStyles
-} from '../rendering/types';
-import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from '../model/types';
+import type { Reply, TopicPoll } from '@/domain/forum/models';
+import type { HtmlRenderers } from '../rendering/types';
+import type { ReplyFilter } from '../model/types';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
 import { HTML_ALLOWED_INLINE_STYLES, trimsTrailingBlockSpacing } from '../rendering/htmlStyles';
 import {
@@ -48,7 +32,6 @@ import {
   FORUM_VIDEO_TAG
 } from '@/domain/forum/html';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
-import { forumVideoBlockFromHtml, splitTopicContentHtml } from '@/domain/forum/topicContentSplit';
 import {
   androidRipple,
   replyContextBadgeStyle,
@@ -64,13 +47,7 @@ import { Avatar } from '@/ui/avatar/Avatar';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavigation';
-import {
-  topicActionStateKey,
-  type InteractionType,
-  type OptimisticActionState,
-  type TopicActionStateKind
-} from '@/domain/forum/topicActionState';
-import type { TopicImageDeriver } from '../model/topicDerivedData';
+import { topicActionStateKey, type TopicActionStateKind } from '@/domain/forum/topicActionState';
 import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
@@ -80,29 +57,31 @@ import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import {
   discourseQuotedPostReferenceFromAttributes,
   quotedPostReferenceKey,
-  quotedPostReferenceFromReply,
   topicOpeningPostAsReply,
-  topicQuotedPostInstanceKey,
-  type ToggleReplyQuoteOptions,
-  type ToggleTopicBodyQuoteOptions
+  topicQuotedPostInstanceKey
 } from '@/domain/forum/quotedPosts';
-import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
-import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
+import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { TopicPolls } from './TopicPolls';
 import { AcceptedAnswerPreview } from './AcceptedAnswerPreview';
 import { DetailActionButton } from './TopicActionBar';
 import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
+import { topicStatusBadges } from '../model/screenHelpers';
+import type { TopicContentPresentation } from '../useTopicPresentation';
+import {
+  buildAcceptedAnswerPresentation,
+  buildTopicOpeningContent,
+  type TopicContentItem
+} from '../model/topicOpeningPresentation';
 import {
   buildReplyListItems,
   buildVirtualizedReplyItems,
-  isAccessNoticeHtml,
-  stableTextHash,
   topicListItemSpacing,
-  topicStatusBadges,
-  type TopicListItem as ReplyTopicListItem
-} from '../model/screenHelpers';
+  type TopicReplyListItem
+} from '../model/replyListModel';
+import { stableTextHash } from '../model/contentIdentity';
+import { topicListItemKey, topicListItemType, type TopicListItem } from '../model/topicListModel';
 
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
 const EMPTY_NEARBY_TOPIC_CONTENT_KEYS: ReadonlySet<string> = new Set();
@@ -142,19 +121,7 @@ function YaohuoFavoriteButton({
   );
 }
 
-type TopicContentItem =
-  | { type: 'content'; key: string; html: string }
-  | { type: 'contentVideo'; key: string; src: string }
-  | { type: 'poll'; key: string; poll: TopicPoll }
-  | { type: 'accessNotice'; key: string; label: string; detail: string };
-type TopicListItem =
-  | ReplyTopicListItem
-  | { type: 'topicContent'; key: string; content: TopicContentItem }
-  | { type: 'topicPostlude'; key: string };
-export type { TopicListItem };
-
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
-const EMPTY_TOPIC_POLLS: TopicPoll[] = [];
 const TrimTrailingBlockSpacingRenderer: CustomBlockRenderer = ({ InternalRenderer, ...props }) => (
   <InternalRenderer
     {...props}
@@ -262,143 +229,67 @@ function hasHtmlClass(tnode: unknown, className: string) {
   return classValue.split(/\s+/).includes(className);
 }
 
-function topicListItemKey(item: TopicListItem) {
-  return item.key;
-}
-
-function topicListItemType(item: TopicListItem) {
-  if (item.type === 'replyQuoteContent') {
-    return `${item.type}:${item.content.type}`;
-  }
-  return item.type === 'topicContent' ? `topicContent:${item.content.type}` : item.type;
-}
-
 export const TopicContentList = memo(function TopicContentList({
-  actionBusy,
-  decisionFor,
-  contentWidth,
-  htmlBaseStyle,
-  htmlClassesStyles,
-  htmlIgnoredStyles,
-  htmlRenderers,
-  htmlRenderersProps,
-  htmlTagsStyles,
   discourseEmojiUrls,
   headerState,
-  expandedQuotes,
-  loadedQuotedReplies,
-  loadingMoreReplies,
-  loadingQuotedFloors,
-  mediaSessionIdentity,
-  commentQuery,
-  replyHighlightQuery,
-  quoteStateVersion,
-  replyComposerOpen,
-  replyFilter,
-  replyHasMore,
-  replies,
-  selectedTopic,
-  sourceReplies,
-  topic,
-  topicBusy,
-  topicError,
-  topicScrollRef,
-  unreadReplyCount,
-  onCommentQueryChange,
-  optimisticActions,
-  onDeleteReply,
-  onEditReply,
-  onInteract,
-  onDiscourseBookmark,
-  onNodeSeekCollection,
-  onYaohuoFavorite,
-  onVotePoll,
-  onLoadMoreReplies,
-  onOpenTopic,
-  onReplyComposerOpenChange,
-  onReplyFilterChange,
-  onReplyToFloor,
-  onTopicScroll,
-  onToggleReplyQuote,
-  onToggleTopicBodyQuote,
-  onOpenUser,
-  yaohuoBookmarked,
-  inlineSizedImageUrls,
-  topicImageDeriver
+  presentation
 }: {
-  actionBusy: boolean;
-  decisionFor: TopicActionDecisionFor;
-  contentWidth: number;
-  htmlBaseStyle: HtmlBaseStyle;
-  htmlClassesStyles: HtmlClassesStyles;
-  htmlIgnoredStyles: HtmlIgnoredStyles;
-  htmlRenderers: HtmlRenderers;
-  htmlRenderersProps: HtmlRenderersProps;
-  htmlTagsStyles: HtmlTagsStyles;
   discourseEmojiUrls: DiscourseEmojiUrlMap;
   headerState: ReactNode;
-  getDiscourseEmojiUrls: (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
-  expandedQuotes: Record<string, boolean>;
-  loadedQuotedReplies: Record<string, Reply>;
-  loadingMoreReplies: boolean;
-  loadingQuotedFloors: Record<string, boolean>;
-  mediaSessionIdentity: string;
-  commentQuery: string;
-  replyHighlightQuery: string;
-  quoteStateVersion: number;
-  replyComposerOpen: boolean;
-  replyContent: string;
-  replyFace: string;
-  replyEditTarget: ReplyEditTarget | null;
-  replyFilter: ReplyFilter;
-  replyTarget: ReplyTarget | null;
-  replyHasMore: boolean;
-  replies: Reply[];
-  selectedTopic: Topic | null;
-  sourceReplies: Reply[];
-  topic: TopicDetail | null;
-  topicBusy: boolean;
-  topicError: SourceErrorInfo | null;
-  identityBlocked?: boolean;
-  identityChecking?: boolean;
-  topicFavorite: boolean;
-  topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
-  unreadReplyCount: number;
-  onBack: () => void;
-  onCommentQueryChange: (value: string) => void;
-  optimisticActions: Record<string, OptimisticActionState>;
-  onDeleteReply: (reply: Reply) => void;
-  onEditReply: (reply: Reply) => void;
-  onInteract: (type: InteractionType, commentId?: number) => void;
-  onDiscourseBookmark: () => void;
-  onNodeSeekCollection: () => void;
-  onYaohuoFavorite: () => void;
-  onShareTopic: () => void;
-  onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
-  onLoadMoreReplies: () => void;
-  onOpenOriginal: (url: string) => void;
-  onOpenTopic: (topic: Topic) => void;
-  onOpenReadingSettings: () => void;
-  onReplyComposerOpenChange: (open: boolean) => void;
-  onReplyContentChange: (value: string) => void;
-  onReplyFaceChange: (value: string) => void;
-  onReplyFilterChange: (filter: ReplyFilter) => void;
-  onReplyToFloor: (reply: Reply) => void;
-  onRefreshTopic: () => void;
-  onRefreshWholeTopic: () => void;
-  onVerifyLinuxDo: () => void;
-  onVerifyNodeSeek: () => void;
-  onSubmitReply: () => void;
-  onUploadReplyImage: () => void;
-  onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  onToggleReplyQuote: (options: ToggleReplyQuoteOptions) => void;
-  onToggleTopicBodyQuote: (options: ToggleTopicBodyQuoteOptions) => void;
-  onToggleFavorite: (topic: Topic) => void;
-  onOpenUser: (user: UserReference) => void;
-  yaohuoBookmarked?: boolean;
-  inlineSizedImageUrls: Record<string, true>;
-  topicImageDeriver: TopicImageDeriver;
+  presentation: TopicContentPresentation;
 }) {
+  const {
+    actions: {
+      bookmarkDiscourse: onDiscourseBookmark,
+      busy: actionBusy,
+      collectNodeSeek: onNodeSeekCollection,
+      decisionFor,
+      deleteReply: onDeleteReply,
+      editReply: onEditReply,
+      favoriteYaohuo: onYaohuoFavorite,
+      interact: onInteract,
+      optimistic: optimisticActions,
+      votePoll: onVotePoll
+    },
+    article: { busy: topicBusy, error: topicError, selectedTopic, topic, yaohuoBookmarked },
+    navigation: { openTopic: onOpenTopic, openUser: onOpenUser },
+    rendering: {
+      contentWidth,
+      htmlBaseStyle,
+      htmlClassesStyles,
+      htmlIgnoredStyles,
+      htmlRenderers,
+      htmlRenderersProps,
+      htmlTagsStyles,
+      inlineSizedImageUrls,
+      mediaSessionIdentity,
+      topicImageDeriver
+    },
+    replies: {
+      changeCommentQuery: onCommentQueryChange,
+      changeFilter: onReplyFilterChange,
+      commentQuery,
+      expandedQuotes,
+      filtered: replies,
+      hasMore: replyHasMore,
+      loadedQuotedReplies,
+      loadingMore: loadingMoreReplies,
+      loadingQuotedFloors,
+      loadMore: onLoadMoreReplies,
+      onScroll: onTopicScroll,
+      openComposer: onReplyComposerOpenChange,
+      query: replyHighlightQuery,
+      quoteStateVersion,
+      replyComposerOpen,
+      replyFilter,
+      replyToFloor: onReplyToFloor,
+      source: sourceReplies,
+      toggleReplyQuote: onToggleReplyQuote,
+      toggleTopicBodyQuote: onToggleTopicBodyQuote,
+      topicScrollRef,
+      unreadCount: unreadReplyCount
+    }
+  } = presentation;
   const { styles, theme } = useReaderStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const mediaContext = useMemo(
@@ -569,63 +460,60 @@ export const TopicContentList = memo(function TopicContentList({
   }, []);
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
-  const topicSource = topic?.source;
-  const topicContentHtml = topic?.contentHtml || '';
-  const topicPolls = topic?.polls || EMPTY_TOPIC_POLLS;
-  const topicAccessRequirementText = topic?.accessRequirement
-    ? forumAccessRequirementText(topic.accessRequirement)
-    : '';
-  const topicAccessRequirementDetail = topic?.accessRequirement?.detail || '当前账号暂无权限查看这个帖子';
-  const topicShowsAccessNotice = Boolean(topic && isAccessNoticeHtml(topicContentHtml, topic.accessRequirement));
-  const topicContentItems = useMemo<TopicContentItem[]>(() => {
-    return topicSource
-      ? topicShowsAccessNotice
-        ? [
-            {
-              type: 'accessNotice' as const,
-              key: 'topic-access-notice',
-              label: topicAccessRequirementText,
-              detail: topicAccessRequirementDetail
+  const openingAcceptedAnswerFloor = topic?.acceptedAnswerFloor;
+  const openingAccessRequirement = topic?.accessRequirement;
+  const openingContentHtml = topic?.contentHtml;
+  const openingTopicId = topic?.id;
+  const openingPolls = topic?.polls;
+  const openingReplies = topic?.replies;
+  const openingSource = topic?.source;
+  const openingContent = useMemo(
+    () =>
+      buildTopicOpeningContent(
+        openingSource
+          ? {
+              accessRequirement: openingAccessRequirement,
+              contentHtml: openingContentHtml || '',
+              polls: openingPolls,
+              source: openingSource
             }
-          ]
-        : (isDiscourseSource(topicSource)
-            ? splitDiscourseContentHtml(topicContentHtml, topicPolls)
-            : [{ type: 'html' as const, html: topicContentHtml }]
-          ).flatMap((part, partIndex): TopicContentItem[] => {
-            if (part.type === 'poll') {
-              return [
-                {
-                  type: 'poll' as const,
-                  key: `topic-poll-${part.poll.name || part.poll.id || partIndex}`,
-                  poll: part.poll
-                }
-              ];
-            }
-            return splitTopicContentHtml(part.html).map((html, index) => {
-              const video = forumVideoBlockFromHtml(html);
-              return video
-                ? {
-                    type: 'contentVideo' as const,
-                    key: `topic-video-${partIndex}-${index}-${stableTextHash(video.src)}`,
-                    src: video.src
-                  }
-                : {
-                    type: 'content' as const,
-                    key: `topic-content-${partIndex}-${index}-${stableTextHash(html)}`,
-                    html
-                  };
-            });
-          })
-      : [];
-  }, [
-    topicAccessRequirementDetail,
-    topicAccessRequirementText,
-    topicContentHtml,
-    topicPolls,
-    topicShowsAccessNotice,
-    topicSource
-  ]);
-  const replyItems = useMemo<ReplyTopicListItem[]>(
+          : null
+      ),
+    [openingAccessRequirement, openingContentHtml, openingPolls, openingSource]
+  );
+  const {
+    contentItems: topicContentItems,
+    legacyPollsVisible: legacyTopicPollsVisible,
+    polls: topicPolls,
+    showsAccessNotice: topicShowsAccessNotice
+  } = openingContent;
+  const acceptedAnswer = useMemo(
+    () =>
+      buildAcceptedAnswerPresentation({
+        loadedQuotedReplies,
+        showsAccessNotice: topicShowsAccessNotice,
+        sourceReplies,
+        topic:
+          openingSource && openingTopicId
+            ? {
+                acceptedAnswerFloor: openingAcceptedAnswerFloor,
+                id: openingTopicId,
+                replies: openingReplies || [],
+                source: openingSource
+              }
+            : null
+      }),
+    [
+      loadedQuotedReplies,
+      sourceReplies,
+      openingAcceptedAnswerFloor,
+      openingReplies,
+      openingSource,
+      openingTopicId,
+      topicShowsAccessNotice
+    ]
+  );
+  const replyItems = useMemo<TopicReplyListItem[]>(
     () =>
       buildVirtualizedReplyItems({
         expandedQuotes,
@@ -648,31 +536,6 @@ export const TopicContentList = memo(function TopicContentList({
       repliesByFloor
     ]
   );
-  const acceptedAnswer = useMemo(() => {
-    if (!topic || topicShowsAccessNotice || !isDiscourseSource(topic.source)) {
-      return null;
-    }
-    const flaggedReply =
-      sourceReplies.find((reply) => reply.acceptedAnswer) || topic.replies.find((reply) => reply.acceptedAnswer);
-    const acceptedFloor = flaggedReply?.floor ?? topic.acceptedAnswerFloor;
-    const reference = quotedPostReferenceFromReply(topic.source, topic.id, acceptedFloor);
-    if (!reference) {
-      return null;
-    }
-    const referenceKey = quotedPostReferenceKey(reference);
-    const candidate =
-      (acceptedFloor
-        ? sourceReplies.find((reply) => reply.floor === acceptedFloor) ||
-          topic.replies.find((reply) => reply.floor === acceptedFloor) ||
-          loadedQuotedReplies[referenceKey]
-        : undefined) || flaggedReply;
-    return {
-      floor: reference.postNumber,
-      instanceKey: `accepted-answer:${topic.id}:${referenceKey}`,
-      reference,
-      reply: candidate && !candidate.systemAction && candidate.contentHtml.trim() ? candidate : undefined
-    };
-  }, [loadedQuotedReplies, sourceReplies, topic, topicShowsAccessNotice]);
   const acceptedAnswerReply = acceptedAnswer?.reply;
   const acceptedAnswerLoading = Boolean(acceptedAnswer && loadingQuotedFloors[acceptedAnswer.instanceKey]);
   const acceptedAnswerLoadAttemptRef = useRef('');
@@ -727,13 +590,6 @@ export const TopicContentList = memo(function TopicContentList({
         topicShowsAccessNotice
       }),
     [canShowReplies, replyItems, topicShowsAccessNotice]
-  );
-  const legacyTopicPollsVisible = Boolean(
-    topic &&
-    !isDiscourseSource(topic.source) &&
-    topic.source !== 'nodeseek' &&
-    !topicShowsAccessNotice &&
-    topicPolls.length
   );
   const topicPostludeVisible = Boolean(
     legacyTopicPollsVisible || (acceptedAnswer && !topicShowsAccessNotice) || topicHasPostActions

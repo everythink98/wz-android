@@ -42,13 +42,14 @@ import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../model/
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
-import { getReplyKey, stableTextHash, type TopicListItem } from '../model/screenHelpers';
+import { getReplyKey, type TopicReplyListItem } from '../model/replyListModel';
+import { stableTextHash } from '../model/contentIdentity';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 
 type NodeSeekStat = { label: string; value: number };
 type ReplyItemSection = Extract<
-  TopicListItem,
+  TopicReplyListItem,
   {
     type: 'replyStart' | 'replyQuoteSummary' | 'replyQuoteContent' | 'replyEnd';
   }

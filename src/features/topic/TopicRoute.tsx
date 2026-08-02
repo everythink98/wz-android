@@ -26,7 +26,6 @@ import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificationPrompt';
-import { markCurrentNodeSeekOwnRepliesUnlikable } from './actions/actionHelpers';
 import { useTopicActionsController } from './actions/useTopicActionsController';
 import { useImagePreviewController } from './media/useImagePreviewController';
 import { replyHtmlWithSignature } from './model/topicDerivedData';
@@ -34,11 +33,12 @@ import { verifyLinuxDoTopic } from './model/topicVerification';
 import { useHtmlRenderingController } from './rendering/useHtmlRenderingController';
 import { shareTopicWithClipboardFallback } from './shareTopic';
 import { TopicScreen } from './TopicScreen';
-import type { TopicListItem } from './components/TopicContentList';
+import type { TopicListItem } from './model/topicListModel';
 import { useStableTopicLayoutDetail } from './useStableTopicLayoutDetail';
 import { useTopicController } from './useTopicController';
-import { filterTopicSessionReplies, useTopicSessionController } from './useTopicSessionController';
+import { useTopicSessionController } from './useTopicSessionController';
 import { useTopicRouteBeforeRemove } from './useTopicRouteBeforeRemove';
+import { useTopicPresentation } from './useTopicPresentation';
 
 type IdentityCheck = {
   checking: boolean;
@@ -111,19 +111,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
   const topicSession = useTopicSessionController({ notify: runtime.notify, topic });
   const {
-    state: {
-      commentQuery,
-      debouncedCommentQuery,
-      expandedQuotes,
-      quoteStateVersion,
-      replyComposerOpen,
-      replyContent,
-      replyEditTarget,
-      replyFace,
-      replyFilter,
-      replyTarget,
-      selectedTopic
-    },
+    state: { replyComposerOpen, selectedTopic },
     commands: { composer: topicComposer, view: topicView }
   } = topicSession;
   const openTopicRoute = useCallback(
@@ -147,23 +135,16 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     topicSession
   });
   const {
-    loadMoreReplies,
     loadedQuotedReplies,
-    loadingMoreReplies,
-    loadingQuotedFloors,
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
-    replyHasMore,
-    toggleReplyQuote,
-    toggleTopicBodyQuote,
     topicBusy,
     topicDetail,
     topicError,
     topicFavorite,
     topicQueryKey,
-    topicReplies,
-    unreadReplyCount
+    topicReplies
   } = topicController;
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const identityCheck = topic.source === 'linuxdo' ? runtime.account.identityChecks.linuxdo : undefined;
@@ -199,34 +180,6 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     topicKey: `${topic.source}:${topic.id}`,
     webViewBlockMessage: runtime.networkProxyWebViewBlockMessage
   });
-  const filteredReplies = useMemo(
-    () =>
-      filterTopicSessionReplies({
-        commentQuery: debouncedCommentQuery,
-        inlineSizedImageUrls: html.inlineSizedImageUrls,
-        replyFilter,
-        topicDetail: topicLayoutDetail,
-        topicImageDeriver: html.topicImageDeriver,
-        topicReplies
-      }),
-    [
-      debouncedCommentQuery,
-      html.inlineSizedImageUrls,
-      html.topicImageDeriver,
-      replyFilter,
-      topicLayoutDetail,
-      topicReplies
-    ]
-  );
-  const displayReplies = useMemo(
-    () =>
-      markCurrentNodeSeekOwnRepliesUnlikable(
-        filteredReplies,
-        runtime.account.sessionViewModels.nodeseek.currentUser,
-        runtime.account.nodeSeekUserId
-      ),
-    [filteredReplies, runtime]
-  );
   const getTopicHtmlParts = useCallback(
     () =>
       [
@@ -341,6 +294,43 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   const stableOpenUser = useLatestCallback((user: UserReference) => navigation.push('User', { user }));
   const stableRefreshReplies = useLatestCallback(refreshTopicReplies);
   const stableRefreshWholeTopic = useLatestCallback(refreshCurrentTopic);
+  const presentation = useTopicPresentation({
+    actions,
+    articleState: {
+      busy: topicBusy && !identityError,
+      error: identityError || topicError || null,
+      topic: topicLayoutDetail,
+      ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
+    },
+    chrome: {
+      back: navigation.goBack,
+      favorite: topicFavorite,
+      getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
+      identityBlocked: Boolean(identityCheck?.pending),
+      identityChecking: Boolean(identityCheck?.checking),
+      onScroll: handleTopicScroll,
+      openOriginal: openExternalUrl,
+      openReadingSettings: () => navigation.push('ReadingSettings'),
+      openTopic: stableOpenTopic,
+      openUser: stableOpenUser,
+      refreshReplies: stableRefreshReplies,
+      refreshTopic: stableRefreshWholeTopic,
+      share: shareTopic,
+      toggleFavorite: toggleTopicFavorite,
+      verifyLinuxDo,
+      verifyNodeSeek
+    },
+    currentNodeSeekUser: runtime.account.sessionViewModels.nodeseek.currentUser,
+    html: {
+      ...html,
+      contentWidth: runtime.contentWidth,
+      mediaSessionIdentity
+    },
+    nodeSeekUserId: runtime.account.nodeSeekUserId,
+    read: topicController,
+    session: topicSession,
+    topicScrollRef
+  });
 
   return (
     <OriginalImageUpgradeBoundary enabled={active}>
@@ -350,78 +340,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
         pointerEvents={active ? 'auto' : 'none'}
         style={{ flex: 1 }}
       >
-        <TopicScreen
-          actionBusy={actions.actionBusy}
-          decisionFor={actions.decisionFor}
-          contentWidth={runtime.contentWidth}
-          htmlBaseStyle={html.htmlBaseStyle}
-          htmlClassesStyles={html.htmlClassesStyles}
-          htmlIgnoredStyles={html.htmlIgnoredStyles}
-          htmlRenderers={html.htmlRenderers}
-          htmlRenderersProps={html.htmlRenderersProps}
-          htmlTagsStyles={html.htmlTagsStyles}
-          getDiscourseEmojiUrls={runtime.account.readGateway.getEmojiUrls}
-          inlineSizedImageUrls={html.inlineSizedImageUrls}
-          topicImageDeriver={html.topicImageDeriver}
-          expandedQuotes={expandedQuotes}
-          loadedQuotedReplies={loadedQuotedReplies}
-          loadingMoreReplies={loadingMoreReplies}
-          loadingQuotedFloors={loadingQuotedFloors}
-          mediaSessionIdentity={mediaSessionIdentity}
-          commentQuery={commentQuery}
-          replyHighlightQuery={debouncedCommentQuery}
-          quoteStateVersion={quoteStateVersion}
-          topicFavorite={topicFavorite}
-          replyComposerOpen={replyComposerOpen}
-          replyContent={replyContent}
-          replyFace={replyFace}
-          replyEditTarget={replyEditTarget}
-          replyFilter={replyFilter}
-          replyTarget={replyTarget}
-          replyHasMore={replyHasMore}
-          replies={displayReplies}
-          selectedTopic={selectedTopic}
-          sourceReplies={topicReplies}
-          topic={topicLayoutDetail}
-          topicBusy={topicBusy && !identityError}
-          topicError={identityError || topicError || null}
-          identityBlocked={Boolean(identityCheck?.pending)}
-          identityChecking={Boolean(identityCheck?.checking)}
-          topicScrollRef={topicScrollRef}
-          unreadReplyCount={unreadReplyCount}
-          onBack={navigation.goBack}
-          onCommentQueryChange={topicView.changeCommentQuery}
-          optimisticActions={actions.optimisticTopicActions}
-          onDeleteReply={actions.deleteReply}
-          onEditReply={actions.editReply}
-          onInteract={actions.interact}
-          onDiscourseBookmark={actions.bookmarkOnDiscourseSite}
-          onNodeSeekCollection={actions.collectOnNodeSeekSite}
-          onYaohuoFavorite={actions.favoriteOnYaohuoSite}
-          onShareTopic={shareTopic}
-          onVotePoll={actions.votePoll}
-          onLoadMoreReplies={loadMoreReplies}
-          onOpenOriginal={openExternalUrl}
-          onOpenTopic={stableOpenTopic}
-          onOpenReadingSettings={() => navigation.push('ReadingSettings')}
-          onReplyComposerOpenChange={topicComposer.toggle}
-          onReplyContentChange={topicComposer.changeContent}
-          onReplyFaceChange={topicComposer.changeFace}
-          onReplyFilterChange={topicView.changeReplyFilter}
-          onReplyToFloor={topicComposer.replyToFloor}
-          onRefreshTopic={stableRefreshReplies}
-          onRefreshWholeTopic={stableRefreshWholeTopic}
-          onVerifyLinuxDo={verifyLinuxDo}
-          onVerifyNodeSeek={verifyNodeSeek}
-          onSubmitReply={actions.submitReply}
-          onUploadReplyImage={actions.uploadReplyImage}
-          onTopicScroll={handleTopicScroll}
-          onToggleReplyQuote={toggleReplyQuote}
-          onToggleTopicBodyQuote={toggleTopicBodyQuote}
-          onToggleFavorite={toggleTopicFavorite}
-          onOpenUser={stableOpenUser}
-          yaohuoBookmarked={topicDetail?.source === 'yaohuo' ? topicDetail.bookmarked : undefined}
-        />
+        <TopicScreen presentation={presentation} />
         <ImagePreviewModal
           preview={imagePreviewController.imagePreview}
           nodeSeekMediaUserAgent={runtime.nodeSeekMediaUserAgent}

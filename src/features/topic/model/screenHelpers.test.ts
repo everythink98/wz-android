@@ -3,10 +3,10 @@ import {
   buildReplyListItems,
   buildVirtualizedReplyItems,
   getReplyKey,
-  hasSameYaohuoTopicLayout,
   topicListItemSpacing,
-  type TopicListItem
-} from './screenHelpers';
+  type TopicReplyListItem
+} from './replyListModel';
+import { hasSameYaohuoTopicLayout } from './screenHelpers';
 import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 
@@ -16,13 +16,13 @@ const reply: Reply = {
   createdAt: '2026-07-03T00:00:00.000Z',
   floor: 2
 };
-const replyItem: TopicListItem = {
+const replyItem: TopicReplyListItem = {
   type: 'reply',
   key: 'reply-floor-2',
   reply,
   replyFloor: 2
 };
-const listCases: [string, boolean, TopicListItem[], boolean, TopicListItem[]][] = [
+const listCases: [string, boolean, TopicReplyListItem[], boolean, TopicReplyListItem[]][] = [
   ['visible replies', true, [replyItem], false, [{ type: 'replyControls', key: 'reply-controls' }, replyItem]],
   [
     'empty replies',

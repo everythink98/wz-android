@@ -10,7 +10,7 @@ import { triggerPressFeedback } from '@/ui/controls/AppControls';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import type { TopicImageDeriver } from '../model/topicDerivedData';
-import { stableTextHash } from '../model/screenHelpers';
+import { stableTextHash } from '../model/contentIdentity';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { TopicPolls } from './TopicPolls';
 
