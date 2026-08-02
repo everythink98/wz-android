@@ -252,7 +252,6 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
       searchSessionNotices={[]}
       searchSource={searchSource}
       submittedQuery={submittedQuery}
-      scrollToTopSignal={0}
       onOpenTopic={() => setRoute('topic')}
       onLoadMoreSearchSource={loadMoreSearchSource}
       onRemoveRecentSearch={jest.fn()}
@@ -302,7 +301,6 @@ function RecentSearchHarness({
       searchSessionNotices={[]}
       searchSource="all"
       submittedQuery=""
-      scrollToTopSignal={0}
       onOpenTopic={jest.fn()}
       onLoadMoreSearchSource={jest.fn()}
       onRemoveRecentSearch={onRemoveRecentSearch}
@@ -335,7 +333,6 @@ function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof 
     searchSessionNotices: [],
     searchSource: 'all',
     submittedQuery: 'codex',
-    scrollToTopSignal: 0,
     onOpenTopic: jest.fn(),
     onLoadMoreSearchSource: jest.fn(),
     onRemoveRecentSearch: jest.fn(),
@@ -778,8 +775,7 @@ describe('Search state', () => {
 
   it.each([
     ['query', { query: 'changed' }],
-    ['source', { searchSource: 'all' as const }],
-    ['scroll-to-top', { scrollToTopSignal: 1 }]
+    ['source', { searchSource: 'all' as const }]
   ])('clears an armed sentinel when %s changes', async (_label, changedProps) => {
     const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
     const group: SearchGroup = {

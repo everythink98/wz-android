@@ -1,5 +1,5 @@
 import type { AppStyles } from './styles';
-import { memo, type ComponentType, type ReactNode } from 'react';
+import { memo, type ComponentType } from 'react';
 import { NavigationContainer, StackActions, createNavigationContainerRef, type Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -82,22 +82,20 @@ export function pushUserRoute(user: UserReference) {
 
 function MainTabsHost({
   moreHasBadge,
-  renderFeedTab,
-  renderLibraryTab,
-  renderMoreTab,
-  renderSearchTab,
+  FeedRouteComponent,
+  LibraryRouteComponent,
+  MoreRouteComponent,
+  SearchRouteComponent,
   styles,
-  theme,
-  onTabPress
+  theme
 }: {
   moreHasBadge: boolean;
-  renderFeedTab: () => ReactNode;
-  renderLibraryTab: () => ReactNode;
-  renderMoreTab: () => ReactNode;
-  renderSearchTab: () => ReactNode;
+  FeedRouteComponent: ComponentType;
+  LibraryRouteComponent: ComponentType;
+  MoreRouteComponent: ComponentType;
+  SearchRouteComponent: ComponentType;
   styles: AppStyles;
   theme: ReaderTheme;
-  onTabPress: (target: keyof MainTabParamList) => void;
 }) {
   return (
     <Tab.Navigator
@@ -124,25 +122,16 @@ function MainTabsHost({
           )
         };
       }}
-      screenListeners={({ route }) => ({
+      screenListeners={{
         tabPress: () => {
           triggerPressFeedback();
-          onTabPress(route.name as keyof MainTabParamList);
         }
-      })}
+      }}
     >
-      <Tab.Screen name="feed" options={{ title: '首页' }}>
-        {renderFeedTab}
-      </Tab.Screen>
-      <Tab.Screen name="search" options={{ title: '搜索' }}>
-        {renderSearchTab}
-      </Tab.Screen>
-      <Tab.Screen name="library" options={{ title: '收藏' }}>
-        {renderLibraryTab}
-      </Tab.Screen>
-      <Tab.Screen name="more" options={{ title: '更多' }}>
-        {renderMoreTab}
-      </Tab.Screen>
+      <Tab.Screen name="feed" component={FeedRouteComponent} options={{ title: '首页' }} />
+      <Tab.Screen name="search" component={SearchRouteComponent} options={{ title: '搜索' }} />
+      <Tab.Screen name="library" component={LibraryRouteComponent} options={{ title: '收藏' }} />
+      <Tab.Screen name="more" component={MoreRouteComponent} options={{ title: '更多' }} />
     </Tab.Navigator>
   );
 }
@@ -150,33 +139,31 @@ function MainTabsHost({
 export const AppNavigator = memo(function AppNavigator({
   moreHasBadge,
   navigationTheme,
-  renderFeedTab,
-  renderLibraryTab,
-  renderMoreTab,
-  renderReadingSettingsScreen,
-  renderSearchTab,
+  FeedRouteComponent,
+  LibraryRouteComponent,
+  MoreRouteComponent,
+  ReadingSettingsRouteComponent,
+  SearchRouteComponent,
   TopicRouteComponent,
   UserRouteComponent,
   styles,
   theme,
   onReady,
-  onScreenChange,
-  onTabPress
+  onScreenChange
 }: {
   moreHasBadge: boolean;
   navigationTheme: Theme;
-  renderFeedTab: () => ReactNode;
-  renderLibraryTab: () => ReactNode;
-  renderMoreTab: () => ReactNode;
-  renderReadingSettingsScreen: () => ReactNode;
-  renderSearchTab: () => ReactNode;
+  FeedRouteComponent: ComponentType;
+  LibraryRouteComponent: ComponentType;
+  MoreRouteComponent: ComponentType;
+  ReadingSettingsRouteComponent: ComponentType;
+  SearchRouteComponent: ComponentType;
   TopicRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'Topic'>>;
   UserRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'User'>>;
   styles: AppStyles;
   theme: ReaderTheme;
   onReady: () => void;
   onScreenChange: (screen: Screen, routeKey: string) => void;
-  onTabPress: (target: keyof MainTabParamList) => void;
 }) {
   const publishCurrentScreen = () => {
     const route = currentAppRoute();
@@ -204,20 +191,21 @@ export const AppNavigator = memo(function AppNavigator({
           {() => (
             <MainTabsHost
               moreHasBadge={moreHasBadge}
-              renderFeedTab={renderFeedTab}
-              renderLibraryTab={renderLibraryTab}
-              renderMoreTab={renderMoreTab}
-              renderSearchTab={renderSearchTab}
+              FeedRouteComponent={FeedRouteComponent}
+              LibraryRouteComponent={LibraryRouteComponent}
+              MoreRouteComponent={MoreRouteComponent}
+              SearchRouteComponent={SearchRouteComponent}
               styles={styles}
               theme={theme}
-              onTabPress={onTabPress}
             />
           )}
         </Stack.Screen>
         <Stack.Screen name="Topic" component={TopicRouteComponent} />
-        <Stack.Screen name="ReadingSettings" options={{ headerShown: true, title: '阅读设置' }}>
-          {renderReadingSettingsScreen}
-        </Stack.Screen>
+        <Stack.Screen
+          name="ReadingSettings"
+          component={ReadingSettingsRouteComponent}
+          options={{ headerShown: true, title: '阅读设置' }}
+        />
         <Stack.Screen name="User" component={UserRouteComponent} />
       </Stack.Navigator>
     </NavigationContainer>

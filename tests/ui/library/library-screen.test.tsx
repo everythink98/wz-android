@@ -176,7 +176,6 @@ function LibraryHarness({
         libraryTab={libraryTab}
         loaded
         records={libraryRecords}
-        scrollToTopSignal={0}
         topicStateIndex={topicStateIndex}
         onClearHistory={onClearHistory}
         onOpenTopic={onOpenTopic}

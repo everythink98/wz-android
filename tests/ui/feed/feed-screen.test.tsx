@@ -215,7 +215,6 @@ function renderFeed(
       topicStateIndex={topicStateIndex}
       readingFilter="all"
       refreshing={false}
-      scrollToTopSignal={0}
       onCategoryChange={jest.fn()}
       onFeedFilterChange={jest.fn()}
       onFeedSourceChange={jest.fn()}
@@ -283,7 +282,6 @@ function FeedFilterHarness() {
       topicStateIndex={topicStateIndex}
       readingFilter={readingFilter}
       refreshing={false}
-      scrollToTopSignal={0}
       onCategoryChange={(value) => setFeedSelection((current) => ({ ...current, categoryFilter: value }))}
       onFeedFilterChange={changeFeedFilter}
       onFeedSourceChange={changeSource}

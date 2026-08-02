@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
-import type { Screen } from '@/ui/navigation/types';
 import type { ReadGateway } from '@/sources/readGateway';
 import {
   defaultFeedFilters,
@@ -305,6 +304,7 @@ export function feedOutcomeKind(itemCount: number, errors: SourceErrors): Source
 }
 
 export function useFeedController({
+  active,
   catalogCategories,
   identityBarriers = [],
   identityReconciliationPending = false,
@@ -314,12 +314,12 @@ export function useFeedController({
   notify,
   readerData,
   readerDataLoaded,
-  screen,
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
   readGateway
 }: {
+  active: boolean;
   catalogCategories: Category[];
   identityBarriers?: readonly ForumIdentityBarrierSource[];
   identityReconciliationPending?: boolean;
@@ -329,7 +329,6 @@ export function useFeedController({
   notify: (message: string) => void;
   readerData: ReaderData;
   readerDataLoaded: boolean;
-  screen: Screen;
   showLinuxDoVerification: (
     message?: string,
     recovery?: LinuxDoReadRecovery
@@ -339,7 +338,7 @@ export function useFeedController({
   readGateway: ReadGateway;
 }) {
   const queryClient = useQueryClient();
-  const feedActive = screen === 'feed';
+  const feedActive = active;
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');

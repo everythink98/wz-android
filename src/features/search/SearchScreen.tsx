@@ -1,6 +1,6 @@
 import { createSearchStyles, type SearchStyles } from './styles';
 import { SearchFilterSheet } from './SearchFilterSheet';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, Text, TextInput, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
 import { ChevronDown, ChevronRight, History, Search, SlidersHorizontal, X } from 'lucide-react-native';
@@ -213,7 +213,7 @@ export const SearchScreen = memo(function SearchScreen({
   searchSessionNotices,
   searchSource,
   submittedQuery,
-  scrollToTopSignal,
+  scrollRef,
   onOpenTopic,
   onLoadMoreSearchSource,
   onCheckLinuxDoStatus,
@@ -245,7 +245,7 @@ export const SearchScreen = memo(function SearchScreen({
   searchSessionNotices: SearchSessionNoticeItem[];
   searchSource: FeedSource;
   submittedQuery: string;
-  scrollToTopSignal: number;
+  scrollRef?: RefObject<FlashListRef<SearchListItem> | null>;
   onOpenTopic: (topic: Topic) => void;
   onLoadMoreSearchSource: (source: Source, page: number) => void;
   onCheckLinuxDoStatus?: () => void;
@@ -273,7 +273,8 @@ export const SearchScreen = memo(function SearchScreen({
   onSearchSourceChange: (source: FeedSource) => void;
 }) {
   const { styles, theme } = useReaderStyles(createSearchStyles);
-  const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
+  const internalListRef = useRef<FlashListRef<SearchListItem> | null>(null);
+  const listRef = scrollRef || internalListRef;
   const autoLoadArmedRef = useRef(false);
   const pendingAutoLoadRef = useRef<{ source: Source; page: number; previousItemCount: number } | null>(null);
   const paginationStateRef = useRef<{
@@ -500,7 +501,7 @@ export const SearchScreen = memo(function SearchScreen({
   );
   useLayoutEffect(() => {
     autoLoadArmedRef.current = false;
-  }, [query, scrollToTopSignal, searchSource, submittedQuery]);
+  }, [query, searchSource, submittedQuery]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(
     ({ item }) => {
       if (item.type === 'topic') {
@@ -646,12 +647,6 @@ export const SearchScreen = memo(function SearchScreen({
     }
     return `${item.group.source}:${item.type}`;
   }, []);
-  useEffect(() => {
-    if (scrollToTopSignal > 0) {
-      listRef.current?.scrollToOffset({ offset: 0, animated: true });
-    }
-  }, [scrollToTopSignal]);
-
   const header = useMemo(
     () => (
       <View style={styles.stack}>

@@ -14,13 +14,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
 import { useReaderRuntime } from './useReaderRuntime';
-import { useReaderDataActionsController } from '@/features/library/useReaderDataActionsController';
-import { useReaderSettingsController } from '@/features/more/useReaderSettingsController';
-import { useBackupStatusController } from '@/features/more/useBackupStatusController';
-import { useDiagnosticLogController } from '@/features/more/useDiagnosticLogController';
 import type { LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
-import { useFeedController } from '@/features/feed/useFeedController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
 import {
   AppNavigator,
@@ -30,12 +25,8 @@ import {
   pushUserRoute,
   shouldUpdateAppRootScreen
 } from './AppNavigator';
-import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
-import { useSearchController } from '@/features/search/useSearchController';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
-import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificationPrompt';
-import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
@@ -43,16 +34,23 @@ import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '@/p
 import type { Topic, UserReference } from '@/domain/forum/models';
 import { isHttpOrHttpsUrl } from '@/platform/media/htmlImages';
 import { LOGIN_WEBVIEW_ALLOWED_HOSTS, shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
-import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import type { LibraryTab } from '@/domain/forum/feed';
+import { toggleFavorite } from '@/domain/reader/readerData';
 import { errorMessage } from '@/platform/network/errors';
 import { parseInternalTopicOpenLink } from '@/domain/forum/links';
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
-import { FeedScreen } from '@/features/feed/FeedScreen';
-import { LibraryScreen } from '@/features/library/LibraryScreen';
-import { EMPTY_LIBRARY_RECORDS, sortLibraryRecords } from '@/features/library/model/libraryFilters';
-import { MoreScreen, ReadingSettingsScreen } from '@/features/more/MoreScreen';
-import { SearchScreen } from '@/features/search/SearchScreen';
+import { FeedRoute, FeedRouteRuntimeProvider, type FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
+import {
+  LibraryRoute,
+  LibraryRouteRuntimeProvider,
+  type LibraryRouteRuntimeValue
+} from '@/features/library/LibraryRoute';
+import {
+  MoreRoute,
+  MoreRouteRuntimeProvider,
+  ReadingSettingsRoute,
+  type MoreRouteRuntimeValue
+} from '@/features/more/MoreRoute';
+import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
 import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
 import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
@@ -115,23 +113,10 @@ export function AppRoot() {
   const { commitReaderData, readerData, readerDataLoaded, readerDataRef, replaceReaderData, waitForReaderDataSave } =
     useReaderRuntime({ notify });
 
-  const { moreScrollRef, requestTabScrollToTop, tabScrollToTopSignals } = useMainTabScrollToTop();
-  const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
-  const { clearHistory, removeFollowedUser, removeLibraryTopic, toggleTopicFavorite } = useReaderDataActionsController({
-    commitReaderData,
-    libraryTab,
-    readerDataRef
-  });
-  const followedUserRecords = useMemo(
-    () =>
-      Object.values(readerData.followedUsers).sort(
-        (left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)
-      ),
-    [readerData.followedUsers]
+  const toggleTopicFavorite = useCallback(
+    (topic: Topic) => commitReaderData('favorite-toggled', (current) => toggleFavorite(current, topic)),
+    [commitReaderData]
   );
-  const { updateSettings } = useReaderSettingsController({ commitReaderData });
-  const [showNetworkProxyPanel, setShowNetworkProxyPanel] = useState(false);
-  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   useCommitRefValue(screenRef, screen);
   const { fontScale } = readerData.settings;
   const { appStyles, contentWidth, navigationTheme, readerStyleContext, theme } = useAppTheme(
@@ -297,13 +282,6 @@ export function AppRoot() {
     markNodeSeekBrowserFetchHttpError,
     updateLinuxDoSession
   } = accountRuntime.session;
-  const selectedLibraryRecords =
-    libraryTab === 'history'
-      ? readerData.history
-      : libraryTab === 'favorites'
-        ? readerData.favorites
-        : EMPTY_LIBRARY_RECORDS;
-  const libraryRecords = useMemo(() => sortLibraryRecords(selectedLibraryRecords), [selectedLibraryRecords]);
   const openExternalUrl = useCallback(
     (url: string) => {
       if (!isHttpOrHttpsUrl(url)) {
@@ -342,10 +320,6 @@ export function AppRoot() {
     (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.linuxdo),
     [handleLoginNavigation]
   );
-  const topicStateIndex = useMemo(
-    () => createTopicListItemStateIndex(readerData),
-    [readerData.favorites, readerData.history, readerData.settings.listDensity]
-  );
   const showYaohuoLogin = useCallback(
     (message = '请先登录妖火。') => {
       setYaohuoLoginPrompt(message);
@@ -374,12 +348,6 @@ export function AppRoot() {
     };
   }, [stopLinuxDoVerificationForInactiveApp]);
 
-  const closeMorePanels = useCallback(() => {
-    closeAccountPanels();
-    setShowNetworkProxyPanel(false);
-    setShowSettingsPanel(false);
-  }, [closeAccountPanels]);
-
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek, webLoginUserId);
   useEffect(() => {
     if (!readerDataLoaded || accountStatusInitialRefreshRef.current) {
@@ -397,88 +365,6 @@ export function AppRoot() {
     readGateway,
     retainableIdentityBarriers: retainableAccountIdentityBarriers,
     sessionEpochs: forumSessionEpochs
-  });
-  const {
-    activeFeedState,
-    categories,
-    categoryFilter,
-    changeFeedSource,
-    feedAllowsRemotePagination,
-    feedBusy,
-    feedCategories,
-    feedFilter,
-    feedFilters,
-    feedOutcomeKind,
-    feedSource,
-    loadFeed,
-    readingFilter,
-    refreshFeed,
-    setCategoryFilter,
-    setFeedFilter,
-    setReadingFilter,
-    shownFeedItems
-  } = useFeedController({
-    catalogCategories,
-    identityBarriers: accountIdentityBarriers,
-    identityReconciliationPending,
-    retainableIdentityBarriers: retainableAccountIdentityBarriers,
-    sessionEpochs: forumSessionEpochs,
-    linuxDoVerificationActive: showLinuxDoPanel,
-    notify,
-    readerData,
-    readerDataLoaded,
-    screen,
-    showLinuxDoVerification,
-    showNodeSeekVerification: requestNodeSeekVerification,
-    showYaohuoLogin,
-    readGateway
-  });
-  const feedIdentityCheck = feedSource === 'linuxdo' ? accountIdentityChecks.linuxdo : undefined;
-  const feedIdentityError = feedIdentityCheck?.pending ? feedIdentityCheck.error : undefined;
-
-  const {
-    applySearchFilter,
-    loadMoreSearchSource,
-    recentSearches,
-    removeRecentSearch,
-    retryLinuxDoAiSearch,
-    retrySearchSource,
-    runSearch,
-    searchBusy,
-    searchFilters,
-    searchGroups,
-    searchDiscourseTags,
-    searchDiscourseUsers,
-    linuxDoAiState,
-    linuxDoAiVisible,
-    searchSessionNotices,
-    searchQuery,
-    searchSource,
-    submittedSearchQuery,
-    setSearchQuery,
-    setSearchSource,
-    toggleLinuxDoAiSearch
-  } = useSearchController({
-    categories,
-    sessionEpochs: forumSessionEpochs,
-    linuxDoVerificationActive: showLinuxDoPanel,
-    notify,
-    onNodeSeekSearchVerificationRequired: requestNodeSeekVerification,
-    screen,
-    sessionViewModels: accountSessionViewModels,
-    showLinuxDoVerification,
-    showNodeSeekVerification: requestNodeSeekVerification,
-    showYaohuoLogin,
-    readGateway
-  });
-  const searchIdentityCheck = searchSource === 'linuxdo' ? accountIdentityChecks.linuxdo : undefined;
-  const searchIdentityError = searchIdentityCheck?.pending ? searchIdentityCheck.error : undefined;
-
-  const { backupBusy, exportBackupFile, importBackupFile } = useBackupStatusController({
-    notify,
-    readerDataRef,
-    replaceReaderData,
-    waitForReaderDataSave
   });
   const diagnosticMetadata = useMemo(
     () => ({
@@ -501,11 +387,6 @@ export function AppRoot() {
     }),
     [fontScale, height, networkProxyState.enabled, screen, accountSessionViewModels, theme.dark, width]
   );
-  const { diagnosticBusy, exportDiagnosticLogFile } = useDiagnosticLogController({
-    getCurrentScreen,
-    metadata: diagnosticMetadata,
-    notify
-  });
   const {
     appUpdateBusy,
     appUpdateDownloading,
@@ -523,45 +404,23 @@ export function AppRoot() {
     void checkAppUpdate({ silent: true });
   }, [checkAppUpdate]);
 
-  const handleNavigationScreenChange = useCallback(
-    (nextScreen: Screen, routeKey: string) => {
-      const previousScreen = screenRef.current;
-      const trace = beginDiagnosticTrace('navigation', 'screen-change', {
-        previousState: previousScreen,
-        nextState: nextScreen,
-        routeKind: routeKey ? 'stack' : 'tab'
-      });
-      if (previousScreen === nextScreen) {
-        finishDiagnosticTrace(trace, 'noop', { state: 'same-screen' });
-        return;
-      }
-      if (previousScreen === 'more' && nextScreen !== 'more') {
-        closeMorePanels();
-      }
-      screenRef.current = nextScreen;
-      if (shouldUpdateAppRootScreen(previousScreen, nextScreen)) {
-        setScreen(nextScreen);
-      }
-      finishDiagnosticTrace(trace, 'success', { state: 'applied' });
-    },
-    [closeMorePanels]
-  );
-
-  const linuxDoForegroundReadIntent = useMemo(() => {
-    if (screen === 'feed' && feedSource === 'linuxdo') {
-      return `feed:${categoryFilter}:${feedFilter || ''}`;
+  const handleNavigationScreenChange = useCallback((nextScreen: Screen, routeKey: string) => {
+    const previousScreen = screenRef.current;
+    const trace = beginDiagnosticTrace('navigation', 'screen-change', {
+      previousState: previousScreen,
+      nextState: nextScreen,
+      routeKind: routeKey ? 'stack' : 'tab'
+    });
+    if (previousScreen === nextScreen) {
+      finishDiagnosticTrace(trace, 'noop', { state: 'same-screen' });
+      return;
     }
-    if (screen === 'search' && searchSource === 'linuxdo' && submittedSearchQuery) {
-      return `search:${submittedSearchQuery}:${JSON.stringify(searchFilters.linuxdo)}`;
+    screenRef.current = nextScreen;
+    if (shouldUpdateAppRootScreen(previousScreen, nextScreen)) {
+      setScreen(nextScreen);
     }
-    return null;
-  }, [categoryFilter, feedFilter, feedSource, screen, searchFilters.linuxdo, searchSource, submittedSearchQuery]);
-  const linuxDoForegroundReadBlocked =
-    screen === 'feed'
-      ? shownFeedItems.length === 0
-      : screen === 'search'
-        ? !searchGroups.some((group) => group.source === 'linuxdo' && group.items.length > 0)
-        : false;
+    finishDiagnosticTrace(trace, 'success', { state: 'applied' });
+  }, []);
 
   useEffect(() => {
     const openInternalTopic = (url: string | null) => {
@@ -577,14 +436,6 @@ export function AppRoot() {
     return () => subscription.remove();
   }, [openTopic]);
 
-  useIdentityVerificationPrompt({
-    enabled: appActive && !linuxDoAiVisible && linuxDoForegroundReadBlocked,
-    error: accountIdentityChecks.linuxdo.error,
-    identityPending: accountIdentityChecks.linuxdo.pending,
-    intentKey: linuxDoForegroundReadIntent,
-    showVerification: showLinuxDoVerification
-  });
-
   const pageDiagnosticStateRef = useRef('');
   useEffect(() => {
     const currentScreen = screenRef.current;
@@ -592,31 +443,10 @@ export function AppRoot() {
     let isBusy = false;
     let hasError = false;
     let emptyReason = 'none';
-    if (currentScreen === 'feed') {
-      itemCount = shownFeedItems.length;
-      isBusy = feedBusy || activeFeedState.loadingMore || activeFeedState.refreshing;
-      emptyReason = isBusy ? 'loading' : itemCount ? 'none' : 'no-items';
-    } else if (currentScreen === 'search') {
-      itemCount = searchGroups.reduce((count, group) => count + group.items.length, 0);
-      isBusy = searchBusy || searchGroups.some((group) => group.loading || group.loadingMore);
-      hasError = searchGroups.some((group) => Boolean(group.error));
-      emptyReason = !submittedSearchQuery
-        ? 'not-started'
-        : isBusy
-          ? 'loading'
-          : hasError && !itemCount
-            ? 'source-error'
-            : itemCount
-              ? 'none'
-              : 'no-results';
-    } else if (currentScreen === 'library') {
-      itemCount = libraryTab === 'users' ? followedUserRecords.length : libraryRecords.length;
-      isBusy = !readerDataLoaded;
-      emptyReason = isBusy ? 'not-loaded' : itemCount ? 'none' : 'no-items';
-    } else if (currentScreen === 'more') {
+    if (currentScreen === 'more') {
       itemCount = 1;
-      isBusy = backupBusy || diagnosticBusy || appUpdateBusy || appUpdateDownloading || statusBusy;
-    } else if (currentScreen === 'topic' || currentScreen === 'user') {
+      isBusy = appUpdateBusy || appUpdateDownloading || statusBusy;
+    } else {
       itemCount = 1;
       emptyReason = 'route-owned';
     }
@@ -634,25 +464,7 @@ export function AppRoot() {
     });
     markDiagnosticStage(trace, 'apply', { state: 'summary' });
     finishDiagnosticTrace(trace, 'success');
-  }, [
-    activeFeedState.loadingMore,
-    activeFeedState.refreshing,
-    appUpdateBusy,
-    appUpdateDownloading,
-    backupBusy,
-    diagnosticBusy,
-    feedBusy,
-    followedUserRecords.length,
-    libraryRecords.length,
-    libraryTab,
-    readerDataLoaded,
-    screen,
-    searchBusy,
-    searchGroups,
-    shownFeedItems.length,
-    statusBusy,
-    submittedSearchQuery
-  ]);
+  }, [appUpdateBusy, appUpdateDownloading, screen, statusBusy]);
 
   const { handleLinuxDoBrowserFetchMessage, handleNodeSeekBrowserFetchMessage } = useHiddenBrowserFetchController({
     completeLinuxDoBrowserFetch,
@@ -684,10 +496,6 @@ export function AppRoot() {
         closeLinuxDoPanel(true, 'hardware-back');
         return handled('linuxdo-panel-closed');
       }
-      if (showSettingsPanel) {
-        setShowSettingsPanel(false);
-        return handled('settings-panel-closed');
-      }
       if (currentScreen === 'topic' || currentScreen === 'user' || isReadingSettingsScreen()) {
         finishDiagnosticTrace(trace, 'noop', { state: 'native-stack-back' });
         return false;
@@ -709,8 +517,7 @@ export function AppRoot() {
     showLoginPanel,
     showNodeImageAuthPanel,
     showLinuxDoPanel,
-    showYaohuoLoginPanel,
-    showSettingsPanel
+    showYaohuoLoginPanel
   ]);
 
   const handleNavigationReady = useCallback(() => {
@@ -727,33 +534,6 @@ export function AppRoot() {
     navigateAppScreen(pendingScreen);
   }, []);
 
-  const loadMoreActiveFeed = useCallback(() => {
-    if (!feedAllowsRemotePagination) {
-      return;
-    }
-    void loadFeed();
-  }, [feedAllowsRemotePagination, loadFeed]);
-
-  const runCurrentSearch = useCallback(
-    (queryOverride?: string) => {
-      void runSearch(queryOverride === undefined ? undefined : { query: queryOverride });
-    },
-    [runSearch]
-  );
-
-  const checkLinuxDoStatus = useCallback(() => {
-    void showLinuxDoVerification();
-  }, [showLinuxDoVerification]);
-  const retryFeedIdentity = useCallback(() => {
-    if (feedSource === 'linuxdo') {
-      void reconcileAccountStatus('linuxdo');
-    }
-  }, [feedSource, reconcileAccountStatus]);
-  const retrySearchIdentity = useCallback(() => {
-    if (searchSource === 'linuxdo') {
-      void reconcileAccountStatus('linuxdo');
-    }
-  }, [reconcileAccountStatus, searchSource]);
   const handleAccountCenterCommand = useCallback(
     async (command: AccountCenterCommand) => {
       if (command.type === 'open-user') {
@@ -763,179 +543,6 @@ export function AppRoot() {
       await handleAccountCenterRuntimeCommand(command);
     },
     [handleAccountCenterRuntimeCommand, openUserRoute]
-  );
-
-  const feedProps = useMemo(
-    () => ({
-      busy: feedBusy && !feedIdentityError,
-      categories: feedCategories,
-      categoryFilter,
-      feedHasMore: activeFeedState.hasMore && feedAllowsRemotePagination,
-      feedItems: shownFeedItems,
-      feedOutcomeKind: feedIdentityError
-        ? feedIdentityError.kind === 'ordinary'
-          ? ('error' as const)
-          : ('auth' as const)
-        : feedOutcomeKind,
-      feedPage: activeFeedState.page,
-      feedSource,
-      feedFilter,
-      feedFilters,
-      identityChecking: Boolean(feedIdentityCheck?.checking),
-      identityError: feedIdentityError,
-      loadMoreFailureSignal: activeFeedState.loadMoreFailureSignal,
-      loadingMore: activeFeedState.loadingMore,
-      topicStateIndex,
-      readingFilter,
-      refreshing: activeFeedState.refreshing,
-      scrollToTopSignal: tabScrollToTopSignals.feed,
-      onCategoryChange: setCategoryFilter,
-      onFeedSourceChange: changeFeedSource,
-      onFeedFilterChange: setFeedFilter,
-      onLoadMore: loadMoreActiveFeed,
-      onCheckLinuxDoStatus: checkLinuxDoStatus,
-      onOpenTopic: openTopic,
-      onRetryIdentity: retryFeedIdentity,
-      onReadingFilterChange: setReadingFilter,
-      onRefresh: feedIdentityError ? retryFeedIdentity : refreshFeed
-    }),
-    [
-      activeFeedState.hasMore,
-      activeFeedState.loadMoreFailureSignal,
-      activeFeedState.loadingMore,
-      activeFeedState.page,
-      activeFeedState.refreshing,
-      categoryFilter,
-      changeFeedSource,
-      feedAllowsRemotePagination,
-      feedBusy,
-      feedCategories,
-      feedFilter,
-      feedFilters,
-      feedIdentityCheck?.checking,
-      feedIdentityError,
-      feedOutcomeKind,
-      feedSource,
-      loadMoreActiveFeed,
-      checkLinuxDoStatus,
-      openTopic,
-      readingFilter,
-      refreshFeed,
-      retryFeedIdentity,
-      setCategoryFilter,
-      setFeedFilter,
-      setReadingFilter,
-      shownFeedItems,
-      tabScrollToTopSignals.feed,
-      topicStateIndex
-    ]
-  );
-
-  const searchProps = useMemo(
-    () => ({
-      busy: searchBusy,
-      categories,
-      sessionEpochs: forumSessionEpochs,
-      requestsEnabled:
-        screen === 'search' &&
-        !showLinuxDoPanel &&
-        (searchSource === 'all' || searchSource === 'v2ex' || !accountIdentityPending[searchSource]),
-      query: searchQuery,
-      topicStateIndex,
-      recentSearches,
-      searchFilters,
-      searchGroups,
-      linuxDoAiState,
-      linuxDoAiVisible,
-      identityChecking: Boolean(searchIdentityCheck?.checking),
-      identityError: searchIdentityError,
-      searchSessionNotices: searchIdentityCheck?.pending ? [] : searchSessionNotices,
-      searchSource,
-      submittedQuery: submittedSearchQuery,
-      scrollToTopSignal: tabScrollToTopSignals.search,
-      onLoadMoreSearchSource: loadMoreSearchSource,
-      onCheckLinuxDoStatus: checkLinuxDoStatus,
-      onOpenTopic: openTopic,
-      onRemoveRecentSearch: removeRecentSearch,
-      onQueryChange: setSearchQuery,
-      onRetryLinuxDoAiSearch: retryLinuxDoAiSearch,
-      onRetryIdentity: retrySearchIdentity,
-      onSearch: runCurrentSearch,
-      onSearchFilterApply: applySearchFilter,
-      onSearchDiscourseTags: searchDiscourseTags,
-      onSearchDiscourseUsers: searchDiscourseUsers,
-      onSearchSourceChange: setSearchSource,
-      onRetrySearchSource: retrySearchSource,
-      onToggleLinuxDoAiSearch: toggleLinuxDoAiSearch
-    }),
-    [
-      applySearchFilter,
-      accountIdentityPending,
-      categories,
-      checkLinuxDoStatus,
-      forumSessionEpochs,
-      loadMoreSearchSource,
-      openTopic,
-      recentSearches,
-      removeRecentSearch,
-      retryLinuxDoAiSearch,
-      retrySearchIdentity,
-      retrySearchSource,
-      runCurrentSearch,
-      searchBusy,
-      searchFilters,
-      searchGroups,
-      searchDiscourseTags,
-      searchDiscourseUsers,
-      linuxDoAiState,
-      linuxDoAiVisible,
-      searchQuery,
-      searchSessionNotices,
-      searchIdentityCheck?.checking,
-      searchIdentityCheck?.pending,
-      searchIdentityError,
-      searchSource,
-      screen,
-      setSearchQuery,
-      setSearchSource,
-      showLinuxDoPanel,
-      submittedSearchQuery,
-      tabScrollToTopSignals.search,
-      toggleLinuxDoAiSearch,
-      topicStateIndex
-    ]
-  );
-
-  const libraryProps = useMemo(
-    () => ({
-      categories,
-      followedUsers: followedUserRecords,
-      libraryTab,
-      loaded: readerDataLoaded,
-      records: libraryRecords,
-      scrollToTopSignal: tabScrollToTopSignals.library,
-      topicStateIndex,
-      onClearHistory: clearHistory,
-      onOpenTopic: openTopic,
-      onOpenUser: openUserRoute,
-      onRemove: removeLibraryTopic,
-      onRemoveUser: removeFollowedUser,
-      onTabChange: setLibraryTab
-    }),
-    [
-      categories,
-      clearHistory,
-      followedUserRecords,
-      libraryRecords,
-      libraryTab,
-      openTopic,
-      openUserRoute,
-      readerDataLoaded,
-      removeFollowedUser,
-      removeLibraryTopic,
-      tabScrollToTopSignals.library,
-      topicStateIndex
-    ]
   );
 
   const moreProps = useMemo(
@@ -964,11 +571,7 @@ export function AppRoot() {
       showLoginPanel,
       showYaohuoLoginPanel,
       showLinuxDoPanel,
-      showNetworkProxyPanel,
-      showSettingsPanel,
       statusBusy,
-      backupBusy,
-      diagnosticBusy,
       webViewRef,
       pendingCredentialFillSite,
       yaohuoLoginPrompt,
@@ -1028,22 +631,16 @@ export function AppRoot() {
       onHandleLoginMessage: handleLoginMessage,
       onNodeSeekLoginWebViewState: recordNodeSeekLoginWebViewState,
       onYaohuoLoginWebViewState: recordYaohuoLoginWebViewState,
-      onExportBackupFile: exportBackupFile,
-      onExportDiagnosticLog: exportDiagnosticLogFile,
-      onImportBackupFile: importBackupFile,
       onSetLoadingLoginPage: setLoadingLoginPage,
       onSetLoadingYaohuoLoginPage: setLoadingYaohuoLoginPage,
       onShowLoginPanelChange: changeNodeSeekLoginPanel,
       onShowYaohuoLoginPanelChange: changeYaohuoLoginPanel,
       onLoginFormMessage: handleCredentialLoginFormMessage,
-      onShowNetworkProxyPanelChange: setShowNetworkProxyPanel,
-      onShowSettingsPanelChange: setShowSettingsPanel,
       onDeleteNetworkProxyProfile: deleteNetworkProxyProfile,
       onSelectNetworkProxyProfile: selectNetworkProxyProfile,
       onSetNetworkProxyEnabled: setNetworkProxyEnabled,
       onTestNetworkProxyProfile: testNetworkProxyProfile,
-      onUpsertNetworkProxyProfile: upsertNetworkProxyProfile,
-      onUpdateSettings: updateSettings
+      onUpsertNetworkProxyProfile: upsertNetworkProxyProfile
     }),
     [
       appUpdateBusy,
@@ -1051,8 +648,6 @@ export function AppRoot() {
       appUpdateDownloadProgress,
       appUpdateInfo,
       appUpdateMessage,
-      backupBusy,
-      diagnosticBusy,
       changeNodeSeekLoginPanel,
       changeYaohuoLoginPanel,
       checkAppUpdate,
@@ -1068,14 +663,11 @@ export function AppRoot() {
       authorizeNodeImageApiKey,
       deleteNetworkProxyProfile,
       downloadAppUpdate,
-      exportBackupFile,
-      exportDiagnosticLogFile,
       handleLoginMessage,
       handleAccountCenterCommand,
       handleCredentialLoginFormMessage,
       handleNodeSeekLoginNavigation,
       handleYaohuoLoginNavigation,
-      importBackupFile,
       linuxDoLevelBusy,
       linuxDoLevelError,
       linuxDoLevelProfile,
@@ -1102,13 +694,10 @@ export function AppRoot() {
       setNetworkProxyEnabled,
       showLinuxDoPanel,
       showLoginPanel,
-      showNetworkProxyPanel,
-      showSettingsPanel,
       showYaohuoLoginPanel,
       statusBusy,
       testNetworkProxyProfile,
       upsertNetworkProxyProfile,
-      updateSettings,
       yaohuoLoginPrompt,
       xiaoyinsiAuthController
     ]
@@ -1228,24 +817,128 @@ export function AppRoot() {
     ]
   );
 
-  const renderFeedTab = useCallback(() => <FeedScreen {...feedProps} />, [feedProps]);
-  const renderSearchTab = useCallback(() => <SearchScreen {...searchProps} />, [searchProps]);
-  const renderLibraryTab = useCallback(() => <LibraryScreen {...libraryProps} />, [libraryProps]);
-  const renderMoreTab = useCallback(() => <MoreScreen {...moreProps} scrollRef={moreScrollRef} />, [moreProps]);
-  const renderReadingSettingsScreen = useCallback(
-    () => <ReadingSettingsScreen settings={readerData.settings} onUpdateSettings={updateSettings} />,
-    [readerData.settings, updateSettings]
-  );
-  const handleMainTabPress = useCallback(
-    (targetScreen: keyof MainTabParamList) => {
-      if (screen === targetScreen) {
-        requestTabScrollToTop(targetScreen);
+  const feedRouteRuntime = useMemo<FeedRouteRuntimeValue>(
+    () => ({
+      account: {
+        identityBarriers: accountIdentityBarriers,
+        identityChecks: accountIdentityChecks,
+        identityReconciliationPending,
+        linuxDoVerificationVisible: showLinuxDoPanel,
+        readGateway,
+        reconcileAccountStatus,
+        requestNodeSeekVerification,
+        retainableIdentityBarriers: retainableAccountIdentityBarriers,
+        sessionEpochs: forumSessionEpochs,
+        showLinuxDoVerification,
+        showYaohuoLogin
+      },
+      appActive,
+      catalogCategories,
+      notify,
+      reader: {
+        data: readerData,
+        loaded: readerDataLoaded
       }
-      changeScreen(targetScreen);
-    },
-    [changeScreen, requestTabScrollToTop, screen]
+    }),
+    [
+      accountIdentityBarriers,
+      accountIdentityChecks,
+      appActive,
+      catalogCategories,
+      forumSessionEpochs,
+      identityReconciliationPending,
+      notify,
+      readGateway,
+      readerData,
+      readerDataLoaded,
+      reconcileAccountStatus,
+      requestNodeSeekVerification,
+      retainableAccountIdentityBarriers,
+      showLinuxDoPanel,
+      showLinuxDoVerification,
+      showYaohuoLogin
+    ]
   );
 
+  const searchRouteRuntime = useMemo<SearchRouteRuntimeValue>(
+    () => ({
+      account: {
+        identityChecks: accountIdentityChecks,
+        identityPending: accountIdentityPending,
+        linuxDoVerificationVisible: showLinuxDoPanel,
+        readGateway,
+        reconcileAccountStatus,
+        requestNodeSeekVerification,
+        sessionEpochs: forumSessionEpochs,
+        sessionViewModels: accountSessionViewModels,
+        showLinuxDoVerification,
+        showYaohuoLogin
+      },
+      appActive,
+      catalogCategories,
+      notify,
+      readerData
+    }),
+    [
+      accountIdentityChecks,
+      accountIdentityPending,
+      accountSessionViewModels,
+      appActive,
+      catalogCategories,
+      forumSessionEpochs,
+      notify,
+      readGateway,
+      readerData,
+      reconcileAccountStatus,
+      requestNodeSeekVerification,
+      showLinuxDoPanel,
+      showLinuxDoVerification,
+      showYaohuoLogin
+    ]
+  );
+
+  const libraryRouteRuntime = useMemo<LibraryRouteRuntimeValue>(
+    () => ({
+      categories: catalogCategories,
+      notify,
+      reader: {
+        commit: commitReaderData,
+        data: readerData,
+        dataRef: readerDataRef,
+        loaded: readerDataLoaded
+      }
+    }),
+    [catalogCategories, commitReaderData, notify, readerData, readerDataLoaded, readerDataRef]
+  );
+
+  const moreRouteRuntime = useMemo<MoreRouteRuntimeValue>(
+    () => ({
+      closeAccountPanels,
+      diagnostics: {
+        getCurrentScreen,
+        metadata: diagnosticMetadata
+      },
+      notify,
+      reader: {
+        commit: commitReaderData,
+        dataRef: readerDataRef,
+        replace: replaceReaderData,
+        waitForSave: waitForReaderDataSave
+      },
+      screen: moreProps
+    }),
+    [
+      closeAccountPanels,
+      commitReaderData,
+      diagnosticMetadata,
+      getCurrentScreen,
+      moreProps,
+      notify,
+      readerDataRef,
+      replaceReaderData,
+      waitForReaderDataSave
+    ]
+  );
   return (
     <ReaderStyleProvider value={readerStyleContext}>
       <ForumSessionEpochProvider sessionEpochs={forumSessionEpochs}>
@@ -1321,22 +1014,29 @@ export function AppRoot() {
                 {networkProxyContentReady ? (
                   <TopicRouteRuntimeProvider value={topicRouteRuntime}>
                     <UserRouteRuntimeProvider value={userRouteRuntime}>
-                      <AppNavigator
-                        moreHasBadge={Boolean(appUpdateInfo)}
-                        navigationTheme={navigationTheme}
-                        renderFeedTab={renderFeedTab}
-                        renderLibraryTab={renderLibraryTab}
-                        renderMoreTab={renderMoreTab}
-                        renderReadingSettingsScreen={renderReadingSettingsScreen}
-                        renderSearchTab={renderSearchTab}
-                        TopicRouteComponent={TopicRoute}
-                        UserRouteComponent={UserRoute}
-                        styles={appStyles}
-                        theme={theme}
-                        onReady={handleNavigationReady}
-                        onScreenChange={handleNavigationScreenChange}
-                        onTabPress={handleMainTabPress}
-                      />
+                      <FeedRouteRuntimeProvider value={feedRouteRuntime}>
+                        <SearchRouteRuntimeProvider value={searchRouteRuntime}>
+                          <LibraryRouteRuntimeProvider value={libraryRouteRuntime}>
+                            <MoreRouteRuntimeProvider value={moreRouteRuntime}>
+                              <AppNavigator
+                                moreHasBadge={Boolean(appUpdateInfo)}
+                                navigationTheme={navigationTheme}
+                                FeedRouteComponent={FeedRoute}
+                                LibraryRouteComponent={LibraryRoute}
+                                MoreRouteComponent={MoreRoute}
+                                ReadingSettingsRouteComponent={ReadingSettingsRoute}
+                                SearchRouteComponent={SearchRoute}
+                                TopicRouteComponent={TopicRoute}
+                                UserRouteComponent={UserRoute}
+                                styles={appStyles}
+                                theme={theme}
+                                onReady={handleNavigationReady}
+                                onScreenChange={handleNavigationScreenChange}
+                              />
+                            </MoreRouteRuntimeProvider>
+                          </LibraryRouteRuntimeProvider>
+                        </SearchRouteRuntimeProvider>
+                      </FeedRouteRuntimeProvider>
                     </UserRouteRuntimeProvider>
                   </TopicRouteRuntimeProvider>
                 ) : null}

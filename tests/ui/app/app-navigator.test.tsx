@@ -1,15 +1,15 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { cleanup } from '@testing-library/react-native';
-import { DefaultTheme, useIsFocused } from '@react-navigation/native';
+import { DefaultTheme, useIsFocused, useScrollToTop } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { AppNavigator, navigateMainTab, navigationRef, pushTopicRoute, pushUserRoute } from '@/app/AppNavigator';
 import { useTopicRouteBeforeRemove } from '@/features/topic/useTopicRouteBeforeRemove';
 import type { Topic, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { OriginalImageUpgradeBoundary, useOriginalImageUpgradeEnabled } from '@/platform/media/originalImageLoading';
-import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
+import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 import { createTestStyles as createStyles } from '../styleFixture';
@@ -41,12 +41,36 @@ function topic(id: string): Topic {
 
 function StatefulTab({ label }: { label: string }) {
   const [value, setValue] = useState('');
+  const [scrollToTopCount, setScrollToTopCount] = useState(0);
+  const scrollRef = useRef({ scrollToTop: () => setScrollToTopCount((current) => current + 1) });
+  useScrollToTop(scrollRef);
   return (
     <View>
       <Text>{label}页面</Text>
+      <Text>{`${label}回顶 ${scrollToTopCount}`}</Text>
       <TextInput accessibilityLabel={`${label}状态`} value={value} onChangeText={setValue} />
     </View>
   );
+}
+
+function FeedTab() {
+  return <StatefulTab label="首页" />;
+}
+
+function SearchTab() {
+  return <StatefulTab label="搜索" />;
+}
+
+function LibraryTab() {
+  return <StatefulTab label="收藏" />;
+}
+
+function MoreTab() {
+  return <StatefulTab label="更多" />;
+}
+
+function ReadingSettingsRoute() {
+  return <Text>阅读设置页面</Text>;
 }
 
 function OriginalUpgradeProbe({ id }: { id: string }) {
@@ -127,18 +151,17 @@ function Navigator({ moreHasBadge = false }: { moreHasBadge?: boolean }) {
     <AppNavigator
       moreHasBadge={moreHasBadge}
       navigationTheme={DefaultTheme}
-      renderFeedTab={() => <StatefulTab label="首页" />}
-      renderLibraryTab={() => <StatefulTab label="收藏" />}
-      renderMoreTab={() => <StatefulTab label="更多" />}
-      renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
-      renderSearchTab={() => <StatefulTab label="搜索" />}
+      FeedRouteComponent={FeedTab}
+      LibraryRouteComponent={LibraryTab}
+      MoreRouteComponent={MoreTab}
+      ReadingSettingsRouteComponent={ReadingSettingsRoute}
+      SearchRouteComponent={SearchTab}
       TopicRouteComponent={StatefulTopicRoute}
       UserRouteComponent={StatefulUserRoute}
       styles={styles}
       theme={theme}
       onReady={jest.fn()}
       onScreenChange={jest.fn()}
-      onTabPress={jest.fn<(target: keyof MainTabParamList) => void>()}
     />
   );
 }
@@ -177,6 +200,8 @@ describe('App navigator UI state', () => {
     await fireEvent.press(view.getByTestId('main-tab-feed'));
 
     await waitFor(() => expect(view.getByLabelText('首页状态').props.value).toBe('feed-state'));
+    await fireEvent.press(view.getByTestId('main-tab-feed'));
+    await waitFor(() => expect(view.getByText('首页回顶 1')).toBeTruthy());
     await fireEvent.press(view.getByTestId('main-tab-search'));
     await waitFor(() => expect(view.getByLabelText('搜索状态').props.value).toBe('search-state'));
     expect(view.getByLabelText('更多，有可用更新')).toBeTruthy();

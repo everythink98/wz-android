@@ -1,5 +1,5 @@
 import { createFeedStyles } from './styles';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   Modal,
   Pressable,
@@ -77,7 +77,7 @@ export const FeedScreen = memo(function FeedScreen({
   topicStateIndex,
   readingFilter,
   refreshing,
-  scrollToTopSignal,
+  scrollRef,
   onCategoryChange,
   onFeedFilterChange,
   onFeedSourceChange,
@@ -105,7 +105,7 @@ export const FeedScreen = memo(function FeedScreen({
   topicStateIndex: TopicListItemStateIndex;
   readingFilter: ReadingFilter;
   refreshing: boolean;
-  scrollToTopSignal: number;
+  scrollRef?: RefObject<FlashListRef<Topic> | null>;
   onCategoryChange: (categoryId: string) => void;
   onFeedFilterChange: (filter: SourceFeedFilter) => void;
   onFeedSourceChange: (source: FeedSource) => void;
@@ -117,7 +117,8 @@ export const FeedScreen = memo(function FeedScreen({
   onRefresh: () => void;
 }) {
   const { styles, theme } = useReaderStyles(createFeedStyles);
-  const listRef = useRef<FlashListRef<Topic>>(null);
+  const internalListRef = useRef<FlashListRef<Topic>>(null);
+  const listRef = scrollRef || internalListRef;
   const { width: pagerWidth } = useWindowDimensions();
   const requestedFeedPageRef = useRef<number | null>(null);
   const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
@@ -204,10 +205,13 @@ export const FeedScreen = memo(function FeedScreen({
     }
   }, [loadMoreFailureSignal]);
 
-  const scrollFeedToTop = useCallback((animated = true) => {
-    listRef.current?.scrollToOffset({ offset: 0, animated });
-    setShowFloatingActions(false);
-  }, []);
+  const scrollFeedToTop = useCallback(
+    (animated = true) => {
+      listRef.current?.scrollToOffset({ offset: 0, animated });
+      setShowFloatingActions(false);
+    },
+    [listRef]
+  );
 
   const commitFeedSelectionChange = useCallback(
     (commit: () => void) => {
@@ -229,12 +233,6 @@ export const FeedScreen = memo(function FeedScreen({
       setFilterMenuOpen(false);
     }
   }, [showFeedFilter]);
-
-  useEffect(() => {
-    if (scrollToTopSignal > 0) {
-      scrollFeedToTop();
-    }
-  }, [scrollFeedToTop, scrollToTopSignal]);
 
   useEffect(() => {
     setPagerIndex((current) => (current === activeFeedSourceIndex ? current : activeFeedSourceIndex));
@@ -499,6 +497,7 @@ export const FeedScreen = memo(function FeedScreen({
       identityError,
       handleScroll,
       handleScrollBeginDrag,
+      listRef,
       loadingMore,
       onCheckLinuxDoStatus,
       onRefresh,

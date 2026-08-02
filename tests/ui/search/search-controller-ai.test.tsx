@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useSearchCandidateQueries, useSearchController } from '@/features/search/useSearchController';
-import type { Screen } from '@/ui/navigation/types';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/searchFilters';
@@ -94,7 +93,7 @@ function renderSearchController(
         sessionEpochs: getSessionEpochs(),
         linuxDoVerificationActive: false,
         notify,
-        screen: 'search',
+        active: true,
         sessionViewModels,
         showLinuxDoVerification,
         showNodeSeekVerification,
@@ -299,7 +298,7 @@ describe('linux.do AI search controller', () => {
           sessionEpochs: initialForumSessionEpochs,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
-          screen: 'search',
+          active: true,
           sessionViewModels,
           showLinuxDoVerification,
           showNodeSeekVerification: jest.fn(),
@@ -346,7 +345,7 @@ describe('linux.do AI search controller', () => {
     const showNodeSeekVerification = jest.fn<(message?: string) => void>();
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
     const readGateway = createGateway({ searchTopics });
-    let screen: Screen = 'search';
+    let active = true;
     let sessionEpochs = initialForumSessionEpochs;
     appQueryClient.clear();
     const hook = await renderHook(
@@ -356,7 +355,7 @@ describe('linux.do AI search controller', () => {
           sessionEpochs,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
-          screen,
+          active,
           sessionViewModels: loggedInSessions,
           showLinuxDoVerification,
           showNodeSeekVerification,
@@ -371,7 +370,7 @@ describe('linux.do AI search controller', () => {
     });
     await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
 
-    screen = 'more';
+    active = false;
     sessionEpochs = { ...initialForumSessionEpochs, linuxdo: 1 };
     await act(async () => {
       hook.rerender(undefined);
@@ -427,7 +426,7 @@ describe('linux.do AI search controller', () => {
           sessionEpochs: initialForumSessionEpochs,
           linuxDoVerificationActive,
           notify: jest.fn(),
-          screen: 'search',
+          active: true,
           sessionViewModels: loggedInSessions,
           showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
           showNodeSeekVerification: jest.fn<(message?: string) => void>(),
@@ -1579,7 +1578,7 @@ describe('linux.do AI search controller', () => {
               }
             })
           ),
-          screen: 'search',
+          active: true,
           showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),

@@ -1,5 +1,5 @@
 import { createLibraryStyles, type LibraryStyles } from './styles';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star, Trash2, type LucideIcon } from 'lucide-react-native';
@@ -94,7 +94,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   followedUsers,
   loaded,
   records,
-  scrollToTopSignal,
+  scrollRef,
   topicStateIndex,
   onClearHistory,
   onOpenTopic,
@@ -108,7 +108,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   followedUsers: FollowedUserRecord[];
   loaded: boolean;
   records: TopicRecord[];
-  scrollToTopSignal: number;
+  scrollRef?: RefObject<FlashListRef<FollowedUserRecord | LibraryListItem> | null>;
   topicStateIndex: TopicListItemStateIndex;
   onClearHistory: () => void;
   onOpenTopic: (topic: Topic) => void;
@@ -118,7 +118,8 @@ export const LibraryScreen = memo(function LibraryScreen({
   onTabChange: (tab: LibraryTab) => void;
 }) {
   const { styles, theme } = useReaderStyles(createLibraryStyles);
-  const listRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
+  const internalListRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
+  const listRef = scrollRef || internalListRef;
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const userRecords = useMemo(
@@ -157,11 +158,6 @@ export const LibraryScreen = memo(function LibraryScreen({
       setCategoryFilter('all');
     }
   }, [categoryFilter, categoryItems]);
-  useEffect(() => {
-    if (scrollToTopSignal > 0) {
-      listRef.current?.scrollToOffset({ offset: 0, animated: true });
-    }
-  }, [scrollToTopSignal]);
   const confirmRemoveFavorite = useCallback(
     (topic: Topic) => {
       Alert.alert('确定取消收藏吗？', topic.title || '这条收藏将从本机移除。', [

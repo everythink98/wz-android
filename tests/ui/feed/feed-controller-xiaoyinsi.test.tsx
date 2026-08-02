@@ -3,7 +3,6 @@ import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/r
 import { useLayoutEffect } from 'react';
 import { useFeedController } from '@/features/feed/useFeedController';
 import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
-import type { Screen } from '@/ui/navigation/types';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -20,11 +19,13 @@ function renderHook<Result>(callback: () => Result) {
   return renderNativeHook(callback, { wrapper: QueryTestWrapper });
 }
 
-type FeedRuntimeOptions = Omit<Parameters<typeof useFeedController>[0], 'catalogCategories'>;
+type FeedRuntimeOptions = Omit<Parameters<typeof useFeedController>[0], 'catalogCategories'> & {
+  catalogActive?: boolean;
+};
 
-function useFeedRuntime(options: FeedRuntimeOptions) {
+function useFeedRuntime({ catalogActive, ...options }: FeedRuntimeOptions) {
   const catalog = useForumCatalogRuntime({
-    active: (options.screen === 'feed' || options.screen === 'search') && !options.linuxDoVerificationActive,
+    active: (catalogActive ?? options.active) && !options.linuxDoVerificationActive,
     identityBarriers: options.identityBarriers,
     identityReconciliationPending: options.identityReconciliationPending ?? false,
     notify: options.notify,
@@ -70,14 +71,14 @@ describe('小隐寺 Feed controller', () => {
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
     const notify = jest.fn();
-    let screen: Screen = 'feed';
+    let active = true;
     const hook = await renderHook(() =>
       useFeedRuntime({
         linuxDoVerificationActive: false,
         notify,
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen,
+        active,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -87,9 +88,9 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
     expect(readGateway.getFeed).toHaveBeenCalledTimes(1);
 
-    screen = 'more';
+    active = false;
     await act(async () => hook.rerender({}));
-    screen = 'feed';
+    active = true;
     await act(async () => hook.rerender({}));
 
     await act(async () => {
@@ -126,7 +127,7 @@ describe('小隐寺 Feed controller', () => {
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
     let sessionEpochs = initialForumSessionEpochs;
-    let screen: Screen = 'feed';
+    let active = true;
     const hook = await renderHook(() =>
       useFeedRuntime({
         sessionEpochs,
@@ -134,7 +135,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen,
+        active,
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
@@ -143,7 +144,7 @@ describe('小隐寺 Feed controller', () => {
     );
     await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
 
-    screen = 'more';
+    active = false;
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
@@ -210,7 +211,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -299,7 +300,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -484,7 +485,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -575,7 +576,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -636,14 +637,15 @@ describe('小隐寺 Feed controller', () => {
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let screen: Screen = 'search';
+    let catalogActive = true;
     const hook = await renderHook(() =>
       useFeedRuntime({
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen,
+        active: false,
+        catalogActive,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -653,7 +655,7 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(1));
     expect(getFeed).not.toHaveBeenCalled();
 
-    screen = 'more';
+    catalogActive = false;
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
@@ -679,14 +681,14 @@ describe('小隐寺 Feed controller', () => {
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let screen: Screen = 'feed';
+    let active = true;
     const hook = await renderHook(() =>
       useFeedRuntime({
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen,
+        active,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification,
         showYaohuoLogin: jest.fn(),
@@ -697,7 +699,7 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
     showNodeSeekVerification.mockClear();
 
-    screen = 'search';
+    active = false;
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
@@ -752,7 +754,7 @@ describe('小隐寺 Feed controller', () => {
         notify,
         readerData,
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
@@ -823,7 +825,7 @@ describe('小隐寺 Feed controller', () => {
         notify,
         readerData,
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
@@ -901,7 +903,7 @@ describe('小隐寺 Feed controller', () => {
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
@@ -999,7 +1001,7 @@ describe('小隐寺 Feed controller', () => {
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
@@ -1074,7 +1076,7 @@ describe('小隐寺 Feed controller', () => {
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
@@ -1176,7 +1178,7 @@ describe('小隐寺 Feed controller', () => {
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
@@ -1283,7 +1285,7 @@ describe('小隐寺 Feed controller', () => {
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
@@ -1362,7 +1364,7 @@ describe('小隐寺 Feed controller', () => {
           notify,
           readerData: createEmptyReaderData(),
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification,
           showYaohuoLogin: jest.fn(),
@@ -1425,7 +1427,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -1541,7 +1543,7 @@ describe('小隐寺 Feed controller', () => {
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
@@ -1620,7 +1622,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -1677,7 +1679,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -1744,7 +1746,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -1838,7 +1840,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -1937,7 +1939,7 @@ describe('小隐寺 Feed controller', () => {
         notify,
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -2048,7 +2050,7 @@ describe('小隐寺 Feed controller', () => {
     let phase: 'initial' | 'changed-epoch' = 'initial';
     let changedEpochFirstPageReads = 0;
     let sessionEpochs = initialForumSessionEpochs;
-    let screen: Screen = 'feed';
+    let active = true;
     const canceledRefreshSignals: AbortSignal[] = [];
     const getFeed = jest.fn(async ({ page = 1, signal }: { page?: number; cursor?: string; signal: AbortSignal }) => {
       if (phase === 'initial') {
@@ -2089,14 +2091,14 @@ describe('小隐寺 Feed controller', () => {
         notify,
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen,
+        active,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
         readGateway
       });
       useLayoutEffect(() => {
-        if (!settleCanceledRefreshInLayout || screen !== 'more') {
+        if (!settleCanceledRefreshInLayout || active) {
           return;
         }
         settleCanceledRefreshInLayout = false;
@@ -2107,7 +2109,7 @@ describe('小隐寺 Feed controller', () => {
           nextCursor: 'direct-new-cursor',
           nextPage: 2
         });
-      }, [screen]);
+      }, [active]);
       return controller;
     });
 
@@ -2156,14 +2158,14 @@ describe('小隐寺 Feed controller', () => {
     });
     await waitFor(() => expect(canceledRefreshSignals).toHaveLength(1));
     settleCanceledRefreshInLayout = true;
-    screen = 'more';
+    active = false;
     await hook.rerender({});
     await act(async () => {
       await canceledRefreshRead.promise;
       await canceledRefresh;
     });
     expect(notify).not.toHaveBeenCalledWith('列表已更新');
-    screen = 'feed';
+    active = true;
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
@@ -2290,7 +2292,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -2466,7 +2468,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -2568,7 +2570,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -2647,7 +2649,7 @@ describe('小隐寺 Feed controller', () => {
         notify,
         readerData,
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
@@ -2718,7 +2720,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -2791,7 +2793,7 @@ describe('小隐寺 Feed controller', () => {
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
@@ -2876,7 +2878,7 @@ describe('小隐寺 Feed controller', () => {
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification: jest.fn(),
           showNodeSeekVerification: jest.fn(),
           showYaohuoLogin: jest.fn(),
@@ -2925,7 +2927,7 @@ describe('小隐寺 Feed controller', () => {
         notify,
         readerData,
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
@@ -2992,7 +2994,7 @@ describe('小隐寺 Feed controller', () => {
         notify,
         readerData,
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
@@ -3069,7 +3071,7 @@ describe('小隐寺 Feed controller', () => {
           notify,
           readerData,
           readerDataLoaded: true,
-          screen: 'feed',
+          active: true,
           showLinuxDoVerification,
           showNodeSeekVerification,
           showYaohuoLogin,
@@ -3128,7 +3130,7 @@ describe('小隐寺 Feed controller', () => {
         notify,
         readerData,
         readerDataLoaded: true,
-        screen: 'feed',
+        active: true,
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,

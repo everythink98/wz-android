@@ -31,7 +31,6 @@ import {
 } from '@/domain/session/siteSessionPrompts';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source } from '@/domain/forum/models';
-import type { Screen } from '@/ui/navigation/types';
 import type { SearchGroup } from './listItems';
 import {
   createSearchHistoryWriteQueue,
@@ -203,24 +202,24 @@ export function useSearchCandidateQueries({
 }
 
 export function useSearchController({
+  active,
   categories,
   sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
   notify,
   onNodeSeekSearchVerificationRequired,
-  screen,
   sessionViewModels,
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
   readGateway
 }: {
+  active: boolean;
   categories: Category[];
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
-  screen: Screen;
   sessionViewModels: SiteSessionViewModels;
   showLinuxDoVerification: (
     message?: string,
@@ -231,7 +230,7 @@ export function useSearchController({
   readGateway: ReadGateway;
 }) {
   const queryClient = useQueryClient();
-  const searchActive = screen === 'search';
+  const searchActive = active;
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
   const recentSearchHistoryHydratedRef = useRef(false);
