@@ -17,7 +17,7 @@ import type { HtmlRenderers, HtmlRenderersProps } from './types';
 import { buildHtmlRenderingStyles, createHtmlRendererStyles, trimsTrailingBlockSpacing } from './htmlStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import { ForumCallout } from '@/ui/content/ForumCallout';
-import { hasSameYaohuoTopicLayout } from '../model/screenHelpers';
+import { hasSameYaohuoTopicLayout } from '../model/topicContentIdentity';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import {
   DISCOURSE_CALLOUT_ATTRIBUTE,

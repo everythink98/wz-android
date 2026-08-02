@@ -44,22 +44,30 @@ import {
   type SiteSessionEvent
 } from '@/domain/session/siteSessionState';
 import {
-  commitChangedAccountStatusQuery,
   enqueueBrowserFetchRequest,
-  forumSessionEpochsAfterSourceChange,
-  resetForumSourceQueries,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   rejectBrowserFetchRequest,
   requestHeaderValue,
   settleBrowserFetchRequestOnce,
-  siteSessionEventInvalidatesForumQueries,
-  startNextBrowserFetchRequest,
-  type CredentialClearOptions
-} from './sessionControllerHelpers';
+  startNextBrowserFetchRequest
+} from './browserFetchQueue';
+import {
+  commitChangedAccountStatusQuery,
+  forumSessionEpochsAfterSourceChange,
+  resetForumSourceQueries,
+  siteSessionEventInvalidatesForumQueries
+} from './sessionQueryOwnership';
 
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
+
+type CredentialClearOptions = {
+  generation?: number;
+  force?: boolean;
+  expiredMessage?: string;
+  recoveryQueryKey?: readonly unknown[];
+};
 
 export type NodeSeekBrowserFetchRequest = {
   id: number;

@@ -14,7 +14,7 @@ import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificatio
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { commitChangedAccountStatusQuery } from '@/features/account/sessionControllerHelpers';
+import { commitChangedAccountStatusQuery } from '@/features/account/sessionQueryOwnership';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { UserProfile } from '@/domain/forum/models';
 import { QueryTestWrapper } from '../QueryTestWrapper';

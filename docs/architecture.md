@@ -138,7 +138,7 @@
 ## 详情页
 
 - `src/features/topic/TopicScreen.tsx` 只保留页面 chrome、菜单、composer 和错误态；`src/features/topic/components/TopicContentList.tsx` 拥有详情 FlashList、opening body、正文后控件和回复 rows。`ListHeaderComponent` 只保留顶部元数据、错误和 Loading；mounted cell 是主楼原图升级 gate，不再维护第二套 cell-relative/absolute 坐标。`useHtmlRenderingController` 只组合 renderer，preview、video/sticker 与 terminal 分别归 `src/features/topic/rendering/previewRenderers.tsx`、`src/features/topic/rendering/contentMediaRenderers.tsx`、`src/features/topic/rendering/terminalRenderers.tsx`。LinuxDo adapter 在通用 sanitizer 的同一棵 DOM 上完成 poll/Reddit 变换；无 placeholder/tag 的阶段直接跳过解析，正文输入未变时不因其他 Topic 字段更新而重拆。读取在重型正文解析前让出事件循环并复查取消。见 `REG-PERF-008`。
-- `src/features/topic/model/screenHelpers.ts` 承载详情页纯辅助逻辑，例如回复 key、状态徽标和权限提示识别。
+- `src/features/topic/model/replyListModel.ts`、`src/features/topic/model/topicContentIdentity.ts`、`src/features/topic/model/topicHeaderModel.ts`、`src/features/topic/model/topicError.ts` 承载详情页纯辅助逻辑，例如回复 key、状态徽标和权限提示识别。
 - `src/features/topic/components/ReplyItem.tsx`、`src/features/topic/components/TopicBodyQuoteCard.tsx`、`src/features/topic/composer/ReplyComposer.tsx`、`src/features/topic/components/TopicActionBar.tsx`、`src/features/topic/components/TopicContentBlock.tsx`、`src/features/topic/components/TopicMenu.tsx`、`src/features/topic/components/TopicPolls.tsx` 分别承载详情页局部 UI。正文引用卡片与评论引用卡片保持独立展示实现；`QuotedPostReference` 是 `src/domain/forum/models.ts` 的领域身份，`src/domain/forum/quotedPosts.ts` 只共享完整引用键与交互实例键。评论只有 reference topic 与当前 topic 相同时才能读取本地楼层，否则使用 exact Query；目标主题标题保留为内部 Topic 导航。见 `REG-TOPIC-003/007/053`。
 - NodeSeek Markdown 固定使用 `markdown-it@14.3.0` 与 `linkify-it>=5.0.2`，保留 linkify，`maxNesting` 固定为 100；UTF-8 输入超过 256 KiB 时不进入 Markdown/linkify，只渲染固定安全提示。见 `REG-TOPIC-051`。
 

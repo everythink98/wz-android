@@ -20,7 +20,7 @@ import {
   readManagedCookieHeader as readManagedCookieHeaderFromNative,
   type ManagedCookieReadResult
 } from '@/platform/network/managedCookies';
-import { cancelForumSourceQueries, removeUnconfirmedForumSourceQueries } from './sessionControllerHelpers';
+import { cancelForumSourceQueries, removeUnconfirmedForumSourceQueries } from './sessionQueryOwnership';
 import { sessionSources, type SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';

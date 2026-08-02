@@ -6,7 +6,7 @@ import {
   commitChangedAccountStatusQuery,
   commitExpiredAccountStatusQuery,
   resetForumSourceQueries
-} from '@/features/account/sessionControllerHelpers';
+} from '@/features/account/sessionQueryOwnership';
 
 describe('forum server state', () => {
   it('deduplicates concurrent reads and keeps the successful value for the same structured key', async () => {

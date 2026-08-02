@@ -69,7 +69,7 @@ import { DetailActionButton } from './TopicActionBar';
 import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
-import { topicStatusBadges } from '../model/screenHelpers';
+import { topicStatusBadges } from '../model/topicHeaderModel';
 import type { TopicContentPresentation } from '../useTopicPresentation';
 import {
   buildAcceptedAnswerPresentation,

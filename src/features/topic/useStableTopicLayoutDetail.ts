@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
 import type { TopicDetail } from '@/domain/forum/models';
-import { hasSameYaohuoTopicLayout } from './model/screenHelpers';
+import { hasSameYaohuoTopicLayout } from './model/topicContentIdentity';
 
 export function useStableTopicLayoutDetail(topicDetail: TopicDetail | null) {
   const stableDetailRef = useRef(topicDetail);

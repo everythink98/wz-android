@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type RefObject } from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
+import { shouldHandleBrowserHttpError } from './browserFetchQueue';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 

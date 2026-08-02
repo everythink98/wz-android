@@ -8,7 +8,7 @@ import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { ReadGateway } from '@/sources/readGateway';
 import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { resetForumSourceQueries } from '@/features/account/sessionControllerHelpers';
+import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { sessionSources } from '@/domain/forum/sourceCatalog';
 import type { Category, SourceErrors, Topic } from '@/domain/forum/models';

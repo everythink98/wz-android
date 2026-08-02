@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { appQueryClient, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { resetForumSourceQueries } from '@/features/account/sessionControllerHelpers';
+import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import { useUserController } from '@/features/user/useUserController';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';

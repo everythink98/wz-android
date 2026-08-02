@@ -12,7 +12,7 @@ import type { ReadGateway } from '@/sources/readGateway';
 import type { SearchResponse, Source, Topic } from '@/domain/forum/models';
 import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { resetForumSourceQueries } from '@/features/account/sessionControllerHelpers';
+import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
 const mockStorageGetItem = jest.fn<(key: string) => Promise<string | null>>(async () => null);

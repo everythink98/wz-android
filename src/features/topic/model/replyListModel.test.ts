@@ -6,7 +6,6 @@ import {
   topicListItemSpacing,
   type TopicReplyListItem
 } from './replyListModel';
-import { hasSameYaohuoTopicLayout } from './screenHelpers';
 import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 
@@ -37,7 +36,7 @@ const listCases: [string, boolean, TopicReplyListItem[], boolean, TopicReplyList
   ['access notice', true, [replyItem], true, []]
 ];
 
-describe('topic screen helpers', () => {
+describe('topic reply list model', () => {
   it('REG-TOPIC-028 keeps replies with the same display floor as distinct list items', () => {
     const imageReply: Reply = {
       ...reply,
@@ -73,25 +72,6 @@ describe('topic screen helpers', () => {
       expect(buildReplyListItems({ canShowReplies, replyItems, topicShowsAccessNotice })).toEqual(expected);
     }
   );
-
-  it('[REG-WRITE-005] ignores yaohuo bookmark fields when comparing topic layout', () => {
-    const detail: TopicDetail = {
-      source: 'yaohuo',
-      id: '123',
-      title: 'topic',
-      author: 'alice',
-      url: 'https://www.yaohuo.me/bbs-123.html',
-      createdAt: '2026-07-15T00:00:00.000Z',
-      replyCount: 0,
-      contentHtml: '<p>body</p>',
-      replies: [],
-      bookmarked: false
-    };
-
-    expect(hasSameYaohuoTopicLayout(detail, { ...detail, bookmarked: true, bookmarkId: 987 })).toBe(true);
-    expect(hasSameYaohuoTopicLayout(detail, { ...detail, bookmarked: false, bookmarkId: undefined })).toBe(true);
-    expect(hasSameYaohuoTopicLayout(detail, { ...detail, title: 'changed' })).toBe(false);
-  });
 
   it('reuses the already-loaded opening post when a reply quotes floor 1', () => {
     const topic: TopicDetail = {

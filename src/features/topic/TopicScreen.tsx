@@ -17,7 +17,7 @@ import { createTopicStyles } from './styles';
 import { ReplyComposerSheet } from './components/ReplyComposerSheet';
 import { TopicContentList } from './components/TopicContentList';
 import { TopicMenu } from './components/TopicMenu';
-import { readableTopicError } from './model/screenHelpers';
+import { readableTopicError } from './model/topicError';
 import type { TopicScreenPresentation } from './useTopicPresentation';
 
 const EMPTY_DISCOURSE_EMOJI_URLS: DiscourseEmojiUrlMap = {};
