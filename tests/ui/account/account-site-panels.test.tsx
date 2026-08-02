@@ -241,7 +241,6 @@ function linuxDoVerifyProps(
     onShowLinuxDoPanelChange: jest.fn(),
     showLinuxDoPanel: true,
     styles,
-    theme,
     webViewBlockMessage: '',
     ...overrides
   };

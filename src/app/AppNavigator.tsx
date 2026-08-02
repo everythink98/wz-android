@@ -18,8 +18,7 @@ function MainTabsHost({
   LibraryRouteComponent,
   MoreRouteComponent,
   SearchRouteComponent,
-  styles,
-  theme
+  styles
 }: {
   moreHasBadge: boolean;
   FeedRouteComponent: ComponentType;
@@ -27,7 +26,6 @@ function MainTabsHost({
   MoreRouteComponent: ComponentType;
   SearchRouteComponent: ComponentType;
   styles: AppStyles;
-  theme: ReaderTheme;
 }) {
   return (
     <Tab.Navigator
@@ -126,7 +124,6 @@ export const AppNavigator = memo(function AppNavigator({
               MoreRouteComponent={MoreRouteComponent}
               SearchRouteComponent={SearchRouteComponent}
               styles={styles}
-              theme={theme}
             />
           )}
         </Stack.Screen>

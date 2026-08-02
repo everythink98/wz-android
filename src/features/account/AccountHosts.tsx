@@ -68,7 +68,7 @@ export function AccountHosts({
   verification,
   view
 }: AccountHostsProps) {
-  const { styles, theme } = useReaderThemeStyles(createAccountHostStyles);
+  const { styles } = useReaderThemeStyles(createAccountHostStyles);
   const accountSessionViewModels = status.accountSessionViewModels;
 
   return (
@@ -130,7 +130,6 @@ export function AccountHosts({
         showLinuxDoPanel={view.showLinuxDoPanel}
         showNodeImageAuthPanel={nodeImage.panel.visible}
         styles={styles}
-        theme={theme}
         webViewBlockMessage={blockedMessage}
         changeLinuxDoPanel={verification.changeLinuxDoPanel}
         requestLinuxDoCredentialFill={() => credentials.openAccountLogin('linuxdo', true)}

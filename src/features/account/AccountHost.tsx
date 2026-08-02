@@ -5,7 +5,6 @@ import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { MemoizedLinuxDoVerifyModal } from './components/LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
-import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { NodeImageAuthDocument } from './useNodeImageAuthController';
 import type { AccountHostStyles } from './accountHostStyles';
 
@@ -43,7 +42,6 @@ export function AccountHost({
   requestLinuxDoCredentialFill,
   closeNodeImageAuthPanel,
   styles,
-  theme,
   webViewBlockMessage
 }: {
   checking: boolean;
@@ -79,7 +77,6 @@ export function AccountHost({
   requestLinuxDoCredentialFill: () => void;
   closeNodeImageAuthPanel: () => void;
   styles: AccountHostStyles;
-  theme: ReaderTheme;
   webViewBlockMessage: string;
 }) {
   return (
@@ -99,7 +96,6 @@ export function AccountHost({
         showLinuxDoPanel={showLinuxDoPanel}
         webViewBlockMessage={webViewBlockMessage}
         styles={styles}
-        theme={theme}
         onCheckLinuxDoCookie={checkLinuxDoCookie}
         onClearLinuxDoCookie={clearLinuxDoCookie}
         handleLinuxDoNavigation={handleLinuxDoNavigation}

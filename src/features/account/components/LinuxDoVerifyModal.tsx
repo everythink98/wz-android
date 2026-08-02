@@ -8,7 +8,6 @@ import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
-import { type ReaderTheme } from '@/ui/theme/tokens';
 import type { AccountHostStyles } from '../accountHostStyles';
 
 const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
@@ -28,7 +27,6 @@ export function LinuxDoVerifyModal({
   loadingLinuxDoPage,
   showLinuxDoPanel,
   styles,
-  theme,
   webViewBlockMessage,
   onCheckLinuxDoCookie,
   onClearLinuxDoCookie,
@@ -54,7 +52,6 @@ export function LinuxDoVerifyModal({
   loadingLinuxDoPage: boolean;
   showLinuxDoPanel: boolean;
   styles: AccountHostStyles;
-  theme: ReaderTheme;
   webViewBlockMessage: string;
   onCheckLinuxDoCookie: () => void;
   onClearLinuxDoCookie: () => void;
