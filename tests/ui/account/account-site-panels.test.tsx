@@ -7,7 +7,8 @@ import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel';
-import { NodeSeekLoginPanel, YaohuoLoginPanel } from '@/features/more/components/MorePanels';
+import { NodeSeekLoginPanel } from '@/features/more/components/NodeSeekLoginPanel';
+import { YaohuoLoginPanel } from '@/features/more/components/YaohuoLoginPanel';
 import {
   createSiteSessionStates,
   createSiteSessionViewModels,

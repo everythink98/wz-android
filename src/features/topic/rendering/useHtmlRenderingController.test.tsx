@@ -86,12 +86,9 @@ vi.mock('react-native-render-html', () => ({
   useIMGElementStateWithCache: vi.fn()
 }));
 
-import {
-  cachedPreviewImageDimensions,
-  readManagedWebViewCookieHeader,
-  rememberPreviewImageDimensions,
-  shouldShowVideoStickerLoading
-} from './useHtmlRenderingController';
+import { cachedPreviewImageDimensions, rememberPreviewImageDimensions } from './previewRenderers';
+import { readManagedWebViewCookieHeader, shouldShowVideoStickerLoading } from './contentMediaRenderers';
+import './useHtmlRenderingController';
 
 describe('HTML topic media loading state', () => {
   it('[REG-TOPIC-056] configures the Callout layout transition with system Reduce Motion', () => {

@@ -11,7 +11,7 @@ import {
   type AccessibilityActionEvent,
   type ImageURISource
 } from 'react-native';
-import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
+import type { ImageLoadEventData } from 'expo-image';
 import PagerView, { type PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
@@ -36,6 +36,7 @@ import { markOriginalImageDisplayed, originalImageDisplayRevision } from '@/plat
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, type DiagnosticFields, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { CompatibleSvgDocumentView } from '@/ui/content/CompatibleSvgDocumentView';
+import { PreviewPageLoadLayer } from './PreviewPageLoadLayer';
 
 const EMPTY_PREVIEW_ITEMS: ImagePreviewItem[] = [];
 const IMAGE_LOAD_TIMEOUT_MS = 30_000;
@@ -895,124 +896,93 @@ function PreviewPagerPage({
         onTap={onToggleChrome}
       >
         <View testID={`preview-zoom-content-${index}`} style={[componentStyles.previewPage, imageSize]}>
-          {activeAnimatedArtifact ? (
-            <ExpoImage
-              key={`${sourceIdentity}:${activeAnimatedArtifact.posterRevision}:continuity`}
-              testID={
-                animatedSvgZoomSuspended || readySvgViewIdentity !== svgViewIdentity
-                  ? `preview-continuity-${index}`
-                  : undefined
+          <PreviewPageLoadLayer
+            active={active}
+            activeAnimatedArtifact={activeAnimatedArtifact}
+            animatedSvgPosterReady={animatedSvgPosterReady}
+            animatedSvgZoomSuspended={animatedSvgZoomSuspended}
+            displaySource={displaySource}
+            fullQuality={fullQuality}
+            index={index}
+            knownArtifact={knownArtifact}
+            mediaSessionIdentity={mediaContext.sessionIdentity}
+            originalUri={item.originalUri}
+            originalSource={originalSource}
+            readySvgViewIdentity={readySvgViewIdentity}
+            retryVersion={retryVersion}
+            sourceIdentity={sourceIdentity}
+            svgViewIdentity={svgViewIdentity}
+            onAnimatedPosterDisplay={() => {
+              if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                return;
               }
-              cachePolicy="memory-disk"
-              contentFit="contain"
-              pointerEvents="none"
-              priority="high"
-              recyclingKey={`${mediaContext.sessionIdentity}:${sourceIdentity}:${activeAnimatedArtifact.posterRevision}:continuity`}
-              source={activeAnimatedArtifact.posterSource}
-              style={[
-                StyleSheet.absoluteFill,
-                readySvgViewIdentity === svgViewIdentity && (!animatedSvgZoomSuspended || !animatedSvgPosterReady)
-                  ? componentStyles.hiddenMedia
-                  : null
-              ]}
-              onDisplay={() => {
-                if (!mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
-                  return;
-                }
-                setDisplayedSvgPosterIdentity(svgPosterIdentity);
-              }}
-              onError={() => {
-                setDisplayedSvgPosterIdentity((identity) => (identity === svgPosterIdentity ? '' : identity));
-                void refreshSvgPoster(activeAnimatedArtifact, false);
-              }}
-            />
-          ) : knownArtifact ? (
-            <ExpoImage
-              key={`${sourceIdentity}:${knownArtifact.posterRevision}:${active ? 'active' : 'warm'}:poster`}
-              allowDownscaling={!active}
-              testID={`preview-svg-poster-${index}`}
-              cachePolicy="memory-disk"
-              contentFit="contain"
-              priority={active ? 'high' : 'low'}
-              recyclingKey={`${mediaContext.sessionIdentity}:${sourceIdentity}:${knownArtifact.posterRevision}:poster`}
-              source={knownArtifact.posterSource}
-              style={StyleSheet.absoluteFill}
-              onDisplay={() => settleLoaded(true)}
-              onError={() => {
-                void refreshSvgPoster(knownArtifact, true);
-              }}
-            />
-          ) : (
-            <ExpoImage
-              allowDownscaling={!fullQuality}
-              key={sourceIdentity}
-              testID={`preview-image-${index}`}
-              cachePolicy="memory-disk"
-              contentFit="contain"
-              placeholder={displaySource}
-              placeholderContentFit="contain"
-              priority={active ? 'high' : 'low'}
-              recyclingKey={`${mediaContext.sessionIdentity}:${item.originalUri}:${retryVersion}:native`}
-              source={originalSource}
-              style={StyleSheet.absoluteFill}
-              onDisplay={() => settleLoaded(false)}
-              onError={() => {
+              setDisplayedSvgPosterIdentity(svgPosterIdentity);
+            }}
+            onAnimatedPosterError={() => {
+              setDisplayedSvgPosterIdentity((identity) => (identity === svgPosterIdentity ? '' : identity));
+              void refreshSvgPoster(activeAnimatedArtifact!, false);
+            }}
+            onDisplay={() => settleLoaded(false)}
+            onError={() => {
+              if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                return;
+              }
+              nativeFailedRef.current = true;
+              if (activeRef.current) {
+                void recoverSvgArtifact();
+              }
+            }}
+            onLoad={(event) => {
+              const source = event.source;
+              if (source.width > 0 && source.height > 0) {
+                const nextResolution = { width: source.width, height: source.height };
                 if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
                   return;
                 }
-                nativeFailedRef.current = true;
-                if (activeRef.current) {
-                  void recoverSvgArtifact();
-                }
-              }}
-              onLoad={(event) => {
-                const source = event.source;
-                if (source.width > 0 && source.height > 0) {
-                  const nextResolution = { width: source.width, height: source.height };
-                  if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
-                    return;
-                  }
-                  loadMetricsRef.current = {
-                    ...loadMetricsRef.current,
-                    cacheType: event.cacheType,
-                    loadedAt: Date.now(),
-                    sourceHeight: source.height,
-                    sourceWidth: source.width
-                  };
-                  setResolution(nextResolution);
-                  onResolution(resolutionIdentity, nextResolution);
-                }
-              }}
-              onLoadStart={() => {
-                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
-                  return;
-                }
-                if (!previewDiagnosticRef.current) {
-                  loadMetricsRef.current = {
-                    sourceIdentity,
-                    startedAt: Date.now()
-                  };
-                }
-                if (activeRef.current) {
-                  currentDiagnostic(false);
-                }
-                setCurrentStatus('loading');
-              }}
-              onProgress={(event: ImageProgressEventData) => {
-                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
-                  return;
-                }
-                const loadedBytes = Number(event.loaded);
-                const totalBytes = Number(event.total);
                 loadMetricsRef.current = {
                   ...loadMetricsRef.current,
-                  ...(loadMetricsRef.current.firstProgressAt === undefined ? { firstProgressAt: Date.now() } : {}),
-                  ...(Number.isFinite(loadedBytes) && loadedBytes >= 0 ? { loadedBytes } : {}),
-                  ...(Number.isFinite(totalBytes) && totalBytes >= 0 ? { totalBytes } : {})
+                  cacheType: event.cacheType,
+                  loadedAt: Date.now(),
+                  sourceHeight: source.height,
+                  sourceWidth: source.width
                 };
-              }}
-            />
-          )}
+                setResolution(nextResolution);
+                onResolution(resolutionIdentity, nextResolution);
+              }
+            }}
+            onLoadStart={() => {
+              if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+                return;
+              }
+              if (!previewDiagnosticRef.current) {
+                loadMetricsRef.current = {
+                  sourceIdentity,
+                  startedAt: Date.now()
+                };
+              }
+              if (activeRef.current) {
+                currentDiagnostic(false);
+              }
+              setCurrentStatus('loading');
+            }}
+            onPosterDisplay={() => settleLoaded(true)}
+            onPosterError={() => {
+              void refreshSvgPoster(knownArtifact!, true);
+            }}
+            onProgress={(event) => {
+              if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity || settledRef.current) {
+                return;
+              }
+              const loadedBytes = Number(event.loaded);
+              const totalBytes = Number(event.total);
+              loadMetricsRef.current = {
+                ...loadMetricsRef.current,
+                ...(loadMetricsRef.current.firstProgressAt === undefined ? { firstProgressAt: Date.now() } : {}),
+                ...(Number.isFinite(loadedBytes) && loadedBytes >= 0 ? { loadedBytes } : {}),
+                ...(Number.isFinite(totalBytes) && totalBytes >= 0 ? { totalBytes } : {})
+              };
+            }}
+          />
         </View>
       </ResumableZoom>
       {activeAnimatedArtifact ? (

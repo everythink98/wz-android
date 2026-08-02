@@ -1051,7 +1051,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-04`、`ACCOUNT-02`、`RELEASE-02` |
 | 用户症状 | NodeSeek 登录 WebView 已显示“页面打开超时”或加载失败，Replay 仍因 ready testID 可见而通过。 |
 | 触发条件 | readiness 脚本消息在超时或错误状态之后到达；旧 Replay 又固定等待 15 秒，只检查 ready testID，不检查错误是否存在。 |
-| 根因 seam | `src/features/more/components/MorePanels.tsx` 的 WebView readiness/error 状态和 `tests/device/nodeseek-session.ad` 的等待 oracle。 |
+| 根因 seam | `src/features/more/components/NodeSeekLoginPanel.tsx` 的 WebView readiness/error 状态和 `tests/device/nodeseek-session.ad` 的等待 oracle。 |
 | 必须保持的行为 | 成功、明确错误或代理阻断都让当前 attempt 进入 App 自有 settled；错误必须可见并保留“刷新页面”，迟到成功消息不得覆盖错误。Loading 期间不暴露 settled。Replay 证明流程结算，不把错误分支叫作第三方成功。 |
 | 精确失败 oracle | `tests/ui/account/account-site-panels.test.tsx` 分别固定成功与错误共享 `nodeseek-login-webview-settled`、错误文案与刷新入口，并让迟到/伪造消息不能把错误改成成功；`tests/tooling/android-smoke-guard.test.ts` 禁止固定 sleep 和 success-only oracle。 |
 | 最低可靠自动测试层 | `UI_PASS` 固定分支互斥和共同 settled；`DEVICE_REPLAY_PASS` 再证明 Android surface 能结算、刷新和返回。 |

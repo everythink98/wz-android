@@ -11,13 +11,11 @@ import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, ExpandablePanel, MenuButton } from '@/ui/controls/AppControls';
-import {
-  AppearancePanel,
-  BackupRestorePanel,
-  LinuxDoLevelPanel,
-  NodeSeekLoginPanel,
-  YaohuoLoginPanel
-} from './components/MorePanels';
+import { AppearancePanel } from './components/AppearancePanel';
+import { BackupRestorePanel } from './components/BackupRestorePanel';
+import { LinuxDoLevelPanel } from './components/LinuxDoLevelPanel';
+import { NodeSeekLoginPanel } from './components/NodeSeekLoginPanel';
+import { YaohuoLoginPanel } from './components/YaohuoLoginPanel';
 import { NetworkProxyModal } from './components/NetworkProxyModal';
 import { AccountCenterPanel } from './components/AccountCenterPanel';
 import type {

@@ -150,7 +150,9 @@ describe('account center view', () => {
       path.join(process.cwd(), 'src/features/more/components/AccountCenterPanel.tsx'),
       'utf8'
     );
-    const panels = readFileSync(path.join(process.cwd(), 'src/features/more/components/MorePanels.tsx'), 'utf8');
+    const panels = ['NodeSeekLoginPanel.tsx', 'YaohuoLoginPanel.tsx', 'LinuxDoLevelPanel.tsx']
+      .map((file) => readFileSync(path.join(process.cwd(), 'src/features/more/components', file), 'utf8'))
+      .join('\n');
     const linuxDoModal = readFileSync(
       path.join(process.cwd(), 'src/features/account/components/LinuxDoVerifyModal.tsx'),
       'utf8'
