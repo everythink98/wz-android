@@ -19,11 +19,22 @@ describe('Android release packaging guards', () => {
     );
 
     expect(pkg.scripts.verify).toBe(
-      'npm run lint && npm run format:check && npm run check:architecture && npm run test:architecture && npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && node scripts/check-version.mjs'
+      'npm run lint && npm run format:check && npm run check:architecture && npm run test:architecture && npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && npm run check:react && node scripts/check-version.mjs'
+    );
+    expect(pkg.scripts['check:react']).toBe(
+      'npx --yes react-doctor@0.9.3 . --no-warnings --no-telemetry --no-dead-code --no-supply-chain --blocking error'
     );
     expect(ciWorkflow).toContain('- run: npm run verify');
     expect(verifyIndex).toBeGreaterThanOrEqual(0);
     expect(prebuildIndex).toBeGreaterThan(verifyIndex);
+  });
+
+  it('backs the Android appearance setting with Expo SystemUI', () => {
+    const pkg = JSON.parse(readProjectFile('package.json'));
+    const appConfig = JSON.parse(readProjectFile('app.json'));
+
+    expect(appConfig.expo.userInterfaceStyle).toBe('light');
+    expect(pkg.dependencies['expo-system-ui']).toBeDefined();
   });
 
   it('keeps version truth in config instead of duplicating it in stable docs', () => {

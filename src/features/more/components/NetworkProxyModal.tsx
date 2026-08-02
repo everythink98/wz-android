@@ -178,15 +178,16 @@ export function NetworkProxyModal({
     setSelectedIds((current) => current.filter((id) => proxyState.profiles.some((profile) => profile.id === id)));
   }, [proxyState.profiles]);
 
-  const run = async (task: () => Promise<void>) => {
+  const executeProxyTask = async <T,>(task: () => Promise<T>) => {
     if (busy) {
-      return;
+      return { ok: false } as const;
     }
     setBusy(true);
     try {
-      await task();
+      return { ok: true, value: await task() } as const;
     } catch (error) {
       Alert.alert('服务器代理', errorMessage(error));
+      return { ok: false } as const;
     } finally {
       setBusy(false);
     }
@@ -203,23 +204,24 @@ export function NetworkProxyModal({
     setDraftKeyboardInset(0);
   };
 
-  const saveDraft = () => {
+  const saveDraft = async () => {
     setSubmitted(true);
     if (Object.keys(errors).length) {
       return;
     }
-    void run(async () => {
-      await onUpsertProfile(draftProfile);
-      setTestResults((current) => {
-        const { [draftProfile.id]: _removed, ...rest } = current;
-        return rest;
-      });
-      Keyboard.dismiss();
-      setDraft(emptyDraft);
-      setDraftMode(null);
-      setSubmitted(false);
-      setDraftKeyboardInset(0);
+    const result = await executeProxyTask(() => onUpsertProfile(draftProfile));
+    if (!result.ok) {
+      return;
+    }
+    setTestResults((current) => {
+      const { [draftProfile.id]: _removed, ...rest } = current;
+      return rest;
     });
+    Keyboard.dismiss();
+    setDraft(emptyDraft);
+    setDraftMode(null);
+    setSubmitted(false);
+    setDraftKeyboardInset(0);
   };
 
   const openCreate = () => {
@@ -244,42 +246,42 @@ export function NetworkProxyModal({
       return;
     }
     if (profile.id !== proxyState.activeId) {
-      void run(() => onSelectProfile(profile.id));
+      void executeProxyTask(() => onSelectProfile(profile.id));
     }
   };
 
-  const toggleEnabled = (enabled: boolean) => {
+  const toggleEnabled = async (enabled: boolean) => {
     if (busy || applyStatus === 'applying' || enabled === displayedEnabled) {
       return;
     }
     if (enabled && !activeProfile) {
-      void run(() => onSetEnabled(enabled));
+      await executeProxyTask(() => onSetEnabled(enabled));
       return;
     }
     setPendingEnabled(enabled);
-    void run(async () => {
-      try {
-        await onSetEnabled(enabled);
-      } catch (error) {
-        setPendingEnabled(null);
-        throw error;
-      }
-    });
+    const result = await executeProxyTask(() => onSetEnabled(enabled));
+    if (!result.ok) {
+      setPendingEnabled(null);
+    }
   };
 
-  const testProfile = (profile: NetworkProxyProfile) =>
-    void run(async () => {
-      setTestingId(profile.id);
-      try {
-        const result = await onTestProfile(profile);
+  const testProfile = async (profile: NetworkProxyProfile) => {
+    if (busy) {
+      return;
+    }
+    setTestingId(profile.id);
+    try {
+      const result = await executeProxyTask(() => onTestProfile(profile));
+      if (result.ok) {
         setTestResults((current) => ({
           ...current,
-          [profile.id]: `${result.latencyMs} ms`
+          [profile.id]: `${result.value.latencyMs} ms`
         }));
-      } finally {
-        setTestingId(null);
       }
-    });
+    } finally {
+      setTestingId(null);
+    }
+  };
 
   const deleteSelectedProfiles = () => {
     Alert.alert('删除代理', `确定删除选中的 ${selectedIds.length} 个代理？`, [
@@ -287,13 +289,16 @@ export function NetworkProxyModal({
       {
         text: '删除',
         style: 'destructive',
-        onPress: () =>
-          void run(async () => {
+        onPress: async () => {
+          const result = await executeProxyTask(async () => {
             for (const id of selectedIds) {
               await onDeleteProfile(id);
             }
+          });
+          if (result.ok) {
             setSelectedIds([]);
-          })
+          }
+        }
       }
     ]);
   };
@@ -349,7 +354,7 @@ export function NetworkProxyModal({
                 variant="ghost"
                 styles={styles}
                 onPress={() => {
-                  void run(() => onSetEnabled(false));
+                  void executeProxyTask(() => onSetEnabled(false));
                 }}
               />
             ) : null}

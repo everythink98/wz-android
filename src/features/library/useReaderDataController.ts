@@ -128,8 +128,7 @@ export function useReaderDataController({ notify }: { notify: (message: string) 
   const readerDataLoadedRef = useRef(false);
   const readerDataWriteSuspendedRef = useRef(false);
   const lastPersistedReaderDataRef = useRef<ReaderData>(readerData);
-  const lastPersistedReaderDataJsonRef = useRef<string | null>(null);
-  lastPersistedReaderDataJsonRef.current ??= JSON.stringify(readerData);
+  const lastPersistedReaderDataJsonRef = useRef<string | null>(JSON.stringify(readerData));
   const saveQueueRef = useRef(Promise.resolve());
 
   const persistReaderData = useCallback(
