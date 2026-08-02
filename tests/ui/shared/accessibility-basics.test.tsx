@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { render } from '@testing-library/react-native';
 import React from 'react';
-import { LoadingState } from '@/ui/controls/AppControls';
+import { LoadingState } from '@/ui/controls/FeedbackStates';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';

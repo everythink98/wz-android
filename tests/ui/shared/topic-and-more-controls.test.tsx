@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '../render';
 import React from 'react';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { BackupRestorePanel } from '@/features/more/components/BackupRestorePanel';
@@ -65,7 +65,6 @@ describe('Topic and More controls', () => {
       <TopicMenu
         visible
         styles={styles}
-        theme={theme}
         topicUrl={topicUrl}
         onOpenOriginal={onOpenOriginal}
         onOpenReadingSettings={onOpenReadingSettings}

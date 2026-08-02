@@ -8,7 +8,10 @@ import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCa
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { replyImageUploadSupported } from '@/sources/imageUpload';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-import { AppButton, EmptyText, IconButton, LoadingState, triggerPressFeedback } from '@/ui/controls/AppControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
+import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
+import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from './styles';
 import { ReplyComposerSheet } from './components/ReplyComposerSheet';
@@ -147,13 +150,13 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
 
   return (
     <View style={styles.topicScreenRoot}>
-      <View style={styles.topicTopBar}>
+      <ScreenTopBar>
         <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={chrome.back} />
-        <Text style={styles.topicTopHint} numberOfLines={1}>
+        <ScreenTopBarTitle>
           {sourceLabel(item.source)}
           {item.category ? ' · ' + item.category : ''}
-        </Text>
-        <View style={styles.topicTopActions}>
+        </ScreenTopBarTitle>
+        <ScreenTopBarActions>
           <IconButton
             iconOnly
             ghost
@@ -175,8 +178,8 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
             active={topicMenuOpen}
             onPress={() => setTopicMenuOpen((value) => !value)}
           />
-        </View>
-      </View>
+        </ScreenTopBarActions>
+      </ScreenTopBar>
       <TopicContentList presentation={content} discourseEmojiUrls={discourseEmojiUrls} headerState={headerState} />
       <TopicMenu
         onOpenOriginal={chrome.openOriginal}
@@ -187,7 +190,6 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
         onShareTopic={chrome.share}
         runTopicMenuAction={runTopicMenuAction}
         styles={styles}
-        theme={theme}
         topicUrl={item.url}
         visible={topicMenuOpen}
       />

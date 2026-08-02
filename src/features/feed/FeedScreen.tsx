@@ -1,7 +1,6 @@
 import { createFeedStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
-  Modal,
   Pressable,
   RefreshControl,
   Text,
@@ -40,15 +39,11 @@ import {
 import type { ReadingFilter } from '@/domain/forum/feed';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
-import {
-  AppButton,
-  EmptyText,
-  FloatingIconButton,
-  LoadingState,
-  PillRail,
-  TOUCH_HIT_SLOP,
-  triggerPressFeedback
-} from '@/ui/controls/AppControls';
+import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
+import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { PillRail } from '@/ui/controls/SelectionControls';
+import { TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/pressFeedback';
+import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
@@ -340,57 +335,37 @@ export const FeedScreen = memo(function FeedScreen({
     (item: { value: SourceFeedFilter; label: string }, last: boolean) => {
       const active = item.value === visualFeedFilter;
       return (
-        <Pressable
+        <PopupMenuItem
           key={item.value}
-          accessibilityRole="button"
-          accessibilityState={{ selected: active }}
-          hitSlop={TOUCH_HIT_SLOP}
-          style={[
-            styles.topicMenuItem,
-            styles.linuxDoFilterMenuItem,
-            active && styles.linuxDoFilterMenuItemActive,
-            last && styles.topicMenuItemLast
-          ]}
+          compact
+          label={item.label}
+          last={last}
+          selected={active}
           onPress={() => changeFeedFilter(item.value)}
-        >
-          <Text
-            style={[
-              styles.topicMenuItemText,
-              styles.linuxDoFilterMenuItemText,
-              active && styles.linuxDoFilterMenuItemTextActive
-            ]}
-          >
-            {item.label}
-          </Text>
-        </Pressable>
+        />
       );
     },
-    [changeFeedFilter, styles, visualFeedFilter]
+    [changeFeedFilter, visualFeedFilter]
   );
   const feedFilterMenu = filterMenuOpen ? (
-    <Modal transparent animationType="fade" visible={filterMenuOpen} onRequestClose={closeFeedFilterMenu}>
-      <View style={styles.topicMenuLayer}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="关闭列表筛选菜单"
-          style={styles.topicMenuDismissLayer}
-          onPress={closeFeedFilterMenu}
-        />
-        <View style={styles.linuxDoFilterMenu}>
-          {activeFeedFilterMenuGroups.map((group, groupIndex) => (
-            <View key={group.title || `group-${groupIndex}`}>
-              {group.title ? <Text style={styles.linuxDoFilterMenuSectionText}>{group.title}</Text> : null}
-              {group.items.map((item, itemIndex) =>
-                renderFeedFilterItem(
-                  item,
-                  groupIndex === activeFeedFilterMenuGroups.length - 1 && itemIndex === group.items.length - 1
-                )
-              )}
-            </View>
-          ))}
+    <PopupMenu
+      accessibilityLabel="关闭列表筛选菜单"
+      placementStyle={styles.linuxDoFilterMenu}
+      visible={filterMenuOpen}
+      onRequestClose={closeFeedFilterMenu}
+    >
+      {activeFeedFilterMenuGroups.map((group, groupIndex) => (
+        <View key={group.title || `group-${groupIndex}`}>
+          {group.title ? <Text style={styles.linuxDoFilterMenuSectionText}>{group.title}</Text> : null}
+          {group.items.map((item, itemIndex) =>
+            renderFeedFilterItem(
+              item,
+              groupIndex === activeFeedFilterMenuGroups.length - 1 && itemIndex === group.items.length - 1
+            )
+          )}
         </View>
-      </View>
-    </Modal>
+      ))}
+    </PopupMenu>
   ) : null;
   const feedEmptyText =
     readingFilter !== 'all' || Boolean(categoryFilter) || feedSource !== 'all' ? '当前筛选没有匹配主题' : '暂无主题';

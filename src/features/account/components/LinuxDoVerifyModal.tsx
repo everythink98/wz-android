@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { LINUXDO_URL } from '@/domain/forum/sourceUrls';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
-import { AppButton } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';

@@ -20,7 +20,7 @@ jest.mock('react-native-webview', () => {
     })
   };
 });
-jest.mock('@/ui/controls/AppControls', () => ({
+jest.mock('@/ui/controls/ButtonControls', () => ({
   AppButton: () => null
 }));
 jest.mock('@/ui/navigation/LoginWebViewModal', () => {

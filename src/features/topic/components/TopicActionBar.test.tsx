@@ -13,7 +13,7 @@ vi.mock('react-native', () => ({
   View: 'View'
 }));
 
-vi.mock('@/ui/controls/AppControls', () => ({
+vi.mock('@/ui/controls/pressFeedback', () => ({
   triggerPressFeedback: vi.fn()
 }));
 

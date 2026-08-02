@@ -3791,7 +3791,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-03`、`ACCOUNT-04`、`TOPIC-03`、`MORE-03` |
 | 用户症状 | Loading 的 Spinner 与文本可能重复播报；Search filter、NodeImage Key、评论搜索只靠 placeholder；外观和回复目标触控区域小于 48dp。 |
 | 触发条件 | 共享 LoadingState 没有 status/live/busy 语义，输入缺显式 label，若干视觉尺寸同时承担 touch target。 |
-| 根因 seam | `AppControls.LoadingState`、三个输入入口和 `themeStyles` 的 appearance/reply 交互几何。 |
+| 根因 seam | `FeedbackStates.LoadingState`、三个输入入口和 `themeStyles` 的 appearance/reply 交互几何。 |
 | 必须保持的行为 | Loading 作为单一 polite busy status 播报，Spinner/文本不再各自成为 accessibility element；筛选、Key 与评论搜索有明确 label；appearance segment、字号按钮/slider 与 reply head 的布局至少 48dp，紧凑 reply target 由 `hitSlop` 扩展触控区，图标尺寸和评论正文 42px 缩进不变。 |
 | 精确失败 oracle | `tests/ui/shared/accessibility-basics.test.tsx` 的 `REG-A11Y-001` 固定单次 status 播报语义；Search/More/Topic UI 测试用 label 驱动真实输入；`tests/integration/style-ownership.test.ts` 固定布局尺寸与 `replyContentArea.paddingLeft=42`，`tests/ui/topic/topic-components.test.tsx` 固定 target `hitSlop`。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：style 数值与真实 RNTL accessibility tree 同时覆盖；只查 placeholder 或源码字符串不足。 |

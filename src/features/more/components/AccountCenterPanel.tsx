@@ -1,24 +1,16 @@
 import type { MoreAccountStyles } from '../accountStyles';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  Alert,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
-} from 'react-native';
+import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton, ExpandablePanel, IconButton, triggerPressFeedback } from '@/ui/controls/AppControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
+import { ExpandablePanel } from '@/ui/controls/ExpandableControls';
+import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
+import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
 import {
   accountCenterSummary,
   createSiteAccountViews,
@@ -352,93 +344,79 @@ function CredentialEditor({
           />
         ) : null}
       </View>
-      <Modal transparent visible={editing} animationType="fade" onRequestClose={closeEditor}>
-        <KeyboardAvoidingView behavior="height" enabled={keyboardAvoidingEnabled} style={styles.searchFilterModalRoot}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`关闭${view.label}自动填入设置`}
-            disabled={busy}
-            style={styles.searchFilterBackdrop}
-            onPress={closeEditor}
-          />
-          <View style={styles.searchFilterSheet}>
-            <View style={styles.searchFilterHandle} />
-            <View style={styles.searchFilterHeader}>
-              <View style={styles.flex}>
-                <Text style={styles.searchFilterTitle}>
-                  {view.credential.state === 'missing'
-                    ? '设置自动填入'
-                    : view.credential.state === 'invalidated'
-                      ? '重新设置自动填入'
-                      : '管理自动填入'}
-                </Text>
-                <Text style={styles.meta}>{view.label}</Text>
-              </View>
-            </View>
-            <ScrollView
-              style={styles.searchFilterBody}
-              contentContainerStyle={styles.searchFilterBodyInner}
-              keyboardShouldPersistTaps="always"
-            >
-              <View style={styles.stack}>
-                <Text style={styles.panelTitle}>账号 / 邮箱</Text>
-                <TextInput
-                  accessibilityLabel={`${view.label} 登录账号`}
-                  autoCapitalize="none"
-                  autoComplete="off"
-                  autoCorrect={false}
-                  placeholder="账号 / 邮箱"
-                  placeholderTextColor={theme.muted}
-                  style={styles.input}
-                  value={account}
-                  onFocus={() => setKeyboardAvoidingEnabled(true)}
-                  onChangeText={setAccount}
-                />
-              </View>
-              <View style={styles.stack}>
-                <Text style={styles.panelTitle}>密码</Text>
-                <TextInput
-                  accessibilityLabel={`${view.label} 登录密码`}
-                  autoCapitalize="none"
-                  autoComplete="off"
-                  autoCorrect={false}
-                  placeholder="密码"
-                  placeholderTextColor={theme.muted}
-                  secureTextEntry
-                  style={styles.input}
-                  value={password}
-                  onFocus={() => setKeyboardAvoidingEnabled(true)}
-                  onChangeText={setPassword}
-                />
-              </View>
-            </ScrollView>
-            <View style={styles.searchFilterActions}>
-              {view.credential.state !== 'missing' ? (
-                <AppButton
-                  compact
-                  label="删除"
-                  variant="danger"
-                  styles={styles}
-                  disabled={busy}
-                  onPress={confirmDelete}
-                />
-              ) : null}
-              <View style={styles.flex} />
-              <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeEditor} />
-              <AppButton
-                compact
-                label={busy ? '保存中' : '保存'}
-                variant="primary"
-                styles={styles}
-                disabled={busy || !account.trim() || !password}
-                onPress={() => {
-                  void persist();
-                }}
-              />
-            </View>
+      <ModalSheetFrame
+        backdropLabel={`关闭${view.label}自动填入设置`}
+        keyboardAvoidingEnabled={keyboardAvoidingEnabled}
+        visible={editing}
+        onRequestClose={closeEditor}
+      >
+        <View style={styles.searchFilterHeader}>
+          <View style={styles.flex}>
+            <Text style={styles.searchFilterTitle}>
+              {view.credential.state === 'missing'
+                ? '设置自动填入'
+                : view.credential.state === 'invalidated'
+                  ? '重新设置自动填入'
+                  : '管理自动填入'}
+            </Text>
+            <Text style={styles.meta}>{view.label}</Text>
           </View>
-        </KeyboardAvoidingView>
-      </Modal>
+        </View>
+        <ScrollView
+          style={styles.searchFilterBody}
+          contentContainerStyle={styles.searchFilterBodyInner}
+          keyboardShouldPersistTaps="always"
+        >
+          <View style={styles.stack}>
+            <Text style={styles.panelTitle}>账号 / 邮箱</Text>
+            <TextInput
+              accessibilityLabel={`${view.label} 登录账号`}
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect={false}
+              placeholder="账号 / 邮箱"
+              placeholderTextColor={theme.muted}
+              style={styles.input}
+              value={account}
+              onFocus={() => setKeyboardAvoidingEnabled(true)}
+              onChangeText={setAccount}
+            />
+          </View>
+          <View style={styles.stack}>
+            <Text style={styles.panelTitle}>密码</Text>
+            <TextInput
+              accessibilityLabel={`${view.label} 登录密码`}
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect={false}
+              placeholder="密码"
+              placeholderTextColor={theme.muted}
+              secureTextEntry
+              style={styles.input}
+              value={password}
+              onFocus={() => setKeyboardAvoidingEnabled(true)}
+              onChangeText={setPassword}
+            />
+          </View>
+        </ScrollView>
+        <View style={styles.searchFilterActions}>
+          {view.credential.state !== 'missing' ? (
+            <AppButton compact label="删除" variant="danger" styles={styles} disabled={busy} onPress={confirmDelete} />
+          ) : null}
+          <View style={styles.flex} />
+          <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeEditor} />
+          <AppButton
+            compact
+            label={busy ? '保存中' : '保存'}
+            variant="primary"
+            styles={styles}
+            disabled={busy || !account.trim() || !password}
+            onPress={() => {
+              void persist();
+            }}
+          />
+        </View>
+      </ModalSheetFrame>
     </View>
   );
 }

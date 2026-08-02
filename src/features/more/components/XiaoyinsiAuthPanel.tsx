@@ -3,7 +3,7 @@ import { Alert, Text, View } from 'react-native';
 import type { XiaoyinsiAuthPhase } from '@/domain/session/accountCenter';
 import type { XiaoyinsiPendingAuthorization } from '@/sources/xiaoyinsi/auth';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
-import { AppButton } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 
 function countdownLabel(seconds: number) {

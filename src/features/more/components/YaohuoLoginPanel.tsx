@@ -6,7 +6,7 @@ import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { YAOHUO_URL } from '@/domain/forum/sourceUrls';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import type { ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 

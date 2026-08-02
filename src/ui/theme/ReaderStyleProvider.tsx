@@ -28,3 +28,15 @@ export function useReaderStyles<T>(
   }
   return { styles: styles as T, theme: context.theme };
 }
+
+export function useReaderThemeStyles<T>(createStyles: (theme: ReaderTheme, settings: ReaderSettings) => T) {
+  const context = useContext(ReaderStyleContext);
+  const styles = useMemo(
+    () => (context ? createStyles(context.theme, context.settings) : undefined),
+    [context, createStyles]
+  );
+  if (!context) {
+    throw new Error('ReaderStyleProvider is required');
+  }
+  return { settings: context.settings, styles: styles as T, theme: context.theme };
+}

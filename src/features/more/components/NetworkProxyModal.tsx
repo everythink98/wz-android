@@ -15,7 +15,10 @@ import {
 } from 'react-native';
 import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppButton, EmptyText, SettingRail } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
+import { EmptyText } from '@/ui/controls/FeedbackStates';
+import { SettingRail } from '@/ui/controls/SelectionControls';
+import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   createNetworkProxyProfile,
@@ -501,105 +504,99 @@ export function NetworkProxyModal({
             </Pressable>
           </View>
         </ScrollView>
-        <Modal transparent visible={draftMode !== null} animationType="fade" onRequestClose={closeDraft}>
-          <View style={styles.searchFilterModalRoot}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="关闭代理表单"
-              disabled={busy}
-              style={styles.searchFilterBackdrop}
-              onPress={closeDraft}
-            />
-            <View style={[styles.searchFilterSheet, draftKeyboardInset ? { marginBottom: draftKeyboardInset } : null]}>
-              <View style={styles.searchFilterHandle} />
-              <View style={styles.searchFilterHeader}>
-                <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
-              </View>
-              <ScrollView
-                style={styles.searchFilterBody}
-                contentContainerStyle={[styles.searchFilterBodyInner, proxyStyles.sheetBody]}
-                keyboardShouldPersistTaps="handled"
-              >
-                <SettingRail
-                  title="类型"
-                  items={[
-                    { value: 'http', label: 'HTTP' },
-                    { value: 'socks5', label: 'SOCKS5' }
-                  ]}
-                  value={draft.protocol}
-                  styles={styles}
-                  onChange={(value) => setDraft((current) => ({ ...current, protocol: value as NetworkProxyProtocol }))}
-                />
-                <ProxyInput
-                  label="名称"
-                  value={draft.name}
-                  error={visibleErrors.name}
-                  styles={styles}
-                  theme={theme}
-                  onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
-                />
-                <View style={proxyStyles.fieldRow}>
-                  <ProxyInput
-                    label="服务器"
-                    value={draft.host}
-                    error={visibleErrors.host}
-                    styles={styles}
-                    theme={theme}
-                    autoCapitalize="none"
-                    style={proxyStyles.fieldMain}
-                    onChangeText={(host) => setDraft((current) => ({ ...current, host }))}
-                  />
-                  <ProxyInput
-                    label="端口"
-                    value={draft.port}
-                    error={visibleErrors.port}
-                    styles={styles}
-                    theme={theme}
-                    keyboardType="number-pad"
-                    style={proxyStyles.portField}
-                    onChangeText={(port) => setDraft((current) => ({ ...current, port }))}
-                  />
-                </View>
-                <View style={proxyStyles.fieldRow}>
-                  <ProxyInput
-                    label="用户名"
-                    value={draft.username}
-                    error={visibleErrors.username}
-                    styles={styles}
-                    theme={theme}
-                    autoCapitalize="none"
-                    placeholder="可空"
-                    style={proxyStyles.fieldMain}
-                    onChangeText={(username) => setDraft((current) => ({ ...current, username }))}
-                  />
-                  <ProxyInput
-                    label="密码"
-                    value={draft.password}
-                    error={visibleErrors.password}
-                    styles={styles}
-                    theme={theme}
-                    autoCapitalize="none"
-                    placeholder="可空"
-                    secureTextEntry
-                    style={proxyStyles.fieldMain}
-                    onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
-                  />
-                </View>
-              </ScrollView>
-              <View style={styles.searchFilterActions}>
-                <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeDraft} />
-                <AppButton
-                  compact
-                  label={busy ? '保存中' : '确定'}
-                  variant="primary"
-                  styles={styles}
-                  disabled={busy}
-                  onPress={saveDraft}
-                />
-              </View>
-            </View>
+        <ModalSheetFrame
+          backdropLabel="关闭代理表单"
+          bottomInset={draftKeyboardInset}
+          keyboardAvoiding={false}
+          visible={draftMode !== null}
+          onRequestClose={closeDraft}
+        >
+          <View style={styles.searchFilterHeader}>
+            <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
           </View>
-        </Modal>
+          <ScrollView
+            style={styles.searchFilterBody}
+            contentContainerStyle={[styles.searchFilterBodyInner, proxyStyles.sheetBody]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <SettingRail
+              title="类型"
+              items={[
+                { value: 'http', label: 'HTTP' },
+                { value: 'socks5', label: 'SOCKS5' }
+              ]}
+              value={draft.protocol}
+              styles={styles}
+              onChange={(value) => setDraft((current) => ({ ...current, protocol: value as NetworkProxyProtocol }))}
+            />
+            <ProxyInput
+              label="名称"
+              value={draft.name}
+              error={visibleErrors.name}
+              styles={styles}
+              theme={theme}
+              onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
+            />
+            <View style={proxyStyles.fieldRow}>
+              <ProxyInput
+                label="服务器"
+                value={draft.host}
+                error={visibleErrors.host}
+                styles={styles}
+                theme={theme}
+                autoCapitalize="none"
+                style={proxyStyles.fieldMain}
+                onChangeText={(host) => setDraft((current) => ({ ...current, host }))}
+              />
+              <ProxyInput
+                label="端口"
+                value={draft.port}
+                error={visibleErrors.port}
+                styles={styles}
+                theme={theme}
+                keyboardType="number-pad"
+                style={proxyStyles.portField}
+                onChangeText={(port) => setDraft((current) => ({ ...current, port }))}
+              />
+            </View>
+            <View style={proxyStyles.fieldRow}>
+              <ProxyInput
+                label="用户名"
+                value={draft.username}
+                error={visibleErrors.username}
+                styles={styles}
+                theme={theme}
+                autoCapitalize="none"
+                placeholder="可空"
+                style={proxyStyles.fieldMain}
+                onChangeText={(username) => setDraft((current) => ({ ...current, username }))}
+              />
+              <ProxyInput
+                label="密码"
+                value={draft.password}
+                error={visibleErrors.password}
+                styles={styles}
+                theme={theme}
+                autoCapitalize="none"
+                placeholder="可空"
+                secureTextEntry
+                style={proxyStyles.fieldMain}
+                onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
+              />
+            </View>
+          </ScrollView>
+          <View style={styles.searchFilterActions}>
+            <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeDraft} />
+            <AppButton
+              compact
+              label={busy ? '保存中' : '确定'}
+              variant="primary"
+              styles={styles}
+              disabled={busy}
+              onPress={saveDraft}
+            />
+          </View>
+        </ModalSheetFrame>
       </View>
     </Modal>
   );

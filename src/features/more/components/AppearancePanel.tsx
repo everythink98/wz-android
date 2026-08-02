@@ -10,7 +10,7 @@ import {
   normalizeFontScale,
   type ReaderSettings
 } from '@/domain/reader/readerData';
-import { triggerPressFeedback } from '@/ui/controls/AppControls';
+import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 export function AppearancePanel({

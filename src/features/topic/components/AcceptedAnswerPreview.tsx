@@ -6,7 +6,7 @@ import type { Reply, Source } from '@/domain/forum/models';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { quotedPostReferenceKey } from '@/domain/forum/quotedPosts';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
-import { triggerPressFeedback } from '@/ui/controls/AppControls';
+import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import type { TopicImageDeriver } from '../model/topicDerivedData';

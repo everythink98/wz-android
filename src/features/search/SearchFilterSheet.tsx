@@ -1,6 +1,6 @@
 import type { SearchStyles } from './styles';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { X } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption, Source } from '@/domain/forum/models';
 import { type DiscourseSource } from '@/domain/forum/sourceCatalog';
@@ -15,7 +15,9 @@ import {
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
 import type { ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton, TOUCH_HIT_SLOP } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
+import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { DiscourseFilterPickers, useDiscourseFilterPickers } from './DiscourseFilterPickers';
 import { SearchFilterForm } from './SearchFilterForm';
@@ -161,66 +163,55 @@ export function SearchFilterSheet({
 
   return (
     <>
-      <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-        <KeyboardAvoidingView behavior="height" style={styles.searchFilterModalRoot}>
+      <ModalSheetFrame backdropLabel="关闭筛选" visible={visible} onRequestClose={onClose}>
+        <View style={styles.searchFilterHeader}>
+          <View style={styles.flex}>
+            <Text style={styles.searchFilterTitle}>筛选</Text>
+            <Text style={styles.meta}>{sourceLabel(source)}</Text>
+          </View>
           <Pressable
+            testID="search-filter-close"
             accessibilityRole="button"
             accessibilityLabel="关闭筛选"
-            style={styles.searchFilterBackdrop}
+            hitSlop={TOUCH_HIT_SLOP}
+            style={styles.searchInlineButton}
             onPress={onClose}
+          >
+            <X size={18} color={theme.muted} strokeWidth={2} />
+          </Pressable>
+        </View>
+        <ScrollView
+          style={styles.searchFilterBody}
+          contentContainerStyle={styles.searchFilterBodyInner}
+          keyboardShouldPersistTaps="handled"
+        >
+          <SearchFilterForm
+            categoryNames={pickers.category.names}
+            draftFilter={draftFilter}
+            filterSheetVisible={visible}
+            nodeSeekCategoryItems={nodeSeekCategoryItems}
+            openCategoryPicker={pickers.category.open}
+            openTagPicker={pickers.tags.open}
+            openUserPicker={pickers.users.open}
+            styles={styles}
+            theme={theme}
+            toggleTag={toggleTag}
+            toggleVisited={toggleVisited}
+            updateDraft={updateDraft}
+            updateLinuxDoExpertResponse={updateLinuxDoExpertResponse}
+            yaohuoCategoryItems={yaohuoCategoryItems}
           />
-          <View style={styles.searchFilterSheet}>
-            <View style={styles.searchFilterHandle} />
-            <View style={styles.searchFilterHeader}>
-              <View style={styles.flex}>
-                <Text style={styles.searchFilterTitle}>筛选</Text>
-                <Text style={styles.meta}>{sourceLabel(source)}</Text>
-              </View>
-              <Pressable
-                testID="search-filter-close"
-                accessibilityRole="button"
-                accessibilityLabel="关闭筛选"
-                hitSlop={TOUCH_HIT_SLOP}
-                style={styles.searchInlineButton}
-                onPress={onClose}
-              >
-                <X size={18} color={theme.muted} strokeWidth={2} />
-              </Pressable>
-            </View>
-            <ScrollView
-              style={styles.searchFilterBody}
-              contentContainerStyle={styles.searchFilterBodyInner}
-              keyboardShouldPersistTaps="handled"
-            >
-              <SearchFilterForm
-                categoryNames={pickers.category.names}
-                draftFilter={draftFilter}
-                filterSheetVisible={visible}
-                nodeSeekCategoryItems={nodeSeekCategoryItems}
-                openCategoryPicker={pickers.category.open}
-                openTagPicker={pickers.tags.open}
-                openUserPicker={pickers.users.open}
-                styles={styles}
-                theme={theme}
-                toggleTag={toggleTag}
-                toggleVisited={toggleVisited}
-                updateDraft={updateDraft}
-                updateLinuxDoExpertResponse={updateLinuxDoExpertResponse}
-                yaohuoCategoryItems={yaohuoCategoryItems}
-              />
-            </ScrollView>
-            {filterError ? (
-              <Text accessibilityRole="alert" style={styles.errorText}>
-                {filterError}
-              </Text>
-            ) : null}
-            <View style={styles.searchFilterActions}>
-              <AppButton compact label="重置" variant="ghost" styles={styles} onPress={resetDraft} />
-              <AppButton compact label="确认筛选" variant="primary" styles={styles} onPress={applyDraft} />
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+        </ScrollView>
+        {filterError ? (
+          <Text accessibilityRole="alert" style={styles.errorText}>
+            {filterError}
+          </Text>
+        ) : null}
+        <View style={styles.searchFilterActions}>
+          <AppButton compact label="重置" variant="ghost" styles={styles} onPress={resetDraft} />
+          <AppButton compact label="确认筛选" variant="primary" styles={styles} onPress={applyDraft} />
+        </View>
+      </ModalSheetFrame>
       <DiscourseFilterPickers
         controller={pickers}
         discourseDraft={discourseDraft}

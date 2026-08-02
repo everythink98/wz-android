@@ -34,7 +34,8 @@ import {
   type ToggleReplyQuoteOptions
 } from '@/domain/forum/quotedPosts';
 import { replyContextBadgeStyle, type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton, triggerPressFeedback } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
+import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import type { InteractionType, TopicActionStateKind } from '@/domain/forum/topicActionState';

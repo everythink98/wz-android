@@ -1,5 +1,5 @@
 import { View } from 'react-native';
-import { AppButton } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import type { MoreScreenStyles } from '../styles';
 
 export function BackupRestorePanel({

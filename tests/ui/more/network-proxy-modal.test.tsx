@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '../render';
 import React from 'react';
 import { Alert } from 'react-native';
 import { createEmptyNetworkProxyState, type NetworkProxyProfile } from '@/platform/network/networkProxy';

@@ -6,7 +6,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
 import type { ReplyEditTarget, ReplyTarget } from '../model/types';
 import { type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import type { Source } from '@/domain/forum/models';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';

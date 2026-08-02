@@ -8,7 +8,10 @@ import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
-import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '@/ui/controls/AppControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
+import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { PillRail } from '@/ui/controls/SelectionControls';
+import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
@@ -393,12 +396,12 @@ export const UserScreen = memo(function UserScreen({
 
   return (
     <View style={styles.screen}>
-      <View style={styles.topicTopBar}>
+      <ScreenTopBar>
         <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
-        <Text style={styles.topicTopHint} numberOfLines={1}>
+        <ScreenTopBarTitle>
           {sourceLabel(user.source)} · {user.displayName || user.username || user.id}
-        </Text>
-        <View style={styles.topicTopActions}>
+        </ScreenTopBarTitle>
+        <ScreenTopBarActions>
           {followTarget ? (
             <IconButton
               iconOnly
@@ -424,8 +427,8 @@ export const UserScreen = memo(function UserScreen({
               onPress={() => onOpenOriginal(user.url)}
             />
           ) : null}
-        </View>
-      </View>
+        </ScreenTopBarActions>
+      </ScreenTopBar>
       {renderProfileHeader()}
       <FlashList
         testID={profile && !busy ? 'user-screen-loaded' : undefined}

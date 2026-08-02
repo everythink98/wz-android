@@ -2,7 +2,7 @@ import type { TopicStyles } from '../styles';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { alphaColor, androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
-import { triggerPressFeedback } from '@/ui/controls/AppControls';
+import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 
 export type DetailActionTone = 'danger' | 'favorite' | 'primary' | 'success' | 'warning';
 

@@ -6,7 +6,8 @@ import type { Source, TopicPoll } from '@/domain/forum/models';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { pollParticipationLabel, pollTotalVotes } from '@/domain/forum/topicPollDisplay';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton, triggerPressFeedback } from '@/ui/controls/AppControls';
+import { AppButton } from '@/ui/controls/ButtonControls';
+import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 
 function topicPollKey(poll: TopicPoll, index: number) {

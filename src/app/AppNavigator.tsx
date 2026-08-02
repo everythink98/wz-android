@@ -4,7 +4,7 @@ import { NavigationContainer, type Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { TabBarIcon, tabNavItems } from '@/ui/navigation/NavBar';
-import { triggerPressFeedback } from '@/ui/controls/AppControls';
+import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { Screen } from '@/ui/navigation/types';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';

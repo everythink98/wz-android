@@ -5,7 +5,7 @@ import { RefreshCw } from 'lucide-react-native';
 import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
-import { AppButton, IconButton } from '@/ui/controls/AppControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 
 const LINUXDO_LEVEL_TABS = [
   { value: 'progress', label: '等级进度' },
