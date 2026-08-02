@@ -42,7 +42,7 @@
 - Replay 默认 retries 为 0；单个 `.ad` 首次失败即停止，普通执行失败由外层继续其他独立文件并在最后汇总，清理失败则立即中止后续文件以避免污染，只有全部通过才输出 `DEVICE_REPLAY_PASS`。带 `--record-video` 的 tracked Replay 不自行执行 `close`：test harness 必须先停止并拉回视频，再由 cleanup 关闭 session。诊断性重跑不能覆盖第一次失败。禁止在 CI 使用 `replay -u`：本机 0.19.0 仍可能重写脚本，而 0.19.1 起该参数已退役为 no-op；统一根据 divergence 建议人工修改并审查 diff。
 - Agent Live 不是 CI。它只在 `npm run verify` 和相关 Replay 之后按 `targeted` 或 `full` Profile 执行；CF、动态目标、授权、恢复、不可逆写入和失败续跑规则以 `tests/live/agent-live.md` 为准。
 - React Doctor 单独扫描全仓并阻断 blocking error；它依赖外部 CLI，不并入确定性的 `npm run verify`，也不替代任何行为测试。
-- `npm run check:architecture` 检查真实源码的组合链、依赖方向、route ownership、旧路径、barrel 和循环；`npm run test:architecture` 用合法/非法 fixture 证明规则本身会接受与拒绝预期输入。两者只提供 `STATIC_PASS`，route 草稿、滚动、inactive gate 和返回优先级仍必须由 RNTL/Replay 证明。
+- `npm run check:architecture` 检查真实源码的组合链、依赖方向、route ownership、Screen props 投影、Account raw session/host 能力逃逸、行为测试读取生产源码字符串、旧路径、barrel 和循环；`npm run test:architecture` 用合法/非法 fixture 证明规则本身会接受与拒绝预期输入。两者只提供 `STATIC_PASS`，route 草稿、滚动、inactive gate 和返回优先级仍必须由 RNTL/Replay 证明。
 - 历史逃逸事故及负向控制见 `docs/regression-corpus.md`。
 
 ## 改动影响面回归
@@ -107,6 +107,8 @@
 | 问题诊断 | Release 常驻入口可生成 UTF-8 JSON Lines 并打开系统分享；日志轮转和导出不阻塞业务；临时分享文件随后删除；所有字段经过白名单和脱敏；局部来源、凭据、解析和写后刷新失败提升为 `partial`，页面提示显示问题附截图、内容特例附原帖链接 | `src/platform/diagnostics/diagnostics.test.ts`、`src/platform/diagnostics/diagnosticFileStore.test.ts`、`src/sources/readGatewayContract.test.ts`、`tests/ui/account/account-status-controller.test.tsx`、`tests/ui/topic/topic-actions-controller.test.tsx`、`src/app/useReaderRuntime.test.ts`、`src/platform/media/imageSave.test.ts` |
 | 更多页 / 外观 / 更新 | 单一账号中心按 NodeSeek、linux.do、妖火、小隐寺排列且只显示一站详情；顶部区分待处理、四站网站登录和原三站自动填入数量；原三站服务入口均保留，小隐寺显示本人主页、等级及独立授权管理；进入 More 页不自动刷新；App 内不提供伪匿名测试入口；代理密码遮蔽、完整连通性文案、备份、诊断、外观和更新行为保持独立 | `tests/ui/account/account-status-controller.test.tsx`、`src/features/more/accountCenter.test.ts`、`tests/ui/account/account-center.test.tsx`、`tests/ui/more/more-screen.test.tsx`、`tests/ui/account/xiaoyinsi-auth-controller.test.tsx`、`tests/ui/more/network-proxy-modal.test.tsx`、`src/sources/xiaoyinsi/reader.test.ts`、`src/domain/session/siteSessionState.test.ts`、`src/sources/xiaoyinsi/auth.test.ts`、`src/platform/storage/credentialVault.test.ts`、`src/domain/session/loginFormAdapters.test.ts`、`src/platform/network/networkProxy.test.ts`、`tests/tooling/webview-proxy-guard.test.ts`、`src/platform/update/appUpdate.test.ts`、`tests/tooling/release-packaging.test.ts` |
 | 发布 / 安装 | 版本号一致；release 先跑测试、文档和无用代码检查；正式签名有效；按设备 ABI 覆盖安装签名 APK；`APK_SANITY` 与 `DEVICE_REPLAY_PASS` 分别通过；敏感文件不提交 | `tests/tooling/release-packaging.test.ts`、`tests/tooling/android-smoke-guard.test.ts`、`npm run release:android` |
+
+结构收口不能只靠源码门禁：账号协议分发至少运行 `src/sources/sourceAccountRead.test.ts` 与 `tests/ui/account/account-status-controller.test.tsx`；Topic 权限/回滚至少运行 `src/features/topic/actions/topicActionDecision.test.ts` 与 `tests/ui/topic/topic-actions-controller.test.tsx`；Search picker 生命周期运行 `tests/ui/search/search-screen.test.tsx`；More capability 组合运行 `tests/ui/more/more-screen.test.tsx`；主题样式 owner 运行 `tests/integration/style-ownership.test.ts`。这些测试证明行为，architecture fixture 只证明边界规则会拒绝非法形状。
 
 > `REG-PERF-009` 补充详情图片 cache 矩阵：正文尺寸、原图 revision 与 compatible SVG artifact 的 render/getSnapshot read 不得提升全局 LRU；只有已提交 effect/subscription、显示/recovery 或写入可以改变淘汰顺序。三个编号单测必须同时固定 speculative read 不提升与 committed activity 提升，既有容量、完整媒体 identity、active listener 和 recovery single-flight 不变。
 

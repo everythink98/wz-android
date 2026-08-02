@@ -2281,7 +2281,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 账号刷新 Query 已得到新的远端会话状态，而 Topic action controller 仍直接读取授权 workflow 的旧 `SiteSessionStates`。两份投影可以同时给出相反的可写结论。 |
 | 根因 seam | `src/features/account/useAccountRuntime.ts` 向 `src/features/topic/TopicRoute.tsx` / `actions/useTopicActionsController.ts` 投影 writable session 能力的边界。 |
 | 必须保持的行为 | Topic 写入口只使用账户 Query 与当前验证 workflow 合并后的 `accountSessionViewModels`；验证中、失效或匿名必须撤销该站写入口，确认已登录则开放站点级写能力，再由主题 `can_create_post` 和逐条 `can_*` 权限 fail-closed 收窄。不得新增第三份登录状态或绕过对象权限。 |
-| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-016` 同时构造 workflow 认为 linux.do 可写/小隐寺不可写、账户投影给出相反结果；旧实现精确返回 linux.do=true、小隐寺=false。 |
+| 精确失败 oracle | `src/features/topic/actions/topicActionDecision.test.ts` 固定 unsupported、login-required、identity-pending、object-forbidden、missing-target、already-complete、pending 与 allowed 的唯一判定；`tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-016` 同时构造 workflow 认为 linux.do 可写/小隐寺不可写、账户投影给出相反结果，并固定判定进入唯一 mutation owner。旧实现精确返回 linux.do=true、小隐寺=false。 |
 | 最低可靠自动测试层 | `UI_PASS`：用真实 Controller 与合并后的 view model 固定 Topic 可见权限；纯 parser 单测无法暴露跨 Controller 状态分叉。 |
 | Replay 或真实验收路径 | 账号中心刷新后分别打开 linux.do 与小隐寺详情；只读核对账号状态、回复入口和原站允许的点赞入口一致。主题或帖子本身不可写时必须继续隐藏对应入口，不发送回复。 |
 | 负向验证方式 | 改回从 `effectiveSiteSessionStates` 派生 Topic actions，编号测试会再次得到与账户投影相反的两个布尔值。 |

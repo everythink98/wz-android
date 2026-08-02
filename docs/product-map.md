@@ -82,6 +82,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `REG-SEARCH-018` 补充 `SEARCH-02`、`SEARCH-04`：NodeSeek 搜索只统计当前解析器实际选择的数据面；正式 `.post-list` 为空时，即使页面其他区域含 `post-*` 链接或页面壳含旧 embedded topics 也必须显示正常空态，不能误报 `parse_empty`。只有表单而结果面未完成时仍保持可重试失败，纯数字查询不改写为帖子直达。
 
+`SEARCH-03` 的筛选状态 owner 固定为 `src/features/search/SearchFilterSheet.tsx`、`src/features/search/SearchFilterForm.tsx` 与 `src/features/search/DiscourseFilterPickers.tsx`：sheet 只提交草稿事务，picker 自持 visibility、debounce、候选 Query、取消和 stale-response 拒绝；对应可见行为由 `tests/ui/search/search-screen.test.tsx` 固定。
+
 `REG-SEARCH-019` 补充 `SEARCH-02`、`SEARCH-04`：单站搜索累计结果为 0 时，空态即为终态；即使来源残留 `hasMore/nextPage`，也不得显示分页哨兵或触发自动续页。非空结果的既有自动分页与分页失败重试保持不变。
 
 ### TOPIC：主题详情与阅读
@@ -135,6 +137,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `ACCOUNT-01/02/04/06` 共用 Account canonical identity、同步 `SessionRuntimeSnapshot` 与 `ForumSessionEpochs`：probe 开始和 canonical commit 先同步 runtime 再完成 Promise；身份 pending、登录 surface 尚未卸载或恢复屏障存在时不发新私有请求。A→A 只解除 barrier；A→B、A→anonymous 或 anonymous→B 原子提交新身份、递增目标站 epoch并清理目标站及 `all` 私有 Query、Level/AI、Topic 服务端数据和 managed media 身份缓存；unknown 保留上一份可信身份与已加载内容只读。验证恢复先关闭并卸载面板，再恢复原 Query。Feed/Search 聚合只暂停 dirty 来源，其他来源继续刷新；Topic route 的选择、滚动、筛选和草稿保留，但正文、回复和用户资料不能跨 epoch 复用。见 `REG-ACCOUNT-031/035`。
 
+`ACCOUNT-01/02` 的账号状态协议归 `src/sources/accountRead.ts` 与四个 provider `accountStatus` adapter，统一返回 `AccountStatusObservation`；`useAccountStatusController` 只负责 Query/probe generation 与原子提交。可见/隐藏登录页由 `src/features/account/AccountHosts.tsx` 在 Account 内组合，App 不接收 WebView ref 或 setter。`src/sources/sourceAccountRead.test.ts`、`tests/ui/account/account-status-controller.test.tsx` 与 `tests/ui/account/account-site-panels.test.tsx` 分别固定协议分发、对账和 host 行为。
+
 `ACCOUNT-04` 的等级刷新使用 error-first 语义：失败时可以保留旧可信数据，但必须返回本次错误、不得提示成功或自动重试，见 `REG-ACCOUNT-018`。Device Replay 会从小隐寺“查看等级”入口发起一次读取，先等待只在 profile/error 结算后出现的 `xiaoyinsi-level-settled`，再确认成功和错误共有的“刷新等级”，不要求第三方实时数据成功；动态等级与活跃数据由 `tests/live/agent-live.md` 独立核实，明确限流只阻塞数据验证，不得覆盖正确错误流程或阻断其他 More 旅程，见 `REG-TEST-005`。
 
 `ACCOUNT-01/02` 的 NodeSeek `verified` 是访客 Cloudflare 验证状态，不是账号登录：它与 `anonymous` 一样保持 `isLoggedIn=false`、不增加网站登录计数、关闭写入并使用匿名 Google 搜索。隔离 AVD Replay 必须接受“未登录”与仅访客“已验证”两个准确终态，同时拒绝“已登录”、pending、unknown 和 expired，见 `REG-TEST-004`。
@@ -158,6 +162,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `WRITE-01/02/03/04` 与 NodeSeek 签到统一先经 `ensureWritableSession(source)` 取得一次性 identity/epoch ticket。dirty 会话先复核；换号、退出、unknown 或 ticket 过期均在 Query snapshot、optimistic update、文件选择、上传、transport 和写后刷新结算前终止，所有等待后再次校验。未确认失败恢复仍存在的旧 scope optimistic snapshot，但不重建已清除的旧 epoch Query；已确认后换代只结算 `stale + serverConfirmed`，不回滚或写新 epoch。只有站点 client/runtime 给出的 `login-required`、`login-expired`、`verification-required` 请求一次 Account Query 对账；`ordinary` 与 `permission-denied` 只结算本次 mutation，不建立 barrier，也不自动重放非幂等请求。NodeImage 自动取得或在账号中心手动粘贴的 Key 都在保存时绑定当前已确认的 NodeSeek identity；旧版未验证 Key 不可用于上传，用户需重新获取授权或重新粘贴。见 `REG-WRITE-023/024/025`。
 
+`WRITE-01/02/03` 的入口与 controller 共用 `src/features/topic/actions/topicActionDecision.ts`，按来源 capability、身份可信度、对象权限、必需 target、already-complete 和 pending 返回单一 reason；`src/features/topic/actions/topicActionDecision.test.ts` 与 `tests/ui/topic/topic-actions-controller.test.tsx` 固定零请求、单次成功和完整 rollback。
+
 ### DATA：本机资料、持久化与备份
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |
@@ -174,6 +180,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 | `MORE-02` | 诊断记录请求阶段、归属和终态，局部来源、凭据、解析或写后刷新失败必须把整体成功终态提升为 `partial`，但不记录内容或 secret；账号公共刷新只记录失败站并保持另外三站完成，不因缓存复位误报全站退出，见 `REG-ACCOUNT-019`；两份 1 MiB 轮转，导出走系统分享且清理临时文件。 | `src/platform/diagnostics/diagnosticPolicy.ts`、`src/platform/diagnostics/diagnostics.ts`、`src/platform/diagnostics/diagnosticFileStore.ts`、`src/sources/readGateway.ts` | `src/platform/diagnostics/diagnostics.test.ts`、`src/platform/diagnostics/diagnosticFileStore.test.ts`、`src/sources/readGatewayContract.test.ts`、`tests/ui/account/account-status-controller.test.tsx`、`tests/ui/topic/topic-actions-controller.test.tsx` | 更多 → 诊断日志 → 生成/分享后取消；检查无敏感可见内容。 |
 | `MORE-03` | 外观支持字号、浅/深色主题、列表密度、行距、正文宽度和字体；切换立即生效并持久化，不应挤压主要页面。 | `src/features/more/components/AppearancePanel.tsx`、`src/features/more/useReaderSettingsController.ts`、`src/ui/theme/tokens.ts`、`src/ui/theme/ReaderStyleProvider.tsx` | `src/features/more/useReaderSettingsController.test.ts`、`tests/integration/style-ownership.test.ts`、`tests/ui/shared/topic-and-more-controls.test.tsx` | 更多 → 外观；逐项切换，检查首页/详情/弹层，并恢复原值。 |
 | `MORE-04` | 检查更新读取可信 manifest，比较版本并校验下载；manifest signer 必须等于 App 内置正式 signer，下载后继续校验 hash、包名、版本和当前唯一 APK signer，见 `REG-UPDATE-003/004`。检查与下载在 runtime 层互斥，不能在新检查期间下载旧 update info，见 `REG-UPDATE-001`。安装由 Android 系统确认，代理保护覆盖更新请求。 | `src/platform/update/appUpdate.ts`、`src/platform/update/useAppUpdateRuntime.ts`、`plugins/withApkInstaller.js` | `src/platform/update/appUpdate.test.ts`、`src/platform/update/useAppUpdateRuntime.test.ts`、`src/platform/update/appUpdateProxyGuard.test.ts`、`tests/tooling/apk-installer-plugin.test.ts` | 更多 → 检查更新；安装包下载/安装按发布风险授权。 |
+
+`MORE-01..04` 的 route-local 组合归 `src/features/more/MoreRoute.tsx`；账号、更新和工具/设置分别由 `src/features/more/components/MoreAccountPanel.tsx`、`src/features/more/components/MoreUpdatePanel.tsx`、`src/features/more/components/MoreUtilityPanels.tsx` 持有局部状态，`src/features/more/MoreScreen.tsx` 只布局。`tests/ui/more/more-screen.test.tsx` 固定 capability 投影与 panel 行为。
 
 ### RELEASE：构建、打包与发布
 

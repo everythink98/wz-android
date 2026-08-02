@@ -39,15 +39,16 @@
 - source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/feedRead.ts`、`src/sources/searchRead.ts`、`src/sources/sourceRead.ts`、`src/sources/discourseRead.ts`、`src/sources/discourseActions.ts` 与 `src/sources/readGateway.ts` 是允许组合多个 adapter 的来源根模块。
 - `src/sources/readGateway.ts` 是读取统一入口。写操作继续复用现有 action client 和 `useTopicActionsController` 生命周期，不为目录整洁另造 service、factory 或 provider registry。
 - 禁止新增 barrel `index.ts`、旧内部路径 re-export 和纯转发 facade。移动内部模块时一次性更新调用方、测试与文档。
-- App 组合链固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`：`AppRoot` 只能依赖 `AppComposition`，不得持有 `useState/useRef/useEffect/useCallback` 或直接导入 Screen/controller；`AppComposition` 只依赖深 runtime、全局 provider、Account-owned host 与 `AppRoutes`；`AppRoutes` 只映射六个 feature route entry；`AppNavigator` 不得依赖 feature。
+- App 组合链固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`：`AppRoot` 只能依赖 `AppComposition`；`useAppRuntime` 只能组合深 runtime、用 `useMemo` 投影 route capability，不得持有 `useState/useRef/useEffect/useCallback` 或导入 Screen/component；`AppComposition` 只依赖深 runtime、全局 provider 与 `AppRoutes`；`AppRoutes` 只映射六个 feature route entry；`AppNavigator` 不得依赖 feature。
 - Feed、Search、Library、More tab 长期挂载但以 `active` 控制 Query 和副作用；Topic/User 的 controller、list ref、草稿、筛选和滚动状态归各自 native route。禁止恢复 Topic presentation cache、route snapshot、手工 back stack、全局 openTopic/openUser ref 或 deferred navigation registry。
 
 ## 模块与文件拆分
 
 - 按 owner 和独立变化原因拆分，不按行数拆分。一个复杂 hook 若仍是唯一生命周期 owner，就保留 cohesive module。
 - Screen 只拥有渲染与局部交互；远端状态、取消、草稿、返回栈、身份 epoch 等状态继续由现有 controller 或 Query owner 管理。
+- Runtime 跨 owner 只暴露按旅程分组的语义能力。Account 的公开接口固定为 `read`、`write`、`center`、`hosts`；`hosts` 只提供 Account 自己生成的 host 节点、surface 状态和语义命令，不得泄漏 raw session、setter、ref、WebView controller 或 registry。Route runtime 不得用 `ComponentProps<typeof Screen>` 反向复制 Screen props。
 - 可复用必须以语义、生命周期、权限和错误处理一致为前提。只相似但行为不同的 provider、feature 和写操作保持独立。
-- 样式跟随 owner：feature 样式位于对应 feature，跨旅程 token/primitive 位于 UI；禁止恢复全局 feature-style registry。
+- 样式跟随 owner：feature 样式位于对应 feature，跨旅程 token/primitive 位于 UI；`ReaderStyleContextValue` 只提供 `theme/settings`，控件和 feature 用自己的 style factory 消费，禁止恢复全局 feature-style registry。
 - 不增加未要求的扩展点、配置层或单实现 interface。新增抽象必须减少现有重复或切断真实反向依赖。
 
 ## 测试归属
@@ -63,7 +64,7 @@
 - TypeScript/JavaScript 使用单引号、分号、无尾逗号和 120 列；全部受管文本使用 LF，JSON/YAML 遵循 Prettier 的合法语法。Markdown、`package-lock.json`、生成目录与产物不做批量格式化。
 - 提交前至少运行与改动相关的测试、`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run check:architecture` 和 `git diff --check`。
 - `npm run verify` 是最终确定性门禁，并额外运行 architecture 自测、全量 Vitest、Jest/RNTL、文档、unused 和版本检查。
-- `scripts/check-architecture.mjs` 使用仓库已安装的 TypeScript AST 检查六类根目录、依赖矩阵、跨 feature/provider、组合链 allowlist、AppRoot 状态 hook、AppNavigator feature 隔离、旧路径、barrel 和依赖环；合法/非法 fixture 由 `npm run test:architecture` 固定。规则失败应修正 ownership，不得用文件级豁免绕过，也不得新增 LOC、文件数或 props 数量门禁。
+- `scripts/check-architecture.mjs` 使用仓库已安装的 TypeScript AST 检查六类根目录、依赖矩阵、跨 feature/provider、组合链 allowlist、AppRoot/`useAppRuntime` 状态 hook、route 的 Screen props 投影、Account raw session/host 能力逃逸、AppNavigator feature 隔离、行为测试读取生产源码字符串、旧路径、barrel 和依赖环；合法/非法 fixture 由 `npm run test:architecture` 固定。规则失败应修正 ownership，不得用文件级豁免绕过，也不得新增 LOC、文件数或 props 数量门禁。
 
 ## 改动边界
 
