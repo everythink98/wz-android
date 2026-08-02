@@ -38,6 +38,8 @@ function waitForNextSaveTurn() {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+const emptyReaderDataJson = JSON.stringify(createEmptyReaderData());
+
 function isSettingsOnlyCommit(previous: ReaderData, next: ReaderData) {
   return (
     next.version === previous.version &&
@@ -128,7 +130,7 @@ export function useReaderDataController({ notify }: { notify: (message: string) 
   const readerDataLoadedRef = useRef(false);
   const readerDataWriteSuspendedRef = useRef(false);
   const lastPersistedReaderDataRef = useRef<ReaderData>(readerData);
-  const lastPersistedReaderDataJsonRef = useRef<string | null>(JSON.stringify(readerData));
+  const lastPersistedReaderDataJsonRef = useRef<string | null>(emptyReaderDataJson);
   const saveQueueRef = useRef(Promise.resolve());
 
   const persistReaderData = useCallback(

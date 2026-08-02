@@ -22,7 +22,7 @@
     "check:architecture": "node scripts/check-architecture.mjs",
     "check:react": "npx --yes react-doctor@0.9.3 . --no-warnings --no-telemetry --no-dead-code --no-supply-chain --blocking error",
     "check:unused": "tsc --noEmit --noUnusedLocals --noUnusedParameters --allowUnreachableCode false --allowUnusedLabels false",
-    "verify": "npm run lint && npm run format:check && npm run check:architecture && npm run test:architecture && npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && npm run check:react && node scripts/check-version.mjs",
+    "verify": "npm run lint && npm run format:check && npm run check:architecture && npm run test:architecture && npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && node scripts/check-version.mjs",
     "android": "expo run:android",
     "release:android": "node scripts/release-android.mjs",
     "smoke:android": "node scripts/smoke-android.mjs",

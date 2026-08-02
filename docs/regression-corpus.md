@@ -10,7 +10,7 @@
 
 | 证据 | 只证明 |
 | --- | --- |
-| `STATIC_PASS` | 文档、类型、unused 和 React Doctor 增量静态检查通过 |
+| `STATIC_PASS` | 文档、类型、unused 和 React Doctor 全仓 blocking error 检查通过 |
 | `UNIT_PASS` | Vitest 固定的领域、controller、gateway、存储或请求契约通过 |
 | `UI_PASS` | Jest/RNTL 固定的用户可见 React Native 渲染与交互通过 |
 | `DEVICE_REPLAY_PASS` | `.ad` 脚本在身份匹配的 App、APK、设备和会话上通过；不证明第三方当前健康或当天有数据 |

@@ -27,7 +27,7 @@
 
 | 结果 | 必须来自 | 不能证明 |
 | --- | --- | --- |
-| `STATIC_PASS` | lint、format、architecture、文档、TypeScript、unused、React Doctor changed-lines | 功能在设备上可用 |
+| `STATIC_PASS` | lint、format、architecture、文档、TypeScript、unused、React Doctor 全仓 blocking error | 功能在设备上可用 |
 | `UNIT_PASS` | Vitest 行为测试 | React Native 实际渲染或当天原站结果 |
 | `UI_PASS` | Jest/RNTL 通过 role、label、text 或稳定 `testID` 验证的渲染行为 | Native/WebView 和真实网络行为 |
 | `DEVICE_REPLAY_PASS` | `.ad` 在匹配的 App/APK/设备/会话执行成功 | 第三方当前健康、当天有数据、未包含的能力或真实写入 |
@@ -41,7 +41,7 @@
 - 动态读取的 Replay 只等待当前请求专属 outcome：Feed 使用 `data/empty/partial/error/auth`，Search 按来源使用同一结果词汇。Loading、未提交或旧请求不能暴露终态；永久 Loading、错误不可见、无恢复入口和来源串扰仍必须失败。一个来源或能力失败不得取消其他独立文件的取证。
 - Replay 默认 retries 为 0；单个 `.ad` 首次失败即停止，普通执行失败由外层继续其他独立文件并在最后汇总，清理失败则立即中止后续文件以避免污染，只有全部通过才输出 `DEVICE_REPLAY_PASS`。带 `--record-video` 的 tracked Replay 不自行执行 `close`：test harness 必须先停止并拉回视频，再由 cleanup 关闭 session。诊断性重跑不能覆盖第一次失败。禁止在 CI 使用 `replay -u`：本机 0.19.0 仍可能重写脚本，而 0.19.1 起该参数已退役为 no-op；统一根据 divergence 建议人工修改并审查 diff。
 - Agent Live 不是 CI。它只在 `npm run verify` 和相关 Replay 之后按 `targeted` 或 `full` Profile 执行；CF、动态目标、授权、恢复、不可逆写入和失败续跑规则以 `tests/live/agent-live.md` 为准。
-- React Doctor 只扫描新增行并阻断新增 error；它是静态建议，不替代任何行为测试。
+- React Doctor 单独扫描全仓并阻断 blocking error；它依赖外部 CLI，不并入确定性的 `npm run verify`，也不替代任何行为测试。
 - 历史逃逸事故及负向控制见 `docs/regression-corpus.md`。
 
 ## 改动影响面回归
