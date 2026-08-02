@@ -15,6 +15,7 @@ describe('WebView proxy guard', () => {
     const networkRuntime = readSource('src', 'platform', 'network', 'useNetworkProxyRuntime.ts');
     const hiddenBrowserHost = readSource('src', 'features', 'account', 'HiddenBrowserHost.tsx');
     const accountHost = readSource('src', 'features', 'account', 'AccountHost.tsx');
+    const accountHosts = readSource('src', 'features', 'account', 'AccountHosts.tsx');
     const contentMediaRenderers = readSource('src', 'features', 'topic', 'rendering', 'contentMediaRenderers.tsx');
     const yaohuoLoginPanel = readSource('src', 'features', 'more', 'components', 'YaohuoLoginPanel.tsx');
 
@@ -22,8 +23,9 @@ describe('WebView proxy guard', () => {
     expect(appRuntime).toContain('webViewBlockMessage: networkProxyWebViewBlockMessage');
     expect(appRuntime).toContain('blockedMessage: networkProxyWebViewBlockMessage');
     expect(appRuntime).toContain('webViewBlockMessage: networkProxyWebViewBlockMessage');
-    expect(appComposition).toContain('<HiddenBrowserHost {...runtime.hiddenBrowserHost} />');
-    expect(appComposition).toContain('<AccountHost {...runtime.accountHost} />');
+    expect(appComposition).toContain('<AccountHosts {...runtime.accountHosts} />');
+    expect(accountHosts).toContain('<HiddenBrowserHost');
+    expect(accountHosts).toContain('<AccountHost');
     expect(hiddenBrowserHost).toContain('blockedMessage');
     expect(hiddenBrowserHost).toContain('!blockedMessage && nodeSeekBrowserFetchRequest');
     expect(hiddenBrowserHost).toContain('!blockedMessage && linuxDoBrowserFetchRequest');

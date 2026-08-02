@@ -20,8 +20,7 @@ const METRO_RESOLUTION_EXTENSIONS = ['.android.ts', '.android.tsx', '.native.ts'
 const APP_COMPOSITION_ALLOWED_INTERNAL_IMPORTS = new Set([
   './AppRoutes',
   './useAppRuntime',
-  '@/features/account/AccountHost',
-  '@/features/account/HiddenBrowserHost',
+  '@/features/account/AccountHosts',
   '@/platform/media/mediaSessionEpoch',
   '@/ui/theme/ReaderStyleProvider'
 ]);

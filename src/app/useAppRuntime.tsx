@@ -23,12 +23,6 @@ export function useAppRuntime() {
     changeScreen,
     getCurrentScreen,
     height,
-    loginNavigation: {
-      linuxdo: handleLinuxDoNavigation,
-      nodeimage: handleNodeImageAuthNavigation,
-      nodeseek: handleNodeSeekLoginNavigation,
-      yaohuo: handleYaohuoLoginNavigation
-    },
     notify,
     onReady: handleNavigationReady,
     onScreenChange: handleNavigationScreenChange,
@@ -45,22 +39,14 @@ export function useAppRuntime() {
     width,
     height
   );
+  const networkRuntime = useNetworkProxyRuntime({ notify });
   const {
-    activeProfile: networkProxyActiveProfile,
-    applyError: networkProxyApplyError,
-    applyStatus: networkProxyApplyStatus,
     contentReady: networkProxyContentReady,
     ensureNetworkProxyReady,
     networkProxyFetcher,
     proxyState: networkProxyState,
-    summary: networkProxySummary,
-    webViewBlockMessage: networkProxyWebViewBlockMessage,
-    deleteProxyProfile: deleteNetworkProxyProfile,
-    selectProxyProfile: selectNetworkProxyProfile,
-    setProxyEnabled: setNetworkProxyEnabled,
-    testProxyProfile: testNetworkProxyProfile,
-    upsertProxyProfile: upsertNetworkProxyProfile
-  } = useNetworkProxyRuntime({ notify });
+    webViewBlockMessage: networkProxyWebViewBlockMessage
+  } = networkRuntime;
 
   const accountRuntime = useAccountRuntime({
     appActive,
@@ -70,6 +56,12 @@ export function useAppRuntime() {
     ready: readerDataLoaded,
     screen,
     webViewBlockMessage: networkProxyWebViewBlockMessage
+  });
+  const updateRuntime = useAppUpdateRuntime({
+    autoCheck: true,
+    beforeRequest: ensureNetworkProxyReady,
+    fetcher: networkProxyFetcher,
+    notify
   });
   const {
     accountIdentityChecks,
@@ -87,100 +79,21 @@ export function useAppRuntime() {
   const { ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession, resetLinuxDoLevelState } =
     accountRuntime.write;
   const {
-    account: {
-      checkYaohuoCookie,
-      clearLinuxDoCookie,
-      clearLogin,
-      clearYaohuoLogin,
-      handleLoginMessage,
-      linuxDoLevelBusy,
-      linuxDoLevelError,
-      linuxDoLevelProfile,
-      recordNodeSeekLoginWebViewState,
-      recordYaohuoLoginWebViewState,
-      refreshLinuxDoLevel
-    },
-    checkIn,
-    checking,
-    handleAccountCenterCommand,
-    credentials: {
-      credentialFillAttempt,
-      credentialLoginSite,
-      credentialSummaries,
-      handleCredentialLoginFormMessage,
-      openAccountLogin,
-      pendingCredentialFillSite
-    },
     nodeImage: {
-      key: {
-        authorize: authorizeNodeImageApiKey,
-        busy: nodeImageApiKeyBusy,
-        clear: clearNodeImageApiKeyInput,
-        ensure: ensureNodeImageApiKey,
-        save: saveNodeImageApiKeyInput,
-        saved: nodeImageApiKeySaved
-      },
-      panel: {
-        close: closeNodeImageAuthPanel,
-        document: nodeImageAuthDocument,
-        error: nodeImageAuthError,
-        fail: reportNodeImageAuthFailure,
-        handleMessage: handleNodeImageAuthMessage,
-        loading: loadingNodeImageAuthPage,
-        setLoading: setLoadingNodeImageAuthPage,
-        visible: showNodeImageAuthPanel,
-        webViewRef: nodeImageAuthWebViewRef
-      }
+      key: { ensure: ensureNodeImageApiKey }
     },
     webLoginUserId,
-    xiaoyinsiAuth: xiaoyinsiAuthController,
-    xiaoyinsiLevel: xiaoyinsiLevelController
+    xiaoyinsiAuth: xiaoyinsiAuthController
   } = accountRuntime.center;
   const {
-    changeNodeSeekLoginPanel,
-    checkNodeSeekLoginAndRetry,
-    changeYaohuoLoginPanel,
-    closePanels: closeAccountPanels,
     closeTopmostSurface: closeTopmostAccountSurface,
-    failLinuxDoBrowserFetchById,
-    failNodeSeekBrowserFetchById,
-    handleLinuxDoBrowserFetchMessage,
-    handleNodeSeekBrowserFetchMessage,
-    hiddenBrowserFetchRequests,
-    linuxDoBrowserWebViewRef,
-    linuxDoWebViewError,
-    linuxDoWebViewKey,
-    linuxDoWebViewRef,
-    linuxDoWebViewUserAgent,
     linuxDoWebViewUserAgentRef,
-    loadingLinuxDoPage,
-    loadingLoginPage,
-    loadingYaohuoLoginPage,
-    mountLinuxDoWebView,
-    markLinuxDoBrowserFetchHttpError,
-    markNodeSeekBrowserFetchHttpError,
-    nodeSeekBrowserWebViewRef,
     nodeSeekWebViewUserAgent,
     nodeSeekWebViewUserAgentRef,
-    setLoadingLoginPage,
-    setLoadingYaohuoLoginPage,
     requestNodeSeekVerification,
     showLinuxDoPanel,
-    showLoginPanel,
-    showYaohuoLoginPanel,
-    verification: {
-      changeLinuxDoPanel,
-      checkLinuxDoCookie,
-      handleLinuxDoMessage,
-      resetLinuxDoWebView,
-      setLinuxDoWebViewErrorForSession,
-      setLoadingLinuxDoPageForSession,
-      showLinuxDoVerification
-    },
-    webViewRef,
-    showYaohuoLogin,
-    yaohuoLoginPrompt,
-    yaohuoWebViewRef
+    verification: { showLinuxDoVerification },
+    showYaohuoLogin
   } = accountRuntime.hosts;
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek, webLoginUserId);
 
@@ -193,20 +106,7 @@ export function useAppRuntime() {
     retainableIdentityBarriers: retainableAccountIdentityBarriers,
     sessionEpochs: forumSessionEpochs
   });
-  const {
-    appUpdateBusy,
-    appUpdateDownloading,
-    appUpdateDownloadProgress,
-    appUpdateInfo,
-    appUpdateMessage,
-    checkAppUpdate,
-    downloadAppUpdate
-  } = useAppUpdateRuntime({
-    autoCheck: true,
-    beforeRequest: ensureNetworkProxyReady,
-    fetcher: networkProxyFetcher,
-    notify
-  });
+  const { appUpdateBusy, appUpdateDownloading, appUpdateInfo } = updateRuntime;
   const { metadata: diagnosticMetadata } = useAppDiagnosticsRuntime({
     accountSessionViewModels,
     appUpdateBusy,
@@ -220,169 +120,6 @@ export function useAppRuntime() {
   });
 
   useAppBackHandler({ changeScreen, closeTopmostAccountSurface, getCurrentScreen });
-
-  const moreProps = useMemo(
-    () => ({
-      checking,
-      appUpdateBusy,
-      appUpdateDownloading,
-      appUpdateDownloadProgress,
-      appUpdateInfo,
-      appUpdateMessage,
-      credentialFillAttempt,
-      credentialLoginSite,
-      credentialSummaries,
-      loadingLoginPage,
-      loadingYaohuoLoginPage,
-      linuxDoLevelBusy,
-      linuxDoLevelError,
-      linuxDoLevelProfile,
-      xiaoyinsiLevelBusy: xiaoyinsiLevelController.levelBusy,
-      xiaoyinsiLevelError: xiaoyinsiLevelController.levelError,
-      xiaoyinsiLevelProfile: xiaoyinsiLevelController.levelProfile,
-      nodeSeekUserId: effectiveNodeSeekUserId,
-      nodeImageApiKeyBusy,
-      nodeImageApiKeySaved,
-      settings: readerData.settings,
-      showLoginPanel,
-      showYaohuoLoginPanel,
-      showLinuxDoPanel,
-      statusBusy,
-      webViewRef,
-      pendingCredentialFillSite,
-      yaohuoLoginPrompt,
-      yaohuoWebViewRef,
-      sessionViewModels: accountSessionViewModels,
-      networkProxyActiveProfile,
-      networkProxyApplyError,
-      networkProxyApplyStatus,
-      networkProxyState,
-      networkProxySummary,
-      webViewBlockMessage: networkProxyWebViewBlockMessage,
-      xiaoyinsiAuth: {
-        message: xiaoyinsiAuthController.message,
-        pending: xiaoyinsiAuthController.pending,
-        phase: xiaoyinsiAuthController.phase,
-        secondsRemaining: xiaoyinsiAuthController.secondsRemaining,
-        onBegin: () => {
-          void xiaoyinsiAuthController.beginAuthorization();
-        },
-        onCancel: () => {
-          void xiaoyinsiAuthController.cancelAuthorization();
-        },
-        onOpenBrowser: () => {
-          void xiaoyinsiAuthController.openAuthorizationBrowser();
-        },
-        onRevoke: () => {
-          void xiaoyinsiAuthController.revokeAuthorization();
-        }
-      },
-      onAccountCenterCommand: handleAccountCenterCommand,
-      onCheckAppUpdate: checkAppUpdate,
-      onDownloadAppUpdate: downloadAppUpdate,
-      onCheckIn: checkIn,
-      onCheckLogin: () => {
-        void checkNodeSeekLoginAndRetry();
-      },
-      onAuthorizeNodeImageApiKey: authorizeNodeImageApiKey,
-      onSaveNodeImageApiKey: saveNodeImageApiKeyInput,
-      onClearNodeImageApiKey: clearNodeImageApiKeyInput,
-      onCheckYaohuoLogin: () => {
-        void checkYaohuoCookie();
-      },
-      onRefreshLinuxDoLevel: () => {
-        void refreshLinuxDoLevel();
-      },
-      onRefreshXiaoyinsiLevel: () => {
-        void xiaoyinsiLevelController.refreshLevel();
-      },
-      onClearLogin: () => {
-        void clearLogin();
-      },
-      onClearYaohuoLogin: () => {
-        void clearYaohuoLogin();
-      },
-      handleNodeSeekLoginNavigation,
-      handleYaohuoLoginNavigation,
-      onHandleLoginMessage: handleLoginMessage,
-      onNodeSeekLoginWebViewState: recordNodeSeekLoginWebViewState,
-      onYaohuoLoginWebViewState: recordYaohuoLoginWebViewState,
-      onSetLoadingLoginPage: setLoadingLoginPage,
-      onSetLoadingYaohuoLoginPage: setLoadingYaohuoLoginPage,
-      onShowLoginPanelChange: changeNodeSeekLoginPanel,
-      onShowYaohuoLoginPanelChange: changeYaohuoLoginPanel,
-      onLoginFormMessage: handleCredentialLoginFormMessage,
-      onDeleteNetworkProxyProfile: deleteNetworkProxyProfile,
-      onSelectNetworkProxyProfile: selectNetworkProxyProfile,
-      onSetNetworkProxyEnabled: setNetworkProxyEnabled,
-      onTestNetworkProxyProfile: testNetworkProxyProfile,
-      onUpsertNetworkProxyProfile: upsertNetworkProxyProfile
-    }),
-    [
-      appUpdateBusy,
-      appUpdateDownloading,
-      appUpdateDownloadProgress,
-      appUpdateInfo,
-      appUpdateMessage,
-      changeNodeSeekLoginPanel,
-      changeYaohuoLoginPanel,
-      checkAppUpdate,
-      checkIn,
-      checkNodeSeekLoginAndRetry,
-      checkYaohuoCookie,
-      checking,
-      clearLogin,
-      clearYaohuoLogin,
-      credentialFillAttempt,
-      credentialLoginSite,
-      credentialSummaries,
-      authorizeNodeImageApiKey,
-      deleteNetworkProxyProfile,
-      downloadAppUpdate,
-      handleLoginMessage,
-      handleAccountCenterCommand,
-      handleCredentialLoginFormMessage,
-      handleNodeSeekLoginNavigation,
-      handleYaohuoLoginNavigation,
-      linuxDoLevelBusy,
-      linuxDoLevelError,
-      linuxDoLevelProfile,
-      effectiveNodeSeekUserId,
-      accountSessionViewModels,
-      loadingLoginPage,
-      loadingYaohuoLoginPage,
-      nodeImageApiKeyBusy,
-      nodeImageApiKeySaved,
-      networkProxyActiveProfile,
-      networkProxyApplyError,
-      networkProxyApplyStatus,
-      networkProxyState,
-      networkProxySummary,
-      networkProxyWebViewBlockMessage,
-      pendingCredentialFillSite,
-      recordNodeSeekLoginWebViewState,
-      recordYaohuoLoginWebViewState,
-      readerData.settings,
-      refreshLinuxDoLevel,
-      saveNodeImageApiKeyInput,
-      clearNodeImageApiKeyInput,
-      selectNetworkProxyProfile,
-      setLoadingLoginPage,
-      setLoadingYaohuoLoginPage,
-      setNetworkProxyEnabled,
-      showLinuxDoPanel,
-      showLoginPanel,
-      showYaohuoLoginPanel,
-      statusBusy,
-      testNetworkProxyProfile,
-      upsertNetworkProxyProfile,
-      webViewRef,
-      yaohuoLoginPrompt,
-      yaohuoWebViewRef,
-      xiaoyinsiAuthController,
-      xiaoyinsiLevelController
-    ]
-  );
 
   const topicRouteRuntime = useMemo<TopicRouteRuntimeValue>(
     () => ({
@@ -592,97 +329,57 @@ export function useAppRuntime() {
 
   const moreRouteRuntime = useMemo<MoreRouteRuntimeValue>(
     () => ({
-      closeAccountPanels,
+      account: {
+        center: accountRuntime.center,
+        hosts: accountRuntime.hosts,
+        read: accountRuntime.read
+      },
       diagnostics: {
         getCurrentScreen,
         metadata: diagnosticMetadata
       },
+      loginNavigation: {
+        nodeseek: lifecycle.loginNavigation.nodeseek,
+        yaohuo: lifecycle.loginNavigation.yaohuo
+      },
       notify,
+      proxy: networkRuntime,
       reader: {
         commit: commitReaderData,
+        data: readerData,
         dataRef: readerDataRef,
         replace: replaceReaderData,
         waitForSave: waitForReaderDataSave
       },
-      screen: moreProps
+      update: updateRuntime
     }),
     [
-      closeAccountPanels,
+      accountRuntime.center,
+      accountRuntime.hosts,
+      accountRuntime.read,
       commitReaderData,
       diagnosticMetadata,
       getCurrentScreen,
-      moreProps,
+      lifecycle.loginNavigation.nodeseek,
+      lifecycle.loginNavigation.yaohuo,
+      networkRuntime,
       notify,
+      readerData,
       readerDataRef,
       replaceReaderData,
+      updateRuntime,
       waitForReaderDataSave
     ]
   );
   return {
-    accountHost: {
-      checking,
-      credentialFillAttempt: credentialFillAttempt?.site === 'linuxdo' ? credentialFillAttempt.attempt : 0,
-      credentialFillPending: pendingCredentialFillSite === 'linuxdo',
-      checkLinuxDoCookie,
-      clearLinuxDoCookie: () => {
-        void clearLinuxDoCookie();
-      },
-      handleLinuxDoMessage,
-      handleLinuxDoNavigation,
-      handleCredentialLoginFormMessage,
-      handleNodeImageAuthMessage,
-      handleNodeImageAuthNavigation,
-      linuxDoCredentialSaved: credentialSummaries.linuxdo.hasCredential,
-      linuxDoLoginFormMode: credentialLoginSite === 'linuxdo',
-      linuxDoSession: accountSessionViewModels.linuxdo,
-      linuxDoWebViewError,
-      linuxDoWebViewKey,
-      linuxDoWebViewRef,
-      loadingLinuxDoPage,
-      loadingNodeImageAuthPage,
-      mountLinuxDoWebView,
-      nodeImageAuthDocument,
-      nodeImageAuthError,
-      nodeImageAuthWebViewRef,
-      resetLinuxDoWebView,
-      setLinuxDoWebViewErrorForSession,
-      setLoadingLinuxDoPageForSession,
-      setLoadingNodeImageAuthPage,
-      setNodeImageAuthError: reportNodeImageAuthFailure,
-      showLinuxDoPanel,
-      showNodeImageAuthPanel,
+    accountHosts: {
+      blockedMessage: networkProxyWebViewBlockMessage,
+      loginNavigation: lifecycle.loginNavigation,
+      runtime: accountRuntime,
       styles: appStyles,
-      theme,
-      webViewBlockMessage: networkProxyWebViewBlockMessage,
-      changeLinuxDoPanel,
-      requestLinuxDoCredentialFill: () => {
-        openAccountLogin('linuxdo', true);
-      },
-      closeNodeImageAuthPanel
+      theme
     },
     appStyles,
-    hiddenBrowserHost: {
-      blockedMessage: networkProxyWebViewBlockMessage,
-      failLinuxDoBrowserFetchById,
-      failNodeSeekBrowserFetchById,
-      handleLinuxDoBrowserFetchMessage,
-      handleNodeSeekBrowserFetchMessage,
-      linuxDoBrowserWebViewRef,
-      nodeSeekBrowserWebViewRef,
-      state: {
-        linuxDo: {
-          request: hiddenBrowserFetchRequests.linuxDo,
-          userAgent: linuxDoWebViewUserAgent
-        },
-        nodeSeek: {
-          request: hiddenBrowserFetchRequests.nodeSeek,
-          userAgent: nodeSeekWebViewUserAgent
-        }
-      },
-      styles: appStyles,
-      onLinuxDoHttpErrorStatus: markLinuxDoBrowserFetchHttpError,
-      onNodeSeekHttpErrorStatus: markNodeSeekBrowserFetchHttpError
-    },
     readerStyleContext,
     routes: networkProxyContentReady
       ? {

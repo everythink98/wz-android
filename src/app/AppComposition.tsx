@@ -2,8 +2,7 @@ import { KeyboardAvoidingView, View } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { AccountHost } from '@/features/account/AccountHost';
-import { HiddenBrowserHost } from '@/features/account/HiddenBrowserHost';
+import { AccountHosts } from '@/features/account/AccountHosts';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { AppRoutes } from './AppRoutes';
@@ -20,8 +19,7 @@ export function AppComposition() {
               <SafeAreaView edges={['left', 'right']} style={runtime.appStyles.screen}>
                 <ExpoStatusBar style={runtime.theme.dark ? 'light' : 'dark'} />
                 <View pointerEvents="none" style={runtime.appStyles.statusBarScrim} />
-                <HiddenBrowserHost {...runtime.hiddenBrowserHost} />
-                <AccountHost {...runtime.accountHost} />
+                <AccountHosts {...runtime.accountHosts} />
                 {runtime.routes ? <AppRoutes {...runtime.routes} /> : null}
               </SafeAreaView>
             </KeyboardAvoidingView>

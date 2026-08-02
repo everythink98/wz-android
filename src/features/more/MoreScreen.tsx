@@ -626,22 +626,3 @@ export const MoreScreen = memo(function MoreScreen({
     </ScrollView>
   );
 });
-
-export const ReadingSettingsScreen = memo(function ReadingSettingsScreen({
-  settings,
-  onUpdateSettings
-}: {
-  settings: ReaderSettings;
-  onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
-}) {
-  const { styles } = useReaderStyles(createMoreScreenStyles);
-  return (
-    <ScrollView
-      style={styles.content}
-      contentContainerStyle={styles.moreContentInner}
-      keyboardShouldPersistTaps="handled"
-    >
-      <AppearancePanel settings={settings} showSettingsPanel styles={styles} onUpdateSettings={onUpdateSettings} />
-    </ScrollView>
-  );
-});
