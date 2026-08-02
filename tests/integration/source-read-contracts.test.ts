@@ -15,13 +15,8 @@ import {
   createLinuxDoWebViewFallbackFetcher,
   LinuxDoHiddenBrowserFailureError
 } from '@/sources/linuxdo/browserFallback';
-import {
-  getLinuxDoCurrentUserProfile,
-  getLinuxDoUserProfile,
-  searchLinuxDoSemantic,
-  searchLinuxDoTags,
-  searchLinuxDoUsers
-} from '@/sources/linuxdo/reader';
+import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
+import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '@/sources/nodeseek/browserFallback';

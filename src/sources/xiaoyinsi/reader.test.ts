@@ -1,18 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   getXiaoyinsiCategories,
-  getXiaoyinsiCurrentUserProfile,
   getXiaoyinsiEmojiUrls,
   getXiaoyinsiFeed,
-  getXiaoyinsiLevelProfile,
   getXiaoyinsiReplies,
   getXiaoyinsiReply,
-  getXiaoyinsiTopic,
-  getXiaoyinsiUserProfile,
-  searchXiaoyinsi,
-  searchXiaoyinsiTags,
-  searchXiaoyinsiUsers
+  getXiaoyinsiTopic
 } from './reader';
+import { getXiaoyinsiCurrentUserProfile, getXiaoyinsiLevelProfile, getXiaoyinsiUserProfile } from './account';
+import { searchXiaoyinsi, searchXiaoyinsiTags, searchXiaoyinsiUsers } from './search';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 

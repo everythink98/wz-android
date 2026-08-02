@@ -271,7 +271,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `USER-01`、`NAV-03` |
 | 用户症状 | 小隐寺用户页“主题”列表混入用户只回复或互动过的帖子，作者和分页也可能错误。 |
 | 触发条件 | `/u/{name}/summary.json` 的活动摘要被直接当作 authored topics，且没有使用 Discourse 专用发帖列表及 cursor。 |
-| 根因 seam | `src/sources/xiaoyinsi/reader.ts` 的用户身份摘要与用户发帖列表生命周期被混为一个接口。 |
+| 根因 seam | `src/sources/xiaoyinsi/account.ts` 的用户身份摘要与用户发帖列表生命周期被混为一个接口。 |
 | 必须保持的行为 | 身份与计数继续读取 summary；主题独立读取 `/topics/created-by/{username}.json`，作者取该响应用户表，并保留 `more_topics_url` 分页。 |
 | 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 的 `REG-XIAOYINSI-004` 给 summary 注入非本人主题，要求页面只返回 created-by 两页数据。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须经过两个真实 Adapter 端点和分页映射；UI 夹具无法区分数据来源。 |
@@ -391,7 +391,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `ACCOUNT-04`、`ACCOUNT-06` |
 | 用户症状 | 账号中心已能识别小隐寺用户并显示 `Lv`，但站点服务区没有“小隐寺 等级”，无法查看等级进度和活跃数据。 |
 | 触发条件 | 新来源只向账号中心注入 Device Code 授权面板，没有接入项目已有的 Discourse 等级展示；或 Account Query 已识别授权，但 Gateway 仍用不再承载远端身份的 workflow `SiteSessionState` 拒绝加载 SecureStore 凭据。 |
-| 根因 seam | `src/features/more/MoreScreen.tsx` 的小隐寺 `siteContent`、`src/features/account/useXiaoyinsiAuthController.ts` 的 User API 读取状态、`src/app/AppRoot.tsx` 的 Gateway 凭据装配和 `src/sources/xiaoyinsi/reader.ts` 的当前用户 summary 转换。 |
+| 根因 seam | `src/features/more/MoreScreen.tsx` 的小隐寺 `siteContent`、`src/features/account/useXiaoyinsiAuthController.ts` 的 User API 读取状态、`src/app/AppRoot.tsx` 的 Gateway 凭据装配和 `src/sources/xiaoyinsi/account.ts` 的当前用户 summary 转换。 |
 | 必须保持的行为 | 已授权小隐寺显示独立等级入口，通过保存的 User API Key 读取 `/session/current.json` 与当前用户 summary；Gateway 直接以 SecureStore 凭据和 credential generation 为准，不以 Account Query 之外的旧 session projection 阻断读取。只共享等级展示和纯转换，不读取 linux.do Cookie、Connect 或浏览器状态。未授权时明确引导 Device Code 授权。 |
 | 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 固定已登录小隐寺站点服务区存在等级入口；`tests/ui/account/xiaoyinsi-auth-controller.test.tsx` 固定 SecureStore 凭据路由，并以 `REG-ACCOUNT-016` 证明 Account 只读检查返回事件但不发布 workflow state；`src/sources/xiaoyinsi/reader.test.ts` 固定 User API headers、两个端点和等级/活跃数据映射；`tests/tooling/android-smoke-guard.test.ts` 固定 `account-readonly.ad` 点击“查看等级”一次，先等待 profile/error 专用的 `xiaoyinsi-level-settled`，再确认成功/错误共有的“刷新等级”，同时要求 `more-readonly.ad` 不发起等级读取。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Adapter 固定独立传输，controller 固定状态，RNTL 固定真实入口。 |
@@ -436,7 +436,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-03`、`SEARCH-04` |
 | 用户症状 | 小隐寺高级搜索能打开分类候选，但进入“标签”只显示“标签候选加载失败”，点击重试仍失败。 |
 | 触发条件 | App 请求小隐寺 `/tags/filter/search` 时沿用 linux.do 的 `limit=8` 参数；当前原站对任意 `limit` 返回 HTTP 400“Limit 无效”。 |
-| 根因 seam | `src/sources/xiaoyinsi/reader.ts` 的 `searchXiaoyinsiTags` 复制了另一 Discourse 站点的候选请求参数，没有按本站真实端点契约分离传输差异。 |
+| 根因 seam | `src/sources/xiaoyinsi/search.ts` 的 `searchXiaoyinsiTags` 复制了另一 Discourse 站点的候选请求参数，没有按本站真实端点契约分离传输差异。 |
 | 必须保持的行为 | 小隐寺标签候选继续携带本站独立 User API 凭据、查询、分类和已选标签，但不发送原站拒绝的 `limit`；Adapter 在解析、去重后按调用方上限本地截断。linux.do 请求不变。 |
 | 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 的 `REG-XIAOYINSI-016` 在请求含 `limit` 时返回同原站一致的 400，并返回多于调用方上限的成功样本；要求最终请求无 `limit` 且只保留指定数量。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定站点参数差异与本地上限；当天真实标签候选由 Agent Live 观察，不作为 Replay 前置。 |
@@ -466,7 +466,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-01`、`SEARCH-02` |
 | 用户症状 | 小隐寺搜索卡片把命中回复的用户显示为主题作者；打开详情后才看到真实楼主是另一人。 |
 | 触发条件 | `/search.json` 的 `posts[]` 返回命中的回复；`topics[].posters` 可能提供 Original Poster，也可能完全缺失作者身份。 |
-| 根因 seam | `src/sources/xiaoyinsi/reader.ts` 的 `topicsFromSearch` 优先把命中帖子传给主题归一化，覆盖了主题自己的 Original Poster。 |
+| 根因 seam | `src/sources/xiaoyinsi/search.ts` 的 `topicsFromSearch` 优先把命中帖子传给主题归一化，覆盖了主题自己的 Original Poster。 |
 | 必须保持的行为 | 搜索作者优先取主题 Original Poster；仅当命中帖明确为 `post_number=1` 时才可作为后备。命中帖继续提供摘要；缺少可靠 OP 时按 `REG-SEARCH-013` 保留结果并显示未知作者，不得用回复者或最后回复者猜测。 |
 | 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 的 `REG-XIAOYINSI-018` 同时提供两个二楼命中：bob 的主题有 alice 这个 Original Poster，要求结果显示 alice 且保留 bob 的命中摘要；另一个主题没有可靠 OP，要求结果仍保留、作者为空，并且两条候选都计为有效。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：Adapter 公开搜索接口可固定原站载荷与归一化结果；源码字符串、页面可打开或动态标题不能证明作者正确。 |
@@ -526,7 +526,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-02`、`SEARCH-03`、`SEARCH-04` |
 | 用户症状 | linux.do 标签和发帖人原本是可任意手输的文本框，可能提交站点不存在的值；快速改词时旧候选或旧 AI 响应还可能覆盖当前查询；空作者输入可能永久显示 Loading；关闭标签选择、切换分类再重开时，上一分类的同词候选可能重新出现并可点击；分页或详情返回后筛选也可能退回浅拷贝中的旧数组。 |
 | 触发条件 | 标签/作者未经过原站候选接口；300ms 防抖请求先发后到；空 term 的 debounce sentinel 被当成进行中；Query placeholder 只核对输入文本而未核对来源和分类；提交快照只浅拷贝数组；新查询、筛选、排序或来源变化时未取消并失效 AI 请求。 |
-| 根因 seam | `src/features/search/SearchScreen.tsx` 的候选草稿交互、`src/features/search/useSearchController.ts` 的普通/AI/候选结构化 Query key、`src/features/search/controllerResults.ts` 的深快照和合并、`src/sources/linuxdo/reader.ts` 的候选接口。 |
+| 根因 seam | `src/features/search/SearchScreen.tsx` 的候选草稿交互、`src/features/search/useSearchController.ts` 的普通/AI/候选结构化 Query key、`src/features/search/controllerResults.ts` 的深快照和合并、`src/sources/linuxdo/search.ts` 的候选接口。 |
 | 必须保持的行为 | 分类、标签和发帖人只能从站点候选选择；双标签可选任意/全部；空作者输入只显示输入提示且不请求；候选投影必须匹配当前来源、分类和输入，旧标签、作者或 AI 响应不得改变新查询。已应用数组在第一页、普通分页和详情返回中保持独立快照。AI 开关只读当前查询的缓存，普通顺序优先并按话题 ID 去重；关闭不重复请求。 |
 | 精确失败 oracle | `tests/ui/search/search-screen.test.tsx` 断言页面没有自由标签/作者提交入口、只接受候选，空作者不显示 Loading 或发请求，旧标签 Promise 晚于新 Promise 完成后仍只显示新候选，并在上一分类已有候选、下一分类请求悬空时断言旧候选立即不可见；`tests/ui/search/search-controller-ai.test.tsx` 让旧 AI Promise 晚到，断言新查询状态、去重顺序、开关缓存和普通分页不被污染；`src/features/search/useSearchController.test.ts` 修改原草稿数组后要求已提交快照不变。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定 token、深快照、Gateway 和合并规则；`UI_PASS` 固定防抖、过期响应、草稿、并发和用户可见标识。只有源码字符串、App 可启动或单次 Live 成功都不能证明请求竞争安全。 |
@@ -556,7 +556,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-03` |
 | 用户症状 | 已登录 linux.do 搜索明确命中首帖时仍显示“未知作者”，头像也不展示；标题、摘要和详情可用。 |
 | 触发条件 | 标准 Discourse `/search.json` 返回 `topics[]` 与 `posts[]`，命中 post 明确为 `post_number=1` 且含 `username/avatar_template`，而 topic 没有列表页专属的 `posters`，`users[]` 为空。 |
-| 根因 seam | `src/sources/linuxdo/reader.ts` 的 `topicsFromLinuxDoSearchData` 已按 `topic_id` 找到首帖，却只读取其 `blurb`；作者仍调用列表页的 `originalPoster(topic, users)`，因此被归一化为空。普通搜索和 AI 语义搜索共用该转换层。 |
+| 根因 seam | `src/sources/linuxdo/search.ts` 的 `topicsFromLinuxDoSearchData` 已按 `topic_id` 找到首帖，却只读取其 `blurb`；作者仍调用列表页的 `originalPoster(topic, users)`，因此被归一化为空。普通搜索和 AI 语义搜索共用该转换层。 |
 | 必须保持的行为 | 优先使用 `topics[].posters → users[]` 或 `details.created_by` 的可靠 OP；缺失时仅允许明确的首帖提供主题作者和头像。回复命中按 `REG-SEARCH-013` 保留结果但不得冒充楼主。不得为每条结果新增用户请求，也不得改变搜索顺序、摘要、分页或登录态。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-SEARCH-003` 使用 `topics[]` 无 `posters`、`users[]` 为空且 `posts[]` 含 `post_number=1`、`username/avatar_template` 的标准响应，断言最终 Topic 保留作者和绝对头像 URL。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 直接覆盖真实 `searchTopics → searchLinuxDo → topicsFromLinuxDoSearchData` 链路；只测 `TopicCard` fallback、源码字符串或详情页作者都不能证明搜索字段已正确转换。 |
@@ -571,7 +571,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
 | 用户症状 | 小隐寺有真实搜索命中却显示“内容无法解析”；已登录 linux.do 则可能把命中回复者或最后回复者显示成主题作者。是否出现取决于查询命中首帖还是回复。 |
 | 触发条件 | Discourse 搜索返回合法 `topics[]` 和命中回复 `posts[]`，但 topic 没有可映射的 Original Poster，且命中帖的 `post_number>1`。 |
-| 根因 seam | `src/sources/xiaoyinsi/reader.ts` 把缺少作者的 Topic 当作无效候选丢弃；`src/sources/linuxdo/reader.ts` 优先把命中 post 或 `last_poster_username` 归一化成主题作者。 |
+| 根因 seam | `src/sources/xiaoyinsi/search.ts` 把缺少作者的 Topic 当作无效候选丢弃；`src/sources/linuxdo/search.ts` 优先把命中 post 或 `last_poster_username` 归一化成主题作者。 |
 | 必须保持的行为 | 搜索命中本身足以保留结果。只有 `topics[].posters → users[]`、`details.created_by` 或明确的首帖才能填写主题作者；其余情况作者留空，由现有 TopicCard 显示“未知作者”。命中回复仍提供摘要，候选不得计入 dropped/parse_empty；不得新增逐主题请求。 |
 | 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 同时固定可靠 OP 与无 OP 的二楼命中，要求两条都保留且后者作者为空；`tests/integration/source-read-contracts.test.ts` 固定 linux.do 二楼命中且同时提供回复者和最后回复者，要求结果保留、作者为空，并另以 `details.created_by` 固定可靠 topic creator 不被误清空。两者都断言 `validCount=candidateCount`、`droppedCount=0`、`isParseEmpty=false`。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须经过两站公开 search adapter 和诊断汇总；TopicCard 已有空作者降级，动态标题或单次页面成功不能固定作者语义。 |
@@ -2174,7 +2174,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `USER-01`、`LIBRARY-02` |
 | 用户症状 | 新用户明确有 0 主题、0 回复或 0 帖子时，App 隐藏统计，用户看到的状态与来源不一致。 |
 | 触发条件 | linux.do、小隐寺、NodeSeek 或妖火 adapter 用 truthy 判断数字，0 被转成 undefined。 |
-| 根因 seam | `src/sources/linuxdo/reader.ts`、`src/sources/xiaoyinsi/reader.ts`、`src/sources/nodeseek/protocol.ts`、`src/sources/yaohuo/parser.ts` 的可选非负统计归一化。 |
+| 根因 seam | `src/sources/linuxdo/account.ts`、`src/sources/xiaoyinsi/account.ts`、`src/sources/nodeseek/protocol.ts`、`src/sources/yaohuo/parser.ts` 的可选非负统计归一化。 |
 | 必须保持的行为 | 来源明确返回的有限非负 0 必须保留；字段缺失仍为 undefined；负数拒绝。妖火两个组成统计均已定义时，包括 0，派生总数。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts`、`src/sources/xiaoyinsi/reader.test.ts`、`src/sources/yaohuo/parser.test.ts` 分别固定四站显式零统计。 |
 | 最低可靠自动测试层 | `UNIT_PASS`。 |

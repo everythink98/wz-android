@@ -1,4 +1,4 @@
-import type { XiaoyinsiApiCredentials } from './reader';
+import type { XiaoyinsiApiCredentials } from './credentials';
 import { XIAOYINSI_BASE_URL } from './protocol';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';

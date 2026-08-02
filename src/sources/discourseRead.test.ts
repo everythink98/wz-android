@@ -27,13 +27,19 @@ const readers = vi.hoisted(() => ({
 
 vi.mock('@/sources/linuxdo/reader', () => ({
   getLinuxDoCategories: readers.getLinuxDoCategories,
-  getLinuxDoCurrentUserProfile: readers.getLinuxDoCurrentUserProfile,
   getLinuxDoEmojiUrls: readers.getLinuxDoEmojiUrls,
   getLinuxDoFeed: readers.getLinuxDoFeed,
   getLinuxDoReplies: readers.getLinuxDoReplies,
   getLinuxDoReply: readers.getLinuxDoReply,
-  getLinuxDoTopic: readers.getLinuxDoTopic,
-  getLinuxDoUserProfile: readers.getLinuxDoUserProfile,
+  getLinuxDoTopic: readers.getLinuxDoTopic
+}));
+
+vi.mock('@/sources/linuxdo/account', () => ({
+  getLinuxDoCurrentUserProfile: readers.getLinuxDoCurrentUserProfile,
+  getLinuxDoUserProfile: readers.getLinuxDoUserProfile
+}));
+
+vi.mock('@/sources/linuxdo/search', () => ({
   searchLinuxDo: readers.searchLinuxDo,
   searchLinuxDoTags: readers.searchLinuxDoTags,
   searchLinuxDoUsers: readers.searchLinuxDoUsers
@@ -41,13 +47,19 @@ vi.mock('@/sources/linuxdo/reader', () => ({
 
 vi.mock('@/sources/xiaoyinsi/reader', () => ({
   getXiaoyinsiCategories: readers.getXiaoyinsiCategories,
-  getXiaoyinsiCurrentUserProfile: readers.getXiaoyinsiCurrentUserProfile,
   getXiaoyinsiEmojiUrls: readers.getXiaoyinsiEmojiUrls,
   getXiaoyinsiFeed: readers.getXiaoyinsiFeed,
   getXiaoyinsiReplies: readers.getXiaoyinsiReplies,
   getXiaoyinsiReply: readers.getXiaoyinsiReply,
-  getXiaoyinsiTopic: readers.getXiaoyinsiTopic,
-  getXiaoyinsiUserProfile: readers.getXiaoyinsiUserProfile,
+  getXiaoyinsiTopic: readers.getXiaoyinsiTopic
+}));
+
+vi.mock('@/sources/xiaoyinsi/account', () => ({
+  getXiaoyinsiCurrentUserProfile: readers.getXiaoyinsiCurrentUserProfile,
+  getXiaoyinsiUserProfile: readers.getXiaoyinsiUserProfile
+}));
+
+vi.mock('@/sources/xiaoyinsi/search', () => ({
   searchXiaoyinsi: readers.searchXiaoyinsi,
   searchXiaoyinsiTags: readers.searchXiaoyinsiTags,
   searchXiaoyinsiUsers: readers.searchXiaoyinsiUsers

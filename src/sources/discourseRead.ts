@@ -1,30 +1,24 @@
 import {
   getLinuxDoCategories,
-  getLinuxDoCurrentUserProfile,
   getLinuxDoEmojiUrls,
   getLinuxDoFeed,
   getLinuxDoReplies,
   getLinuxDoReply,
-  getLinuxDoTopic,
-  getLinuxDoUserProfile,
-  searchLinuxDo,
-  searchLinuxDoTags,
-  searchLinuxDoUsers
+  getLinuxDoTopic
 } from '@/sources/linuxdo/reader';
+import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
+import { searchLinuxDo, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
 import {
   getXiaoyinsiCategories,
-  getXiaoyinsiCurrentUserProfile,
   getXiaoyinsiEmojiUrls,
   getXiaoyinsiFeed,
   getXiaoyinsiReplies,
   getXiaoyinsiReply,
-  getXiaoyinsiTopic,
-  getXiaoyinsiUserProfile,
-  searchXiaoyinsi,
-  searchXiaoyinsiTags,
-  searchXiaoyinsiUsers,
-  type XiaoyinsiApiCredentials
+  getXiaoyinsiTopic
 } from '@/sources/xiaoyinsi/reader';
+import { getXiaoyinsiCurrentUserProfile, getXiaoyinsiUserProfile } from '@/sources/xiaoyinsi/account';
+import { searchXiaoyinsi, searchXiaoyinsiTags, searchXiaoyinsiUsers } from '@/sources/xiaoyinsi/search';
+import type { XiaoyinsiApiCredentials } from '@/sources/xiaoyinsi/credentials';
 import type { Fetcher } from '@/platform/network/request';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';

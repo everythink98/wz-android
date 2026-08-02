@@ -27,7 +27,7 @@ import type {
 } from '@/domain/session/accountCenter';
 import type { CredentialSummaries } from './accountCenter';
 import type { XiaoyinsiPendingAuthorization } from '@/sources/xiaoyinsi/auth';
-import type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/reader';
+import type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/account';
 import { XiaoyinsiAuthPanel } from './components/XiaoyinsiAuthPanel';
 
 const moreScreenStyles = StyleSheet.create({

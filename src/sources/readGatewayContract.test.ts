@@ -64,10 +64,26 @@ vi.mock('expo-secure-store', () => ({
 vi.mock('./feedRead', () => forumMocks);
 vi.mock('./searchRead', () => forumMocks);
 vi.mock('./sourceRead', () => forumMocks);
-vi.mock('@/sources/linuxdo/reader', () => linuxDoMocks);
+vi.mock('@/sources/linuxdo/reader', () => ({
+  getLinuxDoEmojiUrls: linuxDoMocks.getLinuxDoEmojiUrls
+}));
+vi.mock('@/sources/linuxdo/search', () => ({
+  searchLinuxDoSemantic: linuxDoMocks.searchLinuxDoSemantic,
+  searchLinuxDoTags: linuxDoMocks.searchLinuxDoTags,
+  searchLinuxDoUsers: linuxDoMocks.searchLinuxDoUsers
+}));
 vi.mock('@/sources/nodeseek/reader', () => nodeSeekMocks);
 vi.mock('@/sources/linuxdo/level', () => linuxDoLevelMocks);
-vi.mock('@/sources/xiaoyinsi/reader', () => xiaoyinsiMocks);
+vi.mock('@/sources/xiaoyinsi/reader', () => ({
+  getXiaoyinsiEmojiUrls: xiaoyinsiMocks.getXiaoyinsiEmojiUrls
+}));
+vi.mock('@/sources/xiaoyinsi/account', () => ({
+  getXiaoyinsiLevelProfile: xiaoyinsiMocks.getXiaoyinsiLevelProfile
+}));
+vi.mock('@/sources/xiaoyinsi/search', () => ({
+  searchXiaoyinsiTags: xiaoyinsiMocks.searchXiaoyinsiTags,
+  searchXiaoyinsiUsers: xiaoyinsiMocks.searchXiaoyinsiUsers
+}));
 vi.mock('@/sources/yaohuo/reader', () => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(),
