@@ -4,7 +4,7 @@ import {
   isGoogleSiteSearchUrl,
   isSameGoogleSiteSearchUrl
 } from '@/sources/searchFallback';
-import { isNodeSeekChallengeResponse } from './parser';
+import { isNodeSeekChallengeResponse } from './protocol';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -15,7 +15,7 @@ import {
   type DiagnosticReason
 } from '@/platform/diagnostics/diagnostics';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
-import { hasNodeSeekAccountEvidenceHtml } from './reader';
+import { hasNodeSeekAccountEvidenceHtml } from './userParser';
 
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE = 'NodeSeek direct fetch timeout';

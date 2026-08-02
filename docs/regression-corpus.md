@@ -646,7 +646,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-02`、`SEARCH-04` |
 | 用户症状 | NodeSeek 单站搜索特定关键词时稳定显示“搜索结果返回内容无法解析，请重试”，而普通关键词可返回结果；原站搜索页实际可能只是明确的空结果。 |
 | 触发条件 | 已登录 NodeSeek `/search` 响应包含搜索表单和空 `.post-list`，但页面其他区域仍有 `post-*` 链接；同类页面还可能在 embedded payload 中保留首页旧主题。真实 `841430` 响应的脱敏结构为列表内候选 0、全页非结果链接 3、embedded candidates 0。 |
-| 根因 seam | `src/sources/nodeseek/reader.ts` 的搜索解析器以正式 `.post-list` 为结果面，诊断器却把全页 `post-*` 链接及 embedded candidates 一起计入候选，制造 `candidateCount>0 + validCount=0` 的假 `parse_empty`。 |
+| 根因 seam | `src/sources/nodeseek/feedParser.ts` 的搜索解析器以正式 `.post-list` 为结果面，诊断器却把全页 `post-*` 链接及 embedded candidates 一起计入候选，制造 `candidateCount>0 + validCount=0` 的假 `parse_empty`。 |
 | 必须保持的行为 | 候选数只来自当前实际选择的解析面：正式 `.post-list` 存在时只统计其内部 rows/links，并忽略页面其他区域链接及 embedded topics；空列表输出 `isExpectedEmpty=true`、`isParseEmpty=false`。只有表单而结果面未完成时仍报可重试错误；当前 `.post-list` 内存在无效候选时仍允许诊断为 `parse_empty`。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的同名 fixture 经过真实 `searchTopics → searchNodeSeek` 链路，构造空 `.post-list`、3 个 footer `post-*` 链接和 1 个 stale embedded topic，要求空 `items` 且诊断为 `candidateCount=0`、`validCount=0`、`droppedCount=0`、`isExpectedEmpty=true`、`isParseEmpty=false`；修复前稳定得到 `3/0/3/false/true`。相邻用例继续固定只有搜索表单的未完成页面必须 reject。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：adapter fixture 可确定性固定数据面选择与诊断摘要；只断言列表为空无法发现用户可见的错误分类。 |
@@ -1499,7 +1499,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01`、`WRITE-03` |
 | 用户症状 | NodeSeek 主题正文保留 `nsapp://vote` 原始标记而没有可用投票卡片；多个投票标记中一个读取失败时详情仍被误报为完整成功。提交成功后 App 又只做本地 `+1`，把原站未返回的未知票数显示成 `1`，与刷新后的服务端结果不一致。 |
 | 触发条件 | `/api/vote/info/{id}` 缺少原站动态签名而返回 403；读取链路把投票 header 扩散到普通 JSON API，或成功/失败标记没有分别清理；写链路只根据 POST 返回做本地增量，没有调用原站提交后的结果 GET。 |
-| 根因 seam | `src/sources/nodeseek/polls.ts` 的 NodeSeek 投票协议、`src/sources/nodeseek/reader.ts` 的标记读取/清理和 partial 诊断、`src/sources/nodeseek/actionRequest.ts` 与 `src/sources/nodeseek/actionClient.ts` 的投票专用请求、`src/features/topic/actions/useTopicActionsController.ts` 的写后同步，以及 `src/domain/forum/topicActionState.ts` 的服务端快照/未知计数合并。 |
+| 根因 seam | `src/sources/nodeseek/polls.ts` 的 NodeSeek 投票协议、`src/sources/nodeseek/topicParser.ts` 的标记解析、`src/sources/nodeseek/reader.ts` 的投票读取/清理和 partial 诊断、`src/sources/nodeseek/actionRequest.ts` 与 `src/sources/nodeseek/actionClient.ts` 的投票专用请求、`src/features/topic/actions/useTopicActionsController.ts` 的写后同步，以及 `src/domain/forum/topicActionState.ts` 的服务端快照/未知计数合并。 |
 | 必须保持的行为 | 只有 NodeSeek 投票 GET/POST 携带 JSON `Accept` 和已验证 fallback `x-dynamic-sign`，继续复用现有 Cookie、User-Agent、Referer、超时与代理通道；未投票时不提前展示结果票数，已投票、多选和锁定状态按 API 归一化；只删除成功加载投票对应的原始标记，失败标记保留且详情诊断为 `partial`。POST 成功后固定只读 GET 一次并合并完整服务端快照到精确 Topic Query cache 与活动 route，不刷新整篇正文；GET 失败仍保留已投和所选项、未知票数保持未知、提示刷新失败并记 `partial`，绝不重发 POST。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 模拟缺少签名即 403，固定未投/已投、多选/锁定、多个标记部分失败、成功标记删除与失败标记保留；`src/sources/nodeseek/actionRequest.test.ts`、`src/sources/nodeseek/actionClient.test.ts` 固定投票专用 header 和权威结果 GET；`tests/ui/topic/topic-actions-controller.test.tsx` 固定 `POST × 1 → GET × 1`、服务端快照与 GET 失败的单次 POST；`src/domain/forum/topicActionState.test.ts` 固定已知票数正常合并、未知票数不伪造成 `1`。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定来源协议、controller 顺序和状态合并；当天原站签名是否仍接受、App 内登录态 API 与刷新后显示必须由 `LIVE_PASS` 核实。公共 `TopicPolls` 没有改变，既有四站 UI 用例继续作为共享回归。 |
@@ -1529,7 +1529,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01`、`WRITE-03` |
 | 用户症状 | NodeSeek 原帖中的投票标记位于正文中间，但 App 删除标记后把投票卡片统一追加到整段正文末尾，改变了原帖阅读顺序。 |
 | 触发条件 | NodeSeek 投票 API 或渲染表单成功解析后只保留 `Topic.polls`，正文没有留下位置占位；`TopicScreenBody` 又把所有非 LinuxDo 投票走底部 fallback。真实页面还可能同时出现渲染表单、相邻的 `">` 前缀块和同一 `nsapp://vote` 标记，若按出现次数渲染会重复卡片并触发重复 key。 |
-| 根因 seam | `src/sources/nodeseek/polls.ts` 的成功标记替换和正文分片、`src/sources/nodeseek/reader.ts` 的渲染表单占位，以及 `src/features/topic/TopicScreen.tsx` 的逐来源正文渲染边界。 |
+| 根因 seam | `src/sources/nodeseek/polls.ts` 的成功标记替换和正文分片、`src/sources/nodeseek/topicParser.ts` 的渲染表单占位，以及 `src/features/topic/TopicScreen.tsx` 的逐来源正文渲染边界。 |
 | 必须保持的行为 | 成功解析的 NodeSeek 投票用站点专属占位保留原正文位置，UI 按“前文 → 投票 → 后文”只渲染一次；同一 id 的重复标记及其纯 `">` 前缀块必须清理，失败标记继续原样保留并记 `partial`。LinuxDo、妖火、V2EX 和公共 `TopicPolls` 行为不变。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定 API 标记、渲染表单以及“相邻 `">` 块 + 重复标记”的真实形态只产出一个 NodeSeek 占位；`tests/ui/topic/topic-reply-filters.test.tsx` 固定重复占位输入下投票节点仍位于前后正文之间且只出现一次。 |
 | 最低可靠自动测试层 | 来源 Vitest 固定占位数据，RNTL 固定用户可见顺序；真实 NodeSeek 主题由只读 `LIVE_PASS` 核对位置。 |
@@ -1544,7 +1544,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`WRITE-03`；共享详情渲染 seam 回归 `TOPIC-03`、`NAV-03` |
 | 用户症状 | NodeSeek 投票帖在 App 中残留字面量 `">`，投票卡片前后各多出一条正文分隔线；投票后的文字与 sticker 在底部重叠，而原站同一正文没有这些问题。 |
 | 触发条件 | 原站 hydrated DOM 把块级 `.vote-panel` 放在 `<p>` 内，且投票前后仍有 `<br>`、文本或 sticker；HTML parser 会按规范提前闭合无效段落。若先解析再替换投票，或把占位符前后拆成多个正文块，原始流式上下文会丢失。 |
-| 根因 seam | `src/sources/nodeseek/reader.ts` 的原站渲染 HTML 提取/投票表单替换、`src/sources/nodeseek/polls.ts` 的残留 marker 清理，以及 `src/features/topic/TopicScreen.tsx` 的正文树与自定义投票 renderer 边界。 |
+| 根因 seam | `src/sources/nodeseek/topicParser.ts` 的原站渲染 HTML 提取/投票表单替换、`src/sources/nodeseek/polls.ts` 的残留 marker 清理，以及 `src/features/topic/TopicScreen.tsx` 的正文树与自定义投票 renderer 边界。 |
 | 必须保持的行为 | 首轮 parser 只识别投票表单并取得其原始源码 range，不从已被自动修正结构的 AST 读取正文 `innerHTML`；在序列化前按原始 range 把成功解析的投票面板原位替换为一个 opaque block 占位。整篇 NodeSeek 正文只进入一个 HTML 渲染树，投票 renderer 在树内就地渲染。只清理与成功占位相邻且内容严格为可选引号加 `>` 的泄漏前缀，合法正文 `1 > 0` 必须保留；投票后的文字、图片和 sticker 继续走既有公共排版规则。其他来源、回复、详情返回和公共 `TopicPolls` 行为不变。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-WRITE-010` fixture 保留目标帖的“同一 `<p>` 内前文 + `">` + 块级投票 + 后文 + sticker”形态，要求无泄漏前缀、合法 `1 > 0` 仍在、前文/唯一占位/后文顺序不变且段落不被拆散；`tests/ui/topic/topic-reply-filters.test.tsx` 要求该输入只有一个正文渲染根，投票只出现一次并位于前后文之间。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定原始 HTML range 替换和负向文本边界；`UI_PASS` 固定单一正文树及用户可见顺序；Android 的分隔线和文字/sticker 几何关系由只读 `LIVE_PASS` 核对。 |
@@ -2174,7 +2174,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `USER-01`、`LIBRARY-02` |
 | 用户症状 | 新用户明确有 0 主题、0 回复或 0 帖子时，App 隐藏统计，用户看到的状态与来源不一致。 |
 | 触发条件 | linux.do、小隐寺、NodeSeek 或妖火 adapter 用 truthy 判断数字，0 被转成 undefined。 |
-| 根因 seam | `src/sources/linuxdo/reader.ts`、`src/sources/xiaoyinsi/reader.ts`、`src/sources/nodeseek/reader.ts`、`src/sources/yaohuo/parser.ts` 的可选非负统计归一化。 |
+| 根因 seam | `src/sources/linuxdo/reader.ts`、`src/sources/xiaoyinsi/reader.ts`、`src/sources/nodeseek/protocol.ts`、`src/sources/yaohuo/parser.ts` 的可选非负统计归一化。 |
 | 必须保持的行为 | 来源明确返回的有限非负 0 必须保留；字段缺失仍为 undefined；负数拒绝。妖火两个组成统计均已定义时，包括 0，派生总数。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts`、`src/sources/xiaoyinsi/reader.test.ts`、`src/sources/yaohuo/parser.test.ts` 分别固定四站显式零统计。 |
 | 最低可靠自动测试层 | `UNIT_PASS`。 |
@@ -3386,7 +3386,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-03` |
 | 用户症状 | NodeSeek 第 2 页缺少 `.floor-link` 和数字 id 时从 1 重新显示楼层，与首屏重复；点赞等 embedded 元数据还可能因错误楼层匹配而丢失。 |
 | 触发条件 | 渲染解析层立即用页内 index 补楼层，使消费层无法判断字段缺失、无法应用 page/offset，也让 `missingFloorCount` 永远为 0。 |
-| 根因 seam | `src/sources/nodeseek/reader.ts` 的渲染楼层解析、Topic 首屏与 replies 分页消费。 |
+| 根因 seam | `src/sources/nodeseek/topicParser.ts` 的渲染楼层解析，以及 `src/sources/nodeseek/reader.ts` 的 Topic 首屏与 replies 分页消费。 |
 | 必须保持的行为 | 解析层保留 `floor: undefined`；首屏按 1 起补齐，后续页按当前 offset 补齐；在补齐前记录真实缺失数量，显式楼层和 commentId 优先级不变。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-TOPIC-036` 读取 offset=30 的第 2 页无标记渲染 HTML，要求楼层为 31、32 且诊断缺失数为 2；既有首屏测试固定从 1 开始。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：确定性 HTML fixture 同时覆盖显示楼层和诊断。 |

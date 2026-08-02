@@ -11,7 +11,8 @@ import {
   elementText,
   isRecord,
   parseHtml,
-  parsePositiveInteger
+  parsePositiveInteger,
+  toIsoString
 } from '@/domain/forum/html';
 
 export const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
@@ -225,4 +226,107 @@ export function isNodeSeekChallengeResponse(
     return false;
   }
   return isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: html });
+}
+
+export function parseViewCount(value: unknown) {
+  const match = String(value || '')
+    .replace(/,/g, '')
+    .match(/(\d+(?:\.\d+)?)\s*(万|千|w|k|m)?/i);
+  if (!match) {
+    return undefined;
+  }
+  const number = Number(match[1]);
+  const suffix = match[2]?.toLowerCase();
+  const multiplier =
+    suffix === '万' || suffix === 'w' ? 10000 : suffix === '千' || suffix === 'k' ? 1000 : suffix === 'm' ? 1000000 : 1;
+  const count = Math.round(number * multiplier);
+  return count || undefined;
+}
+
+export function optionalInteger(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  const match = String(value).replace(/,/g, '').match(/\d+/);
+  return match ? Number(match[0]) : undefined;
+}
+
+export function optionalNonNegativeInteger(value: unknown) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value >= 0 ? Math.trunc(value) : undefined;
+  }
+  const text = typeof value === 'string' ? value.replace(/,/g, '').trim() : '';
+  return /^\d+$/.test(text) ? Number(text) : undefined;
+}
+
+export function optionalBoolean(value: unknown) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no'].includes(normalized)) {
+      return false;
+    }
+  }
+  return undefined;
+}
+
+export function nodeSeekEmbeddedUserId(user: Record<string, unknown>) {
+  return String(user.uid || user.id || user.userId || user.user_id || user.member_id || '').trim();
+}
+
+export function nodeSeekRoleLabel(user: Record<string, unknown>) {
+  const labels = (Array.isArray(user.roles) ? user.roles : [])
+    .map((role) => (isRecord(role) ? String(role.display_text || role.displayText || role.name || '').trim() : ''))
+    .filter((label) => label && label !== '楼主');
+  return labels.join(' · ') || undefined;
+}
+
+export function arrayField(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+export function nodeSeekCreatedAt(raw: Record<string, unknown>) {
+  const time = isRecord(raw.time) ? raw.time : {};
+  return toIsoString(
+    raw.created_at ||
+      raw.createdAt ||
+      raw.createdDate ||
+      time.created_at ||
+      time.createdAt ||
+      time.createdDate ||
+      raw.time
+  );
+}
+
+function nodeSeekReplyCountValue(value: unknown) {
+  if (value === undefined || value === null || value === '' || Array.isArray(value)) {
+    return undefined;
+  }
+  return parsePositiveInteger(value);
+}
+
+export function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>, fallback = 0) {
+  const explicitReplyCount =
+    nodeSeekReplyCountValue(raw.replyCount) ??
+    nodeSeekReplyCountValue(raw.replies) ??
+    nodeSeekReplyCountValue(raw.reply_count);
+  if (explicitReplyCount !== undefined) {
+    return explicitReplyCount;
+  }
+  const totalComments =
+    nodeSeekReplyCountValue(raw.comments) ??
+    nodeSeekReplyCountValue(raw.commentCount) ??
+    nodeSeekReplyCountValue(raw.comment_count);
+  return totalComments !== undefined ? Math.max(totalComments - 1, 0) : fallback;
 }
