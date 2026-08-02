@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { StyleSheet } from 'react-native';
 import { type ReaderSettings } from '@/domain/reader/readerData';
 import {
@@ -296,13 +295,5 @@ describe('Android reader theme safety rails', () => {
     expect(styles.navIconPill?.backgroundColor).toBeUndefined();
     expect(styles.navIconPillActive).toBeUndefined();
     expect(styles.navTextActive?.color).toBe(theme.primary);
-  });
-});
-
-describe('feature style ownership', () => {
-  it('keeps feature style factories out of the shared app theme owner', () => {
-    const appThemeSource = readFileSync('src/app/useAppTheme.ts', 'utf8');
-
-    expect(appThemeSource).not.toContain("from '@/features/");
   });
 });

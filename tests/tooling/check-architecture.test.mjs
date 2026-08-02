@@ -7,13 +7,18 @@ import { analyzeArchitecture, ROOT_MODULES } from '../../scripts/check-architect
 
 const temporaryRoots = [];
 
-function architectureFixture(files) {
+function architectureFixture(files, projectFiles = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'wz-architecture-'));
   temporaryRoots.push(root);
   const srcDir = path.join(root, 'src');
   for (const moduleName of ROOT_MODULES) mkdirSync(path.join(srcDir, moduleName), { recursive: true });
   for (const [relativeFile, source] of Object.entries(files)) {
     const filePath = path.join(srcDir, relativeFile);
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, source);
+  }
+  for (const [relativeFile, source] of Object.entries(projectFiles)) {
+    const filePath = path.join(root, relativeFile);
     mkdirSync(path.dirname(filePath), { recursive: true });
     writeFileSync(filePath, source);
   }
@@ -108,8 +113,9 @@ test('accepts the declarative app composition contract', () => {
     'app/AppRoutes.tsx':
       "import { AppNavigator } from './AppNavigator'; import { FeedRoute } from '@/features/feed/FeedRoute'; export const AppRoutes = [AppNavigator, FeedRoute];",
     'app/AppNavigator.tsx': "import { Nav } from '@/ui/Nav'; export const AppNavigator = Nav;",
-    'app/useAppRuntime.ts': 'export const useAppRuntime = () => true;',
-    'features/feed/FeedRoute.tsx': 'export const FeedRoute = true;',
+    'app/useAppRuntime.ts':
+      "import { useMemo } from 'react'; import type { FeedRouteRuntimeValue } from '@/features/feed/FeedRoute'; export const useAppRuntime = (): FeedRouteRuntimeValue => useMemo(() => true, []);",
+    'features/feed/FeedRoute.tsx': 'export type FeedRouteRuntimeValue = boolean; export const FeedRoute = true;',
     'ui/Nav.ts': 'export const Nav = true;'
   });
 
@@ -126,6 +132,10 @@ test('rejects state and fine-grained dependencies in the app composition chain',
       "import { FeedScreen } from '@/features/feed/FeedScreen'; export const AppRoutes = FeedScreen;",
     'app/AppNavigator.tsx':
       "import { TopicRoute } from '@/features/topic/TopicRoute'; export const AppNavigator = TopicRoute;",
+    'app/useAppRuntime.tsx':
+      "import { useRef } from 'react'; import { FeedRoute } from '@/features/feed/FeedRoute'; import { FeedScreen } from '@/features/feed/FeedScreen'; export const useAppRuntime = () => useRef([FeedRoute, FeedScreen]);",
+    'app/useAppTheme.ts':
+      "import type { FeedRouteRuntimeValue } from '@/features/feed/FeedRoute'; export type Theme = FeedRouteRuntimeValue;",
     'features/feed/FeedScreen.tsx': 'export const FeedScreen = true;',
     'features/topic/TopicRoute.tsx': 'export const TopicRoute = true;',
     'features/topic/useTopicController.ts': 'export const useTopicController = true;'
@@ -137,16 +147,54 @@ test('rejects state and fine-grained dependencies in the app composition chain',
   assert.ok(codes.includes('app-composition-import'));
   assert.ok(codes.includes('app-routes-import'));
   assert.ok(codes.includes('app-navigator-feature'));
+  assert.ok(codes.includes('app-runtime-state-hook'));
+  assert.ok(codes.includes('app-runtime-route-value-import'));
+  assert.ok(codes.includes('app-runtime-presentation-import'));
+  assert.ok(codes.includes('app-theme-feature-import'));
+});
+
+test('rejects Screen props projection and raw account session escape', () => {
+  const srcDir = architectureFixture({
+    'features/more/MoreScreen.tsx': 'export const MoreScreen = () => null;',
+    'features/more/MoreRoute.tsx':
+      "import type { ComponentProps } from 'react'; import { MoreScreen } from './MoreScreen'; export type MoreRouteRuntimeValue = ComponentProps<typeof MoreScreen>;",
+    'app/accountConsumer.ts': 'export const readSession = (accountRuntime: any) => accountRuntime.session;'
+  });
+  const codes = analyzeArchitecture(srcDir).issues.map((issue) => issue.code);
+
+  assert.ok(codes.includes('route-runtime-screen-projection'));
+  assert.ok(codes.includes('raw-account-session'));
+});
+
+test('keeps source-string contracts in tooling instead of behavior suites', () => {
+  const sourceReader =
+    "import { readFileSync } from 'node:fs'; export const source = readFileSync('src/app/AppRoot.tsx', 'utf8');";
+  const srcDir = architectureFixture(
+    {},
+    {
+      'tests/integration/source-contract.test.ts': sourceReader,
+      'tests/tooling/release-contract.test.ts': sourceReader
+    }
+  );
+  const issues = analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'behavior-test-source-read');
+
+  assert.equal(issues.length, 1);
+  assert.match(issues[0].message, /tests\/integration\/source-contract\.test\.ts/);
 });
 
 test('rejects legacy files and unresolved imports without compatibility shells', () => {
   const srcDir = architectureFixture({
     'app/useDeferredNavigationTask.ts': 'export const deferred = true;',
+    'ui/theme/sharedStyles.ts': 'export const styles = true;',
+    'features/topic/screenHelpers.ts': 'export const helper = true;',
+    'features/search/controllerResults.ts': 'export const result = true;',
+    'features/account/sessionControllerHelpers.ts': 'export const session = true;',
+    'ui/components/AppControls.tsx': 'export const controls = true;',
     'features/feed/FeedRoute.tsx': "import { aggregate } from '@/sources/aggregateRead'; export const feed = aggregate;"
   });
   const legacyIssues = analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'legacy-path');
 
-  assert.equal(legacyIssues.length, 2);
+  assert.equal(legacyIssues.length, 7);
 });
 
 test('rejects route entries that reach into another feature', () => {

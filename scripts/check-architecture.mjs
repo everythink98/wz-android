@@ -33,13 +33,18 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   '@/features/topic/TopicRoute',
   '@/features/user/UserRoute'
 ]);
-const APP_ROOT_FORBIDDEN_REACT_HOOKS = new Set(['useCallback', 'useEffect', 'useRef', 'useState']);
+const FORBIDDEN_RAW_STATE_HOOKS = new Set(['useCallback', 'useEffect', 'useRef', 'useState']);
 const FORBIDDEN_LEGACY_MODULE_NAMES = new Set([
+  'AppControls',
   'GlobalModalHost',
   'MorePanels',
   'TopicPresentationContext',
   'backHandlerHelpers',
+  'controllerResults',
   'htmlImages',
+  'screenHelpers',
+  'sessionControllerHelpers',
+  'sharedStyles',
   'topicBackStack',
   'topicPresentationCache',
   'topicPresentationContext',
@@ -102,7 +107,7 @@ function importedModuleSpecifiers(filePath) {
   return [...specifiers];
 }
 
-function importedAppRootStateHooks(filePath) {
+function importedRawStateHooks(filePath) {
   const sourceText = readFileSync(filePath, 'utf8');
   const sourceFile = ts.createSourceFile(
     filePath,
@@ -124,7 +129,7 @@ function importedAppRootStateHooks(filePath) {
     } else if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
       for (const element of clause.namedBindings.elements) {
         const importedName = element.propertyName?.text || element.name.text;
-        if (APP_ROOT_FORBIDDEN_REACT_HOOKS.has(importedName)) hooks.add(importedName);
+        if (FORBIDDEN_RAW_STATE_HOOKS.has(importedName)) hooks.add(importedName);
       }
     }
   }
@@ -134,7 +139,7 @@ function importedAppRootStateHooks(filePath) {
       ts.isPropertyAccessExpression(node) &&
       ts.isIdentifier(node.expression) &&
       reactNamespaces.has(node.expression.text) &&
-      APP_ROOT_FORBIDDEN_REACT_HOOKS.has(node.name.text)
+      FORBIDDEN_RAW_STATE_HOOKS.has(node.name.text)
     ) {
       hooks.add(node.name.text);
     }
@@ -142,6 +147,160 @@ function importedAppRootStateHooks(filePath) {
   };
   visit(sourceFile);
   return [...hooks];
+}
+
+function appRuntimeImportIssues(filePath, fromFile) {
+  if (fromFile !== 'app/useAppRuntime.ts' && fromFile !== 'app/useAppRuntime.tsx') return [];
+  const sourceText = readFileSync(filePath, 'utf8');
+  const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const issues = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (!isInternalSpecifier(specifier)) continue;
+    if (/(?:^|\/)components(?:\/|$)/.test(specifier) || /Screen$/.test(moduleName(specifier))) {
+      issues.push({
+        code: 'app-runtime-presentation-import',
+        message: `${fromFile} 不得依赖 Screen/component：${specifier}`
+      });
+    }
+    const namedImports = statement.importClause?.namedBindings;
+    const typeOnlyImport =
+      statement.importClause?.isTypeOnly ||
+      (namedImports && ts.isNamedImports(namedImports) && namedImports.elements.every((element) => element.isTypeOnly));
+    if (/^@\/features\/[^/]+\/[^/]*Route$/.test(specifier) && !typeOnlyImport) {
+      issues.push({
+        code: 'app-runtime-route-value-import',
+        message: `${fromFile} 对 route entry 只允许 type import：${specifier}`
+      });
+    }
+  }
+  return issues;
+}
+
+function lastEntityName(name) {
+  return ts.isIdentifier(name) ? name.text : name.name.text;
+}
+
+function routeRuntimeProjectionIssues(filePath, fromFile) {
+  const sourceText = readFileSync(filePath, 'utf8');
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+  const issues = [];
+  const visitRuntimeType = (node, ownerName) => {
+    if (
+      ts.isTypeReferenceNode(node) &&
+      lastEntityName(node.typeName) === 'ComponentProps' &&
+      node.typeArguments?.some(
+        (argument) => ts.isTypeQueryNode(argument) && lastEntityName(argument.exprName).endsWith('Screen')
+      )
+    ) {
+      issues.push({
+        code: 'route-runtime-screen-projection',
+        message: `${fromFile} 的 ${ownerName} 不得投影 Screen ComponentProps`
+      });
+    }
+    ts.forEachChild(node, (child) => visitRuntimeType(child, ownerName));
+  };
+  for (const statement of sourceFile.statements) {
+    if (
+      (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) &&
+      /RouteRuntime/.test(statement.name.text)
+    ) {
+      visitRuntimeType(statement, statement.name.text);
+    }
+  }
+  return issues;
+}
+
+function rawAccountSessionIssues(filePath, fromFile) {
+  const sourceText = readFileSync(filePath, 'utf8');
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+  const issues = [];
+  const report = () => {
+    if (issues.length === 0) {
+      issues.push({ code: 'raw-account-session', message: `${fromFile} 不得读取 accountRuntime.session` });
+    }
+  };
+  const visit = (node) => {
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'accountRuntime' &&
+      node.name.text === 'session'
+    ) {
+      report();
+    } else if (
+      ts.isElementAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'accountRuntime' &&
+      ts.isStringLiteralLike(node.argumentExpression) &&
+      node.argumentExpression.text === 'session'
+    ) {
+      report();
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isIdentifier(node.initializer) &&
+      node.initializer.text === 'accountRuntime' &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.name.elements.some((element) => (element.propertyName || element.name).getText(sourceFile) === 'session')
+    ) {
+      report();
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return issues;
+}
+
+function behaviorTestSourceReadIssues(projectRoot) {
+  const issues = [];
+  for (const relativeDirectory of ['tests/integration', 'tests/ui']) {
+    const directory = path.join(projectRoot, relativeDirectory);
+    for (const filePath of listCodeFiles(directory)) {
+      const sourceText = readFileSync(filePath, 'utf8');
+      const sourceFile = ts.createSourceFile(
+        filePath,
+        sourceText,
+        ts.ScriptTarget.Latest,
+        true,
+        filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+      );
+      const importsProductionSource = sourceFile.statements.some((statement) => {
+        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) return false;
+        if (!['fs', 'fs/promises', 'node:fs', 'node:fs/promises'].includes(statement.moduleSpecifier.text)) {
+          return false;
+        }
+        const bindings = statement.importClause?.namedBindings;
+        if (bindings && ts.isNamespaceImport(bindings)) return /\breadFile(?:Sync)?\b/.test(sourceText);
+        if (bindings && ts.isNamedImports(bindings)) {
+          return bindings.elements.some((element) =>
+            ['readFile', 'readFileSync'].includes(element.propertyName?.text || element.name.text)
+          );
+        }
+        return /\breadFile(?:Sync)?\b/.test(sourceText);
+      });
+      if (importsProductionSource) {
+        issues.push({
+          code: 'behavior-test-source-read',
+          message: `${path.relative(projectRoot, filePath).replaceAll('\\', '/')} 不得读取生产源码字符串证明行为`
+        });
+      }
+    }
+  }
+  return issues;
 }
 
 function isInternalSpecifier(specifier) {
@@ -182,6 +341,12 @@ function compositionIssue(fromFile, specifier) {
   if (fromFile === 'app/AppNavigator.tsx' && specifier.startsWith('@/features/')) {
     return {
       code: 'app-navigator-feature',
+      message: `${fromFile} 不得依赖 feature：${specifier}`
+    };
+  }
+  if (fromFile === 'app/useAppTheme.ts' && specifier.startsWith('@/features/')) {
+    return {
+      code: 'app-theme-feature-import',
       message: `${fromFile} 不得依赖 feature：${specifier}`
     };
   }
@@ -340,10 +505,18 @@ export function analyzeArchitecture(srcDir) {
       issues.push({ code: 'legacy-path', message: `禁止恢复旧模块：${fromFile}` });
     }
     if (fromFile === 'app/AppRoot.tsx') {
-      for (const hook of importedAppRootStateHooks(file)) {
+      for (const hook of importedRawStateHooks(file)) {
         issues.push({ code: 'app-root-state-hook', message: `${fromFile} 不得持有 React 业务状态 hook：${hook}` });
       }
     }
+    if (fromFile === 'app/useAppRuntime.ts' || fromFile === 'app/useAppRuntime.tsx') {
+      for (const hook of importedRawStateHooks(file)) {
+        issues.push({ code: 'app-runtime-state-hook', message: `${fromFile} 不得持有 React 业务状态 hook：${hook}` });
+      }
+    }
+    issues.push(...appRuntimeImportIssues(file, fromFile));
+    issues.push(...routeRuntimeProjectionIssues(file, fromFile));
+    issues.push(...rawAccountSessionIssues(file, fromFile));
     for (const specifier of importedModuleSpecifiers(file)) {
       const importedPath = internalModulePath(fromFile, specifier);
       if (importedPath && FORBIDDEN_LEGACY_MODULE_NAMES.has(moduleName(importedPath))) {
@@ -364,6 +537,8 @@ export function analyzeArchitecture(srcDir) {
       if (issue) issues.push(issue);
     }
   }
+
+  issues.push(...behaviorTestSourceReadIssues(path.dirname(resolvedSrcDir)));
 
   for (const cycle of findDependencyCycles(graph)) {
     issues.push({ code: 'cycle', message: `检测到依赖环：${cycle.join(' -> ')}` });
