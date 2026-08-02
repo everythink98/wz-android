@@ -17,7 +17,7 @@ import { aggregateSearchSources, type DiscourseSource } from '@/domain/forum/sou
 import { topicKey } from '@/domain/reader/readerData';
 import { feedSourceItems } from '@/domain/forum/feedOptions';
 import { buildSearchListItems, searchGroupEmptyText, type SearchGroup, type SearchListItem } from './listItems';
-import type { LinuxDoAiSearchState } from './controllerResults';
+import type { LinuxDoAiSearchState } from './aiSearch';
 import {
   searchFilterForSource,
   searchFilterSummary,

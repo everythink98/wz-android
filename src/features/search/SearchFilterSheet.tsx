@@ -1,7 +1,6 @@
 import type { SearchStyles } from './styles';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, View } from 'react-native';
-import type { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { X } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption, Source } from '@/domain/forum/models';
 import { type DiscourseSource } from '@/domain/forum/sourceCatalog';
@@ -18,8 +17,7 @@ import {
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, TOUCH_HIT_SLOP } from '@/ui/controls/AppControls';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { useSearchCandidateQueries } from './useSearchController';
-import { DiscourseFilterPickers } from './DiscourseFilterPickers';
+import { DiscourseFilterPickers, useDiscourseFilterPickers } from './DiscourseFilterPickers';
 import { SearchFilterForm } from './SearchFilterForm';
 
 function sourceCategories(categories: Category[], source: Source) {
@@ -76,16 +74,6 @@ export function SearchFilterSheet({
   const [draftFilter, setDraftFilter] = useState<SourceSearchFilter>(() =>
     searchFilterForSource(searchFilters, source)
   );
-  const [v2exMoreVisible, setV2exMoreVisible] = useState(false);
-  const [tagPickerVisible, setTagPickerVisible] = useState(false);
-  const [tagQuery, setTagQuery] = useState('');
-  const [debouncedTagQuery, setDebouncedTagQuery] = useState<string | null>(null);
-  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
-  const [categoryQuery, setCategoryQuery] = useState('');
-  const [userPickerVisible, setUserPickerVisible] = useState(false);
-  const [userQuery, setUserQuery] = useState('');
-  const [debouncedUserQuery, setDebouncedUserQuery] = useState<string | null>(null);
-  const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [filterError, setFilterError] = useState('');
   const nodeSeekCategoryItems = useMemo(() => categoryOptions(categories, 'nodeseek'), [categories]);
   const yaohuoCategoryItems = useMemo(() => categoryOptions(categories, 'yaohuo'), [categories]);
@@ -98,11 +86,6 @@ export function SearchFilterSheet({
           ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
           : { ...filter }
       );
-      setV2exMoreVisible(false);
-      setTagPickerVisible(false);
-      setCategoryPickerVisible(false);
-      setUserPickerVisible(false);
-      setDatePickerVisible(false);
       setFilterError('');
     }
   }, [searchFilters, source, visible]);
@@ -114,7 +97,6 @@ export function SearchFilterSheet({
 
   const resetDraft = useCallback(() => {
     setDraftFilter(defaultSearchFilterForSource(source));
-    setDatePickerVisible(false);
     setFilterError('');
   }, [source]);
 
@@ -130,75 +112,15 @@ export function SearchFilterSheet({
     onClose();
   }, [draftFilter, onApply, onClose, source]);
   const discourseDraft = isDiscourseSearchFilter(draftFilter) ? draftFilter : null;
-  const discourseCategories = useMemo(
-    () => (discourseDraft ? sourceCategories(categories, discourseDraft.source) : []),
-    [categories, discourseDraft?.source]
-  );
-  const categoryNames = useMemo(
-    () => new Map(discourseCategories.map((category) => [category.id, category.name])),
-    [discourseCategories]
-  );
-  const filteredDiscourseCategories = useMemo(() => {
-    const query = categoryQuery.trim().toLowerCase();
-    return discourseCategories.filter((category) => {
-      const parentName = category.parentId ? categoryNames.get(category.parentId) || '' : '';
-      return !query || `${parentName} ${category.name} ${category.slug || ''}`.toLowerCase().includes(query);
-    });
-  }, [categoryNames, categoryQuery, discourseCategories]);
-
-  useEffect(() => {
-    setDebouncedTagQuery(null);
-    if (!tagPickerVisible) {
-      return;
-    }
-    const timer = setTimeout(() => setDebouncedTagQuery(tagQuery), 300);
-    return () => clearTimeout(timer);
-  }, [tagPickerVisible, tagQuery]);
-
-  useEffect(() => {
-    setDebouncedUserQuery(null);
-    const term = userQuery.trim();
-    if (!userPickerVisible || !term) {
-      return;
-    }
-    const timer = setTimeout(() => setDebouncedUserQuery(term), 300);
-    return () => clearTimeout(timer);
-  }, [userPickerVisible, userQuery]);
-
-  const normalizedUserQuery = userQuery.trim();
-  const candidates = useSearchCandidateQueries({
+  const pickers = useDiscourseFilterPickers({
+    categories,
+    discourseDraft,
+    filterSheetVisible: visible,
     sessionEpochs,
-    enabled: requestsEnabled,
+    requestsEnabled,
     searchDiscourseTags: onSearchDiscourseTags,
-    searchDiscourseUsers: onSearchDiscourseUsers,
-    tagRequest:
-      visible && tagPickerVisible && discourseDraft && debouncedTagQuery !== null
-        ? {
-            source: discourseDraft.source,
-            query: debouncedTagQuery,
-            categoryId: discourseDraft.category || undefined,
-            selectedTags: discourseDraft.tags
-          }
-        : null,
-    userRequest:
-      visible && userPickerVisible && discourseDraft && debouncedUserQuery
-        ? {
-            source: discourseDraft.source,
-            term: debouncedUserQuery,
-            categoryId: discourseDraft.category || undefined
-          }
-        : null
+    searchDiscourseUsers: onSearchDiscourseUsers
   });
-
-  const tagDebouncing = tagPickerVisible && debouncedTagQuery !== tagQuery;
-  const tagOptions = tagDebouncing ? [] : candidates.tags.options;
-  const tagLoading = tagDebouncing || candidates.tags.loading;
-  const tagError = !tagDebouncing && candidates.tags.error ? '标签候选加载失败' : '';
-  const userDebouncing =
-    userPickerVisible && Boolean(normalizedUserQuery) && debouncedUserQuery !== normalizedUserQuery;
-  const userOptions = userDebouncing ? [] : candidates.users.options;
-  const userLoading = userDebouncing || candidates.users.loading;
-  const userError = !userDebouncing && candidates.users.error ? '作者候选加载失败' : '';
 
   const toggleTag = useCallback((name: string) => {
     setFilterError('');
@@ -237,16 +159,6 @@ export function SearchFilterSheet({
     });
   }, []);
 
-  const changeExactDate = useCallback(
-    (event: DateTimePickerEvent, value?: Date) => {
-      setDatePickerVisible(false);
-      if (event.type === 'set' && value) {
-        updateDraft({ date: localSearchDate(value), timeRange: 'all' });
-      }
-    },
-    [updateDraft]
-  );
-
   return (
     <>
       <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
@@ -281,26 +193,19 @@ export function SearchFilterSheet({
               keyboardShouldPersistTaps="handled"
             >
               <SearchFilterForm
-                categoryNames={categoryNames}
-                changeExactDate={changeExactDate}
-                datePickerVisible={datePickerVisible}
+                categoryNames={pickers.category.names}
                 draftFilter={draftFilter}
+                filterSheetVisible={visible}
                 nodeSeekCategoryItems={nodeSeekCategoryItems}
-                setCategoryPickerVisible={setCategoryPickerVisible}
-                setCategoryQuery={setCategoryQuery}
-                setDatePickerVisible={setDatePickerVisible}
-                setTagPickerVisible={setTagPickerVisible}
-                setTagQuery={setTagQuery}
-                setUserPickerVisible={setUserPickerVisible}
-                setUserQuery={setUserQuery}
-                setV2exMoreVisible={setV2exMoreVisible}
+                openCategoryPicker={pickers.category.open}
+                openTagPicker={pickers.tags.open}
+                openUserPicker={pickers.users.open}
                 styles={styles}
                 theme={theme}
                 toggleTag={toggleTag}
                 toggleVisited={toggleVisited}
                 updateDraft={updateDraft}
                 updateLinuxDoExpertResponse={updateLinuxDoExpertResponse}
-                v2exMoreVisible={v2exMoreVisible}
                 yaohuoCategoryItems={yaohuoCategoryItems}
               />
             </ScrollView>
@@ -317,41 +222,13 @@ export function SearchFilterSheet({
         </KeyboardAvoidingView>
       </Modal>
       <DiscourseFilterPickers
-        categoryNames={categoryNames}
-        categoryPickerVisible={categoryPickerVisible}
-        categoryQuery={categoryQuery}
+        controller={pickers}
         discourseDraft={discourseDraft}
-        filteredDiscourseCategories={filteredDiscourseCategories}
-        onRetryTags={candidates.tags.retry}
-        onRetryUsers={candidates.users.retry}
-        setCategoryPickerVisible={setCategoryPickerVisible}
-        setCategoryQuery={setCategoryQuery}
-        setTagPickerVisible={setTagPickerVisible}
-        setTagQuery={setTagQuery}
-        setUserPickerVisible={setUserPickerVisible}
-        setUserQuery={setUserQuery}
         styles={styles}
-        tagError={tagError}
-        tagLoading={tagLoading}
-        tagOptions={tagOptions}
-        tagPickerVisible={tagPickerVisible}
-        tagQuery={tagQuery}
         theme={theme}
         toggleTag={toggleTag}
         updateDraft={updateDraft}
-        userError={userError}
-        userLoading={userLoading}
-        userOptions={userOptions}
-        userPickerVisible={userPickerVisible}
-        userQuery={userQuery}
       />
     </>
   );
-}
-
-function localSearchDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }

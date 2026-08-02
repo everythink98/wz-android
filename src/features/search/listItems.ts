@@ -15,6 +15,16 @@ export type SearchGroup = {
   nextPage?: number | null;
 };
 
+export type RemoteSearchAction =
+  | { type: 'yaohuo-login'; message: string }
+  | { type: 'nodeseek-verification'; message: string }
+  | { type: 'linuxdo-verification'; message: string };
+
+export type RemoteSearchSourceResult =
+  | { kind: 'success'; group: SearchGroup }
+  | { kind: 'failed'; group: SearchGroup }
+  | { kind: 'action-required'; group: SearchGroup; action: RemoteSearchAction };
+
 export type SearchListItem =
   | { type: 'groupHeader'; group: SearchGroup; meta: string }
   | { type: 'groupAuthNotice'; group: SearchGroup }
@@ -61,6 +71,18 @@ export function searchGroupMeta(group: SearchGroup) {
 
 export function searchGroupEmptyText(group: SearchGroup) {
   return `${group.label} 没有匹配结果`;
+}
+
+export function groupFromRemoteSearchResult(result: RemoteSearchSourceResult) {
+  return result.group;
+}
+
+export function hasNextSearchPage(
+  hasMore: boolean | undefined,
+  nextPage: number | null | undefined,
+  requestedPage: number
+) {
+  return Boolean(hasMore && nextPage && nextPage !== requestedPage);
 }
 
 export function buildSearchListItems({

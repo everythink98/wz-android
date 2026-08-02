@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { useSearchCandidateQueries, useSearchController } from '@/features/search/useSearchController';
+import { useSearchCandidateQueries } from '@/features/search/DiscourseFilterPickers';
+import { useSearchController } from '@/features/search/useSearchController';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/searchFilters';

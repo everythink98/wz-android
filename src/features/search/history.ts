@@ -1,6 +1,10 @@
 export const MAX_RECENT_SEARCHES = 20;
 export const MAX_SEARCH_HISTORY_QUERY_LENGTH = 120;
 
+export type SearchHistoryWriteQueue = {
+  current: Promise<void>;
+};
+
 export function normalizeSearchHistory(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
@@ -45,4 +49,17 @@ export function sameSearchHistory(left: string[] | null | undefined, right: stri
     return false;
   }
   return left.every((item, index) => item === right[index]);
+}
+
+export function createSearchHistoryWriteQueue(): SearchHistoryWriteQueue {
+  return { current: Promise.resolve() };
+}
+
+export function enqueueSearchHistoryWrite(queue: SearchHistoryWriteQueue, task: () => Promise<void>) {
+  const run = queue.current.catch(() => undefined).then(task);
+  queue.current = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
 }

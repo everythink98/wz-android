@@ -9,7 +9,13 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
-import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from './history';
+import {
+  createSearchHistoryWriteQueue,
+  enqueueSearchHistoryWrite,
+  mergeLoadedSearchHistory,
+  normalizeSearchHistory,
+  sameSearchHistory
+} from './history';
 import type { ReadGateway } from '@/sources/readGateway';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
@@ -26,21 +32,15 @@ import {
   searchSessionNoticeItems
 } from '@/domain/session/siteSessionPrompts';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source } from '@/domain/forum/models';
-import type { SearchGroup } from './listItems';
+import type { Category, FeedSource, Source } from '@/domain/forum/models';
 import {
-  createSearchHistoryWriteQueue,
-  enqueueSearchHistoryWrite,
   groupFromRemoteSearchResult,
   hasNextSearchPage,
-  linuxDoAiFailureState,
-  mergeLinuxDoAiTopics,
-  remoteSearchSort,
-  snapshotSearchFilters,
-  type LinuxDoAiSearchState,
   type RemoteSearchSourceResult,
-  type SearchRunOptions
-} from './controllerResults';
+  type SearchGroup
+} from './listItems';
+import { linuxDoAiFailureState, mergeLinuxDoAiTopics, type LinuxDoAiSearchState } from './aiSearch';
+import { remoteSearchSort, snapshotSearchFilters, type SearchRunOptions } from './searchRun';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
@@ -116,85 +116,6 @@ function mergeSearchPages(pages: RemoteSearchSourceResult[], error: unknown): Se
 
 function isSourceIdentityPending(source: Source, sessions: SiteSessionViewModels) {
   return source !== 'v2ex' && sessions[source].identityTrust === 'pending';
-}
-
-type SearchTagCandidatesRequest = {
-  categoryId?: string;
-  query: string;
-  selectedTags: string[];
-  source: DiscourseSource;
-};
-
-type SearchUserCandidatesRequest = {
-  categoryId?: string;
-  source: DiscourseSource;
-  term: string;
-};
-
-export function useSearchCandidateQueries({
-  sessionEpochs,
-  enabled,
-  searchDiscourseTags,
-  searchDiscourseUsers,
-  tagRequest,
-  userRequest
-}: {
-  sessionEpochs: ForumSessionEpochs;
-  enabled: boolean;
-  searchDiscourseTags: (
-    options: SearchTagCandidatesRequest & { signal?: AbortSignal }
-  ) => Promise<DiscourseTagOption[]>;
-  searchDiscourseUsers: (
-    options: SearchUserCandidatesRequest & { signal?: AbortSignal }
-  ) => Promise<DiscourseUserOption[]>;
-  tagRequest: SearchTagCandidatesRequest | null;
-  userRequest: SearchUserCandidatesRequest | null;
-}) {
-  const queryClient = useQueryClient();
-  const tagCandidatesQuery = useQuery<DiscourseTagOption[]>({
-    queryKey: forumQueryKeys.searchTags({
-      categoryId: tagRequest?.categoryId,
-      query: tagRequest?.query || '',
-      scope: sessionEpochs,
-      selectedTags: tagRequest?.selectedTags || [],
-      source: tagRequest?.source || 'linuxdo'
-    }),
-    enabled: Boolean(enabled && tagRequest),
-    queryFn: ({ signal }) => (tagRequest ? searchDiscourseTags({ ...tagRequest, signal }) : Promise.resolve([]))
-  });
-
-  const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
-    queryKey: forumQueryKeys.searchUsers({
-      categoryId: userRequest?.categoryId,
-      scope: sessionEpochs,
-      source: userRequest?.source || 'linuxdo',
-      term: userRequest?.term || ''
-    }),
-    enabled: Boolean(enabled && userRequest),
-    queryFn: ({ signal }) => (userRequest ? searchDiscourseUsers({ ...userRequest, signal }) : Promise.resolve([]))
-  });
-  useEffect(() => {
-    if (enabled) return;
-    void queryClient.cancelQueries({
-      predicate: ({ queryKey }) =>
-        queryKey[0] === 'forum' && (queryKey[2] === 'search-tags' || queryKey[2] === 'search-users')
-    });
-  }, [enabled, queryClient]);
-
-  return {
-    tags: {
-      error: tagCandidatesQuery.isError,
-      loading: tagCandidatesQuery.isFetching,
-      options: tagCandidatesQuery.data || [],
-      retry: tagCandidatesQuery.refetch
-    },
-    users: {
-      error: userCandidatesQuery.isError,
-      loading: userCandidatesQuery.isFetching,
-      options: userCandidatesQuery.data || [],
-      retry: userCandidatesQuery.refetch
-    }
-  };
 }
 
 export function useSearchController({

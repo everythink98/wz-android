@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildSearchListItems, searchGroupEmptyText, type SearchGroup } from './listItems';
+import {
+  buildSearchListItems,
+  groupFromRemoteSearchResult,
+  hasNextSearchPage,
+  searchGroupEmptyText,
+  type RemoteSearchSourceResult,
+  type SearchGroup
+} from './listItems';
 import type { Topic } from '@/domain/forum/models';
 
 function topic(id: string, source: Topic['source'], category = '默认'): Topic {
@@ -17,6 +24,25 @@ function topic(id: string, source: Topic['source'], category = '默认'): Topic 
 }
 
 describe('Android search list items', () => {
+  it('keeps an undisplayed cached page reachable and rejects a repeated page', () => {
+    expect(hasNextSearchPage(true, 3, 2)).toBe(true);
+    expect(hasNextSearchPage(true, 2, 2)).toBe(false);
+    expect(hasNextSearchPage(false, 3, 2)).toBe(false);
+  });
+
+  it('projects each remote result into its user-visible group', () => {
+    const results: RemoteSearchSourceResult[] = [
+      { kind: 'success', group: { source: 'v2ex', label: 'V2EX', items: [topic('1', 'v2ex')] } },
+      {
+        kind: 'action-required',
+        action: { type: 'yaohuo-login', message: '妖火需要登录后使用此功能。' },
+        group: { source: 'yaohuo', label: '妖火', items: [], error: '妖火需要登录后使用此功能。' }
+      }
+    ];
+
+    expect(results.map(groupFromRemoteSearchResult).map((group) => group.source)).toEqual(['v2ex', 'yaohuo']);
+  });
+
   it('uses a two-topic non-paginating preview for the all-source overview', () => {
     const groups: SearchGroup[] = [
       {

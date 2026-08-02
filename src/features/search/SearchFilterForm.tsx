@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
@@ -159,49 +159,55 @@ function FilterNumberField({
 
 export function SearchFilterForm({
   categoryNames,
-  changeExactDate,
-  datePickerVisible,
   draftFilter,
+  filterSheetVisible,
   nodeSeekCategoryItems,
-  setCategoryPickerVisible,
-  setCategoryQuery,
-  setDatePickerVisible,
-  setTagPickerVisible,
-  setTagQuery,
-  setUserPickerVisible,
-  setUserQuery,
-  setV2exMoreVisible,
+  openCategoryPicker,
+  openTagPicker,
+  openUserPicker,
   styles,
   theme,
   toggleTag,
   toggleVisited,
   updateDraft,
   updateLinuxDoExpertResponse,
-  v2exMoreVisible,
   yaohuoCategoryItems
 }: {
   categoryNames: ReadonlyMap<string, string>;
-  changeExactDate: (event: DateTimePickerEvent, value?: Date) => void;
-  datePickerVisible: boolean;
   draftFilter: SourceSearchFilter;
+  filterSheetVisible: boolean;
   nodeSeekCategoryItems: { value: string; label: string }[];
-  setCategoryPickerVisible: Dispatch<SetStateAction<boolean>>;
-  setCategoryQuery: Dispatch<SetStateAction<string>>;
-  setDatePickerVisible: Dispatch<SetStateAction<boolean>>;
-  setTagPickerVisible: Dispatch<SetStateAction<boolean>>;
-  setTagQuery: Dispatch<SetStateAction<string>>;
-  setUserPickerVisible: Dispatch<SetStateAction<boolean>>;
-  setUserQuery: Dispatch<SetStateAction<string>>;
-  setV2exMoreVisible: Dispatch<SetStateAction<boolean>>;
+  openCategoryPicker: () => void;
+  openTagPicker: () => void;
+  openUserPicker: () => void;
   styles: SearchStyles;
   theme: ReaderTheme;
   toggleTag: (name: string) => void;
   toggleVisited: (value: DiscourseVisitedFilter) => void;
   updateDraft: (partial: Partial<SourceSearchFilter>) => void;
   updateLinuxDoExpertResponse: (expertResponse: boolean) => void;
-  v2exMoreVisible: boolean;
   yaohuoCategoryItems: { value: string; label: string }[];
 }) {
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [v2exMoreVisible, setV2exMoreVisible] = useState(false);
+  useEffect(() => {
+    setDatePickerVisible(false);
+    setV2exMoreVisible(false);
+  }, [draftFilter.source, filterSheetVisible]);
+  useEffect(() => {
+    if (!('date' in draftFilter) || !draftFilter.date) {
+      setDatePickerVisible(false);
+    }
+  }, [draftFilter]);
+  const changeExactDate = useCallback(
+    (event: DateTimePickerEvent, value?: Date) => {
+      setDatePickerVisible(false);
+      if (event.type === 'set' && value) {
+        updateDraft({ date: localSearchDate(value), timeRange: 'all' });
+      }
+    },
+    [updateDraft]
+  );
   const V2exMoreChevron = v2exMoreVisible ? ChevronUp : ChevronDown;
   return (
     <>
@@ -290,10 +296,7 @@ export function SearchFilterForm({
               accessibilityLabel="选择分类"
               android_ripple={androidRipple(theme.primarySoft)}
               style={styles.input}
-              onPress={() => {
-                setCategoryQuery('');
-                setCategoryPickerVisible(true);
-              }}
+              onPress={openCategoryPicker}
             >
               <Text
                 style={[styles.searchFilterOptionText, draftFilter.category && styles.searchFilterOptionTextActive]}
@@ -309,10 +312,7 @@ export function SearchFilterForm({
               accessibilityLabel="选择标签"
               android_ripple={androidRipple(theme.primarySoft)}
               style={styles.input}
-              onPress={() => {
-                setTagQuery('');
-                setTagPickerVisible(true);
-              }}
+              onPress={openTagPicker}
             >
               <Text
                 style={[
@@ -507,10 +507,7 @@ export function SearchFilterForm({
               accessibilityLabel="选择作者"
               android_ripple={androidRipple(theme.primarySoft)}
               style={styles.input}
-              onPress={() => {
-                setUserQuery('');
-                setUserPickerVisible(true);
-              }}
+              onPress={openUserPicker}
             >
               <Text
                 style={[styles.searchFilterOptionText, draftFilter.username && styles.searchFilterOptionTextActive]}
@@ -568,4 +565,11 @@ export function SearchFilterForm({
       ) : null}
     </>
   );
+}
+
+function localSearchDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }

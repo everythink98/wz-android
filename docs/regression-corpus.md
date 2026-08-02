@@ -526,9 +526,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-02`、`SEARCH-03`、`SEARCH-04` |
 | 用户症状 | linux.do 标签和发帖人原本是可任意手输的文本框，可能提交站点不存在的值；快速改词时旧候选或旧 AI 响应还可能覆盖当前查询；空作者输入可能永久显示 Loading；关闭标签选择、切换分类再重开时，上一分类的同词候选可能重新出现并可点击；分页或详情返回后筛选也可能退回浅拷贝中的旧数组。 |
 | 触发条件 | 标签/作者未经过原站候选接口；300ms 防抖请求先发后到；空 term 的 debounce sentinel 被当成进行中；Query placeholder 只核对输入文本而未核对来源和分类；提交快照只浅拷贝数组；新查询、筛选、排序或来源变化时未取消并失效 AI 请求。 |
-| 根因 seam | `src/features/search/SearchScreen.tsx` 的候选草稿交互、`src/features/search/useSearchController.ts` 的普通/AI/候选结构化 Query key、`src/features/search/controllerResults.ts` 的深快照和合并、`src/sources/linuxdo/search.ts` 的候选接口。 |
+| 根因 seam | `src/features/search/SearchScreen.tsx` 的候选草稿交互、`src/features/search/useSearchController.ts` 的普通/AI/候选结构化 Query key、`src/features/search/searchRun.ts` 的深快照和合并、`src/sources/linuxdo/search.ts` 的候选接口。 |
 | 必须保持的行为 | 分类、标签和发帖人只能从站点候选选择；双标签可选任意/全部；空作者输入只显示输入提示且不请求；候选投影必须匹配当前来源、分类和输入，旧标签、作者或 AI 响应不得改变新查询。已应用数组在第一页、普通分页和详情返回中保持独立快照。AI 开关只读当前查询的缓存，普通顺序优先并按话题 ID 去重；关闭不重复请求。 |
-| 精确失败 oracle | `tests/ui/search/search-screen.test.tsx` 断言页面没有自由标签/作者提交入口、只接受候选，空作者不显示 Loading 或发请求，旧标签 Promise 晚于新 Promise 完成后仍只显示新候选，并在上一分类已有候选、下一分类请求悬空时断言旧候选立即不可见；`tests/ui/search/search-controller-ai.test.tsx` 让旧 AI Promise 晚到，断言新查询状态、去重顺序、开关缓存和普通分页不被污染；`src/features/search/useSearchController.test.ts` 修改原草稿数组后要求已提交快照不变。 |
+| 精确失败 oracle | `tests/ui/search/search-screen.test.tsx` 断言页面没有自由标签/作者提交入口、只接受候选，空作者不显示 Loading 或发请求，旧标签 Promise 晚于新 Promise 完成后仍只显示新候选，并在上一分类已有候选、下一分类请求悬空时断言旧候选立即不可见；`tests/ui/search/search-controller-ai.test.tsx` 让旧 AI Promise 晚到，断言新查询状态、去重顺序、开关缓存和普通分页不被污染；`src/features/search/searchRun.test.ts` 修改原草稿数组后要求已提交快照不变。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定 token、深快照、Gateway 和合并规则；`UI_PASS` 固定防抖、过期响应、草稿、并发和用户可见标识。只有源码字符串、App 可启动或单次 Live 成功都不能证明请求竞争安全。 |
 | Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 只提交一次聚合搜索并在清空后检查来源/筛选入口；Agent Live 在保留登录态的 App 内验证 linux.do 双标签、作者、状态、日期、范围、专家回应、普通分页、AI 开关和有数据时的详情返回，不固定动态标题或数量。 |
 | 负向验证方式 | 临时从候选 Query key 移除来源、分类或输入词，移除 Query 的取消 signal，把标签恢复为文本输入，让快照复用原数组，或将 AI 结果直接替换普通结果；相应用例必须精确失败，随后还原。 |

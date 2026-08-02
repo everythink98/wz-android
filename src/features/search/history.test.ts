@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_RECENT_SEARCHES,
   MAX_SEARCH_HISTORY_QUERY_LENGTH,
+  createSearchHistoryWriteQueue,
+  enqueueSearchHistoryWrite,
   mergeLoadedSearchHistory,
   normalizeSearchHistory,
   sameSearchHistory,
@@ -42,5 +44,23 @@ describe('search history helpers', () => {
     expect(sameSearchHistory(['AI', 'linux'], ['AI', 'linux'])).toBe(true);
     expect(sameSearchHistory(['AI', 'linux'], ['linux', 'AI'])).toBe(false);
     expect(sameSearchHistory(['AI'], ['ai'])).toBe(false);
+  });
+
+  it('serializes writes so the latest history state wins', async () => {
+    const queue = createSearchHistoryWriteQueue();
+    const writes: string[] = [];
+    const releaseFirstWrite = Promise.withResolvers<void>();
+    const first = enqueueSearchHistoryWrite(queue, async () => {
+      await releaseFirstWrite.promise;
+      writes.push('with A');
+    });
+    const second = enqueueSearchHistoryWrite(queue, async () => {
+      writes.push('without A');
+    });
+
+    releaseFirstWrite.resolve();
+    await Promise.all([first, second]);
+
+    expect(writes).toEqual(['with A', 'without A']);
   });
 });
