@@ -74,13 +74,7 @@ export function AcceptedAnswerPreview({
           {reply ? (
             <>
               <View style={styles.topicAcceptedAnswerAuthorRow}>
-                <Avatar
-                  contentSource={contentSource}
-                  small
-                  name={reply.author}
-                  uri={reply.authorAvatar}
-                  styles={styles}
-                />
+                <Avatar contentSource={contentSource} small name={reply.author} uri={reply.authorAvatar} />
                 <View style={styles.topicAcceptedAnswerAuthorMeta}>
                   <Text style={styles.topicAcceptedAnswerAuthor} numberOfLines={1}>
                     {reply.author || '未知作者'}

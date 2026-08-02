@@ -375,7 +375,7 @@ export function ReplyItem({
         accessibilityLabel={`系统事件，${author} 于 ${createdAt} ${actionText}`}
         style={[styles.replyCard, styles.replyHead, styles.replySystemEvent]}
       >
-        <Avatar contentSource={source || null} small name={author} uri={reply.authorAvatar} styles={styles} />
+        <Avatar contentSource={source || null} small name={author} uri={reply.authorAvatar} />
         <View style={styles.replyAuthorBlock}>
           <View style={styles.replyAuthorNameRow}>
             <Text style={styles.replyAuthor} numberOfLines={1}>
@@ -419,7 +419,7 @@ export function ReplyItem({
               }
             }}
           >
-            <Avatar contentSource={source || null} small name={reply.author} uri={reply.authorAvatar} styles={styles} />
+            <Avatar contentSource={source || null} small name={reply.author} uri={reply.authorAvatar} />
             <View style={styles.replyAuthorBlock}>
               <View style={styles.replyAuthorNameRow}>
                 <Text style={styles.replyAuthor} numberOfLines={1}>
@@ -508,7 +508,6 @@ export function ReplyItem({
                           small
                           name={quotedAuthorName}
                           uri={quotedReply?.authorAvatar}
-                          styles={styles}
                         />
                         <View style={styles.quoteAuthorTextBlock}>
                           <Text style={styles.quoteAuthorText} numberOfLines={1}>
@@ -521,7 +520,6 @@ export function ReplyItem({
                         compact
                         label={loading ? '读取' : expanded ? '收起' : '展开'}
                         variant="ghost"
-                        styles={styles}
                         disabled={loading}
                         onPress={() =>
                           onToggleReplyQuote({

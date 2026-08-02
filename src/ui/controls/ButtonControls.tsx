@@ -1,26 +1,125 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
-import { ActivityIndicator, Pressable, Text } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { alphaColor, androidRipple, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { pressWithFeedback, TOUCH_HIT_SLOP } from './pressFeedback';
+
+function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+  return StyleSheet.create({
+    floating: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.surface,
+      elevation: 1
+    },
+    button: {
+      minHeight: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 6,
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 12,
+      paddingVertical: 5
+    },
+    compact: {
+      minHeight: 40,
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 2
+    },
+    iconOnly: {
+      width: 44,
+      minHeight: 44,
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      borderRadius: 22,
+      paddingHorizontal: 0,
+      paddingVertical: 0
+    },
+    tiny: {
+      alignSelf: 'flex-start',
+      borderRadius: 8,
+      minHeight: 40,
+      gap: 5,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.1 : 0.045),
+      borderColor: theme.line,
+      paddingHorizontal: 10,
+      paddingVertical: 0
+    },
+    ghost: {
+      backgroundColor: 'transparent',
+      borderColor: 'transparent'
+    },
+    danger: {
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.06),
+      borderColor: alphaColor(theme.danger, theme.dark ? 0.38 : 0.24)
+    },
+    primary: {
+      backgroundColor: theme.primaryStrong,
+      borderColor: theme.primaryStrong
+    },
+    active: {
+      backgroundColor: theme.mist,
+      borderColor: 'transparent'
+    },
+    disabled: {
+      opacity: 0.45
+    },
+    text: {
+      color: theme.ink,
+      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontSize: 13,
+      fontWeight: '600'
+    },
+    textCompact: {
+      fontSize: 12,
+      fontWeight: '500'
+    },
+    textTiny: {
+      color: theme.muted,
+      fontSize: 12,
+      fontWeight: '500',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    textActive: {
+      color: theme.primary
+    },
+    textDanger: {
+      color: theme.danger
+    },
+    textPrimary: {
+      color: theme.onPrimary,
+      fontWeight: '700',
+      letterSpacing: 0
+    }
+  });
+}
 
 export function FloatingIconButton({
   disabled = false,
   icon,
   label,
   loading = false,
-  styles,
-  theme,
   onPress
 }: {
   disabled?: boolean;
   icon: LucideIcon;
   label: string;
   loading?: boolean;
-  styles: SharedStyles;
-  theme: ReaderTheme;
   onPress: () => void;
 }) {
+  const { styles, theme } = useReaderThemeStyles(createStyles);
   const Icon = icon;
   return (
     <Pressable
@@ -29,7 +128,7 @@ export function FloatingIconButton({
       accessibilityState={{ disabled }}
       android_ripple={androidRipple(theme.primarySoft, true)}
       disabled={disabled}
-      style={[styles.floatingIconButton, disabled && styles.buttonDisabled]}
+      style={[styles.floating, disabled && styles.disabled]}
       onPress={() => pressWithFeedback(onPress)}
     >
       {loading ? (
@@ -50,9 +149,7 @@ export function IconButton({
   iconOnly = false,
   icon,
   label,
-  styles,
   tiny = false,
-  theme,
   onPress
 }: {
   active?: boolean;
@@ -63,11 +160,10 @@ export function IconButton({
   iconOnly?: boolean;
   icon: LucideIcon;
   label: string;
-  styles: SharedStyles;
   tiny?: boolean;
-  theme: ReaderTheme;
   onPress: () => void;
 }) {
+  const { styles, theme } = useReaderThemeStyles(createStyles);
   const Icon = icon;
   const iconSize = tiny ? 15 : iconOnly ? 14 : compact ? 14 : 17;
   const color = active ? activeColor || theme.primary : theme.ink;
@@ -80,12 +176,12 @@ export function IconButton({
       android_ripple={androidRipple(theme.primarySoft, iconOnly || tiny)}
       style={[
         styles.button,
-        ghost && styles.buttonGhost,
-        compact && styles.buttonCompact,
-        iconOnly && styles.buttonIconOnly,
-        tiny && styles.buttonTiny,
-        active && !iconOnly && styles.buttonActive,
-        disabled && styles.buttonDisabled
+        ghost && styles.ghost,
+        compact && styles.compact,
+        iconOnly && styles.iconOnly,
+        tiny && styles.tiny,
+        active && !iconOnly && styles.active,
+        disabled && styles.disabled
       ]}
       disabled={disabled}
       onPress={() => pressWithFeedback(onPress)}
@@ -94,12 +190,7 @@ export function IconButton({
       {iconOnly ? null : (
         <Text
           numberOfLines={1}
-          style={[
-            styles.buttonText,
-            compact && styles.buttonTextCompact,
-            tiny && styles.buttonTextTiny,
-            active && styles.buttonTextActive
-          ]}
+          style={[styles.text, compact && styles.textCompact, tiny && styles.textTiny, active && styles.textActive]}
         >
           {label}
         </Text>
@@ -115,7 +206,6 @@ export function AppButton({
   testID,
   tiny = false,
   variant = 'default',
-  styles,
   onPress
 }: {
   compact?: boolean;
@@ -124,9 +214,9 @@ export function AppButton({
   testID?: string;
   tiny?: boolean;
   variant?: 'default' | 'danger' | 'ghost' | 'primary';
-  styles: SharedStyles;
   onPress: () => void;
 }) {
+  const { styles } = useReaderThemeStyles(createStyles);
   return (
     <Pressable
       testID={testID}
@@ -136,23 +226,23 @@ export function AppButton({
       accessibilityState={{ disabled }}
       style={[
         styles.button,
-        compact && styles.buttonCompact,
-        tiny && styles.buttonTiny,
-        variant === 'ghost' && styles.buttonGhost,
-        variant === 'primary' && styles.buttonPrimary,
-        variant === 'danger' && styles.buttonDanger,
-        disabled && styles.buttonDisabled
+        compact && styles.compact,
+        tiny && styles.tiny,
+        variant === 'ghost' && styles.ghost,
+        variant === 'primary' && styles.primary,
+        variant === 'danger' && styles.danger,
+        disabled && styles.disabled
       ]}
       disabled={disabled}
       onPress={() => pressWithFeedback(onPress)}
     >
       <Text
         style={[
-          styles.buttonText,
-          compact && styles.buttonTextCompact,
-          tiny && styles.buttonTextTiny,
-          variant === 'primary' && styles.buttonTextPrimary,
-          variant === 'danger' && styles.buttonTextDanger
+          styles.text,
+          compact && styles.textCompact,
+          tiny && styles.textTiny,
+          variant === 'primary' && styles.textPrimary,
+          variant === 'danger' && styles.textDanger
         ]}
       >
         {label}

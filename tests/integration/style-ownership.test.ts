@@ -10,7 +10,6 @@ import {
   topicTagColorStyle,
   type ReaderTheme
 } from '@/ui/theme/tokens';
-import { createSharedStyles } from '@/ui/theme/sharedStyles';
 import { createAppStyles } from '@/app/styles';
 import { createFeedStyles } from '@/features/feed/styles';
 import { createSearchStyles } from '@/features/search/styles';
@@ -21,6 +20,9 @@ import { createLibraryStyles } from '@/features/library/styles';
 import { createMoreAccountStyles } from '@/features/more/accountStyles';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { createMoreStyles } from '@/features/more/styles';
+import { createExpandableStyles } from '@/ui/controls/ExpandableControls';
+import { createScreenTopBarStyles } from '@/ui/controls/ScreenTopBar';
+import { createNavBarStyles } from '@/ui/navigation/NavBar';
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -36,20 +38,33 @@ vi.mock('react-native', () => ({
   }
 }));
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight: number) {
-  const sharedStyles = createSharedStyles(theme, settings, windowHeight);
+vi.mock('lucide-react-native', () => ({
+  ChevronDown: () => null,
+  ChevronRight: () => null,
+  ChevronUp: () => null,
+  Home: () => null,
+  MoreHorizontal: () => null,
+  Search: () => null,
+  Star: () => null
+}));
+
+vi.mock('@/ui/controls/pressFeedback', () => ({
+  pressWithFeedback: (onPress: () => void) => onPress()
+}));
+
+function createStyles(theme: ReaderTheme, settings: ReaderSettings, _windowHeight: number) {
   return Object.assign(
     {},
-    createAppStyles(sharedStyles, theme),
-    createFeedStyles(sharedStyles, theme, settings),
-    createSearchStyles(sharedStyles, theme, settings),
-    createTopicStyles(sharedStyles, theme, settings),
+    createAppStyles(theme),
+    createFeedStyles(theme, settings),
+    createSearchStyles(theme, settings),
+    createTopicStyles(theme, settings),
     createHtmlRendererStyles(settings, theme),
-    createUserStyles(sharedStyles, theme, settings),
-    createLibraryStyles(sharedStyles, theme, settings),
-    createMoreAccountStyles(sharedStyles, theme, settings),
-    createLoginWebViewStyles(sharedStyles, theme, settings),
-    createMoreStyles(sharedStyles, theme, settings)
+    createUserStyles(theme, settings),
+    createLibraryStyles(theme, settings),
+    createMoreAccountStyles(theme, settings),
+    createLoginWebViewStyles(theme, settings),
+    createMoreStyles(theme, settings)
   );
 }
 
@@ -66,6 +81,7 @@ describe('Android reader theme safety rails', () => {
   it('keeps scrollable content and user profiles clear of the Android status bar', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
+    const topBarStyles = createScreenTopBarStyles(theme, settings);
 
     expect(styles.statusBarScrim).toMatchObject({
       position: 'absolute',
@@ -75,7 +91,7 @@ describe('Android reader theme safety rails', () => {
       elevation: 0
     });
     expect(styles.statusBarScrim.zIndex).toBeGreaterThan(10);
-    expect(styles.topicTopBar.paddingTop).toBe(32);
+    expect(topBarStyles.bar.paddingTop).toBe(32);
     expect(styles.contentInner.paddingTop).toBe(28);
     expect(styles.topicContentInner.paddingTop).toBe(18);
     expect(styles.userContentInner.paddingTop).toBe(8);
@@ -193,6 +209,7 @@ describe('Android reader theme safety rails', () => {
   it('keeps appearance controls compact, equal-width, and touch accessible', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+    const expandableStyles = createExpandableStyles(theme, settings);
 
     expect(styles.appearanceSegmentedControl.flex).toBe(1);
     expect(styles.appearanceSegment.flex).toBe(1);
@@ -201,7 +218,7 @@ describe('Android reader theme safety rails', () => {
     expect(styles.appearanceStepButton.height).toBeGreaterThanOrEqual(48);
     expect(styles.appearanceSlider.height).toBeGreaterThanOrEqual(48);
     expect(styles.menuIcon.backgroundColor).toBeUndefined();
-    expect(styles.expandableStateIcon.backgroundColor).toBeUndefined();
+    expect('backgroundColor' in expandableStyles.stateIcon).toBe(false);
   });
 
   it('[REG-A11Y-001][REG-TOPIC-058] keeps reply navigation visually compact without changing the prose inset', () => {
@@ -274,7 +291,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps selected bottom navigation in the accent color without a capsule background', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown> | undefined>;
+    const styles = createNavBarStyles(theme, settings) as Record<string, Record<string, unknown> | undefined>;
 
     expect(styles.navIconPill?.backgroundColor).toBeUndefined();
     expect(styles.navIconPillActive).toBeUndefined();

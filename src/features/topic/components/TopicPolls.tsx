@@ -208,7 +208,6 @@ export function TopicPolls({
                     compact
                     label={submitLabel}
                     variant={submitDisabled ? 'ghost' : 'primary'}
-                    styles={styles}
                     disabled={submitDisabled}
                     onPress={() => onVotePoll(poll, selectedOptionIds)}
                   />

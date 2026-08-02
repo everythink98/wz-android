@@ -533,7 +533,12 @@ describe('Feed loading', () => {
     expect(activeScene.getByText('456')).toBeTruthy();
     expect(activeScene.getByText('宽松密度下显示的主题摘要')).toBeTruthy();
     const card = activeScene.getByTestId('feed-topic-first');
-    expect(card.props.style).toEqual(expect.arrayContaining([styles.topicCardPressable, styles.topicCardRead]));
+    expect(card.props.style).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ gap: 10, paddingHorizontal: 16, paddingBottom: 14 }),
+        expect.objectContaining({ opacity: 0.72 })
+      ])
+    );
     expect(card.props.nativeBackgroundAndroid).toBeDefined();
   });
 

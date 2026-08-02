@@ -1,8 +1,9 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
-import { Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Home, MoreHorizontal, Search, Star, type LucideIcon } from 'lucide-react-native';
 import type { Screen } from './types';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
 export const tabNavItems: { value: Screen; label: string; icon: LucideIcon }[] = [
   { value: 'feed', label: '首页', icon: Home },
@@ -15,17 +16,14 @@ export function TabBarIcon({
   focused,
   icon,
   label,
-  showBadge = false,
-  styles,
-  theme
+  showBadge = false
 }: {
   focused: boolean;
   icon: LucideIcon;
   label: string;
   showBadge?: boolean;
-  styles: SharedStyles;
-  theme: ReaderTheme;
 }) {
+  const { styles, theme } = useReaderThemeStyles(createNavBarStyles);
   const Icon = icon;
   const color = focused ? theme.primary : theme.muted;
   return (
@@ -39,4 +37,38 @@ export function TabBarIcon({
       <Text style={[styles.navText, focused && styles.navTextActive]}>{label}</Text>
     </View>
   );
+}
+
+export function createNavBarStyles(theme: ReaderTheme, settings: ReaderSettings) {
+  return StyleSheet.create({
+    navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, minHeight: 48, borderRadius: 6 },
+    navIconPill: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 46,
+      height: 28,
+      borderRadius: 999,
+      paddingHorizontal: 16
+    },
+    navIconWrap: { position: 'relative' },
+    navBadge: {
+      position: 'absolute',
+      top: -2,
+      right: -7,
+      width: 8,
+      height: 8,
+      borderRadius: 999,
+      borderColor: theme.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.danger
+    },
+    navText: {
+      color: theme.muted,
+      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontSize: 10,
+      fontWeight: '600',
+      letterSpacing: 0
+    },
+    navTextActive: { color: theme.primary, fontWeight: '700' }
+  });
 }

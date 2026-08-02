@@ -38,7 +38,7 @@ import {
 } from './floatingActions';
 import type { ReadingFilter } from '@/domain/forum/feed';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
@@ -111,7 +111,7 @@ export const FeedScreen = memo(function FeedScreen({
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
 }) {
-  const { styles, theme } = useReaderStyles(createFeedStyles);
+  const { styles, theme } = useReaderThemeStyles(createFeedStyles);
   const internalListRef = useRef<FlashListRef<Topic>>(null);
   const listRef = scrollRef || internalListRef;
   const { width: pagerWidth } = useWindowDimensions();
@@ -320,14 +320,12 @@ export const FeedScreen = memo(function FeedScreen({
     ({ index, item: topic }) => (
       <MemoizedTopicCard
         readerState={getTopicListItemStateFromIndex(topicStateIndex, topic)}
-        styles={styles}
         testID={index === 0 ? 'feed-topic-first' : undefined}
-        theme={theme}
         topic={topic}
         onOpenTopic={onOpenTopic}
       />
     ),
-    [onOpenTopic, styles, theme, topicStateIndex]
+    [onOpenTopic, topicStateIndex]
   );
   const renderTopicSeparator = useCallback(() => <View style={styles.topicListSeparator} />, [styles]);
   const categoryItems = useMemo(() => feedCategoryItems(categories, visualFeedSource), [categories, visualFeedSource]);
@@ -372,10 +370,10 @@ export const FeedScreen = memo(function FeedScreen({
   const renderFeedLoadingScene = useCallback(
     () => (
       <View style={styles.content}>
-        <LoadingState text="正在读取主题..." styles={styles} theme={theme} />
+        <LoadingState text="正在读取主题..." />
       </View>
     ),
-    [styles, theme]
+    [styles]
   );
   const renderFeedScene = useCallback(
     ({ route }: { route: { key: string } }) => {
@@ -386,11 +384,7 @@ export const FeedScreen = memo(function FeedScreen({
       if (feedItems.length === 0 && !identityError && (busy || identityChecking)) {
         return (
           <View style={styles.content}>
-            <LoadingState
-              text={identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'}
-              styles={styles}
-              theme={theme}
-            />
+            <LoadingState text={identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'} />
           </View>
         );
       }
@@ -398,14 +392,14 @@ export const FeedScreen = memo(function FeedScreen({
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{identityError.message}</Text>
           <View style={styles.actions}>
-            <AppButton label="重试检测" styles={styles} onPress={onRetryIdentity || onRefresh} />
+            <AppButton label="重试检测" onPress={onRetryIdentity || onRefresh} />
             {feedSource === 'linuxdo' && onCheckLinuxDoStatus ? (
-              <AppButton label="检查 L 站状态" variant="ghost" styles={styles} onPress={onCheckLinuxDoStatus} />
+              <AppButton label="检查 L 站状态" variant="ghost" onPress={onCheckLinuxDoStatus} />
             ) : null}
           </View>
         </View>
       ) : identityChecking ? (
-        <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} />
+        <LoadingState text="正在确认 L 站访问状态" />
       ) : null;
       return (
         <FlashList
@@ -436,17 +430,12 @@ export const FeedScreen = memo(function FeedScreen({
           {...FEED_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={identityNotice}
           ListEmptyComponent={
-            identityNotice ? null : busy ? (
-              <LoadingState text="正在读取主题..." styles={styles} theme={theme} />
-            ) : (
-              <EmptyText text={feedEmptyText} styles={styles} />
-            )
+            identityNotice ? null : busy ? <LoadingState text="正在读取主题..." /> : <EmptyText text={feedEmptyText} />
           }
           ListFooterComponent={
             feedHasMore ? (
               <AppButton
                 label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
-                styles={styles}
                 disabled={busy || loadingMore}
                 onPress={() => requestFeedLoadMore('button')}
               />
@@ -495,7 +484,6 @@ export const FeedScreen = memo(function FeedScreen({
           items={feedSourceItems}
           value={visualFeedSource}
           testIDPrefix="feed-source"
-          styles={styles}
           onChange={changeFeedSourceValue}
         />
         {shouldUseReadingFilter(visualFeedSource) ? (
@@ -505,7 +493,6 @@ export const FeedScreen = memo(function FeedScreen({
             items={feedReadingFilterItems}
             value={readingFilter}
             resetScrollKey={secondaryRailResetKey}
-            styles={styles}
             onChange={changeReadingFilter}
           />
         ) : showFeedFilter ? (
@@ -517,7 +504,6 @@ export const FeedScreen = memo(function FeedScreen({
                 items={categoryItems}
                 value={visualCategoryFilter}
                 resetScrollKey={secondaryRailResetKey}
-                styles={styles}
                 onChange={changeCategoryFilter}
               />
             </View>
@@ -545,7 +531,6 @@ export const FeedScreen = memo(function FeedScreen({
             items={categoryItems}
             value={visualCategoryFilter}
             resetScrollKey={secondaryRailResetKey}
-            styles={styles}
             onChange={changeCategoryFilter}
           />
         )}
@@ -565,13 +550,7 @@ export const FeedScreen = memo(function FeedScreen({
       />
       {showFloatingActions ? (
         <View style={styles.feedFloatingActions}>
-          <FloatingIconButton
-            icon={ChevronUp}
-            label="回到顶部"
-            styles={styles}
-            theme={theme}
-            onPress={scrollFeedToTopPress}
-          />
+          <FloatingIconButton icon={ChevronUp} label="回到顶部" onPress={scrollFeedToTopPress} />
         </View>
       ) : null}
     </View>

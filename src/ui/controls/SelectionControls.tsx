@@ -1,7 +1,64 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { useEffect, useRef } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { pressWithFeedback, TOUCH_HIT_SLOP } from './pressFeedback';
+
+function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+  const fontFamily = fontFamilyValue(settings.fontFamily);
+  return StyleSheet.create({
+    pillRail: { gap: 2, paddingRight: 18, paddingVertical: 0 },
+    pill: {
+      minHeight: 40,
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 4
+    },
+    pillActive: {
+      backgroundColor: theme.mist,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.12)
+    },
+    pillText: { color: theme.muted, fontFamily, fontSize: 11, fontWeight: '500' },
+    pillTextActive: { color: theme.primary, fontWeight: '600' },
+    subtabRail: { gap: 20, paddingRight: 18, paddingVertical: 0 },
+    subtab: {
+      minHeight: 34,
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+      borderBottomColor: 'transparent',
+      borderBottomWidth: 2,
+      paddingHorizontal: 2,
+      paddingTop: 3,
+      paddingBottom: 5
+    },
+    subtabActive: { borderBottomColor: theme.primary },
+    subtabText: { color: theme.muted, fontFamily, fontSize: 12, fontWeight: '500' },
+    subtabTextActive: { color: theme.primary, fontWeight: '600' },
+    tabRail: {
+      gap: 22,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingRight: 18
+    },
+    tab: {
+      minHeight: 40,
+      justifyContent: 'center',
+      borderBottomColor: 'transparent',
+      borderBottomWidth: 2,
+      paddingBottom: 4
+    },
+    tabActive: { borderBottomColor: theme.primary },
+    tabText: { color: theme.muted, fontFamily, fontSize: 13, fontWeight: '500' },
+    tabTextActive: { color: theme.primary, fontWeight: '600' },
+    settingGroup: { gap: 7 },
+    panelTitle: { color: theme.ink, fontFamily, fontSize: 15, fontWeight: '600' }
+  });
+}
 
 export function PillRail({
   disabled = false,
@@ -10,7 +67,6 @@ export function PillRail({
   value,
   resetScrollKey,
   testIDPrefix,
-  styles,
   onChange
 }: {
   disabled?: boolean;
@@ -19,16 +75,14 @@ export function PillRail({
   value: string;
   resetScrollKey?: string | number;
   testIDPrefix?: string;
-  styles: SharedStyles;
   onChange: (value: string) => void;
 }) {
+  const { styles } = useReaderThemeStyles(createStyles);
   const isTabs = variant === 'tabs';
   const isSubtabs = variant === 'subtabs';
   const scrollRef = useRef<ScrollView>(null);
   useEffect(() => {
-    if (resetScrollKey !== undefined) {
-      scrollRef.current?.scrollTo({ x: 0, animated: false });
-    }
+    if (resetScrollKey !== undefined) scrollRef.current?.scrollTo({ x: 0, animated: false });
   }, [resetScrollKey]);
   return (
     <ScrollView
@@ -79,19 +133,18 @@ export function SettingRail({
   title,
   items,
   value,
-  styles,
   onChange
 }: {
   title: string;
   items: { value: string; label: string }[];
   value: string;
-  styles: SharedStyles;
   onChange: (value: string) => void;
 }) {
+  const { styles } = useReaderThemeStyles(createStyles);
   return (
     <View style={styles.settingGroup}>
       <Text style={styles.panelTitle}>{title}</Text>
-      <PillRail items={items} value={value} styles={styles} onChange={onChange} />
+      <PillRail items={items} value={value} onChange={onChange} />
     </View>
   );
 }

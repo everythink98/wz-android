@@ -1,18 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
-import { render } from '@testing-library/react-native';
+import { render } from '../render';
 import React from 'react';
 import { LoadingState } from '@/ui/controls/FeedbackStates';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
-
-const readerData = createEmptyReaderData();
-const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 
 describe('REG-A11Y-001 shared accessibility basics', () => {
   it('announces loading once as a polite busy status', async () => {
-    const view = await render(<LoadingState text="正在读取主题" styles={styles} theme={theme} />);
+    const view = await render(<LoadingState text="正在读取主题" />);
     const status = view.getByRole('status');
 
     expect(status.props).toMatchObject({

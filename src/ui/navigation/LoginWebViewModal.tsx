@@ -1,9 +1,9 @@
-import type { LoginWebViewStyles } from './loginWebViewStyles';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Modal, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { createLoginWebViewStyles } from './loginWebViewStyles';
 
 export function LoginWebViewModal({
   actions,
@@ -11,8 +11,6 @@ export function LoginWebViewModal({
   error,
   loading,
   loadingText,
-  styles,
-  theme,
   title,
   subtitle,
   visible,
@@ -23,13 +21,12 @@ export function LoginWebViewModal({
   error?: string;
   loading: boolean;
   loadingText: string;
-  styles: LoginWebViewStyles;
-  theme: ReaderTheme;
   title: string;
   subtitle: string;
   visible: boolean;
   onClose: () => void;
 }) {
+  const { styles, theme } = useReaderThemeStyles(createLoginWebViewStyles);
   const insets = useSafeAreaInsets();
 
   return (
@@ -40,7 +37,7 @@ export function LoginWebViewModal({
             <Text style={styles.loginWebViewTitle}>{title}</Text>
             <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text>
           </View>
-          <AppButton label="关闭" variant="ghost" styles={styles} onPress={onClose} />
+          <AppButton label="关闭" variant="ghost" onPress={onClose} />
         </View>
         {actions ? <View style={styles.loginWebViewToolbar}>{actions}</View> : null}
         {error ? (

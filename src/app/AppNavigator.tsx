@@ -48,8 +48,6 @@ function MainTabsHost({
               icon={item.icon}
               label={item.label}
               showBadge={item.value === 'more' && moreHasBadge}
-              styles={styles}
-              theme={theme}
             />
           )
         };

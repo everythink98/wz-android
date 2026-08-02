@@ -1,4 +1,3 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,7 +20,9 @@ import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-na
 import { X } from 'lucide-react-native';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/imagePreviewCatalog';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -62,8 +63,6 @@ type PreviewImageLoadMetrics = {
 type ImagePreviewModalProps = {
   preview: ImagePreviewList | null;
   nodeSeekMediaUserAgent?: string;
-  styles: SharedStyles;
-  theme: ReaderTheme;
   onClose: () => void;
   onSave: () => void;
   onSelect: (index: number) => void;
@@ -84,7 +83,7 @@ type PreviewPageProps = {
   onToggleChrome: () => void;
   onZoomGestureSettled: (index: number, scale: number) => void;
   onZoomGestureStart: (index: number) => void;
-  styles: SharedStyles;
+  styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   width: number;
 };
@@ -104,12 +103,11 @@ function ImagePreviewModalContent({
   preview,
   nodeSeekMediaUserAgent,
   mediaContext,
-  styles,
-  theme,
   onClose,
   onSave,
   onSelect
 }: ImagePreviewModalProps & { mediaContext: ForumMediaRequestContext }) {
+  const { styles, theme } = useReaderThemeStyles(createStyles);
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const previewItems = preview?.items || EMPTY_PREVIEW_ITEMS;
@@ -504,6 +502,60 @@ function ImagePreviewModalContent({
       </GestureHandlerRootView>
     </Modal>
   );
+}
+
+function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+  const fontFamily = fontFamilyValue(settings.fontFamily);
+  return StyleSheet.create({
+    imagePreviewOverlay: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#000000'
+    },
+    imagePreviewTopBar: {
+      position: 'absolute',
+      top: 10,
+      right: 14,
+      left: 14,
+      zIndex: 2,
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between'
+    },
+    imagePreviewCount: { color: theme.onOverlay, fontFamily, fontSize: 13, fontWeight: '600' },
+    imagePreviewTextButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 58,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: 'rgba(255, 255, 255, 0.14)'
+    },
+    imagePreviewButtonText: { color: theme.onOverlay, fontFamily, fontSize: 13, fontWeight: '700' },
+    imagePreviewClose: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: 'rgba(255, 255, 255, 0.14)'
+    },
+    imagePreviewScroll: { flex: 1, width: '100%' },
+    imagePreviewState: {
+      position: 'absolute',
+      alignSelf: 'center',
+      top: '46%',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      borderRadius: 10,
+      backgroundColor: 'rgba(0, 0, 0, 0.58)',
+      paddingHorizontal: 14,
+      paddingVertical: 11
+    },
+    imagePreviewStateText: { color: theme.onOverlay, fontFamily, fontSize: 13, fontWeight: '600' }
+  });
 }
 
 function PreviewPagerPage({

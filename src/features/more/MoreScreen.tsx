@@ -9,7 +9,7 @@ import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from 
 import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { ExpandablePanel, MenuButton } from '@/ui/controls/ExpandableControls';
 import { AppearancePanel } from './components/AppearancePanel';
@@ -213,7 +213,7 @@ export const MoreScreen = memo(function MoreScreen({
   onUpsertNetworkProxyProfile: (profile: NetworkProxyProfile) => Promise<void>;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
-  const { styles, theme } = useReaderStyles(createMoreScreenStyles);
+  const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [diagnosticExpanded, setDiagnosticExpanded] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
@@ -333,14 +333,12 @@ export const MoreScreen = memo(function MoreScreen({
                 <AppButton
                   variant="primary"
                   label={appUpdateDownloading ? '下载中' : '下载并安装'}
-                  styles={styles}
                   disabled={appUpdateBusy || appUpdateDownloading}
                   onPress={onDownloadAppUpdate}
                 />
                 <AppButton
                   tiny
                   label={appUpdateBusy ? '检查中' : '检查更新'}
-                  styles={styles}
                   disabled={appUpdateBusy || appUpdateDownloading}
                   onPress={onCheckAppUpdate}
                 />
@@ -349,7 +347,6 @@ export const MoreScreen = memo(function MoreScreen({
               <AppButton
                 tiny
                 label={appUpdateBusy ? '检查中' : '检查更新'}
-                styles={styles}
                 disabled={appUpdateBusy}
                 onPress={onCheckAppUpdate}
               />
@@ -434,8 +431,6 @@ export const MoreScreen = memo(function MoreScreen({
                   label="linux.do 等级"
                   value={levelMeta}
                   expanded={levelExpanded}
-                  styles={styles}
-                  theme={theme}
                   onPress={() => setLevelExpanded((value) => !value)}
                 />
                 {levelExpanded ? (
@@ -514,8 +509,6 @@ export const MoreScreen = memo(function MoreScreen({
                     label="查看等级"
                     value={xiaoyinsiLevelMeta}
                     expanded={xiaoyinsiLevelExpanded}
-                    styles={styles}
-                    theme={theme}
                     onPress={() => setXiaoyinsiLevelExpanded((value) => !value)}
                   />
                   {xiaoyinsiLevelExpanded ? (
@@ -547,8 +540,6 @@ export const MoreScreen = memo(function MoreScreen({
             icon={Server}
             label="服务器代理"
             value={networkProxySummary}
-            styles={styles}
-            theme={theme}
             onPress={() => onShowNetworkProxyPanelChange(true)}
           />
         </View>
@@ -573,8 +564,6 @@ export const MoreScreen = memo(function MoreScreen({
           meta={diagnosticBusy ? '正在生成' : '生成脱敏日志并分享'}
           icon={Bug}
           expanded={diagnosticExpanded}
-          styles={styles}
-          theme={theme}
           onExpandedChange={setDiagnosticExpanded}
         >
           <View style={styles.stack}>
@@ -583,7 +572,6 @@ export const MoreScreen = memo(function MoreScreen({
             </Text>
             <AppButton
               label={diagnosticBusy ? '正在生成' : '生成并分享诊断日志'}
-              styles={styles}
               disabled={diagnosticBusy}
               onPress={onExportDiagnosticLog}
             />
@@ -595,8 +583,6 @@ export const MoreScreen = memo(function MoreScreen({
           meta={backupBusy ? '处理中' : '文件导出和恢复'}
           icon={DatabaseBackup}
           expanded={backupExpanded}
-          styles={styles}
-          theme={theme}
           onExpandedChange={setBackupExpanded}
         >
           <BackupRestorePanel
@@ -612,8 +598,6 @@ export const MoreScreen = memo(function MoreScreen({
           meta={appearanceSummary(settings)}
           icon={Settings}
           expanded={showSettingsPanel}
-          styles={styles}
-          theme={theme}
           onExpandedChange={onShowSettingsPanelChange}
         >
           <AppearancePanel

@@ -196,7 +196,6 @@ export function ReplyComposer({
         compact
         label={item.label}
         variant={active ? 'primary' : 'ghost'}
-        styles={styles}
         disabled={actionBusy}
         onPress={onPress}
       />
@@ -404,14 +403,12 @@ export function ReplyComposer({
         <AppButton
           label={replyEditTarget ? '取消编辑' : replyTarget ? '取消楼层回复' : '收起回复'}
           variant="ghost"
-          styles={styles}
           disabled={actionBusy}
           onPress={() => onReplyComposerOpenChange(false)}
         />
         <AppButton
           label={submitLabel}
           variant={replyContent.trim() ? 'primary' : 'default'}
-          styles={styles}
           disabled={actionBusy || !replyContent.trim()}
           onPress={onSubmitReply}
         />

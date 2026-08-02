@@ -1,9 +1,46 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { useState, type ReactNode } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { androidRipple, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { pressWithFeedback } from './pressFeedback';
+
+export function createExpandableStyles(theme: ReaderTheme, settings: ReaderSettings) {
+  const fontFamily = fontFamilyValue(settings.fontFamily);
+  return StyleSheet.create({
+    group: {
+      gap: 8,
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 14,
+      paddingVertical: 12
+    },
+    groupList: {
+      gap: 7,
+      backgroundColor: 'transparent',
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderRadius: 0,
+      paddingHorizontal: 0,
+      paddingVertical: 12
+    },
+    menuButton: { alignItems: 'center', flexDirection: 'row', gap: 10, minHeight: 44 },
+    menuIcon: { alignItems: 'center', justifyContent: 'center', width: 30, height: 30 },
+    menuLabel: { color: theme.ink, fontFamily, fontSize: 15, fontWeight: '600' },
+    menuChevron: { marginLeft: 4, opacity: 0.45 },
+    menuChevronExpanded: { transform: [{ rotate: '180deg' }] },
+    header: { alignItems: 'center', flexDirection: 'row', gap: 10, minHeight: 44 },
+    stateIcon: { alignItems: 'center', justifyContent: 'center', width: 24, height: 32 },
+    body: { gap: 10, overflow: 'hidden' },
+    flex: { flex: 1 },
+    meta: { color: theme.muted, fontFamily, fontSize: 12, lineHeight: 17 },
+    panelTitle: { color: theme.ink, fontFamily, fontSize: 15, fontWeight: '600' },
+    disabled: { opacity: 0.45 }
+  });
+}
 
 export function MenuButton({
   disabled = false,
@@ -12,8 +49,6 @@ export function MenuButton({
   nested = false,
   value,
   expanded,
-  styles,
-  theme,
   onPress
 }: {
   disabled?: boolean;
@@ -22,10 +57,9 @@ export function MenuButton({
   nested?: boolean;
   value: string;
   expanded?: boolean;
-  styles: SharedStyles;
-  theme: ReaderTheme;
   onPress: () => void;
 }) {
+  const { styles, theme } = useReaderThemeStyles(createExpandableStyles);
   const Icon = icon;
   const Chevron = expanded === undefined ? ChevronRight : ChevronDown;
   const nestedActionColor = theme.primary;
@@ -35,7 +69,7 @@ export function MenuButton({
       accessibilityState={{ disabled }}
       android_ripple={nested ? androidRipple(theme.primarySoft) : undefined}
       disabled={disabled}
-      style={[styles.menuButton, disabled && styles.buttonDisabled]}
+      style={[styles.menuButton, disabled && styles.disabled]}
       onPress={() => pressWithFeedback(onPress)}
     >
       {nested ? null : (
@@ -66,8 +100,6 @@ export function ExpandablePanel({
   icon,
   meta,
   quiet = false,
-  styles,
-  theme,
   title,
   onExpandedChange
 }: {
@@ -77,11 +109,10 @@ export function ExpandablePanel({
   icon?: LucideIcon;
   meta?: string;
   quiet?: boolean;
-  styles: SharedStyles;
-  theme: ReaderTheme;
   title: string;
   onExpandedChange?: (expanded: boolean) => void;
 }) {
+  const { styles, theme } = useReaderThemeStyles(createExpandableStyles);
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
   const panelExpanded = expanded ?? internalExpanded;
   const Icon = icon;
@@ -99,7 +130,7 @@ export function ExpandablePanel({
         accessibilityRole="button"
         accessibilityState={{ expanded: panelExpanded }}
         android_ripple={androidRipple(theme.primarySoft)}
-        style={styles.expandableHeader}
+        style={styles.header}
         onPress={toggleExpanded}
       >
         {Icon ? (
@@ -115,13 +146,13 @@ export function ExpandablePanel({
             </Text>
           ) : null}
         </View>
-        <View style={styles.expandableStateIcon}>
+        <View style={styles.stateIcon}>
           <StateIcon size={18} color={theme.primary} strokeWidth={1.9} />
         </View>
       </Pressable>
       <View
         pointerEvents={panelExpanded ? 'auto' : 'none'}
-        style={[styles.expandableBody, { display: panelExpanded ? 'flex' : 'none' }]}
+        style={[styles.body, { display: panelExpanded ? 'flex' : 'none' }]}
       >
         {children}
       </View>

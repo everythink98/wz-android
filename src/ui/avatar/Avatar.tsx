@@ -1,4 +1,3 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
@@ -8,6 +7,9 @@ import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 
 import type { Source } from '@/domain/forum/models';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
+import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
 const MAX_IMAGE_RETRY_COUNT = 1;
 
@@ -35,16 +37,15 @@ export function Avatar({
   name,
   small,
   tiny,
-  styles,
   uri
 }: {
   contentSource: Source | null;
   name?: string;
   small?: boolean;
   tiny?: boolean;
-  styles: SharedStyles;
   uri?: string;
 }) {
+  const { styles } = useReaderThemeStyles(createStyles);
   const [imageFailed, setImageFailed] = useState(false);
   const [imageRetryCount, setImageRetryCount] = useState(0);
   const [svgXml, setSvgXml] = useState<string | null>(null);
@@ -88,12 +89,8 @@ export function Avatar({
   }, [imageRetryCount, loadSvgFallback, uri]);
 
   return (
-    <View
-      style={[styles.replyAvatar, tiny ? styles.feedAvatarTiny : small ? styles.replyAvatarSmall : styles.topicAvatar]}
-    >
-      <Text style={[styles.replyAvatarText, (small || tiny) && styles.replyAvatarSmallText]}>
-        {avatarInitial(name)}
-      </Text>
+    <View style={[styles.avatar, tiny ? styles.tiny : small ? styles.small : styles.topic]}>
+      <Text style={[styles.text, (small || tiny) && styles.smallText]}>{avatarInitial(name)}</Text>
       {svgXml ? (
         <View style={StyleSheet.absoluteFillObject}>
           <SvgXml xml={svgXml} width="100%" height="100%" />
@@ -102,7 +99,7 @@ export function Avatar({
         <ExpoImage
           key={`${mediaSessionIdentity}:${uri}:${imageRetryCount}`}
           source={imageSourceFromUrl(uri, { mediaContext })}
-          style={[styles.replyAvatarImage, StyleSheet.absoluteFillObject]}
+          style={[styles.image, StyleSheet.absoluteFillObject]}
           contentFit="cover"
           recyclingKey={`${mediaSessionIdentity}:${uri}:${imageRetryCount}`}
           cachePolicy={imageRetryCount > 0 ? 'none' : undefined}
@@ -111,4 +108,31 @@ export function Avatar({
       ) : null}
     </View>
   );
+}
+
+function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+  return StyleSheet.create({
+    avatar: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 34,
+      height: 34,
+      overflow: 'hidden',
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 17,
+      borderWidth: StyleSheet.hairlineWidth
+    },
+    small: { width: 32, height: 32, borderRadius: 16 },
+    tiny: { width: 24, height: 24, borderRadius: 12 },
+    topic: { width: 42, height: 42, borderRadius: 21 },
+    image: { width: '100%', height: '100%' },
+    text: {
+      color: theme.primary,
+      fontFamily: fontFamilyValue(settings.fontFamily),
+      fontSize: 13,
+      fontWeight: '700'
+    },
+    smallText: { fontSize: 11 }
+  });
 }

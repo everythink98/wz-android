@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { ScrollView } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppearancePanel } from './components/AppearancePanel';
 import { createMoreScreenStyles } from './styles';
 
@@ -12,7 +12,7 @@ export const ReadingSettingsScreen = memo(function ReadingSettingsScreen({
   settings: ReaderSettings;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
-  const { styles } = useReaderStyles(createMoreScreenStyles);
+  const { styles } = useReaderThemeStyles(createMoreScreenStyles);
   return (
     <ScrollView
       style={styles.content}

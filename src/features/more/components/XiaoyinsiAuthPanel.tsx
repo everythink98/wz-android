@@ -1,4 +1,4 @@
-import type { MoreAccountStyles } from '../accountStyles';
+import type { MoreScreenStyles } from '../styles';
 import { Alert, Text, View } from 'react-native';
 import type { XiaoyinsiAuthPhase } from '@/domain/session/accountCenter';
 import type { XiaoyinsiPendingAuthorization } from '@/sources/xiaoyinsi/auth';
@@ -30,7 +30,7 @@ export function XiaoyinsiAuthPanel({
   phase: XiaoyinsiAuthPhase;
   secondsRemaining: number;
   session: SiteSessionViewModel;
-  styles: MoreAccountStyles;
+  styles: MoreScreenStyles;
   theme: ReaderTheme;
   onBegin: () => void;
   onCancel: () => void;
@@ -67,21 +67,20 @@ export function XiaoyinsiAuthPanel({
             <Text style={styles.meta}>剩余 {countdownLabel(secondsRemaining)} · 返回阅坛后会自动继续检测</Text>
           </View>
           <View style={styles.actions}>
-            <AppButton label="复制验证码并前往授权页" variant="primary" styles={styles} onPress={onOpenBrowser} />
-            <AppButton label="取消" variant="ghost" styles={styles} onPress={onCancel} />
+            <AppButton label="复制验证码并前往授权页" variant="primary" onPress={onOpenBrowser} />
+            <AppButton label="取消" variant="ghost" onPress={onCancel} />
           </View>
         </>
       ) : null}
       {phase === 'cleanup' ? (
-        <AppButton label="重试本机清理" variant="primary" styles={styles} onPress={onBegin} />
+        <AppButton label="重试本机清理" variant="primary" onPress={onBegin} />
       ) : session.isLoggedIn ? (
         <View style={styles.actions}>
-          <AppButton tiny label="重新授权" variant="ghost" styles={styles} onPress={onBegin} />
+          <AppButton tiny label="重新授权" variant="ghost" onPress={onBegin} />
           <AppButton
             tiny
             label="撤销授权"
             variant="danger"
-            styles={styles}
             onPress={() =>
               Alert.alert('撤销小隐寺授权？', '服务器确认撤销后，阅坛才会删除本机 Token 和安全密钥。', [
                 { text: '取消', style: 'cancel' },
@@ -102,7 +101,6 @@ export function XiaoyinsiAuthPanel({
                   : '授权登录'
           }
           variant="primary"
-          styles={styles}
           onPress={onBegin}
         />
       ) : null}

@@ -118,8 +118,6 @@ export function AccountHost({
         loading={!webViewBlockMessage && loadingNodeImageAuthPage}
         loadingText="正在打开 NodeImage..."
         error={webViewBlockMessage || nodeImageAuthError}
-        styles={styles}
-        theme={theme}
         onClose={closeNodeImageAuthPanel}
       >
         {showNodeImageAuthPanel && nodeImageAuthDocument && !webViewBlockMessage ? (

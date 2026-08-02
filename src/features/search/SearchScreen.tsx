@@ -35,7 +35,7 @@ import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import type { SearchSessionNoticeItem } from '@/domain/session/siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '@/domain/session/siteSessionPrompts';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
 const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 50,
@@ -175,9 +175,7 @@ function LinuxDoAiControl({
         {statusText}
       </Text>
       {state.status === 'loading' ? <ActivityIndicator size="small" color={theme.primary} /> : null}
-      {state.status === 'error' ? (
-        <AppButton compact label="重试 AI 搜索" variant="ghost" styles={styles} onPress={onRetry} />
-      ) : null}
+      {state.status === 'error' ? <AppButton compact label="重试 AI 搜索" variant="ghost" onPress={onRetry} /> : null}
       <Pressable
         accessibilityRole="switch"
         accessibilityLabel="AI 搜索"
@@ -275,7 +273,7 @@ export const SearchScreen = memo(function SearchScreen({
   onToggleLinuxDoAiSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
 }) {
-  const { styles, theme } = useReaderStyles(createSearchStyles);
+  const { styles, theme } = useReaderThemeStyles(createSearchStyles);
   const internalListRef = useRef<FlashListRef<SearchListItem> | null>(null);
   const listRef = scrollRef || internalListRef;
   const autoLoadArmedRef = useRef(false);
@@ -344,9 +342,7 @@ export const SearchScreen = memo(function SearchScreen({
       <MemoizedTopicCard
         highlightQuery={query}
         readerState={getTopicListItemStateFromIndex(topicStateIndex, item)}
-        styles={styles}
         testID={testID}
-        theme={theme}
         topic={item}
         onOpenTopic={onOpenTopic}
       />
@@ -545,7 +541,6 @@ export const SearchScreen = memo(function SearchScreen({
             <AppButton
               label={paginationError ? `重试加载 ${item.group.label}` : `重试 ${item.group.label}`}
               variant="ghost"
-              styles={styles}
               disabled={busy || (paginationError && !retryPage)}
               onPress={() => {
                 if (paginationError) {
@@ -584,12 +579,12 @@ export const SearchScreen = memo(function SearchScreen({
         );
       }
       if (item.type === 'groupLoading') {
-        return <LoadingState text={`${item.group.label} 搜索中...`} styles={styles} theme={theme} />;
+        return <LoadingState text={`${item.group.label} 搜索中...`} />;
       }
       if (item.type === 'groupEmpty') {
         return (
           <View>
-            <EmptyText text={searchGroupEmptyText(item.group)} styles={styles} />
+            <EmptyText text={searchGroupEmptyText(item.group)} />
           </View>
         );
       }
@@ -670,17 +665,16 @@ export const SearchScreen = memo(function SearchScreen({
           items={feedSourceItems}
           value={searchSource}
           testIDPrefix="search-source"
-          styles={styles}
           onChange={changeSearchSource}
         />
-        {identityChecking ? <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} /> : null}
+        {identityChecking ? <LoadingState text="正在确认 L 站访问状态" /> : null}
         {identityError ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{identityError.message}</Text>
             <View style={styles.actions}>
-              {onRetryIdentity ? <AppButton label="重试检测" styles={styles} onPress={onRetryIdentity} /> : null}
+              {onRetryIdentity ? <AppButton label="重试检测" onPress={onRetryIdentity} /> : null}
               {searchSource === 'linuxdo' && onCheckLinuxDoStatus ? (
-                <AppButton label="检查 L 站状态" variant="ghost" styles={styles} onPress={onCheckLinuxDoStatus} />
+                <AppButton label="检查 L 站状态" variant="ghost" onPress={onCheckLinuxDoStatus} />
               ) : null}
             </View>
           </View>
@@ -836,17 +830,17 @@ export const SearchScreen = memo(function SearchScreen({
         ListFooterComponent={null}
         ListEmptyComponent={
           showSearchGroups || identityError ? null : searchBusy && hasSubmittedQuery ? (
-            <LoadingState text="正在搜索..." styles={styles} theme={theme} />
+            <LoadingState text="正在搜索..." />
           ) : !hasInputValue ? (
             showIdleRecentSearches ? null : (
-              <EmptyText text="输入关键词后开始搜索" styles={styles} />
+              <EmptyText text="输入关键词后开始搜索" />
             )
           ) : !hasSearchTerm ? (
-            <EmptyText text="输入关键词后开始搜索" styles={styles} />
+            <EmptyText text="输入关键词后开始搜索" />
           ) : !hasSubmittedQuery ? (
-            <EmptyText text="按键盘上的搜索键开始" styles={styles} />
+            <EmptyText text="按键盘上的搜索键开始" />
           ) : (
-            <EmptyText text="暂无搜索结果" styles={styles} />
+            <EmptyText text="暂无搜索结果" />
           )
         }
         renderItem={renderSearchListItem}

@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View
 } from 'react-native';
 import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
@@ -106,6 +107,7 @@ export function NetworkProxyModal({
   onTestProfile: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
   onUpsertProfile: (profile: NetworkProxyProfile) => Promise<void>;
 }) {
+  const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [draftMode, setDraftMode] = useState<'create' | 'edit' | null>(null);
@@ -355,7 +357,6 @@ export function NetworkProxyModal({
                 disabled={busy}
                 label="重置为直连"
                 variant="ghost"
-                styles={styles}
                 onPress={() => {
                   void executeProxyTask(() => onSetEnabled(false));
                 }}
@@ -391,7 +392,7 @@ export function NetworkProxyModal({
 
           <View style={[proxyStyles.card, { backgroundColor: cardColor }]}>
             <Text style={[proxyStyles.cardTitle, { color: accentColor }]}>代理连接</Text>
-            {!proxyState.profiles.length ? <EmptyText text="还没有代理配置" styles={styles} /> : null}
+            {!proxyState.profiles.length ? <EmptyText text="还没有代理配置" /> : null}
             {proxyState.profiles.map((profile) => {
               const active = profile.id === proxyState.activeId;
               const latency = testResults[profile.id];
@@ -515,7 +516,7 @@ export function NetworkProxyModal({
             <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
           </View>
           <ScrollView
-            style={styles.searchFilterBody}
+            style={[styles.searchFilterBody, { maxHeight: Math.max(320, Math.round(height * 0.58)) }]}
             contentContainerStyle={[styles.searchFilterBodyInner, proxyStyles.sheetBody]}
             keyboardShouldPersistTaps="handled"
           >
@@ -526,7 +527,6 @@ export function NetworkProxyModal({
                 { value: 'socks5', label: 'SOCKS5' }
               ]}
               value={draft.protocol}
-              styles={styles}
               onChange={(value) => setDraft((current) => ({ ...current, protocol: value as NetworkProxyProtocol }))}
             />
             <ProxyInput
@@ -586,15 +586,8 @@ export function NetworkProxyModal({
             </View>
           </ScrollView>
           <View style={styles.searchFilterActions}>
-            <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeDraft} />
-            <AppButton
-              compact
-              label={busy ? '保存中' : '确定'}
-              variant="primary"
-              styles={styles}
-              disabled={busy}
-              onPress={saveDraft}
-            />
+            <AppButton compact label="取消" variant="ghost" disabled={busy} onPress={closeDraft} />
+            <AppButton compact label={busy ? '保存中' : '确定'} variant="primary" disabled={busy} onPress={saveDraft} />
           </View>
         </ModalSheetFrame>
       </View>

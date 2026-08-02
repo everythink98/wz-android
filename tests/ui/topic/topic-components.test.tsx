@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, renderHook, within } from '@testing-library/react-native';
+import { renderHook } from '@testing-library/react-native';
+import { fireEvent, render, within } from '../render';
 import React, { type ComponentProps } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';

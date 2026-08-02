@@ -50,7 +50,7 @@ import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavigation';
 import { topicActionStateKey, type TopicActionStateKind } from '@/domain/forum/topicActionState';
-import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -292,7 +292,7 @@ export const TopicContentList = memo(function TopicContentList({
       unreadCount: unreadReplyCount
     }
   } = presentation;
-  const { styles, theme } = useReaderStyles(createTopicStyles);
+  const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const mediaContext = useMemo(
     () => ({
@@ -1220,7 +1220,6 @@ export const TopicContentList = memo(function TopicContentList({
                 <AppButton
                   label={replyComposerOpen ? '收起回复' : '写回复'}
                   variant={replyComposerOpen ? 'ghost' : 'default'}
-                  styles={styles}
                   onPress={() => onReplyComposerOpenChange(!replyComposerOpen)}
                 />
               ) : null}
@@ -1234,7 +1233,6 @@ export const TopicContentList = memo(function TopicContentList({
                 { value: 'newest', label: '倒序' }
               ]}
               value={replyFilter}
-              styles={styles}
               onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
             />
             {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
@@ -1247,15 +1245,7 @@ export const TopicContentList = memo(function TopicContentList({
                 placeholder="评论内查找"
                 placeholderTextColor={theme.muted}
               />
-              {commentQuery ? (
-                <IconButton
-                  icon={X}
-                  label="清空查找"
-                  styles={styles}
-                  theme={theme}
-                  onPress={() => onCommentQueryChange('')}
-                />
-              ) : null}
+              {commentQuery ? <IconButton icon={X} label="清空查找" onPress={() => onCommentQueryChange('')} /> : null}
             </View>
           </View>
         );
@@ -1264,7 +1254,7 @@ export const TopicContentList = memo(function TopicContentList({
       if (listItem.type === 'emptyReplies') {
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
-            <EmptyText text="暂无回复" styles={styles} />
+            <EmptyText text="暂无回复" />
           </View>
         );
       }
@@ -1357,7 +1347,7 @@ export const TopicContentList = memo(function TopicContentList({
   );
 
   if (!item) {
-    return <EmptyText text="未选择主题" styles={styles} />;
+    return <EmptyText text="未选择主题" />;
   }
 
   const topicHeaderStatusBadges = topicStatusBadges(item);
@@ -1391,7 +1381,7 @@ export const TopicContentList = memo(function TopicContentList({
               }
             }}
           >
-            <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} styles={styles} />
+            <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} />
             <View style={styles.topicAuthorMeta}>
               <View style={styles.replyAuthorNameRow}>
                 <Text style={styles.replyAuthor} numberOfLines={1}>
@@ -1488,7 +1478,6 @@ export const TopicContentList = memo(function TopicContentList({
                 <View style={[styles.topicFooter, topicColumnStyle]}>
                   <AppButton
                     label={loadingMoreReplies ? '正在加载...' : '加载更多回复'}
-                    styles={styles}
                     disabled={loadingMoreReplies}
                     onPress={requestReplyLoadMore}
                   />

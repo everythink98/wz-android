@@ -12,7 +12,7 @@ import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
-import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from './styles';
 import { ReplyComposerSheet } from './components/ReplyComposerSheet';
 import { TopicContentList } from './components/TopicContentList';
@@ -23,8 +23,7 @@ import type { TopicScreenPresentation } from './useTopicPresentation';
 const EMPTY_DISCOURSE_EMOJI_URLS: DiscourseEmojiUrlMap = {};
 
 export const TopicLoadingState = memo(function TopicLoadingState() {
-  const { styles, theme } = useReaderStyles(createTopicStyles);
-  return <LoadingState text="正在读取主题..." styles={styles} theme={theme} />;
+  return <LoadingState text="正在读取主题..." />;
 });
 
 export const TopicScreen = memo(function TopicScreen({ presentation }: { presentation: TopicScreenPresentation }) {
@@ -37,7 +36,7 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
       article: { error: topicError, selectedTopic, topic }
     }
   } = presentation;
-  const { styles, theme } = useReaderStyles(createTopicStyles);
+  const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const itemSource = topic?.source;
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
@@ -82,7 +81,7 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
   }, []);
 
   if (!item) {
-    return <EmptyText text="未选择主题" styles={styles} />;
+    return <EmptyText text="未选择主题" />;
   }
 
   const canWrite = decisionFor({ action: 'reply' }).allowed;
@@ -119,31 +118,21 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
           </Text>
           <View style={styles.actions}>
             {item.source === 'linuxdo' && chrome.identityBlocked ? (
-              <AppButton label="检查 L 站状态" styles={styles} onPress={chrome.verifyLinuxDo} />
+              <AppButton label="检查 L 站状态" onPress={chrome.verifyLinuxDo} />
             ) : null}
             {item.source === 'linuxdo' && !chrome.identityBlocked && topicError.kind === 'verification-required' ? (
-              <AppButton label="去验证" styles={styles} onPress={chrome.verifyLinuxDo} />
+              <AppButton label="去验证" onPress={chrome.verifyLinuxDo} />
             ) : null}
             {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? (
-              <AppButton label="去验证" styles={styles} onPress={chrome.verifyNodeSeek} />
+              <AppButton label="去验证" onPress={chrome.verifyNodeSeek} />
             ) : null}
-            <AppButton
-              label={chrome.identityBlocked ? '重试检测' : '重试'}
-              styles={styles}
-              onPress={chrome.refreshTopic}
-            />
+            <AppButton label={chrome.identityBlocked ? '重试检测' : '重试'} onPress={chrome.refreshTopic} />
           </View>
         </View>
       ) : null}
-      {topic && chrome.identityChecking ? (
-        <LoadingState text="正在确认 L 站访问状态" styles={styles} theme={theme} />
-      ) : null}
+      {topic && chrome.identityChecking ? <LoadingState text="正在确认 L 站访问状态" /> : null}
       {!topic && !topicError ? (
-        <LoadingState
-          text={chrome.identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'}
-          styles={styles}
-          theme={theme}
-        />
+        <LoadingState text={chrome.identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'} />
       ) : null}
     </>
   );
@@ -151,7 +140,7 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
   return (
     <View style={styles.topicScreenRoot}>
       <ScreenTopBar>
-        <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={chrome.back} />
+        <IconButton icon={ChevronLeft} compact ghost label="返回" onPress={chrome.back} />
         <ScreenTopBarTitle>
           {sourceLabel(item.source)}
           {item.category ? ' · ' + item.category : ''}
@@ -162,8 +151,6 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
             ghost
             icon={Star}
             label={chrome.favorite ? '已收藏' : '收藏'}
-            styles={styles}
-            theme={theme}
             active={chrome.favorite}
             activeColor={theme.favorite}
             onPress={chrome.toggleFavorite}
@@ -173,8 +160,6 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
             ghost
             icon={MoreHorizontal}
             label="更多操作"
-            styles={styles}
-            theme={theme}
             active={topicMenuOpen}
             onPress={() => setTopicMenuOpen((value) => !value)}
           />

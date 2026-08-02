@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, type ViewStyle, View } from 'react-native';
 import { X } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption } from '@/domain/forum/models';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
@@ -241,6 +241,7 @@ export type DiscourseFilterPickerController = ReturnType<typeof useDiscourseFilt
 export function DiscourseFilterPickers({
   controller,
   discourseDraft,
+  filterBodyStyle,
   styles,
   theme,
   toggleTag,
@@ -248,6 +249,7 @@ export function DiscourseFilterPickers({
 }: {
   controller: DiscourseFilterPickerController;
   discourseDraft: DiscourseSearchFilter | null;
+  filterBodyStyle: ViewStyle;
   styles: SearchStyles;
   theme: ReaderTheme;
   toggleTag: (name: string) => void;
@@ -282,26 +284,18 @@ export function DiscourseFilterPickers({
           />
         </View>
         <ScrollView
-          style={styles.searchFilterBody}
+          style={[styles.searchFilterBody, filterBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"
         >
-          {tags.loading ? <LoadingState text="正在加载标签..." styles={styles} theme={theme} /> : null}
+          {tags.loading ? <LoadingState text="正在加载标签..." /> : null}
           {tags.error ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{tags.error}</Text>
-              <AppButton
-                compact
-                label="重试标签候选"
-                variant="ghost"
-                styles={styles}
-                onPress={() => void tags.retry()}
-              />
+              <AppButton compact label="重试标签候选" variant="ghost" onPress={() => void tags.retry()} />
             </View>
           ) : null}
-          {!tags.loading && !tags.error && !tags.options.length ? (
-            <EmptyText text="没有匹配标签" styles={styles} />
-          ) : null}
+          {!tags.loading && !tags.error && !tags.options.length ? <EmptyText text="没有匹配标签" /> : null}
           {tags.options.map((option) => {
             const selected = Boolean(discourseDraft?.tags.includes(option.name));
             return (
@@ -323,7 +317,7 @@ export function DiscourseFilterPickers({
           })}
         </ScrollView>
         <View style={styles.searchFilterActions}>
-          <AppButton compact label="完成" variant="primary" styles={styles} onPress={tags.close} />
+          <AppButton compact label="完成" variant="primary" onPress={tags.close} />
         </View>
       </ModalSheetFrame>
       <ModalSheetFrame backdropLabel="关闭分类选择" visible={category.visible} onRequestClose={category.close}>
@@ -352,7 +346,7 @@ export function DiscourseFilterPickers({
           />
         </View>
         <ScrollView
-          style={styles.searchFilterBody}
+          style={[styles.searchFilterBody, filterBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"
         >
@@ -424,26 +418,20 @@ export function DiscourseFilterPickers({
           />
         </View>
         <ScrollView
-          style={styles.searchFilterBody}
+          style={[styles.searchFilterBody, filterBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"
         >
-          {users.loading ? <LoadingState text="正在加载作者..." styles={styles} theme={theme} /> : null}
+          {users.loading ? <LoadingState text="正在加载作者..." /> : null}
           {users.error ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{users.error}</Text>
-              <AppButton
-                compact
-                label="重试作者候选"
-                variant="ghost"
-                styles={styles}
-                onPress={() => void users.retry()}
-              />
+              <AppButton compact label="重试作者候选" variant="ghost" onPress={() => void users.retry()} />
             </View>
           ) : null}
-          {!users.query.trim() ? <EmptyText text="输入用户名后选择" styles={styles} /> : null}
+          {!users.query.trim() ? <EmptyText text="输入用户名后选择" /> : null}
           {!users.loading && !users.error && users.query.trim() && !users.options.length ? (
-            <EmptyText text="没有匹配用户" styles={styles} />
+            <EmptyText text="没有匹配用户" />
           ) : null}
           {users.options.map((user) => (
             <Pressable

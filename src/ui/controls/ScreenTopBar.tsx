@@ -4,7 +4,7 @@ import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+export function createScreenTopBarStyles(theme: ReaderTheme, settings: ReaderSettings) {
   return StyleSheet.create({
     bar: {
       alignItems: 'center',
@@ -36,12 +36,12 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
 }
 
 export function ScreenTopBar({ children }: { children: ReactNode }) {
-  const { styles } = useReaderThemeStyles(createStyles);
+  const { styles } = useReaderThemeStyles(createScreenTopBarStyles);
   return <View style={styles.bar}>{children}</View>;
 }
 
 export function ScreenTopBarTitle({ children }: { children: ReactNode }) {
-  const { styles } = useReaderThemeStyles(createStyles);
+  const { styles } = useReaderThemeStyles(createScreenTopBarStyles);
   return (
     <Text style={styles.title} numberOfLines={1}>
       {children}
@@ -50,6 +50,6 @@ export function ScreenTopBarTitle({ children }: { children: ReactNode }) {
 }
 
 export function ScreenTopBarActions({ children }: { children: ReactNode }) {
-  const { styles } = useReaderThemeStyles(createStyles);
+  const { styles } = useReaderThemeStyles(createScreenTopBarStyles);
   return <View style={styles.actions}>{children}</View>;
 }

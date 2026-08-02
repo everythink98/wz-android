@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render } from '../render';
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -63,9 +63,7 @@ describe('Topic card visible behavior', () => {
       <TopicCard
         highlightQuery="自动化"
         readerState={{ favorite: true, listDensity: 'loose', read: true }}
-        styles={styles}
         testID="real-topic-card"
-        theme={theme}
         topic={topic}
         onOpenTopic={onOpenTopic}
       />
@@ -102,9 +100,7 @@ describe('Topic card visible behavior', () => {
             <Text>取消</Text>
           </Pressable>
         )}
-        styles={styles}
         testID="real-topic-card"
-        theme={theme}
         topic={topic}
         onOpenTopic={onOpenTopic}
       />

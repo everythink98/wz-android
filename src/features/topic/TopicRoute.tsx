@@ -344,8 +344,6 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
         <ImagePreviewModal
           preview={imagePreviewController.imagePreview}
           nodeSeekMediaUserAgent={runtime.nodeSeekMediaUserAgent}
-          styles={runtime.readerStyle.sharedStyles}
-          theme={runtime.readerStyle.theme}
           onClose={imagePreviewController.closeImagePreview}
           onSave={imagePreviewController.savePreviewImage}
           onSelect={imagePreviewController.selectPreviewImage}

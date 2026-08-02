@@ -118,27 +118,19 @@ export function YaohuoLoginPanel({
         loading={!webViewBlockMessage && loadingYaohuoLoginPage}
         loadingText="正在打开妖火..."
         error={webViewBlockMessage || webViewError}
-        styles={styles}
-        theme={theme}
         onClose={() => onShowYaohuoLoginPanelChange(false)}
         actions={
           <View style={styles.actions}>
             {credentialSaved ? (
               <AppButton
                 label="填入已保存登录信息"
-                styles={styles}
                 disabled={credentialFillPending}
                 onPress={onRequestCredentialFill}
               />
             ) : null}
-            <AppButton
-              label={checking ? '检测中' : '检测登录'}
-              styles={styles}
-              disabled={checking}
-              onPress={onCheckYaohuoLogin}
-            />
-            <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearYaohuoLogin} />
-            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={refreshWebView} />
+            <AppButton label={checking ? '检测中' : '检测登录'} disabled={checking} onPress={onCheckYaohuoLogin} />
+            <AppButton label="清除登录" variant="danger" onPress={onClearYaohuoLogin} />
+            <AppButton label="刷新页面" variant="ghost" onPress={refreshWebView} />
           </View>
         }
       >

@@ -9,22 +9,20 @@ import { createSearchStyles } from '@/features/search/styles';
 import { createTopicStyles } from '@/features/topic/styles';
 import { createHtmlRendererStyles } from '@/features/topic/rendering/htmlStyles';
 import { createUserStyles } from '@/features/user/styles';
-import { createSharedStyles } from '@/ui/theme/sharedStyles';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 
-export function createTestStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight: number) {
-  const sharedStyles = createSharedStyles(theme, settings, windowHeight);
+export function createTestStyles(theme: ReaderTheme, settings: ReaderSettings, _windowHeight: number) {
   return Object.assign(
     {},
-    createAppStyles(sharedStyles, theme),
-    createMoreAccountStyles(sharedStyles, theme, settings),
-    createLoginWebViewStyles(sharedStyles, theme, settings),
-    createFeedStyles(sharedStyles, theme, settings),
-    createLibraryStyles(sharedStyles, theme, settings),
-    createMoreStyles(sharedStyles, theme, settings),
-    createSearchStyles(sharedStyles, theme, settings),
-    createTopicStyles(sharedStyles, theme, settings),
+    createAppStyles(theme),
+    createMoreAccountStyles(theme, settings),
+    createLoginWebViewStyles(theme, settings),
+    createFeedStyles(theme, settings),
+    createLibraryStyles(theme, settings),
+    createMoreStyles(theme, settings),
+    createSearchStyles(theme, settings),
+    createTopicStyles(theme, settings),
     createHtmlRendererStyles(settings, theme),
-    createUserStyles(sharedStyles, theme, settings)
+    createUserStyles(theme, settings)
   );
 }

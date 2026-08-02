@@ -91,7 +91,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-03`、`FEED-04` |
 | 用户症状 | 横滑优化后 Feed 条目省略头像、图标、徽章背景、标签层级和点击/已读效果，并把多类信息压成单行；内容虽仍在字符串里，实际列表已不是优化前的样式。 |
 | 触发条件 | Feed 给共享 `TopicCard` 传入 `feedLayout`，走一棵专用 flat render tree；对应测试只验证合并文本，反而把产品回退固化为性能契约。 |
-| 根因 seam | `src/features/feed/FeedScreen.tsx` 到 `src/ui/topic/TopicCard.tsx` 的 presentation 分叉，以及 `src/ui/theme/sharedStyles.ts` 的 Feed 专用扁平样式。 |
+| 根因 seam | `src/features/feed/FeedScreen.tsx` 到 `src/ui/topic/TopicCard.tsx` 的 presentation 分叉，以及 `TopicCard` 自持的扁平列表样式。 |
 | 必须保持的行为 | Feed 与其他 Topic 列表复用同一完整 rich TopicCard；性能实现只能改变用户不可见的调度、缓存或绘制方式，不得合并、隐藏、截断或重排既有信息，也不得删除 Avatar、徽章/标签背景、统计 icon、整卡已读状态和 ripple。 |
 | 精确失败 oracle | `tests/ui/feed/feed-screen.test.tsx` 用真实 Feed scene 同时断言独立来源/分类/访问徽章、前三个标签与 `+N`、摘要、作者头像/等级/收藏/同链、回复/浏览统计及整卡已读样式。该测试在 flat 分支上必须失败，并在完整 TopicCard 上通过。 |
 | 最低可靠自动测试层 | `UI_PASS`：必须经过 FeedScreen 到 TopicCard 的真实渲染边界；TopicCard 单独通过或 DTO 字段仍存在都不能证明 Feed 没有选用另一套 presentation。 |
@@ -1334,7 +1334,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
 | 用户症状 | 调整评论引用卡片后，主题正文里的引用也跟着改变；默认简介和展开后的完整帖子混在一起，或展开后仍只看到简介。评论最外层还可能被误改成逐条卡片。 |
 | 触发条件 | 正文引用与评论引用强行共用展示组件、只按楼层缓存被引内容，或修改共享 HTML/样式后只回归当前评论入口。不同主题存在相同楼层号时更容易串入错误帖子。 |
-| 根因 seam | `src/features/topic/components/TopicContentList.tsx`、`src/features/topic/components/TopicBodyQuoteCard.tsx` 与 `src/features/topic/components/ReplyItem.tsx` 的两套展示入口；`src/domain/forum/quotedPosts.ts`、`src/features/topic/useTopicController.ts`、`src/features/topic/useTopicSessionController.ts` 的引用标识、加载和 session 缓存；`src/sources/linuxdo/reader.ts` 的简介/完整帖数据边界；`src/ui/theme/sharedStyles.ts` 与 `TopicContentBlock` 的四站回复间距。 |
+| 根因 seam | `src/features/topic/components/TopicContentList.tsx`、`src/features/topic/components/TopicBodyQuoteCard.tsx` 与 `src/features/topic/components/ReplyItem.tsx` 的两套展示入口；`src/domain/forum/quotedPosts.ts`、`src/features/topic/useTopicController.ts`、`src/features/topic/useTopicSessionController.ts` 的引用标识、加载和 session 缓存；`src/sources/linuxdo/reader.ts` 的简介/完整帖数据边界；`src/features/topic/styles.ts` 与 `TopicContentBlock` 的四站回复间距。 |
 | 必须保持的行为 | 正文引用和评论引用分别实现并分别验收：默认只展示原站简介，展开后追加真实完整帖子；已加载的同主题楼层可直接复用，未加载或跨主题 linux.do 引用按来源、主题 id、帖子号读取；缓存不能只按楼层。评论仍是透明平铺列表，仅引用区域是卡片；正文、签名/留言、reaction/统计/感谢、操作栏和分隔线的间距不能叠加失衡。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 分别断言正文跨主题引用和评论同主题引用的简介/完整帖边界；`src/domain/forum/quotedPosts.test.ts` 固定跨主题同楼层缓存隔离；`tests/ui/topic/topic-components.test.tsx` 独立断言 `TopicBodyQuoteCard` 与 `ReplyItem` 默认只见简介、展开后才见匹配的完整帖且错误主题内容不可见；`tests/integration/style-ownership.test.ts` 固定评论外层无卡片圆角、保留分隔线，并固定签名、统计和操作栏的间距契约。 |
 | 最低可靠自动测试层 | 数据边界和缓存键使用 `UNIT_PASS`；正文引用与评论引用的独立可见行为至少使用 `UI_PASS`。四站实际 HTML、字体和末尾内容造成的视觉间距仍需要 `LIVE_PASS`。 |
@@ -3551,7 +3551,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` |
 | 用户症状 | 只要求调整评论纵向留白后，评论正文却向左扩张到头像列下方，签名、引用、投票和操作区也随正文一起铺满；相邻评论之间的纵向节奏正确，但左右布局已不是原来的样式。 |
 | 触发条件 | 同一提交把 `replyContentArea.paddingLeft` 从 `42` 改成 `0`，又把回复 HTML 宽度从 `contentWidth - 42` 改成完整 `contentWidth`；新增测试随后把“full column”错误地固化为契约。`v1.3.83` 尚未包含，`v1.3.84` 首次发布该回归。 |
-| 根因 seam | `src/features/topic/components/ReplyItem.tsx` 的 `replyContentWidth` 与 `src/ui/theme/sharedStyles.ts` 的 `replyContentArea`。普通回复的引用、回复目标、正文、投票、签名/留言、reaction/统计/感谢、采纳状态和操作栏都在该容器内；主楼、评论头部、系统事件、User 回复活动和 Reply composer 不经过该容器。 |
+| 根因 seam | `src/features/topic/components/ReplyItem.tsx` 的 `replyContentWidth` 与 `src/features/topic/styles.ts` 的 `replyContentArea`。普通回复的引用、回复目标、正文、投票、签名/留言、reaction/统计/感谢、采纳状态和操作栏都在该容器内；主楼、评论头部、系统事件、User 回复活动和 Reply composer 不经过该容器。 |
 | 必须保持的行为 | 普通评论正文容器保留左侧 `42px`、右侧 `0` 的横向缩进，HTML 可用宽度同步为 `Math.max(220, contentWidth - 42)`；主楼继续使用完整列宽。`replyCard` 的顶部 `16`、底部 `8`、内部 `gap: 8`，以及签名、统计、感谢、采纳提示和操作栏的现有纵向几何均保持不变。 |
 | 精确失败 oracle | `tests/integration/style-ownership.test.ts` 的 `REG-TOPIC-047` 同时固定 `paddingLeft: 42`、`paddingRight: 0` 和现有纵向数值；`tests/ui/topic/topic-components.test.tsx` 通过真实 `ReplyItem` 给出 `contentWidth: 360`，要求评论正文与签名 HTML 宽度均为 `318`，而独立主楼正文仍为 `360`。修复前两条用例分别收到 `paddingLeft: 0` 与 `width: 360`。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：theme test 固定容器几何，RNTL 固定真实 ReplyItem 到 HTML renderer 的宽度；只检查源码数字或单独渲染 HTML 不能证明入口接线正确。 |

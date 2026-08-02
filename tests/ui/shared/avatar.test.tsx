@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '../render';
 import React from 'react';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 
 type AvatarSvgLoader = typeof import('@/platform/media/avatarImages').loadRemoteAvatarSvgText;
 const mockLoadRemoteAvatarSvgText = jest.fn<AvatarSvgLoader>();
@@ -36,10 +33,6 @@ jest.mock('react-native-svg', () => {
   };
 });
 
-const readerData = createEmptyReaderData();
-const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
-
 afterEach(() => {
   jest.clearAllMocks();
 });
@@ -49,7 +42,7 @@ describe('Avatar image fallback', () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
 
     const view = await render(
-      <Avatar contentSource="nodeseek" name="Alice" styles={styles} uri="https://www.nodeseek.com/avatar/58159.png" />
+      <Avatar contentSource="nodeseek" name="Alice" uri="https://www.nodeseek.com/avatar/58159.png" />
     );
 
     expect(view.getByTestId('native-avatar')).toBeTruthy();
@@ -59,7 +52,7 @@ describe('Avatar image fallback', () => {
   it('retries the native image once before rendering the SVG fallback', async () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue('<svg><path /></svg>');
     const uri = 'https://www.nodeseek.com/avatar/58160.png';
-    const view = await render(<Avatar contentSource="nodeseek" name="Alice" styles={styles} uri={uri} />);
+    const view = await render(<Avatar contentSource="nodeseek" name="Alice" uri={uri} />);
 
     await fireEvent(view.getByTestId('native-avatar'), 'error');
     expect(view.getByTestId('native-avatar')).toBeTruthy();
@@ -92,7 +85,7 @@ describe('Avatar image fallback', () => {
     const secondUri = 'https://www.nodeseek.com/avatar/58162.png';
     const avatar = (uri: string, sessionEpoch: number) => (
       <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: sessionEpoch }}>
-        <Avatar contentSource="nodeseek" name="Alice" styles={styles} uri={uri} />
+        <Avatar contentSource="nodeseek" name="Alice" uri={uri} />
       </ForumSessionEpochProvider>
     );
     const view = await render(avatar(firstUri, 0));
@@ -122,7 +115,7 @@ describe('Avatar image fallback', () => {
   it('shows the text initial when the native image and SVG fallback both fail', async () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
     const view = await render(
-      <Avatar contentSource="nodeseek" name="Bob" styles={styles} uri="https://www.nodeseek.com/avatar/58163.png" />
+      <Avatar contentSource="nodeseek" name="Bob" uri="https://www.nodeseek.com/avatar/58163.png" />
     );
 
     await fireEvent(view.getByTestId('native-avatar'), 'error');

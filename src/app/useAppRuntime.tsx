@@ -36,8 +36,7 @@ export function useAppRuntime() {
   const { fontScale } = readerData.settings;
   const { appStyles, contentWidth, navigationTheme, readerStyleContext, theme } = useAppTheme(
     readerData.settings,
-    width,
-    height
+    width
   );
   const networkRuntime = useNetworkProxyRuntime({ notify });
   const {

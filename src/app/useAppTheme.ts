@@ -2,12 +2,11 @@ import { useDeferredValue, useMemo } from 'react';
 import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
-import { createSharedStyles } from '@/ui/theme/sharedStyles';
 import { contentWidthValue, createTheme } from '@/ui/theme/tokens';
 import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 import { createAppStyles } from './styles';
 
-export function useAppTheme(settings: ReaderSettings, width: number, height: number) {
+export function useAppTheme(settings: ReaderSettings, width: number) {
   const deferredFontScale = useDeferredValue(settings.fontScale);
   const theme = useMemo(() => createTheme(settings), [settings]);
   const navigationTheme = useMemo(() => {
@@ -27,18 +26,14 @@ export function useAppTheme(settings: ReaderSettings, width: number, height: num
     };
   }, [theme]);
   const styleSettings = useMemo(() => ({ ...settings, fontScale: deferredFontScale }), [deferredFontScale, settings]);
-  const sharedStyles = useMemo(() => createSharedStyles(theme, styleSettings, height), [height, styleSettings, theme]);
-  const loginWebViewStyles = useMemo(
-    () => createLoginWebViewStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
+  const loginWebViewStyles = useMemo(() => createLoginWebViewStyles(theme, styleSettings), [styleSettings, theme]);
   const appStyles = useMemo(
-    () => Object.assign(createAppStyles(sharedStyles, theme), loginWebViewStyles),
-    [loginWebViewStyles, sharedStyles, theme]
+    () => Object.assign(createAppStyles(theme), loginWebViewStyles),
+    [loginWebViewStyles, theme]
   );
   const readerStyleContext = useMemo<ReaderStyleContextValue>(
-    () => ({ settings: styleSettings, sharedStyles, theme }),
-    [sharedStyles, styleSettings, theme]
+    () => ({ settings: styleSettings, theme }),
+    [styleSettings, theme]
   );
 
   return {

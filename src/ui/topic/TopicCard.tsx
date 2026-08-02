@@ -1,6 +1,5 @@
-import type { SharedStyles } from '@/ui/theme/sharedStyles';
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
-import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
+import { Pressable, StyleSheet, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle } from 'lucide-react-native';
 import type { Topic } from '@/domain/forum/models';
@@ -11,10 +10,14 @@ import {
   sourceBadgeColorStyle,
   topicTagColorStyle,
   topicTagTextColorStyle,
+  alphaColor,
+  fontFamilyValue,
   type ReaderTheme
 } from '@/ui/theme/tokens';
 import type { TopicListItemState } from '@/domain/forum/topicListItemState';
 import { Avatar } from '@/ui/avatar/Avatar';
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
 
@@ -24,9 +27,7 @@ type TopicCardProps = {
   renderTrailingAction?: (topic: Topic) => ReactNode;
   topic: Topic;
   readerState: TopicListItemState;
-  styles: SharedStyles;
   testID?: string;
-  theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
 };
 
@@ -36,9 +37,7 @@ function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) 
     previous.hideReplyCount === next.hideReplyCount &&
     previous.renderTrailingAction === next.renderTrailingAction &&
     previous.onOpenTopic === next.onOpenTopic &&
-    previous.styles === next.styles &&
     previous.testID === next.testID &&
-    previous.theme === next.theme &&
     previous.readerState.favorite === next.readerState.favorite &&
     previous.readerState.read === next.readerState.read &&
     previous.readerState.listDensity === next.readerState.listDensity &&
@@ -77,11 +76,10 @@ export function TopicCard({
   renderTrailingAction,
   topic,
   readerState,
-  styles,
   testID,
-  theme,
   onOpenTopic
 }: TopicCardProps) {
+  const { styles, theme } = useReaderThemeStyles(createStyles);
   const { getMappingKey } = useMappingHelper();
   const openTopicPress = useCallback(() => {
     onOpenTopic(topic);
@@ -166,7 +164,7 @@ export function TopicCard({
         ) : null}
         <View style={[styles.topicFooterRow, readerState.read && styles.topicCardRead]}>
           <View style={styles.topicAuthorChip}>
-            <Avatar contentSource={topic.source} name={topic.author} uri={topic.authorAvatar} tiny styles={styles} />
+            <Avatar contentSource={topic.source} name={topic.author} uri={topic.authorAvatar} tiny />
             <Text style={styles.topicAuthorName} numberOfLines={1}>
               {authorMeta}
             </Text>
@@ -192,3 +190,139 @@ export function TopicCard({
 }
 
 export const MemoizedTopicCard = memo(TopicCard, topicCardPropsAreEqual);
+
+function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+  const fontFamily = fontFamilyValue(settings.fontFamily);
+  const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
+  const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
+  return StyleSheet.create({
+    topicRowShell: { position: 'relative', overflow: 'hidden', width: '100%', backgroundColor: theme.surface },
+    topicCardPressable: {
+      gap: 10,
+      paddingHorizontal: 16,
+      paddingTop: densityPadding + 2,
+      paddingBottom: 14
+    },
+    topicCardRead: { opacity: 0.72 },
+    topicCardHead: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+    topicCardHeadMeta: { alignItems: 'center', flexDirection: 'row', flexShrink: 0, gap: 4 },
+    topicBadgeRow: { flex: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    topicSourceBadge: {
+      overflow: 'hidden',
+      color: theme.ink,
+      fontFamily,
+      fontSize: 11,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 16,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 7,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      textAlignVertical: 'center'
+    },
+    topicCategoryBadge: {
+      overflow: 'hidden',
+      color: theme.muted,
+      fontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16,
+      backgroundColor: 'transparent',
+      borderColor: theme.line,
+      borderRadius: 7,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      textAlignVertical: 'center'
+    },
+    timeText: { flexShrink: 0, color: theme.muted, fontFamily, fontSize: 12 },
+    cardTitle: {
+      color: theme.ink,
+      fontFamily,
+      fontSize: Math.round(17 * listFontScale),
+      fontWeight: '600',
+      letterSpacing: 0,
+      lineHeight: Math.round(24 * listFontScale)
+    },
+    excerpt: { color: theme.muted, fontFamily, fontSize: 12, lineHeight: 18 },
+    highlightText: { color: theme.ink, backgroundColor: alphaColor(theme.primary, theme.dark ? 0.28 : 0.16) },
+    topicAccessBadge: {
+      alignSelf: 'flex-start',
+      overflow: 'hidden',
+      color: theme.danger,
+      fontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16,
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
+      borderColor: alphaColor(theme.danger, 0.34),
+      borderRadius: 6,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      textAlignVertical: 'center'
+    },
+    topicFooterRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 10,
+      marginTop: 4
+    },
+    topicAuthorChip: { flex: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', gap: 7 },
+    topicAuthorName: {
+      flexShrink: 1,
+      color: theme.muted,
+      fontFamily,
+      fontSize: 13,
+      fontWeight: '500',
+      includeFontPadding: false
+    },
+    topicStatGroup: { flexShrink: 0, alignItems: 'center', flexDirection: 'row', gap: 14 },
+    topicStatItem: { alignItems: 'center', flexDirection: 'row', gap: 4 },
+    topicStatText: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: 13,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    topicTagRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingTop: 2 },
+    topicTagPill: {
+      alignItems: 'center',
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      borderRadius: 6,
+      borderWidth: 0,
+      justifyContent: 'center',
+      minHeight: 20,
+      paddingHorizontal: 5,
+      paddingVertical: 1
+    },
+    topicTagText: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 14,
+      textAlignVertical: 'center'
+    },
+    topicTagMorePill: { backgroundColor: 'transparent', borderColor: 'transparent' },
+    topicTagMoreText: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16,
+      textAlignVertical: 'center'
+    }
+  });
+}

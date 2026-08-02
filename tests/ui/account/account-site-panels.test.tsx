@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '../render';
 import React, { type ComponentProps } from 'react';
 import { Text, View } from 'react-native';
 import { LinuxDoVerifyModal } from '@/features/account/components/LinuxDoVerifyModal';
@@ -266,8 +266,6 @@ describe('Account site panels', () => {
         error="页面加载失败"
         loading
         loadingText="正在打开登录页"
-        styles={styles}
-        theme={theme}
         title="站点登录"
         subtitle="未登录"
         visible

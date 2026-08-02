@@ -133,15 +133,7 @@ export function NodeSeekLoginPanel({
   return (
     <>
       {nodeSeekSession.canWrite ? (
-        <MenuButton
-          nested
-          icon={CheckCircle}
-          label="NodeSeek 签到"
-          value="使用本机登录 Cookie"
-          styles={styles}
-          theme={theme}
-          onPress={onCheckIn}
-        />
+        <MenuButton nested icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" onPress={onCheckIn} />
       ) : null}
       <MenuButton
         nested
@@ -149,31 +141,22 @@ export function NodeSeekLoginPanel({
         label="NodeImage API Key"
         value={nodeImageApiKeySaved ? '已保存，NodeSeek 图片上传可用' : '未保存，NodeSeek 图片上传不可用'}
         expanded={showNodeImagePanel}
-        styles={styles}
-        theme={theme}
         onPress={() => setShowNodeImagePanel((value) => !value)}
       />
       {showNodeImagePanel ? (
         <View style={styles.stack}>
           <Text style={styles.meta}>优先复用 NodeImage 登录态；明确失效时才连接 NodeSeek。手动粘贴只作备用。</Text>
           <View style={styles.actions}>
-            <AppButton
-              label="获取 / 恢复授权"
-              styles={styles}
-              disabled={nodeImageApiKeyBusy}
-              onPress={onAuthorizeNodeImageApiKey}
-            />
+            <AppButton label="获取 / 恢复授权" disabled={nodeImageApiKeyBusy} onPress={onAuthorizeNodeImageApiKey} />
             <AppButton
               label="清除 Key"
               variant="ghost"
-              styles={styles}
               disabled={nodeImageApiKeyBusy || !nodeImageApiKeySaved}
               onPress={onClearNodeImageApiKey}
             />
             <AppButton
               label={showManualNodeImageKey ? '收起手动备用' : '手动粘贴备用'}
               variant="ghost"
-              styles={styles}
               onPress={() => setShowManualNodeImageKey((value) => !value)}
             />
           </View>
@@ -193,7 +176,6 @@ export function NodeSeekLoginPanel({
               <View style={styles.actions}>
                 <AppButton
                   label={nodeImageApiKeyBusy ? '保存中' : '保存 Key'}
-                  styles={styles}
                   disabled={nodeImageApiKeyBusy || !nodeImageApiKeyDraft.trim()}
                   onPress={() => {
                     onSaveNodeImageApiKey(nodeImageApiKeyDraft);
@@ -212,15 +194,12 @@ export function NodeSeekLoginPanel({
         loading={!webViewBlockMessage && loadingLoginPage}
         loadingText="正在打开 NodeSeek..."
         error={webViewBlockMessage || webViewError}
-        styles={styles}
-        theme={theme}
         onClose={() => onShowLoginPanelChange(false)}
         actions={
           <View style={styles.actions}>
             {credentialSaved ? (
               <AppButton
                 label="填入已保存登录信息"
-                styles={styles}
                 disabled={credentialFillPending}
                 onPress={onRequestCredentialFill}
               />
@@ -228,12 +207,11 @@ export function NodeSeekLoginPanel({
             <AppButton
               testID={webViewSettledForReplay || webViewBlockMessage ? 'nodeseek-login-webview-settled' : undefined}
               label={checking ? '检测中' : '检测登录'}
-              styles={styles}
               disabled={checking}
               onPress={onCheckLogin}
             />
-            <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLogin} />
-            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={refreshWebView} />
+            <AppButton label="清除登录" variant="danger" onPress={onClearLogin} />
+            <AppButton label="刷新页面" variant="ghost" onPress={refreshWebView} />
           </View>
         }
       >

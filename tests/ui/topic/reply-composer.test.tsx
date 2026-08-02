@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render } from '../render';
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';

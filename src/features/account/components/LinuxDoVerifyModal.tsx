@@ -109,27 +109,15 @@ export function LinuxDoVerifyModal({
       loading={!webViewBlockMessage && loadingLinuxDoPage}
       loadingText="正在打开 linux.do..."
       error={webViewBlockMessage || linuxDoWebViewError}
-      styles={styles}
-      theme={theme}
       onClose={() => onShowLinuxDoPanelChange(false)}
       actions={
         <View style={styles.actions}>
           {credentialSaved ? (
-            <AppButton
-              label="填入已保存登录信息"
-              styles={styles}
-              disabled={credentialFillPending}
-              onPress={onRequestCredentialFill}
-            />
+            <AppButton label="填入已保存登录信息" disabled={credentialFillPending} onPress={onRequestCredentialFill} />
           ) : null}
-          <AppButton
-            label={checking ? '检测中' : '检测状态'}
-            styles={styles}
-            disabled={checking}
-            onPress={onCheckLinuxDoCookie}
-          />
-          <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLinuxDoCookie} />
-          <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
+          <AppButton label={checking ? '检测中' : '检测状态'} disabled={checking} onPress={onCheckLinuxDoCookie} />
+          <AppButton label="清除登录" variant="danger" onPress={onClearLinuxDoCookie} />
+          <AppButton label="刷新页面" variant="ghost" onPress={onResetLinuxDoWebView} />
         </View>
       }
     >

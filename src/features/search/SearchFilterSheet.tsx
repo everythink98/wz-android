@@ -1,6 +1,6 @@
 import type { SearchStyles } from './styles';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { X } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption, Source } from '@/domain/forum/models';
 import { type DiscourseSource } from '@/domain/forum/sourceCatalog';
@@ -73,6 +73,8 @@ export function SearchFilterSheet({
   onApply: (source: Source, filter: SourceSearchFilter) => void;
   onClose: () => void;
 }) {
+  const { height } = useWindowDimensions();
+  const filterBodyStyle = { maxHeight: Math.max(320, Math.round(height * 0.58)) };
   const [draftFilter, setDraftFilter] = useState<SourceSearchFilter>(() =>
     searchFilterForSource(searchFilters, source)
   );
@@ -181,7 +183,7 @@ export function SearchFilterSheet({
           </Pressable>
         </View>
         <ScrollView
-          style={styles.searchFilterBody}
+          style={[styles.searchFilterBody, filterBodyStyle]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="handled"
         >
@@ -208,8 +210,8 @@ export function SearchFilterSheet({
           </Text>
         ) : null}
         <View style={styles.searchFilterActions}>
-          <AppButton compact label="重置" variant="ghost" styles={styles} onPress={resetDraft} />
-          <AppButton compact label="确认筛选" variant="primary" styles={styles} onPress={applyDraft} />
+          <AppButton compact label="重置" variant="ghost" onPress={resetDraft} />
+          <AppButton compact label="确认筛选" variant="primary" onPress={applyDraft} />
         </View>
       </ModalSheetFrame>
       <DiscourseFilterPickers
@@ -217,6 +219,7 @@ export function SearchFilterSheet({
         discourseDraft={discourseDraft}
         styles={styles}
         theme={theme}
+        filterBodyStyle={filterBodyStyle}
         toggleTag={toggleTag}
         updateDraft={updateDraft}
       />

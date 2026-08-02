@@ -7,7 +7,7 @@ import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActiv
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
-import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
@@ -140,7 +140,7 @@ export const UserScreen = memo(function UserScreen({
   onRefresh: () => void;
   onToggleFollow: (user: UserProfile) => void;
 }) {
-  const { styles, theme } = useReaderStyles(createUserStyles);
+  const { styles, theme } = useReaderThemeStyles(createUserStyles);
   const user = profile || requestedUser;
   const topics = profile?.topics || [];
   const replies = profile?.replies || [];
@@ -266,7 +266,6 @@ export const UserScreen = memo(function UserScreen({
           <Avatar
             contentSource={user?.source || null}
             name={user?.displayName || user?.username || user?.id}
-            styles={styles}
             uri={user?.avatar}
           />
           <View style={styles.topicAuthorMeta}>
@@ -296,33 +295,24 @@ export const UserScreen = memo(function UserScreen({
             </Text>
             {identityBlocked ? (
               <View style={styles.actions}>
-                <AppButton label="重试检测" styles={styles} onPress={onRefresh} />
+                <AppButton label="重试检测" onPress={onRefresh} />
                 {user?.source === 'linuxdo' && onCheckLinuxDoStatus ? (
-                  <AppButton label="检查 L 站状态" variant="ghost" styles={styles} onPress={onCheckLinuxDoStatus} />
+                  <AppButton label="检查 L 站状态" variant="ghost" onPress={onCheckLinuxDoStatus} />
                 ) : null}
               </View>
             ) : null}
           </View>
         ) : null}
-        {busy ? (
-          <LoadingState
-            text={identityChecking ? '正在确认 L 站访问状态' : '正在读取用户主页...'}
-            styles={styles}
-            theme={theme}
-          />
-        ) : null}
+        {busy ? <LoadingState text={identityChecking ? '正在确认 L 站访问状态' : '正在读取用户主页...'} /> : null}
         <View style={styles.actions}>
           {followTarget ? (
             <AppButton
               label={followed ? '取消关注' : '关注'}
               variant={followed ? 'danger' : undefined}
-              styles={styles}
               onPress={() => onToggleFollow(followTarget)}
             />
           ) : null}
-          {user?.url ? (
-            <AppButton label="原站主页" variant="ghost" styles={styles} onPress={() => onOpenOriginal(user.url)} />
-          ) : null}
+          {user?.url ? <AppButton label="原站主页" variant="ghost" onPress={() => onOpenOriginal(user.url)} /> : null}
         </View>
         {profile ? (
           <PillRail
@@ -332,15 +322,14 @@ export const UserScreen = memo(function UserScreen({
             ]}
             value={userTab}
             variant="tabs"
-            styles={styles}
             onChange={changeUserTab}
           />
         ) : null}
         {profile && userTab === 'topics' && !topics.length && !busy ? (
-          <EmptyText text="这个用户暂时没有可显示的主题" styles={styles} />
+          <EmptyText text="这个用户暂时没有可显示的主题" />
         ) : null}
         {profile && userTab === 'replies' && !replies.length && !busy ? (
-          <EmptyText text="这个用户暂时没有可显示的回复" styles={styles} />
+          <EmptyText text="这个用户暂时没有可显示的回复" />
         ) : null}
       </View>
     ),
@@ -379,8 +368,6 @@ export const UserScreen = memo(function UserScreen({
         <MemoizedTopicCard
           testID={index === 0 ? 'user-topic-first' : undefined}
           readerState={getTopicListItemStateFromIndex(topicStateIndex, item.topic)}
-          styles={styles}
-          theme={theme}
           topic={item.topic}
           hideReplyCount={item.topic.source === 'nodeseek'}
           onOpenTopic={onOpenTopic}
@@ -391,13 +378,13 @@ export const UserScreen = memo(function UserScreen({
   );
 
   if (!user) {
-    return <EmptyText text="未选择用户" styles={styles} />;
+    return <EmptyText text="未选择用户" />;
   }
 
   return (
     <View style={styles.screen}>
       <ScreenTopBar>
-        <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
+        <IconButton icon={ChevronLeft} compact ghost label="返回" onPress={onBack} />
         <ScreenTopBarTitle>
           {sourceLabel(user.source)} · {user.displayName || user.username || user.id}
         </ScreenTopBarTitle>
@@ -410,22 +397,12 @@ export const UserScreen = memo(function UserScreen({
               label={followed ? '已关注' : '关注'}
               active={followed}
               activeColor={theme.favorite}
-              styles={styles}
-              theme={theme}
               onPress={() => onToggleFollow(followTarget)}
             />
           ) : null}
-          <IconButton iconOnly ghost icon={RefreshCw} label="刷新" styles={styles} theme={theme} onPress={onRefresh} />
+          <IconButton iconOnly ghost icon={RefreshCw} label="刷新" onPress={onRefresh} />
           {user.url ? (
-            <IconButton
-              iconOnly
-              ghost
-              icon={ExternalLink}
-              label="原站"
-              styles={styles}
-              theme={theme}
-              onPress={() => onOpenOriginal(user.url)}
-            />
+            <IconButton iconOnly ghost icon={ExternalLink} label="原站" onPress={() => onOpenOriginal(user.url)} />
           ) : null}
         </ScreenTopBarActions>
       </ScreenTopBar>
@@ -453,7 +430,6 @@ export const UserScreen = memo(function UserScreen({
                       ? '加载更多回复'
                       : '加载更多主题'
                 }
-                styles={styles}
                 disabled={busy || (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)}
                 onPress={requestUserTopicLoadMore}
               />

@@ -1,4 +1,4 @@
-import type { MoreAccountStyles } from '../accountStyles';
+import type { MoreScreenStyles } from '../styles';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { RefreshCw } from 'lucide-react-native';
@@ -42,7 +42,7 @@ export function LinuxDoLevelPanel({
   loginMessage?: string;
   profile: LinuxDoLevelProfile | null;
   siteSession: SiteSessionViewModel;
-  styles: MoreAccountStyles;
+  styles: MoreScreenStyles;
   theme: ReaderTheme;
   onOpenLogin: () => void;
   onRefresh: () => void;
@@ -53,7 +53,7 @@ export function LinuxDoLevelPanel({
       <View style={styles.stack}>
         <Text style={styles.meta}>{loginMessage}</Text>
         <View style={styles.actions}>
-          <AppButton label={loginButtonLabel} styles={styles} onPress={onOpenLogin} />
+          <AppButton label={loginButtonLabel} onPress={onOpenLogin} />
         </View>
       </View>
     );
@@ -81,8 +81,6 @@ export function LinuxDoLevelPanel({
                 icon={RefreshCw}
                 label={busy ? '读取中' : '刷新等级'}
                 iconOnly
-                styles={styles}
-                theme={theme}
                 disabled={busy}
                 onPress={onRefresh}
               />
@@ -166,16 +164,14 @@ export function LinuxDoLevelPanel({
         <View style={styles.levelEmptyState}>
           {busy ? <ActivityIndicator color={theme.primary} size="small" /> : null}
           <Text style={styles.meta}>{busy ? '正在读取当前账号统计。' : '点击刷新后读取当前账号统计。'}</Text>
-          {!busy ? (
-            <IconButton icon={RefreshCw} label="刷新等级" compact styles={styles} theme={theme} onPress={onRefresh} />
-          ) : null}
+          {!busy ? <IconButton icon={RefreshCw} label="刷新等级" compact onPress={onRefresh} /> : null}
         </View>
       )}
     </View>
   );
 }
 
-function LevelStat({ label, value, styles }: { label: string; value: string; styles: MoreAccountStyles }) {
+function LevelStat({ label, value, styles }: { label: string; value: string; styles: MoreScreenStyles }) {
   return (
     <View style={styles.levelStatItem}>
       <Text style={styles.levelStatLabel}>{label}</Text>

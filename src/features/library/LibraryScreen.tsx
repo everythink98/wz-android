@@ -11,7 +11,7 @@ import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { feedSources } from '@/domain/forum/feedOptions';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
-import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
+import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
@@ -120,7 +120,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   onRemoveUser: (user: UserProfile) => void;
   onTabChange: (tab: LibraryTab) => void;
 }) {
-  const { styles, theme } = useReaderStyles(createLibraryStyles);
+  const { styles, theme } = useReaderThemeStyles(createLibraryStyles);
   const internalListRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const listRef = scrollRef || internalListRef;
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
@@ -229,8 +229,6 @@ export const LibraryScreen = memo(function LibraryScreen({
                 : undefined
             }
             readerState={libraryTab === 'favorites' ? { ...readerState, favorite: false, read: false } : readerState}
-            styles={styles}
-            theme={theme}
             renderTrailingAction={renderTopicTrailingAction}
             topic={record.topic}
             onOpenTopic={onOpenTopic}
@@ -289,7 +287,6 @@ export const LibraryScreen = memo(function LibraryScreen({
           items={LIBRARY_TAB_ITEMS}
           value={libraryTab}
           testIDPrefix="library-tab"
-          styles={styles}
           onChange={changeLibraryTab}
         />
         <PillRail
@@ -297,21 +294,14 @@ export const LibraryScreen = memo(function LibraryScreen({
           items={LIBRARY_SOURCE_ITEMS}
           value={sourceFilter}
           testIDPrefix="library-source"
-          styles={styles}
           onChange={changeSourceFilter}
         />
         {libraryTab !== 'users' && categoryItems.length > 1 ? (
-          <PillRail
-            variant="subtabs"
-            items={categoryItems}
-            value={categoryFilter}
-            styles={styles}
-            onChange={setCategoryFilter}
-          />
+          <PillRail variant="subtabs" items={categoryItems} value={categoryFilter} onChange={setCategoryFilter} />
         ) : null}
         {libraryTab === 'history' && records.length ? (
           <View style={styles.actions}>
-            <AppButton compact label="清空历史" variant="danger" styles={styles} onPress={confirmClearHistory} />
+            <AppButton compact label="清空历史" variant="danger" onPress={confirmClearHistory} />
           </View>
         ) : null}
         {libraryTab === 'users' ? <View style={styles.libraryUserListSpacer} /> : null}
@@ -368,7 +358,7 @@ export const LibraryScreen = memo(function LibraryScreen({
             loaded && libraryTab === 'favorites' && !filteredRecords.length ? 'library-favorites-empty' : undefined
           }
         >
-          <EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} styles={styles} />
+          <EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} />
         </View>
       }
       renderItem={

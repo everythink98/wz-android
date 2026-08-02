@@ -1,11 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '../render';
 import React from 'react';
 import { NativeModules, StyleSheet } from 'react-native';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
@@ -248,10 +245,6 @@ jest.mock('react-native-zoom-toolkit', () => {
 
 jest.mock('lucide-react-native', () => ({ X: () => null }));
 
-const readerData = createEmptyReaderData();
-const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
-
 function previewItem(originalUri: string, displayUri = originalUri) {
   return { displayUri, originalUri };
 }
@@ -298,9 +291,7 @@ describe('Image preview', () => {
     const items = Array.from({ length: 5 }, (_, index) =>
       previewItem(`https://example.com/original-${index}.png`, `https://example.com/display-${index}.png`)
     );
-    const view = await render(
-      <ImagePreviewModal preview={previewProps(items, 2)} styles={styles} theme={theme} {...callbacks()} />
-    );
+    const view = await render(<ImagePreviewModal preview={previewProps(items, 2)} {...callbacks()} />);
 
     expect(view.queryByTestId('preview-image-0')).toBeNull();
     expect(view.getByTestId('preview-image-1').props).toEqual(
@@ -339,8 +330,6 @@ describe('Image preview', () => {
         preview={previewProps([
           previewItem('https://example.com/fast-cache.png', 'https://example.com/fast-cache-thumb.png')
         ])}
-        styles={styles}
-        theme={theme}
         {...callbacks()}
       />
     );
@@ -354,8 +343,6 @@ describe('Image preview', () => {
     const view = await render(
       <ImagePreviewModal
         preview={previewProps([previewItem(originalUrl, 'https://example.com/fullscreen-ready-display.png')])}
-        styles={styles}
-        theme={theme}
         {...callbacks()}
       />
     );
@@ -375,9 +362,7 @@ describe('Image preview', () => {
         previewItem('https://example.com/broken.png', 'https://example.com/broken-thumb.png'),
         previewItem('https://example.com/neighbor.png', 'https://example.com/neighbor-thumb.png')
       ];
-      const view = await render(
-        <ImagePreviewModal preview={previewProps(items)} styles={styles} theme={theme} {...callbacks()} />
-      );
+      const view = await render(<ImagePreviewModal preview={previewProps(items)} {...callbacks()} />);
       const neighborKey = view.getByTestId('preview-image-1').props.recyclingKey;
 
       await fireEvent(view.getByTestId('preview-image-0'), 'error');
@@ -400,8 +385,6 @@ describe('Image preview', () => {
       const view = await render(
         <ImagePreviewModal
           preview={previewProps([previewItem('https://example.com/retry-stale.png')])}
-          styles={styles}
-          theme={theme}
           {...callbacks()}
         />
       );
@@ -431,8 +414,6 @@ describe('Image preview', () => {
           ],
           1
         )}
-        styles={styles}
-        theme={theme}
         {...callbacks({ onSelect })}
       />
     );
@@ -468,12 +449,12 @@ describe('Image preview', () => {
   it('restores controls when a hidden preview is closed and opened again', async () => {
     const preview = previewProps([previewItem('https://example.com/reopen.png')]);
     const props = callbacks();
-    const view = await render(<ImagePreviewModal preview={preview} styles={styles} theme={theme} {...props} />);
+    const view = await render(<ImagePreviewModal preview={preview} {...props} />);
     await fireEvent(view.getByTestId('preview-zoom-0'), 'tap', {});
     expect(view.queryByLabelText('关闭图片预览')).toBeNull();
 
-    await view.rerender(<ImagePreviewModal preview={null} styles={styles} theme={theme} {...props} />);
-    await view.rerender(<ImagePreviewModal preview={preview} styles={styles} theme={theme} {...props} />);
+    await view.rerender(<ImagePreviewModal preview={null} {...props} />);
+    await view.rerender(<ImagePreviewModal preview={preview} {...props} />);
 
     expect(view.getByLabelText('关闭图片预览')).toBeTruthy();
     expect(view.getByLabelText('保存图片')).toBeTruthy();
@@ -484,7 +465,7 @@ describe('Image preview', () => {
     try {
       const preview = previewProps([previewItem('https://example.com/reopen-displayed.png')]);
       const props = callbacks();
-      const view = await render(<ImagePreviewModal preview={preview} styles={styles} theme={theme} {...props} />);
+      const view = await render(<ImagePreviewModal preview={preview} {...props} />);
       const firstImage = view.getByTestId('preview-image-0');
       const recyclingKey = firstImage.props.recyclingKey;
 
@@ -493,8 +474,8 @@ describe('Image preview', () => {
       expect(view.queryByText('图片加载中...')).toBeNull();
       expect(originalImageDisplayRevision(firstImage.props.source)).toBeGreaterThan(0);
 
-      await view.rerender(<ImagePreviewModal preview={null} styles={styles} theme={theme} {...props} />);
-      await view.rerender(<ImagePreviewModal preview={preview} styles={styles} theme={theme} {...props} />);
+      await view.rerender(<ImagePreviewModal preview={null} {...props} />);
+      await view.rerender(<ImagePreviewModal preview={preview} {...props} />);
 
       const reopenedImage = view.getByTestId('preview-image-0');
       expect(reopenedImage.props.recyclingKey).toBe(recyclingKey);
@@ -518,8 +499,6 @@ describe('Image preview', () => {
           previewItem('https://example.com/current.png'),
           previewItem('https://example.com/preloaded.png')
         ])}
-        styles={styles}
-        theme={theme}
         {...callbacks()}
       />
     );
@@ -532,12 +511,7 @@ describe('Image preview', () => {
 
   it('updates the active zoom ceiling from the original pixel dimensions', async () => {
     const view = await render(
-      <ImagePreviewModal
-        preview={previewProps([previewItem('https://example.com/resolution.png')])}
-        styles={styles}
-        theme={theme}
-        {...callbacks()}
-      />
+      <ImagePreviewModal preview={previewProps([previewItem('https://example.com/resolution.png')])} {...callbacks()} />
     );
     expect(view.getByTestId('preview-zoom-0').props.maxScale).toBe(6);
 
@@ -555,12 +529,7 @@ describe('Image preview', () => {
       originalUri: 'https://example.com/stable-original.png'
     };
     const view = await render(
-      <ImagePreviewModal
-        preview={{ contentSource: null, items: [item], index: 0 }}
-        styles={styles}
-        theme={theme}
-        {...callbacks()}
-      />
+      <ImagePreviewModal preview={{ contentSource: null, items: [item], index: 0 }} {...callbacks()} />
     );
     const before = StyleSheet.flatten(view.getByTestId('preview-zoom-content-0').props.style);
 
@@ -579,8 +548,6 @@ describe('Image preview', () => {
     const view = await render(
       <ImagePreviewModal
         preview={previewProps([previewItem('https://example.com/one.png'), previewItem('https://example.com/two.png')])}
-        styles={styles}
-        theme={theme}
         {...callbacks({ onClose, onSelect })}
       />
     );
@@ -606,8 +573,6 @@ describe('Image preview', () => {
     const view = await render(
       <ImagePreviewModal
         preview={previewProps([previewItem('https://example.com/save.png')])}
-        styles={styles}
-        theme={theme}
         {...callbacks({ onSave })}
       />
     );
@@ -635,8 +600,6 @@ describe('Image preview', () => {
             previewItem('https://example.com/stalled.png'),
             previewItem('https://example.com/next.png')
           ])}
-          styles={styles}
-          theme={theme}
           {...callbacks()}
         />
       );
@@ -671,8 +634,6 @@ describe('Image preview', () => {
       const view = await render(
         <ImagePreviewModal
           preview={previewProps([previewItem(privateUrl, 'https://secret.example/display.png')])}
-          styles={styles}
-          theme={theme}
           {...callbacks()}
         />
       );
@@ -728,8 +689,6 @@ describe('Image preview', () => {
             previewItem('https://example.com/active.png'),
             previewItem('https://example.com/adjacent.png')
           ])}
-          styles={styles}
-          theme={theme}
           {...callbacks()}
         />
       );
@@ -763,8 +722,6 @@ describe('Image preview', () => {
             previewItem('https://example.com/timing-active.png'),
             previewItem('https://example.com/timing-adjacent.png')
           ])}
-          styles={styles}
-          theme={theme}
           {...callbacks()}
         />
       );
@@ -801,8 +758,6 @@ describe('Image preview', () => {
       const view = await render(
         <ImagePreviewModal
           preview={previewProps([previewItem('https://example.com/first.png'), previewItem(secondUrl)])}
-          styles={styles}
-          theme={theme}
           {...callbacks()}
         />
       );
@@ -845,12 +800,7 @@ describe('Image preview', () => {
       );
     try {
       const view = await render(
-        <ImagePreviewModal
-          preview={previewProps([previewItem(imageUrl, bodyPosterUrl)])}
-          styles={styles}
-          theme={theme}
-          {...callbacks()}
-        />
+        <ImagePreviewModal preview={previewProps([previewItem(imageUrl, bodyPosterUrl)])} {...callbacks()} />
       );
       await fireEvent(view.getByTestId('preview-image-0'), 'error');
       await waitFor(() => expect(view.getByTestId('compatible-svg-document-view')).toBeTruthy());
@@ -885,14 +835,7 @@ describe('Image preview', () => {
         )
       );
     try {
-      const view = await render(
-        <ImagePreviewModal
-          preview={previewProps([previewItem(imageUrl)])}
-          styles={styles}
-          theme={theme}
-          {...callbacks()}
-        />
-      );
+      const view = await render(<ImagePreviewModal preview={previewProps([previewItem(imageUrl)])} {...callbacks()} />);
       await fireEvent(view.getByTestId('preview-image-0'), 'error');
       const documentView = await waitFor(() => view.getByTestId('compatible-svg-document-view'));
       const documentToken = documentView.props.mockWebViewToken;
@@ -952,9 +895,7 @@ describe('Image preview', () => {
     const imageUrl = 'https://example.com/deferred-dynamic.svg';
     const items = [previewItem(imageUrl), previewItem('https://example.com/second.png')];
     const sharedCallbacks = callbacks();
-    const modal = (index: number) => (
-      <ImagePreviewModal preview={previewProps(items, index)} styles={styles} theme={theme} {...sharedCallbacks} />
-    );
+    const modal = (index: number) => <ImagePreviewModal preview={previewProps(items, index)} {...sharedCallbacks} />;
     const initialPoster = {
       documentHeight: 460,
       documentWidth: 920,
@@ -1020,14 +961,7 @@ describe('Image preview', () => {
         )
       );
     try {
-      const view = await render(
-        <ImagePreviewModal
-          preview={previewProps([previewItem(imageUrl)])}
-          styles={styles}
-          theme={theme}
-          {...callbacks()}
-        />
-      );
+      const view = await render(<ImagePreviewModal preview={previewProps([previewItem(imageUrl)])} {...callbacks()} />);
       await fireEvent(view.getByTestId('preview-image-0'), 'error');
       await waitFor(() => expect(view.getByTestId('compatible-svg-document-view')).toBeTruthy());
 
@@ -1046,9 +980,7 @@ describe('Image preview', () => {
     const bodyPosterUrl = 'file:///cache/revisit-body-poster.png';
     const items = [previewItem(imageUrl, bodyPosterUrl), previewItem('https://example.com/second.png')];
     const sharedCallbacks = callbacks();
-    const modal = (index: number) => (
-      <ImagePreviewModal preview={previewProps(items, index)} styles={styles} theme={theme} {...sharedCallbacks} />
-    );
+    const modal = (index: number) => <ImagePreviewModal preview={previewProps(items, index)} {...sharedCallbacks} />;
     const fetchSpy = jest
       .spyOn(global, 'fetch')
       .mockResolvedValue(
@@ -1104,12 +1036,7 @@ describe('Image preview', () => {
       );
     try {
       const first = await render(
-        <ImagePreviewModal
-          preview={previewProps([previewItem(imageUrl)])}
-          styles={styles}
-          theme={theme}
-          {...callbacks()}
-        />
+        <ImagePreviewModal preview={previewProps([previewItem(imageUrl)])} {...callbacks()} />
       );
       await fireEvent(first.getByTestId('preview-image-0'), 'error');
       await waitFor(() => expect(first.getByTestId('compatible-svg-document-view')).toBeTruthy());
@@ -1128,8 +1055,6 @@ describe('Image preview', () => {
               }
             ]
           }}
-          styles={styles}
-          theme={theme}
           {...callbacks()}
         />
       );
@@ -1155,12 +1080,7 @@ describe('Image preview', () => {
       );
     try {
       const first = await render(
-        <ImagePreviewModal
-          preview={previewProps([previewItem(imageUrl)])}
-          styles={styles}
-          theme={theme}
-          {...callbacks()}
-        />
+        <ImagePreviewModal preview={previewProps([previewItem(imageUrl)])} {...callbacks()} />
       );
 
       await fireEvent(first.getByTestId('preview-image-0'), 'error');
@@ -1168,14 +1088,7 @@ describe('Image preview', () => {
       await fireEvent(first.getByTestId('preview-svg-poster-0'), 'display');
       await first.unmount();
 
-      const view = await render(
-        <ImagePreviewModal
-          preview={previewProps([previewItem(imageUrl)])}
-          styles={styles}
-          theme={theme}
-          {...callbacks()}
-        />
-      );
+      const view = await render(<ImagePreviewModal preview={previewProps([previewItem(imageUrl)])} {...callbacks()} />);
       const poster = view.getByTestId('preview-svg-poster-0');
 
       expect(poster.props.source).toEqual(
@@ -1234,25 +1147,13 @@ describe('Image preview', () => {
       );
     try {
       const first = await render(
-        <ImagePreviewModal
-          preview={previewProps([previewItem(imageUrl)])}
-          styles={styles}
-          theme={theme}
-          {...callbacks()}
-        />
+        <ImagePreviewModal preview={previewProps([previewItem(imageUrl)])} {...callbacks()} />
       );
       await fireEvent(first.getByTestId('preview-image-0'), 'error');
       await waitFor(() => first.getByTestId('preview-svg-poster-0'));
       await first.unmount();
 
-      const view = await render(
-        <ImagePreviewModal
-          preview={previewProps([previewItem(imageUrl)])}
-          styles={styles}
-          theme={theme}
-          {...callbacks()}
-        />
-      );
+      const view = await render(<ImagePreviewModal preview={previewProps([previewItem(imageUrl)])} {...callbacks()} />);
       await fireEvent(view.getByTestId('preview-svg-poster-0'), 'error');
       await waitFor(() => expect(view.getByText('重试')).toBeTruthy());
       expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -1284,8 +1185,6 @@ describe('Image preview', () => {
         <ImagePreviewModal
           preview={{ contentSource: 'nodeseek', items: [previewItem(imageUrl)], index: 0 }}
           nodeSeekMediaUserAgent="WZ-Preview-Test"
-          styles={styles}
-          theme={theme}
           {...callbacks()}
         />
       </ForumSessionEpochProvider>
@@ -1315,8 +1214,6 @@ describe('Image preview', () => {
         <ImagePreviewModal
           preview={{ contentSource: 'nodeseek', items: [previewItem(imageUrl), previewItem(secondImageUrl)], index: 0 }}
           nodeSeekMediaUserAgent="WZ-Preview-Test"
-          styles={styles}
-          theme={theme}
           {...sharedCallbacks}
         />
       </ForumSessionEpochProvider>
@@ -1355,8 +1252,6 @@ describe('Image preview', () => {
     const view = await render(
       <ImagePreviewModal
         preview={previewProps([previewItem('https://example.com/pull.png')])}
-        styles={styles}
-        theme={theme}
         {...callbacks({ onClose })}
       />
     );

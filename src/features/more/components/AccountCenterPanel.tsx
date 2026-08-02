@@ -1,6 +1,16 @@
-import type { MoreAccountStyles } from '../accountStyles';
+import type { MoreScreenStyles } from '../styles';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Keyboard,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View
+} from 'react-native';
 import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
@@ -167,7 +177,7 @@ function AccountAction({
   disabled?: boolean;
   label: string;
   accountStyles: AccountCenterStyles;
-  styles: MoreAccountStyles;
+  styles: MoreScreenStyles;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
@@ -212,10 +222,11 @@ function CredentialEditor({
   site: CredentialSite;
   view: SiteAccountView;
   accountStyles: AccountCenterStyles;
-  styles: MoreAccountStyles;
+  styles: MoreScreenStyles;
   theme: ReaderTheme;
   onCommand: CommandHandler;
 }) {
+  const { height } = useWindowDimensions();
   const [editing, setEditing] = useState(false);
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
@@ -363,7 +374,7 @@ function CredentialEditor({
           </View>
         </View>
         <ScrollView
-          style={styles.searchFilterBody}
+          style={[styles.searchFilterBody, { maxHeight: Math.max(320, Math.round(height * 0.58)) }]}
           contentContainerStyle={styles.searchFilterBodyInner}
           keyboardShouldPersistTaps="always"
         >
@@ -401,15 +412,14 @@ function CredentialEditor({
         </ScrollView>
         <View style={styles.searchFilterActions}>
           {view.credential.state !== 'missing' ? (
-            <AppButton compact label="删除" variant="danger" styles={styles} disabled={busy} onPress={confirmDelete} />
+            <AppButton compact label="删除" variant="danger" disabled={busy} onPress={confirmDelete} />
           ) : null}
           <View style={styles.flex} />
-          <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeEditor} />
+          <AppButton compact label="取消" variant="ghost" disabled={busy} onPress={closeEditor} />
           <AppButton
             compact
             label={busy ? '保存中' : '保存'}
             variant="primary"
-            styles={styles}
             disabled={busy || !account.trim() || !password}
             onPress={() => {
               void persist();
@@ -456,7 +466,7 @@ export function AccountCenterPanel({
   sessions: SiteSessionViewModels;
   siteContent: Partial<Record<SessionSite, ReactNode>>;
   statusBusy: boolean;
-  styles: MoreAccountStyles;
+  styles: MoreScreenStyles;
   theme: ReaderTheme;
   onCommand: CommandHandler;
   onExpandedChange: (expanded: boolean) => void;
@@ -485,8 +495,6 @@ export function AccountCenterPanel({
       meta={accountCenterSummary(views)}
       icon={User}
       expanded={expanded}
-      styles={styles}
-      theme={theme}
       onExpandedChange={onExpandedChange}
     >
       <View style={accountStyles.selectorRow}>
@@ -496,8 +504,6 @@ export function AccountCenterPanel({
           ghost
           icon={RefreshCw}
           label={statusBusy ? '刷新中' : '刷新账号状态'}
-          styles={styles}
-          theme={theme}
           disabled={statusBusy}
           onPress={() => {
             void onCommand({ type: 'refresh' });
