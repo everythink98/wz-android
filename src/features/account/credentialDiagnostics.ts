@@ -1,11 +1,7 @@
 import type { CredentialSummaries, CredentialSummary } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
 const sites = ['nodeseek', 'linuxdo', 'yaohuo'] as const satisfies readonly CredentialSite[];
 

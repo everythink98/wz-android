@@ -30,13 +30,8 @@ import {
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
 } from '@/domain/forum/quotedPosts';
-import {
-  beginDiagnosticTrace,
-  diagnosticRef,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { diagnosticRef, normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';

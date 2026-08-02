@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import type { WebViewMessageEvent } from 'react-native-webview';
-import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '@/domain/forum/html';
+import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '@/domain/forum/accessRequirements';
 
 export const NODESEEK_BROWSER_FETCH_SCRIPT = `
 (() => {

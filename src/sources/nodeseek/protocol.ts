@@ -5,15 +5,8 @@ import {
   isCloudflareChallengeResponse
 } from '@/platform/network/cloudflareChallenge';
 import type { Topic, TopicDetail } from '@/domain/forum/models';
-import {
-  absoluteUrl,
-  accessRequirementFromText,
-  elementText,
-  isRecord,
-  parseHtml,
-  parsePositiveInteger,
-  toIsoString
-} from '@/domain/forum/html';
+import { absoluteUrl, elementText, isRecord, parseHtml, parsePositiveInteger, toIsoString } from '@/domain/forum/html';
+import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 
 export const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 

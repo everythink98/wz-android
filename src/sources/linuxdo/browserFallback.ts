@@ -11,9 +11,9 @@ import {
   diagnosticTraceForRequest,
   finishDiagnosticTrace,
   markDiagnosticStage,
-  normalizeDiagnosticReason,
   registerDiagnosticContextFetcher
 } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 
 export type LinuxDoHiddenBrowserFailureReason =
   'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';

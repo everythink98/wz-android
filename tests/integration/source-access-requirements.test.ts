@@ -10,7 +10,7 @@ vi.mock('expo-secure-store', () => ({
 import { getLinuxDoFeed, getLinuxDoTopic } from '@/sources/linuxdo/reader';
 import { getNodeSeekFeed, getNodeSeekTopic } from '@/sources/nodeseek/reader';
 import { getV2exFeed, getV2exTopic } from '@/sources/v2ex/reader';
-import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/html';
+import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { parseYaohuoListHtml } from '@/sources/yaohuo/feedParser';
 import { parseYaohuoTopicHtml } from '@/sources/yaohuo/topicParser';
 import { forumAccessRequirementText } from '@/domain/forum/presentation';

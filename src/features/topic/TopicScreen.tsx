@@ -58,7 +58,7 @@ import {
   FORUM_STICKER_ROW_TAG,
   FORUM_STICKER_TAG,
   INLINE_FORUM_IMAGE_TAG
-} from '@/platform/media/htmlImages';
+} from '@/platform/media/inlineMedia';
 import {
   FORUM_LINK_CARD_TAG,
   FORUM_TERMINAL_REPORT_TAG,

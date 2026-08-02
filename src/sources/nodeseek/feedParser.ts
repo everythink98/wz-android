@@ -2,8 +2,6 @@ import type { Category, NodeSeekFeedFilter, Topic } from '@/domain/forum/models'
 import type { NodeSeekSearchFilter } from '@/domain/forum/searchFilters';
 import {
   absoluteUrl,
-  accessRequirementFromObject,
-  accessRequirementFromText,
   elementText,
   isRecord,
   parseHtml,
@@ -11,6 +9,7 @@ import {
   textExcerpt,
   toIsoString
 } from '@/domain/forum/html';
+import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
   arrayField,

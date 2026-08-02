@@ -10,7 +10,7 @@ import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import type { TopicDetail } from '@/domain/forum/models';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
-import { imageSourceFromUrl } from '@/platform/media/htmlImages';
+import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import {
   markOriginalImageDisplayed,
   OriginalImageUpgradeBoundary,

@@ -10,7 +10,7 @@ import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntim
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '@/platform/network/networkProxy';
 import type { Topic, UserReference } from '@/domain/forum/models';
-import { isHttpOrHttpsUrl } from '@/platform/media/htmlImages';
+import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { LOGIN_WEBVIEW_ALLOWED_HOSTS, shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import { toggleFavorite } from '@/domain/reader/readerData';
 import { errorMessage } from '@/platform/network/errors';

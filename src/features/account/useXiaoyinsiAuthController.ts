@@ -7,10 +7,9 @@ import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
-  normalizeDiagnosticReason,
-  withDiagnosticFetcher,
-  type DiagnosticTrace
+  withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { ScopedSiteSessionEvent, SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { XiaoyinsiAuthPhase, XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';

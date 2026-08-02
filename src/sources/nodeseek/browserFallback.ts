@@ -10,10 +10,9 @@ import {
   diagnosticTraceForRequest,
   finishDiagnosticTrace,
   markDiagnosticStage,
-  normalizeDiagnosticReason,
-  registerDiagnosticContextFetcher,
-  type DiagnosticReason
+  registerDiagnosticContextFetcher
 } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { hasNodeSeekAccountEvidenceHtml } from './userParser';
 

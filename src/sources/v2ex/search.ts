@@ -1,7 +1,8 @@
 import type { SearchSort } from '@/domain/forum/feed';
 import { searchTimeRangeStartEpoch, type V2exSearchFilter } from '@/domain/forum/searchFilters';
 import type { SearchResponse, Topic } from '@/domain/forum/models';
-import { accessRequirementFromObject, isRecord, textExcerpt, toIsoString } from '@/domain/forum/html';
+import { isRecord, textExcerpt, toIsoString } from '@/domain/forum/html';
+import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import { SOV2EX_URL, V2EX_BASE_URL as BASE_URL } from './protocol';
 import { fetchJson, topicId, type V2exOptions } from './reader';

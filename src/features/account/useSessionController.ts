@@ -30,10 +30,9 @@ import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
   finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason,
-  type DiagnosticTrace
+  markDiagnosticStage
 } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { appQueryClient } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {

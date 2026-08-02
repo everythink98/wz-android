@@ -54,7 +54,8 @@ import { useXiaoyinsiLevelController } from '@/features/account/useXiaoyinsiLeve
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import type { ReadGateway } from '@/sources/readGateway';
 
 const mockBegin = jest.mocked(XiaoyinsiAuth.beginXiaoyinsiDeviceAuth);

@@ -1,5 +1,6 @@
 import type { TopicPoll } from '@/domain/forum/models';
-import { FORUM_LINK_CARD_TAG, sanitizeContentHtml } from '@/domain/forum/html';
+import { FORUM_LINK_CARD_TAG } from '@/domain/forum/html';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import {
   discourseContentNeedsCalloutNormalization,
   discoursePollPlaceholder,

@@ -4,11 +4,8 @@ import { categoryKey } from '@/domain/reader/readerData';
 import { mergeCategories } from '@/domain/forum/feed';
 import type { CategoriesResponse, Category } from '@/domain/forum/models';
 import type { ReadGateway } from '@/sources/readGateway';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  normalizeDiagnosticReason
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   canRetainTrustedSource,
   changedSessionSources,

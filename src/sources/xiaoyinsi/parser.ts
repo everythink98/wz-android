@@ -1,5 +1,5 @@
 import type { TopicPoll } from '@/domain/forum/models';
-import { sanitizeContentHtml } from '@/domain/forum/html';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import {
   discourseContentNeedsCalloutNormalization,
   discoursePollPlaceholder,

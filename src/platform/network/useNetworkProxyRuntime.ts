@@ -1,13 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Fetcher } from './request';
 import { errorMessage } from './errors';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason,
-  type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   activeNetworkProxyProfile,
   applyNetworkProxy,

@@ -4,15 +4,13 @@ import { sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
 import { errorMessage } from '@/platform/network/errors';
 import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from './credentialDiagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
   normalizeDiagnosticReason,
   type DiagnosticFields,
   type DiagnosticOutcome,
   type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+} from '@/platform/diagnostics/diagnosticPolicy';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import { appQueryClient } from '@/platform/query/serverState';

@@ -1,13 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
 import { mergeTopics } from '@/domain/forum/feed';
-import {
-  beginDiagnosticTrace,
-  diagnosticRef,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { diagnosticRef, normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { isUserFollowed, type ReaderData } from '@/domain/reader/readerData';
 import { nodeSeekUserIdFromValue, normalizeUserReference } from '@/domain/forum/userNavigation';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';

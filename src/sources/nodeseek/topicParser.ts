@@ -2,16 +2,15 @@ import type { HTMLElement } from 'node-html-parser';
 import type { Reply, TopicDetail, TopicPoll, TopicPollOption } from '@/domain/forum/models';
 import {
   absoluteUrl,
-  accessRequirementFromObject,
-  accessRequirementFromText,
   elementText,
   isRecord,
   parseHtml,
   parsePositiveInteger,
-  sanitizeContentHtml,
   textExcerpt,
   toIsoString
 } from '@/domain/forum/html';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
   arrayField,

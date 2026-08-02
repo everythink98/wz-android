@@ -55,10 +55,9 @@ import {
   finishDiagnosticTrace,
   hintDiagnosticOutcome,
   markDiagnosticStage,
-  normalizeDiagnosticReason,
-  withDiagnosticFetcher,
-  type DiagnosticTrace
+  withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { TopicSessionController } from '../useTopicSessionController';
 import { forumMutationKeys, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';

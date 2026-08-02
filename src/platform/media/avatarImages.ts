@@ -1,4 +1,4 @@
-import { imageRequestHeadersForUrl, normalizeImagePreviewUrl } from './htmlImages';
+import { imageRequestHeadersForUrl, normalizeImagePreviewUrl } from './imageRequestSource';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
 import { fetchWithTimeout } from '@/platform/network/request';
 

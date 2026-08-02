@@ -3,12 +3,8 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '@/domain/forum/sourceUrls';
 import { errorMessage } from '@/platform/network/errors';
 import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   nodeImageAuthPayloadScript,
   nodeImageSessionScript,

@@ -31,22 +31,26 @@ import { createTopicImageDeriver } from '../model/topicDerivedData';
 import {
   imageSourceFromUrl,
   imageRequestHeadersForUrl,
+  isHttpOrHttpsUrl,
+  normalizeImagePreviewUrl
+} from '@/platform/media/imageRequestSource';
+import {
+  isInlineForumImage,
+  isPreviewableImageUrl,
+  selectImageDisplaySource,
+  selectImageOriginalSource,
+  type ImageDisplayCandidateKind,
+  type ImageDisplaySize
+} from '@/platform/media/imagePreviewCatalog';
+import {
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize,
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
   FORUM_STICKER_TAG,
   INLINE_FORUM_IMAGE_TAG,
-  isHttpOrHttpsUrl,
-  isInlineForumImage,
-  isPreviewableImageUrl,
-  normalizeImagePreviewUrl,
-  selectImageDisplaySource,
-  selectImageOriginalSource,
-  shouldMarkLoadedImageInline,
-  type ImageDisplayCandidateKind,
-  type ImageDisplaySize
-} from '@/platform/media/htmlImages';
+  shouldMarkLoadedImageInline
+} from '@/platform/media/inlineMedia';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/domain/forum/videoEmbeds';
 import { parseForumTopicLink, parseForumUserLink } from '@/domain/forum/links';
 import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
@@ -74,13 +78,8 @@ import {
 } from '@/platform/media/compatibleImageSources';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
-import {
-  beginDiagnosticTrace,
-  diagnosticRef,
-  finishDiagnosticTrace,
-  type DiagnosticFields,
-  type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { diagnosticRef, type DiagnosticFields, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   markOriginalImageDisplayed,
   originalImageDisplayIdentity,

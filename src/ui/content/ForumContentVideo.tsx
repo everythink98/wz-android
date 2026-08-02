@@ -5,7 +5,7 @@ import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
 import { Maximize2, Play } from 'lucide-react-native';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
-import { imageRequestHeadersForUrl } from '@/platform/media/htmlImages';
+import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
 
 export function ForumContentVideo({
   headers,

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { DiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { Fetcher } from '@/platform/network/request';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { SessionSite } from '@/domain/session/siteSessionState';

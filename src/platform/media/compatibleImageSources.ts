@@ -1,6 +1,6 @@
 import { Buffer } from 'buffer';
 import type { ImageURISource } from 'react-native';
-import { normalizeImagePreviewUrl } from './htmlImages';
+import { normalizeImagePreviewUrl } from './imageRequestSource';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { fetchBoundedSvgDocument, renderSvgPoster, type SvgPosterRenderResult } from './svgPosterRenderer';
 

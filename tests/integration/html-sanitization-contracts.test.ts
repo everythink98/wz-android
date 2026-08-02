@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { decodeHtml, sanitizeContentHtml, textContentFromHtml } from '@/domain/forum/html';
+import { decodeHtml, textContentFromHtml } from '@/domain/forum/html';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 
 describe('Android local HTML helpers', () => {
   it('extracts visible text without script or style contents', () => {

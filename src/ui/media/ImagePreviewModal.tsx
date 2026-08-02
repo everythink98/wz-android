@@ -19,7 +19,8 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-native-zoom-toolkit';
 import { X } from 'lucide-react-native';
-import { imageSourceFromUrl, type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/htmlImages';
+import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/imagePreviewCatalog';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import {
   cachedCompatibleSvgArtifact,
@@ -32,13 +33,8 @@ import {
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { markOriginalImageDisplayed, originalImageDisplayRevision } from '@/platform/media/originalImageLoading';
-import {
-  beginDiagnosticTrace,
-  diagnosticRef,
-  finishDiagnosticTrace,
-  type DiagnosticFields,
-  type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { diagnosticRef, type DiagnosticFields, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { CompatibleSvgDocumentView } from '@/ui/content/CompatibleSvgDocumentView';
 
 const EMPTY_PREVIEW_ITEMS: ImagePreviewItem[] = [];

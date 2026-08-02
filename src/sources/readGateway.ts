@@ -39,11 +39,13 @@ import {
   finishDiagnosticTrace,
   hintDiagnosticOutcome,
   markDiagnosticStage,
+  withDiagnosticFetcher
+} from '@/platform/diagnostics/diagnostics';
+import {
   normalizeDiagnosticReason,
-  withDiagnosticFetcher,
   type DiagnosticFields,
   type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+} from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceDiagnosticSummary } from './diagnostics';
 import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
 import {

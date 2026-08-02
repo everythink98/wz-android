@@ -18,7 +18,7 @@ import { highlightHtml } from '@/ui/text/highlight';
 import { stripHtml } from '@/domain/forum/text';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { parseForumTopicLink } from '@/domain/forum/links';
-import { imageSourceFromUrl } from '@/platform/media/htmlImages';
+import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import {
   discourseReactionStats,

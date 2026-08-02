@@ -2,17 +2,16 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { Buffer } from 'buffer';
 import { safeFileName } from '@/platform/storage/backupFiles';
-import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './htmlImages';
+import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './imageRequestSource';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
-  normalizeDiagnosticReason,
-  withDiagnosticFetcher,
-  type DiagnosticTrace
+  withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
 export interface ImageSaveRequestOptions {
   mediaContext: ForumMediaRequestContext;

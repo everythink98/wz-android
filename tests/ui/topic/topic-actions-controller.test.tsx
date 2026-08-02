@@ -54,7 +54,8 @@ import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import { uploadNodeSeekReplyImageWithApiKey } from '@/sources/nodeimage/upload';
-import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   createSiteSessionStates,
   createSiteSessionViewModels,

@@ -9,19 +9,21 @@ import type {
 } from '@/domain/forum/models';
 import {
   absoluteUrl,
-  accessRequirementFromObject,
-  accessRequirementFromNoticeText,
-  accessRequirementFromText,
   elementText,
   isRecord,
   parsePositiveInteger,
   parseHtml,
-  sanitizeContentHtml,
   sortTopicsByTime,
   textExcerpt,
   textContentFromHtml,
   toIsoString
 } from '@/domain/forum/html';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import {
+  accessRequirementFromObject,
+  accessRequirementFromNoticeText,
+  accessRequirementFromText
+} from '@/domain/forum/accessRequirements';
 import {
   V2EX_BASE_URL as BASE_URL,
   safeV2exNodePath as safeNodePath,

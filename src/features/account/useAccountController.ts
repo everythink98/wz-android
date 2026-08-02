@@ -17,13 +17,8 @@ import type { Screen } from '@/ui/navigation/types';
 import { sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
 import { shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import type { LoginWebViewFailureReason } from './credentialDiagnostics';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason,
-  type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type {

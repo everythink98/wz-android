@@ -14,13 +14,8 @@ import type {
   Topic,
   TopicDetail
 } from '@/domain/forum/models';
-import {
-  accessRequirementFromObject,
-  accessRequirementFromText,
-  isRecord,
-  parsePositiveInteger,
-  textContentFromHtml
-} from '@/domain/forum/html';
+import { isRecord, parsePositiveInteger, textContentFromHtml } from '@/domain/forum/html';
+import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import {

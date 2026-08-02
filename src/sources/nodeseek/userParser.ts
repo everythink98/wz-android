@@ -1,7 +1,6 @@
 import type { Topic, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import {
   absoluteUrl,
-  accessRequirementFromObject,
   elementText,
   isRecord,
   parseHtml,
@@ -9,6 +8,7 @@ import {
   textExcerpt,
   toIsoString
 } from '@/domain/forum/html';
+import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   NODESEEK_BASE_URL,

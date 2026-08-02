@@ -1,19 +1,21 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   beginDiagnosticTrace,
-  type DiagnosticFields,
   diagnosticTraceForRequest,
-  diagnosticRef,
   finishDiagnosticTrace,
   hintDiagnosticOutcome,
   markDiagnosticStage,
-  linkDiagnosticRefs,
-  normalizeDiagnosticReason,
   recordDiagnosticError,
   registerDiagnosticContextFetcher,
   setDiagnosticWriter,
   withDiagnosticFetcher
 } from './diagnostics';
+import {
+  type DiagnosticFields,
+  diagnosticRef,
+  linkDiagnosticRefs,
+  normalizeDiagnosticReason
+} from './diagnosticPolicy';
 
 function captureEvents() {
   const lines: string[] = [];

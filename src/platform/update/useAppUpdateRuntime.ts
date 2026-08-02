@@ -16,9 +16,9 @@ import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
-  normalizeDiagnosticReason,
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 
 type CheckAppUpdateOptions = {
   silent?: boolean;

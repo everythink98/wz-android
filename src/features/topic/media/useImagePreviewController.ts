@@ -1,24 +1,20 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { PixelRatio } from 'react-native';
+import { normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import {
   createImagePreviewCatalog,
   imagePreviewListFromCatalog,
-  normalizeImagePreviewUrl,
   type ImageDisplaySize,
   type ImagePreviewList
-} from '@/platform/media/htmlImages';
+} from '@/platform/media/imagePreviewCatalog';
 import type { TopicImageDeriver } from '../model/topicDerivedData';
 import { errorMessage } from '@/platform/network/errors';
 import { saveImageUriToLibrary } from '@/platform/media/imageSave';
 import type { Fetcher } from '@/platform/network/request';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { Source } from '@/domain/forum/models';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 function normalizeImageCacheKey(url: string) {

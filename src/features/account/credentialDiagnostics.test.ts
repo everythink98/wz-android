@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CredentialSummary } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
-import { beginDiagnosticTrace, setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { finishCredentialFillTraceForWebViewFailure, loadCredentialSummariesWithTrace } from './credentialDiagnostics';
 
 const summaries: Record<CredentialSite, CredentialSummary> = {

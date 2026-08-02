@@ -9,7 +9,8 @@ jest.mock('@/sources/nodeseek/actionClient', () => ({
 import { runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { useNodeSeekCheckInController } from '@/features/account/useNodeSeekCheckInController';
 import { appQueryClient } from '@/platform/query/serverState';
-import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 
 const mockRunNodeSeekAction = jest.mocked(runNodeSeekAction);

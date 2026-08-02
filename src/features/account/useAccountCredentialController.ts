@@ -15,15 +15,13 @@ import {
   parseLoginFormMessage
 } from '@/domain/session/loginFormAdapters';
 import type { SessionSite } from '@/domain/session/siteSessionState';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
   normalizeDiagnosticReason,
   type DiagnosticFields,
   type DiagnosticOutcome,
   type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+} from '@/platform/diagnostics/diagnosticPolicy';
 import {
   finishCredentialFillTraceForWebViewFailure,
   loadCredentialSummariesWithTrace,

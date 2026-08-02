@@ -1,27 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sanitizeContentHtml } from '@/domain/forum/html';
-import { diagnosticRef } from '@/platform/diagnostics/diagnostics';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { diagnosticRef } from '@/platform/diagnostics/diagnosticPolicy';
 
 vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
   DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
 }));
 import {
-  createImagePreviewCatalog,
   dataImageFileFromUrl,
-  extractImageUrlsFromHtml,
-  flowInlineImagesInMixedParagraphs,
-  imagePreviewListFromCatalog,
   imageRequestHeadersForUrl,
   imageSourceFromUrl,
+  isHttpOrHttpsUrl,
+  normalizeImagePreviewUrl
+} from './imageRequestSource';
+import {
+  createImagePreviewCatalog,
+  extractImageUrlsFromHtml,
+  imagePreviewListFromCatalog,
+  isPreviewableImageUrl,
+  selectImageDisplaySource,
+  selectImageOriginalSource
+} from './imagePreviewCatalog';
+import {
+  flowInlineImagesInMixedParagraphs,
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize,
-  isHttpOrHttpsUrl,
-  isPreviewableImageUrl,
-  normalizeImagePreviewUrl,
-  selectImageDisplaySource,
-  selectImageOriginalSource,
   shouldMarkLoadedImageInline
-} from './htmlImages';
+} from './inlineMedia';
 
 const publicMediaContext = {
   contentSource: null,

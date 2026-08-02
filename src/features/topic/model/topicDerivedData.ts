@@ -1,5 +1,6 @@
 import type { Reply } from '@/domain/forum/models';
-import { extractImageUrlsFromHtml, markInlineSizedImageHtml } from '@/platform/media/htmlImages';
+import { extractImageUrlsFromHtml } from '@/platform/media/imagePreviewCatalog';
+import { markInlineSizedImageHtml } from '@/platform/media/inlineMedia';
 
 export type InlineSizedImageUrlMap = Record<string, true>;
 

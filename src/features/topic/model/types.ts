@@ -1,4 +1,4 @@
-import type { DiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { Reply } from '@/domain/forum/models';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 

@@ -1,7 +1,8 @@
 import type { Reply, Source, Topic, TopicDetail, UserReference } from './models';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from './presentation';
 import { parseForumUserLink } from './links';
-import { accessRequirementFromNoticeText, textContentFromHtml } from './html';
+import { textContentFromHtml } from './html';
+import { accessRequirementFromNoticeText } from './accessRequirements';
 
 export function nodeSeekUserIdFromValue(value?: string) {
   const text = String(value || '').trim();

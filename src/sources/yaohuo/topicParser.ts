@@ -2,15 +2,15 @@ import type { HTMLElement } from 'node-html-parser';
 import type { RepliesResponse, TopicDetail, TopicPoll, TopicPollOption } from '@/domain/forum/models';
 import {
   absoluteUrl,
-  accessRequirementFromText,
   elementText,
   hasRenderableHtmlContent,
   parseHtml,
   parsePositiveInteger,
-  sanitizeContentHtml,
   textContentFromHtml,
   textExcerpt
 } from '@/domain/forum/html';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   YAOHUO_BASE_URL as BASE_URL,

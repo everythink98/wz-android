@@ -9,7 +9,7 @@ import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/AppControls';
 import type { Source } from '@/domain/forum/models';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-import { imageSourceFromUrl } from '@/platform/media/htmlImages';
+import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import {
   applyReplyComposerFormat,
   replyComposerExpressionGridKey,

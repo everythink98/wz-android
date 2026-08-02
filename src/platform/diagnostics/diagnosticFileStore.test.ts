@@ -117,14 +117,8 @@ import {
   initializeDiagnosticFileLogging,
   type DiagnosticExportMetadata
 } from './diagnosticFileStore';
-import {
-  beginDiagnosticTrace,
-  diagnosticRef,
-  finishDiagnosticTrace,
-  recordDiagnosticError,
-  setDiagnosticWriter,
-  type DiagnosticFields
-} from './diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError, setDiagnosticWriter } from './diagnostics';
+import { diagnosticRef, type DiagnosticFields } from './diagnosticPolicy';
 
 const metadata: DiagnosticExportMetadata = {
   androidApiLevel: 35,

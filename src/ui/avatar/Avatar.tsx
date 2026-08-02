@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { SvgXml } from 'react-native-svg';
 import { loadRemoteAvatarSvgText } from '@/platform/media/avatarImages';
-import { imageSourceFromUrl } from '@/platform/media/htmlImages';
+import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 
 import type { Source } from '@/domain/forum/models';

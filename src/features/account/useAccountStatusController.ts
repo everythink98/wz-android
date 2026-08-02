@@ -24,10 +24,9 @@ import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
-  normalizeDiagnosticReason,
-  withDiagnosticFetcher,
-  type DiagnosticTrace
+  withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   readManagedCookieHeader as readManagedCookieHeaderFromNative,
   type ManagedCookieReadResult

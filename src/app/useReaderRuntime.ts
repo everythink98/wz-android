@@ -8,13 +8,8 @@ import {
   type ReaderDataMutationReason
 } from '@/domain/reader/readerData';
 import { loadReaderData, saveCleanReaderData, saveReaderSettings } from '@/platform/storage/readerDataStore';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason,
-  type DiagnosticTrace
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
 function prepareSettingsOnlyCommit(current: ReaderData, updated: ReaderData) {
   if (

@@ -1,13 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { runBackupOperation } from '@/platform/storage/backupOperation';
 import { exportDiagnosticLog, type DiagnosticExportMetadata } from '@/platform/diagnostics/diagnosticFileStore';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason,
-  type DiagnosticReason
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 export function useDiagnosticLogController({

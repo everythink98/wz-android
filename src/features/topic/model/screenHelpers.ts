@@ -8,7 +8,8 @@ import type {
   TopicDetail,
   TopicPoll
 } from '@/domain/forum/models';
-import { accessRequirementFromNoticeText, textContentFromHtml } from '@/domain/forum/html';
+import { textContentFromHtml } from '@/domain/forum/html';
+import { accessRequirementFromNoticeText } from '@/domain/forum/accessRequirements';
 import { replyKey } from '@/domain/forum/feed';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { splitTopicContentHtml } from '@/domain/forum/topicContentSplit';

@@ -2,13 +2,13 @@ import type { HTMLElement } from 'node-html-parser';
 import type { FeedResponse, SearchResponse, Topic } from '@/domain/forum/models';
 import {
   absoluteUrl,
-  accessRequirementFromText,
   elementText,
   parseHtml,
   parsePositiveInteger,
   sortTopicsByTime,
   textExcerpt
 } from '@/domain/forum/html';
+import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   YAOHUO_BASE_URL as BASE_URL,

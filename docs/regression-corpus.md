@@ -453,7 +453,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 小隐寺 Topic API 返回 `reactions[]`，或用户打开小隐寺回复编辑器；正文/评论 `cooked` 中的 `<img class="emoji">` 仍可能单独正常显示。 |
 | 根因 seam | `src/sources/linuxdo/reactions.ts` 同时承担通用 Discourse reaction 和 linux.do 站点资源，通用分支刻意丢弃图片 URL；表情目录只由 linux.do adapter 读取，页面与编辑器因此无法取得小隐寺自己的 `/emojis.json`。 |
 | 必须保持的行为 | 每个 Discourse adapter 独立读取并缓存本站 `/emojis.json`，公共 reaction presenter 只消费当前来源的 name→URL；主题和回复均显示本站 emoji 图片及计数，未知 id 才回退成可读文字。切换站点时旧目录不得短暂泄漏。小隐寺正文和评论里的 `cooked <img class="emoji">` 继续按 inline 图片渲染；编辑器插入原站接受的 `:name:`，不发送评论。linux.do 的 boost 仍是其站点特性。 |
-| 精确失败 oracle | `src/sources/discourse/reactions.test.ts` 用原站 `heart/+1` URL 固定 reaction 图片映射；`src/sources/xiaoyinsi/reader.test.ts` 固定 `/emojis.json` 与本站绝对 URL；`tests/ui/topic/topic-components.test.tsx` 要求小隐寺只读回复实际渲染两张 reaction 图片；`tests/ui/topic/reply-composer.test.tsx` 要求小隐寺表情入口插入 `:waving_hand:`；`src/platform/media/htmlImages.test.ts` 固定真实评论 emoji 仍走 inline 图片。 |
+| 精确失败 oracle | `src/sources/discourse/reactions.test.ts` 用原站 `heart/+1` URL 固定 reaction 图片映射；`src/sources/xiaoyinsi/reader.test.ts` 固定 `/emojis.json` 与本站绝对 URL；`tests/ui/topic/topic-components.test.tsx` 要求小隐寺只读回复实际渲染两张 reaction 图片；`tests/ui/topic/reply-composer.test.tsx` 要求小隐寺表情入口插入 `:waving_hand:`；`src/platform/media/imageMediaPolicies.test.ts` 固定真实评论 emoji 仍走 inline 图片。 |
 | 最低可靠自动测试层 | 数据目录与映射使用 `UNIT_PASS`，reaction 图片与编辑器入口使用 `UI_PASS`；真实资源加载、主题与评论的视觉结果使用 `LIVE_PASS`。 |
 | Replay 或真实验收路径 | 直达 `https://forum.xiaoyinsi.com/t/topic/9`：首帖应以图片显示 heart、+1、distorted_face 及计数；回复 #2 同样显示多种图片；回复 #7 的 waving_hand 应在正文行内显示；只打开编辑器检查“表情”目录和插入草稿，不发送。 |
 | 负向验证方式 | 让小隐寺继续调用无目录参数的 `discourseReactionStats`、把 emoji reader 只注册给 linux.do，或从小隐寺 toolbar 移除 `discourse-emoji`，对应编号测试必须失败。 |
@@ -1874,9 +1874,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-02`、`TOPIC-03` |
 | 用户症状 | NodeSeek sticker 的 `title` 或其他引号属性包含 `>` 时，sticker 被切断、删除或把后续正文吞掉。 |
 | 触发条件 | mixed-paragraph 图片/sticker 处理用非 quote-aware tag 正则。 |
-| 根因 seam | `src/platform/media/htmlImages.ts` 在 sticker/image regex 前的 quoted-tag normalization。 |
+| 根因 seam | `src/platform/media/inlineMedia.ts` 在 sticker/image regex 前的 quoted-tag normalization。 |
 | 必须保持的行为 | 引号内 `>` 属于属性内容；sticker、前后正文和 inline 流顺序都保持，真正 tag 结束符才参与分片。 |
-| 精确失败 oracle | `src/platform/media/htmlImages.test.ts` 的 `REG-TOPIC-011` 固定 `title="1 > 0"` sticker 与前后正文均保留。 |
+| 精确失败 oracle | `src/platform/media/imageMediaPolicies.test.ts` 的 `REG-TOPIC-011` 固定 `title="1 > 0"` sticker 与前后正文均保留。 |
 | 最低可靠自动测试层 | `UNIT_PASS`。 |
 | Replay 或真实验收路径 | 只读打开含 sticker 的 NodeSeek 主题，对照前后文字。 |
 | 负向验证方式 | 去掉 quote normalization，测试会缺 sticker 或丢尾文。 |
@@ -1996,7 +1996,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | RN/Fresco、Expo Image、Expo Video 和保存下载分别拥有 transport；其中任一路没有接入准确 URL 的当前 WebView Cookie，或从 App 快照手工拼接旧 `Cookie` header。 |
 | 根因 seam | 原生 managed OkHttp client、Expo Image loader、`src/features/topic/rendering/useHtmlRenderingController.tsx` 的 Expo Video source、图片预览与 `src/platform/media/imageSave.ts`。 |
 | 必须保持的行为 | 本条保留“NodeSeek 同来源受保护媒体不丢当前会话、不使用 Cookie 快照、响应不回写”的历史语义；旧 JS Expo Video Cookie bridge 由 `REG-TOPIC-029` 的统一媒体契约取代。正文、全屏图、SVG fallback、保存下载和视频都在 JS 携带内部内容来源 marker 与 opaque session identity，原生在发网前移除两个内部头和任何 JS `Cookie` header。首跳目标属于内容来源时可按准确 URL 从 WebView CookieJar 实时读取；跨来源、未受管、无效 marker 或媒体 Cookie 读取失败都继续匿名加载，重定向一旦离开内容来源就永久降权。RN Networking、Fresco、Expo Image 与 Expo Video 使用项目配置的 managed OkHttp client；响应不得写回 WebView，Cookie 值不得进入 URL、持久化文件或诊断日志。 |
-| 精确失败 oracle | 生成的 `NetworkProxyRuntimeTest` 固定两个内部头在发网前移除、同来源首跳可读 Cookie、跨来源/无效 marker 匿名继续、Cookie 读取异常 fail-closed，以及离源后跳回仍不恢复。`tests/tooling/release-packaging.test.ts` 与 `tests/tooling/network-proxy-plugin.test.ts` 固定 Expo Image/Video 使用 managed client 且视频不继承图片总时限；`src/platform/media/htmlImages.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/image-preview.test.tsx`、`tests/ui/topic/image-preview-controller.test.tsx` 与 `src/platform/media/imageSave.test.ts` 固定各入口只传内部来源与 identity 头、不在 JS 传输 Cookie 快照。 |
+| 精确失败 oracle | 生成的 `NetworkProxyRuntimeTest` 固定两个内部头在发网前移除、同来源首跳可读 Cookie、跨来源/无效 marker 匿名继续、Cookie 读取异常 fail-closed，以及离源后跳回仍不恢复。`tests/tooling/release-packaging.test.ts` 与 `tests/tooling/network-proxy-plugin.test.ts` 固定 Expo Image/Video 使用 managed client 且视频不继承图片总时限；`src/platform/media/imageMediaPolicies.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/image-preview.test.tsx`、`tests/ui/topic/image-preview-controller.test.tsx` 与 `src/platform/media/imageSave.test.ts` 固定各入口只传内部来源与 identity 头、不在 JS 传输 Cookie 快照。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` + 原生生成/编译。 |
 | Replay 或真实验收路径 | 只有当前登录态自然出现受保护媒体时做只读预览；真实保存会写系统媒体库，须另获授权。 |
 | 负向验证方式 | 恢复媒体 Cookie state/参数、按媒体目标 host 推断身份、向 JS source 写入 `Cookie`、让重定向离源后重新获得 Cookie、让 Expo Image/Video 使用独立 client，或允许响应保存 Cookie；对应测试必须失败。 |
@@ -3283,7 +3283,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | JS 按媒体目标 host 推断 session identity 并手工读取/拼接 Cookie，缺少内容来源和整条重定向链的授权上下文。 |
 | 根因 seam | `ForumMediaRequestContext`、所有媒体 source/header 构造和生成的 Android OkHttp Cookie policy。 |
 | 必须保持的行为 | 所有 HTTP(S) 媒体携带仅供进程内识别的内容来源标记；原生在发网前移除。只有首跳目标属于内容来源时可读取 Cookie；跨站/未知 CDN 继续匿名加载，任一跳离源后永久降权，跳回也不恢复。普通无标记 API 行为不变。 |
-| 精确失败 oracle | `src/platform/media/htmlImages.test.ts` 与 `src/platform/media/mediaSessionEpoch.test.ts` 固定媒体来源标记/epoch；生成 Kotlin policy tests 固定同源、跨站、无效标记和真实 302 离源后跳回，并单独证明无标记普通 API 不进入媒体策略；视频 UI 测试要求 source 无 JS Cookie。 |
+| 精确失败 oracle | `src/platform/media/imageMediaPolicies.test.ts` 与 `src/platform/media/mediaSessionEpoch.test.ts` 固定媒体来源标记/epoch；生成 Kotlin policy tests 固定同源、跨站、无效标记和真实 302 离源后跳回，并单独证明无标记普通 API 不进入媒体策略；视频 UI 测试要求 source 无 JS Cookie。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + 原生 Kotlin tests + fresh prebuild compile；JS 测试不能替代重定向与发网前移除证明。 |
 | Replay 或真实验收路径 | 只读打开含同源与跨源媒体的 Topic，二者都能请求；诊断只显示来源分类。真实跨站受保护视频未获授权时标 `NOT_VERIFIED`。 |
 | 负向验证方式 | 恢复目标 host 身份推断、删除 marker 移除或允许 policy 重新升级后，JS/Kotlin 编号测试失败。 |
@@ -3296,9 +3296,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-02` |
 | 用户症状 | 已清洗的安全 `src` 被相对或 `javascript:` lazy/srcset 候选覆盖，正文加载失败；同一候选还可进入全屏预览和保存。 |
 | 触发条件 | 图片“发现候选”与“允许主动请求”共用宽松规则，扩展名判断把危险值重新激活。 |
-| 根因 seam | `src/platform/media/htmlImages.ts` 的 source upgrade、preview catalog 和 tapped URL 结算。 |
+| 根因 seam | `src/platform/media/inlineMedia.ts` 的 source upgrade 与 `src/platform/media/imagePreviewCatalog.ts` 的 preview catalog/tapped URL 结算。 |
 | 必须保持的行为 | 相对地址只可作为匹配 alias；正文、预览和保存只接受绝对 HTTP(S)、规范化 protocol-relative URL 或允许的 raster data URI，否则回退已清洗 `src` 或不发请求。 |
-| 精确失败 oracle | `src/platform/media/htmlImages.test.ts` 的 `REG-TOPIC-030` 覆盖 unsafe lazy、不安全 catalog 候选以及直接点击危险/相对 URL，三者都不能成为 active URL。 |
+| 精确失败 oracle | `src/platform/media/imageMediaPolicies.test.ts` 的 `REG-TOPIC-030` 覆盖 unsafe lazy、不安全 catalog 候选以及直接点击危险/相对 URL，三者都不能成为 active URL。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：从公开 HTML/preview 接口固定最终主动 URL。 |
 | Replay 或真实验收路径 | 打开含 lazy/srcset 的只读 Topic，正文与预览显示同一安全图片；保存需单独授权。 |
 | 负向验证方式 | 在 upgrade 或 tapped preview 处恢复宽松候选，编号测试会出现 `javascript:x.png` 或相对 URL。 |
@@ -3341,9 +3341,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-02` |
 | 用户症状 | 图片 URL 中本应保留的字面 `&lt;` 被再次变成 `<`，增补平面数字实体也可能被截断。 |
 | 触发条件 | DOM parser 已解码属性，后续 helper 又按多趟替换；`&amp;lt;` 在一轮调用内被解两次。 |
-| 根因 seam | `src/platform/media/htmlImages.ts` 的 DOM 属性读取与 raw regex fallback 解码边界。 |
+| 根因 seam | `src/platform/media/imagePreviewCatalog.ts` 的 DOM 属性读取与 raw regex fallback 解码边界。 |
 | 必须保持的行为 | DOM 属性直接使用 parser 结果；只有 raw fallback 调用现有单趟 `decodeHtml` 一次，并保持 `fromCodePoint` 语义。 |
-| 精确失败 oracle | `src/platform/media/htmlImages.test.ts` 的 `REG-TOPIC-033` 输入 `&amp;lt;`，公开提取结果必须是字面 `&lt;` 而非 `<`。 |
+| 精确失败 oracle | `src/platform/media/imageMediaPolicies.test.ts` 的 `REG-TOPIC-033` 输入 `&amp;lt;`，公开提取结果必须是字面 `&lt;` 而非 `<`。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：固定 parser 与 fallback 的确定性输出。 |
 | Replay 或真实验收路径 | 动态 Topic 无需特意构造实体；相关图片能正常请求即可，畸形实体主要由 fixture 验证。 |
 | 负向验证方式 | 恢复 `&amp;` 后再逐类 replace 的多趟 decoder，编号测试失败。 |
@@ -3446,9 +3446,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` |
 | 用户症状 | 浏览器中秒开的论坛图片在 App 正文等待十几秒甚至离页仍未完成；窄屏正文实际下载了灯箱原图或 `srcset` 最大候选，耗时和字节数远大于展示所需。 |
 | 触发条件 | HTML 预处理把 `<a href>` 灯箱 URL 或最大 `srcset` 候选覆盖进正文 `src`，并让一个 URL 同时承担正文展示、全屏预览和保存。 |
-| 根因 seam | `src/platform/media/htmlImages.ts` 的图片候选解析、正文 source 选择与预览 alias catalog，以及 `src/features/topic/rendering/useHtmlRenderingController.tsx` 的最终 native source。 |
+| 根因 seam | `src/platform/media/imagePreviewCatalog.ts` 的图片候选解析与预览 alias catalog、`src/platform/media/inlineMedia.ts` 的正文 source 选择，以及 `src/features/topic/rendering/useHtmlRenderingController.tsx` 的最终 native source。 |
 | 必须保持的行为 | 每张 HTML 图片形成最小双层模型：`displayUri` 必须是正文首个请求，`originalUri` 用于全屏、保存及 `REG-TOPIC-048` 约束的第二阶段清晰升级。`w` 候选选择首个满足 `contentWidth × DPR` 的宽度，否则最大；`x` 候选选择首个不低于 DPR 的倍率，否则最大。安全且非占位的 `src` 在候选不完整时优先；灯箱原图不得覆盖正文首个请求。所有 alias 仍结算到同一预览项，主动 URL 继续遵守 `REG-TOPIC-030`。 |
-| 精确失败 oracle | `src/platform/media/htmlImages.test.ts` 的 `REG-TOPIC-040` 固定 `w/x srcset` 临界点、DPR、无描述符回退、占位 src、非法候选、alias 去重和 display/original 分离；`tests/ui/topic/topic-image-loading.test.tsx` 用含小适屏图与大灯箱图的真实 renderer props 断言适屏图完成 `onLoad + onDisplay` 前 native source 只收到适屏 URL，点击后预览仍指向原图。 |
+| 精确失败 oracle | `src/platform/media/imageMediaPolicies.test.ts` 的 `REG-TOPIC-040` 固定 `w/x srcset` 临界点、DPR、无描述符回退、占位 src、非法候选、alias 去重和 display/original 分离；`tests/ui/topic/topic-image-loading.test.tsx` 用含小适屏图与大灯箱图的真实 renderer props 断言适屏图完成 `onLoad + onDisplay` 前 native source 只收到适屏 URL，点击后预览仍指向原图。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：解析器固定候选算法，RNTL 固定最终 native source；源码字符串或仅验证 catalog 不足以证明正文没有下载原图。 |
 | Replay 或真实验收路径 | 用“大原图 + 小适屏图 + 可暂停响应”的受控只读端点打开 Topic，核对正文命中的候选、最终字节数和预览原图。今日日志没有保存图片 URL；重新取得原帖/图片入口前，幺火该资源专项标 `NOT_VERIFIED`。 |
 | 负向验证方式 | 恢复灯箱 URL 覆盖正文首个请求、无条件先取最大候选或让原图早于适屏图 `onDisplay` 启动，编号测试会收到大图 URL；放宽危险候选会同时触发 `REG-TOPIC-030`。 |
@@ -3566,9 +3566,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-02`；共享详情渲染 seam 回归 `TOPIC-01`、`TOPIC-03`、`NAV-03`、`ACCOUNT-01` |
 | 用户症状 | 详情与评论只能一直显示适屏图；即使全屏原图已经清晰显示，关闭预览后外层仍模糊。若直接把原图改成首个请求，长帖又会恢复慢加载、滚动期间整页抢带宽和图片尺寸跳动。 |
 | 触发条件 | `displayUri/originalUri` 只在预览 catalog 中分层，块图 renderer 不消费安全原图；正文与全屏也没有按完整媒体请求 identity 共享“原图已显示”状态。 |
-| 根因 seam | `src/platform/media/htmlImages.ts` 的原图来源传递、`src/features/topic/rendering/useHtmlRenderingController.tsx` 的块图双层生命周期、`src/platform/media/originalImageLoading.tsx` 的附近门禁与进程内显示信号、`src/features/topic/TopicScreen.tsx` 的主楼分块范围，以及 `src/ui/media/ImagePreviewModal.tsx` 的全屏 `onDisplay` 结算。 |
+| 根因 seam | `src/platform/media/imagePreviewCatalog.ts` 的原图来源传递、`src/features/topic/rendering/useHtmlRenderingController.tsx` 的块图双层生命周期、`src/platform/media/originalImageLoading.tsx` 的附近门禁与进程内显示信号、`src/features/topic/TopicScreen.tsx` 的主楼分块范围，以及 `src/ui/media/ImagePreviewModal.tsx` 的全屏 `onDisplay` 结算。 |
 | 必须保持的行为 | 适屏图仍是首个请求，并继续独占 4:3 占位、唯一 Spinner、`onLoad` 真实比例与 `onDisplay` 显示门槛。适屏图显示后，评论只依赖 FlashList 的 `720px` render window，主楼只允许同一 `720px` 范围内已测量分块以低优先级启动原图；点击图片立即使用高优先级。原图层以适屏图为 placeholder、`150ms` 过渡并绝对覆盖既有 frame，成功或分辨率差异不得改变外层几何。完整媒体 request identity（URL、cache key、headers/session）匹配的正文、评论或全屏原图只有在 `onDisplay` 后才能发布进程内 ready；全屏成功后外层复用同一 Glide 缓存或已有 SVG poster。相同 URL 不发第二次请求；后台失败保留适屏图、没有第二错误态或循环重试，只有后续全屏成功 revision 可重新触发；复杂 SVG 后台失败不得启动 Chromium，现有全屏重试和 artifact 恢复保持不变。 |
-| 精确失败 oracle | `src/platform/media/htmlImages.test.ts` 的 `REG-TOPIC-048` 固定安全灯箱/最大 `srcset` 原图传递；`src/platform/media/originalImageLoading.test.ts` 固定 `720px` 边界和完整 session identity 隔离；`tests/ui/topic/topic-image-loading.test.tsx` 固定原图不早启、低/高优先级、placeholder、`150ms`、同 URL 去重、稳定几何、失败保留适屏图、ready 后重试与旧 epoch 隔离；`tests/ui/topic/image-preview.test.tsx` 固定全屏 `onLoad` 不发布、匹配 `onDisplay` 才发布。 |
+| 精确失败 oracle | `src/platform/media/imageMediaPolicies.test.ts` 的 `REG-TOPIC-048` 固定安全灯箱/最大 `srcset` 原图传递；`src/platform/media/originalImageLoading.test.ts` 固定 `720px` 边界和完整 session identity 隔离；`tests/ui/topic/topic-image-loading.test.tsx` 固定原图不早启、低/高优先级、placeholder、`150ms`、同 URL 去重、稳定几何、失败保留适屏图、ready 后重试与旧 epoch 隔离；`tests/ui/topic/image-preview.test.tsx` 固定全屏 `onLoad` 不发布、匹配 `onDisplay` 才发布。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：parser/纯函数固定来源与范围，RNTL 必须观察真实 Expo Image props、生命周期、几何和跨全屏信号；源码字符串、只检查 catalog 或只打开 App 都不足以证明请求顺序。 |
 | Replay 或真实验收路径 | 在当前身份匹配的 App 中只读打开含主楼长图、远端评论图和 SVG 的详情：冷加载确认先适屏后附近原图；滚到长帖远段确认未到附近不启动；点开原图等清晰显示后关闭，外层应同步清晰且位置不跳；快速返回与原图自然失败时适屏图继续可用。不得为制造失败清 Cookie、断网或写入论坛。 |
 | 负向验证方式 | 让原图在适屏图 `onDisplay` 前、主楼 `720px` 范围外或旧 session ready 后挂载，移除绝对覆盖/placeholder，原图失败时替换成错误态，或在后台 SVG 失败时调用 Chromium 恢复，编号 unit/UI 用例必须失败。 |
@@ -3643,7 +3643,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 一个 ReplyItem 在单个父列表 cell 中同步创建引用帖的全部 HTML/图片节点；目标为首帖时另走 reply Query 而没有复用同 epoch Topic cache；route 只恢复 expanded boolean、未从当前 epoch cache 重建 active request；实例 key 只绑定展示楼层；任一状态变化重复拆分所有已展开正文。头像节点只在 URL 存在时挂载，列表全局 gap 又被用于同一卡片的连续分块。 |
 | 根因 seam | `useTopicController` 的引用 Query、`buildVirtualizedReplyItems`、`TopicScreenBody` 的唯一纵向 FlashList、`ReplyItem` 分段渲染与引用卡片样式。 |
 | 必须保持的行为 | 目标首帖已在当前 session epoch 的 Topic Query cache 时直接转换并 seed 对应 reply Query，零重复 transport；route 恢复已展开评论引用时，从当前回复实体和同 epoch reply cache 重建 observer。引用实例绑定稳定 reply identity（优先 commentId），展示楼层只用于文案。评论、每个引用摘要、展开正文 chunk 和评论尾部按稳定顺序成为父 FlashList data，由同一个 render window 挂载，不创建嵌套纵向列表。折叠只移除正文 rows，二次展开复用 WeakMap 中同一 immutable Reply 的拆分结果和稳定 key。头像位始终保留 fallback，作者单行、标题最多两行；同一卡片分块无外部 gap，不同引用及普通列表项保留明确纵向间距，inline 引用头像保留 6dp 右间距，展开/收起及标题入口至少 48dp。 |
-| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 在目标 Topic 已缓存时要求展开零 `getReply`，进入目标再 restore parent 后仍立即得到同一 cached reply、transport 总数不增加；`src/features/topic/model/screenHelpers.test.ts` 以两个不同 commentId 但相同 floor/reference 的回复要求 key 与 expanded 状态隔离，并要求重复 build 复用同一 content 对象；`tests/ui/topic/topic-reply-filters.test.tsx` 要求超长引用生成多个稳定父列表 rows、顺序不变、折叠只去除内容且分隔值为 0/8/10/12；`tests/ui/topic/topic-components.test.tsx` 固定头像 fallback、长作者/标题行数和携带 reply identity 的 callback；`src/platform/media/htmlImages.test.ts`、`tests/integration/style-ownership.test.ts` 固定 inline 头像与触控/间距样式。修复前缓存二次展开仍出现约 433.6ms 最慢帧和约 2874 个 helper 节点。 |
+| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 在目标 Topic 已缓存时要求展开零 `getReply`，进入目标再 restore parent 后仍立即得到同一 cached reply、transport 总数不增加；`src/features/topic/model/screenHelpers.test.ts` 以两个不同 commentId 但相同 floor/reference 的回复要求 key 与 expanded 状态隔离，并要求重复 build 复用同一 content 对象；`tests/ui/topic/topic-reply-filters.test.tsx` 要求超长引用生成多个稳定父列表 rows、顺序不变、折叠只去除内容且分隔值为 0/8/10/12；`tests/ui/topic/topic-components.test.tsx` 固定头像 fallback、长作者/标题行数和携带 reply identity 的 callback；`src/platform/media/imageMediaPolicies.test.ts`、`tests/integration/style-ownership.test.ts` 固定 inline 头像与触控/间距样式。修复前缓存二次展开仍出现约 433.6ms 最慢帧和约 2874 个 helper 节点。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Query 行为、列表 data、真实组件布局语义和样式共同固定；只测 fetch 去重或只看最终截图均不足。 |
 | Replay 或真实验收路径 | 保留 App 数据直达 `https://linux.do/t/topic/2685882`，展开首条跨主题引用，连续滚过文字、链接和图片分块，再收起并二次展开；卡片必须连续、作者区不位移、返回可立即操作。匹配的 90Hz debug 模拟器记录二次展开帧分布并与逃逸基线对照，不以工具 settle 时长代替 App 帧耗时，不访问其他主题或执行写操作。 |
 | 负向验证方式 | 把完整引用放回单个 ReplyItem、增加嵌套纵向列表、删除 Topic/reply cache 恢复、以 floor 生成实例 key、每次 build 重拆同一 Reply、恢复条件头像或全局列表 gap，编号 controller/helper/UI/theme 测试至少一层必须失败。 |

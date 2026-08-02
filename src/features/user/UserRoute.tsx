@@ -7,7 +7,7 @@ import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState
 import { toggleFollowedUser, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { SessionSource } from '@/domain/forum/sourceCatalog';
-import { isHttpOrHttpsUrl } from '@/platform/media/htmlImages';
+import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { errorMessage } from '@/platform/network/errors';
 import type { ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';

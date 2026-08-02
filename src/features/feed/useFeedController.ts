@@ -11,12 +11,8 @@ import {
 } from '@/domain/forum/feedOptions';
 import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '@/domain/forum/feed';
 import { categoryKey, topicKey, type ReaderData } from '@/domain/reader/readerData';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { isFeedFilterSource, isSessionSource, sourceValues } from '@/domain/forum/sourceCatalog';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';

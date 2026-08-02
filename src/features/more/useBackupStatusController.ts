@@ -7,13 +7,8 @@ import { exportReaderBackupJson, importReaderBackupJson } from '@/domain/reader/
 import { safeFileName } from '@/platform/storage/backupFiles';
 import { readBackupFileText } from '@/platform/storage/backupImportFile';
 import { runBackupOperation } from '@/platform/storage/backupOperation';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason,
-  type DiagnosticReason
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 
 export function useBackupStatusController({
   notify,

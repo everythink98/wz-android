@@ -2,12 +2,8 @@ import { useCallback, useEffect } from 'react';
 import { isCancelledError, useQuery } from '@tanstack/react-query';
 import type { XiaoyinsiAuthPhase } from '@/domain/session/accountCenter';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';

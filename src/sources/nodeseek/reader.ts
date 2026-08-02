@@ -19,7 +19,8 @@ import type {
   UserProfile,
   UserReference
 } from '@/domain/forum/models';
-import { accessRequirementFromText, elementText, isRecord, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
+import { elementText, isRecord, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
+import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
   arrayField,

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { parseForumUserLink } from '@/domain/forum/links';
-import { accessRequirementFromText, decodeHtml } from '@/domain/forum/html';
+import { decodeHtml } from '@/domain/forum/html';
+import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { sourceCatalog, sourceValues } from '@/domain/forum/sourceCatalog';
 import type { AccessRequirement, Category, Source, Topic, UserProfile } from '@/domain/forum/models';
 

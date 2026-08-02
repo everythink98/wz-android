@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { RenderHTMLSource } from 'react-native-render-html';
-import { flowInlineImagesInMixedParagraphs } from '@/platform/media/htmlImages';
+import { flowInlineImagesInMixedParagraphs } from '@/platform/media/inlineMedia';
 import { HTML_REPLY_CONTENT_CLASS, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from '../rendering/htmlStyles';
 import { markNodeSeekReplyReferenceLinks, normalizeRenderableHtml } from '@/domain/forum/topicContentHtml';
 import {
