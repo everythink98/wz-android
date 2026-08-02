@@ -129,7 +129,7 @@ export function useUserController({
   identityBarriers?: readonly ForumIdentityBarrierSource[];
   sessionEpochs?: ForumSessionEpochs;
   notify: (message: string) => void;
-  onOpenUserScreen: () => void;
+  onOpenUserScreen: (user: UserReference) => void;
   readerData: ReaderData;
   screen: Screen;
   showLinuxDoVerification: (
@@ -476,7 +476,7 @@ export function useUserController({
         notify('用户信息不完整');
         return 'completed';
       }
-      onOpenUserScreen();
+      onOpenUserScreen(user);
       setSelectedUser(requested);
       return 'completed';
     },

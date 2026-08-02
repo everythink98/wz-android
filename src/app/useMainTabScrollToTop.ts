@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { ScrollView } from 'react-native';
-import type { MainTabParamList } from './AppNavigator';
+import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
 
 type SignalTab = Exclude<keyof MainTabParamList, 'more'>;
 

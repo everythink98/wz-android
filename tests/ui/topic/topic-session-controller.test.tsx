@@ -1,19 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { useRef, useState } from 'react';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useTopicController } from '@/features/topic/useTopicController';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
-import { executeTopicReturnStrategy } from '@/app/backHandlerHelpers';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { setDiagnosticWriter, type DiagnosticEvent } from '@/platform/diagnostics/diagnostics';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { Screen } from '@/ui/navigation/types';
-import type { TopicSnapshot } from '@/features/topic/model/types';
 import type { Reply, Topic, TopicDetail } from '@/domain/forum/models';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
@@ -40,135 +36,78 @@ const firstDetail: TopicDetail = {
 };
 
 describe('topic route sessions', () => {
-  it('[REG-PERF-002] keeps the active route state when navigation reports the same route again', async () => {
-    const hook = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn() }));
-
-    await act(async () => {
-      hook.result.current.commands.topic.select(firstTopic);
-      hook.result.current.commands.navigation.activateRoute('topic-route-1');
-    });
-    await act(async () => {
-      hook.result.current.commands.composer.changeContent('saved draft');
-    });
-    await act(async () => {
-      hook.result.current.commands.navigation.saveRoute('topic-route-1');
-    });
+  it('[REG-PERF-002] keeps route-local draft and filter state across rerenders', async () => {
+    const hook = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn(), topic: firstTopic }));
     await act(async () => {
       hook.result.current.commands.composer.changeContent('current draft');
+      hook.result.current.commands.view.changeReplyFilter('author');
     });
-
-    let routeHandled = false;
-    await act(async () => {
-      routeHandled = hook.result.current.commands.navigation.restoreRoute('topic-route-1');
-    });
-
-    expect(routeHandled).toBe(true);
+    hook.rerender(undefined);
     expect(hook.result.current.state.replyContent).toBe('current draft');
+    expect(hook.result.current.state.replyFilter).toBe('author');
+    expect(hook.result.current.state.selectedTopic).toEqual(firstTopic);
   });
 
-  it('[REG-PERF-008] dispatches native pop before restoring the previous Topic session', async () => {
+  it('[REG-PERF-008] isolates state between native Topic route instances', async () => {
     const secondTopic: Topic = {
       ...firstTopic,
       id: '2',
       title: 'Still loading',
       url: 'https://www.nodeseek.com/post-2-1'
     };
-    const hook = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn() }));
-
+    const first = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn(), topic: firstTopic }));
+    const second = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn(), topic: secondTopic }));
     await act(async () => {
-      hook.result.current.commands.topic.select(firstTopic);
-      hook.result.current.commands.navigation.activateRoute('topic-route-1');
-      hook.result.current.commands.composer.changeContent('first draft');
+      first.result.current.commands.composer.changeContent('first draft');
+      second.result.current.commands.composer.changeContent('second draft');
     });
-    await act(async () => {
-      hook.result.current.commands.navigation.saveRoute('topic-route-1');
-      hook.result.current.commands.navigation.pushBackStack(hook.result.current.snapshot(), secondTopic);
-      hook.result.current.commands.topic.select(secondTopic);
-      hook.result.current.commands.navigation.activateRoute('topic-route-2');
-      hook.result.current.commands.composer.changeContent('loading draft');
-    });
-
-    const fallbackSnapshot = hook.result.current.commands.navigation.popBackStack();
-    const calls: string[] = [];
-    await act(async () => {
-      executeTopicReturnStrategy({
-        canGoBack: true,
-        strategy: 'route-pop',
-        goBack: () => calls.push('pop'),
-        restoreReturningRoute: () => {
-          calls.push('restore-route');
-          return hook.result.current.commands.navigation.restoreRoute('topic-route-1');
-        },
-        restoreSnapshot: () => {
-          calls.push('restore-fallback');
-          if (fallbackSnapshot) hook.result.current.restore(fallbackSnapshot);
-        },
-        returnToScreen: () => calls.push('return-screen')
-      });
-    });
-
-    expect(calls).toEqual(['pop', 'restore-route']);
-    expect(hook.result.current.state.selectedTopic).toEqual(firstTopic);
-    expect(hook.result.current.state.replyContent).toBe('first draft');
-
-    await act(async () => {
-      hook.result.current.commands.composer.changeContent('current draft');
-      hook.result.current.commands.navigation.restoreRoute('topic-route-1');
-    });
-    expect(hook.result.current.state.replyContent).toBe('current draft');
+    expect(first.result.current.state.replyContent).toBe('first draft');
+    expect(second.result.current.state.replyContent).toBe('second draft');
+    expect(first.result.current.state.selectedTopic).toEqual(firstTopic);
+    expect(second.result.current.state.selectedTopic).toEqual(secondTopic);
   });
 });
 
 function renderTopicController({
-  getCurrentTopicRouteKey = () => null,
+  getActive = () => true,
   getIdentityBarriers = () => [],
   getSessionEpochs = () => initialForumSessionEpochs,
   notify = jest.fn(),
-  onPushTopicScreen,
+  onOpenTopic = jest.fn(),
   readGateway,
-  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
+  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+  topic = firstTopic
 }: {
-  getCurrentTopicRouteKey?: () => string | null;
+  getActive?: () => boolean;
   getIdentityBarriers?: () => ForumIdentityBarrierSource[];
   getSessionEpochs?: () => ForumSessionEpochs;
   notify?: (message: string) => void;
-  onPushTopicScreen?: (topic: Topic, snapshot: TopicSnapshot) => void;
+  onOpenTopic?: (topic: Topic) => void;
   readGateway: Partial<ReadGateway>;
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
+  topic?: Topic;
 }) {
   const readerData = createEmptyReaderData();
   return renderNativeHook(
     () => {
-      const [screen, setScreen] = useState<Screen>('feed');
-      const screenRef = useRef<Screen>(screen);
-      screenRef.current = screen;
-      const session = useTopicSessionController({ notify });
+      const session = useTopicSessionController({ notify, topic });
       const controller = useTopicController({
-        changeScreen: setScreen,
+        active: getActive(),
         commitReaderData: jest.fn(),
         identityBarriers: getIdentityBarriers(),
         sessionEpochs: getSessionEpochs(),
-        getCurrentScreen: () => screenRef.current,
         notify,
         onNodeSeekTopicVerificationRequired: jest.fn(),
-        pushTopicScreen: jest.fn<(_topic: Topic) => boolean>((_topic) => {
-          const routeKey = getCurrentTopicRouteKey();
-          if (routeKey) session.commands.navigation.saveRoute(routeKey);
-          onPushTopicScreen?.(_topic, session.snapshot());
-          setScreen('topic');
-          return true;
-        }),
+        onOpenTopic,
         readerData,
         readerDataRef: { current: readerData },
-        reopenExistingTopicScreenRef: { current: false },
-        screen,
         showLinuxDoVerification,
         showYaohuoLogin: jest.fn(),
         readGateway: readGateway as ReadGateway,
-        topicReturnScreenRef: { current: 'feed' },
+        topic,
         topicSession: session
       });
-      return { controller, screen, session };
+      return { controller, session };
     },
     { wrapper: QueryTestWrapper }
   );
@@ -201,79 +140,25 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels the old key when switching topics', async () => {
-    let firstSignal: AbortSignal | undefined;
-    const firstPending = Promise.withResolvers<TopicDetail>();
+  it('[REG-PERF-008] opens a different Topic as a new route without mutating the current session', async () => {
     const secondTopic = { ...firstTopic, id: '2', title: 'Second', url: 'https://www.nodeseek.com/post-2-1' };
-    const secondDetail = { ...firstDetail, ...secondTopic };
-    const getTopic = jest.fn<ReadGateway['getTopic']>(async ({ id, signal }) => {
-      if (id === '1') {
-        firstSignal = signal;
-        return firstPending.promise;
-      }
-      return secondDetail;
-    });
-    const hook = await renderTopicController({ readGateway: { getTopic } });
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => firstDetail);
+    const onOpenTopic = jest.fn();
+    const hook = await renderTopicController({ onOpenTopic, readGateway: { getTopic } });
 
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(firstDetail));
     await act(async () => {
-      await hook.result.current.controller.openTopic(firstTopic);
-    });
-    await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
-    await act(async () => {
-      await hook.result.current.controller.openTopic(secondTopic);
-    });
-
-    await waitFor(() => expect(firstSignal?.aborted).toBe(true));
-    await waitFor(() => expect(hook.result.current.controller.topicDetail?.id).toBe('2'));
-  });
-
-  it('[REG-PERF-008] saves the current route identity before selecting a nested Topic', async () => {
-    const secondTopic = { ...firstTopic, id: '2', title: 'Second', url: 'https://www.nodeseek.com/post-2-1' };
-    const pushedSnapshots: TopicSnapshot[] = [];
-    let currentRouteKey: string | null = null;
-    const hook = await renderTopicController({
-      getCurrentTopicRouteKey: () => currentRouteKey,
-      onPushTopicScreen: (_topic, snapshot) => pushedSnapshots.push(snapshot),
-      readGateway: {
-        getTopic: jest.fn<ReadGateway['getTopic']>(async ({ id }) =>
-          id === firstTopic.id ? firstDetail : { ...firstDetail, ...secondTopic }
-        )
-      }
-    });
-
-    await act(async () => {
-      await hook.result.current.controller.openTopic(firstTopic);
-    });
-    currentRouteKey = 'topic-route-a';
-    await act(async () => {
-      hook.result.current.session.commands.navigation.activateRoute(currentRouteKey!);
       hook.result.current.session.commands.composer.changeContent('A draft');
-    });
-    await waitFor(() => expect(hook.result.current.session.state.replyContent).toBe('A draft'));
-    await act(async () => {
       await hook.result.current.controller.openTopic(secondTopic);
     });
 
-    expect(pushedSnapshots[1]).toMatchObject({
-      key: 'nodeseek:1',
-      selectedTopic: firstTopic,
-      replyContent: 'A draft'
-    });
-
-    currentRouteKey = 'topic-route-b';
-    await act(async () => {
-      hook.result.current.session.commands.navigation.activateRoute(currentRouteKey!);
-      expect(hook.result.current.session.commands.navigation.restoreRoute('topic-route-a')).toBe(true);
-    });
-    currentRouteKey = 'topic-route-a';
-    await act(async () => {
-      await hook.result.current.controller.openTopic(secondTopic);
-    });
-
-    expect(pushedSnapshots).toHaveLength(3);
+    expect(onOpenTopic).toHaveBeenCalledWith(secondTopic);
+    expect(hook.result.current.session.state.selectedTopic).toEqual(firstTopic);
+    expect(hook.result.current.session.state.replyContent).toBe('A draft');
+    expect(getTopic).toHaveBeenCalledTimes(1);
   });
 
-  it('isolates cached detail when the credential scope changes', async () => {
+  it('[REG-TOPIC-057] isolates cached detail when the credential scope changes', async () => {
     let scope = initialForumSessionEpochs;
     const replacement = Promise.withResolvers<TopicDetail>();
     const getTopic = jest
@@ -298,11 +183,10 @@ describe('topic query controller', () => {
 
     await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(2));
     expect(hook.result.current.controller.topicDetail).toBeNull();
-    expect(hook.result.current.session.snapshot()).toMatchObject({
+    expect(hook.result.current.session.state).toMatchObject({
       selectedTopic: firstTopic,
       replyContent: '保留的本地草稿',
-      replyFilter: 'author',
-      scrollY: 280
+      replyFilter: 'author'
     });
     await act(async () => {
       replacement.resolve({ ...firstDetail, title: 'New account' });
@@ -351,6 +235,7 @@ describe('topic query controller', () => {
     const hook = await renderTopicController({
       getIdentityBarriers: () => identityBarriers,
       showLinuxDoVerification,
+      topic: linuxTopic,
       readGateway: { getTopic }
     });
 
@@ -361,7 +246,6 @@ describe('topic query controller', () => {
       await Promise.resolve();
     });
 
-    expect(hook.result.current.screen).toBe('topic');
     expect(getTopic).not.toHaveBeenCalled();
     expect(showLinuxDoVerification).not.toHaveBeenCalled();
     expect(hook.result.current.controller.topicBusy).toBe(false);
@@ -522,6 +406,7 @@ describe('topic query controller', () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderTopicController({
       showLinuxDoVerification,
+      topic: linuxTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReplies
@@ -564,6 +449,7 @@ describe('topic query controller', () => {
       totalCount: 7
     }));
     const hook = await renderTopicController({
+      topic: xiaTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => xiaDetail),
         getReplies
@@ -665,7 +551,7 @@ describe('topic query controller', () => {
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    const hook = await renderTopicController({ readGateway: { getTopic } });
+    const hook = await renderTopicController({ readGateway: { getTopic }, topic: v2exTopic });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(v2exTopic);
@@ -691,7 +577,7 @@ describe('topic query controller', () => {
       return linuxDetail;
     });
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderTopicController({ readGateway: { getTopic }, showLinuxDoVerification });
+    const hook = await renderTopicController({ readGateway: { getTopic }, showLinuxDoVerification, topic: linuxTopic });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(linuxTopic);
@@ -706,12 +592,13 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(2);
   });
 
-  it('loads quoted posts by a reference key without putting data in the route snapshot', async () => {
+  it('loads quoted posts by a reference key without putting server data in route-local state', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const quoted: Reply = { author: 'carol', floor: 2, contentHtml: '<p>quoted</p>', createdAt: '' };
     const getReply = jest.fn<ReadGateway['getReply']>(async () => quoted);
     const hook = await renderTopicController({
+      topic: linuxTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReply
@@ -731,8 +618,8 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:1:2']).toEqual(quoted));
 
     expect(getReply).toHaveBeenCalledTimes(1);
-    expect(hook.result.current.session.snapshot()).not.toHaveProperty('loadedQuotedReplies');
-    expect(hook.result.current.session.snapshot()).not.toHaveProperty('topicDetail');
+    expect(hook.result.current.session.state).not.toHaveProperty('loadedQuotedReplies');
+    expect(hook.result.current.session.state).not.toHaveProperty('topicDetail');
   });
 
   it('[REG-TOPIC-026] prefetches an accepted answer without expanding a quote or notifying', async () => {
@@ -761,6 +648,7 @@ describe('topic query controller', () => {
     const getReply = jest.fn<ReadGateway['getReply']>(async () => acceptedReply);
     const hook = await renderTopicController({
       notify,
+      topic: solvedTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => solvedDetail),
         getReply
@@ -805,6 +693,7 @@ describe('topic query controller', () => {
     const hook = await renderTopicController({
       notify,
       showLinuxDoVerification,
+      topic: solvedTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => solvedDetail),
         getReply
@@ -866,6 +755,7 @@ describe('topic query controller', () => {
       });
       const hook = await renderTopicController({
         notify,
+        topic: solvedTopic,
         readGateway: {
           getTopic: jest.fn<ReadGateway['getTopic']>(async () => solvedDetail),
           getReply
@@ -910,6 +800,7 @@ describe('topic query controller', () => {
   );
 
   it('cancels only the active Topic detail, replies, and quote queries when leaving the route', async () => {
+    let active = true;
     let detailSignal: AbortSignal | undefined;
     let repliesSignal: AbortSignal | undefined;
     let quoteSignal: AbortSignal | undefined;
@@ -938,7 +829,10 @@ describe('topic query controller', () => {
           signal?.addEventListener('abort', () => reject(new Error('quote canceled')), { once: true });
         })
     );
-    const hook = await renderTopicController({ readGateway: { getReply, getReplies, getTopic } });
+    const hook = await renderTopicController({
+      getActive: () => active,
+      readGateway: { getReply, getReplies, getTopic }
+    });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(firstTopic);
@@ -976,7 +870,8 @@ describe('topic query controller', () => {
     await waitFor(() => expect(unrelatedSignal).toBeDefined());
 
     await act(async () => {
-      hook.result.current.controller.cancelTopicQueries();
+      active = false;
+      hook.rerender(undefined);
       await Promise.resolve();
     });
 
@@ -994,6 +889,7 @@ describe('topic query controller', () => {
     const pending = Promise.withResolvers<Reply>();
     const getReply = jest.fn<ReadGateway['getReply']>(async () => pending.promise);
     const hook = await renderTopicController({
+      topic: linuxTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReply
@@ -1064,6 +960,7 @@ describe('topic query controller', () => {
     });
     appQueryClient.setQueryData(targetTopicKey, cachedTarget);
     const hook = await renderTopicController({
+      topic: linuxTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReply
@@ -1091,7 +988,7 @@ describe('topic query controller', () => {
     expect(getReply).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-054] restores an expanded cross-topic reply quote from its epoch cache', async () => {
+  it('[REG-TOPIC-054] keeps the parent quote state while a child Topic route opens', async () => {
     const parentTopic: Topic = {
       ...firstTopic,
       source: 'linuxdo',
@@ -1112,7 +1009,6 @@ describe('topic query controller', () => {
       title: 'Target',
       url: 'https://linux.do/t/topic/342888'
     };
-    const targetDetail: TopicDetail = { ...parentDetail, ...targetTopic, replies: [] };
     const quoted: Reply = {
       author: 'quoted',
       contentHtml: '<p>cached complete quote</p>',
@@ -1120,11 +1016,12 @@ describe('topic query controller', () => {
       floor: reference.postNumber
     };
     const getReply = jest.fn<ReadGateway['getReply']>(async () => quoted);
+    const onOpenTopic = jest.fn();
     const hook = await renderTopicController({
+      onOpenTopic,
+      topic: parentTopic,
       readGateway: {
-        getTopic: jest.fn<ReadGateway['getTopic']>(async ({ id }) =>
-          id === parentTopic.id ? parentDetail : targetDetail
-        ),
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => parentDetail),
         getReply
       }
     });
@@ -1140,19 +1037,14 @@ describe('topic query controller', () => {
       });
     });
     await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:342888:2']).toEqual(quoted));
-    const parentSnapshot = hook.result.current.session.snapshot();
-
     await act(async () => {
       await hook.result.current.controller.openTopic(targetTopic);
-    });
-    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(targetDetail));
-    await act(async () => {
-      hook.result.current.session.restore(parentSnapshot);
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(parentDetail));
     await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:342888:2']).toEqual(quoted));
     expect(hook.result.current.session.state.expandedQuotes['reply:comment:44:linuxdo:342888:2']).toBe(true);
+    expect(onOpenTopic).toHaveBeenCalledWith(targetTopic);
     expect(getReply).toHaveBeenCalledTimes(1);
   });
 
@@ -1167,6 +1059,7 @@ describe('topic query controller', () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderTopicController({
       showLinuxDoVerification,
+      topic: linuxTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => linuxDetail),
         getReply

@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
-import type { SourceErrorInfo } from '@/domain/forum/models';
 import { errorMessage } from '@/platform/network/errors';
 import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from './credentialDiagnostics';
@@ -30,37 +29,6 @@ type Ref<T> = MutableRefObject<T>;
 
 type LinuxDoVerificationPhase =
   'idle' | 'preparing' | 'awaiting-clearance' | 'checking-clearance' | 'resuming-read' | 'closing';
-
-export function useLinuxDoIdentityVerificationPrompt({
-  enabled = true,
-  error,
-  identityPending,
-  intentKey,
-  showLinuxDoVerification
-}: {
-  enabled?: boolean;
-  error?: SourceErrorInfo;
-  identityPending: boolean;
-  intentKey: string | null;
-  showLinuxDoVerification: (message?: string) => unknown;
-}) {
-  const handledIntentRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!identityPending || !intentKey) {
-      handledIntentRef.current = null;
-      return;
-    }
-    if (!enabled) {
-      handledIntentRef.current = intentKey;
-      return;
-    }
-    if (error?.kind !== 'verification-required' || handledIntentRef.current === intentKey) {
-      return;
-    }
-    handledIntentRef.current = intentKey;
-    void showLinuxDoVerification(error.message);
-  }, [enabled, error, identityPending, intentKey, showLinuxDoVerification]);
-}
 
 type ActiveLinuxDoReadRecovery = {
   generation: number;
@@ -102,8 +70,6 @@ export function useVerificationController({
   onLinuxDoRecoveryBarrierChanged = () => undefined,
   onLinuxDoSurfaceClosed = () => undefined,
   onLinuxDoSurfaceOpened = () => undefined,
-  onNodeSeekVerificationOpened = () => undefined,
-  onVerificationOpened = () => undefined,
   reconcileAccountStatus,
   setChecking,
   setLinuxDoWebViewError,
@@ -131,8 +97,6 @@ export function useVerificationController({
   onLinuxDoRecoveryBarrierChanged?: (active: boolean) => void;
   onLinuxDoSurfaceClosed?: (options: { authoritativeResult: boolean; reason: AuthSurfaceCloseReason }) => void;
   onLinuxDoSurfaceOpened?: () => void;
-  onNodeSeekVerificationOpened?: () => void;
-  onVerificationOpened?: () => void;
   reconcileAccountStatus: (source: 'linuxdo') => Promise<AccountReconcileResult>;
   setChecking: Dispatch<SetStateAction<boolean>>;
   setLinuxDoWebViewError: Dispatch<SetStateAction<string>>;
@@ -428,23 +392,13 @@ export function useVerificationController({
   const showNodeSeekVerification = useCallback(
     (message = 'NodeSeek 需要完成 Cloudflare 验证') => {
       closeLinuxDoPanel(true, 'switch-surface');
-      onVerificationOpened();
-      onNodeSeekVerificationOpened();
       changeNodeSeekLoginPanel(true);
       closeYaohuoLoginPanel('switch-surface');
       updateNodeSeekSession({ type: 'verification-required', message });
       notify(message);
       return true;
     },
-    [
-      changeNodeSeekLoginPanel,
-      closeLinuxDoPanel,
-      closeYaohuoLoginPanel,
-      notify,
-      onNodeSeekVerificationOpened,
-      onVerificationOpened,
-      updateNodeSeekSession
-    ]
+    [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeYaohuoLoginPanel, notify, updateNodeSeekSession]
   );
 
   const changeLinuxDoPanel = useCallback(
@@ -549,7 +503,6 @@ export function useVerificationController({
       }
       changeNodeSeekLoginPanel(false, 'switch-surface');
       closeYaohuoLoginPanel('switch-surface');
-      onVerificationOpened();
       if (!changeLinuxDoPanel(true)) {
         return false;
       }
@@ -565,7 +518,6 @@ export function useVerificationController({
       invalidateLinuxDoCheck,
       linuxDoPanelClosingSessionRef,
       notify,
-      onVerificationOpened,
       startLinuxDoVerificationTrace,
       updateLinuxDoSession
     ]

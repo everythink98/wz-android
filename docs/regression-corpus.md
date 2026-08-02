@@ -45,12 +45,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `NAV-02`、`NAV-03`、`TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`TOPIC-04`、`USER-01`、`USER-02` |
 | 用户症状 | 从 Topic 或 User 返回时偶发卡顿或状态回滚；returning native route 已保留自己的可视 presentation，返回链路却又恢复整份 fallback snapshot，User 路径还再次 `openTopic`。 |
 | 触发条件 | Topic → Topic → 返回，或 Topic → User → Topic；原生栈存在可返回的 Topic route，同时内存中也保留兼容 fallback snapshot。 |
-| 根因 seam | `src/app/AppRoot.tsx` 的 Topic/User 返回策略、`src/features/topic/useTopicSessionController.ts` 的 route 恢复幂等边界，以及 `src/app/backHandlerHelpers.ts` 的返回决策。 |
-| 必须保持的行为 | 正常 native pop 由 returning route 自己缓存的 presentation 保证可视连续性；返回链路只恢复精确 route session，当前 active route 的重复报告必须 no-op。User 转场结束后只恢复 return-screen/back stack 元数据；仅精确 route snapshot 丢失或不能 pop 时才执行完整 snapshot fallback 与重新打开。离开 route 时请求取消和 owner 失效仍立即发生。 |
-| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 保存旧 route snapshot 后修改当前草稿，再重复恢复 active route，要求当前草稿不回滚；`src/app/backHandlerHelpers.test.ts` 要求可 pop Topic route 只 dispatch 一次 pop 并恢复精确 route，route miss 才恢复 fallback snapshot，User 分支只排队 metadata restore、零完整 fallback/open。`tests/ui/app/app-navigator.test.tsx` 与 `REG-PERF-008` 另固定 route presentation 的可见隔离；helper 调用顺序不能代替该 UI oracle。 |
+| 根因 seam | 旧实现由 `src/app/AppRoot.tsx` 重放 Topic/User 返回状态，并让多个 native route 共享一个 Topic session；native stack 已经保留 route 实例，却又叠加 snapshot restore。 |
+| 必须保持的行为 | Topic、User 和 ReadingSettings 只使用 native push/pop；returning Topic route 继续使用自己的 mounted controller、list ref、草稿、筛选和滚动状态，不执行 fallback restore 或再次 `openTopic`。离开 route 时请求取消和 inactive gate 仍立即发生。 |
+| 精确失败 oracle | `tests/ui/app/app-navigator.test.tsx` 固定 Topic A → B → A、Topic → User/ReadingSettings → Topic 返回同一实例并保留 route-local 状态；`tests/ui/topic/topic-session-controller.test.tsx` 固定不同 route controller 互不修改。 |
 | 最低可靠自动测试层 | `UI_PASS` 固定 session 状态没有二次提交，`UNIT_PASS` 固定返回分支；实际 native 转场和帧时序仍需设备验收。 |
 | Replay 或真实验收路径 | 在匹配构建上分别执行五站列表 → Topic → 返回、Topic → User → Topic、嵌套 Topic 返回；核对筛选、草稿、展开引用、滚动位置和逐层返回，并记录 20 次帧指标。 |
-| 负向验证方式 | 移除 active-route no-op，或让有 returning route 的正常 pop 仍选择完整 snapshot fallback，编号测试必须分别回滚当前草稿或选错返回策略。 |
+| 负向验证方式 | 把 Topic controller 提回 AppRoot、用 `popTo(MainTabs)` 返回，或在 native pop 后重建/恢复 Topic state，编号测试必须丢失或回滚原 route 状态。 |
 | 明确不覆盖范围 | 第三方请求当天延迟、随机目标是否存在和未经授权的论坛写操作不由该回归固定。 |
 
 ## `REG-PERF-003` Feed 来源切换把列表工作压进 Pager 收尾帧
@@ -121,12 +121,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `NAV-02`、`NAV-03`、`TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
 | 用户症状 | 从评论里的跨主题链接进入大主题后，在“正在读取主题”期间点击顶栏或 Android 返回没有立即离开；加载完成后返回也可能先闪白/灰空页。超长 opening body 虽然被分块，进入和返回时仍有明显同步卡顿。 |
 | 触发条件 | 多个 native Topic route 共用一个全局 renderer/session/list ref，使 A、B route 同时消费当前 B presentation；native-stack 保留上一 route 时，A 没有自己的可视内容可立即恢复。超长 opening body 又在 FlashList `ListHeaderComponent` 中同步挂载全部 chunk；读取端与展示端对同一正文重复 DOM parse，普通 chunk 还逐个解析“是否纯视频”，任意 topic 对象更新也会重跑整篇拆分。 |
-| 根因 seam | `src/app/AppNavigator.tsx` 的 route presentation/媒体活动所有权、`src/app/AppRoot.tsx` 的 route seed 与全局 active Topic runtime、`src/features/topic/TopicScreen.tsx` 的 FlashList item/memo 输入边界，以及 `src/domain/forum/html.ts`、`src/sources/linuxdo/reader.ts`、`src/sources/discourse/content.ts`、`src/domain/forum/topicContentSplit.ts` 的 DOM ownership。`src/app/backHandlerHelpers.ts` 只负责一次 pop 与精确/fallback session 恢复分支；它的函数调用顺序不能证明原生转场首帧。 |
-| 必须保持的行为 | 每个 Topic route 只以稳定的 `source + topicId` identity 绑定目标并拥有独立 list ref；只有 identity 与当前 route/content generation 匹配的 focused presentation 可更新缓存。inactive route 保留最后一次匹配 UI，但关闭 pointer/accessibility 交互并暂停原图升级；epoch 变化或 identity 不匹配立即使缓存失效。opening body chunk、正文后控件和回复必须作为同一 FlashList data，正文按 render window 挂载；已挂载 chunk 才可升级原图。LinuxDo source transform 与通用 sanitizer 共用一棵 DOM；无 poll placeholder/原生 video tag 时跳过对应解析，正文/polls/source 未变时不得因点赞或收藏对象更新重拆正文。正式解析前让出一次事件循环并再次检查 AbortSignal，使 Loading 期间已排队的返回先取消读取。返回只 dispatch 一次 native pop，returning route 立即使用自己的 presentation；全局 active runtime 通过精确 route snapshot 独立恢复。迟到 B 结果不得覆盖 A；上级筛选、展开引用、草稿、回复页和滚动位置保持。 |
-| 精确失败 oracle | `tests/ui/app/app-navigator.test.tsx` 固定 A ready/B Loading 的 route 可见隔离、跨 epoch 拒绝和 inactive 原图暂停；`tests/ui/topic/topic-reply-filters.test.tsx` 固定 opening-body item 位于 FlashList data、mounted-cell 原图 gate，以及正文未变时不重复 split。`tests/integration/html-sanitization-contracts.test.ts` 固定 LinuxDo poll/Reddit transform 只触发一次 DOM parse且后续安全清理有效；`tests/integration/discourse-content-contracts.test.ts`、`src/domain/forum/topicContentSplit.test.ts` 固定普通内容不进入多余解析；`tests/integration/source-read-contracts.test.ts` 固定已排队取消在正文解析前胜出。`src/app/backHandlerHelpers.test.ts` 与 `tests/ui/topic/topic-session-controller.test.tsx` 固定一次 pop、精确 route restore、route-miss fallback 和先保存 A 再选择 B；这些状态/顺序测试不替代 AppNavigator 可见 oracle。 |
-| 最低可靠自动测试层 | `UI_PASS` 固定 route presentation 隔离、非交互边界、真实 React session 恢复和正文 list shape；`UNIT_PASS` 固定返回分支。native transition 的空白帧与超长正文实际挂载成本仍须匹配 APK 的模拟器/设备只读验收。 |
+| 根因 seam | 旧 `AppNavigator` presentation cache、`AppRoot` 全局 Topic runtime 与共享 list ref 让多个 native route 同时消费当前主题；`TopicScreen` 又曾在 FlashList header 同步挂载全部 opening body chunk。当前 seam 是 `TopicRoute` 的 route-local controller 与 `TopicScreen` 的 list item/memo 输入边界。 |
+| 必须保持的行为 | 每个 Topic route 以完整 canonical `Topic` 参数创建独立 controller 和 list ref；只有 focused route 启动 Query、交互和原图升级，epoch 变化由 Query key 隔离旧数据。opening body chunk、正文后控件和回复作为同一 FlashList data 按 render window 挂载；正文/polls/source 未变时不得因点赞或收藏对象更新重拆正文。返回只 dispatch native pop，returning route 直接显示自身 mounted state；迟到 B 结果不得覆盖 A，A 的筛选、展开引用、草稿、回复页和滚动位置保持。 |
+| 精确失败 oracle | `tests/ui/app/app-navigator.test.tsx` 固定 A/B route state、inactive 原图暂停、User/ReadingSettings 返回和 overlay 返回优先级；`tests/ui/topic/topic-session-controller.test.tsx` 固定 route controller、Query/epoch 隔离与取消；`tests/ui/topic/topic-reply-filters.test.tsx` 固定 opening-body item 位于 FlashList data、mounted-cell 原图 gate，以及正文未变时不重复 split。HTML 与来源集成测试继续固定单次 DOM parse 和取消边界。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定 route instance 隔离、非交互边界、真实 React state 和正文 list shape；native transition 的空白帧与超长正文实际挂载成本仍须匹配 APK 的模拟器/设备只读验收。 |
 | Replay 或真实验收路径 | 保留 App 数据直达 `https://linux.do/t/topic/2685882`，点击首条跨主题引用标题，在目标仍显示 Loading 时立即返回；必须一次返回到原主题且旧内容、筛选与滚动可用。目标若已命中缓存，覆盖进入后立即返回和加载完成后返回；全程只读。 |
-| 负向验证方式 | 恢复全局 Topic presentation/shared list ref、允许 inactive route 交互或继续升级原图、跨 epoch 复用缓存、先 select B 再保存 A，或把 opening-body chunk 移回 ListHeader 全量 `map`，编号 UI oracle 必须失败。恢复 LinuxDo 双重 sanitizer parse、普通 chunk 逐个 video parse、整 topic 对象 memo 依赖或取消前不让出事件循环，对应性能 oracle 必须失败。 |
+| 负向验证方式 | 恢复全局 Topic controller/shared list ref、允许 inactive route 请求或继续升级原图、跨 epoch 复用缓存，或把 opening-body chunk 移回 ListHeader 全量 `map`，编号 UI oracle 必须失败。恢复 LinuxDo 双重 sanitizer parse、普通 chunk 逐个 video parse、整 topic 对象 memo 依赖或取消前不让出事件循环，对应性能 oracle 必须失败。 |
 | 明确不覆盖范围 | 不以关闭动画、延长 Loading、禁用链接、预取整篇大主题、额外 memo/cache 或 idle prewarm 掩盖问题；第三方响应速度和物理高刷绝对帧指标分别记录，不执行真实论坛写操作。 |
 
 ## `REG-FEED-001` 首次加载出现两套 Loading
@@ -257,7 +257,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 原站已显示主题收藏，但 App 点击取消时提示收藏记录不完整，不能恢复初始状态。 |
 | 触发条件 | Discourse 主题详情返回 `bookmarked=true`，却未返回具体 `bookmark_id`；旧实现把 Topic 和 Post 都强制绑定记录 id。 |
 | 根因 seam | `src/sources/xiaoyinsi/actionRequest.ts` 的书签取消请求构造，以及 `src/features/topic/actions/useTopicActionsController.ts` 的前置门禁。 |
-| 必须保持的行为 | Topic 缺少记录 id 时使用 Discourse 主题级 `PUT /t/{topicId}/remove_bookmarks`；Post 取消仍要求具体记录 id；主题收藏先显示目标 optimistic 状态，请求失败恢复原状态，服务端确认后同步当前 Topic 与活动 route snapshot，不整篇重载。 |
+| 必须保持的行为 | Topic 缺少记录 id 时使用 Discourse 主题级 `PUT /t/{topicId}/remove_bookmarks`；Post 取消仍要求具体记录 id；主题收藏先显示目标 optimistic 状态，请求失败恢复原状态，服务端确认后补丁精确 Topic Query cache 与当前 route state，不整篇重载。 |
 | 精确失败 oracle | `src/sources/xiaoyinsi/actionRequest.test.ts` 与 `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-XIAOYINSI-003` 分别固定请求、optimistic apply、失败 rollback 和真实 controller 路由。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：请求构造和 controller 门禁都必须覆盖，单独显示按钮不能证明可取消。 |
 | Replay 或真实验收路径 | 在已获逐次授权的可恢复 Topic 上记录初始状态，收藏/取消各一次，刷新后与原站状态一致并恢复初态。 |
@@ -347,7 +347,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 小隐寺已点赞帖子显示“取消赞”，点击后却提示当前帖子不能点赞，原站状态没有变化。 |
 | 触发条件 | Discourse 对已执行的点赞返回 `acted=true`、`can_act=false`；UI 用 `liked` 正确保留取消入口，但 controller 只看 `canLike=false`。 |
 | 根因 seam | `src/features/topic/actions/useTopicActionsController.ts` 把“不能新增点赞”和“不能撤销已有点赞”合并成同一个前置门禁。 |
-| 必须保持的行为 | 未点赞且 `can_act=false` 时继续禁止点赞；`liked=true` 时允许发送 DELETE 取消点赞，即使 `can_act=false`；点赞切换先显示目标 optimistic 状态，请求失败恢复原状态，服务端确认后同步目标帖子及活动 route snapshot，不整篇重载。 |
+| 必须保持的行为 | 未点赞且 `can_act=false` 时继续禁止点赞；`liked=true` 时允许发送 DELETE 取消点赞，即使 `can_act=false`；点赞切换先显示目标 optimistic 状态，请求失败恢复原状态，服务端确认后补丁目标帖子 Query cache，不整篇重载。 |
 | 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-XIAOYINSI-009` 使用 `liked=true`、`canLike=false`，要求先应用取消状态、发送一次 DELETE，并在失败路径恢复原点赞状态。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须经过 controller 门禁和真实请求构造，只验证按钮可见会漏掉点击后的拦截。 |
 | Replay 或真实验收路径 | 仅在获得逐次写操作授权时记录初始点赞状态，取消后刷新核对原站，再恢复初始状态。 |
@@ -377,8 +377,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 小隐寺点击点赞或收藏后，主题正文和回复整体进入重新加载；回复删除、投票等同类操作也会丢失当前可视上下文。 |
 | 触发条件 | User API 写请求已经由服务器确认，但 controller 仍统一调用 `refreshWholeTopic`，而不是只 patch 精确 Query cache 与定向刷新回复。 |
 | 根因 seam | `src/features/topic/actions/useTopicActionsController.ts` 的小隐寺写后处理没有把 action 结果限定在精确 Topic/Replies Query cache，而是把所有 action 都接到整篇 Topic 重读。 |
-| 必须保持的行为 | 小隐寺身份与请求继续只走独立 User API Key；点赞/取消和主题书签/取消先显示 optimistic 状态、失败 rollback、确认后同步权威状态；投票在服务器确认后局部更新，删除先本地移除再静默刷新回复切片；均同步活动 route snapshot，不刷新整篇主题。回复与编辑仍沿用既有定向回复刷新。 |
-| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-XIAOYINSI-012` 分别固定点赞、取消点赞、收藏取消的 optimistic/rollback，以及投票与删除的精确 Query cache patch；删除、编辑只允许失效 Replies Query，不得失效 Topic detail。`tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-WRITE-006` 固定活动 route snapshot 同步。 |
+| 必须保持的行为 | 小隐寺身份与请求继续只走独立 User API Key；点赞/取消和主题书签/取消先显示 optimistic 状态、失败 rollback、确认后同步权威状态；投票在服务器确认后局部更新，删除先本地移除再静默刷新回复切片；均补丁精确 Query cache，不刷新整篇主题。回复与编辑仍沿用既有定向回复刷新。 |
+| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-XIAOYINSI-012` 分别固定点赞、取消点赞、收藏取消的 optimistic/rollback，以及投票与删除的精确 Query cache patch；删除、编辑只允许失效 Replies Query，不得失效 Topic detail。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：领域 helper 固定局部 patch，真实 `QueryClientProvider` controller 测试固定 mutation cache 与写后失效边界，Topic session UI 测试固定返回路径不会恢复旧快照；只验证 HTTP 成功无法发现整页重载。 |
 | Replay 或真实验收路径 | 获得逐次可恢复写操作授权后，记录初态并切换一次点赞或收藏，确认正文、回复列表和滚动上下文不进入整页 Loading，刷新核对原站后恢复初态。投票、编辑和删除不因本条默认获得真实写入授权。 |
 | 负向验证方式 | 把任一小隐寺 action 恢复为 `refreshWholeTopic`、移除对应精确 Query cache patch，或让点赞/书签失败后保留目标状态，编号 controller 测试必须失败。 |
@@ -1319,12 +1319,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-04`、`NAV-03` |
 | 用户症状 | 从主题右上菜单进入“阅读设置”后切回首页，原主题详情已经被弹出，用户回到首页列表而不是继续阅读原主题。 |
 | 触发条件 | 当前位于 Topic route，执行“阅读设置”，完成查看或调整后返回。修复前该入口展开 More 的外观面板并切换到 More tab，随后返回首页。 |
-| 根因 seam | `src/app/AppRoot.tsx` 的入口曾复用 `changeScreen('more')`，导致 `popTo('MainTabs')` 移除 Topic；改为临时 `ReadingSettings` route 后，又曾先 dispatch `push`、再依赖下一次 render 保存 Topic，navigation state 变化可能先触发旧闭包，得到滞后一帧 snapshot。 |
-| 必须保持的行为 | 阅读设置入口先按当前 Topic route key 同步保存最新 Topic snapshot，再 push 既有外观控件；关闭或离开设置后返回同一个主题详情、同一回复筛选和滚动上下文。普通底部 tab 导航仍保持既有契约。 |
-| 精确失败 oracle | `src/app/AppNavigator.test.ts` 的 `REG-TOPIC-002` 断言当前 Topic route 先执行 `saveTopicRoute`、后 dispatch `push`；`tests/ui/app/app-navigator.test.tsx` 再固定用户进入阅读设置并返回后仍为同一个 Topic 组件且内部状态未丢失。旧顺序精确失败为 `push` 先发生或返回旧 snapshot。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定保存与导航的同步顺序；`UI_PASS` 证明用户经过可见入口返回后 Topic 组件及内部状态仍保留。 |
+| 根因 seam | `src/app/AppRoot.tsx` 的入口曾复用 `changeScreen('more')`，导致 `popTo('MainTabs')` 移除 Topic；后续 snapshot 方案仍把 native stack 已拥有的 route state 复制到全局。 |
+| 必须保持的行为 | Topic route 直接 push `ReadingSettings`；关闭或离开设置后 native pop 返回同一个 mounted Topic 实例、回复筛选和滚动上下文。普通底部 tab 导航仍保持既有契约。 |
+| 精确失败 oracle | `tests/ui/app/app-navigator.test.tsx` 固定进入 ReadingSettings 并返回后仍为同一个 Topic 组件，草稿、筛选、滚动和已提交 UI 均未丢失。 |
+| 最低可靠自动测试层 | `UI_PASS` 证明用户经过可见入口返回后 Topic 组件及内部状态仍保留。 |
 | Replay 或真实验收路径 | Feed → Topic → 更多操作 → 阅读设置 → 系统或顶栏返回；核对外观控件可见，并且返回后仍是原 Topic、原筛选和原阅读位置。 |
-| 负向验证方式 | 临时恢复 `changeScreen('more')` 时 UI 用例必须失败；保留临时 route 但把 `saveTopicRoute` 移回 dispatch 之后时，单元顺序 oracle 必须失败。 |
+| 负向验证方式 | 临时恢复 `changeScreen('more')`、用 replace/popTo 打开设置或给 ReadingSettings 返回增加 snapshot restore 时，UI 用例必须失败。 |
 | 明确不覆盖范围 | 外观各设置的切换、持久化与恢复由 `MORE-03` 验收；一般 tab 切换、Topic → User 嵌套返回仍由其他 NAV 测试负责。 |
 
 ## `REG-TOPIC-003` 评论引用改动误伤正文引用
@@ -1483,14 +1483,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `WRITE-03`、`TOPIC-04`、`NAV-03` |
 | 用户症状 | 妖火原站已经确认收藏或取消，但用户在请求期间打开阅读设置，返回后按钮恢复成请求前状态，App 与服务器不一致。 |
-| 触发条件 | 进入阅读设置时保存 Topic route snapshot；非全局 busy 的收藏请求随后完成并更新当前 Topic；返回时旧 snapshot 覆盖最新 `bookmarked`/`bookmarkId`。 |
-| 根因 seam | `src/features/topic/useTopicSessionController.ts` 的 action update 只更新当前 React state，没有同步当前活动 route 已保存的 snapshot。 |
-| 必须保持的行为 | action 确认后同时补丁当前 Topic state 和当前活动 route snapshot；从阅读设置或覆盖层返回时保留已确认的收藏、互动、投票和回复删除结果，同时继续恢复筛选、草稿和滚动上下文。 |
-| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 保存未收藏 Topic route，应用收藏成功补丁后恢复同一路由，最终仍必须为 `bookmarked=true` 且保留 `bookmarkId`；修复前恢复为未收藏。 |
-| 最低可靠自动测试层 | `UI_PASS` 通过真实 hook state/update/restore 生命周期固定竞态；真实原站最终一致性仍需获授权的 `LIVE_PASS`。 |
+| 触发条件 | 非全局 busy 的收藏请求在 ReadingSettings 覆盖 Topic 期间完成；旧实现返回时用入口时刻的 snapshot 覆盖最新 `bookmarked`/`bookmarkId`。 |
+| 根因 seam | 复制 route state 产生了第二个所有权；action 更新当前 Query/route 后，snapshot restore 又写回旧值。 |
+| 必须保持的行为 | ReadingSettings 保留 mounted Topic route；action 确认后补丁精确 Topic Query cache 与当前 route state，返回时不执行恢复写入，因此已确认的收藏、互动、投票和回复删除结果与筛选、草稿、滚动上下文同时保留。 |
+| 精确失败 oracle | `tests/ui/app/app-navigator.test.tsx` 固定 ReadingSettings 返回同一 route 实例和覆盖期间已提交 UI；`tests/ui/topic/topic-actions-controller.test.tsx` 固定 action 只补丁精确 Query cache。 |
+| 最低可靠自动测试层 | `UI_PASS` 通过真实 native route 与 Query/action 生命周期固定竞态；真实原站最终一致性仍需获授权的 `LIVE_PASS`。 |
 | Replay 或真实验收路径 | 确定性测试模拟请求完成；真实验收仅在逐次授权后执行妖火收藏 → 立即打开阅读设置 → 等待确认 → 返回，并与原站收藏夹核对后恢复初始状态。 |
-| 负向验证方式 | 移除 action update 对活动 route snapshot 的补丁，测试会在 restore 后精确收到 `bookmarked=false`。 |
-| 明确不覆盖范围 | 不替代服务端并发变更、失败响应和访问验证处理；只有已由 action client 确认的结果进入 snapshot。 |
+| 负向验证方式 | 让 ReadingSettings replace/unmount Topic、恢复旧 snapshot 层，或停止补丁精确 Query cache，编号测试必须丢失覆盖期间的已确认状态。 |
+| 明确不覆盖范围 | 不替代服务端并发变更、失败响应和访问验证处理；只有已由 action client 确认的结果进入 cache。 |
 
 ## `REG-WRITE-007` NodeSeek 投票读取失败且提交后伪造票数
 
@@ -2203,10 +2203,10 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `WRITE-02`、`TOPIC-03`、`NAV-03` |
 | 用户症状 | 服务器已确认删除回复，但当前详情和回复分页仍显示该楼层、回复数不变；若编辑器正回复该楼层，还会继续指向不存在对象。 |
-| 触发条件 | action controller 只提示成功或刷新部分数据，没有把 typed deletion update 应用到当前 Topic 与活动 route snapshot。 |
+| 触发条件 | action controller 只提示成功或刷新部分数据，没有把 typed deletion update 应用到精确 Topic/Replies Query cache。 |
 | 根因 seam | `src/features/topic/useTopicSessionController.ts` 的 `reply-deleted` action update、列表去重和 composer target 收口。 |
-| 必须保持的行为 | 确认删除后从 detail replies 与分页缓存移除目标，回复数最多减一且不小于 0，同步活动 snapshot；只有 composer 正指向该楼层时才关闭。 |
-| 精确失败 oracle | `src/features/topic/useTopicSessionController.test.ts` 的 `REG-WRITE-011` 同时断言详情/分页移除、计数、snapshot 和 composer 匹配边界。 |
+| 必须保持的行为 | 确认删除后从 detail replies 与分页缓存移除目标，回复数最多减一且不小于 0；只有 composer 正指向该楼层时才关闭。 |
+| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-011` 断言服务器确认后精确 patch detail/replies cache，并仅刷新 Replies Query。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：controller state update 足以固定，无需真实删除。 |
 | Replay 或真实验收路径 | 真实删除不可逆，必须对具体回复逐次授权；本轮不执行。 |
 | 负向验证方式 | 忽略 `reply-deleted` 或只改一份数组，编号测试会保留楼层、错误计数或错误 composer。 |
@@ -3688,7 +3688,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 编辑目标只保存 `canEdit` 与回复 id，未绑定来源、账号 identity、session epoch 和 topic；提交前又提前读取旧 epoch Query key。 |
 | 根因 seam | `ReplyEditTarget`、`useTopicSessionController` 与 `useTopicActionsController` 的写 ticket、Replies Query 和 composer 生命周期。 |
 | 必须保持的行为 | 编辑目标绑定 `topicId + WritableSessionTicket`；编辑入口先取得 ticket，提交和上传按该 ticket epoch 生成 Query key，并在取消 Query 后、凭据/runtime 准备后、文件选择/上传/transport 前确认同 `commentId` 在缓存中恰好存在一条且 `canEdit=true`；跨页重复或权限冲突必须 fail closed。身份、epoch、route 或权限变化关闭编辑态并清除 target，但保留文本；旧 target 不得产生 picker、NodeImage Key、optimistic update、上传或 transport。 |
-| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-026` 固定 A→B、旧 route snapshot、reply missing、`canEdit=false`、跨页重复权限冲突、取消 Query 或 Discourse runtime 准备期间失效、NodeImage 前置零调用和 ticket epoch Query key；修复前旧 target 可进入写链路或读取旧 key。 |
+| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-026` 固定 inactive route、epoch/identity 变化、reply missing、`canEdit=false`、跨页重复权限冲突、取消 Query 或 Discourse runtime 准备期间失效、NodeImage 前置零调用和 ticket epoch Query key；修复前旧 target 可进入写链路或读取旧 key。 |
 | 最低可靠自动测试层 | `UI_PASS`：在真实 QueryClient/Controller 生命周期上观察编辑 target、草稿和所有副作用 mock；只测 ticket helper 或按钮隐藏不足以证明 transport 前门禁。 |
 | Replay 或真实验收路径 | 未获真实写授权时只检查编辑入口、切号后 composer 收起和文本保留，提交、上传与真实 A→B 保持 `NOT_VERIFIED`；获授权后按 `tests/live/agent-live.md` 记录账号、恢复和残留。 |
 | 负向验证方式 | 移除 target ticket/topic、在 `ensureWritableSession` 前生成 Query key，或跳过取消 Query 后复核，编号 UI 用例必须出现 transport、picker/Key 调用或旧 epoch cache 命中。 |

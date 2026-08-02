@@ -2,9 +2,7 @@ import type { AppHostStyles } from './styles';
 import type { RefObject } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
-import type { ImagePreviewList } from '@/platform/media/htmlImages';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import { MemoizedLinuxDoVerifyModal } from '@/features/account/components/LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
@@ -15,10 +13,8 @@ export function GlobalModalHost({
   checking,
   credentialFillAttempt,
   credentialFillPending,
-  closeImagePreview,
   handleLinuxDoMessage,
   handleLinuxDoNavigation,
-  imagePreview,
   linuxDoCredentialSaved,
   linuxDoLoginFormMode,
   linuxDoSession,
@@ -31,7 +27,6 @@ export function GlobalModalHost({
   nodeImageAuthDocument,
   nodeImageAuthError,
   nodeImageAuthWebViewRef,
-  nodeSeekMediaUserAgent,
   resetLinuxDoWebView,
   checkLinuxDoCookie,
   clearLinuxDoCookie,
@@ -44,8 +39,6 @@ export function GlobalModalHost({
   setNodeImageAuthError,
   showNodeImageAuthPanel,
   showLinuxDoPanel,
-  savePreviewImage,
-  selectPreviewImage,
   changeLinuxDoPanel,
   requestLinuxDoCredentialFill,
   closeNodeImageAuthPanel,
@@ -56,10 +49,8 @@ export function GlobalModalHost({
   checking: boolean;
   credentialFillAttempt: number;
   credentialFillPending: boolean;
-  closeImagePreview: () => void;
   handleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
-  imagePreview: ImagePreviewList | null;
   linuxDoCredentialSaved: boolean;
   linuxDoLoginFormMode: boolean;
   linuxDoSession: SiteSessionViewModel;
@@ -72,7 +63,6 @@ export function GlobalModalHost({
   nodeImageAuthDocument: NodeImageAuthDocument | null;
   nodeImageAuthError: string;
   nodeImageAuthWebViewRef: RefObject<WebView | null>;
-  nodeSeekMediaUserAgent?: string;
   resetLinuxDoWebView: () => void;
   checkLinuxDoCookie: () => void;
   clearLinuxDoCookie: () => void;
@@ -85,8 +75,6 @@ export function GlobalModalHost({
   setNodeImageAuthError: (value: string) => void;
   showNodeImageAuthPanel: boolean;
   showLinuxDoPanel: boolean;
-  savePreviewImage: () => void;
-  selectPreviewImage: (index: number) => void;
   changeLinuxDoPanel: (value: boolean) => void;
   requestLinuxDoCredentialFill: () => void;
   closeNodeImageAuthPanel: () => void;
@@ -177,15 +165,6 @@ export function GlobalModalHost({
           </>
         ) : null}
       </LoginWebViewModal>
-      <ImagePreviewModal
-        preview={imagePreview}
-        nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-        styles={styles}
-        theme={theme}
-        onClose={closeImagePreview}
-        onSave={savePreviewImage}
-        onSelect={selectPreviewImage}
-      />
     </>
   );
 }

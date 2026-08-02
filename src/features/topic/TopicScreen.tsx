@@ -1,16 +1,5 @@
 import { createTopicStyles, type TopicStyles } from './styles';
-import {
-  createContext,
-  memo,
-  type ReactNode,
-  type RefObject,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react';
+import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type LayoutChangeEvent,
   type NativeScrollEvent,
@@ -155,13 +144,6 @@ import {
   type TopicListItem as ReplyTopicListItem
 } from './model/screenHelpers';
 
-type YaohuoFavoriteState = {
-  bookmarked?: boolean;
-  onPress: () => void;
-  topicKey: string;
-};
-
-const YaohuoFavoriteStateContext = createContext<YaohuoFavoriteState | null>(null);
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
 
 type QuoteContentLayoutProgress = {
@@ -170,32 +152,19 @@ type QuoteContentLayoutProgress = {
   primed: boolean;
 };
 
-export function YaohuoFavoriteStateProvider({
-  bookmarked,
-  children,
-  onPress,
-  topicKey
-}: YaohuoFavoriteState & { children: ReactNode }) {
-  const value = useMemo(() => ({ bookmarked, onPress, topicKey }), [bookmarked, onPress, topicKey]);
-  return <YaohuoFavoriteStateContext.Provider value={value}>{children}</YaohuoFavoriteStateContext.Provider>;
-}
-
 function YaohuoFavoriteButton({
   actionBusy,
-  fallbackBookmarked,
+  bookmarked,
+  onPress,
   styles,
-  theme,
-  topicKey
+  theme
 }: {
   actionBusy: boolean;
-  fallbackBookmarked?: boolean;
+  bookmarked?: boolean;
+  onPress: () => void;
   styles: TopicStyles;
   theme: ReaderTheme;
-  topicKey: string;
 }) {
-  const favoriteState = useContext(YaohuoFavoriteStateContext);
-  const currentState = favoriteState?.topicKey === topicKey ? favoriteState : null;
-  const bookmarked = currentState ? currentState.bookmarked : fallbackBookmarked;
   const stateKnown = bookmarked !== undefined;
   return (
     <DetailActionButton
@@ -207,7 +176,7 @@ function YaohuoFavoriteButton({
       styles={styles}
       theme={theme}
       disabled={actionBusy || !stateKnown}
-      onPress={currentState?.onPress || (() => undefined)}
+      onPress={onPress}
     />
   );
 }
@@ -395,6 +364,7 @@ export const TopicScreen = memo(function TopicScreen({
   onInteract,
   onDiscourseBookmark,
   onNodeSeekCollection,
+  onYaohuoFavorite,
   onShareTopic,
   onVotePoll,
   onLoadMoreReplies,
@@ -417,6 +387,7 @@ export const TopicScreen = memo(function TopicScreen({
   onToggleTopicBodyQuote,
   onToggleFavorite,
   onOpenUser,
+  yaohuoBookmarked,
   inlineSizedImageUrls,
   topicImageDeriver
 }: {
@@ -464,6 +435,7 @@ export const TopicScreen = memo(function TopicScreen({
   onInteract: (type: InteractionType, commentId?: number) => void;
   onDiscourseBookmark: () => void;
   onNodeSeekCollection: () => void;
+  onYaohuoFavorite: () => void;
   onShareTopic: () => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onLoadMoreReplies: () => void;
@@ -486,6 +458,7 @@ export const TopicScreen = memo(function TopicScreen({
   onToggleTopicBodyQuote: (options: ToggleTopicBodyQuoteOptions) => void;
   onToggleFavorite: (topic: Topic) => void;
   onOpenUser: (user: UserReference) => void;
+  yaohuoBookmarked?: boolean;
   inlineSizedImageUrls: Record<string, true>;
   topicImageDeriver: TopicImageDeriver;
 }) {
@@ -1381,10 +1354,10 @@ export const TopicScreen = memo(function TopicScreen({
                   <View style={styles.topicPrimaryActions}>
                     <YaohuoFavoriteButton
                       actionBusy={actionBusy}
-                      fallbackBookmarked={topic?.bookmarked}
+                      bookmarked={yaohuoBookmarked ?? topic?.bookmarked}
+                      onPress={onYaohuoFavorite}
                       styles={styles}
                       theme={theme}
-                      topicKey={detailTopicStateKey}
                     />
                   </View>
                 ) : null}
@@ -1444,6 +1417,7 @@ export const TopicScreen = memo(function TopicScreen({
       onDiscourseBookmark,
       onInteract,
       onNodeSeekCollection,
+      onYaohuoFavorite,
       onVotePoll,
       pollSelections,
       renderTopicListItemFrame,
@@ -1452,6 +1426,7 @@ export const TopicScreen = memo(function TopicScreen({
       theme,
       togglePollSelection,
       topic,
+      yaohuoBookmarked,
       topicBaseUrl,
       topicColumnStyle,
       topicHasPostActions,

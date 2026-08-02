@@ -1,19 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createReplyTextIndexForQuery, filterRepliesByQuery } from './model/replySearch';
-import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from './model/types';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from './model/topicDerivedData';
-import {
-  createEmptyTopicSession,
-  createInactiveTopicSession,
-  createTopicRouteSessionStore,
-  pushTopicSnapshot,
-  readTopicRouteSnapshot,
-  removeTopicRouteSnapshot,
-  saveTopicRouteSnapshot,
-  snapshotFromTopicSession,
-  topicSessionFromSnapshot
-} from './model/sessionState';
 import type { Reply, Topic, TopicDetail } from '@/domain/forum/models';
 
 export function replyContentAfterComposerClose(content: string, replyEditTarget: ReplyEditTarget | null) {
@@ -56,8 +45,7 @@ export function filterTopicSessionReplies({
   return filterRepliesByQuery(replies, commentQuery, createReplyTextIndexForQuery(topicReplies, commentQuery));
 }
 
-export function useTopicSessionController({ notify }: { notify: (message: string) => void }) {
-  const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
+export function useTopicSessionController({ notify, topic }: { notify: (message: string) => void; topic: Topic }) {
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyContent, setReplyContent] = useState('');
   const [replyFace, setReplyFace] = useState('');
@@ -68,38 +56,12 @@ export function useTopicSessionController({ notify }: { notify: (message: string
   const [replyEditTarget, setReplyEditTarget] = useState<ReplyEditTarget | null>(null);
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   const [quoteStateVersion, setQuoteStateVersion] = useState(0);
-  const currentTopicKeyRef = useRef('');
-  const activeTopicRouteKeyRef = useRef<string | null>(null);
-  const topicRouteSessionStoreRef = useRef(createTopicRouteSessionStore());
-  const topicBackStackRef = useRef<TopicSnapshot[]>([]);
   const topicScrollYRef = useRef(0);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedCommentQuery(commentQuery), 180);
     return () => clearTimeout(timer);
   }, [commentQuery]);
-
-  const selectTopic = useCallback((topic: Topic) => {
-    const key = `${topic.source}:${topic.id}`;
-    if (currentTopicKeyRef.current === key) {
-      setSelectedTopic(() => topic);
-      return;
-    }
-    const session = createEmptyTopicSession(topic);
-    currentTopicKeyRef.current = session.key;
-    setSelectedTopic(() => topic);
-    setReplyFilter(session.replyFilter);
-    setReplyContent(session.replyContent);
-    setReplyFace(session.replyFace);
-    setCommentQuery(session.commentQuery);
-    setDebouncedCommentQuery(session.commentQuery);
-    setReplyComposerOpen(session.replyComposerOpen);
-    setReplyTarget(session.replyTarget);
-    setReplyEditTarget(session.replyEditTarget);
-    setExpandedQuotes(session.expandedQuotes);
-    topicScrollYRef.current = 0;
-    setQuoteStateVersion((current) => current + 1);
-  }, []);
 
   const toggleReplyComposer = useCallback(
     (open: boolean) => {
@@ -171,91 +133,6 @@ export function useTopicSessionController({ notify }: { notify: (message: string
     setQuoteStateVersion((current) => current + 1);
   }, []);
 
-  const snapshot = useCallback(
-    (): TopicSnapshot =>
-      snapshotFromTopicSession({
-        ...(selectedTopic ? createEmptyTopicSession(selectedTopic) : createInactiveTopicSession()),
-        key: currentTopicKeyRef.current,
-        selectedTopic,
-        commentQuery,
-        replyFilter,
-        replyContent,
-        replyFace,
-        replyComposerOpen,
-        replyTarget,
-        replyEditTarget,
-        expandedQuotes,
-        scrollY: topicScrollYRef.current
-      }),
-    [
-      commentQuery,
-      expandedQuotes,
-      replyComposerOpen,
-      replyContent,
-      replyEditTarget,
-      replyFace,
-      replyFilter,
-      replyTarget,
-      selectedTopic
-    ]
-  );
-
-  const restore = useCallback((topicSnapshot: TopicSnapshot) => {
-    const session = topicSessionFromSnapshot(topicSnapshot);
-    currentTopicKeyRef.current = session.key;
-    setSelectedTopic(session.selectedTopic);
-    setCommentQuery(session.commentQuery);
-    setDebouncedCommentQuery(session.commentQuery);
-    setReplyFilter(session.replyFilter);
-    setReplyContent(session.replyContent);
-    setReplyFace(session.replyFace);
-    setReplyComposerOpen(session.replyComposerOpen);
-    setReplyTarget(session.replyTarget);
-    setReplyEditTarget(session.replyEditTarget);
-    setExpandedQuotes(session.expandedQuotes);
-    topicScrollYRef.current = session.scrollY;
-    setQuoteStateVersion((current) => current + 1);
-  }, []);
-
-  const saveRoute = useCallback(
-    (routeKey: string) => {
-      if (routeKey) saveTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey, snapshot());
-    },
-    [snapshot]
-  );
-  const restoreRoute = useCallback(
-    (routeKey: string) => {
-      if (activeTopicRouteKeyRef.current === routeKey) return true;
-      const saved = readTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey);
-      if (!saved) return false;
-      activeTopicRouteKeyRef.current = routeKey;
-      restore(saved);
-      return true;
-    },
-    [restore]
-  );
-  const activateRoute = useCallback((routeKey: string) => {
-    activeTopicRouteKeyRef.current = routeKey;
-  }, []);
-  const forgetRoute = useCallback((routeKey: string) => {
-    removeTopicRouteSnapshot(topicRouteSessionStoreRef.current, routeKey);
-    if (activeTopicRouteKeyRef.current === routeKey) activeTopicRouteKeyRef.current = null;
-  }, []);
-  const clearRoutes = useCallback(() => {
-    topicRouteSessionStoreRef.current.clear();
-    activeTopicRouteKeyRef.current = null;
-  }, []);
-  const clearBackStack = useCallback(() => {
-    topicBackStackRef.current = [];
-  }, []);
-  const pushBackStack = useCallback((current: TopicSnapshot, nextTopic?: Topic) => {
-    topicBackStackRef.current = pushTopicSnapshot(topicBackStackRef.current, current, nextTopic);
-  }, []);
-  const popBackStack = useCallback(() => topicBackStackRef.current.pop(), []);
-  const readBackStack = useCallback(() => [...topicBackStackRef.current], []);
-  const replaceBackStack = useCallback((stack: TopicSnapshot[]) => {
-    topicBackStackRef.current = [...stack];
-  }, []);
   const rememberScrollY = useCallback((value: number) => {
     topicScrollYRef.current = Math.max(0, value);
   }, []);
@@ -272,7 +149,7 @@ export function useTopicSessionController({ notify }: { notify: (message: string
       replyFace,
       replyFilter,
       replyTarget,
-      selectedTopic
+      selectedTopic: topic
     },
     commands: {
       composer: {
@@ -285,35 +162,19 @@ export function useTopicSessionController({ notify }: { notify: (message: string
         replyToFloor,
         toggle: toggleReplyComposer
       },
-      navigation: {
-        activateRoute,
-        clearBackStack,
-        clearRoutes,
-        forgetRoute,
-        popBackStack,
-        pushBackStack,
-        readBackStack,
-        replaceBackStack,
-        restoreRoute,
-        saveRoute
-      },
       quotes: {
         changeExpanded: changeQuoteExpanded,
         isExpanded: (key: string) => Boolean(expandedQuotes[key])
       },
       topic: {
-        getCurrentKey: () => currentTopicKeyRef.current,
-        select: selectTopic,
-        stopWork: () => undefined
+        getCurrentKey: () => `${topic.source}:${topic.id}`
       },
       view: {
         changeCommentQuery: setCommentQuery,
         changeReplyFilter: setReplyFilter,
         rememberScrollY
       }
-    },
-    restore,
-    snapshot
+    }
   };
 }
 

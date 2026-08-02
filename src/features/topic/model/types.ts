@@ -1,5 +1,5 @@
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnostics';
-import type { Reply, Topic } from '@/domain/forum/models';
+import type { Reply } from '@/domain/forum/models';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 
 export type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
@@ -29,17 +29,3 @@ export interface TopicRepliesRefreshOptions {
   targetReply?: ReplyRefreshTarget | null;
   excludeReply?: ReplyRefreshTarget | null;
 }
-
-export type TopicSnapshot = {
-  key?: string;
-  selectedTopic: Topic | null;
-  commentQuery: string;
-  replyFilter: ReplyFilter;
-  replyContent: string;
-  replyFace?: string;
-  replyComposerOpen: boolean;
-  replyTarget: ReplyTarget | null;
-  replyEditTarget: ReplyEditTarget | null;
-  expandedQuotes: Record<string, boolean>;
-  scrollY?: number;
-};

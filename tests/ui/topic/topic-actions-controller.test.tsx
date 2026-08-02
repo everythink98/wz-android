@@ -139,6 +139,7 @@ function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): Topi
 }
 
 async function renderActions({
+  active = true,
   sessionEpochs = initialForumSessionEpochs,
   discourseLoginPrompts = { linuxdo: jest.fn(), xiaoyinsi: jest.fn() },
   ensureNodeImageApiKey = jest.fn(async () => null),
@@ -152,6 +153,7 @@ async function renderActions({
   topicDetail = detail,
   topicReplies = []
 }: {
+  active?: boolean;
   sessionEpochs?: ForumSessionEpochs;
   dispatchSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
   discourseLoginPrompts?: { linuxdo: (message?: string) => void; xiaoyinsi: (message?: string) => void };
@@ -170,9 +172,10 @@ async function renderActions({
   topicReplies?: Reply[];
 } = {}) {
   const hook = await renderNativeHook(
-    (props: { sessionEpochs: ForumSessionEpochs; topicReplies?: Reply[] }) => {
-      const topicSession = useTopicSessionController({ notify });
+    (props: { active?: boolean; sessionEpochs: ForumSessionEpochs; topicReplies?: Reply[] }) => {
+      const topicSession = useTopicSessionController({ notify, topic: topicDetail });
       const actions = useTopicActionsController({
+        active: props.active ?? active,
         sessionEpochs: props.sessionEpochs,
         discourseActionRuntimeDependencies: {
           linuxDoUserAgent: () => 'safe-agent',
@@ -210,9 +213,6 @@ async function renderActions({
       wrapper: QueryTestWrapper
     }
   );
-  await act(async () => {
-    hook.result.current.topicSession.commands.topic.select(topicDetail);
-  });
   await act(async () => {
     hook.result.current.topicSession.commands.composer.toggle(true);
   });
@@ -391,12 +391,13 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalledWith('原站收藏已提交');
   });
 
-  it('[REG-WRITE-021] removes an old topic cache when a confirmed reply settles after navigation', async () => {
+  it('[REG-WRITE-021] settles a confirmed reply without refreshing an inactive Topic route', async () => {
+    let active = true;
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
     const refreshTopicReplies = jest.fn(async () => 'completed');
     const { detailKey, repliesKey } = seedTopicCache();
-    const hook = await renderActions({ refreshTopicReplies });
+    const hook = await renderActions({ active, refreshTopicReplies });
     let submission!: Promise<void>;
 
     await act(async () => {
@@ -408,19 +409,19 @@ describe('topic action query mutations', () => {
     });
     await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
 
+    active = false;
     await act(async () => {
-      hook.result.current.topicSession.commands.topic.select({
-        ...detail,
-        id: '99',
-        url: 'https://www.nodeseek.com/post-99-1'
-      });
+      await hook.rerender({ active, sessionEpochs: initialForumSessionEpochs });
+    });
+    await act(async () => {
       transport.resolve({ success: true });
       await submission;
     });
 
     expect(refreshTopicReplies).not.toHaveBeenCalled();
-    expect(appQueryClient.getQueryData(detailKey)).toBeUndefined();
-    expect(appQueryClient.getQueryData(repliesKey)).toBeUndefined();
+    expect(appQueryClient.getQueryData(detailKey)).toBeDefined();
+    expect(appQueryClient.getQueryData(repliesKey)).toBeDefined();
+    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
   });
 
   it('REG-LINUXDO-003 records a confirmed reply with a failed follow-up refresh as partial', async () => {
@@ -959,18 +960,12 @@ describe('topic action query mutations', () => {
     }
   );
 
-  it('[REG-WRITE-026] restores an inactive edit route as a closed draft with no stale or direct write path', async () => {
+  it('[REG-WRITE-026] closes an inactive edit draft when its account epoch changes', async () => {
+    let active = true;
     const nodeSeekDetail = detailFor('nodeseek', {
       canCreatePost: true,
       polls: [],
       replies: [editableReply]
-    });
-    const otherTopic = detailFor('nodeseek', {
-      id: '43',
-      title: 'Other route',
-      url: 'https://www.nodeseek.com/post-43-1',
-      polls: [],
-      replies: []
     });
     const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
     const ensureWritableSession = jest.fn(async () => ({
@@ -982,12 +977,12 @@ describe('topic action query mutations', () => {
     const hook = await renderActions({
       ensureNodeImageApiKey,
       ensureWritableSession,
+      active,
       topicDetail: nodeSeekDetail,
       topicReplies: [editableReply]
     });
 
     await act(async () => {
-      hook.result.current.topicSession.commands.navigation.activateRoute('topic-route-a');
       await hook.result.current.actions.editReply(editableReply);
       hook.result.current.topicSession.commands.composer.changeContent('同账号返回后保留的草稿');
     });
@@ -995,18 +990,13 @@ describe('topic action query mutations', () => {
     const staleUploadReplyImage = hook.result.current.actions.uploadReplyImage;
 
     await act(async () => {
-      hook.result.current.topicSession.commands.navigation.saveRoute('topic-route-a');
-      hook.result.current.topicSession.commands.navigation.activateRoute('topic-route-b');
-      hook.result.current.topicSession.commands.topic.select(otherTopic);
+      active = false;
+      hook.rerender({
+        active,
+        sessionEpochs: { ...initialForumSessionEpochs, nodeseek: 1 },
+        topicReplies: [editableReply]
+      });
     });
-    expect(hook.result.current.topicSession.state.selectedTopic?.id).toBe('43');
-
-    let routeRestored = false;
-    await act(async () => {
-      routeRestored = hook.result.current.topicSession.commands.navigation.restoreRoute('topic-route-a');
-    });
-
-    expect(routeRestored).toBe(true);
     expect(hook.result.current.topicSession.state.selectedTopic?.id).toBe(nodeSeekDetail.id);
     expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
     expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
@@ -1451,7 +1441,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryState(detailKey)?.isInvalidated).toBe(false);
   });
 
-  it('[REG-XIAOYINSI-012] removes a confirmed reply locally and refreshes only the reply query', async () => {
+  it('[REG-WRITE-011][REG-XIAOYINSI-012] removes a confirmed reply locally and refreshes only the reply query', async () => {
     const reply: Reply = {
       author: 'alice',
       canDelete: true,

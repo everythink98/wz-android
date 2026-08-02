@@ -53,7 +53,7 @@
 - 先在 `docs/product-map.md` 选择受影响能力 ID；如果触及共享 seam，按地图展开关联能力，不能只回归最初入口。
 - 启动、首页、搜索：`src/app/AppRoot.tsx`、`src/features/feed/`、`src/features/search/`、`src/domain/forum/feed.ts` 与 `src/domain/forum/feedOptions.ts`。
 - 来源读取：`src/sources/readGateway.ts` 及其后的读取实现；互动写入：`src/features/topic/actions/useTopicActionsController.ts` 及各站 action client。
-- 详情与返回：`src/features/topic/useTopicController.ts`、`src/features/topic/model/sessionState.ts`、`src/features/topic/TopicScreen.tsx` 与 `src/features/topic/`。
+- 详情与返回：`src/features/topic/TopicRoute.tsx`、`src/features/topic/useTopicSessionController.ts`、`src/features/topic/useTopicController.ts`、`src/features/topic/useTopicRouteBeforeRemove.ts` 与 `src/features/topic/TopicScreen.tsx`。
 - 账号与登录恢复：原三站使用账号/session controller、Cookie bridge 与 App 内 WebView；小隐寺使用独立 Device Code controller 与 Android Keystore，系统浏览器仅承载一次性授权页，不属于 App 会话。
 - 本机资料与备份：reader data、backup module 与相关 controller。
 - 发布：`scripts/release-android.mjs`、`scripts/check-version.mjs` 和 `scripts/smoke-android.mjs`。

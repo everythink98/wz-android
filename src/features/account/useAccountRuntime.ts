@@ -17,7 +17,12 @@ import {
   type AuthSurface,
   type AuthSurfaceCloseReason
 } from '@/domain/session/authSurfaceCoordinator';
-import type { AccountReconcileResult, CredentialSite } from '@/domain/session/sessionContracts';
+import type {
+  AccountReconcileResult,
+  CredentialSite,
+  LinuxDoReadRecovery,
+  LinuxDoReadResumeOutcome
+} from '@/domain/session/sessionContracts';
 import type { Screen } from '@/ui/navigation/types';
 import {
   ensureWritableSessionTicket,
@@ -42,17 +47,11 @@ import { useXiaoyinsiLevelController } from './useXiaoyinsiLevelController';
 export function useAccountRuntime({
   fetcher,
   notify,
-  onNodeSeekLoginPanelClosed,
-  onNodeSeekVerificationOpened,
-  onVerificationOpened,
   screen,
   webViewBlockMessage
 }: {
   fetcher: Fetcher;
   notify: (message: string) => void;
-  onNodeSeekLoginPanelClosed: () => void;
-  onNodeSeekVerificationOpened: () => void;
-  onVerificationOpened: () => void;
   screen: Screen;
   webViewBlockMessage: string;
 }) {
@@ -107,6 +106,7 @@ export function useAccountRuntime({
   const forumSessionEpochsRef = useRef<ForumSessionEpochs>(initialForumSessionEpochs);
   const authSurfaceRegistryRef = useRef(createAuthSurfaceRegistry());
   const linuxDoRecoveryBarrierRef = useRef(false);
+  const pendingNodeSeekRecoveryRef = useRef<LinuxDoReadRecovery | null>(null);
   const [authBarrierRevision, setAuthBarrierRevision] = useState(0);
   const [linuxDoRecoveryBarrier, setLinuxDoRecoveryBarrierState] = useState(false);
   const accountIdentityKeysRef = useRef<Record<SessionSite, string>>({
@@ -347,15 +347,15 @@ export function useAccountRuntime({
       if (visible) {
         beginAuthSurfaceTicket('nodeseek-login', 'nodeseek');
       } else {
+        pendingNodeSeekRecoveryRef.current = null;
         handleClearCredentialLoginIntent('nodeseek');
-        onNodeSeekLoginPanelClosed();
       }
       webViewRef.current?.stopLoading();
       setLoadingLoginPage(visible);
       setShowLoginPanel(visible);
       if (!visible) finishAuthSurfaceTicket('nodeseek-login', closeReason);
     },
-    [beginAuthSurfaceTicket, finishAuthSurfaceTicket, handleClearCredentialLoginIntent, onNodeSeekLoginPanelClosed]
+    [beginAuthSurfaceTicket, finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
   );
   const verification = useVerificationController({
     changeNodeSeekLoginPanel,
@@ -375,8 +375,6 @@ export function useAccountRuntime({
       finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason);
     },
     onLinuxDoSurfaceOpened: () => beginAuthSurfaceTicket('linuxdo-login', 'linuxdo'),
-    onNodeSeekVerificationOpened,
-    onVerificationOpened,
     reconcileAccountStatus,
     setChecking,
     setLinuxDoWebViewError,
@@ -390,6 +388,7 @@ export function useAccountRuntime({
     updateNodeSeekSession: session.updateNodeSeekSession
   });
   const closeLinuxDoPanel = verification.closeLinuxDoPanel;
+  const showNodeSeekVerification = verification.showNodeSeekVerification;
   const closeNodeImageAuthPanel = nodeImage.panel.close;
   const prepareAuthSurfaceOpen = useCallback(
     (openingSurface: AuthSurface) => {
@@ -452,6 +451,58 @@ export function useAccountRuntime({
   });
   useCommitRefValue(credentialFailureHandlerRef, credentials.finishCredentialFillForLoginFailure);
   useCommitRefValue(credentialClearIntentHandlerRef, credentials.clearCredentialLoginIntent);
+  const requestNodeSeekVerification = useCallback(
+    (message = 'NodeSeek 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
+      if (recovery) pendingNodeSeekRecoveryRef.current = recovery;
+      showNodeSeekVerification(message);
+    },
+    [showNodeSeekVerification]
+  );
+  const checkNodeSeekLoginAndRetry = useCallback(async () => {
+    const checkRequest = nodeSeekLoginPanelRequestRef.current;
+    const accountResult = await account.checkNodeSeekAccount();
+    if (nodeSeekLoginPanelRequestRef.current !== checkRequest) return false;
+    if (accountResult.status === 'changed') {
+      changeNodeSeekLoginPanel(false, 'authoritative-recovery');
+      return false;
+    }
+    if (accountResult.status !== 'same') return false;
+
+    const recovery = pendingNodeSeekRecoveryRef.current;
+    pendingNodeSeekRecoveryRef.current = null;
+    changeNodeSeekLoginPanel(false, 'authoritative-recovery');
+    if (!recovery) return true;
+
+    const recoveryRequest = nodeSeekLoginPanelRequestRef.current;
+    setChecking(true);
+    let outcome: LinuxDoReadResumeOutcome = 'failed';
+    try {
+      outcome = await recovery.resume();
+    } catch (error) {
+      if (nodeSeekLoginPanelRequestRef.current === recoveryRequest) {
+        notify(`NodeSeek 身份已确认，但原页面恢复失败：${errorMessage(error)}`);
+      }
+    } finally {
+      if (nodeSeekLoginPanelRequestRef.current === recoveryRequest) setChecking(false);
+    }
+    if (nodeSeekLoginPanelRequestRef.current !== recoveryRequest) return false;
+    if (outcome === 'verification-required') {
+      const queryIsActive =
+        appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive() === true;
+      if (queryIsActive && !pendingNodeSeekRecoveryRef.current) {
+        requestNodeSeekVerification('NodeSeek 验证仍未生效，请继续验证后再次检测。', recovery);
+      }
+      session.updateNodeSeekSession({
+        type: 'verification-required',
+        message: 'NodeSeek 验证仍未生效，请继续验证后再次检测。'
+      });
+      return false;
+    }
+    if (outcome === 'failed') {
+      notify('NodeSeek 身份已确认，但原页面恢复失败，请返回原页面重试。');
+    }
+    return outcome === 'completed';
+  }, [account, changeNodeSeekLoginPanel, notify, requestNodeSeekVerification, session]);
   const closePanels = useCallback(() => {
     changeNodeSeekLoginPanel(false, 'navigation-away');
     closeNodeImageAuthPanel('navigation-away');
@@ -523,6 +574,7 @@ export function useAccountRuntime({
       authSurfaceRegistryRef,
       beginAuthSurfaceTicket,
       changeNodeSeekLoginPanel,
+      checkNodeSeekLoginAndRetry,
       changeYaohuoLoginPanel,
       closePanels,
       closeYaohuoLoginPanel,
@@ -556,6 +608,7 @@ export function useAccountRuntime({
       yaohuoLoginPrompt,
       yaohuoWebViewRef,
       nodeSeekLoginPanelRequestRef,
+      requestNodeSeekVerification,
       setChecking
     },
     session

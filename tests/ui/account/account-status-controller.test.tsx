@@ -10,7 +10,7 @@ jest.mock('@/sources/readGateway', () => ({
 
 import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
 import { useAccountStatusController } from '@/features/account/useAccountStatusController';
-import { useLinuxDoIdentityVerificationPrompt } from '@/features/account/useVerificationController';
+import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificationPrompt';
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -1339,9 +1339,9 @@ describe('linux.do foreground identity prompt', () => {
     };
     const hook = await renderNativeHook(
       (props: { error?: typeof challenge; identityPending: boolean; intentKey: string | null }) =>
-        useLinuxDoIdentityVerificationPrompt({
+        useIdentityVerificationPrompt({
           ...props,
-          showLinuxDoVerification
+          showVerification: showLinuxDoVerification
         }),
       {
         initialProps: {
@@ -1374,11 +1374,11 @@ describe('linux.do foreground identity prompt', () => {
     const showLinuxDoVerification = jest.fn();
     const hook = await renderNativeHook(
       (props: { error?: { kind: 'ordinary'; message: string }; intentKey: string | null }) =>
-        useLinuxDoIdentityVerificationPrompt({
+        useIdentityVerificationPrompt({
           error: props.error,
           identityPending: true,
           intentKey: props.intentKey,
-          showLinuxDoVerification
+          showVerification: showLinuxDoVerification
         }),
       {
         initialProps: {
@@ -1408,12 +1408,12 @@ describe('linux.do foreground identity prompt', () => {
       };
       const hook = await renderNativeHook(
         (props: { enabled: boolean; error?: typeof challenge; intentKey: string | null }) =>
-          useLinuxDoIdentityVerificationPrompt({
+          useIdentityVerificationPrompt({
             enabled: props.enabled,
             error: props.error,
             identityPending: true,
             intentKey: props.intentKey,
-            showLinuxDoVerification
+            showVerification: showLinuxDoVerification
           }),
         {
           initialProps: {

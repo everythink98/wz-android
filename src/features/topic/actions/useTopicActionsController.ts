@@ -176,6 +176,7 @@ function replyEditTargetIsCurrent(
 }
 
 export function useTopicActionsController({
+  active,
   sessionEpochs,
   discourseActionRuntimeDependencies,
   discourseLoginPrompts,
@@ -192,6 +193,7 @@ export function useTopicActionsController({
   topicReplies,
   topicSession
 }: {
+  active: boolean;
   sessionEpochs: ForumSessionEpochs;
   discourseActionRuntimeDependencies: DiscourseActionRuntimeDependencies;
   discourseLoginPrompts: Record<DiscourseSource, (message?: string) => void>;
@@ -210,6 +212,7 @@ export function useTopicActionsController({
 }) {
   const queryClient = useQueryClient();
   const pendingActionReservationsRef = useRef(new Set<string>());
+  const activeRef = useCommittedRef(active);
   const sessionEpochsRef = useCommittedRef(sessionEpochs);
   const {
     state: { replyComposerOpen, replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic },
@@ -425,6 +428,10 @@ export function useTopicActionsController({
 
   const refreshRepliesAfterWrite = useCallback(
     async (actionTopic: TopicDetail, trace: DiagnosticTrace, options: TopicRepliesRefreshOptions) => {
+      if (!activeRef.current) {
+        markDiagnosticStage(trace, 'apply', { source: actionTopic.source, state: 'inactive-route' });
+        return true;
+      }
       if (topicCommands.getCurrentKey() !== topicKey(actionTopic)) {
         const { detailKey, repliesKey } = cacheKeys(actionTopic);
         queryClient.removeQueries({ queryKey: repliesKey, exact: true });
@@ -435,7 +442,7 @@ export function useTopicActionsController({
       const outcome = await refreshTopicReplies({ ...options, diagnosticTrace: trace });
       return outcome === 'completed' || outcome === true;
     },
-    [cacheKeys, queryClient, refreshTopicReplies, topicCommands]
+    [activeRef, cacheKeys, queryClient, refreshTopicReplies, topicCommands]
   );
 
   const executeMutation = useCallback(

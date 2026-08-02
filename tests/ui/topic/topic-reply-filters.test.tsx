@@ -9,7 +9,7 @@ import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRe
 import { discoursePollPlaceholder } from '@/sources/discourse/content';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { TopicScreen, YaohuoFavoriteStateProvider } from '@/features/topic/TopicScreen';
+import { TopicScreen } from '@/features/topic/TopicScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import type { InteractionType } from '@/domain/forum/topicActionState';
@@ -456,88 +456,84 @@ function TopicFilterHarness({
 
   return (
     <View>
-      <YaohuoFavoriteStateProvider
-        bookmarked={yaohuoVisualBookmarked ?? topicDetail?.bookmarked}
-        onPress={onYaohuoFavorite}
-        topicKey={topicDetail ? `${topicDetail.source}:${topicDetail.id}` : ''}
-      >
-        <TopicScreen
-          actionBusy={false}
-          sourceActionAvailability={{
-            linuxdo: canUseLinuxDoActions,
-            nodeseek: canUseNodeSeekActions,
-            v2ex: false,
-            xiaoyinsi: canUseXiaoyinsiActions,
-            yaohuo: canUseYaohuoActions
-          }}
-          commentQuery={commentQuery}
-          contentWidth={720}
-          expandedQuotes={expandedQuotes}
-          htmlBaseStyle={htmlStyles.htmlBaseStyle}
-          htmlClassesStyles={htmlStyles.htmlClassesStyles}
-          htmlIgnoredStyles={htmlStyles.htmlIgnoredStyles}
-          htmlRenderers={{}}
-          htmlRenderersProps={{}}
-          htmlTagsStyles={htmlStyles.htmlTagsStyles}
-          getDiscourseEmojiUrls={getDiscourseEmojiUrls}
-          inlineSizedImageUrls={{}}
-          mediaSessionIdentity={`${topicDetail?.source || 'public'}:0`}
-          loadedQuotedReplies={loadedQuotedReplies}
-          loadingMoreReplies={loadingMoreReplies}
-          loadingQuotedFloors={loadingQuotedFloors}
-          optimisticActions={{}}
-          quoteStateVersion={0}
-          replies={replies}
-          replyComposerOpen={false}
-          replyContent=""
-          replyEditTarget={null}
-          replyFace=""
-          replyFilter={replyFilter}
-          replyHasMore={replyHasMore}
-          replyHighlightQuery={effectiveCommentQuery}
-          replyTarget={null}
-          selectedTopic={selectedTopic}
-          sourceReplies={topicReplies}
-          topic={topicDetail}
-          topicBusy={topicBusy}
-          topicError={topicError}
-          identityBlocked={identityBlocked}
-          identityChecking={identityChecking}
-          topicFavorite={topicFavorite}
-          topicImageDeriver={topicImageDeriver}
-          topicScrollRef={topicScrollRef}
-          unreadReplyCount={0}
-          onBack={jest.fn()}
-          onCommentQueryChange={setCommentQuery}
-          onDeleteReply={jest.fn()}
-          onEditReply={jest.fn()}
-          onInteract={onInteract}
-          onDiscourseBookmark={onDiscourseBookmark}
-          onLoadMoreReplies={onLoadMoreReplies}
-          onNodeSeekCollection={jest.fn()}
-          onOpenOriginal={jest.fn()}
-          onOpenTopic={jest.fn()}
-          onOpenReadingSettings={jest.fn()}
-          onOpenUser={jest.fn()}
-          onRefreshTopic={jest.fn()}
-          onRefreshWholeTopic={onRefreshWholeTopic}
-          onReplyComposerOpenChange={onReplyComposerOpenChange}
-          onReplyContentChange={jest.fn()}
-          onReplyFaceChange={jest.fn()}
-          onReplyFilterChange={setReplyFilter}
-          onReplyToFloor={jest.fn()}
-          onShareTopic={jest.fn()}
-          onSubmitReply={jest.fn()}
-          onToggleFavorite={onToggleFavorite}
-          onToggleReplyQuote={jest.fn()}
-          onToggleTopicBodyQuote={onToggleTopicBodyQuote}
-          onTopicScroll={jest.fn()}
-          onUploadReplyImage={jest.fn()}
-          onVerifyLinuxDo={onVerifyLinuxDo}
-          onVerifyNodeSeek={onVerifyNodeSeek}
-          onVotePoll={onVotePoll}
-        />
-      </YaohuoFavoriteStateProvider>
+      <TopicScreen
+        actionBusy={false}
+        sourceActionAvailability={{
+          linuxdo: canUseLinuxDoActions,
+          nodeseek: canUseNodeSeekActions,
+          v2ex: false,
+          xiaoyinsi: canUseXiaoyinsiActions,
+          yaohuo: canUseYaohuoActions
+        }}
+        commentQuery={commentQuery}
+        contentWidth={720}
+        expandedQuotes={expandedQuotes}
+        htmlBaseStyle={htmlStyles.htmlBaseStyle}
+        htmlClassesStyles={htmlStyles.htmlClassesStyles}
+        htmlIgnoredStyles={htmlStyles.htmlIgnoredStyles}
+        htmlRenderers={{}}
+        htmlRenderersProps={{}}
+        htmlTagsStyles={htmlStyles.htmlTagsStyles}
+        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+        inlineSizedImageUrls={{}}
+        mediaSessionIdentity={`${topicDetail?.source || 'public'}:0`}
+        loadedQuotedReplies={loadedQuotedReplies}
+        loadingMoreReplies={loadingMoreReplies}
+        loadingQuotedFloors={loadingQuotedFloors}
+        optimisticActions={{}}
+        quoteStateVersion={0}
+        replies={replies}
+        replyComposerOpen={false}
+        replyContent=""
+        replyEditTarget={null}
+        replyFace=""
+        replyFilter={replyFilter}
+        replyHasMore={replyHasMore}
+        replyHighlightQuery={effectiveCommentQuery}
+        replyTarget={null}
+        selectedTopic={selectedTopic}
+        sourceReplies={topicReplies}
+        topic={topicDetail}
+        topicBusy={topicBusy}
+        topicError={topicError}
+        identityBlocked={identityBlocked}
+        identityChecking={identityChecking}
+        topicFavorite={topicFavorite}
+        topicImageDeriver={topicImageDeriver}
+        topicScrollRef={topicScrollRef}
+        unreadReplyCount={0}
+        onBack={jest.fn()}
+        onCommentQueryChange={setCommentQuery}
+        onDeleteReply={jest.fn()}
+        onEditReply={jest.fn()}
+        onInteract={onInteract}
+        onDiscourseBookmark={onDiscourseBookmark}
+        onLoadMoreReplies={onLoadMoreReplies}
+        onNodeSeekCollection={jest.fn()}
+        onYaohuoFavorite={onYaohuoFavorite}
+        onOpenOriginal={jest.fn()}
+        onOpenTopic={jest.fn()}
+        onOpenReadingSettings={jest.fn()}
+        onOpenUser={jest.fn()}
+        onRefreshTopic={jest.fn()}
+        onRefreshWholeTopic={onRefreshWholeTopic}
+        onReplyComposerOpenChange={onReplyComposerOpenChange}
+        onReplyContentChange={jest.fn()}
+        onReplyFaceChange={jest.fn()}
+        onReplyFilterChange={setReplyFilter}
+        onReplyToFloor={jest.fn()}
+        onShareTopic={jest.fn()}
+        onSubmitReply={jest.fn()}
+        onToggleFavorite={onToggleFavorite}
+        onToggleReplyQuote={jest.fn()}
+        onToggleTopicBodyQuote={onToggleTopicBodyQuote}
+        onTopicScroll={jest.fn()}
+        onUploadReplyImage={jest.fn()}
+        onVerifyLinuxDo={onVerifyLinuxDo}
+        onVerifyNodeSeek={onVerifyNodeSeek}
+        onVotePoll={onVotePoll}
+        yaohuoBookmarked={yaohuoVisualBookmarked ?? topicDetail?.bookmarked}
+      />
       <Text testID="active-filter">{replyFilter}</Text>
     </View>
   );

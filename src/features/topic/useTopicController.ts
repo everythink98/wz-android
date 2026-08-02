@@ -20,7 +20,6 @@ import {
   yaohuoErrorRequiresLoginPanel
 } from '@/sources/sourceErrors';
 import type { RepliesResponse, Reply, Source, SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
-import type { Screen } from '@/ui/navigation/types';
 import type { TopicRepliesRefreshOptions } from './model/types';
 import {
   quotedPostReferenceKey,
@@ -117,51 +116,45 @@ export function hasNextReplyPage({
 }
 
 export function useTopicController({
-  changeScreen,
+  active,
   commitReaderData,
   identityBarriers = [],
   sessionEpochs = initialForumSessionEpochs,
-  getCurrentScreen,
   notify,
   onNodeSeekTopicVerificationRequired,
-  pushTopicScreen,
+  onOpenTopic,
   readerData,
   readerDataRef,
-  reopenExistingTopicScreenRef,
-  screen,
   showLinuxDoVerification,
   showYaohuoLogin,
   readGateway,
-  topicReturnScreenRef,
+  topic,
   topicSession
 }: {
-  changeScreen: (nextScreen: Screen) => void;
+  active: boolean;
   commitReaderData: (mutationReason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
   identityBarriers?: readonly ForumIdentityBarrierSource[];
   sessionEpochs?: ForumSessionEpochs;
-  getCurrentScreen: () => Screen;
   notify: (message: string) => void;
   onNodeSeekTopicVerificationRequired: (message: string, recovery: LinuxDoReadRecovery) => void;
-  pushTopicScreen: (topic: Topic) => boolean;
+  onOpenTopic: (topic: Topic) => void;
   readerData: ReaderData;
   readerDataRef: MutableRef<ReaderData>;
-  reopenExistingTopicScreenRef: MutableRef<boolean>;
-  screen: Screen;
   showLinuxDoVerification: (
     message?: string,
     recovery?: LinuxDoReadRecovery
   ) => void | boolean | Promise<void | boolean>;
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
-  topicReturnScreenRef: MutableRef<Exclude<Screen, 'topic'>>;
+  topic: Topic;
   topicSession: TopicSessionController;
 }) {
   const queryClient = useQueryClient();
   const {
-    state: { expandedQuotes, selectedTopic },
-    commands: { navigation: topicNavigation, quotes: topicQuotes, topic: topicCommands },
-    snapshot: topicSnapshot
+    state: { expandedQuotes, selectedTopic: sessionTopic },
+    commands: { quotes: topicQuotes, topic: topicCommands }
   } = topicSession;
+  const selectedTopic = sessionTopic || topic;
   const [quoteRequests, setQuoteRequests] = useState<
     Record<
       string,
@@ -171,7 +164,9 @@ export function useTopicController({
       }
     >
   >({});
-  const unreadBaselineRef = useRef<Record<string, number>>({});
+  const unreadBaselineRef = useRef<Record<string, number>>({
+    [topicKey(topic)]: readerDataRef.current.history[topicKey(topic)]?.topic.replyCount || 0
+  });
   const recordedTopicUpdateRef = useRef('');
   const handledTopicErrorRef = useRef(0);
   const handledRepliesErrorRef = useRef(0);
@@ -182,7 +177,7 @@ export function useTopicController({
   const selectedIdentityPending = Boolean(
     selectedTopic && selectedTopic.source !== 'v2ex' && identityBarriers.includes(selectedTopic.source)
   );
-  const enabled = Boolean(selectedTopic && screen === 'topic' && !selectedIdentityPending);
+  const enabled = Boolean(active && !selectedIdentityPending);
   const topicQueryKey = useMemo(
     () =>
       forumQueryKeys.topic({
@@ -615,26 +610,12 @@ export function useTopicController({
 
   const openTopic = useCallback(
     async (topic: Topic, refresh = false): Promise<LinuxDoReadResumeOutcome> => {
-      const currentScreen = getCurrentScreen();
       const currentKey = topicCommands.getCurrentKey();
       const nextKey = topicKey(topic);
       const opensDifferentTopic = Boolean(currentKey && currentKey !== nextKey);
-      const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;
-      reopenExistingTopicScreenRef.current = false;
-      if (currentScreen !== 'topic' && !reopenExistingTopicScreen) {
-        topicReturnScreenRef.current = currentScreen;
-        topicNavigation.clearBackStack();
-      } else if (opensDifferentTopic) {
-        topicNavigation.pushBackStack(topicSnapshot(), topic);
-      }
-      if (opensDifferentTopic) cancelTopicQueries(selectedTopic);
-      if (opensDifferentTopic) setQuoteRequests({});
-      unreadBaselineRef.current[nextKey] = readerDataRef.current.history[nextKey]?.topic.replyCount || 0;
-      const shouldPushTopicScreen = currentScreen !== 'topic' || opensDifferentTopic;
-      const pushedTopicScreen = shouldPushTopicScreen && pushTopicScreen(topic);
-      topicCommands.select(topic);
-      if (shouldPushTopicScreen && !pushedTopicScreen) {
-        changeScreen('topic');
+      if (opensDifferentTopic) {
+        onOpenTopic(topic);
+        return 'completed';
       }
       if (refresh) {
         const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: sessionEpochs });
@@ -643,22 +624,12 @@ export function useTopicController({
       }
       return 'completed';
     },
-    [
-      cancelTopicQueries,
-      changeScreen,
-      sessionEpochs,
-      getCurrentScreen,
-      pushTopicScreen,
-      queryClient,
-      readerDataRef,
-      reopenExistingTopicScreenRef,
-      selectedTopic,
-      topicCommands,
-      topicNavigation,
-      topicReturnScreenRef,
-      topicSnapshot
-    ]
+    [sessionEpochs, onOpenTopic, queryClient, topicCommands]
   );
+
+  useEffect(() => {
+    if (!active) cancelTopicQueries();
+  }, [active, cancelTopicQueries]);
 
   const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!selectedTopic || selectedIdentityPending) return 'stale';
@@ -968,7 +939,7 @@ export function useTopicController({
   );
 
   const currentTopic = topicDetail || selectedTopic;
-  const currentTopicKey = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
+  const currentTopicKey = currentTopic ? topicKey(currentTopic) : null;
   const topicError =
     !topicDetail && detailQuery.error && selectedTopic
       ? sourceErrorFromUnknown(selectedTopic.source, detailQuery.error)
