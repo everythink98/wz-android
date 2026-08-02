@@ -195,6 +195,18 @@ export function networkProxyWebViewBlockMessage({
   return '';
 }
 
+export function canStartNetworkContent({
+  applyStatus,
+  enabled,
+  loaded
+}: {
+  applyStatus: NetworkProxyApplyStatus;
+  enabled: boolean;
+  loaded: boolean;
+}) {
+  return loaded && (!enabled || (applyStatus !== 'loading' && applyStatus !== 'applying'));
+}
+
 export function networkProxyModuleFromReactNativeImport(mod: any): NativeNetworkProxyModule | undefined {
   const nativeModules = mod?.NativeModules || mod?.default?.NativeModules;
   return nativeModules?.NetworkProxyModule as NativeNetworkProxyModule | undefined;

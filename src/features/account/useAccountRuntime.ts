@@ -24,6 +24,7 @@ import type {
   LinuxDoReadResumeOutcome
 } from '@/domain/session/sessionContracts';
 import type { Screen } from '@/ui/navigation/types';
+import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import {
   ensureWritableSessionTicket,
   validateWritableSessionTicket,
@@ -45,13 +46,19 @@ import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
 import { useXiaoyinsiLevelController } from './useXiaoyinsiLevelController';
 
 export function useAccountRuntime({
+  appActive,
   fetcher,
   notify,
+  openUser,
+  ready,
   screen,
   webViewBlockMessage
 }: {
+  appActive: boolean;
   fetcher: Fetcher;
   notify: (message: string) => void;
+  openUser: (user: Extract<AccountCenterCommand, { type: 'open-user' }>['user']) => Promise<unknown>;
+  ready: boolean;
   screen: Screen;
   webViewBlockMessage: string;
 }) {
@@ -75,6 +82,7 @@ export function useAccountRuntime({
     (site: CredentialSite, attempt: number, reason: LoginWebViewFailureReason) => void
   >(() => undefined);
   const credentialClearIntentHandlerRef = useRef<(site: CredentialSite) => void>(() => undefined);
+  const initialStatusRefreshStartedRef = useRef(false);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
@@ -236,8 +244,14 @@ export function useAccountRuntime({
     sessionViewModels: session.siteSessionViewModels
   });
   const reconcileAccountStatus = status.reconcileAccountStatus;
+  const refreshAccountStatus = status.refreshAccountStatus;
   useCommitRefValue(beginAccountIdentityCheckRef, status.beginAccountIdentityCheck);
   useCommitRefValue(reconcileAccountStatusRef, reconcileAccountStatus);
+  useEffect(() => {
+    if (!ready || initialStatusRefreshStartedRef.current) return;
+    initialStatusRefreshStartedRef.current = true;
+    void refreshAccountStatus({ silent: true });
+  }, [ready, refreshAccountStatus]);
 
   const accountIdentityKeys = useMemo<Record<SessionSite, string>>(
     () => ({
@@ -389,6 +403,10 @@ export function useAccountRuntime({
   });
   const closeLinuxDoPanel = verification.closeLinuxDoPanel;
   const showNodeSeekVerification = verification.showNodeSeekVerification;
+  const stopLinuxDoVerificationForInactiveApp = verification.stopLinuxDoVerificationForInactiveApp;
+  useEffect(() => {
+    if (!appActive) stopLinuxDoVerificationForInactiveApp();
+  }, [appActive, stopLinuxDoVerificationForInactiveApp]);
   const closeNodeImageAuthPanel = nodeImage.panel.close;
   const prepareAuthSurfaceOpen = useCallback(
     (openingSurface: AuthSurface) => {
@@ -449,6 +467,24 @@ export function useAccountRuntime({
     webViewBlockMessage,
     yaohuoWebViewRef
   });
+  const handleAccountCenterCommand = useCallback(
+    async (command: AccountCenterCommand) => {
+      if (command.type === 'open-user') {
+        await openUser(command.user);
+        return;
+      }
+      await credentials.handleAccountCenterCommand(command);
+    },
+    [credentials, openUser]
+  );
+  const showYaohuoLogin = useCallback(
+    (message = '请先登录妖火。') => {
+      setYaohuoLoginPrompt(message);
+      changeYaohuoLoginPanel(true);
+      notify(message);
+    },
+    [changeYaohuoLoginPanel, notify]
+  );
   useCommitRefValue(credentialFailureHandlerRef, credentials.finishCredentialFillForLoginFailure);
   useCommitRefValue(credentialClearIntentHandlerRef, credentials.clearCredentialLoginIntent);
   const requestNodeSeekVerification = useCallback(
@@ -509,6 +545,31 @@ export function useAccountRuntime({
     closeYaohuoLoginPanel('navigation-away');
     closeLinuxDoPanel(true, 'navigation-away');
   }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
+  const closeTopmostSurface = useCallback(() => {
+    if (showLoginPanelRef.current) {
+      changeNodeSeekLoginPanel(false, 'hardware-back');
+      return 'login-panel-closed';
+    }
+    if (nodeImage.panel.visible) {
+      closeNodeImageAuthPanel('hardware-back');
+      return 'image-auth-panel-closed';
+    }
+    if (showYaohuoLoginPanelRef.current) {
+      closeYaohuoLoginPanel('hardware-back');
+      return 'yaohuo-panel-closed';
+    }
+    if (showLinuxDoPanelRef.current) {
+      closeLinuxDoPanel(true, 'hardware-back');
+      return 'linuxdo-panel-closed';
+    }
+    return null;
+  }, [
+    changeNodeSeekLoginPanel,
+    closeLinuxDoPanel,
+    closeNodeImageAuthPanel,
+    closeYaohuoLoginPanel,
+    nodeImage.panel.visible
+  ]);
 
   const readWritableSessionSnapshot = useCallback(
     (source: SessionSite): WritableSessionSnapshot => readSessionRuntimeSnapshot(source),
@@ -549,7 +610,7 @@ export function useAccountRuntime({
       readGateway,
       readSessionRuntimeSnapshot,
       reconcileAccountStatus,
-      refreshAccountStatus: status.refreshAccountStatus,
+      refreshAccountStatus,
       retainableIdentityBarriers,
       statusBusy: status.statusBusy
     },
@@ -565,6 +626,7 @@ export function useAccountRuntime({
       checkIn: nodeSeekCheckIn.checkIn,
       checkInBusy: nodeSeekCheckIn.busy,
       credentials,
+      handleAccountCenterCommand,
       nodeImage,
       webLoginUserId,
       xiaoyinsiAuth,
@@ -577,6 +639,7 @@ export function useAccountRuntime({
       checkNodeSeekLoginAndRetry,
       changeYaohuoLoginPanel,
       closePanels,
+      closeTopmostSurface,
       closeYaohuoLoginPanel,
       finishAuthSurfaceTicket,
       hiddenBrowserFetchRequests: session.hiddenBrowserFetchRequests,
@@ -601,6 +664,7 @@ export function useAccountRuntime({
       showLinuxDoPanel,
       showLoginPanel,
       showYaohuoLoginPanel,
+      showYaohuoLogin,
       updateLinuxDoRecoveryBarrier,
       verification,
       webViewRef,

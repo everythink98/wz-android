@@ -12,12 +12,14 @@ describe('WebView proxy guard', () => {
   it('routes every WebView through the shared proxy transition guard', () => {
     const appComposition = readSource('src', 'app', 'AppComposition.tsx');
     const appRuntime = readSource('src', 'app', 'useAppRuntime.tsx');
+    const networkRuntime = readSource('src', 'platform', 'network', 'useNetworkProxyRuntime.ts');
     const hiddenBrowserHost = readSource('src', 'features', 'account', 'HiddenBrowserHost.tsx');
     const accountHost = readSource('src', 'features', 'account', 'AccountHost.tsx');
     const contentMediaRenderers = readSource('src', 'features', 'topic', 'rendering', 'contentMediaRenderers.tsx');
     const yaohuoLoginPanel = readSource('src', 'features', 'more', 'components', 'YaohuoLoginPanel.tsx');
 
-    expect(appRuntime).toContain('const networkProxyWebViewBlockMessage =');
+    expect(networkRuntime).toContain('const webViewBlockMessage = networkProxyWebViewBlockMessage({');
+    expect(appRuntime).toContain('webViewBlockMessage: networkProxyWebViewBlockMessage');
     expect(appRuntime).toContain('blockedMessage: networkProxyWebViewBlockMessage');
     expect(appRuntime).toContain('webViewBlockMessage: networkProxyWebViewBlockMessage');
     expect(appComposition).toContain('<HiddenBrowserHost {...runtime.hiddenBrowserHost} />');

@@ -14,7 +14,7 @@ import type { ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { DiscourseActionRuntimeDependencies } from './actions/discourseActionRuntime';
-import type { ReaderData, ReaderDataMutationReason } from '@/domain/reader/readerData';
+import { toggleFavorite, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
 import type { SourceErrorInfo, Topic, UserReference } from '@/domain/forum/models';
 import type { DiscourseSource, SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionEvent, SiteSessionViewModels } from '@/domain/session/siteSessionState';
@@ -84,7 +84,6 @@ export type TopicRouteRuntimeValue = {
     commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
     data: ReaderData;
     dataRef: { current: ReaderData };
-    toggleTopicFavorite: (topic: Topic) => void;
   };
   readerStyle: ReaderStyleContextValue;
 };
@@ -105,6 +104,10 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   const runtime = useTopicRouteRuntime();
   const active = useIsFocused();
   const topic = route.params.topic;
+  const toggleTopicFavorite = useCallback(
+    () => runtime.reader.commit('favorite-toggled', (current) => toggleFavorite(current, topic)),
+    [runtime.reader, topic]
+  );
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
   const topicSession = useTopicSessionController({ notify: runtime.notify, topic });
   const {
@@ -415,7 +418,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
           onTopicScroll={handleTopicScroll}
           onToggleReplyQuote={toggleReplyQuote}
           onToggleTopicBodyQuote={toggleTopicBodyQuote}
-          onToggleFavorite={runtime.reader.toggleTopicFavorite}
+          onToggleFavorite={toggleTopicFavorite}
           onOpenUser={stableOpenUser}
           yaohuoBookmarked={topicDetail?.source === 'yaohuo' ? topicDetail.bookmarked : undefined}
         />

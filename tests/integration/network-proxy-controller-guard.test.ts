@@ -112,15 +112,4 @@ describe('network proxy controller guard', () => {
     expect(guard.indexOf("applyStatusRef.current === 'failed'")).toBeLessThan(guard.indexOf('if (!current.enabled)'));
     expect(guard).toContain("throw new Error(applyErrorRef.current || '代理状态不确定，请重新应用代理设置。');");
   });
-
-  it('delays main content until the saved proxy state is applied', () => {
-    const source = readSource('src', 'app', 'useAppRuntime.tsx');
-
-    expect(source).toContain('const [networkProxyContentReady, setNetworkProxyContentReady] = useState(false);');
-    expect(source).toContain('setDefaultAvatarFetcher(networkProxyFetcher)');
-    expect(source).toMatch(
-      /networkProxyState\.enabled\s*&&\s*\(networkProxyApplyStatus === 'loading'\s*\|\|\s*networkProxyApplyStatus === 'applying'\)/
-    );
-    expect(source).toMatch(/routes:\s*networkProxyContentReady\s*\?\s*\{/);
-  });
 });

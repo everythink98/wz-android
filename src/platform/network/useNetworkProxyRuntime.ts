@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
 import type { Fetcher } from './request';
 import { errorMessage } from './errors';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
@@ -6,11 +7,13 @@ import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diag
 import {
   activeNetworkProxyProfile,
   applyNetworkProxy,
+  canStartNetworkContent,
   createEmptyNetworkProxyState,
   createNetworkProxyProfile,
   loadNetworkProxyState,
   MAX_NETWORK_PROXY_PROFILES,
   networkProxySummary,
+  networkProxyWebViewBlockMessage,
   removeNetworkProxyProfile,
   saveNetworkProxyState,
   testNetworkProxy,
@@ -70,6 +73,7 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
   const [loaded, setLoaded] = useState(false);
   const [applyStatus, setApplyStatus] = useState<NetworkProxyApplyStatus>('loading');
   const [applyError, setApplyError] = useState('');
+  const [contentReady, setContentReady] = useState(false);
   const readyPromiseRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
   const proxyStateRef = useRef(proxyState);
   const loadedRef = useRef(loaded);
@@ -416,15 +420,32 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
     [ensureNetworkProxyReady]
   );
 
+  useEffect(() => setDefaultAvatarFetcher(networkProxyFetcher), [networkProxyFetcher]);
+
+  const webViewBlockMessage = networkProxyWebViewBlockMessage({
+    applyError,
+    applyStatus,
+    enabled: proxyState.enabled,
+    loaded
+  });
+
+  useEffect(() => {
+    if (!contentReady && canStartNetworkContent({ applyStatus, enabled: proxyState.enabled, loaded })) {
+      setContentReady(true);
+    }
+  }, [applyStatus, contentReady, loaded, proxyState.enabled]);
+
   return {
     activeProfile,
     applyError,
     applyStatus,
+    contentReady,
     ensureNetworkProxyReady,
     loaded,
     networkProxyFetcher,
     proxyState,
     summary,
+    webViewBlockMessage,
     deleteProxyProfile,
     selectProxyProfile,
     setProxyEnabled,

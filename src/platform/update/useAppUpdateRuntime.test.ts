@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('react', () => ({
   useCallback: <T>(callback: T) => callback,
+  useEffect: (effect: () => void | (() => void)) => {
+    effect();
+  },
   useRef: <T>(value: T) => ({ current: value }),
   useState: <T>(initial: T | (() => T)) => {
     let value = typeof initial === 'function' ? (initial as () => T)() : initial;
@@ -86,6 +89,14 @@ describe('app update controller', () => {
     expect(mocks.createDownloadResumable).not.toHaveBeenCalled();
     check.resolve(null);
     await activeCheck;
+  });
+
+  it('runs the silent startup check once when the update runtime owns auto-check', async () => {
+    mocks.checkGithubAppUpdate.mockResolvedValue(null);
+
+    useAppUpdateRuntime({ autoCheck: true, fetcher: vi.fn(), notify: vi.fn() });
+
+    await vi.waitFor(() => expect(mocks.checkGithubAppUpdate).toHaveBeenCalledTimes(1));
   });
 
   it('[REG-UPDATE-005] reuses one cache target across versions and keeps a successful APK', async () => {

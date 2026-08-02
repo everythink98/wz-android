@@ -1,83 +1,45 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, BackHandler, Linking, Platform, ToastAndroid, useWindowDimensions } from 'react-native';
-import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
+import { useMemo } from 'react';
 import { useReaderRuntime } from './useReaderRuntime';
 import { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
 import { useHiddenBrowserFetchController } from '@/features/account/useHiddenBrowserFetchController';
-import { isReadingSettingsScreen, navigateAppScreen, pushUserRoute, shouldUpdateAppRootScreen } from './appNavigation';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
-import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
-import { networkProxyWebViewBlockMessage as proxyWebViewBlockMessage } from '@/platform/network/networkProxy';
-import type { Topic, UserReference } from '@/domain/forum/models';
-import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
-import { LOGIN_WEBVIEW_ALLOWED_HOSTS, shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
-import { toggleFavorite } from '@/domain/reader/readerData';
-import { errorMessage } from '@/platform/network/errors';
-import { normalizeUserReference } from '@/domain/forum/userNavigation';
 import type { FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
 import type { LibraryRouteRuntimeValue } from '@/features/library/LibraryRoute';
 import type { MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
 import type { SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
 import type { TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
 import type { UserRouteRuntimeValue } from '@/features/user/UserRoute';
-import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
-import type { AccountCenterCommand } from '@/domain/session/accountCenter';
-import type { Screen } from '@/ui/navigation/types';
-import { setRequestTimeoutsActive } from '@/platform/network/request';
-import { focusManager } from '@tanstack/react-query';
 import { nodeSeekUserIdForSession } from '@/domain/session/siteSessionState';
-import {
-  CURRENT_ANDROID_VERSION_CODE,
-  CURRENT_APP_VERSION,
-  CURRENT_EXPO_VERSION,
-  CURRENT_REACT_NATIVE_VERSION
-} from '@/platform/update/appUpdate';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { useAppTheme } from './useAppTheme';
 import { useForumCatalogRuntime } from './useForumCatalogRuntime';
-import { useAppDeepLinkNavigation } from './useAppDeepLinkNavigation';
+import { useAppBackHandler } from './useAppBackHandler';
+import { useAppDiagnosticsRuntime } from './useAppDiagnosticsRuntime';
+import { useAppLifecycleRuntime } from './useAppLifecycleRuntime';
 
 export function useAppRuntime() {
-  const { width, height } = useWindowDimensions();
-  const [screen, setScreen] = useState<Screen>('feed');
-  const [appActive, setAppActive] = useState(
-    () => AppState.currentState !== 'background' && AppState.currentState !== 'inactive'
-  );
-  const screenRef = useRef<Screen>('feed');
-  const getCurrentScreen = useCallback(() => screenRef.current, []);
-  const changeScreen = useCallback((nextScreen: Screen) => {
-    navigateAppScreen(nextScreen);
-  }, []);
-  const autoAppUpdateCheckedRef = useRef(false);
-  const notify = useCallback((message: string) => {
-    if (!message) {
-      return;
-    }
-    ToastAndroid.show(message, ToastAndroid.SHORT);
-  }, []);
-  const openUserRoute = useCallback(
-    async (user: UserReference) => {
-      const normalized = normalizeUserReference(user);
-      if (!normalized) {
-        notify('用户信息不完整');
-        return 'completed';
-      }
-      pushUserRoute(normalized);
-      return 'completed';
+  const lifecycle = useAppLifecycleRuntime();
+  const {
+    appActive,
+    changeScreen,
+    getCurrentScreen,
+    height,
+    loginNavigation: {
+      linuxdo: handleLinuxDoNavigation,
+      nodeimage: handleNodeImageAuthNavigation,
+      nodeseek: handleNodeSeekLoginNavigation,
+      yaohuo: handleYaohuoLoginNavigation
     },
-    [notify]
-  );
-  const handleNavigationReady = useAppDeepLinkNavigation();
-  const accountStatusInitialRefreshRef = useRef(false);
+    notify,
+    onReady: handleNavigationReady,
+    onScreenChange: handleNavigationScreenChange,
+    openUserRoute,
+    screen,
+    width
+  } = lifecycle;
   const { commitReaderData, readerData, readerDataLoaded, readerDataRef, replaceReaderData, waitForReaderDataSave } =
     useReaderRuntime({ notify });
 
-  const toggleTopicFavorite = useCallback(
-    (topic: Topic) => commitReaderData('favorite-toggled', (current) => toggleFavorite(current, topic)),
-    [commitReaderData]
-  );
-  useCommitRefValue(screenRef, screen);
   const { fontScale } = readerData.settings;
   const { appStyles, contentWidth, navigationTheme, readerStyleContext, theme } = useAppTheme(
     readerData.settings,
@@ -88,41 +50,25 @@ export function useAppRuntime() {
     activeProfile: networkProxyActiveProfile,
     applyError: networkProxyApplyError,
     applyStatus: networkProxyApplyStatus,
+    contentReady: networkProxyContentReady,
     ensureNetworkProxyReady,
-    loaded: networkProxyLoaded,
     networkProxyFetcher,
     proxyState: networkProxyState,
     summary: networkProxySummary,
+    webViewBlockMessage: networkProxyWebViewBlockMessage,
     deleteProxyProfile: deleteNetworkProxyProfile,
     selectProxyProfile: selectNetworkProxyProfile,
     setProxyEnabled: setNetworkProxyEnabled,
     testProxyProfile: testNetworkProxyProfile,
     upsertProxyProfile: upsertNetworkProxyProfile
   } = useNetworkProxyRuntime({ notify });
-  useEffect(() => setDefaultAvatarFetcher(networkProxyFetcher), [networkProxyFetcher]);
-  const networkProxyWebViewBlockMessage = proxyWebViewBlockMessage({
-    applyError: networkProxyApplyError,
-    applyStatus: networkProxyApplyStatus,
-    enabled: networkProxyState.enabled,
-    loaded: networkProxyLoaded
-  });
-  const [networkProxyContentReady, setNetworkProxyContentReady] = useState(false);
-  useEffect(() => {
-    if (networkProxyContentReady || !networkProxyLoaded) {
-      return;
-    }
-    if (
-      networkProxyState.enabled &&
-      (networkProxyApplyStatus === 'loading' || networkProxyApplyStatus === 'applying')
-    ) {
-      return;
-    }
-    setNetworkProxyContentReady(true);
-  }, [networkProxyApplyStatus, networkProxyContentReady, networkProxyLoaded, networkProxyState.enabled]);
 
   const accountRuntime = useAccountRuntime({
+    appActive,
     fetcher: networkProxyFetcher,
     notify,
+    openUser: openUserRoute,
+    ready: readerDataLoaded,
     screen,
     webViewBlockMessage: networkProxyWebViewBlockMessage
   });
@@ -135,7 +81,6 @@ export function useAppRuntime() {
     identityReconciliationPending,
     readGateway,
     reconcileAccountStatus,
-    refreshAccountStatus,
     retainableIdentityBarriers: retainableAccountIdentityBarriers,
     statusBusy
   } = accountRuntime.read;
@@ -157,11 +102,11 @@ export function useAppRuntime() {
     },
     checkIn,
     checking,
+    handleAccountCenterCommand,
     credentials: {
       credentialFillAttempt,
       credentialLoginSite,
       credentialSummaries,
-      handleAccountCenterCommand: handleAccountCenterRuntimeCommand,
       handleCredentialLoginFormMessage,
       openAccountLogin,
       pendingCredentialFillSite
@@ -196,7 +141,7 @@ export function useAppRuntime() {
     checkNodeSeekLoginAndRetry,
     changeYaohuoLoginPanel,
     closePanels: closeAccountPanels,
-    closeYaohuoLoginPanel,
+    closeTopmostSurface: closeTopmostAccountSurface,
     hiddenBrowserFetchRequests,
     linuxDoBrowserWebViewRef,
     linuxDoWebViewError,
@@ -213,7 +158,6 @@ export function useAppRuntime() {
     nodeSeekWebViewUserAgentRef,
     setLoadingLoginPage,
     setLoadingYaohuoLoginPage,
-    setYaohuoLoginPrompt,
     requestNodeSeekVerification,
     showLinuxDoPanel,
     showLoginPanel,
@@ -221,15 +165,14 @@ export function useAppRuntime() {
     verification: {
       changeLinuxDoPanel,
       checkLinuxDoCookie,
-      closeLinuxDoPanel,
       handleLinuxDoMessage,
       resetLinuxDoWebView,
       setLinuxDoWebViewErrorForSession,
       setLoadingLinuxDoPageForSession,
-      showLinuxDoVerification,
-      stopLinuxDoVerificationForInactiveApp
+      showLinuxDoVerification
     },
     webViewRef,
+    showYaohuoLogin,
     yaohuoLoginPrompt,
     yaohuoWebViewRef
   } = accountRuntime.hosts;
@@ -242,80 +185,7 @@ export function useAppRuntime() {
     markNodeSeekBrowserFetchHttpError,
     updateLinuxDoSession
   } = accountRuntime.session;
-  const openExternalUrl = useCallback(
-    (url: string) => {
-      if (!isHttpOrHttpsUrl(url)) {
-        notify('仅支持打开 http/https 链接。');
-        return;
-      }
-      void Linking.openURL(url).catch((error) => notify(errorMessage(error)));
-    },
-    [notify]
-  );
-  const handleLoginNavigation = useCallback(
-    (request: LoginNavigationRequest, allowedHosts: readonly string[]) => {
-      if (shouldOpenLoginWebViewUrl(request.url, allowedHosts)) {
-        return true;
-      }
-      if (isHttpOrHttpsUrl(request.url)) {
-        openExternalUrl(request.url);
-      }
-      return false;
-    },
-    [openExternalUrl]
-  );
-  const handleNodeSeekLoginNavigation = useCallback(
-    (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.nodeseek),
-    [handleLoginNavigation]
-  );
-  const handleNodeImageAuthNavigation = useCallback(
-    (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.nodeimage),
-    [handleLoginNavigation]
-  );
-  const handleYaohuoLoginNavigation = useCallback(
-    (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.yaohuo),
-    [handleLoginNavigation]
-  );
-  const handleLinuxDoNavigation = useCallback(
-    (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.linuxdo),
-    [handleLoginNavigation]
-  );
-  const showYaohuoLogin = useCallback(
-    (message = '请先登录妖火。') => {
-      setYaohuoLoginPrompt(message);
-      changeYaohuoLoginPanel(true);
-      notify(message);
-    },
-    [changeYaohuoLoginPanel, notify, setYaohuoLoginPrompt]
-  );
-  useEffect(() => {
-    const initialActive = AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
-    setRequestTimeoutsActive(initialActive);
-    focusManager.setFocused(initialActive);
-    const subscription = AppState.addEventListener('change', (next) => {
-      const active = next === 'active';
-      setAppActive(active);
-      setRequestTimeoutsActive(active);
-      focusManager.setFocused(active);
-      if (next !== 'active') {
-        stopLinuxDoVerificationForInactiveApp();
-      }
-    });
-    return () => {
-      subscription.remove();
-      setRequestTimeoutsActive(true);
-      focusManager.setFocused(undefined);
-    };
-  }, [stopLinuxDoVerificationForInactiveApp]);
-
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek, webLoginUserId);
-  useEffect(() => {
-    if (!readerDataLoaded || accountStatusInitialRefreshRef.current) {
-      return;
-    }
-    accountStatusInitialRefreshRef.current = true;
-    void refreshAccountStatus({ silent: true });
-  }, [readerDataLoaded, refreshAccountStatus]);
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
     active: (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
@@ -326,27 +196,6 @@ export function useAppRuntime() {
     retainableIdentityBarriers: retainableAccountIdentityBarriers,
     sessionEpochs: forumSessionEpochs
   });
-  const diagnosticMetadata = useMemo(
-    () => ({
-      androidApiLevel: typeof Platform.Version === 'number' ? Platform.Version : undefined,
-      appVersion: CURRENT_APP_VERSION,
-      currentScreen: screen,
-      deviceModel: Platform.OS === 'android' ? Platform.constants.Model : undefined,
-      expoVersion: CURRENT_EXPO_VERSION,
-      fontScale,
-      linuxDoSession: accountSessionViewModels.linuxdo.status,
-      nodeSeekSession: accountSessionViewModels.nodeseek.status,
-      proxyEnabled: networkProxyState.enabled,
-      reactNativeVersion: CURRENT_REACT_NATIVE_VERSION,
-      screenHeight: height,
-      screenWidth: width,
-      theme: theme.dark ? ('dark' as const) : ('light' as const),
-      versionCode: CURRENT_ANDROID_VERSION_CODE,
-      yaohuoSession: accountSessionViewModels.yaohuo.status,
-      xiaoyinsiSession: accountSessionViewModels.xiaoyinsi.status
-    }),
-    [fontScale, height, networkProxyState.enabled, screen, accountSessionViewModels, theme.dark, width]
-  );
   const {
     appUpdateBusy,
     appUpdateDownloading,
@@ -355,127 +204,30 @@ export function useAppRuntime() {
     appUpdateMessage,
     checkAppUpdate,
     downloadAppUpdate
-  } = useAppUpdateRuntime({ beforeRequest: ensureNetworkProxyReady, fetcher: networkProxyFetcher, notify });
-  useEffect(() => {
-    if (autoAppUpdateCheckedRef.current) {
-      return;
-    }
-    autoAppUpdateCheckedRef.current = true;
-    void checkAppUpdate({ silent: true });
-  }, [checkAppUpdate]);
-
-  const handleNavigationScreenChange = useCallback((nextScreen: Screen, routeKey: string) => {
-    const previousScreen = screenRef.current;
-    const trace = beginDiagnosticTrace('navigation', 'screen-change', {
-      previousState: previousScreen,
-      nextState: nextScreen,
-      routeKind: routeKey ? 'stack' : 'tab'
-    });
-    if (previousScreen === nextScreen) {
-      finishDiagnosticTrace(trace, 'noop', { state: 'same-screen' });
-      return;
-    }
-    screenRef.current = nextScreen;
-    if (shouldUpdateAppRootScreen(previousScreen, nextScreen)) {
-      setScreen(nextScreen);
-    }
-    finishDiagnosticTrace(trace, 'success', { state: 'applied' });
-  }, []);
-
-  const pageDiagnosticStateRef = useRef('');
-  useEffect(() => {
-    const currentScreen = screenRef.current;
-    let itemCount = 0;
-    let isBusy = false;
-    let hasError = false;
-    let emptyReason = 'none';
-    if (currentScreen === 'more') {
-      itemCount = 1;
-      isBusy = appUpdateBusy || appUpdateDownloading || statusBusy;
-    } else {
-      itemCount = 1;
-      emptyReason = 'route-owned';
-    }
-    const stateKey = `${currentScreen}:${isBusy}:${hasError}:${itemCount}:${emptyReason}`;
-    if (pageDiagnosticStateRef.current === stateKey) {
-      return;
-    }
-    pageDiagnosticStateRef.current = stateKey;
-    const trace = beginDiagnosticTrace('app', 'page-state', {
-      screen: currentScreen,
-      isBusy,
-      hasError,
-      itemCount,
-      emptyReason
-    });
-    markDiagnosticStage(trace, 'apply', { state: 'summary' });
-    finishDiagnosticTrace(trace, 'success');
-  }, [appUpdateBusy, appUpdateDownloading, screen, statusBusy]);
+  } = useAppUpdateRuntime({
+    autoCheck: true,
+    beforeRequest: ensureNetworkProxyReady,
+    fetcher: networkProxyFetcher,
+    notify
+  });
+  const { metadata: diagnosticMetadata } = useAppDiagnosticsRuntime({
+    accountSessionViewModels,
+    appUpdateBusy,
+    appUpdateDownloading,
+    dimensions: { height, width },
+    fontScale,
+    proxyEnabled: networkProxyState.enabled,
+    screen,
+    statusBusy,
+    themeDark: theme.dark
+  });
 
   const { handleLinuxDoBrowserFetchMessage, handleNodeSeekBrowserFetchMessage } = useHiddenBrowserFetchController({
     completeLinuxDoBrowserFetch,
     completeNodeSeekBrowserFetch
   });
 
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      const currentScreen = screenRef.current;
-      const trace = beginDiagnosticTrace('navigation', 'hardware-back', { screen: currentScreen });
-      const handled = (state: string) => {
-        markDiagnosticStage(trace, 'guard', { state });
-        finishDiagnosticTrace(trace, 'success', { state });
-        return true;
-      };
-      if (showLoginPanel) {
-        changeNodeSeekLoginPanel(false, 'hardware-back');
-        return handled('login-panel-closed');
-      }
-      if (showNodeImageAuthPanel) {
-        closeNodeImageAuthPanel('hardware-back');
-        return handled('image-auth-panel-closed');
-      }
-      if (showYaohuoLoginPanel) {
-        closeYaohuoLoginPanel('hardware-back');
-        return handled('yaohuo-panel-closed');
-      }
-      if (showLinuxDoPanel) {
-        closeLinuxDoPanel(true, 'hardware-back');
-        return handled('linuxdo-panel-closed');
-      }
-      if (currentScreen === 'topic' || currentScreen === 'user' || isReadingSettingsScreen()) {
-        finishDiagnosticTrace(trace, 'noop', { state: 'native-stack-back' });
-        return false;
-      }
-      if (currentScreen !== 'feed') {
-        changeScreen('feed');
-        return handled('feed-return');
-      }
-      finishDiagnosticTrace(trace, 'noop', { state: 'system-back' });
-      return false;
-    });
-    return () => subscription.remove();
-  }, [
-    changeScreen,
-    changeNodeSeekLoginPanel,
-    closeNodeImageAuthPanel,
-    closeYaohuoLoginPanel,
-    closeLinuxDoPanel,
-    showLoginPanel,
-    showNodeImageAuthPanel,
-    showLinuxDoPanel,
-    showYaohuoLoginPanel
-  ]);
-
-  const handleAccountCenterCommand = useCallback(
-    async (command: AccountCenterCommand) => {
-      if (command.type === 'open-user') {
-        await openUserRoute(command.user);
-        return;
-      }
-      await handleAccountCenterRuntimeCommand(command);
-    },
-    [handleAccountCenterRuntimeCommand, openUserRoute]
-  );
+  useAppBackHandler({ changeScreen, closeTopmostAccountSurface, getCurrentScreen });
 
   const moreProps = useMemo(
     () => ({
@@ -675,8 +427,7 @@ export function useAppRuntime() {
       reader: {
         commit: commitReaderData,
         data: readerData,
-        dataRef: readerDataRef,
-        toggleTopicFavorite
+        dataRef: readerDataRef
       },
       readerStyle: readerStyleContext
     }),
@@ -710,7 +461,6 @@ export function useAppRuntime() {
       resetLinuxDoLevelState,
       showLinuxDoVerification,
       showYaohuoLogin,
-      toggleTopicFavorite,
       updateLinuxDoSession,
       xiaoyinsiAuthController.beginAuthorization,
       xiaoyinsiAuthController.refreshAuthorization

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NativeModules } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
@@ -25,12 +25,13 @@ type CheckAppUpdateOptions = {
 };
 
 type UseAppUpdateRuntimeOptions = {
+  autoCheck?: boolean;
   beforeRequest?: () => Promise<void>;
   fetcher: Fetcher;
   notify: (message: string) => void;
 };
 
-export function useAppUpdateRuntime({ beforeRequest, fetcher, notify }: UseAppUpdateRuntimeOptions) {
+export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher, notify }: UseAppUpdateRuntimeOptions) {
   const [appUpdateBusy, setAppUpdateBusy] = useState(false);
   const [appUpdateDownloading, setAppUpdateDownloading] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
@@ -38,6 +39,7 @@ export function useAppUpdateRuntime({ beforeRequest, fetcher, notify }: UseAppUp
   const [appUpdateDownloadProgress, setAppUpdateDownloadProgress] = useState<AppUpdateDownloadProgress | null>(null);
   const appUpdateBusyRef = useRef(false);
   const appUpdateDownloadingRef = useRef(false);
+  const autoCheckStartedRef = useRef(false);
 
   const checkAppUpdate = useCallback(
     async (options: CheckAppUpdateOptions = {}) => {
@@ -184,6 +186,12 @@ export function useAppUpdateRuntime({ beforeRequest, fetcher, notify }: UseAppUp
       setAppUpdateDownloadProgress(null);
     }
   }, [appUpdateInfo, beforeRequest, notify]);
+
+  useEffect(() => {
+    if (!autoCheck || autoCheckStartedRef.current) return;
+    autoCheckStartedRef.current = true;
+    void checkAppUpdate({ silent: true });
+  }, [autoCheck, checkAppUpdate]);
 
   return {
     appUpdateBusy,
