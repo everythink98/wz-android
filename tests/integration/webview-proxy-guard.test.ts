@@ -10,9 +10,10 @@ function readSource(...parts: string[]) {
 
 describe('WebView proxy guard', () => {
   it('routes every WebView through the shared proxy transition guard', () => {
-    const appRoot = readSource('src', 'app', 'AppRoot.tsx');
-    const hiddenBrowserHost = readSource('src', 'app', 'HiddenBrowserHost.tsx');
-    const globalModalHost = readSource('src', 'app', 'GlobalModalHost.tsx');
+    const appComposition = readSource('src', 'app', 'AppComposition.tsx');
+    const appRuntime = readSource('src', 'app', 'useAppRuntime.tsx');
+    const hiddenBrowserHost = readSource('src', 'features', 'account', 'HiddenBrowserHost.tsx');
+    const accountHost = readSource('src', 'features', 'account', 'AccountHost.tsx');
     const htmlRenderingController = readSource(
       'src',
       'features',
@@ -22,14 +23,15 @@ describe('WebView proxy guard', () => {
     );
     const morePanels = readSource('src', 'features', 'more', 'components', 'MorePanels.tsx');
 
-    expect(appRoot).toContain('const networkProxyWebViewBlockMessage =');
-    expect(appRoot).toContain('blockedMessage={networkProxyWebViewBlockMessage}');
-    expect(appRoot).toContain('webViewBlockMessage={networkProxyWebViewBlockMessage}');
-    expect(appRoot).toContain('webViewBlockMessage: networkProxyWebViewBlockMessage');
+    expect(appRuntime).toContain('const networkProxyWebViewBlockMessage =');
+    expect(appRuntime).toContain('blockedMessage: networkProxyWebViewBlockMessage');
+    expect(appRuntime).toContain('webViewBlockMessage: networkProxyWebViewBlockMessage');
+    expect(appComposition).toContain('<HiddenBrowserHost {...runtime.hiddenBrowserHost} />');
+    expect(appComposition).toContain('<AccountHost {...runtime.accountHost} />');
     expect(hiddenBrowserHost).toContain('blockedMessage');
     expect(hiddenBrowserHost).toContain('!blockedMessage && nodeSeekBrowserFetchRequest');
     expect(hiddenBrowserHost).toContain('!blockedMessage && linuxDoBrowserFetchRequest');
-    expect(globalModalHost).toContain('webViewBlockMessage || nodeImageAuthError');
+    expect(accountHost).toContain('webViewBlockMessage || nodeImageAuthError');
     expect(htmlRenderingController).toContain('webViewBlockMessage ? (');
     expect(morePanels).toContain('webViewBlockMessage || webViewError');
   });

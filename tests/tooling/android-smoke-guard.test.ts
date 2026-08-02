@@ -558,7 +558,7 @@ describe('Android release evidence guards', () => {
 
   it('keeps diagnostic logging initialized and wired into the More screen', () => {
     const entry = readProjectFile('index.ts');
-    const appRoot = readProjectFile('src', 'app', 'AppRoot.tsx');
+    const moreRoute = readProjectFile('src', 'features', 'more', 'MoreRoute.tsx');
     const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
 
     expect(entry).toContain(
@@ -567,10 +567,10 @@ describe('Android release evidence guards', () => {
     expect(entry.indexOf('initializeDiagnosticFileLogging();')).toBeLessThan(
       entry.indexOf('registerRootComponent(App);')
     );
-    expect(appRoot).toMatch(
-      /useDiagnosticLogController\(\{\s*getCurrentScreen,\s*metadata: diagnosticMetadata,\s*notify\s*\}\)/
+    expect(moreRoute).toMatch(
+      /useDiagnosticLogController\(\{\s*getCurrentScreen: runtime\.diagnostics\.getCurrentScreen,\s*metadata: runtime\.diagnostics\.metadata,\s*notify: runtime\.notify\s*\}\)/
     );
-    expect(appRoot).toContain('onExportDiagnosticLog: exportDiagnosticLogFile');
+    expect(moreRoute).toContain('onExportDiagnosticLog={exportDiagnosticLogFile}');
     expect(moreScreen).toContain('title="问题诊断"');
     expect(moreScreen).toContain('onPress={onExportDiagnosticLog}');
   });

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, render } from '@testing-library/react-native';
 import React, { createRef } from 'react';
 import type { WebView } from 'react-native-webview';
-import { HiddenBrowserHost } from '@/app/HiddenBrowserHost';
+import { HiddenBrowserHost } from '@/features/account/HiddenBrowserHost';
 
 const mockInjectJavaScript = jest.fn();
 let mockWebViewProps: Record<string, any> = {};

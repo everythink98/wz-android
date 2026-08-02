@@ -40,9 +40,9 @@ jest.mock('@/features/account/components/LinuxDoVerifyModal', () => ({
   MemoizedLinuxDoVerifyModal: () => null
 }));
 
-import { GlobalModalHost } from '@/app/GlobalModalHost';
+import { AccountHost } from '@/features/account/AccountHost';
 
-describe('GlobalModalHost NodeImage authorization boundary', () => {
+describe('AccountHost NodeImage authorization boundary', () => {
   beforeEach(() => {
     nodeImageWebViewMounts = 0;
     nodeImageWebViewProps = {};
@@ -96,7 +96,7 @@ describe('GlobalModalHost NodeImage authorization boundary', () => {
       checkLinuxDoCookie: jest.fn(),
       clearLinuxDoCookie: jest.fn()
     };
-    const view = await render(<GlobalModalHost {...(baseProps as any)} />);
+    const view = await render(<AccountHost {...(baseProps as any)} />);
 
     expect(nodeImageWebViewProps.source).toEqual({ uri: 'https://www.nodeimage.com/' });
     expect(nodeImageWebViewProps.injectedJavaScript).toBe('session-script');
@@ -106,7 +106,7 @@ describe('GlobalModalHost NodeImage authorization boundary', () => {
 
     await act(async () => {
       view.rerender(
-        <GlobalModalHost
+        <AccountHost
           {...({
             ...baseProps,
             nodeImageAuthDocument: {
@@ -127,7 +127,7 @@ describe('GlobalModalHost NodeImage authorization boundary', () => {
 
     await act(async () => {
       view.rerender(
-        <GlobalModalHost
+        <AccountHost
           {...({
             ...baseProps,
             nodeImageAuthDocument: {

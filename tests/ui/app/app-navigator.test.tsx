@@ -4,7 +4,8 @@ import { DefaultTheme, useIsFocused, useScrollToTop } from '@react-navigation/na
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { AppNavigator, navigateMainTab, navigationRef, pushTopicRoute, pushUserRoute } from '@/app/AppNavigator';
+import { AppNavigator } from '@/app/AppNavigator';
+import { navigateMainTab, navigationRef, pushTopicRoute, pushUserRoute } from '@/app/appNavigation';
 import { useTopicRouteBeforeRemove } from '@/features/topic/useTopicRouteBeforeRemove';
 import type { Topic, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';

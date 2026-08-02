@@ -27,13 +27,13 @@ vi.mock('@/ui/navigation/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: 
 vi.mock('@/ui/controls/AppControls', () => ({ triggerPressFeedback: vi.fn() }));
 
 import {
-  AppNavigator,
   navigateAppScreen,
   navigateMainTab,
   pushTopicRoute,
   pushUserRoute,
   shouldUpdateAppRootScreen
-} from './AppNavigator';
+} from './appNavigation';
+import { AppNavigator } from './AppNavigator';
 
 const topic: Topic = {
   source: 'linuxdo',
