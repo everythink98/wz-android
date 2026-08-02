@@ -56,9 +56,9 @@ export type TopicRouteRuntimeValue = {
     ensureNodeImageApiKey: () => Promise<string | null>;
     ensureWritableSession: (source: SessionSource) => Promise<WritableSessionTicket>;
     isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
-    linuxDoUserAgentRef: { current: string };
+    getLinuxDoUserAgent: () => string;
     linuxDoVerificationVisible: boolean;
-    nodeSeekUserAgentRef: { current: string };
+    getNodeSeekUserAgent: () => string;
     nodeSeekUserId: number | null;
     readGateway: ReadGateway;
     reconcileAccountStatus: (source: SessionSource) => Promise<unknown>;
@@ -203,7 +203,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   useCommitRefValue(openImagePreviewRef, imagePreviewController.openImagePreview);
   const discourseActionRuntimeDependencies = useMemo(
     () => ({
-      linuxDoUserAgent: () => runtime.account.linuxDoUserAgentRef.current,
+      linuxDoUserAgent: runtime.account.getLinuxDoUserAgent,
       refreshXiaoyinsiAuthorization: runtime.account.refreshXiaoyinsiAuthorization,
       resetLinuxDoLevelState: runtime.account.resetLinuxDoLevelState,
       updateLinuxDoSession: runtime.account.updateLinuxDoSession
@@ -224,7 +224,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     ensureWritableSession: runtime.account.ensureWritableSession,
     fetcher: runtime.fetcher,
     isWritableSessionTicketCurrent: runtime.account.isWritableSessionTicketCurrent,
-    nodeSeekWebViewUserAgentRef: runtime.account.nodeSeekUserAgentRef,
+    getNodeSeekUserAgent: runtime.account.getNodeSeekUserAgent,
     ensureNodeImageApiKey: runtime.account.ensureNodeImageApiKey,
     notify: runtime.notify,
     reconcileWritableSession: runtime.account.reconcileWritableSession,

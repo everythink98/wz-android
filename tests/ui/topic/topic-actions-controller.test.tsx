@@ -196,7 +196,7 @@ async function renderActions({
         fetcher: jest.fn(async () => new Response('{}')),
         isWritableSessionTicketCurrent:
           isWritableSessionTicketCurrent || ((ticket) => ticket.sessionEpoch === props.sessionEpochs[ticket.source]),
-        nodeSeekWebViewUserAgentRef: { current: 'safe-agent' },
+        getNodeSeekUserAgent: () => 'safe-agent',
         notify,
         reconcileWritableSession,
         refreshTopicReplies,

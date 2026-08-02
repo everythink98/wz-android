@@ -1051,7 +1051,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `SEARCH-04`、`ACCOUNT-02`、`RELEASE-02` |
 | 用户症状 | NodeSeek 登录 WebView 已显示“页面打开超时”或加载失败，Replay 仍因 ready testID 可见而通过。 |
 | 触发条件 | readiness 脚本消息在超时或错误状态之后到达；旧 Replay 又固定等待 15 秒，只检查 ready testID，不检查错误是否存在。 |
-| 根因 seam | `src/features/more/components/NodeSeekLoginPanel.tsx` 的 WebView readiness/error 状态和 `tests/device/nodeseek-session.ad` 的等待 oracle。 |
+| 根因 seam | `src/features/account/components/NodeSeekLoginHost.tsx` 的 WebView readiness/error 状态和 `tests/device/nodeseek-session.ad` 的等待 oracle。 |
 | 必须保持的行为 | 成功、明确错误或代理阻断都让当前 attempt 进入 App 自有 settled；错误必须可见并保留“刷新页面”，迟到成功消息不得覆盖错误。Loading 期间不暴露 settled。Replay 证明流程结算，不把错误分支叫作第三方成功。 |
 | 精确失败 oracle | `tests/ui/account/account-site-panels.test.tsx` 分别固定成功与错误共享 `nodeseek-login-webview-settled`、错误文案与刷新入口，并让迟到/伪造消息不能把错误改成成功；`tests/tooling/android-smoke-guard.test.ts` 禁止固定 sleep 和 success-only oracle。 |
 | 最低可靠自动测试层 | `UI_PASS` 固定分支互斥和共同 settled；`DEVICE_REPLAY_PASS` 再证明 Android surface 能结算、刷新和返回。 |
@@ -2525,7 +2525,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02` |
 | 用户症状 | 账号中心仍显示妖火用户名和已登录状态，点入后却先打开登录页；点击“检测登录状态”后页面立即恢复为“我的地盘”。 |
 | 触发条件 | 已确认的妖火账号打开登录 surface；surface ticket 将 `identityTrust` 置为 `pending` 并临时关闭写权限。 |
-| 根因 seam | `YaohuoLoginPanel` 用 `canWrite` 选择登录页或会话页，把“身份核对期间禁止写入”误当成“已经退出”。 |
+| 根因 seam | `src/features/account/components/YaohuoLoginHost.tsx` 用 `canWrite` 选择登录页或会话页，把“身份核对期间禁止写入”误当成“已经退出”。 |
 | 必须保持的行为 | `pending` 期间继续显示上次确认身份并打开妖火会话页，但所有写操作和新的单站私有请求仍由 identity barrier 暂停；明确匿名或失效才打开登录页，用户选择账号密码填入时仍进入登录表单。 |
 | 精确失败 oracle | `tests/ui/account/account-site-panels.test.tsx` 的 `REG-ACCOUNT-032` 构造 `isLoggedIn=true`、`canWrite=false`、`identityTrust=pending` 的妖火会话，要求 WebView 首个 URL 为 `/wapindex.aspx?sid=-2`；旧实现得到 `/waplogin.aspx`。 |
 | 最低可靠自动测试层 | `UI_PASS`：需要渲染真实 panel 并读取 WebView source，纯 view-model 测试不能证明页面选址。 |

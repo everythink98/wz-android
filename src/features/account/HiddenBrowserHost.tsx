@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type RefObject } from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { shouldHandleBrowserHttpError } from './browserFetchQueue';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
@@ -8,6 +8,7 @@ import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './
 import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '@/sources/linuxdo/browserFallback';
 import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '@/sources/nodeseek/browserFallback';
 import { isGoogleSiteSearchAccessTroubleUrl } from '@/sources/searchFallback';
+import type { AccountHostStyles } from './accountHostStyles';
 
 type HiddenBrowserState = {
   linuxDo: {
@@ -43,10 +44,7 @@ export function HiddenBrowserHost({
   onLinuxDoHttpErrorStatus: (requestId: number, statusCode?: number) => void;
   onNodeSeekHttpErrorStatus: (requestId: number, statusCode: number) => void;
   state: HiddenBrowserState;
-  styles: {
-    hiddenBrowserWebView: StyleProp<ViewStyle>;
-    hiddenBrowserWebViewHost: StyleProp<ViewStyle>;
-  };
+  styles: AccountHostStyles;
 }) {
   const linuxDoBrowserFetchRequest = state.linuxDo.request;
   const nodeSeekBrowserFetchRequest = state.nodeSeek.request;

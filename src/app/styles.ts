@@ -1,6 +1,5 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import { type ReaderTheme } from '@/ui/theme/tokens';
-import type { LoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 
 export function createAppStyles(theme: ReaderTheme) {
   return StyleSheet.create({
@@ -30,24 +29,6 @@ export function createAppStyles(theme: ReaderTheme) {
       zIndex: 0,
       elevation: 0
     },
-    hiddenBrowserWebViewHost: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      width: 1,
-      height: 1,
-      overflow: 'hidden',
-      opacity: 0,
-      zIndex: -1,
-      elevation: -1
-    },
-    hiddenBrowserWebView: {
-      flex: 0,
-      width: 1,
-      height: 1,
-      opacity: 0,
-      backgroundColor: 'transparent'
-    },
     nav: {
       flexDirection: 'row' as const,
       borderTopColor: theme.line,
@@ -61,4 +42,3 @@ export function createAppStyles(theme: ReaderTheme) {
 }
 
 export type AppStyles = ReturnType<typeof createAppStyles>;
-export type AppHostStyles = AppStyles & LoginWebViewStyles;

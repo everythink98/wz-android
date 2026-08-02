@@ -50,6 +50,7 @@ export function useAppRuntime() {
   const accountRuntime = useAccountRuntime({
     appActive,
     fetcher: networkProxyFetcher,
+    loginNavigation: lifecycle.loginNavigation,
     notify,
     openUser: openUserRoute,
     ready: readerDataLoaded,
@@ -67,6 +68,8 @@ export function useAppRuntime() {
     accountIdentityPending,
     accountSessionViewModels,
     forumSessionEpochs,
+    getLinuxDoUserAgent,
+    getNodeSeekUserAgent,
     identityBarriers: accountIdentityBarriers,
     identityReconciliationPending,
     readGateway,
@@ -86,12 +89,10 @@ export function useAppRuntime() {
   } = accountRuntime.center;
   const {
     closeTopmostSurface: closeTopmostAccountSurface,
-    linuxDoWebViewUserAgentRef,
-    nodeSeekWebViewUserAgent,
-    nodeSeekWebViewUserAgentRef,
+    linuxDoVerificationVisible: showLinuxDoPanel,
+    nodeSeekMediaUserAgent: nodeSeekWebViewUserAgent,
     requestNodeSeekVerification,
-    showLinuxDoPanel,
-    verification: { showLinuxDoVerification },
+    showLinuxDoVerification,
     showYaohuoLogin
   } = accountRuntime.hosts;
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek, webLoginUserId);
@@ -131,9 +132,9 @@ export function useAppRuntime() {
         ensureNodeImageApiKey,
         ensureWritableSession,
         isWritableSessionTicketCurrent,
-        linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
+        getLinuxDoUserAgent,
         linuxDoVerificationVisible: showLinuxDoPanel,
-        nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+        getNodeSeekUserAgent,
         nodeSeekUserId: effectiveNodeSeekUserId,
         readGateway,
         reconcileAccountStatus,
@@ -172,12 +173,12 @@ export function useAppRuntime() {
       ensureWritableSession,
       forumSessionEpochs,
       isWritableSessionTicketCurrent,
-      linuxDoWebViewUserAgentRef,
+      getLinuxDoUserAgent,
       showLinuxDoPanel,
       networkProxyFetcher,
       networkProxyWebViewBlockMessage,
       nodeSeekWebViewUserAgent,
-      nodeSeekWebViewUserAgentRef,
+      getNodeSeekUserAgent,
       notify,
       readGateway,
       readerData,
@@ -329,17 +330,54 @@ export function useAppRuntime() {
   const moreRouteRuntime = useMemo<MoreRouteRuntimeValue>(
     () => ({
       account: {
-        center: accountRuntime.center,
-        hosts: accountRuntime.hosts,
-        read: accountRuntime.read
+        read: {
+          sessions: accountRuntime.read.accountSessionViewModels,
+          statusBusy: accountRuntime.read.statusBusy
+        },
+        center: {
+          command: accountRuntime.center.handleAccountCenterCommand,
+          credentials: {
+            summaries: accountRuntime.center.credentials.credentialSummaries,
+            pendingFillSite: accountRuntime.center.credentials.pendingCredentialFillSite
+          },
+          linuxDoLevel: {
+            busy: accountRuntime.center.account.linuxDoLevelBusy,
+            error: accountRuntime.center.account.linuxDoLevelError,
+            profile: accountRuntime.center.account.linuxDoLevelProfile,
+            refresh: accountRuntime.center.account.refreshLinuxDoLevel
+          },
+          nodeImageKey: accountRuntime.center.nodeImage.key,
+          nodeSeek: {
+            checkIn: accountRuntime.center.checkIn,
+            webLoginUserId: accountRuntime.center.webLoginUserId
+          },
+          xiaoyinsiAuth: {
+            begin: accountRuntime.center.xiaoyinsiAuth.beginAuthorization,
+            cancel: accountRuntime.center.xiaoyinsiAuth.cancelAuthorization,
+            message: accountRuntime.center.xiaoyinsiAuth.message,
+            openBrowser: accountRuntime.center.xiaoyinsiAuth.openAuthorizationBrowser,
+            pending: accountRuntime.center.xiaoyinsiAuth.pending,
+            phase: accountRuntime.center.xiaoyinsiAuth.phase,
+            revoke: accountRuntime.center.xiaoyinsiAuth.revokeAuthorization,
+            secondsRemaining: accountRuntime.center.xiaoyinsiAuth.secondsRemaining
+          },
+          xiaoyinsiLevel: {
+            busy: accountRuntime.center.xiaoyinsiLevel.levelBusy,
+            error: accountRuntime.center.xiaoyinsiLevel.levelError,
+            profile: accountRuntime.center.xiaoyinsiLevel.levelProfile,
+            refresh: accountRuntime.center.xiaoyinsiLevel.refreshLevel
+          }
+        },
+        surfaces: {
+          closeAll: accountRuntime.hosts.closePanels,
+          linuxdo: accountRuntime.hosts.surfaces.linuxdo,
+          nodeseek: accountRuntime.hosts.surfaces.nodeseek,
+          yaohuo: accountRuntime.hosts.surfaces.yaohuo
+        }
       },
       diagnostics: {
         getCurrentScreen,
         metadata: diagnosticMetadata
-      },
-      loginNavigation: {
-        nodeseek: lifecycle.loginNavigation.nodeseek,
-        yaohuo: lifecycle.loginNavigation.yaohuo
       },
       notify,
       proxy: networkRuntime,
@@ -354,13 +392,15 @@ export function useAppRuntime() {
     }),
     [
       accountRuntime.center,
-      accountRuntime.hosts,
-      accountRuntime.read,
+      accountRuntime.hosts.closePanels,
+      accountRuntime.hosts.surfaces.linuxdo,
+      accountRuntime.hosts.surfaces.nodeseek,
+      accountRuntime.hosts.surfaces.yaohuo,
+      accountRuntime.read.accountSessionViewModels,
+      accountRuntime.read.statusBusy,
       commitReaderData,
       diagnosticMetadata,
       getCurrentScreen,
-      lifecycle.loginNavigation.nodeseek,
-      lifecycle.loginNavigation.yaohuo,
       networkRuntime,
       notify,
       readerData,
@@ -371,13 +411,7 @@ export function useAppRuntime() {
     ]
   );
   return {
-    accountHosts: {
-      blockedMessage: networkProxyWebViewBlockMessage,
-      loginNavigation: lifecycle.loginNavigation,
-      runtime: accountRuntime,
-      styles: appStyles,
-      theme
-    },
+    accountHost: accountRuntime.hosts.element,
     appStyles,
     readerStyleContext,
     routes: networkProxyContentReady

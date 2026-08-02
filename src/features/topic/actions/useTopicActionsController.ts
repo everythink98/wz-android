@@ -96,7 +96,6 @@ import {
   type TopicActionDecisionRequest
 } from './topicActionDecision';
 
-type Ref<T> = { current: T };
 type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unknown>;
 
 type MutationVariables = {
@@ -195,7 +194,7 @@ export function useTopicActionsController({
   ensureWritableSession,
   fetcher,
   isWritableSessionTicketCurrent,
-  nodeSeekWebViewUserAgentRef,
+  getNodeSeekUserAgent,
   notify,
   reconcileWritableSession,
   refreshTopicReplies,
@@ -212,7 +211,7 @@ export function useTopicActionsController({
   ensureWritableSession: (source: SessionSite) => Promise<WritableSessionTicket>;
   fetcher: Fetcher;
   isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
-  nodeSeekWebViewUserAgentRef: Ref<string>;
+  getNodeSeekUserAgent: () => string;
   notify: (message: string) => void;
   reconcileWritableSession: (source: SessionSite) => Promise<WritableSessionReconcileResult>;
   refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
@@ -624,7 +623,7 @@ export function useTopicActionsController({
         await runNodeSeekAction({
           fetcher: withDiagnosticFetcher(trace, fetcher),
           request,
-          userAgent: nodeSeekWebViewUserAgentRef.current
+          userAgent: getNodeSeekUserAgent()
         });
       } catch (error) {
         assertWritableTicket(ticket);
@@ -639,7 +638,7 @@ export function useTopicActionsController({
       assertWritableTicket(ticket, true);
       return true;
     },
-    [assertWritableTicket, fetcher, nodeSeekWebViewUserAgentRef, notify, reconcileWritableSession]
+    [assertWritableTicket, fetcher, getNodeSeekUserAgent, notify, reconcileWritableSession]
   );
 
   const actionBusy = pendingVariables.some((variables) => variables?.busy !== false);
@@ -1474,7 +1473,7 @@ export function useTopicActionsController({
                 const confirmedPoll = await fetchNodeSeekVoteInfo({
                   pollId: poll.id,
                   fetcher: withDiagnosticFetcher(trace, fetcher),
-                  userAgent: nodeSeekWebViewUserAgentRef.current
+                  userAgent: getNodeSeekUserAgent()
                 });
                 return { confirmedPoll, refreshFailed: false };
               } catch {
@@ -1574,7 +1573,7 @@ export function useTopicActionsController({
       cacheKeys,
       executeMutation,
       fetcher,
-      nodeSeekWebViewUserAgentRef,
+      getNodeSeekUserAgent,
       notify,
       queryClient,
       runDiscourseRequest,

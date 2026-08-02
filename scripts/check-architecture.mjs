@@ -20,7 +20,6 @@ const METRO_RESOLUTION_EXTENSIONS = ['.android.ts', '.android.tsx', '.native.ts'
 const APP_COMPOSITION_ALLOWED_INTERNAL_IMPORTS = new Set([
   './AppRoutes',
   './useAppRuntime',
-  '@/features/account/AccountHosts',
   '@/platform/media/mediaSessionEpoch',
   '@/ui/theme/ReaderStyleProvider'
 ]);
@@ -34,6 +33,17 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   '@/features/user/UserRoute'
 ]);
 const FORBIDDEN_RAW_STATE_HOOKS = new Set(['useCallback', 'useEffect', 'useRef', 'useState']);
+const ACCOUNT_RUNTIME_HOST_CAPABILITIES = new Set([
+  'closePanels',
+  'closeTopmostSurface',
+  'element',
+  'linuxDoVerificationVisible',
+  'nodeSeekMediaUserAgent',
+  'requestNodeSeekVerification',
+  'showLinuxDoVerification',
+  'showYaohuoLogin',
+  'surfaces'
+]);
 const FORBIDDEN_LEGACY_MODULE_NAMES = new Set([
   'AppControls',
   'GlobalModalHost',
@@ -258,6 +268,33 @@ function rawAccountSessionIssues(filePath, fromFile) {
       node.name.elements.some((element) => (element.propertyName || element.name).getText(sourceFile) === 'session')
     ) {
       report();
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return issues;
+}
+
+function rawAccountHostProjectionIssues(filePath, fromFile) {
+  if (fromFile !== 'features/account/useAccountRuntime.ts') return [];
+  const sourceText = readFileSync(filePath, 'utf8');
+  const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const issues = [];
+  const visit = (node) => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      node.name.getText(sourceFile) === 'hosts' &&
+      ts.isObjectLiteralExpression(node.initializer)
+    ) {
+      for (const property of node.initializer.properties) {
+        const name = property.name?.getText(sourceFile).replace(/^['"]|['"]$/g, '');
+        if (name && !ACCOUNT_RUNTIME_HOST_CAPABILITIES.has(name)) {
+          issues.push({
+            code: 'raw-account-host-capability',
+            message: `${fromFile} 的 hosts 不得暴露 Account 内部状态：${name}`
+          });
+        }
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -517,6 +554,7 @@ export function analyzeArchitecture(srcDir) {
     issues.push(...appRuntimeImportIssues(file, fromFile));
     issues.push(...routeRuntimeProjectionIssues(file, fromFile));
     issues.push(...rawAccountSessionIssues(file, fromFile));
+    issues.push(...rawAccountHostProjectionIssues(file, fromFile));
     for (const specifier of importedModuleSpecifiers(file)) {
       const importedPath = internalModulePath(fromFile, specifier);
       if (importedPath && FORBIDDEN_LEGACY_MODULE_NAMES.has(moduleName(importedPath))) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { WebView } from 'react-native-webview';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
@@ -45,10 +45,12 @@ import { useVerificationController } from './useVerificationController';
 import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
 import { useXiaoyinsiLevelController } from './useXiaoyinsiLevelController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
+import { AccountHosts, type AccountHostsProps } from './AccountHosts';
 
 export function useAccountRuntime({
   appActive,
   fetcher,
+  loginNavigation,
   notify,
   openUser,
   ready,
@@ -57,6 +59,7 @@ export function useAccountRuntime({
 }: {
   appActive: boolean;
   fetcher: Fetcher;
+  loginNavigation: AccountHostsProps['loginNavigation'];
   notify: (message: string) => void;
   openUser: (user: Extract<AccountCenterCommand, { type: 'open-user' }>['user']) => Promise<unknown>;
   ready: boolean;
@@ -594,6 +597,8 @@ export function useAccountRuntime({
       validateWritableSessionTicket(ticket, readWritableSessionSnapshot(ticket.source)),
     [readWritableSessionSnapshot]
   );
+  const getLinuxDoUserAgent = useCallback(() => linuxDoWebViewUserAgentRef.current, []);
+  const getNodeSeekUserAgent = useCallback(() => nodeSeekWebViewUserAgentRef.current, []);
   const nodeSeekCheckIn = useNodeSeekCheckInController({
     ensureWritableSession,
     fetcher,
@@ -601,6 +606,43 @@ export function useAccountRuntime({
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     reconcileWritableSession
+  });
+  const hostElement = createElement(AccountHosts, {
+    account,
+    blockedMessage: webViewBlockMessage,
+    credentials,
+    loginNavigation,
+    nodeImage,
+    session,
+    status,
+    verification,
+    view: {
+      checking,
+      checkNodeSeekLoginAndRetry,
+      changeNodeSeekLoginPanel,
+      changeYaohuoLoginPanel,
+      handleLinuxDoBrowserFetchMessage,
+      handleNodeSeekBrowserFetchMessage,
+      linuxDoBrowserWebViewRef,
+      linuxDoWebViewError,
+      linuxDoWebViewKey,
+      linuxDoWebViewRef,
+      linuxDoWebViewUserAgent,
+      loadingLinuxDoPage,
+      loadingLoginPage,
+      loadingYaohuoLoginPage,
+      mountLinuxDoWebView,
+      nodeSeekBrowserWebViewRef,
+      nodeSeekWebViewUserAgent,
+      setLoadingLoginPage,
+      setLoadingYaohuoLoginPage,
+      showLinuxDoPanel,
+      showLoginPanel,
+      showYaohuoLoginPanel,
+      webViewRef,
+      yaohuoLoginPrompt,
+      yaohuoWebViewRef
+    }
   });
 
   return {
@@ -610,6 +652,8 @@ export function useAccountRuntime({
       accountSessionViewModels: status.accountSessionViewModels,
       forumFetchWithWebViewFallback: session.forumFetchWithWebViewFallback,
       forumSessionEpochs: session.forumSessionEpochs,
+      getLinuxDoUserAgent,
+      getNodeSeekUserAgent,
       identityBarriers,
       identityReconciliationPending: status.identityReconciliationPending,
       readGateway,
@@ -627,65 +671,54 @@ export function useAccountRuntime({
       resetLinuxDoLevelState
     },
     center: {
-      account,
-      checking,
+      account: {
+        linuxDoLevelBusy: account.linuxDoLevelBusy,
+        linuxDoLevelError: account.linuxDoLevelError,
+        linuxDoLevelProfile: account.linuxDoLevelProfile,
+        refreshLinuxDoLevel: account.refreshLinuxDoLevel
+      },
       checkIn: nodeSeekCheckIn.checkIn,
-      checkInBusy: nodeSeekCheckIn.busy,
-      credentials,
+      credentials: {
+        credentialSummaries: credentials.credentialSummaries,
+        pendingCredentialFillSite: credentials.pendingCredentialFillSite
+      },
       handleAccountCenterCommand,
-      nodeImage,
+      nodeImage: {
+        key: nodeImage.key
+      },
       webLoginUserId,
-      xiaoyinsiAuth,
-      xiaoyinsiLevel
+      xiaoyinsiAuth: {
+        beginAuthorization: xiaoyinsiAuth.beginAuthorization,
+        cancelAuthorization: xiaoyinsiAuth.cancelAuthorization,
+        message: xiaoyinsiAuth.message,
+        openAuthorizationBrowser: xiaoyinsiAuth.openAuthorizationBrowser,
+        pending: xiaoyinsiAuth.pending,
+        phase: xiaoyinsiAuth.phase,
+        refreshAuthorization: xiaoyinsiAuth.refreshAuthorization,
+        revokeAuthorization: xiaoyinsiAuth.revokeAuthorization,
+        secondsRemaining: xiaoyinsiAuth.secondsRemaining
+      },
+      xiaoyinsiLevel: {
+        levelBusy: xiaoyinsiLevel.levelBusy,
+        levelError: xiaoyinsiLevel.levelError,
+        levelProfile: xiaoyinsiLevel.levelProfile,
+        refreshLevel: xiaoyinsiLevel.refreshLevel
+      }
     },
     hosts: {
-      authSurfaceRegistryRef,
-      beginAuthSurfaceTicket,
-      changeNodeSeekLoginPanel,
-      checkNodeSeekLoginAndRetry,
-      changeYaohuoLoginPanel,
       closePanels,
       closeTopmostSurface,
-      closeYaohuoLoginPanel,
-      finishAuthSurfaceTicket,
-      failLinuxDoBrowserFetchById: session.failLinuxDoBrowserFetchById,
-      failNodeSeekBrowserFetchById: session.failNodeSeekBrowserFetchById,
-      handleLinuxDoBrowserFetchMessage,
-      handleNodeSeekBrowserFetchMessage,
-      hiddenBrowserFetchRequests: session.hiddenBrowserFetchRequests,
-      linuxDoBrowserWebViewRef,
-      linuxDoWebViewError,
-      linuxDoWebViewKey,
-      linuxDoWebViewRef,
-      loadingLinuxDoPage,
-      loadingLoginPage,
-      loadingYaohuoLoginPage,
-      mountLinuxDoWebView,
-      markLinuxDoBrowserFetchHttpError: session.markLinuxDoBrowserFetchHttpError,
-      markNodeSeekBrowserFetchHttpError: session.markNodeSeekBrowserFetchHttpError,
-      linuxDoWebViewUserAgent,
-      linuxDoWebViewUserAgentRef,
-      nodeSeekBrowserWebViewRef,
-      nodeSeekWebViewUserAgent,
-      nodeSeekWebViewUserAgentRef,
-      setLinuxDoWebViewUserAgent,
-      setLoadingLoginPage,
-      setLoadingYaohuoLoginPage,
-      setNodeSeekWebViewUserAgent,
-      setYaohuoLoginPrompt,
-      showLinuxDoPanel,
-      showLoginPanel,
-      showYaohuoLoginPanel,
+      element: hostElement,
+      linuxDoVerificationVisible: showLinuxDoPanel,
+      nodeSeekMediaUserAgent: nodeSeekWebViewUserAgent,
       showYaohuoLogin,
-      updateLinuxDoRecoveryBarrier,
-      verification,
-      webViewRef,
-      yaohuoLoginPanelRequestRef,
-      yaohuoLoginPrompt,
-      yaohuoWebViewRef,
-      nodeSeekLoginPanelRequestRef,
       requestNodeSeekVerification,
-      setChecking
+      showLinuxDoVerification: verification.showLinuxDoVerification,
+      surfaces: {
+        linuxdo: showLinuxDoPanel,
+        nodeseek: showLoginPanel,
+        yaohuo: showYaohuoLoginPanel
+      }
     }
   };
 }

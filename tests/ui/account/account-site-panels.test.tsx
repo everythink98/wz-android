@@ -7,8 +7,9 @@ import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel';
-import { NodeSeekLoginPanel } from '@/features/more/components/NodeSeekLoginPanel';
-import { YaohuoLoginPanel } from '@/features/more/components/YaohuoLoginPanel';
+import { NodeSeekLoginHost } from '@/features/account/components/NodeSeekLoginHost';
+import { YaohuoLoginHost } from '@/features/account/components/YaohuoLoginHost';
+import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
 import {
   createSiteSessionStates,
   createSiteSessionViewModels,
@@ -158,35 +159,27 @@ const levelProfile: LinuxDoLevelProfile = {
 };
 
 function nodeSeekProps(
-  overrides: Partial<ComponentProps<typeof NodeSeekLoginPanel>> = {}
-): ComponentProps<typeof NodeSeekLoginPanel> {
+  overrides: Partial<ComponentProps<typeof NodeSeekLoginHost>> = {}
+): ComponentProps<typeof NodeSeekLoginHost> {
   return {
-    accountExpanded: true,
     checking: false,
     credentialAttempt: 3,
     credentialFillPending: false,
     credentialSaved: true,
-    handleNodeSeekLoginNavigation: () => true,
-    loadingLoginPage: false,
+    loading: false,
     loginFormMode: false,
-    nodeImageApiKeyBusy: false,
-    nodeImageApiKeySaved: false,
-    nodeSeekSession: session('nodeseek', 'anonymous'),
-    onAuthorizeNodeImageApiKey: jest.fn(),
-    onCheckIn: jest.fn(),
-    onCheckLogin: jest.fn(),
-    onClearLogin: jest.fn(),
-    onClearNodeImageApiKey: jest.fn(),
-    onHandleLoginMessage: jest.fn(),
+    onCheck: jest.fn(),
+    onClear: jest.fn(),
+    onClose: jest.fn(),
+    onHandleMessage: jest.fn(),
     onLoginFormMessage: () => false,
+    onNavigation: () => true,
     onRequestCredentialFill: jest.fn(),
-    onSaveNodeImageApiKey: jest.fn(),
-    onSetLoadingLoginPage: jest.fn(),
-    onShowLoginPanelChange: jest.fn(),
+    onSetLoading: jest.fn(),
     onWebViewState: jest.fn(),
-    showLoginPanel: false,
+    session: session('nodeseek', 'anonymous'),
     styles,
-    theme,
+    visible: false,
     webViewBlockMessage: '',
     webViewRef: { current: null },
     ...overrides
@@ -194,31 +187,29 @@ function nodeSeekProps(
 }
 
 function yaohuoProps(
-  overrides: Partial<ComponentProps<typeof YaohuoLoginPanel>> = {}
-): ComponentProps<typeof YaohuoLoginPanel> {
+  overrides: Partial<ComponentProps<typeof YaohuoLoginHost>> = {}
+): ComponentProps<typeof YaohuoLoginHost> {
   return {
-    accountExpanded: true,
     checking: false,
     credentialAttempt: 4,
     credentialFillPending: false,
     credentialSaved: true,
-    handleYaohuoLoginNavigation: () => true,
-    loadingYaohuoLoginPage: false,
+    loading: false,
     loginFormMode: false,
-    onCheckYaohuoLogin: jest.fn(),
-    onClearYaohuoLogin: jest.fn(),
+    onCheck: jest.fn(),
+    onClear: jest.fn(),
+    onClose: jest.fn(),
     onLoginFormMessage: () => false,
+    onNavigation: () => true,
     onRequestCredentialFill: jest.fn(),
-    onSetLoadingYaohuoLoginPage: jest.fn(),
-    onShowYaohuoLoginPanelChange: jest.fn(),
+    onSetLoading: jest.fn(),
     onWebViewState: jest.fn(),
-    showYaohuoLoginPanel: true,
+    prompt: '登录后返回本页检测状态',
+    session: session('yaohuo', 'anonymous'),
     styles,
-    theme,
+    visible: true,
     webViewBlockMessage: '',
-    yaohuoLoginPrompt: '登录后返回本页检测状态',
-    yaohuoSession: session('yaohuo', 'anonymous'),
-    yaohuoWebViewRef: { current: null },
+    webViewRef: { current: null },
     ...overrides
   };
 }
@@ -329,11 +320,16 @@ describe('Account site panels', () => {
     const onAuthorizeNodeImageApiKey = jest.fn();
     const onSaveNodeImageApiKey = jest.fn();
     const view = await render(
-      <NodeSeekLoginPanel
-        {...nodeSeekProps({
-          onAuthorizeNodeImageApiKey,
-          onSaveNodeImageApiKey
-        })}
+      <NodeSeekServicesPanel
+        apiKeyBusy={false}
+        apiKeySaved={false}
+        session={session('nodeseek', 'anonymous')}
+        styles={styles}
+        theme={theme}
+        onAuthorizeApiKey={onAuthorizeNodeImageApiKey}
+        onCheckIn={jest.fn()}
+        onClearApiKey={jest.fn()}
+        onSaveApiKey={onSaveNodeImageApiKey}
       />
     );
 
@@ -356,14 +352,14 @@ describe('Account site panels', () => {
     const onShowLoginPanelChange = jest.fn();
     const onWebViewState = jest.fn();
     const props = nodeSeekProps({
-      loadingLoginPage: true,
-      onCheckLogin,
-      onSetLoadingLoginPage,
-      onShowLoginPanelChange,
+      loading: true,
+      onCheck: onCheckLogin,
+      onSetLoading: onSetLoadingLoginPage,
+      onClose: onShowLoginPanelChange,
       onWebViewState,
-      showLoginPanel: true
+      visible: true
     });
-    const view = await render(<NodeSeekLoginPanel {...props} />);
+    const view = await render(<NodeSeekLoginHost {...props} />);
 
     expect(view.getByText('正在打开 NodeSeek...')).toBeTruthy();
     expect(view.queryByTestId('nodeseek-login-webview-settled')).toBeNull();
@@ -389,12 +385,12 @@ describe('Account site panels', () => {
     const webViewMock = jest.requireMock('react-native-webview') as { mockReload: jest.Mock };
     expect(webViewMock.mockReload).toHaveBeenCalled();
     await fireEvent.press(view.getByLabelText('关闭'));
-    expect(onShowLoginPanelChange).toHaveBeenCalledWith(false);
+    expect(onShowLoginPanelChange).toHaveBeenCalledTimes(1);
 
     await view.rerender(
-      <NodeSeekLoginPanel
+      <NodeSeekLoginHost
         {...nodeSeekProps({
-          showLoginPanel: true,
+          visible: true,
           webViewBlockMessage: '当前环境禁止打开登录页'
         })}
       />
@@ -403,7 +399,7 @@ describe('Account site panels', () => {
   });
 
   it('[REG-VERIFICATION-003] lets Android choose the NodeSeek verification WebView user agent', async () => {
-    await render(<NodeSeekLoginPanel {...nodeSeekProps({ showLoginPanel: true })} />);
+    await render(<NodeSeekLoginHost {...nodeSeekProps({ visible: true })} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
@@ -413,10 +409,10 @@ describe('Account site panels', () => {
     try {
       mockLoginWebViewMountCount = 0;
       const view = await render(
-        <NodeSeekLoginPanel
+        <NodeSeekLoginHost
           {...nodeSeekProps({
-            loadingLoginPage: true,
-            showLoginPanel: true
+            loading: true,
+            visible: true
           })}
         />
       );
@@ -441,11 +437,11 @@ describe('Account site panels', () => {
   it('[REG-ACCOUNT-022] keeps login WebViews mounted while a new credential fill attempt is injected', async () => {
     mockLoginWebViewMountCount = 0;
     const nodeSeek = await render(
-      <NodeSeekLoginPanel
+      <NodeSeekLoginHost
         {...nodeSeekProps({
           credentialAttempt: 1,
           loginFormMode: true,
-          showLoginPanel: true
+          visible: true
         })}
       />
     );
@@ -454,11 +450,11 @@ describe('Account site panels', () => {
     nodeSeekWebViewMock.mockInjectJavaScript.mockClear();
 
     await nodeSeek.rerender(
-      <NodeSeekLoginPanel
+      <NodeSeekLoginHost
         {...nodeSeekProps({
           credentialAttempt: 2,
           loginFormMode: true,
-          showLoginPanel: true
+          visible: true
         })}
       />
     );
@@ -470,7 +466,7 @@ describe('Account site panels', () => {
 
     mockLoginWebViewMountCount = 0;
     const yaohuo = await render(
-      <YaohuoLoginPanel
+      <YaohuoLoginHost
         {...yaohuoProps({
           credentialAttempt: 1,
           loginFormMode: true
@@ -482,7 +478,7 @@ describe('Account site panels', () => {
     yaohuoWebViewMock.mockInjectJavaScript.mockClear();
 
     await yaohuo.rerender(
-      <YaohuoLoginPanel
+      <YaohuoLoginHost
         {...yaohuoProps({
           credentialAttempt: 2,
           loginFormMode: true
@@ -541,7 +537,7 @@ describe('Account site panels', () => {
   });
 
   it('[REG-VERIFICATION-003] lets Android choose the Yaohuo login WebView user agent', async () => {
-    await render(<YaohuoLoginPanel {...yaohuoProps()} />);
+    await render(<YaohuoLoginHost {...yaohuoProps()} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
@@ -549,9 +545,9 @@ describe('Account site panels', () => {
   it('[REG-ACCOUNT-032] keeps a confirmed Yaohuo session page open while identity reconciliation is pending', async () => {
     const confirmed = session('yaohuo', 'logged-in');
     const view = await render(
-      <YaohuoLoginPanel
+      <YaohuoLoginHost
         {...yaohuoProps({
-          yaohuoSession: {
+          session: {
             ...confirmed,
             canWrite: false,
             identityTrust: 'pending',
@@ -567,9 +563,7 @@ describe('Account site panels', () => {
   });
 
   it('[REG-NODESEEK-002] settles on an explicit error', async () => {
-    const view = await render(
-      <NodeSeekLoginPanel {...nodeSeekProps({ loadingLoginPage: true, showLoginPanel: true })} />
-    );
+    const view = await render(<NodeSeekLoginHost {...nodeSeekProps({ loading: true, visible: true })} />);
 
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载失败'));
     await fireEvent.press(view.getByLabelText('模拟 WebView 消息'));
@@ -580,9 +574,7 @@ describe('Account site panels', () => {
   });
 
   it('does not settle from an arbitrary third-party frame message', async () => {
-    const view = await render(
-      <NodeSeekLoginPanel {...nodeSeekProps({ loadingLoginPage: true, showLoginPanel: true })} />
-    );
+    const view = await render(<NodeSeekLoginHost {...nodeSeekProps({ loading: true, visible: true })} />);
 
     await fireEvent.press(view.getByLabelText('模拟 WebView 消息'));
 
@@ -595,7 +587,13 @@ describe('Account site panels', () => {
     const onSetLoadingYaohuoLoginPage = jest.fn();
     const onWebViewState = jest.fn();
     const view = await render(
-      <YaohuoLoginPanel {...yaohuoProps({ onCheckYaohuoLogin, onSetLoadingYaohuoLoginPage, onWebViewState })} />
+      <YaohuoLoginHost
+        {...yaohuoProps({
+          onCheck: onCheckYaohuoLogin,
+          onSetLoading: onSetLoadingYaohuoLoginPage,
+          onWebViewState
+        })}
+      />
     );
 
     expect(view.getByText('登录后返回本页检测状态')).toBeTruthy();
@@ -616,9 +614,9 @@ describe('Account site panels', () => {
     try {
       mockLoginWebViewMountCount = 0;
       const view = await render(
-        <YaohuoLoginPanel
+        <YaohuoLoginHost
           {...yaohuoProps({
-            loadingYaohuoLoginPage: true
+            loading: true
           })}
         />
       );

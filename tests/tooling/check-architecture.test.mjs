@@ -153,17 +153,20 @@ test('rejects state and fine-grained dependencies in the app composition chain',
   assert.ok(codes.includes('app-theme-feature-import'));
 });
 
-test('rejects Screen props projection and raw account session escape', () => {
+test('rejects Screen props projection and raw account state escape', () => {
   const srcDir = architectureFixture({
     'features/more/MoreScreen.tsx': 'export const MoreScreen = () => null;',
     'features/more/MoreRoute.tsx':
       "import type { ComponentProps } from 'react'; import { MoreScreen } from './MoreScreen'; export type MoreRouteRuntimeValue = ComponentProps<typeof MoreScreen>;",
-    'app/accountConsumer.ts': 'export const readSession = (accountRuntime: any) => accountRuntime.session;'
+    'app/accountConsumer.ts': 'export const readSession = (accountRuntime: any) => accountRuntime.session;',
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { const webViewRef = {}; return { hosts: { closePanels() {}, webViewRef } }; }'
   });
   const codes = analyzeArchitecture(srcDir).issues.map((issue) => issue.code);
 
   assert.ok(codes.includes('route-runtime-screen-projection'));
   assert.ok(codes.includes('raw-account-session'));
+  assert.ok(codes.includes('raw-account-host-capability'));
 });
 
 test('keeps source-string contracts in tooling instead of behavior suites', () => {

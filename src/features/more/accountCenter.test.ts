@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CredentialSummaries } from '@/platform/storage/credentialVault';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
@@ -142,43 +140,5 @@ describe('account center view', () => {
 
     expect(createSiteAccountViews(loggedIn, emptyCredentialSummaries(), 48872)[0].identityLabel).toBe('用户 48872');
     expect(createSiteAccountViews(expired, emptyCredentialSummaries(), 48872)[0].identityLabel).toBe('已失效');
-  });
-
-  it('uses one account center while retaining every existing site tool', () => {
-    const more = readFileSync(path.join(process.cwd(), 'src/features/more/MoreScreen.tsx'), 'utf8');
-    const accountCenterPanel = readFileSync(
-      path.join(process.cwd(), 'src/features/more/components/AccountCenterPanel.tsx'),
-      'utf8'
-    );
-    const panels = ['NodeSeekLoginPanel.tsx', 'YaohuoLoginPanel.tsx', 'LinuxDoLevelPanel.tsx']
-      .map((file) => readFileSync(path.join(process.cwd(), 'src/features/more/components', file), 'utf8'))
-      .join('\n');
-    const linuxDoModal = readFileSync(
-      path.join(process.cwd(), 'src/features/account/components/LinuxDoVerifyModal.tsx'),
-      'utf8'
-    );
-
-    expect(more).toContain('<AccountCenterPanel');
-    expect(more).not.toContain('title="个人中心"');
-    expect(more).not.toContain('title="账号与验证"');
-    expect(`${more}${panels}${linuxDoModal}`).toContain('NodeSeek 签到');
-    expect(`${more}${panels}${linuxDoModal}`).toContain('NodeImage API Key');
-    expect(`${more}${panels}${linuxDoModal}`).toContain('linux.do 等级');
-    expect(`${more}${panels}${linuxDoModal}`).toContain('检测登录');
-    expect(`${more}${panels}${linuxDoModal}`).toContain('检测状态');
-    expect(accountCenterPanel).toContain('检测或重新登录');
-    expect(accountCenterPanel).not.toContain('管理网站登录');
-    expect(`${more}${panels}${linuxDoModal}`).toContain('清除登录');
-    expect(`${more}${panels}${linuxDoModal}`).toContain('刷新页面');
-  });
-
-  it('keeps More controls out of the Android Fabric animated-transform hit-testing path', () => {
-    const moreScreen = readFileSync(path.join(process.cwd(), 'src/features/more/MoreScreen.tsx'), 'utf8');
-    const appControls = readFileSync(path.join(process.cwd(), 'src/ui/controls/AppControls.tsx'), 'utf8');
-
-    expect(moreScreen).toContain('keyboardShouldPersistTaps="always"');
-    expect(moreScreen).not.toContain('decelerationRate={0}');
-    expect(appControls).not.toContain('react-native-reanimated');
-    expect(appControls).not.toContain('<Animated.View');
   });
 });

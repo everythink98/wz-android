@@ -1,4 +1,3 @@
-import type { LoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { memo, type RefObject, useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -10,6 +9,7 @@ import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/platform/network/loginWebViewScr
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
+import type { AccountHostStyles } from '../accountHostStyles';
 
 const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
 const LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
@@ -53,7 +53,7 @@ export function LinuxDoVerifyModal({
   mountLinuxDoWebView: boolean;
   loadingLinuxDoPage: boolean;
   showLinuxDoPanel: boolean;
-  styles: LoginWebViewStyles;
+  styles: AccountHostStyles;
   theme: ReaderTheme;
   webViewBlockMessage: string;
   onCheckLinuxDoCookie: () => void;

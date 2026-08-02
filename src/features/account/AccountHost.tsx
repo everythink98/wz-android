@@ -1,4 +1,3 @@
-import type { LoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import type { RefObject } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -8,6 +7,7 @@ import { MemoizedLinuxDoVerifyModal } from './components/LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { NodeImageAuthDocument } from './useNodeImageAuthController';
+import type { AccountHostStyles } from './accountHostStyles';
 
 export function AccountHost({
   checking,
@@ -78,7 +78,7 @@ export function AccountHost({
   changeLinuxDoPanel: (value: boolean) => void;
   requestLinuxDoCredentialFill: () => void;
   closeNodeImageAuthPanel: () => void;
-  styles: LoginWebViewStyles;
+  styles: AccountHostStyles;
   theme: ReaderTheme;
   webViewBlockMessage: string;
 }) {

@@ -97,93 +97,140 @@ const authorizedXiaoyinsiSessions = createSiteSessionViewModels(
   })
 );
 
-function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): ComponentProps<typeof MoreScreen> {
-  return {
-    appUpdateBusy: false,
-    appUpdateDownloading: false,
-    appUpdateDownloadProgress: null,
-    appUpdateInfo: null,
-    appUpdateMessage: '当前版本 1.3.63',
-    backupBusy: false,
-    checking: false,
-    credentialFillAttempt: null,
-    credentialLoginSite: null,
-    credentialSummaries: emptyCredentialSummaries(),
-    diagnosticBusy: false,
-    handleNodeSeekLoginNavigation: () => true,
-    handleYaohuoLoginNavigation: () => true,
-    linuxDoLevelBusy: false,
-    linuxDoLevelError: '',
-    linuxDoLevelProfile: null,
-    xiaoyinsiLevelBusy: false,
-    xiaoyinsiLevelError: '',
-    xiaoyinsiLevelProfile: null,
-    loadingLoginPage: false,
-    loadingYaohuoLoginPage: false,
-    networkProxyActiveProfile: null,
-    networkProxyApplyError: '',
-    networkProxyApplyStatus: 'idle',
-    networkProxyState: createEmptyNetworkProxyState(),
-    networkProxySummary: '未启用',
-    nodeImageApiKeyBusy: false,
-    nodeImageApiKeySaved: false,
-    nodeSeekUserId: null,
-    onAccountCenterCommand: jest.fn(async () => undefined),
-    onAuthorizeNodeImageApiKey: jest.fn(),
-    onCheckAppUpdate: jest.fn(),
-    onCheckIn: jest.fn(),
-    onCheckLogin: jest.fn(),
-    onCheckYaohuoLogin: jest.fn(),
-    onClearLogin: jest.fn(),
-    onClearNodeImageApiKey: jest.fn(),
-    onClearYaohuoLogin: jest.fn(),
-    onDeleteNetworkProxyProfile: jest.fn(async () => undefined),
-    onDownloadAppUpdate: jest.fn(),
-    onExportBackupFile: jest.fn(),
-    onExportDiagnosticLog: jest.fn(),
-    onHandleLoginMessage: jest.fn(),
-    onImportBackupFile: jest.fn(),
-    onLoginFormMessage: () => false,
-    onNodeSeekLoginWebViewState: jest.fn(),
-    onRefreshLinuxDoLevel: jest.fn(),
-    onRefreshXiaoyinsiLevel: jest.fn(),
-    onSaveNodeImageApiKey: jest.fn(),
-    onSelectNetworkProxyProfile: jest.fn(async () => undefined),
-    onSetLoadingLoginPage: jest.fn(),
-    onSetLoadingYaohuoLoginPage: jest.fn(),
-    onSetNetworkProxyEnabled: jest.fn(async () => undefined),
-    onShowLoginPanelChange: jest.fn(),
-    onShowNetworkProxyPanelChange: jest.fn(),
-    onShowSettingsPanelChange: jest.fn(),
-    onShowYaohuoLoginPanelChange: jest.fn(),
-    onTestNetworkProxyProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
-    onUpdateSettings: jest.fn(),
-    onUpsertNetworkProxyProfile: jest.fn(async () => undefined),
-    onYaohuoLoginWebViewState: jest.fn(),
-    pendingCredentialFillSite: null,
-    sessionViewModels,
-    settings: readerData.settings,
-    showLinuxDoPanel: false,
-    showLoginPanel: false,
-    showNetworkProxyPanel: false,
-    showSettingsPanel: false,
-    showYaohuoLoginPanel: false,
-    statusBusy: false,
-    webViewBlockMessage: '',
-    webViewRef: { current: null },
-    yaohuoLoginPrompt: '',
-    yaohuoWebViewRef: { current: null },
-    xiaoyinsiAuth: {
-      message: '',
-      pending: null,
-      phase: 'idle',
-      secondsRemaining: 0,
-      onBegin: jest.fn(),
-      onCancel: jest.fn(),
-      onOpenBrowser: jest.fn(),
-      onRevoke: jest.fn()
+type MoreScreenProps = ComponentProps<typeof MoreScreen>;
+type MoreScreenOverrides = {
+  account?: {
+    read?: Partial<MoreScreenProps['account']['read']>;
+    center?: {
+      command?: MoreScreenProps['account']['center']['command'];
+      credentials?: Partial<MoreScreenProps['account']['center']['credentials']>;
+      linuxDoLevel?: Partial<MoreScreenProps['account']['center']['linuxDoLevel']>;
+      nodeImageKey?: Partial<MoreScreenProps['account']['center']['nodeImageKey']>;
+      nodeSeek?: Partial<MoreScreenProps['account']['center']['nodeSeek']>;
+      xiaoyinsiAuth?: Partial<MoreScreenProps['account']['center']['xiaoyinsiAuth']>;
+      xiaoyinsiLevel?: Partial<MoreScreenProps['account']['center']['xiaoyinsiLevel']>;
+    };
+    surfaces?: Partial<MoreScreenProps['account']['surfaces']>;
+  };
+  update?: Partial<MoreScreenProps['update']>;
+  utilities?: {
+    backup?: Partial<MoreScreenProps['utilities']['backup']>;
+    diagnostics?: Partial<MoreScreenProps['utilities']['diagnostics']>;
+    proxy?: Partial<MoreScreenProps['utilities']['proxy']>;
+    settings?: Partial<MoreScreenProps['utilities']['settings']>;
+  };
+};
+
+function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
+  const account: MoreScreenProps['account'] = {
+    read: {
+      sessions: sessionViewModels,
+      statusBusy: false,
+      ...overrides.account?.read
     },
-    ...overrides
+    center: {
+      command: jest.fn(async () => undefined),
+      credentials: {
+        summaries: emptyCredentialSummaries(),
+        pendingFillSite: null,
+        ...overrides.account?.center?.credentials
+      },
+      linuxDoLevel: {
+        busy: false,
+        error: '',
+        profile: null,
+        refresh: jest.fn(),
+        ...overrides.account?.center?.linuxDoLevel
+      },
+      nodeImageKey: {
+        authorize: jest.fn(),
+        busy: false,
+        clear: jest.fn(),
+        save: jest.fn(),
+        saved: false,
+        ...overrides.account?.center?.nodeImageKey
+      },
+      nodeSeek: {
+        checkIn: jest.fn(),
+        webLoginUserId: null,
+        ...overrides.account?.center?.nodeSeek
+      },
+      xiaoyinsiAuth: {
+        begin: jest.fn(),
+        cancel: jest.fn(),
+        message: '',
+        openBrowser: jest.fn(),
+        pending: null,
+        phase: 'idle',
+        revoke: jest.fn(),
+        secondsRemaining: 0,
+        ...overrides.account?.center?.xiaoyinsiAuth
+      },
+      xiaoyinsiLevel: {
+        busy: false,
+        error: '',
+        profile: null,
+        refresh: jest.fn(),
+        ...overrides.account?.center?.xiaoyinsiLevel
+      },
+      ...(overrides.account?.center?.command ? { command: overrides.account.center.command } : {})
+    },
+    surfaces: {
+      closeAll: jest.fn(),
+      linuxdo: false,
+      nodeseek: false,
+      yaohuo: false,
+      ...overrides.account?.surfaces
+    }
+  };
+  return {
+    account,
+    update: {
+      busy: false,
+      downloading: false,
+      progress: null,
+      info: null,
+      message: '当前版本 1.3.63',
+      check: jest.fn(),
+      download: jest.fn(),
+      ...overrides.update
+    },
+    utilities: {
+      backup: {
+        busy: false,
+        exportFile: jest.fn(),
+        importFile: jest.fn(),
+        ...overrides.utilities?.backup
+      },
+      diagnostics: {
+        busy: false,
+        exportLog: jest.fn(),
+        ...overrides.utilities?.diagnostics
+      },
+      proxy: {
+        activeProfile: null,
+        applyError: '',
+        applyStatus: 'idle',
+        state: createEmptyNetworkProxyState(),
+        summary: '未启用',
+        visible: false,
+        close: jest.fn(),
+        open: jest.fn(),
+        deleteProfile: jest.fn(async () => undefined),
+        selectProfile: jest.fn(async () => undefined),
+        setEnabled: jest.fn(async () => undefined),
+        testProfile: jest.fn(async () => ({ ok: true, latencyMs: 10 })),
+        upsertProfile: jest.fn(async () => undefined),
+        ...overrides.utilities?.proxy
+      },
+      settings: {
+        value: readerData.settings,
+        visible: false,
+        changeVisible: jest.fn(),
+        update: jest.fn(),
+        ...overrides.utilities?.settings
+      }
+    }
   };
 }
 
@@ -204,13 +251,17 @@ describe('More screen state and actions', () => {
   it('shows current, checking, available-update and download progress states', async () => {
     const onCheckAppUpdate = jest.fn();
     const onDownloadAppUpdate = jest.fn();
-    const view = await render(<MoreScreen {...moreProps({ onCheckAppUpdate, onDownloadAppUpdate })} />);
+    const view = await render(
+      <MoreScreen {...moreProps({ update: { check: onCheckAppUpdate, download: onDownloadAppUpdate } })} />
+    );
 
     expect(view.queryByText('有新版本')).toBeNull();
     await fireEvent.press(view.getByLabelText('检查更新'));
     expect(onCheckAppUpdate).toHaveBeenCalledTimes(1);
 
-    await view.rerender(<MoreScreen {...moreProps({ appUpdateBusy: true, onCheckAppUpdate, onDownloadAppUpdate })} />);
+    await view.rerender(
+      <MoreScreen {...moreProps({ update: { busy: true, check: onCheckAppUpdate, download: onDownloadAppUpdate } })} />
+    );
     expect(view.getByLabelText('检查中').props.accessibilityState.disabled).toBe(true);
 
     const appUpdateInfo = {
@@ -226,10 +277,12 @@ describe('More screen state and actions', () => {
     await view.rerender(
       <MoreScreen
         {...moreProps({
-          appUpdateInfo,
-          appUpdateMessage: '发现新版 1.4.0',
-          onCheckAppUpdate,
-          onDownloadAppUpdate
+          update: {
+            info: appUpdateInfo,
+            message: '发现新版 1.4.0',
+            check: onCheckAppUpdate,
+            download: onDownloadAppUpdate
+          }
         })}
       />
     );
@@ -241,19 +294,21 @@ describe('More screen state and actions', () => {
     await view.rerender(
       <MoreScreen
         {...moreProps({
-          appUpdateBusy: true,
-          appUpdateDownloading: true,
-          appUpdateDownloadProgress: {
-            title: '正在下载 1.4.0',
-            downloadedBytes: 1024,
-            totalBytes: 2048,
-            percent: 50,
-            percentLabel: '50%',
-            sizeLabel: '1 KB / 2 KB'
-          },
-          appUpdateInfo,
-          onCheckAppUpdate,
-          onDownloadAppUpdate
+          update: {
+            busy: true,
+            downloading: true,
+            progress: {
+              title: '正在下载 1.4.0',
+              downloadedBytes: 1024,
+              totalBytes: 2048,
+              percent: 50,
+              percentLabel: '50%',
+              sizeLabel: '1 KB / 2 KB'
+            },
+            info: appUpdateInfo,
+            check: onCheckAppUpdate,
+            download: onDownloadAppUpdate
+          }
         })}
       />
     );
@@ -268,10 +323,11 @@ describe('More screen state and actions', () => {
     const onImportBackupFile = jest.fn();
     const onShowNetworkProxyPanelChange = jest.fn();
     const props = moreProps({
-      onExportBackupFile,
-      onExportDiagnosticLog,
-      onImportBackupFile,
-      onShowNetworkProxyPanelChange
+      utilities: {
+        backup: { exportFile: onExportBackupFile, importFile: onImportBackupFile },
+        diagnostics: { exportLog: onExportDiagnosticLog },
+        proxy: { open: () => onShowNetworkProxyPanelChange(true) }
+      }
     });
     const view = await render(<MoreScreen {...props} />);
 
@@ -289,7 +345,16 @@ describe('More screen state and actions', () => {
     expect(onExportBackupFile).toHaveBeenCalledTimes(1);
     expect(onImportBackupFile).toHaveBeenCalledTimes(1);
 
-    await view.rerender(<MoreScreen {...moreProps({ ...props, backupBusy: true, diagnosticBusy: true })} />);
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          utilities: {
+            backup: { busy: true, exportFile: onExportBackupFile, importFile: onImportBackupFile },
+            diagnostics: { busy: true, exportLog: onExportDiagnosticLog }
+          }
+        })}
+      />
+    );
     expect(view.getByLabelText('正在生成').props.accessibilityState.disabled).toBe(true);
     expect(view.getByLabelText('处理中').props.accessibilityState.disabled).toBe(true);
     expect(view.getByLabelText('选择备份文件恢复').props.accessibilityState.disabled).toBe(true);
@@ -317,13 +382,16 @@ describe('More screen state and actions', () => {
     const view = await render(
       <MoreScreen
         {...moreProps({
-          xiaoyinsiAuth: {
-            ...moreProps().xiaoyinsiAuth,
-            pending,
-            phase: 'waiting',
-            secondsRemaining: 599,
-            onCancel,
-            onOpenBrowser
+          account: {
+            center: {
+              xiaoyinsiAuth: {
+                pending,
+                phase: 'waiting',
+                secondsRemaining: 599,
+                cancel: onCancel,
+                openBrowser: onOpenBrowser
+              }
+            }
           }
         })}
       />
@@ -347,7 +415,14 @@ describe('More screen state and actions', () => {
   it('[REG-XIAOYINSI-013][REG-XIAOYINSI-014] puts the level entry after authorization management for an authorized 小隐寺 account', async () => {
     const onRefreshXiaoyinsiLevel = jest.fn();
     const view = await render(
-      <MoreScreen {...moreProps({ onRefreshXiaoyinsiLevel, sessionViewModels: authorizedXiaoyinsiSessions })} />
+      <MoreScreen
+        {...moreProps({
+          account: {
+            read: { sessions: authorizedXiaoyinsiSessions },
+            center: { xiaoyinsiLevel: { refresh: onRefreshXiaoyinsiLevel } }
+          }
+        })}
+      />
     );
 
     await fireEvent.press(view.getByLabelText('展开账号中心'));
@@ -366,7 +441,9 @@ describe('More screen state and actions', () => {
 
   it('[REG-TEST-005] marks only settled level outcomes and keeps an error visible until refresh', async () => {
     const onRefreshXiaoyinsiLevel = jest.fn();
-    const levelProfile: NonNullable<ComponentProps<typeof MoreScreen>['xiaoyinsiLevelProfile']> = {
+    const levelProfile: NonNullable<
+      ComponentProps<typeof MoreScreen>['account']['center']['xiaoyinsiLevel']['profile']
+    > = {
       username: 'alice',
       currentLevel: 2,
       targetLevel: 3,
@@ -391,9 +468,12 @@ describe('More screen state and actions', () => {
     const view = await render(
       <MoreScreen
         {...moreProps({
-          onRefreshXiaoyinsiLevel,
-          sessionViewModels: authorizedXiaoyinsiSessions,
-          xiaoyinsiLevelError: '限制 10 秒后再试'
+          account: {
+            read: { sessions: authorizedXiaoyinsiSessions },
+            center: {
+              xiaoyinsiLevel: { error: '限制 10 秒后再试', refresh: onRefreshXiaoyinsiLevel }
+            }
+          }
         })}
       />
     );
@@ -411,10 +491,12 @@ describe('More screen state and actions', () => {
     await view.rerender(
       <MoreScreen
         {...moreProps({
-          onRefreshXiaoyinsiLevel,
-          sessionViewModels: authorizedXiaoyinsiSessions,
-          xiaoyinsiLevelBusy: true,
-          xiaoyinsiLevelProfile: levelProfile
+          account: {
+            read: { sessions: authorizedXiaoyinsiSessions },
+            center: {
+              xiaoyinsiLevel: { busy: true, profile: levelProfile, refresh: onRefreshXiaoyinsiLevel }
+            }
+          }
         })}
       />
     );
@@ -423,9 +505,10 @@ describe('More screen state and actions', () => {
     await view.rerender(
       <MoreScreen
         {...moreProps({
-          onRefreshXiaoyinsiLevel,
-          sessionViewModels: authorizedXiaoyinsiSessions,
-          xiaoyinsiLevelProfile: levelProfile
+          account: {
+            read: { sessions: authorizedXiaoyinsiSessions },
+            center: { xiaoyinsiLevel: { profile: levelProfile, refresh: onRefreshXiaoyinsiLevel } }
+          }
         })}
       />
     );
@@ -439,19 +522,24 @@ describe('More screen state and actions', () => {
     const view = await render(
       <MoreScreen
         {...moreProps({
-          sessionViewModels: {
-            ...sessionViewModels,
-            xiaoyinsi: {
-              ...sessionViewModels.xiaoyinsi,
-              isLoggedIn: true,
-              canWrite: true
+          account: {
+            read: {
+              sessions: {
+                ...sessionViewModels,
+                xiaoyinsi: {
+                  ...sessionViewModels.xiaoyinsi,
+                  isLoggedIn: true,
+                  canWrite: true
+                }
+              }
+            },
+            center: {
+              xiaoyinsiAuth: {
+                message: '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。',
+                phase: 'cleanup',
+                begin: onBegin
+              }
             }
-          },
-          xiaoyinsiAuth: {
-            ...moreProps().xiaoyinsiAuth,
-            message: '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。',
-            phase: 'cleanup',
-            onBegin
           }
         })}
       />

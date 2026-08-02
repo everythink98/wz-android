@@ -1,7 +1,6 @@
 import { useDeferredValue, useMemo } from 'react';
 import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { contentWidthValue, createTheme } from '@/ui/theme/tokens';
 import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 import { createAppStyles } from './styles';
@@ -26,11 +25,7 @@ export function useAppTheme(settings: ReaderSettings, width: number) {
     };
   }, [theme]);
   const styleSettings = useMemo(() => ({ ...settings, fontScale: deferredFontScale }), [deferredFontScale, settings]);
-  const loginWebViewStyles = useMemo(() => createLoginWebViewStyles(theme, styleSettings), [styleSettings, theme]);
-  const appStyles = useMemo(
-    () => Object.assign(createAppStyles(theme), loginWebViewStyles),
-    [loginWebViewStyles, theme]
-  );
+  const appStyles = useMemo(() => createAppStyles(theme), [theme]);
   const readerStyleContext = useMemo<ReaderStyleContextValue>(
     () => ({ settings: styleSettings, theme }),
     [styleSettings, theme]

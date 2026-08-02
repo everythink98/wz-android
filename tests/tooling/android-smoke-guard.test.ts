@@ -514,9 +514,13 @@ describe('Android release evidence guards', () => {
 
   it('keeps stable selectors on the read-only navigation paths', () => {
     expect(readProjectFile('src', 'app', 'AppNavigator.tsx')).toContain('tabBarButtonTestID: `main-tab-${item.value}`');
-    const appControls = readProjectFile('src', 'ui', 'controls', 'AppControls.tsx');
-    expect(appControls).toContain('testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}');
-    expect(appControls).toContain("accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}");
+    const selectionControls = readProjectFile('src', 'ui', 'controls', 'SelectionControls.tsx');
+    expect(selectionControls).toContain('testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}');
+    expect(selectionControls).toContain(
+      "accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}"
+    );
+    expect(selectionControls).not.toContain('react-native-reanimated');
+    expect(selectionControls).not.toContain('<Animated.View');
     const feedScreen = readProjectFile('src', 'features', 'feed', 'FeedScreen.tsx');
     expect(feedScreen).toContain("testID={index === 0 ? 'feed-topic-first' : undefined}");
     expect(feedScreen).toContain("`feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`");
@@ -550,18 +554,18 @@ describe('Android release evidence guards', () => {
     expect(libraryScreen).toContain("'library-history-first'");
     const accountCenter = readProjectFile('src', 'features', 'more', 'components', 'AccountCenterPanel.tsx');
     expect(accountCenter).toContain('testID={`account-site-${view.site}`}');
-    const nodeSeekLoginPanel = readProjectFile('src', 'features', 'more', 'components', 'NodeSeekLoginPanel.tsx');
-    expect(nodeSeekLoginPanel).toContain('webViewSettledForReplay');
-    expect(nodeSeekLoginPanel).toContain("'nodeseek-login-webview-settled'");
-    expect(nodeSeekLoginPanel).not.toContain("'nodeseek-login-webview-ready'");
-    expect(nodeSeekLoginPanel).not.toContain('NODESEEK_REPLAY_READINESS_SCRIPT');
-    expect(nodeSeekLoginPanel).not.toContain('NODESEEK_REPLAY_READY_MESSAGE');
+    const nodeSeekLoginHost = readProjectFile('src', 'features', 'account', 'components', 'NodeSeekLoginHost.tsx');
+    expect(nodeSeekLoginHost).toContain('settledForReplay');
+    expect(nodeSeekLoginHost).toContain("'nodeseek-login-webview-settled'");
+    expect(nodeSeekLoginHost).not.toContain("'nodeseek-login-webview-ready'");
+    expect(nodeSeekLoginHost).not.toContain('NODESEEK_REPLAY_READINESS_SCRIPT');
+    expect(nodeSeekLoginHost).not.toContain('NODESEEK_REPLAY_READY_MESSAGE');
   });
 
   it('keeps diagnostic logging initialized and wired into the More screen', () => {
     const entry = readProjectFile('index.ts');
     const moreRoute = readProjectFile('src', 'features', 'more', 'MoreRoute.tsx');
-    const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
+    const utilityPanels = readProjectFile('src', 'features', 'more', 'components', 'MoreUtilityPanels.tsx');
 
     expect(entry).toContain(
       "import { initializeDiagnosticFileLogging } from '@/platform/diagnostics/diagnosticFileStore';"
@@ -572,9 +576,9 @@ describe('Android release evidence guards', () => {
     expect(moreRoute).toMatch(
       /useDiagnosticLogController\(\{\s*getCurrentScreen: runtime\.diagnostics\.getCurrentScreen,\s*metadata: runtime\.diagnostics\.metadata,\s*notify: runtime\.notify\s*\}\)/
     );
-    expect(moreRoute).toContain('onExportDiagnosticLog={exportDiagnosticLogFile}');
-    expect(moreScreen).toContain('title="问题诊断"');
-    expect(moreScreen).toContain('onPress={onExportDiagnosticLog}');
+    expect(moreRoute).toContain('exportLog: exportDiagnosticLogFile');
+    expect(utilityPanels).toContain('title="问题诊断"');
+    expect(utilityPanels).toContain('onPress={runtime.diagnostics.exportLog}');
   });
 
   it('runs Smoke only after APK signer verification and before writing the release manifest', () => {
