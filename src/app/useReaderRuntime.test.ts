@@ -8,11 +8,7 @@ import {
 } from '@/domain/reader/readerData';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { Topic } from '@/domain/forum/models';
-import {
-  loadInitialReaderData,
-  prepareReaderDataCommit,
-  rollbackFailedReaderDataSave
-} from './useReaderDataController';
+import { loadInitialReaderData, prepareReaderDataCommit, rollbackFailedReaderDataSave } from './useReaderRuntime';
 
 const topic: Topic = {
   source: 'nodeseek',

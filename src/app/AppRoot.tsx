@@ -20,7 +20,7 @@ import { WebView } from 'react-native-webview';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
-import { useReaderDataController } from '@/features/library/useReaderDataController';
+import { useReaderRuntime } from './useReaderRuntime';
 import { useReaderDataActionsController } from '@/features/library/useReaderDataActionsController';
 import { useReaderSettingsController } from '@/features/more/useReaderSettingsController';
 import { useBackupStatusController } from '@/features/more/useBackupStatusController';
@@ -148,6 +148,7 @@ import {
 } from '@/domain/session/writableSessionGate';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
 import { useAppTheme } from './useAppTheme';
+import { useForumCatalogRuntime } from './useForumCatalogRuntime';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 
 type UserReturnTopic = {
@@ -401,7 +402,7 @@ export function AppRoot() {
     cancelTopicQueriesRef.current();
   }, []);
   const { commitReaderData, readerData, readerDataLoaded, readerDataRef, replaceReaderData, waitForReaderDataSave } =
-    useReaderDataController({ notify });
+    useReaderRuntime({ notify });
 
   const resetLinuxDoLevelState = useCallback(() => {
     void appQueryClient.cancelQueries({ queryKey: forumQueryKeys.level('linuxdo') });
@@ -1092,6 +1093,15 @@ export function AppRoot() {
     void refreshAccountStatus({ silent: true });
   }, [readerDataLoaded, refreshAccountStatus]);
 
+  const { categories: catalogCategories } = useForumCatalogRuntime({
+    active: (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
+    identityBarriers: accountIdentityBarriers,
+    identityReconciliationPending,
+    notify,
+    readGateway,
+    retainableIdentityBarriers: retainableAccountIdentityBarriers,
+    sessionEpochs: forumSessionEpochs
+  });
   const {
     activeFeedState,
     categories,
@@ -1112,6 +1122,7 @@ export function AppRoot() {
     setReadingFilter,
     shownFeedItems
   } = useFeedController({
+    catalogCategories,
     identityBarriers: accountIdentityBarriers,
     identityReconciliationPending,
     retainableIdentityBarriers: retainableAccountIdentityBarriers,

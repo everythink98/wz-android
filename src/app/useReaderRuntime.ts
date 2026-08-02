@@ -123,7 +123,7 @@ export async function loadInitialReaderData({
   }
 }
 
-export function useReaderDataController({ notify }: { notify: (message: string) => void }) {
+export function useReaderRuntime({ notify }: { notify: (message: string) => void }) {
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
   const [readerDataLoaded, setReaderDataLoaded] = useState(false);
   const readerDataRef = useRef<ReaderData>(readerData);

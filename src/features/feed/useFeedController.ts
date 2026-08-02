@@ -19,7 +19,7 @@ import {
   normalizeDiagnosticReason
 } from '@/platform/diagnostics/diagnostics';
 import { sourceLabel } from '@/domain/forum/presentation';
-import { isFeedFilterSource, isSessionSource, sessionSources, sourceValues } from '@/domain/forum/sourceCatalog';
+import { isFeedFilterSource, isSessionSource, sourceValues } from '@/domain/forum/sourceCatalog';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   formatSourceErrorMessages,
@@ -35,7 +35,6 @@ import type {
   FeedFilterState,
   FeedResponse,
   FeedSource,
-  Source,
   SourceErrorInfo,
   SourceFeedFilter,
   SourceErrors,
@@ -44,6 +43,17 @@ import type {
 } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import {
+  canRetainTrustedSource,
+  changedSessionSources,
+  changedSourcesForIdentityTransition,
+  identityBarriersOnlyRemoved,
+  normalizeIdentityBarriers,
+  sameIdentityBarriers,
+  sameSessionEpochs,
+  visibleIdentityErrors,
+  withoutChangedSourceErrors
+} from '@/platform/query/identityProjection';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 type FeedPageParam = { cursor?: string; page: number };
@@ -132,14 +142,6 @@ function mergeFeedPages(pages: FeedPage[]) {
   );
 }
 
-function canRetainTrustedSource(
-  source: Source,
-  blockedSources: ReadonlySet<ForumIdentityBarrierSource>,
-  retainableSources: ReadonlySet<ForumIdentityBarrierSource>
-) {
-  return !isSessionSource(source) || !blockedSources.has(source) || retainableSources.has(source);
-}
-
 function mergeTrustedTopics(
   current: Topic[],
   trusted: Topic[],
@@ -184,99 +186,6 @@ function mergeTrustedCategories(
     return [retained];
   });
   return [...stable, ...remaining.values()];
-}
-
-function normalizeIdentityBarriers(barriers: readonly ForumIdentityBarrierSource[]) {
-  return [...new Set(barriers)].sort();
-}
-
-function sameIdentityBarriers(
-  left: readonly ForumIdentityBarrierSource[],
-  right: readonly ForumIdentityBarrierSource[]
-) {
-  const normalizedRight = normalizeIdentityBarriers(right);
-  return left.length === normalizedRight.length && left.every((source, index) => source === normalizedRight[index]);
-}
-
-function sameSessionEpochs(left: ForumSessionEpochs, right: ForumSessionEpochs) {
-  return sessionSources.every((source) => left[source] === right[source]);
-}
-
-function changedSessionSources(left: ForumSessionEpochs, right: ForumSessionEpochs) {
-  return new Set(sessionSources.filter((source) => left[source] !== right[source]));
-}
-
-function identityBarriersOnlyRemoved(
-  previous: readonly ForumIdentityBarrierSource[],
-  current: readonly ForumIdentityBarrierSource[]
-) {
-  const normalizedCurrent = normalizeIdentityBarriers(current);
-  return normalizedCurrent.length < previous.length && normalizedCurrent.every((source) => previous.includes(source));
-}
-
-type AggregateQueryKeyState = {
-  category?: unknown;
-  feedFilter?: unknown;
-  identityBarriers?: unknown;
-  sessionEpoch?: unknown;
-};
-
-function aggregateQueryKeyState(
-  queryKey: readonly unknown[],
-  resource: 'categories' | 'feed'
-): AggregateQueryKeyState | null {
-  if (
-    queryKey[0] !== 'forum' ||
-    queryKey[1] !== 'all' ||
-    queryKey[2] !== resource ||
-    !queryKey[3] ||
-    typeof queryKey[3] !== 'object'
-  ) {
-    return null;
-  }
-  return queryKey[3] as AggregateQueryKeyState;
-}
-
-function changedSourcesForIdentityTransition(
-  previousQueryKey: readonly unknown[] | undefined,
-  currentQueryKey: readonly unknown[],
-  resource: 'categories' | 'feed',
-  scopedFields: readonly (keyof AggregateQueryKeyState)[] = []
-) {
-  const previous = previousQueryKey ? aggregateQueryKeyState(previousQueryKey, resource) : null;
-  const current = aggregateQueryKeyState(currentQueryKey, resource);
-  if (!previous || !current || scopedFields.some((field) => !Object.is(previous[field], current[field]))) {
-    return null;
-  }
-
-  const previousEpochs = previous.sessionEpoch as Partial<ForumSessionEpochs> | undefined;
-  const currentEpochs = current.sessionEpoch as Partial<ForumSessionEpochs> | undefined;
-  if (!previousEpochs || !currentEpochs) {
-    return null;
-  }
-  const changedSources = new Set(sessionSources.filter((source) => previousEpochs[source] !== currentEpochs[source]));
-  return changedSources;
-}
-
-function withoutChangedSourceErrors(
-  errors: SourceErrors | undefined,
-  changedSources: ReadonlySet<ForumIdentityBarrierSource>
-) {
-  return Object.fromEntries(
-    Object.entries(errors || {}).filter(([source]) => !changedSources.has(source as ForumIdentityBarrierSource))
-  ) as SourceErrors;
-}
-
-function visibleIdentityErrors(
-  errors: SourceErrors | undefined,
-  blockedSources: ReadonlySet<ForumIdentityBarrierSource>,
-  retainableSources: ReadonlySet<ForumIdentityBarrierSource>
-) {
-  const current = errors || {};
-  const visible = Object.entries(current).filter(([source]) =>
-    canRetainTrustedSource(source as Source, blockedSources, retainableSources)
-  );
-  return visible.length === Object.keys(current).length ? current : (Object.fromEntries(visible) as SourceErrors);
 }
 
 function transitionFeedData(
@@ -367,30 +276,6 @@ function projectSafeFeedPlaceholder(
   return pages.some((page) => page.items.length) ? { ...previousData, pages } : undefined;
 }
 
-function projectSafeCategoriesPlaceholder(
-  previousData: CategoriesResponse | undefined,
-  previousQueryKey: readonly unknown[] | undefined,
-  currentQueryKey: readonly unknown[]
-) {
-  const changedSources = changedSourcesForIdentityTransition(previousQueryKey, currentQueryKey, 'categories');
-  if (!previousData || !changedSources) {
-    return undefined;
-  }
-  if (!changedSources.size) {
-    return previousData.items.length ? previousData : undefined;
-  }
-  const items = previousData.items.filter(
-    (category) => !isSessionSource(category.source) || !changedSources.has(category.source)
-  );
-  return items.length
-    ? {
-        ...previousData,
-        errors: withoutChangedSourceErrors(previousData.errors, changedSources),
-        items
-      }
-    : undefined;
-}
-
 function sourceErrorsFromFeedError(source: FeedSource, error: unknown): SourceErrors {
   if (error instanceof FeedQueryError && Object.keys(error.sourceErrors).length) {
     return error.sourceErrors;
@@ -420,6 +305,7 @@ export function feedOutcomeKind(itemCount: number, errors: SourceErrors): Source
 }
 
 export function useFeedController({
+  catalogCategories,
   identityBarriers = [],
   identityReconciliationPending = false,
   retainableIdentityBarriers = [],
@@ -434,6 +320,7 @@ export function useFeedController({
   showYaohuoLogin,
   readGateway
 }: {
+  catalogCategories: Category[];
   identityBarriers?: readonly ForumIdentityBarrierSource[];
   identityReconciliationPending?: boolean;
   retainableIdentityBarriers?: readonly ForumIdentityBarrierSource[];
@@ -453,18 +340,10 @@ export function useFeedController({
 }) {
   const queryClient = useQueryClient();
   const feedActive = screen === 'feed';
-  const categoriesActive = (screen === 'feed' || screen === 'search') && !linuxDoVerificationActive;
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
-  const [categoriesQueryIdentityBarriers, setCategoriesQueryIdentityBarriers] = useState(() =>
-    normalizeIdentityBarriers(identityBarriers)
-  );
-  const [categoriesQueryRetainableIdentityBarriers, setCategoriesQueryRetainableIdentityBarriers] = useState(() =>
-    normalizeIdentityBarriers(retainableIdentityBarriers)
-  );
-  const [categoriesQuerySessionEpochs, setCategoriesQuerySessionEpochs] = useState(sessionEpochs);
   const [feedQueryIdentityBarriers, setFeedQueryIdentityBarriers] = useState(() =>
     normalizeIdentityBarriers(identityBarriers)
   );
@@ -472,13 +351,6 @@ export function useFeedController({
     normalizeIdentityBarriers(retainableIdentityBarriers)
   );
   const [feedQuerySessionEpochs, setFeedQuerySessionEpochs] = useState(sessionEpochs);
-  const trustedAggregateCategoriesRef = useRef<
-    | {
-        data: CategoriesResponse;
-        queryKey: readonly unknown[];
-      }
-    | undefined
-  >(undefined);
   const trustedAggregateFeedRef = useRef<
     | {
         data: InfiniteData<FeedPage, FeedPageParam>;
@@ -486,26 +358,14 @@ export function useFeedController({
       }
     | undefined
   >(undefined);
-  const handledCategoriesErrorRef = useRef<unknown>(undefined);
+  const handledSourceCategoriesErrorRef = useRef<unknown>(undefined);
   const handledFeedErrorRef = useRef<unknown>(undefined);
   const handledPartialErrorsRef = useRef<unknown>(undefined);
   const blockedIdentitySources = useMemo(() => new Set(identityBarriers), [identityBarriers]);
   const retainableIdentitySources = useMemo(() => new Set(retainableIdentityBarriers), [retainableIdentityBarriers]);
-  const categoriesChangedIdentitySources = useMemo(
-    () => changedSessionSources(categoriesQuerySessionEpochs, sessionEpochs),
-    [categoriesQuerySessionEpochs, sessionEpochs]
-  );
   const feedChangedIdentitySources = useMemo(
     () => changedSessionSources(feedQuerySessionEpochs, sessionEpochs),
     [feedQuerySessionEpochs, sessionEpochs]
-  );
-  const categoriesBlockedIdentitySources = useMemo(
-    () => new Set([...blockedIdentitySources, ...categoriesChangedIdentitySources]),
-    [blockedIdentitySources, categoriesChangedIdentitySources]
-  );
-  const categoriesRetainableIdentitySources = useMemo(
-    () => new Set([...retainableIdentitySources].filter((source) => !categoriesChangedIdentitySources.has(source))),
-    [categoriesChangedIdentitySources, retainableIdentitySources]
   );
   const feedBlockedIdentitySources = useMemo(
     () => new Set([...blockedIdentitySources, ...feedChangedIdentitySources]),
@@ -522,10 +382,6 @@ export function useFeedController({
     (!identityReconciliationPending &&
       sameIdentityBarriers(feedQueryIdentityBarriers, identityBarriers) &&
       sameSessionEpochs(feedQuerySessionEpochs, sessionEpochs));
-  const categoriesIdentitySnapshotReady =
-    !identityReconciliationPending &&
-    sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers) &&
-    sameSessionEpochs(categoriesQuerySessionEpochs, sessionEpochs);
   const aggregateIdentityTransitionPending = feedSource === 'all' && !feedIdentitySnapshotReady;
   const canShowFeedSourceData =
     !feedSourceIdentityPending || (isSessionSource(feedSource) && retainableIdentityBarriers.includes(feedSource));
@@ -542,164 +398,7 @@ export function useFeedController({
     feedIdentitySnapshotReady &&
     (readerDataLoaded || !shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter));
 
-  const allCategoriesQueryKey = forumQueryKeys.categories(
-    'all',
-    categoriesQuerySessionEpochs,
-    categoriesQueryIdentityBarriers
-  );
-  const visibleAllCategoriesQueryKey = forumQueryKeys.categories('all', sessionEpochs, identityBarriers);
-  const allCategoriesQuery = useQuery<CategoriesResponse>({
-    queryKey: allCategoriesQueryKey,
-    enabled: categoriesActive && categoriesIdentitySnapshotReady,
-    placeholderData: (previousData, previousQuery) =>
-      projectSafeCategoriesPlaceholder(previousData, previousQuery?.queryKey, allCategoriesQueryKey),
-    queryFn: async ({ signal }) => {
-      const trace = beginDiagnosticTrace('feed', 'categories', { source: 'all' });
-      try {
-        const data = await readGateway.getCategories(
-          { source: 'all', signal },
-          { identityBarriers: categoriesQueryIdentityBarriers, trace }
-        );
-        finishDiagnosticTrace(trace, Object.keys(data.errors || {}).length ? 'partial' : 'success', {
-          source: 'all',
-          itemCount: data.items.length,
-          partialErrorCount: Object.keys(data.errors || {}).length
-        });
-        return data;
-      } catch (error) {
-        finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
-          source: 'all',
-          reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
-        });
-        throw error;
-      }
-    }
-  });
-  const effectiveCategoriesRetainableIdentityBarriers = sameIdentityBarriers(
-    categoriesQueryIdentityBarriers,
-    identityBarriers
-  )
-    ? normalizeIdentityBarriers(retainableIdentityBarriers)
-    : categoriesQueryRetainableIdentityBarriers;
-  const trustedCategoriesState = trustedAggregateCategoriesRef.current;
-  const trustedCategoriesChangedSources = trustedCategoriesState
-    ? changedSourcesForIdentityTransition(trustedCategoriesState.queryKey, visibleAllCategoriesQueryKey, 'categories')
-    : null;
-  const trustedCategoriesData =
-    trustedCategoriesState &&
-    (effectiveCategoriesRetainableIdentityBarriers.length || trustedCategoriesChangedSources?.size)
-      ? projectSafeCategoriesPlaceholder(
-          trustedCategoriesState.data,
-          trustedCategoriesState.queryKey,
-          visibleAllCategoriesQueryKey
-        )
-      : undefined;
-  const currentAggregateCategories = (allCategoriesQuery.data?.items || []).filter((category) =>
-    canRetainTrustedSource(category.source, categoriesBlockedIdentitySources, categoriesRetainableIdentitySources)
-  );
-  const allCategories = useMemo(() => {
-    if (!trustedCategoriesData?.items.length) {
-      return currentAggregateCategories;
-    }
-    return mergeTrustedCategories(
-      currentAggregateCategories,
-      trustedCategoriesData.items,
-      categoriesBlockedIdentitySources,
-      categoriesRetainableIdentitySources
-    );
-  }, [
-    categoriesBlockedIdentitySources,
-    categoriesRetainableIdentitySources,
-    currentAggregateCategories,
-    trustedCategoriesData?.items
-  ]);
-  useEffect(() => {
-    if (
-      categoriesQueryIdentityBarriers.length ||
-      !allCategoriesQuery.isSuccess ||
-      allCategoriesQuery.isFetching ||
-      allCategoriesQuery.isPlaceholderData ||
-      !allCategoriesQuery.data
-    ) {
-      return;
-    }
-    if (trustedCategoriesChangedSources?.size && trustedCategoriesData?.items.length) {
-      const stableData = { ...allCategoriesQuery.data, items: allCategories };
-      trustedAggregateCategoriesRef.current = { data: stableData, queryKey: allCategoriesQueryKey };
-      queryClient.setQueryData<CategoriesResponse>(allCategoriesQueryKey, stableData);
-      return;
-    }
-    trustedAggregateCategoriesRef.current = {
-      data: allCategoriesQuery.data,
-      queryKey: allCategoriesQueryKey
-    };
-  }, [
-    allCategoriesQuery.data,
-    allCategoriesQuery.isFetching,
-    allCategoriesQuery.isPlaceholderData,
-    allCategoriesQuery.isSuccess,
-    allCategoriesQueryKey,
-    categoriesQueryIdentityBarriers.length,
-    allCategories,
-    queryClient,
-    trustedCategoriesChangedSources?.size,
-    trustedCategoriesData?.items.length
-  ]);
-  useEffect(() => {
-    if (identityReconciliationPending) {
-      return;
-    }
-    const nextRetainableIdentityBarriers = normalizeIdentityBarriers(retainableIdentityBarriers);
-    if (
-      sameIdentityBarriers(categoriesQueryIdentityBarriers, identityBarriers) &&
-      sameSessionEpochs(categoriesQuerySessionEpochs, sessionEpochs)
-    ) {
-      if (!sameIdentityBarriers(categoriesQueryRetainableIdentityBarriers, nextRetainableIdentityBarriers)) {
-        setCategoriesQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
-      }
-      return;
-    }
-    if (allCategoriesQuery.isFetching) {
-      return;
-    }
-    const nextIdentityBarriers = normalizeIdentityBarriers(identityBarriers);
-    const targetQueryKey = forumQueryKeys.categories('all', sessionEpochs, nextIdentityBarriers);
-    if (identityBarriersOnlyRemoved(categoriesQueryIdentityBarriers, nextIdentityBarriers)) {
-      if (allCategories.length) {
-        queryClient.setQueryData<CategoriesResponse>(targetQueryKey, {
-          errors: visibleIdentityErrors(
-            allCategoriesQuery.data?.errors,
-            categoriesBlockedIdentitySources,
-            categoriesRetainableIdentitySources
-          ),
-          items: allCategories
-        });
-        void queryClient.invalidateQueries({ queryKey: targetQueryKey, exact: true, refetchType: 'none' });
-      } else {
-        queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
-      }
-    } else {
-      queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
-    }
-    setCategoriesQueryIdentityBarriers(nextIdentityBarriers);
-    setCategoriesQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
-    setCategoriesQuerySessionEpochs(sessionEpochs);
-  }, [
-    allCategories,
-    allCategoriesQuery.data,
-    allCategoriesQuery.isFetching,
-    categoriesQueryIdentityBarriers,
-    categoriesQueryRetainableIdentityBarriers,
-    categoriesQuerySessionEpochs,
-    categoriesBlockedIdentitySources,
-    categoriesRetainableIdentitySources,
-    identityBarriers,
-    identityReconciliationPending,
-    queryClient,
-    retainableIdentityBarriers,
-    sessionEpochs
-  ]);
-  const needsSourceCategories = feedSource !== 'all' && shouldLoadCategoriesForSource(allCategories, feedSource);
+  const needsSourceCategories = feedSource !== 'all' && shouldLoadCategoriesForSource(catalogCategories, feedSource);
   const sourceCategoriesQuery = useQuery({
     queryKey: forumQueryKeys.categories(feedSource === 'all' ? 'v2ex' : feedSource, sessionEpochs),
     enabled: feedActive && !linuxDoVerificationActive && !feedSourceIdentityPending && needsSourceCategories,
@@ -723,23 +422,18 @@ export function useFeedController({
     }
   });
   const categories = useMemo(
-    () => mergeCategories(allCategories, canShowFeedSourceData ? sourceCategoriesQuery.data?.items || [] : []),
-    [allCategories, canShowFeedSourceData, sourceCategoriesQuery.data?.items]
+    () => mergeCategories(catalogCategories, canShowFeedSourceData ? sourceCategoriesQuery.data?.items || [] : []),
+    [canShowFeedSourceData, catalogCategories, sourceCategoriesQuery.data?.items]
   );
   const feedCategories = useMemo(
     () =>
       sourceValues.reduce((current, source) => {
         const cached = queryClient.getQueryData<CategoriesResponse>(forumQueryKeys.categories(source, sessionEpochs));
         return cached?.items.length
-          ? mergeTrustedCategories(
-              current,
-              cached.items,
-              categoriesBlockedIdentitySources,
-              categoriesRetainableIdentitySources
-            )
+          ? mergeTrustedCategories(current, cached.items, feedBlockedIdentitySources, feedRetainableIdentitySources)
           : current;
       }, categories),
-    [categories, categoriesBlockedIdentitySources, categoriesRetainableIdentitySources, queryClient, sessionEpochs]
+    [categories, feedBlockedIdentitySources, feedRetainableIdentitySources, queryClient, sessionEpochs]
   );
 
   const feedQuery = useInfiniteQuery({
@@ -1017,37 +711,34 @@ export function useFeedController({
   });
 
   useEffect(() => {
-    if (!categoriesActive) {
+    if (
+      !feedActive ||
+      feedSourceIdentityPending ||
+      !sourceCategoriesQuery.isError ||
+      handledSourceCategoriesErrorRef.current === sourceCategoriesQuery.error
+    ) {
       return;
     }
-    const query =
-      feedActive && !feedSourceIdentityPending && sourceCategoriesQuery.isError
-        ? sourceCategoriesQuery
-        : allCategoriesQuery;
-    if (!query.isError || handledCategoriesErrorRef.current === query.error) {
+    handledSourceCategoriesErrorRef.current = sourceCategoriesQuery.error;
+    if (sourceCategoriesQuery.isFetching) {
       return;
     }
-    handledCategoriesErrorRef.current = query.error;
-    if (query.isFetching) {
-      return;
-    }
-    const error = sourceErrorFromUnknown(feedSource, query.error);
+    const error = sourceErrorFromUnknown(feedSource, sourceCategoriesQuery.error);
     if (feedSource === 'nodeseek' && error.kind === 'verification-required') {
       showNodeSeekVerification(error.message);
     } else {
       notify(error.message);
     }
   }, [
-    allCategoriesQuery.errorUpdatedAt,
-    allCategoriesQuery.isError,
-    categoriesActive,
     feedActive,
     feedSource,
     feedSourceIdentityPending,
     notify,
     showNodeSeekVerification,
     sourceCategoriesQuery.errorUpdatedAt,
-    sourceCategoriesQuery.isError
+    sourceCategoriesQuery.isError,
+    sourceCategoriesQuery.isFetching,
+    sourceCategoriesQuery.error
   ]);
 
   useEffect(() => {
@@ -1238,7 +929,8 @@ export function useFeedController({
 
   const abortFeedRequests = useCallback(() => {
     void queryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum' && (queryKey[2] === 'feed' || queryKey[2] === 'categories')
+      predicate: ({ queryKey }) =>
+        queryKey[0] === 'forum' && (queryKey[2] === 'feed' || (queryKey[2] === 'categories' && queryKey[1] !== 'all'))
     });
   }, [queryClient]);
 
@@ -1249,12 +941,6 @@ export function useFeedController({
         queryKey[0] === 'forum' && (queryKey[2] === 'feed' || (queryKey[2] === 'categories' && queryKey[1] !== 'all'))
     });
   }, [feedActive, queryClient]);
-  useEffect(() => {
-    if (categoriesActive) return;
-    void queryClient.cancelQueries({
-      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'categories'
-    });
-  }, [categoriesActive, queryClient]);
   useEffect(() => abortFeedRequests, [abortFeedRequests]);
 
   return {

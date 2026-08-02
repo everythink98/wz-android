@@ -30,9 +30,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `NAV-01`、`LIBRARY-01`、`LIBRARY-02`、`LIBRARY-03`、`FEED-01`、`FEED-02`、`FEED-03`、`SEARCH-01`、`SEARCH-02`、`TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`USER-01`、`ACCOUNT-01`、`DATA-01`、`DATA-02`、`DATA-03` |
 | 用户症状 | 收藏帖子、关注用户和历史之间切换时明显卡顿；Debug 基线出现 17%–32% 掉帧，最慢帧约 69–82ms。1000 条历史的 x86_64 Release 基线两批最慢帧中位数为 55.45ms / 51.9ms，History 就绪中位数为 702.5ms / 708ms。Topic 旅程中 20 次历史同步提交有 8 次超过 8ms，最慢 22ms。 |
 | 触发条件 | Library 已有数据，切换 tab 时 FlashList 的 `key` 改变；旧实例卸载、新实例挂载并集中创建可见行及头像，同时筛选在切换后的 effect 再重置。即使复用列表，继承共享列表的 900px 预绘制窗口仍会在 1000 条 History 数据切入时提前创建屏外行并触发头像解码与原生绘制。Topic 读取完成时 `history-recorded` 对已校验 ReaderData 再做一次全量 sanitize。 |
-| 根因 seam | `src/features/library/LibraryScreen.tsx` 的列表 identity、筛选提交、滚顶、Library 专属 `drawDistance` 和 `maintainVisibleContentPosition` 契约；`src/ui/avatar/Avatar.tsx` 是 Feed、Search、Library、Topic、User 共用的头像加载 seam；`src/domain/reader/readerData.ts` 与 `src/features/library/useReaderDataController.ts` 共同约束历史写入和持久化。 |
+| 根因 seam | `src/features/library/LibraryScreen.tsx` 的列表 identity、筛选提交、滚顶、Library 专属 `drawDistance` 和 `maintainVisibleContentPosition` 契约；`src/ui/avatar/Avatar.tsx` 是 Feed、Search、Library、Topic、User 共用的头像加载 seam；`src/domain/reader/readerData.ts` 与 `src/app/useReaderRuntime.ts` 共同约束历史写入和持久化。 |
 | 必须保持的行为 | 三个 tab 复用同一个 FlashList；目标 tab 首次可见状态已经是全部来源/全部分类，列表在数据替换前无动画回到顶部且下一帧补偿，重复点击当前 tab 不重置筛选或滚动，Library 不锚定旧数据位置，并把预绘制距离限制为 250px；Feed、Search 等共享列表继续使用各自配置。正常头像先只走原生加载，保留一次原生 retry，第二次失败才走带 session identity 的 SVG fallback，旧 URI/session/unmount 的迟到结果不得显示。`recordHistory` 自身只保留最新 1000 条；只有可信 `history-recorded` 跳过全量 sanitize，加载、导入、合并和其他 mutation 仍完整校验，visitCount、收藏摘要、tombstone、保存队列与失败回滚不变。筛选、删除、清空和 `REG-FEED-002` 的 Feed 独立位置保护保持不变。 |
-| 精确失败 oracle | `tests/ui/library/library-screen.test.tsx` 依次切换三个 tab，要求列表只挂载一次；History 第一次 render 即得到未筛选数据；真实切换先调用一次 `animated=false` 滚顶、下一帧再补一次，重复点击当前 tab 不滚顶；Library 显式禁用可视位置锚定并固定 `drawDistance=250`。`tests/ui/shared/avatar.test.tsx` 要求正常位图零 SVG probe、第二次原生失败才显示 SVG、迟到结果丢弃且 fallback 失败显示文字头像。`src/domain/reader/readerData.test.ts`、`src/features/library/useReaderDataController.test.ts` 与 `tests/ui/library/reader-data-controller.test.tsx` 要求 1001 条只留最新 1000 条，可信提交不重建快照且仍进入原保存队列；既有 `REG-DATA-002/003/004` 继续固定排队、失败回滚与恢复写。 |
+| 精确失败 oracle | `tests/ui/library/library-screen.test.tsx` 依次切换三个 tab，要求列表只挂载一次；History 第一次 render 即得到未筛选数据；真实切换先调用一次 `animated=false` 滚顶、下一帧再补一次，重复点击当前 tab 不滚顶；Library 显式禁用可视位置锚定并固定 `drawDistance=250`。`tests/ui/shared/avatar.test.tsx` 要求正常位图零 SVG probe、第二次原生失败才显示 SVG、迟到结果丢弃且 fallback 失败显示文字头像。`src/domain/reader/readerData.test.ts`、`src/app/useReaderRuntime.test.ts` 与 `tests/ui/library/reader-data-controller.test.tsx` 要求 1001 条只留最新 1000 条，可信提交不重建快照且仍进入原保存队列；既有 `REG-DATA-002/003/004` 继续固定排队、失败回滚与恢复写。 |
 | 最低可靠自动测试层 | `UI_PASS`：必须跨真实 React state 更新观察列表实例、目标首帧数据和滚动调用；源码字符串或单独测试筛选 helper 都不能证明没有 remount。ReaderData 以 helper `UNIT_PASS` 和 controller `UI_PASS` 共同固定快路径及数据行为，最终同步耗时仍由设备诊断 trace 复测。 |
 | Replay 或真实验收路径 | 保留 App 数据执行 `tests/device/library-return.ad`；性能验收在身份匹配构建上执行 Favorites ↔ History 20 次并用 FrameTimeline/`gfxinfo` 对照 missed-deadline、p95 和最慢帧；在可精确恢复的 1000 条 History 数据上再执行快速向下 20 次、向上 20 次，要求全程存在完整可见行且没有空白或抖动；最后执行 20 次可落历史的 Topic 旅程，核对 `history-recorded` 同步阶段。 |
 | 负向验证方式 | 恢复 `key={libraryTab}`、把筛选重置移回 `[libraryTab]` effect、移除切换前/下一帧滚顶、让已选 tab 也重置、重新启用位置锚定或让 Library 重新继承 900px 预绘制距离，Library oracle 必须失败；恢复 mount 时 SVG probe 或接受旧身份结果，Avatar oracle 必须失败；移除 `recordHistory` 上限或让 `history-recorded` 重走全量 sanitize，数据上限或性能契约必须失败。 |
@@ -1649,7 +1649,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `DATA-01`、`DATA-02` |
 | 用户症状 | 一次收藏/历史保存失败后，紧接着只改阅读设置，后一次成功写入可能只带设置而漏掉最新 ReaderData。 |
 | 触发条件 | 较早的 record save 在较晚 settings mutation 入队前失败，controller 以乐观而非最后已提交快照构建后续保存。 |
-| 根因 seam | `src/features/library/useReaderDataController.ts` 的提交队列与完整快照基线。 |
+| 根因 seam | `src/app/useReaderRuntime.ts` 的提交队列与完整快照基线。 |
 | 必须保持的行为 | 每个后续 mutation 都基于最后已提交完整快照；旧保存失败后，较晚设置修改仍要重写当前资料和设置。 |
 | 精确失败 oracle | `tests/ui/library/reader-data-controller.test.tsx` 控制首个保存失败，再改设置，要求第二次保存包含最新完整 ReaderData。 |
 | 最低可靠自动测试层 | `UI_PASS`：需要 hook 跨 mutation 的排队与已提交状态。 |
@@ -1664,7 +1664,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `DATA-01`、`DATA-02`、`DATA-03` |
 | 用户症状 | ReaderData 已写入但 settings 写失败，连旧快照回滚也失败后，磁盘状态未知；后续 queued 保存仍继续，可能永久覆盖可恢复现场。 |
 | 触发条件 | 两个 AsyncStorage key 的配对写部分成功，补偿回滚再次失败。 |
-| 根因 seam | `src/platform/storage/readerDataStore.ts` 的原子补偿和 `src/features/library/useReaderDataController.ts` 的未知状态熔断。 |
+| 根因 seam | `src/platform/storage/readerDataStore.ts` 的原子补偿和 `src/app/useReaderRuntime.ts` 的未知状态熔断。 |
 | 必须保持的行为 | 配对写失败必须尝试恢复旧完整快照并用 `AggregateError` 保留原错与回滚错；回滚失败后取消已排队保存并暂停新 mutation，直到显式备份恢复成功。 |
 | 精确失败 oracle | `src/platform/storage/readerDataStore.test.ts` 固定补偿；`tests/ui/library/reader-data-controller.test.tsx` 固定 queued 与未来 mutation 均不再落盘。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：store 原子语义和 controller 熔断都必须覆盖。 |
@@ -1679,7 +1679,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `DATA-01`、`DATA-03` |
 | 用户症状 | 配对写回滚失败后，用户导入内容恰好与内存相同的备份，JSON 相等优化会跳过物理写，损坏或未知的磁盘仍未恢复。 |
 | 触发条件 | controller 处于 recovery-required，导入快照与最后已知内存值深相等。 |
-| 根因 seam | `src/features/library/useReaderDataController.ts` 的 no-op 去重与恢复强制写边界。 |
+| 根因 seam | `src/app/useReaderRuntime.ts` 的 no-op 去重与恢复强制写边界。 |
 | 必须保持的行为 | recovery-required 时备份导入必须强制完整物理写；只有写入成功才解除暂停。正常状态仍可跳过真正 no-op。 |
 | 精确失败 oracle | `tests/ui/library/reader-data-controller.test.tsx` 先制造未知磁盘状态，再导入相同备份，要求发生物理写并恢复可修改状态。 |
 | 最低可靠自动测试层 | `UI_PASS`：需要完整 recovery 生命周期而非单个序列化函数。 |

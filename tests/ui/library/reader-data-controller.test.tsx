@@ -15,7 +15,7 @@ jest.mock('@/platform/storage/readerDataStore', () => ({
   saveReaderSettings: () => mockSaveReaderSettings()
 }));
 
-import { useReaderDataController } from '@/features/library/useReaderDataController';
+import { useReaderRuntime } from '@/app/useReaderRuntime';
 
 const topic: Topic = {
   source: 'nodeseek',
@@ -37,7 +37,7 @@ describe('reader data controller persistence', () => {
   });
 
   it('[REG-PERF-001] persists the bounded history snapshot through the existing save queue', async () => {
-    const hook = await renderHook(() => useReaderDataController({ notify: jest.fn() }));
+    const hook = await renderHook(() => useReaderRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
 
     await act(async () => {
@@ -55,7 +55,7 @@ describe('reader data controller persistence', () => {
     const firstSave = Promise.withResolvers<ReaderData>();
     mockSaveCleanReaderData.mockImplementationOnce(() => firstSave.promise);
     const notify = jest.fn();
-    const hook = await renderHook(() => useReaderDataController({ notify }));
+    const hook = await renderHook(() => useReaderRuntime({ notify }));
     await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
 
     await act(async () => {
@@ -86,7 +86,7 @@ describe('reader data controller persistence', () => {
       )
     );
     const notify = jest.fn();
-    const hook = await renderHook(() => useReaderDataController({ notify }));
+    const hook = await renderHook(() => useReaderRuntime({ notify }));
     await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
 
     await act(async () => {
@@ -111,7 +111,7 @@ describe('reader data controller persistence', () => {
     const firstSave = Promise.withResolvers<ReaderData>();
     mockSaveCleanReaderData.mockImplementationOnce(() => firstSave.promise);
     const notify = jest.fn();
-    const hook = await renderHook(() => useReaderDataController({ notify }));
+    const hook = await renderHook(() => useReaderRuntime({ notify }));
     await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
 
     await act(async () => {
@@ -154,7 +154,7 @@ describe('reader data controller persistence', () => {
         }
         return data;
       });
-    const hook = await renderHook(() => useReaderDataController({ notify: jest.fn() }));
+    const hook = await renderHook(() => useReaderRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
 
     await act(async () => {

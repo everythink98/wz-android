@@ -2,6 +2,7 @@ import { afterEach } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { useLayoutEffect } from 'react';
 import { useFeedController } from '@/features/feed/useFeedController';
+import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import type { Screen } from '@/ui/navigation/types';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
@@ -17,6 +18,21 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 function renderHook<Result>(callback: () => Result) {
   appQueryClient.clear();
   return renderNativeHook(callback, { wrapper: QueryTestWrapper });
+}
+
+type FeedRuntimeOptions = Omit<Parameters<typeof useFeedController>[0], 'catalogCategories'>;
+
+function useFeedRuntime(options: FeedRuntimeOptions) {
+  const catalog = useForumCatalogRuntime({
+    active: (options.screen === 'feed' || options.screen === 'search') && !options.linuxDoVerificationActive,
+    identityBarriers: options.identityBarriers,
+    identityReconciliationPending: options.identityReconciliationPending ?? false,
+    notify: options.notify,
+    readGateway: options.readGateway,
+    retainableIdentityBarriers: options.retainableIdentityBarriers,
+    sessionEpochs: options.sessionEpochs
+  });
+  return useFeedController({ ...options, catalogCategories: catalog.categories });
 }
 
 describe('小隐寺 Feed controller', () => {
@@ -56,7 +72,7 @@ describe('小隐寺 Feed controller', () => {
     const notify = jest.fn();
     let screen: Screen = 'feed';
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify,
         readerData: createEmptyReaderData(),
@@ -112,7 +128,7 @@ describe('小隐寺 Feed controller', () => {
     let sessionEpochs = initialForumSessionEpochs;
     let screen: Screen = 'feed';
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         sessionEpochs,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -189,7 +205,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     let linuxDoVerificationActive = false;
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
@@ -275,7 +291,7 @@ describe('小隐寺 Feed controller', () => {
     let sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs;
     const renderedStates: { busy: boolean; itemCount: number; refreshing: boolean }[] = [];
     const hook = await renderHook(() => {
-      const controller = useFeedController({
+      const controller = useFeedRuntime({
         identityBarriers,
         identityReconciliationPending,
         sessionEpochs,
@@ -460,7 +476,7 @@ describe('小隐寺 Feed controller', () => {
     let identityReconciliationPending = false;
     let sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs;
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         identityBarriers,
         identityReconciliationPending,
         sessionEpochs,
@@ -552,7 +568,7 @@ describe('小隐寺 Feed controller', () => {
     let identityBarriers: ForumIdentityBarrierSource[] = [];
     let identityReconciliationPending = false;
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         identityBarriers,
         identityReconciliationPending,
         linuxDoVerificationActive: false,
@@ -622,7 +638,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     let screen: Screen = 'search';
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
@@ -665,7 +681,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     let screen: Screen = 'feed';
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
@@ -731,7 +747,7 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify,
         readerData,
@@ -801,7 +817,7 @@ describe('小隐寺 Feed controller', () => {
     const showYaohuoLogin = jest.fn();
     let sessionEpochs = initialForumSessionEpochs;
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         sessionEpochs,
         linuxDoVerificationActive: false,
         notify,
@@ -879,7 +895,7 @@ describe('小隐寺 Feed controller', () => {
     const renderedKeys: string[][] = [];
     const hook = await renderNativeHook(
       () => {
-        const controller = useFeedController({
+        const controller = useFeedRuntime({
           identityBarriers: sessionSources,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
@@ -978,7 +994,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     const hook = await renderNativeHook(
       () =>
-        useFeedController({
+        useFeedRuntime({
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
@@ -1053,7 +1069,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     const hook = await renderNativeHook(
       () =>
-        useFeedController({
+        useFeedRuntime({
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
@@ -1155,7 +1171,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     const hook = await renderNativeHook(
       () =>
-        useFeedController({
+        useFeedRuntime({
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
@@ -1260,7 +1276,7 @@ describe('小隐寺 Feed controller', () => {
     let retainableIdentityBarriers: ForumIdentityBarrierSource[] = [];
     const hook = await renderNativeHook(
       () =>
-        useFeedController({
+        useFeedRuntime({
           identityBarriers,
           retainableIdentityBarriers,
           linuxDoVerificationActive: false,
@@ -1340,7 +1356,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     const hook = await renderNativeHook(
       () =>
-        useFeedController({
+        useFeedRuntime({
           identityBarriers: ['nodeseek'],
           linuxDoVerificationActive: false,
           notify,
@@ -1403,7 +1419,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek', 'linuxdo'];
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         identityBarriers,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -1519,7 +1535,7 @@ describe('小隐寺 Feed controller', () => {
     const renderedKeys: string[][] = [];
     const hook = await renderNativeHook(
       () => {
-        const controller = useFeedController({
+        const controller = useFeedRuntime({
           identityBarriers,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
@@ -1598,7 +1614,7 @@ describe('小隐寺 Feed controller', () => {
     let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
     const renderedKeys: string[][] = [];
     const hook = await renderHook(() => {
-      const controller = useFeedController({
+      const controller = useFeedRuntime({
         identityBarriers,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -1655,7 +1671,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         identityBarriers,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -1720,7 +1736,7 @@ describe('小隐寺 Feed controller', () => {
     let sessionEpochs = initialForumSessionEpochs;
     const renderedCategoryKeys: string[][] = [];
     const hook = await renderHook(() => {
-      const controller = useFeedController({
+      const controller = useFeedRuntime({
         identityBarriers,
         retainableIdentityBarriers,
         sessionEpochs,
@@ -1816,7 +1832,7 @@ describe('小隐寺 Feed controller', () => {
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         sessionEpochs,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -1913,7 +1929,7 @@ describe('小隐寺 Feed controller', () => {
     const notify = jest.fn();
     const renderedKeys: string[][] = [];
     const hook = await renderHook(() => {
-      const controller = useFeedController({
+      const controller = useFeedRuntime({
         identityBarriers,
         retainableIdentityBarriers: identityBarriers,
         sessionEpochs,
@@ -2067,7 +2083,7 @@ describe('小隐寺 Feed controller', () => {
     const notify = jest.fn();
     let settleCanceledRefreshInLayout = false;
     const hook = await renderHook(() => {
-      const controller = useFeedController({
+      const controller = useFeedRuntime({
         sessionEpochs,
         linuxDoVerificationActive: false,
         notify,
@@ -2266,7 +2282,7 @@ describe('小隐寺 Feed controller', () => {
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         identityBarriers,
         retainableIdentityBarriers,
         sessionEpochs,
@@ -2443,7 +2459,7 @@ describe('小隐寺 Feed controller', () => {
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         identityBarriers,
         retainableIdentityBarriers: identityBarriers,
         linuxDoVerificationActive: false,
@@ -2546,7 +2562,7 @@ describe('小隐寺 Feed controller', () => {
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         identityBarriers: ['nodeseek'],
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -2626,7 +2642,7 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify,
         readerData,
@@ -2697,7 +2713,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     const showLinuxDoVerification = jest.fn();
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
@@ -2770,7 +2786,7 @@ describe('小隐寺 Feed controller', () => {
     } as unknown as ReadGateway;
     const showLinuxDoVerification = jest.fn();
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
@@ -2855,7 +2871,7 @@ describe('小隐寺 Feed controller', () => {
         hasYaohuoCredential: jest.fn(async () => false)
       } as unknown as ReadGateway;
       const hook = await renderHook(() =>
-        useFeedController({
+        useFeedRuntime({
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
@@ -2904,7 +2920,7 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify,
         readerData,
@@ -2971,7 +2987,7 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify,
         readerData,
@@ -3048,7 +3064,7 @@ describe('小隐寺 Feed controller', () => {
       const showNodeSeekVerification = jest.fn();
       const showYaohuoLogin = jest.fn();
       const hook = await renderHook(() =>
-        useFeedController({
+        useFeedRuntime({
           linuxDoVerificationActive: false,
           notify,
           readerData,
@@ -3107,7 +3123,7 @@ describe('小隐寺 Feed controller', () => {
     const showNodeSeekVerification = jest.fn();
     const showYaohuoLogin = jest.fn();
     const hook = await renderHook(() =>
-      useFeedController({
+      useFeedRuntime({
         linuxDoVerificationActive: false,
         notify,
         readerData,
