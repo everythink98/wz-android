@@ -1,4 +1,4 @@
-import { KeyboardAvoidingView, View } from 'react-native';
+import { KeyboardAvoidingView, Text, View } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -19,7 +19,24 @@ export function AppComposition() {
                 <ExpoStatusBar style={runtime.theme.dark ? 'light' : 'dark'} />
                 <View pointerEvents="none" style={runtime.appStyles.statusBarScrim} />
                 {runtime.accountHost}
-                {runtime.routes ? <AppRoutes {...runtime.routes} /> : null}
+                {runtime.routes ? (
+                  <AppRoutes {...runtime.routes} />
+                ) : (
+                  <View style={runtime.appStyles.bootstrap}>
+                    <Text accessibilityRole="header" style={runtime.appStyles.bootstrapTitle}>
+                      阅坛
+                    </Text>
+                    <Text
+                      accessibilityLabel="阅坛正在启动"
+                      accessibilityLiveRegion="polite"
+                      accessibilityState={{ busy: true }}
+                      role="status"
+                      style={runtime.appStyles.bootstrapStatus}
+                    >
+                      正在启动
+                    </Text>
+                  </View>
+                )}
               </SafeAreaView>
             </KeyboardAvoidingView>
           </SafeAreaProvider>

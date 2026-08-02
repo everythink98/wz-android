@@ -3078,6 +3078,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 向任一非 Feed/Smoke Replay 加回 `feed-list-ready-all`，把等级步骤放回 `more-readonly.ad`，增加第七普通文件/额外 relaunch，或把 retry 改为非零，编号守卫必须失败。 |
 | 明确不覆盖范围 | 不减少必要的身份前置，不合并独立来源请求，也不引入共享 session、全局 setup、nightly runner 或自动限流规避。 |
 
+## `REG-TEST-008` 冷启动空节点让 Replay 在 selector timeout 前失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-01`、`FEED-01`、`SEARCH-01`、`LIBRARY-01`、`MORE-01`、`RELEASE-02` |
+| 用户症状 | exact-revision APK 已正常启动且稍后能显示 Feed，但 Replay 在任何旅程操作前报告 Android accessibility hierarchy 为 0 个节点；`more-readonly.ad` 等待 `main-tab-more` 时未用满 60 秒 selector timeout 就失败。 |
+| 触发条件 | fresh build 或连续 relaunch 后，SecureStore 读取与原生代理 startup gate 在慢模拟器上需要数秒；`useAppRuntime` 尚未投影 routes。 |
+| 根因 seam | `AppComposition` 在 `runtime.routes === null` 时返回空节点。snapshot helper 因前台 App 没有 meaningful accessibility node 转入 stock UIAutomator，后者等待 idle 超时，selector wait 无法继续轮询。 |
+| 必须保持的行为 | startup gate 继续 fail-closed，不提前挂载 routes 或发网络请求；等待期间显示两个静态文本节点“阅坛 / 正在启动”，状态以 `role=status`、`busy=true`、polite live region 暴露且不使用无限动画。routes 放行后由真实导航树原位替换。 |
+| 精确失败 oracle | `tests/ui/app/app-composition.test.tsx` 在 `routes=null` 时要求 header、`阅坛正在启动` busy status 和零 `ActivityIndicator`；删除 fallback、恢复 `null` 或只留动画时失败。既有 `tests/tooling/android-smoke-guard.test.ts` 继续禁止 Replay 固定 sleep 与 retry。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定 bootstrap 可访问语义；匹配 revision/version/APK SHA 且零 retry 的六条普通 Replay 形成 `DEVICE_REPLAY_PASS`，两者不能互相替代。 |
+| Replay 或真实验收路径 | 安装 exact-revision smoke APK，在保留数据设备运行 `npm run test:device`；每条文件独立 relaunch，直接等待自己的 `main-tab-*`，冷启动期间不得出现零节点 snapshot failure。 |
+| 负向验证方式 | 把 fallback 改回 `null` 或仅含无限动画，UI 回归先失败；在 Replay 加固定 sleep、retry 或 Feed 全局前置，既有 tooling guard 必须失败。 |
+| 明确不覆盖范围 | 不缩短 SecureStore 或代理初始化、不放宽 fail-closed、不新增启动 timeout，不把 accessibility backend 异常误报为来源网络失败。 |
+
 ## `REG-PROXY-004` 原生代理切换与 bridge 销毁遗留旧连接
 
 | 字段 | 内容 |

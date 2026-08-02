@@ -33,7 +33,7 @@
 | `plugins/` | Expo config plugin，持久化 Android 原生配置；服务器代理与小隐寺 Keystore 原生模块分别由对应 plugin 生成 |
 | `scripts/` | 文档检查、Android smoke、release 打包与版本检查脚本 |
 
-`AppRoot` 只渲染 `AppComposition`；`useAppRuntime` 只组合深 runtime 并投影六个 route capability；Account runtime 自己创建全局 host 节点，`AppComposition` 只把该节点与全局 provider、routes 声明式挂载。`AppRoutes` 是六个 feature route entry 的唯一映射；`AppNavigator` 只接收 route component，不 import feature。四个 tab 使用 `lazy: false` 保持长期挂载，业务 Query 与副作用由各 route 的 `active` gate 控制。
+`AppRoot` 只渲染 `AppComposition`；`useAppRuntime` 只组合深 runtime 并投影六个 route capability；Account runtime 自己创建全局 host 节点，`AppComposition` 只把该节点与全局 provider、routes 声明式挂载。代理 startup gate 尚未放行 routes 时，`AppComposition` 显示静态、可访问且无动画的启动状态，不能返回空节点。`AppRoutes` 是六个 feature route entry 的唯一映射；`AppNavigator` 只接收 route component，不 import feature。四个 tab 使用 `lazy: false` 保持长期挂载，业务 Query 与副作用由各 route 的 `active` gate 控制。
 
 ## 来源边界
 
