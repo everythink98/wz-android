@@ -26,7 +26,6 @@ import {
   AppNavigator,
   isReadingSettingsScreen,
   navigateAppScreen,
-  navigationRef,
   pushTopicRoute,
   pushUserRoute,
   shouldUpdateAppRootScreen
@@ -35,7 +34,6 @@ import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
 import { useSearchController } from '@/features/search/useSearchController';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
-import { useUserController } from '@/features/user/useUserController';
 import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificationPrompt';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
@@ -49,13 +47,14 @@ import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState
 import type { LibraryTab } from '@/domain/forum/feed';
 import { errorMessage } from '@/platform/network/errors';
 import { parseInternalTopicOpenLink } from '@/domain/forum/links';
+import { normalizeUserReference } from '@/domain/forum/userNavigation';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { LibraryScreen } from '@/features/library/LibraryScreen';
 import { EMPTY_LIBRARY_RECORDS, sortLibraryRecords } from '@/features/library/model/libraryFilters';
 import { MoreScreen, ReadingSettingsScreen } from '@/features/more/MoreScreen';
 import { SearchScreen } from '@/features/search/SearchScreen';
 import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
-import { UserScreen } from '@/features/user/UserScreen';
+import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import type { Screen } from '@/ui/navigation/types';
@@ -100,18 +99,36 @@ export function AppRoot() {
     if (!pushTopicRoute(topic)) pendingTopicNavigationRef.current = topic;
     return 'completed';
   }, []);
+  const openUserRoute = useCallback(
+    async (user: UserReference): Promise<LinuxDoReadResumeOutcome> => {
+      const normalized = normalizeUserReference(user);
+      if (!normalized) {
+        notify('用户信息不完整');
+        return 'completed';
+      }
+      pushUserRoute(normalized);
+      return 'completed';
+    },
+    [notify]
+  );
   const accountStatusInitialRefreshRef = useRef(false);
   const { commitReaderData, readerData, readerDataLoaded, readerDataRef, replaceReaderData, waitForReaderDataSave } =
     useReaderRuntime({ notify });
 
   const { moreScrollRef, requestTabScrollToTop, tabScrollToTopSignals } = useMainTabScrollToTop();
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
-  const { clearHistory, removeFollowedUser, removeLibraryTopic, toggleTopicFavorite, toggleUserFollow } =
-    useReaderDataActionsController({
-      commitReaderData,
-      libraryTab,
-      readerDataRef
-    });
+  const { clearHistory, removeFollowedUser, removeLibraryTopic, toggleTopicFavorite } = useReaderDataActionsController({
+    commitReaderData,
+    libraryTab,
+    readerDataRef
+  });
+  const followedUserRecords = useMemo(
+    () =>
+      Object.values(readerData.followedUsers).sort(
+        (left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)
+      ),
+    [readerData.followedUsers]
+  );
   const { updateSettings } = useReaderSettingsController({ commitReaderData });
   const [showNetworkProxyPanel, setShowNetworkProxyPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
@@ -530,37 +547,6 @@ export function AppRoot() {
     [closeMorePanels]
   );
 
-  const prepareUserNavigation = useCallback((user: UserReference) => {
-    pushUserRoute(user);
-  }, []);
-
-  const {
-    currentUserFollowed,
-    followedUserRecords,
-    loadMoreUserReplies,
-    loadMoreUserTopics,
-    openUser,
-    refreshUser,
-    selectedUser,
-    userBusy,
-    userError,
-    userLoadingMoreReplies,
-    userLoadingMoreTopics,
-    userProfile
-  } = useUserController({
-    identityBarriers: accountIdentityBarriers,
-    sessionEpochs: forumSessionEpochs,
-    notify,
-    onOpenUserScreen: prepareUserNavigation,
-    readerData,
-    screen,
-    showLinuxDoVerification,
-    showNodeSeekVerification: requestNodeSeekVerification,
-    readGateway,
-    showYaohuoLogin
-  });
-  const selectedUserIdentityCheck = selectedUser?.source === 'linuxdo' ? accountIdentityChecks.linuxdo : undefined;
-  const userIdentityError = selectedUserIdentityCheck?.pending ? selectedUserIdentityCheck.error : undefined;
   const linuxDoForegroundReadIntent = useMemo(() => {
     if (screen === 'feed' && feedSource === 'linuxdo') {
       return `feed:${categoryFilter}:${feedFilter || ''}`;
@@ -568,28 +554,14 @@ export function AppRoot() {
     if (screen === 'search' && searchSource === 'linuxdo' && submittedSearchQuery) {
       return `search:${submittedSearchQuery}:${JSON.stringify(searchFilters.linuxdo)}`;
     }
-    if (screen === 'user' && selectedUser?.source === 'linuxdo') {
-      return `user:${selectedUser.id || selectedUser.username || ''}`;
-    }
     return null;
-  }, [
-    categoryFilter,
-    feedFilter,
-    feedSource,
-    screen,
-    searchFilters.linuxdo,
-    searchSource,
-    selectedUser,
-    submittedSearchQuery
-  ]);
+  }, [categoryFilter, feedFilter, feedSource, screen, searchFilters.linuxdo, searchSource, submittedSearchQuery]);
   const linuxDoForegroundReadBlocked =
     screen === 'feed'
       ? shownFeedItems.length === 0
       : screen === 'search'
         ? !searchGroups.some((group) => group.source === 'linuxdo' && group.items.length > 0)
-        : screen === 'user'
-          ? !userProfile
-          : false;
+        : false;
 
   useEffect(() => {
     const openInternalTopic = (url: string | null) => {
@@ -644,22 +616,9 @@ export function AppRoot() {
     } else if (currentScreen === 'more') {
       itemCount = 1;
       isBusy = backupBusy || diagnosticBusy || appUpdateBusy || appUpdateDownloading || statusBusy;
-    } else if (currentScreen === 'topic') {
+    } else if (currentScreen === 'topic' || currentScreen === 'user') {
       itemCount = 1;
       emptyReason = 'route-owned';
-    } else {
-      itemCount = (userProfile?.topics?.length || 0) + (userProfile?.replies?.length || 0);
-      isBusy = userBusy || userLoadingMoreTopics || userLoadingMoreReplies;
-      hasError = Boolean(userError);
-      emptyReason = isBusy
-        ? 'loading'
-        : hasError
-          ? 'load-failed'
-          : userProfile
-            ? itemCount
-              ? 'none'
-              : 'no-items'
-            : 'no-user';
     }
     const stateKey = `${currentScreen}:${isBusy}:${hasError}:${itemCount}:${emptyReason}`;
     if (pageDiagnosticStateRef.current === stateKey) {
@@ -692,12 +651,7 @@ export function AppRoot() {
     searchGroups,
     shownFeedItems.length,
     statusBusy,
-    submittedSearchQuery,
-    userBusy,
-    userError,
-    userLoadingMoreReplies,
-    userLoadingMoreTopics,
-    userProfile
+    submittedSearchQuery
   ]);
 
   const { handleLinuxDoBrowserFetchMessage, handleNodeSeekBrowserFetchMessage } = useHiddenBrowserFetchController({
@@ -800,23 +754,15 @@ export function AppRoot() {
       void reconcileAccountStatus('linuxdo');
     }
   }, [reconcileAccountStatus, searchSource]);
-  const refreshCurrentUser = useCallback(() => {
-    if (userIdentityError && selectedUser?.source === 'linuxdo') {
-      void reconcileAccountStatus('linuxdo');
-      return;
-    }
-    void refreshUser();
-  }, [reconcileAccountStatus, refreshUser, selectedUser, userIdentityError]);
-
   const handleAccountCenterCommand = useCallback(
     async (command: AccountCenterCommand) => {
       if (command.type === 'open-user') {
-        await openUser(command.user);
+        await openUserRoute(command.user);
         return;
       }
       await handleAccountCenterRuntimeCommand(command);
     },
-    [handleAccountCenterRuntimeCommand, openUser]
+    [handleAccountCenterRuntimeCommand, openUserRoute]
   );
 
   const feedProps = useMemo(
@@ -971,7 +917,7 @@ export function AppRoot() {
       topicStateIndex,
       onClearHistory: clearHistory,
       onOpenTopic: openTopic,
-      onOpenUser: openUser,
+      onOpenUser: openUserRoute,
       onRemove: removeLibraryTopic,
       onRemoveUser: removeFollowedUser,
       onTabChange: setLibraryTab
@@ -983,7 +929,7 @@ export function AppRoot() {
       libraryRecords,
       libraryTab,
       openTopic,
-      openUser,
+      openUserRoute,
       readerDataLoaded,
       removeFollowedUser,
       removeLibraryTopic,
@@ -1168,49 +1114,6 @@ export function AppRoot() {
     ]
   );
 
-  const userProps = useMemo(
-    () => ({
-      busy: (userBusy && !userIdentityError) || Boolean(selectedUserIdentityCheck?.checking),
-      error: userIdentityError || userError || null,
-      followed: currentUserFollowed,
-      identityBlocked: Boolean(selectedUserIdentityCheck?.pending),
-      identityChecking: Boolean(selectedUserIdentityCheck?.checking),
-      profile: userProfile,
-      requestedUser: selectedUser,
-      topicStateIndex,
-      loadingMoreReplies: userLoadingMoreReplies,
-      loadingMoreTopics: userLoadingMoreTopics,
-      onBack: () => navigationRef.goBack(),
-      onLoadMoreReplies: loadMoreUserReplies,
-      onLoadMoreTopics: loadMoreUserTopics,
-      onCheckLinuxDoStatus: checkLinuxDoStatus,
-      onOpenOriginal: openExternalUrl,
-      onOpenTopic: openTopic,
-      onRefresh: refreshCurrentUser,
-      onToggleFollow: toggleUserFollow
-    }),
-    [
-      checkLinuxDoStatus,
-      currentUserFollowed,
-      loadMoreUserReplies,
-      loadMoreUserTopics,
-      openExternalUrl,
-      openTopic,
-      refreshCurrentUser,
-      selectedUser,
-      selectedUserIdentityCheck?.checking,
-      selectedUserIdentityCheck?.pending,
-      toggleUserFollow,
-      topicStateIndex,
-      userBusy,
-      userError,
-      userIdentityError,
-      userLoadingMoreReplies,
-      userLoadingMoreTopics,
-      userProfile
-    ]
-  );
-
   const topicRouteRuntime = useMemo<TopicRouteRuntimeValue>(
     () => ({
       account: {
@@ -1288,6 +1191,43 @@ export function AppRoot() {
     ]
   );
 
+  const userRouteRuntime = useMemo<UserRouteRuntimeValue>(
+    () => ({
+      account: {
+        identityBarriers: accountIdentityBarriers,
+        identityChecks: accountIdentityChecks,
+        linuxDoVerificationVisible: showLinuxDoPanel,
+        readGateway,
+        reconcileAccountStatus,
+        requestNodeSeekVerification,
+        sessionEpochs: forumSessionEpochs,
+        showLinuxDoVerification,
+        showYaohuoLogin
+      },
+      appActive,
+      notify,
+      reader: {
+        commit: commitReaderData,
+        data: readerData
+      }
+    }),
+    [
+      accountIdentityBarriers,
+      accountIdentityChecks,
+      appActive,
+      commitReaderData,
+      forumSessionEpochs,
+      notify,
+      readGateway,
+      readerData,
+      reconcileAccountStatus,
+      requestNodeSeekVerification,
+      showLinuxDoPanel,
+      showLinuxDoVerification,
+      showYaohuoLogin
+    ]
+  );
+
   const renderFeedTab = useCallback(() => <FeedScreen {...feedProps} />, [feedProps]);
   const renderSearchTab = useCallback(() => <SearchScreen {...searchProps} />, [searchProps]);
   const renderLibraryTab = useCallback(() => <LibraryScreen {...libraryProps} />, [libraryProps]);
@@ -1296,8 +1236,6 @@ export function AppRoot() {
     () => <ReadingSettingsScreen settings={readerData.settings} onUpdateSettings={updateSettings} />,
     [readerData.settings, updateSettings]
   );
-  const renderUserScreen = useCallback(() => <UserScreen {...userProps} />, [userProps]);
-
   const handleMainTabPress = useCallback(
     (targetScreen: keyof MainTabParamList) => {
       if (screen === targetScreen) {
@@ -1382,22 +1320,24 @@ export function AppRoot() {
                 />
                 {networkProxyContentReady ? (
                   <TopicRouteRuntimeProvider value={topicRouteRuntime}>
-                    <AppNavigator
-                      moreHasBadge={Boolean(appUpdateInfo)}
-                      navigationTheme={navigationTheme}
-                      renderFeedTab={renderFeedTab}
-                      renderLibraryTab={renderLibraryTab}
-                      renderMoreTab={renderMoreTab}
-                      renderReadingSettingsScreen={renderReadingSettingsScreen}
-                      renderSearchTab={renderSearchTab}
-                      TopicRouteComponent={TopicRoute}
-                      renderUserScreen={renderUserScreen}
-                      styles={appStyles}
-                      theme={theme}
-                      onReady={handleNavigationReady}
-                      onScreenChange={handleNavigationScreenChange}
-                      onTabPress={handleMainTabPress}
-                    />
+                    <UserRouteRuntimeProvider value={userRouteRuntime}>
+                      <AppNavigator
+                        moreHasBadge={Boolean(appUpdateInfo)}
+                        navigationTheme={navigationTheme}
+                        renderFeedTab={renderFeedTab}
+                        renderLibraryTab={renderLibraryTab}
+                        renderMoreTab={renderMoreTab}
+                        renderReadingSettingsScreen={renderReadingSettingsScreen}
+                        renderSearchTab={renderSearchTab}
+                        TopicRouteComponent={TopicRoute}
+                        UserRouteComponent={UserRoute}
+                        styles={appStyles}
+                        theme={theme}
+                        onReady={handleNavigationReady}
+                        onScreenChange={handleNavigationScreenChange}
+                        onTabPress={handleMainTabPress}
+                      />
+                    </UserRouteRuntimeProvider>
                   </TopicRouteRuntimeProvider>
                 ) : null}
               </SafeAreaView>

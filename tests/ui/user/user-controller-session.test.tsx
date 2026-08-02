@@ -26,15 +26,19 @@ const user: UserProfile = {
 };
 
 function renderUserController({
+  getActive = () => true,
   getIdentityBarriers = () => [],
   getSessionEpochs = () => initialForumSessionEpochs,
+  getUser = () => user,
   getUserProfile,
   resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(),
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
   showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
 }: {
+  getActive?: () => boolean;
   getIdentityBarriers?: () => ForumIdentityBarrierSource[];
   getSessionEpochs?: () => ForumSessionEpochs;
+  getUser?: () => UserReference;
   getUserProfile: ReadGateway['getUserProfile'];
   resolveNodeSeekUser?: ReadGateway['resolveNodeSeekUser'];
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
@@ -42,16 +46,16 @@ function renderUserController({
 }) {
   return renderHook(() =>
     useUserController({
+      active: getActive(),
       identityBarriers: getIdentityBarriers(),
       sessionEpochs: getSessionEpochs(),
       notify: jest.fn(),
-      onOpenUserScreen: jest.fn(),
       readerData: createEmptyReaderData(),
-      screen: 'user',
       showLinuxDoVerification,
       showNodeSeekVerification,
       showYaohuoLogin: jest.fn(),
-      readGateway: { getUserProfile, resolveNodeSeekUser } as unknown as ReadGateway
+      readGateway: { getUserProfile, resolveNodeSeekUser } as unknown as ReadGateway,
+      user: getUser()
     })
   );
 }
@@ -62,6 +66,38 @@ describe('user query controller', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+  });
+
+  it('[REG-PERF-008][REG-ACCOUNT-031] gates route queries and commands while inactive', async () => {
+    let active = false;
+    let signal: AbortSignal | undefined;
+    const pending = Promise.withResolvers<UserProfile>();
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async (request) => {
+      signal = request.signal;
+      return pending.promise;
+    });
+    const hook = await renderUserController({ getActive: () => active, getUserProfile });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(getUserProfile).not.toHaveBeenCalled();
+    await expect(hook.result.current.refreshUser()).resolves.toBe('stale');
+
+    active = true;
+    await act(async () => {
+      hook.rerender(undefined);
+    });
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
+
+    active = false;
+    await act(async () => {
+      hook.rerender(undefined);
+    });
+    await waitFor(() => expect(signal?.aborted).toBe(true));
+    await expect(hook.result.current.loadMoreUserTopics()).resolves.toBe('stale');
+
+    pending.resolve(user);
   });
 
   it('[REG-TOPIC-039] resolves a username before loading the canonical NodeSeek profile', async () => {
@@ -80,12 +116,7 @@ describe('user query controller', () => {
       hasMoreTopics: !cursorType,
       nextTopicsCursor: cursorType ? null : 'topics-2'
     }));
-    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
-
-    await act(async () => {
-      void hook.result.current.openUser(reference);
-      void hook.result.current.openUser(reference);
-    });
+    const hook = await renderUserController({ getUser: () => reference, getUserProfile, resolveNodeSeekUser });
     await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1));
     expect(getUserProfile).not.toHaveBeenCalled();
     expect(hook.result.current.userBusy).toBe(true);
@@ -141,11 +172,7 @@ describe('user query controller', () => {
       id: '8052',
       username: 'xy'
     }));
-    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
-
-    await act(async () => {
-      void hook.result.current.openUser(reference);
-    });
+    const hook = await renderUserController({ getUser: () => reference, getUserProfile, resolveNodeSeekUser });
     await waitFor(() => expect(hook.result.current.userError).not.toBeNull());
     expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
     expect(getUserProfile).not.toHaveBeenCalled();
@@ -184,10 +211,11 @@ describe('user query controller', () => {
       username: 'xy'
     }));
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser, showNodeSeekVerification });
-
-    await act(async () => {
-      void hook.result.current.openUser(reference);
+    const hook = await renderUserController({
+      getUser: () => reference,
+      getUserProfile,
+      resolveNodeSeekUser,
+      showNodeSeekVerification
     });
     await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
     const recovery = showNodeSeekVerification.mock.calls[0]?.[1];
@@ -212,15 +240,16 @@ describe('user query controller', () => {
       .mockResolvedValueOnce({ ...user, id: '1414', username: '男朋友' });
     const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>();
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser, showNodeSeekVerification });
-
-    await act(async () => {
-      void hook.result.current.openUser({
+    const hook = await renderUserController({
+      getUser: () => ({
         source: 'nodeseek',
         id: '1414',
         username: '男朋友',
         url: 'https://www.nodeseek.com/space/1414'
-      });
+      }),
+      getUserProfile,
+      resolveNodeSeekUser,
+      showNodeSeekVerification
     });
     await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
     const recovery = showNodeSeekVerification.mock.calls[0]?.[1];
@@ -251,15 +280,15 @@ describe('user query controller', () => {
         })
       );
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderUserController({ getUserProfile, showNodeSeekVerification });
-
-    await act(async () => {
-      void hook.result.current.openUser({
+    const hook = await renderUserController({
+      getUser: () => ({
         source: 'nodeseek',
         id: '1414',
         username: '男朋友',
         url: 'https://www.nodeseek.com/space/1414'
-      });
+      }),
+      getUserProfile,
+      showNodeSeekVerification
     });
     await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('1414'));
     await act(async () => {
@@ -278,17 +307,14 @@ describe('user query controller', () => {
     });
     const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const hook = await renderUserController({
-      getUserProfile: jest.fn<ReadGateway['getUserProfile']>(),
-      resolveNodeSeekUser,
-      showNodeSeekVerification
-    });
-
-    await act(async () => {
-      void hook.result.current.openUser({
+      getUser: () => ({
         source: 'nodeseek',
         username: 'xy',
         url: 'https://www.nodeseek.com/member?t=xy'
-      });
+      }),
+      getUserProfile: jest.fn<ReadGateway['getUserProfile']>(),
+      resolveNodeSeekUser,
+      showNodeSeekVerification
     });
     await waitFor(() => expect(hook.result.current.userError?.kind).toBe('login-required'));
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
@@ -316,12 +342,9 @@ describe('user query controller', () => {
     const hook = await renderUserController({
       getIdentityBarriers: () => identityBarriers,
       getSessionEpochs: () => sessionEpochs,
+      getUser: () => reference,
       getUserProfile,
       resolveNodeSeekUser
-    });
-
-    await act(async () => {
-      void hook.result.current.openUser(reference);
     });
     await act(async () => {
       await Promise.resolve();
@@ -365,22 +388,25 @@ describe('user query controller', () => {
       username: username || id,
       url: `https://www.nodeseek.com/space/${id}`
     }));
-    const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
-
-    await act(async () => {
-      void hook.result.current.openUser({
-        source: 'nodeseek',
-        username: 'old-user',
-        url: 'https://www.nodeseek.com/member?t=old-user'
-      });
+    let routeUser: UserReference = {
+      source: 'nodeseek',
+      username: 'old-user',
+      url: 'https://www.nodeseek.com/member?t=old-user'
+    };
+    const hook = await renderUserController({
+      getUser: () => routeUser,
+      getUserProfile,
+      resolveNodeSeekUser
     });
+
     await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1));
     await act(async () => {
-      void hook.result.current.openUser({
+      routeUser = {
         source: 'nodeseek',
         username: 'new-user',
         url: 'https://www.nodeseek.com/member?t=new-user'
-      });
+      };
+      hook.rerender(undefined);
     });
     await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('22'));
     expect(oldSignal?.aborted).toBe(true);
@@ -417,10 +443,6 @@ describe('user query controller', () => {
       replies: []
     }));
     const hook = await renderUserController({ getUserProfile, resolveNodeSeekUser });
-
-    await act(async () => {
-      void hook.result.current.openUser(user);
-    });
     await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
 
     expect(getUserProfile).toHaveBeenCalledTimes(1);
@@ -434,10 +456,6 @@ describe('user query controller', () => {
     const hook = await renderUserController({
       getIdentityBarriers: () => identityBarriers,
       getUserProfile
-    });
-
-    await act(async () => {
-      await hook.result.current.openUser(user);
     });
     await waitFor(() =>
       expect(hook.result.current.userProfile).toMatchObject({
@@ -512,10 +530,6 @@ describe('user query controller', () => {
           };
     });
     const hook = await renderUserController({ getUserProfile });
-
-    await act(async () => {
-      void hook.result.current.openUser(user);
-    });
     await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
     await act(async () => {
       await Promise.all([hook.result.current.loadMoreUserTopics(), hook.result.current.loadMoreUserReplies()]);
@@ -567,10 +581,6 @@ describe('user query controller', () => {
       })
       .mockImplementationOnce(async () => refresh.promise);
     const hook = await renderUserController({ getUserProfile });
-
-    await act(async () => {
-      await hook.result.current.openUser(user);
-    });
     await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
     await act(async () => {
       await hook.result.current.loadMoreUserTopics();
@@ -629,10 +639,10 @@ describe('user query controller', () => {
       .mockResolvedValueOnce(oldRouteProfile)
       .mockImplementationOnce(async () => replacement.promise);
     let sessionEpochs = initialForumSessionEpochs;
-    const hook = await renderUserController({ getSessionEpochs: () => sessionEpochs, getUserProfile });
-
-    await act(async () => {
-      void hook.result.current.openUser(oldRouteProfile);
+    const hook = await renderUserController({
+      getSessionEpochs: () => sessionEpochs,
+      getUser: () => oldRouteProfile,
+      getUserProfile
     });
     await waitFor(() =>
       expect(hook.result.current.userProfile).toMatchObject({
@@ -692,10 +702,10 @@ describe('user query controller', () => {
       return { ...linuxUser, topics: [secondTopic], hasMoreTopics: false, nextTopicsCursor: null };
     });
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderUserController({ getUserProfile, showLinuxDoVerification });
-
-    await act(async () => {
-      void hook.result.current.openUser(linuxUser);
+    const hook = await renderUserController({
+      getUser: () => linuxUser,
+      getUserProfile,
+      showLinuxDoVerification
     });
     await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
     await act(async () => {
@@ -727,10 +737,10 @@ describe('user query controller', () => {
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new Error('恢复后网络失败'));
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const hook = await renderUserController({ getUserProfile, showLinuxDoVerification });
-
-    await act(async () => {
-      void hook.result.current.openUser(linuxUser);
+    await renderUserController({
+      getUser: () => linuxUser,
+      getUserProfile,
+      showLinuxDoVerification
     });
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
@@ -759,10 +769,6 @@ describe('user query controller', () => {
     );
     const hook = await renderUserController({
       getUserProfile: jest.fn<ReadGateway['getUserProfile']>(async () => parsedEmpty)
-    });
-
-    await act(async () => {
-      void hook.result.current.openUser(user);
     });
     await waitFor(() => expect(hook.result.current.userError?.message).toContain('解析为空'));
     expect(hook.result.current.userProfile).toBeNull();

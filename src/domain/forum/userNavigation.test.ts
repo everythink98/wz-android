@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { nodeSeekUserIdFromValue, topicWithAuthorFallback, userFromReply, userFromTopic } from './userNavigation';
+import {
+  nodeSeekUserIdFromValue,
+  normalizeUserReference,
+  topicWithAuthorFallback,
+  userFromReply,
+  userFromTopic
+} from './userNavigation';
 import type { Reply, Topic, TopicDetail } from './models';
 
 describe('Android user navigation helpers', () => {
@@ -7,6 +13,25 @@ describe('Android user navigation helpers', () => {
     expect(nodeSeekUserIdFromValue('https://www.nodeseek.com/space/15105#/discussions')).toBe('15105');
     expect(nodeSeekUserIdFromValue('/space/15105#/discussions')).toBe('15105');
     expect(nodeSeekUserIdFromValue('Bugs')).toBe('');
+  });
+
+  it('normalizes serializable route references without treating a username as a NodeSeek ID', () => {
+    expect(
+      normalizeUserReference({
+        source: 'nodeseek',
+        id: 'https://www.nodeseek.com/space/15105#/discussions',
+        username: ' Bugs ',
+        url: 'https://www.nodeseek.com/space/15105#/discussions'
+      })
+    ).toMatchObject({ source: 'nodeseek', id: '15105', username: 'Bugs' });
+    expect(
+      normalizeUserReference({
+        source: 'nodeseek',
+        username: ' Bugs ',
+        url: 'https://www.nodeseek.com/member?t=Bugs'
+      })
+    ).toMatchObject({ source: 'nodeseek', username: 'Bugs' });
+    expect(normalizeUserReference({ source: 'v2ex', username: ' ', url: '' })).toBeNull();
   });
 
   it('keeps NodeSeek author navigation available when detail data loses the list author ID', () => {

@@ -25,6 +25,7 @@ const styles = createStyles(theme, readerData.settings, 800);
 const topicA = topic('A');
 const topicB = topic('B');
 const user: UserReference = { source: 'linuxdo', id: '7', username: 'alice', url: 'https://linux.do/u/alice' };
+const userB: UserReference = { source: 'linuxdo', id: '8', username: 'bob', url: 'https://linux.do/u/bob' };
 
 function topic(id: string): Topic {
   return {
@@ -103,6 +104,24 @@ function StatefulTopicRoute({ navigation, route }: NativeStackScreenProps<RootSt
   );
 }
 
+function StatefulUserRoute({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'User'>) {
+  const identity = route.params.user.id || route.params.user.username || '';
+  const [filter, setFilter] = useState('topics');
+  const [scrollY, setScrollY] = useState('0');
+  return (
+    <View>
+      <Text>{`用户详情页面 ${route.params.user.username || route.params.user.id}`}</Text>
+      <TextInput accessibilityLabel={`${identity}用户筛选`} value={filter} onChangeText={setFilter} />
+      <TextInput accessibilityLabel={`${identity}用户滚动`} value={scrollY} onChangeText={setScrollY} />
+      {identity === '7' ? (
+        <Pressable accessibilityLabel="打开用户 B" onPress={() => navigation.push('User', { user: userB })}>
+          <Text>打开用户 B</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 function Navigator({ moreHasBadge = false }: { moreHasBadge?: boolean }) {
   return (
     <AppNavigator
@@ -114,7 +133,7 @@ function Navigator({ moreHasBadge = false }: { moreHasBadge?: boolean }) {
       renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
       renderSearchTab={() => <StatefulTab label="搜索" />}
       TopicRouteComponent={StatefulTopicRoute}
-      renderUserScreen={() => <Text>用户详情页面</Text>}
+      UserRouteComponent={StatefulUserRoute}
       styles={styles}
       theme={theme}
       onReady={jest.fn()}
@@ -185,7 +204,19 @@ describe('App navigator UI state', () => {
     });
 
     await fireEvent.press(view.getByLabelText('打开用户'));
-    await waitFor(() => expect(view.getByText('用户详情页面')).toBeTruthy());
+    await waitFor(() => expect(view.getByText('用户详情页面 alice')).toBeTruthy());
+    await fireEvent.changeText(view.getByLabelText('7用户筛选'), 'replies');
+    await fireEvent.changeText(view.getByLabelText('7用户滚动'), '320');
+    await fireEvent.press(view.getByLabelText('打开用户 B'));
+    await waitFor(() => expect(view.getByText('用户详情页面 bob')).toBeTruthy());
+    await fireEvent.changeText(view.getByLabelText('8用户筛选'), 'topics-b');
+    await act(async () => {
+      navigationRef.goBack();
+    });
+    await waitFor(() => {
+      expect(view.getByLabelText('7用户筛选').props.value).toBe('replies');
+      expect(view.getByLabelText('7用户滚动').props.value).toBe('320');
+    });
     await act(async () => {
       navigationRef.goBack();
     });
@@ -233,7 +264,7 @@ describe('App navigator UI state', () => {
       navigationRef.goBack();
       expect(pushUserRoute(user)).toBe(true);
     });
-    await waitFor(() => expect(view.getByText('用户详情页面')).toBeTruthy());
+    await waitFor(() => expect(view.getByText('用户详情页面 alice')).toBeTruthy());
     expect(navigationRef.getCurrentRoute()?.params).toEqual({ user });
   });
 });

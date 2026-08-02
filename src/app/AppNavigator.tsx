@@ -156,7 +156,7 @@ export const AppNavigator = memo(function AppNavigator({
   renderReadingSettingsScreen,
   renderSearchTab,
   TopicRouteComponent,
-  renderUserScreen,
+  UserRouteComponent,
   styles,
   theme,
   onReady,
@@ -171,7 +171,7 @@ export const AppNavigator = memo(function AppNavigator({
   renderReadingSettingsScreen: () => ReactNode;
   renderSearchTab: () => ReactNode;
   TopicRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'Topic'>>;
-  renderUserScreen: () => ReactNode;
+  UserRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'User'>>;
   styles: AppStyles;
   theme: ReaderTheme;
   onReady: () => void;
@@ -218,7 +218,7 @@ export const AppNavigator = memo(function AppNavigator({
         <Stack.Screen name="ReadingSettings" options={{ headerShown: true, title: '阅读设置' }}>
           {renderReadingSettingsScreen}
         </Stack.Screen>
-        <Stack.Screen name="User">{renderUserScreen}</Stack.Screen>
+        <Stack.Screen name="User" component={UserRouteComponent} />
       </Stack.Navigator>
     </NavigationContainer>
   );

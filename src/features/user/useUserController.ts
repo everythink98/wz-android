@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
 import { mergeTopics } from '@/domain/forum/feed';
 import {
@@ -8,8 +8,8 @@ import {
   markDiagnosticStage,
   normalizeDiagnosticReason
 } from '@/platform/diagnostics/diagnostics';
-import { isUserFollowed, type FollowedUserRecord, type ReaderData } from '@/domain/reader/readerData';
-import { nodeSeekUserIdFromValue } from '@/domain/forum/userNavigation';
+import { isUserFollowed, type ReaderData } from '@/domain/reader/readerData';
+import { nodeSeekUserIdFromValue, normalizeUserReference } from '@/domain/forum/userNavigation';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
 import type {
@@ -20,7 +20,6 @@ import type {
   UserReference,
   UserReplyActivity
 } from '@/domain/forum/models';
-import type { Screen } from '@/ui/navigation/types';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -64,25 +63,6 @@ export function hasNextUserPage(
   return Boolean(hasMore && nextCursor && nextCursor !== requestedCursor);
 }
 
-function normalizeRequestedUser(user: UserReference): UserReference | null {
-  const username = user.username?.trim() || undefined;
-  const id =
-    user.source === 'nodeseek'
-      ? nodeSeekUserIdFromValue(user.id) || nodeSeekUserIdFromValue(user.url) || undefined
-      : user.id?.trim() || username;
-  if (!id && !username) {
-    return null;
-  }
-  const identity = id ? { id, ...(username ? { username } : {}) } : { username: username! };
-  return {
-    source: user.source,
-    ...identity,
-    displayName: user.displayName,
-    avatar: user.avatar,
-    url: user.url || ''
-  };
-}
-
 function nextUserCursor(profile: UserProfile, lane: UserLane) {
   return lane === 'topics' ? profile.nextTopicsCursor : profile.nextRepliesCursor;
 }
@@ -115,23 +95,22 @@ function firstLaneData(profile: UserProfile): InfiniteData<UserProfile, string |
 }
 
 export function useUserController({
+  active,
   identityBarriers = [],
   sessionEpochs = initialForumSessionEpochs,
   notify,
-  onOpenUserScreen,
   readerData,
-  screen,
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
-  readGateway
+  readGateway,
+  user
 }: {
+  active: boolean;
   identityBarriers?: readonly ForumIdentityBarrierSource[];
   sessionEpochs?: ForumSessionEpochs;
   notify: (message: string) => void;
-  onOpenUserScreen: (user: UserReference) => void;
   readerData: ReaderData;
-  screen: Screen;
   showLinuxDoVerification: (
     message?: string,
     recovery?: LinuxDoReadRecovery
@@ -139,21 +118,20 @@ export function useUserController({
   showNodeSeekVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
+  user: UserReference;
 }) {
   const queryClient = useQueryClient();
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const handledUserErrorAtRef = useRef<Record<'resolution' | 'profile' | UserLane, number>>({
     profile: 0,
     resolution: 0,
     replies: 0,
     topics: 0
   });
-  const [selectedUser, setSelectedUser] = useState<UserReference | null>(null);
-  const followedUserRecords = useMemo<FollowedUserRecord[]>(
-    () =>
-      Object.values(readerData.followedUsers).sort(
-        (left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)
-      ),
-    [readerData.followedUsers]
+  const selectedUser = useMemo(
+    () => normalizeUserReference(user),
+    [user.avatar, user.displayName, user.id, user.source, user.url, user.username]
   );
   const selectedSource = selectedUser?.source || 'v2ex';
   const selectedUsername = selectedUser?.username || '';
@@ -171,7 +149,7 @@ export function useUserController({
       }),
     [sessionEpochs.nodeseek, selectedUsername]
   );
-  const resolutionEnabled = Boolean(selectedNeedsResolution && screen === 'user' && !selectedIdentityPending);
+  const resolutionEnabled = Boolean(selectedNeedsResolution && active && !selectedIdentityPending);
   const resolutionQuery = useQuery({
     queryKey: resolutionKey,
     enabled: resolutionEnabled,
@@ -223,7 +201,7 @@ export function useUserController({
   );
   const topicKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'topics'), [profileKey]);
   const replyKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'replies'), [profileKey]);
-  const enabled = Boolean(canonicalUser && identity && screen === 'user' && !selectedIdentityPending);
+  const enabled = Boolean(canonicalUser && identity && active && !selectedIdentityPending);
 
   const profileQuery = useQuery({
     queryKey: profileKey,
@@ -361,7 +339,7 @@ export function useUserController({
       lane: 'resolution' | 'profile' | UserLane,
       resume: () => Promise<{ error: unknown; errorUpdatedAt: number; isError: boolean }>
     ) => {
-      if (!selectedUser) return;
+      if (!active || !selectedUser) return;
       const sourceError = sourceErrorFromUnknown(selectedUser.source, error);
       const target = userSourceRecoveryTarget(selectedUser.source, sourceError);
       if (target === 'linuxdo-verification') {
@@ -376,6 +354,7 @@ export function useUserController({
         const recovery: LinuxDoReadRecovery = {
           queryKey,
           resume: async () => {
+            if (!activeRef.current) return 'stale';
             const result = await resume();
             handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
             return result.isError ? sourceReadRecoveryOutcome('linuxdo', result.error) : 'completed';
@@ -391,6 +370,7 @@ export function useUserController({
         const recovery: LinuxDoReadRecovery = {
           queryKey,
           resume: async () => {
+            if (!activeRef.current) return 'stale';
             const result = await resume();
             handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
             return result.isError ? sourceReadRecoveryOutcome('nodeseek', result.error) : 'completed';
@@ -404,6 +384,7 @@ export function useUserController({
       }
     },
     [
+      active,
       notify,
       profileKey,
       replyKey,
@@ -465,26 +446,8 @@ export function useUserController({
     selectedUser?.source
   ]);
 
-  const openUser = useCallback(
-    async (user: UserReference): Promise<LinuxDoReadResumeOutcome> => {
-      if (!user.id && !user.username) {
-        notify('用户信息不完整');
-        return 'completed';
-      }
-      const requested = normalizeRequestedUser(user);
-      if (!requested) {
-        notify('用户信息不完整');
-        return 'completed';
-      }
-      onOpenUserScreen(user);
-      setSelectedUser(requested);
-      return 'completed';
-    },
-    [notify, onOpenUserScreen]
-  );
-
   const refreshUser = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!selectedUser) return 'completed';
+    if (!active || !selectedUser) return 'stale';
     if (selectedIdentityPending) return 'stale';
     if (selectedNeedsResolution && !resolutionQuery.data) {
       const result = await resolutionQuery.refetch({ cancelRefetch: true });
@@ -499,6 +462,7 @@ export function useUserController({
     }
     return 'completed';
   }, [
+    active,
     identity,
     profileKey,
     queryClient,
@@ -512,7 +476,7 @@ export function useUserController({
   ]);
 
   const loadMoreUserTopics = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (selectedIdentityPending) return 'stale';
+    if (!active || selectedIdentityPending) return 'stale';
     if (topicsQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
     seedUserLane(topicKey);
     if (queryClient.getQueryState(topicKey)?.fetchStatus === 'fetching') {
@@ -529,6 +493,7 @@ export function useUserController({
     const result = await topicsQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
   }, [
+    active,
     profileQuery.data,
     queryClient,
     seedUserLane,
@@ -539,7 +504,7 @@ export function useUserController({
     topicsQuery.refetch
   ]);
   const loadMoreUserReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (selectedIdentityPending) return 'stale';
+    if (!active || selectedIdentityPending) return 'stale';
     if (repliesQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
     seedUserLane(replyKey);
     if (queryClient.getQueryState(replyKey)?.fetchStatus === 'fetching') {
@@ -556,6 +521,7 @@ export function useUserController({
     const result = await repliesQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
   }, [
+    active,
     profileQuery.data,
     queryClient,
     repliesQuery.fetchNextPage,
@@ -567,12 +533,12 @@ export function useUserController({
   ]);
 
   useEffect(() => {
-    if (screen === 'user' || !selectedUser) return;
+    if (active || !selectedUser) return;
     void queryClient.cancelQueries({ queryKey: resolutionKey, exact: true });
     void queryClient.cancelQueries({ queryKey: profileKey, exact: true });
     void queryClient.cancelQueries({ queryKey: topicKey, exact: true });
     void queryClient.cancelQueries({ queryKey: replyKey, exact: true });
-  }, [profileKey, queryClient, replyKey, resolutionKey, screen, selectedUser, topicKey]);
+  }, [active, profileKey, queryClient, replyKey, resolutionKey, selectedUser, topicKey]);
 
   useEffect(
     () => () => {
@@ -586,10 +552,8 @@ export function useUserController({
 
   return {
     currentUserFollowed,
-    followedUserRecords,
     loadMoreUserReplies,
     loadMoreUserTopics,
-    openUser,
     refreshUser,
     selectedUser,
     userBusy: (resolutionQuery.isFetching && resolutionEnabled) || (profileQuery.isFetching && enabled),

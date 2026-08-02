@@ -8,6 +8,22 @@ export function nodeSeekUserIdFromValue(value?: string) {
   return text.match(/(?:^|\/)space\/(\d+)(?:[/?#]|$)/)?.[1] || (/^\d+$/.test(text) ? text : '');
 }
 
+export function normalizeUserReference(user: UserReference): UserReference | null {
+  const username = user.username?.trim() || undefined;
+  const id =
+    user.source === 'nodeseek'
+      ? nodeSeekUserIdFromValue(user.id) || nodeSeekUserIdFromValue(user.url) || undefined
+      : user.id?.trim() || username;
+  if (!id && !username) return null;
+  return {
+    source: user.source,
+    ...(id ? { id, ...(username ? { username } : {}) } : { username: username! }),
+    displayName: user.displayName,
+    avatar: user.avatar,
+    url: user.url || ''
+  };
+}
+
 function nodeSeekAuthorId(authorId?: string, authorUrl?: string) {
   return nodeSeekUserIdFromValue(authorId) || nodeSeekUserIdFromValue(authorUrl);
 }
