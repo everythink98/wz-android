@@ -533,10 +533,12 @@ describe('Android release evidence guards', () => {
     expect(searchScreen).not.toContain('search-result-first');
     expect(searchScreen).toContain("'search-all-sources-settled'");
     expect(searchScreen).toContain("'search-complete'");
-    expect(readProjectFile('src', 'features', 'topic', 'TopicScreen.tsx')).toContain(
+    expect(readProjectFile('src', 'features', 'topic', 'components', 'TopicContentList.tsx')).toContain(
       "testID={topic ? 'topic-detail-loaded' : undefined}"
     );
-    expect(readProjectFile('src', 'features', 'topic', 'TopicScreen.tsx')).toContain('testID="topic-author"');
+    expect(readProjectFile('src', 'features', 'topic', 'components', 'TopicContentList.tsx')).toContain(
+      'testID="topic-author"'
+    );
     const userScreen = readProjectFile('src', 'features', 'user', 'UserScreen.tsx');
     expect(userScreen).toContain("testID={profile && !busy ? 'user-screen-loaded' : undefined}");
     expect(userScreen).toContain("testID={index === 0 ? 'user-topic-first' : undefined}");
@@ -548,12 +550,12 @@ describe('Android release evidence guards', () => {
     expect(libraryScreen).toContain("'library-history-first'");
     const accountCenter = readProjectFile('src', 'features', 'more', 'components', 'AccountCenterPanel.tsx');
     expect(accountCenter).toContain('testID={`account-site-${view.site}`}');
-    const morePanels = readProjectFile('src', 'features', 'more', 'components', 'MorePanels.tsx');
-    expect(morePanels).toContain('webViewSettledForReplay');
-    expect(morePanels).toContain("'nodeseek-login-webview-settled'");
-    expect(morePanels).not.toContain("'nodeseek-login-webview-ready'");
-    expect(morePanels).not.toContain('NODESEEK_REPLAY_READINESS_SCRIPT');
-    expect(morePanels).not.toContain('NODESEEK_REPLAY_READY_MESSAGE');
+    const nodeSeekLoginPanel = readProjectFile('src', 'features', 'more', 'components', 'NodeSeekLoginPanel.tsx');
+    expect(nodeSeekLoginPanel).toContain('webViewSettledForReplay');
+    expect(nodeSeekLoginPanel).toContain("'nodeseek-login-webview-settled'");
+    expect(nodeSeekLoginPanel).not.toContain("'nodeseek-login-webview-ready'");
+    expect(nodeSeekLoginPanel).not.toContain('NODESEEK_REPLAY_READINESS_SCRIPT');
+    expect(nodeSeekLoginPanel).not.toContain('NODESEEK_REPLAY_READY_MESSAGE');
   });
 
   it('keeps diagnostic logging initialized and wired into the More screen', () => {

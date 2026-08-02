@@ -14,14 +14,8 @@ describe('WebView proxy guard', () => {
     const appRuntime = readSource('src', 'app', 'useAppRuntime.tsx');
     const hiddenBrowserHost = readSource('src', 'features', 'account', 'HiddenBrowserHost.tsx');
     const accountHost = readSource('src', 'features', 'account', 'AccountHost.tsx');
-    const htmlRenderingController = readSource(
-      'src',
-      'features',
-      'topic',
-      'rendering',
-      'useHtmlRenderingController.tsx'
-    );
-    const morePanels = readSource('src', 'features', 'more', 'components', 'MorePanels.tsx');
+    const contentMediaRenderers = readSource('src', 'features', 'topic', 'rendering', 'contentMediaRenderers.tsx');
+    const yaohuoLoginPanel = readSource('src', 'features', 'more', 'components', 'YaohuoLoginPanel.tsx');
 
     expect(appRuntime).toContain('const networkProxyWebViewBlockMessage =');
     expect(appRuntime).toContain('blockedMessage: networkProxyWebViewBlockMessage');
@@ -32,7 +26,7 @@ describe('WebView proxy guard', () => {
     expect(hiddenBrowserHost).toContain('!blockedMessage && nodeSeekBrowserFetchRequest');
     expect(hiddenBrowserHost).toContain('!blockedMessage && linuxDoBrowserFetchRequest');
     expect(accountHost).toContain('webViewBlockMessage || nodeImageAuthError');
-    expect(htmlRenderingController).toContain('webViewBlockMessage ? (');
-    expect(morePanels).toContain('webViewBlockMessage || webViewError');
+    expect(contentMediaRenderers).toContain('webViewBlockMessage ? (');
+    expect(yaohuoLoginPanel).toContain('webViewBlockMessage || webViewError');
   });
 });

@@ -17,6 +17,40 @@ const ALLOWED_DEPENDENCIES = {
 };
 const CODE_EXTENSIONS = ['.ts', '.tsx'];
 const METRO_RESOLUTION_EXTENSIONS = ['.android.ts', '.android.tsx', '.native.ts', '.native.tsx', ...CODE_EXTENSIONS];
+const APP_COMPOSITION_ALLOWED_INTERNAL_IMPORTS = new Set([
+  './AppRoutes',
+  './useAppRuntime',
+  '@/features/account/AccountHost',
+  '@/features/account/HiddenBrowserHost',
+  '@/platform/media/mediaSessionEpoch',
+  '@/ui/theme/ReaderStyleProvider'
+]);
+const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
+  './AppNavigator',
+  '@/features/feed/FeedRoute',
+  '@/features/library/LibraryRoute',
+  '@/features/more/MoreRoute',
+  '@/features/search/SearchRoute',
+  '@/features/topic/TopicRoute',
+  '@/features/user/UserRoute'
+]);
+const APP_ROOT_FORBIDDEN_REACT_HOOKS = new Set(['useCallback', 'useEffect', 'useRef', 'useState']);
+const FORBIDDEN_LEGACY_MODULE_NAMES = new Set([
+  'GlobalModalHost',
+  'MorePanels',
+  'TopicPresentationContext',
+  'backHandlerHelpers',
+  'htmlImages',
+  'topicBackStack',
+  'topicPresentationCache',
+  'topicPresentationContext',
+  'topicRouteSnapshotStore',
+  'topicRouteSnapshots',
+  'useDeferredNavigationTask',
+  'useMainTabScrollToTop',
+  'userReturnSnapshot',
+  'aggregateRead'
+]);
 
 function normalizedPath(filePath) {
   return path.resolve(filePath).toLowerCase();
@@ -67,6 +101,92 @@ function importedModuleSpecifiers(filePath) {
   };
   visit(sourceFile);
   return [...specifiers];
+}
+
+function importedAppRootStateHooks(filePath) {
+  const sourceText = readFileSync(filePath, 'utf8');
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+  const hooks = new Set();
+  const reactNamespaces = new Set();
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || statement.moduleSpecifier.text !== 'react') continue;
+    const clause = statement.importClause;
+    if (!clause) continue;
+    if (clause.name) reactNamespaces.add(clause.name.text);
+    if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+      reactNamespaces.add(clause.namedBindings.name.text);
+    } else if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+      for (const element of clause.namedBindings.elements) {
+        const importedName = element.propertyName?.text || element.name.text;
+        if (APP_ROOT_FORBIDDEN_REACT_HOOKS.has(importedName)) hooks.add(importedName);
+      }
+    }
+  }
+
+  const visit = (node) => {
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      reactNamespaces.has(node.expression.text) &&
+      APP_ROOT_FORBIDDEN_REACT_HOOKS.has(node.name.text)
+    ) {
+      hooks.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...hooks];
+}
+
+function isInternalSpecifier(specifier) {
+  return specifier.startsWith('@/') || specifier.startsWith('.');
+}
+
+function moduleName(modulePath) {
+  const withoutExtension = modulePath.replace(/(?:\.android|\.native)?\.tsx?$/, '');
+  return path.posix.basename(withoutExtension);
+}
+
+function internalModulePath(fromFile, specifier) {
+  if (specifier.startsWith('@/')) return specifier.slice(2);
+  if (specifier.startsWith('.')) return path.posix.normalize(path.posix.join(path.posix.dirname(fromFile), specifier));
+  return null;
+}
+
+function compositionIssue(fromFile, specifier) {
+  if (!isInternalSpecifier(specifier)) return null;
+  if (fromFile === 'app/AppRoot.tsx' && specifier !== './AppComposition') {
+    return {
+      code: 'app-root-import',
+      message: `${fromFile} 只能直接依赖 AppComposition：${specifier}`
+    };
+  }
+  if (fromFile === 'app/AppComposition.tsx' && !APP_COMPOSITION_ALLOWED_INTERNAL_IMPORTS.has(specifier)) {
+    return {
+      code: 'app-composition-import',
+      message: `${fromFile} 只能依赖深 runtime、全局 owner host 与 AppRoutes：${specifier}`
+    };
+  }
+  if (fromFile === 'app/AppRoutes.tsx' && !APP_ROUTES_ALLOWED_INTERNAL_IMPORTS.has(specifier)) {
+    return {
+      code: 'app-routes-import',
+      message: `${fromFile} 只能映射 feature route entry：${specifier}`
+    };
+  }
+  if (fromFile === 'app/AppNavigator.tsx' && specifier.startsWith('@/features/')) {
+    return {
+      code: 'app-navigator-feature',
+      message: `${fromFile} 不得依赖 feature：${specifier}`
+    };
+  }
+  return null;
 }
 
 function resolveInternalModule(fromFile, specifier, srcDir, filesByPath) {
@@ -217,10 +337,27 @@ export function analyzeArchitecture(srcDir) {
     if (/\/(?:index)\.tsx?$/.test(`/${fromFile}`)) {
       issues.push({ code: 'barrel', message: `禁止 barrel 文件：${fromFile}` });
     }
+    if (FORBIDDEN_LEGACY_MODULE_NAMES.has(moduleName(fromFile))) {
+      issues.push({ code: 'legacy-path', message: `禁止恢复旧模块：${fromFile}` });
+    }
+    if (fromFile === 'app/AppRoot.tsx') {
+      for (const hook of importedAppRootStateHooks(file)) {
+        issues.push({ code: 'app-root-state-hook', message: `${fromFile} 不得持有 React 业务状态 hook：${hook}` });
+      }
+    }
     for (const specifier of importedModuleSpecifiers(file)) {
+      const importedPath = internalModulePath(fromFile, specifier);
+      if (importedPath && FORBIDDEN_LEGACY_MODULE_NAMES.has(moduleName(importedPath))) {
+        issues.push({ code: 'legacy-path', message: `${fromFile} 不得导入旧模块：${specifier}` });
+      }
+      const appIssue = compositionIssue(fromFile, specifier);
+      if (appIssue) issues.push(appIssue);
       const target = resolveInternalModule(file, specifier, resolvedSrcDir, filesByPath);
       if (!target) continue;
       const toFile = relativePath(resolvedSrcDir, target);
+      if (fromFile === 'app/AppNavigator.tsx' && toFile.startsWith('features/')) {
+        issues.push({ code: 'app-navigator-feature', message: `${fromFile} 不得依赖 feature：${toFile}` });
+      }
       graph.get(fromFile).add(toFile);
       const styleIssue = importStyleIssue(fromFile, toFile, specifier);
       if (styleIssue) issues.push(styleIssue);

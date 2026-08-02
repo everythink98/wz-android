@@ -99,3 +99,62 @@ test('resolves Metro platform files before generic modules', () => {
 
   assert.equal(analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'cycle').length, 1);
 });
+
+test('accepts the declarative app composition contract', () => {
+  const srcDir = architectureFixture({
+    'app/AppRoot.tsx': "import { AppComposition } from './AppComposition'; export const AppRoot = AppComposition;",
+    'app/AppComposition.tsx':
+      "import { AppRoutes } from './AppRoutes'; import { useAppRuntime } from './useAppRuntime'; export const AppComposition = () => useAppRuntime() && AppRoutes;",
+    'app/AppRoutes.tsx':
+      "import { AppNavigator } from './AppNavigator'; import { FeedRoute } from '@/features/feed/FeedRoute'; export const AppRoutes = [AppNavigator, FeedRoute];",
+    'app/AppNavigator.tsx': "import { Nav } from '@/ui/Nav'; export const AppNavigator = Nav;",
+    'app/useAppRuntime.ts': 'export const useAppRuntime = () => true;',
+    'features/feed/FeedRoute.tsx': 'export const FeedRoute = true;',
+    'ui/Nav.ts': 'export const Nav = true;'
+  });
+
+  assert.deepEqual(analyzeArchitecture(srcDir).issues, []);
+});
+
+test('rejects state and fine-grained dependencies in the app composition chain', () => {
+  const srcDir = architectureFixture({
+    'app/AppRoot.tsx':
+      "import { useState } from 'react'; import { FeedScreen } from '@/features/feed/FeedScreen'; export const AppRoot = () => useState(FeedScreen);",
+    'app/AppComposition.tsx':
+      "import { useTopicController } from '@/features/topic/useTopicController'; export const AppComposition = useTopicController;",
+    'app/AppRoutes.tsx':
+      "import { FeedScreen } from '@/features/feed/FeedScreen'; export const AppRoutes = FeedScreen;",
+    'app/AppNavigator.tsx':
+      "import { TopicRoute } from '@/features/topic/TopicRoute'; export const AppNavigator = TopicRoute;",
+    'features/feed/FeedScreen.tsx': 'export const FeedScreen = true;',
+    'features/topic/TopicRoute.tsx': 'export const TopicRoute = true;',
+    'features/topic/useTopicController.ts': 'export const useTopicController = true;'
+  });
+  const codes = analyzeArchitecture(srcDir).issues.map((issue) => issue.code);
+
+  assert.ok(codes.includes('app-root-state-hook'));
+  assert.ok(codes.includes('app-root-import'));
+  assert.ok(codes.includes('app-composition-import'));
+  assert.ok(codes.includes('app-routes-import'));
+  assert.ok(codes.includes('app-navigator-feature'));
+});
+
+test('rejects legacy files and unresolved imports without compatibility shells', () => {
+  const srcDir = architectureFixture({
+    'app/useDeferredNavigationTask.ts': 'export const deferred = true;',
+    'features/feed/FeedRoute.tsx': "import { aggregate } from '@/sources/aggregateRead'; export const feed = aggregate;"
+  });
+  const legacyIssues = analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'legacy-path');
+
+  assert.equal(legacyIssues.length, 2);
+});
+
+test('rejects route entries that reach into another feature', () => {
+  const srcDir = architectureFixture({
+    'features/feed/FeedRoute.tsx':
+      "import { SearchRoute } from '@/features/search/SearchRoute'; export const FeedRoute = SearchRoute;",
+    'features/search/SearchRoute.tsx': 'export const SearchRoute = true;'
+  });
+
+  assert.equal(analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'cross-feature').length, 1);
+});

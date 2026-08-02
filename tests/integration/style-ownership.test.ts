@@ -283,11 +283,9 @@ describe('Android reader theme safety rails', () => {
 });
 
 describe('feature style ownership', () => {
-  it('keeps feature style factories and instances out of the app composition root', () => {
+  it('keeps feature style factories out of the shared app theme owner', () => {
     const appThemeSource = readFileSync('src/app/useAppTheme.ts', 'utf8');
-    const appRootSource = readFileSync('src/app/AppRoot.tsx', 'utf8');
 
     expect(appThemeSource).not.toContain("from '@/features/");
-    expect(appRootSource).not.toMatch(/\b(?:feed|library|more|search|topic|user)Styles\b/);
   });
 });
