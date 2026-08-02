@@ -39,13 +39,13 @@ vi.mock('expo-file-system/legacy', () => ({
   deleteAsync: mocks.deleteAsync
 }));
 
-vi.mock('@/platform/update/appUpdate', async () => ({
-  ...(await vi.importActual<typeof import('@/platform/update/appUpdate')>('@/platform/update/appUpdate')),
+vi.mock('./appUpdate', async () => ({
+  ...(await vi.importActual<typeof import('./appUpdate')>('./appUpdate')),
   checkGithubAppUpdate: mocks.checkGithubAppUpdate,
   installVerifiedApk: mocks.installVerifiedApk
 }));
 
-import { useAppUpdateController } from './useAppUpdateController';
+import { useAppUpdateRuntime } from './useAppUpdateRuntime';
 
 afterEach(() => {
   mocks.initialUpdateInfo = null;
@@ -74,7 +74,7 @@ describe('app update controller', () => {
     mocks.createDownloadResumable.mockReturnValue({
       downloadAsync: vi.fn(async () => ({ status: 200, uri: 'file:///cache/update.apk' }))
     });
-    const controller = useAppUpdateController({
+    const controller = useAppUpdateRuntime({
       fetcher: vi.fn(),
       notify: vi.fn()
     });
@@ -96,7 +96,7 @@ describe('app update controller', () => {
     for (const version of ['1.4.0', '1.5.0']) {
       mocks.initialUpdateInfo = updateInfo(version);
       mocks.nullStateIndex = 0;
-      await useAppUpdateController({ fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
+      await useAppUpdateRuntime({ fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
     }
 
     expect(mocks.createDownloadResumable.mock.calls.map((call) => call[1])).toEqual([
@@ -115,7 +115,7 @@ describe('app update controller', () => {
       })
     });
 
-    await useAppUpdateController({ fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
+    await useAppUpdateRuntime({ fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
 
     expect(mocks.deleteAsync).toHaveBeenCalledTimes(2);
     expect(mocks.deleteAsync).toHaveBeenNthCalledWith(2, 'file:///cache/wz-update.apk', { idempotent: true });

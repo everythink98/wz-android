@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
-import { useNetworkProxyController } from '@/features/more/useNetworkProxyController';
+import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/networkProxy';
 import { fetchWithTimeout } from '@/platform/network/request';
 
@@ -51,7 +51,7 @@ describe('network proxy controller', () => {
 
   it('[REG-PROXY-003] can reset an unreadable saved proxy to a confirmed direct connection', async () => {
     mockLoadNetworkProxyState.mockRejectedValueOnce(new Error('corrupted proxy state'));
-    const hook = await renderHook(() => useNetworkProxyController({ notify: jest.fn() }));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
 
     await act(async () => {
@@ -75,7 +75,7 @@ describe('network proxy controller', () => {
       .mockImplementationOnce(() => firstSave.promise)
       .mockImplementationOnce(() => secondSave.promise);
     const notify = jest.fn();
-    const hook = await renderHook(() => useNetworkProxyController({ notify }));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
     await waitFor(() => expect(hook.result.current.loaded).toBe(true));
 
     let firstTask!: Promise<void>;
@@ -123,7 +123,7 @@ describe('network proxy controller', () => {
       .mockImplementationOnce(() => firstApply.promise)
       .mockImplementationOnce(() => secondApply.promise);
     const notify = jest.fn();
-    const hook = await renderHook(() => useNetworkProxyController({ notify }));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
     await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1));
 
     let selection!: Promise<void>;
@@ -156,7 +156,7 @@ describe('network proxy controller', () => {
     });
     mockApplyNetworkProxy.mockImplementationOnce(() => apply.promise);
     const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
-    const hook = await renderHook(() => useNetworkProxyController({ notify: jest.fn() }));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledWith(profileA));
 
     const request = fetchWithTimeout(
@@ -204,7 +204,7 @@ describe('network proxy controller', () => {
     });
     mockSaveNetworkProxyState.mockImplementationOnce(() => save.promise);
     const notify = jest.fn();
-    const hook = await renderHook(() => useNetworkProxyController({ notify }));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
     expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
 
@@ -232,7 +232,7 @@ describe('network proxy controller', () => {
       profiles: [profileA]
     });
     const notify = jest.fn();
-    const hook = await renderHook(() => useNetworkProxyController({ notify }));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
 
     await act(async () => {
@@ -250,7 +250,7 @@ describe('network proxy controller', () => {
       activeId: profileA.id,
       profiles: [profileA]
     });
-    const hook = await renderHook(() => useNetworkProxyController({ notify: jest.fn() }));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
 
     await act(async () => {
@@ -272,7 +272,7 @@ describe('network proxy controller', () => {
       activeId: null,
       profiles: []
     });
-    const hook = await renderHook(() => useNetworkProxyController({ notify: jest.fn() }));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('disabled'));
     await act(async () => {
       await hook.result.current.upsertProxyProfile(profileA);

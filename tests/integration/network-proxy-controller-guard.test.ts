@@ -27,7 +27,7 @@ vi.mock('@/platform/network/networkProxy', async () => ({
 }));
 
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
-import { useNetworkProxyController } from '@/features/more/useNetworkProxyController';
+import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 
 const rootDir = path.resolve(__dirname, '../..');
 
@@ -45,7 +45,7 @@ describe('network proxy controller guard', () => {
     proxyMocks.loadNetworkProxyState.mockRejectedValueOnce(new Error('secure storage unavailable'));
     const notify = vi.fn();
 
-    const controller = useNetworkProxyController({ notify });
+    const controller = useNetworkProxyRuntime({ notify });
 
     await expect(controller.ensureNetworkProxyReady()).rejects.toThrow('代理配置读取失败');
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('代理配置读取失败'));
@@ -72,7 +72,7 @@ describe('network proxy controller guard', () => {
       ]
     });
 
-    useNetworkProxyController({ notify: vi.fn() });
+    useNetworkProxyRuntime({ notify: vi.fn() });
 
     await vi.waitFor(() => {
       expect(lines.some((line) => JSON.parse(line).phase === 'finish')).toBe(true);
@@ -88,7 +88,7 @@ describe('network proxy controller guard', () => {
   });
 
   it('keeps enable, persistence and native apply on one diagnostic trace', () => {
-    const source = readSource('src', 'features', 'more', 'useNetworkProxyController.ts');
+    const source = readSource('src', 'platform', 'network', 'useNetworkProxyRuntime.ts');
     const enableFlow = source.slice(
       source.indexOf('const runSetProxyEnabled'),
       source.indexOf('const upsertProxyProfile')
@@ -103,7 +103,7 @@ describe('network proxy controller guard', () => {
   });
 
   it('blocks all requests after a failed native disable instead of silently going direct', () => {
-    const source = readSource('src', 'features', 'more', 'useNetworkProxyController.ts');
+    const source = readSource('src', 'platform', 'network', 'useNetworkProxyRuntime.ts');
     const guard = source.slice(
       source.indexOf('const ensureNetworkProxyReady'),
       source.indexOf('const networkProxyFetcher')

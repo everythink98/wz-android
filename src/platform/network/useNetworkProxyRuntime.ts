@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Fetcher } from '@/platform/network/request';
-import { errorMessage } from '@/platform/network/errors';
+import type { Fetcher } from './request';
+import { errorMessage } from './errors';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -23,7 +23,7 @@ import {
   type NetworkProxyApplyStatus,
   type NetworkProxyProfile,
   type NetworkProxyState
-} from '@/platform/network/networkProxy';
+} from './networkProxy';
 
 type SettledApplyStatus = Extract<NetworkProxyApplyStatus, 'disabled' | 'applied'>;
 const RESOLVED_VOID_PROMISE: Promise<void> = Promise.resolve();
@@ -70,7 +70,7 @@ function enqueueProxyEnabledTransition(
   return task;
 }
 
-export function useNetworkProxyController({ notify }: { notify: (message: string) => void }) {
+export function useNetworkProxyRuntime({ notify }: { notify: (message: string) => void }) {
   const [proxyState, setProxyState] = useState<NetworkProxyState>(() => createEmptyNetworkProxyState());
   const [loaded, setLoaded] = useState(false);
   const [applyStatus, setApplyStatus] = useState<NetworkProxyApplyStatus>('loading');

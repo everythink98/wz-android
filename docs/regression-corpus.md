@@ -1006,7 +1006,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `FEED-01`、`SEARCH-01`、`ACCOUNT-02`、`MORE-01`、`MORE-04` |
 | 用户症状 | 用户原本依赖服务器代理时，启动阶段 SecureStore 暂时读取失败，App 把代理状态当作“未启用”并让来源、登录 WebView 或更新请求直接联网。 |
 | 触发条件 | 代理 load catch 用空状态继续完成启动，既没有设置 failed 门禁，也没有阻止随后对空 profile 执行 native disable。 |
-| 根因 seam | `useNetworkProxyController` 的安全存储加载终态、native apply effect 与 `ensureNetworkProxyReady` 门禁。 |
+| 根因 seam | `useNetworkProxyRuntime` 的安全存储加载终态、native apply effect 与 `ensureNetworkProxyReady` 门禁。 |
 | 必须保持的行为 | 代理配置读取失败必须进入用户可见 failed 状态并阻断所有受代理保护请求，不能推断用户未启用代理；成功保存新的明确配置后才可退出加载失败门禁并重新应用。 |
 | 精确失败 oracle | `tests/integration/network-proxy-controller-guard.test.ts` 的 `REG-PROXY-001` 注入 load rejection，要求 `ensureNetworkProxyReady` rejection 且提示配置读取失败。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：controller 的 ref、ready promise 和 guard 必须一起覆盖；只测 SecureStore loader 或 UI 错误文案不能证明请求没有直连。 |
@@ -1021,9 +1021,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `MORE-04` |
 | 用户症状 | 已显示旧更新信息时，用户快速连续点击“检查更新”和“下载并安装”，旧 APK 下载可在新 manifest 检查尚未结束时启动。 |
 | 触发条件 | UI 要等下一次 React render 才禁用下载按钮；controller 的下载 guard 只检查 downloading，没有同步检查已经置位的 checking ref。 |
-| 根因 seam | `useAppUpdateController` 的 check/download 并发所有权与同步 busy ref 门禁。 |
+| 根因 seam | `useAppUpdateRuntime` 的 check/download 并发所有权与同步 busy ref 门禁。 |
 | 必须保持的行为 | 检查或下载任一操作正在进行时，另一个命令必须在 controller 层同步 blocked；只有当前已确认的 update info 才能创建下载任务。 |
-| 精确失败 oracle | `src/features/more/useAppUpdateController.test.ts` 的 `REG-UPDATE-001` 保持检查 Promise pending 后立即调用下载，要求不创建 `DownloadResumable`。 |
+| 精确失败 oracle | `src/platform/update/useAppUpdateRuntime.test.ts` 的 `REG-UPDATE-001` 保持检查 Promise pending 后立即调用下载，要求不创建 `DownloadResumable`。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须模拟同一 render 内的连续命令；只断言按钮 disabled 无法覆盖状态提交前的点击窗口。 |
 | Replay 或真实验收路径 | 默认只检查更新信息，不下载或安装；真实下载与 Android 安装器需明确发布/安装授权。 |
 | 负向验证方式 | 从下载 guard 删除 `appUpdateBusyRef`，编号测试应开始创建旧版本下载。 |
@@ -1724,7 +1724,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `MORE-01` |
 | 用户症状 | 快速保存、切换、启用或关闭代理时，原生层可能应用尚未持久化的配置或较早 profile；保存未改动的启用 profile 还可能让可用代理变成错误状态。 |
 | 触发条件 | 多个异步持久化和 native apply 并发完成，后一次操作从乐观 state 而非已提交 state 构建。 |
-| 根因 seam | `src/features/more/useNetworkProxyController.ts` 的持久化队列、native apply 队列与 committed state。 |
+| 根因 seam | `src/platform/network/useNetworkProxyRuntime.ts` 的持久化队列、native apply 队列与 committed state。 |
 | 必须保持的行为 | 所有命令按提交顺序串行；profile 先保存成功再 apply；后一次 edit 基于已提交状态；最终 enable/disable 与最后命令一致；未改动的启用 profile 保持可用。 |
 | 精确失败 oracle | `tests/ui/more/network-proxy-controller.test.tsx` 固定并发保存、选择、保存失败、no-op 保存以及快速启停的完成顺序。 |
 | 最低可靠自动测试层 | `UI_PASS`：需要 hook 与两个异步副作用队列。 |
@@ -1739,7 +1739,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `MORE-01` |
 | 用户症状 | 安全存储中的代理配置无法读取时，App 正确 fail-closed，但 UI 没有恢复入口，所有网络能力永久被阻断。 |
 | 触发条件 | `loadNetworkProxyState` 抛错，普通编辑又依赖已加载 state。 |
-| 根因 seam | `src/features/more/useNetworkProxyController.ts` 的 recovery command 与 `src/features/more/components/NetworkProxyModal.tsx` 的显式直连重置入口。 |
+| 根因 seam | `src/platform/network/useNetworkProxyRuntime.ts` 的 recovery command 与 `src/features/more/components/NetworkProxyModal.tsx` 的显式直连重置入口。 |
 | 必须保持的行为 | 错误态提供需确认的“重置为直连”；成功保存空代理状态并原生 apply `null` 后才解除门禁，失败继续保持错误态。 |
 | 精确失败 oracle | `tests/ui/more/network-proxy-controller.test.tsx` 固定损坏读取后的空状态保存/apply；`tests/ui/more/network-proxy-modal.test.tsx` 固定错误态入口与确认行为。 |
 | 最低可靠自动测试层 | `UI_PASS`。 |
@@ -3100,7 +3100,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `MORE-01` |
 | 用户症状 | “测试代理延迟”只建立到固定 443 目标的 TCP tunnel 就提示成功，即使 TLS、证书 hostname 或 HTTP 已失败；代理密码在输入框和 Android 可访问性树中以普通文本暴露。 |
 | 触发条件 | native `test()` 在 `connectToTarget()` 后立即关闭 socket，UI 把总耗时称为 Ping；密码 `TextInput` 未设置 secure/password 语义。 |
-| 根因 seam | 生成的 `LocalNetworkProxyServer.test()`、`src/platform/network/networkProxy.ts` 的 native Promise 计时、`src/features/more/useNetworkProxyController.ts` 提示与 `src/features/more/components/NetworkProxyModal.tsx` 输入属性。 |
+| 根因 seam | 生成的 `LocalNetworkProxyServer.test()`、`src/platform/network/networkProxy.ts` 的 native Promise 计时、`src/platform/network/useNetworkProxyRuntime.ts` 提示与 `src/features/more/components/NetworkProxyModal.tsx` 输入属性。 |
 | 必须保持的行为 | CONNECT 后必须以 `HTTPS` endpoint identification 完成 TLS 握手，再请求固定 `/generate_204` 并只接受 204；显示耗时代表整段 TLS/HTTP 往返并统一称“连通性测试”。密码输入必须 `secureTextEntry`，并提供 `password` / `current-password` 语义，不新增显示密码按钮。 |
 | 精确失败 oracle | `NetworkProxyRuntimeTest.successfulConnectTunnelStillPerformsTlsHostnameAndHttpVerification` 用本机 HTTP proxy 返回 CONNECT 200，并以 mock TLS transport 固定 read timeout、HTTPS hostname verification、TLS handshake、`GET /generate_204` 和 204 响应的完整调用顺序；`connectivityProbeRequiresTheExpectedHttpResponse` 对空响应和 200 均失败、204 通过；`tests/tooling/release-packaging.test.ts` 固定生产 `SSLSocket` adapter 接线；`tests/ui/more/network-proxy-modal.test.tsx` 固定连通性文案和三项 password 属性。修复前 CONNECT 后立即成功，UI 字段属性均为空。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：原生 CONNECT → TLS/hostname → HTTP 请求与响应行为；`UI_PASS`：RNTL 输入与文案；`:app:compileReleaseKotlin` 与生成接线守卫固定生产 TLS adapter 接线，源码字符串不单独作为正确性证据。 |
@@ -3731,7 +3731,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `MORE-01` |
 | 用户症状 | WebView localhost relay 可接受任意端口、userinfo、畸形 request line、非标准 numeric IPv4、IPv4-compatible/mapped IPv6 或私网 IP literal；合法首请求后的流水线第二 target 还能绕过校验，空闲 tunnel 也可能长期占用连接与 copy worker，按方向独立计时又会误杀仍在持续单向传输的 tunnel；worker 结束与 relay 停止并发时还可能抛异常并跳过后续 socket/executor 清理；profile 只改名还会无意义重启。 |
 | 触发条件 | relay 依赖随机本地端口和宽松 URI 解析，IPv4-compatible IPv6 绕过普通 `InetAddress` 私网判断，校验首个 HTTP header 后盲转整个 client stream，socket copy 没有由双向活动共同续期的 idle deadline，socket registry 的 snapshot 与 remove 不受同一 ownership lock 保护，apply key 包含展示字段。 |
-| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的 `LocalNetworkProxyServer` 与 `useNetworkProxyController` apply key。 |
+| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的 `LocalNetworkProxyServer` 与 `useNetworkProxyRuntime` apply key。 |
 | 必须保持的行为 | relay 只绑定 `127.0.0.1`，并发与 backlog 均为 16、header 上限 64 KiB；只接受 HTTP absolute-form 80 和显式 HTTPS CONNECT 443，拒绝 userinfo、控制字符、空/不一致 Host、hex/octal/short/前导零 numeric IPv4、IPv4-compatible/mapped IPv6，以及 loopback/private/link-local/multicast/unspecified IP literal。非 CONNECT 只按唯一合法 `Content-Length` 转发首个 request body，拒绝 `Transfer-Encoding`、重复/歧义长度，剥离持久连接头并关闭连接，流水线第二 target 不得到达 upstream。共享双向 idle deadline 为 120 秒：任一方向读到字节都续期，只有整个 tunnel 双向静默才超时；所有 socket registry mutation 与停止 snapshot 使用同一 ownership lock，超时、停止和切换都不得抛出 cleanup 竞态，并关闭 client/upstream socket 与 copy task。apply key 只含 protocol/host/port/username/password。 |
 | 精确失败 oracle | 生成的 `NetworkProxyRuntimeTest.kt` 的 `REG-PROXY-007` 只连接进程内 `127.0.0.1` socket pair/fake upstream，固定非法端口/目标、numeric IPv4、IPv4-compatible/mapped IPv6、合法公网 IPv6 的带方括号 upstream authority、流水线第二 target 零转发、唯一长度 framing、17th connection、64 KiB header、短注入共享 idle deadline、单向持续传输、copy executor reject；`regProxy007StopOverlapsConnectionWorkerCleanupWithoutBackgroundFailure` 用现有 `socketConnector` 与 latch 精确重叠 connection worker unwind 和 `stop()`，捕获并 join 实际 connection worker 后再断言后台零异常及 socket/worker 全部释放。`tests/tooling/network-proxy-plugin.test.ts` 与 `tests/ui/more/network-proxy-controller.test.tsx` 固定生成接线和改名不重启。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Kotlin JUnit 验证真实 socket/parser 生命周期，Jest 验证 controller apply；JS 字符串检查不能代替原生行为测试。 |
@@ -3806,9 +3806,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `MORE-04` |
 | 用户症状 | 每个更新版本使用不同 cache 文件名，连续下载会留下多个历史 APK；下载失败还可能保留 partial。 |
 | 触发条件 | 目标文件名包含版本号，catch 路径未清理已经准备的下载目标。 |
-| 根因 seam | `useAppUpdateController.downloadAppUpdate` 的 cache target 与失败清理。 |
+| 根因 seam | `useAppUpdateRuntime.downloadAppUpdate` 的 cache target 与失败清理。 |
 | 必须保持的行为 | 所有版本固定使用 `wz-update.apk`；新下载前删除旧文件，失败或取消后删除 partial，成功后保留给系统安装器读取。 |
-| 精确失败 oracle | `src/features/more/useAppUpdateController.test.ts` 的 `REG-UPDATE-005` 连续下载两个版本要求同一 target 且成功只执行下载前清理；失败要求第二次幂等删除 partial、零安装。 |
+| 精确失败 oracle | `src/platform/update/useAppUpdateRuntime.test.ts` 的 `REG-UPDATE-005` 连续下载两个版本要求同一 target 且成功只执行下载前清理；失败要求第二次幂等删除 partial、零安装。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：mock FileSystem 与 installer 精确观察 target、删除次数和成功/失败顺序。 |
 | Replay 或真实验收路径 | APK 下载与安装属于发布风险操作，本轮保持 `NOT_VERIFIED`；只有明确授权后检查 cache 与系统安装确认。 |
 | 负向验证方式 | 恢复版本化文件名或移除 catch 清理，编号测试必须看到两个路径或少一次删除。 |

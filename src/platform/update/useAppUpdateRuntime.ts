@@ -9,7 +9,7 @@ import {
   installVerifiedApk,
   type ApkInstaller,
   type AppUpdateDownloadProgress
-} from '@/platform/update/appUpdate';
+} from './appUpdate';
 import { errorMessage } from '@/platform/network/errors';
 import type { Fetcher } from '@/platform/network/request';
 import {
@@ -24,13 +24,13 @@ type CheckAppUpdateOptions = {
   silent?: boolean;
 };
 
-type UseAppUpdateControllerOptions = {
+type UseAppUpdateRuntimeOptions = {
   beforeRequest?: () => Promise<void>;
   fetcher: Fetcher;
   notify: (message: string) => void;
 };
 
-export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAppUpdateControllerOptions) {
+export function useAppUpdateRuntime({ beforeRequest, fetcher, notify }: UseAppUpdateRuntimeOptions) {
   const [appUpdateBusy, setAppUpdateBusy] = useState(false);
   const [appUpdateDownloading, setAppUpdateDownloading] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);

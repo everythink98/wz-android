@@ -32,7 +32,7 @@ import type {
   LinuxDoReadRecovery,
   LinuxDoReadResumeOutcome
 } from '@/domain/session/sessionContracts';
-import { useAppUpdateController } from '@/features/more/useAppUpdateController';
+import { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
 import { useFeedController } from '@/features/feed/useFeedController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
@@ -53,7 +53,7 @@ import { useImagePreviewController } from '@/features/topic/media/useImagePrevie
 import { useSearchController } from '@/features/search/useSearchController';
 import { useSessionController } from '@/features/account/useSessionController';
 import { useSessionReadGateway } from '@/features/account/useSessionReadGateway';
-import { useNetworkProxyController } from '@/features/more/useNetworkProxyController';
+import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import { useTopicController } from '@/features/topic/useTopicController';
 import { useStableTopicLayoutDetail } from '@/features/topic/useStableTopicLayoutDetail';
 import { filterTopicSessionReplies, useTopicSessionController } from '@/features/topic/useTopicSessionController';
@@ -499,7 +499,7 @@ export function AppRoot() {
     setProxyEnabled: setNetworkProxyEnabled,
     testProxyProfile: testNetworkProxyProfile,
     upsertProxyProfile: upsertNetworkProxyProfile
-  } = useNetworkProxyController({ notify });
+  } = useNetworkProxyRuntime({ notify });
   useEffect(() => setDefaultAvatarFetcher(networkProxyFetcher), [networkProxyFetcher]);
   const networkProxyWebViewBlockMessage = proxyWebViewBlockMessage({
     applyError: networkProxyApplyError,
@@ -1207,7 +1207,7 @@ export function AppRoot() {
     appUpdateMessage,
     checkAppUpdate,
     downloadAppUpdate
-  } = useAppUpdateController({ beforeRequest: ensureNetworkProxyReady, fetcher: networkProxyFetcher, notify });
+  } = useAppUpdateRuntime({ beforeRequest: ensureNetworkProxyReady, fetcher: networkProxyFetcher, notify });
   useEffect(() => {
     if (autoAppUpdateCheckedRef.current) {
       return;
