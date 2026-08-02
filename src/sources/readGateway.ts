@@ -1,12 +1,11 @@
+import { getCategories as getForumCategories, getFeed as getForumFeed } from './feedRead';
 import {
-  getCategories as getForumCategories,
-  getFeed as getForumFeed,
   getReply as getForumReply,
   getReplies as getForumReplies,
   getTopic as getForumTopic,
-  getUserProfile as getForumUserProfile,
-  searchTopics as searchForumTopics
-} from './aggregateRead';
+  getUserProfile as getForumUserProfile
+} from './sourceRead';
+import { searchTopics as searchForumTopics } from './searchRead';
 import {
   getYaohuoFeedDirect,
   getYaohuoRepliesDirect,
@@ -54,7 +53,7 @@ import {
   type SessionSource
 } from '@/domain/forum/sourceCatalog';
 
-export { getCurrentUserProfile } from './aggregateRead';
+export { getCurrentUserProfile } from './sourceRead';
 export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 export type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/reader';
 export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/sources/yaohuo/reader';

@@ -6,16 +6,9 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import {
-  getCategories,
-  getCurrentUserProfile,
-  getFeed,
-  getReplies,
-  getReply,
-  getTopic,
-  getUserProfile,
-  searchTopics
-} from './aggregateRead';
+import { getCategories, getFeed } from './feedRead';
+import { getCurrentUserProfile, getReplies, getReply, getTopic, getUserProfile } from './sourceRead';
+import { searchTopics } from './searchRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { sourceDiagnosticSummary } from './diagnostics';
 

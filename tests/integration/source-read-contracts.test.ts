@@ -6,7 +6,9 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from '@/sources/aggregateRead';
+import { getCategories, getFeed } from '@/sources/feedRead';
+import { searchTopics } from '@/sources/searchRead';
+import { getReplies, getReply, getTopic } from '@/sources/sourceRead';
 import { isLinuxDoCloudflareError } from '@/sources/errors';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import {

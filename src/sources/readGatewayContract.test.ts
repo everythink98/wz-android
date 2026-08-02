@@ -61,7 +61,9 @@ vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
   setItemAsync: vi.fn()
 }));
-vi.mock('./aggregateRead', () => forumMocks);
+vi.mock('./feedRead', () => forumMocks);
+vi.mock('./searchRead', () => forumMocks);
+vi.mock('./sourceRead', () => forumMocks);
 vi.mock('@/sources/linuxdo/reader', () => linuxDoMocks);
 vi.mock('@/sources/nodeseek/reader', () => nodeSeekMocks);
 vi.mock('@/sources/linuxdo/level', () => linuxDoLevelMocks);

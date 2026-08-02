@@ -44,8 +44,8 @@
 - 标准 Discourse 回复、点赞、书签、编辑、删除、投票和上传先表达为 `DiscourseAction`，再由 `discourseActions` 选择标准 request builder 或最小站点 override；小隐寺 Topic 无 bookmark id 的取消收藏是当前 override。`discourseActionRuntime` 按来源注册独立鉴权和 transport，Topic controller 只执行统一 action 生命周期。
 - Feed、Search、Topic UI 只消费语义筛选、权限和 action capability；标准 Discourse emoji 目录由 Topic 通过 managed `readGateway.getEmojiUrls` 读取，复用代理 fetcher、站点凭据、诊断和 `AbortSignal`，各 adapter 只保留站点级目录缓存并把结果交给公共 presenter。linux.do boost、Cloudflare 验证、小隐寺 Device Code 等站点特性留在站点 presenter、鉴权或 transport 边界。
 - App controller 使用不带 `Direct` 和站点前缀的通用读取入口；妖火的 `Direct` 命名只保留在 gateway 后的来源实现。
-- `readGateway` 内部仍转发到 `src/sources/aggregateRead.ts` 和 `src/sources/yaohuo/reader.ts`；Discourse adapter 注册集中在 `discourseRead` / `discourseActions`。
-- `src/sources/aggregateRead.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
+- `readGateway` 分别转发到 `feedRead`（Feed/Categories 聚合）、`searchRead`（Search 聚合）和 `sourceRead`（Topic/Reply/User 单来源分发）；来源 adapter 注册继续集中在各 provider reader 与 `discourseRead` / `discourseActions`。
+- 聚合读取只组合结果、错误与诊断，不拥有 Cookie、凭据、Query 或页面状态；这些边界仍由 `readGateway` 和调用它的 Query owner 持有。
 - 来源静态 capability 只说明该站可能支持某项能力；当前主题或回复的 `canEdit`、`canDelete` 等权限仍以原站解析结果为准。
 
 ## 服务器状态与请求生命周期

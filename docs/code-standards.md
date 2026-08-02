@@ -36,7 +36,7 @@
 | `app` | 六类模块 |
 
 - feature 不得反向依赖 app，也不得跨 feature 直接调用；共享语义下沉到 domain/platform/ui，共享来源能力留在 sources。
-- source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/discourseRead.ts`、`src/sources/discourseActions.ts`、`src/sources/aggregateRead.ts` 与 `src/sources/readGateway.ts` 是允许组合多个 adapter 的来源根模块。
+- source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/feedRead.ts`、`src/sources/searchRead.ts`、`src/sources/sourceRead.ts`、`src/sources/discourseRead.ts`、`src/sources/discourseActions.ts` 与 `src/sources/readGateway.ts` 是允许组合多个 adapter 的来源根模块。
 - `src/sources/readGateway.ts` 是读取统一入口。写操作继续复用现有 action client 和 `useTopicActionsController` 生命周期，不为目录整洁另造 service、factory 或 provider registry。
 - 禁止新增 barrel `index.ts`、旧内部路径 re-export 和纯转发 facade。移动内部模块时一次性更新调用方、测试与文档。
 
