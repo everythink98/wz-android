@@ -22,12 +22,6 @@ export function createAppStyles(sharedStyles: SharedStyles, theme: ReaderTheme) 
         zIndex: 0,
         elevation: 0
       },
-      moreContentInner: {
-        gap: 10,
-        padding: 16,
-        paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
-        paddingBottom: 124
-      },
       hiddenBrowserWebViewHost: {
         position: 'absolute',
         top: 0,

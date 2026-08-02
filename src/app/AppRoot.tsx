@@ -7,7 +7,6 @@ import {
   Platform,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  ScrollView,
   Share,
   ToastAndroid,
   View,
@@ -99,11 +98,9 @@ import { parseInternalTopicOpenLink } from '@/domain/forum/links';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { LibraryScreen } from '@/features/library/LibraryScreen';
 import { EMPTY_LIBRARY_RECORDS, sortLibraryRecords } from '@/features/library/model/libraryFilters';
-import { MoreScreen } from '@/features/more/MoreScreen';
-import { AppearancePanel } from '@/features/more/components/MorePanels';
+import { MoreScreen, ReadingSettingsScreen } from '@/features/more/MoreScreen';
 import { SearchScreen } from '@/features/search/SearchScreen';
-import { TopicScreen, YaohuoFavoriteStateProvider } from '@/features/topic/TopicScreen';
-import { LoadingState } from '@/ui/controls/AppControls';
+import { TopicLoadingState, TopicScreen, YaohuoFavoriteStateProvider } from '@/features/topic/TopicScreen';
 import { UserScreen } from '@/features/user/UserScreen';
 import { isSessionSource } from '@/domain/forum/sourceCatalog';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
@@ -151,6 +148,7 @@ import {
 } from '@/domain/session/writableSessionGate';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
 import { useAppTheme } from './useAppTheme';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 
 type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;
@@ -482,18 +480,11 @@ export function AppRoot() {
   useCommitRefValue(showYaohuoLoginPanelRef, showYaohuoLoginPanel);
   useCommitRefValue(showLinuxDoPanelRef, showLinuxDoPanel);
   const { fontScale } = readerData.settings;
-  const {
-    appStyles,
-    contentWidth,
-    feedStyles,
-    libraryStyles,
-    moreStyles,
-    navigationTheme,
-    searchStyles,
-    theme,
-    topicStyles,
-    userStyles
-  } = useAppTheme(readerData.settings, width, height);
+  const { appStyles, contentWidth, navigationTheme, readerStyleContext, theme } = useAppTheme(
+    readerData.settings,
+    width,
+    height
+  );
   const {
     activeProfile: networkProxyActiveProfile,
     applyError: networkProxyApplyError,
@@ -735,7 +726,7 @@ export function AppRoot() {
     nodeSeekMediaUserAgent: nodeSeekWebViewUserAgent,
     selectedTopic,
     settings: readerData.settings,
-    styles: topicStyles,
+    styleSettings: readerStyleContext.settings,
     theme,
     topicDetail,
     topicKey: `${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`,
@@ -1995,8 +1986,6 @@ export function AppRoot() {
       readingFilter,
       refreshing: activeFeedState.refreshing,
       scrollToTopSignal: tabScrollToTopSignals.feed,
-      styles: feedStyles,
-      theme,
       onCategoryChange: setCategoryFilter,
       onFeedSourceChange: changeFeedSource,
       onFeedFilterChange: setFeedFilter,
@@ -2035,9 +2024,7 @@ export function AppRoot() {
       setFeedFilter,
       setReadingFilter,
       shownFeedItems,
-      feedStyles,
       tabScrollToTopSignals.feed,
-      theme,
       topicStateIndex
     ]
   );
@@ -2064,8 +2051,6 @@ export function AppRoot() {
       searchSource,
       submittedQuery: submittedSearchQuery,
       scrollToTopSignal: tabScrollToTopSignals.search,
-      styles: searchStyles,
-      theme,
       onLoadMoreSearchSource: loadMoreSearchSource,
       onCheckLinuxDoStatus: checkLinuxDoStatus,
       onOpenTopic: openTopic,
@@ -2112,10 +2097,8 @@ export function AppRoot() {
       setSearchQuery,
       setSearchSource,
       showLinuxDoPanel,
-      searchStyles,
       submittedSearchQuery,
       tabScrollToTopSignals.search,
-      theme,
       toggleLinuxDoAiSearch,
       topicStateIndex
     ]
@@ -2130,8 +2113,6 @@ export function AppRoot() {
       records: libraryRecords,
       scrollToTopSignal: tabScrollToTopSignals.library,
       topicStateIndex,
-      styles: libraryStyles,
-      theme,
       onClearHistory: clearHistory,
       onOpenTopic: openTopic,
       onOpenUser: openUser,
@@ -2150,9 +2131,7 @@ export function AppRoot() {
       readerDataLoaded,
       removeFollowedUser,
       removeLibraryTopic,
-      libraryStyles,
       tabScrollToTopSignals.library,
-      theme,
       topicStateIndex
     ]
   );
@@ -2186,10 +2165,8 @@ export function AppRoot() {
       showNetworkProxyPanel,
       showSettingsPanel,
       statusBusy,
-      styles: moreStyles,
       backupBusy,
       diagnosticBusy,
-      theme,
       webViewRef,
       pendingCredentialFillSite,
       yaohuoLoginPrompt,
@@ -2327,9 +2304,7 @@ export function AppRoot() {
       showSettingsPanel,
       showYaohuoLoginPanel,
       statusBusy,
-      moreStyles,
       testNetworkProxyProfile,
-      theme,
       upsertNetworkProxyProfile,
       updateSettings,
       yaohuoLoginPrompt,
@@ -2388,8 +2363,6 @@ export function AppRoot() {
       replies: displayReplies,
       selectedTopic,
       sourceReplies: topicReplies,
-      styles: topicStyles,
-      theme,
       topic: topicLayoutDetail,
       topicBusy: topicBusy && !topicIdentityError,
       topicError: topicIdentityError || topicError || null,
@@ -2483,9 +2456,7 @@ export function AppRoot() {
       stableVerifyLinuxDoFromTopic,
       stableVerifyNodeSeekFromTopic,
       stableVotePoll,
-      topicStyles,
       sourceActionAvailability,
-      theme,
       toggleReplyComposer,
       toggleTopicFavorite,
       topicBusy,
@@ -2510,8 +2481,6 @@ export function AppRoot() {
       identityChecking: Boolean(selectedUserIdentityCheck?.checking),
       profile: userProfile,
       requestedUser: selectedUser,
-      styles: userStyles,
-      theme,
       topicStateIndex,
       loadingMoreReplies: userLoadingMoreReplies,
       loadingMoreTopics: userLoadingMoreTopics,
@@ -2536,8 +2505,6 @@ export function AppRoot() {
       selectedUser,
       selectedUserIdentityCheck?.checking,
       selectedUserIdentityCheck?.pending,
-      userStyles,
-      theme,
       toggleUserFollow,
       topicStateIndex,
       userBusy,
@@ -2552,35 +2519,10 @@ export function AppRoot() {
   const renderFeedTab = useCallback(() => <FeedScreen {...feedProps} />, [feedProps]);
   const renderSearchTab = useCallback(() => <SearchScreen {...searchProps} />, [searchProps]);
   const renderLibraryTab = useCallback(() => <LibraryScreen {...libraryProps} />, [libraryProps]);
-  const renderMoreTab = useCallback(
-    () => (
-      <ScrollView
-        ref={moreScrollRef}
-        style={moreStyles.content}
-        contentContainerStyle={appStyles.moreContentInner}
-        keyboardShouldPersistTaps="always"
-      >
-        <MoreScreen {...moreProps} />
-      </ScrollView>
-    ),
-    [appStyles.moreContentInner, moreProps, moreStyles.content]
-  );
+  const renderMoreTab = useCallback(() => <MoreScreen {...moreProps} scrollRef={moreScrollRef} />, [moreProps]);
   const renderReadingSettingsScreen = useCallback(
-    () => (
-      <ScrollView
-        style={moreStyles.content}
-        contentContainerStyle={appStyles.moreContentInner}
-        keyboardShouldPersistTaps="handled"
-      >
-        <AppearancePanel
-          settings={readerData.settings}
-          showSettingsPanel
-          styles={moreStyles}
-          onUpdateSettings={updateSettings}
-        />
-      </ScrollView>
-    ),
-    [appStyles.moreContentInner, moreStyles, readerData.settings, updateSettings]
+    () => <ReadingSettingsScreen settings={readerData.settings} onUpdateSettings={updateSettings} />,
+    [readerData.settings, updateSettings]
   );
   const renderTopicScreen = useCallback(
     ({ listRef, routeSource }: TopicRouteRenderRequest) => {
@@ -2594,12 +2536,12 @@ export function AppRoot() {
       return {
         content: <TopicScreen {...topicProps} topicScrollRef={listRef} />,
         identity: selectedTopic ? `${selectedTopic.source}:${selectedTopic.id}` : '',
-        loadingContent: <LoadingState text="正在读取主题..." styles={topicStyles} theme={theme} />,
+        loadingContent: <TopicLoadingState />,
         routeSessionEpoch,
         sessionEpoch
       };
     },
-    [forumSessionEpochs, selectedTopic, theme, topicProps, topicStyles]
+    [forumSessionEpochs, selectedTopic, topicProps]
   );
   const renderUserScreen = useCallback(() => <UserScreen {...userProps} />, [userProps]);
   const handleTopicClosing = useCallback(
@@ -2621,117 +2563,119 @@ export function AppRoot() {
   );
 
   return (
-    <ForumSessionEpochProvider sessionEpochs={forumSessionEpochs}>
-      <GestureHandlerRootView style={appStyles.screen}>
-        <SafeAreaProvider>
-          <KeyboardAvoidingView style={appStyles.screen}>
-            <SafeAreaView edges={['left', 'right']} style={appStyles.screen}>
-              <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
-              <View
-                pointerEvents="none"
-                style={[
-                  appStyles.statusBarScrim,
-                  screen === 'topic' && replyComposerOpen && appStyles.statusBarScrimBelowOverlay
-                ]}
-              />
-              <HiddenBrowserHost
-                blockedMessage={networkProxyWebViewBlockMessage}
-                failLinuxDoBrowserFetchById={failLinuxDoBrowserFetchById}
-                failNodeSeekBrowserFetchById={failNodeSeekBrowserFetchById}
-                handleLinuxDoBrowserFetchMessage={handleLinuxDoBrowserFetchMessage}
-                handleNodeSeekBrowserFetchMessage={handleNodeSeekBrowserFetchMessage}
-                linuxDoBrowserWebViewRef={linuxDoBrowserWebViewRef}
-                nodeSeekBrowserWebViewRef={nodeSeekBrowserWebViewRef}
-                state={{
-                  linuxDo: {
-                    request: hiddenBrowserFetchRequests.linuxDo,
-                    userAgent: linuxDoWebViewUserAgent
-                  },
-                  nodeSeek: {
-                    request: hiddenBrowserFetchRequests.nodeSeek,
-                    userAgent: nodeSeekWebViewUserAgent
-                  }
-                }}
-                styles={appStyles}
-                onLinuxDoHttpErrorStatus={markLinuxDoBrowserFetchHttpError}
-                onNodeSeekHttpErrorStatus={markNodeSeekBrowserFetchHttpError}
-              />
-              <GlobalModalHost
-                checking={checking}
-                credentialFillAttempt={credentialFillAttempt?.site === 'linuxdo' ? credentialFillAttempt.attempt : 0}
-                credentialFillPending={pendingCredentialFillSite === 'linuxdo'}
-                checkLinuxDoCookie={checkLinuxDoCookie}
-                clearLinuxDoCookie={() => {
-                  void clearLinuxDoCookie();
-                }}
-                closeImagePreview={closeImagePreview}
-                handleLinuxDoMessage={handleLinuxDoMessage}
-                handleLinuxDoNavigation={handleLinuxDoNavigation}
-                handleCredentialLoginFormMessage={handleCredentialLoginFormMessage}
-                handleNodeImageAuthMessage={handleNodeImageAuthMessage}
-                handleNodeImageAuthNavigation={handleNodeImageAuthNavigation}
-                imagePreview={imagePreview}
-                linuxDoCredentialSaved={credentialSummaries.linuxdo.hasCredential}
-                linuxDoLoginFormMode={credentialLoginSite === 'linuxdo'}
-                linuxDoSession={siteSessionViewModels.linuxdo}
-                linuxDoWebViewError={linuxDoWebViewError}
-                linuxDoWebViewKey={linuxDoWebViewKey}
-                linuxDoWebViewRef={linuxDoWebViewRef}
-                loadingLinuxDoPage={loadingLinuxDoPage}
-                loadingNodeImageAuthPage={loadingNodeImageAuthPage}
-                mountLinuxDoWebView={mountLinuxDoWebView}
-                nodeImageAuthDocument={nodeImageAuthDocument}
-                nodeImageAuthError={nodeImageAuthError}
-                nodeImageAuthWebViewRef={nodeImageAuthWebViewRef}
-                nodeSeekMediaUserAgent={nodeSeekWebViewUserAgent}
-                resetLinuxDoWebView={resetLinuxDoWebView}
-                savePreviewImage={savePreviewImage}
-                selectPreviewImage={selectPreviewImage}
-                setLinuxDoWebViewErrorForSession={setLinuxDoWebViewErrorForSession}
-                setLoadingLinuxDoPageForSession={setLoadingLinuxDoPageForSession}
-                setLoadingNodeImageAuthPage={setLoadingNodeImageAuthPage}
-                setNodeImageAuthError={reportNodeImageAuthFailure}
-                showLinuxDoPanel={showLinuxDoPanel}
-                showNodeImageAuthPanel={showNodeImageAuthPanel}
-                styles={appStyles}
-                theme={theme}
-                webViewBlockMessage={networkProxyWebViewBlockMessage}
-                changeLinuxDoPanel={changeLinuxDoPanel}
-                requestLinuxDoCredentialFill={() => {
-                  openAccountLogin('linuxdo', true);
-                }}
-                closeNodeImageAuthPanel={closeNodeImageAuthPanel}
-              />
-              {networkProxyContentReady ? (
-                <YaohuoFavoriteStateProvider
-                  bookmarked={topicDetail?.source === 'yaohuo' ? topicDetail.bookmarked : undefined}
-                  onPress={stableFavoriteOnYaohuoSite}
-                  topicKey={topicDetail?.source === 'yaohuo' ? `${topicDetail.source}:${topicDetail.id}` : ''}
-                >
-                  <AppNavigator
-                    moreHasBadge={Boolean(appUpdateInfo)}
-                    navigationTheme={navigationTheme}
-                    renderFeedTab={renderFeedTab}
-                    renderLibraryTab={renderLibraryTab}
-                    renderMoreTab={renderMoreTab}
-                    renderReadingSettingsScreen={renderReadingSettingsScreen}
-                    renderSearchTab={renderSearchTab}
-                    renderTopicScreen={renderTopicScreen}
-                    renderUserScreen={renderUserScreen}
-                    styles={appStyles}
-                    theme={theme}
-                    onReady={handleNavigationReady}
-                    onScreenChange={handleNavigationScreenChange}
-                    onTabPress={handleMainTabPress}
-                    onTopicClosing={handleTopicClosing}
-                    onUserClosing={flushDeferredNavigationTask}
-                  />
-                </YaohuoFavoriteStateProvider>
-              ) : null}
-            </SafeAreaView>
-          </KeyboardAvoidingView>
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    </ForumSessionEpochProvider>
+    <ReaderStyleProvider value={readerStyleContext}>
+      <ForumSessionEpochProvider sessionEpochs={forumSessionEpochs}>
+        <GestureHandlerRootView style={appStyles.screen}>
+          <SafeAreaProvider>
+            <KeyboardAvoidingView style={appStyles.screen}>
+              <SafeAreaView edges={['left', 'right']} style={appStyles.screen}>
+                <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    appStyles.statusBarScrim,
+                    screen === 'topic' && replyComposerOpen && appStyles.statusBarScrimBelowOverlay
+                  ]}
+                />
+                <HiddenBrowserHost
+                  blockedMessage={networkProxyWebViewBlockMessage}
+                  failLinuxDoBrowserFetchById={failLinuxDoBrowserFetchById}
+                  failNodeSeekBrowserFetchById={failNodeSeekBrowserFetchById}
+                  handleLinuxDoBrowserFetchMessage={handleLinuxDoBrowserFetchMessage}
+                  handleNodeSeekBrowserFetchMessage={handleNodeSeekBrowserFetchMessage}
+                  linuxDoBrowserWebViewRef={linuxDoBrowserWebViewRef}
+                  nodeSeekBrowserWebViewRef={nodeSeekBrowserWebViewRef}
+                  state={{
+                    linuxDo: {
+                      request: hiddenBrowserFetchRequests.linuxDo,
+                      userAgent: linuxDoWebViewUserAgent
+                    },
+                    nodeSeek: {
+                      request: hiddenBrowserFetchRequests.nodeSeek,
+                      userAgent: nodeSeekWebViewUserAgent
+                    }
+                  }}
+                  styles={appStyles}
+                  onLinuxDoHttpErrorStatus={markLinuxDoBrowserFetchHttpError}
+                  onNodeSeekHttpErrorStatus={markNodeSeekBrowserFetchHttpError}
+                />
+                <GlobalModalHost
+                  checking={checking}
+                  credentialFillAttempt={credentialFillAttempt?.site === 'linuxdo' ? credentialFillAttempt.attempt : 0}
+                  credentialFillPending={pendingCredentialFillSite === 'linuxdo'}
+                  checkLinuxDoCookie={checkLinuxDoCookie}
+                  clearLinuxDoCookie={() => {
+                    void clearLinuxDoCookie();
+                  }}
+                  closeImagePreview={closeImagePreview}
+                  handleLinuxDoMessage={handleLinuxDoMessage}
+                  handleLinuxDoNavigation={handleLinuxDoNavigation}
+                  handleCredentialLoginFormMessage={handleCredentialLoginFormMessage}
+                  handleNodeImageAuthMessage={handleNodeImageAuthMessage}
+                  handleNodeImageAuthNavigation={handleNodeImageAuthNavigation}
+                  imagePreview={imagePreview}
+                  linuxDoCredentialSaved={credentialSummaries.linuxdo.hasCredential}
+                  linuxDoLoginFormMode={credentialLoginSite === 'linuxdo'}
+                  linuxDoSession={siteSessionViewModels.linuxdo}
+                  linuxDoWebViewError={linuxDoWebViewError}
+                  linuxDoWebViewKey={linuxDoWebViewKey}
+                  linuxDoWebViewRef={linuxDoWebViewRef}
+                  loadingLinuxDoPage={loadingLinuxDoPage}
+                  loadingNodeImageAuthPage={loadingNodeImageAuthPage}
+                  mountLinuxDoWebView={mountLinuxDoWebView}
+                  nodeImageAuthDocument={nodeImageAuthDocument}
+                  nodeImageAuthError={nodeImageAuthError}
+                  nodeImageAuthWebViewRef={nodeImageAuthWebViewRef}
+                  nodeSeekMediaUserAgent={nodeSeekWebViewUserAgent}
+                  resetLinuxDoWebView={resetLinuxDoWebView}
+                  savePreviewImage={savePreviewImage}
+                  selectPreviewImage={selectPreviewImage}
+                  setLinuxDoWebViewErrorForSession={setLinuxDoWebViewErrorForSession}
+                  setLoadingLinuxDoPageForSession={setLoadingLinuxDoPageForSession}
+                  setLoadingNodeImageAuthPage={setLoadingNodeImageAuthPage}
+                  setNodeImageAuthError={reportNodeImageAuthFailure}
+                  showLinuxDoPanel={showLinuxDoPanel}
+                  showNodeImageAuthPanel={showNodeImageAuthPanel}
+                  styles={appStyles}
+                  theme={theme}
+                  webViewBlockMessage={networkProxyWebViewBlockMessage}
+                  changeLinuxDoPanel={changeLinuxDoPanel}
+                  requestLinuxDoCredentialFill={() => {
+                    openAccountLogin('linuxdo', true);
+                  }}
+                  closeNodeImageAuthPanel={closeNodeImageAuthPanel}
+                />
+                {networkProxyContentReady ? (
+                  <YaohuoFavoriteStateProvider
+                    bookmarked={topicDetail?.source === 'yaohuo' ? topicDetail.bookmarked : undefined}
+                    onPress={stableFavoriteOnYaohuoSite}
+                    topicKey={topicDetail?.source === 'yaohuo' ? `${topicDetail.source}:${topicDetail.id}` : ''}
+                  >
+                    <AppNavigator
+                      moreHasBadge={Boolean(appUpdateInfo)}
+                      navigationTheme={navigationTheme}
+                      renderFeedTab={renderFeedTab}
+                      renderLibraryTab={renderLibraryTab}
+                      renderMoreTab={renderMoreTab}
+                      renderReadingSettingsScreen={renderReadingSettingsScreen}
+                      renderSearchTab={renderSearchTab}
+                      renderTopicScreen={renderTopicScreen}
+                      renderUserScreen={renderUserScreen}
+                      styles={appStyles}
+                      theme={theme}
+                      onReady={handleNavigationReady}
+                      onScreenChange={handleNavigationScreenChange}
+                      onTabPress={handleMainTabPress}
+                      onTopicClosing={handleTopicClosing}
+                      onUserClosing={flushDeferredNavigationTask}
+                    />
+                  </YaohuoFavoriteStateProvider>
+                ) : null}
+              </SafeAreaView>
+            </KeyboardAvoidingView>
+          </SafeAreaProvider>
+        </GestureHandlerRootView>
+      </ForumSessionEpochProvider>
+    </ReaderStyleProvider>
   );
 }

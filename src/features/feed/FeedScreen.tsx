@@ -1,4 +1,4 @@
-import type { FeedStyles } from './styles';
+import { createFeedStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
@@ -39,7 +39,7 @@ import {
 } from './floatingActions';
 import type { ReadingFilter } from '@/domain/forum/feed';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 import {
   AppButton,
   EmptyText,
@@ -78,8 +78,6 @@ export const FeedScreen = memo(function FeedScreen({
   readingFilter,
   refreshing,
   scrollToTopSignal,
-  styles,
-  theme,
   onCategoryChange,
   onFeedFilterChange,
   onFeedSourceChange,
@@ -108,8 +106,6 @@ export const FeedScreen = memo(function FeedScreen({
   readingFilter: ReadingFilter;
   refreshing: boolean;
   scrollToTopSignal: number;
-  styles: FeedStyles;
-  theme: ReaderTheme;
   onCategoryChange: (categoryId: string) => void;
   onFeedFilterChange: (filter: SourceFeedFilter) => void;
   onFeedSourceChange: (source: FeedSource) => void;
@@ -120,6 +116,7 @@ export const FeedScreen = memo(function FeedScreen({
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
 }) {
+  const { styles, theme } = useReaderStyles(createFeedStyles);
   const listRef = useRef<FlashListRef<Topic>>(null);
   const { width: pagerWidth } = useWindowDimensions();
   const requestedFeedPageRef = useRef<number | null>(null);

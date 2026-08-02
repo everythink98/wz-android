@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Text,
   View,
-  type ImageStyle,
   type ImageURISource,
   type StyleProp,
   type TextStyle,
@@ -53,7 +52,7 @@ import { parseForumTopicLink, parseForumUserLink } from '@/domain/forum/links';
 import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
 import type { Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 import type { HtmlRenderers, HtmlRenderersProps } from './types';
-import { buildHtmlRenderingStyles, trimsTrailingBlockSpacing } from './htmlStyles';
+import { buildHtmlRenderingStyles, createHtmlRendererStyles, trimsTrailingBlockSpacing } from './htmlStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import {
   FORUM_LINK_CARD_TAG,
@@ -861,7 +860,7 @@ export function useHtmlRenderingController({
   nodeSeekMediaUserAgent,
   selectedTopic,
   settings,
-  styles,
+  styleSettings,
   theme,
   topicDetail,
   topicKey,
@@ -875,17 +874,7 @@ export function useHtmlRenderingController({
   nodeSeekMediaUserAgent?: string;
   selectedTopic: Topic | null;
   settings: ReaderSettings;
-  styles: {
-    htmlFloorLink: StyleProp<TextStyle>;
-    htmlMentionLink: StyleProp<TextStyle>;
-    htmlReplyReferenceFloorText: StyleProp<TextStyle>;
-    htmlReplyReferenceLabel: StyleProp<TextStyle>;
-    htmlReplyReferenceMentionText: StyleProp<TextStyle>;
-    htmlReplyReferenceRow: StyleProp<ViewStyle>;
-    htmlReplyReferenceSeparator: StyleProp<TextStyle>;
-    inlineForumImage: StyleProp<ImageStyle>;
-    inlineForumImageText: StyleProp<TextStyle>;
-  };
+  styleSettings?: ReaderSettings;
   theme: ReaderTheme;
   topicDetail: TopicDetail | null;
   topicKey: string;
@@ -943,6 +932,11 @@ export function useHtmlRenderingController({
         theme
       }),
     [mediaContext.contentSource, settings.fontFamily, settings.fontScale, settings.lineHeight, theme]
+  );
+  const resolvedStyleSettings = styleSettings || settings;
+  const htmlRendererStyles = useMemo(
+    () => createHtmlRendererStyles(resolvedStyleSettings, theme),
+    [resolvedStyleSettings.fontFamily, resolvedStyleSettings.fontScale, theme]
   );
   const openHtmlLink = useCallback(
     (href: string, event?: { stopPropagation?: () => void }) => {
@@ -1026,15 +1020,15 @@ export function useHtmlRenderingController({
         return null;
       }
       return (
-        <View style={styles.htmlReplyReferenceRow}>
-          <Text style={styles.htmlReplyReferenceLabel}>回复</Text>
+        <View style={htmlRendererStyles.htmlReplyReferenceRow}>
+          <Text style={htmlRendererStyles.htmlReplyReferenceLabel}>回复</Text>
           {mention ? (
             <Pressable accessibilityRole="link" disabled={!userHref} onPress={(event) => openHtmlLink(userHref, event)}>
-              <Text style={styles.htmlReplyReferenceMentionText}>{mention}</Text>
+              <Text style={htmlRendererStyles.htmlReplyReferenceMentionText}>{mention}</Text>
             </Pressable>
           ) : null}
-          {mention && floor ? <Text style={styles.htmlReplyReferenceSeparator}>·</Text> : null}
-          {floor ? <Text style={styles.htmlReplyReferenceFloorText}>{floor}</Text> : null}
+          {mention && floor ? <Text style={htmlRendererStyles.htmlReplyReferenceSeparator}>·</Text> : null}
+          {floor ? <Text style={htmlRendererStyles.htmlReplyReferenceFloorText}>{floor}</Text> : null}
         </View>
       );
     };
@@ -1049,7 +1043,7 @@ export function useHtmlRenderingController({
       const nativeProps = getNativePropsForTNode(props);
       if (isFloorLink) {
         const { accessibilityRole: _accessibilityRole, onPress: _onPress, ...textProps } = nativeProps;
-        return <Text {...textProps} style={[textProps.style, styles.htmlFloorLink]} />;
+        return <Text {...textProps} style={[textProps.style, htmlRendererStyles.htmlFloorLink]} />;
       }
       const href = props.tnode.attributes?.href || '';
       return (
@@ -1057,7 +1051,7 @@ export function useHtmlRenderingController({
           {...nativeProps}
           accessibilityRole="link"
           onPress={(event) => openHtmlLink(href, event)}
-          style={[nativeProps.style, styles.htmlMentionLink]}
+          style={[nativeProps.style, htmlRendererStyles.htmlMentionLink]}
         />
       );
     };
@@ -1065,7 +1059,7 @@ export function useHtmlRenderingController({
       <View style={[embedStyles.videoFrame, { borderColor: theme.line, backgroundColor: theme.surface2 }]}>
         {webViewBlockMessage ? (
           <View style={embedStyles.blockedWebView}>
-            <Text style={[styles.inlineForumImageText, { color: theme.muted }]}>{webViewBlockMessage}</Text>
+            <Text style={[htmlRendererStyles.inlineForumImageText, { color: theme.muted }]}>{webViewBlockMessage}</Text>
           </View>
         ) : (
           <WebView
@@ -1093,7 +1087,7 @@ export function useHtmlRenderingController({
             contentFit="contain"
             recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
             source={imageSourceFromUrl(fallbackSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
-            style={[styles.inlineForumImage, size]}
+            style={[htmlRendererStyles.inlineForumImage, size]}
           />
         ) : null;
       }
@@ -1103,7 +1097,7 @@ export function useHtmlRenderingController({
             contentFit="contain"
             recyclingKey={`${mediaSessionIdentity}:${src}`}
             source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
-            style={[styles.inlineForumImage, size]}
+            style={[htmlRendererStyles.inlineForumImage, size]}
           />
         );
       }
@@ -1143,14 +1137,14 @@ export function useHtmlRenderingController({
       const contentWidth = useContentWidth();
       const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth);
       if (!src) {
-        return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
+        return <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
       }
       return (
         <ExpoImage
           contentFit="contain"
           recyclingKey={`${mediaSessionIdentity}:${src}`}
           source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
-          style={[styles.inlineForumImage, size]}
+          style={[htmlRendererStyles.inlineForumImage, size]}
         />
       );
     };
@@ -1318,7 +1312,9 @@ export function useHtmlRenderingController({
       const inlineSrc = attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
       if (isInlineForumImage(attributes)) {
         if (!inlineSrc) {
-          return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
+          return (
+            <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>
+          );
         }
         return (
           <ExpoImage
@@ -1326,7 +1322,7 @@ export function useHtmlRenderingController({
             recyclingKey={`${mediaSessionIdentity}:${inlineSrc}`}
             source={imageSourceFromUrl(inlineSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
             style={[
-              styles.inlineForumImage,
+              htmlRendererStyles.inlineForumImage,
               inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth),
               inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)
             ]}
@@ -1335,7 +1331,7 @@ export function useHtmlRenderingController({
       }
       const displaySource = selectImageDisplaySource(attributes, contentWidth, PixelRatio.get());
       if (!displaySource) {
-        return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
+        return <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
       }
       const src = displaySource.uri;
       const originalUri = selectImageOriginalSource(attributes) || src;
@@ -1349,7 +1345,7 @@ export function useHtmlRenderingController({
           key={`${mediaSessionIdentity}:${src}`}
           attributes={attributes}
           candidateKind={displaySource.candidateKind}
-          errorTextStyle={styles.inlineForumImageText}
+          errorTextStyle={htmlRendererStyles.inlineForumImageText}
           frameBackgroundColor={theme.surface2}
           frameBorderColor={theme.line}
           imageProps={imageProps}
@@ -1373,7 +1369,7 @@ export function useHtmlRenderingController({
       const src = attributes.src || '';
       const label = attributes.alt || attributes.title || '';
       if (!src) {
-        return <Text style={styles.inlineForumImageText}>{label}</Text>;
+        return <Text style={htmlRendererStyles.inlineForumImageText}>{label}</Text>;
       }
       const isInlineImage = isInlineForumImage(attributes);
       if (isInlineImage) {
@@ -1383,14 +1379,14 @@ export function useHtmlRenderingController({
             recyclingKey={`${mediaSessionIdentity}:${src}`}
             source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
             style={[
-              styles.inlineForumImage,
+              htmlRendererStyles.inlineForumImage,
               inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth),
               inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)
             ]}
           />
         );
       }
-      return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
+      return <Text style={htmlRendererStyles.inlineForumImageText}>{label || src}</Text>;
     };
     return {
       a: ReplyReferenceLinkRenderer,
@@ -1417,15 +1413,15 @@ export function useHtmlRenderingController({
     openHtmlLink,
     markInlineSizedImageUrl,
     settings.fontScale,
-    styles.htmlFloorLink,
-    styles.htmlMentionLink,
-    styles.htmlReplyReferenceFloorText,
-    styles.htmlReplyReferenceLabel,
-    styles.htmlReplyReferenceMentionText,
-    styles.htmlReplyReferenceRow,
-    styles.htmlReplyReferenceSeparator,
-    styles.inlineForumImage,
-    styles.inlineForumImageText,
+    htmlRendererStyles.htmlFloorLink,
+    htmlRendererStyles.htmlMentionLink,
+    htmlRendererStyles.htmlReplyReferenceFloorText,
+    htmlRendererStyles.htmlReplyReferenceLabel,
+    htmlRendererStyles.htmlReplyReferenceMentionText,
+    htmlRendererStyles.htmlReplyReferenceRow,
+    htmlRendererStyles.htmlReplyReferenceSeparator,
+    htmlRendererStyles.inlineForumImage,
+    htmlRendererStyles.inlineForumImageText,
     theme,
     theme.ink,
     theme.line,

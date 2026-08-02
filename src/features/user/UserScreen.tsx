@@ -1,4 +1,4 @@
-import type { UserStyles } from './styles';
+import { createUserStyles, type UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
@@ -7,6 +7,7 @@ import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActiv
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '@/ui/controls/AppControls';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
@@ -105,8 +106,6 @@ export const UserScreen = memo(function UserScreen({
   identityChecking = false,
   profile,
   requestedUser,
-  styles,
-  theme,
   topicStateIndex,
   loadingMoreReplies,
   loadingMoreTopics,
@@ -126,8 +125,6 @@ export const UserScreen = memo(function UserScreen({
   identityChecking?: boolean;
   profile: UserProfile | null;
   requestedUser: UserReference | null;
-  styles: UserStyles;
-  theme: ReaderTheme;
   topicStateIndex: TopicListItemStateIndex;
   loadingMoreReplies: boolean;
   loadingMoreTopics: boolean;
@@ -140,6 +137,7 @@ export const UserScreen = memo(function UserScreen({
   onRefresh: () => void;
   onToggleFollow: (user: UserProfile) => void;
 }) {
+  const { styles, theme } = useReaderStyles(createUserStyles);
   const user = profile || requestedUser;
   const topics = profile?.topics || [];
   const replies = profile?.replies || [];

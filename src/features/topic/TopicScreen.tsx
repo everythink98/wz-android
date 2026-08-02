@@ -1,4 +1,4 @@
-import type { TopicStyles } from './styles';
+import { createTopicStyles, type TopicStyles } from './styles';
 import {
   createContext,
   memo,
@@ -109,6 +109,7 @@ import {
 } from '@/domain/forum/topicActionState';
 import type { TopicImageDeriver } from './model/topicDerivedData';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
+import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -344,6 +345,11 @@ function topicListItemType(item: TopicListItem) {
   return item.type === 'topicContent' ? `topicContent:${item.content.type}` : item.type;
 }
 
+export const TopicLoadingState = memo(function TopicLoadingState() {
+  const { styles, theme } = useReaderStyles(createTopicStyles);
+  return <LoadingState text="正在读取主题..." styles={styles} theme={theme} />;
+});
+
 export const TopicScreen = memo(function TopicScreen({
   actionBusy,
   sourceActionAvailability,
@@ -373,8 +379,6 @@ export const TopicScreen = memo(function TopicScreen({
   replies,
   selectedTopic,
   sourceReplies,
-  styles,
-  theme,
   topic,
   topicBusy,
   topicError,
@@ -444,8 +448,6 @@ export const TopicScreen = memo(function TopicScreen({
   replies: Reply[];
   selectedTopic: Topic | null;
   sourceReplies: Reply[];
-  styles: TopicStyles;
-  theme: ReaderTheme;
   topic: TopicDetail | null;
   topicBusy: boolean;
   topicError: SourceErrorInfo | null;
@@ -487,6 +489,7 @@ export const TopicScreen = memo(function TopicScreen({
   inlineSizedImageUrls: Record<string, true>;
   topicImageDeriver: TopicImageDeriver;
 }) {
+  const { styles, theme } = useReaderStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const mediaContext = useMemo(
     () => ({

@@ -1,4 +1,4 @@
-import type { LibraryStyles } from './styles';
+import { createLibraryStyles, type LibraryStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
@@ -11,6 +11,7 @@ import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { feedSources } from '@/domain/forum/feedOptions';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
+import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, EmptyText, PillRail, TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/AppControls';
 import { avatarInitial } from '@/ui/avatar/Avatar';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
@@ -95,8 +96,6 @@ export const LibraryScreen = memo(function LibraryScreen({
   records,
   scrollToTopSignal,
   topicStateIndex,
-  styles,
-  theme,
   onClearHistory,
   onOpenTopic,
   onOpenUser,
@@ -111,8 +110,6 @@ export const LibraryScreen = memo(function LibraryScreen({
   records: TopicRecord[];
   scrollToTopSignal: number;
   topicStateIndex: TopicListItemStateIndex;
-  styles: LibraryStyles;
-  theme: ReaderTheme;
   onClearHistory: () => void;
   onOpenTopic: (topic: Topic) => void;
   onOpenUser: (user: UserReference) => void;
@@ -120,6 +117,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   onRemoveUser: (user: UserProfile) => void;
   onTabChange: (tab: LibraryTab) => void;
 }) {
+  const { styles, theme } = useReaderStyles(createLibraryStyles);
   const listRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');

@@ -1,6 +1,6 @@
-import type { MoreScreenStyles } from './styles';
+import { createMoreScreenStyles } from './styles';
 import { memo, type RefObject, useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, Bug, DatabaseBackup, Server, Settings } from 'lucide-react-native';
 import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '@/platform/update/appUpdate';
@@ -9,7 +9,7 @@ import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from 
 import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { type ReaderTheme } from '@/ui/theme/tokens';
+import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, ExpandablePanel, MenuButton } from '@/ui/controls/AppControls';
 import {
   AppearancePanel,
@@ -65,6 +65,7 @@ export const MoreScreen = memo(function MoreScreen({
   nodeImageApiKeyBusy,
   nodeImageApiKeySaved,
   nodeSeekUserId,
+  scrollRef,
   settings,
   showLoginPanel,
   showYaohuoLoginPanel,
@@ -72,10 +73,8 @@ export const MoreScreen = memo(function MoreScreen({
   showNetworkProxyPanel,
   showSettingsPanel,
   statusBusy,
-  styles,
   backupBusy,
   diagnosticBusy,
-  theme,
   webViewRef,
   pendingCredentialFillSite,
   yaohuoLoginPrompt,
@@ -143,6 +142,7 @@ export const MoreScreen = memo(function MoreScreen({
   nodeImageApiKeyBusy: boolean;
   nodeImageApiKeySaved: boolean;
   nodeSeekUserId: number | null;
+  scrollRef?: RefObject<ScrollView | null>;
   settings: ReaderSettings;
   showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
@@ -150,10 +150,8 @@ export const MoreScreen = memo(function MoreScreen({
   showNetworkProxyPanel: boolean;
   showSettingsPanel: boolean;
   statusBusy: boolean;
-  styles: MoreScreenStyles;
   backupBusy: boolean;
   diagnosticBusy: boolean;
-  theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
   pendingCredentialFillSite: SessionSite | null;
   yaohuoLoginPrompt: string;
@@ -216,6 +214,7 @@ export const MoreScreen = memo(function MoreScreen({
   onUpsertNetworkProxyProfile: (profile: NetworkProxyProfile) => Promise<void>;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
+  const { styles, theme } = useReaderStyles(createMoreScreenStyles);
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [diagnosticExpanded, setDiagnosticExpanded] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
@@ -308,317 +307,343 @@ export const MoreScreen = memo(function MoreScreen({
         ? `LV ${xiaoyinsiLevelProfile.currentLevel}${xiaoyinsiLevelProfile.targetLevel !== null ? ` → LV ${xiaoyinsiLevelProfile.targetLevel}` : ''}`
         : xiaoyinsiLevelError || '点击读取';
   return (
-    <View style={styles.stack}>
-      <Text style={styles.sectionTitle}>更多</Text>
-      <View style={styles.groupList}>
-        <View style={styles.menuButton}>
-          <View style={styles.menuIcon}>
-            <Activity size={19} color={theme.primary} strokeWidth={1.8} />
-          </View>
-          <View style={styles.flex}>
-            <View style={styles.actions}>
-              <Text style={styles.menuLabel}>关于阅坛</Text>
-              {appUpdateInfo ? <Text style={styles.updateBadge}>有新版本</Text> : null}
+    <ScrollView
+      ref={scrollRef}
+      style={styles.content}
+      contentContainerStyle={styles.moreContentInner}
+      keyboardShouldPersistTaps="always"
+    >
+      <View style={styles.stack}>
+        <Text style={styles.sectionTitle}>更多</Text>
+        <View style={styles.groupList}>
+          <View style={styles.menuButton}>
+            <View style={styles.menuIcon}>
+              <Activity size={19} color={theme.primary} strokeWidth={1.8} />
             </View>
-            <Text style={styles.meta}>{appVersionMeta}</Text>
+            <View style={styles.flex}>
+              <View style={styles.actions}>
+                <Text style={styles.menuLabel}>关于阅坛</Text>
+                {appUpdateInfo ? <Text style={styles.updateBadge}>有新版本</Text> : null}
+              </View>
+              <Text style={styles.meta}>{appVersionMeta}</Text>
+            </View>
           </View>
-        </View>
-        <View style={styles.actions}>
-          {appUpdateInfo ? (
-            <>
-              <AppButton
-                variant="primary"
-                label={appUpdateDownloading ? '下载中' : '下载并安装'}
-                styles={styles}
-                disabled={appUpdateBusy || appUpdateDownloading}
-                onPress={onDownloadAppUpdate}
-              />
+          <View style={styles.actions}>
+            {appUpdateInfo ? (
+              <>
+                <AppButton
+                  variant="primary"
+                  label={appUpdateDownloading ? '下载中' : '下载并安装'}
+                  styles={styles}
+                  disabled={appUpdateBusy || appUpdateDownloading}
+                  onPress={onDownloadAppUpdate}
+                />
+                <AppButton
+                  tiny
+                  label={appUpdateBusy ? '检查中' : '检查更新'}
+                  styles={styles}
+                  disabled={appUpdateBusy || appUpdateDownloading}
+                  onPress={onCheckAppUpdate}
+                />
+              </>
+            ) : (
               <AppButton
                 tiny
                 label={appUpdateBusy ? '检查中' : '检查更新'}
                 styles={styles}
-                disabled={appUpdateBusy || appUpdateDownloading}
+                disabled={appUpdateBusy}
                 onPress={onCheckAppUpdate}
               />
-            </>
-          ) : (
-            <AppButton
-              tiny
-              label={appUpdateBusy ? '检查中' : '检查更新'}
-              styles={styles}
-              disabled={appUpdateBusy}
-              onPress={onCheckAppUpdate}
-            />
-          )}
-        </View>
-        {appUpdateDownloadProgress ? (
-          <View style={styles.updateProgressBox}>
-            <View style={styles.updateProgressHeader}>
-              <Text style={styles.updateProgressTitle}>{appUpdateDownloadProgress.title}</Text>
-              {appUpdateDownloadProgress.percentLabel ? (
-                <Text style={styles.updateProgressPercent}>{appUpdateDownloadProgress.percentLabel}</Text>
-              ) : null}
-            </View>
-            {appUpdateProgressWidth ? (
-              <View style={styles.updateProgressTrack}>
-                <View style={[styles.updateProgressFill, { width: appUpdateProgressWidth }]} />
-              </View>
-            ) : null}
-            <Text style={styles.updateProgressMeta}>{appUpdateDownloadProgress.sizeLabel}</Text>
+            )}
           </View>
-        ) : null}
-        {appUpdateStatus && !appUpdateDownloadProgress ? <Text style={styles.meta}>{appUpdateStatus}</Text> : null}
-        {appUpdateInfo && updateNotes ? <Text style={styles.meta}>{updateNotes}</Text> : null}
-      </View>
-      <AccountCenterPanel
-        credentials={credentialSummaries}
-        expanded={accountExpanded}
-        forcedSite={
-          showLoginPanel
-            ? 'nodeseek'
-            : showYaohuoLoginPanel
-              ? 'yaohuo'
-              : showLinuxDoPanel
-                ? 'linuxdo'
-                : xiaoyinsiAuthForcedOpen
-                  ? 'xiaoyinsi'
-                  : null
-        }
-        pendingFillSite={pendingCredentialFillSite}
-        nodeSeekUserId={nodeSeekUserId}
-        sessions={accountSessionViewModels}
-        siteContent={{
-          nodeseek: (
-            <NodeSeekLoginPanel
-              checking={checking}
-              credentialAttempt={credentialFillAttempt?.site === 'nodeseek' ? credentialFillAttempt.attempt : 0}
-              credentialFillPending={pendingCredentialFillSite === 'nodeseek'}
-              credentialSaved={credentialSummaries.nodeseek.hasCredential}
-              nodeSeekSession={nodeSeekSession}
-              nodeImageApiKeyBusy={nodeImageApiKeyBusy}
-              nodeImageApiKeySaved={nodeImageApiKeySaved}
-              accountExpanded={accountExpanded}
-              loginFormMode={credentialLoginSite === 'nodeseek'}
-              loadingLoginPage={loadingLoginPage}
-              showLoginPanel={showLoginPanel}
-              styles={styles}
-              theme={theme}
-              webViewRef={webViewRef}
-              webViewBlockMessage={webViewBlockMessage}
-              onCheckIn={onCheckIn}
-              onCheckLogin={onCheckLogin}
-              onAuthorizeNodeImageApiKey={onAuthorizeNodeImageApiKey}
-              onSaveNodeImageApiKey={onSaveNodeImageApiKey}
-              onClearNodeImageApiKey={onClearNodeImageApiKey}
-              onClearLogin={onClearLogin}
-              onHandleLoginMessage={onHandleLoginMessage}
-              onLoginFormMessage={onLoginFormMessage}
-              onRequestCredentialFill={() => {
-                void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'nodeseek' });
-              }}
-              onWebViewState={onNodeSeekLoginWebViewState}
-              handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
-              onSetLoadingLoginPage={onSetLoadingLoginPage}
-              onShowLoginPanelChange={onShowLoginPanelChange}
-            />
-          ),
-          linuxdo: (
-            <>
-              <MenuButton
-                nested
-                icon={Activity}
-                label="linux.do 等级"
-                value={levelMeta}
-                expanded={levelExpanded}
-                styles={styles}
-                theme={theme}
-                onPress={() => setLevelExpanded((value) => !value)}
-              />
-              {levelExpanded ? (
-                <LinuxDoLevelPanel
-                  busy={linuxDoLevelBusy}
-                  error={linuxDoLevelError}
-                  siteSession={linuxDoSession}
-                  profile={linuxDoLevelProfile}
-                  styles={styles}
-                  theme={theme}
-                  onOpenLogin={() => {
-                    void onAccountCenterCommand({ type: 'open-login', site: 'linuxdo' });
-                  }}
-                  onRefresh={onRefreshLinuxDoLevel}
-                />
+          {appUpdateDownloadProgress ? (
+            <View style={styles.updateProgressBox}>
+              <View style={styles.updateProgressHeader}>
+                <Text style={styles.updateProgressTitle}>{appUpdateDownloadProgress.title}</Text>
+                {appUpdateDownloadProgress.percentLabel ? (
+                  <Text style={styles.updateProgressPercent}>{appUpdateDownloadProgress.percentLabel}</Text>
+                ) : null}
+              </View>
+              {appUpdateProgressWidth ? (
+                <View style={styles.updateProgressTrack}>
+                  <View style={[styles.updateProgressFill, { width: appUpdateProgressWidth }]} />
+                </View>
               ) : null}
-            </>
-          ),
-          yaohuo: (
-            <YaohuoLoginPanel
-              checking={checking}
-              credentialAttempt={credentialFillAttempt?.site === 'yaohuo' ? credentialFillAttempt.attempt : 0}
-              credentialFillPending={pendingCredentialFillSite === 'yaohuo'}
-              credentialSaved={credentialSummaries.yaohuo.hasCredential}
-              yaohuoSession={yaohuoSession}
-              accountExpanded={accountExpanded}
-              loginFormMode={credentialLoginSite === 'yaohuo'}
-              loadingYaohuoLoginPage={loadingYaohuoLoginPage}
-              showYaohuoLoginPanel={showYaohuoLoginPanel}
-              styles={styles}
-              theme={theme}
-              yaohuoLoginPrompt={yaohuoLoginPrompt}
-              yaohuoWebViewRef={yaohuoWebViewRef}
-              webViewBlockMessage={webViewBlockMessage}
-              onCheckYaohuoLogin={onCheckYaohuoLogin}
-              onClearYaohuoLogin={onClearYaohuoLogin}
-              handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
-              onLoginFormMessage={onLoginFormMessage}
-              onRequestCredentialFill={() => {
-                void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'yaohuo' });
-              }}
-              onWebViewState={onYaohuoLoginWebViewState}
-              onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
-              onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
-            />
-          ),
-          xiaoyinsi: (
-            <>
-              <XiaoyinsiAuthPanel
-                message={xiaoyinsiAuth.message}
-                pending={xiaoyinsiAuth.pending}
-                phase={xiaoyinsiAuth.phase}
-                secondsRemaining={xiaoyinsiAuth.secondsRemaining}
-                session={xiaoyinsiSession}
+              <Text style={styles.updateProgressMeta}>{appUpdateDownloadProgress.sizeLabel}</Text>
+            </View>
+          ) : null}
+          {appUpdateStatus && !appUpdateDownloadProgress ? <Text style={styles.meta}>{appUpdateStatus}</Text> : null}
+          {appUpdateInfo && updateNotes ? <Text style={styles.meta}>{updateNotes}</Text> : null}
+        </View>
+        <AccountCenterPanel
+          credentials={credentialSummaries}
+          expanded={accountExpanded}
+          forcedSite={
+            showLoginPanel
+              ? 'nodeseek'
+              : showYaohuoLoginPanel
+                ? 'yaohuo'
+                : showLinuxDoPanel
+                  ? 'linuxdo'
+                  : xiaoyinsiAuthForcedOpen
+                    ? 'xiaoyinsi'
+                    : null
+          }
+          pendingFillSite={pendingCredentialFillSite}
+          nodeSeekUserId={nodeSeekUserId}
+          sessions={accountSessionViewModels}
+          siteContent={{
+            nodeseek: (
+              <NodeSeekLoginPanel
+                checking={checking}
+                credentialAttempt={credentialFillAttempt?.site === 'nodeseek' ? credentialFillAttempt.attempt : 0}
+                credentialFillPending={pendingCredentialFillSite === 'nodeseek'}
+                credentialSaved={credentialSummaries.nodeseek.hasCredential}
+                nodeSeekSession={nodeSeekSession}
+                nodeImageApiKeyBusy={nodeImageApiKeyBusy}
+                nodeImageApiKeySaved={nodeImageApiKeySaved}
+                accountExpanded={accountExpanded}
+                loginFormMode={credentialLoginSite === 'nodeseek'}
+                loadingLoginPage={loadingLoginPage}
+                showLoginPanel={showLoginPanel}
                 styles={styles}
                 theme={theme}
-                onBegin={xiaoyinsiAuth.onBegin}
-                onCancel={xiaoyinsiAuth.onCancel}
-                onOpenBrowser={xiaoyinsiAuth.onOpenBrowser}
-                onRevoke={xiaoyinsiAuth.onRevoke}
+                webViewRef={webViewRef}
+                webViewBlockMessage={webViewBlockMessage}
+                onCheckIn={onCheckIn}
+                onCheckLogin={onCheckLogin}
+                onAuthorizeNodeImageApiKey={onAuthorizeNodeImageApiKey}
+                onSaveNodeImageApiKey={onSaveNodeImageApiKey}
+                onClearNodeImageApiKey={onClearNodeImageApiKey}
+                onClearLogin={onClearLogin}
+                onHandleLoginMessage={onHandleLoginMessage}
+                onLoginFormMessage={onLoginFormMessage}
+                onRequestCredentialFill={() => {
+                  void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'nodeseek' });
+                }}
+                onWebViewState={onNodeSeekLoginWebViewState}
+                handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
+                onSetLoadingLoginPage={onSetLoadingLoginPage}
+                onShowLoginPanelChange={onShowLoginPanelChange}
               />
-              <View
-                testID={
-                  xiaoyinsiLevelExpanded &&
-                  xiaoyinsiSession.canWrite &&
-                  !xiaoyinsiLevelBusy &&
-                  (xiaoyinsiLevelProfile || xiaoyinsiLevelError)
-                    ? 'xiaoyinsi-level-settled'
-                    : undefined
-                }
-                style={[moreScreenStyles.accountFooterAction, { borderTopColor: theme.line }]}
-              >
+            ),
+            linuxdo: (
+              <>
                 <MenuButton
                   nested
                   icon={Activity}
-                  label="查看等级"
-                  value={xiaoyinsiLevelMeta}
-                  expanded={xiaoyinsiLevelExpanded}
+                  label="linux.do 等级"
+                  value={levelMeta}
+                  expanded={levelExpanded}
                   styles={styles}
                   theme={theme}
-                  onPress={() => setXiaoyinsiLevelExpanded((value) => !value)}
+                  onPress={() => setLevelExpanded((value) => !value)}
                 />
-                {xiaoyinsiLevelExpanded ? (
+                {levelExpanded ? (
                   <LinuxDoLevelPanel
-                    busy={xiaoyinsiLevelBusy}
-                    error={xiaoyinsiLevelError}
-                    loginButtonLabel="授权登录"
-                    loginMessage="需要先完成小隐寺授权，等级数据只使用 App 保存的 User API Key 读取。"
-                    profile={xiaoyinsiLevelProfile}
-                    siteSession={xiaoyinsiSession}
+                    busy={linuxDoLevelBusy}
+                    error={linuxDoLevelError}
+                    siteSession={linuxDoSession}
+                    profile={linuxDoLevelProfile}
                     styles={styles}
                     theme={theme}
-                    onOpenLogin={xiaoyinsiAuth.onBegin}
-                    onRefresh={onRefreshXiaoyinsiLevel}
+                    onOpenLogin={() => {
+                      void onAccountCenterCommand({ type: 'open-login', site: 'linuxdo' });
+                    }}
+                    onRefresh={onRefreshLinuxDoLevel}
                   />
                 ) : null}
-              </View>
-            </>
-          )
-        }}
-        statusBusy={statusBusy}
-        styles={styles}
-        theme={theme}
-        onCommand={onAccountCenterCommand}
-        onExpandedChange={setAccountExpanded}
-      />
-      <View style={styles.groupList}>
-        <MenuButton
-          icon={Server}
-          label="服务器代理"
-          value={networkProxySummary}
+              </>
+            ),
+            yaohuo: (
+              <YaohuoLoginPanel
+                checking={checking}
+                credentialAttempt={credentialFillAttempt?.site === 'yaohuo' ? credentialFillAttempt.attempt : 0}
+                credentialFillPending={pendingCredentialFillSite === 'yaohuo'}
+                credentialSaved={credentialSummaries.yaohuo.hasCredential}
+                yaohuoSession={yaohuoSession}
+                accountExpanded={accountExpanded}
+                loginFormMode={credentialLoginSite === 'yaohuo'}
+                loadingYaohuoLoginPage={loadingYaohuoLoginPage}
+                showYaohuoLoginPanel={showYaohuoLoginPanel}
+                styles={styles}
+                theme={theme}
+                yaohuoLoginPrompt={yaohuoLoginPrompt}
+                yaohuoWebViewRef={yaohuoWebViewRef}
+                webViewBlockMessage={webViewBlockMessage}
+                onCheckYaohuoLogin={onCheckYaohuoLogin}
+                onClearYaohuoLogin={onClearYaohuoLogin}
+                handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
+                onLoginFormMessage={onLoginFormMessage}
+                onRequestCredentialFill={() => {
+                  void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'yaohuo' });
+                }}
+                onWebViewState={onYaohuoLoginWebViewState}
+                onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
+                onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
+              />
+            ),
+            xiaoyinsi: (
+              <>
+                <XiaoyinsiAuthPanel
+                  message={xiaoyinsiAuth.message}
+                  pending={xiaoyinsiAuth.pending}
+                  phase={xiaoyinsiAuth.phase}
+                  secondsRemaining={xiaoyinsiAuth.secondsRemaining}
+                  session={xiaoyinsiSession}
+                  styles={styles}
+                  theme={theme}
+                  onBegin={xiaoyinsiAuth.onBegin}
+                  onCancel={xiaoyinsiAuth.onCancel}
+                  onOpenBrowser={xiaoyinsiAuth.onOpenBrowser}
+                  onRevoke={xiaoyinsiAuth.onRevoke}
+                />
+                <View
+                  testID={
+                    xiaoyinsiLevelExpanded &&
+                    xiaoyinsiSession.canWrite &&
+                    !xiaoyinsiLevelBusy &&
+                    (xiaoyinsiLevelProfile || xiaoyinsiLevelError)
+                      ? 'xiaoyinsi-level-settled'
+                      : undefined
+                  }
+                  style={[moreScreenStyles.accountFooterAction, { borderTopColor: theme.line }]}
+                >
+                  <MenuButton
+                    nested
+                    icon={Activity}
+                    label="查看等级"
+                    value={xiaoyinsiLevelMeta}
+                    expanded={xiaoyinsiLevelExpanded}
+                    styles={styles}
+                    theme={theme}
+                    onPress={() => setXiaoyinsiLevelExpanded((value) => !value)}
+                  />
+                  {xiaoyinsiLevelExpanded ? (
+                    <LinuxDoLevelPanel
+                      busy={xiaoyinsiLevelBusy}
+                      error={xiaoyinsiLevelError}
+                      loginButtonLabel="授权登录"
+                      loginMessage="需要先完成小隐寺授权，等级数据只使用 App 保存的 User API Key 读取。"
+                      profile={xiaoyinsiLevelProfile}
+                      siteSession={xiaoyinsiSession}
+                      styles={styles}
+                      theme={theme}
+                      onOpenLogin={xiaoyinsiAuth.onBegin}
+                      onRefresh={onRefreshXiaoyinsiLevel}
+                    />
+                  ) : null}
+                </View>
+              </>
+            )
+          }}
+          statusBusy={statusBusy}
           styles={styles}
           theme={theme}
-          onPress={() => onShowNetworkProxyPanelChange(true)}
+          onCommand={onAccountCenterCommand}
+          onExpandedChange={setAccountExpanded}
         />
-      </View>
-      <NetworkProxyModal
-        activeProfile={networkProxyActiveProfile}
-        applyError={networkProxyApplyError}
-        applyStatus={networkProxyApplyStatus}
-        proxyState={networkProxyState}
-        styles={styles}
-        theme={theme}
-        visible={showNetworkProxyPanel}
-        onClose={() => onShowNetworkProxyPanelChange(false)}
-        onDeleteProfile={onDeleteNetworkProxyProfile}
-        onSelectProfile={onSelectNetworkProxyProfile}
-        onSetEnabled={onSetNetworkProxyEnabled}
-        onTestProfile={onTestNetworkProxyProfile}
-        onUpsertProfile={onUpsertNetworkProxyProfile}
-      />
-      <ExpandablePanel
-        quiet
-        title="问题诊断"
-        meta={diagnosticBusy ? '正在生成' : '生成脱敏日志并分享'}
-        icon={Bug}
-        expanded={diagnosticExpanded}
-        styles={styles}
-        theme={theme}
-        onExpandedChange={setDiagnosticExpanded}
-      >
-        <View style={styles.stack}>
-          <Text style={styles.meta}>
-            日志只保存在本机并经过脱敏。显示问题请同时附截图；特定内容解析异常请附原帖链接。
-          </Text>
-          <AppButton
-            label={diagnosticBusy ? '正在生成' : '生成并分享诊断日志'}
+        <View style={styles.groupList}>
+          <MenuButton
+            icon={Server}
+            label="服务器代理"
+            value={networkProxySummary}
             styles={styles}
-            disabled={diagnosticBusy}
-            onPress={onExportDiagnosticLog}
+            theme={theme}
+            onPress={() => onShowNetworkProxyPanelChange(true)}
           />
         </View>
-      </ExpandablePanel>
-      <ExpandablePanel
-        quiet
-        title="备份 / 恢复"
-        meta={backupBusy ? '处理中' : '文件导出和恢复'}
-        icon={DatabaseBackup}
-        expanded={backupExpanded}
-        styles={styles}
-        theme={theme}
-        onExpandedChange={setBackupExpanded}
-      >
-        <BackupRestorePanel
-          backupBusy={backupBusy}
+        <NetworkProxyModal
+          activeProfile={networkProxyActiveProfile}
+          applyError={networkProxyApplyError}
+          applyStatus={networkProxyApplyStatus}
+          proxyState={networkProxyState}
           styles={styles}
-          onExportBackupFile={onExportBackupFile}
-          onImportBackupFile={onImportBackupFile}
+          theme={theme}
+          visible={showNetworkProxyPanel}
+          onClose={() => onShowNetworkProxyPanelChange(false)}
+          onDeleteProfile={onDeleteNetworkProxyProfile}
+          onSelectProfile={onSelectNetworkProxyProfile}
+          onSetEnabled={onSetNetworkProxyEnabled}
+          onTestProfile={onTestNetworkProxyProfile}
+          onUpsertProfile={onUpsertNetworkProxyProfile}
         />
-      </ExpandablePanel>
-      <ExpandablePanel
-        quiet
-        title="外观"
-        meta={appearanceSummary(settings)}
-        icon={Settings}
-        expanded={showSettingsPanel}
-        styles={styles}
-        theme={theme}
-        onExpandedChange={onShowSettingsPanelChange}
-      >
-        <AppearancePanel
-          settings={settings}
-          showSettingsPanel={showSettingsPanel}
+        <ExpandablePanel
+          quiet
+          title="问题诊断"
+          meta={diagnosticBusy ? '正在生成' : '生成脱敏日志并分享'}
+          icon={Bug}
+          expanded={diagnosticExpanded}
           styles={styles}
-          onUpdateSettings={onUpdateSettings}
-        />
-      </ExpandablePanel>
-    </View>
+          theme={theme}
+          onExpandedChange={setDiagnosticExpanded}
+        >
+          <View style={styles.stack}>
+            <Text style={styles.meta}>
+              日志只保存在本机并经过脱敏。显示问题请同时附截图；特定内容解析异常请附原帖链接。
+            </Text>
+            <AppButton
+              label={diagnosticBusy ? '正在生成' : '生成并分享诊断日志'}
+              styles={styles}
+              disabled={diagnosticBusy}
+              onPress={onExportDiagnosticLog}
+            />
+          </View>
+        </ExpandablePanel>
+        <ExpandablePanel
+          quiet
+          title="备份 / 恢复"
+          meta={backupBusy ? '处理中' : '文件导出和恢复'}
+          icon={DatabaseBackup}
+          expanded={backupExpanded}
+          styles={styles}
+          theme={theme}
+          onExpandedChange={setBackupExpanded}
+        >
+          <BackupRestorePanel
+            backupBusy={backupBusy}
+            styles={styles}
+            onExportBackupFile={onExportBackupFile}
+            onImportBackupFile={onImportBackupFile}
+          />
+        </ExpandablePanel>
+        <ExpandablePanel
+          quiet
+          title="外观"
+          meta={appearanceSummary(settings)}
+          icon={Settings}
+          expanded={showSettingsPanel}
+          styles={styles}
+          theme={theme}
+          onExpandedChange={onShowSettingsPanelChange}
+        >
+          <AppearancePanel
+            settings={settings}
+            showSettingsPanel={showSettingsPanel}
+            styles={styles}
+            onUpdateSettings={onUpdateSettings}
+          />
+        </ExpandablePanel>
+      </View>
+    </ScrollView>
+  );
+});
+
+export const ReadingSettingsScreen = memo(function ReadingSettingsScreen({
+  settings,
+  onUpdateSettings
+}: {
+  settings: ReaderSettings;
+  onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
+}) {
+  const { styles } = useReaderStyles(createMoreScreenStyles);
+  return (
+    <ScrollView
+      style={styles.content}
+      contentContainerStyle={styles.moreContentInner}
+      keyboardShouldPersistTaps="handled"
+    >
+      <AppearancePanel settings={settings} showSettingsPanel styles={styles} onUpdateSettings={onUpdateSettings} />
+    </ScrollView>
   );
 });

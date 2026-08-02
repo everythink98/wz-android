@@ -1,13 +1,11 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render } from '../render';
 import React, { type ComponentProps } from 'react';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { MoreScreen } from '@/features/more/MoreScreen';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
@@ -79,8 +77,6 @@ jest.mock('lucide-react-native', () => {
 });
 
 const readerData = createEmptyReaderData();
-const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
 const authorizedXiaoyinsiSessions = createSiteSessionViewModels(
   createSiteSessionStates({
@@ -173,8 +169,6 @@ function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): 
     showSettingsPanel: false,
     showYaohuoLoginPanel: false,
     statusBusy: false,
-    styles,
-    theme,
     webViewBlockMessage: '',
     webViewRef: { current: null },
     yaohuoLoginPrompt: '',

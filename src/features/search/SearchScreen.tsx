@@ -1,4 +1,4 @@
-import type { SearchStyles } from './styles';
+import { createSearchStyles, type SearchStyles } from './styles';
 import { SearchFilterSheet } from './SearchFilterSheet';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, Text, TextInput, View } from 'react-native';
@@ -32,6 +32,7 @@ import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import type { SearchSessionNoticeItem } from '@/domain/session/siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '@/domain/session/siteSessionPrompts';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { useReaderStyles } from '@/ui/theme/ReaderStyleProvider';
 
 const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 50,
@@ -213,8 +214,6 @@ export const SearchScreen = memo(function SearchScreen({
   searchSource,
   submittedQuery,
   scrollToTopSignal,
-  styles,
-  theme,
   onOpenTopic,
   onLoadMoreSearchSource,
   onCheckLinuxDoStatus,
@@ -247,8 +246,6 @@ export const SearchScreen = memo(function SearchScreen({
   searchSource: FeedSource;
   submittedQuery: string;
   scrollToTopSignal: number;
-  styles: SearchStyles;
-  theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
   onLoadMoreSearchSource: (source: Source, page: number) => void;
   onCheckLinuxDoStatus?: () => void;
@@ -275,6 +272,7 @@ export const SearchScreen = memo(function SearchScreen({
   onToggleLinuxDoAiSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
 }) {
+  const { styles, theme } = useReaderStyles(createSearchStyles);
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
   const autoLoadArmedRef = useRef(false);
   const pendingAutoLoadRef = useRef<{ source: Source; page: number; previousItemCount: number } | null>(null);

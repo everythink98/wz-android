@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { StyleSheet } from 'react-native';
 import { type ReaderSettings } from '@/domain/reader/readerData';
 import {
@@ -14,6 +15,7 @@ import { createAppStyles } from '@/app/styles';
 import { createFeedStyles } from '@/features/feed/styles';
 import { createSearchStyles } from '@/features/search/styles';
 import { createTopicStyles } from '@/features/topic/styles';
+import { createHtmlRendererStyles } from '@/features/topic/rendering/htmlStyles';
 import { createUserStyles } from '@/features/user/styles';
 import { createLibraryStyles } from '@/features/library/styles';
 import { createMoreAccountStyles } from '@/features/more/accountStyles';
@@ -42,6 +44,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight
     createFeedStyles(sharedStyles, theme, settings),
     createSearchStyles(sharedStyles, theme, settings),
     createTopicStyles(sharedStyles, theme, settings),
+    createHtmlRendererStyles(settings, theme),
     createUserStyles(sharedStyles, theme, settings),
     createLibraryStyles(sharedStyles, theme, settings),
     createMoreAccountStyles(sharedStyles, theme, settings),
@@ -276,5 +279,15 @@ describe('Android reader theme safety rails', () => {
     expect(styles.navIconPill?.backgroundColor).toBeUndefined();
     expect(styles.navIconPillActive).toBeUndefined();
     expect(styles.navTextActive?.color).toBe(theme.primary);
+  });
+});
+
+describe('feature style ownership', () => {
+  it('keeps feature style factories and instances out of the app composition root', () => {
+    const appThemeSource = readFileSync('src/app/useAppTheme.ts', 'utf8');
+    const appRootSource = readFileSync('src/app/AppRoot.tsx', 'utf8');
+
+    expect(appThemeSource).not.toContain("from '@/features/");
+    expect(appRootSource).not.toMatch(/\b(?:feed|library|more|search|topic|user)Styles\b/);
   });
 });

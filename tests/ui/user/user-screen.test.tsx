@@ -1,11 +1,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render } from '../render';
 import React from 'react';
 import type { Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { UserScreen } from '@/features/user/UserScreen';
-import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 
 jest.mock('@shopify/flash-list', () => {
@@ -75,8 +73,6 @@ jest.mock('@/ui/topic/TopicCard', () => {
 });
 
 const readerData = createEmptyReaderData();
-const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);
 const topic: Topic = {
   source: 'linuxdo',
@@ -123,8 +119,6 @@ function userScreen(overrides: Partial<React.ComponentProps<typeof UserScreen>> 
     loadingMoreTopics: false,
     profile,
     requestedUser: profile,
-    styles,
-    theme,
     topicStateIndex,
     onBack: jest.fn(),
     onLoadMoreReplies: jest.fn(),
@@ -265,8 +259,6 @@ describe('User screen behavior', () => {
         loadingMoreTopics={false}
         profile={profile}
         requestedUser={profile}
-        styles={styles}
-        theme={theme}
         topicStateIndex={topicStateIndex}
         onBack={jest.fn()}
         onLoadMoreReplies={onLoadMoreReplies}

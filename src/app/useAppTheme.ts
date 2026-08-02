@@ -1,16 +1,10 @@
 import { useDeferredValue, useMemo } from 'react';
 import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { createFeedStyles } from '@/features/feed/styles';
-import { createLibraryStyles } from '@/features/library/styles';
-import { createMoreAccountStyles } from '@/features/more/accountStyles';
-import { createMoreStyles } from '@/features/more/styles';
-import { createSearchStyles } from '@/features/search/styles';
-import { createTopicStyles } from '@/features/topic/styles';
-import { createUserStyles } from '@/features/user/styles';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { createSharedStyles } from '@/ui/theme/sharedStyles';
 import { contentWidthValue, createTheme } from '@/ui/theme/tokens';
+import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 import { createAppStyles } from './styles';
 
 export function useAppTheme(settings: ReaderSettings, width: number, height: number) {
@@ -42,46 +36,16 @@ export function useAppTheme(settings: ReaderSettings, width: number, height: num
     () => Object.assign(createAppStyles(sharedStyles, theme), loginWebViewStyles),
     [loginWebViewStyles, sharedStyles, theme]
   );
-  const feedStyles = useMemo(
-    () => createFeedStyles(sharedStyles, theme, styleSettings),
+  const readerStyleContext = useMemo<ReaderStyleContextValue>(
+    () => ({ settings: styleSettings, sharedStyles, theme }),
     [sharedStyles, styleSettings, theme]
-  );
-  const searchStyles = useMemo(
-    () => createSearchStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const topicStyles = useMemo(
-    () => createTopicStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const userStyles = useMemo(
-    () => createUserStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const libraryStyles = useMemo(
-    () => createLibraryStyles(sharedStyles, theme, styleSettings),
-    [sharedStyles, styleSettings, theme]
-  );
-  const moreStyles = useMemo(
-    () =>
-      Object.assign(
-        createMoreStyles(sharedStyles, theme, styleSettings),
-        createMoreAccountStyles(sharedStyles, theme, styleSettings),
-        loginWebViewStyles
-      ),
-    [loginWebViewStyles, sharedStyles, styleSettings, theme]
   );
 
   return {
     appStyles,
     contentWidth: Math.min(width - 40, contentWidthValue(settings.contentWidth)),
-    feedStyles,
-    libraryStyles,
-    moreStyles,
     navigationTheme,
-    searchStyles,
-    theme,
-    topicStyles,
-    userStyles
+    readerStyleContext,
+    theme
   };
 }

@@ -1,9 +1,9 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens';
 import type { SharedStyles } from '@/ui/theme/sharedStyles';
-import type { MoreAccountStyles } from './accountStyles';
-import type { LoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
+import { createMoreAccountStyles } from './accountStyles';
+import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 
 export function createMoreStyles(sharedStyles: SharedStyles, theme: ReaderTheme, settings: ReaderSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
@@ -11,6 +11,12 @@ export function createMoreStyles(sharedStyles: SharedStyles, theme: ReaderTheme,
     {},
     sharedStyles,
     StyleSheet.create({
+      moreContentInner: {
+        gap: 10,
+        padding: 16,
+        paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
+        paddingBottom: 124
+      },
       updateBadge: {
         alignSelf: 'flex-start',
         overflow: 'hidden',
@@ -224,4 +230,14 @@ export function createMoreStyles(sharedStyles: SharedStyles, theme: ReaderTheme,
 }
 
 export type MoreStyles = ReturnType<typeof createMoreStyles>;
-export type MoreScreenStyles = MoreStyles & MoreAccountStyles & LoginWebViewStyles;
+
+export function createMoreScreenStyles(sharedStyles: SharedStyles, theme: ReaderTheme, settings: ReaderSettings) {
+  return Object.assign(
+    {},
+    createMoreStyles(sharedStyles, theme, settings),
+    createMoreAccountStyles(sharedStyles, theme, settings),
+    createLoginWebViewStyles(sharedStyles, theme, settings)
+  );
+}
+
+export type MoreScreenStyles = ReturnType<typeof createMoreScreenStyles>;

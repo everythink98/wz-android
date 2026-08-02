@@ -959,63 +959,6 @@ export function createTopicStyles(sharedStyles: SharedStyles, theme: ReaderTheme
         fontWeight: '600',
         lineHeight: 16
       },
-      htmlMentionLink: {
-        color: linkColor,
-        fontFamily: appFontFamily,
-        fontSize: Math.round(15 * fontScale),
-        fontWeight: '600',
-        lineHeight: Math.round(24 * fontScale)
-      },
-      htmlFloorLink: {
-        color: linkColor,
-        fontFamily: appFontFamily,
-        fontSize: Math.round(13 * fontScale),
-        fontWeight: '600',
-        lineHeight: Math.round(22 * fontScale)
-      },
-      htmlReplyReferenceRow: {
-        alignItems: 'center',
-        alignSelf: 'stretch',
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 5,
-        marginBottom: 4,
-        marginTop: -1
-      },
-      htmlReplyReferenceLabel: {
-        color: theme.muted,
-        fontFamily: appFontFamily,
-        fontSize: Math.round(12 * fontScale),
-        includeFontPadding: false,
-        lineHeight: Math.round(18 * fontScale),
-        textAlignVertical: 'center'
-      },
-      htmlReplyReferenceMentionText: {
-        color: linkColor,
-        fontFamily: appFontFamily,
-        fontSize: Math.round(13 * fontScale),
-        fontWeight: '600',
-        includeFontPadding: false,
-        lineHeight: Math.round(18 * fontScale),
-        textAlignVertical: 'center'
-      },
-      htmlReplyReferenceSeparator: {
-        color: theme.muted,
-        fontFamily: appFontFamily,
-        fontSize: Math.round(12 * fontScale),
-        includeFontPadding: false,
-        lineHeight: Math.round(18 * fontScale),
-        textAlignVertical: 'center'
-      },
-      htmlReplyReferenceFloorText: {
-        color: theme.muted,
-        fontFamily: appFontFamily,
-        fontSize: Math.round(12 * fontScale),
-        fontWeight: '600',
-        includeFontPadding: false,
-        lineHeight: Math.round(18 * fontScale),
-        textAlignVertical: 'center'
-      },
       replyBody: {
         paddingTop: 0
       },
@@ -1240,18 +1183,6 @@ export function createTopicStyles(sharedStyles: SharedStyles, theme: ReaderTheme
         fontFamily: appFontFamily,
         fontSize: 13,
         lineHeight: 20
-      },
-      inlineForumImageText: {
-        color: theme.ink,
-        fontFamily: appFontFamily,
-        fontSize: Math.round(16 * fontScale),
-        lineHeight: Math.round(20 * fontScale)
-      },
-      inlineForumImage: {
-        width: Math.round(104 * fontScale),
-        height: Math.round(82 * fontScale),
-        marginHorizontal: 2,
-        resizeMode: 'contain' as const
       },
       replyNewBadge: {
         alignSelf: 'flex-start' as const,

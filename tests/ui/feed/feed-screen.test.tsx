@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, within } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '../render';
 import React, { useState } from 'react';
 import { Platform } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -216,8 +216,6 @@ function renderFeed(
       readingFilter="all"
       refreshing={false}
       scrollToTopSignal={0}
-      styles={styles}
-      theme={theme}
       onCategoryChange={jest.fn()}
       onFeedFilterChange={jest.fn()}
       onFeedSourceChange={jest.fn()}
@@ -286,8 +284,6 @@ function FeedFilterHarness() {
       readingFilter={readingFilter}
       refreshing={false}
       scrollToTopSignal={0}
-      styles={styles}
-      theme={theme}
       onCategoryChange={(value) => setFeedSelection((current) => ({ ...current, categoryFilter: value }))}
       onFeedFilterChange={changeFeedFilter}
       onFeedSourceChange={changeSource}

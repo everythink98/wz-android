@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '../render';
 import React, { useState } from 'react';
 import { Alert, View } from 'react-native';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
 import { LibraryScreen } from '@/features/library/LibraryScreen';
-import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { Category, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 
@@ -101,8 +99,6 @@ jest.mock('@/ui/topic/TopicCard', () => {
 });
 
 const readerData = createEmptyReaderData();
-const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);
 const categories: Category[] = [
   { source: 'v2ex', id: 'qna', name: '问与答' },
@@ -181,8 +177,6 @@ function LibraryHarness({
         loaded
         records={libraryRecords}
         scrollToTopSignal={0}
-        styles={styles}
-        theme={theme}
         topicStateIndex={topicStateIndex}
         onClearHistory={onClearHistory}
         onOpenTopic={onOpenTopic}

@@ -195,7 +195,6 @@ function TopicImageHarness({
     onOpenUser: noop,
     selectedTopic: topic,
     settings: readerData.settings,
-    styles,
     theme,
     topicDetail: topic,
     topicKey: 'yaohuo:image-topic',

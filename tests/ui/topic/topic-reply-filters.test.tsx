@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '../render';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
@@ -11,7 +11,6 @@ import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles'
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '@/features/topic/TopicScreen';
 import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 
@@ -311,7 +310,6 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
 
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 const htmlStyles = buildHtmlRenderingStyles({ settings: readerData.settings, theme });
 const topicImageDeriver = createTopicImageDeriver();
 const noop = () => undefined;
@@ -363,7 +361,6 @@ function HtmlRendererIdentityHarness({
     onOpenUser: noop,
     selectedTopic,
     settings: readerData.settings,
-    styles,
     theme,
     topicDetail,
     topicKey: `${topicDetail.source}:${topicDetail.id}`,
@@ -501,8 +498,6 @@ function TopicFilterHarness({
           replyTarget={null}
           selectedTopic={selectedTopic}
           sourceReplies={topicReplies}
-          styles={styles}
-          theme={theme}
           topic={topicDetail}
           topicBusy={topicBusy}
           topicError={topicError}

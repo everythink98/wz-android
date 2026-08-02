@@ -1,13 +1,11 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render as renderNative, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render as renderNative, waitFor } from '../render';
 import React, { useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from '@/domain/forum/searchFilters';
 import type { SearchGroup } from '@/features/search/listItems';
 import { SearchScreen } from '@/features/search/SearchScreen';
-import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { Category, FeedSource, Source, Topic } from '@/domain/forum/models';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -118,8 +116,6 @@ jest.mock('@react-native-community/datetimepicker', () => {
 });
 
 const readerData = createEmptyReaderData();
-const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);
 const categories: Category[] = [
   { source: 'linuxdo', id: '2', name: '技术', slug: 'tech', topicCount: 120 },
@@ -257,8 +253,6 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
       searchSource={searchSource}
       submittedQuery={submittedQuery}
       scrollToTopSignal={0}
-      styles={styles}
-      theme={theme}
       onOpenTopic={() => setRoute('topic')}
       onLoadMoreSearchSource={loadMoreSearchSource}
       onRemoveRecentSearch={jest.fn()}
@@ -309,8 +303,6 @@ function RecentSearchHarness({
       searchSource="all"
       submittedQuery=""
       scrollToTopSignal={0}
-      styles={styles}
-      theme={theme}
       onOpenTopic={jest.fn()}
       onLoadMoreSearchSource={jest.fn()}
       onRemoveRecentSearch={onRemoveRecentSearch}
@@ -344,8 +336,6 @@ function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof 
     searchSource: 'all',
     submittedQuery: 'codex',
     scrollToTopSignal: 0,
-    styles,
-    theme,
     onOpenTopic: jest.fn(),
     onLoadMoreSearchSource: jest.fn(),
     onRemoveRecentSearch: jest.fn(),
