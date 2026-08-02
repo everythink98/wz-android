@@ -38,7 +38,7 @@ import { AppButton } from '@/ui/controls/ButtonControls';
 import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
-import type { InteractionType, TopicActionStateKind } from '@/domain/forum/topicActionState';
+import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
 import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../model/topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
@@ -171,7 +171,6 @@ export function ReplyItem({
   decisionFor,
   contentWidth,
   expandedQuotes,
-  isActionPending,
   isNew,
   loadedQuotedReplies,
   loadingQuotedFloors,
@@ -190,6 +189,7 @@ export function ReplyItem({
   topicAuthor,
   topicBaseUrl,
   topicId,
+  topicStateKey,
   topicImageDeriver,
   onInteract,
   onDeleteReply,
@@ -205,7 +205,6 @@ export function ReplyItem({
   decisionFor: TopicActionDecisionFor;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
-  isActionPending: (targetId: string | number | undefined, action: TopicActionStateKind) => boolean;
   inlineSizedImageUrls: Record<string, true>;
   discourseEmojiUrls?: DiscourseEmojiUrlMap;
   isNew?: boolean;
@@ -224,6 +223,7 @@ export function ReplyItem({
   topicAuthor?: string;
   topicBaseUrl?: string;
   topicId?: string;
+  topicStateKey: string;
   topicImageDeriver: TopicImageDeriver;
   onInteract: (type: InteractionType, commentId?: number) => void;
   onDeleteReply: (reply: Reply) => void;
@@ -355,8 +355,27 @@ export function ReplyItem({
   const canReply = decisionFor({ action: 'reply' }).allowed;
   const canEdit = decisionFor({ action: 'edit', reply }).allowed;
   const canDelete = decisionFor({ action: 'delete', reply }).allowed;
-  const canLike = decisionFor({ action: 'like', reply }).allowed;
-  const canUseNodeSeekInteractions = source === 'nodeseek' && canLike;
+  const interactionDecision = (interaction: InteractionType) =>
+    decisionFor({
+      action: 'like',
+      ...(reply.commentId && topicStateKey
+        ? {
+            actionKey: topicActionStateKey({ topicKey: topicStateKey, targetId: reply.commentId, action: interaction })
+          }
+        : {}),
+      interaction,
+      reply,
+      target: reply
+    });
+  const upvoteDecision = interactionDecision('upvote');
+  const likeDecision = interactionDecision('like');
+  const dislikeDecision = interactionDecision('dislike');
+  const canLike = likeDecision.allowed || likeDecision.reason === 'pending';
+  const canUseNodeSeekInteractions =
+    source === 'nodeseek' &&
+    [upvoteDecision, likeDecision, dislikeDecision].some(
+      (decision) => decision.allowed || decision.reason === 'already-complete' || decision.reason === 'pending'
+    );
   const canUseDiscoursePostActions = isDiscourse && Boolean(canReply || canEdit || canDelete || canLike);
   const discourseReplyReactionStats = isDiscourse
     ? source === 'linuxdo'
@@ -759,10 +778,10 @@ export function ReplyItem({
                       count={reply.upvoteCount}
                       icon={ThumbsUp}
                       label="赞"
-                      pending={isActionPending(reply.commentId, 'upvote')}
+                      pending={upvoteDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !upvoteDecision.allowed}
                       onPress={() => onInteract('upvote', reply.commentId)}
                     />
                   ) : (
@@ -778,10 +797,10 @@ export function ReplyItem({
                       count={reply.likeCount}
                       icon={Drumstick}
                       label="鸡腿"
-                      pending={isActionPending(reply.commentId, 'like')}
+                      pending={likeDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !likeDecision.allowed}
                       onPress={() => onInteract('like', reply.commentId)}
                     />
                   ) : (
@@ -797,10 +816,10 @@ export function ReplyItem({
                       count={reply.dislikeCount}
                       icon={ThumbsDown}
                       label="反对"
-                      pending={isActionPending(reply.commentId, 'dislike')}
+                      pending={dislikeDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !dislikeDecision.allowed}
                       onPress={() => onInteract('dislike', reply.commentId)}
                     />
                   ) : (
@@ -868,10 +887,10 @@ export function ReplyItem({
                       accessibilityLabel={reply.liked ? '取消赞' : '点赞'}
                       icon={ThumbsUp}
                       label="赞"
-                      pending={isActionPending(reply.commentId, 'like')}
+                      pending={likeDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !likeDecision.allowed}
                       onPress={() => onInteract('like', reply.commentId)}
                     />
                   ) : null}
@@ -931,7 +950,6 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.actionBusy !== next.actionBusy ||
     previous.decisionFor !== next.decisionFor ||
     previous.contentWidth !== next.contentWidth ||
-    previous.isActionPending !== next.isActionPending ||
     previous.isNew !== next.isNew ||
     previous.discourseEmojiUrls !== next.discourseEmojiUrls ||
     previous.onDeleteReply !== next.onDeleteReply ||

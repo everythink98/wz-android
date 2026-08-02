@@ -23,9 +23,7 @@ function runtimeContext(): DiscourseActionRuntimeContext {
   return {
     fetcher: vi.fn(),
     linuxDoUserAgent: () => 'test-agent',
-    refreshXiaoyinsiAuthorization: vi.fn(async () => true),
-    resetLinuxDoLevelState: vi.fn(),
-    updateLinuxDoSession: vi.fn()
+    refreshXiaoyinsiAuthorization: vi.fn(async () => true)
   };
 }
 
@@ -97,7 +95,5 @@ describe('Discourse action runtime registry', () => {
       loginRequired: true,
       phase: 'credential'
     });
-    expect(context.updateLinuxDoSession).not.toHaveBeenCalled();
-    expect(context.resetLinuxDoLevelState).not.toHaveBeenCalled();
   });
 });

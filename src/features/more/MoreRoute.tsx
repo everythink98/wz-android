@@ -19,7 +19,19 @@ export type MoreRouteRuntimeValue = {
     metadata: Parameters<typeof useDiagnosticLogController>[0]['metadata'];
   };
   notify: (message: string) => void;
-  proxy: ReturnType<typeof useNetworkProxyRuntime>;
+  proxy: Pick<
+    ReturnType<typeof useNetworkProxyRuntime>,
+    | 'activeProfile'
+    | 'applyError'
+    | 'applyStatus'
+    | 'deleteProxyProfile'
+    | 'proxyState'
+    | 'selectProxyProfile'
+    | 'setProxyEnabled'
+    | 'summary'
+    | 'testProxyProfile'
+    | 'upsertProxyProfile'
+  >;
   reader: {
     commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
     data: ReaderData;

@@ -4,10 +4,6 @@ export type InteractionType = 'upvote' | 'like' | 'dislike';
 type InteractionMode = 'add' | 'remove';
 export type TopicActionStateKind = InteractionType | 'collection' | 'bookmark';
 
-export type OptimisticActionState = {
-  inFlight: boolean;
-};
-
 type InteractionPatch = {
   commentId: number;
   type: InteractionType;

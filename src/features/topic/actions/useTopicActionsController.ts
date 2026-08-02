@@ -8,7 +8,6 @@ import {
   buildNodeSeekInteractionRequest,
   buildNodeSeekReplyRequest,
   buildNodeSeekVoteRequest,
-  nodeSeekInteractionRemovalMessage,
   type NodeSeekActionRequest
 } from '@/sources/nodeseek/actionRequest';
 import {
@@ -33,8 +32,7 @@ import {
   applyPollVoteToTopic,
   discourseBookmarkIdFromActionResult,
   topicActionStateKey,
-  type InteractionType,
-  type OptimisticActionState
+  type InteractionType
 } from '@/domain/forum/topicActionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ReplyEditTarget, TopicRepliesRefreshOptions } from '../model/types';
@@ -247,6 +245,7 @@ export function useTopicActionsController({
       let objectAllowed = request.objectAllowed;
       let targetPresent = request.targetPresent;
       let alreadyComplete = request.alreadyComplete;
+      const interactionTarget = request.target || request.reply;
       if (request.action === 'reply' || request.action === 'upload') {
         objectAllowed ??=
           Boolean(request.reply?.canEdit) ||
@@ -259,11 +258,19 @@ export function useTopicActionsController({
       } else if (request.action === 'delete') {
         objectAllowed ??= request.reply?.canDelete === true;
         targetPresent ??= Boolean(request.reply?.commentId || request.reply?.deletePath || request.reply?.floor);
-      } else if (request.action === 'like' && request.reply) {
+      } else if (request.action === 'like' && interactionTarget) {
         objectAllowed ??= isDiscourseSource(actionTopic?.source)
-          ? canToggleDiscourseLike(request.reply)
-          : request.reply.canLike !== false;
-        targetPresent ??= Boolean(request.reply.commentId);
+          ? canToggleDiscourseLike(interactionTarget)
+          : interactionTarget.canLike !== false;
+        targetPresent ??= Boolean(interactionTarget.commentId);
+        if (actionTopic?.source === 'nodeseek' && request.interaction) {
+          const completedField = {
+            upvote: 'upvoted',
+            like: 'liked',
+            dislike: 'disliked'
+          }[request.interaction] as 'upvoted' | 'liked' | 'disliked';
+          alreadyComplete ??= interactionTarget[completedField] === true;
+        }
       } else if (request.action === 'vote') {
         objectAllowed ??= !request.poll?.closed;
         targetPresent ??= Boolean(request.poll);
@@ -392,29 +399,37 @@ export function useTopicActionsController({
     filters: { mutationKey, status: 'pending' },
     select: (entry) => entry.state.variables as MutationVariables
   });
-  const optimisticTopicActions = useMemo<Record<string, OptimisticActionState>>(
-    () =>
-      Object.fromEntries(
-        pendingVariables
-          .filter((variables) => variables?.applyOptimistic)
-          .map((variables) => [
-            variables.actionKey,
-            {
-              inFlight: true
-            }
-          ])
-      ),
-    [pendingVariables]
-  );
   const decisionFor = useCallback<TopicActionDecisionFor>(
-    (request) =>
-      baseDecisionFor({
+    (request) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      const target = request.target || request.reply;
+      const actionKey =
+        request.actionKey ||
+        (actionTopic && request.interaction && target?.commentId
+          ? topicActionStateKey({
+              topicKey: topicKey(actionTopic),
+              targetId: target.commentId,
+              action: request.interaction
+            })
+          : actionTopic && request.action === 'vote' && request.poll
+            ? topicPollVoteActionKey(topicKey(actionTopic), request.poll)
+            : actionTopic && request.action === 'bookmark'
+              ? actionTopic.source === 'yaohuo'
+                ? yaohuoFavoriteActionKey(topicKey(actionTopic))
+                : topicActionStateKey({
+                    topicKey: topicKey(actionTopic),
+                    targetId: actionTopic.id,
+                    action: actionTopic.source === 'nodeseek' ? 'collection' : 'bookmark'
+                  })
+              : undefined);
+      return baseDecisionFor({
         ...request,
         pending:
           request.pending === true ||
-          Boolean(request.actionKey && pendingVariables.some((variables) => variables?.actionKey === request.actionKey))
-      }),
-    [baseDecisionFor, pendingVariables]
+          Boolean(actionKey && pendingVariables.some((variables) => variables?.actionKey === actionKey))
+      });
+    },
+    [baseDecisionFor, pendingVariables, selectedTopic, topicDetail]
   );
 
   const cacheKeys = useCallback((actionTopic: TopicDetail, ticket?: WritableSessionTicket) => {
@@ -1257,7 +1272,10 @@ export function useTopicActionsController({
           busy: false,
           decision: {
             action: 'like',
+            actionKey,
+            interaction: 'like',
             objectAllowed: canToggleDiscourseLike(target),
+            target: target || undefined,
             targetPresent: Boolean(commentId)
           },
           trace,
@@ -1282,11 +1300,6 @@ export function useTopicActionsController({
         return;
       }
       const fields = { upvote: 'upvoted', like: 'liked', dislike: 'disliked' } as const;
-      if (target?.[fields[type]]) {
-        notify(nodeSeekInteractionRemovalMessage(type));
-        finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
-        return;
-      }
       const actionKey = topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: commentId, action: type });
       const patch = { commentId, type, mode: 'add' as const };
       await executeMutation(actionTopic as TopicDetail, {
@@ -1294,7 +1307,11 @@ export function useTopicActionsController({
         busy: false,
         decision: {
           action: 'like',
+          actionKey,
+          alreadyComplete: target?.[fields[type]] === true,
+          interaction: type,
           objectAllowed: target?.canLike !== false,
+          target: target || undefined,
           targetPresent: Boolean(commentId)
         },
         trace,
@@ -1593,9 +1610,10 @@ export function useTopicActionsController({
     editReply,
     favoriteOnYaohuoSite,
     interact,
-    optimisticTopicActions,
     submitReply,
     uploadReplyImage,
     votePoll
   };
 }
+
+export type TopicActionsController = ReturnType<typeof useTopicActionsController>;

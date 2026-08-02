@@ -1,10 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ReplyFilter } from '@/features/topic/model/types';
-import { filterTopicSessionReplies } from '@/features/topic/useTopicSessionController';
+import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { discoursePollPlaceholder } from '@/sources/discourse/content';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
@@ -14,7 +14,11 @@ import { createTheme } from '@/ui/theme/tokens';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import type { TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
-import type { TopicContentPresentation, TopicScreenPresentation } from '@/features/topic/useTopicPresentation';
+import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
+import type { useTopicController } from '@/features/topic/useTopicController';
+import type { ToggleTopicBodyQuoteOptions } from '@/domain/forum/quotedPosts';
+import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
+import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
@@ -414,7 +418,7 @@ function TopicFilterHarness({
   canUseYaohuoActions?: boolean;
   filteredCommentQuery?: string;
   expandedQuotes?: Record<string, boolean>;
-  getDiscourseEmojiUrls?: TopicScreenPresentation['chrome']['getDiscourseEmojiUrls'];
+  getDiscourseEmojiUrls?: (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
   loadedQuotedReplies?: Record<string, Reply>;
   loadingMoreReplies?: boolean;
   loadingQuotedFloors?: Record<string, boolean>;
@@ -428,7 +432,7 @@ function TopicFilterHarness({
   onVerifyLinuxDo?: () => void;
   onVotePoll?: (poll: TopicPoll, optionIds: string[]) => void;
   onDiscourseBookmark?: () => void;
-  onToggleTopicBodyQuote?: TopicContentPresentation['replies']['toggleTopicBodyQuote'];
+  onToggleTopicBodyQuote?: (options: ToggleTopicBodyQuoteOptions) => void;
   replyHasMore?: boolean;
   selectedTopic?: Topic;
   topicReplies?: Reply[];
@@ -444,18 +448,6 @@ function TopicFilterHarness({
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const topicScrollRef = useRef(null);
   const effectiveCommentQuery = filteredCommentQuery ?? commentQuery;
-  const replies = useMemo(
-    () =>
-      filterTopicSessionReplies({
-        commentQuery: effectiveCommentQuery,
-        inlineSizedImageUrls: {},
-        replyFilter,
-        topicDetail,
-        topicImageDeriver,
-        topicReplies
-      }),
-    [effectiveCommentQuery, replyFilter, topicDetail, topicReplies]
-  );
   const decisionFor = (({ action }) => {
     const source = topicDetail?.source || selectedTopic?.source;
     const sourceAllowed = {
@@ -471,100 +463,108 @@ function TopicFilterHarness({
       !(source === 'xiaoyinsi' && (action === 'reply' || action === 'upload') && topicDetail?.canCreatePost !== true);
     return { allowed, reason: allowed ? 'allowed' : 'login-required' };
   }) satisfies TopicActionDecisionFor;
+  const actions = {
+    actionBusy: false,
+    bookmarkOnDiscourseSite: async () => onDiscourseBookmark(),
+    collectOnNodeSeekSite: async () => undefined,
+    decisionFor,
+    deleteReply: async () => undefined,
+    editReply: async () => undefined,
+    favoriteOnYaohuoSite: async () => onYaohuoFavorite(),
+    interact: async (type: InteractionType, commentId?: number) => onInteract(type, commentId),
+    submitReply: async () => undefined,
+    uploadReplyImage: async () => undefined,
+    votePoll: async (poll: TopicPoll, optionIds: string[]) => onVotePoll(poll, optionIds)
+  } satisfies TopicActionsController;
+  const read = {
+    loadMoreReplies: async () => {
+      onLoadMoreReplies();
+      return true;
+    },
+    loadedQuotedReplies,
+    loadingMoreReplies,
+    loadingQuotedFloors,
+    replyHasMore,
+    toggleReplyQuote: jest.fn(),
+    toggleTopicBodyQuote: onToggleTopicBodyQuote,
+    topicReplies,
+    unreadReplyCount: 0
+  } as unknown as ReturnType<typeof useTopicController>;
+  const session = {
+    state: {
+      commentQuery,
+      debouncedCommentQuery: effectiveCommentQuery,
+      expandedQuotes,
+      quoteStateVersion: 0,
+      replyComposerOpen: false,
+      replyContent: '',
+      replyEditTarget: null,
+      replyFace: '',
+      replyFilter,
+      replyTarget: null,
+      selectedTopic
+    },
+    commands: {
+      composer: {
+        changeContent: jest.fn(),
+        changeFace: jest.fn(),
+        replyToFloor: jest.fn(),
+        toggle: onReplyComposerOpenChange
+      },
+      view: {
+        changeCommentQuery: setCommentQuery,
+        changeReplyFilter: setReplyFilter
+      }
+    }
+  } as unknown as TopicSessionController;
 
   return (
     <View>
       <TopicScreen
-        presentation={{
-          content: {
-            actions: {
-              bookmarkDiscourse: onDiscourseBookmark,
-              busy: false,
-              collectNodeSeek: jest.fn(),
-              decisionFor,
-              deleteReply: jest.fn(),
-              editReply: jest.fn(),
-              favoriteYaohuo: onYaohuoFavorite,
-              interact: onInteract,
-              optimistic: {},
-              votePoll: onVotePoll
-            },
-            article: {
-              busy: topicBusy,
-              error: topicError,
-              selectedTopic,
-              topic: topicDetail,
-              yaohuoBookmarked: yaohuoVisualBookmarked ?? topicDetail?.bookmarked
-            },
-            navigation: {
-              openTopic: jest.fn(),
-              openUser: jest.fn()
-            },
-            rendering: {
-              contentWidth: 720,
-              htmlBaseStyle: htmlStyles.htmlBaseStyle,
-              htmlClassesStyles: htmlStyles.htmlClassesStyles,
-              htmlIgnoredStyles: htmlStyles.htmlIgnoredStyles,
-              htmlRenderers: {},
-              htmlRenderersProps: {},
-              htmlTagsStyles: htmlStyles.htmlTagsStyles,
-              inlineSizedImageUrls: {},
-              mediaSessionIdentity: `${topicDetail?.source || 'public'}:0`,
-              topicImageDeriver
-            },
-            replies: {
-              changeCommentQuery: setCommentQuery,
-              changeFilter: setReplyFilter,
-              commentQuery,
-              expandedQuotes,
-              filtered: replies,
-              hasMore: replyHasMore,
-              loadedQuotedReplies,
-              loadingMore: loadingMoreReplies,
-              loadingQuotedFloors,
-              loadMore: onLoadMoreReplies,
-              onScroll: jest.fn(),
-              openComposer: onReplyComposerOpenChange,
-              query: effectiveCommentQuery,
-              quoteStateVersion: 0,
-              replyComposerOpen: false,
-              replyFilter,
-              replyToFloor: jest.fn(),
-              source: topicReplies,
-              toggleReplyQuote: jest.fn(),
-              toggleTopicBodyQuote: onToggleTopicBodyQuote,
-              topicScrollRef,
-              unreadCount: 0
-            }
-          },
-          chrome: {
-            back: jest.fn(),
-            favorite: topicFavorite,
-            getDiscourseEmojiUrls,
-            identityBlocked,
-            identityChecking,
-            openOriginal: jest.fn(),
-            openReadingSettings: jest.fn(),
-            refreshReplies: jest.fn(),
-            refreshTopic: onRefreshWholeTopic,
-            share: jest.fn(),
-            toggleFavorite: onToggleFavorite,
-            verifyLinuxDo: onVerifyLinuxDo,
-            verifyNodeSeek: onVerifyNodeSeek
-          },
-          composer: {
-            changeContent: jest.fn(),
-            changeFace: jest.fn(),
-            content: '',
-            editTarget: null,
-            face: '',
-            open: false,
-            submit: jest.fn(),
-            target: null,
-            toggle: onReplyComposerOpenChange,
-            uploadImage: jest.fn()
-          }
+        actions={actions}
+        article={{
+          busy: topicBusy,
+          error: topicError,
+          topic: topicDetail,
+          yaohuoBookmarked: yaohuoVisualBookmarked ?? topicDetail?.bookmarked
         }}
+        chrome={{
+          back: jest.fn(),
+          favorite: topicFavorite,
+          getDiscourseEmojiUrls,
+          identityBlocked,
+          identityChecking,
+          onScroll: jest.fn(),
+          openOriginal: jest.fn(),
+          openReadingSettings: jest.fn(),
+          openTopic: jest.fn(),
+          openUser: jest.fn(),
+          refreshReplies: jest.fn(),
+          refreshTopic: onRefreshWholeTopic,
+          share: jest.fn(),
+          toggleFavorite: onToggleFavorite,
+          verifyLinuxDo: onVerifyLinuxDo,
+          verifyNodeSeek: onVerifyNodeSeek
+        }}
+        currentNodeSeekUser={undefined}
+        html={
+          {
+            contentWidth: 720,
+            htmlBaseStyle: htmlStyles.htmlBaseStyle,
+            htmlClassesStyles: htmlStyles.htmlClassesStyles,
+            htmlIgnoredStyles: htmlStyles.htmlIgnoredStyles,
+            htmlRenderers: {},
+            htmlRenderersProps: {},
+            htmlTagsStyles: htmlStyles.htmlTagsStyles,
+            inlineSizedImageUrls: {},
+            mediaSessionIdentity: `${topicDetail?.source || 'public'}:0`,
+            topicImageDeriver
+          } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
+        }
+        nodeSeekUserId={null}
+        read={read}
+        session={session}
+        topicScrollRef={topicScrollRef}
       />
       <Text testID="active-filter">{replyFilter}</Text>
     </View>
@@ -792,7 +792,7 @@ describe('Topic reply filters', () => {
       };
       const referenceKey = `${source}:${solvedTopic.id}:${acceptedFloor}`;
       const instanceKey = `accepted-answer:${solvedTopic.id}:${referenceKey}`;
-      const onToggleTopicBodyQuote = jest.fn<TopicContentPresentation['replies']['toggleTopicBodyQuote']>();
+      const onToggleTopicBodyQuote = jest.fn<(options: ToggleTopicBodyQuoteOptions) => void>();
       const view = await render(
         <TopicFilterHarness
           onToggleTopicBodyQuote={onToggleTopicBodyQuote}
@@ -865,7 +865,7 @@ describe('Topic reply filters', () => {
       solved: true,
       source: 'linuxdo'
     };
-    const onToggleTopicBodyQuote = jest.fn<TopicContentPresentation['replies']['toggleTopicBodyQuote']>();
+    const onToggleTopicBodyQuote = jest.fn<(options: ToggleTopicBodyQuoteOptions) => void>();
     const view = await render(
       <TopicFilterHarness
         onToggleTopicBodyQuote={onToggleTopicBodyQuote}
@@ -936,7 +936,7 @@ describe('Topic reply filters', () => {
   });
 
   it('[REG-TOPIC-027] aborts the old emoji read and ignores its late result after switching sites', async () => {
-    type EmojiLoader = TopicScreenPresentation['chrome']['getDiscourseEmojiUrls'];
+    type EmojiLoader = (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
     type EmojiUrls = Awaited<ReturnType<EmojiLoader>>;
     let resolveFirst: ((urls: EmojiUrls) => void) | undefined;
     let resolveSecond: ((urls: EmojiUrls) => void) | undefined;

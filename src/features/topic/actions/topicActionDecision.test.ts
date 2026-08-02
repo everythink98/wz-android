@@ -38,4 +38,13 @@ describe('topic action decision', () => {
       reason: 'allowed'
     });
   });
+
+  it('keeps an optimistic completed target visibly pending until transport settles', () => {
+    expect(
+      decideTopicAction({ account: loggedIn, action: 'reply', topic, alreadyComplete: true, pending: true })
+    ).toEqual({
+      allowed: false,
+      reason: 'pending'
+    });
+  });
 });

@@ -17,7 +17,7 @@ import type { DiscourseActionRuntimeDependencies } from './actions/discourseActi
 import { toggleFavorite, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
 import type { SourceErrorInfo, Topic, UserReference } from '@/domain/forum/models';
 import type { DiscourseSource, SessionSource } from '@/domain/forum/sourceCatalog';
-import type { SiteSessionEvent, SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { WritableSessionReconcileResult, WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
@@ -38,7 +38,6 @@ import { useStableTopicLayoutDetail } from './useStableTopicLayoutDetail';
 import { useTopicController } from './useTopicController';
 import { useTopicSessionController } from './useTopicSessionController';
 import { useTopicRouteBeforeRemove } from './useTopicRouteBeforeRemove';
-import { useTopicPresentation } from './useTopicPresentation';
 
 type IdentityCheck = {
   checking: boolean;
@@ -65,13 +64,11 @@ export type TopicRouteRuntimeValue = {
     reconcileWritableSession: (source: SessionSource) => Promise<WritableSessionReconcileResult>;
     refreshXiaoyinsiAuthorization: DiscourseActionRuntimeDependencies['refreshXiaoyinsiAuthorization'];
     requestNodeSeekVerification: (message: string, recovery: LinuxDoReadRecovery) => void;
-    resetLinuxDoLevelState: () => void;
     showLinuxDoVerification: (
       message?: string,
       recovery?: LinuxDoReadRecovery
     ) => void | boolean | Promise<void | boolean>;
     showYaohuoLogin: (message?: string) => void;
-    updateLinuxDoSession: (event: SiteSessionEvent) => void;
   };
   appActive: boolean;
   contentWidth: number;
@@ -204,9 +201,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   const discourseActionRuntimeDependencies = useMemo(
     () => ({
       linuxDoUserAgent: runtime.account.getLinuxDoUserAgent,
-      refreshXiaoyinsiAuthorization: runtime.account.refreshXiaoyinsiAuthorization,
-      resetLinuxDoLevelState: runtime.account.resetLinuxDoLevelState,
-      updateLinuxDoSession: runtime.account.updateLinuxDoSession
+      refreshXiaoyinsiAuthorization: runtime.account.refreshXiaoyinsiAuthorization
     }),
     [runtime]
   );
@@ -294,44 +289,6 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   const stableOpenUser = useLatestCallback((user: UserReference) => navigation.push('User', { user }));
   const stableRefreshReplies = useLatestCallback(refreshTopicReplies);
   const stableRefreshWholeTopic = useLatestCallback(refreshCurrentTopic);
-  const presentation = useTopicPresentation({
-    actions,
-    articleState: {
-      busy: topicBusy && !identityError,
-      error: identityError || topicError || null,
-      topic: topicLayoutDetail,
-      ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
-    },
-    chrome: {
-      back: navigation.goBack,
-      favorite: topicFavorite,
-      getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
-      identityBlocked: Boolean(identityCheck?.pending),
-      identityChecking: Boolean(identityCheck?.checking),
-      onScroll: handleTopicScroll,
-      openOriginal: openExternalUrl,
-      openReadingSettings: () => navigation.push('ReadingSettings'),
-      openTopic: stableOpenTopic,
-      openUser: stableOpenUser,
-      refreshReplies: stableRefreshReplies,
-      refreshTopic: stableRefreshWholeTopic,
-      share: shareTopic,
-      toggleFavorite: toggleTopicFavorite,
-      verifyLinuxDo,
-      verifyNodeSeek
-    },
-    currentNodeSeekUser: runtime.account.sessionViewModels.nodeseek.currentUser,
-    html: {
-      ...html,
-      contentWidth: runtime.contentWidth,
-      mediaSessionIdentity
-    },
-    nodeSeekUserId: runtime.account.nodeSeekUserId,
-    read: topicController,
-    session: topicSession,
-    topicScrollRef
-  });
-
   return (
     <OriginalImageUpgradeBoundary enabled={active}>
       <View
@@ -340,7 +297,39 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
         pointerEvents={active ? 'auto' : 'none'}
         style={{ flex: 1 }}
       >
-        <TopicScreen presentation={presentation} />
+        <TopicScreen
+          actions={actions}
+          article={{
+            busy: topicBusy && !identityError,
+            error: identityError || topicError || null,
+            topic: topicLayoutDetail,
+            ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
+          }}
+          chrome={{
+            back: navigation.goBack,
+            favorite: topicFavorite,
+            getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
+            identityBlocked: Boolean(identityCheck?.pending),
+            identityChecking: Boolean(identityCheck?.checking),
+            onScroll: handleTopicScroll,
+            openOriginal: openExternalUrl,
+            openReadingSettings: () => navigation.push('ReadingSettings'),
+            openTopic: stableOpenTopic,
+            openUser: stableOpenUser,
+            refreshReplies: stableRefreshReplies,
+            refreshTopic: stableRefreshWholeTopic,
+            share: shareTopic,
+            toggleFavorite: toggleTopicFavorite,
+            verifyLinuxDo,
+            verifyNodeSeek
+          }}
+          currentNodeSeekUser={runtime.account.sessionViewModels.nodeseek.currentUser}
+          html={{ ...html, contentWidth: runtime.contentWidth, mediaSessionIdentity }}
+          nodeSeekUserId={runtime.account.nodeSeekUserId}
+          read={topicController}
+          session={topicSession}
+          topicScrollRef={topicScrollRef}
+        />
         <ImagePreviewModal
           preview={imagePreviewController.imagePreview}
           nodeSeekMediaUserAgent={runtime.nodeSeekMediaUserAgent}

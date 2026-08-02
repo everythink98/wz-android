@@ -1,4 +1,5 @@
 import type { Reply, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { InteractionType } from '@/domain/forum/topicActionState';
 import { sourceSupportsTopicAction, type TopicActionCapability } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 
@@ -21,10 +22,12 @@ export type TopicActionDecisionRequest = {
   action: TopicActionCapability;
   actionKey?: string;
   alreadyComplete?: boolean;
+  interaction?: InteractionType;
   objectAllowed?: boolean;
   pending?: boolean;
   poll?: TopicPoll;
   reply?: Reply;
+  target?: Reply | TopicDetail;
   targetPresent?: boolean;
 };
 
@@ -74,7 +77,7 @@ export function decideTopicAction({
   if (!account?.canWrite) return { allowed: false, reason: 'login-required' };
   if (!objectAllowed) return { allowed: false, reason: 'object-forbidden' };
   if (!targetPresent) return { allowed: false, reason: 'missing-target' };
-  if (alreadyComplete) return { allowed: false, reason: 'already-complete' };
   if (pending) return { allowed: false, reason: 'pending' };
+  if (alreadyComplete) return { allowed: false, reason: 'already-complete' };
   return { allowed: true, reason: 'allowed' };
 }

@@ -1,7 +1,7 @@
 import type { SearchStyles } from './styles';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
-import { X } from 'lucide-react-native';
+import { ChevronDown, SlidersHorizontal, X } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption, Source } from '@/domain/forum/models';
 import { type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import { sourceLabel } from '@/domain/forum/presentation';
@@ -14,7 +14,7 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
-import type { ReaderTheme } from '@/ui/theme/tokens';
+import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
 import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
@@ -41,22 +41,21 @@ export function SearchFilterSheet({
   requestsEnabled,
   source,
   searchFilters,
+  summary,
   styles,
   theme,
-  visible,
   onSearchDiscourseTags,
   onSearchDiscourseUsers,
-  onApply,
-  onClose
+  onApply
 }: {
   categories: Category[];
   sessionEpochs: ForumSessionEpochs;
   requestsEnabled: boolean;
   source: Source;
   searchFilters: SearchFilterState;
+  summary: string;
   styles: SearchStyles;
   theme: ReaderTheme;
-  visible: boolean;
   onSearchDiscourseTags: (options: {
     source?: DiscourseSource;
     query: string;
@@ -71,7 +70,6 @@ export function SearchFilterSheet({
     signal?: AbortSignal;
   }) => Promise<DiscourseUserOption[]>;
   onApply: (source: Source, filter: SourceSearchFilter) => void;
-  onClose: () => void;
 }) {
   const { height } = useWindowDimensions();
   const filterBodyStyle = { maxHeight: Math.max(320, Math.round(height * 0.58)) };
@@ -79,6 +77,7 @@ export function SearchFilterSheet({
     searchFilterForSource(searchFilters, source)
   );
   const [filterError, setFilterError] = useState('');
+  const [visible, setVisible] = useState(false);
   const nodeSeekCategoryItems = useMemo(() => categoryOptions(categories, 'nodeseek'), [categories]);
   const yaohuoCategoryItems = useMemo(() => categoryOptions(categories, 'yaohuo'), [categories]);
 
@@ -113,8 +112,8 @@ export function SearchFilterSheet({
       }
     }
     onApply(source, draftFilter);
-    onClose();
-  }, [draftFilter, onApply, onClose, source]);
+    setVisible(false);
+  }, [draftFilter, onApply, source]);
   const discourseDraft = isDiscourseSearchFilter(draftFilter) ? draftFilter : null;
   const pickers = useDiscourseFilterPickers({
     categories,
@@ -165,7 +164,27 @@ export function SearchFilterSheet({
 
   return (
     <>
-      <ModalSheetFrame backdropLabel="关闭筛选" visible={visible} onRequestClose={onClose}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`打开搜索筛选，当前${summary}`}
+        accessibilityState={{ selected: summary !== '默认' }}
+        android_ripple={androidRipple(theme.primarySoft)}
+        style={[styles.searchFilterEntry, summary !== '默认' && styles.searchFilterEntryActive]}
+        onPress={() => setVisible(true)}
+      >
+        <View style={styles.searchFilterEntryIcon}>
+          <SlidersHorizontal size={17} color={theme.primary} strokeWidth={1.9} />
+        </View>
+        <Text style={styles.searchFilterEntryText}>筛选</Text>
+        <Text
+          numberOfLines={1}
+          style={[styles.searchFilterEntrySummary, summary !== '默认' && styles.searchFilterEntrySummaryActive]}
+        >
+          {summary}
+        </Text>
+        <ChevronDown size={16} color={theme.muted} strokeWidth={1.7} />
+      </Pressable>
+      <ModalSheetFrame backdropLabel="关闭筛选" visible={visible} onRequestClose={() => setVisible(false)}>
         <View style={styles.searchFilterHeader}>
           <View style={styles.flex}>
             <Text style={styles.searchFilterTitle}>筛选</Text>
@@ -177,7 +196,7 @@ export function SearchFilterSheet({
             accessibilityLabel="关闭筛选"
             hitSlop={TOUCH_HIT_SLOP}
             style={styles.searchInlineButton}
-            onPress={onClose}
+            onPress={() => setVisible(false)}
           >
             <X size={18} color={theme.muted} strokeWidth={2} />
           </Pressable>

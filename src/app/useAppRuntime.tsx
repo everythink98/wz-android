@@ -75,26 +75,19 @@ export function useAppRuntime() {
     readGateway,
     reconcileAccountStatus,
     retainableIdentityBarriers: retainableAccountIdentityBarriers,
-    statusBusy,
-    updateLinuxDoSession
+    statusBusy
   } = accountRuntime.read;
-  const { ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession, resetLinuxDoLevelState } =
+  const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession } =
     accountRuntime.write;
-  const {
-    nodeImage: {
-      key: { ensure: ensureNodeImageApiKey }
-    },
-    webLoginUserId,
-    xiaoyinsiAuth: xiaoyinsiAuthController
-  } = accountRuntime.center;
+  const { webLoginUserId, xiaoyinsiAuth: xiaoyinsiAuthController } = accountRuntime.center;
   const {
     closeTopmostSurface: closeTopmostAccountSurface,
     linuxDoVerificationVisible: showLinuxDoPanel,
-    nodeSeekMediaUserAgent: nodeSeekWebViewUserAgent,
     requestNodeSeekVerification,
     showLinuxDoVerification,
     showYaohuoLogin
   } = accountRuntime.hosts;
+  const nodeSeekMediaUserAgent = getNodeSeekUserAgent();
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek, webLoginUserId);
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
@@ -141,17 +134,15 @@ export function useAppRuntime() {
         reconcileWritableSession,
         refreshXiaoyinsiAuthorization: xiaoyinsiAuthController.refreshAuthorization,
         requestNodeSeekVerification,
-        resetLinuxDoLevelState,
         showLinuxDoVerification,
-        showYaohuoLogin,
-        updateLinuxDoSession
+        showYaohuoLogin
       },
       appActive,
       contentWidth,
       ensureNetworkProxyReady,
       fetcher: networkProxyFetcher,
       networkProxyWebViewBlockMessage,
-      nodeSeekMediaUserAgent: nodeSeekWebViewUserAgent,
+      nodeSeekMediaUserAgent,
       notify,
       reader: {
         commit: commitReaderData,
@@ -177,7 +168,7 @@ export function useAppRuntime() {
       showLinuxDoPanel,
       networkProxyFetcher,
       networkProxyWebViewBlockMessage,
-      nodeSeekWebViewUserAgent,
+      nodeSeekMediaUserAgent,
       getNodeSeekUserAgent,
       notify,
       readGateway,
@@ -187,10 +178,8 @@ export function useAppRuntime() {
       reconcileAccountStatus,
       reconcileWritableSession,
       requestNodeSeekVerification,
-      resetLinuxDoLevelState,
       showLinuxDoVerification,
       showYaohuoLogin,
-      updateLinuxDoSession,
       xiaoyinsiAuthController.beginAuthorization,
       xiaoyinsiAuthController.refreshAuthorization
     ]
@@ -346,7 +335,13 @@ export function useAppRuntime() {
             profile: accountRuntime.center.account.linuxDoLevelProfile,
             refresh: accountRuntime.center.account.refreshLinuxDoLevel
           },
-          nodeImageKey: accountRuntime.center.nodeImage.key,
+          nodeImageKey: {
+            authorize: accountRuntime.center.nodeImage.key.authorize,
+            busy: accountRuntime.center.nodeImage.key.busy,
+            clear: accountRuntime.center.nodeImage.key.clear,
+            save: accountRuntime.center.nodeImage.key.save,
+            saved: accountRuntime.center.nodeImage.key.saved
+          },
           nodeSeek: {
             checkIn: accountRuntime.center.checkIn,
             webLoginUserId: accountRuntime.center.webLoginUserId
@@ -380,7 +375,18 @@ export function useAppRuntime() {
         metadata: diagnosticMetadata
       },
       notify,
-      proxy: networkRuntime,
+      proxy: {
+        activeProfile: networkRuntime.activeProfile,
+        applyError: networkRuntime.applyError,
+        applyStatus: networkRuntime.applyStatus,
+        proxyState: networkRuntime.proxyState,
+        summary: networkRuntime.summary,
+        deleteProxyProfile: networkRuntime.deleteProxyProfile,
+        selectProxyProfile: networkRuntime.selectProxyProfile,
+        setProxyEnabled: networkRuntime.setProxyEnabled,
+        testProxyProfile: networkRuntime.testProxyProfile,
+        upsertProxyProfile: networkRuntime.upsertProxyProfile
+      },
       reader: {
         commit: commitReaderData,
         data: readerData,
@@ -401,7 +407,16 @@ export function useAppRuntime() {
       commitReaderData,
       diagnosticMetadata,
       getCurrentScreen,
-      networkRuntime,
+      networkRuntime.activeProfile,
+      networkRuntime.applyError,
+      networkRuntime.applyStatus,
+      networkRuntime.deleteProxyProfile,
+      networkRuntime.proxyState,
+      networkRuntime.selectProxyProfile,
+      networkRuntime.setProxyEnabled,
+      networkRuntime.summary,
+      networkRuntime.testProxyProfile,
+      networkRuntime.upsertProxyProfile,
       notify,
       readerData,
       readerDataRef,

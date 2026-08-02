@@ -160,13 +160,41 @@ test('rejects Screen props projection and raw account state escape', () => {
       "import type { ComponentProps } from 'react'; import { MoreScreen } from './MoreScreen'; export type MoreRouteRuntimeValue = ComponentProps<typeof MoreScreen>;",
     'app/accountConsumer.ts': 'export const readSession = (accountRuntime: any) => accountRuntime.session;',
     'features/account/useAccountRuntime.ts':
-      'export function useAccountRuntime() { const webViewRef = {}; return { hosts: { closePanels() {}, webViewRef } }; }'
+      'export function useAccountRuntime() { const webViewRef = {}; return { read: { readGateway: {}, updateLinuxDoSession() {} }, hosts: { closePanels() {}, webViewRef: webViewRef } }; }'
   });
   const codes = analyzeArchitecture(srcDir).issues.map((issue) => issue.code);
 
   assert.ok(codes.includes('route-runtime-screen-projection'));
   assert.ok(codes.includes('raw-account-session'));
+  assert.ok(codes.includes('account-runtime-groups'));
+  assert.ok(codes.includes('raw-account-read-capability'));
+  assert.ok(codes.includes('raw-account-host-capability'), JSON.stringify(codes));
+});
+
+test('rejects Account capability group aliases, spreads, and nested raw state', () => {
+  const srcDir = architectureFixture({
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { const read = { readGateway: {} }; const session = {}; return { read, write: { ensureWritableSession() {}, ...session }, center: { account: { sessionRef: {} } }, hosts: { ...session } }; }'
+  });
+  const codes = analyzeArchitecture(srcDir).issues.map((issue) => issue.code);
+
+  assert.ok(codes.includes('raw-account-read-capability'));
+  assert.ok(codes.includes('raw-account-write-capability'));
+  assert.ok(codes.includes('raw-account-center-capability'));
   assert.ok(codes.includes('raw-account-host-capability'));
+});
+
+test('keeps NodeImage credential ensure in the Account write capability', () => {
+  const srcDir = architectureFixture({
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { return { read: {}, write: { ensureNodeImageApiKey() {} }, center: { nodeImage: { key: { ensure() {} } } }, hosts: {} }; }'
+  });
+
+  assert.ok(
+    analyzeArchitecture(srcDir).issues.some(
+      (issue) => issue.code === 'raw-account-center-capability' && issue.message.includes('ensure')
+    )
+  );
 });
 
 test('keeps source-string contracts in tooling instead of behavior suites', () => {

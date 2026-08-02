@@ -96,7 +96,7 @@
 - NodeSeek 单站在未选分类时支持 `新帖子`、`新评论`；V2EX 单站在未选分类时支持 `全部`、`最新`、`最热`。
 - 新增首页筛选状态应先放进 `src/domain/forum/feedOptions.ts`，再通过 `src/features/feed/useFeedController.ts` 进入 `getFeed`。
 
-搜索筛选由 `SearchFilterSheet` 持有 draft/apply/reset 事务，来源表单只消费 `value/onChange`；`DiscourseFilterPickers` 自持 picker 可见性、输入防抖、候选 Query、取消和 stale response 拒绝。Search 主 controller 只拥有已提交筛选与搜索 Query，不接收候选 raw setter；历史、AI merge/error 和结果 list model 分别归自己的模块。
+搜索筛选入口和 sheet visibility 由 `SearchFilterSheet` 自持，打开时开始 draft/apply/reset 事务，来源表单只消费 `value/onChange`；`DiscourseFilterPickers` 自持 picker 可见性、输入防抖、候选 Query、取消和 stale response 拒绝。Search 主 controller 只拥有已提交筛选与搜索 Query，不接收 sheet/picker raw setter；历史、AI merge/error 和结果 list model 分别归自己的模块。
 
 ## 账号中心
 

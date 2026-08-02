@@ -33,17 +33,55 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   '@/features/user/UserRoute'
 ]);
 const FORBIDDEN_RAW_STATE_HOOKS = new Set(['useCallback', 'useEffect', 'useRef', 'useState']);
+const ACCOUNT_RUNTIME_READ_CAPABILITIES = new Set([
+  'accountIdentityChecks',
+  'accountIdentityPending',
+  'accountSessionViewModels',
+  'forumSessionEpochs',
+  'getLinuxDoUserAgent',
+  'getNodeSeekUserAgent',
+  'identityBarriers',
+  'identityReconciliationPending',
+  'readGateway',
+  'reconcileAccountStatus',
+  'retainableIdentityBarriers',
+  'statusBusy'
+]);
+const ACCOUNT_RUNTIME_WRITE_CAPABILITIES = new Set([
+  'ensureNodeImageApiKey',
+  'ensureWritableSession',
+  'isWritableSessionTicketCurrent',
+  'reconcileWritableSession'
+]);
+const ACCOUNT_RUNTIME_CENTER_CAPABILITIES = new Set([
+  'account',
+  'checkIn',
+  'credentials',
+  'handleAccountCenterCommand',
+  'nodeImage',
+  'webLoginUserId',
+  'xiaoyinsiAuth',
+  'xiaoyinsiLevel'
+]);
 const ACCOUNT_RUNTIME_HOST_CAPABILITIES = new Set([
   'closePanels',
   'closeTopmostSurface',
   'element',
   'linuxDoVerificationVisible',
-  'nodeSeekMediaUserAgent',
   'requestNodeSeekVerification',
   'showLinuxDoVerification',
   'showYaohuoLogin',
   'surfaces'
 ]);
+const ACCOUNT_RUNTIME_GROUP_CAPABILITIES = new Map([
+  ['read', ACCOUNT_RUNTIME_READ_CAPABILITIES],
+  ['write', ACCOUNT_RUNTIME_WRITE_CAPABILITIES],
+  ['center', ACCOUNT_RUNTIME_CENTER_CAPABILITIES],
+  ['hosts', ACCOUNT_RUNTIME_HOST_CAPABILITIES]
+]);
+const FORBIDDEN_ACCOUNT_ESCAPE_MEMBER =
+  /^(?:forumFetch.*|read.*Snapshot|session|sessionRuntime|sessionSnapshot|set[A-Z].*|update.*Session)$|Ref$/;
+const FORBIDDEN_ACCOUNT_CENTER_WRITE_MEMBER = new Set(['ensure', 'ensureNodeImageApiKey']);
 const FORBIDDEN_LEGACY_MODULE_NAMES = new Set([
   'AppControls',
   'GlobalModalHost',
@@ -58,6 +96,7 @@ const FORBIDDEN_LEGACY_MODULE_NAMES = new Set([
   'topicBackStack',
   'topicPresentationCache',
   'topicPresentationContext',
+  'useTopicPresentation',
   'topicRouteSnapshotStore',
   'topicRouteSnapshots',
   'useDeferredNavigationTask',
@@ -275,30 +314,68 @@ function rawAccountSessionIssues(filePath, fromFile) {
   return issues;
 }
 
-function rawAccountHostProjectionIssues(filePath, fromFile) {
+function rawAccountCapabilityProjectionIssues(filePath, fromFile) {
   if (fromFile !== 'features/account/useAccountRuntime.ts') return [];
   const sourceText = readFileSync(filePath, 'utf8');
   const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const issues = [];
-  const visit = (node) => {
-    if (
-      ts.isPropertyAssignment(node) &&
-      node.name.getText(sourceFile) === 'hosts' &&
-      ts.isObjectLiteralExpression(node.initializer)
-    ) {
-      for (const property of node.initializer.properties) {
-        const name = property.name?.getText(sourceFile).replace(/^['"]|['"]$/g, '');
-        if (name && !ACCOUNT_RUNTIME_HOST_CAPABILITIES.has(name)) {
-          issues.push({
-            code: 'raw-account-host-capability',
-            message: `${fromFile} 的 hosts 不得暴露 Account 内部状态：${name}`
-          });
-        }
+  const accountRuntime = sourceFile.statements.find(
+    (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === 'useAccountRuntime'
+  );
+  const runtimeReturn = accountRuntime?.body?.statements.find(
+    (statement) => ts.isReturnStatement(statement) && ts.isObjectLiteralExpression(statement.expression)
+  );
+  if (
+    !runtimeReturn ||
+    !ts.isReturnStatement(runtimeReturn) ||
+    !ts.isObjectLiteralExpression(runtimeReturn.expression)
+  ) {
+    return [{ code: 'account-runtime-groups', message: `${fromFile} 必须直接返回 AccountRuntime 四能力组` }];
+  }
+  const runtimeProperties = runtimeReturn.expression.properties;
+  const runtimePropertyNames = runtimeProperties
+    .map((property) => property.name?.getText(sourceFile).replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean);
+  if (
+    runtimeProperties.some(ts.isSpreadAssignment) ||
+    runtimePropertyNames.length !== ACCOUNT_RUNTIME_GROUP_CAPABILITIES.size ||
+    runtimePropertyNames.some((name) => !ACCOUNT_RUNTIME_GROUP_CAPABILITIES.has(name)) ||
+    [...ACCOUNT_RUNTIME_GROUP_CAPABILITIES.keys()].some((name) => !runtimePropertyNames.includes(name))
+  ) {
+    issues.push({ code: 'account-runtime-groups', message: `${fromFile} 顶层只允许 read/write/center/hosts` });
+  }
+  for (const [group, allowed] of ACCOUNT_RUNTIME_GROUP_CAPABILITIES) {
+    const property = runtimeProperties.find(
+      (candidate) => candidate.name?.getText(sourceFile).replace(/^['"]|['"]$/g, '') === group
+    );
+    const code = `raw-account-${group === 'hosts' ? 'host' : group}-capability`;
+    if (!property || !ts.isPropertyAssignment(property) || !ts.isObjectLiteralExpression(property.initializer)) {
+      issues.push({ code, message: `${fromFile} 的 ${group} 必须内联显式能力投影` });
+      continue;
+    }
+    for (const capability of property.initializer.properties) {
+      const name = capability.name?.getText(sourceFile).replace(/^['"]|['"]$/g, '');
+      if (ts.isSpreadAssignment(capability) || !name || !allowed.has(name)) {
+        issues.push({
+          code,
+          message: `${fromFile} 的 ${group} 不得暴露 Account 内部状态：${name || 'spread'}`
+        });
       }
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
+    const visitNested = (node) => {
+      const name = node.name?.getText?.(sourceFile).replace(/^['"]|['"]$/g, '');
+      if (
+        (ts.isSpreadAssignment(node) ||
+          (name && FORBIDDEN_ACCOUNT_ESCAPE_MEMBER.test(name)) ||
+          (group === 'center' && name && FORBIDDEN_ACCOUNT_CENTER_WRITE_MEMBER.has(name))) &&
+        node !== property
+      ) {
+        issues.push({ code, message: `${fromFile} 的 ${group} 不得嵌套 raw 状态或跨 owner 能力：${name || 'spread'}` });
+      }
+      ts.forEachChild(node, visitNested);
+    };
+    visitNested(property.initializer);
+  }
   return issues;
 }
 
@@ -554,7 +631,7 @@ export function analyzeArchitecture(srcDir) {
     issues.push(...appRuntimeImportIssues(file, fromFile));
     issues.push(...routeRuntimeProjectionIssues(file, fromFile));
     issues.push(...rawAccountSessionIssues(file, fromFile));
-    issues.push(...rawAccountHostProjectionIssues(file, fromFile));
+    issues.push(...rawAccountCapabilityProjectionIssues(file, fromFile));
     for (const specifier of importedModuleSpecifiers(file)) {
       const importedPath = internalModulePath(fromFile, specifier);
       if (importedPath && FORBIDDEN_LEGACY_MODULE_NAMES.has(moduleName(importedPath))) {

@@ -1,10 +1,13 @@
-import { memo, useCallback, useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { memo, type RefObject, useCallback, useEffect, useState } from 'react';
+import { type NativeScrollEvent, type NativeSyntheticEvent, Text, View } from 'react-native';
+import type { FlashListRef } from '@shopify/flash-list';
 import { ChevronLeft, MoreHorizontal, Star } from 'lucide-react-native';
 
 import { sourceLabel } from '@/domain/forum/presentation';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import type { SourceErrorInfo, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { replyImageUploadSupported } from '@/sources/imageUpload';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -18,7 +21,11 @@ import { ReplyComposerSheet } from './components/ReplyComposerSheet';
 import { TopicContentList } from './components/TopicContentList';
 import { TopicMenu } from './components/TopicMenu';
 import { readableTopicError } from './model/topicError';
-import type { TopicScreenPresentation } from './useTopicPresentation';
+import type { TopicActionsController } from './actions/useTopicActionsController';
+import type { useHtmlRenderingController } from './rendering/useHtmlRenderingController';
+import type { TopicListItem } from './model/topicListModel';
+import type { useTopicController } from './useTopicController';
+import type { TopicSessionController } from './useTopicSessionController';
 
 const EMPTY_DISCOURSE_EMOJI_URLS: DiscourseEmojiUrlMap = {};
 
@@ -26,16 +33,56 @@ export const TopicLoadingState = memo(function TopicLoadingState() {
   return <LoadingState text="正在读取主题..." />;
 });
 
-export const TopicScreen = memo(function TopicScreen({ presentation }: { presentation: TopicScreenPresentation }) {
-  const {
-    chrome,
-    composer,
-    content,
-    content: {
-      actions: { busy: actionBusy, decisionFor },
-      article: { error: topicError, selectedTopic, topic }
-    }
-  } = presentation;
+export const TopicScreen = memo(function TopicScreen({
+  actions,
+  article,
+  chrome,
+  currentNodeSeekUser,
+  html,
+  nodeSeekUserId,
+  read,
+  session,
+  topicScrollRef
+}: {
+  actions: TopicActionsController;
+  article: {
+    busy: boolean;
+    error: SourceErrorInfo | null;
+    topic: TopicDetail | null;
+    yaohuoBookmarked?: boolean;
+  };
+  chrome: {
+    favorite: boolean;
+    identityBlocked: boolean;
+    identityChecking: boolean;
+    getDiscourseEmojiUrls: (options: {
+      signal?: AbortSignal;
+      source: DiscourseSource;
+    }) => Promise<DiscourseEmojiUrlMap>;
+    back: () => void;
+    openOriginal: (url: string) => void;
+    openReadingSettings: () => void;
+    openTopic: (topic: Topic) => void;
+    openUser: (user: UserReference) => void;
+    onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+    refreshReplies: () => void;
+    refreshTopic: () => void;
+    share: () => void;
+    toggleFavorite: () => void;
+    verifyLinuxDo: () => void;
+    verifyNodeSeek: () => void;
+  };
+  currentNodeSeekUser: SiteSessionViewModels['nodeseek']['currentUser'];
+  html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string };
+  nodeSeekUserId: number | null;
+  read: ReturnType<typeof useTopicController>;
+  session: TopicSessionController;
+  topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
+}) {
+  const { state, commands } = session;
+  const { actionBusy, decisionFor } = actions;
+  const { error: topicError, topic } = article;
+  const selectedTopic = state.selectedTopic;
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const itemSource = topic?.source;
@@ -86,13 +133,15 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
 
   const canWrite = decisionFor({ action: 'reply' }).allowed;
   const canUseDiscourseInteractions = Boolean(
-    topic && isDiscourseSource(topic.source) && decisionFor({ action: 'like' }).allowed
+    topic &&
+    isDiscourseSource(topic.source) &&
+    decisionFor({ action: 'like', interaction: 'like', target: topic }).allowed
   );
   const canOpenReplyComposer =
     canWrite ||
     Boolean(
       canUseDiscourseInteractions &&
-      composer.editTarget &&
+      state.replyEditTarget &&
       decisionFor({ action: 'edit', objectAllowed: true, targetPresent: true }).allowed
     );
   const topicReadableError = topicError ? readableTopicError(topicError.message) : '';
@@ -165,7 +214,21 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
           />
         </ScreenTopBarActions>
       </ScreenTopBar>
-      <TopicContentList presentation={content} discourseEmojiUrls={discourseEmojiUrls} headerState={headerState} />
+      <TopicContentList
+        actions={actions}
+        article={article}
+        currentNodeSeekUser={currentNodeSeekUser}
+        discourseEmojiUrls={discourseEmojiUrls}
+        headerState={headerState}
+        html={html}
+        nodeSeekUserId={nodeSeekUserId}
+        onOpenTopic={chrome.openTopic}
+        onOpenUser={chrome.openUser}
+        onScroll={chrome.onScroll}
+        read={read}
+        session={session}
+        topicScrollRef={topicScrollRef}
+      />
       <TopicMenu
         onOpenOriginal={chrome.openOriginal}
         onOpenReadingSettings={chrome.openReadingSettings}
@@ -181,19 +244,19 @@ export const TopicScreen = memo(function TopicScreen({ presentation }: { present
       <ReplyComposerSheet
         actionBusy={actionBusy}
         discourseEmojiUrls={discourseEmojiUrls}
-        replyContent={composer.content}
-        replyFace={composer.face}
-        replyEditTarget={composer.editTarget}
-        replyTarget={composer.target}
+        replyContent={state.replyContent}
+        replyFace={state.replyFace}
+        replyEditTarget={state.replyEditTarget}
+        replyTarget={state.replyTarget}
         source={topic?.source}
         styles={styles}
         theme={theme}
-        visible={Boolean(canOpenReplyComposer && composer.open)}
-        onReplyComposerOpenChange={composer.toggle}
-        onReplyContentChange={composer.changeContent}
-        onReplyFaceChange={composer.changeFace}
-        onSubmitReply={composer.submit}
-        onUploadReplyImage={replyImageUploadSupported(topic?.source) ? composer.uploadImage : undefined}
+        visible={Boolean(canOpenReplyComposer && state.replyComposerOpen)}
+        onReplyComposerOpenChange={commands.composer.toggle}
+        onReplyContentChange={commands.composer.changeContent}
+        onReplyFaceChange={commands.composer.changeFace}
+        onSubmitReply={actions.submitReply}
+        onUploadReplyImage={replyImageUploadSupported(topic?.source) ? actions.uploadReplyImage : undefined}
       />
     </View>
   );

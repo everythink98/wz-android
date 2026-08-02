@@ -180,9 +180,7 @@ async function renderActions({
         sessionEpochs: props.sessionEpochs,
         discourseActionRuntimeDependencies: {
           linuxDoUserAgent: () => 'safe-agent',
-          refreshXiaoyinsiAuthorization: async () => true,
-          resetLinuxDoLevelState: jest.fn(),
-          updateLinuxDoSession: jest.fn()
+          refreshXiaoyinsiAuthorization: async () => true
         },
         discourseLoginPrompts,
         ensureNodeImageApiKey,
@@ -288,6 +286,23 @@ describe('topic action query mutations', () => {
       allowed: false,
       reason: 'login-required'
     });
+  });
+
+  it('[REG-WRITE-019] treats a completed NodeSeek target as the same decision-chain outcome', async () => {
+    const completed = { ...detail, upvoted: true };
+    const hook = await renderActions({ topicDetail: completed });
+
+    expect(
+      hook.result.current.actions.decisionFor({ action: 'like', interaction: 'upvote', target: completed })
+    ).toEqual({
+      allowed: false,
+      reason: 'already-complete'
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.interact('upvote', completed.commentId);
+    });
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
   it('[REG-WRITE-023] blocks before optimistic state and transport when identity is unknown', async () => {
@@ -667,6 +682,18 @@ describe('topic action query mutations', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.upvoted).toBe(true));
+    await waitFor(() =>
+      expect(
+        hook.result.current.actions.decisionFor({
+          action: 'like',
+          interaction: 'upvote',
+          target: appQueryClient.getQueryData<TopicDetail>(detailKey)
+        })
+      ).toEqual({
+        allowed: false,
+        reason: 'pending'
+      })
+    );
 
     await act(async () => {
       transport.reject(new Error('network failed'));

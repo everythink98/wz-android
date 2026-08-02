@@ -299,7 +299,6 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     contentWidth: 720,
     expandedQuotes: {},
     inlineSizedImageUrls: {},
-    isActionPending: () => false,
     loadedQuotedReplies: {},
     loadingQuotedFloors: {},
     onDeleteReply: jest.fn(),
@@ -322,6 +321,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     topicAuthor: 'alice',
     topicBaseUrl: 'https://www.nodeseek.com/post-1-1',
     topicId: 'topic-1',
+    topicStateKey: 'nodeseek:topic-1',
     topicImageDeriver,
     ...overrides
   };

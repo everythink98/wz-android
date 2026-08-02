@@ -1,9 +1,9 @@
 import { createSearchStyles, type SearchStyles } from './styles';
 import { SearchFilterSheet } from './SearchFilterSheet';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, Text, TextInput, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
-import { ChevronDown, ChevronRight, History, Search, SlidersHorizontal, X } from 'lucide-react-native';
+import { ChevronRight, History, Search, X } from 'lucide-react-native';
 import type {
   Category,
   DiscourseTagOption,
@@ -106,42 +106,6 @@ function SearchInputField({
         <Search size={17} color={theme.primary} strokeWidth={2} />
       </Pressable>
     </View>
-  );
-}
-
-function SearchFilterEntry({
-  summary,
-  styles,
-  theme,
-  onPress
-}: {
-  summary: string;
-  styles: SearchStyles;
-  theme: ReaderTheme;
-  onPress: () => void;
-}) {
-  const active = summary !== '默认';
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`打开搜索筛选，当前${summary}`}
-      accessibilityState={{ selected: active }}
-      android_ripple={androidRipple(theme.primarySoft)}
-      style={[styles.searchFilterEntry, active && styles.searchFilterEntryActive]}
-      onPress={onPress}
-    >
-      <View style={styles.searchFilterEntryIcon}>
-        <SlidersHorizontal size={17} color={theme.primary} strokeWidth={1.9} />
-      </View>
-      <Text style={styles.searchFilterEntryText}>筛选</Text>
-      <Text
-        numberOfLines={1}
-        style={[styles.searchFilterEntrySummary, active && styles.searchFilterEntrySummaryActive]}
-      >
-        {summary}
-      </Text>
-      <ChevronDown size={16} color={theme.muted} strokeWidth={1.7} />
-    </Pressable>
   );
 }
 
@@ -287,15 +251,12 @@ export const SearchScreen = memo(function SearchScreen({
     groups: [],
     onLoadMore: onLoadMoreSearchSource
   });
-  const [filterSheetVisible, setFilterSheetVisible] = useState(false);
   const [completedPagination, setCompletedPagination] = useState<{
     context: string;
     source: Source;
     page: number;
     previousItemCount: number;
   } | null>(null);
-  const openFilterSheet = useCallback(() => setFilterSheetVisible(true), []);
-  const closeFilterSheet = useCallback(() => setFilterSheetVisible(false), []);
   const resetPaginationFeedback = useCallback(() => {
     autoLoadArmedRef.current = false;
     pendingAutoLoadRef.current = null;
@@ -349,11 +310,6 @@ export const SearchScreen = memo(function SearchScreen({
     ),
     [onOpenTopic, query, styles, theme, topicStateIndex]
   );
-  useEffect(() => {
-    if (searchSource === 'all') {
-      setFilterSheetVisible(false);
-    }
-  }, [searchSource]);
   const visibleSearchGroups = searchGroups;
   const paginationBusy = busy || visibleSearchGroups.some((group) => group.loading || group.loadingMore);
   const paginationContext = `${submittedQuery}\u0000${searchSource}`;
@@ -721,11 +677,18 @@ export const SearchScreen = memo(function SearchScreen({
           </View>
         ) : null}
         {searchSource !== 'all' ? (
-          <SearchFilterEntry
+          <SearchFilterSheet
+            categories={categories}
+            sessionEpochs={sessionEpochs}
+            requestsEnabled={requestsEnabled}
+            source={searchSource as Source}
+            searchFilters={searchFilters}
             summary={searchFilterEntrySummary}
             styles={styles}
             theme={theme}
-            onPress={openFilterSheet}
+            onSearchDiscourseTags={onSearchDiscourseTags}
+            onSearchDiscourseUsers={onSearchDiscourseUsers}
+            onApply={applySearchFilter}
           />
         ) : null}
         {linuxDoAiVisible ? (
@@ -774,7 +737,9 @@ export const SearchScreen = memo(function SearchScreen({
       </View>
     ),
     [
+      applySearchFilter,
       busy,
+      categories,
       changeSearchSource,
       hasInputValue,
       hasSearchTerm,
@@ -789,12 +754,16 @@ export const SearchScreen = memo(function SearchScreen({
       onRetryLinuxDoAiSearch,
       onRetryIdentity,
       onToggleLinuxDoAiSearch,
-      openFilterSheet,
+      onSearchDiscourseTags,
+      onSearchDiscourseUsers,
       query,
       recentSearches,
+      requestsEnabled,
+      searchFilters,
       searchFilterEntrySummary,
       searchSessionNotices,
       searchSource,
+      sessionEpochs,
       showIdleRecentSearches,
       styles,
       submitSearch,
@@ -845,22 +814,6 @@ export const SearchScreen = memo(function SearchScreen({
         }
         renderItem={renderSearchListItem}
       />
-      {searchSource !== 'all' ? (
-        <SearchFilterSheet
-          categories={categories}
-          sessionEpochs={sessionEpochs}
-          requestsEnabled={requestsEnabled}
-          source={searchSource as Source}
-          searchFilters={searchFilters}
-          styles={styles}
-          theme={theme}
-          visible={filterSheetVisible}
-          onSearchDiscourseTags={onSearchDiscourseTags}
-          onSearchDiscourseUsers={onSearchDiscourseUsers}
-          onApply={applySearchFilter}
-          onClose={closeFilterSheet}
-        />
-      ) : null}
     </View>
   );
 });

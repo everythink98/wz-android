@@ -1,7 +1,16 @@
 import { createTopicStyles, type TopicStyles } from '../styles';
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { type LayoutChangeEvent, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { FlashList, type ListRenderItem } from '@shopify/flash-list';
+import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View
+} from 'react-native';
+import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import {
   HTMLContentModel,
   HTMLElementModel,
@@ -13,7 +22,8 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronRight, Drumstick, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type { Reply, TopicPoll } from '@/domain/forum/models';
+import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserReference } from '@/domain/forum/models';
+import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
@@ -49,13 +59,12 @@ import { Avatar } from '@/ui/avatar/Avatar';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavigation';
-import { topicActionStateKey, type TopicActionStateKind } from '@/domain/forum/topicActionState';
+import type { InteractionType } from '@/domain/forum/topicActionState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
-import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import {
   discourseQuotedPostReferenceFromAttributes,
   quotedPostReferenceKey,
@@ -70,7 +79,11 @@ import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { topicStatusBadges } from '../model/topicHeaderModel';
-import type { TopicContentPresentation } from '../useTopicPresentation';
+import type { TopicActionsController } from '../actions/useTopicActionsController';
+import { markCurrentNodeSeekOwnRepliesUnlikable } from '../actions/actionHelpers';
+import type { useHtmlRenderingController } from '../rendering/useHtmlRenderingController';
+import { filterTopicSessionReplies, type TopicSessionController } from '../useTopicSessionController';
+import type { useTopicController } from '../useTopicController';
 import {
   buildAcceptedAnswerPresentation,
   buildTopicOpeningContent,
@@ -232,66 +245,95 @@ function hasHtmlClass(tnode: unknown, className: string) {
 }
 
 export const TopicContentList = memo(function TopicContentList({
+  actions,
+  article,
+  currentNodeSeekUser,
   discourseEmojiUrls,
   headerState,
-  presentation
+  html,
+  nodeSeekUserId,
+  onOpenTopic,
+  onOpenUser,
+  onScroll: onTopicScroll,
+  read,
+  session,
+  topicScrollRef
 }: {
+  actions: TopicActionsController;
+  article: {
+    busy: boolean;
+    error: SourceErrorInfo | null;
+    topic: TopicDetail | null;
+    yaohuoBookmarked?: boolean;
+  };
+  currentNodeSeekUser: SiteSessionViewModels['nodeseek']['currentUser'];
   discourseEmojiUrls: DiscourseEmojiUrlMap;
   headerState: ReactNode;
-  presentation: TopicContentPresentation;
+  html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string };
+  nodeSeekUserId: number | null;
+  onOpenTopic: (topic: Topic) => void;
+  onOpenUser: (user: UserReference) => void;
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  read: ReturnType<typeof useTopicController>;
+  session: TopicSessionController;
+  topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
+  const { state, commands } = session;
+  const { actionBusy, decisionFor, deleteReply: onDeleteReply, editReply: onEditReply } = actions;
+  const { busy: topicBusy, error: topicError, topic, yaohuoBookmarked } = article;
   const {
-    actions: {
-      bookmarkDiscourse: onDiscourseBookmark,
-      busy: actionBusy,
-      collectNodeSeek: onNodeSeekCollection,
-      decisionFor,
-      deleteReply: onDeleteReply,
-      editReply: onEditReply,
-      favoriteYaohuo: onYaohuoFavorite,
-      interact: onInteract,
-      optimistic: optimisticActions,
-      votePoll: onVotePoll
-    },
-    article: { busy: topicBusy, error: topicError, selectedTopic, topic, yaohuoBookmarked },
-    navigation: { openTopic: onOpenTopic, openUser: onOpenUser },
-    rendering: {
-      contentWidth,
-      htmlBaseStyle,
-      htmlClassesStyles,
-      htmlIgnoredStyles,
-      htmlRenderers,
-      htmlRenderersProps,
-      htmlTagsStyles,
-      inlineSizedImageUrls,
-      mediaSessionIdentity,
-      topicImageDeriver
-    },
-    replies: {
-      changeCommentQuery: onCommentQueryChange,
-      changeFilter: onReplyFilterChange,
-      commentQuery,
-      expandedQuotes,
-      filtered: replies,
-      hasMore: replyHasMore,
-      loadedQuotedReplies,
-      loadingMore: loadingMoreReplies,
-      loadingQuotedFloors,
-      loadMore: onLoadMoreReplies,
-      onScroll: onTopicScroll,
-      openComposer: onReplyComposerOpenChange,
-      query: replyHighlightQuery,
-      quoteStateVersion,
-      replyComposerOpen,
-      replyFilter,
-      replyToFloor: onReplyToFloor,
-      source: sourceReplies,
-      toggleReplyQuote: onToggleReplyQuote,
-      toggleTopicBodyQuote: onToggleTopicBodyQuote,
-      topicScrollRef,
-      unreadCount: unreadReplyCount
-    }
-  } = presentation;
+    contentWidth,
+    htmlBaseStyle,
+    htmlClassesStyles,
+    htmlIgnoredStyles,
+    htmlRenderers,
+    htmlRenderersProps,
+    htmlTagsStyles,
+    inlineSizedImageUrls,
+    mediaSessionIdentity,
+    topicImageDeriver
+  } = html;
+  const filteredReplies = useMemo(
+    () =>
+      filterTopicSessionReplies({
+        commentQuery: state.debouncedCommentQuery,
+        inlineSizedImageUrls,
+        replyFilter: state.replyFilter,
+        topicDetail: topic,
+        topicImageDeriver,
+        topicReplies: read.topicReplies
+      }),
+    [inlineSizedImageUrls, read.topicReplies, state.debouncedCommentQuery, state.replyFilter, topic, topicImageDeriver]
+  );
+  const replies = useMemo(
+    () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, currentNodeSeekUser, nodeSeekUserId),
+    [currentNodeSeekUser, filteredReplies, nodeSeekUserId]
+  );
+  const selectedTopic = state.selectedTopic;
+  const commentQuery = state.commentQuery;
+  const expandedQuotes = state.expandedQuotes;
+  const replyHighlightQuery = state.debouncedCommentQuery;
+  const quoteStateVersion = state.quoteStateVersion;
+  const replyComposerOpen = state.replyComposerOpen;
+  const replyFilter = state.replyFilter;
+  const sourceReplies = read.topicReplies;
+  const replyHasMore = read.replyHasMore;
+  const loadedQuotedReplies = read.loadedQuotedReplies;
+  const loadingMoreReplies = read.loadingMoreReplies;
+  const loadingQuotedFloors = read.loadingQuotedFloors;
+  const unreadReplyCount = read.unreadReplyCount;
+  const onCommentQueryChange = commands.view.changeCommentQuery;
+  const onReplyFilterChange = commands.view.changeReplyFilter;
+  const onLoadMoreReplies = read.loadMoreReplies;
+  const onReplyComposerOpenChange = commands.composer.toggle;
+  const onReplyToFloor = commands.composer.replyToFloor;
+  const onToggleReplyQuote = read.toggleReplyQuote;
+  const onToggleTopicBodyQuote = read.toggleTopicBodyQuote;
+  const onDiscourseBookmark = actions.bookmarkOnDiscourseSite;
+  const onNodeSeekCollection = actions.collectOnNodeSeekSite;
+  const onYaohuoFavorite = actions.favoriteOnYaohuoSite;
+  const onInteract = actions.interact;
+  const onVotePoll = actions.votePoll;
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const mediaContext = useMemo(
@@ -303,21 +345,25 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
+  const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
+  const interactionDecision = (interaction: InteractionType) =>
+    decisionFor({ action: 'like', interaction, target: topic || undefined });
+  const upvoteDecision = interactionDecision('upvote');
+  const likeDecision = interactionDecision('like');
+  const dislikeDecision = interactionDecision('dislike');
   const canWriteNodeSeek = Boolean(
     topic &&
     topic.source === 'nodeseek' &&
-    decisionFor({ action: 'like', objectAllowed: topic.canLike !== false, targetPresent: Boolean(topic.commentId) })
-      .allowed
+    [upvoteDecision, likeDecision, dislikeDecision].some(
+      (decision) => decision.allowed || decision.reason === 'already-complete' || decision.reason === 'pending'
+    )
   );
-  const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && decisionFor({ action: 'bookmark' }).allowed);
+  const bookmarkDecision = decisionFor({ action: 'bookmark' });
+  const canWriteYaohuo = Boolean(
+    topic && topic.source === 'yaohuo' && (bookmarkDecision.allowed || bookmarkDecision.reason === 'pending')
+  );
   const canUseDiscourseInteractions = Boolean(
-    topic &&
-    isDiscourseSource(topic.source) &&
-    decisionFor({
-      action: 'like',
-      objectAllowed: canToggleDiscourseLike(topic),
-      targetPresent: Boolean(topic.commentId)
-    }).allowed
+    topic && isDiscourseSource(topic.source) && (likeDecision.allowed || likeDecision.reason === 'pending')
   );
   const canWrite = decisionFor({ action: 'reply' }).allowed;
   const replyTotalCount = item?.replyCount ?? replies.length;
@@ -335,7 +381,6 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
-  const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
   const [nearbyTopicContent, setNearbyTopicContent] = useState<{
     keys: ReadonlySet<string>;
     topicKey: string;
@@ -410,17 +455,6 @@ export const TopicContentList = memo(function TopicContentList({
       });
     },
     [detailTopicStateKey]
-  );
-  const isOptimisticActionPending = useCallback(
-    (targetId: string | number | undefined, action: TopicActionStateKind) => {
-      if (!detailTopicStateKey || !targetId) {
-        return false;
-      }
-      return Boolean(
-        optimisticActions[topicActionStateKey({ topicKey: detailTopicStateKey, targetId, action })]?.inFlight
-      );
-    },
-    [detailTopicStateKey, optimisticActions]
   );
   const autoLoadRepliesArmedRef = useRef(false);
   const repliesByFloor = useMemo(() => {
@@ -1057,10 +1091,10 @@ export const TopicContentList = memo(function TopicContentList({
                       count={topic?.upvoteCount}
                       icon={ThumbsUp}
                       label="赞"
-                      pending={isOptimisticActionPending(topic?.commentId, 'upvote')}
+                      pending={upvoteDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !upvoteDecision.allowed}
                       onPress={() => onInteract('upvote', topic?.commentId)}
                     />
                     <DetailActionButton
@@ -1070,10 +1104,10 @@ export const TopicContentList = memo(function TopicContentList({
                       count={topic?.likeCount}
                       icon={Drumstick}
                       label="鸡腿"
-                      pending={isOptimisticActionPending(topic?.commentId, 'like')}
+                      pending={likeDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !likeDecision.allowed}
                       onPress={() => onInteract('like', topic?.commentId)}
                     />
                     <DetailActionButton
@@ -1083,10 +1117,10 @@ export const TopicContentList = memo(function TopicContentList({
                       count={topic?.dislikeCount}
                       icon={ThumbsDown}
                       label="反对"
-                      pending={isOptimisticActionPending(topic?.commentId, 'dislike')}
+                      pending={dislikeDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !dislikeDecision.allowed}
                       onPress={() => onInteract('dislike', topic?.commentId)}
                     />
                     <DetailActionButton
@@ -1096,10 +1130,10 @@ export const TopicContentList = memo(function TopicContentList({
                       count={topic?.collectionCount}
                       icon={BookMarked}
                       label="收藏"
-                      pending={isOptimisticActionPending(topic?.id, 'collection')}
+                      pending={bookmarkDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !bookmarkDecision.allowed}
                       onPress={onNodeSeekCollection}
                     />
                   </View>
@@ -1136,10 +1170,10 @@ export const TopicContentList = memo(function TopicContentList({
                       accessibilityLabel={topic?.liked ? '取消赞' : '点赞'}
                       icon={ThumbsUp}
                       label="赞"
-                      pending={isOptimisticActionPending(topic?.commentId, 'like')}
+                      pending={likeDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !likeDecision.allowed}
                       onPress={() => onInteract('like', topic?.commentId)}
                     />
                     <DetailActionButton
@@ -1148,10 +1182,10 @@ export const TopicContentList = memo(function TopicContentList({
                       accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'}
                       icon={BookMarked}
                       label="收藏"
-                      pending={isOptimisticActionPending(topic?.id, 'bookmark')}
+                      pending={bookmarkDecision.reason === 'pending'}
                       styles={styles}
                       theme={theme}
-                      disabled={actionBusy}
+                      disabled={actionBusy || !bookmarkDecision.allowed}
                       onPress={onDiscourseBookmark}
                     />
                   </View>
@@ -1168,15 +1202,17 @@ export const TopicContentList = memo(function TopicContentList({
     acceptedAnswerLoading,
     acceptedAnswerReply,
     actionBusy,
+    bookmarkDecision,
     canUseDiscourseInteractions,
     canWriteNodeSeek,
     canWriteYaohuo,
     contentWidth,
     decisionFor,
     detailTopicStateKey,
+    dislikeDecision,
     discourseTopicReactionStats,
     inlineSizedImageUrls,
-    isOptimisticActionPending,
+    likeDecision,
     legacyTopicPollsVisible,
     loadAcceptedAnswer,
     onDiscourseBookmark,
@@ -1198,7 +1234,8 @@ export const TopicContentList = memo(function TopicContentList({
     topicImageDeriver,
     topicPolls,
     topicReactionStats,
-    topicShowsAccessNotice
+    topicShowsAccessNotice,
+    upvoteDecision
   ]);
 
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(
@@ -1266,7 +1303,6 @@ export const TopicContentList = memo(function TopicContentList({
             decisionFor={decisionFor}
             contentWidth={contentWidth}
             expandedQuotes={expandedQuotes}
-            isActionPending={isOptimisticActionPending}
             inlineSizedImageUrls={inlineSizedImageUrls}
             discourseEmojiUrls={discourseEmojiUrls}
             topicImageDeriver={topicImageDeriver}
@@ -1291,6 +1327,7 @@ export const TopicContentList = memo(function TopicContentList({
             onReplyToFloor={onReplyToFloor}
             onToggleReplyQuote={onToggleReplyQuote}
             topicId={item?.id}
+            topicStateKey={detailTopicStateKey}
             query={replyHighlightQuery}
             isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
             source={itemSource}
@@ -1310,7 +1347,6 @@ export const TopicContentList = memo(function TopicContentList({
       item?.author,
       item?.id,
       topicImageDeriver,
-      isOptimisticActionPending,
       loadedQuotedReplies,
       loadingQuotedFloors,
       discourseEmojiUrls,
@@ -1342,7 +1378,8 @@ export const TopicContentList = memo(function TopicContentList({
       topicBaseUrl,
       topicColumnStyle,
       topicPostlude,
-      unreadReplyCount
+      unreadReplyCount,
+      detailTopicStateKey
     ]
   );
 

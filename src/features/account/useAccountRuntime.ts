@@ -650,25 +650,21 @@ export function useAccountRuntime({
       accountIdentityChecks: status.accountIdentityChecks,
       accountIdentityPending,
       accountSessionViewModels: status.accountSessionViewModels,
-      forumFetchWithWebViewFallback: session.forumFetchWithWebViewFallback,
       forumSessionEpochs: session.forumSessionEpochs,
       getLinuxDoUserAgent,
       getNodeSeekUserAgent,
       identityBarriers,
       identityReconciliationPending: status.identityReconciliationPending,
       readGateway,
-      readSessionRuntimeSnapshot,
       reconcileAccountStatus,
-      refreshAccountStatus,
       retainableIdentityBarriers,
-      statusBusy: status.statusBusy,
-      updateLinuxDoSession: session.updateLinuxDoSession
+      statusBusy: status.statusBusy
     },
     write: {
+      ensureNodeImageApiKey: nodeImage.key.ensure,
       ensureWritableSession,
       isWritableSessionTicketCurrent,
-      reconcileWritableSession,
-      resetLinuxDoLevelState
+      reconcileWritableSession
     },
     center: {
       account: {
@@ -684,7 +680,13 @@ export function useAccountRuntime({
       },
       handleAccountCenterCommand,
       nodeImage: {
-        key: nodeImage.key
+        key: {
+          authorize: nodeImage.key.authorize,
+          busy: nodeImage.key.busy,
+          clear: nodeImage.key.clear,
+          save: nodeImage.key.save,
+          saved: nodeImage.key.saved
+        }
       },
       webLoginUserId,
       xiaoyinsiAuth: {
@@ -710,7 +712,6 @@ export function useAccountRuntime({
       closeTopmostSurface,
       element: hostElement,
       linuxDoVerificationVisible: showLinuxDoPanel,
-      nodeSeekMediaUserAgent: nodeSeekWebViewUserAgent,
       showYaohuoLogin,
       requestNodeSeekVerification,
       showLinuxDoVerification: verification.showLinuxDoVerification,
