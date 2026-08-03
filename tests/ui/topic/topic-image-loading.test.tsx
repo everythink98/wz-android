@@ -450,6 +450,144 @@ describe('topic block image loading', () => {
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
   });
 
+  it('[REG-TOPIC-059] keeps a displayed image mounted when the preview action changes', async () => {
+    const firstPreviewAction = jest.fn();
+    const latestPreviewAction = jest.fn();
+    const screen = await render(<TopicImageHarness onOpenImagePreview={firstPreviewAction} />);
+
+    await loadAndDisplayImage(latestImageProps(imageUrl));
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+
+    await screen.rerender(<TopicImageHarness onOpenImagePreview={latestPreviewAction} />);
+
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    fireEvent.press(screen.getByLabelText('测试图片'));
+    expect(latestPreviewAction).toHaveBeenCalledWith(imageUrl, { height: 240, width: 320 }, undefined);
+    expect(firstPreviewAction).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-059] keeps the shared renderer registry stable and routes through the latest actions', async () => {
+    const firstActions = {
+      onOpenExternalUrl: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenExternalUrl']>(),
+      onOpenImagePreview: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>(),
+      onOpenTopic: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenTopic']>(),
+      onOpenUser: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenUser']>()
+    };
+    const latestActions = {
+      onOpenExternalUrl: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenExternalUrl']>(),
+      onOpenImagePreview: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>(),
+      onOpenTopic: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenTopic']>(),
+      onOpenUser: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenUser']>()
+    };
+    const controller = await renderHook(
+      (actions: typeof firstActions) =>
+        useHtmlRenderingController({
+          ...htmlRenderingControllerProps('yaohuo:2'),
+          ...actions
+        }),
+      { initialProps: firstActions }
+    );
+    const firstRenderers = controller.result.current.htmlRenderers;
+
+    await controller.rerender(latestActions);
+
+    expect(controller.result.current.htmlRenderers).toBe(firstRenderers);
+    const openLink = controller.result.current.htmlRenderersProps.a?.onPress;
+    const event = { stopPropagation: jest.fn() };
+    openLink?.(event as never, 'https://img.example.com/latest.png', {} as never, {} as never);
+    openLink?.(event as never, 'https://yaohuo.me/bbs-654.html', {} as never, {} as never);
+    openLink?.(event as never, 'https://www.yaohuo.me/userinfo.aspx?userid=42', {} as never, {} as never);
+    openLink?.(event as never, 'https://example.com/latest', {} as never, {} as never);
+
+    expect(latestActions.onOpenImagePreview).toHaveBeenCalledWith('https://img.example.com/latest.png');
+    expect(latestActions.onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ id: '654', source: 'yaohuo' }));
+    expect(latestActions.onOpenUser).toHaveBeenCalledWith(expect.objectContaining({ id: '42', source: 'yaohuo' }));
+    expect(latestActions.onOpenExternalUrl).toHaveBeenCalledWith('https://example.com/latest');
+    expect(Object.values(firstActions).every((action) => action.mock.calls.length === 0)).toBe(true);
+  });
+
+  it('[REG-TOPIC-059] resolves relative links with the latest Topic base URL and user candidates', async () => {
+    const firstTopic: TopicDetail = {
+      ...topic,
+      author: 'owner',
+      id: 'context-topic',
+      replies: [
+        {
+          author: 'alice',
+          authorId: '1',
+          contentHtml: '<p>first</p>',
+          createdAt: '2026-07-17T00:01:00.000Z'
+        }
+      ],
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/archive/'
+    };
+    const latestTopic: TopicDetail = {
+      ...firstTopic,
+      replies: [{ ...firstTopic.replies[0], authorId: '2' }],
+      url: 'https://www.nodeseek.com/post-123-1'
+    };
+    const onOpenUser = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenUser']>();
+    const controller = await renderHook(
+      ({ selectedTopic, topicDetail }: { selectedTopic: TopicDetail; topicDetail: TopicDetail }) =>
+        useHtmlRenderingController({
+          ...htmlRenderingControllerProps('nodeseek:2'),
+          onOpenUser,
+          selectedTopic,
+          topicDetail,
+          topicKey: 'nodeseek:context-topic'
+        }),
+      { initialProps: { selectedTopic: firstTopic, topicDetail: firstTopic } }
+    );
+    const firstRenderers = controller.result.current.htmlRenderers;
+
+    await controller.rerender({ selectedTopic: latestTopic, topicDetail: latestTopic });
+
+    expect(controller.result.current.htmlRenderers).toBe(firstRenderers);
+    const event = { stopPropagation: jest.fn() };
+    controller.result.current.htmlRenderersProps.a?.onPress?.(
+      event as never,
+      'member?t=alice',
+      {} as never,
+      {} as never
+    );
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(onOpenUser).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '2', source: 'nodeseek', username: 'alice' })
+    );
+  });
+
+  it.each([
+    ['Topic identity', { topicKey: 'yaohuo:next-topic' }],
+    [
+      'source',
+      {
+        selectedTopic: { ...topic, source: 'v2ex', url: 'https://www.v2ex.com/t/123' },
+        topicDetail: { ...topic, source: 'v2ex', url: 'https://www.v2ex.com/t/123' }
+      }
+    ],
+    ['theme', { theme: createTheme({ ...readerData.settings, theme: 'dark' }) }],
+    ['font family', { settings: { ...readerData.settings, fontFamily: 'serif' } }],
+    ['font scale', { settings: { ...readerData.settings, fontScale: 1.1 } }],
+    ['line height', { settings: { ...readerData.settings, lineHeight: 'loose' } }],
+    ['NodeSeek User-Agent', { nodeSeekMediaUserAgent: 'latest-agent' }],
+    ['WebView policy', { webViewBlockMessage: 'blocked' }]
+  ] satisfies [string, Partial<Parameters<typeof useHtmlRenderingController>[0]>][])(
+    '[REG-TOPIC-059] rebuilds the renderer registry when %s changes',
+    async (_label, changedProps) => {
+      const initialProps = htmlRenderingControllerProps('yaohuo:2');
+      const controller = await renderHook(
+        (props: Parameters<typeof useHtmlRenderingController>[0]) => useHtmlRenderingController(props),
+        { initialProps }
+      );
+      const firstRenderers = controller.result.current.htmlRenderers;
+
+      await controller.rerender({ ...initialProps, ...changedProps });
+
+      expect(controller.result.current.htmlRenderers).not.toBe(firstRenderers);
+    }
+  );
+
   it('[REG-TOPIC-004] waits for a matching late onLoad after onDisplay without accepting an older request', async () => {
     const lateImageUrl = 'https://img.example.com/android-display-before-load.png';
     mockSourceHeaders = { Cookie: 'session=one' };
@@ -653,6 +791,7 @@ describe('topic block image loading', () => {
     const secondRenderer = controller.result.current.htmlRenderers[FORUM_VIDEO_TAG] as unknown as (
       props: typeof videoProps
     ) => React.ReactElement<typeof ForumContentVideo>;
+    expect(secondRenderer).not.toBe(firstRenderer);
     const secondVideo = secondRenderer(videoProps);
     expect(secondVideo.key).toBe(`yaohuo:2:${videoUrl}`);
     await video.rerender(secondVideo);

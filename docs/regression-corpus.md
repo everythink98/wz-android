@@ -3904,6 +3904,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复 pill `minHeight/justifyContent`、删除 `hitSlop`、把整个正文行做成按钮，或去掉 User 导航，编号测试必须失败。 |
 | 明确不覆盖范围 | 不重设所有 mention/引用视觉，不改回复解析、楼层语义、字体或其他 48dp 控件；大字体与 TalkBack 仍按 `REG-A11Y-001` 单独验收。 |
 
+## `REG-TOPIC-059` 无关 Topic 状态变化重挂载已显示富媒体
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`、`TOPIC-03`、`NAV-03` |
+| 用户症状 | 正文图片加载完成后，打开全屏预览再返回会闪回灰色占位；评论引用或评论展开/收起时，已显示图片短暂出现 Spinner，inline emoji、贴纸和其他 HTML 富媒体也会消失后重现。 |
+| 触发条件 | `TopicRoute` 的预览、导航、引用、筛选或其他本地状态变化产生新的动作回调身份；这些身份进入 `htmlRenderers` memo 依赖后创建新的自定义 renderer 函数组件。 |
+| 根因 seam | `src/features/topic/rendering/useHtmlRenderingController.tsx` 的动作代理与 renderer registry 生命周期，以及 `react-native-render-html` 以 renderer 函数作为 React 组件类型的消费方式。 |
+| 必须保持的行为 | renderer registry 只随 Topic/source、媒体 session identity、主题、字号、User-Agent、WebView 策略等真实渲染配置变化；预览、评论、引用、查找、筛选和动作状态只能更新稳定代理背后的最新 handler，不能改变已挂载的 block image、inline image/emoji、静态/视频贴纸、视频、链接卡片、iframe/WebView 或 Callout renderer 类型。点击图片、站内 Topic/User 和外链仍使用最新 Topic 基准 URL 与最新 handler。切换 Topic/source、媒体 epoch 或真实渲染配置时仍必须重建并拒绝旧请求迟到落地。 |
+| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 的 `REG-TOPIC-059` 首先让正文图片完成 `onLoad + onDisplay`，只替换预览 action；修复前立即重新出现一个 `ActivityIndicator`，修复后加载态不回退且点击只调用最新 action。后续用例同时替换四类动作和 Topic 链接上下文，要求共享 renderer registry 保持同一引用，并使用最新 handler、相对链接基准 URL 与 User 候选；参数化反向用例要求 Topic/source、主题、字体、字号、行高、User-Agent 和 WebView 策略变化时 registry 重建。既有 `REG-ACCOUNT-029` 同文件用例继续要求媒体 epoch 变化时 image/video request identity 与 renderer 真正更新。 |
+| 最低可靠自动测试层 | `UI_PASS` + `STATIC_PASS`：RNTL 必须完成真实 renderer 挂载、图片显示结算和父级 rerender；只断言 `useMemo` 依赖、缓存命中或 App 能启动不能证明用户可见媒体连续性。 |
+| Replay 或真实验收路径 | 在匹配 revision/bundle 的 90Hz Android 设备直达 `https://linux.do/t/topic/2693802`，等待正文图和目标评论 emoji 显示后，图片打开/返回两次、评论引用展开/收起两次，并逐帧检查原区域；不得出现灰色占位、Spinner、图片或 emoji 消失。正文引用使用具备前置内容的当前样本或确定性 UI fixture；动态第三方 Topic 不写入 tracked Replay。全程只读，不清数据、Cookie 或登录态。 |
+| 负向验证方式 | 把原始 `onOpenImagePreview` 或由 Topic/User/external handler 创建的非稳定 `openHtmlLink` 恢复到 renderer memo 依赖，编号测试必须在 rerender 后重新看到 Spinner或 registry 身份变化；把 registry 永久冻结到媒体 epoch 变化也不更新，则既有 session 测试必须失败。 |
+| 明确不覆盖范围 | 不新增全局“已加载”缓存、淡入动画、延迟占位、Context 重写或测试专用产品钩子；图片冷加载、原图渐进升级、SVG fallback、列表虚拟化和全屏 Pager 生命周期仍由既有回归负责。 |
+
 ## `REG-PROXY-008` 阻塞写绕过共享 tunnel deadline
 
 | 字段 | 内容 |

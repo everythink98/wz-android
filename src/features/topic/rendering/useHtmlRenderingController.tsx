@@ -33,6 +33,7 @@ import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { createContentMediaRenderers } from './contentMediaRenderers';
 import { createPreviewRenderers } from './previewRenderers';
 import { createTerminalRenderers, terminalNodeHasClass, terminalNodeTagName, tnodeText } from './terminalRenderers';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 
 export function useHtmlRenderingController({
   mediaSessionIdentity,
@@ -121,34 +122,32 @@ export function useHtmlRenderingController({
     () => createHtmlRendererStyles(resolvedStyleSettings, theme),
     [resolvedStyleSettings.fontFamily, resolvedStyleSettings.fontScale, theme]
   );
-  const openHtmlLink = useCallback(
-    (href: string, event?: { stopPropagation?: () => void }) => {
-      event?.stopPropagation?.();
-      if (isPreviewableImageUrl(href)) {
-        onOpenImagePreview(href);
-        return;
-      }
-      const baseUrl = selectedTopic?.url || htmlTopicDetail?.url;
-      const candidates = [
-        ...(selectedTopic ? [selectedTopic] : []),
-        ...(htmlTopicDetail ? [htmlTopicDetail, ...(htmlTopicDetail.replies || [])] : [])
-      ];
-      const appUser = parseForumUserLink(href, baseUrl, candidates);
-      if (appUser) {
-        void onOpenUser(appUser);
-        return;
-      }
-      const appTopic = parseForumTopicLink(href, baseUrl);
-      if (appTopic) {
-        void onOpenTopic(appTopic);
-        return;
-      }
-      if (isHttpOrHttpsUrl(href)) {
-        onOpenExternalUrl(href);
-      }
-    },
-    [htmlTopicDetail, onOpenExternalUrl, onOpenImagePreview, onOpenTopic, onOpenUser, selectedTopic]
-  );
+  const openImagePreview = useLatestCallback(onOpenImagePreview);
+  const openHtmlLink = useLatestCallback((href: string, event?: { stopPropagation?: () => void }) => {
+    event?.stopPropagation?.();
+    if (isPreviewableImageUrl(href)) {
+      openImagePreview(href);
+      return;
+    }
+    const baseUrl = selectedTopic?.url || htmlTopicDetail?.url;
+    const candidates = [
+      ...(selectedTopic ? [selectedTopic] : []),
+      ...(htmlTopicDetail ? [htmlTopicDetail, ...(htmlTopicDetail.replies || [])] : [])
+    ];
+    const appUser = parseForumUserLink(href, baseUrl, candidates);
+    if (appUser) {
+      void onOpenUser(appUser);
+      return;
+    }
+    const appTopic = parseForumTopicLink(href, baseUrl);
+    if (appTopic) {
+      void onOpenTopic(appTopic);
+      return;
+    }
+    if (isHttpOrHttpsUrl(href)) {
+      onOpenExternalUrl(href);
+    }
+  });
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const BlockquoteRenderer: CustomBlockRenderer = (props) => {
       const renderOrdinaryQuote = () => {
@@ -258,7 +257,7 @@ export function useHtmlRenderingController({
         mediaContext,
         mediaSessionIdentity,
         nodeSeekMediaUserAgent,
-        onOpenImagePreview,
+        onOpenImagePreview: openImagePreview,
         settings,
         theme
       }),
@@ -271,7 +270,7 @@ export function useHtmlRenderingController({
     mediaContext,
     mediaSessionIdentity,
     nodeSeekMediaUserAgent,
-    onOpenImagePreview,
+    openImagePreview,
     openHtmlLink,
     markInlineSizedImageUrl,
     settings.fontScale,
