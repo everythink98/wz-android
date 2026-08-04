@@ -21,7 +21,7 @@
 - 新增或修改依赖登录态的能力时，必须从 App 内原站同类页面核实字段、权限、入口和请求；未登录页面、桌面浏览器、第三方客户端、作者名或猜测的 API 不能作为依据。必要时可通过 WebView 调试查看 DOM、全局数据、已加载 JS 和 network，但不得输出 Cookie、token 或含敏感信息的截图、UI dump；临时取证文件只能保留在本机且不得提交。
 - 单一账号、页面或当前已加载 JS/API 中没有对应入口或行为，不足以证明原站不支持。证据不足时不得猜测实现或新增入口，也不得据此移除或隐藏已有能力；应说明证据缺口。
 - “全面测试”默认不授权真实发布、回复、编辑、删除、签到、上传、点赞、鸡腿、反对、投票、原站书签或收藏切换；这些写操作只用自动测试、请求构造、权限显示和只读入口检查覆盖。
-- 确实需要真实写操作验收时，必须先得到用户明确同意。发帖、回复、编辑和删除只作用于本次新建、中文且贴合原帖主题的临时内容，完成后清理并刷新确认；点赞和收藏切换完成后恢复原状态；投票等不可逆操作，以及无法清理的上传，必须针对具体对象或残留风险单独取得同意。
+- 确实需要真实写操作验收时，必须先得到用户明确同意。发帖、回复、编辑和删除只作用于本次新建、中文且贴合原帖主题的临时内容，完成后清理并刷新确认；NodeSeek 获授权的上述测试优先使用 App 内原站当前标为“沙盒”的官方测试分区，执行前确认分区名称和用途，不硬编码可能变化的 category id；点赞和收藏切换完成后恢复原状态；投票等不可逆操作，以及无法清理的上传，必须针对具体对象或残留风险单独取得同意。沙盒只限定测试对象，不替代每次任务的写入授权。
 
 ## 证据分层与工具职责
 
@@ -186,7 +186,7 @@ $env:WZ_ANDROID_TEST_APK = 'C:\path\to\current.apk'
 npm run test:device
 ```
 
-`test:device` 要求可信安装为 `agent-device >= 0.19.0`，随后核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。每个 `.ad` 使用唯一 session、独立 relaunch且不自行 `close`，让 test harness 先完成录屏 stop，再执行 session cleanup；单文件内部零重试并在失败处停止。普通执行失败时外层继续其余文件并汇总为非零退出，任何录屏隔离或恢复失败都立即中止。执行前若明确设备存在 active manifest、对应 `.tmp`、工具录屏进程或 orphan scratch，流程按 `BLOCKED_BY_ENV` 停止并保留现场；正式 manifest 即使为空也按文件存在视为占用。执行后只对同时匹配本条唯一 session 与 device 的 manifest 调用 agent-device `record stop`，未知或畸形 manifest、录屏进程和 scratch 一律不终止、不删除。runner 不结束本机 daemon，不使用 wildcard 清设备文件，也不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。代理 startup gate 放行 routes 前必须渲染静态、可访问且无动画的启动状态，使 selector wait 能在冷启动期间继续等待而不是因零 accessibility node 提前失败，见 `REG-TEST-008`；不得以固定 sleep 或 retry 掩盖。普通套件固定六个独立失败域：账号与小隐寺等级、聚合 Feed、聚合 Search、Library、本地 More、NodeSeek WebView；账号等级集中在 `account-readonly.ad`，本地 More 不发等级请求。Feed/Search 只断言当前请求进入合法 outcome，不要求实时首条、固定列表长度或动态详情成功；Topic/User 嵌套和 Library 空/非空由固定 RNTL 严格覆盖，真实对象链由 Agent Live 在满足前置条件时核实。NodeSeek Replay 只使用 App 自有 `nodeseek-login-webview-settled` 及刷新/返回流程，不读取第三方 DOM；timeout 必须先卸载失败的 WebView generation，使 App 自有 marker、错误和刷新入口可被 Android accessibility 读取，显式刷新才 remount，见 `REG-VERIFICATION-004`。小隐寺等级点击恰好一次，等待 `xiaoyinsi-level-settled` 和成功/错误共有的“刷新等级”，不等待成功专属内容、不复试，见 `REG-TEST-005/006/007`。
+`test:device` 要求可信安装为 `agent-device >= 0.19.0`，随后核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。每个 `.ad` 使用唯一 session、独立 relaunch且不自行 `close`，让 test harness 先完成录屏 stop，再执行 session cleanup；单文件内部零重试并在失败处停止。普通执行失败时外层继续其余文件并汇总为非零退出，任何录屏隔离或恢复失败都立即中止。执行前若明确设备存在 active manifest、对应 `.tmp`、工具录屏进程或 orphan scratch，流程按 `BLOCKED_BY_ENV` 停止并保留现场；正式 manifest 即使为空也按文件存在视为占用。执行后只对同时匹配本条唯一 session 与 device 的 manifest 调用 agent-device `record stop`，未知或畸形 manifest、录屏进程和 scratch 一律不终止、不删除。runner 不结束本机 daemon，不使用 wildcard 清设备文件，也不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。代理 startup gate 放行 routes 前必须渲染静态、可访问且无动画的启动状态，使 selector wait 能在冷启动期间继续等待而不是因零 accessibility node 提前失败，见 `REG-TEST-008`；不得以固定 sleep 或 retry 掩盖。普通套件固定七个独立失败域：账号与小隐寺等级、聚合 Feed、聚合 Search、Library、本地 More、NodeSeek WebView、统一消息中心；账号等级集中在 `account-readonly.ad`，本地 More 不发等级请求，消息中心 Replay 不执行真实已读。Feed/Search 只断言当前请求进入合法 outcome，不要求实时首条、固定列表长度或动态详情成功；Topic/User 嵌套和 Library 空/非空由固定 RNTL 严格覆盖，真实对象链由 Agent Live 在满足前置条件时核实。NodeSeek Replay 只使用 App 自有 `nodeseek-login-webview-settled` 及刷新/返回流程，不读取第三方 DOM；timeout 必须先卸载失败的 WebView generation，使 App 自有 marker、错误和刷新入口可被 Android accessibility 读取，显式刷新才 remount，见 `REG-VERIFICATION-004`。小隐寺等级点击恰好一次，等待 `xiaoyinsi-level-settled` 和成功/错误共有的“刷新等级”，不等待成功专属内容、不复试，见 `REG-TEST-005/006/007`。
 
 真实未登录验收使用 `tests/device-logged-out/logged-out-readonly.ad` 和独立 AVD：
 
@@ -204,9 +204,28 @@ npm run test:device:logged-out
 npm run smoke:android
 ```
 
-通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；覆盖安装后先读取设备 epoch、再写唯一 logcat marker 并执行第一次启动，以 `logcat -T` 有界读取该时间之后的日志，按包名与该包 PID 裁剪 marker 后窗口。`APK_SANITY` 只要求 `main-tab-feed` 可见、目标包在前台且该窗口无崩溃、ANR 或 RedBox；marker 丢失同样失败，不得清空设备全局 logcat。随后执行 `tests/device/` 的六条普通 Replay，形成独立的 `DEVICE_REPLAY_PASS`；真实未登录旅程通过独立设备命令另行执行。动态搜索无结果、合法空 Library 或第三方阻碍不构成 APK 产品失败，只有 APK 身份错误、App 自有入口或当前请求无法结算、永久 Loading、错误不可见或无恢复入口才失败。全程只读，不创建或切换收藏，也不执行其他真实写操作；独立能力继续取证。
+通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；覆盖安装后先读取设备 epoch、再写唯一 logcat marker 并执行第一次启动，以 `logcat -T` 有界读取该时间之后的日志，按包名与该包 PID 裁剪 marker 后窗口。`APK_SANITY` 只要求 `main-tab-feed` 可见、目标包在前台且该窗口无崩溃、ANR 或 RedBox；marker 丢失同样失败，不得清空设备全局 logcat。随后执行 `tests/device/` 的七条普通 Replay，形成独立的 `DEVICE_REPLAY_PASS`；真实未登录旅程通过独立设备命令另行执行。动态搜索无结果、合法空 Library 或第三方阻碍不构成 APK 产品失败，只有 APK 身份错误、App 自有入口或当前请求无法结算、永久 Loading、错误不可见或无恢复入口才失败。全程只读，不创建或切换收藏，也不执行其他真实写操作；独立能力继续取证。
 
 动态来源、真实账号和已授权写操作按 `tests/live/agent-live.md` 执行。普通改动只跑受影响能力的 `targeted`；集中修复、里程碑或发布前跑 `full`。场景相互独立，CF 由用户手动处理；无人处理记 `BLOCKED_BY_ENV`，不可逆结果不明确时不得重试。动态服务同时报告应用流程和数据读取结果：成功数据，或明确错误可见、可刷新且无自动请求突发，应用流程均可记 `LIVE_PASS`；数据真实出现记 `LIVE_PASS`，明确限流或有诊断证据的外部故障记 `BLOCKED_BY_ENV`，证据不足记 `NOT_VERIFIED`，诊断证明 App 的请求构造、凭据路由、鉴权头或解析契约错误时则记数据读取明确失败，即使错误 UI 流程本身正确。小隐寺等级首次失败时先保留错误和脱敏诊断；只有错误明确给出可执行的限流/冷却时间（时长或截止时刻），才等待至窗口结束再加 2 秒并显式刷新一次。复试成功仍记录首败，再次限流记数据 `BLOCKED_BY_ENV`；其他错误不猜成限流，也不得仅因 App 正确展示错误态就判产品失败。不得重跑整套或增加全局 retry。
+
+## 消息通知验收
+
+消息中心同时跨四站、账号身份、后台调度和 Android 权限，必须分层验收，不能用“列表能打开”代替协议、隐私或后台证据。
+
+### 自动测试
+
+1. 四站脱敏 fixture 固定分页、稳定 ID、未知类型、未读、auth/CF/畸形响应和来源隔离；NodeSeek 的 CF challenge 与畸形 JSON、Discourse 的 401 与畸形 JSON、妖火的失效登录与损坏详情 target 都必须明确失败，不能结算为空页。NodeSeek 另固定三类 `markViewed` body、列表省略 `viewed` 时仍为未读、缺远端 ID 的非敏感稳定 fallback、同 timestamp 无 ID 多会话保守丢弃，以及 `commentId` 在 floor 缺失/无效/错误时仍为主身份并在 `replyCount` 上限内逐页命中；Discourse 固定单条/批量 PUT 与顶层 serializer 字段；妖火固定时间/删除动作分离、目标详情 block、目标 ID 缺失明确失败和详情后重读列表复核；小隐寺固定新旧 credential 迁移与失败回滚。
+   - NodeSeek @我/回复 fixture 必须同时给出可复用的列表行 `id` 和变化的 `comment_id`，证明投递身份跟随 `comment_id`，而 `markViewed` 仍只使用原始行 ID。
+2. Store/worker/system 固定首次 baseline 静默、首发四站 opt-in allowlist、每站摘要、200-ID 上限、重复运行不重复、全局/单站开关重启恢复、换号/退出清理、代理失败零请求、墙钟 deadline 和单站失败不阻断其他站；至少用两页 fixture 证明 worker 沿 opaque cursor 请求 `[undefined, next]` 并只记录最新 60 条，同时固定重复 cursor/无下一页停止。系统通知或 identifier 保存失败必须回滚本轮投递 ID；记录后及 Android 返回后关闭全局/来源开关或换号，都必须复核、撤销账号级 exact identifier 并释放 ID，旧 identifier 不得复活或误删新账号摘要。registration 测试必须阻塞 register/unregister 并交错提交相反意图，最终状态只服从最后一次调用；空 eligible-source 集合不得注册后台任务，foreground handler 必须展示 banner/list 且不设置 badge。
+3. 隐私断言必须证明标题、正文、预览、会话、Cookie 和 token 不进入持久化、诊断或系统通知 payload；参与者只允许进入当次 Android 摘要正文，不进入持久化或诊断。摘要除此之外只含来源、动作和新增数量。
+4. Gateway/RNTL/导航测试固定 More 入口和 `none/update/messages/both` 无障碍文案、总览/单站/未读筛选、合法 outcome marker、分页/刷新/局部错误、详情、已读失败提示、首次 opt-in、权限拒绝/撤销意图及四站开关；聚合局部错误必须为每个失败来源显示独立重试，并证明点击只调用目标来源 `listPage`、携带发起时 expected identity 与 cancel signal、只 patch 对应失败页；失败页不是末页时恢复 cursor 必须传播到末页，其他来源数据和 `listAllPage` 不变。还必须覆盖消息 native route 的 Android 硬件返回、旧 `read,write` 小隐寺授权显示升级而非登录且不能维持空后台任务、其 scope 读取不阻塞其他来源身份、pending/unknown 保留可信身份/cache 但不参与读取也不渲染旧私有 row、确认退出清 aggregate Query、前台 snapshot 调用共用投递 worker、snapshot 存储失败不阻断成功来源、消息中心可见时仍调用 Android system sink、隐藏但 mounted 的列表停止读取、快速连续身份变化只允许最新 effect 落盘、详情 route 绑定条目身份，以及 adapter I/O 前的 expected identity/abort；条目 label 包含动作，短来源 Tab 双轴至少 48dp。
+5. 运行相关 Vitest/Jest、`npm run typecheck` 和 `npm run verify`；`app.json`、TaskManager 或原生依赖变化还要 fresh Expo prebuild，检查生成 manifest/permission/icon/plugin，运行生成的 Kotlin 单测和 `:app:compileReleaseKotlin`。正式 release 脚本仍受 Node 22、clean tree、签名和设备前置门禁约束。
+
+### 设备与 Live 边界
+
+1. `tests/device/notifications-readonly.ad` 从 More 进入消息中心，依次检查总览与四站 `data/empty/partial/error/auth` 合法结算，切换“只看未读”开/关，打开设置确认四站都存在，再用系统返回依次回到消息列表和 More。Replay 不要求当天有数据，不点击消息行、不下拉刷新、不改变字号或启用 TalkBack；详情、刷新、默认/大字号布局和 TalkBack 动作朗读由匹配 APK 手动/只读 Live 补验，未执行记 `NOT_VERIFIED`。全程不执行真实已读、全部已读或主设备 Android 通知设置变更。
+2. Android 13+ 权限 grant/deny/revoke、前台普通页/消息中心与后台的每站摘要替换、锁屏 `PRIVATE`、warm/cold 点击只进来源列表及约 15 分钟 WorkManager 调度，在一次性 AVD 上验证；不得清除或卸载主登录模拟器 App。前台/后台真实新消息需要外部账号产生一条 baseline 之后的 @我、回复或私信；缺少该前置时分别记 `LIVE_PASS NOT_VERIFIED`，不能用恢复旧未读冒充。
+3. 原站当天有无消息不作为 Replay 前置。逐条和批量已读属于真实写入，只有用户对具体来源另行明确授权后才执行 `LIVE_PASS`；否则统一记 `NOT_VERIFIED`，不得用 Fixture 通过冒充线上写入通过。
 
 ## 搜索验收
 
@@ -434,6 +453,7 @@ npm run typecheck
 | 历史 | ready/empty；有前置数据时检查最近阅读和已读状态 | 删除、清空历史 |
 | 关注用户 | ready/empty；有前置数据时检查用户页、用户主题列表和返回 | 取消关注 |
 | 账号中心 | 四个可登录来源顺序、单站详情、真实状态、身份、主操作、顶部唯一公共 `刷新账号状态` 和全部原服务入口；原三站显示凭据摘要并从 App 内打开登录 / 验证页，小隐寺只显示 Device Code 授权且打开系统浏览器；测试凭据填入但不提交并在结束前删除 | 清除网站登录、撤销授权、退出登录、手工改 Cookie、提交测试登录、真实签到 |
+| 消息通知 | More 入口、总览/四站来源、只看未读、当前请求合法 outcome、空态/局部错误、设置文案与默认关闭；一次性 AVD 另验权限、摘要隐私和 warm/cold 跳转 | 打开具体未读条目、全部已读、启用主设备后台通知、真实逐条/批量已读 |
 | 回复编辑 / 图片上传 | 四个可写来源回复框、失败后可继续编辑、格式按钮、文件选择器打开和取消；只用现有 NodeImage session 验证自动保存、关闭和零 Connect；失效兜底流程由自动测试固定，真实 Connect / 上传只按 Agent Live 逐次授权 | 真实 Connect、真实上传、真实发送回复、清除 NodeImage Key/Cookie |
 | 回复删除 | 删除入口和权限显示；确认框取消及删除后消失默认由自动测试覆盖 | 点击已有内容的删除入口、真实新发回复、真实删除回复、删除旧回复、删除他人回复、清数据制造状态 |
 | 未登录设备 | 只在独立 AVD 上使用同一 APK，四站结算为权威未登录状态（NodeSeek 可为“未登录”或仅访客“已验证”，linux.do 为“匿名可用”）；可完成访客 CF 验证但不登录论坛；主设备数据、Cookie 和登录态不变 | 克隆主 AVD 数据、登录论坛、清主设备数据或 Cookie |
@@ -452,6 +472,7 @@ npm run typecheck
 | 回复删除、删除权限、评论 id / 删除链接解析 | 回复删除验收、相关 action / 来源解析测试、`npm run typecheck`、模拟器验收 |
 | 收藏、历史、备份 / 恢复 | reader data / backup 测试、`tests/integration/security-boundaries.test.ts`、`npm run typecheck` |
 | 服务器代理 | `src/platform/network/networkProxy.test.ts`、`tests/tooling/network-proxy-controller-guard.test.ts`、`tests/tooling/network-proxy-modal-guard.test.ts`、`tests/tooling/webview-proxy-guard.test.ts`、`src/platform/update/appUpdateProxyGuard.test.ts`、`tests/tooling/release-packaging.test.ts`、`tests/ui/more/network-proxy-modal.test.tsx`、fresh Expo prebuild、生成 Kotlin JUnit（含 `REG-PROXY-007/008` 的 stop/worker overlap 与阻塞写 deadline）、`:app:compileReleaseKotlin`、`npm run typecheck`；模拟器默认只做离线 UI 验收，不启用真实代理 |
+| 消息中心、Android 通知、后台任务 | 四站 notification adapter/gateway/store/worker 测试、notification UI/AppNavigator/More 测试、账号与小隐寺 credential 测试、代理 fail-closed 测试、`tests/tooling/release-packaging.test.ts`、fresh Expo prebuild、生成 Kotlin JUnit、`:app:compileReleaseKotlin`、`npm run typecheck`、`tests/device/notifications-readonly.ad`；真实已读写入另行授权 |
 | UI 样式、主题 | 只保留事故级 UI helper 测试、`tests/integration/style-ownership.test.ts`、`npm run typecheck`、模拟器验收 |
 | App 内更新检查、安装入口 | `src/platform/update/appUpdate.test.ts`、`src/platform/update/appUpdateProxyGuard.test.ts`、`tests/tooling/release-packaging.test.ts`、`npm run typecheck`、模拟器验收 |
 | 签名、版本、原生构建配置、发布脚本、正式发布 | `npm run release:android` |

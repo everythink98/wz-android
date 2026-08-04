@@ -15,6 +15,10 @@ import { useForumCatalogRuntime } from './useForumCatalogRuntime';
 import { useAppBackHandler } from './useAppBackHandler';
 import { useAppDiagnosticsRuntime } from './useAppDiagnosticsRuntime';
 import { useAppLifecycleRuntime } from './useAppLifecycleRuntime';
+import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
+import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRoute';
+import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/moreBadge';
+import { openNotificationsRoute, openXiaoyinsiAuthorization } from './appNavigation';
 
 export function useAppRuntime() {
   const lifecycle = useAppLifecycleRuntime();
@@ -87,8 +91,33 @@ export function useAppRuntime() {
     showLinuxDoVerification,
     showYaohuoLogin
   } = accountRuntime.hosts;
+  const beginXiaoyinsiAuthorization = useMemo(
+    () => () => openXiaoyinsiAuthorization(xiaoyinsiAuthController.beginAuthorization),
+    [xiaoyinsiAuthController.beginAuthorization]
+  );
   const nodeSeekMediaUserAgent = getNodeSeekUserAgent();
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek, webLoginUserId);
+  const notificationsRuntime = useNotificationsRuntime({
+    appActive,
+    authorizationRevision: xiaoyinsiAuthController.phase,
+    beginXiaoyinsiAuthorization,
+    fetcher: networkProxyFetcher,
+    getLinuxDoUserAgent,
+    getNodeSeekUserAgent,
+    openSource: openNotificationsRoute,
+    sessions: accountSessionViewModels
+  });
+  const notificationRouteRuntime = useMemo<NotificationRouteRuntimeValue>(
+    () => ({ ...notificationsRuntime, contentWidth, notify }),
+    [contentWidth, notificationsRuntime, notify]
+  );
+  const notificationSummary = `${notificationsRuntime.unreadTotal ? '有未读' : '暂无未读'} · ${
+    notificationsRuntime.backgroundEnabled ? '后台通知已开启' : '后台通知未开启'
+  }${notificationsRuntime.partialUnavailable ? ' · 部分站点暂不可用' : ''}`;
+  const onNavigationReady = () => {
+    notificationsRuntime.onNavigationReady();
+    handleNavigationReady();
+  };
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
     active: (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
@@ -119,7 +148,7 @@ export function useAppRuntime() {
       account: {
         identityBarriers: accountIdentityBarriers,
         identityChecks: accountIdentityChecks,
-        beginXiaoyinsiAuthorization: xiaoyinsiAuthController.beginAuthorization,
+        beginXiaoyinsiAuthorization,
         sessionEpochs: forumSessionEpochs,
         sessionViewModels: accountSessionViewModels,
         ensureNodeImageApiKey,
@@ -156,6 +185,7 @@ export function useAppRuntime() {
       accountIdentityChecks,
       accountSessionViewModels,
       appActive,
+      beginXiaoyinsiAuthorization,
       commitReaderData,
       contentWidth,
       effectiveNodeSeekUserId,
@@ -180,7 +210,6 @@ export function useAppRuntime() {
       requestNodeSeekVerification,
       showLinuxDoVerification,
       showYaohuoLogin,
-      xiaoyinsiAuthController.beginAuthorization,
       xiaoyinsiAuthController.refreshAuthorization
     ]
   );
@@ -375,6 +404,12 @@ export function useAppRuntime() {
         metadata: diagnosticMetadata
       },
       notify,
+      notifications: {
+        open: () => {
+          openNotificationsRoute();
+        },
+        summary: notificationSummary
+      },
       proxy: {
         activeProfile: networkRuntime.activeProfile,
         applyError: networkRuntime.applyError,
@@ -417,6 +452,7 @@ export function useAppRuntime() {
       networkRuntime.summary,
       networkRuntime.testProxyProfile,
       networkRuntime.upsertProxyProfile,
+      notificationSummary,
       notify,
       readerData,
       readerDataRef,
@@ -433,10 +469,11 @@ export function useAppRuntime() {
       ? {
           feedRouteRuntime,
           libraryRouteRuntime,
-          moreHasBadge: Boolean(appUpdateInfo),
+          moreBadgeState: notificationMoreBadgeState(Boolean(appUpdateInfo), notificationsRuntime.unreadTotal > 0),
           moreRouteRuntime,
           navigationTheme,
-          onReady: handleNavigationReady,
+          notificationRouteRuntime,
+          onReady: onNavigationReady,
           onScreenChange: handleNavigationScreenChange,
           searchRouteRuntime,
           styles: appStyles,

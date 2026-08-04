@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import type { SourceSearchFilter } from '@/domain/forum/searchFilters';
-import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import { isSessionSource, type NotificationSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import type { FeedSource, Source } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from './sessionEpochs';
 
@@ -207,6 +207,27 @@ export const forumQueryKeys = {
         generation
       }
     ] as const,
+  notifications: (source: NotificationSource | 'all') => ['forum', source, 'notifications'] as const,
+  notificationList: ({
+    identityKey,
+    source,
+    unreadOnly
+  }: {
+    identityKey: string;
+    source: NotificationSource | 'all';
+    unreadOnly: boolean;
+  }) => ['forum', source, 'notifications', 'list', { identityKey, unreadOnly }] as const,
+  notificationDetail: ({
+    identityKey,
+    notificationId,
+    source
+  }: {
+    identityKey: string;
+    notificationId: string;
+    source: NotificationSource;
+  }) => ['forum', source, 'notifications', 'detail', { identityKey, notificationId }] as const,
+  notificationSnapshots: (identityKey: string) =>
+    ['forum', 'all', 'notifications', 'snapshots', { identityKey }] as const,
   level: (source: Source) => ['forum', source, 'level'] as const,
   levelProfile: ({ sessionEpochs, source }: { sessionEpochs: ForumSessionEpochs; source: Source }) =>
     ['forum', source, 'level', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const

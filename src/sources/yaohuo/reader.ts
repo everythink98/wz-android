@@ -11,12 +11,12 @@ import {
   sourceDiagnosticSummary
 } from '@/sources/diagnostics';
 
-interface DirectRequestOptions {
+export interface DirectRequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
 }
 
-type YaohuoHtmlRequestOptions = DirectRequestOptions & {
+export type YaohuoHtmlRequestOptions = DirectRequestOptions & {
   validateLogin?: boolean;
 };
 
@@ -46,7 +46,7 @@ function yaohuoRequestInit(): RequestInit {
   };
 }
 
-async function fetchYaohuoHtml(url: string, fetcher: Fetcher = fetch, options: YaohuoHtmlRequestOptions = {}) {
+export async function fetchYaohuoHtml(url: string, fetcher: Fetcher = fetch, options: YaohuoHtmlRequestOptions = {}) {
   const { validateLogin = true, ...requestOptions } = options;
   const safeUrl = requireYaohuoRequestUrl(url);
   const response = await fetchWithTimeout(safeUrl, yaohuoRequestInit(), { fetcher, ...requestOptions });

@@ -61,6 +61,15 @@ test('rejects reverse, cross-feature, and cross-provider imports', () => {
   assert.ok(codes.includes('cross-provider'));
 });
 
+test('rejects network I/O globals in domain models', () => {
+  const srcDir = architectureFixture({
+    'domain/notification.ts':
+      'export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>; export const load = () => fetch("/");'
+  });
+
+  assert.ok(analyzeArchitecture(srcDir).issues.some((issue) => issue.code === 'domain-io'));
+});
+
 test('rejects invalid source roots and barrel files', () => {
   const srcDir = architectureFixture({
     'domain/index.ts': 'export const model = true;',
@@ -111,11 +120,12 @@ test('accepts the declarative app composition contract', () => {
     'app/AppComposition.tsx':
       "import { AppRoutes } from './AppRoutes'; import { useAppRuntime } from './useAppRuntime'; export const AppComposition = () => useAppRuntime() && AppRoutes;",
     'app/AppRoutes.tsx':
-      "import { AppNavigator } from './AppNavigator'; import { FeedRoute } from '@/features/feed/FeedRoute'; export const AppRoutes = [AppNavigator, FeedRoute];",
+      "import { AppNavigator } from './AppNavigator'; import { FeedRoute } from '@/features/feed/FeedRoute'; import { NotificationsRoute } from '@/features/notifications/NotificationRoute'; export const AppRoutes = [AppNavigator, FeedRoute, NotificationsRoute];",
     'app/AppNavigator.tsx': "import { Nav } from '@/ui/Nav'; export const AppNavigator = Nav;",
     'app/useAppRuntime.ts':
       "import { useMemo } from 'react'; import type { FeedRouteRuntimeValue } from '@/features/feed/FeedRoute'; export const useAppRuntime = (): FeedRouteRuntimeValue => useMemo(() => true, []);",
     'features/feed/FeedRoute.tsx': 'export type FeedRouteRuntimeValue = boolean; export const FeedRoute = true;',
+    'features/notifications/NotificationRoute.tsx': 'export const NotificationsRoute = true;',
     'ui/Nav.ts': 'export const Nav = true;'
   });
 

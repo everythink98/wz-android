@@ -5,19 +5,26 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
-import { navigateMainTab, navigationRef, pushTopicRoute, pushUserRoute } from '@/app/appNavigation';
+import {
+  navigateMainTab,
+  navigationRef,
+  openNotificationsRoute,
+  pushTopicRoute,
+  pushUserRoute
+} from '@/app/appNavigation';
 import { useTopicRouteBeforeRemove } from '@/features/topic/useTopicRouteBeforeRemove';
 import type { Topic, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { OriginalImageUpgradeBoundary, useOriginalImageUpgradeEnabled } from '@/platform/media/originalImageLoading';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
+import type { MoreBadgeState } from '@/ui/navigation/moreBadge';
 import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 import { createTestStyles as createStyles } from '../styleFixture';
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { Home: Icon, MoreHorizontal: Icon, Search: Icon, Star: Icon };
+  return { Home: Icon, MoreHorizontal: Icon, Search: Icon, Settings: Icon, Star: Icon };
 });
 
 const readerData = createEmptyReaderData();
@@ -72,6 +79,18 @@ function MoreTab() {
 
 function ReadingSettingsRoute() {
   return <Text>阅读设置页面</Text>;
+}
+
+function NotificationsRoute() {
+  return <Text>消息页面</Text>;
+}
+
+function NotificationDetailRoute() {
+  return <Text>消息详情页面</Text>;
+}
+
+function NotificationSettingsRoute() {
+  return <Text>消息设置页面</Text>;
 }
 
 function OriginalUpgradeProbe({ id }: { id: string }) {
@@ -146,14 +165,23 @@ function StatefulUserRoute({ navigation, route }: NativeStackScreenProps<RootSta
   );
 }
 
-function Navigator({ moreHasBadge = false }: { moreHasBadge?: boolean }) {
+function Navigator({
+  moreBadgeState,
+  moreHasBadge = false
+}: {
+  moreBadgeState?: MoreBadgeState;
+  moreHasBadge?: boolean;
+}) {
   return (
     <AppNavigator
-      moreHasBadge={moreHasBadge}
+      moreBadgeState={moreBadgeState ?? (moreHasBadge ? 'update' : 'none')}
       navigationTheme={DefaultTheme}
       FeedRouteComponent={FeedTab}
       LibraryRouteComponent={LibraryTab}
       MoreRouteComponent={MoreTab}
+      NotificationDetailRouteComponent={NotificationDetailRoute}
+      NotificationSettingsRouteComponent={NotificationSettingsRoute}
+      NotificationsRouteComponent={NotificationsRoute}
       ReadingSettingsRouteComponent={ReadingSettingsRoute}
       SearchRouteComponent={SearchTab}
       TopicRouteComponent={StatefulTopicRoute}
@@ -189,6 +217,36 @@ describe('App navigator UI state', () => {
 
   afterAll(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  });
+
+  it.each<[MoreBadgeState, string]>([
+    ['none', '更多'],
+    ['update', '更多，有可用更新'],
+    ['messages', '更多，有新消息'],
+    ['both', '更多，有新消息和可用更新']
+  ])('renders the %s More badge accessibility label', async (moreBadgeState, label) => {
+    const view = await render(<Navigator moreBadgeState={moreBadgeState} />);
+
+    expect(view.getByLabelText(label)).toBeTruthy();
+  });
+
+  it('[REG-NOTIFY-003] opens an Android summary with a flat header and keeps settings in the More stack', async () => {
+    const view = await renderNavigator();
+
+    await act(async () => {
+      expect(openNotificationsRoute('linuxdo')).toBe(true);
+    });
+    await waitFor(() => expect(view.getByText('消息页面')).toBeTruthy());
+    expect(navigationRef.getCurrentRoute()).toMatchObject({ name: 'Notifications', params: { source: 'linuxdo' } });
+    const header = view.container.queryAll((node) => node.props.title === '消息' && 'hideShadow' in node.props)[0];
+    expect(header?.props.hideShadow).toBe(true);
+
+    await fireEvent.press(view.getByLabelText('消息通知设置'));
+    await waitFor(() => expect(view.getByText('消息设置页面')).toBeTruthy());
+    const settingsHeader = view.container.queryAll(
+      (node) => node.props.title === '消息通知设置' && 'hideShadow' in node.props
+    )[0];
+    expect(settingsHeader?.props.hideShadow).toBe(true);
   });
 
   it('[REG-PERF-002][REG-PERF-008][REG-TOPIC-002][REG-WRITE-006] keeps tab and native route state owned by their mounted route instances', async () => {

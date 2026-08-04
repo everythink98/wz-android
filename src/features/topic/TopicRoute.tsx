@@ -328,6 +328,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
           nodeSeekUserId={runtime.account.nodeSeekUserId}
           read={topicController}
           session={topicSession}
+          targetReply={route.params.targetReply}
           topicScrollRef={topicScrollRef}
         />
         <ImagePreviewModal

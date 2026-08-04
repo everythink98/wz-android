@@ -843,22 +843,25 @@ export function useTopicController({
     ]
   );
 
-  const loadMoreReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!selectedTopic || selectedIdentityPending) return 'stale';
-    if (!repliesQuery.hasNextPage || repliesQuery.isFetchingNextPage) return 'completed';
-    const result = await repliesQuery.fetchNextPage();
-    if (result.error) return readOutcome(selectedTopic.source, result.error);
-    const loaded = result.data?.pages.at(-1)?.items.length || 0;
-    notify(`已加载 ${loaded} 条回复`);
-    return 'completed';
-  }, [
-    notify,
-    repliesQuery.fetchNextPage,
-    repliesQuery.hasNextPage,
-    repliesQuery.isFetchingNextPage,
-    selectedIdentityPending,
-    selectedTopic
-  ]);
+  const loadMoreReplies = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
+      if (!selectedTopic || selectedIdentityPending) return 'stale';
+      if (!repliesQuery.hasNextPage || repliesQuery.isFetchingNextPage) return 'completed';
+      const result = await repliesQuery.fetchNextPage();
+      if (result.error) return readOutcome(selectedTopic.source, result.error);
+      const loaded = result.data?.pages.at(-1)?.items.length || 0;
+      if (!silent) notify(`已加载 ${loaded} 条回复`);
+      return 'completed';
+    },
+    [
+      notify,
+      repliesQuery.fetchNextPage,
+      repliesQuery.hasNextPage,
+      repliesQuery.isFetchingNextPage,
+      selectedIdentityPending,
+      selectedTopic
+    ]
+  );
 
   const toggleLoadedQuotedPost = useCallback(
     async ({

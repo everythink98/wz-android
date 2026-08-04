@@ -9,6 +9,7 @@ import { absoluteUrl, elementText, isRecord, parseHtml, parsePositiveInteger, to
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 
 export const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
+export const NODESEEK_FLOORS_PER_PAGE = 10;
 
 export function nodeSeekTopicUrl(id: string) {
   return `${NODESEEK_BASE_URL}/post-${id}-1`;

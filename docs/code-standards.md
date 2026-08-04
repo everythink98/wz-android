@@ -14,7 +14,7 @@
 | --- | --- |
 | `src/app/` | Expo bootstrap 之后的声明式组合链、导航命令和无条件挂载的 App 级 runtime 投影；全局 host 仍放在真实 feature owner |
 | `src/domain/` | 无 React、无 I/O 的 Forum、ReaderData、Session canonical model 与确定性规则 |
-| `src/features/` | `feed`、`search`、`topic`、`user`、`library`、`account`、`more` 用户旅程的 controller、screen、局部组件和样式 |
+| `src/features/` | `feed`、`search`、`topic`、`user`、`library`、`account`、`more`、`notifications` 用户旅程的 controller、screen、局部组件和样式 |
 | `src/sources/` | 统一读取 gateway、聚合读取、共享协议与各站独立 parser/reader/account/action adapter |
 | `src/platform/` | Query、网络、存储、诊断、媒体、更新和 Android bridge |
 | `src/ui/` | 跨旅程复用的 UI primitive、TopicCard、Avatar、导航控件和主题 token |
@@ -36,10 +36,10 @@
 | `app` | 六类模块 |
 
 - feature 不得反向依赖 app，也不得跨 feature 直接调用；共享语义下沉到 domain/platform/ui，共享来源能力留在 sources。
-- source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/feedRead.ts`、`src/sources/searchRead.ts`、`src/sources/sourceRead.ts`、`src/sources/discourseRead.ts`、`src/sources/discourseActions.ts` 与 `src/sources/readGateway.ts` 是允许组合多个 adapter 的来源根模块。
-- `src/sources/readGateway.ts` 是读取统一入口。写操作继续复用现有 action client 和 `useTopicActionsController` 生命周期，不为目录整洁另造 service、factory 或 provider registry。
+- source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/feedRead.ts`、`src/sources/searchRead.ts`、`src/sources/sourceRead.ts`、`src/sources/discourseRead.ts`、`src/sources/discourseActions.ts`、`src/sources/readGateway.ts`、`src/sources/discourseNotifications.ts`、`src/sources/notificationAdapter.ts`、`src/sources/notificationAdapters.ts`、`src/sources/notificationForegroundAccess.ts`、`src/sources/notificationBackgroundAccess.ts` 与 `src/sources/notificationGateway.ts` 是允许组合多个 adapter 的来源根模块。
+- `src/sources/readGateway.ts` 是论坛读取统一入口，`src/sources/notificationGateway.ts` 是消息读取与已读协议的独立统一入口。写操作继续复用现有 action client；不为目录整洁另造 service、factory 或 provider registry。
 - 禁止新增 barrel `index.ts`、旧内部路径 re-export 和纯转发 facade。移动内部模块时一次性更新调用方、测试与文档。
-- App 组合链固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`：`AppRoot` 只能依赖 `AppComposition`；`useAppRuntime` 只能组合深 runtime、用 `useMemo` 投影 route capability，不得持有 `useState/useRef/useEffect/useCallback` 或导入 Screen/component；`AppComposition` 只依赖深 runtime、全局 provider 与 `AppRoutes`；`AppRoutes` 只映射六个 feature route entry；`AppNavigator` 不得依赖 feature。
+- App 组合链固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`：`AppRoot` 只能依赖 `AppComposition`；`useAppRuntime` 只能组合深 runtime、用 `useMemo` 投影 route capability，不得持有 `useState/useRef/useEffect/useCallback` 或导入 Screen/component；`AppComposition` 只依赖深 runtime、全局 provider 与 `AppRoutes`；`AppRoutes` 只映射七个 feature route entry；`AppNavigator` 不得依赖 feature。
 - Feed、Search、Library、More tab 长期挂载但以 `active` 控制 Query 和副作用；Topic/User 的 controller、list ref、草稿、筛选和滚动状态归各自 native route。禁止恢复 Topic presentation cache、route snapshot、手工 back stack、全局 openTopic/openUser ref 或 deferred navigation registry。
 
 ## 模块与文件拆分
@@ -64,7 +64,7 @@
 - TypeScript/JavaScript 使用单引号、分号、无尾逗号和 120 列；全部受管文本使用 LF，JSON/YAML 遵循 Prettier 的合法语法。Markdown、`package-lock.json`、生成目录与产物不做批量格式化。
 - 提交前至少运行与改动相关的测试、`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run check:architecture` 和 `git diff --check`。
 - `npm run verify` 是最终确定性门禁，并额外运行 architecture 自测、全量 Vitest、Jest/RNTL、文档、unused 和版本检查。
-- `scripts/check-architecture.mjs` 使用仓库已安装的 TypeScript AST 检查六类根目录、依赖矩阵、跨 feature/provider、组合链 allowlist、AppRoot/`useAppRuntime` 状态 hook、route 的 Screen props 投影、Account raw session/host 能力逃逸、AppNavigator feature 隔离、行为测试读取生产源码字符串、旧路径、barrel 和依赖环；合法/非法 fixture 由 `npm run test:architecture` 固定。规则失败应修正 ownership，不得用文件级豁免绕过，也不得新增 LOC、文件数或 props 数量门禁。
+- `scripts/check-architecture.mjs` 使用仓库已安装的 TypeScript AST 检查六类根目录、依赖矩阵、跨 feature/provider、domain 网络 I/O 全局、组合链 allowlist、AppRoot/`useAppRuntime` 状态 hook、route 的 Screen props 投影、Account raw session/host 能力逃逸、AppNavigator feature 隔离、行为测试读取生产源码字符串、旧路径、barrel 和依赖环；合法/非法 fixture 由 `npm run test:architecture` 固定。规则失败应修正 ownership，不得用文件级豁免绕过，也不得新增 LOC、文件数或 props 数量门禁。
 
 ## 改动边界
 

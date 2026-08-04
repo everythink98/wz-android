@@ -6,7 +6,7 @@ import { ChevronLeft, MoreHorizontal, Star } from 'lucide-react-native';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
-import type { SourceErrorInfo, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type { Reply, SourceErrorInfo, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { replyImageUploadSupported } from '@/sources/imageUpload';
@@ -42,6 +42,7 @@ export const TopicScreen = memo(function TopicScreen({
   nodeSeekUserId,
   read,
   session,
+  targetReply,
   topicScrollRef
 }: {
   actions: TopicActionsController;
@@ -77,6 +78,7 @@ export const TopicScreen = memo(function TopicScreen({
   nodeSeekUserId: number | null;
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
+  targetReply?: Pick<Reply, 'commentId' | 'floor'>;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
   const { state, commands } = session;
@@ -227,6 +229,7 @@ export const TopicScreen = memo(function TopicScreen({
         onScroll={chrome.onScroll}
         read={read}
         session={session}
+        targetReply={targetReply}
         topicScrollRef={topicScrollRef}
       />
       <TopicMenu

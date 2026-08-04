@@ -3,6 +3,8 @@ node_modules/
 .expo/
 .expo-shared/
 .agent-device/
+.claude/
+.codex-tmp/
 /android/
 AGENTS.md
 memory/

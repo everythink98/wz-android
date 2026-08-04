@@ -255,6 +255,7 @@ describe('Android release evidence guards', () => {
       'library-return.ad',
       'more-readonly.ad',
       'nodeseek-session.ad',
+      'notifications-readonly.ad',
       'search-multi-source.ad'
     ];
     expect(readdirSync(deviceDir).sort()).toEqual(expected);
@@ -283,7 +284,7 @@ describe('Android release evidence guards', () => {
           (readFileSync(path.join(deviceDir, file), 'utf8').match(/open \$\{APP_ID\} --relaunch/g)?.length || 0),
         0
       )
-    ).toBe(6);
+    ).toBe(7);
     const loggedOutReplay = readFileSync(path.join(loggedOutDeviceDir, 'logged-out-readonly.ad'), 'utf8');
     expect(loggedOutReplay.match(/open \$\{APP_ID\} --relaunch/g)).toHaveLength(2);
     expect(
@@ -336,10 +337,19 @@ describe('Android release evidence guards', () => {
 
     const accountReplay = readFileSync(path.join(deviceDir, 'account-readonly.ad'), 'utf8');
     const moreReplay = readFileSync(path.join(deviceDir, 'more-readonly.ad'), 'utf8');
+    const notificationsReplay = readFileSync(path.join(deviceDir, 'notifications-readonly.ad'), 'utf8');
     const libraryReplay = readFileSync(path.join(deviceDir, 'library-return.ad'), 'utf8');
     expect(accountReplay).not.toMatch(/服务器代理|问题诊断|备份 \/ 恢复|外观/);
     expect(moreReplay).not.toMatch(/account-site-|查看等级|刷新等级|xiaoyinsi-level-settled/);
     expect(moreReplay).toMatch(/服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/);
+    expect(notificationsReplay).toContain('find "消息通知" click');
+    for (const source of ['all', 'nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']) {
+      expect(notificationsReplay).toContain(`notification-source-${source}`);
+      for (const outcome of ['data', 'empty', 'partial', 'error', 'auth']) {
+        expect(notificationsReplay).toContain(`notification-outcome-${outcome}-${source}`);
+      }
+    }
+    expect(notificationsReplay).not.toMatch(/全部标记为已读|全部已读|Android 消息通知/);
     expect(libraryReplay).toMatch(/library-favorites-ready[\s\S]*library-users-ready[\s\S]*library-history-ready/);
     expect(libraryReplay).not.toMatch(
       /library-user-first|library-history-first|topic-detail-loaded|user-screen-loaded/
@@ -413,6 +423,7 @@ describe('Android release evidence guards', () => {
       'library-return.ad': 'library',
       'more-readonly.ad': 'more',
       'nodeseek-session.ad': 'more',
+      'notifications-readonly.ad': 'more',
       'search-multi-source.ad': 'search'
     } as const;
 
@@ -435,6 +446,7 @@ describe('Android release evidence guards', () => {
       'library-return.ad',
       'more-readonly.ad',
       'nodeseek-session.ad',
+      'notifications-readonly.ad',
       'search-multi-source.ad'
     ]);
     expect(listReplayFiles(loggedOutDeviceDir).map((file) => path.basename(file))).toEqual(['logged-out-readonly.ad']);

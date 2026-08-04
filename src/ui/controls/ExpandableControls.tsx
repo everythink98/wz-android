@@ -43,6 +43,7 @@ export function createExpandableStyles(theme: ReaderTheme, settings: ReaderSetti
 }
 
 export function MenuButton({
+  accessibilityLabel,
   disabled = false,
   icon,
   label,
@@ -51,6 +52,7 @@ export function MenuButton({
   expanded,
   onPress
 }: {
+  accessibilityLabel?: string;
   disabled?: boolean;
   icon: LucideIcon;
   label: string;
@@ -66,6 +68,7 @@ export function MenuButton({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled }}
       android_ripple={nested ? androidRipple(theme.primarySoft) : undefined}
       disabled={disabled}

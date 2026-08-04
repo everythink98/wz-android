@@ -6,6 +6,7 @@ import type { Screen } from '@/ui/navigation/types';
 import type { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
 import type { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import { MoreScreen } from './MoreScreen';
+import type { MoreUtilityCapabilities } from './components/MoreUtilityPanels';
 import { ReadingSettingsScreen } from './ReadingSettingsScreen';
 import { useBackupStatusController } from './useBackupStatusController';
 import { useDiagnosticLogController } from './useDiagnosticLogController';
@@ -19,6 +20,7 @@ export type MoreRouteRuntimeValue = {
     metadata: Parameters<typeof useDiagnosticLogController>[0]['metadata'];
   };
   notify: (message: string) => void;
+  notifications: MoreUtilityCapabilities['notifications'];
   proxy: Pick<
     ReturnType<typeof useNetworkProxyRuntime>,
     | 'activeProfile'
@@ -106,6 +108,7 @@ export function MoreRoute() {
         download: update.downloadAppUpdate
       }}
       utilities={{
+        notifications: runtime.notifications,
         backup: {
           busy: backupBusy,
           exportFile: exportBackupFile,

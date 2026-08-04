@@ -9,6 +9,7 @@ export const sourceCatalog = {
     family: 'v2ex',
     feedFilter: 'v2ex',
     managedSession: false,
+    notifications: false,
     searchFilter: 'v2ex',
     topicActions: [],
     replyPermission: 'session',
@@ -23,6 +24,7 @@ export const sourceCatalog = {
     family: 'discourse',
     feedFilter: 'discourse',
     managedSession: true,
+    notifications: true,
     searchFilter: 'discourse',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
     replyPermission: 'session',
@@ -37,6 +39,7 @@ export const sourceCatalog = {
     family: 'nodeseek',
     feedFilter: 'nodeseek',
     managedSession: true,
+    notifications: true,
     searchFilter: 'nodeseek',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'vote', 'upload'],
     replyPermission: 'session',
@@ -51,6 +54,7 @@ export const sourceCatalog = {
     family: 'yaohuo',
     feedFilter: 'none',
     managedSession: true,
+    notifications: true,
     searchFilter: 'yaohuo',
     topicActions: ['reply', 'bookmark', 'delete', 'vote', 'upload'],
     replyPermission: 'session',
@@ -65,6 +69,7 @@ export const sourceCatalog = {
     family: 'discourse',
     feedFilter: 'discourse',
     managedSession: true,
+    notifications: true,
     searchFilter: 'discourse',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
     replyPermission: 'topic',
@@ -84,6 +89,9 @@ export type FeedFilterSource = {
 export type SessionSource = {
   [Site in Source]: (typeof sourceCatalog)[Site]['managedSession'] extends true ? Site : never;
 }[Source];
+export type NotificationSource = {
+  [Site in Source]: (typeof sourceCatalog)[Site]['notifications'] extends true ? Site : never;
+}[Source];
 
 export const sourceValues = (Object.keys(sourceCatalog) as Source[]).sort(
   (left, right) => sourceCatalog[left].sortOrder - sourceCatalog[right].sortOrder
@@ -99,6 +107,10 @@ export const sessionSources = sourceValues.filter(
   (source): source is SessionSource => sourceCatalog[source].managedSession
 );
 
+export const notificationSources = sourceValues.filter(
+  (source): source is NotificationSource => sourceCatalog[source].notifications
+);
+
 export function isDiscourseSource(source: Source | null | undefined): source is DiscourseSource {
   return Boolean(source && sourceCatalog[source].family === 'discourse');
 }
@@ -109,6 +121,10 @@ export function isFeedFilterSource(source: Source | null | undefined): source is
 
 export function isSessionSource(source: Source | null | undefined): source is SessionSource {
   return Boolean(source && sourceCatalog[source].managedSession);
+}
+
+export function isNotificationSource(source: Source | null | undefined): source is NotificationSource {
+  return Boolean(source && sourceCatalog[source].notifications);
 }
 
 export function sourceSupportsTopicAction(source: Source | null | undefined, action: TopicActionCapability) {

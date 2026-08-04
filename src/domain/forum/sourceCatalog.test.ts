@@ -6,6 +6,8 @@ import {
   isFeedFilterSource,
   isDiscourseSource,
   isSessionSource,
+  isNotificationSource,
+  notificationSources,
   sessionSources,
   sourceCatalog,
   sourceValues,
@@ -52,5 +54,11 @@ describe('source capability catalog', () => {
       yaohuo: true
     });
     expect(sourceValues.filter(isSessionSource)).toEqual(sessionSources);
+  });
+
+  it('derives notification registration from the catalog and keeps V2EX out until its protocol exists', () => {
+    expect(notificationSources).toEqual(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']);
+    expect(sourceValues.filter(isNotificationSource)).toEqual(notificationSources);
+    expect(sourceCatalog.v2ex.notifications).toBe(false);
   });
 });

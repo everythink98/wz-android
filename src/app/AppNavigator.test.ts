@@ -22,13 +22,16 @@ vi.mock('@react-navigation/bottom-tabs', () => ({
 vi.mock('@react-navigation/native-stack', () => ({
   createNativeStackNavigator: () => ({ Navigator: () => null, Screen: () => null })
 }));
+vi.mock('lucide-react-native', () => ({ Settings: () => null }));
 vi.mock('react-native', () => ({ View: () => null }));
 vi.mock('@/ui/navigation/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 vi.mock('@/ui/controls/pressFeedback', () => ({ triggerPressFeedback: vi.fn() }));
 
 import {
+  isNativeStackScreen,
   navigateAppScreen,
   navigateMainTab,
+  openXiaoyinsiAuthorization,
   pushTopicRoute,
   pushUserRoute,
   shouldUpdateAppRootScreen
@@ -68,6 +71,38 @@ describe('navigation commands', () => {
       type: 'POP_TO',
       payload: { name: 'MainTabs', params: { screen: 'search' } }
     });
+  });
+
+  it('[REG-NOTIFY-017] opens the visible account authorization surface before starting the upgrade', async () => {
+    const beginAuthorization = vi.fn(async () => null);
+
+    await openXiaoyinsiAuthorization(beginAuthorization);
+
+    expect(navigation.dispatch).toHaveBeenCalledWith({
+      type: 'POP_TO',
+      payload: { name: 'MainTabs', params: { screen: 'more' } }
+    });
+    expect(beginAuthorization).toHaveBeenCalledTimes(1);
+    expect(navigation.dispatch.mock.invocationCallOrder[0]).toBeLessThan(
+      beginAuthorization.mock.invocationCallOrder[0]!
+    );
+  });
+
+  it('[REG-NOTIFY-004] leaves hardware back to every native stack route', () => {
+    for (const name of [
+      'Topic',
+      'User',
+      'Notifications',
+      'NotificationDetail',
+      'NotificationSettings',
+      'ReadingSettings'
+    ]) {
+      navigation.getCurrentRoute.mockReturnValue({ key: name, name });
+      expect(isNativeStackScreen()).toBe(true);
+    }
+
+    navigation.getCurrentRoute.mockReturnValue({ key: 'more', name: 'more' });
+    expect(isNativeStackScreen()).toBe(false);
   });
 
   it('requires canonical data for detail routes', () => {

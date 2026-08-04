@@ -119,7 +119,7 @@ describe('xiaoyinsi Device Code auth', () => {
     expect(currentXiaoyinsiCredentialGeneration()).toBeGreaterThan(capturedGeneration);
   });
 
-  it('checks capability and persists a ten-minute read/write device request without callback fields', async () => {
+  it('checks capability and persists a ten-minute read/write/notifications device request without callback fields', async () => {
     const store = memoryStore();
     const crypto = keystore();
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
@@ -134,7 +134,7 @@ describe('xiaoyinsi Device Code auth', () => {
       const body = JSON.parse(String(init?.body));
       expect(body).toEqual({
         application_name: '阅坛 Android',
-        scopes: 'read,write',
+        scopes: 'read,write,notifications',
         client_id: 'c'.repeat(64),
         nonce: 'e'.repeat(64),
         public_key: '-----BEGIN PUBLIC KEY-----\nPUBLIC\n-----END PUBLIC KEY-----',
@@ -204,12 +204,24 @@ describe('xiaoyinsi Device Code auth', () => {
       pollXiaoyinsiDeviceAuth({ fetcher: authorizedFetcher, keystore: crypto, now: () => 4_000 })
     ).resolves.toEqual({
       status: 'authorized',
-      credentials: { apiKey: 'user-api-secret', clientId: 'client' }
+      credentials: {
+        apiKey: 'user-api-secret',
+        clientId: 'client',
+        scopes: ['read', 'write', 'notifications']
+      }
     });
     expect(crypto.decrypt).toHaveBeenCalledWith('encrypted-payload');
-    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('user-api-secret');
+    expect(JSON.parse(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)!)).toEqual({
+      version: 1,
+      apiKey: 'user-api-secret',
+      scopes: ['read', 'write', 'notifications']
+    });
     expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe(false);
-    expect(await loadXiaoyinsiCredentials()).toEqual({ apiKey: 'user-api-secret', clientId: 'client' });
+    expect(await loadXiaoyinsiCredentials()).toEqual({
+      apiKey: 'user-api-secret',
+      clientId: 'client',
+      scopes: ['read', 'write', 'notifications']
+    });
 
     await expect(
       pollXiaoyinsiDeviceAuth({ fetcher: authorizedFetcher, keystore: crypto, now: () => 5_000 })
@@ -256,6 +268,40 @@ describe('xiaoyinsi Device Code auth', () => {
     finishDecrypt(JSON.stringify({ key: 'late-key', nonce: 'e'.repeat(64), api: 4 }));
 
     await expect(poll).rejects.toThrow('请求已取消');
+    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('old-key');
+  });
+
+  it('restores the previous credential when saving the upgraded bundle fails', async () => {
+    const store = memoryStore();
+    const crypto = keystore();
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, 'old-key');
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        nonce: 'e'.repeat(64),
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        expiresAt: 601_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
+    let apiKeyWrites = 0;
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      store.set(key, value);
+      if (key === XIAOYINSI_AUTH_STORAGE_KEYS.apiKey && apiKeyWrites++ === 0) throw new Error('save failed');
+    });
+
+    await expect(
+      pollXiaoyinsiDeviceAuth({
+        fetcher: async () => json({ status: 'authorized', payload: 'cipher' }),
+        keystore: crypto,
+        now: () => 2_000
+      })
+    ).rejects.toThrow('save failed');
     expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('old-key');
   });
 
@@ -431,7 +477,11 @@ describe('xiaoyinsi Device Code auth', () => {
     await expect(
       revokeXiaoyinsiAuthorization({ fetcher: async () => json({ errors: ['no'] }, 500), keystore: crypto })
     ).rejects.toThrow('HTTP 500');
-    expect(await loadXiaoyinsiCredentials()).toEqual({ apiKey: 'secret', clientId: 'client' });
+    expect(await loadXiaoyinsiCredentials()).toEqual({
+      apiKey: 'secret',
+      clientId: 'client',
+      scopes: ['read', 'write']
+    });
     expect(crypto.deleteKey).not.toHaveBeenCalled();
 
     await expect(

@@ -28,11 +28,13 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   '@/features/feed/FeedRoute',
   '@/features/library/LibraryRoute',
   '@/features/more/MoreRoute',
+  '@/features/notifications/NotificationRoute',
   '@/features/search/SearchRoute',
   '@/features/topic/TopicRoute',
   '@/features/user/UserRoute'
 ]);
 const FORBIDDEN_RAW_STATE_HOOKS = new Set(['useCallback', 'useEffect', 'useRef', 'useState']);
+const FORBIDDEN_DOMAIN_IO_GLOBALS = new Set(['AbortSignal', 'RequestInit', 'XMLHttpRequest', 'WebSocket', 'fetch']);
 const ACCOUNT_RUNTIME_READ_CAPABILITIES = new Set([
   'accountIdentityChecks',
   'accountIdentityPending',
@@ -154,6 +156,28 @@ function importedModuleSpecifiers(filePath) {
   };
   visit(sourceFile);
   return [...specifiers];
+}
+
+function domainIoIssues(filePath, relativeFile) {
+  if (!relativeFile.startsWith('domain/')) return [];
+  const sourceText = readFileSync(filePath, 'utf8');
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+  const globals = new Set();
+  const visit = (node) => {
+    if (ts.isIdentifier(node) && FORBIDDEN_DOMAIN_IO_GLOBALS.has(node.text)) globals.add(node.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...globals].map((name) => ({
+    code: 'domain-io',
+    message: `${relativeFile} 的 domain model 不得依赖网络 I/O 全局：${name}`
+  }));
 }
 
 function importedRawStateHooks(filePath) {
@@ -632,6 +656,7 @@ export function analyzeArchitecture(srcDir) {
     issues.push(...routeRuntimeProjectionIssues(file, fromFile));
     issues.push(...rawAccountSessionIssues(file, fromFile));
     issues.push(...rawAccountCapabilityProjectionIssues(file, fromFile));
+    issues.push(...domainIoIssues(file, fromFile));
     for (const specifier of importedModuleSpecifiers(file)) {
       const importedPath = internalModulePath(fromFile, specifier);
       if (importedPath && FORBIDDEN_LEGACY_MODULE_NAMES.has(moduleName(importedPath))) {

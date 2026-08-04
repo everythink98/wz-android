@@ -1,0 +1,37 @@
+context platform=android
+context timeout=240000
+context retries=0
+env APP_ID=com.wz.reader
+
+open ${APP_ID} --relaunch
+wait id="main-tab-more" 60000
+press id="main-tab-more"
+wait text="关于阅坛" 10000
+find "消息通知" click
+wait id="notification-source-all" 10000
+wait "id=\"notification-outcome-data-all\" || id=\"notification-outcome-empty-all\" || id=\"notification-outcome-partial-all\" || id=\"notification-outcome-error-all\" || id=\"notification-outcome-auth-all\"" 60000
+
+press id="notification-source-nodeseek"
+wait "id=\"notification-outcome-data-nodeseek\" || id=\"notification-outcome-empty-nodeseek\" || id=\"notification-outcome-partial-nodeseek\" || id=\"notification-outcome-error-nodeseek\" || id=\"notification-outcome-auth-nodeseek\"" 60000
+press id="notification-source-linuxdo"
+wait "id=\"notification-outcome-data-linuxdo\" || id=\"notification-outcome-empty-linuxdo\" || id=\"notification-outcome-partial-linuxdo\" || id=\"notification-outcome-error-linuxdo\" || id=\"notification-outcome-auth-linuxdo\"" 60000
+press id="notification-source-yaohuo"
+wait "id=\"notification-outcome-data-yaohuo\" || id=\"notification-outcome-empty-yaohuo\" || id=\"notification-outcome-partial-yaohuo\" || id=\"notification-outcome-error-yaohuo\" || id=\"notification-outcome-auth-yaohuo\"" 60000
+press id="notification-source-xiaoyinsi"
+wait "id=\"notification-outcome-data-xiaoyinsi\" || id=\"notification-outcome-empty-xiaoyinsi\" || id=\"notification-outcome-partial-xiaoyinsi\" || id=\"notification-outcome-error-xiaoyinsi\" || id=\"notification-outcome-auth-xiaoyinsi\"" 60000
+
+press label="只看未读"
+wait "id=\"notification-outcome-data-xiaoyinsi\" || id=\"notification-outcome-empty-xiaoyinsi\" || id=\"notification-outcome-partial-xiaoyinsi\" || id=\"notification-outcome-error-xiaoyinsi\" || id=\"notification-outcome-auth-xiaoyinsi\"" 60000
+press label="只看未读"
+wait "id=\"notification-outcome-data-xiaoyinsi\" || id=\"notification-outcome-empty-xiaoyinsi\" || id=\"notification-outcome-partial-xiaoyinsi\" || id=\"notification-outcome-error-xiaoyinsi\" || id=\"notification-outcome-auth-xiaoyinsi\"" 60000
+
+press label="消息通知设置"
+wait text="已关闭" 10000
+wait text="NodeSeek" 10000
+wait text="linux.do" 10000
+wait text="妖火" 10000
+wait text="小隐寺" 10000
+back --system
+wait id="notification-source-all" 10000
+back --system
+wait text="关于阅坛" 10000

@@ -1,5 +1,6 @@
 import type { AppStyles } from './styles';
 import { memo, type ComponentType } from 'react';
+import { Pressable } from 'react-native';
 import { NavigationContainer, type Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -9,18 +10,21 @@ import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { Screen } from '@/ui/navigation/types';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { currentAppRoute, navigationRef } from './appNavigation';
+import { Settings } from 'lucide-react-native';
+import { androidRipple } from '@/ui/theme/tokens';
+import { moreBadgeAccessibilityLabel, type MoreBadgeState } from '@/ui/navigation/moreBadge';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 function MainTabsHost({
-  moreHasBadge,
+  moreBadgeState,
   FeedRouteComponent,
   LibraryRouteComponent,
   MoreRouteComponent,
   SearchRouteComponent,
   styles
 }: {
-  moreHasBadge: boolean;
+  moreBadgeState: MoreBadgeState;
   FeedRouteComponent: ComponentType;
   LibraryRouteComponent: ComponentType;
   MoreRouteComponent: ComponentType;
@@ -39,13 +43,13 @@ function MainTabsHost({
           tabBarStyle: styles.nav,
           tabBarItemStyle: styles.navItem,
           tabBarButtonTestID: `main-tab-${item.value}`,
-          tabBarAccessibilityLabel: item.value === 'more' && moreHasBadge ? '更多，有可用更新' : item.label,
+          tabBarAccessibilityLabel: item.value === 'more' ? moreBadgeAccessibilityLabel(moreBadgeState) : item.label,
           tabBarIcon: ({ focused }: { focused: boolean }) => (
             <TabBarIcon
               focused={focused}
               icon={item.icon}
               label={item.label}
-              showBadge={item.value === 'more' && moreHasBadge}
+              showBadge={item.value === 'more' && moreBadgeState !== 'none'}
             />
           )
         };
@@ -65,11 +69,14 @@ function MainTabsHost({
 }
 
 export const AppNavigator = memo(function AppNavigator({
-  moreHasBadge,
+  moreBadgeState,
   navigationTheme,
   FeedRouteComponent,
   LibraryRouteComponent,
   MoreRouteComponent,
+  NotificationDetailRouteComponent,
+  NotificationSettingsRouteComponent,
+  NotificationsRouteComponent,
   ReadingSettingsRouteComponent,
   SearchRouteComponent,
   TopicRouteComponent,
@@ -79,11 +86,14 @@ export const AppNavigator = memo(function AppNavigator({
   onReady,
   onScreenChange
 }: {
-  moreHasBadge: boolean;
+  moreBadgeState: MoreBadgeState;
   navigationTheme: Theme;
   FeedRouteComponent: ComponentType;
   LibraryRouteComponent: ComponentType;
   MoreRouteComponent: ComponentType;
+  NotificationDetailRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'NotificationDetail'>>;
+  NotificationSettingsRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'NotificationSettings'>>;
+  NotificationsRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'Notifications'>>;
   ReadingSettingsRouteComponent: ComponentType;
   SearchRouteComponent: ComponentType;
   TopicRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'Topic'>>;
@@ -110,6 +120,7 @@ export const AppNavigator = memo(function AppNavigator({
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
+          headerShadowVisible: false,
           animation: 'slide_from_right',
           freezeOnBlur: true,
           contentStyle: { backgroundColor: theme.background }
@@ -118,7 +129,7 @@ export const AppNavigator = memo(function AppNavigator({
         <Stack.Screen name="MainTabs">
           {() => (
             <MainTabsHost
-              moreHasBadge={moreHasBadge}
+              moreBadgeState={moreBadgeState}
               FeedRouteComponent={FeedRouteComponent}
               LibraryRouteComponent={LibraryRouteComponent}
               MoreRouteComponent={MoreRouteComponent}
@@ -128,6 +139,35 @@ export const AppNavigator = memo(function AppNavigator({
           )}
         </Stack.Screen>
         <Stack.Screen name="Topic" component={TopicRouteComponent} />
+        <Stack.Screen
+          name="Notifications"
+          component={NotificationsRouteComponent}
+          options={({ navigation }) => ({
+            headerShown: true,
+            title: '消息',
+            headerRight: () => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="消息通知设置"
+                android_ripple={androidRipple(theme.primarySoft, true)}
+                style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}
+                onPress={() => navigation.navigate('NotificationSettings')}
+              >
+                <Settings color={theme.ink} size={20} strokeWidth={1.8} />
+              </Pressable>
+            )
+          })}
+        />
+        <Stack.Screen
+          name="NotificationDetail"
+          component={NotificationDetailRouteComponent}
+          options={{ headerShown: true, title: '消息详情' }}
+        />
+        <Stack.Screen
+          name="NotificationSettings"
+          component={NotificationSettingsRouteComponent}
+          options={{ headerShown: true, title: '消息通知设置' }}
+        />
         <Stack.Screen
           name="ReadingSettings"
           component={ReadingSettingsRouteComponent}

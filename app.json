@@ -2,7 +2,7 @@
   "expo": {
     "name": "阅坛 Android",
     "slug": "wz-android",
-    "version": "1.3.94",
+    "version": "1.3.95",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "platforms": ["android"],
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.wz.reader",
-      "versionCode": 98,
+      "versionCode": 99,
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_MEDIA_AUDIO",
@@ -40,6 +40,14 @@
         "expo-secure-store",
         {
           "configureAndroidBackup": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#1677FF",
+          "defaultChannel": "message-notifications"
         }
       ],
       "expo-video",

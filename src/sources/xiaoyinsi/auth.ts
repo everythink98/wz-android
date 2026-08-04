@@ -1,7 +1,12 @@
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getXiaoyinsiCurrentUserProfile } from './account';
-import type { XiaoyinsiApiCredentials } from './credentials';
+import {
+  parseStoredXiaoyinsiCredential,
+  serializeXiaoyinsiCredential,
+  type XiaoyinsiApiCredentials,
+  type XiaoyinsiApiScope
+} from './credentials';
 import { XIAOYINSI_BASE_URL } from './protocol';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { UserProfile } from '@/domain/forum/models';
@@ -13,6 +18,7 @@ const DEVICE_CODE_PATH = '/user-api-key/device.json';
 const DEVICE_POLL_PATH = '/user-api-key/device/poll.json';
 const AUTH_CAPABILITY_PATH = '/user-api-key/new';
 const REVOKE_PATH = '/user-api-key/revoke';
+const AUTH_SCOPES: XiaoyinsiApiScope[] = ['read', 'write', 'notifications'];
 
 let xiaoyinsiCredentialGeneration = 0;
 
@@ -270,9 +276,10 @@ export async function loadXiaoyinsiCredentials(
     return undefined;
   }
   const [apiKeyValue, clientIdValue] = values;
-  const apiKey = apiKeyValue?.trim() || '';
+  const storedCredential = parseStoredXiaoyinsiCredential(apiKeyValue);
+  const apiKey = storedCredential?.apiKey || '';
   const clientId = clientIdValue?.trim() || '';
-  return apiKey && clientId ? { apiKey, clientId } : undefined;
+  return apiKey && clientId ? { apiKey, clientId, scopes: storedCredential?.scopes || [] } : undefined;
 }
 
 async function stableClientId(keystore: XiaoyinsiKeystore) {
@@ -322,7 +329,7 @@ export async function beginXiaoyinsiDeviceAuth(dependencies: XiaoyinsiAuthDepend
       DEVICE_CODE_PATH,
       {
         application_name: APPLICATION_NAME,
-        scopes: 'read,write',
+        scopes: AUTH_SCOPES.join(','),
         client_id: clientId,
         nonce,
         public_key: publicKey,
@@ -499,19 +506,21 @@ export async function pollXiaoyinsiDeviceAuth(
     throw new XiaoyinsiAuthError('missing-client-id', '小隐寺安装标识已丢失，请重新授权。');
   }
   advanceXiaoyinsiCredentialGeneration();
-  await SecureStore.setItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, apiKey, secureStoreOptions);
-  if (dependencies.signal?.aborted) {
+  try {
+    await SecureStore.setItemAsync(
+      XIAOYINSI_AUTH_STORAGE_KEYS.apiKey,
+      serializeXiaoyinsiCredential({ apiKey, scopes: AUTH_SCOPES }),
+      secureStoreOptions
+    );
+    assertNotCanceled(dependencies);
+    await SecureStore.deleteItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.pending, secureStoreOptions);
+    assertNotCanceled(dependencies);
+  } catch (error) {
     advanceXiaoyinsiCredentialGeneration();
     await restoreApiKey(previousApiKey);
-    assertNotCanceled(dependencies);
+    throw error;
   }
-  await SecureStore.deleteItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.pending, secureStoreOptions);
-  if (dependencies.signal?.aborted) {
-    advanceXiaoyinsiCredentialGeneration();
-    await restoreApiKey(previousApiKey);
-    assertNotCanceled(dependencies);
-  }
-  return { status: 'authorized', credentials: { apiKey, clientId } };
+  return { status: 'authorized', credentials: { apiKey, clientId, scopes: [...AUTH_SCOPES] } };
 }
 
 export async function cancelXiaoyinsiDeviceAuth(dependencies: Pick<XiaoyinsiAuthDependencies, 'keystore'> = {}) {

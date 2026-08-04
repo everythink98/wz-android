@@ -1,11 +1,13 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '../render';
 import React, { type ComponentProps } from 'react';
+import { StyleSheet } from 'react-native';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { MoreScreen } from '@/features/more/MoreScreen';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createTheme } from '@/ui/theme/tokens';
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
@@ -58,6 +60,7 @@ jest.mock('lucide-react-native', () => {
   return {
     Activity: Icon,
     ArrowLeft: Icon,
+    Bell: Icon,
     Bug: Icon,
     Check: Icon,
     CheckCircle: Icon,
@@ -114,6 +117,7 @@ type MoreScreenOverrides = {
   };
   update?: Partial<MoreScreenProps['update']>;
   utilities?: {
+    notifications?: Partial<MoreScreenProps['utilities']['notifications']>;
     backup?: Partial<MoreScreenProps['utilities']['backup']>;
     diagnostics?: Partial<MoreScreenProps['utilities']['diagnostics']>;
     proxy?: Partial<MoreScreenProps['utilities']['proxy']>;
@@ -196,6 +200,11 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       ...overrides.update
     },
     utilities: {
+      notifications: {
+        open: jest.fn(),
+        summary: '暂无未读 · 后台通知未开启',
+        ...overrides.utilities?.notifications
+      },
       backup: {
         busy: false,
         exportFile: jest.fn(),
@@ -248,6 +257,26 @@ function collectRenderedText(node: unknown): string[] {
 }
 
 describe('More screen state and actions', () => {
+  it('opens the unified message center with an accurate summary', async () => {
+    const open = jest.fn();
+    const view = await render(
+      <MoreScreen
+        {...moreProps({
+          utilities: {
+            notifications: { open, summary: '有未读 · 后台通知已开启' }
+          }
+        })}
+      />
+    );
+
+    await fireEvent.press(view.getByLabelText('消息通知，有未读 · 后台通知已开启'));
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(StyleSheet.flatten(view.getByTestId('more-notifications-row').props.style)).toMatchObject({
+      borderBottomColor: createTheme(readerData.settings).line,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    });
+  });
+
   it('shows current, checking, available-update and download progress states', async () => {
     const onCheckAppUpdate = jest.fn();
     const onDownloadAppUpdate = jest.fn();

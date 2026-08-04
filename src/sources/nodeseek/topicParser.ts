@@ -659,9 +659,19 @@ function nodeSeekRestrictedNotice(root: ReturnType<typeof parseHtml>) {
   return '';
 }
 
-export function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 30): TopicDetail | null {
+export function parseRenderedNodeSeekTopicHtml(
+  html: string,
+  id: string,
+  replyLimit = 30,
+  page = 1
+): TopicDetail | null {
   const root = parseHtml(html);
   const firstContentItem = root.querySelector('.content-item');
+  const identifiedFirstReply = Boolean(
+    page > 1 &&
+    firstContentItem &&
+    (renderedNodeSeekFloor(firstContentItem) || renderedNodeSeekCommentId(firstContentItem))
+  );
   const restrictedNotice = nodeSeekRestrictedNotice(root);
   const contentElement =
     firstContentItem?.querySelector('.post-content') ||
@@ -711,7 +721,7 @@ export function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLi
     .querySelectorAll('.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]')
     .filter((row) => {
       const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
-      return Boolean(replyContent?.innerHTML && row !== firstContentItem);
+      return Boolean(replyContent?.innerHTML && (row !== firstContentItem || identifiedFirstReply));
     });
   const allReplies = replyRows.map((row) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');

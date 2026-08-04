@@ -94,6 +94,11 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
       fontSize: 15,
       fontWeight: '600'
     },
+    menuRowDivider: {
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingBottom: 7
+    },
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,

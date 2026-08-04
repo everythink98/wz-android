@@ -22,9 +22,9 @@
 | `App.tsx` | 应用入口，提供唯一 `QueryClientProvider` 并加载 `AppRoot` |
 | `src/app/` | `AppRoot → AppComposition → AppRoutes → AppNavigator` 组合链、导航命令与 App 级 runtime 投影；不拥有 Screen、细粒度 controller 或具体来源协议 |
 | `src/domain/` | 无 React、无 I/O 的 Forum、ReaderData、Session canonical model 和确定性规则 |
-| `src/features/` | Feed、Search、Topic、User、Library、Account、More 用户旅程的 controller、screen、局部组件与样式 |
-| `src/sources/` | `readGateway`、聚合读取、Discourse 协议与五站独立 parser/reader/account/action adapter |
-| `src/platform/` | Query、网络、存储、诊断、媒体、更新和 Android bridge |
+| `src/features/` | Feed、Search、Topic、User、Library、Account、More、Notifications 用户旅程的 controller、screen、局部组件与样式 |
+| `src/sources/` | `readGateway`、notification gateway、聚合读取、Discourse 协议与五站独立 parser/reader/account/action adapter |
+| `src/platform/` | Query、网络、存储、诊断、媒体、更新、通知调度和 Android bridge |
 | `src/ui/` | 跨旅程复用的 primitive、TopicCard、Avatar、导航控件和主题 token/context |
 | `src/platform/query/serverState.ts` | TanStack Query 的唯一 client，以及五站类型化 query/mutation key |
 | `src/sources/readGateway.ts` | App 统一来源读取入口，隐藏五站读取 adapter 差异 |
@@ -33,7 +33,7 @@
 | `plugins/` | Expo config plugin，持久化 Android 原生配置；服务器代理与小隐寺 Keystore 原生模块分别由对应 plugin 生成 |
 | `scripts/` | 文档检查、Android smoke、release 打包与版本检查脚本 |
 
-`AppRoot` 只渲染 `AppComposition`；`useAppRuntime` 只组合深 runtime 并投影六个 route capability；Account runtime 自己创建全局 host 节点，`AppComposition` 只把该节点与全局 provider、routes 声明式挂载。代理 startup gate 尚未放行 routes 时，`AppComposition` 显示静态、可访问且无动画的启动状态，不能返回空节点。`AppRoutes` 是六个 feature route entry 的唯一映射；`AppNavigator` 只接收 route component，不 import feature。四个 tab 使用 `lazy: false` 保持长期挂载，业务 Query 与副作用由各 route 的 `active` gate 控制。
+`AppRoot` 只渲染 `AppComposition`；`useAppRuntime` 只组合深 runtime 并投影七个 route capability；Account runtime 自己创建全局 host 节点，`AppComposition` 只把该节点与全局 provider、routes 声明式挂载。代理 startup gate 尚未放行 routes 时，`AppComposition` 显示静态、可访问且无动画的启动状态，不能返回空节点。`AppRoutes` 是七个 feature route entry 的唯一映射；`AppNavigator` 只接收 route component，不 import feature。四个 tab 使用 `lazy: false` 保持长期挂载，业务 Query 与副作用由各 route 的 `active` gate 控制。
 
 ## 来源边界
 
@@ -126,6 +126,19 @@
 - 小隐寺由 `src/features/account/useXiaoyinsiAuthController.ts` 驱动独立 Device Code 状态机：App 生成安装级 Client ID、单次 nonce 与 Android Keystore RSA 密钥；系统浏览器只承载一次性 Google / Discord 身份确认和站点授权页，不提供 Cookie 或 App 登录态。App 前台轮询并在解密后校验 nonce，之后只以 User API Key、Client ID 和 `/session/current.json` 维护身份。待授权状态可在十分钟内跨进程恢复，后台暂停轮询。Account Query 使用该 controller 的只读授权检查结果直接构造 Query session，不发布 `SiteSessionState` 事件；Device Code、撤销和被动失效流程才提交 workflow session event。
 - 小隐寺 User API Key、Client ID 与短期待授权状态使用独立 SecureStore key；RSA 私钥不导出 Keystore。撤销先请求原站，成功后才删除本机授权材料；站点不支持 Device Code 时继续匿名读取，不降级到 WebView Cookie 登录。
 
+## 消息与后台通知
+
+- `src/domain/forum/sourceCatalog.ts` 的 `notifications` capability 派生 `NotificationSource`；四站 adapter 表必须满足完整的 `Record<NotificationSource, NotificationAdapter>`。V2EX 当前 capability 为 false，不创建占位 adapter；未来开启时由 TypeScript 强制补齐协议实现。
+- `src/domain/notifications/models.ts` 只定义消息真实共性：类型、来源稳定 ID、参与者、可选时间、远端已读、目标、opaque cursor 和只读详情；带 fetch、signal、timeout 与来源 credential 的 adapter I/O 契约归 `src/sources/notificationAdapter.ts`。`src/sources/notificationGateway.ts` 统一处理 canonical identity 门禁、取消、错误归一化及 `Promise.allSettled` 来源隔离；NodeSeek、Discourse 与妖火 adapter 只处理各自传输和解析。通知 gateway 复用既有底层 fetch、账号和错误能力，但不扩展前台 `ReadGateway` 生命周期，也不依赖 React 或 WebView fallback；同一 adapter 可由前台和 headless task 组合使用。来源解析必须固定真实协议边界：NodeSeek 详情以 `commentId` 为主身份，floor 只作页定位提示或缺 ID 时的降级，并以 `replyCount` 计算的末页为逐页上限；NodeSeek 列表只有明确 `viewed/is_read/read=true` 才表示已读，省略标记仍是未读，见 `REG-NOTIFY-028`；Discourse 同时读取顶层通知字段；妖火把时间与删除动作分开，并按 exact detail URL 解析官方 `.content` 的“内容”字段，写操作、聊天历史或缺少内容结构的错误页不得作为正文，见 `REG-NOTIFY-010/011`。
+- NodeSeek @我/回复列表以 `comment_id`（兼容 `message_id`）生成统一消息、详情和投递身份；原始列表行 `id` 只作为 `remoteReadId` 供 `markViewed` 使用，不能参与 Android 摘要去重。私信会话只有发送者明确为对方且原站未读时才进入系统投递；自己发送但对方未查看的行按已读展示，见 `REG-NOTIFY-029/030`。
+- 聚合消息 Query 保留每页、每来源的结果与错误边界。UI 为每个失败来源投影独立重试；`NotificationRoute` 只以失败页保存的该来源 cursor 调用 `listPage`，并只替换该页中同来源条目、cursor 和错误。重试绑定发起时 exact identity 与 route-owned cancel signal；失败页不是末页时，把恢复来源 cursor 传播到末页并重算 `hasMore`，否则该来源后续页不可达。不得为局部恢复调用 `listAllPage/refetch` 或重建整个 infinite query，见 `REG-NOTIFY-015/021`。
+- 列表与详情 Query key 均绑定 `source:userId`。正文、预览和会话只存在 TanStack Query 与 route state；身份 A→B 或明确退出时，清目标站单站消息 Query、可能含旧身份的聚合消息 Query、水位和 Android 摘要，其他来源单站状态保持不变；pending、unknown 或 challenge 只暂停来源访问并保留上一份可信身份/cache，但展示层只允许 active 来源条目，不能把 retained 私有 row 继续画出来或伪装成退出。身份 reconciliation 在每个可等待副作用返回后都必须复核当前 effect，失效 generation 不得继续 reset 水位或清 Query，见 `REG-NOTIFY-023`。详情 route 捕获条目所属 `identityKey`，并用 route-owned `AbortController` 把 expected identity 与 signal 传给 `loadDetail/markRead/markAllRead`；identity signature 变化或 unmount 时取消。gateway 完成 access 读取后、adapter I/O 前再次核对 signal 和 exact identity，不能让旧账号条目或在途请求借新账号会话发网，见 `REG-NOTIFY-006/007/019/021`。
+- `src/platform/notifications/notificationStore.ts` 的 AsyncStorage 只保存全局/来源意图、公开身份键、每站最多 200 个投递 ID、baseline、最后成功/未读状态和 Android notification identifier，不进入 ReaderData 或备份。首次 opt-in 的来源集合显式锁定首发四站，未来 capability 新增来源默认关闭。NodeSeek 缺少远端 ID 时，只能从不含参与者/对端、标题、预览和列表顺序的稳定定位字段派生 opaque ID；同 timestamp 的多会话产生歧义时整组保守丢弃，不能改用 participant-derived hash。首次启用、重新启用和换号把 baseline 置为未建立，第一次扫描只记录不投递，见 `REG-NOTIFY-012`。
+- `src/platform/notifications/notificationWorker.ts` 是前后台共用的投递状态机。前台在启动/恢复、普通页面约 5 分钟、消息中心约 60 秒先读取 snapshot，再只对成功来源执行同一身份门禁、cursor 扫描、baseline 和去重；snapshot 持久化按来源 all-settled，单次失败不能阻断其他成功来源。消息列表 Query 只在 route focused 时启用；隐藏 route 不继续一分钟轮询。前台所有页面的新 `mention/reply/private-message` 都生成 Android 每站摘要，消息中心可见性只改变刷新频率，不得跳过 system sink 后仍提交水位，见 `REG-NOTIFY-025/026/027`；不用 Toast。headless `src/app/notificationBackgroundTask.ts` 在模块顶层定义唯一 TaskManager task，每轮先恢复安全存储中的代理并应用到 native CookieJar；读取或应用失败整轮 fail-closed。权限撤销在账号 probe 前停止读取；随后每站 direct probe 当前身份，unknown、challenge、匿名或身份不一致均跳过。单站累计最多扫描 60 条，并在无下一页、cursor 重复或 deadline 时停止。摘要不含标题、正文或私信内容；系统摘要创建或 identifier 保存失败必须释放本轮投递 ID。发送前及 Android 返回后再次确认开关和身份；identifier 绑定来源与 identity，状态已变则撤销本次 exact identifier 并释放 ID，见 `REG-NOTIFY-001/008/009/018/024`。
+- 三个消息 native route 由 native stack 持有返回；App 根硬件返回处理器不得把它们误送到 Feed。列表读屏文案包含来源、已读状态和动作，`PillRail variant="tabs"` 的视觉与触控布局至少 48dp×48dp。小隐寺旧 `read,write` credential 继续保留原能力，消息页显示“升级授权”及操作，不得伪装成未登录，见 `REG-NOTIFY-004/005/013/014`。
+- Android 通知由 `expo-notifications` 提供单一 `message-notifications` channel，锁屏可见性为 `PRIVATE`，small icon 为 `assets/notification-icon.png`，颜色为 `#1677FF`；App 入口安装 foreground handler，让本地摘要在前台任何页面进入系统 banner/list。图形来自 Lucide 官方 `bell.svg`，以 ISC 许可保留在 `assets/notification-icon.svg`，PNG 只含白色与透明像素。全局和四站开关默认关闭；OS 权限拒绝/撤销保留用户意图并注销后台任务。registration 额外接收 runtime 的 active 来源集合，小隐寺旧 scope 或其他不可读来源不能单独维持空任务；register/unregister 作为单一串行生命周期，以最后一次调用意图为最终状态，见 `REG-NOTIFY-018/020/022/025`。Android 配置只通过 `app.json` 的 config plugin 持久化，不手改 `android/`。
+- 小隐寺 SecureStore credential 是兼容旧字符串的版本化 bundle：旧值按 `read,write` 读取，新授权原子保存 scope。消息访问额外要求 `notifications`；旧授权保留已确认身份和消息开关意图但暂停该来源，用户主动升级成功后才恢复。拒绝、取消、超时或保存失败恢复旧 credential，不主动撤销仍可用授权，见 `REG-NOTIFY-005`。
+
 ## 服务器代理
 
 - 代理配置保存在 Android 安全存储，不进入备份 JSON。
@@ -162,6 +175,7 @@
 ## 数据边界
 
 - NodeSeek、linux.do、妖火网站 Cookie 只存在 Android WebView `CookieManager`；App 不持久化可传输 header。自动填入账号密码、NodeImage API Key、小隐寺 User API Key / Client ID 等 App 私有凭据使用各自 SecureStore key；小隐寺 RSA 私钥只存在 Android Keystore。
+- 消息正文、预览、参与者、私信会话、Cookie 和 token 不写 ReaderData、备份、AsyncStorage 或诊断；通知存储只保留前述开关、公开身份键、有限 opaque 投递 ID、成功状态与系统 identifier，fallback ID 同样不得编码参与者、私信对端、标题或预览，见 `REG-NOTIFY-012`。
 - 服务器代理地址、用户名和密码只保存在 Android 本机安全存储。
 - 搜索历史保存在 `AsyncStorage`，最多 20 条，单条最多 120 字符。
 - 本机资料只通过当前 version 2 JSON 备份 / 恢复迁移；导入会限制 JSON 大小和嵌套深度。Topic URL 只由 `source + id` 重建，用户主页由 `source + id/username` 重建；avatar/media URL 只保留合法 HTTP(S) 的 origin + pathname，清空 userinfo、全部 query 和 hash。保存、加载、导入和导出共用同一 sanitizer。见 `REG-DATA-006`。

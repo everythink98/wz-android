@@ -46,7 +46,8 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       paddingRight: 18
     },
     tab: {
-      minHeight: 40,
+      minWidth: 48,
+      minHeight: 48,
       justifyContent: 'center',
       borderBottomColor: 'transparent',
       borderBottomWidth: 2,

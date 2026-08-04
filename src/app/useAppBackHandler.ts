@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { BackHandler } from 'react-native';
 import type { Screen } from '@/ui/navigation/types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
-import { isReadingSettingsScreen } from './appNavigation';
+import { isNativeStackScreen } from './appNavigation';
 
 export function useAppBackHandler({
   changeScreen,
@@ -23,7 +23,7 @@ export function useAppBackHandler({
         finishDiagnosticTrace(trace, 'success', { state: closedSurface });
         return true;
       }
-      if (currentScreen === 'topic' || currentScreen === 'user' || isReadingSettingsScreen()) {
+      if (isNativeStackScreen()) {
         finishDiagnosticTrace(trace, 'noop', { state: 'native-stack-back' });
         return false;
       }

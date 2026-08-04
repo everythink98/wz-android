@@ -257,6 +257,7 @@ export const TopicContentList = memo(function TopicContentList({
   onScroll: onTopicScroll,
   read,
   session,
+  targetReply,
   topicScrollRef
 }: {
   actions: TopicActionsController;
@@ -276,6 +277,7 @@ export const TopicContentList = memo(function TopicContentList({
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
+  targetReply?: Pick<Reply, 'commentId' | 'floor'>;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
   const { state, commands } = session;
@@ -642,6 +644,83 @@ export const TopicContentList = memo(function TopicContentList({
     ],
     [replyListItems, topicContentItems, topicPostludeVisible]
   );
+  const targetReplyKey =
+    typeof targetReply?.commentId === 'number'
+      ? `comment:${targetReply.commentId}`
+      : typeof targetReply?.floor === 'number'
+        ? `floor:${targetReply.floor}`
+        : '';
+  const targetReplyMatches = useCallback(
+    (reply: Reply) =>
+      typeof targetReply?.commentId === 'number'
+        ? reply.commentId === targetReply.commentId
+        : typeof targetReply?.floor === 'number' && reply.floor === targetReply.floor,
+    [targetReply?.commentId, targetReply?.floor]
+  );
+  const targetReplyListIndex = useMemo(
+    () =>
+      targetReplyKey
+        ? topicListItems.findIndex(
+            (listItem) =>
+              (listItem.type === 'reply' || listItem.type === 'replyStart') && targetReplyMatches(listItem.reply)
+          )
+        : -1,
+    [targetReplyKey, targetReplyMatches, topicListItems]
+  );
+  const targetReplyLoaded = useMemo(
+    () => Boolean(targetReplyKey && sourceReplies.some(targetReplyMatches)),
+    [sourceReplies, targetReplyKey, targetReplyMatches]
+  );
+  const targetIsOpeningPost = Boolean(
+    targetReplyKey &&
+    ((typeof targetReply?.commentId === 'number' && topic?.commentId === targetReply.commentId) ||
+      (typeof targetReply?.commentId !== 'number' &&
+        targetReply?.floor === 1 &&
+        itemSource &&
+        isDiscourseSource(itemSource)))
+  );
+  const handledTargetReplyRef = useRef('');
+  const targetReplyLoadAttemptRef = useRef('');
+  useEffect(() => {
+    handledTargetReplyRef.current = '';
+    targetReplyLoadAttemptRef.current = '';
+  }, [detailTopicStateKey, targetReplyKey]);
+  useEffect(() => {
+    if (!targetReplyKey || !canShowReplies || handledTargetReplyRef.current === targetReplyKey) return;
+    if (targetIsOpeningPost) {
+      handledTargetReplyRef.current = targetReplyKey;
+      topicScrollRef.current?.scrollToOffset({ animated: true, offset: 0 });
+      return;
+    }
+    if (targetReplyListIndex >= 0) {
+      handledTargetReplyRef.current = targetReplyKey;
+      topicScrollRef.current?.scrollToIndex({ animated: true, index: targetReplyListIndex });
+      return;
+    }
+    if (targetReplyLoaded) {
+      onCommentQueryChange('');
+      onReplyFilterChange('all');
+      return;
+    }
+    if (!replyHasMore || loadingMoreReplies) return;
+    const attemptKey = `${targetReplyKey}:${sourceReplies.length}`;
+    if (targetReplyLoadAttemptRef.current === attemptKey) return;
+    targetReplyLoadAttemptRef.current = attemptKey;
+    void onLoadMoreReplies({ silent: true });
+  }, [
+    canShowReplies,
+    loadingMoreReplies,
+    onCommentQueryChange,
+    onLoadMoreReplies,
+    onReplyFilterChange,
+    replyHasMore,
+    sourceReplies.length,
+    targetIsOpeningPost,
+    targetReplyKey,
+    targetReplyListIndex,
+    targetReplyLoaded,
+    topicScrollRef
+  ]);
   const acceptedAnswerListIndex = useMemo(() => {
     if (!acceptedAnswerReply) {
       return -1;

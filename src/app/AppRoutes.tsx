@@ -15,14 +15,22 @@ import {
 import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
 import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
 import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
+import {
+  NotificationDetailRoute,
+  NotificationRouteRuntimeProvider,
+  NotificationSettingsRoute,
+  NotificationsRoute,
+  type NotificationRouteRuntimeValue
+} from '@/features/notifications/NotificationRoute';
 
 type NavigatorProps = ComponentProps<typeof AppNavigator>;
 
 export function AppRoutes({
   feedRouteRuntime,
   libraryRouteRuntime,
-  moreHasBadge,
+  moreBadgeState,
   moreRouteRuntime,
+  notificationRouteRuntime,
   navigationTheme,
   searchRouteRuntime,
   styles,
@@ -34,8 +42,9 @@ export function AppRoutes({
 }: {
   feedRouteRuntime: FeedRouteRuntimeValue;
   libraryRouteRuntime: LibraryRouteRuntimeValue;
-  moreHasBadge: boolean;
+  moreBadgeState: NavigatorProps['moreBadgeState'];
   moreRouteRuntime: MoreRouteRuntimeValue;
+  notificationRouteRuntime: NotificationRouteRuntimeValue;
   navigationTheme: NavigatorProps['navigationTheme'];
   searchRouteRuntime: SearchRouteRuntimeValue;
   styles: NavigatorProps['styles'];
@@ -52,21 +61,26 @@ export function AppRoutes({
           <SearchRouteRuntimeProvider value={searchRouteRuntime}>
             <LibraryRouteRuntimeProvider value={libraryRouteRuntime}>
               <MoreRouteRuntimeProvider value={moreRouteRuntime}>
-                <AppNavigator
-                  moreHasBadge={moreHasBadge}
-                  navigationTheme={navigationTheme}
-                  FeedRouteComponent={FeedRoute}
-                  LibraryRouteComponent={LibraryRoute}
-                  MoreRouteComponent={MoreRoute}
-                  ReadingSettingsRouteComponent={ReadingSettingsRoute}
-                  SearchRouteComponent={SearchRoute}
-                  TopicRouteComponent={TopicRoute}
-                  UserRouteComponent={UserRoute}
-                  styles={styles}
-                  theme={theme}
-                  onReady={onReady}
-                  onScreenChange={onScreenChange}
-                />
+                <NotificationRouteRuntimeProvider value={notificationRouteRuntime}>
+                  <AppNavigator
+                    moreBadgeState={moreBadgeState}
+                    navigationTheme={navigationTheme}
+                    FeedRouteComponent={FeedRoute}
+                    LibraryRouteComponent={LibraryRoute}
+                    MoreRouteComponent={MoreRoute}
+                    NotificationDetailRouteComponent={NotificationDetailRoute}
+                    NotificationSettingsRouteComponent={NotificationSettingsRoute}
+                    NotificationsRouteComponent={NotificationsRoute}
+                    ReadingSettingsRouteComponent={ReadingSettingsRoute}
+                    SearchRouteComponent={SearchRoute}
+                    TopicRouteComponent={TopicRoute}
+                    UserRouteComponent={UserRoute}
+                    styles={styles}
+                    theme={theme}
+                    onReady={onReady}
+                    onScreenChange={onScreenChange}
+                  />
+                </NotificationRouteRuntimeProvider>
               </MoreRouteRuntimeProvider>
             </LibraryRouteRuntimeProvider>
           </SearchRouteRuntimeProvider>

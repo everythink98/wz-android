@@ -408,6 +408,7 @@ function TopicFilterHarness({
   topicError = null,
   topicFavorite = false,
   topicBusy = false,
+  targetReply,
   identityBlocked = false,
   identityChecking = false,
   yaohuoVisualBookmarked
@@ -422,7 +423,7 @@ function TopicFilterHarness({
   loadedQuotedReplies?: Record<string, Reply>;
   loadingMoreReplies?: boolean;
   loadingQuotedFloors?: Record<string, boolean>;
-  onLoadMoreReplies?: () => void;
+  onLoadMoreReplies?: (options?: { silent?: boolean }) => void;
   onInteract?: (type: InteractionType, commentId?: number) => void;
   onRefreshWholeTopic?: () => void;
   onReplyComposerOpenChange?: (open: boolean) => void;
@@ -440,6 +441,7 @@ function TopicFilterHarness({
   topicError?: SourceErrorInfo | null;
   topicFavorite?: boolean;
   topicBusy?: boolean;
+  targetReply?: { commentId?: number; floor?: number };
   identityBlocked?: boolean;
   identityChecking?: boolean;
   yaohuoVisualBookmarked?: boolean;
@@ -477,8 +479,8 @@ function TopicFilterHarness({
     votePoll: async (poll: TopicPoll, optionIds: string[]) => onVotePoll(poll, optionIds)
   } satisfies TopicActionsController;
   const read = {
-    loadMoreReplies: async () => {
-      onLoadMoreReplies();
+    loadMoreReplies: async (options?: { silent?: boolean }) => {
+      onLoadMoreReplies(options);
       return true;
     },
     loadedQuotedReplies,
@@ -564,6 +566,7 @@ function TopicFilterHarness({
         nodeSeekUserId={null}
         read={read}
         session={session}
+        targetReply={targetReply}
         topicScrollRef={topicScrollRef}
       />
       <Text testID="active-filter">{replyFilter}</Text>
@@ -572,6 +575,73 @@ function TopicFilterHarness({
 }
 
 describe('Topic reply filters', () => {
+  it('loads later pages and locates a notification reply by stable comment id', async () => {
+    const pages: Reply[][] = [
+      [
+        {
+          author: 'first',
+          commentId: 101,
+          contentHtml: '<p>第一页</p>',
+          createdAt: '2026-08-01T00:00:00.000Z',
+          floor: 1
+        }
+      ],
+      [
+        {
+          author: 'decoy',
+          commentId: 999,
+          contentHtml: '<p>同楼层但不是目标</p>',
+          createdAt: '2026-08-01T00:01:00.000Z',
+          floor: 21
+        }
+      ],
+      [
+        {
+          author: 'target',
+          commentId: 11640077,
+          contentHtml: '<p>目标评论</p>',
+          createdAt: '2026-08-01T00:02:00.000Z',
+          floor: 99
+        }
+      ]
+    ];
+    const targetTopic: TopicDetail = {
+      ...topic,
+      id: 'notification-target-topic',
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-852804-1',
+      replies: pages[0],
+      replyCount: 3
+    };
+    const loadMore = jest.fn();
+    function NotificationTargetHarness() {
+      const [pageCount, setPageCount] = useState(1);
+      return (
+        <TopicFilterHarness
+          onLoadMoreReplies={(options) => {
+            loadMore(options);
+            setPageCount((current) => Math.min(pages.length, current + 1));
+          }}
+          replyHasMore={pageCount < pages.length}
+          selectedTopic={targetTopic}
+          targetReply={{ commentId: 11640077, floor: 21 }}
+          topicDetail={targetTopic}
+          topicReplies={pages.slice(0, pageCount).flat()}
+        />
+      );
+    }
+    mockScrollToIndex.mockClear();
+
+    const view = await render(<NotificationTargetHarness />);
+
+    await waitFor(() => expect(loadMore).toHaveBeenCalledTimes(2));
+    expect(loadMore).toHaveBeenNthCalledWith(1, { silent: true });
+    expect(loadMore).toHaveBeenNthCalledWith(2, { silent: true });
+    await waitFor(() => expect(view.getByTestId('reply-floor-99')).toBeTruthy());
+    expect(mockScrollToIndex).toHaveBeenCalledTimes(1);
+    expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: true }));
+  });
+
   it('[REG-PERF-008] gives split opening-post blocks to FlashList instead of mounting them in its header', async () => {
     const longTopic: TopicDetail = {
       ...topic,

@@ -2,6 +2,7 @@ import { StackActions, createNavigationContainerRef } from '@react-navigation/na
 import type { Topic, UserReference } from '@/domain/forum/models';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { Screen } from '@/ui/navigation/types';
+import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
@@ -10,9 +11,18 @@ export function navigateMainTab(screen: keyof MainTabParamList) {
   navigationRef.dispatch(StackActions.popTo('MainTabs', { screen }));
 }
 
+export async function openXiaoyinsiAuthorization(beginAuthorization: () => Promise<unknown>) {
+  if (!navigationRef.isReady()) return null;
+  navigateMainTab('more');
+  return beginAuthorization();
+}
+
 function appScreenForRouteName(routeName?: string): Screen {
   if (routeName === 'Topic' || routeName === 'ReadingSettings') return 'topic';
   if (routeName === 'User') return 'user';
+  if (routeName === 'Notifications' || routeName === 'NotificationDetail' || routeName === 'NotificationSettings') {
+    return 'more';
+  }
   if (routeName === 'search' || routeName === 'library' || routeName === 'more') return routeName;
   return 'feed';
 }
@@ -37,8 +47,16 @@ export function navigateAppScreen(screen: Screen) {
   return true;
 }
 
-export function isReadingSettingsScreen() {
-  return navigationRef.getCurrentRoute()?.name === 'ReadingSettings';
+export function isNativeStackScreen() {
+  const routeName = navigationRef.getCurrentRoute()?.name;
+  return (
+    routeName === 'Topic' ||
+    routeName === 'User' ||
+    routeName === 'Notifications' ||
+    routeName === 'NotificationDetail' ||
+    routeName === 'NotificationSettings' ||
+    routeName === 'ReadingSettings'
+  );
 }
 
 export function pushTopicRoute(topic: Topic) {
@@ -50,5 +68,11 @@ export function pushTopicRoute(topic: Topic) {
 export function pushUserRoute(user: UserReference) {
   if (!navigationRef.isReady()) return false;
   navigationRef.dispatch(StackActions.push('User', { user }));
+  return true;
+}
+
+export function openNotificationsRoute(source?: NotificationSource) {
+  if (!navigationRef.isReady()) return false;
+  navigationRef.navigate('Notifications', source ? { source } : undefined);
   return true;
 }

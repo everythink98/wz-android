@@ -1104,6 +1104,31 @@ describe('Android local sources', () => {
     expect(sourceDiagnosticSummary(replies)?.missingFloorCount).toBe(2);
   });
 
+  it('[REG-TOPIC-060] keeps the identified first reply on rendered NodeSeek later pages', async () => {
+    const fetcher = vi.fn(async () =>
+      html(`
+      <a class="post-title" href="/post-852804-3">NodeSeek topic</a>
+      <li id="21" data-comment-id="11640077" class="content-item">
+        <a class="floor-link">#21</a>
+        <a href="/space/1" class="author-name">first reply</a>
+        <article class="post-content"><p>第 21 楼</p></article>
+      </li>
+      <li id="22" data-comment-id="11640171" class="content-item">
+        <a class="floor-link">#22</a>
+        <a href="/space/2" class="author-name">second reply</a>
+        <article class="post-content"><p>第 22 楼</p></article>
+      </li>
+    `)
+    );
+
+    const replies = await getNodeSeekReplies('852804', { fetcher, page: 3, limit: 10 });
+
+    expect(replies.items.map((item) => [item.floor, item.commentId])).toEqual([
+      [21, 11640077],
+      [22, 11640171]
+    ]);
+  });
+
   it('does not fill normal NodeSeek replies from following origin pages', async () => {
     const pageOnePayload = Buffer.from(
       JSON.stringify({

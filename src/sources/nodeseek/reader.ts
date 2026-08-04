@@ -315,7 +315,7 @@ async function fetchTopicPageData(id: string, page: number, options: NodeSeekOpt
   const html = await fetchTopicHtml(id, page, options);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
-  const rendered = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER);
+  const rendered = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER, page);
   if (!postData && !rendered) {
     throw new Error('NodeSeek 主题解析失败');
   }

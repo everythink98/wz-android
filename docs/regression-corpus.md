@@ -1129,8 +1129,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | `scripts/run-device-replay.mjs` 同时承担设备发现与 Replay 调用：设备发现接受 ID 或名称，但 agent-device 0.19.0 的 test runner 按显示名称绑定设备。 |
 | 必须保持的行为 | 环境变量仍可显式填写设备 ID 或名称；runner 必须先唯一解析同一台已启动 Android 设备，ADB 身份校验使用 `device.id`，Replay test 使用解析后的 `device.name`，不得自动选择、启动或重置其他设备。 |
 | 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 用 `id=emulator-5554`、`name=WZ Pixel API 35` 的真实列表形状断言 Replay 参数为 `--device WZ Pixel API 35`；恢复传原始 ID 时测试先失败，真实 Replay 再精确失败在第一步 `open`。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定 ID → 名称映射，`DEVICE_REPLAY_PASS` 证明 agent-device 实际接受该参数并走完六条普通旅程；隔离未登录旅程另行形成独立证据。二者缺一不能宣称对应设备闸门恢复。 |
-| Replay 或真实验收路径 | `npm test -- tests/tooling/android-smoke-guard.test.ts`；随后在身份匹配的保留数据设备上执行 `npm run test:device`，六条普通 Replay 均须 `retries=0`；需要未登录证据时另在隔离 AVD 执行 `npm run test:device:logged-out`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 ID → 名称映射，`DEVICE_REPLAY_PASS` 证明 agent-device 实际接受该参数并走完七条普通旅程；隔离未登录旅程另行形成独立证据。二者缺一不能宣称对应设备闸门恢复。 |
+| Replay 或真实验收路径 | `npm test -- tests/tooling/android-smoke-guard.test.ts`；随后在身份匹配的保留数据设备上执行 `npm run test:device`，七条普通 Replay 均须 `retries=0`；需要未登录证据时另在隔离 AVD 执行 `npm run test:device:logged-out`。 |
 | 负向验证方式 | 在隔离测试中把 Replay 参数临时改回环境变量中的 `emulator-5554`，单元 oracle 必须失败，CLI 单步回放必须报 `No device named emulator-5554`；还原后重新跑完整 Replay。 |
 | 明确不覆盖范围 | 不承诺修复 agent-device 上游的失联 daemon 生命周期，也不通过卸载、清数据、清 Cookie 或切换设备制造通过。 |
 
@@ -1145,7 +1145,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 必须保持的行为 | 设备 ID 和完全相同的显示名继续精确匹配；AVD 名只把连续下划线/空白视为等价并且仍须唯一匹配；不能模糊选择另一台设备。 |
 | 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 以清单设备 `emulator-5554 / WZ Pixel API 35` 断言配置值 `WZ_Pixel_API_35` 唯一映射到同一设备；修复前返回空数组。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定纯设备匹配，`APK_SANITY` 与 `DEVICE_REPLAY_PASS` 证明 release 命令能在同一保留数据设备继续完成。 |
-| Replay 或真实验收路径 | `.env.release.local` 保持 `WZ_ANDROID_SMOKE_DEVICE=WZ_Pixel_API_35`，执行 `npm run release:android`；身份行必须记录解析后的 display name/ID，六条普通 Replay 全部零重试通过；真实未登录另按 `REG-OPS-009` 在隔离 AVD 执行。 |
+| Replay 或真实验收路径 | `.env.release.local` 保持 `WZ_ANDROID_SMOKE_DEVICE=WZ_Pixel_API_35`，执行 `npm run release:android`；身份行必须记录解析后的 display name/ID，七条普通 Replay 全部零重试通过；真实未登录另按 `REG-OPS-009` 在隔离 AVD 执行。 |
 | 负向验证方式 | 在隔离测试中恢复完全相等比较，AVD 名映射断言必须收到空数组；不改真实 AVD 名、不创建重复设备制造失败。 |
 | 明确不覆盖范围 | 不把连字符、任意标点或部分字符串当成同一设备；归一化后出现多个候选仍必须拒绝，也不自动启动另一台设备。 |
 
@@ -1174,8 +1174,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | `tests/device/*.ad` 与 agent-device test harness 的录屏收尾顺序，而不是 `scripts/run-device-replay.mjs` 的所有权门禁。 |
 | 必须保持的行为 | tracked Replay 不自行执行 `close`；test harness 先成功停止并拉回视频，再由自身 cleanup 关闭 session。异常路径仍只能按当前 session/device manifest 精确恢复，不能扩大删除或终止范围。 |
 | 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 拒绝任何 tracked Replay 中的独立 `close`；完整设备执行后每条 trace 都有成功的 `video_recording_stop`，且 manifest、工具 `screenrecord` 和录屏 scratch 均为 0。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定六条普通与一条隔离未登录 Replay 的生命周期契约；`DEVICE_REPLAY_PASS` 证明真实 daemon、manifest 和 Android `screenrecord` 连续收口。 |
-| Replay 或真实验收路径 | `npm run test:device` 在空录屏基线上连续执行六条 `--record-video` Replay；未登录套件另在隔离设备执行一条，并分别核对设备与本机任务进程基线。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定七条普通与一条隔离未登录 Replay 的生命周期契约；`DEVICE_REPLAY_PASS` 证明真实 daemon、manifest 和 Android `screenrecord` 连续收口。 |
+| Replay 或真实验收路径 | `npm run test:device` 在空录屏基线上连续执行七条 `--record-video` Replay；未登录套件另在隔离设备执行一条，并分别核对设备与本机任务进程基线。 |
 | 负向验证方式 | 给任一 Replay 恢复末尾 `close`，守卫测试必须失败；隔离设备运行会只有录屏 start/preroll、没有成功 stop。 |
 | 明确不覆盖范围 | 不承诺修复 agent-device 其他 daemon 生命周期问题，也不删除未知历史 scratch；现有所有权安全门禁必须保留。 |
 
@@ -1215,11 +1215,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `RELEASE-02`；关联 `ACCOUNT-01`、`FEED-01`、`SEARCH-01`、`SEARCH-04` |
 | 用户症状 | 未登录旅程若在已有账号/Cookie 的主设备或 Release Smoke 上运行，会得到登录态结果或要求清除主设备数据；反过来，主设备基线也可能被未登录测试破坏。 |
-| 触发条件 | 真实未登录 Replay 与普通六条 Replay 共用 `tests/device/`、同一个设备环境变量或自动设备选择。 |
+| 触发条件 | 真实未登录 Replay 与普通七条 Replay 共用 `tests/device/`、同一个设备环境变量或自动设备选择。 |
 | 根因 seam | 文件发现目录、设备选择和 APK 身份校验没有把“普通保留数据设备”与“从未登录论坛的隔离 AVD”建模为两个外部环境。 |
-| 必须保持的行为 | `npm run test:device` 与 Release Smoke 只发现 `tests/device/` 六条普通旅程；`npm run test:device:logged-out` 只发现 `tests/device-logged-out/`，且必须显式设置与主测试/Smoke 设备不同的 `WZ_ANDROID_LOGGED_OUT_DEVICE`。两套都核对同一待测 APK 的 version/versionCode/SHA，均不得卸载、清数据或清 Cookie。 |
+| 必须保持的行为 | `npm run test:device` 与 Release Smoke 只发现 `tests/device/` 七条普通旅程；`npm run test:device:logged-out` 只发现 `tests/device-logged-out/`，且必须显式设置与主测试/Smoke 设备不同的 `WZ_ANDROID_LOGGED_OUT_DEVICE`。两套都核对同一待测 APK 的 version/versionCode/SHA，均不得卸载、清数据或清 Cookie。 |
 | 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-OPS-009` 精确断言两个目录的文件集合、独立 runner、显式设备变量和 Smoke 不引用未登录目录；`logged-out-readonly.ad` 还要求四站 Account Query 在 relaunch 前后都结算为权威未登录状态，其中 NodeSeek 允许“未登录”或仅访客“已验证”，linux.do 显示“匿名可用”。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定目录与设备门禁；六条普通 `DEVICE_REPLAY_PASS` 和一条独立未登录 `DEVICE_REPLAY_PASS` 分别证明两个真实环境，不能互相替代。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定目录与设备门禁；七条普通 `DEVICE_REPLAY_PASS` 和一条独立未登录 `DEVICE_REPLAY_PASS` 分别证明两个真实环境，不能互相替代。 |
 | Replay 或真实验收路径 | 主设备按原流程运行 `npm run test:device` / Release Smoke；独立 AVD 安装同一 APK 后设置 `WZ_ANDROID_LOGGED_OUT_DEVICE` 运行 `npm run test:device:logged-out`。Cloudflare 可在 App 内以访客身份验证，不登录论坛。 |
 | 负向验证方式 | 把未登录文件放回 `tests/device/`、让独立 runner读取默认目录、删除显式设备门禁或配置成与主设备同名；`REG-OPS-009` 必须失败。 |
 | 明确不覆盖范围 | 不自动创建、克隆、重置或删除 AVD；首次访客 Cloudflare 验证由用户监督，Google/CF 风控可形成 `BLOCKED_BY_ENV`。 |
@@ -1235,7 +1235,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 必须保持的行为 | capture 只把 stdout 交给调用方解析；stderr 仍在 `echoCapture` 开启时显示，非零退出仍失败，不得吞掉工具错误。 |
 | 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 给成功 stdout 配一条 stderr warning，返回值仍能被 `parseAgentDeviceList` 解析。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定流分离；完整开发包与 Release Replay 证明真实 CLI 链路。 |
-| Replay 或真实验收路径 | 当前开发包六条 `npm run test:device`，另在隔离 AVD 运行一条 `npm run test:device:logged-out`，随后执行 `npm run release:android` 的六条普通 Replay。 |
+| Replay 或真实验收路径 | 当前开发包七条 `npm run test:device`，另在隔离 AVD 运行一条 `npm run test:device:logged-out`，随后执行 `npm run release:android` 的七条普通 Replay。 |
 | 明确不覆盖范围 | 不屏蔽 stdout 中的非法内容，也不终止或替换无法证明归属的共享 daemon。 |
 
 ## `REG-OPS-011` runner 覆盖 Replay 自有超时预算
@@ -1248,7 +1248,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | `scripts/run-device-replay.mjs` 的命令行 timeout 覆盖 tracked Replay 的 `context timeout`。 |
 | 必须保持的行为 | 每条 Replay 自己声明 wall-clock budget；runner 继续固定 `retries=0`、`fail-fast`、录屏和报告器，不覆盖预算。`four-source-feed.ad` 继续声明 240 秒，不因当前步骤减少而建立第二套 runner 预算。 |
 | 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 断言 runner 不含统一 180 秒覆盖，且 `four-source-feed.ad` 声明 240 秒。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定配置边界；开发包六条普通、隔离 AVD 一条未登录与 Release 六条普通 `DEVICE_REPLAY_PASS` 分别证明真实 wall-clock 行为。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定配置边界；开发包七条普通、隔离 AVD 一条未登录与 Release 七条普通 `DEVICE_REPLAY_PASS` 分别证明真实 wall-clock 行为。 |
 | Replay 或真实验收路径 | 在身份匹配且保留数据的指定设备上依次执行完整开发包 Replay 与 `npm run release:android`。 |
 | 明确不覆盖范围 | 不增加重试，不延长单步 selector deadline，也不把真实请求、断言或 cleanup 失败改判为通过。 |
 
@@ -1292,7 +1292,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | `scripts/smoke-android.mjs` 把一次 APK sanity 生命周期拆成了两个互斥的 agent-device session。 |
 | 必须保持的行为 | boot、首次打开、日志和 appstate 统一使用 `wz-apk-sanity`；设备只在 boot/install 时显式选择；sanity 成功或失败后都先关闭该 session，再启动 Replay。 |
 | 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 记录 boot、sanity 失败和 close 的命令顺序，要求三者使用同一 session，并断言已绑定 session 的首次 open 不再重复传 device selector。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定 session 生命周期；完整 `npm run release:android` 的 `APK_SANITY` 与六条 `DEVICE_REPLAY_PASS` 证明真实 CLI/模拟器链路。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 session 生命周期；完整 `npm run release:android` 的 `APK_SANITY` 与七条 `DEVICE_REPLAY_PASS` 证明真实 CLI/模拟器链路。 |
 | Replay 或真实验收路径 | 指定保留数据的 `WZ_ANDROID_SMOKE_DEVICE`，运行正式 release；不得卸载或清 App 数据。 |
 | 负向验证方式 | 从 boot 删除显式 session，或在首次 open 恢复新的 session/device 选择，编号测试必须失败。 |
 | 明确不覆盖范围 | 不接管其他 agent-device session，也不关闭无法证明由本次 release 创建的共享进程。 |
@@ -3057,9 +3057,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 固定 Replay 把第三方“此刻成功且有数据”当作唯一终态，并串联要求随机首条 Topic 的作者仍有主题、设备必须预存 Library 对象或 NodeSeek DOM 保持固定。 |
 | 根因 seam | Device Replay 同时承担 App 流程、第三方数据可得性和动态对象前置条件，没有复用 controller/UI 的结果模型；稳定入口与实时内容被压成一个布尔值。 |
 | 必须保持的行为 | Feed 和 Search 只在当前请求已结算时暴露 `data/empty/partial/error/auth`；Loading、未提交和旧请求无终态。固定 fixture/UI 严格覆盖每个分支、恢复和导航；Replay 证明 outcome、App-owned 恢复与返回，不读取动态标题、success-only 详情、可变 Library 非空或第三方 DOM。Agent Live 按来源分别证明当前数据可得，正确错误流程不能冒充数据成功。 |
-| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-TEST-006` 先在旧脚本上因 `feed-topic-first`、`search-result-first`、`topic-detail-loaded`、`user-screen-loaded` 和第三方 DOM 失败，再固定六个当前脚本禁止这些无条件 oracle并要求动态 outcome；Feed/Search、Navigation、Library 和 NodeSeek RNTL 分别固定合法分支、永久 Loading 失败与固定返回栈。 |
+| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-TEST-006` 先在旧脚本上因 `feed-topic-first`、`search-result-first`、`topic-detail-loaded`、`user-screen-loaded` 和第三方 DOM 失败，再固定七个当前脚本禁止这些无条件 oracle并要求动态 outcome；Feed/Search、Navigation、Library、NodeSeek 与通知 RNTL 分别固定合法分支、永久 Loading 失败与固定返回栈。 |
 | 最低可靠自动测试层 | `UNIT_PASS` / `UI_PASS` 固定结果与导航语义，`DEVICE_REPLAY_PASS` 证明 Android App 流程，`LIVE_PASS` 或 `BLOCKED_BY_ENV` 单独描述第三方数据；三层不能互相替代。 |
-| Replay 或真实验收路径 | 在身份匹配的 APK 上运行六条普通 Replay 和独立未登录 Replay；随后按 `tests/live/agent-live.md` 的唯一 probe owner 只请求受影响来源一次，分别报告 flow、data 和 infrastructure。 |
+| Replay 或真实验收路径 | 在身份匹配的 APK 上运行七条普通 Replay 和独立未登录 Replay；随后按 `tests/live/agent-live.md` 的唯一 probe owner 只请求受影响来源一次，分别报告 flow、data 和 infrastructure。 |
 | 负向验证方式 | 在 tracked Replay 恢复任一动态首条/详情/User/非空 Library/第三方 DOM 成功条件，移除 outcome，或让 Loading 暴露终态，Android guard 或对应 UI 测试必须失败。 |
 | 明确不覆盖范围 | 不降低固定数据断言，不把任意错误都算通过，也不增加 retry、固定 sleep、MockWebServer、录制系统或 fixture DSL。 |
 
@@ -3071,9 +3071,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | Search、Library、账号、NodeSeek WebView 或本地 More 旅程尚未到目标入口，就因聚合 Feed 动态失败而停止；重复 relaunch 又在短时间触发多次无关来源和账号请求。 |
 | 触发条件 | 每个 `.ad` 冷启动后统一等待 `feed-list-ready-all`，并把小隐寺等级与多个本地 More 旅程放在同一 fail-fast 文件；普通套件累计八次 relaunch。 |
 | 根因 seam | Replay 以一个网络首页作为所有能力的全局 setup，而不是从目标主 tab 建立最小前置；独立失败域和 probe 所有权没有体现在脚本拓扑中。 |
-| 必须保持的行为 | 普通套件固定 `account-readonly.ad`、`four-source-feed.ad`、`library-return.ad`、`more-readonly.ad`、`nodeseek-session.ad`、`search-multi-source.ad` 六个文件和六次 relaunch；非 Feed/Smoke 启动后直接等待目标 `main-tab-*`，账号等级与本地 More 分开。未登录套件保持两次 relaunch。runner 仍为文件内 fail-fast、文件间继续、`retries=0`。 |
-| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-TEST-007` 固定六文件集合、普通/未登录 relaunch 数、非 Feed/Smoke 禁止 `feed-list-ready-all`，并要求各旅程等待自己的主 tab；`scripts/smoke-android.mjs` 的 APK sanity 只等待 `main-tab-feed`。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定脚本拓扑和 runner 语义；匹配身份的 `DEVICE_REPLAY_PASS` 才证明真实 Android 六个失败域能独立执行。 |
+| 必须保持的行为 | 普通套件固定 `account-readonly.ad`、`four-source-feed.ad`、`library-return.ad`、`more-readonly.ad`、`nodeseek-session.ad`、`notifications-readonly.ad`、`search-multi-source.ad` 七个文件和七次 relaunch；非 Feed/Smoke 启动后直接等待目标 `main-tab-*`，账号等级、本地 More 与统一消息中心分开。未登录套件保持两次 relaunch。runner 仍为文件内 fail-fast、文件间继续、`retries=0`。 |
+| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-TEST-007` 固定七文件集合、普通/未登录 relaunch 数、非 Feed/Smoke 禁止 `feed-list-ready-all`，并要求各旅程等待自己的主 tab；`scripts/smoke-android.mjs` 的 APK sanity 只等待 `main-tab-feed`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定脚本拓扑和 runner 语义；匹配身份的 `DEVICE_REPLAY_PASS` 才证明真实 Android 七个失败域能独立执行。 |
 | Replay 或真实验收路径 | 在匹配 revision/version/APK SHA 的设备运行普通和未登录套件，确认某个普通文件失败时后续独立文件仍执行，cleanup/录屏隔离失败则立即停止。 |
 | 负向验证方式 | 向任一非 Feed/Smoke Replay 加回 `feed-list-ready-all`，把等级步骤放回 `more-readonly.ad`，增加第七普通文件/额外 relaunch，或把 retry 改为非零，编号守卫必须失败。 |
 | 明确不覆盖范围 | 不减少必要的身份前置，不合并独立来源请求，也不引入共享 session、全局 setup、nightly runner 或自动限流规避。 |
@@ -3088,7 +3088,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | `AppComposition` 在 `runtime.routes === null` 时返回空节点。snapshot helper 因前台 App 没有 meaningful accessibility node 转入 stock UIAutomator，后者等待 idle 超时，selector wait 无法继续轮询。 |
 | 必须保持的行为 | startup gate 继续 fail-closed，不提前挂载 routes 或发网络请求；等待期间显示两个静态文本节点“阅坛 / 正在启动”，状态以 `role=status`、`busy=true`、polite live region 暴露且不使用无限动画。routes 放行后由真实导航树原位替换。 |
 | 精确失败 oracle | `tests/ui/app/app-composition.test.tsx` 在 `routes=null` 时要求 header、`阅坛正在启动` busy status 和零 `ActivityIndicator`；删除 fallback、恢复 `null` 或只留动画时失败。既有 `tests/tooling/android-smoke-guard.test.ts` 继续禁止 Replay 固定 sleep 与 retry。 |
-| 最低可靠自动测试层 | `UI_PASS` 固定 bootstrap 可访问语义；匹配 revision/version/APK SHA 且零 retry 的六条普通 Replay 形成 `DEVICE_REPLAY_PASS`，两者不能互相替代。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定 bootstrap 可访问语义；匹配 revision/version/APK SHA 且零 retry 的七条普通 Replay 形成 `DEVICE_REPLAY_PASS`，两者不能互相替代。 |
 | Replay 或真实验收路径 | 安装 exact-revision smoke APK，在保留数据设备运行 `npm run test:device`；每条文件独立 relaunch，直接等待自己的 `main-tab-*`，冷启动期间不得出现零节点 snapshot failure。 |
 | 负向验证方式 | 把 fallback 改回 `null` 或仅含无限动画，UI 回归先失败；在 Replay 加固定 sleep、retry 或 Feed 全局前置，既有 tooling guard 必须失败。 |
 | 明确不覆盖范围 | 不缩短 SecureStore 或代理初始化、不放宽 fail-closed、不新增启动 timeout，不把 accessibility backend 异常误报为来源网络失败。 |
@@ -3919,6 +3919,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把原始 `onOpenImagePreview` 或由 Topic/User/external handler 创建的非稳定 `openHtmlLink` 恢复到 renderer memo 依赖，编号测试必须在 rerender 后重新看到 Spinner或 registry 身份变化；把 registry 永久冻结到媒体 epoch 变化也不更新，则既有 session 测试必须失败。 |
 | 明确不覆盖范围 | 不新增全局“已加载”缓存、淡入动画、延迟占位、Context 重写或测试专用产品钩子；图片冷加载、原图渐进升级、SVG fallback、列表虚拟化和全屏 Pager 生命周期仍由既有回归负责。 |
 
+## `REG-TOPIC-060` NodeSeek 后续页首条回复被当作主楼过滤
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03`；共享 `NOTIFY-02` |
+| 用户症状 | NodeSeek 后续分页会缺少该页第一楼；消息通知恰好指向这一楼时，主题内存在正文，但消息详情显示“消息不可见”。 |
+| 触发条件 | 读取 NodeSeek 第 2 页及以后由 `.content-item` 回复组成的 rendered HTML，目标回复位于页面第一项。 |
+| 根因 seam | `src/sources/nodeseek/topicParser.ts` 的 `parseRenderedNodeSeekTopicHtml` 无条件把首个 `.content-item` 当作主楼过滤，`src/sources/nodeseek/reader.ts` 未把当前页码传入 parser。 |
+| 必须保持的行为 | 首屏仍排除主楼；后续页首项带真实楼层或 `commentId` 时必须作为回复保留，并保持楼层、稳定 `commentId` 与页面顺序。后续页首项无法识别时继续保守视为主楼。NodeSeek 消息详情以通知返回的 `comment_id` 精确命中；“查看完整主题”把同一稳定身份交给现有 Topic route，目标未加载时静默读取后续页并定位，同楼层实体不得抢占。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-TOPIC-060` 在 page 3 构造 `#21/#22`；修复前只返回 `#22`，修复后依次返回 `#21/#22`。既有 `REG-TOPIC-036` 必须继续排除后续页中未编号的重复主楼；`src/sources/nodeseek/notifications.test.ts` 固定通知按 origin page 读取且以 `comment_id` 命中，即使楼层元数据不一致也不得误取。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：共享 source contract 固定 parser 与 reader 页码契约，adapter 单测固定通知目标身份；源码字符串或只验证快捷跳转不能证明正文可见。 |
+| Replay 或真实验收路径 | `tests/device/notifications-readonly.ad` 只固定 NodeSeek 列表合法结算；匹配 revision/APK 且当前账号有消息时，手动打开 NodeSeek 第一条已读消息，详情应显示目标正文和“查看完整主题”，不得出现“详情暂不可用”。普通主题后续页同时确认第一楼未丢失。全程只读，不清数据、Cookie 或登录态。 |
+| 负向验证方式 | 恢复首项无条件过滤、停止传递页码、按楼层替代存在的 `comment_id`，或只隐藏失败态，编号测试必须失败或只读 Live 再现“消息不可见”。 |
+| 明确不覆盖范围 | 不新增消息专用解析器或第二套主题页；定位复用既有 Topic route 和回复分页，不承诺原站不存在目标时伪造定位。真实标记已读属于原站写入，未获授权保持 `NOT_VERIFIED`。 |
+
 ## `REG-PROXY-008` 阻塞写绕过共享 tunnel deadline
 
 | 字段 | 内容 |
@@ -3948,6 +3963,456 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 本轮不执行正式 release、签名、APK 安装或上传，均为 `NOT_VERIFIED`；正式发布时由 clean Node 22 环境执行完整 `npm run release:android`。 |
 | 负向验证方式 | 让 Java 重新使用 `firstOutputLine`、接受零/多个版本行或把原始输出拼进错误，编号测试必须记录提示行、错误接受冲突或泄露 marker。 |
 | 明确不覆盖范围 | 不改变 npm/Gradle 版本解析、manifest schema、toolchain 选择、签名或发布流程，也不引入新依赖。 |
+
+## `REG-NOTIFY-001` 前台恢复旧未读被误报为新消息
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-03`；共享 More 底部消息圆点与消息入口 |
+| 用户症状 | 打开 App 或进入 More 时，页面底部出现带 App 图标、厚胶囊背景和阴影的“有新的站内消息”；它与扁平列表和底部消息圆点重复，且已有未读也被误报成刚收到的新消息。 |
+| 触发条件 | notification runtime 从本机恢复 `unreadCount > 0`，首次启用/重新启用建立 baseline，或消息中心可见时刷新已有未读。 |
+| 根因 seam | `src/features/notifications/useNotificationsRuntime.ts` 若只比较未读计数就无法区分旧未读与新稳定 ID，并可能把恢复值交给全局 `notify`。 |
+| 必须保持的行为 | 本机恢复、首次/重新启用和换号 baseline 只更新 More 圆点、入口摘要与投递水位，不弹原生 Toast，也不补发旧系统通知；baseline 建立后发现的新稳定 ID 无论当前前台页面都按 `REG-NOTIFY-018/025` 发 Android 每站摘要。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 从存储恢复 NodeSeek `unreadCount=1`，要求 runtime 仍公开 `unreadTotal=1` 且 `ToastAndroid.show` 调用为 0；修复前精确收到一次“有新的站内消息”。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 执行真实 runtime effect 与持久化恢复；源码字符串或只看 More 文案不能证明原生 Toast 未出现。 |
+| Replay 或真实验收路径 | 匹配 APK 覆盖安装且保留现有未读，冷启动后进入 More；入口继续显示“有未读”，底部只保留 More 消息圆点，不得出现原生 Toast。全程只读。 |
+| 负向验证方式 | 恢复未读计数增量 effect、从持久化恢复路径调用全局 `notify`/系统通知，或改用另一条带装饰的悬浮提示，编号测试或设备验收必须失败。 |
+| 明确不覆盖范围 | 不改变其他业务操作的短反馈，不新增自定义 Snackbar、动画、图标或依赖；新稳定 ID 的前后台 Android 系统摘要由 `REG-NOTIFY-018` 固定。 |
+
+## `REG-NOTIFY-002` 消息与代理入口缺少分隔线
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01`；共享 More 工具列表 |
+| 用户症状 | More 中“消息通知”和“服务器代理”连续显示且没有分隔线，两项在视觉上粘成一块。 |
+| 触发条件 | More 同时渲染消息通知与服务器代理两个相邻入口。 |
+| 根因 seam | `src/features/more/components/MoreUtilityPanels.tsx` 的工具组只有组末边框和行间距，没有组内分隔。 |
+| 必须保持的行为 | 两项之间显示使用 `theme.line` 的 hairline；浅色与深色主题均可辨认，入口文案、点击区域、无障碍标签、导航和组间距保持不变。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 要求 `more-notifications-row` 的扁平化样式同时使用当前 `theme.line` 和 `StyleSheet.hairlineWidth`；修复前该行没有分隔容器，硬编码彩色线也会失败。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 固定真实 More 渲染中的组内分隔样式。 |
+| Replay 或真实验收路径 | 匹配 APK 覆盖安装后打开 More，确认消息通知与服务器代理之间有一条细分隔线且两个入口仍可独立点击；全程只读。 |
+| 负向验证方式 | 删除边框、改成仅浅色可见的硬编码颜色，或用卡片、pill 取代细分隔线，编号测试或设备验收必须失败。 |
+| 明确不覆盖范围 | 不重排 More、不修改其他工具组，也不增加共享 divider 抽象、动画或新依赖。 |
+
+## `REG-NOTIFY-003` 消息页原生顶栏出现悬浮阴影
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01`；共享 `NAV-01` native stack header |
+| 用户症状 | 消息页标题栏底部出现明显灰黑渐变阴影，像悬浮层压在来源筛选上，与项目扁平列表不一致。 |
+| 触发条件 | Android 打开消息列表、消息详情或消息通知设置等 `headerShown: true` 的 native stack route。 |
+| 根因 seam | `src/app/AppNavigator.tsx` 依赖 native stack 默认 header elevation，根 `screenOptions` 未关闭 header shadow。 |
+| 必须保持的行为 | 可见 native header 使用零阴影、零 elevation；安全区、返回、标题、设置入口、转场和列表工具栏原有 hairline 保持不变，深浅主题一致。 |
+| 精确失败 oracle | `tests/ui/app/app-navigator.test.tsx` 打开真实 Notifications 和 NotificationSettings route，要求原生 header host config 的 `hideShadow=true`；修复前该属性为 `undefined`。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 固定共享 native-stack 配置；视觉结果另由匹配 APK 的设备验收确认。 |
+| Replay 或真实验收路径 | 匹配 APK 覆盖安装后从 More 打开消息通知，再打开设置并返回；标题栏与来源筛选之间不得出现渐变或悬浮阴影。全程只读。 |
+| 负向验证方式 | 删除或启用 header shadow，编号测试必须失败；用页面内遮罩覆盖阴影不能满足共享 header 配置。 |
+| 明确不覆盖范围 | 不自定义 header，不改标题栏高度、字体、来源筛选、消息列表或主题色，也不新增依赖。 |
+
+## `REG-NOTIFY-004` 消息栈硬件返回被 App 根处理器截获
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-01`；共享 `NOTIFY-01/02/03` |
+| 用户症状 | 在消息列表、详情或设置按 Android 返回键时，没有按 native stack 返回上一层，而是被 App 根返回逻辑送回 Feed。 |
+| 触发条件 | 当前 route 是 `Notifications`、`NotificationDetail` 或 `NotificationSettings`，App 级 `hardwareBackPress` 仍只识别旧的 Topic/User/ReadingSettings 例外。 |
+| 根因 seam | `src/app/appNavigation.ts` 的 native-stack route 分类与 `src/app/useAppBackHandler.ts` 的返回所有权。 |
+| 必须保持的行为 | 所有 native stack route 都把硬件返回交给 React Navigation；底部 tab 页面才允许 App 根逻辑返回 Feed。消息列表、详情、设置的物理返回顺序与标题栏返回一致。 |
+| 精确失败 oracle | `src/app/AppNavigator.test.ts` 的 `REG-NOTIFY-004` 逐一把 Topic、User、Notifications、NotificationDetail、NotificationSettings 和 ReadingSettings 设为当前 route，要求 `isNativeStackScreen()` 为 true；More tab 必须为 false。修复前三个消息 route 被归为普通 tab。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯 route 分类固定 App handler 所有权，AppNavigator RNTL继续固定消息栈可达；只检查页面能打开不能证明硬件返回没有被截获。 |
+| Replay 或真实验收路径 | 匹配 APK 从 More 依次进入消息列表、设置并返回，再从一条只读已读消息进入详情并按物理返回；每次只退一层且最终回到 More。未执行匹配 APK 路径时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 从 `isNativeStackScreen` 删除任一消息 route，或恢复按聚合 `screen` 判断，编号测试必须失败，设备上物理返回会跳离消息栈。 |
+| 明确不覆盖范围 | 不改变手势返回、转场、标题栏按钮或底部 tab 历史；不为消息页创建第二套 BackHandler。 |
+
+## `REG-NOTIFY-005` 小隐寺旧授权被消息页误报为未登录
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01`、`ACCOUNT-06` |
+| 用户症状 | 小隐寺账号已登录且旧 `read,write` 授权仍可使用时，消息来源页却提示“请先登录”，用户无法从当前空态找到升级消息授权的入口。 |
+| 触发条件 | 小隐寺 session 已确认，但 credential 缺少 `notifications` scope，因此该来源不能进入 active notification sources。 |
+| 根因 seam | `src/features/notifications/NotificationScreens.tsx` 把所有 unavailable source 共用成未登录空态；runtime 没有把“已登录但需升级 scope”的语义传给列表。 |
+| 必须保持的行为 | 小隐寺来源页明确显示“需要升级消息授权”，说明原有读写授权仍可用，并提供直达既有 Device Code 升级流程的按钮。旧 credential、来源意图、可信 identity 和投递水位保持不变；升级前暂停消息读取。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-005` 要求空态没有“请先登录”、显示升级说明且按钮调用既有升级 action；`tests/ui/notifications/notifications-runtime.test.tsx` 用已登录 session 与 `read,write` credential 固定 `xiaoyinsiNeedsUpgrade=true`、来源不 active，同时保留 `xiaoyinsi:7` 和既有 delivered ID。修复前 UI 找不到升级标题，runtime 会丢失或误开放来源状态。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 必须同时覆盖 runtime scope 判定和用户可达空态；只测 credential parser 或设置页文案不足以证明消息来源页正确。 |
+| Replay 或真实验收路径 | 在保留旧授权的匹配 APK 上打开“小隐寺”消息筛选，确认升级说明和入口存在；不得仅为验收撤销可用旧授权。真正发起重授权会改变外部状态，未获明确授权保持 `NOT_VERIFIED`。 |
+| 负向验证方式 | 删除 scope 专用空态、把缺 scope 重新映射为未登录、将小隐寺加入 active sources，或升级时覆盖/撤销旧 credential，编号测试必须失败。 |
+| 明确不覆盖范围 | 不自动发起授权、不改变旧 `read,write` 能力、不承诺授权成功；Device Code 的取消、超时和保存回滚仍由 `ACCOUNT-06` 测试负责。 |
+
+## `REG-NOTIFY-006` 暂时未知身份被当作退出清除消息状态
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`、`NOTIFY-01/03` |
+| 用户症状 | 启动身份复核、网络 unknown 或 Cloudflare challenge 期间，某站消息缓存、去重水位和通知摘要被当作退出清空；恢复同一账号后旧未读可能闪失或被重新投递，消息列表/设置还会把已登录但待确认的账号误报为“请先登录/未登录”。 |
+| 触发条件 | session 的 `identityTrust` 从 confirmed 暂时变为 pending，runtime 把“当前不可确认”直接投影成 `identityKey=undefined`。 |
+| 根因 seam | `src/features/notifications/useNotificationsRuntime.ts` 的可信 identity 投影、active source 门禁和身份变化清理 effect。 |
+| 必须保持的行为 | pending、unknown 和 challenge 期间沿用持久化的上一份可信 `source:userId` 绑定 Query/cache/watermark，但从 active sources 排除并停止前台私有读取。单站消息页显示“账号确认中”和完成后自动加载说明，设置页显示“账号确认中；开关意图会保留”，不能显示未登录。只有明确匿名/退出，或已确认的新 `source:userId`，才按站撤销摘要并清 Query 与水位；其他站不受影响。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 的 `REG-NOTIFY-006` 从存储恢复 `nodeseek:42`、缓存和 `reply:known`，再给 pending session，要求 identity/cache/delivered IDs 原样保留且 NodeSeek 不 active；修复前 identity 变为 undefined。`tests/ui/notifications/notifications-screen.test.tsx` 的 pending 列表/设置用例分别要求“账号确认中”和“账号确认中；开关意图会保留”，且不存在“请先登录”。相邻 runtime 用例继续要求 confirmed 换号和明确退出清空旧水位与 cache。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 执行真实 runtime/store/Query effect；只测试纯 identity helper 或只断言零请求不能证明缓存和水位未被删除。 |
+| Replay 或真实验收路径 | 不人为制造 challenge、退出或换号。只有匹配 APK 自然出现可恢复的 pending/unknown 时，记录前后同账号消息状态；否则设备结果为 `NOT_VERIFIED`，自动测试作为最低可靠证据。 |
+| 负向验证方式 | 恢复 `identityTrust !== confirmed => undefined`、pending 时调用 identity reset/removeQueries、让 retained identity 继续进入 active sources，或把 pending UI 映射为未登录，编号/runtime/screen 测试必须失败。 |
+| 明确不覆盖范围 | 不允许 pending 身份读取私有消息或执行已读写入；后台仍必须 direct probe 当前身份，不能使用 retained key 代替确认。 |
+
+## `REG-NOTIFY-007` 旧账号消息详情使用新账号读取和已读
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`、`NOTIFY-02` |
+| 用户症状 | 从账号 A 的列表进入消息详情后切到账号 B，旧条目可能通过 B 的 session 加载正文或提交已读，造成串号读取和写入。 |
+| 触发条件 | `NotificationDetail` route 只携带 notification item，或详情/全部已读开始后只沿用 runtime 当前 identity；账号在 gateway 等待 access 的窗口内变化或 route unmount 时，旧调用仍可能进入新账号 adapter。 |
+| 根因 seam | `src/ui/navigation/appRouteTypes.ts` 的详情 route identity、`src/features/notifications/NotificationRoute.tsx` 的 Query/mutation `AbortController` 生命周期，以及 `src/sources/notificationGateway.ts` 在 adapter I/O 前的 expected identity 门禁。 |
+| 必须保持的行为 | 点击列表时把当时的 `identityKey` 与条目一起绑定到 route，并把该 expected identity 与 route-owned `AbortSignal` 传给 `loadDetail`、`markRead` 和单站 `markAllRead`。gateway 完成 `readAccess` 后、调用 adapter 前必须再次检查 signal 与 exact identity；换号或 unmount 立即 abort 在途 access/详情/已读。mismatch 时隐藏旧详情、提示账号状态已变化、不提供重试，且三个 adapter 方法均为零调用。 |
+| 精确失败 oracle | `src/sources/notificationGateway.test.ts` 分别让 `loadDetail`、`markRead`、`markAllRead` 的 expected identity 与刚读取身份不一致，要求抛“账号状态已变化”且 adapter 为零；延迟 `readAccess` 后 abort 的用例要求 `AbortError` 且 adapter 为零。`tests/ui/notifications/notifications-route.test.tsx` 的 `REG-NOTIFY-007` 固定初始 mismatch；相邻两个在途换号用例在 markRead/markAllRead 等待 access 时切到 next-account，要求旧 adapter 写入均为零。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：gateway 单测固定最后发网门禁与取消，Route/provider RNTL 固定 identity signature 变化、controller 生命周期和可见错误态；只给 Query key 加 identity 或只测 Screen 不能证明在途写入被阻断。 |
+| Replay 或真实验收路径 | 换号属于外部身份变化，不在主登录设备为此测试。另获明确授权时用两个测试账号执行 A 列表→切 B→返回旧详情，确认零网络/零已读；否则记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 从 route params 删除 identity、以 runtime 当前 key 重建详情 Query、允许 mismatch 时 refetch、只在 React 层检查而让 gateway 接受当前账号，或换号/unmount 不 abort controller，编号及相邻 gateway/route 测试必须失败。 |
+| 明确不覆盖范围 | 不迁移旧详情到新账号、不自动返回列表、不新增跨账号缓存，也不承诺撤销原站已经确认完成的写入；这里固定的是 adapter 发网前的最后可控门禁与合作式取消。 |
+
+## `REG-NOTIFY-008` 系统通知失败仍消耗投递 ID
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-03` |
+| 用户症状 | 新消息已经写入 delivered IDs，但 Android 摘要创建失败；后续后台轮次把它当作已投递，用户永远收不到该条通知。 |
+| 触发条件 | worker 在调用 `replaceDigest` 前先持久化本轮新 IDs，系统通知调用 reject 后没有释放这些 ID。 |
+| 根因 seam | `src/platform/notifications/notificationStore.ts` 的投递记录事务与 `src/platform/notifications/notificationWorker.ts` 的系统投递失败处理。 |
+| 必须保持的行为 | record 返回仅释放本轮新 IDs 的 rollback；摘要创建或 identifier 保存失败时 worker 执行 rollback，使相同远端 ID 下一轮仍可投递。其他既有 IDs、账号、来源和 baseline 不得回退。 |
+| 精确失败 oracle | `src/platform/notifications/notificationStore.test.ts` 的 `REG-NOTIFY-008` 记录 `new`、rollback 后再次记录，要求两轮都返回 `newIds=['new']`；`src/platform/notifications/notificationWorker.test.ts` 让首次 `replaceDigest` 失败、第二次成功，要求首次 delivered=0/failedSources=1，第二次 delivered=1 且系统调用共两次。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：确定性 store/worker 测试固定两阶段投递；只检查最终 AsyncStorage 或一次成功通知不能证明失败可重试。 |
+| Replay 或真实验收路径 | 不在真实设备故意破坏系统通知服务。一次性 AVD 可在可控 fake/native harness 补验，但本轮未执行时记 `NOT_VERIFIED`；无需真实站点消息。 |
+| 负向验证方式 | 删除 rollback、失败时保留本轮新 IDs，或 rollback 删除全部历史 IDs，编号测试必须失败或引入重复通知。 |
+| 明确不覆盖范围 | 不增加同轮重试、全局 retry 或云端队列；系统已经显示摘要但 identifier 保存失败时仍以“可重试优先”处理。 |
+
+## `REG-NOTIFY-009` 后台记录后关闭开关或换号仍发送摘要
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-03`；共享账号隔离 |
+| 用户症状 | 后台扫描已经记录新 ID 后，用户立即关闭全局/单站通知或切换账号，旧轮次仍可能发出摘要，并把旧 identifier 写回已关闭或新账号状态。 |
+| 触发条件 | worker 只在轮次开始读取一次 state，record 与系统发送之间存在 TOCTOU；identifier 保存也未再次绑定开关和 identity。 |
+| 根因 seam | `src/platform/notifications/notificationWorker.ts` 的 post-record 提交门禁，以及 `notificationStore.setNotificationIdentifier` 的 identity/intent 条件写入。 |
+| 必须保持的行为 | record 后、系统发送前重新读取最新 state；全局关闭、来源关闭或 identity 不一致时 rollback 本轮 IDs并零通知。identifier 仅在全局/来源仍启用且 identity 完全相同时保存，不能复活被清除的状态。 |
+| 精确失败 oracle | `src/platform/notifications/notificationWorker.test.ts` 的参数化 `REG-NOTIFY-009` 在 record 后分别关闭全局、关闭来源和改为 `nodeseek:8`，要求 delivered=0、`replaceDigest=0`、`setIdentifier=0`；`src/platform/notifications/notificationStore.test.ts` 固定同三种状态下 stale identifier 不落盘。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：可控依赖在精确竞态点改变 state；普通设备轮询或只测关闭按钮无法稳定覆盖该窗口。 |
+| Replay 或真实验收路径 | 不用真实消息和主账号制造竞态。一次性 AVD 只补权限/摘要常规路径；该精确竞态以自动测试为最低证据，真实未执行记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 删除 post-record reload、使用轮次初始 state、让 `setNotificationIdentifier` 无条件写入，或 mismatch 时仍 schedule，任一编号测试必须失败。 |
+| 明确不覆盖范围 | 不取消已经由 Android 成功显示的历史摘要，不承诺与 OS 调度绝对原子；只保证 App 在系统发送前最后一次可控提交点 fail-closed。 |
+
+## `REG-NOTIFY-010` 妖火消息列表与详情混入删除动作或聊天历史
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/02` |
+| 用户症状 | 妖火消息时间显示成“删除”，无方括号日期被拼进发送者；打开真实详情会提示“正文未找到”，或把回复、删除与聊天历史当成正文。 |
+| 触发条件 | 原站 `.listmms` 列表行末同时含时间与删除链接，时间也可能不带方括号；官方 `messagelist_view.aspx` 把当前正文放在 `.content` 的“内容”标签之后，聊天 `.listmms` 气泡没有当前详情 ID 链接。 |
+| 根因 seam | `src/sources/yaohuo/notifications.ts` 的 `parsePage` 时间/actor 边界、`loadDetail` 官方内容字段选择和列表复核。 |
+| 必须保持的行为 | 时间候选排除删除 action，支持带/不带方括号的原站时间并从 actor 分离；详情按 exact URL 只返回官方“内容”字段并安全清洗，不包含回复/转发、删除或后续聊天历史。内容标签不存在时明确失败“妖火消息对应的正文未找到”，禁止回退任意 `.listmms` 或整页。markRead 重新读取原列表，只在该 ID 的 unread 图标消失时确认。 |
+| 精确失败 oracle | `src/sources/yaohuo/notifications.test.ts` 的 `REG-NOTIFY-010` 固定“时间 + 删除”、无括号日期和官方详情结构：时间必须解析为正确 ISO、actor 为 `Clover`；detail 含点击正文但不含写操作与历史聊天，复核仍有 new.gif 时返回未确认；请求顺序为 list→detail→原 list。相邻缺失用例返回没有“内容”标签的错误页，要求明确 reject。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：脱敏 HTML fixture 固定 parser 与 read-after-detail 协议；消息列表能打开或仅检查标题不能证明时间、block 和已读对象一致。 |
+| Replay 或真实验收路径 | 匹配 APK 可只打开已读妖火消息核对时间和正文；打开未读会触发原站已读写入，未获该来源明确授权保持 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复取最后一个方括号文本、actor 吞入日期、要求聊天气泡包含当前详情链接、返回整个详情页或不按原列表复核，编号与相邻内容缺失测试必须失败。 |
+| 明确不覆盖范围 | 不实现妖火批量已读、删除或发送；相对时间无法可靠解析时保留原文，不伪造排序时间。 |
+
+## `REG-NOTIFY-011` Discourse 顶层通知字段被忽略
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/02` |
+| 用户症状 | linux.do 或小隐寺通知明明带有标题、发起者和头像，列表却显示“站内消息”、错误 actor 或缺失头像。 |
+| 触发条件 | 官方 notification serializer 把 `fancy_title`、`acting_user_name` 和 `acting_user_avatar_template` 放在 row 顶层，而 parser 只从 `data` 取 fallback 字段。 |
+| 根因 seam | `src/sources/discourseNotifications.ts` 的 `parseNotification` 顶层/嵌套字段优先级与头像绝对 URL 转换。 |
+| 必须保持的行为 | 优先读取官方顶层 actor、title、avatar，再兼容 `data` fallback；linux.do 与小隐寺共享同一 Discourse 语义，未知类型仍显示“其他消息”，不得因字段缺失丢行。 |
+| 精确失败 oracle | `src/sources/discourseNotifications.test.ts` 的 `REG-NOTIFY-011` 只提供顶层 serializer 字段，要求标题为“官方标题”、actor 为 Alice，头像模板按 96px 转成 linux.do 绝对 URL。修复前只能得到 fallback 文案和空头像。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：官方响应形状 fixture 直接执行 adapter；UI mock 自带 actor/title 不能证明 parser 使用真实字段。 |
+| Replay 或真实验收路径 | 当前账号有 Discourse 通知时可在匹配 APK 对照 App 列表与原站；当天数据不是稳定前置，未对照时记 `NOT_VERIFIED`。全程只读，不点击未读条目。 |
+| 负向验证方式 | 删除顶层字段读取、让嵌套 fallback 覆盖非空顶层值，或不绝对化 avatar template，编号测试必须失败。 |
+| 明确不覆盖范围 | 不推断官方未返回的显示名或正文，不把头像/标题持久化；原站新 serializer 字段仍需新增脱敏 fixture 后接入。 |
+
+## `REG-NOTIFY-012` NodeSeek 缺失远端 ID 的 fallback 泄露且不稳定
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/03`、`MORE-02` |
+| 用户症状 | NodeSeek 某些消息行没有远端 row ID 时，列表重排或标题/预览编辑会产生新本地 ID，导致重复 Android 摘要；私信对方 UID 还可能进入持久化 delivered IDs。 |
+| 触发条件 | adapter 用列表序号、counterpart ID 或可变 title/preview 构造 fallback，而这些 ID 会进入 Query key 与最多 200 条投递水位。 |
+| 根因 seam | `src/sources/nodeseek/notifications.ts` 的 `rowNotification` 远端 ID选择、`stableFallbackId` 输入和私信 target/持久化 identity 分离。 |
+| 必须保持的行为 | 有真实 row/comment/message ID 时优先使用；缺失时只散列稳定且非敏感的原站位置/时间字段，不使用列表顺序、actor/counterpart、标题或预览。私信 counterpart 只留在内存 target 供会话读取，不进入持久化通知 ID；没有足够稳定输入时保守丢弃该行。 |
+| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的四组 `REG-NOTIFY-012` 要求缺 ID 私信的 item ID 不含 counterpart，mention 列表反序后按标题映射的 ID 不变且不含 actor ID，标题/预览修改后 ID 仍相同；两个同 timestamp、不同会话且均无远端 ID 的行必须一起保守丢弃，不能碰撞成一个条目或改用 participant-derived hash。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + 隐私边界：adapter fixture 同时证明稳定性和不持久化敏感输入；只测去重 store 或日志脱敏不能发现 ID 自身泄露。 |
+| Replay 或真实验收路径 | 原站缺 ID 行不可作为稳定 Live 前置，本回归以脱敏 fixture 为最低证据；真实出现时只观察两次只读刷新 ID/摘要行为，不输出 UID，未执行记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复 index、counterpart/actor ID、title 或 preview 参与 fallback，编号测试必须因重排、编辑或隐私断言失败。 |
+| 明确不覆盖范围 | 不持久化完整行来换取稳定，不对缺少任何稳定字段的消息伪造 ID；会话详情仍需要内存 counterpart target。 |
+
+## `REG-NOTIFY-013` 消息条目读屏文案缺少动作
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01`；共享无障碍基线 |
+| 用户症状 | TalkBack 聚焦消息条目时只听到来源、已读状态、参与者和标题，不知道对方是提到、回复、私信还是系统互动。 |
+| 触发条件 | row 的 accessibility label 未复用可见 UI 已使用的 notification kind→action 映射。 |
+| 根因 seam | `src/features/notifications/notificationPresentation.ts` 的 `notificationAccessibilityLabel` 与 `notificationActionText`。 |
+| 必须保持的行为 | 单条读屏文案按来源、已读状态、actor、动作、标题顺序一次播报；未知类型使用“其他消息”动作，不丢失条目。可见文本、点击行为和 Android 摘要隐私不变。 |
+| 精确失败 oracle | `src/features/notifications/notificationPresentation.test.ts` 的 `REG-NOTIFY-013` 对 NodeSeek 未读回复要求精确文案“NodeSeek，未读，张三，回复了你，回复了你的主题”；`tests/ui/notifications/notifications-screen.test.tsx` 通过同一 label 点击真实 row。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯映射固定准确文案，RNTL固定 Pressable 实际采用该 label；只看可见 actor/action 两段文字不能证明读屏结果。 |
+| Replay 或真实验收路径 | 匹配 APK 开启 TalkBack，聚焦不同类型的只读消息行，确认一次读完来源、状态、actor、动作和标题；本轮未执行时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 从 label 删除 action、另写与可见动作不一致的映射或把整行拆成多个可聚焦片段，编号测试或 TalkBack 验收必须失败。 |
+| 明确不覆盖范围 | 不重写全 App 读屏顺序，不把正文/预览加入 label，也不改变系统通知朗读内容。 |
+
+## `REG-NOTIFY-014` 短来源 Tab 可点击区域不足 48dp
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01`；共享 `NAV-01` 选择控件 |
+| 用户症状 | 消息页“全部”“妖火”“小隐寺”等短来源 Tab 点按区域过窄或过矮，视觉上能看到但单手难以稳定点击。 |
+| 触发条件 | `PillRail variant="tabs"` 只按文字宽度布局，缺少双轴最小尺寸；短中文标签最明显。 |
+| 根因 seam | `src/ui/controls/SelectionControls.tsx` 的共享 tab style，而不是消息页私有 padding。 |
+| 必须保持的行为 | tabs 视觉与触控布局至少 48dp×48dp，继续保留现有间距、下划线、横向滚动、字体缩放和 `hitSlop`；pills/subtabs 的既有紧凑几何不被顺带放大。 |
+| 精确失败 oracle | `tests/ui/shared/accessibility-basics.test.tsx` 的 `REG-NOTIFY-014` 渲染短“全部”tab并 flatten 实际 style，要求 `minWidth>=48`、`minHeight>=48`。修复前至少一个轴不足。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 固定真实共享控件布局；像素截图或只断言 `hitSlop` 不能证明布局双轴达到 48dp。 |
+| Replay 或真实验收路径 | 匹配 APK 在默认/大字号、浅/深色下逐个点击五个来源 Tab，确认无误触且横向滚动正常；未执行设备检查时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 删除任一最小轴、只给消息页外层加不可点击 padding，或把所有 pill/subtab 一并撑大，编号测试或相邻控件回归必须失败。 |
+| 明确不覆盖范围 | 不重新设计来源栏、不增加第二排标签、不改变颜色或动画；其他小点击目标仍按各自回归处理。 |
+
+## `REG-NOTIFY-015` 聚合消息页重试一个失败来源会重读或覆盖其他站
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01` |
+| 用户症状 | “全部”消息页有多个站点失败时只显示一个笼统重试；点击后可能重新请求全部来源，导致其他站已显示的可信消息闪动、消失或被覆盖。 |
+| 触发条件 | 聚合 infinite query 的任一页包含一个或多个来源错误，用户点击其中一个来源的重试。 |
+| 根因 seam | `NotificationsScreen` 的来源错误投影与 `NotificationRoute.retrySource` 对聚合 infinite query 的定向 patch；不能把来源级恢复退化成整页 `refetch/listAllPage`。 |
+| 必须保持的行为 | 每个失败来源各显示一条紧凑错误和自己的重试入口；点击只以该来源在失败页的 cursor、当前未读筛选调用一次 `listPage(source)`，并只替换该页中该来源的条目、cursor 和错误。其他来源、其他页及其可信数据保持原引用和内容；失败时也只更新该来源错误。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-015` 同时注入 linux.do 与妖火错误，要求分别显示两个错误，点击“重试 linux.do”只回调 `linuxdo` 且不存在笼统重试；`tests/ui/notifications/notifications-route.test.tsx` 的同编号用例预置 NodeSeek 可信页与 linux.do 错误，点击后要求只调用 `listPage('linuxdo', cursor/limit/unreadOnly)`、`listAllPage` 仍为首次的一次，并在原聚合 Query 中恢复 linux.do 结果。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL + 真实 QueryClient 固定屏幕投影、来源请求归属和 infinite query 局部更新；纯 adapter 单测不能证明聚合缓存未被重读。 |
+| Replay 或真实验收路径 | 匹配 APK 的消息总览自然出现 `partial` 时，逐个核对来源级错误与重试；点击一个来源后确认其他站现有条目不闪退、不丢失。第三方失败状态不可稳定制造，条件不满足或未执行设备检查时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复单个笼统按钮、让点击调用 `refetch/listAllPage`、替换整个 infinite query，或清除其他来源/页，任一编号 UI 测试必须失败。 |
+| 明确不覆盖范围 | 不增加自动重试、退避或全局“重试全部”；不改变下拉刷新、单站筛选页重试或来源 adapter 的协议。 |
+
+## `REG-NOTIFY-016` 待确认账号在消息设置中被误报为未登录
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`；共享 `NOTIFY-01/03` |
+| 用户症状 | 同一时刻 More 账号中心显示某站“登录状态待确认”，消息通知设置却显示“未登录；开关意图会保留”，让已登录用户误以为账号丢失。 |
+| 触发条件 | 账号 identity probe 正在进行，`identityTrust='pending'`，而基础 session 尚未或暂时不能确认 `isLoggedIn`。2026-08-03 在匹配候选 APK 的妖火账号上实际复现；同屏小隐寺正确显示“需升级授权”。 |
+| 根因 seam | `NotificationScreens.sourceSettingStatus` 与 `NotificationsRoute.sourcePending` 都把 pending 状态错误地附加了 `isLoggedIn` 前提；pending 本身就是统一身份模型的权威暂态，不能再由基础登录布尔值降级。 |
+| 必须保持的行为 | 任一来源只要 `identityTrust='pending'` 就显示“账号确认中；开关意图会保留”，暂停后台读取并保留意图；只有 `identityTrust='none'` 或确认匿名才显示未登录。小隐寺旧 scope 仍优先显示升级授权。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-016` 构造 `isLoggedIn=false, identityTrust='pending'` 的妖火 session，要求设置页显示一条“账号确认中；开关意图会保留”且其余三站仍为未登录；`tests/ui/notifications/notifications-route.test.tsx` 用同一状态进入妖火筛选，要求显示“账号确认中”、不显示“账号尚未就绪”且不发列表请求。两处修复前均找不到确认中文案。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 固定实际设置页状态投影；session reducer 或 adapter 单测不能证明用户看到的文案。 |
+| Replay 或真实验收路径 | 匹配 APK 在账号中心自然出现“登录状态待确认”时进入消息通知设置，要求同站显示“账号确认中”；状态依赖第三方 probe 时机，条件不满足不强制制造登录变化。 |
+| 负向验证方式 | 任一入口恢复 `isLoggedIn && identityTrust==='pending'`、把 pending 压成布尔未登录或单独猜测 Cookie，编号 UI 测试必须失败。 |
+| 明确不覆盖范围 | 不改变账号 probe、登录判定或自动重试；只修正统一 pending 状态在设置页的投影。 |
+
+## `REG-NOTIFY-017` 小隐寺消息授权按钮在不可见页面后方启动
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-06`；共享 `NOTIFY-01/03` |
+| 用户症状 | 小隐寺已登录但只有旧 `read,write` scope 时，点击消息页“升级消息授权”后页面完全不变，看起来像按钮失效。 |
+| 触发条件 | 用户从小隐寺消息空态或消息通知设置发起 scope 升级；Device Code 的验证码、等待、取消和失败反馈只渲染在 More 的小隐寺账号面板。2026-08-04 在身份匹配 APK 上复现，点击结果为 `changedFromBefore=false`；返回 More 后才看到“重新授权已过期，原授权仍然有效”。 |
+| 根因 seam | `useAppRuntime` 把 auth controller 的原始 `beginAuthorization` 直接交给 Notifications 与 Topic route，授权 workflow 虽已运行，当前 native stack 却没有可见承载面。所有非 More 调用方必须经同一个可见授权入口。 |
+| 必须保持的行为 | 点击升级后先 pop 到现有 `MainTabs → more`，再启动 Device Code；请求中或等待时账号中心自动展开并选中小隐寺，验证码、取消和错误继续复用既有授权面板。旧 credential、登录态和消息开关意图不清除；不自动打开浏览器或完成授权。 |
+| 精确失败 oracle | `src/app/AppNavigator.test.ts` 的 `REG-NOTIFY-017` 要求共享入口先 dispatch `POP_TO MainTabs({screen:'more'})`，再调用一次 `beginAuthorization`；修复前该入口不存在。`tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-005` 继续固定两个消息入口会调用升级 action，`tests/ui/more/more-screen.test.tsx` 固定 waiting 状态显示授权验证码。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：导航命令测试固定调用顺序，RNTL 分别固定消息按钮与既有授权面板；只测 controller 不能证明用户能看到反馈。 |
+| Replay 或真实验收路径 | `tests/device/notifications-readonly.ad` 仍保持只读，不自动创建 Device Code。匹配 APK、保留旧 scope 的受监督设备验收从消息页点击升级，必须直接回到 More 的小隐寺授权面板并看到“正在创建安全授权请求”、验证码或明确错误；若生成 pending，验收后点击“取消”恢复旧授权。真实 Google / Discord 确认不由 Agent 执行。 |
+| 负向验证方式 | 恢复把 raw `beginAuthorization` 直接传给 Notifications/Topic、先开始授权但不离开消息 stack，或新建一套消息专用 Device Code UI，编号测试或设备原路径必须失败。 |
+| 明确不覆盖范围 | 不改变 Device Code 协议、scope、轮询、凭据迁移、失败回滚或系统浏览器行为；只修复非 More 入口与既有可见授权面的连接。 |
+
+## `REG-NOTIFY-018` 前台新消息只亮圆点而不显示 Android 摘要
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-03`；共享 Android 通知投递状态机 |
+| 用户症状 | App 正在前台时，NodeSeek 等站已收到新回复，More 圆点和未读数会变化，但系统通知栏、横幅和声音均没有提醒。 |
+| 触发条件 | 前台 unread snapshot 成功发现消息变化；旧实现只持久化计数，只有 WorkManager background worker 会读取稳定 ID 并调用 `expo-notifications`。即使前台主动 schedule，本地通知没有 foreground handler 时 Expo 也默认不展示。 |
+| 根因 seam | `src/features/notifications/useNotificationsRuntime.ts` 的前台刷新与 `src/platform/notifications/notificationWorker.ts` 投递状态机未连接，以及 `index.ts`/`src/platform/notifications/notificationSystem.ts` 缺少前台展示 handler。 |
+| 必须保持的行为 | 前台成功刷新调用与后台相同的 identity、baseline、最多 60 条扫描、200-ID 去重和每站摘要状态机；只投递新 @我、回复和私信。消息中心可见时同样展示系统摘要，不能只推进水位；本机旧未读、首次/重新启用和换号继续静默。前台不调用 `ToastAndroid`，摘要不含标题、正文或私信内容。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 的 `REG-NOTIFY-018` 用已授权、已建立 baseline 的 NodeSeek 前台 snapshot，要求调用共享 worker 且只传成功来源；修复前调用数为 0。`src/platform/notifications/notificationSystem.test.ts` 要求安装的 foreground handler 返回 show banner/list、播放默认声音且不设置 badge；修复前不存在 handler。worker 既有 baseline/重复运行测试继续固定旧消息不补发。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：RNTL 固定真实 runtime 刷新接线，Vitest 固定 Expo handler 和共享 worker 去重；仅观察 More 圆点或直接用 ADB 发测试通知不能证明业务链路。 |
+| Replay 或真实验收路径 | 匹配 APK 先在前台完成静默 baseline，再由另一个账号产生一条新回复；普通页约五分钟窗口和消息中心约一分钟窗口都必须能出现 NodeSeek 摘要。随后保持 App 后台，用另一条新消息验证 WorkManager 路径。真实消息均需外部协作；本轮没有新消息时记 `LIVE_PASS NOT_VERIFIED`。 |
+| 负向验证方式 | 删除 runtime→worker 接线、恢复未读计数猜测、移除 foreground handler、在消息中心可见时跳过 schedule，或让前后台使用两套 delivered IDs，任一编号测试或设备验收必须失败。 |
+| 明确不覆盖范围 | 不承诺前台实时推送，不增加 FCM、云端中继、Toast/Snackbar、quiet hours 或消息类型开关；普通前台仍按约五分钟轮询。 |
+
+## `REG-NOTIFY-019` 待确认或退出后旧聚合缓存仍暴露私有消息
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`、`NOTIFY-01`；共享私有 Query 边界 |
+| 用户症状 | 某站身份进入 pending 后，单站页仍显示上次账号的私有消息而不是“账号确认中”；明确退出或换号后，单站 Query 已清除，但“全部”聚合 Query 仍保存旧账号条目。 |
+| 触发条件 | unavailable source 的 query 被禁用但 React Query 保留 data，Screen 仍直接渲染 `items`；identity 清理只按 `['forum', source, 'notifications']` 删除，未覆盖 `['forum','all','notifications']`。 |
+| 根因 seam | `NotificationScreens` 的 active-source 可见性门禁与 `useNotificationsRuntime` 的 canonical identity cache eviction。 |
+| 必须保持的行为 | pending/unknown/challenge 继续保留可信 cache 和投递水位，但 UI 只渲染当前 active 来源的条目；明确退出或换号时清该站单站 Query，并删除可能含该站旧身份的聚合消息 Query。其他站单站 Query、水位和系统摘要不受影响。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-019` 给 pending NodeSeek 注入旧 row，要求显示“账号确认中”且该 row 的 accessibility label 不存在；修复前仍显示 row。`tests/ui/notifications/notifications-runtime.test.tsx` 的明确退出用例同时预置单站和 aggregate key，要求两者均清除；修复前 aggregate data 保留。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL + 真实 QueryClient 同时固定“保留但不可见”和“确认退出后删除”两种不同语义；只断言请求 disabled 或单站 key 清除不足。 |
+| Replay 或真实验收路径 | 不在主登录模拟器人为退出、换号或制造 challenge；身份匹配 APK 若自然出现 pending，可确认页面只显示账号确认中。退出/换号设备验证未获授权时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | Screen 恢复直接使用未过滤 `items`、pending 时删除水位、退出只删 source prefix 或为清聚合而清除其他站单站 Query，编号测试必须失败。 |
+| 明确不覆盖范围 | 不把 pending 当退出，不允许 pending 发私有请求，也不迁移旧账号条目到新账号；聚合 cache 采用安全清除后按当前身份重取。 |
+
+## `REG-NOTIFY-020` 小隐寺 scope 检查阻塞四站身份与后台资格
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-06`、`NOTIFY-01/03` |
+| 用户症状 | 小隐寺 SecureStore 读取卡住时，NodeSeek、linux.do 和妖火也无法绑定/清理消息身份；只有旧 `read,write` scope 的小隐寺账号还会让设置显示“后台检查已启用”并注册一个实际不能读取任何来源的任务。 |
+| 触发条件 | 四站 identity reconciliation 被全局 `xiaoyinsiScopeChecked` gate 阻断；后台 eligibility 只检查 intent 与旧 identity，不检查当前 active 来源和 `notifications` scope。 |
+| 根因 seam | `useNotificationsRuntime` 的来源级 scope 生命周期，以及 `syncNotificationBackgroundRegistration` 的 eligible-source 输入。 |
+| 必须保持的行为 | 小隐寺 credential 读取只影响小隐寺 active/升级状态，reject 必须结算为缺 scope；其他三站身份独立及时 reconcile。后台注册和 `backgroundEnabled` 只统计当前 confirmed、可读且 scope 满足的 active 来源；旧 scope、pending、未登录或权限拒绝保留用户意图但任务暂停。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 的两个 `REG-NOTIFY-020` 分别让 credential Promise 永不结算仍要求 NodeSeek identity 落盘，以及只给旧 scope 小隐寺时要求 `backgroundEnabled=false`、registration 收到空 eligible sources；修复前分别为 identity 未定义和 enabled=true。`src/platform/notifications/notificationSystem.test.ts` 固定空 eligibility 不注册。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：runtime hook 固定来源隔离与可见状态，system 单测固定 native task registration 决策；headless worker 自身跳过旧 scope不能证明空任务没有被注册或 UI 没有误报。 |
+| Replay 或真实验收路径 | 匹配 APK 保留现有小隐寺旧 scope，消息设置应显示需升级且后台是否启用由其他可用站决定；不发起 Device Code。SecureStore 人工故障不在主设备制造，未执行记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复全局 scope gate、credential reject 不结算、registration 忽略 eligible sources，或 `backgroundEnabled` 只看旧 identity，编号测试必须失败。 |
+| 明确不覆盖范围 | 不为 SecureStore 增加超时/重试，不自动升级授权，不清旧 credential；只隔离来源并修正调度资格。 |
+
+## `REG-NOTIFY-021` 聚合来源重试可串号并截断后续分页
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01`；共享 canonical identity 与 infinite query |
+| 用户症状 | “全部”列表重试失败来源时若恰好换号，返回的新账号消息可能被写进旧账号 Query；若其他来源已翻到后续页，重试恢复的来源即使还有下一页，“加载更多”也不会再请求它。 |
+| 触发条件 | route 手工调用 `gateway.listPage`，没有 route-owned `AbortSignal`/expected identity；成功只修改失败页的 cursor，而 React Query 的 `getNextPageParam` 只读取最后一页。 |
+| 根因 seam | `notificationGateway.listPage` 的 exact identity 门禁和 `NotificationRoute.retrySource` 对 aggregate infinite-data cursor 所有权。 |
+| 必须保持的行为 | 每次来源重试捕获发起时 `identityKey`，创建并在 identity/source/unmount 时取消的 controller；gateway 在 adapter 发网前检查 signal 与 exact identity。成功仍只替换失败页的该来源数据/错误，但若失败页不是末页，恢复 cursor 同步传播到末页并重算 `hasMore`，使下一次聚合分页继续该来源。 |
+| 精确失败 oracle | `src/sources/notificationGateway.test.ts` 的 `REG-NOTIFY-021` 让当前 NodeSeek 身份与 retry expected key 不同，要求 reject 且 adapter 零调用；修复前 promise 成功。`tests/ui/notifications/notifications-route.test.tsx` 要求 retry 传 expected key/signal，并在预置第二页后把 `linux-next` 传播到最后一页、`hasMore=true`；修复前参数缺失且末页仍为 null/false。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：gateway 单测固定最后发网门禁，真实 QueryClient RNTL 固定多页数据结构；只测首屏重试成功会遗漏分页断链。 |
+| Replay 或真实验收路径 | 真实换号与稳定制造“首屏单站失败、其他站已翻页”都不在主登录设备执行；匹配 APK 自然出现 partial 时只读核对单站重试，完整竞态由自动测试作为最低证据。 |
+| 负向验证方式 | 删除 expected identity/signal、让 retry 调用全局 refetch、只更新失败页 cursor、不重算末页 `hasMore`，编号测试必须失败。 |
+| 明确不覆盖范围 | 不增加自动重试、全局 retry、跨来源 cursor 合并协议或后台分页变化；只修正现有定向 retry 的身份与 cursor 所有权。 |
+
+## `REG-NOTIFY-022` 后台任务注册竞态让旧开关意图覆盖最新状态
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-03`；共享 Android 后台调度生命周期 |
+| 用户症状 | 快速开关消息通知后，设置显示已关闭但 WorkManager 仍注册，或显示已开启但后台任务已经被旧注销操作移除，后续后台新消息没有提醒。 |
+| 触发条件 | 两次 `syncNotificationBackgroundRegistration` 同时读取旧 registration 状态，较早的 register/unregister 在较新的意图之后才完成。 |
+| 根因 seam | `src/platform/notifications/notificationSystem.ts` 把“读取当前注册状态”和“应用目标状态”作为可并发的两段 native 操作。 |
+| 必须保持的行为 | 注册同步按调用顺序串行；前一次失败不能卡死队列，最后一次调用的权限、全局意图和 eligible sources 决定最终 registration。worker 仍在执行时继续由自身状态门禁 fail-closed。 |
+| 精确失败 oracle | `src/platform/notifications/notificationSystem.test.ts` 的 `REG-NOTIFY-022` 分别阻塞旧 register 与旧 unregister，再提交相反的新意图；最终 native registration 必须与最后一次调用一致。修复前两个交错分别遗留已注册和已注销状态。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：必须控制 native Promise 的完成顺序；顺序点击设置页或只断言调用参数无法稳定复现。 |
+| Replay 或真实验收路径 | 一次性 AVD 可快速开关后用 JobScheduler 核对最终任务状态；主登录设备不靠竞态操作验收，未执行记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 删除 registration queue，恢复每次独立 `isTaskRegisteredAsync → register/unregister`，编号测试必须失败。 |
+| 明确不覆盖范围 | 不提高 WorkManager 调度频率、不承诺系统准点运行，也不把后台任务是否已被系统执行等价为注册状态。 |
+
+## `REG-NOTIFY-023` 快速连续换号时旧身份 effect 覆盖最新水位
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`、`NOTIFY-03`；共享账号绑定水位 |
+| 用户症状 | A→B→C 快速身份变化后，UI 已显示 C，但持久化通知身份又被较慢的 A→B 清理写成 B；后续 C 的 worker 因身份不一致持续跳过。 |
+| 触发条件 | 旧 identity effect 的 `dismissSourceNotification` 较晚返回；React cleanup 只阻止最终 commit，没有阻止随后的 reset 与 Query 清理。 |
+| 根因 seam | `src/features/notifications/useNotificationsRuntime.ts` 的 identity reconciliation 缺少每个异步副作用后的当前 generation 门禁。 |
+| 必须保持的行为 | 身份 effect 失效后不得再 reset 水位或删除 Query；每个可等待边界返回后先确认当前 effect，只有最新身份能够落盘、清缓存并同步后台资格。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 的 `REG-NOTIFY-023` 阻塞 A→B 的摘要撤销，先让 A→C 完成再释放旧 Promise，最终重新读取的持久化 identity 必须仍为 C；修复前变回 B。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要真实 Hook effect cleanup、AsyncStorage 队列和 deferred Promise；纯 store 单测不能覆盖 React 生命周期。 |
+| Replay 或真实验收路径 | 不在主登录设备制造快速换号；另获授权的一次性账号环境可在最终 C 身份下等待新消息。未执行时由自动竞态测试作为最低证据。 |
+| 负向验证方式 | 移除 dismiss/reset 后的 current guard，编号测试必须把 C 覆盖为 B。 |
+| 明确不覆盖范围 | 不改变 Account canonical reconciliation、pending/unknown 保留语义或站点登录协议。 |
+
+## `REG-NOTIFY-024` 发送期间关闭通知或换号后旧摘要复活
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-03`；共享 Android 摘要与账号隐私 |
+| 用户症状 | 用户关闭通知或切换账号后，已经清除的旧账号摘要又出现在通知栏；旧 worker 还可能消耗该条投递 ID，之后无法正确重试。 |
+| 触发条件 | worker 只在调用 Android 前复核状态；Android schedule 与 identifier 保存之间发生关闭/换号时，没有发送后的补偿检查。所有账号共用同一个 source identifier 还会让旧账号清理误删新账号摘要。 |
+| 根因 seam | `src/platform/notifications/notificationWorker.ts` 的投递提交阶段与 `src/platform/notifications/notificationSystem.ts` 的 per-source identifier。 |
+| 必须保持的行为 | 每条摘要 identifier 同时绑定来源和公开 identity key；Android 返回后再次读取最新开关与身份。状态已变时撤销本次 exact identifier、释放本轮 ID 且不保存 identifier；schedule 或 identifier 保存失败也执行同一补偿。退出时继续兼容清理旧版 source-only identifier。 |
+| 精确失败 oracle | `src/platform/notifications/notificationWorker.test.ts` 的 `REG-NOTIFY-024` 在 Android 展示回调中关闭全局开关，要求最终 presented 集合为空、rollback 一次且 identifier 不保存；修复前 delivered=1 且摘要残留。`src/platform/notifications/notificationSystem.test.ts` 固定账号级 identifier 与旧 identifier 清理。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：worker 状态机和 Expo system adapter 都要覆盖；只检查发送前门禁会遗漏 schedule 返回后的窗口。 |
+| Replay 或真实验收路径 | 一次性 AVD 可在 mock/development 注入的延迟窗口中关闭通知并检查通知栏；不要求朋友配合制造毫秒级竞态。未执行记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 删除发送后 load/撤销、恢复 source-only identifier，或 identifier 保存失败不撤销，编号测试必须失败。 |
+| 明确不覆盖范围 | 不把 Android schedule 变成云端事务；目标是本机可补偿的一致性，不承诺系统 UI 零帧延迟。 |
+
+## `REG-NOTIFY-025` 消息中心可见时跳过系统通知并永久吞掉投递
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-03`；共享前台摘要展示策略 |
+| 用户症状 | App 在前台且消息中心可见时收到新回复，列表会刷新但 Android 系统通知不出现；投递 ID 已被记录，离开页面或重启后也不会补发。 |
+| 触发条件 | foreground worker 在消息中心可见时用伪 identifier 代替 `Notifications.scheduleNotificationAsync`，但仍提交水位与 identifier。 |
+| 根因 seam | `src/features/notifications/useNotificationsRuntime.ts` 提供给共享 worker 的 foreground notification sink。 |
+| 必须保持的行为 | 用户已开启通知且权限有效时，前台所有页面（包括消息中心）发现新的 @我、回复或私信都必须调用 Android system sink；消息中心可见性只控制 60 秒刷新频率，不能改变投递提交。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 的 `REG-NOTIFY-025` 在 worker 已启动后把消息中心设为可见，再调用该轮 system sink；`replaceSourceNotification` 必须收到 exact source/digest/identity identifier 并调用一次。修复前调用次数为 0。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须经过 Hook ref 与异步 worker dependency；静态检查 callback 或只测固定页面状态不足。 |
+| Replay 或真实验收路径 | 匹配 APK 保持消息中心可见，由外部账号产生一条新消息，确认列表刷新且 Android 通知栏仍出现每站摘要；没有可控新消息时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复任何基于 `centerVisible` 返回伪 identifier 或跳过 system sink 的分支，编号测试必须失败。 |
+| 明确不覆盖范围 | 不保证 OS 展示时延，不验证系统通知 UI 皮肤；普通页与消息中心仍保持既定约五分钟/一分钟刷新。 |
+
+## `REG-NOTIFY-026` 单次 snapshot 写入失败阻断全部前台投递
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/03`；共享来源隔离与前台投递 |
+| 用户症状 | 某次未读计数已成功读取，但一次 AsyncStorage 写入失败后，本轮所有成功来源都不进入 worker；用户至少再等一个轮询周期才能收到提醒。 |
+| 触发条件 | runtime 用 `Promise.all(writes)` 作为启动 worker 的前置；任一 snapshot write reject 直接走统一 catch。 |
+| 根因 seam | `src/features/notifications/useNotificationsRuntime.ts` 的 snapshot 持久化与成功来源投递编排。 |
+| 必须保持的行为 | snapshot 写入按来源 all-settled，任何单次失败不阻止成功读取来源进入共享 worker；worker 自己仍通过 store record 决定是否能安全持久化和投递，持续存储故障继续 fail-closed。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 的 `REG-NOTIFY-026` 让首次 snapshot `setItem` reject，仍要求已成功读取的 NodeSeek 进入 worker；修复前 worker 调用数为 0。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要真实 runtime 编排与存储 Promise；只测 worker 来源隔离无法发现 worker 根本没有被调用。 |
+| Replay 或真实验收路径 | 不在主设备破坏 AsyncStorage；该故障由确定性自动测试覆盖，真实新消息验收只验证正常存储路径。 |
+| 负向验证方式 | 把 `Promise.allSettled` 恢复为 `Promise.all(...).catch`，编号测试必须超时失败。 |
+| 明确不覆盖范围 | 不把持续存储失败降级为无去重通知；worker record 失败时仍不得发送。 |
+
+## `REG-NOTIFY-027` 消息列表失焦后隐藏页面仍每分钟读取站点
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/03`；共享消息 route 生命周期 |
+| 用户症状 | 从消息列表进入详情或完整主题后，已隐藏但仍 mounted 的列表继续每分钟访问四站，造成无意义请求和与当前页面不一致的刷新。 |
+| 触发条件 | `useFocusEffect` 只更新中心可见标志，Infinite Query 的 `enabled` 和 `refetchInterval` 不依赖 route focus；`refetchIntervalInBackground=false` 只识别 AppState。 |
+| 根因 seam | `src/features/notifications/NotificationRoute.tsx` 的 native stack focus 与列表 Query 生命周期。 |
+| 必须保持的行为 | 只有消息列表 route 当前 focused 时启用列表 Query 和 60 秒 interval；push 详情/Topic 后停止读取，返回列表时恢复并按 stale 规则刷新。runtime 普通页面 snapshot 仍独立保持约五分钟策略。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-route.test.tsx` 的 `REG-NOTIFY-027` 在真实 native stack 中先加载消息列表，再 push 到 Other 并触发该 Query refetch；调用数必须保持 1。修复前隐藏 route 再请求一次。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须保留 mounted route 并切换真实 focus；卸载组件或只断言 `setCenterVisible(false)`不能证明 Query 停止。 |
+| Replay 或真实验收路径 | 匹配 APK 从消息列表进入详情/主题并停留超过一分钟，结合脱敏网络诊断确认没有列表轮询；未执行时由导航 Query 测试作为最低证据。 |
+| 负向验证方式 | 从 Query `enabled/refetchInterval` 移除 `useIsFocused`，编号测试必须出现第二次 `listAllPage`。 |
+| 明确不覆盖范围 | 不暂停详情页自身按用户动作发起的读取，也不改变 App 进入后台时的 WorkManager 调度。 |
+
+## `REG-NOTIFY-028` NodeSeek 省略 `viewed` 的新消息被当成已读
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/03`；NodeSeek 列表解析与 Android 摘要投递 |
+| 用户症状 | More 已显示“有未读 · 后台通知已开启”，Android 权限和 channel 正常，但朋友新发的 @我/回复没有系统通知。 |
+| 触发条件 | NodeSeek 通知列表的新行省略 `viewed`；未读计数接口仍返回非零。 |
+| 根因 seam | `src/sources/nodeseek/notifications.ts` 把缺失的已读标记默认成 `true`，worker 因 `unread=false` 过滤该行。 |
+| 必须保持的行为 | 只有原站明确返回 `viewed/is_read/read=true` 才按已读处理；字段省略按未读。读取列表和系统摘要均不得标记远端已读。 |
+| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的 `REG-NOTIFY-028` 解析不含 `viewed` 的真实形态行，必须得到 `unread=true`；修复前稳定得到 `false`。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：adapter fixture 固定字段省略语义；真实 Android 摘要另用安装后新消息验证。 |
+| Replay 或真实验收路径 | 保持 App 在消息中心之外，外部账号产生一条新 @我/回复，触发恢复同步后只检查 Android NotificationManager；不点击消息行。 |
+| 负向验证方式 | 把缺失标记默认值改回已读，编号测试必须失败。 |
+| 明确不覆盖范围 | 不推断已明确返回 `viewed=true` 的行，不执行真实逐条/批量已读。 |
+
+## `REG-NOTIFY-029` NodeSeek 同一通知记录的新回复被投递水位去重
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/02/03`；NodeSeek 列表身份、详情定位与 Android 摘要去重 |
+| 用户症状 | 朋友再次回复同一帖子后 More 能看到未读，但 Android 通知栏没有新的系统通知。 |
+| 触发条件 | NodeSeek 对同一通知记录复用列表行 `id`，同时返回新的 `comment_id`；本机投递水位已经记录旧行 ID。 |
+| 根因 seam | `src/sources/nodeseek/notifications.ts` 优先用列表行 `id` 生成统一消息 ID，把远端 `markViewed` 记录 ID 与每条回复的稳定身份混为一体，worker 将新回复误判为已投递。 |
+| 必须保持的行为 | NodeSeek @我/回复以 `comment_id`（兼容 `message_id`）作为列表、详情和投递身份；原始列表行 `id` 只保存为 `remoteReadId` 供真实 `markViewed` 使用。私信仍按其真实消息行 ID。 |
+| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的 `REG-NOTIFY-029` 输入相同 `id=12`、不同 `comment_id=98/99`，必须得到不同的 `reply-to-me:98/99`，且两者 `remoteReadId` 均为 `12`；修复前两者都为 `reply-to-me:12`。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：adapter fixture 固定两个身份字段的职责；匹配 APK 在消息中心外触发同步并由 Android NotificationManager 确认真实系统通知。 |
+| Replay 或真实验收路径 | 不打开未读条目；保持 Feed 可见，覆盖安装修复 APK 后触发启动/恢复同步，只检查通知栏存在 `com.wz.reader` 通知。 |
+| 负向验证方式 | 恢复原始列表行 ID 优先级，编号测试必须失败并把两条回复重新折叠为同一 ID。 |
+| 明确不覆盖范围 | 不执行真实逐条/批量已读，不点击 Android 摘要，也不改变私信 ID 协议。 |
+
+## `REG-NOTIFY-030` NodeSeek 自己发出的私信被误报为对方新私信
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/03`；NodeSeek 私信未读语义与 Android 摘要 |
+| 用户症状 | 用户刚给对方发送私信后，App 却显示“对方发来私信”并触发一条新的 Android 系统通知。 |
+| 触发条件 | NodeSeek 会话列表最后一条由当前账号发送，`viewed=false` 表示对方尚未查看。 |
+| 根因 seam | `src/sources/nodeseek/notifications.ts` 的列表解析只看 `viewed`，没有像详情未读 ID 逻辑一样同时校验 `sender_id !== ownUserId`。 |
+| 必须保持的行为 | 私信会话行只有在发送者明确为对方且原站未读时才标记 `unread=true`；自己发送、发送者缺失或原站已读均不得进入系统投递，但仍可作为已读会话显示在消息中心。 |
+| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的 `REG-NOTIFY-030` 输入 `sender_id=当前账号`、`viewed=false`，必须得到同一会话条目且 `unread=false`；修复前稳定得到 `true`。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：adapter fixture 固定发送方向与 `viewed` 的组合语义；无需真实发送私信。 |
+| Replay 或真实验收路径 | 不要求真实写入；若已有自己发出的未读回执会话，可只读确认消息中心显示为已读且 NotificationManager 无新增摘要，否则保持 fixture 证据。 |
+| 负向验证方式 | 把私信 `unread` 恢复为仅取反 `viewed`，编号测试必须失败。 |
+| 明确不覆盖范围 | 不改变私信会话 ID、详情加载或真实 markViewed 协议，不发送测试私信。 |
 
 ## 待确认观察
 

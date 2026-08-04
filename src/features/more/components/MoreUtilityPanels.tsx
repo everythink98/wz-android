@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Text, View } from 'react-native';
-import { Bug, DatabaseBackup, Server, Settings } from 'lucide-react-native';
+import { Bell, Bug, DatabaseBackup, Server, Settings } from 'lucide-react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '@/platform/network/networkProxy';
 import { AppButton } from '@/ui/controls/ButtonControls';
@@ -19,6 +19,10 @@ function appearanceSummary(settings: ReaderSettings) {
 }
 
 export type MoreUtilityCapabilities = {
+  notifications: {
+    open: () => void;
+    summary: string;
+  };
   backup: {
     busy: boolean;
     exportFile: () => void;
@@ -59,6 +63,15 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
   return (
     <>
       <View style={styles.groupList}>
+        <View testID="more-notifications-row" style={styles.menuRowDivider}>
+          <MenuButton
+            accessibilityLabel={`消息通知，${runtime.notifications.summary}`}
+            icon={Bell}
+            label="消息通知"
+            value={runtime.notifications.summary}
+            onPress={runtime.notifications.open}
+          />
+        </View>
         <MenuButton icon={Server} label="服务器代理" value={runtime.proxy.summary} onPress={runtime.proxy.open} />
       </View>
       <NetworkProxyModal
