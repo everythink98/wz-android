@@ -4,13 +4,14 @@ import React from 'react';
 import { NativeModules, StyleSheet, Text } from 'react-native';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
-import { FORUM_VIDEO_TAG } from '@/domain/forum/html';
+import { FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import type { TopicDetail } from '@/domain/forum/models';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { FORUM_STICKER_TAG } from '@/platform/media/inlineMedia';
 import {
   markOriginalImageDisplayed,
   OriginalImageUpgradeBoundary,
@@ -49,6 +50,7 @@ type MockExpoImageProps = {
   priority?: 'high' | 'low' | 'normal';
   recyclingKey?: string;
   source?: { cacheKey?: string; headers?: Record<string, string>; uri?: string };
+  style?: unknown;
   testID?: string;
   transition?: number;
 };
@@ -212,6 +214,80 @@ function TopicImageHarness({
   ) : null;
 }
 
+function NodeSeekVideoStickerHarness() {
+  const videoUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.webm';
+  const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
+  const nodeSeekTopic: TopicDetail = {
+    ...topic,
+    id: '859086',
+    source: 'nodeseek',
+    url: 'https://www.nodeseek.com/post-859086-1'
+  };
+  const { htmlRenderers } = useHtmlRenderingController({
+    mediaSessionIdentity: 'nodeseek:4',
+    onOpenExternalUrl: noop,
+    onOpenImagePreview: noop,
+    onOpenTopic: noop,
+    onOpenUser: noop,
+    selectedTopic: nodeSeekTopic,
+    settings: readerData.settings,
+    theme,
+    topicDetail: nodeSeekTopic,
+    topicKey: 'nodeseek:859086',
+    webViewBlockMessage: ''
+  });
+  const Renderer = htmlRenderers[FORUM_VIDEO_STICKER_TAG] as unknown as
+    React.ComponentType<Record<string, unknown>> | undefined;
+  return Renderer
+    ? React.createElement(Renderer, {
+        tnode: {
+          attributes: {
+            alt: 'sticker',
+            'data-fallback-src': fallbackUrl,
+            height: '100',
+            src: videoUrl,
+            width: '100'
+          }
+        }
+      } as never)
+    : null;
+}
+
+function NodeSeekImageStickerHarness({ src }: { src: string }) {
+  const nodeSeekTopic: TopicDetail = {
+    ...topic,
+    id: '859086',
+    source: 'nodeseek',
+    url: 'https://www.nodeseek.com/post-859086-1'
+  };
+  const { htmlRenderers } = useHtmlRenderingController({
+    mediaSessionIdentity: 'nodeseek:4',
+    onOpenExternalUrl: noop,
+    onOpenImagePreview: noop,
+    onOpenTopic: noop,
+    onOpenUser: noop,
+    selectedTopic: nodeSeekTopic,
+    settings: readerData.settings,
+    theme,
+    topicDetail: nodeSeekTopic,
+    topicKey: 'nodeseek:859086',
+    webViewBlockMessage: ''
+  });
+  const Renderer = htmlRenderers[FORUM_STICKER_TAG] as unknown as
+    React.ComponentType<Record<string, unknown>> | undefined;
+  return Renderer
+    ? React.createElement(Renderer, {
+        tnode: {
+          attributes: {
+            alt: 'sticker',
+            class: 'sticker',
+            src
+          }
+        }
+      } as never)
+    : null;
+}
+
 function htmlRenderingControllerProps(mediaSessionIdentity: string) {
   return {
     mediaSessionIdentity,
@@ -256,7 +332,7 @@ describe('topic block image loading', () => {
     expect(view.getByText('original paused')).toBeTruthy();
   });
 
-  it('lets the mounted native image view own the body request lifecycle', async () => {
+  it('[REG-TOPIC-064] gives an unknown host the owning forum profile in the native image view', async () => {
     await render(<TopicImageHarness />);
 
     expect(mockUseImage).not.toHaveBeenCalled();
@@ -264,7 +340,15 @@ describe('topic block image loading', () => {
       expect.objectContaining({
         cachePolicy: 'memory-disk',
         priority: 'normal',
-        source: expect.objectContaining({ uri: imageUrl })
+        source: expect.objectContaining({
+          headers: expect.objectContaining({
+            Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+            'Accept-Language': expect.any(String),
+            Referer: 'https://www.yaohuo.me/',
+            'X-WZ-Forum-Media-Source': 'yaohuo'
+          }),
+          uri: imageUrl
+        })
       })
     );
   });
@@ -324,7 +408,7 @@ describe('topic block image loading', () => {
         placeholder: expect.objectContaining({ uri: displayUrl }),
         priority: 'low',
         source: expect.objectContaining({
-          headers: expect.objectContaining({ Referer: 'https://img.example.com/topic' }),
+          headers: expect.objectContaining({ Referer: 'https://www.yaohuo.me/' }),
           uri: originalUrl
         }),
         testID: 'topic-image-original',
@@ -758,6 +842,98 @@ describe('topic block image loading', () => {
       height: 300,
       width: 320
     });
+  });
+
+  it('[REG-TOPIC-064] keeps a video Accept header when the shared media profile is applied', async () => {
+    const videoUrl = 'https://cdn.example.com/topic.mp4';
+
+    await render(
+      <ForumContentVideo
+        mediaContext={{ contentSource: 'nodeseek', sessionIdentity: 'nodeseek:4' }}
+        src={videoUrl}
+        theme={theme}
+      />
+    );
+
+    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8'
+        }),
+        uri: videoUrl
+      })
+    );
+  });
+
+  it('[REG-TOPIC-065] renders transparent NodeSeek video stickers in Chromium without native player churn', async () => {
+    const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
+    const screen = await render(<NodeSeekVideoStickerHarness />);
+
+    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect(latestImageProps(fallbackUrl).source?.uri).toBe(fallbackUrl);
+    expect(mockWebView).toHaveBeenCalledTimes(1);
+    const firstWebViewProps = mockWebView.mock.calls[0][0] as {
+      mediaPlaybackRequiresUserAction?: boolean;
+      onMessage?: (event: { nativeEvent: { data: string } }) => void;
+      source?: { baseUrl?: string; html?: string };
+      style?: unknown;
+      thirdPartyCookiesEnabled?: boolean;
+    };
+    expect(firstWebViewProps.mediaPlaybackRequiresUserAction).toBe(false);
+    expect(firstWebViewProps.thirdPartyCookiesEnabled).toBe(false);
+    expect(firstWebViewProps.source).toEqual(
+      expect.objectContaining({
+        baseUrl: 'https://www.nodeseek.com/',
+        html: expect.stringContaining('https://www.nodeseek.com/static/image/sticker/emoji/13.webm')
+      })
+    );
+    expect(StyleSheet.flatten(firstWebViewProps.style)).toEqual(
+      expect.objectContaining({ backgroundColor: 'transparent', opacity: 0 })
+    );
+
+    await act(() => firstWebViewProps.onMessage?.({ nativeEvent: { data: 'wz-video-sticker-ready' } }));
+    const readyWebViewProps = mockWebView.mock.calls.at(-1)?.[0] as { source?: unknown; style?: unknown };
+    expect(readyWebViewProps.source).toBe(firstWebViewProps.source);
+    expect(StyleSheet.flatten(readyWebViewProps.style)).toEqual(
+      expect.objectContaining({ backgroundColor: 'transparent', opacity: 1 })
+    );
+
+    await screen.rerender(<NodeSeekVideoStickerHarness />);
+    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect((mockWebView.mock.calls.at(-1)?.[0] as { source?: unknown }).source).toBe(firstWebViewProps.source);
+  });
+
+  it('[REG-TOPIC-066] sizes image stickers from decoded dimensions instead of folder guesses', async () => {
+    const rectangularUrl = 'https://www.nodeseek.com/static/image/sticker/xhj/003.png';
+    const squareUrl = 'https://www.nodeseek.com/static/image/sticker/xhj/015.gif';
+    const screen = await render(<NodeSeekImageStickerHarness src={rectangularUrl} />);
+
+    await act(() =>
+      latestImageProps(rectangularUrl).onLoad?.({
+        cacheType: 'none',
+        source: { height: 48, mediaType: 'image/png', url: rectangularUrl, width: 57 }
+      })
+    );
+    expect(StyleSheet.flatten(latestImageProps(rectangularUrl).style)).toEqual(
+      expect.objectContaining({ height: 48, width: 57 })
+    );
+
+    await screen.rerender(<NodeSeekImageStickerHarness src={squareUrl} />);
+    await act(() =>
+      latestImageProps(squareUrl).onLoad?.({
+        cacheType: 'none',
+        source: { height: 82, mediaType: 'image/gif', url: squareUrl, width: 82 }
+      })
+    );
+    expect(StyleSheet.flatten(latestImageProps(squareUrl).style)).toEqual(
+      expect.objectContaining({ height: 82, width: 82 })
+    );
+
+    await screen.unmount();
+    await render(<NodeSeekImageStickerHarness src={squareUrl} />);
+    expect(StyleSheet.flatten(latestImageProps(squareUrl).style)).toEqual(
+      expect.objectContaining({ height: 82, width: 82 })
+    );
   });
 
   it('[REG-ACCOUNT-029] rebuilds the native-managed video source when the media epoch changes', async () => {

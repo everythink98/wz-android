@@ -7,6 +7,8 @@ import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
 
+const VIDEO_ACCEPT = 'video/webm,video/mp4,video/*,*/*;q=0.8';
+
 export function ForumContentVideo({
   headers,
   mediaContext,
@@ -22,6 +24,7 @@ export function ForumContentVideo({
   const requestHeaders = useMemo(
     () => ({
       ...(imageRequestHeadersForUrl(src, { mediaContext }) || {}),
+      Accept: VIDEO_ACCEPT,
       ...(headers || {})
     }),
     [headers, mediaContext, src]

@@ -858,13 +858,11 @@ export function useFeedController({
     if (!feedActive || aggregateIdentityTransitionPending || feedSourceIdentityPending) {
       return;
     }
-    if (feedQuery.isFetching) {
-      notify('列表正在更新');
-      return;
-    }
-    const refreshGeneration = refreshFeedGenerationRef.current;
+    const refreshGeneration = ++refreshFeedGenerationRef.current;
     notify('正在更新列表');
-    const result = await feedQuery.refetch({ cancelRefetch: false });
+    await queryClient.cancelQueries({ queryKey: feedQueryKey, exact: true });
+    if (refreshFeedGenerationRef.current !== refreshGeneration) return;
+    const result = await feedQuery.refetch({ cancelRefetch: true });
     if (refreshFeedGenerationRef.current !== refreshGeneration) {
       return;
     }
@@ -886,7 +884,6 @@ export function useFeedController({
   }, [
     aggregateIdentityTransitionPending,
     feedActive,
-    feedQuery.isFetching,
     feedQuery.refetch,
     feedQueryIdentityBarriers.length,
     feedQueryKey,
@@ -894,6 +891,7 @@ export function useFeedController({
     feedSourceIdentityPending,
     identityBarriers.length,
     notify,
+    queryClient,
     trustedFeedChangedSources?.size
   ]);
 

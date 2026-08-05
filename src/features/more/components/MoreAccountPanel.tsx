@@ -80,7 +80,15 @@ export type MoreAccountCapabilities = {
   };
 };
 
-export function MoreAccountPanel({ runtime }: { runtime: MoreAccountCapabilities }) {
+export function MoreAccountPanel({
+  nodeSeekRecoveryThreshold,
+  runtime,
+  onNodeSeekRecoveryThresholdChange
+}: {
+  nodeSeekRecoveryThreshold: number;
+  runtime: MoreAccountCapabilities;
+  onNodeSeekRecoveryThresholdChange: (value: number) => void;
+}) {
   const { styles: screenStyles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const [expanded, setExpanded] = useState(false);
   const [linuxDoLevelExpanded, setLinuxDoLevelExpanded] = useState(false);
@@ -202,12 +210,14 @@ export function MoreAccountPanel({ runtime }: { runtime: MoreAccountCapabilities
           <NodeSeekServicesPanel
             apiKeyBusy={runtime.center.nodeImageKey.busy}
             apiKeySaved={runtime.center.nodeImageKey.saved}
+            recoveryThreshold={nodeSeekRecoveryThreshold}
             session={sessions.nodeseek}
             styles={screenStyles}
             theme={theme}
             onAuthorizeApiKey={() => void runtime.center.nodeImageKey.authorize()}
             onCheckIn={() => void runtime.center.nodeSeek.checkIn()}
             onClearApiKey={() => void runtime.center.nodeImageKey.clear()}
+            onRecoveryThresholdChange={onNodeSeekRecoveryThresholdChange}
             onSaveApiKey={(value) => void runtime.center.nodeImageKey.save(value)}
           />
         ),

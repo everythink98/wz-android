@@ -56,6 +56,7 @@ export function useAppRuntime() {
     fetcher: networkProxyFetcher,
     loginNavigation: lifecycle.loginNavigation,
     notify,
+    nodeSeekRecoveryThreshold: readerData.settings.nodeSeekRecoveryThreshold,
     openUser: openUserRoute,
     ready: readerDataLoaded,
     screen,
@@ -423,6 +424,7 @@ export function useAppRuntime() {
       },
       notify,
       notifications: {
+        hasUnread: notificationsRuntime.unreadTotal > 0,
         open: () => {
           openNotificationsRoute();
         },
@@ -471,6 +473,7 @@ export function useAppRuntime() {
       networkRuntime.testProxyProfile,
       networkRuntime.upsertProxyProfile,
       notificationSummary,
+      notificationsRuntime.unreadTotal,
       notify,
       readerData,
       readerDataRef,

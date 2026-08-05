@@ -4,28 +4,33 @@ import { CheckCircle, Image as ImageIcon } from 'lucide-react-native';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { MenuButton } from '@/ui/controls/ExpandableControls';
+import { SettingRail } from '@/ui/controls/SelectionControls';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { MoreScreenStyles } from '../styles';
 
 export function NodeSeekServicesPanel({
   apiKeyBusy,
   apiKeySaved,
+  recoveryThreshold,
   session,
   styles,
   theme,
   onAuthorizeApiKey,
   onCheckIn,
   onClearApiKey,
+  onRecoveryThresholdChange,
   onSaveApiKey
 }: {
   apiKeyBusy: boolean;
   apiKeySaved: boolean;
+  recoveryThreshold: number;
   session: SiteSessionViewModel;
   styles: MoreScreenStyles;
   theme: ReaderTheme;
   onAuthorizeApiKey: () => void;
   onCheckIn: () => void;
   onClearApiKey: () => void;
+  onRecoveryThresholdChange: (value: number) => void;
   onSaveApiKey: (value: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -34,6 +39,15 @@ export function NodeSeekServicesPanel({
 
   return (
     <>
+      <View style={styles.stack}>
+        <SettingRail
+          title="读取通道自愈阈值"
+          items={[1, 2, 3, 4, 5].map((value) => ({ value: String(value), label: `${value} 次` }))}
+          value={String(recoveryThreshold)}
+          onChange={(value) => onRecoveryThresholdChange(Number(value))}
+        />
+        <Text style={styles.meta}>连续出现直连失败但 WebView 读取成功时，达到该次数后重建 NodeSeek 读取通道。</Text>
+      </View>
       {session.canWrite ? (
         <MenuButton nested icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" onPress={onCheckIn} />
       ) : null}

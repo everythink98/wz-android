@@ -5,6 +5,14 @@ export const NETWORK_PROXY_STORAGE_KEY = 'network-proxy-settings';
 export const MAX_NETWORK_PROXY_PROFILES = 10;
 
 export type NetworkProxyProtocol = 'http' | 'socks5';
+export type ForumReadChannel = 'nodeseek' | 'linuxdo';
+
+export type ForumReadChannelRecoveryResult = {
+  ok: boolean;
+  generation: number;
+  canceledQueued: number;
+  canceledRunning: number;
+};
 
 export type NetworkProxyProfile = {
   id: string;
@@ -36,8 +44,11 @@ export type NativeNetworkProxyModule = {
   clearManagedLoginCookies?: (source: string) => Promise<unknown>;
   defaultWebViewUserAgent?: string;
   readManagedCookieHeader?: (exactUrl: string) => Promise<unknown>;
+  recoverForumReadChannel?: (source: ForumReadChannel) => Promise<ForumReadChannelRecoveryResult>;
   testProxy?: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
 };
+
+const forumReadChannelRecoveries = new Map<ForumReadChannel, Promise<ForumReadChannelRecoveryResult>>();
 
 export function createEmptyNetworkProxyState(): NetworkProxyState {
   return {
@@ -246,6 +257,25 @@ export async function applyNetworkProxy(profile: NetworkProxyProfile | null, mod
     throw new Error(result?.message || '代理启动失败');
   }
   return result;
+}
+
+export function recoverForumReadChannel(source: ForumReadChannel, module = networkProxyNativeModule()) {
+  const active = forumReadChannelRecoveries.get(source);
+  if (active) return active;
+  if (!module?.recoverForumReadChannel) {
+    return Promise.reject(new Error('当前安装包不支持论坛读取通道自愈。'));
+  }
+  const recovery = module
+    .recoverForumReadChannel(source)
+    .then((result) => {
+      if (!result?.ok) throw new Error('论坛读取通道自愈失败');
+      return result;
+    })
+    .finally(() => {
+      if (forumReadChannelRecoveries.get(source) === recovery) forumReadChannelRecoveries.delete(source);
+    });
+  forumReadChannelRecoveries.set(source, recovery);
+  return recovery;
 }
 
 export async function testNetworkProxy(profile: NetworkProxyProfile, module = networkProxyNativeModule()) {

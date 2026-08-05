@@ -28,7 +28,11 @@ export const MoreScreen = memo(function MoreScreen({
       <View style={styles.stack}>
         <Text style={styles.sectionTitle}>更多</Text>
         <MoreUpdatePanel runtime={update} />
-        <MoreAccountPanel runtime={account} />
+        <MoreAccountPanel
+          nodeSeekRecoveryThreshold={utilities.settings.value.nodeSeekRecoveryThreshold}
+          runtime={account}
+          onNodeSeekRecoveryThresholdChange={(value) => utilities.settings.update({ nodeSeekRecoveryThreshold: value })}
+        />
         <MoreUtilityPanels runtime={utilities} />
       </View>
     </ScrollView>

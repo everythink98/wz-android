@@ -34,6 +34,7 @@ export interface ReaderSettings {
   listDensity: 'compact' | 'standard' | 'loose';
   theme: 'light' | 'dark';
   fontScale: number;
+  nodeSeekRecoveryThreshold: number;
   lineHeight: 'compact' | 'standard' | 'loose';
   contentWidth: 'narrow' | 'standard' | 'wide';
   fontFamily: 'sans' | 'serif';
@@ -62,6 +63,7 @@ const defaultReaderSettings: ReaderSettings = {
   listDensity: 'standard',
   theme: 'light',
   fontScale: 1,
+  nodeSeekRecoveryThreshold: 1,
   lineHeight: 'standard',
   contentWidth: 'standard',
   fontFamily: 'sans'
@@ -107,6 +109,7 @@ const readerSettingsSchema = z
     listDensity: z.unknown().optional(),
     theme: z.unknown().optional(),
     fontScale: z.unknown().optional(),
+    nodeSeekRecoveryThreshold: z.unknown().optional(),
     lineHeight: z.unknown().optional(),
     contentWidth: z.unknown().optional(),
     fontFamily: z.unknown().optional()
@@ -504,6 +507,10 @@ function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSetti
         : local.listDensity,
     theme: base.theme === 'light' || base.theme === 'dark' ? base.theme : local.theme,
     fontScale: normalizeFontScale(base.fontScale, local.fontScale),
+    nodeSeekRecoveryThreshold:
+      typeof base.nodeSeekRecoveryThreshold === 'number' && Number.isFinite(base.nodeSeekRecoveryThreshold)
+        ? Math.max(1, Math.min(5, Math.round(base.nodeSeekRecoveryThreshold)))
+        : local.nodeSeekRecoveryThreshold,
     lineHeight:
       base.lineHeight === 'compact' || base.lineHeight === 'standard' || base.lineHeight === 'loose'
         ? base.lineHeight

@@ -74,4 +74,21 @@ describe('REG-A11Y-001 shared accessibility basics', () => {
     expect(StyleSheet.flatten(view.getByText('全部消息').props.style).fontSize).toBe(Math.round(13 * 1.3));
     expect(StyleSheet.flatten(view.getByText('消息操作').props.style).fontSize).toBe(Math.round(13 * 1.3));
   });
+
+  it('[REG-FEED-016] keeps compact tabs scalable with Reader settings', async () => {
+    const settings = { ...createEmptyReaderData().settings, fontScale: 1.3 };
+    const view = await render(
+      <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+        <PillRail
+          compactTabs
+          variant="tabs"
+          items={[{ value: 'all', label: '全部站点' }]}
+          value="all"
+          onChange={() => undefined}
+        />
+      </ReaderStyleProvider>
+    );
+
+    expect(StyleSheet.flatten(view.getByText('全部站点').props.style).fontSize).toBe(Math.round(13 * 1.3));
+  });
 });

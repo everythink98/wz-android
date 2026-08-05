@@ -58,12 +58,31 @@ describe('image request source', () => {
     expect(dataImageFileFromUrl('https://cdn.example.com/a.jpg')).toBeNull();
   });
 
-  it('adds browser-like headers for known forum image hosts', () => {
+  it('[REG-TOPIC-064] gives unknown NodeSeek image hosts the forum browser request profile', () => {
+    const headers = imageRequestHeadersForUrl('https://im.legend.moe/file/topic.webp', {
+      mediaContext: nodeSeekMediaContext,
+      nodeSeekUserAgent: 'NodeSeek WebView UA'
+    });
+
+    expect(headers).toEqual({
+      Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+      'Accept-Language': expect.any(String),
+      Referer: 'https://www.nodeseek.com/',
+      'User-Agent': 'NodeSeek WebView UA',
+      'X-WZ-Forum-Media-Identity': 'nodeseek:4',
+      'X-WZ-Forum-Media-Source': 'nodeseek'
+    });
+    expect(headers).not.toHaveProperty('Cookie');
+  });
+
+  it('[REG-TOPIC-064] applies the same source profile without a target-host allowlist', () => {
     expect(
       imageRequestHeadersForUrl('https://i.111666.best/image/a.webp', { mediaContext: nodeSeekMediaContext })
     ).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-      Referer: 'https://i.111666.best',
+      'Accept-Language': expect.any(String),
+      Referer: 'https://www.nodeseek.com/',
+      'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'nodeseek:4',
       'X-WZ-Forum-Media-Source': 'nodeseek'
     });
@@ -72,14 +91,20 @@ describe('image request source', () => {
       cacheKey: 'nodeseek:4:https://i.111666.best/image/a.webp',
       headers: {
         Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-        Referer: 'https://i.111666.best',
+        'Accept-Language': expect.any(String),
+        Referer: 'https://www.nodeseek.com/',
+        'User-Agent': 'native-provider-user-agent',
         'X-WZ-Forum-Media-Identity': 'nodeseek:4',
         'X-WZ-Forum-Media-Source': 'nodeseek'
       }
     });
     expect(
-      imageRequestHeadersForUrl('https://evil111666.best/image/a.webp', { mediaContext: nodeSeekMediaContext })
+      imageRequestHeadersForUrl('https://future-cdn.example/image/a.webp', { mediaContext: nodeSeekMediaContext })
     ).toEqual({
+      Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+      'Accept-Language': expect.any(String),
+      Referer: 'https://www.nodeseek.com/',
+      'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'nodeseek:4',
       'X-WZ-Forum-Media-Source': 'nodeseek'
     });
@@ -94,9 +119,14 @@ describe('image request source', () => {
         mediaContext: {
           contentSource: 'linuxdo',
           sessionIdentity: 'linuxdo:4'
-        }
+        },
+        nodeSeekUserAgent: 'must-not-leak-to-linuxdo'
       })
     ).toEqual({
+      Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+      'Accept-Language': expect.any(String),
+      Referer: 'https://linux.do/',
+      'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'linuxdo:4',
       'X-WZ-Forum-Media-Source': 'linuxdo'
     });
@@ -132,6 +162,9 @@ describe('image request source', () => {
       uri: 'https://i.imgur.com/hKWwFrX.jpeg',
       cacheKey: 'public:0:https://i.imgur.com/hKWwFrX.jpeg',
       headers: {
+        Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+        'Accept-Language': expect.any(String),
+        'User-Agent': 'native-provider-user-agent',
         'X-WZ-Forum-Media-Identity': 'public:0',
         'X-WZ-Forum-Media-Source': 'anonymous'
       }
@@ -143,7 +176,8 @@ describe('image request source', () => {
       imageRequestHeadersForUrl('https://www.nodeseek.com/avatar/48872.png', { mediaContext: nodeSeekMediaContext })
     ).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-      Referer: 'https://www.nodeseek.com',
+      'Accept-Language': expect.any(String),
+      Referer: 'https://www.nodeseek.com/',
       'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'nodeseek:4',
       'X-WZ-Forum-Media-Source': 'nodeseek'
@@ -157,7 +191,8 @@ describe('image request source', () => {
       })
     ).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-      Referer: 'https://www.nodeseek.com',
+      'Accept-Language': expect.any(String),
+      Referer: 'https://www.nodeseek.com/',
       'User-Agent': 'native-provider-user-agent',
       'X-WZ-Forum-Media-Identity': 'nodeseek:4',
       'X-WZ-Forum-Media-Source': 'nodeseek'
@@ -171,5 +206,24 @@ describe('image request source', () => {
         nodeSeekUserAgent: 'WZ-Media-Test'
       })
     ).not.toHaveProperty('Cookie');
+  });
+
+  it('[REG-TOPIC-064] uses a safe language fallback when the platform locale is unavailable', async () => {
+    const dateTimeFormat = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(() => {
+      throw new Error('locale unavailable');
+    });
+    vi.resetModules();
+
+    try {
+      const reloaded = await import('./imageRequestSource');
+      expect(
+        reloaded.imageRequestHeadersForUrl('https://cdn.example.com/image.webp', {
+          mediaContext: publicMediaContext
+        })
+      ).toMatchObject({ 'Accept-Language': 'en-US,en;q=0.9' });
+    } finally {
+      dateTimeFormat.mockRestore();
+      vi.resetModules();
+    }
   });
 });

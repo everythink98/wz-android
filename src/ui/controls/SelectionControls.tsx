@@ -54,6 +54,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderBottomWidth: 2,
       paddingBottom: 4
     },
+    compactTab: { minWidth: undefined, minHeight: 40 },
     tabActive: { borderBottomColor: theme.primary },
     tabText: { color: theme.muted, fontFamily, fontSize: fontSize(13), fontWeight: '500', textAlign: 'center' },
     tabTextActive: { color: theme.primary, fontWeight: '600' },
@@ -63,6 +64,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
 }
 
 export function PillRail({
+  compactTabs = false,
   disabled = false,
   items,
   variant = 'pills',
@@ -71,6 +73,7 @@ export function PillRail({
   testIDPrefix,
   onChange
 }: {
+  compactTabs?: boolean;
   disabled?: boolean;
   items: { value: string; label: string }[];
   variant?: 'pills' | 'tabs' | 'subtabs';
@@ -107,7 +110,7 @@ export function PillRail({
           disabled={disabled || undefined}
           style={
             isTabs
-              ? [styles.tab, value === item.value && styles.tabActive]
+              ? [styles.tab, compactTabs && styles.compactTab, value === item.value && styles.tabActive]
               : isSubtabs
                 ? [styles.subtab, value === item.value && styles.subtabActive]
                 : [styles.pill, value === item.value && styles.pillActive]

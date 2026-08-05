@@ -530,6 +530,28 @@ describe('Android reader data helpers', () => {
     expect(data.settings).not.toHaveProperty('nodeseekCookie');
   });
 
+  it('sanitizes the NodeSeek read-channel recovery threshold for storage and backup data', () => {
+    expect(createEmptyReaderData().settings.nodeSeekRecoveryThreshold).toBe(1);
+    expect(
+      sanitizeReaderData({
+        ...createEmptyReaderData(),
+        settings: { ...createEmptyReaderData().settings, nodeSeekRecoveryThreshold: 3.6 }
+      }).settings.nodeSeekRecoveryThreshold
+    ).toBe(4);
+    expect(
+      sanitizeReaderData({
+        ...createEmptyReaderData(),
+        settings: { ...createEmptyReaderData().settings, nodeSeekRecoveryThreshold: -10 }
+      }).settings.nodeSeekRecoveryThreshold
+    ).toBe(1);
+    expect(
+      sanitizeReaderData({
+        ...createEmptyReaderData(),
+        settings: { ...createEmptyReaderData().settings, nodeSeekRecoveryThreshold: 99 }
+      }).settings.nodeSeekRecoveryThreshold
+    ).toBe(5);
+  });
+
   it('keeps current-version data limited to active Android fields', () => {
     const data = sanitizeReaderData({
       ...createEmptyReaderData(),
@@ -872,7 +894,8 @@ describe('Android reader data helpers', () => {
         ...createEmptyReaderData().settings,
         theme: 'dark',
         listDensity: 'compact',
-        fontScale: 1.1
+        fontScale: 1.1,
+        nodeSeekRecoveryThreshold: 1
       }
     });
     const remote = {
@@ -881,7 +904,8 @@ describe('Android reader data helpers', () => {
         theme: 'blue',
         listDensity: 'wide',
         fontScale: 1.2,
-        lineHeight: 'loose'
+        lineHeight: 'loose',
+        nodeSeekRecoveryThreshold: 3
       }
     };
 
@@ -891,6 +915,7 @@ describe('Android reader data helpers', () => {
     expect(merged.settings.listDensity).toBe('compact');
     expect(merged.settings.fontScale).toBe(1.2);
     expect(merged.settings.lineHeight).toBe('loose');
+    expect(merged.settings.nodeSeekRecoveryThreshold).toBe(3);
   });
 
   it('keeps local reader settings when remote settings is not an object', () => {

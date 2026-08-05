@@ -656,4 +656,188 @@ describe('feed read', () => {
     expect(result.nextCursor).toBeUndefined();
     expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi']);
   });
+
+  it('[REG-FEED-014] publishes feed and categories after the active five-second source budget', async () => {
+    vi.useFakeTimers();
+    const hangingAborts = vi.fn();
+    const fetcher = vi.fn((input: string, init?: RequestInit) => {
+      if (input.includes('nodeseek.com')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              hangingAborts();
+              reject(new DOMException('aborted', 'AbortError'));
+            },
+            { once: true }
+          );
+        });
+      }
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return Promise.resolve(
+          new Response(
+            '<div class="cell item"><a class="topic-link" href="/t/901#reply0">V2EX ready</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>'
+          )
+        );
+      }
+      if (input.includes('/api/topics/latest.json')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                id: 901,
+                title: 'V2EX ready',
+                url: 'https://www.v2ex.com/t/901',
+                created: '2026-05-20T00:00:00.000Z',
+                replies: 0,
+                node: { name: 'create', title: '分享创造' },
+                member: { username: 'neo' }
+              }
+            ]),
+            { headers: { 'content-type': 'application/json' } }
+          )
+        );
+      }
+      return Promise.reject(new Error(`unexpected ${input}`));
+    });
+    const unavailableSources = ['linuxdo', 'yaohuo', 'xiaoyinsi'] as const;
+    const feedController = new AbortController();
+    const categoryController = new AbortController();
+    let feedResult: Awaited<ReturnType<typeof getFeed>> | undefined;
+    let categoryResult: Awaited<ReturnType<typeof getCategories>> | undefined;
+    const feedPromise = getFeed({
+      source: 'all',
+      limit: 2,
+      fetcher,
+      signal: feedController.signal,
+      unavailableSources
+    }).then((result) => {
+      feedResult = result;
+    });
+    const categoryPromise = getCategories({
+      source: 'all',
+      fetcher,
+      signal: categoryController.signal,
+      unavailableSources
+    }).then((result) => {
+      categoryResult = result;
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(5_000);
+      await Promise.resolve();
+      const feedAtBudget = feedResult;
+      const categoriesAtBudget = categoryResult;
+      if (!feedAtBudget) feedController.abort();
+      if (!categoriesAtBudget) categoryController.abort();
+      await Promise.allSettled([feedPromise, categoryPromise]);
+
+      expect(feedAtBudget?.items).toEqual([expect.objectContaining({ source: 'v2ex', id: '901' })]);
+      expect(feedAtBudget?.errors.nodeseek).toBeTruthy();
+      expect(feedAtBudget?.nextCursor).toBeTruthy();
+      expect(categoriesAtBudget?.items).toEqual([expect.objectContaining({ source: 'v2ex', id: 'create' })]);
+      expect(categoriesAtBudget?.errors.nodeseek).toBeTruthy();
+      expect(hangingAborts).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('[REG-FEED-014] propagates parent cancellation instead of publishing a partial aggregate', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn(
+      (_input: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+            once: true
+          });
+        })
+    );
+    const request = getFeed({
+      source: 'all',
+      fetcher,
+      signal: controller.signal,
+      unavailableSources: ['linuxdo', 'yaohuo', 'xiaoyinsi']
+    });
+
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(request).rejects.toThrow('请求已取消');
+  });
+
+  it('[REG-FEED-014] keeps a timed-out source retryable when every completed source is empty', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn((input: string, init?: RequestInit) => {
+        if (input.includes('nodeseek.com')) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+              once: true
+            });
+          });
+        }
+        if (input.includes('/api/topics/latest.json')) {
+          return Promise.resolve(new Response('[]', { headers: { 'content-type': 'application/json' } }));
+        }
+        if (input === 'https://www.v2ex.com/?tab=all') {
+          return Promise.resolve(new Response('<div id="Main"></div>'));
+        }
+        return Promise.reject(new Error(`unexpected ${input}`));
+      });
+      const request = getFeed({
+        source: 'all',
+        fetcher,
+        unavailableSources: ['linuxdo', 'yaohuo', 'xiaoyinsi']
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(request).resolves.toMatchObject({
+        items: [],
+        errors: { nodeseek: expect.anything() },
+        hasMore: true,
+        nextCursor: expect.any(String)
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('[REG-FEED-014] preserves the current page and opaque source cursor when every source times out', async () => {
+    vi.useFakeTimers();
+    const sourceCursor = 'opaque-v2ex-seen-ids';
+    const cursor = encodeURIComponent(
+      JSON.stringify({
+        nextPages: { nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2, xiaoyinsi: 2 },
+        sourceCursors: { v2ex: sourceCursor }
+      })
+    );
+    try {
+      const fetcher = vi.fn(
+        (_input: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+              once: true
+            });
+          })
+      );
+      const request = getFeed({ source: 'all', page: 2, cursor, fetcher });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      const result = await request;
+      const retryCursor = JSON.parse(decodeURIComponent(result.nextCursor || '')) as {
+        nextPages: Record<string, number>;
+        sourceCursors: Record<string, string>;
+      };
+
+      expect(result.hasMore).toBe(true);
+      expect(retryCursor.nextPages).toEqual({ nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2, xiaoyinsi: 2 });
+      expect(retryCursor.sourceCursors.v2ex).toBe(sourceCursor);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });

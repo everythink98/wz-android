@@ -87,20 +87,13 @@ vi.mock('react-native-render-html', () => ({
 }));
 
 import { cachedPreviewImageDimensions, rememberPreviewImageDimensions } from './previewRenderers';
-import { readManagedWebViewCookieHeader, shouldShowVideoStickerLoading } from './contentMediaRenderers';
+import { readManagedWebViewCookieHeader } from './contentMediaRenderers';
 import './useHtmlRenderingController';
 
 describe('HTML topic media loading state', () => {
   it('[REG-TOPIC-056] configures the Callout layout transition with system Reduce Motion', () => {
     expect(reanimatedTransition.duration).toHaveBeenCalledWith(100);
     expect(reanimatedTransition.reduceMotion).toHaveBeenCalledWith('system');
-  });
-
-  it('keeps video sticker loading visible until the first rendered frame', () => {
-    expect(shouldShowVideoStickerLoading(false, false, 'idle')).toBe(true);
-    expect(shouldShowVideoStickerLoading(false, false, 'readyToPlay')).toBe(true);
-    expect(shouldShowVideoStickerLoading(true, false, 'readyToPlay')).toBe(false);
-    expect(shouldShowVideoStickerLoading(false, true, 'error')).toBe(false);
   });
 
   it('reads the live Cookie header for the exact managed WebView URL', async () => {

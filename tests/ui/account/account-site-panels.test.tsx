@@ -318,19 +318,26 @@ describe('Account site panels', () => {
   it('validates and routes the NodeImage key without opening a real login page', async () => {
     const onAuthorizeNodeImageApiKey = jest.fn();
     const onSaveNodeImageApiKey = jest.fn();
+    const onRecoveryThresholdChange = jest.fn();
     const view = await render(
       <NodeSeekServicesPanel
         apiKeyBusy={false}
         apiKeySaved={false}
+        recoveryThreshold={1}
         session={session('nodeseek', 'anonymous')}
         styles={styles}
         theme={theme}
         onAuthorizeApiKey={onAuthorizeNodeImageApiKey}
         onCheckIn={jest.fn()}
         onClearApiKey={jest.fn()}
+        onRecoveryThresholdChange={onRecoveryThresholdChange}
         onSaveApiKey={onSaveNodeImageApiKey}
       />
     );
+
+    expect(view.getByText('读取通道自愈阈值')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('3 次'));
+    expect(onRecoveryThresholdChange).toHaveBeenCalledWith(3);
 
     await fireEvent.press(view.getByText('NodeImage API Key'));
     await fireEvent.press(view.getByLabelText('获取 / 恢复授权'));

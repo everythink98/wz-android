@@ -21,6 +21,7 @@ import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { browserFetchIntentFromInit, type BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { errorMessage } from '@/platform/network/errors';
 import { clearManagedLoginCookies } from '@/platform/network/managedCookies';
+import { recoverForumReadChannel } from '@/platform/network/networkProxy';
 import {
   LEGACY_COOKIE_SNAPSHOT_KEYS,
   migrateLegacyCookieSnapshots
@@ -179,6 +180,7 @@ export function useSessionController({
   linuxDoBrowserWebViewRef,
   linuxDoWebViewUserAgentRef,
   nodeSeekBrowserWebViewRef,
+  nodeSeekRecoveryThreshold,
   nodeSeekWebViewUserAgentRef,
   notify,
   setLinuxDoWebViewUserAgent,
@@ -191,6 +193,7 @@ export function useSessionController({
   linuxDoBrowserWebViewRef: WebViewStopRef;
   linuxDoWebViewUserAgentRef: MutableRef<string>;
   nodeSeekBrowserWebViewRef: WebViewStopRef;
+  nodeSeekRecoveryThreshold: number;
   nodeSeekWebViewUserAgentRef: MutableRef<string>;
   notify: (message: string) => void;
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
@@ -671,15 +674,18 @@ export function useSessionController({
     () =>
       createNodeSeekWebViewFallbackFetcher({
         defaultFetcher,
+        recoveryThreshold: nodeSeekRecoveryThreshold,
+        recoverReadChannel: () => recoverForumReadChannel('nodeseek'),
         webViewFetcher: nodeSeekFetchWithWebView
       }),
-    [defaultFetcher, nodeSeekFetchWithWebView]
+    [defaultFetcher, nodeSeekFetchWithWebView, nodeSeekRecoveryThreshold]
   );
 
   const forumFetchWithWebViewFallback = useMemo(
     () =>
       createLinuxDoWebViewFallbackFetcher({
         defaultFetcher: nodeSeekFetchWithWebViewFallback,
+        recoverReadChannel: () => recoverForumReadChannel('linuxdo'),
         webViewFetcher: linuxDoFetchWithWebView
       }),
     [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback]

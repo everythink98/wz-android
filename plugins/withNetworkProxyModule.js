@@ -59,6 +59,7 @@ function networkProxyRuntimeSource(packageName) {
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import com.bumptech.glide.Glide
@@ -67,6 +68,8 @@ import com.bumptech.glide.load.model.GlideUrl
 import com.facebook.react.modules.network.CookieJarContainer
 import com.facebook.react.modules.network.NetworkingModule
 import com.facebook.react.modules.network.OkHttpClientProvider
+import com.google.net.cronet.okhttptransport.CronetInterceptor
+import com.google.net.cronet.okhttptransport.RedirectStrategy
 import expo.modules.image.okhttp.GlideUrlWrapper
 import expo.modules.image.okhttp.GlideUrlWrapperLoader
 import java.io.EOFException
@@ -92,9 +95,11 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLSocket
@@ -103,6 +108,7 @@ import android.util.Log
 import android.util.Base64
 import okhttp3.ConnectionPool
 import okhttp3.CacheControl
+import okhttp3.Call
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
@@ -110,6 +116,15 @@ import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.JavaNetCookieJar
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.ResponseBody
+import okio.Buffer
+import okio.ForwardingSource
+import okio.buffer
+import org.chromium.net.CronetEngine
+import org.chromium.net.Proxy as CronetProxy
+import org.chromium.net.ProxyOptions as CronetProxyOptions
 
 data class NetworkProxyProfile(
   val protocol: String,
@@ -139,6 +154,7 @@ internal data class LocalProxyRequest(
 private const val BLOCKED_PROXY_PORT = 9
 private const val MAX_PROXY_CONNECTIONS = 16
 private const val PROXY_IDLE_TIMEOUT_MS = 120_000
+private const val CRONET_CANCEL_POLL_MS = 100L
 private const val LOG_TAG = "WzNetworkProxy"
 
 private class PlatformProxyTlsConnection(
@@ -225,12 +241,253 @@ internal class ForumMediaRequestInterceptor(
       .removeHeader(FORUM_MEDIA_SOURCE_HEADER)
       .removeHeader(FORUM_MEDIA_IDENTITY_HEADER)
       .removeHeader("Cookie")
+      .tag(ForumMediaRequestTag::class.java, ForumMediaRequestTag(source))
       .cacheControl(CacheControl.Builder().noStore().build())
       .build()
     return MediaRequestCookieContext.withPolicy(policy) {
       chain.proceed(sanitized)
     }
   }
+}
+
+internal data class ForumMediaRequestTag(val source: String)
+
+internal fun isCloudflareMediaChallenge(request: Request, response: Response): Boolean =
+  (request.method == "GET" || request.method == "HEAD") &&
+    response.header("Cf-Mitigated")?.equals("challenge", ignoreCase = true) == true
+
+internal fun recoverCloudflareMediaChallenge(
+  request: Request,
+  original: Response,
+  outerCall: Call? = null,
+  recover: (Request, Call?) -> Response?
+): Response {
+  if (!isCloudflareMediaChallenge(request, original)) return original
+  val replacement = try {
+    recover(request, outerCall)
+  } catch (_: Exception) {
+    null
+  } catch (_: LinkageError) {
+    null
+  }
+  if (replacement == null || replacement === original) return original
+  if (isCloudflareMediaChallenge(request, replacement)) {
+    replacement.close()
+    return original
+  }
+  original.close()
+  return replacement
+}
+
+internal class ForumMediaCloudflareFallbackInterceptor(
+  private val recover: (Request, Call) -> Response? = { request, call ->
+    NetworkProxyRuntime.executeCronetMediaFallback(request, call)
+  }
+) : Interceptor {
+  override fun intercept(chain: Interceptor.Chain): Response {
+    val original = chain.proceed(chain.request())
+    if (!isCloudflareMediaChallenge(chain.request(), original)) return original
+    val startedAt = SystemClock.elapsedRealtime()
+    val generation = NetworkProxyRuntime.currentMediaTransportGeneration()
+    val source = chain.request().tag(ForumMediaRequestTag::class.java)?.source ?: "anonymous"
+    val recovered = recoverCloudflareMediaChallenge(chain.request(), original, chain.call()) { request, call ->
+      call?.let { recover(request, it) }
+    }
+    val outcome = if (recovered === original) "kept-original" else "recovered"
+    Log.i(
+      LOG_TAG,
+      "media cronet source=$source reason=challenge generation=$generation outcome=$outcome " +
+        "status=\${recovered.code} elapsedMs=\${SystemClock.elapsedRealtime() - startedAt}"
+    )
+    return recovered
+  }
+}
+
+private class ReleasingResponseBody(
+  private val delegate: ResponseBody,
+  private val release: () -> Unit
+) : ResponseBody() {
+  private val released = AtomicBoolean(false)
+  private fun releaseOnce() {
+    if (released.compareAndSet(false, true)) release()
+  }
+
+  private val trackedSource = object : ForwardingSource(delegate.source()) {
+    override fun read(sink: Buffer, byteCount: Long): Long = try {
+      super.read(sink, byteCount).also { read -> if (read == -1L) releaseOnce() }
+    } catch (error: Throwable) {
+      releaseOnce()
+      throw error
+    }
+
+    override fun close() {
+      try {
+        super.close()
+      } finally {
+        releaseOnce()
+      }
+    }
+  }.buffer()
+
+  override fun contentType() = delegate.contentType()
+  override fun contentLength() = delegate.contentLength()
+  override fun source() = trackedSource
+}
+
+private class CronetMediaTransport(
+  val generation: Long,
+  private val engine: CronetEngine,
+  private val interceptor: CronetInterceptor,
+  private val client: OkHttpClient,
+  private val lifecycleExecutor: ScheduledExecutorService
+) {
+  private val lock = Any()
+  private val activeCalls = mutableMapOf<Call, Call>()
+  private var retired = false
+  private var shutdownStarted = false
+  private val cancellationWatch = lifecycleExecutor.scheduleWithFixedDelay(
+    {
+      val canceled = synchronized(lock) {
+        activeCalls.filterValues { outerCall -> outerCall.isCanceled() }.keys.toList()
+      }
+      canceled.forEach { call -> call.cancel() }
+    },
+    CRONET_CANCEL_POLL_MS,
+    CRONET_CANCEL_POLL_MS,
+    TimeUnit.MILLISECONDS
+  )
+
+  fun execute(request: Request, outerCall: Call): Response? {
+    if (outerCall.isCanceled()) return null
+    val call = client.newCall(request)
+    val registered = synchronized(lock) {
+      if (retired) false else {
+        activeCalls[call] = outerCall
+        true
+      }
+    }
+    if (!registered) {
+      call.cancel()
+      return null
+    }
+    return try {
+      val response = call.execute()
+      val body = response.body
+      if (body == null) {
+        finish(call)
+        response
+      } else {
+        response.newBuilder()
+          .body(ReleasingResponseBody(body) { finish(call) })
+          .build()
+      }
+    } catch (error: Throwable) {
+      call.cancel()
+      finish(call)
+      throw error
+    }
+  }
+
+  fun retire() {
+    val calls = synchronized(lock) {
+      retired = true
+      activeCalls.keys.toList()
+    }
+    calls.forEach { call -> call.cancel() }
+    shutdownIfIdle()
+  }
+
+  private fun finish(call: Call) {
+    synchronized(lock) { activeCalls.remove(call) }
+    shutdownIfIdle()
+  }
+
+  private fun shutdownIfIdle() {
+    val shouldShutdown = synchronized(lock) {
+      retired && activeCalls.isEmpty() && !shutdownStarted
+    }
+    if (!shouldShutdown) return
+    synchronized(lock) {
+      if (shutdownStarted || !retired || activeCalls.isNotEmpty()) return
+      shutdownStarted = true
+    }
+    cancellationWatch.cancel(false)
+    lifecycleExecutor.execute {
+      var failureType: String? = null
+      try {
+        interceptor.close()
+      } catch (error: Exception) {
+        failureType = error.javaClass.simpleName
+      }
+      try {
+        engine.shutdown()
+      } catch (error: Exception) {
+        failureType = failureType ?: error.javaClass.simpleName
+      }
+      if (failureType == null) {
+        Log.i(LOG_TAG, "closed media cronet generation=$generation")
+      } else {
+        Log.w(LOG_TAG, "failed to close media cronet generation=$generation type=" + failureType)
+      }
+    }
+  }
+}
+
+private fun cronetProxyOptions(
+  proxy: Proxy,
+  callbackExecutor: ScheduledExecutorService
+): CronetProxyOptions {
+  val address = proxy.address() as? InetSocketAddress
+    ?: throw IllegalArgumentException("Cronet 仅支持本地 HTTP relay")
+  val connectCallback = object : CronetProxy.HttpConnectCallback() {
+    override fun onBeforeRequest(request: CronetProxy.HttpConnectCallback.Request) {
+      request.proceed(emptyList())
+    }
+
+    override fun onResponseReceived(
+      responseHeaders: List<android.util.Pair<String, String>>,
+      statusCode: Int
+    ): Int = if (statusCode in 200..299) {
+      CronetProxy.HttpConnectCallback.RESPONSE_ACTION_PROCEED
+    } else {
+      CronetProxy.HttpConnectCallback.RESPONSE_ACTION_CLOSE
+    }
+  }
+  val cronetProxy = CronetProxy.createHttpProxy(
+    CronetProxy.SCHEME_HTTP,
+    address.hostString,
+    address.port,
+    callbackExecutor,
+    connectCallback
+  )
+  return CronetProxyOptions.fromProxyList(
+    listOf(cronetProxy),
+    CronetProxyOptions.ALL_PROXIES_FAILED_BEHAVIOR_DISALLOW_DIRECT
+  )
+}
+
+private fun createCronetMediaTransport(
+  context: Context,
+  generation: Long,
+  proxy: Proxy?,
+  lifecycleExecutor: ScheduledExecutorService
+): CronetMediaTransport {
+  val engineBuilder = CronetEngine.Builder(context)
+    .enableHttpCache(CronetEngine.Builder.HTTP_CACHE_DISABLED, 0)
+    .enableBrotli(true)
+  if (proxy != null) {
+    engineBuilder.setProxyOptions(cronetProxyOptions(proxy, lifecycleExecutor))
+  }
+  val engine = engineBuilder.build()
+  val interceptor = CronetInterceptor.newBuilder(engine)
+    .setRedirectStrategy(RedirectStrategy.withoutRedirects())
+    .build()
+  val client = OkHttpClient.Builder()
+    .followRedirects(false)
+    .followSslRedirects(false)
+    .addInterceptor(interceptor)
+    .build()
+  return CronetMediaTransport(generation, engine, interceptor, client, lifecycleExecutor)
 }
 
 internal class ReadOnlyWebViewCookieHandler(
@@ -314,6 +571,25 @@ internal data class ManagedLoginCookieClearPlan(
   val expirations: List<Pair<String, String>>
 )
 
+internal data class ForumReadChannelRecovery(
+  val generation: Long,
+  val canceledQueued: Int,
+  val canceledRunning: Int
+)
+
+internal fun forumReadChannelHostSuffix(source: String): String = when (source) {
+  "nodeseek" -> "nodeseek.com"
+  "linuxdo" -> "linux.do"
+  else -> throw IllegalArgumentException("不支持的论坛读取通道")
+}
+
+internal fun isForumReadChannelRequest(source: String, request: okhttp3.Request): Boolean {
+  val suffix = forumReadChannelHostSuffix(source)
+  val host = request.url.host.lowercase(Locale.US)
+  return (request.method == "GET" || request.method == "HEAD") &&
+    (host == suffix || host.endsWith(".$suffix"))
+}
+
 internal fun managedLoginCookieClearPlan(source: String): ManagedLoginCookieClearPlan {
   val specification = when (source) {
     "nodeseek" -> Triple(
@@ -354,10 +630,19 @@ object NetworkProxyRuntime {
   private val selector = NetworkProxySelector()
   private val blockedProxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", BLOCKED_PROXY_PORT))
   @Volatile private var localProxy: Proxy? = blockedProxy
-  private val connectionPool = ConnectionPool()
+  private val mediaConnectionPool = ConnectionPool()
+  @Volatile private var forumConnectionPool = ConnectionPool()
+  private var forumConnectionPoolGeneration = 0L
   private val dispatcher = Dispatcher()
   private val cookieHandler = ReadOnlyWebViewCookieHandler()
   private val cookieJar = ReadOnlyCookieJarContainer(JavaNetCookieJar(cookieHandler))
+  private val cronetLifecycleExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+    Thread(runnable, "WzMediaCronetLifecycle").apply { isDaemon = true }
+  }
+  private var mediaTransportGeneration = 0L
+  private var cronetMediaTransport: CronetMediaTransport? = null
+  @Volatile private var applicationContext: Context? = null
+  @Volatile private var imageClient: OkHttpClient? = null
   private var installed = false
 
   fun install(context: Context) {
@@ -368,35 +653,80 @@ object NetworkProxyRuntime {
       val appContext = context.applicationContext
       selector.setDelegate(ProxySelector.getDefault())
       ProxySelector.setDefault(selector)
-      val client = configureManagedClient(OkHttpClientProvider.createClientBuilder(appContext)).build()
+      val client = configureMediaClient(OkHttpClientProvider.createClientBuilder(appContext)).build()
+      val imageClient = expoImageClient(client)
+      applicationContext = appContext
+      this.imageClient = imageClient
       OkHttpClientProvider.setOkHttpClientFactory { client }
       NetworkingModule.setCustomClientBuilder { builder ->
         configureManagedClient(builder)
       }
-      installExpoImageClient(appContext, expoImageClient(client))
+      installExpoImageClient(appContext, imageClient)
       installed = true
       Log.i(LOG_TAG, "installed app proxy selector")
     }
   }
 
   fun setLocalProxyPort(port: Int?) {
-    localProxy = if (port == null) {
-      Log.i(LOG_TAG, "disabled app proxy")
-      null
-    } else {
-      Log.i(LOG_TAG, "enabled app proxy")
-      Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port))
+    val next = port?.let { Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", it)) }
+    val retired = synchronized(lock) {
+      localProxy = next
+      mediaTransportGeneration += 1
+      cronetMediaTransport.also { cronetMediaTransport = null }
     }
+    retired?.retire()
+    Log.i(LOG_TAG, if (port == null) "disabled app proxy" else "enabled app proxy")
   }
 
   fun blockNetworkRequests() {
-    localProxy = blockedProxy
+    val retired = synchronized(lock) {
+      localProxy = blockedProxy
+      mediaTransportGeneration += 1
+      cronetMediaTransport.also { cronetMediaTransport = null }
+    }
+    retired?.retire()
     dispatcher.cancelAll()
-    connectionPool.evictAll()
+    forumConnectionPool.evictAll()
+    mediaConnectionPool.evictAll()
     Log.i(LOG_TAG, "blocked app requests while proxy switches")
   }
 
   internal fun configureManagedClient(builder: OkHttpClient.Builder): OkHttpClient.Builder {
+    return configureSharedClient(builder, forumConnectionPool)
+  }
+
+  internal fun configureMediaClient(builder: OkHttpClient.Builder): OkHttpClient.Builder {
+    return configureSharedClient(builder, mediaConnectionPool)
+  }
+
+  internal fun currentMediaTransportGeneration(): Long = synchronized(lock) {
+    mediaTransportGeneration
+  }
+
+  internal fun executeCronetMediaFallback(request: Request, outerCall: Call): Response? =
+    currentCronetMediaTransport().execute(request, outerCall)
+
+  internal fun forumImageClient(): OkHttpClient =
+    imageClient ?: throw IllegalStateException("论坛图片 client 尚未安装")
+
+  private fun currentCronetMediaTransport(): CronetMediaTransport = synchronized(lock) {
+    cronetMediaTransport?.let { return@synchronized it }
+    val context = applicationContext ?: throw IllegalStateException("网络运行时尚未安装")
+    createCronetMediaTransport(
+      context,
+      mediaTransportGeneration,
+      localProxy,
+      cronetLifecycleExecutor
+    ).also { created ->
+      cronetMediaTransport = created
+      Log.i(LOG_TAG, "initialized media cronet generation=\${created.generation}")
+    }
+  }
+
+  private fun configureSharedClient(
+    builder: OkHttpClient.Builder,
+    connectionPool: ConnectionPool
+  ): OkHttpClient.Builder {
     builder.cookieJar(cookieJar)
     builder.proxySelector(selector)
     builder.connectionPool(connectionPool)
@@ -405,6 +735,24 @@ object NetworkProxyRuntime {
       builder.addInterceptor(ForumMediaRequestInterceptor())
     }
     return builder
+  }
+
+  internal fun recoverForumReadChannel(source: String): ForumReadChannelRecovery {
+    forumReadChannelHostSuffix(source)
+    val queued = dispatcher.queuedCalls().filter { call -> isForumReadChannelRequest(source, call.request()) }
+    val running = dispatcher.runningCalls().filter { call -> isForumReadChannelRequest(source, call.request()) }
+    queued.forEach { call -> call.cancel() }
+    running.forEach { call -> call.cancel() }
+    val generation = synchronized(lock) {
+      forumConnectionPool = ConnectionPool()
+      forumConnectionPoolGeneration += 1
+      forumConnectionPoolGeneration
+    }
+    Log.i(
+      LOG_TAG,
+      "recovered $source read channel generation=$generation queued=\${queued.size} running=\${running.size}"
+    )
+    return ForumReadChannelRecovery(generation, queued.size, running.size)
   }
 
   internal fun managedCookieHeaderForUrl(url: String): String? =
@@ -460,7 +808,10 @@ object NetworkProxyRuntime {
 }
 
 internal fun expoImageClient(client: OkHttpClient): OkHttpClient =
-  client.newBuilder().callTimeout(30, TimeUnit.SECONDS).build()
+  client.newBuilder()
+    .callTimeout(30, TimeUnit.SECONDS)
+    .addNetworkInterceptor(ForumMediaCloudflareFallbackInterceptor())
+    .build()
 
 private fun installExpoImageClient(context: Context, client: OkHttpClient) {
   val registry = Glide.get(context).registry
@@ -1586,6 +1937,23 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
+  fun recoverForumReadChannel(source: String, promise: Promise) {
+    worker.execute {
+      try {
+        val result = NetworkProxyRuntime.recoverForumReadChannel(source)
+        promise.resolve(Arguments.createMap().apply {
+          putBoolean("ok", true)
+          putDouble("generation", result.generation.toDouble())
+          putInt("canceledQueued", result.canceledQueued)
+          putInt("canceledRunning", result.canceledRunning)
+        })
+      } catch (error: Exception) {
+        promise.reject("forum_read_channel_recovery_failed", error.message ?: "论坛读取通道自愈失败", error)
+      }
+    }
+  }
+
+  @ReactMethod
   fun clearManagedLoginCookies(source: String, promise: Promise) {
     worker.execute {
       try {
@@ -1818,6 +2186,7 @@ function networkProxyRuntimeTestSource(packageName) {
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
@@ -1837,6 +2206,8 @@ import java.util.concurrent.atomic.AtomicReference
 import com.bumptech.glide.load.model.Headers
 import expo.modules.image.okhttp.GlideUrlWithCustomCacheKey
 import okhttp3.Cache
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Cookie
 import okhttp3.Interceptor
 import okhttp3.JavaNetCookieJar
@@ -1845,11 +2216,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
@@ -1910,6 +2283,107 @@ class NetworkProxyRuntimeTest {
     .message("OK")
     .body("".toResponseBody())
     .build()
+
+  @Test
+  fun regTopic064OnlyCloudflareImageChallengesUseOneFallbackResponse() {
+    val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    val served = CountDownLatch(1)
+    val executor = Executors.newSingleThreadExecutor()
+    executor.execute {
+      try {
+        repeat(4) {
+          server.accept().use { socket ->
+            val reader = socket.getInputStream().bufferedReader()
+            val requestLine = reader.readLine().orEmpty()
+            while (!reader.readLine().isNullOrEmpty()) Unit
+            val path = requestLine.split(" ").getOrNull(1).orEmpty()
+            val status = if (path == "/rate") "429 Too Many Requests" else "403 Forbidden"
+            val challengeHeader = if (path == "/challenge" || path == "/write") {
+              "Cf-Mitigated: challenge\\r\\n"
+            } else {
+              ""
+            }
+            socket.getOutputStream().apply {
+              write(
+                (
+                  "HTTP/1.1 $status\\r\\n\${challengeHeader}Content-Type: text/html\\r\\n" +
+                    "Content-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+                ).toByteArray(Charsets.US_ASCII)
+              )
+              flush()
+            }
+          }
+        }
+      } finally {
+        served.countDown()
+      }
+    }
+    val fallbackCount = AtomicInteger()
+    val client = OkHttpClient.Builder()
+      .addNetworkInterceptor(ForumMediaCloudflareFallbackInterceptor { request, _ ->
+        fallbackCount.incrementAndGet()
+        responseFor(request).newBuilder()
+          .header("Content-Type", "image/webp")
+          .body("cronet-image".toResponseBody())
+          .build()
+      })
+      .build()
+
+    fun request(path: String, write: Boolean = false): Response {
+      val builder = Request.Builder().url("http://127.0.0.1:\${server.localPort}$path")
+      if (write) builder.post(ByteArray(0).toRequestBody())
+      return client.newCall(builder.build()).execute()
+    }
+
+    try {
+      request("/challenge").use {
+        assertEquals(200, it.code)
+        assertEquals("cronet-image", it.body?.string())
+      }
+      request("/ordinary").use { assertEquals(403, it.code) }
+      request("/rate").use { assertEquals(429, it.code) }
+      request("/write", write = true).use { assertEquals(403, it.code) }
+
+      assertTrue(served.await(5, TimeUnit.SECONDS))
+      assertEquals(1, fallbackCount.get())
+    } finally {
+      server.close()
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regTopic064FallbackFailureOrSecondChallengeKeepsTheOriginalResponse() {
+    val originalRequest = Request.Builder().url("https://images.example.test/a.webp").build()
+    val original = Response.Builder()
+      .request(originalRequest)
+      .protocol(Protocol.HTTP_1_1)
+      .code(403)
+      .message("Forbidden")
+      .header("Cf-Mitigated", "challenge")
+      .body("original-challenge".toResponseBody())
+      .build()
+    val secondChallenge = original.newBuilder()
+      .body("cronet-challenge".toResponseBody())
+      .build()
+
+    assertSame(
+      original,
+      recoverCloudflareMediaChallenge(originalRequest, original) { _, _ ->
+        throw IOException("cronet unavailable")
+      }
+    )
+    assertSame(
+      original,
+      recoverCloudflareMediaChallenge(originalRequest, original) { _, _ ->
+        throw NoClassDefFoundError("cronet native provider unavailable")
+      }
+    )
+    assertSame(
+      original,
+      recoverCloudflareMediaChallenge(originalRequest, original) { _, _ -> secondChallenge }
+    )
+  }
 
   @Test
   fun regTopic041MediaIdentityMarkerIsInternalOnlyWhileSourcePolicyStillApplies() {
@@ -2241,6 +2715,8 @@ class NetworkProxyRuntimeTest {
     assertSame(base.proxySelector, image.proxySelector)
     assertSame(base.dispatcher, image.dispatcher)
     assertSame(base.connectionPool, image.connectionPool)
+    assertEquals(0, base.networkInterceptors.count { it is ForumMediaCloudflareFallbackInterceptor })
+    assertEquals(1, image.networkInterceptors.count { it is ForumMediaCloudflareFallbackInterceptor })
   }
 
   @Test
@@ -2337,6 +2813,98 @@ class NetworkProxyRuntimeTest {
     assertSame(first.dispatcher, second.dispatcher)
     assertSame(first.connectionPool, second.connectionPool)
     assertEquals(1, reapplied.interceptors.count { it is ForumMediaRequestInterceptor })
+  }
+
+  @Test
+  fun regProxy009MatchesOnlyControlledReadHostsAndMethods() {
+    assertTrue(isForumReadChannelRequest("nodeseek", Request.Builder().url("https://www.nodeseek.com/read").build()))
+    assertTrue(
+      isForumReadChannelRequest(
+        "linuxdo",
+        Request.Builder().url("https://api.linux.do/read").head().build()
+      )
+    )
+    assertFalse(isForumReadChannelRequest("nodeseek", Request.Builder().url("https://evilnodeseek.com/read").build()))
+    assertFalse(
+      isForumReadChannelRequest(
+        "nodeseek",
+        Request.Builder().url("https://www.nodeseek.com/write").post(ByteArray(0).toRequestBody()).build()
+      )
+    )
+    assertThrows(IllegalArgumentException::class.java) {
+      forumReadChannelHostSuffix("arbitrary-host")
+    }
+  }
+
+  @Test
+  fun regProxy009CancelsOnlyTargetReadsAndRotatesOnlyTheForumPool() {
+    val before = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
+    val mediaBefore = NetworkProxyRuntime.configureMediaClient(OkHttpClient.Builder()).build()
+    val dispatcher = before.dispatcher
+    val previousMaxRequests = dispatcher.maxRequests
+    val previousMaxRequestsPerHost = dispatcher.maxRequestsPerHost
+    val started = CountDownLatch(2)
+    val release = CountDownLatch(1)
+    val completed = CountDownLatch(4)
+    val client = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder())
+      .addInterceptor { chain ->
+        started.countDown()
+        release.await(5, TimeUnit.SECONDS)
+        responseFor(chain.request())
+      }
+      .build()
+    val calls = listOf(
+      client.newCall(Request.Builder().url("https://www.nodeseek.com/running").build()),
+      client.newCall(Request.Builder().url("https://www.nodeseek.com/queued").build()),
+      client.newCall(
+        Request.Builder()
+          .url("https://www.nodeseek.com/write")
+          .post(ByteArray(0).toRequestBody())
+          .build()
+      ),
+      client.newCall(Request.Builder().url("https://linux.do/unrelated").build())
+    )
+    val callback = object : Callback {
+      override fun onFailure(call: Call, error: IOException) {
+        completed.countDown()
+      }
+
+      override fun onResponse(call: Call, response: Response) {
+        response.close()
+        completed.countDown()
+      }
+    }
+
+    try {
+      dispatcher.maxRequests = 2
+      dispatcher.maxRequestsPerHost = 1
+      calls.forEach { call -> call.enqueue(callback) }
+      assertTrue(started.await(5, TimeUnit.SECONDS))
+
+      val recovery = NetworkProxyRuntime.recoverForumReadChannel("nodeseek")
+      val after = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
+      val mediaAfter = NetworkProxyRuntime.configureMediaClient(OkHttpClient.Builder()).build()
+
+      assertEquals(1, recovery.canceledQueued)
+      assertEquals(1, recovery.canceledRunning)
+      assertTrue(calls[0].isCanceled())
+      assertTrue(calls[1].isCanceled())
+      assertFalse(calls[2].isCanceled())
+      assertFalse(calls[3].isCanceled())
+      assertSame(before.cookieJar, after.cookieJar)
+      assertSame(before.proxySelector, after.proxySelector)
+      assertSame(before.dispatcher, after.dispatcher)
+      assertNotSame(before.connectionPool, after.connectionPool)
+      assertSame(mediaBefore.connectionPool, mediaAfter.connectionPool)
+
+      release.countDown()
+      assertTrue(completed.await(5, TimeUnit.SECONDS))
+    } finally {
+      release.countDown()
+      calls.forEach { call -> call.cancel() }
+      dispatcher.maxRequests = previousMaxRequests
+      dispatcher.maxRequestsPerHost = previousMaxRequestsPerHost
+    }
   }
 
   @Test
@@ -3352,6 +3920,49 @@ function injectWebkitDependency(contents) {
   );
 }
 
+function injectCronetDependencies(contents) {
+  const bundled = 'org.chromium.net:cronet-bundled:500.0.1';
+  const okhttp = 'com.google.net.cronet:cronet-okhttp:0.1.1';
+  if (contents.includes(bundled) && contents.includes(okhttp)) {
+    return contents;
+  }
+  if (contents.includes(bundled) || contents.includes(okhttp)) {
+    throw new Error('Cronet 依赖只注入了一部分，拒绝继续生成 Android 工程。');
+  }
+  const dependenciesPattern = /dependencies\s*\{/;
+  if (!dependenciesPattern.test(contents)) {
+    throw new Error('无法注入 Cronet 依赖：app build.gradle 模板不匹配。');
+  }
+  return contents.replace(
+    dependenciesPattern,
+    (match) => `${match}
+    implementation("org.chromium.net:cronet-bundled:500.0.1")
+    implementation("com.google.net.cronet:cronet-okhttp:0.1.1") {
+        exclude group: "com.squareup.okhttp3", module: "okhttp"
+        exclude group: "com.squareup.okio", module: "okio"
+        exclude group: "org.chromium.net", module: "cronet-api"
+    }`
+  );
+}
+
+function injectCronetProguardRules(contents) {
+  const rules = [
+    '# Cronet 500 optional platform APIs absent from compileSdk 36.',
+    '-dontwarn android.app.privatecompute.PccSandboxManager',
+    '-dontwarn android.net.http.Proxy$HttpConnectCallback',
+    '-dontwarn android.net.http.Proxy',
+    '-dontwarn android.net.http.ProxyOptions'
+  ];
+  const present = rules.slice(1).map((rule) => contents.includes(rule));
+  if (present.every(Boolean)) {
+    return contents;
+  }
+  if (present.some(Boolean)) {
+    throw new Error('Cronet R8 规则只注入了一部分，拒绝继续生成 Android 工程。');
+  }
+  return `${contents.trimEnd()}\n\n${rules.join('\n')}\n`;
+}
+
 function injectNetworkProxyTestSupport(contents) {
   let next = contents;
   if (!next.includes('testImplementation("junit:junit:4.13.2")')) {
@@ -3376,7 +3987,9 @@ function injectNetworkProxyTestSupport(contents) {
 
 function withNetworkProxyModule(config) {
   config = withAppBuildGradle(config, (config) => {
-    config.modResults.contents = injectNetworkProxyTestSupport(injectWebkitDependency(config.modResults.contents));
+    config.modResults.contents = injectNetworkProxyTestSupport(
+      injectCronetDependencies(injectWebkitDependency(config.modResults.contents))
+    );
     return config;
   });
 
@@ -3388,6 +4001,8 @@ function withNetworkProxyModule(config) {
         return config;
       }
       patchExpoVideoDataSource(config.modRequest.projectRoot);
+      const proguardPath = path.join(config.modRequest.platformProjectRoot, 'app', 'proguard-rules.pro');
+      fs.writeFileSync(proguardPath, injectCronetProguardRules(fs.readFileSync(proguardPath, 'utf8')));
       const outputDir = path.join(
         config.modRequest.platformProjectRoot,
         'app',
@@ -3424,4 +4039,5 @@ function withNetworkProxyModule(config) {
 }
 
 module.exports = withNetworkProxyModule;
+module.exports.injectCronetProguardRules = injectCronetProguardRules;
 module.exports.patchExpoVideoDataSource = patchExpoVideoDataSource;

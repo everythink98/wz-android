@@ -11,6 +11,7 @@ import {
 } from '@/domain/session/siteSessionState';
 import type { Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
+import { readWithinAggregateSourceBudget } from '@/sources/readAggregation';
 import { readAccountStatus } from '@/sources/accountRead';
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
@@ -193,6 +194,7 @@ export function useAccountStatusController({
           generation: number;
           promise: Promise<AccountReconcileResult>;
           queryKey: readonly unknown[];
+          releaseBudgetCancellation: () => void;
           surfaceGeneration: number;
         }
       >
@@ -220,10 +222,16 @@ export function useAccountStatusController({
     [onAccountIdentityRuntimeChanged]
   );
   const reconcileAccountStatus = useCallback(
-    (source: StatusSource, options: { surfaceGeneration?: number } = {}): Promise<AccountReconcileResult> => {
+    (
+      source: StatusSource,
+      options: { signal?: AbortSignal; surfaceGeneration?: number } = {}
+    ): Promise<AccountReconcileResult> => {
       const requestedSurfaceGeneration = options.surfaceGeneration || 0;
       const activeProbe = activeProbeRef.current[source];
-      if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) return activeProbe.promise;
+      if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
+        if (!options.signal) activeProbe.releaseBudgetCancellation();
+        return activeProbe.promise;
+      }
       if (activeProbe) void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
       beginAccountIdentityCheck(source);
       const generation =
@@ -232,6 +240,12 @@ export function useAccountStatusController({
           : Math.max(probeGenerationRef.current[source] + 1, options.surfaceGeneration);
       probeGenerationRef.current[source] = generation;
       const probeQueryKey = forumQueryKeys.accountStatusProbe({ sessionEpochs, generation, source });
+      const abortProbe = () => {
+        if (activeProbeRef.current[source]?.generation !== generation) return;
+        void appQueryClient.cancelQueries({ queryKey: probeQueryKey, exact: true });
+      };
+      const releaseBudgetCancellation = () => options.signal?.removeEventListener('abort', abortProbe);
+      options.signal?.addEventListener('abort', abortProbe, { once: true });
       const promise = (async (): Promise<AccountReconcileResult> => {
         try {
           const nextData = await appQueryClient.fetchQuery({
@@ -287,6 +301,7 @@ export function useAccountStatusController({
           }));
           return { status: 'unknown', error: message, errorInfo };
         } finally {
+          releaseBudgetCancellation();
           if (activeProbeRef.current[source]?.generation === generation) delete activeProbeRef.current[source];
           appQueryClient.removeQueries({ queryKey: probeQueryKey, exact: true });
         }
@@ -295,8 +310,10 @@ export function useAccountStatusController({
         generation,
         promise,
         queryKey: probeQueryKey,
+        releaseBudgetCancellation,
         surfaceGeneration: requestedSurfaceGeneration
       };
+      if (options.signal?.aborted) abortProbe();
       return promise;
     },
     [
@@ -317,10 +334,25 @@ export function useAccountStatusController({
       setIdentityReconciliationPending(true);
       try {
         const results = await Promise.all(
-          Object.values(STATUS_DESCRIPTORS).map(async (descriptor) => ({
-            descriptor,
-            result: await reconcileAccountStatus(descriptor.source)
-          }))
+          Object.values(STATUS_DESCRIPTORS).map(async (descriptor) => {
+            try {
+              return {
+                descriptor,
+                result: await readWithinAggregateSourceBudget(descriptor.source, undefined, (signal) =>
+                  reconcileAccountStatus(descriptor.source, { signal })
+                )
+              };
+            } catch (error) {
+              setIdentityChecks((current) => ({
+                ...current,
+                [descriptor.source]: { checking: false, pending: true }
+              }));
+              return {
+                descriptor,
+                result: { status: 'unknown' as const, error: errorMessage(error) }
+              };
+            }
+          })
         );
         if (options.silent) return;
         const failedSites = results.flatMap(({ descriptor, result }) =>

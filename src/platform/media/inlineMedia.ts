@@ -19,6 +19,7 @@ import {
   ORIGINAL_IMAGE_SOURCE_ATTR,
   parseImageDimension,
   safeTagName,
+  type ImageDisplaySize,
   type ParsedImageNode
 } from './imagePreviewCatalog';
 
@@ -51,7 +52,7 @@ const STICKER_ROW_MAX_SIZE = 160;
 
 const STICKER_ROW_CONTENT_WIDTH_RATIO = 0.55;
 
-const STICKER_ROW_DISPLAY_MAX_SIZE = 100;
+const STICKER_DISPLAY_MAX_SIZE = 100;
 
 export function shouldMarkLoadedImageInline(
   attributes: Record<string, string | undefined>,
@@ -91,13 +92,19 @@ export function markInlineSizedImageHtml(html: string, url: string) {
 export function inlineForumImageDisplaySize(
   attributes: Record<string, string | undefined>,
   scale = 1,
-  contentWidth = 0
+  contentWidth = 0,
+  naturalDimensions?: ImageDisplaySize
 ) {
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
   const isSticker = isForumStickerImageAttributes(attributes);
   const isStickerRow = /^true$/i.test(attributeValue(attributes, STICKER_ROW_ATTR));
-  const knownDimensions = knownForumStickerSourceDimensions(attributes);
+  const naturalWidth = safeImageDimension(naturalDimensions?.width || 0);
+  const naturalHeight = safeImageDimension(naturalDimensions?.height || 0);
+  const usesNaturalDimensions = !width && !height && naturalWidth > 0 && naturalHeight > 0;
+  const knownDimensions = usesNaturalDimensions
+    ? { width: naturalWidth, height: naturalHeight }
+    : knownForumStickerSourceDimensions(attributes);
   const fallbackSize = isSticker ? (isStickerRow ? STICKER_ROW_DEFAULT_SIZE : INLINE_STICKER_DEFAULT_SIZE) : 20;
   let displayWidth =
     width ||
@@ -114,7 +121,9 @@ export function inlineForumImageDisplaySize(
   const maxSize = isSticker
     ? isStickerRow
       ? STICKER_ROW_MAX_SIZE
-      : INLINE_STICKER_MAX_SIZE
+      : usesNaturalDimensions
+        ? STICKER_DISPLAY_MAX_SIZE
+        : INLINE_STICKER_MAX_SIZE
     : isInlineForumImageAttributes(attributes)
       ? INLINE_EMOJI_MAX_SIZE
       : INLINE_STICKER_MAX_SIZE;
@@ -136,7 +145,7 @@ export function inlineForumImageDisplaySize(
   displayHeight *= safeScale;
   if (isStickerRow && Number.isFinite(contentWidth) && contentWidth > 0) {
     const rowMaxSize = Math.max(64, contentWidth * STICKER_ROW_CONTENT_WIDTH_RATIO);
-    const rowMaxDimension = Math.min(STICKER_ROW_DISPLAY_MAX_SIZE, rowMaxSize);
+    const rowMaxDimension = Math.min(STICKER_DISPLAY_MAX_SIZE, rowMaxSize);
     const rowDimension = Math.max(displayWidth, displayHeight);
     if (rowDimension > rowMaxDimension) {
       const ratio = rowMaxDimension / rowDimension;
@@ -381,7 +390,7 @@ function splitLargeStickerMediaFromTextHtml(html: string) {
       return;
     }
     flushRowItems();
-    result.push(`<p>${inlineHtml}</p>`);
+    result.push(inlineStickerMediaLineHtml(inlineHtml) || `<p>${inlineHtml}</p>`);
   };
 
   let match = mediaPattern.exec(html);
@@ -617,9 +626,6 @@ function knownForumStickerSourceDimensions(attributes: Record<string, string | u
   }
   if (/^\/static\/image\/sticker\/emoji\//i.test(path)) {
     return { width: 100, height: 100 };
-  }
-  if (/^\/static\/image\/sticker\/xhj\//i.test(path)) {
-    return { width: 48, height: 48 };
   }
   if (/^\/static\/image\/smiley\/xhj\d{3}\.(?:png|gif|webp|apng)$/i.test(path)) {
     return { width: 120, height: 99 };

@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 const require = createRequire(import.meta.url);
 const plugin = require('../../plugins/withNetworkProxyModule') as {
   patchExpoVideoDataSource: (projectRoot: string) => void;
+  injectCronetProguardRules: (contents: string) => string;
 };
 const scratchRoots: string[] = [];
 const reviewedDataSource = readFileSync(
@@ -85,5 +86,30 @@ describe('withNetworkProxyModule local relay hardening', () => {
 
   it('[REG-PROXY-007] binds the relay with the connection cap as its backlog', () => {
     expect(pluginSource).toContain('ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))');
+  });
+
+  it('[REG-PROXY-009] generates the controlled read-channel bridge and its Kotlin behavior test', () => {
+    expect(pluginSource).toContain('fun recoverForumReadChannel(source: String, promise: Promise)');
+    expect(pluginSource).toContain('internal fun forumReadChannelHostSuffix(source: String)');
+    expect(pluginSource).toContain('fun regProxy009CancelsOnlyTargetReadsAndRotatesOnlyTheForumPool()');
+  });
+
+  it('[REG-TOPIC-064] generates the exact Cloudflare image challenge behavior test', () => {
+    expect(pluginSource).toContain('class ForumMediaCloudflareFallbackInterceptor');
+    expect(pluginSource).toContain('fun regTopic064OnlyCloudflareImageChallengesUseOneFallbackResponse()');
+    expect(pluginSource).toContain('fun regTopic064FallbackFailureOrSecondChallengeKeepsTheOriginalResponse()');
+  });
+
+  it('[REG-TOPIC-064] injects only the optional Cronet platform warnings once', () => {
+    const first = plugin.injectCronetProguardRules('# project rules\n');
+    const second = plugin.injectCronetProguardRules(first);
+
+    expect(second).toBe(first);
+    expect(first.match(/-dontwarn android\.app\.privatecompute\.PccSandboxManager/g)).toHaveLength(1);
+    expect(first.match(/-dontwarn android\.net\.http\.Proxy\$HttpConnectCallback/g)).toHaveLength(1);
+    expect(first.match(/-dontwarn android\.net\.http\.Proxy$/gm)).toHaveLength(1);
+    expect(first.match(/-dontwarn android\.net\.http\.ProxyOptions/g)).toHaveLength(1);
+    expect(first).not.toContain('-ignorewarnings');
+    expect(first).not.toContain('-dontwarn android.**');
   });
 });
