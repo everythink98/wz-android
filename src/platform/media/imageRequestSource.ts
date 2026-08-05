@@ -1,4 +1,5 @@
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import {
   FORUM_MEDIA_IDENTITY_HEADER,
   FORUM_MEDIA_SOURCE_HEADER,
@@ -16,7 +17,9 @@ export type ImageSourceOptions = ImageRequestOptions & {
   baseSource?: unknown;
 };
 
-const IMAGE_REQUEST_HEADER_HOSTS = ['v2ex.com', 'linux.do', 'nodeseek.com', '111666.best'];
+const IMAGE_ACCEPT = 'image/avif,image/webp,image/*,*/*;q=0.8';
+const FALLBACK_ACCEPT_LANGUAGE = 'en-US,en;q=0.9';
+const DEFAULT_ACCEPT_LANGUAGE = defaultAcceptLanguage();
 
 export function isHttpOrHttpsUrl(url: unknown): boolean {
   const clean = typeof url === 'string' ? url.trim() : '';
@@ -53,21 +56,20 @@ export function imageRequestHeadersForUrl(
       return undefined;
     }
     const headers: Record<string, string> = {
+      Accept: IMAGE_ACCEPT,
+      'Accept-Language': DEFAULT_ACCEPT_LANGUAGE,
       [FORUM_MEDIA_IDENTITY_HEADER]: forumMediaIdentityHeaderValue(options?.mediaContext),
       [FORUM_MEDIA_SOURCE_HEADER]: forumMediaSourceHeaderValue(options?.mediaContext)
     };
-    if (!isKnownForumImageHost(parsed.hostname)) {
-      return headers;
+    const contentSource = options?.mediaContext?.contentSource;
+    if (contentSource) {
+      headers.Referer = `${new URL(sourceCatalog[contentSource].baseUrl).origin}/`;
     }
-    Object.assign(headers, {
-      Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-      Referer: parsed.origin
-    });
-    if (isNodeSeekHost(parsed.hostname)) {
-      const userAgent = String(options?.nodeSeekUserAgent || '').trim() || DEFAULT_NODESEEK_ANDROID_USER_AGENT;
-      if (userAgent) {
-        headers['User-Agent'] = userAgent;
-      }
+    const userAgent =
+      (contentSource === 'nodeseek' ? String(options?.nodeSeekUserAgent || '').trim() : '') ||
+      DEFAULT_NODESEEK_ANDROID_USER_AGENT;
+    if (userAgent) {
+      headers['User-Agent'] = userAgent;
     }
     return headers;
   } catch {
@@ -111,9 +113,17 @@ export function dataImageFileFromUrl(url: unknown): { base64: string; extension:
   return base64 ? { base64, extension } : null;
 }
 
-function isKnownForumImageHost(hostname: string) {
-  const normalized = hostname.toLowerCase();
-  return IMAGE_REQUEST_HEADER_HOSTS.some((host) => normalized === host || normalized.endsWith(`.${host}`));
+function defaultAcceptLanguage() {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale.trim().replace(/_/g, '-');
+    if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(locale)) {
+      return FALLBACK_ACCEPT_LANGUAGE;
+    }
+    const language = locale.split('-')[0];
+    return language.toLowerCase() === locale.toLowerCase() ? locale : `${locale},${language};q=0.9`;
+  } catch {
+    return FALLBACK_ACCEPT_LANGUAGE;
+  }
 }
 
 export function isNodeSeekHost(hostname: string) {

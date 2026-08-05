@@ -201,6 +201,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
     },
     utilities: {
       notifications: {
+        hasUnread: false,
         open: jest.fn(),
         summary: '暂无未读 · 后台通知未开启',
         ...overrides.utilities?.notifications
@@ -257,13 +258,13 @@ function collectRenderedText(node: unknown): string[] {
 }
 
 describe('More screen state and actions', () => {
-  it('opens the unified message center with an accurate summary', async () => {
+  it('[REG-NOTIFY-052] shows which More entry owns the unread badge', async () => {
     const open = jest.fn();
     const view = await render(
       <MoreScreen
         {...moreProps({
           utilities: {
-            notifications: { open, summary: '有未读 · 后台通知已开启' }
+            notifications: { hasUnread: true, open, summary: '有未读 · 后台通知已开启' }
           }
         })}
       />
@@ -271,10 +272,18 @@ describe('More screen state and actions', () => {
 
     await fireEvent.press(view.getByLabelText('消息通知，有未读 · 后台通知已开启'));
     expect(open).toHaveBeenCalledTimes(1);
+    expect(StyleSheet.flatten(view.getByTestId('more-notifications-unread-dot').props.style)).toMatchObject({
+      backgroundColor: createTheme(readerData.settings).danger,
+      height: 8,
+      width: 8
+    });
     expect(StyleSheet.flatten(view.getByTestId('more-notifications-row').props.style)).toMatchObject({
       borderBottomColor: createTheme(readerData.settings).line,
       borderBottomWidth: StyleSheet.hairlineWidth
     });
+
+    await view.rerender(<MoreScreen {...moreProps()} />);
+    expect(view.queryByTestId('more-notifications-unread-dot')).toBeNull();
   });
 
   it('shows current, checking, available-update and download progress states', async () => {
@@ -393,6 +402,23 @@ describe('More screen state and actions', () => {
     const view = await render(<MoreScreen {...moreProps()} />);
 
     expect(view.queryByLabelText('展开测试工具')).toBeNull();
+  });
+
+  it('[REG-NODESEEK-004] updates the read-channel threshold from Account Center', async () => {
+    const updateSettings = jest.fn();
+    const view = await render(
+      <MoreScreen
+        {...moreProps({
+          utilities: { settings: { update: updateSettings } }
+        })}
+      />
+    );
+
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await fireEvent.press(view.getByTestId('account-site-nodeseek'));
+    await fireEvent.press(view.getByLabelText('4 次'));
+
+    expect(updateSettings).toHaveBeenCalledWith({ nodeSeekRecoveryThreshold: 4 });
   });
 
   it('shows the 小隐寺 Device Code, countdown and browser/cancel actions without credential fields', async () => {

@@ -99,6 +99,20 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderBottomWidth: StyleSheet.hairlineWidth,
       paddingBottom: 7
     },
+    notificationMenuRow: {
+      position: 'relative'
+    },
+    notificationUnreadDot: {
+      position: 'absolute',
+      left: 22,
+      top: 8,
+      width: 8,
+      height: 8,
+      backgroundColor: theme.danger,
+      borderColor: theme.background,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth
+    },
     meta: {
       color: theme.muted,
       fontFamily: appFontFamily,

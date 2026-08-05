@@ -1,17 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { useEvent } from 'expo';
 import { Image as ExpoImage } from 'expo-image';
-import { VideoView, useVideoPlayer, type VideoPlayerStatus, type VideoSource } from 'expo-video';
 import { WebView } from 'react-native-webview';
-import {
-  TChildrenRenderer,
-  useContentWidth,
-  type CustomBlockRenderer,
-  type CustomMixedRenderer
-} from 'react-native-render-html';
+import { TChildrenRenderer, useContentWidth, type CustomBlockRenderer } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { imageRequestHeadersForUrl, imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import {
+  imageRequestHeadersForUrl,
+  imageSourceFromUrl,
+  isNodeSeekHost,
+  normalizeImagePreviewUrl
+} from '@/platform/media/imageRequestSource';
 import {
   inlineForumImageDisplaySize,
   FORUM_INLINE_MEDIA_LINE_TAG,
@@ -26,6 +24,7 @@ import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
+import { cachedPreviewImageDimensions, rememberPreviewImageDimensions } from './previewRenderers';
 
 export async function readManagedWebViewCookieHeader(url: string) {
   const result = await readManagedCookieHeader(url);
@@ -53,79 +52,100 @@ function videoStickerRequestHeaders(
     : undefined;
 }
 
-export function shouldShowVideoStickerLoading(
-  firstFrameRendered: boolean,
-  loadFailed: boolean,
-  status: VideoPlayerStatus
-) {
-  return !loadFailed && (status === 'loading' || (status !== 'error' && !firstFrameRendered));
-}
+const VIDEO_STICKER_READY_MESSAGE = 'wz-video-sticker-ready';
+const VIDEO_STICKER_ERROR_MESSAGE = 'wz-video-sticker-error';
 
-function ForumVideoStickerVideo({
+function ForumVideoStickerBrowser({
   fallbackSrc,
-  headers,
   loadingColor,
   mediaContext,
   mediaSessionIdentity,
+  nodeSeekUserAgent,
   src,
   videoStyle
 }: {
   fallbackSrc: string;
-  headers?: Record<string, string>;
   loadingColor: string;
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
+  nodeSeekUserAgent?: string;
   src: string;
   videoStyle: StyleProp<ViewStyle>;
 }) {
-  const [firstFrameRendered, setFirstFrameRendered] = useState(false);
-  const source = useMemo<VideoSource>(
-    () => ({
-      uri: src,
-      ...(headers ? { headers } : {}),
-      contentType: 'progressive'
-    }),
-    [headers, src]
-  );
-  const player = useVideoPlayer(source, (nextPlayer) => {
-    nextPlayer.loop = true;
-    nextPlayer.muted = true;
-    nextPlayer.keepScreenOnWhilePlaying = false;
-    nextPlayer.play();
-  });
-  const status = useEvent(player, 'statusChange', { status: player.status }).status;
-  useEffect(() => {
-    setFirstFrameRendered(false);
-  }, [headers, mediaSessionIdentity, src]);
-  const loadFailed = status === 'error';
-  const showLoading = shouldShowVideoStickerLoading(firstFrameRendered, loadFailed, status);
-  const showFallback = fallbackSrc && (!firstFrameRendered || loadFailed);
+  const [ready, setReady] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const document = useMemo(() => videoStickerBrowserDocument(src), [src]);
+  if (!document) {
+    return (
+      <View pointerEvents="none" style={videoStyle}>
+        {fallbackSrc ? (
+          <ExpoImage
+            contentFit="contain"
+            recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
+            source={imageSourceFromUrl(fallbackSrc, { mediaContext, nodeSeekUserAgent })}
+            style={embedStyles.stickerVideoFallback}
+          />
+        ) : null}
+      </View>
+    );
+  }
+  const fail = () => {
+    setReady(false);
+    setLoadFailed(true);
+  };
   return (
     <View pointerEvents="none" style={videoStyle}>
-      {!loadFailed ? (
-        <VideoView
-          allowsVideoFrameAnalysis={false}
-          contentFit="contain"
-          fullscreenOptions={{ enable: false }}
-          nativeControls={false}
-          onFirstFrameRender={() => {
-            setFirstFrameRendered(true);
-          }}
-          player={player}
-          style={embedStyles.stickerVideoFill}
-          surfaceType="textureView"
-          useExoShutter={false}
-        />
-      ) : null}
-      {showFallback ? (
+      {fallbackSrc ? (
         <ExpoImage
           contentFit="contain"
           recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
-          source={imageSourceFromUrl(fallbackSrc, { mediaContext, nodeSeekUserAgent: headers?.['User-Agent'] })}
+          source={imageSourceFromUrl(fallbackSrc, { mediaContext, nodeSeekUserAgent })}
           style={embedStyles.stickerVideoFallback}
         />
       ) : null}
-      {showLoading ? (
+      {!loadFailed ? (
+        <WebView
+          allowFileAccess={false}
+          allowFileAccessFromFileURLs={false}
+          allowUniversalAccessFromFileURLs={false}
+          allowsInlineMediaPlayback
+          bounces={false}
+          containerStyle={embedStyles.stickerVideoFill}
+          domStorageEnabled={false}
+          geolocationEnabled={false}
+          javaScriptCanOpenWindowsAutomatically={false}
+          javaScriptEnabled
+          mediaPlaybackRequiresUserAction={false}
+          mixedContentMode="never"
+          onContentProcessDidTerminate={fail}
+          onError={fail}
+          onHttpError={fail}
+          onMessage={(event) => {
+            if (event.nativeEvent.data === VIDEO_STICKER_READY_MESSAGE) {
+              setReady(true);
+              setLoadFailed(false);
+            } else if (event.nativeEvent.data === VIDEO_STICKER_ERROR_MESSAGE) {
+              fail();
+            }
+          }}
+          onRenderProcessGone={fail}
+          onShouldStartLoadWithRequest={(request) =>
+            request.isTopFrame === false || isVideoStickerBootstrapUrl(request.url, document.source.baseUrl)
+          }
+          originWhitelist={['*']}
+          pointerEvents="none"
+          scrollEnabled={false}
+          setSupportMultipleWindows={false}
+          sharedCookiesEnabled
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
+          source={document.source}
+          style={[embedStyles.stickerVideoFill, embedStyles.transparentWebView, { opacity: ready ? 1 : 0 }]}
+          thirdPartyCookiesEnabled={false}
+          userAgent={nodeSeekUserAgent}
+        />
+      ) : null}
+      {!ready && !loadFailed ? (
         <View style={embedStyles.stickerVideoLoading}>
           <ActivityIndicator color={loadingColor} size="small" />
         </View>
@@ -166,6 +186,9 @@ const embedStyles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  transparentWebView: {
+    backgroundColor: 'transparent'
   },
   linkCard: {
     alignSelf: 'stretch',
@@ -300,15 +323,14 @@ export function createContentMediaRenderers({
         />
       );
     }
-    const headers = videoStickerRequestHeaders(src, mediaContext, nodeSeekMediaUserAgent);
     return (
-      <ForumVideoStickerVideo
+      <ForumVideoStickerBrowser
         key={`${mediaSessionIdentity}:${src}`}
         fallbackSrc={fallbackSrc}
-        headers={headers}
         loadingColor={theme.primary}
         mediaContext={mediaContext}
         mediaSessionIdentity={mediaSessionIdentity}
+        nodeSeekUserAgent={nodeSeekMediaUserAgent}
         src={src}
         videoStyle={[size, embedStyles.inlineVideoSticker, embedStyles.stickerVideoFrame]}
       />
@@ -332,17 +354,42 @@ export function createContentMediaRenderers({
     );
   };
 
-  const ForumStickerRenderer: CustomMixedRenderer = (props) => {
+  const ForumStickerRenderer: CustomBlockRenderer = (props) => {
     const attributes = props.tnode.attributes || {};
     const src = attributes.src || '';
     const contentWidth = useContentWidth();
-    const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth);
+    const normalizedSrc = normalizeImagePreviewUrl(src).trim();
+    const cacheKey = normalizedSrc ? `${mediaSessionIdentity}:${normalizedSrc}` : '';
+    const [loadedDimensions, setLoadedDimensions] = useState<{
+      cacheKey: string;
+      dimensions: { height: number; width: number };
+    } | null>(null);
+    const naturalDimensions =
+      loadedDimensions?.cacheKey === cacheKey
+        ? loadedDimensions.dimensions
+        : cacheKey
+          ? cachedPreviewImageDimensions(cacheKey)
+          : undefined;
+    const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth, naturalDimensions);
     if (!src) {
       return <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
     }
     return (
       <ExpoImage
         contentFit="contain"
+        onLoad={(event) => {
+          const dimensions = { height: event.source.height, width: event.source.width };
+          if (
+            !cacheKey ||
+            !Number.isFinite(dimensions.height) ||
+            !Number.isFinite(dimensions.width) ||
+            !(dimensions.height > 0 && dimensions.width > 0)
+          ) {
+            return;
+          }
+          rememberPreviewImageDimensions(cacheKey, dimensions);
+          setLoadedDimensions({ cacheKey, dimensions });
+        }}
         recyclingKey={`${mediaSessionIdentity}:${src}`}
         source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
         style={[htmlRendererStyles.inlineForumImage, size]}
@@ -446,4 +493,73 @@ export function createContentMediaRenderers({
     [FORUM_VIDEO_STICKER_TAG]: ForumVideoStickerRenderer,
     iframe: IframeRenderer
   };
+}
+
+function videoStickerBrowserDocument(src: string) {
+  try {
+    const url = new URL(src);
+    if (
+      (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+      !isNodeSeekHost(url.hostname) ||
+      !/^\/static\/image\/sticker\//i.test(url.pathname) ||
+      !isVideoStickerUrl(url.toString())
+    ) {
+      return null;
+    }
+    const baseUrl = `${url.origin}/`;
+    return {
+      source: {
+        baseUrl,
+        html: videoStickerBrowserHtml(url.toString(), url.origin)
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
+function videoStickerBrowserHtml(src: string, origin: string) {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="referrer" content="origin">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src ${escapeHtmlAttribute(origin)}; style-src 'unsafe-inline'; script-src 'nonce-wz-video-sticker'; base-uri 'none'; connect-src 'none'; font-src 'none'; form-action 'none'; frame-src 'none'; img-src 'none'; object-src 'none'; worker-src 'none'">
+<style>
+html, body, video { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+video { display: block; object-fit: contain; }
+</style>
+</head>
+<body>
+<video autoplay loop muted playsinline webkit-playsinline disablepictureinpicture src="${escapeHtmlAttribute(src)}"></video>
+<script nonce="wz-video-sticker">
+(() => {
+  const video = document.querySelector('video');
+  let settled = false;
+  const post = (message) => window.ReactNativeWebView.postMessage(message);
+  const play = () => video.play().catch(() => {});
+  const ready = () => {
+    if (settled) return;
+    settled = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => post('${VIDEO_STICKER_READY_MESSAGE}')));
+  };
+  video.addEventListener('loadeddata', ready, { once: true });
+  video.addEventListener('error', () => post('${VIDEO_STICKER_ERROR_MESSAGE}'), { once: true });
+  document.addEventListener('visibilitychange', () => document.hidden ? video.pause() : play());
+  if (video.readyState >= 2) ready();
+  play();
+})();
+</script>
+</body>
+</html>`;
+}
+
+function isVideoStickerBootstrapUrl(value: string, baseUrl: string) {
+  const url = String(value || '').trim();
+  return /^about:blank$/i.test(url) || url === baseUrl;
+}
+
+function escapeHtmlAttribute(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

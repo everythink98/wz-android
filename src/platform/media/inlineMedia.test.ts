@@ -260,6 +260,18 @@ describe('inline media layout', () => {
     expect(result).not.toContain('<forum-sticker src="https://www.nodeseek.com/static/image/sticker/emoji/00.png"');
   });
 
+  it('[REG-TOPIC-066] keeps image stickers out of a text line when later video stickers split into a row', () => {
+    const html =
+      '<p>我就是第一批来的用户 <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/xhj/003.png" alt="xhj003"> <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/xhj/015.gif" alt="xhj015"> <forum-video-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/13.webm" data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/13.png" width="100" height="100"></forum-video-sticker></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-media-line>我就是第一批来的用户 <forum-sticker class="sticker"');
+    expect(result).toContain('xhj/003.png');
+    expect(result).toContain('xhj/015.gif');
+    expect(result).toContain('</forum-inline-media-line><forum-sticker-row><forum-video-sticker');
+    expect(result).not.toContain('<forum-inline-image class="sticker"');
+  });
+
   it('uses a readable inline size for xhj sticker images without explicit dimensions', () => {
     expect(
       inlineForumImageDisplaySize({
@@ -277,6 +289,9 @@ describe('inline media layout', () => {
         src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png'
       })
     ).toEqual({ width: 64, height: 55 });
+  });
+
+  it('uses a neutral placeholder instead of guessing one size for every xhj sticker', () => {
     expect(
       inlineForumImageDisplaySize({
         class: 'sticker',

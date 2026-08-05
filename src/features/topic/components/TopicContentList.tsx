@@ -12,12 +12,9 @@ import {
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import {
-  HTMLContentModel,
-  HTMLElementModel,
   RenderHTMLConfigProvider,
   TChildrenRenderer,
   TRenderEngineProvider,
-  defaultHTMLElementModels,
   useTNodeChildrenProps,
   type CustomBlockRenderer
 } from 'react-native-render-html';
@@ -36,20 +33,7 @@ import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
 import { HTML_ALLOWED_INLINE_STYLES, trimsTrailingBlockSpacing } from '../rendering/htmlStyles';
-import {
-  FORUM_INLINE_MEDIA_LINE_TAG,
-  FORUM_STICKER_ROW_TAG,
-  FORUM_STICKER_TAG,
-  INLINE_FORUM_IMAGE_TAG
-} from '@/platform/media/inlineMedia';
-import {
-  FORUM_LINK_CARD_TAG,
-  FORUM_TERMINAL_REPORT_TAG,
-  FORUM_TERMINAL_TAB_TAG,
-  FORUM_VIDEO_STICKER_TAG,
-  FORUM_VIDEO_TAG
-} from '@/domain/forum/html';
-import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
+import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import {
   androidRipple,
   replyContextBadgeStyle,
@@ -70,7 +54,6 @@ import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavig
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { splitDiscourseContentHtml } from '@/sources/discourse/content';
-import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
 import {
@@ -106,6 +89,7 @@ import {
 } from '../model/replyListModel';
 import { stableTextHash } from '../model/contentIdentity';
 import { topicListItemKey, topicListItemType, type TopicListItem } from '../model/topicListModel';
+import { HTML_CUSTOM_ELEMENT_MODELS } from '../rendering/htmlElementModels';
 
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
 const EMPTY_NEARBY_TOPIC_CONTENT_KEYS: ReadonlySet<string> = new Set();
@@ -152,75 +136,6 @@ const TrimTrailingBlockSpacingRenderer: CustomBlockRenderer = ({ InternalRendere
     style={trimsTrailingBlockSpacing(props.tnode) ? { ...props.style, marginBottom: -4 } : props.style}
   />
 );
-
-const HTML_CUSTOM_ELEMENT_MODELS = {
-  details: defaultHTMLElementModels.details.extend({
-    contentModel: HTMLContentModel.mixed
-  }),
-  summary: defaultHTMLElementModels.summary.extend({
-    contentModel: HTMLContentModel.mixed
-  }),
-  [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: INLINE_FORUM_IMAGE_TAG,
-    contentModel: HTMLContentModel.textual,
-    isOpaque: true
-  }),
-  [FORUM_STICKER_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_STICKER_TAG,
-    contentModel: HTMLContentModel.textual,
-    isOpaque: true
-  }),
-  [FORUM_STICKER_ROW_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_STICKER_ROW_TAG,
-    contentModel: HTMLContentModel.mixed,
-    isOpaque: false
-  }),
-  [FORUM_INLINE_MEDIA_LINE_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_INLINE_MEDIA_LINE_TAG,
-    contentModel: HTMLContentModel.mixed,
-    isOpaque: false
-  }),
-  [FORUM_REPLY_REFERENCE_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_REPLY_REFERENCE_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: true
-  }),
-  [NODESEEK_POLL_PLACEHOLDER_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: NODESEEK_POLL_PLACEHOLDER_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: true
-  }),
-  [FORUM_LINK_CARD_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_LINK_CARD_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: true
-  }),
-  [FORUM_TERMINAL_REPORT_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_TERMINAL_REPORT_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: false
-  }),
-  [FORUM_TERMINAL_TAB_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_TERMINAL_TAB_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: false
-  }),
-  [FORUM_VIDEO_STICKER_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_VIDEO_STICKER_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: true
-  }),
-  [FORUM_VIDEO_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_VIDEO_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: true
-  }),
-  iframe: HTMLElementModel.fromCustomModel({
-    tagName: 'iframe',
-    contentModel: HTMLContentModel.block,
-    isOpaque: true
-  })
-};
 
 function htmlTagName(tnode: unknown) {
   const tagName = ((tnode as { tagName?: string }).tagName || '').toLowerCase();

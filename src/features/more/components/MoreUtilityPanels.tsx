@@ -20,6 +20,7 @@ function appearanceSummary(settings: ReaderSettings) {
 
 export type MoreUtilityCapabilities = {
   notifications: {
+    hasUnread: boolean;
     open: () => void;
     summary: string;
   };
@@ -63,7 +64,7 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
   return (
     <>
       <View style={styles.groupList}>
-        <View testID="more-notifications-row" style={styles.menuRowDivider}>
+        <View testID="more-notifications-row" style={[styles.menuRowDivider, styles.notificationMenuRow]}>
           <MenuButton
             accessibilityLabel={`消息通知，${runtime.notifications.summary}`}
             icon={Bell}
@@ -71,6 +72,9 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
             value={runtime.notifications.summary}
             onPress={runtime.notifications.open}
           />
+          {runtime.notifications.hasUnread ? (
+            <View pointerEvents="none" testID="more-notifications-unread-dot" style={styles.notificationUnreadDot} />
+          ) : null}
         </View>
         <MenuButton icon={Server} label="服务器代理" value={runtime.proxy.summary} onPress={runtime.proxy.open} />
       </View>

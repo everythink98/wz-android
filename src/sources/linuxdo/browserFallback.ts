@@ -5,7 +5,7 @@ import {
   isSameGoogleSiteSearchUrl
 } from '@/sources/searchFallback';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
-import { cancelRequestTimeoutForFallback, type Fetcher } from '@/platform/network/request';
+import { cancelRequestTimeoutForFallback, scheduleRequestTimeout, type Fetcher } from '@/platform/network/request';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -19,6 +19,35 @@ export type LinuxDoHiddenBrowserFailureReason =
   'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
 
 const LINUXDO_CURRENT_SESSION_URL = 'https://linux.do/session/current.json';
+const LINUXDO_DIRECT_FETCH_TIMEOUT_MS = 8_000;
+
+class LinuxDoDirectFetchTimeoutError extends Error {}
+
+async function fetchLinuxDoDirectly(defaultFetcher: Fetcher, input: string, init?: RequestInit) {
+  const controller = new AbortController();
+  const parentSignal = init?.signal;
+  const abortFromParent = () => controller.abort();
+  let cancelTimeout: (() => void) | undefined;
+  let timeoutPromise: Promise<never> | undefined;
+  if (parentSignal?.aborted) {
+    controller.abort();
+  } else {
+    parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+    timeoutPromise = new Promise<never>((_resolve, reject) => {
+      cancelTimeout = scheduleRequestTimeout(() => {
+        reject(new LinuxDoDirectFetchTimeoutError('linux.do direct fetch timeout'));
+        controller.abort();
+      }, LINUXDO_DIRECT_FETCH_TIMEOUT_MS);
+    });
+  }
+  try {
+    const fetchPromise = defaultFetcher(input, { ...init, signal: controller.signal });
+    return await (timeoutPromise ? Promise.race([fetchPromise, timeoutPromise]) : fetchPromise);
+  } finally {
+    cancelTimeout?.();
+    parentSignal?.removeEventListener('abort', abortFromParent);
+  }
+}
 
 export class LinuxDoHiddenBrowserFailureError extends Error {
   constructor(
@@ -196,12 +225,32 @@ async function fetchLinuxDoWebViewOnly(
 export function createLinuxDoWebViewFallbackFetcher({
   allowWebViewFallback = () => true,
   defaultFetcher = fetch,
+  recoverReadChannel,
   webViewFetcher
 }: {
   allowWebViewFallback?: (url: string) => boolean;
   defaultFetcher?: Fetcher;
+  recoverReadChannel?: () => Promise<unknown>;
   webViewFetcher: Fetcher;
 }): Fetcher {
+  const recoverTimedOutRead = async () => {
+    if (!recoverReadChannel) throw new LinuxDoDirectFetchTimeoutError('linux.do direct fetch timeout');
+    const trace = beginDiagnosticTrace('network', 'channel-recovery', { source: 'linuxdo', reason: 'timeout' });
+    try {
+      const result = await recoverReadChannel();
+      const fields = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+      finishDiagnosticTrace(trace, 'success', {
+        source: 'linuxdo',
+        reason: 'timeout',
+        ...(typeof fields.generation === 'number' ? { generation: fields.generation } : {}),
+        ...(typeof fields.canceledQueued === 'number' ? { queuedCount: fields.canceledQueued } : {}),
+        ...(typeof fields.canceledRunning === 'number' ? { runningCount: fields.canceledRunning } : {})
+      });
+    } catch (error) {
+      finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: 'timeout' });
+      throw error;
+    }
+  };
   return registerDiagnosticContextFetcher(async (input, init) => {
     const url = String(input);
     const method = String(init?.method || 'GET').toUpperCase();
@@ -211,25 +260,33 @@ export function createLinuxDoWebViewFallbackFetcher({
       }
       return fetchLinuxDoWebViewOnly(webViewFetcher, url, init);
     }
+    const isIdempotentRead = isLinuxDoRequestUrl(url) && (method === 'GET' || method === 'HEAD');
     let response: Response;
     try {
-      response = await defaultFetcher(input, init);
+      response = isIdempotentRead
+        ? await fetchLinuxDoDirectly(defaultFetcher, url, init)
+        : await defaultFetcher(input, init);
     } catch (error) {
-      const intent = browserFetchIntentFromInit(init);
-      if (
-        url === LINUXDO_CURRENT_SESSION_URL &&
-        method === 'GET' &&
-        intent?.owner === 'account' &&
-        intent.priority === 'background' &&
-        normalizeDiagnosticReason(error) === 'network_error' &&
-        allowWebViewFallback(url)
-      ) {
-        return fetchLinuxDoWebViewOnly(webViewFetcher, url, init, {
-          owner: 'account',
-          reason: 'network_error'
-        });
+      if (error instanceof LinuxDoDirectFetchTimeoutError && !init?.signal?.aborted) {
+        await recoverTimedOutRead();
+        response = await defaultFetcher(input, init);
+      } else {
+        const intent = browserFetchIntentFromInit(init);
+        if (
+          url === LINUXDO_CURRENT_SESSION_URL &&
+          method === 'GET' &&
+          intent?.owner === 'account' &&
+          intent.priority === 'background' &&
+          normalizeDiagnosticReason(error) === 'network_error' &&
+          allowWebViewFallback(url)
+        ) {
+          return fetchLinuxDoWebViewOnly(webViewFetcher, url, init, {
+            owner: 'account',
+            reason: 'network_error'
+          });
+        }
+        throw error;
       }
-      throw error;
     }
     if (!isLinuxDoRequestUrl(url) || method !== 'GET') {
       return response;

@@ -16,11 +16,12 @@ import type {
   Topic,
   V2exFeedFilter
 } from '@/domain/forum/models';
-import type { Fetcher } from '@/platform/network/request';
+import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { mergeSourceDiagnosticSummaries } from './diagnostics';
 import {
   dispatchSourceRead,
   mergeSettledSourceErrors,
+  readWithinAggregateSourceBudget,
   settledDiagnosticFacts,
   unavailableSourceRead
 } from './readAggregation';
@@ -156,54 +157,63 @@ export async function getFeed({
     ) as Record<(typeof allFeedSources)[number], number>;
     const adapterLimit = limit < 30 ? limit * allFeedSources.length : limit;
     const results = await Promise.allSettled(
-      allFeedSources.map((item, index) => {
-        if (unavailableSourceSet.has(item)) {
-          return unavailableSourceRead(item);
-        }
-        if (!fetchedSources[index]) {
-          return Promise.resolve({
-            items: [],
-            errors: {},
-            hasMore: false,
-            nextPage: cursorState.nextPages?.[item] ?? null,
-            nextCursor: cursorState.sourceCursors?.[item] ?? null
-          });
-        }
-        if (isDiscourseSource(item)) {
-          return getDiscourseSourceFeed(item, {
-            auth: discourseAuth,
-            category,
-            fetcher,
-            limit: adapterLimit,
-            page: requestedPages[item],
-            signal,
-            timeoutMs
-          });
-        }
-        if (item === 'nodeseek') {
-          return getNodeSeekFeed({ ...options, limit: adapterLimit, page: requestedPages[item] });
-        }
-        if (item === 'v2ex') {
-          return getV2exFeed({
-            ...options,
-            cursor: cursorState.sourceCursors?.[item],
-            limit,
-            page: requestedPages[item]
-          });
-        }
-        if (item === 'yaohuo') {
-          return getYaohuoFeedDirect({
-            category,
-            page: requestedPages[item],
-            limit: adapterLimit,
-            yaohuoFetcher: fetcher,
-            signal,
-            timeoutMs
-          });
-        }
-        throw new Error(`${item} 未注册聚合首页读取 adapter`);
-      })
+      allFeedSources.map((item, index) =>
+        readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
+          if (unavailableSourceSet.has(item)) {
+            return unavailableSourceRead(item);
+          }
+          if (!fetchedSources[index]) {
+            return Promise.resolve({
+              items: [],
+              errors: {},
+              hasMore: false,
+              nextPage: cursorState.nextPages?.[item] ?? null,
+              nextCursor: cursorState.sourceCursors?.[item] ?? null
+            });
+          }
+          if (isDiscourseSource(item)) {
+            return getDiscourseSourceFeed(item, {
+              auth: discourseAuth,
+              category,
+              fetcher,
+              limit: adapterLimit,
+              page: requestedPages[item],
+              signal: sourceSignal,
+              timeoutMs
+            });
+          }
+          if (item === 'nodeseek') {
+            return getNodeSeekFeed({
+              ...options,
+              limit: adapterLimit,
+              page: requestedPages[item],
+              signal: sourceSignal
+            });
+          }
+          if (item === 'v2ex') {
+            return getV2exFeed({
+              ...options,
+              cursor: cursorState.sourceCursors?.[item],
+              limit,
+              page: requestedPages[item],
+              signal: sourceSignal
+            });
+          }
+          if (item === 'yaohuo') {
+            return getYaohuoFeedDirect({
+              category,
+              page: requestedPages[item],
+              limit: adapterLimit,
+              yaohuoFetcher: fetcher,
+              signal: sourceSignal,
+              timeoutMs
+            });
+          }
+          throw new Error(`${item} 未注册聚合首页读取 adapter`);
+        })
+      )
     );
+    if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
     const items = sortByTime([
       ...bufferedItems,
       ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
@@ -219,6 +229,7 @@ export async function getFeed({
     }
     const nextPages: Partial<Record<Source, number | null>> = {};
     const sourceCursors: Partial<Record<Source, string | null>> = {};
+    const hasFulfilledSource = results.some((result) => result.status === 'fulfilled');
     allFeedSources.forEach((item, index) => {
       const result = results[index];
       if (result?.status === 'fulfilled') {
@@ -230,8 +241,14 @@ export async function getFeed({
         }
         return;
       }
-      if (fetchedSources[index] && selected.length) {
+      const aggregateTimedOut =
+        result?.status === 'rejected' &&
+        typeof result.reason === 'object' &&
+        result.reason !== null &&
+        (result.reason as { reason?: unknown }).reason === 'aggregate_timeout';
+      if (fetchedSources[index] && (hasFulfilledSource || aggregateTimedOut)) {
         nextPages[item] = requestedPages[item];
+        if (cursorState.sourceCursors?.[item]) sourceCursors[item] = cursorState.sourceCursors[item];
       }
     });
     const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages, sourceCursors });
@@ -299,30 +316,33 @@ export async function getCategories({
   if (source === 'all') {
     const sources = sourceValues;
     const results = await Promise.allSettled(
-      sources.map((item) => {
-        if (unavailableSources?.includes(item)) {
-          return unavailableSourceRead(item);
-        }
-        if (isDiscourseSource(item)) {
-          return getDiscourseSourceCategories(item, {
-            auth: discourseAuth,
-            fetcher,
-            signal,
-            timeoutMs
-          });
-        }
-        if (item === 'nodeseek') {
-          return getNodeSeekCategories(options);
-        }
-        if (item === 'v2ex') {
-          return getV2exCategories(options);
-        }
-        if (item === 'yaohuo') {
-          return Promise.resolve(yaohuoCategoriesResponse());
-        }
-        throw new Error(`${item} 未注册分类读取 adapter`);
-      })
+      sources.map((item) =>
+        readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
+          if (unavailableSources?.includes(item)) {
+            return unavailableSourceRead(item);
+          }
+          if (isDiscourseSource(item)) {
+            return getDiscourseSourceCategories(item, {
+              auth: discourseAuth,
+              fetcher,
+              signal: sourceSignal,
+              timeoutMs
+            });
+          }
+          if (item === 'nodeseek') {
+            return getNodeSeekCategories({ ...options, signal: sourceSignal });
+          }
+          if (item === 'v2ex') {
+            return getV2exCategories({ ...options, signal: sourceSignal });
+          }
+          if (item === 'yaohuo') {
+            return Promise.resolve(yaohuoCategoriesResponse());
+          }
+          throw new Error(`${item} 未注册分类读取 adapter`);
+        })
+      )
     );
+    if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
     const response = {
       items: results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : [])),
       errors: mergeSettledSourceErrors(results, sources)

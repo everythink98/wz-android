@@ -73,6 +73,7 @@ describe('Android reader theme safety rails', () => {
   const settings: ReaderSettings = {
     theme: 'light',
     fontScale: 1,
+    nodeSeekRecoveryThreshold: 1,
     lineHeight: 'standard',
     contentWidth: 'standard',
     fontFamily: 'sans',

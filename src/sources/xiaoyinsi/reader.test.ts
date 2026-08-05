@@ -1,11 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getXiaoyinsiCategories,
   getXiaoyinsiEmojiUrls,
   getXiaoyinsiFeed,
   getXiaoyinsiReplies,
   getXiaoyinsiReply,
-  getXiaoyinsiTopic
+  getXiaoyinsiTopic,
+  resetXiaoyinsiCategoryCacheForTests
 } from './reader';
 import { getXiaoyinsiCurrentUserProfile, getXiaoyinsiLevelProfile, getXiaoyinsiUserProfile } from './account';
 import { searchXiaoyinsi, searchXiaoyinsiTags, searchXiaoyinsiUsers } from './search';
@@ -97,6 +98,8 @@ function postsForRequest(url: URL) {
 }
 
 describe('xiaoyinsi adapter', () => {
+  beforeEach(() => resetXiaoyinsiCategoryCacheForTests());
+
   it('drops feed topics when the original author identity is missing', async () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
@@ -226,7 +229,7 @@ describe('xiaoyinsi adapter', () => {
       id: '42',
       author: 'alice',
       authorAvatar: undefined,
-      category: '生活'
+      category: '未分类'
     });
     expect(feed.nextPage).toBe(2);
     expect(categories.items[0]).toEqual({ source: 'xiaoyinsi', id: '5', name: '生活', slug: 'life', topicCount: 12 });
@@ -552,6 +555,80 @@ describe('xiaoyinsi adapter', () => {
     const feed = await getXiaoyinsiFeed({ fetcher });
 
     expect(feed.items[0]).toMatchObject({ id: '42', categoryId: '5', category: '未分类' });
+  });
+
+  it('[REG-XIAOYINSI-024] publishes the public feed before the optional category request settles', async () => {
+    let resolveCategories!: (response: Response) => void;
+    const categoryResponse = new Promise<Response>((resolve) => {
+      resolveCategories = resolve;
+    });
+    const isolatedTopic = { ...topic, category_id: 987654 };
+    const fetcher = vi.fn((input: string) => {
+      if (new URL(input).pathname === '/site.json') {
+        return categoryResponse;
+      }
+      return Promise.resolve(json({ users: [{ id: 7, username: 'alice' }], topic_list: { topics: [isolatedTopic] } }));
+    });
+    let settled = false;
+    const feedPromise = getXiaoyinsiFeed({ fetcher }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const settledBeforeCategories = settled;
+    resolveCategories(json({ categories: [{ id: 987654, name: '独立分类' }] }));
+    const feed = await feedPromise;
+
+    expect(settledBeforeCategories).toBe(true);
+    expect(feed.items[0]).toMatchObject({ categoryId: '987654', category: '未分类' });
+  });
+
+  it('[REG-XIAOYINSI-024] shares category lookup work and reuses the successful cache', async () => {
+    let resolveCategories!: (response: Response) => void;
+    const categoryResponse = new Promise<Response>((resolve) => {
+      resolveCategories = resolve;
+    });
+    const isolatedTopic = { ...topic, category_id: 876543 };
+    const fetcher = vi.fn((input: string) => {
+      if (new URL(input).pathname === '/site.json') return categoryResponse;
+      return Promise.resolve(json({ users: [{ id: 7, username: 'alice' }], topic_list: { topics: [isolatedTopic] } }));
+    });
+
+    await Promise.all([getXiaoyinsiFeed({ fetcher }), getXiaoyinsiFeed({ fetcher })]);
+    const categoriesPromise = getXiaoyinsiCategories({ fetcher });
+    expect(fetcher.mock.calls.filter(([input]) => new URL(input).pathname === '/site.json')).toHaveLength(1);
+    resolveCategories(json({ categories: [{ id: 876543, name: '缓存分类' }] }));
+    await categoriesPromise;
+
+    await expect(getXiaoyinsiFeed({ fetcher })).resolves.toMatchObject({
+      items: [expect.objectContaining({ category: '缓存分类' })]
+    });
+    expect(fetcher.mock.calls.filter(([input]) => new URL(input).pathname === '/site.json')).toHaveLength(1);
+  });
+
+  it('[REG-XIAOYINSI-024] retries category lookup after a failed background request', async () => {
+    let categoryAttempts = 0;
+    const isolatedTopic = { ...topic, category_id: 765432 };
+    const fetcher = vi.fn((input: string) => {
+      if (new URL(input).pathname === '/site.json') {
+        categoryAttempts += 1;
+        return categoryAttempts === 1
+          ? Promise.reject(new Error('category service unavailable'))
+          : Promise.resolve(json({ categories: [{ id: 765432, name: '重试分类' }] }));
+      }
+      return Promise.resolve(json({ users: [{ id: 7, username: 'alice' }], topic_list: { topics: [isolatedTopic] } }));
+    });
+
+    await getXiaoyinsiFeed({ fetcher });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await getXiaoyinsiFeed({ fetcher });
+    await getXiaoyinsiCategories({ fetcher });
+
+    expect(categoryAttempts).toBe(2);
+    await expect(getXiaoyinsiFeed({ fetcher })).resolves.toMatchObject({
+      items: [expect.objectContaining({ category: '重试分类' })]
+    });
   });
 
   it('[REG-XIAOYINSI-004] uses the created-by endpoint for authored topics and preserves its pagination', async () => {

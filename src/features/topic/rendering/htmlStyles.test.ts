@@ -13,6 +13,7 @@ describe('Android HTML rendering styles', () => {
   const settings: ReaderSettings = {
     theme: 'light',
     fontScale: 1,
+    nodeSeekRecoveryThreshold: 1,
     lineHeight: 'standard',
     contentWidth: 'standard',
     fontFamily: 'sans',

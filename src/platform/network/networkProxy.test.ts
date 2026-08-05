@@ -21,6 +21,7 @@ import {
   networkProxyWebViewBlockMessage,
   normalizeNetworkProxyState,
   removeNetworkProxyProfile,
+  recoverForumReadChannel,
   saveNetworkProxyState,
   testNetworkProxy,
   validateNetworkProxyProfile,
@@ -186,5 +187,30 @@ describe('network proxy settings', () => {
     await expect(testNetworkProxy(socksProfile, module)).resolves.toEqual({ ok: true, latencyMs: 123 });
     expect(applyProxy).toHaveBeenCalledWith(socksProfile);
     expect(testProxy).toHaveBeenCalledWith(socksProfile);
+  });
+
+  it('[REG-PROXY-009] keeps read-channel recovery single-flight per forum source', async () => {
+    const recover = vi.fn(async (source: string) => ({
+      ok: true,
+      generation: source === 'nodeseek' ? 2 : 3,
+      canceledQueued: 1,
+      canceledRunning: 1
+    }));
+    const module = { recoverForumReadChannel: recover };
+
+    await expect(
+      Promise.all([
+        recoverForumReadChannel('nodeseek', module),
+        recoverForumReadChannel('nodeseek', module),
+        recoverForumReadChannel('linuxdo', module)
+      ])
+    ).resolves.toEqual([
+      expect.objectContaining({ generation: 2 }),
+      expect.objectContaining({ generation: 2 }),
+      expect.objectContaining({ generation: 3 })
+    ]);
+    expect(recover).toHaveBeenCalledTimes(2);
+    expect(recover).toHaveBeenNthCalledWith(1, 'nodeseek');
+    expect(recover).toHaveBeenNthCalledWith(2, 'linuxdo');
   });
 });

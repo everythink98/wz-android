@@ -226,12 +226,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`SEARCH-01`、`SEARCH-02`、`TOPIC-01`、`USER-01` |
 | 用户症状 | 小隐寺主题已有有效 `category_id`，但首页、搜索、详情和用户主题仍全部显示“未分类”。 |
 | 触发条件 | Discourse 列表、主题、搜索和用户响应只返回 `category_id`，分类字典只在 `/site.json` 中返回。 |
-| 根因 seam | `src/sources/xiaoyinsi/reader.ts` 的共享分类映射；旧实现只从当前响应取字典，没有在 ID 缺失映射时回填小隐寺 `/site.json`。 |
-| 必须保持的行为 | 当前响应未携带所需分类时，小隐寺 Adapter 独立读取 `/site.json` 并按字符串 ID 回填；分类请求失败不得抹掉已成功读取的主题。 |
-| 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 的列表、详情、搜索和用户夹具只提供 `category_id`，分类名仅由 `/site.json` 提供；四条路径都必须得到“生活”。 |
+| 根因 seam | `src/sources/xiaoyinsi/reader.ts` 的共享分类映射；旧实现只从当前响应取字典，没有在 ID 缺失映射时回填小隐寺 `/site.json`，后来的同步回填又会拖住公开 Feed/Topic。 |
+| 必须保持的行为 | Search/User 等需要完整分类的读取继续通过共享 `/site.json` 映射回填；公开 Feed/Topic 先用响应内分类和模块缓存结算，暂时未知显示“未分类”并在后台单飞补全，不得因分类失败抹掉已读到的主题，见 `REG-XIAOYINSI-024`。 |
+| 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 用只有 `category_id` 的夹具固定 Search/User 的完整回填，并由 `REG-XIAOYINSI-024` 固定 Feed/Topic 的非阻塞与后续缓存命中。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须经过真实 Adapter 请求与映射路径；只渲染 UI 夹具或断言 `categoryId` 存在无法拦住。 |
-| Replay 或真实验收路径 | 小隐寺“最新/热门”、一条主题详情、一次搜索和一个用户主题列表均做只读对照，确认有效分类不再被统一降级。 |
-| 负向验证方式 | 移除缺失映射时的 `/site.json` 回填，Adapter 用例必须稳定恢复为“未分类”并失败。 |
+| Replay 或真实验收路径 | 小隐寺“最新/热门”、一条主题详情、一次搜索和一个用户主题列表均做只读对照；Feed/Topic 首次可暂时显示“未分类”，后续读取应使用缓存，Search/User 继续结算完整分类。 |
+| 负向验证方式 | 移除 Search/User 的 `/site.json` 回填会让完整分类 oracle 失败；让 Feed/Topic 再次 `await` 分类请求则必须让 `REG-XIAOYINSI-024` 失败。 |
 | 明确不覆盖范围 | 原站日后新增、改名或删除分类仍属 Live 数据，自动测试不固定当天分类总数。 |
 
 ## `REG-XIAOYINSI-002` 小隐寺回复编辑器缺少格式栏和上传入口
@@ -2755,8 +2755,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 请求尚在等待隐藏 WebView 执行权就达到 15 秒超时；用户只取消一个页面请求，却连带使同站其他 fallback 失败或释放错误任务。 |
 | 触发条件 | fallback 执行 timeout 在 enqueue 前启动，外层 direct request timeout 在 transport 已正式移交后仍继续计时，或调度器共用一个 Abort/取消所有任务。 |
 | 根因 seam | `src/platform/network/request.ts` 的 timeout 所有权、`nodeseekFetchFallback` / `linuxdoFetchFallback` 的 handoff，以及隐藏 WebView 队列的 per-task Abort/执行时钟。 |
-| 必须保持的行为 | 排队等待不消耗隐藏 WebView 的执行 timeout，任务出队获得执行权后才启动 15 秒；正式进入 fallback 时只停止该请求的外层 direct timeout。用户 AbortSignal 只取消自己的排队或执行任务，不影响队中/运行中的其他任务。direct request 只执行一次，符合既有明确条件时只进入一次 fallback。 |
-| 精确失败 oracle | `src/platform/network/request.test.ts` 的 `REG-SOURCE-006` 固定 fallback handoff 只取消当前 outer timer；`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 用虚拟时间让第三个任务在前两项各执行 10 秒后排队超过 15 秒，仍从真正出队时获得完整 15 秒预算，并通过独立 `AbortSignal` 分别取消队中与执行中任务，要求其他 Promise 正常结算；`tests/integration/source-read-contracts.test.ts` 固定 direct 一次、fallback 一次。 |
+| 必须保持的行为 | 排队等待不消耗隐藏 WebView 的执行 timeout，任务出队获得执行权后才启动 15 秒；正式进入 fallback 时只停止该请求的外层 direct timeout。用户 AbortSignal 只取消自己的排队或执行任务，不影响队中/运行中的其他任务。direct request 默认只执行一次，符合既有明确条件时只进入一次 fallback；`REG-LINUXDO-008` 的幂等读取 8 秒通道恢复后单次直连 retry 是唯一窄化例外。 |
+| 精确失败 oracle | `src/platform/network/request.test.ts` 的 `REG-SOURCE-006` 固定 fallback handoff 只取消当前 outer timer；`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 用虚拟时间让第三个任务在前两项各执行 10 秒后排队超过 15 秒，仍从真正出队时获得完整 15 秒预算，并通过独立 `AbortSignal` 分别取消队中与执行中任务，要求其他 Promise 正常结算；`tests/integration/source-read-contracts.test.ts` 固定普通来源 direct 一次、fallback 一次，并单独固定 linux.do 恢复后最多一次 retry。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：需要虚拟时钟、独立 signals 与真实队列 Promise；只看最终错误文案不能区分排队耗时和执行超时。 |
 | Replay 或真实验收路径 | 只在自然出现多个 fallback 时记录 enqueue/start/settle 脱敏诊断，确认较晚任务的执行预算从 start 计算；不为制造队列反复触发 Cloudflare。 |
 | 负向验证方式 | 把执行 timer 移回 enqueue、保留 outer timer、共用 controller 或取消整队；编号测试会看到未开始任务超时或无关 Promise 被 reject。 |
@@ -3131,8 +3131,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | NodeSeek 一次普通超时、403 或 fallback 失败后，linux.do、妖火、小隐寺等本来无关的在飞请求一起被取消；随后刷新 More 或重新发请求才恢复。 |
 | 触发条件 | NodeSeek 恢复分支调用共享 OkHttp `dispatcher.cancelAll()` 和 `connectionPool.evictAll()`，把站点级错误升级成进程级连接重置。 |
 | 根因 seam | `nodeseekFetchFallback` 的推测性网络恢复与 `NetworkProxyRuntime` 共享 dispatcher/connection pool 的资源所有权冲突。 |
-| 必须保持的行为 | 全局 cancel/evict 只属于代理配置 transition：应用、切换、关闭代理时先 fail-closed 再清理旧 transport。普通站点 403/429、Cloudflare、超时、解析、账号或 fallback 失败只结算自己的请求，不调用全局恢复。只读 CookieJar 与代理安装在同一 OkHttp client builder，并复用 selector、dispatcher、connection pool；不以另建 client 规避相互影响。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-PROXY-006` 先保持一个 linux.do shared-default transport pending，再连续触发两次 NodeSeek direct timeout/fallback；旧全局 recovery 会取消该 pending Promise，当前实现要求 recovery 零调用且 linux.do 仍成功。`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 另固定两站 hidden fallback 队列互不取消；`tests/tooling/release-packaging.test.ts` 固定生成源码中 `cancelAll()`/`evictAll()` 只剩代理 transition 的一个调用点；生成的 Kotlin test 证明 managed clients 复用同一 proxy selector、dispatcher、pool 与只读 jar。 |
+| 必须保持的行为 | 全局 cancel/evict 只属于代理配置 transition：应用、切换、关闭代理时先 fail-closed 再清理旧 transport。普通站点 403/429、Cloudflare、解析、账号或 fallback 失败只结算自己的请求，不调用全局恢复。只读 CookieJar 与代理安装在同一 OkHttp client builder；所有 client 复用 selector、dispatcher 与 Cookie policy，RN forum pool 可独立换代，Expo media pool 保持固定，不以另建绕过代理的 client 规避约束。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-PROXY-006` 先保持一个 linux.do shared-default transport pending，再连续触发两次 NodeSeek direct timeout/fallback；旧全局 recovery 会取消该 pending Promise，当前实现要求 legacy global recovery 零调用且 linux.do 仍成功。`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 另固定两站 hidden fallback 队列互不取消；`tests/tooling/release-packaging.test.ts` 固定生成源码中 `cancelAll()` 只剩代理 transition 的一个调用点，并分别固定 forum/media pool；生成的 Kotlin test 证明 selector、dispatcher 与只读 jar 共享，forum pool 换代而 media pool 身份不变。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + 原生生成/编译：跨站 Promise 固定用户可见误取消，Kotlin 行为固定共享资源身份；字符串计数只作为调用点守卫。 |
 | Replay 或真实验收路径 | 冷启动并行读取多个站点，只记录自然来源失败与其他站最终结果；不得主动断网、破坏账号或反复撞 Cloudflare。真实代理仅在用户提供并授权配置时验证，否则代理 Live 标记 `NOT_VERIFIED`。 |
 | 负向验证方式 | 在任一站点 catch/超时恢复全局 cancel/evict，或给 Cookie bridge 另建独立 client；编号测试会观察到跨站取消、调用点增加或 managed client 资源身份不一致。 |
@@ -4744,6 +4744,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除任一上下文字段或复核默认 `all/page=1`，编号测试必须失败。 |
 | 明确不覆盖范围 | 不以打开详情本身假定已读，不执行批量已读，不把旧错误字段形态做猜测兼容。 |
 
+## `REG-NOTIFY-052` More 红点没有指向消息入口
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-03`、`MORE-02`；共享 More 未读提示 |
+| 用户症状 | 底部“更多”出现红点，但进入 More 后“消息通知”入口没有任何红点，用户无法判断提示来自消息还是版本更新。 |
+| 触发条件 | notification runtime 的 `unreadTotal > 0` 点亮合并后的 More badge；用户进入 More 查找来源。 |
+| 根因 seam | `useAppRuntime` 只把未读状态压成中文 summary 传给 `MoreUtilityPanels`，消息入口没有结构化未读字段，也没有渲染视觉标记。 |
+| 必须保持的行为 | 未读消息同时点亮底栏 More 与“消息通知”入口的主题 danger 红点；未读清零时行内红点立即消失。可用更新可以独立点亮 More，但不得误亮消息入口；现有摘要、点击区域、分隔线和无障碍文案保持。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `REG-NOTIFY-052` 以真实 More renderer 注入 `hasUnread=true`，要求出现 8dp theme-danger 行内圆点；改为 false 后必须消失。修复前组件树中不存在该圆点。`src/ui/navigation/moreBadge.test.ts` 继续固定 update 与 messages 的独立状态。 |
+| 最低可靠自动测试层 | `UI_PASS + UNIT_PASS`：RNTL 固定 More 行内视觉归因，现有纯函数测试固定底栏状态不会混淆更新和消息。 |
+| Replay 或真实验收路径 | 匹配 APK 保留一条现有未读，确认底栏 More 与 More 内“消息通知”同时有红点；未读清零属于远端写入，不额外执行。若只有可用更新，消息入口必须无红点。 |
+| 负向验证方式 | 删除 `hasUnread`、从 summary 文案解析状态、把合并后的 `moreBadgeState !== none` 传给消息入口，编号测试或 update-only 对照必须失败。 |
+| 明确不覆盖范围 | 不增加数字角标、动画、Toast、自动跳转或新的通知状态；不改变未读计算、Android 摘要或已读协议。 |
+
 ## `REG-TOPIC-062` 极大回复楼层被当作从首屏开始的连续前缀
 
 | 字段 | 内容 |
@@ -4773,6 +4788,156 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 从消息里的远端楼层或普通长主题进入中段锚点，缓慢向上滚动；确认接近窗口起点时上一窗口提前出现、当前位置不跳，并且回复筛选栏没有“倒序”。只读验收，不发送回复。 |
 | 负向验证方式 | 恢复仅在 `replyWindowStart` 可见时加载，编号测试得到 previous callback 0；恢复 `newest` 本机 reverse，倒序入口断言失败。 |
 | 明确不覆盖范围 | 不增加站点倒序请求协议，不根据网络速度或滚动速度动态调参，不自动连续补齐全部历史。 |
+
+## `REG-NODESEEK-004` NodeSeek 直连通道卡死只能靠重启 App 恢复
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/03`、`USER-01`、`ACCOUNT-01/02`、`MORE-02`、`DATA-02/03`；NodeSeek 幂等读取与自愈配置 |
+| 用户症状 | NodeSeek 直连连续命中 8 秒，WebView 却能返回；同进程内后续读取继续卡顿，只有关闭重开 App 后恢复。 |
+| 触发条件 | NodeSeek `GET/HEAD` 直连超时或 network error，且同次 WebView fallback 返回成功响应；合格次数达到设置阈值 1–5。 |
+| 根因 seam | `src/sources/nodeseek/browserFallback.ts` 的直连/WebView 结算边界、`src/platform/network/networkProxy.ts` 的按站 single-flight 与原生读取通道恢复原语；连接池或 Dispatcher 状态损坏仍是可证伪假设。 |
+| 必须保持的行为 | 只累计“直连 timeout/network error + 同次 WebView `ok`”；直连成功清零。取消、写请求、Cloudflare、HTTP/解析失败、无效或失败的 WebView 响应不计数。原生恢复失败也必须返回已成功的 WebView 响应。阈值默认 1，存储、备份和导入限制为 1–5，入口位于账号中心 → NodeSeek。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定阈值、直连成功清零、排除条件和恢复失败仍返回 fallback；`src/domain/reader/readerData.test.ts` 固定默认、取整、clamp 与 merge；Account/More UI 测试固定入口和更新。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter 行为测试固定计数状态机，ReaderData/UI 固定可配置入口；原生隔离由 `REG-PROXY-009` 的 Kotlin JUnit 证明。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 保留登录态运行 `nodeseek-session.ad`、`four-source-feed.ad`、`account-readonly.ad`；自然出现直连 fallback 时核对 recovery generation 与后续直连，不清 Cookie 制造故障。 |
+| 负向验证方式 | 恢复每次 fallback 都恢复、让 challenge/失败 WebView 计数、让写请求进入 fallback，或在恢复失败时丢弃成功响应，编号测试必须失败。 |
+| 明确不覆盖范围 | 不宣称已证明 OkHttp 根因，不重放写请求，不引入 circuit breaker、无限重试或全局 Dispatcher 重置。 |
+
+## `REG-LINUXDO-008` linux.do 直连长期卡死且检查状态超时
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/03`、`USER-01`、`ACCOUNT-01/02`、`MORE-02`；linux.do 幂等读取 |
+| 用户症状 | linux.do 列表突然无法加载，账号状态检查也长时间超时；关闭重开 App 后恢复。 |
+| 触发条件 | `linux.do` 或受控子域的 `GET/HEAD` 直连在 active time 8 秒内不结算；父级仍未取消。 |
+| 根因 seam | `src/sources/linuxdo/browserFallback.ts` 的直连 watchdog、通道恢复和单次重试边界；原有 Cloudflare WebView fallback 保持独立。 |
+| 必须保持的行为 | 8 秒到期取消本次直连，恢复 `linuxdo` 通道，在原有外层时限内只直连重试一次。父级取消、写请求、HTTP 403/429/登录失效、Cloudflare、其他 network/解析错误不恢复，普通慢请求不伪装成 challenge。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-LINUXDO-008` 以 fake active-time 固定 8 秒恢复、transport 最多两次、第二次响应返回，并固定取消、写入、HTTP 和 Cloudflare 零恢复。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：adapter 行为测试固定恢复/重试次数，匹配 APK 才能证明 RN/OkHttp 实际接线。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 运行 `four-source-feed.ad`、`account-readonly.ad` 及相关详情/搜索只读路径；自然超时时核对 generation 增加后的紧随直连，不主动破坏网络或登录态。 |
+| 负向验证方式 | 恢复递归 watchdog、第三次 transport、写请求恢复或把普通 HTTP/Cloudflare 归类为通道超时，编号测试必须失败。 |
+| 明确不覆盖范围 | 不自动重试非超时失败，不替换现有 Cloudflare 验证流程，不扩大到其他域名。 |
+
+## `REG-PROXY-009` 单站通道恢复误伤其他请求或写操作
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-01`；共享 `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/03`、`USER-01`、`ACCOUNT-01/02` 网络 seam |
+| 用户症状 | 为恢复 NodeSeek 或 linux.do 读取而全局 `cancelAll/evictAll`，会连带取消其他站读取，甚至让已提交写操作的结果变得不确定。 |
+| 触发条件 | 运行中 Dispatcher 同时有目标站和无关站点、目标站读取和写入，然后调用 `recoverForumReadChannel('nodeseek' | 'linuxdo')`。 |
+| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的共享 CookieJar/ProxySelector/Dispatcher、可替换 forum `ConnectionPool`、固定 media pool 与受控域名/方法过滤；`src/platform/network/networkProxy.ts` 按来源 single-flight。 |
+| 必须保持的行为 | 原生层只接受 `nodeseek/linuxdo`，不接受任意 Host；只取消目标根域或子域的 queued/running `GET/HEAD`。无关站和 `POST/PUT/PATCH/DELETE` 继续；只替换 forum pool 并增加 generation，CookieJar、ProxySelector、Dispatcher 和 media pool 保持。代理切换仍按已有安全边界全局取消并清两个 pool。 |
+| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.kt` 使用真实 OkHttp Dispatcher 同时排队目标 GET、目标 POST 和无关 GET，固定取消计数、对象所有权与 pool 世代；`src/platform/network/networkProxy.test.ts` 固定 JS 同站 single-flight/跨站隔离。 |
+| 最低可靠自动测试层 | `UNIT_PASS + STATIC_PASS`：Kotlin JUnit 执行真实 Dispatcher/Call 取消，JS 测试固定 bridge 协调；fresh prebuild 与 Kotlin 编译证明生成接线。 |
+| Replay 或真实验收路径 | 在匹配 APK 上只读同时打开目标站与另一站读取，自然触发恢复后确认无关请求结算；不用真实写操作制造并发。 |
+| 负向验证方式 | 改回 `dispatcher.cancelAll()`、放开任意 Host/写方法，共用可替换 media pool，或重建 CookieJar/ProxySelector/Dispatcher，Kotlin/JS 编号测试必须失败。 |
+| 明确不覆盖范围 | 不保证第三方连接恢复后必然成功，不为每站建立独立 Dispatcher/client，不重放写请求。 |
+
+## `REG-FEED-014` 一个慢来源拖住聚合首页与账号屏障
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01/02/04`、`ACCOUNT-01/02` |
+| 用户症状 | 首页“全部”、分类或启动账号对账一直 Loading，实际只有一个站请求不结算，其他站已可用。 |
+| 触发条件 | Feed/Categories 的一个并发来源或四站 Account probe 在 active time 5 秒内不结算。 |
+| 根因 seam | `src/sources/readAggregation.ts` 的唯一 `AGGREGATE_SOURCE_BUDGET_MS`、`src/sources/feedRead.ts` 的 child AbortController/cursor 边界和 `useAccountStatusController` 的批量 barrier。 |
+| 必须保持的行为 | 每来源独立计时并发；全部完成或 5 秒后只发布一次最终聚合。超时 Feed/Categories 记 partial，并始终保留该来源当前 page 与 opaque source cursor；全部只是普通非超时失败时仍不制造空 cursor。Account 超时站保持 pending/unknown，其他站完成；纯批量 probe 可取消，但被单站检查复用后，批量预算无论先后都只能停止等待，不能截短单站 watchdog。父 Query 取消必须整体抛取消，5 秒不计入 NS 通道恢复阈值。 |
+| 精确失败 oracle | `src/sources/feedRead.test.ts` 让 NS Feed/Categories 永不结算，固定 5 秒 partial、child abort、空成功来源与全来源超时时 current page/opaque V2EX cursor 仍可重试、普通全失败零空 cursor及父取消；`tests/ui/account/account-status-controller.test.tsx` 固定 barrier 结束、超时 pending、单站 probe 在批量前或批量后开始时均不被 5 秒预算取消。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter 测试固定主动时钟/cursor，RNTL 固定真实 Account barrier 状态。 |
+| Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad`、`account-readonly.ad` 和 `logged-out-readonly.ad`，确认单站动态失败时其他来源可见、超时账号不被推断为退出。 |
+| 负向验证方式 | 改回无界 `allSettled`、用普通墙钟 `setTimeout`、把父取消降级为 partial、丢失失败 cursor、让超时账号变 anonymous，或用批量 signal 取消已有单站消费者，编号测试必须失败。 |
+| 明确不覆盖范围 | 不对 Search 引入同样 barrier，不渐进重排列表，不把聚合超时当作通道损坏证据。 |
+
+## `REG-FEED-015` 在途首页请求让手动刷新失效
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01/02/04` |
+| 用户症状 | 列表请求卡住后下拉刷新只提示“列表正在更新”，无法替换旧请求；关闭重开 App 才恢复。 |
+| 触发条件 | 同一 `feedQueryKey` 正在首屏读取，用户下拉刷新；旧 Query 可能有缓存也可能没有。 |
+| 根因 seam | `src/features/feed/useFeedController.ts` 的手动刷新所有权，以 TanStack Query exact cancel + `refetch({ cancelRefetch: true })` 替换在途请求。 |
+| 必须保持的行为 | 手动刷新先 exact `cancelQueries`，再替换同 key 请求；每次刷新增加 generation，旧结果和旧 toast 不落地。有/无缓存一致，分页继续 `fetchNextPage({ cancelRefetch: false })` 且 cursor/append 语义不变。 |
+| 精确失败 oracle | `tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 的 `REG-FEED-015` 分别从无缓存首请求和有缓存刷新创建在途请求，要求旧 signal abort、新结果成为最终列表且旧提示不落地；既有分页用例继续固定 append/cursor。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须经真实 hook + QueryClient 观察 signal、缓存和可见列表，单测函数或源码字符不足以证明替换。 |
+| Replay 或真实验收路径 | 匹配 APK 在首页冷加载期和已显示列表的刷新期各下拉一次，确认当前请求被替换并且仍可分页；不用断网制造超时。 |
+| 负向验证方式 | 恢复 `isFetching` 早返、跳过 exact cancel、使用 `cancelRefetch:false` 刷新，或去掉 generation 检查，编号 UI 测试必须失败。 |
+| 明确不覆盖范围 | 不改变切站、identity barrier 或分页的请求策略，不新增自动重试。 |
+
+## `REG-XIAOYINSI-024` 公开主题列表被可选分类请求阻塞
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01/02/04`、`TOPIC-01`、`SEARCH-01/02`、`USER-01` |
+| 用户症状 | 小隐寺公开 `/latest.json` 已返回主题，页面仍额外等待约 9.8 秒 `/site.json`；未登录时因此卡住并拖慢聚合首页。 |
+| 触发条件 | Feed/Topic 响应有 `category_id` 但没有完整分类字典，同时 `/site.json` 慢、失败或有并发调用。 |
+| 根因 seam | `src/sources/xiaoyinsi/reader.ts` 的模块级公开 Category Map 和 pending Promise；Feed/Topic 的非阻塞分类投影与 Search/User 的完整回填边界。 |
+| 必须保持的行为 | Feed/Topic 立即使用响应内分类和缓存；缺失时后台发起或加入唯一 `/site.json`，当次未知保持“未分类”，后续读取使用缓存。`getXiaoyinsiCategories` 成功同样更新缓存；失败不缓存且下次可重试。未登录继续走公开读取。 |
+| 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 的 `REG-XIAOYINSI-024` 保持 `/site.json` pending 并要求 Feed 已结算；两个并发 Feed + Categories 只调用一次，成功后下次 Feed 使用缓存，首次失败后下次可重试。 |
+| 最低可靠自动测试层 | `UNIT_PASS + DEVICE_REPLAY_PASS`：adapter Promise 时序测试固定非阻塞/single-flight，匹配未登录 APK 才能证明真实公开路径没有额外账号阻塞。 |
+| Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad`与隔离 AVD 的 `logged-out-readonly.ad`，打开小隐寺公开 Feed/Topic；允许首次暂时“未分类”，不要求登录或清主设备凭据。 |
+| 负向验证方式 | 让 Feed/Topic `await /site.json`、为每次读取各发一个分类请求、缓存 rejection 或把无凭据当错误，编号测试必须失败。 |
+| 明确不覆盖范围 | 不引入 TTL/外部缓存库，不为分类补全触发当前列表二次重排，不保证原站当天分类名不变。 |
+
+## `REG-FEED-016` 首页来源 Tab 在 100% 下过高过宽
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-02/04`、`MORE-03`；共享 Tab 大字号与点击区 |
+| 用户症状 | v1.3.95 后首页“全部 + 五站”一级 Tab 在 100% 字号下比二级导航大很多，每项过宽；130% 字号缩放本身仍应保留。 |
+| 触发条件 | 首页来源栏使用共享 `PillRail variant="tabs"`，共享样式在 v1.3.95 加入 `minHeight:48` 和 `minWidth:48`。 |
+| 根因 seam | `src/ui/controls/SelectionControls.tsx` 的共享 Tab 样式与 `compactTabs` 局部 override；`src/features/feed/FeedScreen.tsx` 只为顶部来源栏启用。 |
+| 必须保持的行为 | 首页整个来源栏在 100% 时 `minHeight=40`、无 `minWidth`、13 号字，保留既有 `gap=22`、右 padding、自然宽度、role/label/hitSlop；130% 时字号为 17。其他共享一级 Tab 仍为 48×48 最小区域并满足 `REG-NOTIFY-050`。 |
+| 精确失败 oracle | `tests/ui/feed/feed-screen.test.tsx` 的 `REG-FEED-016` 渲染真实首页并断言 40/自然宽/13；`tests/ui/shared/accessibility-basics.test.tsx` 在 130% 下固定 compact 字号 17，既有 `REG-NOTIFY-050` 继续固定默认 Tab 的 48 区域和大字号。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定展平样式数值，匹配 APK 复核实际排版与横向滚动。 |
+| Replay 或真实验收路径 | 匹配 APK 在 100%/130% 各打开首页与消息中心，核对来源栏高度、自然宽度、文字缩放和滚动；验收后恢复原字号。 |
+| 负向验证方式 | 删除 `compactTabs`、全局回退到 40，或对 compact 固定 13 而不消费 Reader scale，对应 UI oracle 必须失败。 |
+| 明确不覆盖范围 | 不改首页二级导航、其他页 Tab 或全局 accessibility 最小点击区策略。 |
+
+## `REG-TOPIC-064` 论坛图片遭遇 Cloudflare Challenge 后原生详情无法显示
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03`、`NAV-03`、`USER-01`、`ACCOUNT-01/02`、`MORE-02` 媒体 seam |
+| 用户症状 | NodeSeek `post-857589-1` 的 `im.legend.moe` 1028×937 WebP 在原站 WebView 正常显示，原生详情只显示灰色占位。Expo Image 的 OkHttp 响应为 `403 + Cf-Mitigated: challenge`；复制完整浏览器头仍是 challenge，而匿名 WebView 与 Cronet 均能取得图片。 |
+| 触发条件 | 论坛图片的幂等 `GET/HEAD` 已带通用浏览器请求画像，但服务端仍按 TLS/HTTP 网络指纹返回 Cloudflare Challenge Page。Cookie 不是该真实样本成功所必需。 |
+| 根因 seam | `src/platform/media/imageRequestSource.ts` 的通用来源画像只负责热链、UA 和语言检查；传输恢复 seam 是 `plugins/withNetworkProxyModule.js` 生成的 Expo Image/SVG 专用 client。把补请求头或补图床 Host 当成浏览器等价无法解决网络栈指纹差异。 |
+| 必须保持的行为 | 所有合法 HTTP(S) 图片继续按内容来源携带 image Accept、UA、Accept-Language、canonical origin Referer 和内部身份标记，不按目标 Host 分支；视频覆盖为 video Accept。Expo Image 与 SVG 有界复取先走现有 OkHttp/Glide 快路径，只有响应精确包含 `Cf-Mitigated: challenge` 且方法为 `GET/HEAD` 才懒初始化当前 generation 的 bundled Cronet，并通过官方 OkHttp transport 流式重试一次。Cronet 不缓存 body、不自行跟随重定向；非 challenge 响应交回外层 OkHttp，二次 challenge、初始化或网络失败保留原始响应且不递归。JS 永不附加 Cookie；同来源 Cookie、跨站匿名、离源永久降级和内部头移除保持不变。App 代理启用或切换阻塞态时 Cronet 只走本地 relay 且 `DISALLOW_DIRECT`；generation 变化取消旧调用，响应体释放后关闭旧 engine。普通图片、普通 `403/429`、超时、写请求、API、视频和图片保存均不进入 Cronet。 |
+| 精确失败 oracle | `src/platform/media/imageRequestSource.test.ts` 与 `tests/ui/topic/topic-image-loading.test.tsx` 固定未知 CDN 的通用画像、UA 隔离、零 JS Cookie及 video Accept。fresh prebuild 生成的 `NetworkProxyRuntimeTest.regTopic064OnlyCloudflareImageChallengesUseOneFallbackResponse` 用真实本地 OkHttp hop 证明只有 challenge GET 被替换为一次流式恢复，普通 403/429 与 POST 零恢复；`regTopic064FallbackFailureOrSecondChallengeKeepsTheOriginalResponse` 固定失败和二次 challenge 保留原响应。tooling 门禁固定 bundled 依赖、旧 OkHttp/Okio/Cronet API 排除、无重定向、`DISALLOW_DIRECT`、Expo Image network interceptor、SVG 共享 client，以及只允许 Cronet 500 缺失平台 API 的四条精确 R8 `-dontwarn`；既有 Kotlin 测试继续固定 Cookie、重定向和 session cache 边界，`assembleRelease` 必须通过 R8。修复前行为测试缺少恢复器并失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + STATIC_PASS`：Vitest/RNTL 固定 JS 和 renderer，生成 Kotlin JUnit 固定真实 OkHttp fallback 行为，fresh prebuild 与 Release Kotlin compile 固定原生依赖/API 接线。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 使用现有登录态从“更多 → 账号中心 → NodeSeek”打开 `https://www.nodeseek.com/post-857589-1` 作原站对照，再在原生 Topic 详情确认 1028×937 WebP 显示；另只读回归普通第三方图片、同来源私有附件与 `post-841430-1` 的复杂动态 SVG。确认普通图片日志没有 Cronet 初始化或主线程阻塞；不清 App 数据、Cookie 或登录态，不保存图片、不启用真实代理。 |
+| 负向验证方式 | 恢复图床 Host 列表、把所有图片/API/视频直接改走 Cronet、按普通 403/429 或超时触发、递归重试、让 Cronet 自行跟随跨站重定向、代理失败回落直连、给第三方图床附加论坛 Cookie，或让 SVG 绕开同一图片 client，编号测试或原生编译必须失败。 |
+| 明确不覆盖范围 | 不覆盖 JavaScript 生成图片、`blob:`、canvas、DRM、第三方登录 Cookie 或交互 CAPTCHA；不增加隐藏媒体 WebView、服务端代理、图床配置、curl impersonation 或无限重试。若锁定的 Cronet 在保留 TLS 校验和代理边界下仍让目标图片返回 challenge，停止合并并记录受控状态/协议证据，再单独评估其他隔离 transport。 |
+
+## `REG-TOPIC-065` NodeSeek 透明动态贴纸出现黑底并在前后台切换时重载
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02/03`；共享详情 renderer 生命周期 |
+| 用户症状 | NodeSeek `post-859086-2#14` 的三个动态贴纸在原站为透明动画，原生详情中前两个出现黑色方块；App 切到后台再回来时贴纸重新加载。 |
+| 触发条件 | NodeSeek 用 VP9 WebM/MOV 表达透明动画，正文 renderer 把它交给 Expo Video/Media3 `TextureView`；Android 通用媒体格式支持不等于该 native surface 保留 alpha，React 生命周期变化还会重建 player。 |
+| 根因 seam | NodeSeek HTML 的 `video.sticker` 归一化 → `FORUM_VIDEO_STICKER_TAG` → `src/features/topic/rendering/contentMediaRenderers.tsx` 的透明媒体承载与 App 可见性生命周期。 |
+| 必须保持的行为 | 普通正文视频继续走 Expo Video/Media3。只有合法 NodeSeek host、`/static/image/sticker/` 路径及 `webm/mp4/mov` 扩展名的贴纸使用透明、禁交互、禁文件/存储/第三方 Cookie且禁止跨顶层导航的 Chromium media island；同源 PNG fallback 在 ready 前和失败后持续可见。source document 按 URL memoize，普通 React 重渲染和前后台切换只暂停/恢复动画，不重建 player 或重新请求。 |
+| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 的 `REG-TOPIC-065` 走真实 renderer，要求 native `useVideoPlayer` 零调用、WebView 初始透明隐藏、ready 后显示、第三方 Cookie 禁用且 rerender 后 source 对象不变。修复前 oracle 观察到一次 native player 调用。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定 renderer/生命周期契约，匹配 APK 的真实主题固定 Android 合成结果和后台恢复。 |
+| Replay 或真实验收路径 | 直达 `https://www.nodeseek.com/post-859086-2#14`，在“评论内查找”输入 `xhj003` 让第 14 楼进入可见窗口；确认三个动态贴纸透明且在连续截图间有帧变化。按 Home 后恢复 App，确认无黑底、无 Loading 重放且动画继续。不清数据、Cookie 或登录态。 |
+| 负向验证方式 | 把透明贴纸重新交给 native VideoView、让 renderer 每次更新生成新 HTML source、ready 前移除 PNG fallback、开放任意 host/path 或前后台恢复时 remount WebView，编号 UI/Live oracle 必须失败。 |
+| 明确不覆盖范围 | 不把普通视频、图片、SVG、API 或未知第三方动画改走 WebView；不承诺 DRM、交互式页面、canvas 或需脚本生成的媒体。 |
+
+## `REG-TOPIC-066` 同一贴纸目录的不同图片被统一压成小尺寸
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02/03`；共享 inline sticker 布局 |
+| 用户症状 | 同一楼层中的 `xhj/003.png` 与 `xhj/015.gif` 在原站分别按约 `57×48`、`82×82` 显示，App 却把两张都压成约 `48×48`；过往按素材或目录修补后仍会在新贴纸上复发。 |
+| 触发条件 | HTML 没有 `width/height`，`knownForumStickerSourceDimensions()` 把整个 `/sticker/xhj/` 目录假定为 `48×48`，后续 inline `64px` 上限又会把真实的 `82×82` 再次缩小；同段后续出现大视频贴纸时，拆行逻辑还会让前面的图片贴纸回落为 textual inline image，最终被 Android TextView 行盒裁成约一行高。 |
+| 根因 seam | `src/platform/media/inlineMedia.ts` 的混合段落分流与占位尺寸推导 → `src/features/topic/rendering/htmlElementModels.ts` 的 block/textual content model → `src/features/topic/rendering/contentMediaRenderers.tsx` 的 Expo Image `onLoad` → 已有 session-aware 有界自然尺寸缓存。 |
+| 必须保持的行为 | HTML 显式宽高仍优先；缺失时首帧可用保守占位，但图片解码成功后必须以完整 URL 的真实宽高和比例为最终事实，并在 100dp 安全上限内显示。同一媒体 session 再次渲染直接复用缓存尺寸，不能先回到小占位再跳变。混合段落拆出后续大贴纸时，前面的图片贴纸仍经专用 block renderer，不进入 TextView 行盒。目录 hint 只能优化首帧，不能覆盖真实尺寸；普通 inline emoji 继续按文本大小，显式尺寸和 sticker row 的既有约束不变。 |
+| 精确失败 oracle | `src/platform/media/inlineMedia.test.ts` 用第 14 楼同形结构固定图片贴纸在后续视频贴纸拆行时仍产出 `forum-sticker`，并固定未知 xhj 只使用中性占位；`tests/ui/topic/html-element-models.test.tsx` 固定 `forum-sticker` 为 block；`tests/ui/topic/topic-image-loading.test.tsx` 通过真实 Sticker renderer 依次提交 `57×48` PNG 与 `82×82` GIF 的 `onLoad`，要求最终 style 精确保持尺寸，并在卸载重建后首帧复用 `82×82`。三个任一回退都必须使编号测试失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：纯解析/布局测试固定路由与 fallback 边界，模型测试固定原生布局容器，RNTL 固定解码后和缓存重进，匹配 APK 固定真实 Expo Image 解码结果。 |
+| Replay 或真实验收路径 | 直达 `https://www.nodeseek.com/post-859086-2#14`，定位第 14 楼并与同设备原站对照 `xhj003`、`xhj015` 的比例和相对大小；按 Home 后恢复，确认尺寸不退回 `48×48`，GIF 继续播放。 |
+| 负向验证方式 | 恢复 `/sticker/xhj/ = 48×48`、按文件编号加表、忽略 `onLoad` 自然尺寸、让无显式尺寸的贴纸仍受 64dp 上限、把 `forum-sticker` 改回 textual、让拆行前缀绕过专用贴纸转换或把普通 emoji 一并放大，编号测试必须失败。 |
+| 明确不覆盖范围 | 不改变图片传输、Cronet、SVG、普通块图、预览或图片保存；不根据未知网页 CSS 猜任意缩放，只恢复素材固有比例并保留 100dp 安全边界。 |
 
 ## 待确认观察
 

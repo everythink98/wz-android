@@ -1,6 +1,49 @@
 import type { Source, SourceErrors } from '@/domain/forum/models';
+import { REQUEST_CANCELED_MESSAGE, scheduleRequestTimeout } from '@/platform/network/request';
 import { sourceDiagnosticSummary } from './diagnostics';
 import { sourceErrorFromUnknown } from './sourceErrors';
+
+export const AGGREGATE_SOURCE_BUDGET_MS = 5_000;
+
+export function readWithinAggregateSourceBudget<T>(
+  source: Source,
+  parentSignal: AbortSignal | undefined,
+  read: (signal: AbortSignal) => Promise<T>
+) {
+  const controller = new AbortController();
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let cancelBudget: () => void = () => undefined;
+    const finish = (complete: () => void) => {
+      if (settled) return;
+      settled = true;
+      cancelBudget();
+      parentSignal?.removeEventListener('abort', abortFromParent);
+      complete();
+    };
+    const abortFromParent = () => {
+      controller.abort();
+      finish(() => reject(new Error(REQUEST_CANCELED_MESSAGE)));
+    };
+    parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+    if (parentSignal?.aborted) {
+      abortFromParent();
+      return;
+    }
+    cancelBudget = scheduleRequestTimeout(() => {
+      controller.abort();
+      finish(() =>
+        reject(Object.assign(new Error(`${source} 聚合读取超过 5 秒`), { source, reason: 'aggregate_timeout' }))
+      );
+    }, AGGREGATE_SOURCE_BUDGET_MS);
+    Promise.resolve()
+      .then(() => read(controller.signal))
+      .then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error))
+      );
+  });
+}
 
 export function mergeSettledSourceErrors(
   results: PromiseSettledResult<{ errors?: SourceErrors }>[],

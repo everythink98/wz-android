@@ -27,6 +27,8 @@ import { cleanCredentials, requestHeaders, type XiaoyinsiApiCredentials } from '
 
 export const LIST_PAGE_SIZE = 30;
 let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
+let publicCategoryCache: CategoryMap = new Map();
+let publicCategoryRequest: Promise<Record<string, unknown>> | null = null;
 
 export interface XiaoyinsiOptions {
   credentials?: XiaoyinsiApiCredentials;
@@ -160,19 +162,48 @@ function categoryMapFromData(data: unknown) {
   return result;
 }
 
-export async function categoryMapForTopics(data: unknown, topics: unknown[], options: XiaoyinsiOptions) {
-  const categories = categoryMapFromData(data);
-  const needsSiteCategories = topics.some((topic) => {
+function fetchPublicCategoryData(options: XiaoyinsiOptions) {
+  if (!publicCategoryRequest) {
+    publicCategoryRequest = fetchXiaoyinsiJson<Record<string, unknown>>('/site.json', undefined, options)
+      .then((data) => {
+        publicCategoryCache = new Map([...publicCategoryCache, ...categoryMapFromData(data)]);
+        return data;
+      })
+      .finally(() => {
+        publicCategoryRequest = null;
+      });
+  }
+  return publicCategoryRequest;
+}
+
+export function resetXiaoyinsiCategoryCacheForTests() {
+  publicCategoryCache = new Map();
+  publicCategoryRequest = null;
+}
+
+function needsPublicCategories(categories: CategoryMap, topics: unknown[]) {
+  return topics.some((topic) => {
     if (!isRecord(topic) || topic.category_id === undefined || topic.category_id === null) {
       return false;
     }
     return !categories.has(String(topic.category_id));
   });
-  if (!needsSiteCategories) {
+}
+
+function publicCategoryMapForTopics(data: unknown, topics: unknown[], options: XiaoyinsiOptions) {
+  const categories = new Map([...publicCategoryCache, ...categoryMapFromData(data)]);
+  if (!needsPublicCategories(categories, topics)) {
     return categories;
   }
+  void fetchPublicCategoryData(options).catch(() => undefined);
+  return categories;
+}
+
+export async function categoryMapForTopics(data: unknown, topics: unknown[], options: XiaoyinsiOptions) {
+  const categories = new Map([...publicCategoryCache, ...categoryMapFromData(data)]);
+  if (!needsPublicCategories(categories, topics)) return categories;
   try {
-    const siteData = await fetchXiaoyinsiJson<Record<string, unknown>>('/site.json', undefined, options);
+    const siteData = await fetchPublicCategoryData(options);
     return new Map([...categories, ...categoryMapFromData(siteData)]);
   } catch {
     return categories;
@@ -258,7 +289,7 @@ export async function getXiaoyinsiFeed(
   );
   const rawTopics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
   const users = discourseUsersById(data.users);
-  const categories = await categoryMapForTopics(data, rawTopics, options);
+  const categories = publicCategoryMapForTopics(data, rawTopics, options);
   const items = rawTopics
     .map((raw) => (isRecord(raw) ? normalizeTopic(raw, categories, discourseOriginalPoster(raw, users)) : null))
     .filter((item): item is Topic => Boolean(item))
@@ -277,7 +308,7 @@ export async function getXiaoyinsiFeed(
 }
 
 export async function getXiaoyinsiCategories(options: XiaoyinsiOptions = {}): Promise<CategoriesResponse> {
-  const data = await fetchXiaoyinsiJson<Record<string, unknown>>('/site.json', undefined, options);
+  const data = await fetchPublicCategoryData(options);
   const categories = Array.isArray(data.categories)
     ? data.categories
     : isRecord(data.category_list) && Array.isArray(data.category_list.categories)
@@ -326,7 +357,7 @@ export async function getXiaoyinsiTopic(
   if (!firstFields) {
     throw new Error('小隐寺主题正文解析失败');
   }
-  const categories = await categoryMapForTopics(data, [data], options);
+  const categories = publicCategoryMapForTopics(data, [data], options);
   const normalized = normalizeTopic(data, categories, isRecord(firstPost) ? firstPost : undefined);
   if (!normalized) {
     throw new Error('小隐寺主题不存在');

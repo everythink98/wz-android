@@ -66,8 +66,8 @@ async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, ini
     parentSignal?.addEventListener('abort', abortFromParent, { once: true });
     timeoutPromise = new Promise<never>((_resolve, reject) => {
       cancelTimeout = scheduleRequestTimeout(() => {
-        controller.abort();
         reject(new Error(NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE));
+        controller.abort();
       }, NODESEEK_DIRECT_FETCH_TIMEOUT_MS);
     });
   }
@@ -180,14 +180,40 @@ async function fetchNodeSeekWebViewOnly(webViewFetcher: Fetcher, url: string, in
 export function createNodeSeekWebViewFallbackFetcher({
   allowWebViewFallback = () => true,
   defaultFetcher = fetch,
+  recoveryThreshold = 1,
+  recoverReadChannel,
   webViewFetcher
 }: {
   allowWebViewFallback?: (url: string) => boolean;
   defaultFetcher?: Fetcher;
+  recoveryThreshold?: number;
+  recoverReadChannel?: (reason: 'timeout' | 'network_error') => Promise<unknown>;
   webViewFetcher: Fetcher;
 }): Fetcher {
+  const threshold = Math.max(1, Math.min(5, Math.round(recoveryThreshold)));
+  let qualifiedFallbacks = 0;
+  const recordQualifiedFallback = async (reason: 'timeout' | 'network_error') => {
+    if (!recoverReadChannel || ++qualifiedFallbacks < threshold) return;
+    const trace = beginDiagnosticTrace('network', 'channel-recovery', { source: 'nodeseek', reason });
+    try {
+      const result = await recoverReadChannel(reason);
+      qualifiedFallbacks = 0;
+      const fields = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+      finishDiagnosticTrace(trace, 'success', {
+        source: 'nodeseek',
+        reason,
+        ...(typeof fields.generation === 'number' ? { generation: fields.generation } : {}),
+        ...(typeof fields.canceledQueued === 'number' ? { queuedCount: fields.canceledQueued } : {}),
+        ...(typeof fields.canceledRunning === 'number' ? { runningCount: fields.canceledRunning } : {})
+      });
+    } catch {
+      finishDiagnosticTrace(trace, 'failure', { source: 'nodeseek', reason });
+    }
+  };
   return registerDiagnosticContextFetcher(async (input, init) => {
     const url = String(input);
+    const method = String(init?.method || 'GET').toUpperCase();
+    const isIdempotentRead = method === 'GET' || method === 'HEAD';
     const accountProbe = browserFetchIntentFromInit(init)?.owner === 'account';
     if (isNodeSeekGoogleSearchUrl(url)) {
       return fetchNodeSeekWebViewOnly(webViewFetcher, url, init);
@@ -197,19 +223,23 @@ export function createNodeSeekWebViewFallbackFetcher({
     }
     let response: Response;
     try {
-      response = await fetchNodeSeekDirectly(defaultFetcher, url, init);
+      response = isIdempotentRead
+        ? await fetchNodeSeekDirectly(defaultFetcher, url, init)
+        : await defaultFetcher(input, init);
     } catch (error) {
-      if (!init?.signal?.aborted && allowWebViewFallback(url)) {
+      if (isIdempotentRead && !init?.signal?.aborted && allowWebViewFallback(url)) {
         const diagnosticReason = normalizeDiagnosticReason(error);
-        return fetchNodeSeekThroughWebView(
-          webViewFetcher,
-          url,
-          init,
-          diagnosticReason === 'unknown' ? 'network_error' : diagnosticReason
-        );
+        const reason = diagnosticReason === 'unknown' ? 'network_error' : diagnosticReason;
+        const fallbackResponse = await fetchNodeSeekThroughWebView(webViewFetcher, url, init, reason);
+        if (fallbackResponse.ok && (reason === 'timeout' || reason === 'network_error')) {
+          await recordQualifiedFallback(reason);
+        }
+        return fallbackResponse;
       }
       throw error;
     }
+    if (isIdempotentRead) qualifiedFallbacks = 0;
+    else return response;
     const text = await response.clone().text();
     if (isNodeSeekChallengeResponse(response, text, url)) {
       return allowWebViewFallback(url)

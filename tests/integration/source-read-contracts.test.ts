@@ -4968,6 +4968,97 @@ describe('Android local sources', () => {
     }
   });
 
+  it('[REG-NODESEEK-004] recovers after the configured qualified fallback threshold and resets on direct success', async () => {
+    vi.useFakeTimers();
+    try {
+      let directMode: 'hang' | 'success' = 'hang';
+      const defaultFetcher = vi.fn(() =>
+        directMode === 'success'
+          ? Promise.resolve(html('<html>direct success</html>'))
+          : new Promise<Response>(() => undefined)
+      );
+      const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher,
+        webViewFetcher: vi.fn(async () => html('<html>webview success</html>')),
+        recoveryThreshold: 2,
+        recoverReadChannel
+      });
+
+      const firstFallback = fetcher('https://www.nodeseek.com/first');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect(firstFallback).resolves.toBeInstanceOf(Response);
+      expect(recoverReadChannel).not.toHaveBeenCalled();
+
+      const secondFallback = fetcher('https://www.nodeseek.com/second');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect(secondFallback).resolves.toBeInstanceOf(Response);
+      expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+
+      directMode = 'success';
+      await expect(fetcher('https://www.nodeseek.com/direct')).resolves.toBeInstanceOf(Response);
+      directMode = 'hang';
+      const afterReset = fetcher('https://www.nodeseek.com/after-reset');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect(afterReset).resolves.toBeInstanceOf(Response);
+      expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('[REG-NODESEEK-004] preserves a successful WebView result when native recovery fails', async () => {
+    const recoverReadChannel = vi.fn(async () => {
+      throw new Error('native recovery unavailable');
+    });
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => html('<html>usable fallback</html>')),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+
+    const response = await fetcher('https://www.nodeseek.com/read');
+
+    await expect(response.text()).resolves.toContain('usable fallback');
+    expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-NODESEEK-004] excludes writes, Cloudflare and unsuccessful WebView results from recovery counting', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+    const cloudflare = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(
+        async () =>
+          new Response('<div class="cf-turnstile"></div>', {
+            status: 403,
+            headers: { 'cf-mitigated': 'challenge' }
+          })
+      ),
+      webViewFetcher: vi.fn(async () => html('<html>verified</html>')),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+    const failedFallback = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => new Response('unavailable', { status: 503 })),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+
+    await cloudflare('https://www.nodeseek.com/challenge');
+    await failedFallback('https://www.nodeseek.com/read');
+    await expect(failedFallback('https://www.nodeseek.com/write', { method: 'POST', body: 'value' })).rejects.toThrow(
+      'Network request failed'
+    );
+
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
   it('[REG-PROXY-006] keeps repeated NodeSeek direct failures isolated from shared proxy state', async () => {
     vi.useFakeTimers();
     try {
@@ -6532,6 +6623,105 @@ describe('Android local sources', () => {
       expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
     ]);
     expect(JSON.stringify(events)).not.toMatch(/\/t\/42|https?:|cf-turnstile/);
+  });
+
+  it('[REG-LINUXDO-008] recovers a stalled read channel at eight seconds and retries only once', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    try {
+      const defaultFetcher = vi.fn(
+        (_input: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+              once: true
+            });
+          })
+      );
+      const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 4 }));
+      const fetcher = createLinuxDoWebViewFallbackFetcher({
+        defaultFetcher,
+        recoverReadChannel,
+        webViewFetcher: vi.fn() as never
+      });
+      const request = fetcher('https://linux.do/latest.json', { signal: controller.signal });
+
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+      expect(defaultFetcher).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(defaultFetcher).toHaveBeenCalledTimes(2);
+      controller.abort();
+
+      await expect(request).rejects.toBeTruthy();
+    } finally {
+      controller.abort();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('[REG-LINUXDO-008] returns the single retry response after read-channel recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      const defaultFetcher = vi
+        .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+        .mockImplementationOnce(() => new Promise<Response>(() => undefined))
+        .mockResolvedValueOnce(json({ topic_list: { topics: [] } }));
+      const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 5 }));
+      const fetcher = createLinuxDoWebViewFallbackFetcher({
+        defaultFetcher,
+        recoverReadChannel,
+        webViewFetcher: vi.fn() as never
+      });
+      const request = fetcher('https://linux.do/latest.json');
+
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      await expect(request).resolves.toMatchObject({ status: 200 });
+      expect(defaultFetcher).toHaveBeenCalledTimes(2);
+      expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('[REG-LINUXDO-008] excludes cancellation, writes, HTTP failures and Cloudflare from channel recovery', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 6 }));
+    const controller = new AbortController();
+    const canceledFetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(
+        (_input: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+              once: true
+            });
+          })
+      ),
+      recoverReadChannel,
+      webViewFetcher: vi.fn() as never
+    });
+    const responseFetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async (input: string) =>
+        input.endsWith('/challenge')
+          ? new Response('<div class="cf-turnstile"></div>', {
+              status: 403,
+              headers: { 'cf-mitigated': 'challenge' }
+            })
+          : new Response('ordinary failure', { status: 429 })
+      ),
+      recoverReadChannel,
+      webViewFetcher: vi.fn(async () => html('<html>verified</html>'))
+    });
+    const canceled = canceledFetcher('https://linux.do/latest.json', { signal: controller.signal });
+    controller.abort();
+
+    await expect(canceled).rejects.toBeTruthy();
+    await responseFetcher('https://linux.do/challenge');
+    await responseFetcher('https://linux.do/rate-limited');
+    await responseFetcher('https://linux.do/posts', { method: 'POST', body: 'value' });
+
+    expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
   it('[REG-LINUXDO-007] settles the canonical Account probe through one hidden read after a direct network error', async () => {

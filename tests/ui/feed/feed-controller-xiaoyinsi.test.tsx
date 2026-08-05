@@ -43,6 +43,93 @@ describe('小隐寺 Feed controller', () => {
     });
   });
 
+  it.each([
+    { label: 'uncached', withCache: false },
+    { label: 'cached', withCache: true }
+  ])('[REG-FEED-015] replaces an in-flight $label feed during manual refresh', async ({ withCache }) => {
+    type FeedResult = Awaited<ReturnType<ReadGateway['getFeed']>>;
+    const requests: {
+      deferred: ReturnType<typeof Promise.withResolvers<FeedResult>>;
+      signal: AbortSignal;
+    }[] = [];
+    const getFeed = jest.fn(({ signal }: { signal: AbortSignal }) => {
+      const deferred = Promise.withResolvers<FeedResult>();
+      signal.addEventListener('abort', () => deferred.reject(new DOMException('aborted', 'AbortError')), {
+        once: true
+      });
+      requests.push({ deferred, signal });
+      return deferred.promise;
+    });
+    const readGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as ReadGateway;
+    const notify = jest.fn();
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        linuxDoVerificationActive: false,
+        notify,
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway
+      })
+    );
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const response = (id: string): FeedResult => ({
+      items: [
+        {
+          source: 'v2ex',
+          id,
+          title: id,
+          author: 'alice',
+          url: `https://www.v2ex.com/t/${id}`,
+          createdAt: '2026-08-05T00:00:00.000Z',
+          replyCount: 0
+        }
+      ],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    let staleRefresh: Promise<void> | undefined;
+    if (withCache) {
+      await act(async () => {
+        requests[0].deferred.resolve(response('cached'));
+        await requests[0].deferred.promise;
+      });
+      await waitFor(() => expect(hook.result.current.activeFeedState.items[0]?.id).toBe('cached'));
+      await act(async () => {
+        staleRefresh = hook.result.current.refreshFeed();
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(requests).toHaveLength(2));
+    }
+    notify.mockClear();
+    let replacement!: Promise<void>;
+    await act(async () => {
+      replacement = hook.result.current.refreshFeed();
+      await Promise.resolve();
+    });
+    const expectedCalls = withCache ? 3 : 2;
+    await waitFor(() => expect(requests).toHaveLength(expectedCalls));
+    const replacedRequest = requests[withCache ? 1 : 0];
+    const finalRequest = requests.at(-1)!;
+
+    expect(replacedRequest.signal.aborted).toBe(true);
+    await act(async () => {
+      finalRequest.deferred.resolve(response('replacement'));
+      await Promise.all([replacement, staleRefresh].filter(Boolean));
+    });
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items[0]?.id).toBe('replacement'));
+    expect(notify).not.toHaveBeenCalledWith('列表正在更新');
+  });
+
   it('[REG-FEED-007] does not replay a cached partial error after returning to Feed', async () => {
     const partialErrors = {
       v2ex: {

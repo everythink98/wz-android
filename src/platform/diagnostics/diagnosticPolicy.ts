@@ -553,6 +553,8 @@ const numberFieldKeys = new Set([
   'generation',
   'iteration',
   'queueLength',
+  'queuedCount',
+  'runningCount',
   'replyCount',
   'topicCount',
   'floor',

@@ -39,7 +39,6 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.ReactPackage
-import com.facebook.react.modules.network.OkHttpClientProvider
 import com.facebook.react.uimanager.ViewManager
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -512,10 +511,7 @@ private fun isSvgResponseContentType(value: String?): Boolean {
 
 private object SvgDocumentFetcherRuntime {
   private val mainHandler = Handler(Looper.getMainLooper())
-  private val client by lazy {
-    OkHttpClientProvider.getOkHttpClient().newBuilder()
-      .build()
-  }
+  private val client by lazy { NetworkProxyRuntime.forumImageClient() }
 
   fun fetch(url: String, headers: ReadableMap, timeoutMs: Double, promise: Promise) {
     val parsed = Uri.parse(url)

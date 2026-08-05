@@ -52,6 +52,7 @@ export function useAccountRuntime({
   fetcher,
   loginNavigation,
   notify,
+  nodeSeekRecoveryThreshold,
   openUser,
   ready,
   screen,
@@ -61,6 +62,7 @@ export function useAccountRuntime({
   fetcher: Fetcher;
   loginNavigation: AccountHostsProps['loginNavigation'];
   notify: (message: string) => void;
+  nodeSeekRecoveryThreshold: number;
   openUser: (user: Extract<AccountCenterCommand, { type: 'open-user' }>['user']) => Promise<unknown>;
   ready: boolean;
   screen: Screen;
@@ -216,6 +218,7 @@ export function useAccountRuntime({
     linuxDoBrowserWebViewRef,
     linuxDoWebViewUserAgentRef,
     nodeSeekBrowserWebViewRef,
+    nodeSeekRecoveryThreshold,
     nodeSeekWebViewUserAgentRef,
     notify,
     setLinuxDoWebViewUserAgent,

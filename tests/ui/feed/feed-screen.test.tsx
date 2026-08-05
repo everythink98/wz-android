@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, within } from '../render';
 import React, { useState } from 'react';
-import { Platform } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { createTheme } from '@/ui/theme/tokens';
@@ -306,6 +306,17 @@ function FeedSortHarness({ onFilterChange }: { onFilterChange: (filter: SourceFe
 }
 
 describe('Feed loading', () => {
+  it('[REG-FEED-016] keeps the home source tabs at the old compact 100% geometry', async () => {
+    const view = await render(renderFeed(false, [topic]));
+    const tabStyle = StyleSheet.flatten(view.getByTestId('feed-source-all').props.style);
+
+    expect(tabStyle.minHeight).toBe(40);
+    expect(tabStyle.minWidth).toBeUndefined();
+    expect(StyleSheet.flatten(within(view.getByTestId('feed-source-all')).getByText('全部').props.style).fontSize).toBe(
+      13
+    );
+  });
+
   it('[REG-PERF-006] updates both Feed rails when the native pager selects the target', async () => {
     const onFeedSourceChange = jest.fn();
     const view = await render(

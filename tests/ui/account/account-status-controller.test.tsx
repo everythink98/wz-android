@@ -259,6 +259,123 @@ describe('account status queries', () => {
     expect(hook.result.current.identityReconciliationPending).toBe(false);
   });
 
+  it('[REG-FEED-014] ends the account barrier after five active seconds while a source remains pending', async () => {
+    jest.useFakeTimers();
+    const nodeSeekCookie = Promise.withResolvers<string | undefined>();
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => nodeSeekCookie.promise)
+    });
+    let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
+    let settled = false;
+
+    try {
+      await act(async () => {
+        refresh = hook.result.current.refreshAccountStatus({ silent: true });
+        void refresh.then(() => {
+          settled = true;
+        });
+        await Promise.resolve();
+      });
+      expect(hook.result.current.identityReconciliationPending).toBe(true);
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+        await Promise.resolve();
+      });
+      const settledAtBudget = settled;
+      const pendingAtBudget = hook.result.current.accountSessionViewModels.nodeseek.identityTrust;
+      nodeSeekCookie.resolve(undefined);
+      await act(async () => {
+        await refresh;
+      });
+
+      expect(settledAtBudget).toBe(true);
+      expect(pendingAtBudget).toBe('pending');
+      expect(hook.result.current.identityReconciliationPending).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-FEED-014] stops waiting at the aggregate budget without canceling a reused single-source probe', async () => {
+    jest.useFakeTimers();
+    const nodeSeekCookie = Promise.withResolvers<string | undefined>();
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => nodeSeekCookie.promise)
+    });
+
+    try {
+      let existingProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+      let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
+      let existingProbeSettled = false;
+      await act(async () => {
+        existingProbe = hook.result.current.reconcileAccountStatus('nodeseek');
+        void existingProbe.then(() => {
+          existingProbeSettled = true;
+        });
+        refresh = hook.result.current.refreshAccountStatus({ silent: true });
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+        await refresh;
+      });
+
+      expect(existingProbeSettled).toBe(false);
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
+      let existingResult: Awaited<typeof existingProbe> | undefined;
+      await act(async () => {
+        nodeSeekCookie.resolve(undefined);
+        existingResult = await existingProbe;
+      });
+      expect(existingResult).not.toMatchObject({ status: 'stale' });
+    } finally {
+      nodeSeekCookie.resolve(undefined);
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-FEED-014] lets a single-source check adopt a batch probe past the aggregate budget', async () => {
+    jest.useFakeTimers();
+    const nodeSeekCookie = Promise.withResolvers<string | undefined>();
+    const readNodeSeekCookieHeader = jest.fn(async () => nodeSeekCookie.promise);
+    const { hook } = await renderStatusController({ readNodeSeekCookieHeader });
+
+    try {
+      let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
+      let singleSourceProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+      let singleSourceSettled = false;
+      await act(async () => {
+        refresh = hook.result.current.refreshAccountStatus({ silent: true });
+        await Promise.resolve();
+        await Promise.resolve();
+        singleSourceProbe = hook.result.current.reconcileAccountStatus('nodeseek');
+        void singleSourceProbe.then(() => {
+          singleSourceSettled = true;
+        });
+      });
+      expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+        await refresh;
+      });
+
+      expect(singleSourceSettled).toBe(false);
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
+      let singleSourceResult: Awaited<typeof singleSourceProbe> | undefined;
+      await act(async () => {
+        nodeSeekCookie.resolve(undefined);
+        singleSourceResult = await singleSourceProbe;
+      });
+      expect(singleSourceResult).not.toMatchObject({ status: 'stale' });
+    } finally {
+      nodeSeekCookie.resolve(undefined);
+      jest.useRealTimers();
+    }
+  });
+
   it('[REG-FEED-010] still cancels private reads when a confirmed source later becomes pending', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({

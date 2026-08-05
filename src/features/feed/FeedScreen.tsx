@@ -480,6 +480,7 @@ export const FeedScreen = memo(function FeedScreen({
     <View style={styles.content}>
       <View style={styles.feedFixedHeader}>
         <PillRail
+          compactTabs
           variant="tabs"
           items={feedSourceItems}
           value={visualFeedSource}

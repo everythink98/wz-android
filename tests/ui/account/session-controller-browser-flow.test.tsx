@@ -26,6 +26,7 @@ function renderSessionController(defaultFetcher: typeof fetch) {
       linuxDoBrowserWebViewRef: { current: null },
       linuxDoWebViewUserAgentRef: { current: '' },
       nodeSeekBrowserWebViewRef: { current: null },
+      nodeSeekRecoveryThreshold: 1,
       nodeSeekWebViewUserAgentRef: { current: '' },
       notify: jest.fn(),
       setLinuxDoWebViewUserAgent: jest.fn(),
