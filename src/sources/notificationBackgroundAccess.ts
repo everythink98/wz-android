@@ -34,11 +34,13 @@ export async function probeBackgroundNotificationAccess(
     timeoutMs: 0
   });
   const userId = profile.id.trim();
+  const username = profile.username.trim();
   if (!userId) return null;
   return {
     fetcher: fetch,
     identityKey: `${source}:${userId}`,
     userId,
+    ...(username ? { username } : {}),
     signal,
     timeoutMs: 0,
     ...(source === 'nodeseek' && nodeSeekUserAgent ? { userAgent: nodeSeekUserAgent } : {}),

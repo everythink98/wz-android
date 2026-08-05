@@ -17,6 +17,45 @@ function html(value: string) {
 }
 
 describe('NodeSeek notifications', () => {
+  it('[REG-NOTIFY-031] exposes the categories shown by the current NodeSeek site', async () => {
+    await expect(
+      nodeSeekNotificationAdapter.getCategories({ identityKey: 'nodeseek:7', userId: '7' })
+    ).resolves.toEqual([
+      { id: 'all', label: '全部' },
+      { id: 'mentions', label: '@我' },
+      { id: 'replies', label: '回复主题' },
+      { id: 'messages', label: '私信' }
+    ]);
+  });
+
+  it('[REG-NOTIFY-031] reads only the selected NodeSeek notification category', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      expect(new URL(input).pathname).toBe('/api/notification/message/list');
+      return json({
+        msgArray: [
+          {
+            id: 21,
+            sender_id: 9,
+            receiver_id: 7,
+            sender_name: '对方',
+            content: '私信',
+            viewed: false
+          }
+        ]
+      });
+    });
+
+    const page = await nodeSeekNotificationAdapter.listPage({
+      categoryId: 'messages',
+      fetcher,
+      identityKey: 'nodeseek:7',
+      userId: '7'
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(page.items).toEqual([expect.objectContaining({ id: 'message:21', kind: 'private-message' })]);
+  });
+
   it('reports a Cloudflare challenge instead of parsing it as notification data', async () => {
     const fetcher = vi.fn(
       async () =>
@@ -452,6 +491,55 @@ describe('NodeSeek notifications', () => {
     }
   );
 
+  it('[REG-NOTIFY-033] uses the notification floor as a page hint when replyCount is underestimated', async () => {
+    const payload = (comments: unknown[], replyCount = 10) =>
+      Buffer.from(
+        JSON.stringify({
+          postData: {
+            postId: 703863,
+            title: '目标主题',
+            replyCount,
+            op: { name: '楼主' },
+            comments
+          }
+        })
+      ).toString('base64');
+    const firstPage = payload([{ commentId: 1, poster: { name: '楼主' }, markdown: '主楼正文' }]);
+    const thirdPage = payload([
+      { commentId: 31, floorIndex: 21, poster: { name: '目标用户' }, markdown: '第三页精确回复' }
+    ]);
+    const fetcher = vi.fn(async (input: string) =>
+      html(
+        new URL(input).pathname.endsWith('/post-703863-3')
+          ? `<script>${thirdPage}</script>`
+          : `<script>${firstPage}</script>`
+      )
+    );
+
+    const detail = await nodeSeekNotificationAdapter.loadDetail(
+      {
+        source: 'nodeseek',
+        id: 'at-me:31',
+        kind: 'mention',
+        actor: { name: '目标用户' },
+        title: '目标主题',
+        createdAt: null,
+        unread: false,
+        target: {
+          type: 'topic-post',
+          topicId: '703863',
+          postNumber: 21,
+          postId: '31',
+          url: 'https://www.nodeseek.com/post-703863-1'
+        }
+      },
+      { fetcher, identityKey: 'nodeseek:7', userId: '7' }
+    );
+
+    expect(detail.contentHtml).toContain('第三页精确回复');
+    expect(fetcher.mock.calls.map(([input]) => new URL(input).pathname)).toContain('/post-703863-3');
+  });
+
   it('marks mention and reply rows with the exact endpoint field names', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
@@ -512,7 +600,8 @@ describe('NodeSeek notifications', () => {
               id: 20,
               sender_id: 9,
               receiver_id: 7,
-              content: '新消息',
+              content: '**新消息**',
+              is_markdown: true,
               created_at: '2026-08-02T12:00:00Z',
               viewed: false
             },
@@ -520,7 +609,8 @@ describe('NodeSeek notifications', () => {
               id: 19,
               sender_id: 7,
               receiver_id: 9,
-              content: '我的回复',
+              content: '*我的回复*',
+              is_markdown: false,
               created_at: '2026-08-01T12:00:00Z',
               viewed: false
             },
@@ -529,6 +619,7 @@ describe('NodeSeek notifications', () => {
               sender_id: 9,
               receiver_id: 7,
               content: '旧消息',
+              is_markdown: false,
               created_at: '2026-07-31T12:00:00Z',
               viewed: true
             }
@@ -558,11 +649,43 @@ describe('NodeSeek notifications', () => {
       ['19', true],
       ['20', false]
     ]);
+    expect(detail.reply).toEqual({ format: 'markdown' });
+    expect(detail.messages?.[2]?.contentHtml).toContain('<strong>新消息</strong>');
+    expect(detail.messages?.[1]).toMatchObject({ contentText: '*我的回复*' });
     expect(detail.unreadMessageIds).toEqual(['20']);
     expect(calls.at(-1)).toMatchObject({
       init: { method: 'POST', body: JSON.stringify({ messages: [20] }) }
     });
     expect(new URL(calls.at(-1)?.url || '').pathname).toBe('/api/notification/message/markViewed');
+  });
+
+  it('[REG-NOTIFY-031] replies to the exact NodeSeek conversation as Markdown', async () => {
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init).toMatchObject({
+        method: 'POST',
+        body: JSON.stringify({ receiverUid: '9', content: '**你好**', markdown: true })
+      });
+      return json({ success: true, message: '发送成功' });
+    });
+    const item = {
+      source: 'nodeseek' as const,
+      id: 'message:9',
+      kind: 'private-message' as const,
+      actor: { id: '9', name: '丙' },
+      title: '丙',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation' as const, conversationId: '9' }
+    };
+
+    await expect(
+      nodeSeekNotificationAdapter.replyToConversation(item, '**你好**', {
+        fetcher,
+        identityKey: 'nodeseek:7',
+        userId: '7'
+      })
+    ).resolves.toEqual({ confirmed: true, message: '发送成功' });
+    expect(new URL(String(fetcher.mock.calls[0]?.[0])).pathname).toBe('/api/notification/message/send');
   });
 
   it('reads the three unread counters and marks all three groups through their real endpoints', async () => {

@@ -441,6 +441,16 @@ function yaohuoReplyDeleteId(deletePath: string) {
   }
 }
 
+function yaohuoReplyTargetFloor(row: HTMLElement, url?: string) {
+  const href = row.querySelector('.reother a[href*="tofloor="]')?.getAttribute('href');
+  if (!href) return undefined;
+  try {
+    return parsePositiveInteger(new URL(href.replace(/&amp;/gi, '&'), url || BASE_URL).searchParams.get('tofloor'));
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseYaohuoRepliesHtml(
   html: string,
   { page = 1, limit = 30, url }: { page?: number; limit?: number; url?: string } = {}
@@ -450,34 +460,34 @@ export function parseYaohuoRepliesHtml(
   const rows = root.querySelectorAll('div.list-reply, div.line1, div.line2');
   const floorOffset = Math.max(0, page - 1) * limit;
   let missingFloorCount = 0;
-  const items = rows
-    .map((row, index) => {
-      const rawHtml = row.innerHTML;
-      const text = elementText(row);
-      const explicitFloor = explicitReplyFloor(row, text);
-      if (!explicitFloor) {
-        missingFloorCount += 1;
-      }
-      const floor = explicitFloor || floorOffset + index + 1;
-      const deletePath = yaohuoReplyDeletePath(row, url);
-      const deleteId = yaohuoReplyDeleteId(deletePath);
-      const authorLink = row.querySelectorAll('a[href*="userinfo"]').at(-1);
-      const actionLink = row.querySelector(
-        'a[href*="book_re.aspx"][href*="reply="], a[href*="book_re.aspx"][href*="touserid="]'
-      );
-      const author = elementText(authorLink);
-      const authorId =
-        extractUserIdFromHref(authorLink?.getAttribute('href')) ||
-        extractUserIdFromHref(actionLink?.getAttribute('href'));
-      const createdAt =
-        parseYaohuoDate(
-          elementText(row.querySelector('.retime')) ||
-            text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
-            text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
-        ) || new Date().toISOString();
-      const authorHtml = authorLink?.toString() || '';
-      const contentOnly = yaohuoReplyContentHtml(row, rawHtml, authorHtml);
-      return {
+  const parsedRows = rows.map((row, index) => {
+    const rawHtml = row.innerHTML;
+    const text = elementText(row);
+    const explicitFloor = explicitReplyFloor(row, text);
+    if (!explicitFloor) {
+      missingFloorCount += 1;
+    }
+    const floor = explicitFloor || floorOffset + index + 1;
+    const deletePath = yaohuoReplyDeletePath(row, url);
+    const deleteId = yaohuoReplyDeleteId(deletePath);
+    const authorLink = row.querySelectorAll('a[href*="userinfo"]').at(-1);
+    const actionLink = row.querySelector(
+      'a[href*="book_re.aspx"][href*="reply="], a[href*="book_re.aspx"][href*="touserid="]'
+    );
+    const author = elementText(authorLink);
+    const authorId =
+      extractUserIdFromHref(authorLink?.getAttribute('href')) ||
+      extractUserIdFromHref(actionLink?.getAttribute('href'));
+    const createdAt =
+      parseYaohuoDate(
+        elementText(row.querySelector('.retime')) ||
+          text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] ||
+          text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
+      ) || new Date().toISOString();
+    const authorHtml = authorLink?.toString() || '';
+    const contentOnly = yaohuoReplyContentHtml(row, rawHtml, authorHtml);
+    return {
+      reply: {
         author,
         ...(authorId ? { authorId } : {}),
         ...(authorId ? { authorUrl: userUrl(authorId) } : {}),
@@ -486,8 +496,32 @@ export function parseYaohuoRepliesHtml(
         floor,
         ...(deleteId ? { commentId: deleteId } : {}),
         ...(deletePath ? { canDelete: true, deletePath } : {})
+      },
+      targetFloor: yaohuoReplyTargetFloor(row, url)
+    };
+  });
+  const repliesByFloor = new Map(parsedRows.map(({ reply }) => [reply.floor, reply]));
+  const items = parsedRows
+    .map(({ reply, targetFloor }) => {
+      if (!targetFloor) return reply;
+      const target = repliesByFloor.get(targetFloor);
+      return {
+        ...reply,
+        replyTarget: {
+          floor: targetFloor,
+          ...(target?.author
+            ? {
+                author: {
+                  name: target.author,
+                  ...(target.authorId ? { id: target.authorId } : {}),
+                  ...(target.authorUrl ? { url: target.authorUrl } : {})
+                }
+              }
+            : {})
+        }
       };
     })
+    .sort((left, right) => (left.floor ?? Number.MAX_SAFE_INTEGER) - (right.floor ?? Number.MAX_SAFE_INTEGER))
     .slice(0, limit);
   const nextPage = nextPageFromHtml(html, page, items.length, limit);
   const result = {

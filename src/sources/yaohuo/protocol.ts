@@ -74,17 +74,22 @@ export function extractYaohuoUserIdFromHref(href?: string) {
   );
 }
 
+function nextYaohuoPageHref(html: string, acceptsHref: (href: string) => boolean = () => true) {
+  return (
+    parseHtml(html)
+      .querySelectorAll('a[href]')
+      .filter((link) => /^(下一页|下页)$/.test(elementText(link)))
+      .map((link) => link.getAttribute('href') || '')
+      .find((href) => /[?&]page=\d+/i.test(href) && acceptsHref(href)) || ''
+  );
+}
+
 export function nextYaohuoPageFromHtml(html: string, page: number, itemCount: number, limit: number) {
   if (!itemCount) {
     return null;
   }
   const root = parseHtml(html);
-  const href =
-    root
-      .querySelectorAll('a[href]')
-      .find((link) => /^(下一页|下页)$/.test(elementText(link)))
-      ?.getAttribute('href') || '';
-  const next = href.match(/[?&]page=(\d+)/i)?.[1];
+  const next = nextYaohuoPageHref(html).match(/[?&]page=(\d+)/i)?.[1];
   if (next) {
     return Number(next);
   }
@@ -178,12 +183,7 @@ export function yaohuoTopicListNextPageUrl(
   if (!itemCount) {
     return '';
   }
-  const root = parseHtml(html);
-  const href =
-    root
-      .querySelectorAll('a[href]')
-      .find((link) => /^(下一页|下页)$/.test(elementText(link)))
-      ?.getAttribute('href') || '';
+  const href = nextYaohuoPageHref(html, (candidate) => /\/bbs\/book_list(?:_search)?\.aspx/i.test(candidate));
   const linkedUrl = absoluteUrl(href, currentUrl);
   if (linkedUrl) {
     try {
@@ -209,12 +209,7 @@ export function yaohuoReplyListNextPageUrl(html: string, currentUrl: string, ite
   if (!itemCount) {
     return '';
   }
-  const root = parseHtml(html);
-  const href =
-    root
-      .querySelectorAll('a[href]')
-      .find((link) => /^(下一页|下页)$/.test(elementText(link)))
-      ?.getAttribute('href') || '';
+  const href = nextYaohuoPageHref(html, (candidate) => /\/bbs\/book_re_my\.aspx/i.test(candidate));
   const linkedUrl = absoluteUrl(href, currentUrl);
   if (!linkedUrl) {
     return '';

@@ -14,6 +14,7 @@ import {
 import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
 import { parseYaohuoCurrentUserHtml } from './sessionParser';
 import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesHtml, parseYaohuoTopicHtml } from './topicParser';
+import { yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl } from './protocol';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { Topic } from '@/domain/forum/models';
 
@@ -1246,6 +1247,101 @@ describe('Android direct yaohuo API', () => {
       'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3',
       expect.any(Object)
     );
+  });
+
+  it('[REG-NOTIFY-046] ignores a Yaohuo user named 下一页 when deriving the real reply cursor', () => {
+    const result = parseYaohuoRepliesHtml(
+      `
+      <div class="list-reply line1" id="floor-288" data-floor="288">
+        <span class="retext">reply</span>
+        <span class="renick"><a href="/bbs/userinfo.aspx?touserid=39170">下一页</a></span>
+      </div>
+      <a href="/bbs/book_re.aspx?classid=177&amp;id=1560939&amp;page=11">下一页</a>
+    `,
+      { page: 10, limit: 30 }
+    );
+
+    expect(result.nextPage).toBe(11);
+    expect(result.hasMore).toBe(true);
+  });
+
+  it('[REG-NOTIFY-046] ignores a user named 下一页 in profile topic and reply cursors', () => {
+    const misleadingUser = '<a href="/bbs/userinfo.aspx?touserid=39170">下一页</a>';
+
+    expect(
+      yaohuoTopicListNextPageUrl(
+        `${misleadingUser}<a href="/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=11">下一页</a>`,
+        'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=10',
+        10,
+        1
+      )
+    ).toBe('https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=11');
+    expect(
+      yaohuoReplyListNextPageUrl(
+        `${misleadingUser}<a href="/bbs/book_re_my.aspx?touserid=7&page=11">下一页</a>`,
+        'https://www.yaohuo.me/bbs/book_re_my.aspx?touserid=7&page=10',
+        1
+      )
+    ).toBe('https://www.yaohuo.me/bbs/book_re_my.aspx?touserid=7&page=11');
+  });
+
+  it('[REG-NOTIFY-046] resolves a target floor through one server-routed reply-page request', async () => {
+    const response = new Response(`
+      <form><input name="page" value="16" /></form>
+      <div class="list-reply line1" id="floor-90" data-floor="90">
+        <span class="retext">target reply</span>
+        <span class="renick"><a href="/bbs/userinfo.aspx?touserid=1">alice</a></span>
+      </div>
+      <a href="/bbs/book_re.aspx?classid=177&amp;id=1560939&amp;page=17">下一页</a>
+    `);
+    Object.defineProperty(response, 'url', {
+      value: 'https://www.yaohuo.me/bbs/book_re.aspx?classid=177&id=1560939&tofloor=90'
+    });
+    const yaohuoFetcher = vi.fn(async () => response);
+
+    const result = await getYaohuoRepliesDirect({
+      id: '1560939',
+      categoryId: '177',
+      page: 1,
+      targetFloor: 90,
+      yaohuoFetcher
+    });
+
+    expect(yaohuoFetcher).toHaveBeenCalledTimes(1);
+    expect(yaohuoFetcher).toHaveBeenCalledWith(
+      'https://www.yaohuo.me/bbs/book_re.aspx?id=1560939&classid=177&tofloor=90',
+      expect.any(Object)
+    );
+    expect(result).toMatchObject({
+      currentPage: 16,
+      currentOffset: null,
+      previousPage: 15,
+      previousOffset: null,
+      nextPage: 17
+    });
+    expect(result.items).toEqual([expect.objectContaining({ floor: 90, author: 'alice' })]);
+  });
+
+  it('[REG-TOPIC-062] rejects a target window when 妖火 does not confirm its resolved page', async () => {
+    const response = new Response(`
+      <div class="list-reply line1" id="floor-90" data-floor="90">
+        <span class="retext">target reply</span>
+        <span class="renick"><a href="/bbs/userinfo.aspx?touserid=1">alice</a></span>
+      </div>
+    `);
+    Object.defineProperty(response, 'url', {
+      value: 'https://www.yaohuo.me/bbs/book_re.aspx?classid=177&id=1560939&tofloor=90'
+    });
+
+    await expect(
+      getYaohuoRepliesDirect({
+        id: '1560939',
+        categoryId: '177',
+        page: 1,
+        targetFloor: 90,
+        yaohuoFetcher: vi.fn(async () => response)
+      })
+    ).rejects.toThrow('妖火未确认目标楼层所在页');
   });
 
   it('parses yaohuo activity replies from list-reply rows with real floors and rewards', () => {

@@ -209,14 +209,19 @@ export const forumQueryKeys = {
     ] as const,
   notifications: (source: NotificationSource | 'all') => ['forum', source, 'notifications'] as const,
   notificationList: ({
+    categoryId,
     identityKey,
     source,
     unreadOnly
   }: {
+    categoryId?: string | null;
     identityKey: string;
     source: NotificationSource | 'all';
     unreadOnly: boolean;
-  }) => ['forum', source, 'notifications', 'list', { identityKey, unreadOnly }] as const,
+  }) =>
+    ['forum', source, 'notifications', 'list', { categoryId: categoryId || null, identityKey, unreadOnly }] as const,
+  notificationCategories: ({ identityKey, source }: { identityKey: string; source: NotificationSource | 'all' }) =>
+    ['forum', source, 'notifications', 'categories', { identityKey }] as const,
   notificationDetail: ({
     identityKey,
     notificationId,

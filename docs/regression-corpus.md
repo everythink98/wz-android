@@ -241,9 +241,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `WRITE-01`、`WRITE-04` |
 | 用户症状 | 小隐寺已经支持回复和 `/uploads.json`，但编辑器没有 Markdown 格式栏或图片入口，用户只能输入纯文本。 |
 | 触发条件 | 回复来源为 `xiaoyinsi`；底层上传已实现，但编辑器的 Markdown 来源白名单和上传 UI 矩阵没有同步新增来源。 |
-| 根因 seam | `src/features/topic/composer/formatting.ts` 的格式能力集合与 `ReplyComposerSheet` 的来源上传回调边界。 |
+| 根因 seam | `src/ui/composer/replyFormatting.ts` 的格式能力集合与 `ReplyComposerSheet` 的来源上传回调边界。 |
 | 必须保持的行为 | 小隐寺显示与 NodeSeek/linux.do 一致的 Markdown 常用格式和图片入口；点击图片只调用上传回调，不提交回复；妖火仍使用 UBB，V2EX 仍只读。 |
-| 精确失败 oracle | `src/features/topic/composer/formatting.test.ts` 的 `REG-XIAOYINSI-002` 固定 Markdown 工具栏；`tests/ui/topic/reply-composer.test.tsx` 同编号用例固定四个可写来源的图片回调。 |
+| 精确失败 oracle | `src/ui/composer/replyFormatting.test.ts` 的 `REG-XIAOYINSI-002` 固定 Markdown 工具栏；`tests/ui/topic/reply-composer.test.tsx` 同编号用例固定四个可写来源的图片回调。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：领域测试固定来源能力，RNTL 固定真实入口和不误提交。 |
 | Replay 或真实验收路径 | 打开小隐寺可回复主题的编辑器，检查格式栏和图片入口；可打开/关闭并保留草稿，真实上传仍需逐次授权。 |
 | 负向验证方式 | 从 Markdown 来源集合或图片上传 UI 矩阵移除 `xiaoyinsi`，对应测试必须失败。 |
@@ -1305,8 +1305,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 切换“只看楼主”或“只看带图”、或执行评论内查找后，可见回复已经减少，但“回复列表 N 条”仍显示主题原始总回复数。 |
 | 触发条件 | Topic detail 的 `replyCount` 大于筛选后的 `replies.length`，且回复筛选或评论查询处于生效状态。 |
 | 根因 seam | `src/features/topic/components/TopicContentList.tsx` 的回复标题计数直接读取主题总数，没有区分当前可见结果与未筛选总数。 |
-| 必须保持的行为 | “只看楼主”“只看带图”和评论内查找显示当前可见回复数；“全部”与仅“倒序”继续显示主题总回复数；可见列表、选中状态和数量必须同步。 |
-| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 渲染真实 Topic 回复筛选控件：普通用例断言四种筛选、评论查询和列表顺序，4 个带 `REG-TOPIC-001` 的普通测试分别钉住楼主/带图/查询后的标题数量，以及清空原始输入但 debounce 结果尚未更新时的列表与数量一致；`src/features/topic/useTopicSessionController.test.ts` 固定确定性过滤结果。 |
+| 必须保持的行为 | “只看楼主”“只看带图”和评论内查找显示当前可见回复数；“全部”继续显示主题总回复数；可见列表、选中状态和数量必须同步。 |
+| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 渲染真实 Topic 回复筛选控件：普通用例断言全部、只看楼主和只看带图三种筛选、评论查询和列表顺序，4 个带 `REG-TOPIC-001` 的普通测试分别钉住楼主/带图/查询后的标题数量，以及清空原始输入但 debounce 结果尚未更新时的列表与数量一致；`src/features/topic/useTopicSessionController.test.ts` 固定确定性过滤结果。 |
 | 最低可靠自动测试层 | `UI_PASS`：Vitest 可证明过滤数组，但只有 RNTL 能证明用户看到的标题数量跟随数组变化。4 个回归用例必须作为普通测试真实通过。 |
 | Replay 或真实验收路径 | 从 Feed/Search/Library 打开有多位回复者且含图片的 Topic，逐项切换筛选并执行一次评论内查找；作者页返回后复核筛选与数量仍保留。 |
 | 负向验证方式 | 修复前同一 UI 测试在“只看楼主”步骤精确失败：可见回复为 2 条而标题仍为 3 条；恢复直接读取 `replyCount` 时该断言必须再次失败。 |
@@ -3934,6 +3934,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复首项无条件过滤、停止传递页码、按楼层替代存在的 `comment_id`，或只隐藏失败态，编号测试必须失败或只读 Live 再现“消息不可见”。 |
 | 明确不覆盖范围 | 不新增消息专用解析器或第二套主题页；定位复用既有 Topic route 和回复分页，不承诺原站不存在目标时伪造定位。真实标记已读属于原站写入，未获授权保持 `NOT_VERIFIED`。 |
 
+## `REG-TOPIC-061` 妖火回复目标楼层和作者丢失
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03` |
+| 用户症状 | 妖火主题的回复正文正常显示，但原站“回复 88 楼”的关系被丢弃；例如 90 楼明确回复当前用户，App 内既看不到目标楼层，也看不到被回复人。 |
+| 触发条件 | 妖火回复行通过 `.reother a[href*="tofloor="]` 指向另一楼层；目标楼可能位于当前响应，也可能位于其他页。 |
+| 根因 seam | `src/sources/yaohuo/topicParser.ts` 只提取作者和正文，丢弃原站 `tofloor` 关系；共享 `Reply` 又只允许作者字符串，无法独立表达“只知道楼层”或“楼层与作者均已确认”。 |
+| 必须保持的行为 | `Reply.replyTarget` 以 `{ floor, author }` 表达关系，`author` 只在协议明确提供或目标楼已存在于同一响应时补全；妖火同页目标显示“回复 @作者 · #楼层”，跨页目标显示“回复 #楼层”，不得为补作者增加请求。linux.do/小隐寺保留 Discourse 的 `reply_to_post_number` 与明确 username，只有 display label 时可显示但不可猜测导航；V2EX mention 继续作为 author-only 目标。真实引用仍只进入 `quotedPosts`，不得把回复关系伪装成引用正文。 |
+| 精确失败 oracle | `src/sources/yaohuo/parser.test.ts` 的 `REG-TOPIC-061` 固定 90 楼指向同页 88 楼并补全稳定妖火用户 ID，同时固定跨页 30 楼只保留 floor；`tests/ui/topic/topic-components.test.tsx` 要求渲染两种标签、稳定用户目标可进入 App User route、floor-only 不触发用户导航。`src/sources/discourse/model.test.ts` 与 `tests/integration/source-read-contracts.test.ts` 分别固定 Discourse/V2EX 的结构化迁移。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：parser 必须证明协议关系没有丢失，RNTL 必须证明用户可见标签和导航门禁；正文字符串包含楼层或源码存在 selector 不能替代。 |
+| Replay 或真实验收路径 | 在匹配 revision/bundle 的已登录 App 中，从 More → 消息通知 → 妖火打开已读的“Clover 回复了你的回复”，点击“查看完整回复”进入目标主题；90 楼应显示“回复 @流金岁月 · #88”。全程只读，不清数据、Cookie 或登录态。 |
+| 负向验证方式 | 删除 `.reother` 解析、恢复 author-only 平铺字段、把关系并入 `quotedPosts`，或为跨页作者线性抓取其他页，编号 parser/UI 测试必须失败。 |
+| 明确不覆盖范围 | 不预取目标楼所在页、不线性遍历历史页、不新增楼层详情路由，也不执行回复、点赞等真实写入。 |
+
 ## `REG-PROXY-008` 阻塞写绕过共享 tunnel deadline
 
 | 字段 | 内容 |
@@ -4413,6 +4428,276 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 不要求真实写入；若已有自己发出的未读回执会话，可只读确认消息中心显示为已读且 NotificationManager 无新增摘要，否则保持 fixture 证据。 |
 | 负向验证方式 | 把私信 `unread` 恢复为仅取反 `viewed`，编号测试必须失败。 |
 | 明确不覆盖范围 | 不改变私信会话 ID、详情加载或真实 markViewed 协议，不发送测试私信。 |
+
+## `REG-NOTIFY-031` 单站通知被全局类型抹平且私信无法按原站协议回复
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/02/03`、`ACCOUNT-01/02/06`、`MORE-02`、`NAV-01`；四站分类、私信会话与回复安全边界 |
+| 用户症状 | 进入某个站点后仍只能看到跨站“全部/未读”，无法选择原站的 @我、回复、个人信息、系统或聊天分类；私信详情只有一段正文，不能连续阅读双方消息，也不能在 App 内回复。 |
+| 触发条件 | UI 把全局 `NotificationKind` 当成所有站点的筛选枚举，列表 Query key 不含站点 category；adapter 只暴露列表/详情/已读，没有现有会话回复能力与明确成功 oracle。 |
+| 根因 seam | 展示类型与站点筛选语义被合并在全局 domain；会话读取、回复 transport、身份/scope/abort 门禁和草稿确认语义没有经过 `NotificationAdapter → notificationGateway → NotificationRoute` 同一链路。 |
+| 必须保持的行为 | 聚合页不显示子分类；单站分类由 adapter 声明并进入 Query key，切站回默认分类。NodeSeek、Discourse 与妖火分别使用真实 endpoint/type/form；会话按时间正序显示左右气泡并定位最新。NodeSeek/Discourse 为 Markdown，妖火为纯文本且点击正文与最近 20 条聊天分离。空白、重复提交、换号、取消、小隐寺缺 `write` scope 均不得发网；失败或未确认保留内存草稿，明确确认才清空并刷新，正文不进入 diagnostics。 |
+| 精确失败 oracle | 四站 adapter 的 `REG-NOTIFY-031` fixture 固定分类标签、query/body、PM topic 映射、Markdown/plain-text 与精确成功文本；`src/sources/notificationGateway.test.ts` 固定 category、identity/abort/scope、未确认和正文隐私；`tests/ui/notifications/notifications-route.test.tsx` 固定切站重置、草稿保留/清空，`tests/ui/notifications/notifications-screen.test.tsx` 固定无聚合分类、子分类无批量已读、气泡和两种 composer。修复前分别缺方法、缺分类栏或草稿在错误时丢失。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter/gateway Vitest 与 Notifications RNTL；共享 Topic ReplyComposer 同时回归，Android 设备只读核对分类和已有已读会话。 |
+| Replay 或真实验收路径 | 匹配 APK 从 More → 消息通知依次打开四站，只读切换每个原站分类并打开允许读取的既有已读会话；检查气泡方向、作者、时间、最新定位和 composer 格式，不点击发送。真实回复必须另获“站点、收件人、测试内容”授权后才执行一次并刷新确认。 |
+| 负向验证方式 | 从 list key 删除 category、让 UI 使用全局类型枚举、把妖火任意 `.tip` 当成功、在未确认结果时清空草稿，或绕过 gateway 直接调用 adapter，任一编号测试必须失败。 |
+| 明确不覆盖范围 | 不提供新建私信、搜索私信、妖火发件箱、分类级推送设置、书签/个人资料；自动测试与只读验收不真实发送、上传、逐条已读或批量已读。 |
+
+## `REG-NOTIFY-032` 私信会话退化成顶部正文且丢失既有图片与表情能力
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`WRITE-01`、`ACCOUNT-01/06`；私信会话布局与共享 composer 写入门禁 |
+| 用户症状 | 私信消息挤在页面顶部、正文下方留下大块空白，作者与时间反复塞进气泡，底部只有孤立的“回复私信”按钮；打开回复后，Topic 已有的图片上传、NodeSeek 贴纸和 Discourse emoji 全部消失。 |
+| 触发条件 | 消息详情新建了只包含 Markdown 格式按钮的 `MessageReplyComposerSheet`，没有复用现有 ReplyComposer；会话列表未占满可用高度并靠底布局。 |
+| 根因 seam | Topic-local composer 同时拥有共享编辑能力与 Topic 目标文案，通知功能因此复制了残缺实现；会话布局没有把 native header、消息流和固定 composer 入口分成明确层级。 |
+| 必须保持的行为 | `src/ui/composer/ReplyComposer.tsx` 是 Topic 与私信共用的唯一格式/表情/图片 UI。NodeSeek 私信提供贴纸与 NodeImage 图片，linux.do/小隐寺提供本站 emoji 与 `/uploads.json` 图片，妖火私信按已核实协议保持纯文本。图片选择前先取得 writable ticket，NodeSeek 先确认 API Key；每个 await 后复核 ticket/identity/abort，取消和重复点击零上传，上传成功只把 markup 插入内存草稿且绝不自动发送。会话消息靠底、时间与作者弱化并置于气泡外，底部整行入口至少 48dp；换号或离开立即取消。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 固定消息容器 `justifyContent=flex-end`、左右气泡、Markdown 图片/表情、linux.do emoji 与妖火纯文本边界；`tests/ui/notifications/notifications-route.test.tsx` 固定 writable gate 早于 picker、重复/取消零上传、成功只插入草稿；`src/sources/notificationGateway.test.ts` 固定 NodeImage、Discourse `/uploads.json`、小隐寺 write scope 与文件名/API Key 不进入 diagnostics；共享 `tests/ui/topic/reply-composer.test.tsx` 防止 Topic 退化。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：Gateway Vitest 与 Notification/Topic RNTL；真实图片上传和私信发送均不属于自动测试。 |
+| Replay 或真实验收路径 | 匹配 APK 只读打开四站已有已读会话，核对靠底消息、固定回复入口和各站 toolbar；不得点击“图片”或“发送”。真实上传需先获得具体站点与测试文件授权，真实回复仍需“站点、收件人、测试内容”授权。 |
+| 负向验证方式 | 改回通知专用简化 toolbar、删除 `onUploadImage`、让 picker 早于 writable gate、上传后直接调用发送、把妖火显示成 Markdown，或移除消息容器的靠底样式，任一编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增私信附件历史、相册管理、上传重试、新建私信或妖火私信图片；不以官方文档或测试 mock 冒充未经授权的真实站点写入。 |
+
+## `REG-NOTIFY-033` NodeSeek 后续页通知详情错误显示不可用
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`TOPIC-03`；NodeSeek 通知精确帖子定位 |
+| 用户症状 | NodeSeek 的 @我/回复条目可正常进入完整主题并看到目标楼层，但消息详情却显示“NodeSeek 消息对应的帖子内容未找到”。 |
+| 触发条件 | 通知同时携带稳定 `comment_id` 与位于后续页的 floor，目标 floor 指向第 3 页或更后，而首屏主题数据的 `replyCount` 低估了真实页数。 |
+| 根因 seam | `src/sources/nodeseek/notifications.ts` 的通知详情分页在存在 comment ID 时固定从第 2 页开始并只按 `replyCount` 推导末页，丢弃了通知 floor 已提供的可靠页提示。 |
+| 必须保持的行为 | comment ID 始终是最终匹配身份；合法 floor 即使在 comment ID 存在时也必须作为首个分页提示，并与 `replyCount` 取更大的有界页范围。floor 错误时仍逐页按 comment ID 精确查找，不能按相同楼层误命中另一条回复。 |
+| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的 `REG-NOTIFY-033` fixture 给出 `commentId=31`、`floor=21`、`replyCount=10`，且目标只存在于第 3 页；修复前稳定抛出生产同款“帖子内容未找到”，修复后先请求第 3 页并返回 comment ID 31 的正文。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：adapter fixture 固定低估分页组合；匹配当前身份的 App 内原站只读打开同一已有通知，确认详情正文与完整主题目标楼层一致。 |
+| Replay 或真实验收路径 | More → 消息通知 → NodeSeek → @我，打开已确认的 Monkeypox 通知；详情应显示 `@凡想世界 #5 佬能开源吗`。再打开完整主题，目标仍定位到同一条回复。该路径只读，不触发回复、上传或其他写操作。 |
+| 负向验证方式 | 恢复“存在 comment ID 时忽略 floor、固定从第 2 页开始”的页序，编号测试必须以同一生产错误失败。 |
+| 明确不覆盖范围 | 不放宽 comment ID 精确匹配，不猜测无限页数，不把完整主题能打开当作详情成功，也不授权真实回复或已读写入。 |
+
+## `REG-NOTIFY-034` 通知详情底栏被系统手势区遮挡
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`；私信回复入口与普通通知主题操作栏的 Android 底部安全区 |
+| 用户症状 | 私信详情底部输入入口贴到系统手势条上，视觉拥挤且底部点击区域可能被遮挡；普通通知的固定主题按钮存在同一风险。 |
+| 触发条件 | 设备提供非零 bottom safe-area inset，详情页渲染固定 `replyDock` 或 `topicActionDock`。 |
+| 根因 seam | `src/features/notifications/NotificationScreens.tsx` 的两个固定 dock 只使用固定垂直 padding，没有消费 `react-native-safe-area-context` 提供的 bottom inset；弹出的共享 Composer 已独立正确处理安全区。 |
+| 必须保持的行为 | 两个详情页固定 dock 在原有 9dp 底部间距上追加设备 bottom inset；零 inset 设备保持原间距。Composer sheet 继续只处理自己的安全区，不能重复垫高。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-034` 把 bottom inset 设为 24，分别渲染私信回复 dock 和普通通知主题 dock，二者 `paddingBottom` 必须为 33；修复前均没有显式 bottom padding。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 固定真实组件样式组合；Android 匹配 APK 的截图只读复核手势条与入口没有重叠。 |
+| Replay 或真实验收路径 | 在启用手势导航的匹配模拟器中打开已有已读私信，再打开一条可进入主题的普通通知；只读确认两个固定操作栏均完整位于手势区上方。不得点击发送、图片或其他写操作。 |
+| 负向验证方式 | 移除任一 dock 的 safe-area 样式后，对应编号断言必须从 33 退回固定间距或未定义并失败。 |
+| 明确不覆盖范围 | 不改变消息气泡、Composer 高度、系统导航模式或其他页面的安全区策略。 |
+
+## `REG-NOTIFY-035` 消息一级 Tab 文字与选中线不同轴
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01`；共享 `PillRail` 的 tabs 视觉与点击区 |
+| 用户症状 | 消息页一级来源 Tab 看起来歪斜：短中文标签靠在点击区左侧，蓝色选中线却铺满整个最小宽度；长英文标签接近占满宽度，导致同一排各项朝向不一致。 |
+| 触发条件 | `tabs` variant 的标签文本短于 48dp 最小点击宽度，例如“全部”“妖火”。 |
+| 根因 seam | `src/ui/controls/SelectionControls.tsx` 的 `tab` 保证了最小宽度，但 `tabText` 没有居中；React Native Text 拉伸到按钮宽度后沿默认起点绘制。 |
+| 必须保持的行为 | 每个 tabs 标签在自己的点击区与选中线内水平居中；继续保留至少 48dp 双轴点击区、内容宽度、原顺序和横向滚动，不能为了五等分而截断大字号或长站名。共享 Feed、Search、Library、User tabs 使用同一规则。 |
+| 精确失败 oracle | `tests/ui/shared/accessibility-basics.test.tsx` 的 `REG-NOTIFY-035` 渲染短标签“全部”，要求最终 `tabText.textAlign` 为 `center`；修复前稳定得到 `undefined`。 |
+| 最低可靠自动测试层 | `UI_PASS`：共享 RNTL 固定真实 `PillRail` 样式；匹配 Android App 的截图复核短中文、长英文与选中线同轴。 |
+| Replay 或真实验收路径 | More → 消息通知，在聚合页对照“全部 / NodeSeek / linux.do / 妖火 / 小隐寺”；切换一个来源后再次确认选中线和文字中心一致。只读切换不打开未读条目。 |
+| 负向验证方式 | 移除 `tabText` 的居中后，编号测试回到 `undefined` 并失败，模拟器中的“全部”再次贴向选中线左端。 |
+| 明确不覆盖范围 | 不把一级 Tab 强制等宽，不改变站点名称、字号、选中线宽度或二级分类协议。 |
+
+## `REG-NOTIFY-036` 消息中心与共享回复器忽略 App 字号
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/02`、`WRITE-01`；消息中心与共享 ReplyComposer 的 Dynamic Type |
+| 用户症状 | More 已显示“字号 130%”，消息列表、私信气泡和回复输入框却仍保持 100% 大小；页面间字号所有权不一致，大字号也无法改善可读性。 |
+| 触发条件 | Reader settings 的 `fontScale` 非 1，进入消息列表、详情或 Topic/私信共用的回复面板。 |
+| 根因 seam | `createNotificationStyles` 与迁移后的 `src/ui/composer/ReplyComposer.tsx` 仍写死 fontSize/lineHeight，没有消费 `ReaderStyleProvider` 的 `settings.fontScale`。 |
+| 必须保持的行为 | 消息列表、空态、设置、详情、会话元信息/气泡、固定回复入口及共享 composer 的标题、工具、输入、状态与错误均按 Reader `fontScale` 成对缩放字号和行高；布局继续换行或滚动，不能靠截断恢复。 |
+| 精确失败 oracle | `tests/integration/style-ownership.test.ts` 的 `REG-NOTIFY-036` 用 1.3 settings 创建真实消息样式，标题必须从 14 变为 18；`tests/ui/topic/reply-composer.test.tsx` 在真实 `ReaderStyleProvider` 下要求输入字号为 `round(14 × 1.3)`。修复前两者分别仍为 14。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：样式 ownership 集成测试固定消息全局 seam，RNTL 固定共享 composer；匹配 Android 再以 100%/130% 对照页面实际换行。 |
+| Replay 或真实验收路径 | More → 外观把字号从 100% 调到 130%，进入消息聚合、单站分类和已有已读会话，打开但不提交回复面板；确认字形、行高和点击区同步变化，结束后恢复 100%。 |
+| 负向验证方式 | 任一消息或 composer 文本恢复固定 fontSize，编号测试必须得到未缩放值并失败；只放大单个标题不能通过全页设备对照。 |
+| 明确不覆盖范围 | 不跟随 Android 系统字体倍率，不改变 App 已有 Reader 字号档位、字体族或密度设置；真实发送和上传仍不在字号验收内。 |
+
+## `REG-NOTIFY-037` 妖火聊天泄露原始包装并重复、倒序或丢失时间
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`；妖火私信正文与最近聊天的协议隔离和会话呈现 |
+| 用户症状 | 妖火会话气泡显示“回复时间/回复内容”等原站协议标签，原消息在聊天中重复；服务端倒序记录直接展示，日期甚至被当作作者，清理包装后气泡时间又消失。 |
+| 触发条件 | 详情同时包含官方“内容”字段与 `.listmms.the_user/the_me` 聊天气泡；时间可能在 `.info`，也可能只在气泡的“回复时间”包装中。 |
+| 根因 seam | `src/sources/yaohuo/notifications.ts` 把 `.con` 原 HTML直接当正文，没有先分离协议元数据、按内容去重和按解析时间排序；作者/时间只信任单一 `.info` 结构。 |
+| 必须保持的行为 | 原消息正文独立显示一次；聊天只保留可渲染正文、图片和“查看主题帖/查看完整回复”导航链接，精确移除“回复时间/回复内容”协议标签。作者日期形态失效时回退通知对端；时间先从 `.info` 读取，再从“回复时间”提取，随后才清理包装；最终按时间正序，未知时间置后。 |
+| 精确失败 oracle | `src/sources/yaohuo/notifications.test.ts` 的 `REG-NOTIFY-037` 使用真实形态 HTML：一条原消息重复项、倒序历史、日期作者、仅存在于“回复时间”的秒级时间、图片及两类导航链接；结果必须只剩两条正序气泡、作者均为 Clover、秒级时间可解析、正文不含协议标签且两个链接的绝对 href 均保留。修复前得到三条、顺序错误、作者为日期或时间为 null。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：adapter fixture 固定 DOM 协议；匹配 App 只读打开已有已读妖火聊天，核对正文、作者、图片、时间和顺序。 |
+| Replay 或真实验收路径 | More → 消息通知 → 妖火 → 聊天，打开已有已读 Clover 会话；确认“原消息”与最近 20 条历史分区、包装文本不出现、气泡作者/时间可见。不得点击发送。 |
+| 负向验证方式 | 恢复直接 sanitize `.con`、不去重、不排序、把日期 label 当作者，先删除“回复时间”再提取，或把导航链接当 footer 一并删除，编号 fixture 必须失败。 |
+| 明确不覆盖范围 | 原站只提供最近 20 条时不补造更早历史；不新增妖火附件、发件箱或 Markdown，不执行真实回复。 |
+
+## `REG-NOTIFY-038` 大字号回复工具与表情网格被截断或失去输入反馈
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`WRITE-01`；Topic/私信共享编辑器的工具可达性与视觉反馈 |
+| 用户症状 | 130% 下横向工具栏末尾的引用、代码或列表不可见；输入光标仍是系统默认色；Discourse 表情同时显示英文名称，网格拥挤且不像可浏览的表情面板。 |
+| 触发条件 | NodeSeek/linux.do/小隐寺 Markdown composer 在窄屏或大字号下显示完整工具集合，或打开服务器返回的 Discourse emoji 目录。 |
+| 根因 seam | ReplyComposer 把格式工具放进单行横向 ScrollView；TextInput 未声明主题 cursor/selection color；Discourse emoji 使用文字型可变宽单元，而不是图像优先等宽网格。 |
+| 必须保持的行为 | 工具栏在自身边界内换行，全部动作无需隐藏横滑即可看到；输入光标和选区使用主题 primary。Discourse emoji 使用五列等宽图片网格，有图片时英文名只保留为 accessibility label，无图 fallback 才显示文字；图片上传、贴纸和所有原动作继续存在。 |
+| 精确失败 oracle | `tests/ui/topic/reply-composer.test.tsx` 的 `REG-NOTIFY-038` 要求 toolbar `flexWrap=wrap`、末尾“列表”可达、cursor/selection 为主题 primary；同文件表达式测试要求 Discourse list 为五列、`party parrot` 仍可通过无障碍找到但没有可见英文文本。修复前分别是未换行、默认光标和可见英文名。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须渲染真实共享 ReplyComposer；匹配 Android 以 130% + 键盘/表情开关确认布局和焦点反馈。 |
+| Replay 或真实验收路径 | 在已有已读 NodeSeek 与 linux.do 私信中打开回复面板：NodeSeek 核对图片、贴纸和两行工具；linux.do 核对五列表情图、无英文噪声和图片入口。只打开/取消，不选择图片、不发送。 |
+| 负向验证方式 | 改回 horizontal toolbar、删除末尾动作、移除 cursorColor/selectionColor，或恢复带图片表情的可见英文标签，编号测试必须失败。 |
+| 明确不覆盖范围 | 不增加新格式动作、表情搜索/分类或附件能力；只恢复并重排既有能力。 |
+
+## `REG-NOTIFY-039` 四站消息时间格式互相跳变
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/02`；列表与会话时间呈现 |
+| 用户症状 | 同一消息页同时出现“8/3 09:05”、`2026/7/3 13:46` 和 ISO 派生格式，跨年份或站点时难以快速比较；气泡时间与列表又使用不同 formatter。 |
+| 触发条件 | 一部分 adapter 提供可解析 `createdAt`，另一部分只提供原站绝对 `displayTime`。 |
+| 根因 seam | `notificationTimeText` 对两类时间分别调用通用相对格式和原字符串；会话气泡另直接使用 `formatDateTime`。 |
+| 必须保持的行为 | 所有可确认的通知列表、详情头与会话气泡统一显示 `YYYY-MM-DD HH:mm` 的 24 小时绝对时间；站点 `/` 或 `-` 日期补零，无法确认时仍显示“时间未知”，不得猜测日期。 |
+| 精确失败 oracle | `src/features/notifications/notificationPresentation.test.ts` 的 `REG-NOTIFY-039` 同时输入 ISO `createdAt` 与 `2026/7/3 13:46` fallback，必须得到 `2026-08-03 09:05` 和 `2026-07-03 13:46`；修复前前者为 `8/3 09:05`、后者保留斜杠。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：presentation 单测固定转换，Notifications RNTL/设备只读确认同一 formatter 被列表与气泡消费。 |
+| Replay 或真实验收路径 | 聚合与四站单站列表对照多条已读记录，再打开已有已读私信；所有已知时间都应为完整年/月/日与分钟，未知值明确标记。 |
+| 负向验证方式 | 列表恢复通用短日期、fallback 原样返回或气泡绕过 `formatNotificationTime`，编号单测或设备对照必须失败。 |
+| 明确不覆盖范围 | 不显示秒、相对“几分钟前”、时区标签或推断缺年份的模糊时间。 |
+
+## `REG-NOTIFY-040` 通知富文本链接脱离 App 主题色
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`；通知正文与会话气泡的链接 affordance |
+| 用户症状 | 通知详情中的链接使用 `react-native-render-html` 默认蓝色，与 App primary、深浅主题和其他可点击文字不一致，看起来像未完成的网页片段。 |
+| 触发条件 | 任一站点通知或聊天正文通过 `DetailHtml` 渲染 `<a href>`。 |
+| 根因 seam | 共享 `DetailHtml` 只传 baseStyle，没有为 `a` 提供由 Reader theme 拥有的 `tagsStyles`。 |
+| 必须保持的行为 | 消息详情、原消息和气泡内所有富文本链接统一使用当前主题 primary 且保持足够字重；HTML 解析、跳转协议和正文颜色不变。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-040` 渲染真实 `<a>` 并要求最终颜色等于 `createTheme(settings).primary`；修复前得到 renderer 默认 `#245dc1`。`tests/integration/style-ownership.test.ts` 同时固定 `detailLink` 由消息样式提供。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 必须经过真实 RenderHTML style 合并；设备以浅色/深色只读详情复核。 |
+| Replay 或真实验收路径 | 打开包含链接的已有已读普通通知或妖火原消息，确认链接与 App accent 一致且正文仍可读；不需要点击外链。 |
+| 负向验证方式 | 删除 `tagsStyles`、写死外部默认蓝或只改普通文本颜色，编号测试必须失败。 |
+| 明确不覆盖范围 | 不改变链接目标、内外部导航策略、下划线或正文 HTML 内容。 |
+
+## `REG-NOTIFY-041` 表情面板把回复操作压进 Android 导航栏
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`WRITE-01`；共享 Composer Bottom Sheet 的大字号与安全区 |
+| 用户症状 | 130% 下打开 NodeSeek 贴纸或 Discourse emoji 后，“取消/发送回复”被压到 Android 手势条后面；若简单放开高度，linux.do 表情面板又铺满整屏并留下过量空白。 |
+| 触发条件 | Bottom Sheet 已到动态高度上限，同时 toolbar 换为两行并展开约 238dp 的 accessory panel，设备 bottom inset 非零。 |
+| 根因 seam | `ComposerBottomSheet` 把最大动态内容高度固定为窗口 58%，子内容超过上限后仍继续布局；既有 bottom safe padding 因内容溢出而落到容器外。 |
+| 必须保持的行为 | Topic 与四站私信共用的 Bottom Sheet 允许增长到 top-safe viewport 的 75%，并继续在内容底部追加 bottom inset；App 支持的 130% 最大字号下，标题、工具、表情/贴纸、输入和操作按钮均可见，操作按钮完整位于系统导航栏上方，同时不把空面板强制拉到全屏。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-041` 注入 top/bottom 24 与真实窗口高度，要求共享 sheet 的 `maxDynamicContentSize=round((height-top)×0.75)`；修复前固定 58% 得到 774 而不是 983。设备截图进一步固定 130% 展开 accessory 时两枚操作按钮不与手势条重叠。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定共享 sheet 边界，Android 真实布局固定动态测量、键盘和系统 inset；两者不可互相替代。 |
+| Replay 或真实验收路径 | 130% 下分别打开 NodeSeek 贴纸与 linux.do emoji；确认底部操作完整、面板仍可滚动、键盘切换后不跳出屏幕。随后取消并恢复 100%，不选择图片或发送。 |
+| 负向验证方式 | 恢复 58% 上限、移除 bottom padding，或改为全窗口上限导致表情列表把 sheet 顶满并产生大面积空白，设备验收必须失败。 |
+| 明确不覆盖范围 | 不引入新 Bottom Sheet 库、不做可拖拽多档高度或横屏专项重排；只修共享现有面板的支持字号和安全区。 |
+
+## `REG-NOTIFY-042` 妖火气泡外斜杠时间在 Android 丢失
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`；妖火已读私信会话时间 |
+| 用户症状 | 妖火聊天气泡能显示作者、图片和正文，但真实已读会话的气泡下没有时间。 |
+| 触发条件 | 原站把“回复时间”放在同一 `.listmms` 行内、但不放在 `.info` 或 `.bubble .con` 中，并使用 `2026/7/3 13:45:52` 斜杠格式。Node/V8 会宽松解析该值，Android/Hermes 不保证接受。 |
+| 根因 seam | `chatMessages` 只从 `.info` 与正文节点取时间；共享 `toIsoString` 又只规范化连字符日期，导致 Node 测试偶然通过而 Android 返回 null。 |
+| 必须保持的行为 | 时间可以位于消息行内任意原站包装节点；parser 先从 `.info` 取标准时间，再从当前行的“回复时间”取后备。共享时间入口把斜杠或连字符日期补齐为标准 ISO 形态后再解析，随后仍清除包装并按真实时间排序。 |
+| 精确失败 oracle | `src/sources/yaohuo/notifications.test.ts` 的 `REG-NOTIFY-042` 把秒级“回复时间”移到正文气泡外，并让 `Date.parse` 拒绝含斜杠输入以模拟严格运行时；修复前消息时间为 null、顺序错误，修复后为 `2026-07-03T05:45:52.000Z`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：fixture 固定解析边界，身份匹配的已读妖火会话确认气泡时间实际可见。 |
+| Replay 或真实验收路径 | 妖火 → 聊天 → 已读 Clover 会话，确认图片气泡下显示 `YYYY-MM-DD HH:mm`；不打开回复器、不发送。 |
+| 负向验证方式 | 把 reply-time 提取恢复为只读取 `.bubble .con`，或把共享日期规范化恢复为仅支持连字符，编号测试会得到 null/顺序错误，真实会话再次缺时间。 |
+| 明确不覆盖范围 | 不从消息列表时间猜测每条历史气泡时间；原站未提供时间时继续显式未知。 |
+
+## `REG-NOTIFY-043` Discourse 私信从所有通知进入时退化为普通帖子
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/02`、`WRITE-01`；Discourse 私信跨分类详情一致性 |
+| 用户症状 | linux.do 同一条消息在“所有通知”列表已经显示“发来了私信”，点进去却是普通通知/帖子详情；从“个人信息”点进去才显示完整私信会话和回复入口。 |
+| 触发条件 | `/notifications` 返回 private-message notification type，并同时携带 `topic_id` 与 `post_number`；“个人信息”菜单随后会做私信 target 转换，而“所有通知”直接使用通用 mapper 结果。 |
+| 根因 seam | `parseNotification` 正确生成了 `kind=private-message`，但 target 仍无条件按 `topic_id/post_number` 生成 `topic-post`；详情 loader 按 target 分支，因此丢失会话与回复能力。 |
+| 必须保持的行为 | Discourse notification 一旦识别为 `private-message` 且具有合法 `topic_id`，任何分类都生成 `private-conversation`；“所有通知”与“个人信息”必须指向同一 conversation ID，并加载完整正序会话与 Markdown reply。普通 mention/reply 继续使用精确 `topic-post`。 |
+| 精确失败 oracle | `src/sources/discourseNotifications.test.ts` 的 `REG-NOTIFY-043` 让同一条 type 6 notification 同时经过 All 与 Personal Info；修复前两者分别为 `topic-post:202/2` 和 `private-conversation:202`，修复后 target 相同且 All 详情返回两条会话消息与 Markdown reply。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：共享 Discourse adapter fixture；linux.do 与小隐寺共用同一 mapper。 |
+| Replay 或真实验收路径 | linux.do → 所有通知，只打开一条已经确认已读的私信，再从个人信息打开同一会话；两处都应显示相同聊天详情和回复入口。不得用未读条目验收，避免触发原站已读写入。 |
+| 负向验证方式 | 恢复“所有带 topic_id 的 notification 一律生成 topic-post”，编号测试必须稳定看到两个分类 target 不相等。 |
+| 明确不覆盖范围 | 不发送真实私信、不上传图片、不以点击未读条目代替只读验收；缺少 `topic_id` 的通知保持信息型详情，不猜 conversation ID。 |
+
+## `REG-NOTIFY-044` 妖火会话主题链接跳出 App 打开浏览器
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`TOPIC-01/03`、`NAV-01/03`；妖火通知详情到现有主题页的站内导航 |
+| 用户症状 | 妖火会话里的“查看主题帖”和“查看完整回复”点击后打开系统浏览器，离开 App；部分真实会话中“查看完整回复”还会被清理器直接删除。 |
+| 触发条件 | 妖火详情 HTML 包含 `/bbs/book_view.aspx?id=…` 或 `/bbs/book_re.aspx?id=…` 链接，并由消息页的 `DetailHtml` 渲染。 |
+| 根因 seam | 妖火 adapter 把“查看完整回复”误当作 footer 包装删除；消息 `DetailHtml` 又未复用 `parseForumTopicLink`，所有锚点都沿 renderer 默认行为交给 `Linking.openURL`，且 route callback 无法携带解析后的 Topic。 |
+| 必须保持的行为 | 两个导航链接及 href 均保留；受信任的妖火主题/回复 URL 统一经过现有 `parseForumTopicLink`，携带解析后的 Topic 进入 App 现有 `Topic` route；“查看完整回复”的精确楼层另由 `REG-NOTIFY-045` 固定。无法识别的普通外链继续走系统外链行为，不能被错误吞掉。 |
+| 精确失败 oracle | `src/sources/yaohuo/notifications.test.ts` 要求两个绝对 href 均保留；`tests/ui/notifications/notifications-screen.test.tsx` 的 `REG-NOTIFY-044` 点击两个链接后要求 `Linking.openURL` 零调用，`onOpenTopic` 两次收到 `{ source: 'yaohuo', id: '321' }`。修复前两个链接均调用外部浏览器，且 callback 零调用。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：adapter fixture 固定 HTML 清理边界，RNTL 固定链接分流，匹配 App 只读确认两个入口都停留在 App 内。 |
+| Replay 或真实验收路径 | 妖火 → 聊天 → 已有已读会话；分别点击“查看主题帖”和“查看完整回复”，确认都进入 App 内 Topic，返回后仍回到同一会话。不得发送回复。 |
+| 负向验证方式 | 删除任一链接、绕过共享 parser 或恢复 bare `RenderHTML` 链接处理，编号测试必须分别因 href 缺失、外链调用或 Topic callback 缺失而失败。 |
+| 明确不覆盖范围 | 本条只固定两个原站 URL 都进入主题详情；`tofloor` 精确楼层定位由 `REG-NOTIFY-045` 覆盖。不开启真实回复、上传或已读写入。 |
+
+## `REG-NOTIFY-045` 妖火“查看完整回复”进入主题后丢失具体楼层
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`TOPIC-03`、`NAV-03`；妖火私信完整回复的精确楼层定位 |
+| 用户症状 | “查看完整回复”已经留在 App 内，但进入主题后仍停在主楼，用户还要手动寻找原站指向的具体回复。 |
+| 触发条件 | 妖火已读聊天详情给出真实 `book_re.aspx?classid=…&id=…&tofloor=90&fromuserid=…` 链接；原站用 `tofloor` 返回包含该楼层的回复页。 |
+| 根因 seam | `DetailHtml` 只调用 `parseForumTopicLink` 得到 canonical Topic，原始 query 被丢弃；`onOpenTopic` 与 Notification route 也没有继续传递链接级 `targetReply`。 |
+| 必须保持的行为 | 仅对 `www.yaohuo.me`/`yaohuo.me` 的 `/bbs/book_re.aspx` 读取正安全整数 `tofloor`；携带 `{ floor }` 进入现有 Topic route，由共享目标回复加载与滚动逻辑定位。普通主题链接不附加目标；缺失、零值、小数或站外伪链接不得猜楼层。 |
+| 精确失败 oracle | `tests/integration/forum-presentation-contracts.test.ts` 要求真实形态链接解析为 `{ floor: 90 }` 并拒绝无效/站外值；`tests/ui/notifications/notifications-screen.test.tsx` 点击两个链接后要求只有“查看完整回复”的第二次 callback 带 `{ floor: 90 }`；`tests/ui/notifications/notifications-route.test.tsx` 继续要求 `navigation.navigate('Topic', { topic, targetReply: { floor: 90 } })`。修复前第二次 callback 只有 Topic。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：domain parser 固定协议与校验，Notifications Screen/Route RNTL 固定参数不丢失，匹配 App 只读确认最终滚到目标楼层。 |
+| Replay 或真实验收路径 | 妖火 → 聊天 → 已有已读 Clover 会话 → 查看完整回复；确认仍在 App、主题自动加载需要的回复页并滚到原站 `tofloor` 指向的楼层。返回后仍回到会话，不发送回复。 |
+| 负向验证方式 | 去掉 query parser、把 `tofloor` 当分页号、只传 Topic，或接受 `tofloor=0/1.5` 与站外同形 URL，编号测试必须失败。 |
+| 明确不覆盖范围 | 不根据 `page`、`reply`、消息时间或正文猜目标；没有合法 `tofloor` 时只打开主题。不新增妖火专用主题页或真实写操作。 |
+
+## `REG-NOTIFY-046` 妖火目标楼层线性追页且分页被同名用户劫持
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`TOPIC-03`、`USER-01`；妖火目标楼层与共享分页游标 |
+| 用户症状 | “查看完整回复”进入主题后可能从第 2 页逐页请求到目标页；普通帖子或用户列表遇到昵称为“下一页”的用户时，还会提前停止分页或跳进用户主页。 |
+| 触发条件 | 原站 `book_re.aspx?...&tofloor=90` 一次响应落到第 16 页，HTML 的 `page` 表单字段为 16；Android Native Fetch 的 `Response.url` 仍可能是无 `page` 的请求 URL。页面同时含第 17 页游标；第 10 页正文中又存在文本恰为“下一页”的用户链接。 |
+| 根因 seam | Topic 目标回复加载只保留 `{ floor }`，沿通用“加载更多”从当前页线性追赶；初次直达实现又把可选的 `Response.url` 当成唯一当前页依据，缺失时回退为 1，下一次错误请求第 2 页。妖火 HTML parser 还把链接文本当成分页身份，未要求合法 `page` 游标和对应列表 endpoint。 |
+| 必须保持的行为 | 妖火合法目标楼层只发送一次 `tofloor` 请求，以最终 URL 的正页码为首选、原站 HTML 的当前 `page` 字段为 Android 兜底，建立真实分页锚点并用下一页游标继续；定位到第 16 页后下一次只能请求第 17 页，不保留第 1 页与第 16 页之间的假连续列表，也不得退回逐页扫描。目标响应不含该楼层时明确失败。帖子回复、Feed、用户帖子和用户回复都只能接受带正页码的真实分页链接；同名用户链接不能成为 cursor。 |
+| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-NOTIFY-046` 固定请求页序列为 `[1（携带 targetFloor）, 17]`、目标页替换首屏且无 2～16；`src/sources/yaohuo/reader.test.ts` 模拟 Android 的无重定向 `Response.url`，要求从 HTML `page=16` 恢复 `currentPage`，并让用户链接先于真实分页链接出现，要求帖子回复、用户帖子和用户回复仍解析真实下一页。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：parser/reader 固定原站协议，Topic controller 固定跨页状态机，匹配 App 只读确认目标楼层与继续下滚。 |
+| Replay 或真实验收路径 | 妖火 → 聊天 → 已有已读会话 → 查看完整回复；确认一次定位到目标楼层，继续下滚加载紧邻下一页且没有回到页首。再打开包含同名用户的普通主题，确认仍可继续分页。不发送回复、不改变已读状态。 |
+| 负向验证方式 | 恢复按 `topicReplies.length` 反复调用通用加载更多，或在 `Response.url` 无页码时直接回退 1，编号测试都会出现页 2；恢复“第一个文本为下一页的链接”，parser 测试会得到用户主页或 `nextPage=null`。 |
+| 明确不覆盖范围 | 原站未提供可调 page-size，不能伪造批量页长；不并发抓取 2～16，不拼接有缺口的第 1/16 页，不用正文、时间或总回复数猜目标页。 |
+
+## `REG-TOPIC-062` 极大回复楼层被当作从首屏开始的连续前缀
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03`、`NAV-02/03`、`NOTIFY-02`；五站回复关系导航、双向分页和写后刷新 |
+| 用户症状 | 点击很远的被回复楼层会从当前页逐页追赶，长帖产生请求风暴；即使跳到目标，中间缺失页面也可能被拼成连续列表。关系标签整块点击又会打开用户名片，用户无法单独点楼层。定位到中段后只能向下加载，编辑、删除或新回复还可能按已加载数量刷新错误页面。 |
+| 触发条件 | NodeSeek/Discourse/妖火主题包含远端楼层链接或通知携带目标，目标不在当前回复集合；列表采用无限滚动且当前缓存可能只含首屏、锚点中段或双向相邻窗口。V2EX 已经持有完整回复集合。 |
+| 根因 seam | Controller 把 Infinite Query 页组误认为“从第一页开始的完整前缀”，用 `loadMoreReplies` 反复追目标，并以 `topicReplies.length`、数组下标或扩大 page-size 推断绝对页面；route/parser 又使用零散的 reply Pick 类型并丢失 page/fragment。列表只支持 next cursor，写后刷新复用同一错误推断。 |
+| 必须保持的行为 | 使用统一 `ReplyLocationTarget { commentId?, floor?, pageHint? }`；存在 `commentId` 时它是强身份，同楼层不同实体不得命中。已加载目标零请求；未加载目标只请求一次来源确认的目标窗口并原子替换当前页组，随后 `fetchPreviousPage`/`fetchNextPage` 只读取紧邻 cursor。目标实体及可信 current page/offset 缺一即失败并保留原窗口，不猜页、不补中间页；验证恢复必须重试同一目标，来源 session epoch 前进后允许同一 route 目标重新消费。NodeSeek 固定 10 楼精确页且定位请求禁用 fill-pages；linux.do/小隐寺使用 near-post window；妖火只接受响应 URL 或 page 表单确认的 resolved page；V2EX 只在已加载全集本地定位。用户名与 `#楼层` 独立点击，定位前恢复全部/空搜索，成功滚动并短暂高亮。前插保持可见位置，指回任一已加载窗口的 cursor 立即停止。编辑/删除重读目标实体所在真实 `pageParam`，新回复按服务端权威尾楼重新锚定，整帖刷新才回首屏；route 初始目标消费后不得覆盖后续刷新窗口，离开时目标窗和尾窗都不得留作下次首屏。 |
+| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 输入 155 楼只允许请求序列 `[targetFloor=155, page=15, page=17]`，编辑目标随后只能重读真实 `page=16, offset=150`，不得出现 2～14；相邻页反向指回 16 时不得再次请求。测试还固定同楼层不同 `commentId` 失败、NodeSeek 验证恢复重试同一目标、来源 epoch 前进后恢复妖火同一目标、整帖刷新后旧 route 目标不重放，以及尾窗在 route 卸载时清除；目标无法确认时原列表不变，V2EX 未加载目标零请求。`tests/integration/source-read-contracts.test.ts` 固定 NodeSeek 在目标页仅返回一条且声明下一页时 `nextOffset=160`、后续第 17 页仍为 10 楼窗口，同时误传 `fillPages=true` 时仍只有一次传输，并覆盖 linux.do near-post；小隐寺和妖火 reader 测试分别固定独立凭据与 resolved-page falsifier。`tests/ui/topic/topic-components.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx` 固定用户名/楼层双目标、前后边缘、每手势单次自动加载、按钮重试、前插保持和一次滚动高亮。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter/unit 固定五站协议和 cursor，Controller/UI 固定窗口状态机与交互；匹配 APK 的五站只读主题验证真实布局、导航和相邻加载。 |
+| Replay 或真实验收路径 | 从普通 Topic 和消息“查看完整回复”各进入一个已有远端目标；确认直接出现目标并高亮，向上/向下各触发一次相邻加载，点击作者进入用户页、返回后再点击楼层仍留在主题。linux.do 若出现验证，停在“更多 → 账号中心 → linux.do 原站”由用户手动处理后继续。全程不发回复、不清登录态。 |
+| 负向验证方式 | 恢复递归 `loadMoreReplies`、`PageSize=400`、`1..N` 批量补抓、按已加载数量推页、目标请求继续 fill-pages、把用户名和楼层合成单个 Pressable，或在 adapter 未确认页面时应用窗口，任一编号测试都必须失败。 |
+| 明确不覆盖范围 | 不引入 V2EX PAT/API 2.0 分页，不为只有 `@用户名` 的文本猜楼层，不并发预抓全部历史，不对妖火缺页码响应做近似定位。真实回复、编辑、删除仍需针对站点和对象另行授权。 |
+
+## `REG-TOPIC-063` 回复窗口等到重试按钮可见才加载
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03`；回复窗口顺序和向上预取体验 |
+| 用户症状 | 从锚点窗口向上滚动时，先看到“加载更早回复”按钮，随后才开始请求和前插，操作感觉迟滞；本地倒序又只翻转已加载片段，并不能代表原站完整倒序结果。 |
+| 触发条件 | 当前主题存在 previous cursor，用户从窗口中段向上滚动；列表同时把 `replyWindowStart` 渲染为重试按钮，并用该行进入可视区作为上一窗口请求条件。 |
+| 根因 seam | `TopicContentList` 把网络需求与重试 UI 绑定；`ReplyFilter` 还提供没有五站一致读取协议支撑的 `newest` 本机反转。 |
+| 必须保持的行为 | 回复始终按来源读取顺序展示，只保留全部、只看楼主和只看带图。用户开始滚动后，最早可见回复距窗口起点不超过当前可视回复数时提前读取上一 cursor；同一手势最多自动读取一次，按钮只承担正在加载状态和手动重试。前插后必须清除旧预取命中并按新窗口起点重新计算；即使该次插入最后一个 previous cursor，也要保持当前可见位置。下一窗口加载不受影响。 |
+| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 构造 10 条锚点窗口，只把第 4～6 条回复交给 viewability callback，且不包含 `replyWindowStart`；修复前 previous callback 为 0，修复后必须为 1，重复回调仍为 1；前插新窗口后，下一次手势在重新进入预取带前不得再次请求。另一用例固定最后一窗前插期间位置保持仍启用，随后才关闭；“倒序”入口必须不存在且回复保持正序。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定提前触发、前插后预取重置、手势门禁、末窗位置保持、正序筛选和前后窗口按钮；匹配 APK 确认真实上滑没有按钮先出现再启动加载的停顿。 |
+| Replay 或真实验收路径 | 从消息里的远端楼层或普通长主题进入中段锚点，缓慢向上滚动；确认接近窗口起点时上一窗口提前出现、当前位置不跳，并且回复筛选栏没有“倒序”。只读验收，不发送回复。 |
+| 负向验证方式 | 恢复仅在 `replyWindowStart` 可见时加载，编号测试得到 previous callback 0；恢复 `newest` 本机 reverse，倒序入口断言失败。 |
+| 明确不覆盖范围 | 不增加站点倒序请求协议，不根据网络速度或滚动速度动态调参，不自动连续补齐全部历史。 |
 
 ## 待确认观察
 

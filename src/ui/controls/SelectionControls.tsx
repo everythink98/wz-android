@@ -54,7 +54,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       paddingBottom: 4
     },
     tabActive: { borderBottomColor: theme.primary },
-    tabText: { color: theme.muted, fontFamily, fontSize: 13, fontWeight: '500' },
+    tabText: { color: theme.muted, fontFamily, fontSize: 13, fontWeight: '500', textAlign: 'center' },
     tabTextActive: { color: theme.primary, fontWeight: '600' },
     settingGroup: { gap: 7 },
     panelTitle: { color: theme.ink, fontFamily, fontSize: 15, fontWeight: '600' }

@@ -167,6 +167,7 @@ describe('portable Discourse fields', () => {
         can_edit: true,
         can_delete: false,
         bookmarked: false,
+        reply_to_post_number: 1,
         reply_to_user: { username: 'alice' },
         accepted_answer: true,
         wiki: true,
@@ -189,8 +190,10 @@ describe('portable Discourse fields', () => {
       canDelete: false,
       contentMarkdown: 'portable Markdown',
       bookmarked: false,
-      replyTargetAuthor: 'alice',
-      replyTargetUsername: 'alice',
+      replyTarget: {
+        floor: 1,
+        author: { name: 'alice', username: 'alice' }
+      },
       acceptedAnswer: true,
       wiki: true,
       hidden: true,
@@ -267,21 +270,24 @@ describe('portable Discourse fields', () => {
         ...basePost,
         reply_to_user: { name: 'Alice Display' }
       })
-    ).toMatchObject({ replyTargetAuthor: 'Alice Display' });
+    ).toMatchObject({ replyTarget: { author: { name: 'Alice Display' } } });
     expect(
       discoursePostFields({
         ...basePost,
         reply_to_user: { name: 'Alice Display' }
-      })
-    ).not.toHaveProperty('replyTargetUsername');
+      })?.replyTarget?.author
+    ).not.toHaveProperty('username');
     expect(
       discoursePostFields({
         ...basePost,
+        reply_to_post_number: 1,
         reply_to_user: { name: 'Alice Display', username: 'alice' }
       })
     ).toMatchObject({
-      replyTargetAuthor: 'Alice Display',
-      replyTargetUsername: 'alice'
+      replyTarget: {
+        floor: 1,
+        author: { name: 'Alice Display', username: 'alice' }
+      }
     });
   });
 

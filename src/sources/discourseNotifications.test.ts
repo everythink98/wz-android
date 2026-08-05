@@ -10,6 +10,250 @@ function json(value: unknown) {
 }
 
 describe('Discourse notifications', () => {
+  it('[REG-NOTIFY-031] exposes the current Discourse menu categories and advertised Chat support', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      expect(new URL(input).pathname).toBe('/site.json');
+      return json({
+        notification_types: {
+          mentioned: 1,
+          replied: 2,
+          liked: 5,
+          private_message: 6,
+          chat_message: 30
+        }
+      });
+    });
+
+    await expect(
+      discourseNotificationAdapters.linuxdo.getCategories({
+        fetcher,
+        identityKey: 'linuxdo:7',
+        userId: '7',
+        username: 'alice'
+      })
+    ).resolves.toEqual([
+      { id: 'all', label: '所有通知' },
+      { id: 'replies', label: '回复' },
+      { id: 'likes', label: '赞' },
+      { id: 'messages', label: '个人信息' },
+      { id: 'chat', label: '聊天通知' },
+      { id: 'other', label: '其他通知' }
+    ]);
+  });
+
+  it('[REG-NOTIFY-031] paginates the original Discourse type grouping beyond the recent menu window', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/site.json') {
+        return json({ notification_types: { mentioned: 1, replied: 2, liked: 5 } });
+      }
+      if (url.searchParams.get('offset') === '2') {
+        return json({
+          notifications: [{ id: 3, notification_type: 2, read: false, data: {} }],
+          total_rows_notifications: 3
+        });
+      }
+      return json({
+        notifications: [
+          { id: 1, notification_type: 5, read: false, data: {} },
+          { id: 2, notification_type: 5, read: false, data: {} }
+        ],
+        total_rows_notifications: 3
+      });
+    });
+
+    const firstPage = await discourseNotificationAdapters.linuxdo.listPage({
+      categoryId: 'replies',
+      fetcher,
+      identityKey: 'linuxdo:7',
+      limit: 2,
+      userId: '7',
+      username: 'alice'
+    });
+    const secondPage = await discourseNotificationAdapters.linuxdo.listPage({
+      categoryId: 'replies',
+      cursor: firstPage.cursor,
+      fetcher,
+      identityKey: 'linuxdo:7',
+      limit: 2,
+      userId: '7',
+      username: 'alice'
+    });
+
+    const notificationUrls = fetcher.mock.calls
+      .map(([input]) => new URL(String(input)))
+      .filter((url) => url.pathname === '/notifications');
+    expect(notificationUrls[0]?.searchParams.get('offset')).toBe('0');
+    expect(notificationUrls[0]?.searchParams.get('filter')).toBe('all');
+    expect(notificationUrls[0]?.searchParams.has('recent')).toBe(false);
+    expect(firstPage).toMatchObject({ items: [], cursor: '2', hasMore: true });
+    expect(secondPage.items.map((item) => item.id)).toEqual(['3']);
+  });
+
+  it('[REG-NOTIFY-031] derives Other from the notification types advertised by the server', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const path = new URL(input).pathname;
+      if (path === '/site.json') {
+        return json({
+          notification_types: {
+            mentioned: 1,
+            liked: 5,
+            private_message: 6,
+            bookmark_reminder: 8,
+            chat_message: 30,
+            badge_granted: 12,
+            future_notice: 99
+          }
+        });
+      }
+      return json({ notifications: [] });
+    });
+
+    await discourseNotificationAdapters.linuxdo.listPage({
+      categoryId: 'other',
+      fetcher,
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      username: 'alice'
+    });
+
+    const notificationUrl = new URL(String(fetcher.mock.calls.at(-1)?.[0]));
+    expect(notificationUrl.pathname).toBe('/notifications');
+    expect(notificationUrl.searchParams.get('offset')).toBe('0');
+  });
+
+  it('[REG-NOTIFY-031] maps the Discourse private-message menu to conversation rows', async () => {
+    const fetcher = vi.fn(async (_input: string) =>
+      json({
+        read_notifications: [],
+        unread_notifications: [
+          {
+            id: 8315,
+            notification_type: 6,
+            read: false,
+            created_at: '2026-08-03T10:01:00Z',
+            topic_id: 202,
+            fancy_title: '未读私信',
+            acting_user_name: 'Carol',
+            data: {}
+          }
+        ],
+        topics: [
+          {
+            id: 201,
+            slug: 'secret-topic',
+            title: '私信主题',
+            bumped_at: '2026-08-03T10:00:00Z',
+            last_poster_username: 'bob',
+            unread: 1,
+            unread_posts: 2,
+            participants: [{ user_id: 9 }]
+          }
+        ],
+        users: [{ id: 9, username: 'bob', name: 'Bob', avatar_template: '/user_avatar/linux.do/bob/{size}/1.png' }]
+      })
+    );
+
+    const page = await discourseNotificationAdapters.linuxdo.listPage({
+      categoryId: 'messages',
+      fetcher,
+      identityKey: 'linuxdo:7',
+      limit: 30,
+      userId: '7',
+      username: 'alice'
+    });
+
+    const url = new URL(fetcher.mock.calls[0]?.[0] || '');
+    expect(url.pathname).toBe('/u/alice/user-menu-private-messages');
+    expect(url.search).toBe('');
+    expect(page).toMatchObject({ hasMore: false, cursor: null });
+    expect(page.items).toEqual([
+      expect.objectContaining({
+        id: 'private-notification:8315',
+        kind: 'private-message',
+        actor: expect.objectContaining({ name: 'Carol' }),
+        unread: true,
+        target: { type: 'private-conversation', conversationId: '202' }
+      }),
+      expect.objectContaining({
+        id: 'private-topic:201',
+        kind: 'private-message',
+        actor: expect.objectContaining({ id: '9', name: 'Bob' }),
+        unread: true,
+        target: { type: 'private-conversation', conversationId: '201' }
+      })
+    ]);
+  });
+
+  it('[REG-NOTIFY-043] opens a private-message notification as the same conversation from All and Personal Info', async () => {
+    const notification = {
+      id: 8315,
+      notification_type: 6,
+      read: true,
+      created_at: '2026-08-03T10:01:00Z',
+      topic_id: 202,
+      post_number: 2,
+      fancy_title: '与 discobot 的私信',
+      acting_user_name: 'discobot',
+      data: {}
+    };
+    const fetcher = vi.fn(async (input: string) => {
+      const path = new URL(input).pathname;
+      if (path === '/notifications') {
+        return json({ notifications: [notification], total_rows_notifications: 1 });
+      }
+      if (path === '/u/alice/user-menu-private-messages') {
+        return json({ read_notifications: [notification], unread_notifications: [], topics: [], users: [] });
+      }
+      if (path === '/t/202.json') {
+        return json({
+          id: 202,
+          title: '与 discobot 的私信',
+          slug: 'discobot-message',
+          created_at: '2026-08-03T10:00:00Z',
+          bumped_at: '2026-08-03T10:01:00Z',
+          posts_count: 2,
+          post_stream: {
+            stream: [100, 101],
+            posts: [
+              {
+                id: 100,
+                post_number: 1,
+                username: 'discobot',
+                cooked: '<p>欢迎私信</p>',
+                created_at: '2026-08-03T10:00:00Z'
+              },
+              {
+                id: 101,
+                post_number: 2,
+                username: 'alice',
+                cooked: '<p>谢谢</p>',
+                created_at: '2026-08-03T10:01:00Z'
+              }
+            ]
+          }
+        });
+      }
+      throw new Error(`Unexpected Discourse path: ${path}`);
+    });
+    const access = { fetcher, identityKey: 'linuxdo:7', userId: '7', username: 'alice' };
+
+    const allItem = (await discourseNotificationAdapters.linuxdo.listPage({ ...access, categoryId: 'all' })).items[0]!;
+    const personalItem = (await discourseNotificationAdapters.linuxdo.listPage({ ...access, categoryId: 'messages' }))
+      .items[0]!;
+
+    expect(allItem.kind).toBe('private-message');
+    expect(personalItem.kind).toBe('private-message');
+    expect(allItem.target).toEqual(personalItem.target);
+    await expect(discourseNotificationAdapters.linuxdo.loadDetail(allItem, access)).resolves.toMatchObject({
+      reply: { format: 'markdown' },
+      messages: [
+        expect.objectContaining({ author: 'discobot', contentHtml: '<p>欢迎私信</p>' }),
+        expect.objectContaining({ author: 'alice', contentHtml: '<p>谢谢</p>' })
+      ]
+    });
+  });
+
   it('preserves an authentication failure from the Discourse notifications endpoint', async () => {
     const fetcher = vi.fn(
       async () =>
@@ -55,7 +299,7 @@ describe('Discourse notifications', () => {
   });
 
   it('[REG-NOTIFY-011] reads the official top-level notification serializer fields', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn(async (_input: string) =>
       json({
         notifications: [
           {
@@ -207,7 +451,7 @@ describe('Discourse notifications', () => {
   });
 
   it('matches the current Discourse notification type contract', async () => {
-    const fetcher = vi.fn(async () =>
+    const fetcher = vi.fn(async (_input: string) =>
       json({
         notifications: [
           { id: 1, notification_type: 9, read: false, data: {} },
@@ -265,5 +509,228 @@ describe('Discourse notifications', () => {
     expect(detail).toMatchObject({ title: '主题一', contentHtml: '<p>准确正文</p>' });
     expect(detail.topic).toMatchObject({ source: 'linuxdo', id: '201', url: 'https://linux.do/t/hello/201/4' });
     expect(new URL(fetcher.mock.calls[0]?.[0] || '').pathname).toBe('/posts/777.json');
+  });
+
+  it('[REG-NOTIFY-031] loads a Discourse private topic as an ordered replyable conversation', async () => {
+    const fetcher = vi.fn(async (_input: string) =>
+      json({
+        id: 201,
+        title: '私信主题',
+        slug: 'secret-topic',
+        created_at: '2026-08-03T10:00:00Z',
+        bumped_at: '2026-08-03T10:01:00Z',
+        posts_count: 2,
+        post_stream: {
+          stream: [100, 101],
+          posts: [
+            {
+              id: 100,
+              post_number: 1,
+              username: 'bob',
+              cooked: '<p>第一条</p>',
+              created_at: '2026-08-03T10:00:00Z'
+            },
+            {
+              id: 101,
+              post_number: 2,
+              username: 'alice',
+              cooked: '<p>第二条</p>',
+              created_at: '2026-08-03T10:01:00Z'
+            }
+          ]
+        }
+      })
+    );
+    const item = {
+      source: 'linuxdo' as const,
+      id: 'private-topic:201',
+      kind: 'private-message' as const,
+      actor: { id: '9', name: 'Bob' },
+      title: '私信主题',
+      createdAt: '2026-08-03T10:01:00.000Z',
+      unread: true,
+      target: { type: 'private-conversation' as const, conversationId: '201' }
+    };
+
+    const detail = await discourseNotificationAdapters.linuxdo.loadDetail(item, {
+      fetcher,
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      username: 'alice'
+    });
+
+    expect(detail.reply).toEqual({ format: 'markdown' });
+    expect(detail.messages).toEqual([
+      expect.objectContaining({ id: '100', author: 'bob', mine: false, contentHtml: '<p>第一条</p>' }),
+      expect.objectContaining({ id: '101', author: 'alice', mine: true, contentHtml: '<p>第二条</p>' })
+    ]);
+    const detailUrl = new URL(fetcher.mock.calls[0]?.[0] || '');
+    expect(detailUrl.pathname).toBe('/t/201.json');
+    expect(detailUrl.searchParams.get('track_visit')).toBe('true');
+    expect(detailUrl.searchParams.get('forceLoad')).toBe('true');
+    await expect(
+      discourseNotificationAdapters.linuxdo.markRead(item, detail, {
+        fetcher,
+        identityKey: 'linuxdo:7',
+        userId: '7',
+        username: 'alice'
+      })
+    ).resolves.toEqual({ confirmed: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-NOTIFY-031] replies to a linux.do private topic with the original Markdown post request', async () => {
+    const fetcher = vi.fn(async (input: string, _init?: RequestInit) =>
+      new URL(input).pathname === '/session/csrf' ? json({ csrf: 'token' }) : json({ id: 102, post_number: 3 })
+    );
+    const item = {
+      source: 'linuxdo' as const,
+      id: 'private-topic:201',
+      kind: 'private-message' as const,
+      actor: { name: 'Bob' },
+      title: '私信主题',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation' as const, conversationId: '201' }
+    };
+
+    await expect(
+      discourseNotificationAdapters.linuxdo.replyToConversation(item, '  **收到**  ', {
+        fetcher,
+        identityKey: 'linuxdo:7',
+        userId: '7',
+        username: 'alice'
+      })
+    ).resolves.toEqual({ confirmed: true });
+
+    const [, init] = fetcher.mock.calls.find(([url]) => new URL(url).pathname === '/posts.json') || [];
+    expect(init).toMatchObject({ method: 'POST', body: 'topic_id=201&raw=**%E6%94%B6%E5%88%B0**' });
+  });
+
+  it('[REG-NOTIFY-031] disables Xiaoyinsi private replies without write scope before network I/O', async () => {
+    const fetcher = vi.fn();
+    const item = {
+      source: 'xiaoyinsi' as const,
+      id: 'private-topic:201',
+      kind: 'private-message' as const,
+      actor: { name: 'Bob' },
+      title: '私信主题',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation' as const, conversationId: '201' }
+    };
+
+    await expect(
+      discourseNotificationAdapters.xiaoyinsi.replyToConversation(item, '收到', {
+        fetcher,
+        identityKey: 'xiaoyinsi:7',
+        userId: '7',
+        username: 'alice',
+        xiaoyinsiCredentials: {
+          apiKey: 'secret',
+          clientId: 'client',
+          scopes: ['read', 'notifications']
+        }
+      })
+    ).rejects.toThrow('小隐寺需要升级写入授权');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-NOTIFY-031] derives Xiaoyinsi categories and exposes the missing write scope in PM detail', async () => {
+    const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
+      const path = new URL(input).pathname;
+      if (path === '/site.json') {
+        return json({ notification_types: { mentioned: 1, replied: 2, liked: 5, private_message: 6, badge: 12 } });
+      }
+      return json({
+        id: 201,
+        title: '私信主题',
+        slug: 'secret-topic',
+        created_at: '2026-08-03T10:00:00Z',
+        posts_count: 1,
+        post_stream: {
+          stream: [100],
+          posts: [
+            {
+              id: 100,
+              post_number: 1,
+              username: 'bob',
+              cooked: '<p>第一条</p>',
+              created_at: '2026-08-03T10:00:00Z'
+            }
+          ]
+        }
+      });
+    });
+    const access = {
+      fetcher,
+      identityKey: 'xiaoyinsi:7',
+      userId: '7',
+      username: 'alice',
+      xiaoyinsiCredentials: {
+        apiKey: 'secret',
+        clientId: 'client',
+        scopes: ['read', 'notifications'] as ('read' | 'notifications')[]
+      }
+    };
+    const item = {
+      source: 'xiaoyinsi' as const,
+      id: 'private-topic:201',
+      kind: 'private-message' as const,
+      actor: { name: 'Bob' },
+      title: '私信主题',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation' as const, conversationId: '201' }
+    };
+
+    await expect(discourseNotificationAdapters.xiaoyinsi.getCategories(access)).resolves.toEqual([
+      { id: 'all', label: '所有通知' },
+      { id: 'replies', label: '回复' },
+      { id: 'likes', label: '赞' },
+      { id: 'messages', label: '个人信息' },
+      { id: 'other', label: '其他通知' }
+    ]);
+    await expect(discourseNotificationAdapters.xiaoyinsi.loadDetail(item, access)).resolves.toMatchObject({
+      reply: { format: 'markdown', disabledReason: '小隐寺需要升级写入授权' }
+    });
+    const headers = new Headers(fetcher.mock.calls.at(-1)?.[1]?.headers);
+    expect(headers.get('User-Api-Key')).toBe('secret');
+    expect(headers.get('User-Api-Client-Id')).toBe('client');
+  });
+
+  it('[REG-NOTIFY-031] replies to a Xiaoyinsi PM topic with User API Markdown semantics', async () => {
+    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => json({ id: 102, post_number: 2 }));
+    const item = {
+      source: 'xiaoyinsi' as const,
+      id: 'private-topic:201',
+      kind: 'private-message' as const,
+      actor: { name: 'Bob' },
+      title: '私信主题',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation' as const, conversationId: '201' }
+    };
+
+    await expect(
+      discourseNotificationAdapters.xiaoyinsi.replyToConversation(item, '**收到**', {
+        fetcher,
+        identityKey: 'xiaoyinsi:7',
+        userId: '7',
+        username: 'alice',
+        xiaoyinsiCredentials: {
+          apiKey: 'secret',
+          clientId: 'client',
+          scopes: ['read', 'write', 'notifications']
+        }
+      })
+    ).resolves.toEqual({ confirmed: true });
+
+    const [url, init] = fetcher.mock.calls[0] || [];
+    const headers = new Headers(init?.headers);
+    expect(new URL(url || '').pathname).toBe('/posts.json');
+    expect(init).toMatchObject({ method: 'POST', body: 'topic_id=201&raw=**%E6%94%B6%E5%88%B0**' });
+    expect(headers.get('User-Api-Key')).toBe('secret');
+    expect(headers.get('User-Api-Client-Id')).toBe('client');
   });
 });

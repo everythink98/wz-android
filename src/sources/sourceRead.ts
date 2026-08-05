@@ -85,6 +85,7 @@ export function getReplies({
   source,
   id,
   page,
+  pageHint,
   limit = 20,
   offset,
   fetcher,
@@ -92,12 +93,14 @@ export function getReplies({
   nodeSeekUserAgent,
   discourseAuth,
   fillPages,
+  targetFloor,
   signal,
   timeoutMs
 }: {
   source: Source;
   id: string;
   page: number;
+  pageHint?: number;
   limit?: number;
   offset?: number | null;
   fetcher?: Fetcher;
@@ -105,17 +108,20 @@ export function getReplies({
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   fillPages?: boolean;
+  targetFloor?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
   const options = {
     authenticated: nodeSeekAuthenticated,
     page,
+    pageHint,
     limit,
     offset,
     fetcher,
     nodeSeekUserAgent,
     fillPages,
+    targetFloor,
     signal,
     timeoutMs
   };
@@ -126,6 +132,8 @@ export function getReplies({
       limit,
       offset,
       page,
+      pageHint,
+      targetFloor,
       signal,
       timeoutMs
     });

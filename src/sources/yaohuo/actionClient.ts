@@ -21,6 +21,7 @@ const YAOHUO_ACTION_SUCCESS_PATTERN = /^评论成功$/;
 const YAOHUO_REPLY_DELETE_PATH_PATTERN = /^\/bbs\/book_re_del\.aspx$/i;
 const YAOHUO_FAVORITE_ENTRY_PATH_PATTERN = /^\/bbs\/share\.aspx$/i;
 const YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN = /^\/bbs\/favlist\.aspx$/i;
+const YAOHUO_MESSAGE_REPLY_PATH_PATTERN = /^\/bbs\/messagelist_add\.aspx$/i;
 const YAOHUO_ACTION_UNKNOWN_MESSAGE = '操作结果无法确认，请刷新原帖核对';
 
 export type YaohuoActionResult =
@@ -53,6 +54,15 @@ function actionMessage(html: string): YaohuoActionResult {
     status: 'confirmed',
     message: text.length > 80 ? '操作已提交' : text
   };
+}
+
+function messageReplyResult(html: string): YaohuoActionResult {
+  const root = parseHtml(html);
+  const message = elementText(root.querySelector('.tip')) || textContentFromHtml(html);
+  assertYaohuoActionSuccess(message);
+  return message === '发送信息成功！'
+    ? { status: 'confirmed', message }
+    : { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
 }
 
 function assertYaohuoActionSuccess(message: string) {
@@ -213,6 +223,10 @@ export async function runYaohuoAction({
 
   if (isFavoriteDeleteRequest(request)) {
     return { status: 'confirmed', message: favoriteDeleteMessage(html) };
+  }
+
+  if (request.method === 'POST' && YAOHUO_MESSAGE_REPLY_PATH_PATTERN.test(requestUrl.pathname)) {
+    return messageReplyResult(html);
   }
 
   if (isFavoriteEntryRequest(request)) {

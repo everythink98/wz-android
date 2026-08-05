@@ -3,6 +3,7 @@ import React from 'react';
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Alert } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import type { ForumNotification } from '@/domain/notifications/models';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import {
@@ -17,6 +18,12 @@ import type { NotificationAdapter, NotificationAdapterAccess } from '@/sources/n
 import { createNotificationGateway } from '@/sources/notificationGateway';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { act, fireEvent, render, waitFor } from '../render';
+
+jest.mock('expo-document-picker', () => ({
+  getDocumentAsync: jest.fn()
+}));
+
+const mockGetDocumentAsync = jest.mocked(DocumentPicker.getDocumentAsync);
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -56,6 +63,60 @@ jest.mock('lucide-react-native', () => {
   return { ChevronRight: Icon };
 });
 
+jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context'),
+  useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
+}));
+
+jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Text, TextInput, View } = require('react-native') as typeof import('react-native');
+  return {
+    MessageReplyComposerSheet: ({
+      busy,
+      content,
+      error,
+      status,
+      visible,
+      onChangeContent,
+      onSubmit,
+      onUploadImage
+    }: {
+      busy: boolean;
+      content: string;
+      error?: string;
+      status?: string;
+      visible: boolean;
+      onChangeContent: (value: string) => void;
+      onSubmit: () => void;
+      onUploadImage?: () => void;
+    }) =>
+      visible
+        ? ReactModule.createElement(
+            View,
+            null,
+            error ? ReactModule.createElement(Text, null, error) : null,
+            status ? ReactModule.createElement(Text, null, status) : null,
+            ReactModule.createElement(TextInput, {
+              accessibilityLabel: '私信回复内容',
+              value: content,
+              onChangeText: onChangeContent
+            }),
+            ReactModule.createElement(
+              Text,
+              { accessibilityLabel: '测试发送私信', onPress: busy || !content.trim() ? undefined : onSubmit },
+              '发送'
+            ),
+            ReactModule.createElement(
+              Text,
+              { accessibilityLabel: '测试上传图片', onPress: busy ? undefined : onUploadImage },
+              '上传图片'
+            )
+          )
+        : null
+  };
+});
+
 const notification: ForumNotification = {
   source: 'nodeseek',
   id: 'reply:old-account',
@@ -80,6 +141,16 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     backgroundEnabled: false,
     backgroundError: '',
     beginXiaoyinsiAuthorization: jest.fn(),
+    composer: {
+      ensureNodeImageApiKey: jest.fn(async () => 'node-image-key'),
+      ensureWritableSession: jest.fn(async (source) => ({
+        source,
+        identityKey: `${source}:new-account`,
+        sessionEpoch: 1
+      })),
+      getDiscourseEmojiUrls: jest.fn(async () => ({})),
+      isWritableSessionTicketCurrent: jest.fn(() => true)
+    },
     contentWidth: 360,
     gateway,
     identityKeys: { nodeseek: 'nodeseek:new-account' },
@@ -103,6 +174,173 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
 }
 
 describe('notification routes', () => {
+  it('[REG-NOTIFY-031] settles an empty aggregate list without waiting for the disabled category query', async () => {
+    appQueryClient.clear();
+    const getCategories = jest.fn();
+    const gateway = {
+      getCategories,
+      listAllPage: jest.fn(async () => ({
+        items: [],
+        pages: {},
+        errors: {},
+        nextCursors: { nodeseek: null },
+        hasMore: false
+      })),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByText('暂无消息')).toBeTruthy());
+    expect(view.queryByText('正在读取消息')).toBeNull();
+    expect(getCategories).not.toHaveBeenCalled();
+  });
+
+  it('[REG-NOTIFY-031] retries category discovery before reading a selected source list', async () => {
+    appQueryClient.clear();
+    const getCategories = jest
+      .fn<() => Promise<{ id: string; label: string }[]>>()
+      .mockRejectedValueOnce(new Error('分类读取失败'))
+      .mockResolvedValueOnce([{ id: 'all', label: '全部' }]);
+    const listPage = jest.fn(async () => ({ items: [], cursor: null, hasMore: false }));
+    const gateway = {
+      getCategories,
+      listAllPage: jest.fn(),
+      listPage,
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: { source: 'nodeseek' } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByText('重试 NodeSeek')).toBeTruthy());
+    expect(listPage).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByText('重试 NodeSeek'));
+    await waitFor(() => expect(view.getByTestId('notification-category-all')).toBeTruthy());
+    await waitFor(() => expect(listPage).toHaveBeenCalledTimes(1));
+    expect(getCategories).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-NOTIFY-031] scopes list queries by adapter category and resets category when the site changes', async () => {
+    appQueryClient.clear();
+    const getCategories = jest.fn(async (source: string) =>
+      source === 'nodeseek'
+        ? [
+            { id: 'inbox', label: '全部' },
+            { id: 'messages', label: '私信' }
+          ]
+        : [
+            { id: 'recent', label: '所有通知' },
+            { id: 'replies', label: '回复' }
+          ]
+    );
+    const listPage = jest.fn(async () => ({ items: [], cursor: null, hasMore: false }));
+    const gateway = {
+      getCategories,
+      listAllPage: jest.fn(),
+      listPage,
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn(),
+      replyToConversation: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['nodeseek', 'linuxdo'] as const,
+      identityKeys: { nodeseek: 'nodeseek:new-account', linuxdo: 'linuxdo:user' },
+      identitySignature: 'linuxdo:user|nodeseek:new-account'
+    } as NotificationRouteRuntimeValue;
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: { source: 'nodeseek' } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByTestId('notification-category-messages')).toBeTruthy());
+    await fireEvent.press(view.getByTestId('notification-category-messages'));
+    await waitFor(() =>
+      expect(listPage).toHaveBeenLastCalledWith('nodeseek', expect.objectContaining({ categoryId: 'messages' }))
+    );
+    await fireEvent.press(view.getByTestId('notification-source-linuxdo'));
+    await waitFor(() => expect(view.getByTestId('notification-category-replies')).toBeTruthy());
+    expect(listPage).toHaveBeenLastCalledWith('linuxdo', expect.objectContaining({ categoryId: 'recent' }));
+  });
+
+  it('[REG-NOTIFY-031] continues category pagination when an earlier source page has no matching rows', async () => {
+    appQueryClient.clear();
+    const listPage = jest
+      .fn<
+        (
+          _source?: string,
+          _options?: unknown
+        ) => Promise<{
+          items: ForumNotification[];
+          cursor: string | null;
+          hasMore: boolean;
+        }>
+      >()
+      .mockResolvedValueOnce({ items: [], cursor: '30', hasMore: true })
+      .mockResolvedValueOnce({ items: [notification], cursor: null, hasMore: false });
+    const gateway = {
+      getCategories: jest.fn(async () => [{ id: 'replies', label: '回复' }]),
+      listAllPage: jest.fn(),
+      listPage,
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: { source: 'nodeseek' } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByText('旧账号消息')).toBeTruthy());
+    expect(listPage).toHaveBeenCalledTimes(2);
+    expect(listPage).toHaveBeenLastCalledWith('nodeseek', expect.objectContaining({ cursor: '30' }));
+  });
+
   it('[REG-NOTIFY-027] stops the mounted notification list from reading after it loses focus', async () => {
     appQueryClient.clear();
     const listAllPage = jest.fn(async () => ({
@@ -334,11 +572,290 @@ describe('notification routes', () => {
     expect(view.queryByText('重试')).toBeNull();
   });
 
+  it('[REG-NOTIFY-045] forwards the Yaohuo full-reply floor into the Topic route', async () => {
+    appQueryClient.clear();
+    const item: ForumNotification = {
+      source: 'yaohuo',
+      id: 'message:41',
+      kind: 'private-message',
+      actor: { name: 'Clover' },
+      title: '妖火私信',
+      createdAt: '2026-07-03T05:45:52.000Z',
+      unread: false,
+      target: {
+        type: 'message-detail',
+        messageId: '41',
+        url: 'https://www.yaohuo.me/bbs/messagelist_view.aspx?id=41'
+      }
+    };
+    const gateway = {
+      loadDetail: jest.fn(async () => ({
+        notification: item,
+        title: '妖火私信',
+        contentHtml:
+          '<a href="https://www.yaohuo.me/bbs/book_re.aspx?classid=177&amp;id=1560939&amp;tofloor=90&amp;fromuserid=1000">查看完整回复</a>'
+      })),
+      markRead: jest.fn(async () => ({ confirmed: true }))
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['yaohuo'] as const,
+      identityKeys: { yaohuo: 'yaohuo:7' },
+      identitySignature: 'yaohuo:7'
+    } as NotificationRouteRuntimeValue;
+    const navigation = { navigate: jest.fn() };
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NotificationDetailRoute
+          navigation={navigation as never}
+          route={{
+            key: 'notification-detail',
+            name: 'NotificationDetail',
+            params: { notification: item, identityKey: 'yaohuo:7' }
+          }}
+        />
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByRole('link', { name: '查看完整回复' })).toBeTruthy());
+    await fireEvent.press(view.getByRole('link', { name: '查看完整回复' }));
+
+    expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
+      topic: expect.objectContaining({ source: 'yaohuo', id: '1560939', categoryId: '177' }),
+      targetReply: { floor: 90 }
+    });
+  });
+
+  it('[REG-NOTIFY-031] preserves an unconfirmed private draft and clears it only after server confirmation', async () => {
+    appQueryClient.clear();
+    const privateNotification: ForumNotification = {
+      ...notification,
+      id: 'message:9',
+      kind: 'private-message',
+      unread: false,
+      target: { type: 'private-conversation', conversationId: '9' }
+    };
+    const replyToConversation = jest
+      .fn<() => Promise<{ confirmed: boolean; message?: string }>>()
+      .mockResolvedValueOnce({ confirmed: false, message: '原站未确认' })
+      .mockResolvedValueOnce({ confirmed: true });
+    const gateway = {
+      getCategories: jest.fn(),
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(async () => ({
+        notification: privateNotification,
+        title: '私信详情',
+        messages: [],
+        reply: { format: 'markdown' as const }
+      })),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn(),
+      replyToConversation
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = routeRuntime(gateway);
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NotificationDetailRoute
+          navigation={{ navigate: jest.fn() } as never}
+          route={{
+            key: 'notification-detail',
+            name: 'NotificationDetail',
+            params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
+          }}
+        />
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    await fireEvent.changeText(view.getByLabelText('私信回复内容'), 'PRIVATE_DRAFT');
+    await act(async () => {
+      const onPress = view.getByLabelText('测试发送私信').props.onPress as () => void;
+      onPress();
+      onPress();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(view.getByText('原站未确认')).toBeTruthy());
+    expect(view.getByLabelText('私信回复内容').props.value).toBe('PRIVATE_DRAFT');
+    expect(replyToConversation).toHaveBeenCalledTimes(1);
+
+    await fireEvent.press(view.getByLabelText('测试发送私信'));
+    await waitFor(() => expect(runtime.notify).toHaveBeenCalledWith('回复已发送'));
+    expect(view.queryByLabelText('私信回复内容')).toBeNull();
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    expect(view.getByLabelText('私信回复内容').props.value).toBe('');
+    expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-NOTIFY-032] aborts an in-flight private reply when the detail route loses focus', async () => {
+    appQueryClient.clear();
+    const privateNotification: ForumNotification = {
+      ...notification,
+      id: 'message:blur',
+      kind: 'private-message',
+      unread: false,
+      target: { type: 'private-conversation', conversationId: '9' }
+    };
+    const replyToConversation = jest.fn(
+      (_item: ForumNotification, _content: string, _identityKey: string, _signal: AbortSignal) =>
+        new Promise<never>(() => undefined)
+    );
+    const gateway = {
+      getCategories: jest.fn(),
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(async () => ({
+        notification: privateNotification,
+        title: '私信详情',
+        messages: [],
+        reply: { format: 'markdown' as const }
+      })),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn(),
+      replyToConversation
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const listeners = new Map<string, () => void>();
+    const navigation = {
+      addListener: jest.fn((event: string, listener: () => void) => {
+        listeners.set(event, listener);
+        return jest.fn();
+      }),
+      isFocused: jest.fn(() => true),
+      navigate: jest.fn(),
+      setOptions: jest.fn()
+    };
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+        <NotificationDetailRoute
+          navigation={navigation as never}
+          route={{
+            key: 'notification-detail',
+            name: 'NotificationDetail',
+            params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
+          }}
+        />
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    await fireEvent.changeText(view.getByLabelText('私信回复内容'), '仍在发送的草稿');
+    await fireEvent.press(view.getByLabelText('测试发送私信'));
+    await waitFor(() => expect(replyToConversation).toHaveBeenCalledTimes(1));
+    const signal = replyToConversation.mock.calls[0]?.[3] as AbortSignal;
+
+    await act(async () => listeners.get('blur')?.());
+    expect(signal.aborted).toBe(true);
+    expect(view.queryByLabelText('私信回复内容')).toBeNull();
+  });
+
+  it('[REG-NOTIFY-032] gates private-message image picking, inserts markup without sending, and ignores duplicate or canceled picks', async () => {
+    appQueryClient.clear();
+    mockGetDocumentAsync.mockReset();
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///reply.png', name: 'reply.png', mimeType: 'image/png', size: 512, lastModified: 0 }]
+    });
+    const privateNotification: ForumNotification = {
+      ...notification,
+      id: 'message:image',
+      kind: 'private-message',
+      unread: false,
+      target: { type: 'private-conversation', conversationId: '9' }
+    };
+    const uploadReplyImage = jest.fn(async () => ({ markup: '![reply.png](https://img.example/reply.png)' }));
+    const replyToConversation = jest.fn();
+    const gateway = {
+      getCategories: jest.fn(),
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(async () => ({
+        notification: privateNotification,
+        title: '私信详情',
+        messages: [],
+        reply: { format: 'markdown' as const }
+      })),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn(),
+      replyToConversation,
+      uploadReplyImage
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = routeRuntime(gateway);
+    const ensureWritableSession = jest.fn(async () => ({
+      source: 'nodeseek' as const,
+      identityKey: 'nodeseek:new-account',
+      sessionEpoch: 1
+    }));
+    const ensureNodeImageApiKey = jest.fn(async () => 'node-image-key');
+    runtime.composer = {
+      ...runtime.composer,
+      ensureNodeImageApiKey,
+      ensureWritableSession
+    };
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NotificationDetailRoute
+          navigation={{ navigate: jest.fn() } as never}
+          route={{
+            key: 'notification-detail',
+            name: 'NotificationDetail',
+            params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
+          }}
+        />
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    await act(async () => {
+      const onPress = view.getByLabelText('测试上传图片').props.onPress as () => void;
+      onPress();
+      onPress();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(view.getByText('图片已插入草稿')).toBeTruthy());
+
+    expect(ensureWritableSession).toHaveBeenCalledTimes(1);
+    expect(ensureNodeImageApiKey).toHaveBeenCalledTimes(1);
+    expect(ensureWritableSession.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGetDocumentAsync.mock.invocationCallOrder[0]!
+    );
+    expect(ensureNodeImageApiKey.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGetDocumentAsync.mock.invocationCallOrder[0]!
+    );
+    expect(uploadReplyImage).toHaveBeenCalledTimes(1);
+    expect(uploadReplyImage).toHaveBeenCalledWith(
+      'nodeseek',
+      expect.objectContaining({
+        expectedIdentityKey: 'nodeseek:new-account',
+        file: expect.objectContaining({ name: 'reply.png', mimeType: 'image/png' }),
+        nodeImageApiKey: 'node-image-key',
+        signal: expect.any(AbortSignal)
+      })
+    );
+    expect(view.getByLabelText('私信回复内容').props.value).toBe('![reply.png](https://img.example/reply.png)');
+    expect(replyToConversation).not.toHaveBeenCalled();
+
+    mockGetDocumentAsync.mockResolvedValueOnce({ canceled: true, assets: null });
+    await fireEvent.press(view.getByLabelText('测试上传图片'));
+    await waitFor(() => expect(mockGetDocumentAsync).toHaveBeenCalledTimes(2));
+    expect(uploadReplyImage).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels an in-flight read write when the confirmed account changes', async () => {
     appQueryClient.clear();
     let resolveWriteAccess!: (access: NotificationAdapterAccess) => void;
     let accessCalls = 0;
     const sourceAdapter: NotificationAdapter = {
+      getCategories: jest.fn(async () => [{ id: 'all', label: '全部' }]),
       listPage: jest.fn(async () => ({ items: [], cursor: null, hasMore: false })),
       readUnreadSnapshot: jest.fn(async () => ({
         total: 0,
@@ -349,6 +866,7 @@ describe('notification routes', () => {
         title: '消息详情',
         contentText: '正文'
       })),
+      replyToConversation: jest.fn(async () => ({ confirmed: true })),
       markRead: jest.fn(async () => ({ confirmed: true }))
     };
     const gateway = createNotificationGateway({
@@ -398,12 +916,14 @@ describe('notification routes', () => {
     let resolveWriteAccess!: (access: NotificationAdapterAccess) => void;
     let accessCalls = 0;
     const sourceAdapter: NotificationAdapter = {
+      getCategories: jest.fn(async () => [{ id: 'all', label: '全部' }]),
       listPage: jest.fn(async () => ({ items: [], cursor: null, hasMore: false })),
       readUnreadSnapshot: jest.fn(async () => ({
         total: 0,
         checkedAt: '2026-08-03T00:00:00Z'
       })),
       loadDetail: jest.fn(async (item: ForumNotification) => ({ notification: item, title: item.title })),
+      replyToConversation: jest.fn(async () => ({ confirmed: true })),
       markRead: jest.fn(async () => ({ confirmed: true })),
       markAllRead: jest.fn(async () => ({ confirmed: true }))
     };
@@ -416,8 +936,8 @@ describe('notification routes', () => {
       },
       readAccess: async () => {
         accessCalls += 1;
-        if (accessCalls === 1) return { identityKey: 'nodeseek:new-account', userId: 'new-account' };
-        if (accessCalls === 2) {
+        if (accessCalls <= 2) return { identityKey: 'nodeseek:new-account', userId: 'new-account' };
+        if (accessCalls === 3) {
           return new Promise<NotificationAdapterAccess>((resolve) => {
             resolveWriteAccess = resolve;
           });
@@ -447,7 +967,7 @@ describe('notification routes', () => {
       const view = await render(screen(), { wrapper: QueryTestWrapper });
       await waitFor(() => expect(view.getByLabelText('将 NodeSeek 全部标记为已读')).toBeTruthy());
       await fireEvent.press(view.getByLabelText('将 NodeSeek 全部标记为已读'));
-      await waitFor(() => expect(accessCalls).toBe(2));
+      await waitFor(() => expect(accessCalls).toBe(3));
 
       runtime = {
         ...runtime,

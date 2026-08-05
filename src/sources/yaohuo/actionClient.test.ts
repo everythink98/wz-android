@@ -9,6 +9,7 @@ import {
   buildYaohuoDeleteFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
   buildYaohuoFavoriteRequest,
+  buildYaohuoMessageReplyRequest,
   buildYaohuoReplyRequest
 } from './actionRequest';
 
@@ -22,6 +23,17 @@ function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/b
 }
 
 describe('runYaohuoAction', () => {
+  it('[REG-NOTIFY-031] confirms a private reply only from the exact original success text', async () => {
+    const request = buildYaohuoMessageReplyRequest({ content: '收到', fields: { action: 'add', toid: '9' } });
+
+    await expect(
+      runYaohuoAction({ request, fetcher: vi.fn(async () => htmlResponse('<div class="tip">发送成功</div>')) })
+    ).resolves.toEqual({ status: 'unknown', message: '操作结果无法确认，请刷新原帖核对' });
+    await expect(
+      runYaohuoAction({ request, fetcher: vi.fn(async () => htmlResponse('<div class="tip">发送信息成功！</div>')) })
+    ).resolves.toEqual({ status: 'confirmed', message: '发送信息成功！' });
+  });
+
   it('[REG-ACCOUNT-029] sends yaohuo writes through the native read-only cookie jar', async () => {
     const fetcher = vi.fn(async () => htmlResponse('<div class="tip">评论成功</div>'));
 

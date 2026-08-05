@@ -1,5 +1,3 @@
-import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-
 export type ReplyComposerInsertExpression = {
   code: string;
   label: string;
@@ -100,7 +98,9 @@ const DISCOURSE_EMOJI_FALLBACK_ITEMS: ReplyComposerInsertExpression[] = [
   { code: ':open_mouth:', label: 'open mouth' }
 ];
 
-export function discourseEmojiCatalogFromUrlMap(emojiUrls: DiscourseEmojiUrlMap): ReplyComposerInsertExpression[] {
+export function discourseEmojiCatalogFromUrlMap(
+  emojiUrls: Readonly<Record<string, string>>
+): ReplyComposerInsertExpression[] {
   const items = Object.entries(emojiUrls)
     .map(([name, imageUrl]) => ({
       code: `:${name}:`,

@@ -12,6 +12,7 @@ import { isRecord, parsePositiveInteger } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   discourseCategories,
+  discourseReplyWindow,
   discourseOriginalPoster,
   discoursePolls,
   discoursePostFields,
@@ -34,6 +35,7 @@ export interface XiaoyinsiOptions {
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
+  trackVisit?: boolean;
 }
 
 function errorText(data: unknown, fallback: string) {
@@ -302,10 +304,13 @@ export async function getXiaoyinsiEmojiUrls(options: XiaoyinsiOptions = {}) {
   return emojiUrlCache;
 }
 
-async function topicData(id: string, options: XiaoyinsiOptions) {
+async function topicData(id: string, options: XiaoyinsiOptions, targetFloor?: number) {
   return fetchXiaoyinsiJson<Record<string, unknown>>(
-    `/t/${encodeURIComponent(id)}.json`,
-    cleanCredentials(options.credentials) ? { include_raw: 1 } : undefined,
+    `/t/${encodeURIComponent(id)}${targetFloor ? `/${targetFloor}` : ''}.json`,
+    {
+      ...(cleanCredentials(options.credentials) ? { include_raw: 1 } : {}),
+      ...(options.trackVisit ? { track_visit: 'true', forceLoad: 'true' } : {})
+    },
     options
   );
 }
@@ -384,13 +389,36 @@ export async function getXiaoyinsiReplies(
     page?: number;
     limit?: number;
     offset?: number | null;
+    targetFloor?: number;
   } = {}
 ): Promise<RepliesResponse> {
   const page = options.page || 1;
   const limit = options.limit || LIST_PAGE_SIZE;
+  if (options.targetFloor !== undefined && (!Number.isSafeInteger(options.targetFloor) || options.targetFloor <= 0)) {
+    throw new Error('小隐寺目标楼层不正确');
+  }
+  if (options.targetFloor) {
+    const window = discourseReplyWindow(await topicData(id, options, options.targetFloor), limit);
+    const items = window.posts.map((post) => normalizePost(post, id)).filter((reply): reply is Reply => Boolean(reply));
+    if (!items.some((reply) => reply.floor === options.targetFloor)) {
+      throw new Error('小隐寺目标楼层未找到');
+    }
+    const { posts, ...windowState } = window;
+    return annotateSourceDiagnosticSummary(
+      { items, ...windowState },
+      {
+        parserVariant: 'xiaoyinsi-discourse-near-replies',
+        candidateCount: posts.length,
+        validCount: items.length,
+        droppedCount: Math.max(0, posts.length - items.length),
+        missingFloorCount: posts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number)).length
+      }
+    );
+  }
   const data = await topicData(id, options);
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
   const previousReplyCount = typeof options.offset === 'number' ? options.offset : Math.max(0, (page - 1) * limit);
+  const previousOffset = previousReplyCount > 0 ? Math.max(0, previousReplyCount - limit) : null;
   const start = 1 + previousReplyCount;
   const postIds = stream.slice(start, start + limit);
   if (!postIds.length) {
@@ -411,6 +439,10 @@ export async function getXiaoyinsiReplies(
   return annotateSourceDiagnosticSummary(
     {
       items,
+      currentPage: page,
+      currentOffset: previousReplyCount,
+      previousPage: previousOffset === null ? null : Math.floor(previousOffset / limit) + 1,
+      previousOffset,
       hasMore,
       nextPage: hasMore ? page + 1 : null,
       nextOffset: hasMore ? previousReplyCount + postIds.length : null,

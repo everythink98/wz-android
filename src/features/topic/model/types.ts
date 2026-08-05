@@ -2,7 +2,7 @@ import { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { Reply } from '@/domain/forum/models';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 
-export type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
+export type ReplyFilter = 'all' | 'author' | 'images';
 
 export interface ReplyTarget {
   floor: number;

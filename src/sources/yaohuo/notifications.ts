@@ -1,9 +1,12 @@
 import { elementText, hasRenderableHtmlContent, parseHtml, toIsoString } from '@/domain/forum/html';
 import type {
   ForumNotification,
+  NotificationCategory,
   NotificationDetail,
   NotificationMarkResult,
-  NotificationPage
+  NotificationMessage,
+  NotificationPage,
+  NotificationReplyResult
 } from '@/domain/notifications/models';
 import type {
   NotificationAdapter,
@@ -13,6 +16,16 @@ import type {
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { fetchYaohuoHtml } from './reader';
 import { YAOHUO_BASE_URL } from './protocol';
+import { buildYaohuoMessageReplyRequest } from './actionRequest';
+import { runYaohuoAction } from './actionClient';
+
+const yaohuoNotificationCategories = [
+  { id: 'all', label: '收件箱' },
+  { id: 'system', label: '系统' },
+  { id: 'chat', label: '聊天' }
+] as const satisfies readonly NotificationCategory[];
+
+const absoluteChatTimePattern = /\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?/;
 
 function messageId(href: string) {
   try {
@@ -119,8 +132,114 @@ function detailContentHtml(html: string, detailUrl: string) {
   return hasRenderableHtmlContent(content) ? content : '';
 }
 
-async function readListPage(options: NotificationAdapterAccess, page: number, unreadOnly = false) {
-  const result = await fetchYaohuoHtml(`${YAOHUO_BASE_URL}/bbs/messagelist.aspx?page=${page}`, options.fetcher, {
+function chatContentHtml(value: string, detailUrl: string) {
+  const wrapper = parseHtml(`<div id="yaohuo-chat-content">${value}</div>`).querySelector('#yaohuo-chat-content');
+  const content = (wrapper?.innerHTML || '')
+    .replace(
+      /^(?:\s|&nbsp;)*回复时间\s*[：:]\s*\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?(?:(?:\s|&nbsp;)*<br\s*\/?>(?:\s|&nbsp;)*)?/i,
+      ''
+    )
+    .replace(/^(?:\s|&nbsp;)*回复内容\s*[：:]?(?:(?:\s|&nbsp;)*<br\s*\/?>(?:\s|&nbsp;)*)?/i, '')
+    .replace(/(?:(?:\s|&nbsp;)|<br\s*\/?>|\|)+$/gi, '');
+  return sanitizeContentHtml(content, detailUrl);
+}
+
+function messageContentKey(value: string) {
+  const root = parseHtml(value);
+  const text = elementText(root).replace(/\s+/g, ' ').trim();
+  const images = root
+    .querySelectorAll('img[src]')
+    .map((image) => image.getAttribute('src') || '')
+    .filter(Boolean)
+    .join('|');
+  return `${text}\u0000${images}`;
+}
+
+function removeOriginalMessage(messages: NotificationMessage[], contentHtml: string) {
+  const originalKey = messageContentKey(contentHtml);
+  const duplicateIndex = messages.findIndex((message) => messageContentKey(message.contentHtml || '') === originalKey);
+  return duplicateIndex < 0 ? messages : messages.filter((_, index) => index !== duplicateIndex);
+}
+
+function chatMessages(html: string, detailUrl: string, otherAuthor: string) {
+  const messages = parseHtml(html)
+    .querySelectorAll('.listmms')
+    .flatMap((row, index) => {
+      const className = row.getAttribute('class') || '';
+      const mine = /(?:^|\s)the_me(?:\s|$)/.test(className);
+      if (!mine && !/(?:^|\s)the_user(?:\s|$)/.test(className)) return [];
+      const content = row.querySelector('.bubble .con') || row.querySelector('.con');
+      const rawContent = content?.innerHTML || '';
+      const contentHtml = chatContentHtml(rawContent, detailUrl);
+      if (!hasRenderableHtmlContent(contentHtml)) return [];
+      const info = row.querySelector('.info');
+      const infoText = elementText(info);
+      const replyTime = elementText(row).match(
+        new RegExp(`回复时间\\s*[：:]\\s*(${absoluteChatTimePattern.source})`, 'i')
+      )?.[1];
+      const displayTime = infoText.match(absoluteChatTimePattern)?.[0] || replyTime || '';
+      const authorCandidate = elementText(info?.querySelector('.u_name label'));
+      const author =
+        authorCandidate && !absoluteChatTimePattern.test(authorCandidate) ? authorCandidate : mine ? '我' : otherAuthor;
+      return [
+        {
+          id: `chat:${index}`,
+          author: author || '妖火用户',
+          contentHtml,
+          createdAt: toIsoString(displayTime, '+08:00') || null,
+          mine
+        }
+      ];
+    });
+  return messages.sort((left, right) => {
+    if (!left.createdAt) return right.createdAt ? 1 : 0;
+    if (!right.createdAt) return -1;
+    return Date.parse(left.createdAt) - Date.parse(right.createdAt);
+  });
+}
+
+function messageReplyForm(html: string, baseUrl: string) {
+  const root = parseHtml(html);
+  const form = root.querySelectorAll('form[action]').find((candidate) => {
+    try {
+      return /^\/bbs\/messagelist_add\.aspx$/i.test(new URL(candidate.getAttribute('action') || '', baseUrl).pathname);
+    } catch {
+      return false;
+    }
+  });
+  if (!form || !form.querySelector('[name="content"]')) return null;
+  const url = new URL(form.getAttribute('action') || '', baseUrl);
+  if (url.origin !== new URL(YAOHUO_BASE_URL).origin) throw new Error('妖火私信回复地址不正确');
+  const fields = Object.fromEntries(
+    form
+      .querySelectorAll('input[name]')
+      .filter((input) => (input.getAttribute('type') || '').toLowerCase() === 'hidden')
+      .map((input) => [input.getAttribute('name') || '', input.getAttribute('value') || ''])
+      .filter(([name]) => Boolean(name))
+  );
+  return { fields, path: `${url.pathname}${url.search}` };
+}
+
+function messageReplyLink(html: string, baseUrl: string) {
+  const link = parseHtml(html)
+    .querySelectorAll('a[href]')
+    .find((candidate) => /messagelist_add\.aspx/i.test(candidate.getAttribute('href') || ''));
+  if (!link) return '';
+  const url = new URL(link.getAttribute('href') || '', baseUrl);
+  return url.origin === new URL(YAOHUO_BASE_URL).origin && /^\/bbs\/messagelist_add\.aspx$/i.test(url.pathname)
+    ? url.toString()
+    : '';
+}
+
+async function readListPage(options: NotificationAdapterAccess, page: number, unreadOnly = false, categoryId = 'all') {
+  if (!yaohuoNotificationCategories.some((category) => category.id === categoryId)) {
+    throw new Error('妖火消息分类不正确');
+  }
+  const url = new URL('/bbs/messagelist.aspx', YAOHUO_BASE_URL);
+  url.searchParams.set('types', '0');
+  if (categoryId !== 'all') url.searchParams.set('issystem', categoryId === 'system' ? '1' : '0');
+  url.searchParams.set('page', String(page));
+  const result = await fetchYaohuoHtml(url.toString(), options.fetcher, {
     signal: options.signal,
     timeoutMs: options.timeoutMs
   });
@@ -128,9 +247,13 @@ async function readListPage(options: NotificationAdapterAccess, page: number, un
 }
 
 export const yaohuoNotificationAdapter = {
+  async getCategories(_options: NotificationAdapterAccess) {
+    return yaohuoNotificationCategories;
+  },
+
   async listPage(options: NotificationListOptions): Promise<NotificationPage> {
     const page = Math.max(1, Number(options.cursor) || 1);
-    return readListPage(options, page, options.unreadOnly);
+    return readListPage(options, page, options.unreadOnly, options.categoryId);
   },
 
   async readUnreadSnapshot(options: NotificationAdapterAccess) {
@@ -160,16 +283,53 @@ export const yaohuoNotificationAdapter = {
     });
     const contentHtml = detailContentHtml(result.html, detailUrl);
     if (!contentHtml) throw new Error('妖火消息对应的正文未找到');
-    const messages = [
-      {
-        id: item.id,
-        author: item.actor.name,
-        contentHtml,
-        createdAt: item.createdAt,
-        mine: false
-      }
-    ];
-    return { notification: item, title: item.title, messages };
+    const replyable = item.kind === 'private-message';
+    return {
+      notification: item,
+      title: item.title,
+      contentHtml,
+      ...(replyable
+        ? {
+            messages: removeOriginalMessage(chatMessages(result.html, detailUrl, item.actor.name), contentHtml),
+            reply: { format: 'plain-text' as const },
+            historyNotice: '原站仅提供最近 20 条聊天记录。'
+          }
+        : {})
+    };
+  },
+
+  async replyToConversation(
+    item: ForumNotification,
+    content: string,
+    options: NotificationAdapterAccess
+  ): Promise<NotificationReplyResult> {
+    if (item.kind !== 'private-message' || item.target.type !== 'message-detail') {
+      throw new Error('妖火私信会话标识不正确');
+    }
+    let page = await fetchYaohuoHtml(item.target.url, options.fetcher, {
+      signal: options.signal,
+      timeoutMs: options.timeoutMs
+    });
+    let form = messageReplyForm(page.html, item.target.url);
+    if (!form) {
+      const replyUrl = messageReplyLink(page.html, item.target.url);
+      if (!replyUrl) throw new Error('妖火私信回复表单未找到');
+      page = await fetchYaohuoHtml(replyUrl, options.fetcher, {
+        signal: options.signal,
+        timeoutMs: options.timeoutMs
+      });
+      form = messageReplyForm(page.html, replyUrl);
+    }
+    if (!form) throw new Error('妖火私信回复表单未找到');
+    const result = await runYaohuoAction({
+      request: buildYaohuoMessageReplyRequest({ ...form, content }),
+      fetcher: options.fetcher,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs
+    });
+    return result.status === 'confirmed'
+      ? { confirmed: true, message: result.message }
+      : { confirmed: false, message: result.message };
   },
 
   async markRead(

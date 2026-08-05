@@ -10,9 +10,9 @@ import type { ReaderSettings } from '@/domain/reader/readerData';
 import { createTopicImageDeriver } from '../model/topicDerivedData';
 import { isHttpOrHttpsUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import { isPreviewableImageUrl, type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
-import { parseForumTopicLink, parseForumUserLink } from '@/domain/forum/links';
+import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/links';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
-import type { Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type { ReplyLocationTarget, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 import type { HtmlRenderers, HtmlRenderersProps } from './types';
 import { buildHtmlRenderingStyles, createHtmlRendererStyles, trimsTrailingBlockSpacing } from './htmlStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
@@ -53,7 +53,7 @@ export function useHtmlRenderingController({
   onOpenExternalUrl: (url: string) => void;
   mediaSessionIdentity: string;
   onOpenImagePreview: (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void;
-  onOpenTopic: (topic: Topic) => void | Promise<void>;
+  onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void | Promise<void>;
   onOpenUser: (user: UserReference) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
   selectedTopic: Topic | null;
@@ -139,9 +139,11 @@ export function useHtmlRenderingController({
       void onOpenUser(appUser);
       return;
     }
-    const appTopic = parseForumTopicLink(href, baseUrl);
-    if (appTopic) {
-      void onOpenTopic(appTopic);
+    const destination = parseForumTopicDestination(href, baseUrl);
+    if (destination) {
+      void (destination.targetReply
+        ? onOpenTopic(destination.topic, destination.targetReply)
+        : onOpenTopic(destination.topic));
       return;
     }
     if (isHttpOrHttpsUrl(href)) {
@@ -197,6 +199,7 @@ export function useHtmlRenderingController({
       const attributes = props.tnode.attributes || {};
       const mention = attributes['data-mention'] || '';
       const floor = attributes['data-floor'] || '';
+      const floorHref = attributes['data-floor-href'] || '';
       const userHref = attributes['data-user-href'] || '';
       if (!mention && !floor) {
         return null;
@@ -210,7 +213,15 @@ export function useHtmlRenderingController({
             </Pressable>
           ) : null}
           {mention && floor ? <Text style={htmlRendererStyles.htmlReplyReferenceSeparator}>·</Text> : null}
-          {floor ? <Text style={htmlRendererStyles.htmlReplyReferenceFloorText}>{floor}</Text> : null}
+          {floor ? (
+            <Pressable
+              accessibilityRole="link"
+              disabled={!floorHref}
+              onPress={(event) => openHtmlLink(floorHref, event)}
+            >
+              <Text style={htmlRendererStyles.htmlReplyReferenceFloorText}>{floor}</Text>
+            </Pressable>
+          ) : null}
         </View>
       );
     };
@@ -224,8 +235,15 @@ export function useHtmlRenderingController({
       }
       const nativeProps = getNativePropsForTNode(props);
       if (isFloorLink) {
-        const { accessibilityRole: _accessibilityRole, onPress: _onPress, ...textProps } = nativeProps;
-        return <Text {...textProps} style={[textProps.style, htmlRendererStyles.htmlFloorLink]} />;
+        const href = props.tnode.attributes?.href || '';
+        return (
+          <Text
+            {...nativeProps}
+            accessibilityRole="link"
+            onPress={(event) => openHtmlLink(href, event)}
+            style={[nativeProps.style, htmlRendererStyles.htmlFloorLink]}
+          />
+        );
       }
       const href = props.tnode.attributes?.href || '';
       return (

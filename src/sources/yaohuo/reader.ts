@@ -1,5 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
+import { parseHtml, parsePositiveInteger } from '@/domain/forum/html';
 import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from '@/domain/forum/models';
 import { checkYaohuoLoginHtml, ensureYaohuoHtmlLoggedIn } from './sessionParser';
 import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
@@ -234,6 +235,7 @@ export async function getYaohuoRepliesDirect({
   categoryId,
   page,
   limit = 30,
+  targetFloor,
   yaohuoFetcher,
   signal,
   timeoutMs
@@ -242,24 +244,50 @@ export async function getYaohuoRepliesDirect({
   categoryId?: string;
   page: number;
   limit?: number;
+  targetFloor?: number;
   yaohuoFetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
+  if (targetFloor !== undefined && (!Number.isSafeInteger(targetFloor) || targetFloor <= 0)) {
+    throw new Error('妖火目标楼层不正确');
+  }
   const pageResult = await fetchYaohuoHtml(
     yaohuoUrl('/bbs/book_re.aspx', {
       id: topicIdValue(id),
       classid: categoryId || DEFAULT_CLASS_ID,
-      page
+      ...(targetFloor ? { tofloor: targetFloor } : { page })
     }),
     yaohuoFetcher,
     { signal, timeoutMs }
   );
 
-  return parseYaohuoRepliesHtml(pageResult.html, {
+  const confirmedPage = (() => {
+    try {
+      const value = Number(new URL(pageResult.url).searchParams.get('page'));
+      if (Number.isSafeInteger(value) && value > 0) return value;
+    } catch {}
+    return parsePositiveInteger(
+      parseHtml(pageResult.html).querySelector('input[name="page"], input#Action_page')?.getAttribute('value')
+    );
+  })();
+  if (targetFloor && !confirmedPage) {
+    throw new Error('妖火未确认目标楼层所在页');
+  }
+  const resolvedPage = confirmedPage || page;
+  const result = parseYaohuoRepliesHtml(pageResult.html, {
     url: pageResult.url,
-    page,
+    page: resolvedPage,
     limit
+  });
+  if (targetFloor && !result.items.some((reply) => reply.floor === targetFloor)) {
+    throw new Error('妖火目标楼层未找到');
+  }
+  return Object.assign(result, {
+    currentPage: resolvedPage,
+    currentOffset: null,
+    previousPage: resolvedPage > 1 ? resolvedPage - 1 : null,
+    previousOffset: null
   });
 }
 

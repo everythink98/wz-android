@@ -72,7 +72,7 @@ describe('Android topic content HTML', () => {
     expect(marked).toContain(`<${FORUM_REPLY_REFERENCE_TAG}`);
     expect(marked).toContain('data-mention="@电动面包"');
     expect(marked).toContain('data-floor="#4"');
-    expect(marked).not.toContain('data-floor-href');
+    expect(marked).toContain('data-floor-href="https://www.nodeseek.com/post-793572-1#4"');
     expect(marked).toContain('<p>后续正文</p>');
   });
 

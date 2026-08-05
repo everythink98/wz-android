@@ -7,6 +7,25 @@ export interface YaohuoActionRequest {
   body?: string;
 }
 
+export function buildYaohuoMessageReplyRequest({
+  content,
+  fields,
+  path = '/bbs/messagelist_add.aspx'
+}: {
+  content: string;
+  fields: Record<string, string>;
+  path?: string;
+}): YaohuoActionRequest {
+  const params = new URLSearchParams(fields);
+  params.set('content', normalizeYaohuoContent(content));
+  return {
+    path,
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: params.toString()
+  };
+}
+
 function cleanPositiveInteger(value: string | number, name: string) {
   const text = String(value).trim();
   if (!/^\d+$/.test(text)) {

@@ -36,4 +36,18 @@ describe('REG-A11Y-001 shared accessibility basics', () => {
     expect(style.minWidth).toBeGreaterThanOrEqual(48);
     expect(style.minHeight).toBeGreaterThanOrEqual(48);
   });
+
+  it('[REG-NOTIFY-035] centers source labels within their tab indicators', async () => {
+    const view = await render(
+      <PillRail
+        variant="tabs"
+        testIDPrefix="source"
+        items={[{ value: 'all', label: '全部' }]}
+        value="all"
+        onChange={() => undefined}
+      />
+    );
+
+    expect(StyleSheet.flatten(view.getByText('全部').props.style).textAlign).toBe('center');
+  });
 });

@@ -23,6 +23,7 @@ import { elementText, isRecord, parseHtml, parsePositiveInteger } from '@/domain
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
+  NODESEEK_FLOORS_PER_PAGE,
   arrayField,
   extractNodeSeekEmbeddedData,
   isNodeSeekChallengeResponse,
@@ -400,9 +401,11 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
 
 type NodeSeekRepliesOptions = NodeSeekOptions & {
   page?: number;
+  pageHint?: number;
   limit?: number;
   offset?: number | null;
   fillPages?: boolean;
+  targetFloor?: number;
 };
 
 async function fillNodeSeekRepliesLimit(
@@ -464,12 +467,32 @@ function annotateNodeSeekReplies(
 
 export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOptions): Promise<RepliesResponse> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
-  const page = options.page || 1;
-  const limit = options.limit || 30;
+  const targetFloor = options.targetFloor;
+  if (targetFloor !== undefined && (!Number.isSafeInteger(targetFloor) || targetFloor <= 0)) {
+    throw new Error('NodeSeek 目标楼层不正确');
+  }
+  const pageHint =
+    options.pageHint && Number.isSafeInteger(options.pageHint) && options.pageHint > 0 ? options.pageHint : undefined;
+  const page = targetFloor
+    ? pageHint || Math.floor((targetFloor - 1) / NODESEEK_FLOORS_PER_PAGE) + 1
+    : options.page || 1;
+  const limit = targetFloor ? NODESEEK_FLOORS_PER_PAGE : options.limit || 30;
   const { html, postData, rendered } = await fetchTopicPageData(id, page, requestOptions);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? (options.offset as number) : 0;
   const floorOffset = hasOffset ? offset : (page - 1) * limit;
+  const windowFields = {
+    currentPage: page,
+    currentOffset: floorOffset,
+    previousPage: page > 1 ? page - 1 : null,
+    previousOffset: page > 1 ? Math.max(0, floorOffset - NODESEEK_FLOORS_PER_PAGE) : null
+  };
+  const confirmTarget = <T extends RepliesResponse>(result: T) => {
+    if (targetFloor && !result.items.some((reply) => reply.floor === targetFloor)) {
+      throw new Error('NodeSeek 目标楼层未找到');
+    }
+    return result;
+  };
   if (rendered && (rendered.replies.length || !postData)) {
     const renderedSource = rendered.replies.map((reply, index) => ({
       ...reply,
@@ -492,10 +515,17 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     const nextPage = nextNodeSeekPostPage(html, id, page);
     const hasMore = hasPageRemainder || Boolean(nextPage);
     const result = {
+      ...windowFields,
       items,
       hasMore,
       nextPage: hasMore ? (hasPageRemainder ? page : nextPage || page + 1) : null,
-      nextOffset: hasMore ? consumed : null
+      nextOffset: hasMore
+        ? page <= 1 && hasPageRemainder
+          ? consumed
+          : targetFloor || page > 1
+            ? ((nextPage || page + 1) - 1) * NODESEEK_FLOORS_PER_PAGE
+            : floorOffset + items.length
+        : null
     };
     const annotated = annotateNodeSeekReplies(result, {
       parserVariant: 'rendered-replies',
@@ -504,7 +534,10 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       offset,
       page
     });
-    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
+    const confirmed = confirmTarget(annotated);
+    return requestOptions.fillPages && !targetFloor
+      ? fillNodeSeekRepliesLimit(id, requestOptions, confirmed, limit)
+      : confirmed;
   }
   if (!postData) {
     throw new Error('NodeSeek 主题解析失败');
@@ -518,10 +551,17 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     const nextPage = nextNodeSeekPostPage(html, id, 1);
     const hasMore = hasPageRemainder || Boolean(nextPage);
     const result = {
+      ...windowFields,
       items,
       hasMore,
       nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
-      nextOffset: hasMore ? consumed : null
+      nextOffset: hasMore
+        ? hasPageRemainder
+          ? consumed
+          : targetFloor
+            ? ((nextPage || 2) - 1) * NODESEEK_FLOORS_PER_PAGE
+            : consumed
+        : null
     };
     const missingFloorCount = comments
       .slice(1)
@@ -535,16 +575,20 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       offset,
       page
     });
-    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
+    const confirmed = confirmTarget(annotated);
+    return requestOptions.fillPages && !targetFloor
+      ? fillNodeSeekRepliesLimit(id, requestOptions, confirmed, limit)
+      : confirmed;
   }
   const items = normalizeReplies(comments, { skipFirst: false, floorOffset });
   const nextPage = nextNodeSeekPostPage(html, id, page);
   const hasMore = Boolean(nextPage);
   const result = {
+    ...windowFields,
     items,
     hasMore,
     nextPage: nextPage || null,
-    nextOffset: hasMore ? floorOffset + items.length : null
+    nextOffset: hasMore ? (nextPage! - 1) * NODESEEK_FLOORS_PER_PAGE : null
   };
   const annotated = annotateNodeSeekReplies(result, {
     parserVariant: 'embedded-replies',
@@ -555,7 +599,10 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     offset,
     page
   });
-  return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
+  const confirmed = confirmTarget(annotated);
+  return requestOptions.fillPages && !targetFloor
+    ? fillNodeSeekRepliesLimit(id, requestOptions, confirmed, limit)
+    : confirmed;
 }
 
 export async function resolveNodeSeekUser(username: string, options: NodeSeekOptions = {}): Promise<UserReference> {

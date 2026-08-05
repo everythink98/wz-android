@@ -108,8 +108,26 @@ export function useAppRuntime() {
     sessions: accountSessionViewModels
   });
   const notificationRouteRuntime = useMemo<NotificationRouteRuntimeValue>(
-    () => ({ ...notificationsRuntime, contentWidth, notify }),
-    [contentWidth, notificationsRuntime, notify]
+    () => ({
+      ...notificationsRuntime,
+      composer: {
+        ensureNodeImageApiKey,
+        ensureWritableSession,
+        getDiscourseEmojiUrls: readGateway.getEmojiUrls,
+        isWritableSessionTicketCurrent
+      },
+      contentWidth,
+      notify
+    }),
+    [
+      contentWidth,
+      ensureNodeImageApiKey,
+      ensureWritableSession,
+      isWritableSessionTicketCurrent,
+      notificationsRuntime,
+      notify,
+      readGateway.getEmojiUrls
+    ]
   );
   const notificationSummary = `${notificationsRuntime.unreadTotal ? '有未读' : '暂无未读'} · ${
     notificationsRuntime.backgroundEnabled ? '后台通知已开启' : '后台通知未开启'

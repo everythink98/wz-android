@@ -39,8 +39,6 @@ export function filterTopicSessionReplies({
     replies = topicDetail ? replies.filter((reply) => reply.author === topicDetail.author) : replies;
   } else if (replyFilter === 'images') {
     replies = filterRepliesWithImages(replies, inlineSizedImageUrls, topicImageDeriver);
-  } else if (replyFilter === 'newest') {
-    replies = [...replies].reverse();
   }
   return filterRepliesByQuery(replies, commentQuery, createReplyTextIndexForQuery(topicReplies, commentQuery));
 }

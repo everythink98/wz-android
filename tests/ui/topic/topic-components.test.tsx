@@ -288,7 +288,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
         author: { label: 'quoted-user', username: 'quoted-user' }
       }
     ],
-    replyTargetAuthor: 'bob',
+    replyTarget: { floor: 1, author: { name: 'bob', username: 'bob' } },
     upvoteCount: 3,
     likeCount: 4,
     dislikeCount: 1
@@ -304,6 +304,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     onDeleteReply: jest.fn(),
     onEditReply: jest.fn(),
     onInteract: jest.fn(),
+    onLocateReply: jest.fn(),
     onOpenTopic: jest.fn(),
     onOpenUser: jest.fn(),
     onReplyToFloor: jest.fn(),
@@ -403,6 +404,7 @@ describe('Topic real child components', () => {
 
   it('renders reply content and routes quote, user and NodeSeek actions through callbacks', async () => {
     const onInteract = jest.fn();
+    const onLocateReply = jest.fn();
     const onOpenUser = jest.fn();
     const onReplyToFloor = jest.fn();
     const onToggleReplyQuote = jest.fn();
@@ -415,6 +417,7 @@ describe('Topic real child components', () => {
     const props = replyProps({
       loadedQuotedReplies: { 'nodeseek:topic-1:1': quotedReply },
       onInteract,
+      onLocateReply,
       onOpenUser,
       onReplyToFloor,
       onToggleReplyQuote
@@ -433,11 +436,17 @@ describe('Topic real child components', () => {
 
     await view.rerender(<ReplyItem {...props} expandedQuotes={{ 'reply:comment:22:nodeseek:topic-1:1': true }} />);
     expect(view.getByText('被引用内容')).toBeTruthy();
-    const replyTarget = view.getByText('回复 @bob');
+    await fireEvent.press(view.getByText('引用 #1'));
+    expect(onLocateReply).toHaveBeenCalledWith({ floor: 1 });
+    const replyTarget = view.getByText('@bob');
     expect(replyTarget.parent?.props.hitSlop).toBe(12);
     expect(styles.replyTargetPill).not.toHaveProperty('minHeight');
     await fireEvent.press(replyTarget);
     expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', username: 'bob' }));
+    await fireEvent.press(view.getByText('#1'));
+    expect(onLocateReply).toHaveBeenCalledWith({ floor: 1 });
+    await fireEvent.press(view.getByText('#2'));
+    expect(onLocateReply).toHaveBeenCalledWith({ floor: 2 });
 
     await fireEvent.press(view.getByLabelText('回复'));
     await fireEvent.press(view.getByLabelText('点赞'));
@@ -456,7 +465,7 @@ describe('Topic real child components', () => {
       ...replyProps().reply,
       contentHtml: '<p>短评论</p>',
       quotedPosts: [],
-      replyTargetAuthor: undefined,
+      replyTarget: undefined,
       signatureHtml: '<p>签名内容</p>'
     };
     const replyView = await render(
@@ -575,6 +584,54 @@ describe('Topic real child components', () => {
     expect(onOpenExternalUrl).not.toHaveBeenCalled();
   });
 
+  it('[REG-TOPIC-062] routes a NodeSeek floor link with its native page hint', async () => {
+    const onOpenTopic = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenTopic']>();
+    const topic: TopicDetail = {
+      author: 'alice',
+      contentHtml: '<a href="https://www.nodeseek.com/post-832584-16#155">#155</a>',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      id: '832584',
+      replyCount: 200,
+      replies: [],
+      source: 'nodeseek',
+      title: '楼层链接',
+      url: 'https://www.nodeseek.com/post-832584-1'
+    };
+    function FloorLinkHarness() {
+      const rendering = useHtmlRenderingController({
+        mediaSessionIdentity: 'nodeseek:0',
+        onOpenExternalUrl: jest.fn(),
+        onOpenImagePreview: () => undefined,
+        onOpenTopic,
+        onOpenUser: () => undefined,
+        selectedTopic: topic,
+        settings: readerData.settings,
+        theme,
+        topicDetail: topic,
+        topicKey: 'nodeseek:832584',
+        webViewBlockMessage: ''
+      });
+      return (
+        <RenderHTMLConfigProvider renderers={rendering.htmlRenderers} renderersProps={rendering.htmlRenderersProps}>
+          <TopicContentBlock
+            baseUrl={topic.url}
+            contentWidth={720}
+            html={topic.contentHtml}
+            inlineSizedImageUrls={{}}
+            topicImageDeriver={topicImageDeriver}
+          />
+        </RenderHTMLConfigProvider>
+      );
+    }
+
+    const view = await render(<FloorLinkHarness />);
+    await fireEvent.press(view.getByTestId('html-link-#155'));
+    expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', id: '832584' }), {
+      floor: 155,
+      pageHint: 16
+    });
+  });
+
   it('[REG-TOPIC-053] renders and navigates a cross-topic linux.do reply quote with the matching complete post', async () => {
     const onOpenTopic = jest.fn();
     const onToggleReplyQuote = jest.fn();
@@ -620,7 +677,8 @@ describe('Topic real child components', () => {
         source: 'linuxdo',
         id: '2679944',
         title: '跨主题引用标题'
-      })
+      }),
+      { floor: 1 }
     );
     await fireEvent.press(view.getByText('展开'));
     expect(onToggleReplyQuote).toHaveBeenCalledWith({
@@ -751,14 +809,68 @@ describe('Topic real child components', () => {
     const onOpenUser = jest.fn();
     const reply: Reply = {
       ...replyProps().reply,
-      replyTargetAuthor: 'Alice Display',
-      replyTargetUsername: undefined
+      replyTarget: { author: { name: 'Alice Display' } }
     };
     const view = await render(<ReplyItem {...replyProps({ onOpenUser, reply, source: 'linuxdo' })} />);
 
-    expect(view.getByText('回复 @Alice Display')).toBeTruthy();
-    await fireEvent.press(view.getByText('回复 @Alice Display'));
+    expect(view.getByText('@Alice Display')).toBeTruthy();
+    await fireEvent.press(view.getByText('@Alice Display'));
     expect(onOpenUser).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-061][REG-TOPIC-062] gives the Yaohuo target author and floor independent destinations', async () => {
+    const onOpenUser = jest.fn();
+    const onLocateReply = jest.fn();
+    const reply: Reply = {
+      ...replyProps().reply,
+      floor: 90,
+      replyTarget: {
+        floor: 88,
+        author: {
+          id: '45245',
+          name: '流金岁月',
+          url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=45245'
+        }
+      }
+    };
+    const view = await render(
+      <ReplyItem {...replyProps({ onLocateReply, onOpenUser, reply, replyFloor: 90, source: 'yaohuo' })} />
+    );
+
+    await fireEvent.press(view.getByText('@流金岁月'));
+    expect(onOpenUser).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'yaohuo', id: '45245', displayName: '流金岁月' })
+    );
+    await fireEvent.press(view.getByText('#88'));
+    expect(onLocateReply).toHaveBeenCalledWith({ floor: 88 });
+
+    await view.rerender(
+      <ReplyItem
+        {...replyProps({
+          onLocateReply,
+          onOpenUser,
+          reply: { ...reply, replyTarget: { floor: 30 } },
+          replyFloor: 90,
+          repliesByFloor: new Map([
+            [
+              30,
+              {
+                author: '补全用户',
+                authorId: '7',
+                authorUrl: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
+                contentHtml: '<p>目标</p>',
+                createdAt: '2026-08-05T00:00:00.000Z',
+                floor: 30
+              }
+            ]
+          ]),
+          source: 'yaohuo'
+        })}
+      />
+    );
+    expect(view.getByText('@补全用户')).toBeTruthy();
+    await fireEvent.press(view.getByText('#30'));
+    expect(onLocateReply).toHaveBeenLastCalledWith({ floor: 30 });
   });
 
   it.each(['linuxdo', 'xiaoyinsi'] as const)(
@@ -769,7 +881,7 @@ describe('Topic real child components', () => {
         acceptedAnswer: true,
         contentHtml: '<p>答案正文</p>',
         quotedPosts: [],
-        replyTargetAuthor: undefined
+        replyTarget: undefined
       };
       const view = await render(<ReplyItem {...replyProps({ reply, source })} />);
 
@@ -802,7 +914,7 @@ describe('Topic real child components', () => {
         floor: 3,
         quotedPosts: [],
         reactionSummary: [{ id: 'heart', count: 1 }],
-        replyTargetAuthor: undefined,
+        replyTarget: undefined,
         systemAction: true
       };
       const view = await render(<ReplyItem {...replyProps({ reply, replyFloor: 3, source })} />);
@@ -833,7 +945,7 @@ describe('Topic real child components', () => {
         actionCode: 'topic.mystery',
         contentHtml,
         quotedPosts: [],
-        replyTargetAuthor: undefined,
+        replyTarget: undefined,
         systemAction: true
       };
       const view = await render(<ReplyItem {...replyProps({ reply, source })} />);
@@ -941,7 +1053,7 @@ describe('Topic real child components', () => {
       liked: true,
       quotedPosts: [],
       reactionSummary: [{ id: 'heart', count: 2 }],
-      replyTargetAuthor: undefined,
+      replyTarget: undefined,
       signatureHtml: '<p>签名内容</p>'
     };
     const view = await render(

@@ -61,12 +61,14 @@ export type DiscourseFeedReadOptions = DiscourseReadOptions & {
   page?: number;
 };
 
-export type DiscourseTopicReadOptions = DiscourseReadOptions & { replyLimit?: number };
+export type DiscourseTopicReadOptions = DiscourseReadOptions & { replyLimit?: number; trackVisit?: boolean };
 
 export type DiscourseRepliesReadOptions = DiscourseReadOptions & {
   limit?: number;
   offset?: number | null;
   page?: number;
+  pageHint?: number;
+  targetFloor?: number;
 };
 
 export type DiscourseUserReadOptions = DiscourseReadOptions & {

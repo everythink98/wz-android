@@ -2,6 +2,41 @@ import { decodeHtml, isRecord, textContentFromHtml, textExcerpt, toIsoString } f
 import { stripDiscourseCalloutMarkersFromExcerpt } from './content';
 import type { Category, ReactionSummary, Reply, Source, TopicPoll, TopicPollOption } from '@/domain/forum/models';
 
+export function discourseReplyWindow(data: unknown, limit: number) {
+  const postStream = isRecord(data) && isRecord(data.post_stream) ? data.post_stream : {};
+  const stream = Array.isArray(postStream.stream) ? postStream.stream : [];
+  const posts = (Array.isArray(postStream.posts) ? postStream.posts : []).filter(
+    (post) => isRecord(post) && (positiveInteger(post.post_number) || 0) > 1
+  );
+  const positions = posts
+    .map((post) => {
+      if (!isRecord(post)) return -1;
+      const id = post.id;
+      const streamIndex = stream.findIndex((streamId) => String(streamId) === String(id));
+      return streamIndex >= 0 ? streamIndex : (positiveInteger(post.post_number) || 1) - 1;
+    })
+    .filter((index) => index > 0)
+    .sort((left, right) => left - right);
+  const firstIndex = positions[0] ?? 1;
+  const lastIndex = positions.at(-1) ?? firstIndex;
+  const pageSize = Math.max(1, limit);
+  const currentOffset = Math.max(0, firstIndex - 1);
+  const nextOffset = Math.max(currentOffset, lastIndex);
+  const previousOffset = currentOffset > 0 ? Math.max(0, currentOffset - pageSize) : null;
+  const hasMore = stream.length - 1 > nextOffset;
+  return {
+    posts,
+    currentPage: Math.floor(currentOffset / pageSize) + 1,
+    currentOffset,
+    previousPage: previousOffset === null ? null : Math.floor(previousOffset / pageSize) + 1,
+    previousOffset,
+    hasMore,
+    nextPage: hasMore ? Math.floor(nextOffset / pageSize) + 1 : null,
+    nextOffset: hasMore ? nextOffset : null,
+    totalCount: Math.max(0, stream.length - 1)
+  };
+}
+
 export type DiscoursePostFields = Pick<Reply, 'author' | 'createdAt' | 'commentId' | 'floor'> & {
   cookedHtml: string;
 } & Partial<
@@ -15,8 +50,7 @@ export type DiscoursePostFields = Pick<Reply, 'author' | 'createdAt' | 'commentI
       | 'contentMarkdown'
       | 'bookmarkId'
       | 'bookmarked'
-      | 'replyTargetAuthor'
-      | 'replyTargetUsername'
+      | 'replyTarget'
       | 'acceptedAnswer'
       | 'wiki'
       | 'hidden'
@@ -231,6 +265,21 @@ export function discoursePostFields(raw: unknown): DiscoursePostFields | null {
   const replyToUser = isRecord(raw.reply_to_user) ? raw.reply_to_user : undefined;
   const replyTargetUsername = String(replyToUser?.username || '').trim();
   const replyTargetAuthor = String(replyToUser?.name || replyTargetUsername).trim();
+  const replyTargetFloor = positiveInteger(raw.reply_to_post_number);
+  const replyTarget =
+    replyTargetFloor || replyTargetAuthor
+      ? {
+          ...(replyTargetFloor ? { floor: replyTargetFloor } : {}),
+          ...(replyTargetAuthor
+            ? {
+                author: {
+                  name: replyTargetAuthor,
+                  ...(replyTargetUsername ? { username: replyTargetUsername } : {})
+                }
+              }
+            : {})
+        }
+      : undefined;
   const postType = Number(raw.post_type);
   const isSystemAction = Number.isFinite(postType) && postType !== 1;
   const reactions = reactionSummary(raw.reactions);
@@ -251,8 +300,7 @@ export function discoursePostFields(raw: unknown): DiscoursePostFields | null {
       : typeof raw.bookmarked === 'boolean'
         ? { bookmarked: raw.bookmarked }
         : {}),
-    ...(replyTargetAuthor ? { replyTargetAuthor } : {}),
-    ...(replyTargetUsername ? { replyTargetUsername } : {}),
+    ...(replyTarget ? { replyTarget } : {}),
     ...(raw.accepted_answer === true ? { acceptedAnswer: true } : {}),
     ...(raw.wiki === true ? { wiki: true } : {}),
     ...(raw.hidden === true ? { hidden: true } : {}),

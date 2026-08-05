@@ -49,7 +49,7 @@ type V2exHtmlReplyMeta = {
   commentId?: number;
   createdAt?: string;
   floor?: number;
-  replyTargetAuthor?: string;
+  replyTarget?: Reply['replyTarget'];
   thanksCount?: number;
 };
 
@@ -307,12 +307,15 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
       .map((item) => parseV2exThanksCount(item.innerHTML || item.text))
       .find((count): count is number => typeof count === 'number');
     const replyTargetAuthor = v2exReplyTargetAuthor(replyContent);
+    const replyTarget = replyTargetAuthor
+      ? { author: { name: replyTargetAuthor, username: replyTargetAuthor } }
+      : undefined;
     const meta: V2exHtmlReplyMeta = {
       ...(commentId ? { commentId } : {}),
       ...(floor ? { floor } : {}),
       ...(createdAt ? { createdAt } : {}),
       ...(thanksCount ? { thanksCount } : {}),
-      ...(replyTargetAuthor ? { replyTargetAuthor } : {})
+      ...(replyTarget ? { replyTarget } : {})
     };
     if (commentId) {
       repliesByCommentId.set(commentId, meta);
@@ -337,7 +340,7 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
         createdAt,
         ...(floor ? { floor } : {}),
         ...(commentId ? { commentId } : {}),
-        ...(replyTargetAuthor ? { replyTargetAuthor } : {}),
+        ...(replyTarget ? { replyTarget } : {}),
         ...(typeof thanksCount === 'number' ? { thanksCount } : {})
       });
     }
@@ -692,6 +695,9 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
   const contentHtml = sanitizeContentHtml(raw.content_rendered || raw.content || '', BASE_URL);
   const commentId = typeof raw.id === 'number' ? raw.id : parsePositiveInteger(raw.id);
   const replyTargetAuthor = v2exReplyTargetAuthor(raw.content_rendered || raw.content || contentHtml);
+  const replyTarget = replyTargetAuthor
+    ? { author: { name: replyTargetAuthor, username: replyTargetAuthor } }
+    : undefined;
   const authorLevelLabel = v2exMemberLevelLabel(member);
   return {
     author: String(member.username || ''),
@@ -703,7 +709,7 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
     floor: index + 1,
     ...(commentId ? { commentId } : {}),
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
-    ...(replyTargetAuthor ? { replyTargetAuthor } : {})
+    ...(replyTarget ? { replyTarget } : {})
   };
 }
 
@@ -722,7 +728,7 @@ function mergeV2exReplyMeta(replies: Reply[], detail: V2exHtmlDetail | null) {
       ...reply,
       ...(meta.createdAt ? { createdAt: meta.createdAt } : {}),
       ...(meta.floor ? { floor: meta.floor } : {}),
-      ...(meta.replyTargetAuthor && !reply.replyTargetAuthor ? { replyTargetAuthor: meta.replyTargetAuthor } : {}),
+      ...(meta.replyTarget && !reply.replyTarget ? { replyTarget: meta.replyTarget } : {}),
       ...(typeof meta.thanksCount === 'number' ? { thanksCount: meta.thanksCount } : {})
     };
   });

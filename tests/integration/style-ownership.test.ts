@@ -20,6 +20,7 @@ import { createMoreAccountStyles } from '@/features/more/accountStyles';
 import { createAccountHostStyles } from '@/features/account/accountHostStyles';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { createMoreStyles } from '@/features/more/styles';
+import { createNotificationStyles } from '@/features/notifications/styles';
 import { createExpandableStyles } from '@/ui/controls/ExpandableControls';
 import { createScreenTopBarStyles } from '@/ui/controls/ScreenTopBar';
 import { createNavBarStyles } from '@/ui/navigation/NavBar';
@@ -221,6 +222,17 @@ describe('Android reader theme safety rails', () => {
     expect('backgroundColor' in expandableStyles.stateIcon).toBe(false);
   });
 
+  it('[REG-NOTIFY-036][REG-NOTIFY-040] applies reader type scale and link color to notification content', () => {
+    const theme = createTheme(settings);
+    const base = createNotificationStyles(theme, settings);
+    const large = createNotificationStyles(theme, { ...settings, fontScale: 1.3 });
+
+    expect(base.title.fontSize).toBe(14);
+    expect(large.title.fontSize).toBe(Math.round(14 * 1.3));
+    expect(large.messageBody.lineHeight).toBe(Math.round(21 * 1.3));
+    expect(large.detailLink.color).toBe(theme.primary);
+  });
+
   it('[REG-A11Y-001][REG-TOPIC-058] keeps reply navigation visually compact without changing the prose inset', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
@@ -233,18 +245,6 @@ describe('Android reader theme safety rails', () => {
     expect(styles.replyTargetPill).not.toHaveProperty('justifyContent');
     expect(styles.replyTargetPill).not.toHaveProperty('minHeight');
     expect(styles.replyContentArea).toMatchObject({ paddingLeft: 42, paddingRight: 0 });
-  });
-
-  it('keeps reply composer actions grouped at the bottom edge', () => {
-    const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
-
-    expect(styles.replyComposerActions).toMatchObject({
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'flex-end'
-    });
   });
 
   it('keeps reply references readable without turning them into badges', () => {

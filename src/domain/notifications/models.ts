@@ -3,6 +3,11 @@ import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 
 export type NotificationKind = 'mention' | 'reply' | 'private-message' | 'reaction' | 'system' | 'other';
 
+export interface NotificationCategory {
+  id: string;
+  label: string;
+}
+
 export type NotificationTarget =
   | { type: 'topic-post'; topicId: string; postNumber?: number; postId?: string; url: string }
   | { type: 'private-conversation'; conversationId: string }
@@ -54,6 +59,11 @@ export interface NotificationDetail {
   contentHtml?: string;
   contentText?: string;
   messages?: NotificationMessage[];
+  reply?: {
+    format: 'markdown' | 'plain-text';
+    disabledReason?: string;
+  };
+  historyNotice?: string;
   topic?: Topic;
   unreadMessageIds?: string[];
 }
@@ -62,3 +72,5 @@ export interface NotificationMarkResult {
   confirmed: boolean;
   message?: string;
 }
+
+export type NotificationReplyResult = NotificationMarkResult;

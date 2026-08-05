@@ -15,7 +15,7 @@ import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { DiscourseActionRuntimeDependencies } from './actions/discourseActionRuntime';
 import { toggleFavorite, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
-import type { SourceErrorInfo, Topic, UserReference } from '@/domain/forum/models';
+import type { ReplyLocationTarget, SourceErrorInfo, Topic, UserReference } from '@/domain/forum/models';
 import type { DiscourseSource, SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
@@ -112,7 +112,8 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     commands: { composer: topicComposer, view: topicView }
   } = topicSession;
   const openTopicRoute = useCallback(
-    (nextTopic: Topic) => navigation.push('Topic', { topic: nextTopic }),
+    (nextTopic: Topic, targetReply?: ReplyLocationTarget) =>
+      navigation.push('Topic', { topic: nextTopic, targetReply }),
     [navigation]
   );
   const topicController = useTopicController({
@@ -128,11 +129,13 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway,
+    targetReply: route.params.targetReply,
     topic,
     topicSession
   });
   const {
     loadedQuotedReplies,
+    locateReply,
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
@@ -143,6 +146,23 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     topicQueryKey,
     topicReplies
   } = topicController;
+  const openTopicDestination = useCallback(
+    (nextTopic: Topic, targetReply?: ReplyLocationTarget) => {
+      if (!targetReply) {
+        void openTopic(nextTopic);
+        return;
+      }
+      if (nextTopic.source === topic.source && nextTopic.id === topic.id) {
+        topicView.changeCommentQuery('');
+        topicView.changeReplyFilter('all');
+        navigation.setParams({ targetReply });
+        void locateReply(targetReply);
+        return;
+      }
+      openTopicRoute(nextTopic, targetReply);
+    },
+    [locateReply, navigation, openTopic, openTopicRoute, topic.id, topic.source, topicView]
+  );
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const identityCheck = topic.source === 'linuxdo' ? runtime.account.identityChecks.linuxdo : undefined;
   const identityError = identityCheck?.pending ? identityCheck.error : undefined;
@@ -164,9 +184,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     mediaSessionIdentity,
     onOpenExternalUrl: openExternalUrl,
     onOpenImagePreview: (url, displaySize, posterUri) => openImagePreviewRef.current(url, displaySize, posterUri),
-    onOpenTopic: (nextTopic) => {
-      void openTopic(nextTopic);
-    },
+    onOpenTopic: openTopicDestination,
     onOpenUser: (user) => navigation.push('User', { user }),
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
     selectedTopic,
@@ -285,7 +303,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     (event: NativeSyntheticEvent<NativeScrollEvent>) => topicView.rememberScrollY(event.nativeEvent.contentOffset.y),
     [topicView]
   );
-  const stableOpenTopic = useLatestCallback(openTopic);
+  const stableOpenTopic = useLatestCallback(openTopicDestination);
   const stableOpenUser = useLatestCallback((user: UserReference) => navigation.push('User', { user }));
   const stableRefreshReplies = useLatestCallback(refreshTopicReplies);
   const stableRefreshWholeTopic = useLatestCallback(refreshCurrentTopic);

@@ -103,6 +103,24 @@ export interface QuotedPostMetadata {
   topicUrl?: string;
 }
 
+export interface ReplyTargetAuthor {
+  name: string;
+  id?: string;
+  username?: string;
+  url?: string;
+}
+
+export interface ReplyTarget {
+  floor?: number;
+  author?: ReplyTargetAuthor;
+}
+
+export interface ReplyLocationTarget {
+  commentId?: number;
+  floor?: number;
+  pageHint?: number;
+}
+
 export interface Reply {
   author: string;
   authorId?: string;
@@ -131,8 +149,7 @@ export interface Reply {
   contentMarkdown?: string;
   bookmarkId?: number;
   bookmarked?: boolean;
-  replyTargetAuthor?: string;
-  replyTargetUsername?: string;
+  replyTarget?: ReplyTarget;
   thanksCount?: number;
   acceptedAnswer?: boolean;
   wiki?: boolean;
@@ -271,6 +288,10 @@ export interface FeedResponse {
 
 export interface RepliesResponse {
   items: Reply[];
+  currentPage?: number;
+  currentOffset?: number | null;
+  previousPage?: number | null;
+  previousOffset?: number | null;
   hasMore: boolean;
   nextPage: number | null;
   nextOffset?: number | null;

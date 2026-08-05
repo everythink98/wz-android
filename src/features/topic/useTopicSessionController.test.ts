@@ -26,7 +26,7 @@ describe('topic local session helpers', () => {
       { author: 'bob', contentHtml: '<p>needle</p><img src="https://img/2.png">', createdAt: '', floor: 2 },
       { author: 'alice', contentHtml: '<p>third needle</p>', createdAt: '', floor: 3 }
     ];
-    const filter = (replyFilter: 'all' | 'author' | 'images' | 'newest', commentQuery = '') =>
+    const filter = (replyFilter: 'all' | 'author' | 'images', commentQuery = '') =>
       filterTopicSessionReplies({
         commentQuery,
         inlineSizedImageUrls: {},
@@ -38,7 +38,6 @@ describe('topic local session helpers', () => {
 
     expect(filter('author')).toEqual([1, 3]);
     expect(filter('images')).toEqual([2]);
-    expect(filter('newest')).toEqual([3, 2, 1]);
     expect(filter('all', 'needle')).toEqual([2, 3]);
   });
 

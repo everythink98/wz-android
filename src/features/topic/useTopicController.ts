@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQueries, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useIsFetching,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type InfiniteData
+} from '@tanstack/react-query';
 import type { ReadGateway } from '@/sources/readGateway';
 import {
   recordHistory,
@@ -8,9 +15,9 @@ import {
   type ReaderData,
   type ReaderDataMutationReason
 } from '@/domain/reader/readerData';
-import { isSameReply, mergeReplies, removeReply, replyKey as replyIdentityKey } from '@/domain/forum/feed';
+import { mergeReplies, removeReply, replyKey as replyIdentityKey } from '@/domain/forum/feed';
 import { isCanceledRequest } from '@/platform/network/errors';
-import { replyCountAfterNewReplySubmit, replyLoadMoreLimit, replyRefreshTarget } from './model/replyPagination';
+import { REPLY_PAGE_SIZE } from './model/replyPagination';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './actions/actionHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
@@ -19,7 +26,15 @@ import {
   sourceReadRecoveryOutcome,
   yaohuoErrorRequiresLoginPanel
 } from '@/sources/sourceErrors';
-import type { RepliesResponse, Reply, Source, SourceErrorInfo, Topic, TopicDetail } from '@/domain/forum/models';
+import type {
+  RepliesResponse,
+  Reply,
+  ReplyLocationTarget,
+  Source,
+  SourceErrorInfo,
+  Topic,
+  TopicDetail
+} from '@/domain/forum/models';
 import type { TopicRepliesRefreshOptions } from './model/types';
 import {
   quotedPostReferenceKey,
@@ -76,8 +91,12 @@ function mergedReplyPages(data: InfiniteData<ReplyPage, ReplyPageParam> | undefi
   return (data?.pages || []).reduce<Reply[]>((items, page) => mergeReplies(items, page.items), []);
 }
 
-function nextReplyPage(lastPage: ReplyPage): ReplyPageParam | undefined {
-  return hasNextReplyPage({
+function isLoadedReplyPage(pageParams: ReplyPageParam[], candidate: ReplyPageParam) {
+  return pageParams.some((pageParam) => pageParam.page === candidate.page && pageParam.offset === candidate.offset);
+}
+
+function nextReplyPage(lastPage: ReplyPage, loadedPageParams: ReplyPageParam[] = []): ReplyPageParam | undefined {
+  const candidate = hasNextReplyPage({
     hasMore: lastPage.hasMore,
     nextOffset: lastPage.nextOffset,
     nextPage: lastPage.nextPage,
@@ -86,6 +105,25 @@ function nextReplyPage(lastPage: ReplyPage): ReplyPageParam | undefined {
   })
     ? { page: lastPage.nextPage!, offset: lastPage.nextOffset ?? null }
     : undefined;
+  return candidate && !isLoadedReplyPage(loadedPageParams, candidate) ? candidate : undefined;
+}
+
+function previousReplyPage(firstPage: ReplyPage, loadedPageParams: ReplyPageParam[] = []): ReplyPageParam | undefined {
+  const candidate = hasPreviousReplyPage({
+    previousOffset: firstPage.previousOffset,
+    previousPage: firstPage.previousPage,
+    requestedOffset: firstPage.requestedOffset,
+    requestedPage: firstPage.requestedPage
+  })
+    ? { page: firstPage.previousPage!, offset: firstPage.previousOffset ?? null }
+    : undefined;
+  return candidate && !isLoadedReplyPage(loadedPageParams, candidate) ? candidate : undefined;
+}
+
+function matchesReplyLocation(reply: Reply, target: ReplyLocationTarget) {
+  return typeof target.commentId === 'number'
+    ? reply.commentId === target.commentId
+    : typeof target.floor === 'number' && reply.floor === target.floor;
 }
 
 function readOutcome(source: Source, error: unknown): LinuxDoReadResumeOutcome {
@@ -110,6 +148,24 @@ export function hasNextReplyPage({
   );
 }
 
+export function hasPreviousReplyPage({
+  previousOffset,
+  previousPage,
+  requestedOffset,
+  requestedPage
+}: {
+  previousOffset?: number | null;
+  previousPage?: number | null;
+  requestedOffset?: number | null;
+  requestedPage?: number | null;
+}) {
+  return Boolean(
+    previousPage &&
+    previousPage > 0 &&
+    !(previousPage === requestedPage && (previousOffset ?? null) === (requestedOffset ?? null))
+  );
+}
+
 export function useTopicController({
   active,
   commitReaderData,
@@ -123,6 +179,7 @@ export function useTopicController({
   showLinuxDoVerification,
   showYaohuoLogin,
   readGateway,
+  targetReply,
   topic,
   topicSession
 }: {
@@ -141,6 +198,7 @@ export function useTopicController({
   ) => void | boolean | Promise<void | boolean>;
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
+  targetReply?: ReplyLocationTarget;
   topic: Topic;
   topicSession: TopicSessionController;
 }) {
@@ -166,6 +224,8 @@ export function useTopicController({
   const handledTopicErrorRef = useRef(0);
   const handledRepliesErrorRef = useRef(0);
   const handledQuoteErrorsRef = useRef<Record<string, number>>({});
+  const targetWindowCacheOwnedRef = useRef<readonly unknown[] | null>(null);
+  const handledRouteTargetRef = useRef('');
   const selectedSource = selectedTopic?.source || 'v2ex';
   const selectedTopicId = selectedTopic?.id || '';
   const selectedTopicKey = selectedTopic ? topicKey(selectedTopic) : '';
@@ -190,6 +250,17 @@ export function useTopicController({
     ]
   );
   const repliesQueryKey = useMemo(() => forumQueryKeys.replies(topicQueryKey), [topicQueryKey]);
+  const targetReplyQueryRoot = useMemo(() => [...repliesQueryKey, 'target-floor'] as const, [repliesQueryKey]);
+  const loadingTargetReply = useIsFetching({ queryKey: targetReplyQueryRoot }) > 0;
+
+  useEffect(
+    () => () => {
+      if (targetWindowCacheOwnedRef.current) {
+        queryClient.removeQueries({ queryKey: targetWindowCacheOwnedRef.current, exact: true });
+      }
+    },
+    [queryClient]
+  );
 
   const detailQuery = useQuery({
     queryKey: topicQueryKey,
@@ -264,11 +335,7 @@ export function useTopicController({
             id: detail.id,
             categoryId: detail.categoryId,
             page: pageParam.page,
-            limit: replyLoadMoreLimit({
-              source: detail.source,
-              replyNextPage: pageParam.page,
-              replyNextOffset: pageParam.offset
-            }),
+            limit: REPLY_PAGE_SIZE,
             offset: pageParam.offset,
             signal
           },
@@ -297,7 +364,9 @@ export function useTopicController({
         throw error;
       }
     },
-    getNextPageParam: nextReplyPage
+    getNextPageParam: (lastPage, _allPages, _lastPageParam, allPageParams) => nextReplyPage(lastPage, allPageParams),
+    getPreviousPageParam: (firstPage, _allPages, _firstPageParam, allPageParams) =>
+      previousReplyPage(firstPage, allPageParams)
   });
 
   useEffect(() => {
@@ -312,6 +381,7 @@ export function useTopicController({
     [repliesQuery.data]
   );
   const lastReplyPage = repliesQuery.data?.pages.at(-1);
+  const replyHasPrevious = Boolean(repliesQuery.hasPreviousPage);
   const replyHasMore = Boolean(repliesQuery.hasNextPage);
   const replyNextPage =
     nextReplyPage(
@@ -420,6 +490,7 @@ export function useTopicController({
     handledRepliesErrorRef.current = repliesQuery.errorUpdatedAt;
     const topic = selectedTopic;
     const retryFailedNextPage = repliesQuery.isFetchNextPageError;
+    const retryFailedPreviousPage = repliesQuery.isFetchPreviousPageError;
     handleReadError(
       topic.source,
       repliesQuery.error,
@@ -427,9 +498,11 @@ export function useTopicController({
         queryKey: repliesQueryKey,
         resume: async () => {
           if (topicCommands.getCurrentKey() !== topicKey(topic)) return 'stale';
-          const result = retryFailedNextPage
-            ? await repliesQuery.fetchNextPage({ cancelRefetch: false })
-            : await repliesQuery.refetch();
+          const result = retryFailedPreviousPage
+            ? await repliesQuery.fetchPreviousPage({ cancelRefetch: false })
+            : retryFailedNextPage
+              ? await repliesQuery.fetchNextPage({ cancelRefetch: false })
+              : await repliesQuery.refetch();
           handledRepliesErrorRef.current = result.errorUpdatedAt;
           return result.error ? readOutcome(topic.source, result.error) : 'completed';
         }
@@ -443,7 +516,9 @@ export function useTopicController({
     repliesQuery.error,
     repliesQuery.errorUpdatedAt,
     repliesQuery.fetchNextPage,
+    repliesQuery.fetchPreviousPage,
     repliesQuery.isFetchNextPageError,
+    repliesQuery.isFetchPreviousPageError,
     repliesQuery.refetch,
     repliesQueryKey,
     selectedTopic,
@@ -632,6 +707,7 @@ export function useTopicController({
     if (result.error) return readOutcome(selectedTopic.source, result.error);
     if (result.data) {
       queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, firstReplyData(result.data));
+      targetWindowCacheOwnedRef.current = null;
     }
     notify('主题已更新');
     return 'completed';
@@ -690,27 +766,63 @@ export function useTopicController({
         return 'completed';
       }
 
-      const targetIndex = options.targetReply
-        ? topicReplies.findIndex((reply) => isSameReply(reply, options.targetReply))
+      const currentReplyData = queryClient.getQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
+      const targetPageIndex = options.targetReply
+        ? (currentReplyData?.pages.findIndex((page) => {
+            if (page.items.some((reply) => matchesReplyLocation(reply, options.targetReply!))) return true;
+            if (typeof options.targetReply?.floor !== 'number') return false;
+            const floors = page.items
+              .map((reply) => reply.floor)
+              .filter((floor): floor is number => typeof floor === 'number');
+            return floors.length
+              ? options.targetReply.floor >= Math.min(...floors) && options.targetReply.floor <= Math.max(...floors)
+              : false;
+          }) ?? -1)
         : -1;
-      const expectedReplyCount = Math.max(topicDetail.replyCount || 0, topicReplies.length) + 1;
-      const target = replyRefreshTarget({
-        source: selectedTopic.source,
-        afterSubmit: true,
-        expectedReplyCount,
-        replyNextPage,
-        replyNextOffset,
-        loadedReplyCount: topicReplies.length,
-        ...(targetIndex >= 0 ? { targetReplyIndex: targetIndex } : {})
-      });
-      const limit =
-        target.limit ??
-        replyLoadMoreLimit({
-          source: selectedTopic.source,
-          replyNextPage: target.page,
-          replyNextOffset: target.offset
-        });
-      const refreshKey = forumQueryKeys.replyRefresh(repliesQueryKey, target.page, target.offset, limit);
+      if (options.targetReply && targetPageIndex < 0) {
+        const result = await repliesQuery.refetch();
+        if (result.error) return readOutcome(selectedTopic.source, result.error);
+        if (options.excludeReply || options.editedReplyContent) {
+          queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, (current) =>
+            current
+              ? {
+                  ...current,
+                  pages: current.pages.map((page) => ({
+                    ...page,
+                    items: applyEditedReplyContent(
+                      removeReply(page.items, options.excludeReply),
+                      options.editedReplyContent || { commentId: -1, contentMarkdown: '' },
+                      selectedTopic.source
+                    )
+                  }))
+                }
+              : current
+          );
+        }
+        if (!options.silent) notify('评论已更新');
+        return 'completed';
+      }
+      let refreshedDetail = topicDetail;
+      let anchorFloor: number | undefined;
+      if (!options.targetReply) {
+        const result = await detailQuery.refetch();
+        if (result.error || !result.data)
+          return result.error ? readOutcome(selectedTopic.source, result.error) : 'failed';
+        refreshedDetail = result.data;
+        anchorFloor = refreshedDetail.replyCount + (isDiscourseSource(selectedTopic.source) ? 1 : 0);
+        if (!Number.isSafeInteger(anchorFloor) || anchorFloor <= 0) {
+          if (!options.silent) notify('原站未返回可定位的最新楼层');
+          return 'failed';
+        }
+      }
+      const target = options.targetReply
+        ? currentReplyData!.pageParams[targetPageIndex]!
+        : ({ page: 1, offset: null } satisfies ReplyPageParam);
+      const limit = REPLY_PAGE_SIZE;
+      const refreshKey = [
+        ...forumQueryKeys.replyRefresh(repliesQueryKey, target.page, target.offset, limit),
+        ...(anchorFloor ? ['anchor', anchorFloor] : [])
+      ] as const;
       const trace =
         options.diagnosticTrace ||
         beginDiagnosticTrace('reply', 'refresh', {
@@ -731,6 +843,7 @@ export function useTopicController({
                 id: selectedTopic.id,
                 categoryId: topicDetail.categoryId,
                 page: target.page,
+                ...(anchorFloor ? { targetFloor: anchorFloor } : {}),
                 limit,
                 offset: target.offset,
                 signal
@@ -741,15 +854,29 @@ export function useTopicController({
         if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
           throw new Error('评论内容解析为空，无法更新，请重试。');
         }
+        if (
+          anchorFloor &&
+          (!loaded.items.some((reply) => reply.floor === anchorFloor) || !loaded.currentPage || loaded.currentPage <= 0)
+        ) {
+          throw new Error('原站未确认最新楼层所在窗口');
+        }
+        const requestedPage = loaded.currentPage || target.page;
+        const requestedOffset = loaded.currentOffset ?? target.offset;
         return {
           ...loaded,
-          requestedPage: target.page,
-          requestedOffset: target.offset
+          requestedPage,
+          requestedOffset
         };
       };
       const applyRefreshPage = (page: ReplyPage) => {
         const refreshedItems = removeReply(page.items, options.excludeReply);
         queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, (current) => {
+          if (anchorFloor) {
+            return {
+              pages: [{ ...page, items: refreshedItems }],
+              pageParams: [{ page: page.requestedPage, offset: page.requestedOffset }]
+            };
+          }
           const pages = current?.pages.slice() || [];
           const pageParams = current?.pageParams.slice() || [];
           const pageIndex = pageParams.findIndex(
@@ -778,10 +905,10 @@ export function useTopicController({
           }
           return { pages: filteredPages, pageParams };
         });
+        if (anchorFloor) targetWindowCacheOwnedRef.current = repliesQueryKey;
         const replyCount =
           !options.targetReply && !options.excludeReply
-            ? (page.totalCount ??
-              replyCountAfterNewReplySubmit(topicDetail.replyCount || 0, topicReplies.length + refreshedItems.length))
+            ? (page.totalCount ?? refreshedDetail.replyCount)
             : page.totalCount;
         if (typeof replyCount === 'number') {
           queryClient.setQueryData<TopicDetail>(topicQueryKey, (current) =>
@@ -826,20 +953,157 @@ export function useTopicController({
     },
     [
       handleReadError,
+      detailQuery.refetch,
       notify,
       onNodeSeekTopicVerificationRequired,
       queryClient,
       refreshWholeTopic,
       repliesQuery.refetch,
       repliesQueryKey,
-      replyNextOffset,
-      replyNextPage,
       selectedIdentityPending,
       selectedTopic,
       readGateway,
       topicDetail,
-      topicQueryKey,
+      topicQueryKey
+    ]
+  );
+
+  const locateReply = useCallback(
+    async (target: ReplyLocationTarget, { silent = false }: { silent?: boolean } = {}) => {
+      if (!selectedTopic || !topicDetail || selectedIdentityPending) return 'stale';
+      if (topicReplies.some((reply) => matchesReplyLocation(reply, target))) return 'completed';
+      const floor = target.floor;
+      if (!floor || !Number.isSafeInteger(floor) || floor <= 0 || selectedTopic.source === 'v2ex') {
+        if (!silent) notify('目标楼层未找到');
+        return 'failed';
+      }
+      const pageHint =
+        target.pageHint && Number.isSafeInteger(target.pageHint) && target.pageHint > 0 ? target.pageHint : undefined;
+      const targetQueryKey = [...targetReplyQueryRoot, floor, target.commentId ?? null, pageHint ?? null] as const;
+      if (queryClient.getQueryState(targetQueryKey)?.fetchStatus === 'fetching') return 'completed';
+      const loadTargetWindow = async () => {
+        const trace = beginDiagnosticTrace('reply', 'load-more', {
+          source: selectedTopic.source,
+          topicRef: diagnosticRef('topic', `${selectedTopic.source}:${topicDetail.id}`)
+        });
+        try {
+          const loaded = await queryClient.fetchQuery({
+            queryKey: targetQueryKey,
+            queryFn: ({ signal }) =>
+              readGateway.getReplies(
+                {
+                  source: selectedTopic.source,
+                  id: topicDetail.id,
+                  categoryId: topicDetail.categoryId,
+                  page: pageHint || 1,
+                  pageHint,
+                  limit: REPLY_PAGE_SIZE,
+                  offset: null,
+                  targetFloor: floor,
+                  signal
+                },
+                { trace }
+              )
+          });
+          const resolvedPage = loaded.currentPage;
+          if (
+            sourceDiagnosticSummary(loaded)?.isParseEmpty ||
+            !loaded.items.some((reply) => matchesReplyLocation(reply, target)) ||
+            !resolvedPage ||
+            !Number.isSafeInteger(resolvedPage) ||
+            resolvedPage <= 0
+          ) {
+            throw new Error('目标楼层未找到，请重试。');
+          }
+          const resolvedOffset = loaded.currentOffset ?? null;
+          const page: ReplyPage = {
+            ...loaded,
+            requestedPage: resolvedPage,
+            requestedOffset: resolvedOffset
+          };
+          queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, {
+            pages: [page],
+            pageParams: [{ page: resolvedPage, offset: resolvedOffset }]
+          });
+          targetWindowCacheOwnedRef.current = repliesQueryKey;
+          queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
+          finishDiagnosticTrace(trace, 'success', {
+            itemCount: loaded.items.length,
+            hasMore: Boolean(nextReplyPage(page)),
+            page: resolvedPage
+          });
+          if (!silent) notify(`已定位到第 ${floor} 楼`);
+          return 'completed' as const;
+        } catch (error) {
+          finishDiagnosticTrace(trace, isCanceledRequest(error) ? 'canceled' : 'failure', {
+            source: selectedTopic.source,
+            reason: isCanceledRequest(error) ? 'canceled' : normalizeDiagnosticReason(error)
+          });
+          throw error;
+        }
+      };
+      try {
+        return await loadTargetWindow();
+      } catch (error) {
+        const recovery: LinuxDoReadRecovery = {
+          queryKey: targetQueryKey,
+          resume: async () => {
+            queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
+            try {
+              return await loadTargetWindow();
+            } catch (retryError) {
+              return readOutcome(selectedTopic.source, retryError);
+            }
+          }
+        };
+        const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
+        handleReadError(selectedTopic.source, error, recovery, (candidate) =>
+          onNodeSeekTopicVerificationRequired(sourceError.message, candidate)
+        );
+        return readOutcome(selectedTopic.source, error);
+      }
+    },
+    [
+      handleReadError,
+      notify,
+      onNodeSeekTopicVerificationRequired,
+      queryClient,
+      readGateway,
+      repliesQueryKey,
+      selectedIdentityPending,
+      selectedTopic,
+      targetReplyQueryRoot,
+      topicDetail,
       topicReplies
+    ]
+  );
+
+  useEffect(() => {
+    if (!targetReply || !topicDetail || !selectedTopic || selectedIdentityPending) return;
+    const sessionEpoch = selectedTopic.source === 'v2ex' ? 0 : sessionEpochs[selectedTopic.source];
+    const targetKey = `${topicKey(selectedTopic)}:${sessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}`;
+    if (handledRouteTargetRef.current === targetKey) return;
+    handledRouteTargetRef.current = targetKey;
+    void locateReply(targetReply, { silent: true });
+  }, [locateReply, selectedIdentityPending, selectedTopic, sessionEpochs, targetReply, topicDetail]);
+
+  const loadPreviousReplies = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
+      if (!selectedTopic || selectedIdentityPending) return 'stale';
+      if (!repliesQuery.hasPreviousPage || repliesQuery.isFetchingPreviousPage) return 'completed';
+      const result = await repliesQuery.fetchPreviousPage();
+      if (result.error) return readOutcome(selectedTopic.source, result.error);
+      const loaded = result.data?.pages[0]?.items.length || 0;
+      if (!silent) notify(`已加载 ${loaded} 条更早回复`);
+      return 'completed';
+    },
+    [
+      notify,
+      repliesQuery.fetchPreviousPage,
+      repliesQuery.hasPreviousPage,
+      repliesQuery.isFetchingPreviousPage,
+      selectedIdentityPending,
+      selectedTopic
     ]
   );
 
@@ -951,13 +1215,17 @@ export function useTopicController({
     cancelTopicQueries,
     currentTopic,
     currentTopicKey,
+    loadPreviousReplies,
     loadMoreReplies,
+    locateReply,
     loadedQuotedReplies,
-    loadingMoreReplies: repliesQuery.isFetchingNextPage,
+    loadingMoreReplies: loadingTargetReply || repliesQuery.isFetchingNextPage,
+    loadingPreviousReplies: repliesQuery.isFetchingPreviousPage,
     loadingQuotedFloors,
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
+    replyHasPrevious,
     replyHasMore,
     replyNextOffset,
     replyNextPage,

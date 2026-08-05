@@ -1,14 +1,14 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '../render';
-import React, { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import React, { type ReactNode, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { ReplyComposer } from '@/features/topic/composer/ReplyComposer';
-import { createTheme } from '@/ui/theme/tokens';
-import { createTestStyles as createStyles } from '../styleFixture';
+import { ReplyComposer } from '@/ui/composer/ReplyComposer';
 import type { Source } from '@/domain/forum/models';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { createTheme } from '@/ui/theme/tokens';
 
 jest.mock('@gorhom/bottom-sheet', () => {
   const ReactModule = require('react') as typeof React;
@@ -48,10 +48,16 @@ jest.mock('react-native-gesture-handler', () => ({
 
 jest.mock('expo-image', () => ({ Image: () => null }));
 
-const readerData = createEmptyReaderData();
-const theme = createTheme(readerData.settings);
-const styles = createStyles(theme, readerData.settings, 800);
 const submitReply = jest.fn();
+const largeTextSettings = { ...createEmptyReaderData().settings, fontScale: 1.3 };
+
+function LargeTextWrapper({ children }: { children: ReactNode }) {
+  return (
+    <ReaderStyleProvider value={{ settings: largeTextSettings, theme: createTheme(largeTextSettings) }}>
+      {children}
+    </ReaderStyleProvider>
+  );
+}
 
 function ReplyHarness({
   actionBusy = false,
@@ -73,24 +79,32 @@ function ReplyHarness({
   const [visible, setVisible] = useState(true);
   const [content, setContent] = useState(initialContent);
   const [face, setFace] = useState('');
+  const targetAuthor = replyTarget?.author?.trim().replace(/^@+/, '');
+  const title = replyTarget
+    ? `回复 ${targetAuthor ? `@${targetAuthor} · ` : ''}#${replyTarget.floor}`
+    : replyEditTarget?.floor
+      ? `编辑 #${replyEditTarget.floor}`
+      : replyEditTarget
+        ? '编辑回复'
+        : '回复';
   return (
     <View>
       {visible ? (
         <ReplyComposer
           actionBusy={actionBusy}
+          closeLabel={replyEditTarget ? '取消编辑' : replyTarget ? '取消楼层回复' : '收起回复'}
+          content={content}
           discourseEmojiUrls={discourseEmojiUrls}
-          replyContent={content}
-          replyEditTarget={replyEditTarget}
-          replyFace={face}
-          replyTarget={replyTarget}
+          face={face}
+          placeholder={replyEditTarget ? '编辑回复内容' : replyTarget ? '输入楼层回复内容' : '输入回复内容'}
           source={source}
-          styles={styles}
-          theme={theme}
-          onReplyComposerOpenChange={setVisible}
-          onReplyContentChange={setContent}
-          onReplyFaceChange={setFace}
-          onSubmitReply={submitReply}
-          onUploadReplyImage={onUploadReplyImage}
+          submitLabel={replyEditTarget ? '保存编辑' : '发送回复'}
+          title={title}
+          onContentChange={setContent}
+          onFaceChange={setFace}
+          onOpenChange={setVisible}
+          onSubmit={submitReply}
+          onUploadImage={onUploadReplyImage}
         />
       ) : (
         <Pressable accessibilityRole="button" accessibilityLabel="打开回复" onPress={() => setVisible(true)}>
@@ -199,6 +213,8 @@ describe('Reply composer local behavior', () => {
     );
     await fireEvent.press(linuxDoView.getByLabelText('表情'));
     expect(linuxDoView.getByLabelText('party parrot')).toBeTruthy();
+    expect(linuxDoView.queryByText('party parrot')).toBeNull();
+    expect(linuxDoView.getByTestId('reply-composer-discourse-emoji-list').props.numColumns).toBe(5);
     await fireEvent.press(linuxDoView.getByLabelText('party parrot'));
     expect(linuxDoView.getByPlaceholderText('输入回复内容').props.value).toBe(':party_parrot:');
 
@@ -217,5 +233,17 @@ describe('Reply composer local behavior', () => {
     await fireEvent.press(linuxDoView.getByLabelText('表情'));
     await fireEvent.press(linuxDoView.getByLabelText('踩'));
     expect(linuxDoView.getByText('表情：踩')).toBeTruthy();
+  });
+
+  it('[REG-NOTIFY-036][REG-NOTIFY-038] scales the editor, wraps every tool and uses the theme cursor', async () => {
+    const view = await render(<ReplyHarness onUploadReplyImage={jest.fn()} />, { wrapper: LargeTextWrapper });
+    const theme = createTheme(largeTextSettings);
+    const input = view.getByPlaceholderText('输入回复内容');
+
+    expect(StyleSheet.flatten(input.props.style).fontSize).toBe(Math.round(14 * largeTextSettings.fontScale));
+    expect(input.props.cursorColor).toBe(theme.primary);
+    expect(input.props.selectionColor).toBe(theme.primary);
+    expect(StyleSheet.flatten(view.getByTestId('reply-composer-toolbar').props.style).flexWrap).toBe('wrap');
+    expect(view.getByLabelText('列表')).toBeTruthy();
   });
 });

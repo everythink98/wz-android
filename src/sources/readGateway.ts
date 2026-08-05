@@ -110,7 +110,11 @@ export function getTopic(options: GetTopicOptions) {
   });
 }
 
-type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & { categoryId?: string };
+type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & {
+  categoryId?: string;
+  pageHint?: number;
+  targetFloor?: number;
+};
 
 export function getReplies(options: GetRepliesOptions) {
   if (options.source !== 'yaohuo') {
@@ -121,6 +125,7 @@ export function getReplies(options: GetRepliesOptions) {
     categoryId: options.categoryId,
     page: options.page,
     limit: options.limit,
+    targetFloor: options.targetFloor,
     yaohuoFetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs

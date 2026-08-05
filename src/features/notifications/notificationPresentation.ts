@@ -1,4 +1,5 @@
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
+import { formatDateTime } from '@/domain/forum/presentation';
 import type { ForumNotification } from '@/domain/notifications/models';
 
 export function sortNotifications(items: ForumNotification[]) {
@@ -27,17 +28,15 @@ export function notificationActionText(kind: ForumNotification['kind']) {
   return '发来其他消息';
 }
 
-export function notificationTimeText(item: ForumNotification) {
-  if (item.createdAt) {
-    const date = new Date(item.createdAt);
-    if (!Number.isNaN(date.getTime())) {
-      return new Intl.DateTimeFormat('zh-CN', {
-        month: 'numeric',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      }).format(date);
-    }
+export function formatNotificationTime(value?: string | null) {
+  if (!value) return '';
+  const siteTime = value.trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (siteTime) {
+    return `${siteTime[1]}-${siteTime[2]!.padStart(2, '0')}-${siteTime[3]!.padStart(2, '0')} ${siteTime[4]!.padStart(2, '0')}:${siteTime[5]}`;
   }
-  return item.displayTime || '时间未知';
+  return formatDateTime(value);
+}
+
+export function notificationTimeText(item: ForumNotification) {
+  return formatNotificationTime(item.createdAt || item.displayTime) || '时间未知';
 }

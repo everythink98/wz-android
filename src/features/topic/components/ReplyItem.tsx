@@ -8,6 +8,8 @@ import { CheckCircle, Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Tr
 import type {
   QuotedPostMetadata,
   Reply,
+  ReplyLocationTarget,
+  ReplyTargetAuthor,
   Source,
   Topic,
   TopicDetail,
@@ -37,7 +39,7 @@ import { replyContextBadgeStyle, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
-import { userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
+import { normalizeUserReference, userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
 import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../model/topicDerivedData';
 import { TopicPolls } from './TopicPolls';
@@ -62,6 +64,20 @@ function topicForQuotedPost(quote: QuotedPostMetadata, baseUrl?: string): Topic 
   return topic?.source === quote.reference.source && topic.id === quote.reference.topicId
     ? { ...topic, ...(quote.topicTitle ? { title: quote.topicTitle } : {}) }
     : null;
+}
+
+function userFromReplyTarget(source: Source | undefined, author: ReplyTargetAuthor | undefined) {
+  if (!source || !author) return null;
+  if (author.id) {
+    return normalizeUserReference({
+      source,
+      id: author.id,
+      ...(author.username ? { username: author.username } : {}),
+      displayName: author.name,
+      url: author.url || ''
+    });
+  }
+  return author.username ? userReferenceFromUsername(source, author.username, author.name) : null;
 }
 
 function visibleNodeSeekStat(label: string, value: number | undefined): NodeSeekStat | null {
@@ -194,6 +210,7 @@ export function ReplyItem({
   onInteract,
   onDeleteReply,
   onEditReply,
+  onLocateReply,
   onOpenTopic,
   onOpenUser,
   onQuoteContentLayout,
@@ -228,7 +245,8 @@ export function ReplyItem({
   onInteract: (type: InteractionType, commentId?: number) => void;
   onDeleteReply: (reply: Reply) => void;
   onEditReply: (reply: Reply) => void;
-  onOpenTopic: (topic: Topic) => void;
+  onLocateReply: (target: ReplyLocationTarget) => void;
+  onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
   onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
   onReplyToFloor: (reply: Reply) => void;
@@ -382,8 +400,12 @@ export function ReplyItem({
       ? linuxDoReactionStats(reply, discourseEmojiUrls)
       : discourseReactionStats(reply, discourseEmojiUrls)
     : [];
-  const replyTargetUsername = isDiscourse ? reply.replyTargetUsername : reply.replyTargetAuthor;
-  const replyTargetUser = source && replyTargetUsername ? userReferenceFromUsername(source, replyTargetUsername) : null;
+  const replyTargetFloor = reply.replyTarget?.floor;
+  const loadedReplyTarget = replyTargetFloor ? repliesByFloor.get(replyTargetFloor) : undefined;
+  const replyTargetName = reply.replyTarget?.author?.name || loadedReplyTarget?.author || '';
+  const replyTargetUser =
+    userFromReplyTarget(source, reply.replyTarget?.author) ||
+    (loadedReplyTarget ? userFromReply(loadedReplyTarget, source) : null);
   if (reply.systemAction) {
     const actionText = systemActionText(reply);
     const author = reply.author || '系统';
@@ -428,54 +450,61 @@ export function ReplyItem({
               <Text style={styles.replyAcceptedNoticeText}>已解决</Text>
             </View>
           ) : null}
-          <Pressable
-            accessibilityRole="button"
-            disabled={!replyUser}
-            style={styles.replyHead}
-            onPress={() => {
-              if (replyUser) {
-                onOpenUser(replyUser);
-              }
-            }}
-          >
-            <Avatar contentSource={source || null} small name={reply.author} uri={reply.authorAvatar} />
-            <View style={styles.replyAuthorBlock}>
-              <View style={styles.replyAuthorNameRow}>
-                <Text style={styles.replyAuthor} numberOfLines={1}>
-                  {reply.author || '未知作者'}
-                </Text>
-                {reply.authorLevelLabel ? (
-                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]} numberOfLines={1}>
-                    {reply.authorLevelLabel}
+          <View style={styles.replyHead}>
+            <Pressable
+              accessibilityRole="link"
+              disabled={!replyUser}
+              style={styles.replyAuthorLink}
+              onPress={() => replyUser && onOpenUser(replyUser)}
+            >
+              <Avatar contentSource={source || null} small name={reply.author} uri={reply.authorAvatar} />
+              <View style={styles.replyAuthorBlock}>
+                <View style={styles.replyAuthorNameRow}>
+                  <Text style={styles.replyAuthor} numberOfLines={1}>
+                    {reply.author || '未知作者'}
                   </Text>
-                ) : null}
-                {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
-                {reply.hot ? (
-                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text>
-                ) : null}
-                {reply.pinned ? (
-                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text>
-                ) : null}
-                {reply.wiki ? (
-                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text>
-                ) : null}
-                {reply.hidden ? (
-                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text>
-                ) : null}
-                {reply.folded ? (
-                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text>
-                ) : null}
-                {reply.siteExtension?.source === 'linuxdo' && reply.siteExtension.needsApproval ? (
-                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text>
-                ) : null}
+                  {reply.authorLevelLabel ? (
+                    <Text
+                      style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}
+                      numberOfLines={1}
+                    >
+                      {reply.authorLevelLabel}
+                    </Text>
+                  ) : null}
+                  {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
+                  {reply.hot ? (
+                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text>
+                  ) : null}
+                  {reply.pinned ? (
+                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text>
+                  ) : null}
+                  {reply.wiki ? (
+                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text>
+                  ) : null}
+                  {reply.hidden ? (
+                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text>
+                  ) : null}
+                  {reply.folded ? (
+                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text>
+                  ) : null}
+                  {reply.siteExtension?.source === 'linuxdo' && reply.siteExtension.needsApproval ? (
+                    <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text>
+                  ) : null}
+                </View>
+                <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
               </View>
-              <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
-            </View>
-            <View style={styles.replyFloorBadge}>
+            </Pressable>
+            <Pressable
+              accessibilityRole="link"
+              disabled={!reply.floor}
+              hitSlop={12}
+              style={styles.replyFloorBadge}
+              onPress={() => reply.floor && onLocateReply({ floor: reply.floor })}
+            >
               <Text style={styles.replyFloorText}>#{reply.floor ?? '-'}</Text>
-            </View>
+            </Pressable>
             {isNew ? <Text style={styles.replyNewBadge}>新增</Text> : null}
-          </Pressable>
+          </View>
         </>
       ) : null}
       {showQuotes || showTail ? (
@@ -512,29 +541,44 @@ export function ReplyItem({
                     testID={`reply-quote-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
                   >
                     <View style={styles.quoteHeader}>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={!quotedUser}
-                        style={styles.quoteAuthorSummary}
-                        onPress={() => {
-                          if (quotedUser) {
-                            onOpenUser(quotedUser);
-                          }
-                        }}
-                      >
-                        <Avatar
-                          contentSource={reference.source}
-                          small
-                          name={quotedAuthorName}
-                          uri={quotedReply?.authorAvatar}
-                        />
+                      <View style={styles.quoteAuthorSummary}>
+                        <Pressable
+                          accessibilityRole="link"
+                          disabled={!quotedUser}
+                          hitSlop={12}
+                          onPress={() => quotedUser && onOpenUser(quotedUser)}
+                        >
+                          <Avatar
+                            contentSource={reference.source}
+                            small
+                            name={quotedAuthorName}
+                            uri={quotedReply?.authorAvatar}
+                          />
+                        </Pressable>
                         <View style={styles.quoteAuthorTextBlock}>
-                          <Text style={styles.quoteAuthorText} numberOfLines={1}>
-                            {quotedAuthorName}
-                          </Text>
-                          <Text style={styles.replyMeta}>引用 #{reference.postNumber}</Text>
+                          <Pressable
+                            accessibilityRole="link"
+                            disabled={!quotedUser}
+                            hitSlop={8}
+                            onPress={() => quotedUser && onOpenUser(quotedUser)}
+                          >
+                            <Text style={styles.quoteAuthorText} numberOfLines={1}>
+                              {quotedAuthorName}
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            accessibilityRole="link"
+                            hitSlop={8}
+                            onPress={() =>
+                              quotedTopic
+                                ? onOpenTopic(quotedTopic, { floor: reference.postNumber })
+                                : onLocateReply({ floor: reference.postNumber })
+                            }
+                          >
+                            <Text style={styles.replyMeta}>引用 #{reference.postNumber}</Text>
+                          </Pressable>
                         </View>
-                      </Pressable>
+                      </View>
                       <AppButton
                         compact
                         label={loading ? '读取' : expanded ? '收起' : '展开'}
@@ -553,7 +597,7 @@ export function ReplyItem({
                       <Pressable
                         accessibilityRole="link"
                         style={styles.quoteTopicLink}
-                        onPress={() => onOpenTopic(quotedTopic)}
+                        onPress={() => onOpenTopic(quotedTopic, { floor: reference.postNumber })}
                       >
                         <Text style={styles.quoteTopicLinkText} numberOfLines={2}>
                           {quotedTopic.title}
@@ -617,20 +661,30 @@ export function ReplyItem({
           ) : null}
           {showTail ? (
             <>
-              {reply.replyTargetAuthor ? (
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={!replyTargetUser}
-                  hitSlop={12}
-                  style={styles.replyTargetPill}
-                  onPress={() => {
-                    if (replyTargetUser) {
-                      onOpenUser(replyTargetUser);
-                    }
-                  }}
-                >
-                  <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
-                </Pressable>
+              {replyTargetName || replyTargetFloor ? (
+                <View style={styles.replyTargetPill}>
+                  <Text style={styles.replyTargetText}>回复</Text>
+                  {replyTargetName ? (
+                    <Pressable
+                      accessibilityRole="link"
+                      disabled={!replyTargetUser}
+                      hitSlop={12}
+                      onPress={() => replyTargetUser && onOpenUser(replyTargetUser)}
+                    >
+                      <Text style={styles.replyTargetText}>@{replyTargetName.replace(/^@+/, '')}</Text>
+                    </Pressable>
+                  ) : null}
+                  {replyTargetName && replyTargetFloor ? <Text style={styles.replyTargetText}>·</Text> : null}
+                  {replyTargetFloor ? (
+                    <Pressable
+                      accessibilityRole="link"
+                      hitSlop={12}
+                      onPress={() => onLocateReply({ floor: replyTargetFloor })}
+                    >
+                      <Text style={styles.replyTargetText}>#{replyTargetFloor}</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               ) : null}
               {isDiscourse ? (
                 <View style={styles.replyBody}>
@@ -955,6 +1009,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.onDeleteReply !== next.onDeleteReply ||
     previous.onEditReply !== next.onEditReply ||
     previous.onInteract !== next.onInteract ||
+    previous.onLocateReply !== next.onLocateReply ||
     previous.onOpenTopic !== next.onOpenTopic ||
     previous.onOpenUser !== next.onOpenUser ||
     previous.onQuoteContentLayout !== next.onQuoteContentLayout ||
@@ -964,6 +1019,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.onVotePoll !== next.onVotePoll ||
     previous.pollSelections !== next.pollSelections ||
     previous.query !== next.query ||
+    previous.reply.replyTarget !== next.reply.replyTarget ||
     previous.replyFloor !== next.replyFloor ||
     !sameReplyItemSection(previous.section, next.section) ||
     previous.source !== next.source ||
@@ -978,6 +1034,9 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   ) {
     return false;
   }
+
+  const targetFloor = next.reply.replyTarget?.floor;
+  if (targetFloor && previous.repliesByFloor.get(targetFloor) !== next.repliesByFloor.get(targetFloor)) return false;
 
   for (const { reference } of next.reply.quotedPosts || []) {
     const previousKey = replyQuotedPostInstanceKey(getReplyKey(previous.reply), reference);

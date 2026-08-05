@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasNextReplyPage } from './useTopicController';
+import { hasNextReplyPage, hasPreviousReplyPage } from './useTopicController';
 
 describe('topic query pagination', () => {
   it('accepts an advancing reply cursor', () => {
@@ -22,6 +22,25 @@ describe('topic query pagination', () => {
         requestedOffset: 20,
         nextPage: 2,
         nextOffset: 20
+      })
+    ).toBe(false);
+  });
+
+  it('[REG-TOPIC-062] accepts an advancing previous cursor and rejects a repeated one', () => {
+    expect(
+      hasPreviousReplyPage({
+        requestedPage: 16,
+        requestedOffset: 150,
+        previousPage: 15,
+        previousOffset: 140
+      })
+    ).toBe(true);
+    expect(
+      hasPreviousReplyPage({
+        requestedPage: 16,
+        requestedOffset: 150,
+        previousPage: 16,
+        previousOffset: 150
       })
     ).toBe(false);
   });

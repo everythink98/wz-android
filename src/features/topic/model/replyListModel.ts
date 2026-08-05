@@ -10,6 +10,7 @@ export type ReplyQuoteContent = { type: 'html'; html: string } | { type: 'poll';
 
 export type TopicReplyListItem =
   | { type: 'replyControls'; key: string }
+  | { type: 'replyWindowStart'; key: string }
   | { type: 'emptyReplies'; key: string }
   | { type: 'reply'; key: string; reply: Reply; replyFloor: number }
   | { type: 'replyStart'; key: string; reply: Reply; replyFloor: number }
@@ -158,16 +159,19 @@ export function topicListItemSpacing(leading: TopicReplyListItem, trailing: Topi
 
 export function buildReplyListItems({
   canShowReplies,
+  showWindowStart = false,
   replyItems,
   topicShowsAccessNotice
 }: {
   canShowReplies: boolean;
+  showWindowStart?: boolean;
   replyItems: TopicReplyListItem[];
   topicShowsAccessNotice: boolean;
 }): TopicReplyListItem[] {
   if (!canShowReplies || topicShowsAccessNotice) return [];
   return [
     { type: 'replyControls', key: 'reply-controls' },
+    ...(showWindowStart ? ([{ type: 'replyWindowStart', key: 'reply-window-start' }] as const) : []),
     ...(replyItems.length
       ? replyItems
       : ([{ type: 'emptyReplies', key: 'empty-replies' }] satisfies TopicReplyListItem[]))

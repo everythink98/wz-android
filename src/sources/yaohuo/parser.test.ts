@@ -74,6 +74,58 @@ describe('yaohuo reply parsing', () => {
     expect(replies.items[1].deletePath).toBeUndefined();
   });
 
+  it('[REG-TOPIC-061][REG-TOPIC-062] sorts Yaohuo windows by floor and preserves reply targets', () => {
+    const replies = parseYaohuoRepliesHtml(
+      `
+      <div class="list-reply line1" id="floor-90" data-floor="90">
+        [<span class="floornumber">90</span><span>楼</span>]
+        [<a class="replyicon" href="/bbs/book_re.aspx?reply=90&amp;touserid=1000">回</a>]
+        <span class="reother">回复<a href="/bbs/book_re.aspx?classid=177&amp;id=1560939&amp;tofloor=88&amp;page=16#floor-88">88楼</a></span>
+        <span class="recolon">:</span>
+        <span class="retext">阿根廷当然赢，但能赢几个是不确定的</span>
+        <span class="renick"><a href="/bbs/userinfo.aspx?touserid=1000">Clover</a></span>
+        <span class="retime">07-03 13:46</span>
+      </div>
+      <div class="list-reply line2" id="floor-88" data-floor="88">
+        [<span class="floornumber">88</span><span>楼</span>]
+        <span class="retext">阿根廷没问题。</span>
+        <span class="renick"><a href="/bbs/userinfo.aspx?touserid=45245">流金岁月</a></span>
+        <span class="retime">07-03 13:45</span>
+      </div>
+      `,
+      {
+        page: 16,
+        url: 'https://www.yaohuo.me/bbs/book_re.aspx?classid=177&id=1560939&page=16'
+      }
+    );
+
+    expect(replies.items.map(({ floor }) => floor)).toEqual([88, 90]);
+    expect(replies.items.find(({ floor }) => floor === 90)).toMatchObject({
+      floor: 90,
+      replyTarget: {
+        floor: 88,
+        author: {
+          id: '45245',
+          name: '流金岁月',
+          url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=45245'
+        }
+      }
+    });
+
+    const crossPage = parseYaohuoRepliesHtml(
+      `
+      <div class="list-reply line1" id="floor-61" data-floor="61">
+        <span class="reother">回复<a href="/bbs/book_re.aspx?id=1560939&amp;tofloor=30">30楼</a></span>
+        <span class="retext">跨页回复</span>
+        <span class="renick"><a href="/bbs/userinfo.aspx?touserid=1000">Clover</a></span>
+      </div>
+      `,
+      { page: 17, url: 'https://www.yaohuo.me/bbs/book_re.aspx?id=1560939&page=17' }
+    );
+    expect(crossPage.items[0]).toMatchObject({ replyTarget: { floor: 30 } });
+    expect(crossPage.items[0]?.replyTarget?.author).toBeUndefined();
+  });
+
   it('does not duplicate user reply rows when the page wraps replies in outer divs', () => {
     const replies = parseYaohuoUserRepliesHtml(
       `

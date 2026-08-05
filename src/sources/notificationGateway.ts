@@ -10,6 +10,13 @@ import {
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
 import { sourceErrorFromUnknown } from './sourceErrors';
 import { notificationAdapters } from './notificationAdapters';
+import { xiaoyinsiCredentialsHaveScope } from '@/sources/xiaoyinsi/credentials';
+import type { NormalizedReplyImageAsset } from './imageUpload';
+import { replyImageMarkupForSource } from './imageUpload';
+import { uploadNodeSeekReplyImage } from '@/sources/nodeimage/upload';
+import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from './discourseActions';
+import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
+import { runXiaoyinsiAction } from '@/sources/xiaoyinsi/actionClient';
 
 export type NotificationAccessReader = (
   source: NotificationSource
@@ -103,6 +110,7 @@ export function createNotificationGateway({
     source: NotificationSource,
     options: {
       cursor?: string | null;
+      categoryId?: string;
       expectedIdentityKey?: string;
       limit?: number;
       signal?: AbortSignal;
@@ -115,6 +123,7 @@ export function createNotificationGateway({
       async (trace) =>
         adapters[source].listPage({
           ...(await accessFor(source, trace, options.signal, options.expectedIdentityKey)),
+          categoryId: options.categoryId,
           cursor: options.cursor,
           limit: options.limit,
           unreadOnly: options.unreadOnly
@@ -124,6 +133,12 @@ export function createNotificationGateway({
 
   return {
     listPage,
+
+    async getCategories(source: NotificationSource, expectedIdentityKey?: string, signal?: AbortSignal) {
+      return runWithNotificationDiagnostics(source, 'load', async (trace) =>
+        adapters[source].getCategories(await accessFor(source, trace, signal, expectedIdentityKey))
+      );
+    },
 
     async listAllPage(
       options: {
@@ -202,6 +217,78 @@ export function createNotificationGateway({
           ),
         (result) => ({ isConfirmed: result.confirmed })
       );
+    },
+
+    async replyToConversation(
+      item: ForumNotification,
+      content: string,
+      expectedIdentityKey: string,
+      signal?: AbortSignal
+    ) {
+      return runWithNotificationDiagnostics(
+        item.source,
+        'mutate',
+        async (trace) => {
+          const access = await accessFor(item.source, trace, signal, expectedIdentityKey);
+          if (item.source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(access.xiaoyinsiCredentials, 'write')) {
+            throw new Error('小隐寺需要升级写入授权');
+          }
+          if (!content.trim()) throw new Error('请输入回复内容');
+          assertNotAborted(signal);
+          return adapters[item.source].replyToConversation(item, content, access);
+        },
+        (result) => ({ isConfirmed: result.confirmed })
+      );
+    },
+
+    async uploadReplyImage(
+      source: NotificationSource,
+      options: {
+        expectedIdentityKey: string;
+        file: NormalizedReplyImageAsset;
+        nodeImageApiKey?: string;
+        signal?: AbortSignal;
+      }
+    ) {
+      return runWithNotificationDiagnostics(source, 'mutate', async (trace) => {
+        const access = await accessFor(source, trace, options.signal, options.expectedIdentityKey);
+        if (source === 'yaohuo') throw new Error('妖火私信仅支持纯文本');
+        if (source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(access.xiaoyinsiCredentials, 'write')) {
+          throw new Error('小隐寺需要升级写入授权');
+        }
+        assertNotAborted(options.signal);
+        let imageUrl = '';
+        if (source === 'nodeseek') {
+          imageUrl = await uploadNodeSeekReplyImage({
+            apiKey: options.nodeImageApiKey || '',
+            file: options.file,
+            fetcher: access.fetcher,
+            signal: options.signal,
+            timeoutMs: access.timeoutMs
+          });
+        } else {
+          const request = buildDiscourseSourceActionRequest(source, { type: 'upload', file: options.file });
+          const data =
+            source === 'linuxdo'
+              ? await runLinuxDoAction({
+                  fetcher: access.fetcher,
+                  request,
+                  signal: options.signal,
+                  timeoutMs: access.timeoutMs,
+                  userAgent: access.userAgent
+                })
+              : await runXiaoyinsiAction({
+                  credentials: access.xiaoyinsiCredentials!,
+                  fetcher: access.fetcher,
+                  request,
+                  signal: options.signal,
+                  timeoutMs: access.timeoutMs
+                });
+          imageUrl = discourseSourceUploadUrl(source, data);
+        }
+        assertNotAborted(options.signal);
+        return { markup: replyImageMarkupForSource(source, imageUrl, options.file.name) };
+      });
     },
 
     async markAllRead(source: NotificationSource, expectedIdentityKey: string, signal?: AbortSignal) {

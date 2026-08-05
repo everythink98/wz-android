@@ -417,6 +417,43 @@ describe('xiaoyinsi adapter', () => {
     expect(next.items[0]).toMatchObject({ floor: 4, author: 'dave' });
   });
 
+  it('[REG-TOPIC-062] opens a distant reply through one authenticated near-post window', async () => {
+    const stream = Array.from({ length: 120 }, (_, index) => 1000 + index);
+    const nearPosts = Array.from({ length: 20 }, (_, index) => ({
+      id: stream[80 + index],
+      post_number: 81 + index,
+      username: `user-${81 + index}`,
+      cooked: `<p>reply ${81 + index}</p>`,
+      created_at: '2026-07-01T00:00:00.000Z'
+    }));
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      expect(url.pathname).toBe('/t/42/90.json');
+      expect(new Headers(init?.headers).get('User-Api-Key')).toBe('secret-key');
+      expect(new Headers(init?.headers).get('User-Api-Client-Id')).toBe('install-client');
+      return json({ post_stream: { stream, posts: nearPosts } });
+    });
+
+    const result = await getXiaoyinsiReplies('42', {
+      fetcher,
+      credentials: { apiKey: 'secret-key', clientId: 'install-client' },
+      targetFloor: 90,
+      limit: 30
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      currentPage: 3,
+      currentOffset: 79,
+      previousPage: 2,
+      previousOffset: 49,
+      nextPage: 4,
+      nextOffset: 99,
+      totalCount: 119
+    });
+    expect(result.items.find((reply) => reply.floor === 90)?.author).toBe('user-90');
+  });
+
   it('[REG-XIAOYINSI-016] loads 小隐寺 tag candidates without the unsupported limit parameter', async () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);

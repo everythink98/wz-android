@@ -55,8 +55,9 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
     const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)
       ? `${text}Z`
       : text.replace(
-          /^(\d{4}-\d{1,2}-\d{1,2})\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([+-]\d{2}:?\d{2})?$/,
-          (_match, date, clock, zone = '') => `${date}T${clock}${zone || defaultTimezone}`
+          /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([+-]\d{2}:?\d{2})?$/,
+          (_match, year, month, day, hour, minute, second = '', zone = '') =>
+            `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hour.padStart(2, '0')}:${minute}${second ? `:${second}` : ''}${zone || defaultTimezone}`
         );
     time = Date.parse(normalized);
   }

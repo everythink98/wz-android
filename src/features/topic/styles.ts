@@ -13,9 +13,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
   const radiusLg = 18;
   const neutralBase = theme.dark ? '#ffffff' : '#000000';
   const replyNeutralSurface = alphaColor(neutralBase, theme.dark ? 0.06 : 0.035);
-  const replyNeutralSurfaceStrong = alphaColor(neutralBase, theme.dark ? 0.11 : 0.065);
   const replyNeutralBorder = alphaColor(neutralBase, theme.dark ? 0.12 : 0.09);
-  const replyNeutralBorderStrong = alphaColor(neutralBase, theme.dark ? 0.24 : 0.16);
   return StyleSheet.create({
     actions: {
       alignItems: 'center',
@@ -242,180 +240,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '500'
-    },
-    replyInput: {
-      borderColor: replyNeutralBorder,
-      maxHeight: 180,
-      minHeight: 92,
-      textAlignVertical: 'top'
-    },
-    replyFormatToolbarScroll: {
-      flexGrow: 0,
-      backgroundColor: replyNeutralSurface,
-      borderColor: replyNeutralBorder,
-      borderRadius: radiusSm,
-      borderWidth: StyleSheet.hairlineWidth,
-      maxWidth: '100%',
-      minHeight: 48,
-      width: '100%'
-    },
-    replyFormatToolbar: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 8,
-      minHeight: 46,
-      paddingHorizontal: 6,
-      paddingRight: 14,
-      paddingVertical: 4
-    },
-    replyExpressionSelected: {
-      alignSelf: 'flex-start',
-      backgroundColor: replyNeutralSurfaceStrong,
-      borderColor: replyNeutralBorderStrong,
-      borderRadius: 999,
-      borderWidth: StyleSheet.hairlineWidth,
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '700',
-      lineHeight: 18,
-      paddingHorizontal: 9,
-      paddingVertical: 3
-    },
-    replyExpressionPanel: {
-      maxHeight: 238,
-      borderColor: replyNeutralBorder,
-      borderRadius: radiusSm,
-      borderWidth: StyleSheet.hairlineWidth,
-      overflow: 'hidden',
-      backgroundColor: replyNeutralSurface
-    },
-    replyExpressionGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      padding: 10
-    },
-    replyExpressionChip: {
-      minHeight: 44,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 6,
-      borderColor: replyNeutralBorder,
-      borderRadius: radiusSm,
-      borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface,
-      paddingHorizontal: 10,
-      paddingVertical: 7
-    },
-    replyExpressionChipActive: {
-      backgroundColor: replyNeutralSurfaceStrong,
-      borderColor: replyNeutralBorderStrong
-    },
-    replyExpressionPreview: {
-      height: 26,
-      resizeMode: 'contain',
-      width: 26
-    },
-    replyExpressionChipText: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500',
-      maxWidth: 96
-    },
-    replyLinuxDoEmojiList: {
-      maxHeight: 238,
-      borderColor: replyNeutralBorder,
-      borderRadius: radiusSm,
-      borderWidth: StyleSheet.hairlineWidth,
-      overflow: 'hidden',
-      backgroundColor: replyNeutralSurface
-    },
-    replyLinuxDoEmojiListContent: {
-      padding: 10,
-      paddingBottom: 2
-    },
-    replyLinuxDoEmojiRow: {
-      gap: 8,
-      marginBottom: 8
-    },
-    replyLinuxDoEmojiItem: {
-      minHeight: 48,
-      alignItems: 'center',
-      justifyContent: 'flex-start',
-      flexDirection: 'row',
-      flex: 1,
-      gap: 6,
-      borderColor: replyNeutralBorder,
-      borderRadius: radiusSm,
-      borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface,
-      paddingHorizontal: 10,
-      paddingVertical: 8
-    },
-    replyLinuxDoEmojiItemText: {
-      color: theme.ink,
-      flex: 1,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500'
-    },
-    replyStickerCategoryRail: {
-      alignItems: 'center',
-      borderBottomColor: replyNeutralBorder,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      flexDirection: 'row',
-      gap: 6,
-      minHeight: 42,
-      paddingHorizontal: 8,
-      paddingVertical: 4
-    },
-    replyStickerCategoryTab: {
-      borderRadius: radiusSm,
-      minHeight: 34,
-      justifyContent: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 6
-    },
-    replyStickerCategoryTabActive: {
-      backgroundColor: replyNeutralSurfaceStrong
-    },
-    replyStickerCategoryTabText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '600'
-    },
-    replyStickerCategoryTabTextActive: {
-      color: theme.ink
-    },
-    replyStickerGridScroll: {
-      maxHeight: 198
-    },
-    replyStickerChip: {
-      width: 56,
-      height: 60,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderColor: replyNeutralBorder,
-      borderRadius: radiusSm,
-      borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface,
-      padding: 3
-    },
-    replyStickerPreview: {
-      height: 46,
-      resizeMode: 'contain',
-      width: 46
-    },
-    replyComposerActions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      justifyContent: 'flex-end'
     },
     searchRow: {
       alignItems: 'center',
@@ -948,25 +772,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       borderWidth: StyleSheet.hairlineWidth,
       overflow: 'hidden'
     },
-    replyBox: {
-      width: '100%',
-      gap: 10,
-      backgroundColor: theme.surface,
-      borderColor: replyNeutralBorder,
-      borderRadius: radiusMd,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 12
-    },
-    replyComposerSheetBox: {
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      borderRadius: 0,
-      borderWidth: 0,
-      paddingTop: 14,
-      paddingRight: 16,
-      paddingBottom: 0,
-      paddingLeft: 16
-    },
     replyComposerBottomSheetBackground: {
       backgroundColor: theme.surface,
       borderTopLeftRadius: radiusLg,
@@ -990,6 +795,10 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
     },
     replyListItem: {
       alignSelf: 'center'
+    },
+    replyLocationHighlight: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.09),
+      borderRadius: 10
     },
     topicFooter: {
       alignSelf: 'center',
@@ -1069,6 +878,13 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       gap: 10,
       minHeight: 48
     },
+    replyAuthorLink: {
+      alignItems: 'center',
+      flex: 1,
+      flexDirection: 'row',
+      gap: 10,
+      minWidth: 0
+    },
     replyFloorBadge: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -1141,10 +957,13 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
     },
     replyTargetPill: {
       alignSelf: 'flex-start',
+      alignItems: 'center',
       backgroundColor: alphaColor(linkColor, theme.dark ? 0.14 : 0.06),
       borderColor: alphaColor(linkColor, theme.dark ? 0.3 : 0.16),
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 5,
       paddingHorizontal: 10,
       paddingVertical: 5
     },

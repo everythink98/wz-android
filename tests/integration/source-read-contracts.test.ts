@@ -153,6 +153,73 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/|10\.0\.2\.2|127\.0\.0\.1:3000/);
   });
 
+  it('[REG-TOPIC-062] reads a distant NodeSeek floor from one exact page window', async () => {
+    const payload = (floor: number) =>
+      Buffer.from(
+        JSON.stringify({
+          postData: {
+            postId: 999,
+            title: 'Anchored topic',
+            comments: [
+              {
+                commentId: floor,
+                floorIndex: floor,
+                poster: { name: floor === 155 ? 'target' : 'next' },
+                markdown: `reply ${floor}`,
+                time: { createdDate: '2026-08-05T00:00:00.000Z' }
+              }
+            ]
+          }
+        })
+      ).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(input.match(/post-999-(\d+)/)?.[1]);
+      expect([16, 17]).toContain(page);
+      return html(`<script>${payload(page === 16 ? 155 : 165)}</script><a href="/post-999-${page + 1}">下一页</a>`);
+    });
+
+    const replies = await getReplies({
+      source: 'nodeseek',
+      id: '999',
+      page: 1,
+      pageHint: 16,
+      targetFloor: 155,
+      limit: 10,
+      fillPages: true,
+      fetcher
+    });
+    const repliesWithoutHint = await getReplies({
+      source: 'nodeseek',
+      id: '999',
+      page: 1,
+      targetFloor: 155,
+      limit: 10,
+      fillPages: true,
+      fetcher
+    });
+    const next = await getReplies({
+      source: 'nodeseek',
+      id: '999',
+      page: replies.nextPage!,
+      offset: replies.nextOffset,
+      limit: 30,
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(replies).toMatchObject({
+      currentPage: 16,
+      currentOffset: 150,
+      previousPage: 15,
+      previousOffset: 140,
+      nextPage: 17,
+      nextOffset: 160
+    });
+    expect(replies.items).toContainEqual(expect.objectContaining({ floor: 155, commentId: 155 }));
+    expect(repliesWithoutHint).toMatchObject({ currentPage: 16, currentOffset: 150 });
+    expect(next).toMatchObject({ currentPage: 17, currentOffset: 160, nextPage: 18, nextOffset: 170 });
+  });
+
   it('converts NodeSeek Bilibili image syntax into embeddable player HTML', async () => {
     const payload = Buffer.from(
       JSON.stringify({
@@ -2536,6 +2603,48 @@ describe('Android local sources', () => {
       })
     ).rejects.toThrow('用户名不能为空');
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-062] opens a linux.do reply near-post as one anchored window', async () => {
+    const stream = Array.from({ length: 120 }, (_, index) => 1000 + index);
+    const posts = Array.from({ length: 20 }, (_, index) => {
+      const floor = 81 + index;
+      return {
+        id: stream[floor - 1],
+        post_number: floor,
+        username: floor === 90 ? 'target' : `user-${floor}`,
+        cooked: `<p>reply ${floor}</p>`,
+        created_at: '2026-08-05T00:00:00.000Z',
+        can_edit: false
+      };
+    });
+    const fetcher = vi.fn(async (input: string) => {
+      expect(new URL(input).pathname).toBe('/t/900/90.json');
+      return json({ chunk_size: 20, post_stream: { posts, stream } });
+    });
+
+    const replies = await getReplies({
+      source: 'linuxdo',
+      id: '900',
+      page: 1,
+      targetFloor: 90,
+      limit: 30,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(replies).toMatchObject({
+      currentPage: 3,
+      currentOffset: 79,
+      previousPage: 2,
+      previousOffset: 49,
+      hasMore: true,
+      nextPage: 4,
+      nextOffset: 99,
+      totalCount: 119
+    });
+    expect(replies.items).toContainEqual(expect.objectContaining({ floor: 90, author: 'target' }));
   });
 
   it('[REG-TOPIC-024] resolves later linux.do reply pages from the current server stream', async () => {
@@ -5917,7 +6026,7 @@ describe('Android local sources', () => {
       author: 'neo',
       commentId: 7002,
       floor: 2,
-      replyTargetAuthor: 'alice',
+      replyTarget: { author: { name: 'alice', username: 'alice' } },
       thanksCount: 2
     });
   });
@@ -5984,7 +6093,7 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'v2ex', id: '814', fetcher });
 
     expect(topic.replies[0]).toMatchObject({ commentId: 8001, floor: 1 });
-    expect(topic.replies[0].replyTargetAuthor).toBeUndefined();
+    expect(topic.replies[0].replyTarget).toBeUndefined();
   });
 
   it('falls back to V2EX origin HTML replies when the public replies API times out', async () => {
@@ -6043,7 +6152,7 @@ describe('Android local sources', () => {
       author: 'bob',
       commentId: 7102,
       floor: 2,
-      replyTargetAuthor: 'alice',
+      replyTarget: { author: { name: 'alice', username: 'alice' } },
       thanksCount: 3
     });
   });

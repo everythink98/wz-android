@@ -34,6 +34,7 @@ import {
   discourseOriginalPoster,
   discoursePolls,
   discoursePostFields,
+  discourseReplyWindow,
   discourseTopicFields,
   discourseUsersById
 } from '@/sources/discourse/model';
@@ -52,6 +53,7 @@ export interface LinuxDoOptions {
   linuxDoAccess?: { authenticated?: boolean; userAgent?: string };
   signal?: AbortSignal;
   timeoutMs?: number;
+  trackVisit?: boolean;
 }
 
 export function linuxDoOptionsWithBrowserIntent<T extends LinuxDoOptions>(
@@ -464,8 +466,12 @@ export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promis
   });
 }
 
-async function topicData(id: string, options: LinuxDoOptions) {
-  return fetchLinuxDoJson<Record<string, unknown>>(`/t/${encodeURIComponent(id)}.json`, undefined, options);
+async function topicData(id: string, options: LinuxDoOptions, targetFloor?: number) {
+  return fetchLinuxDoJson<Record<string, unknown>>(
+    `/t/${encodeURIComponent(id)}${targetFloor ? `/${targetFloor}` : ''}.json`,
+    options.trackVisit ? { track_visit: 'true', forceLoad: 'true' } : undefined,
+    options
+  );
 }
 
 export async function getLinuxDoTopic(
@@ -579,11 +585,36 @@ export async function getLinuxDoReplies(
     page?: number;
     limit?: number;
     offset?: number | null;
+    targetFloor?: number;
   } = {}
 ): Promise<RepliesResponse> {
   options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
+  if (options.targetFloor !== undefined && (!Number.isSafeInteger(options.targetFloor) || options.targetFloor <= 0)) {
+    throw new Error('linux.do 目标楼层不正确');
+  }
+  if (options.targetFloor) {
+    const window = discourseReplyWindow(await topicData(id, options, options.targetFloor), limit);
+    const items = await hydrateEditableReplyContent(
+      window.posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
+      options
+    );
+    if (!items.some((reply) => reply.floor === options.targetFloor)) {
+      throw new Error('linux.do 目标楼层未找到');
+    }
+    const { posts, ...windowState } = window;
+    return annotateSourceDiagnosticSummary(
+      { items, ...windowState },
+      {
+        parserVariant: 'discourse-near-replies',
+        candidateCount: posts.length,
+        validCount: items.length,
+        droppedCount: Math.max(0, posts.length - items.length),
+        missingFloorCount: posts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number)).length
+      }
+    );
+  }
   const streamState = topicStreamState(await topicData(id, options));
   const stream = streamState.stream;
   const firstPageReplyCount = streamState.embeddedPostCount
@@ -591,6 +622,7 @@ export async function getLinuxDoReplies(
     : limit;
   const previousReplyCount =
     page > 1 ? (typeof options.offset === 'number' ? options.offset : firstPageReplyCount + (page - 2) * limit) : 0;
+  const previousOffset = previousReplyCount > 0 ? Math.max(0, previousReplyCount - limit) : null;
   const start = 1 + previousReplyCount;
   const postIds = stream.slice(start, start + limit);
   if (!postIds.length) {
@@ -613,9 +645,14 @@ export async function getLinuxDoReplies(
   );
   const result = {
     items,
+    currentPage: page,
+    currentOffset: previousReplyCount,
+    previousPage: previousOffset === null ? null : Math.floor(previousOffset / limit) + 1,
+    previousOffset,
     hasMore,
     nextPage: hasMore ? page + 1 : null,
-    nextOffset: hasMore ? previousReplyCount + postIds.length : null
+    nextOffset: hasMore ? previousReplyCount + postIds.length : null,
+    totalCount: Math.max(0, stream.length - 1)
   };
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'discourse-replies',

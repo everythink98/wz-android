@@ -109,6 +109,26 @@ describe('source gateway reads', () => {
     expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
+  it('[REG-NOTIFY-046] forwards a Yaohuo target floor through the shared getReplies interface', async () => {
+    const fetcher = vi.fn(
+      async () => new Response('<input name="page" value="16" /><div class="line1">[90楼] 目标回复</div>')
+    );
+
+    await getReplies({
+      source: 'yaohuo',
+      id: '1560939',
+      categoryId: '177',
+      page: 1,
+      targetFloor: 90,
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.yaohuo.me/bbs/book_re.aspx?id=1560939&classid=177&tofloor=90',
+      expect.any(Object)
+    );
+  });
+
   it('reads a yaohuo user through the shared getUserProfile interface', async () => {
     const fetcher = vi.fn(
       async () =>

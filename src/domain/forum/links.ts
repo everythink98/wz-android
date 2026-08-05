@@ -1,4 +1,4 @@
-import type { Source, Topic, UserReference } from './models';
+import type { ReplyLocationTarget, Source, Topic, UserReference } from './models';
 
 const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
   '177': '妖火茶馆',
@@ -99,6 +99,42 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
     });
   }
   return null;
+}
+
+function positiveLocationPart(value: string | null | undefined) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+export function parseForumTopicDestination(
+  href: string,
+  baseUrl?: string
+): { topic: Topic; targetReply?: ReplyLocationTarget } | null {
+  const topic = parseForumTopicLink(href, baseUrl);
+  const url = forumLinkUrl(href, baseUrl);
+  if (!topic || !url) return null;
+  let targetReply: ReplyLocationTarget | undefined;
+  if (topic.source === 'nodeseek') {
+    const pageHint = positiveLocationPart(url.pathname.match(/^\/post-\d+-(\d+)\/?$/i)?.[1]);
+    const floor = positiveLocationPart(url.hash.match(/^#(\d+)$/)?.[1]);
+    if (floor) targetReply = { floor, ...(pageHint ? { pageHint } : {}) };
+  } else if (topic.source === 'linuxdo' || topic.source === 'xiaoyinsi') {
+    const parts = url.pathname.split('/').filter(Boolean);
+    const topicIdIndex = /^\d+$/.test(parts[1] || '') ? 1 : 2;
+    const floor = positiveLocationPart(parts[topicIdIndex + 1]);
+    if (floor) targetReply = { floor };
+  } else if (topic.source === 'yaohuo' && /\/bbs\/book_re\.aspx$/i.test(url.pathname)) {
+    const floor = positiveLocationPart(url.searchParams.get('tofloor'));
+    if (floor) targetReply = { floor };
+  } else if (topic.source === 'v2ex') {
+    const floor = positiveLocationPart(url.hash.match(/^#reply(\d+)$/i)?.[1]);
+    if (floor) targetReply = { floor };
+  }
+  return { topic, ...(targetReply ? { targetReply } : {}) };
+}
+
+export function parseForumTopicReplyTarget(href: string, baseUrl?: string): ReplyLocationTarget | undefined {
+  return parseForumTopicDestination(href, baseUrl)?.targetReply;
 }
 
 export function parseInternalTopicOpenLink(value: string) {

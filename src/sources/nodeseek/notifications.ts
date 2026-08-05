@@ -1,9 +1,11 @@
 import { absoluteUrl, isRecord, toIsoString } from '@/domain/forum/html';
 import type {
   ForumNotification,
+  NotificationCategory,
   NotificationDetail,
   NotificationMarkResult,
-  NotificationPage
+  NotificationPage,
+  NotificationReplyResult
 } from '@/domain/notifications/models';
 import type {
   NotificationAdapter,
@@ -19,6 +21,19 @@ import { getNodeSeekReplies, getNodeSeekTopic } from './reader';
 import { nodeSeekMarkdownToHtml } from './markdown';
 
 type NodeSeekGroup = 'at-me' | 'reply-to-me' | 'message';
+
+const nodeSeekNotificationCategories = [
+  { id: 'all', label: '全部' },
+  { id: 'mentions', label: '@我' },
+  { id: 'replies', label: '回复主题' },
+  { id: 'messages', label: '私信' }
+] as const satisfies readonly NotificationCategory[];
+
+const nodeSeekGroupByCategory: Record<string, NodeSeekGroup> = {
+  mentions: 'at-me',
+  replies: 'reply-to-me',
+  messages: 'message'
+};
 
 const groupConfig = {
   'at-me': { kind: 'mention', listKey: ['atList', 'notifications', 'list', 'data'] },
@@ -244,9 +259,17 @@ function sortKnownTimes(items: ForumNotification[]) {
 }
 
 export const nodeSeekNotificationAdapter = {
+  async getCategories(_options: NotificationAdapterAccess) {
+    return nodeSeekNotificationCategories;
+  },
+
   async listPage(options: NotificationListOptions): Promise<NotificationPage> {
     const page = Math.max(1, Number(options.cursor) || 1);
-    const groups = Object.keys(groupConfig) as NodeSeekGroup[];
+    const selectedGroup = options.categoryId ? nodeSeekGroupByCategory[options.categoryId] : undefined;
+    if (options.categoryId && options.categoryId !== 'all' && !selectedGroup) {
+      throw new Error('NodeSeek 消息分类不正确');
+    }
+    const groups = selectedGroup ? [selectedGroup] : (Object.keys(groupConfig) as NodeSeekGroup[]);
     const results = await Promise.all(
       groups.map(async (group) => {
         const data = await fetchJson(`/api/notification/${group}/list?page=${page}`, options);
@@ -315,6 +338,7 @@ export const nodeSeekNotificationAdapter = {
         notification: item,
         title: item.actor.name,
         messages: messages.map(({ unread: _unread, senderId: _senderId, index: _index, ...message }) => message),
+        reply: { format: 'markdown' },
         unreadMessageIds: messages
           .filter((message) => message.unread && message.senderId === conversationId && /^\d+$/.test(message.id))
           .map((message) => message.id)
@@ -340,17 +364,26 @@ export const nodeSeekNotificationAdapter = {
       commentId ? candidate.commentId === commentId : candidate.floor === floor;
     let reply = topic.replies.find(matchesTarget);
     if (!reply) {
-      const firstPage = commentId ? 2 : floor && floor > 1 ? Math.floor((floor - 1) / NODESEEK_FLOORS_PER_PAGE) + 1 : 2;
+      const hintedPage = floor && floor > 1 ? Math.floor((floor - 1) / NODESEEK_FLOORS_PER_PAGE) + 1 : 2;
       const lastPage = commentId
-        ? Math.max(firstPage, Math.ceil(topic.replyCount / NODESEEK_FLOORS_PER_PAGE))
-        : firstPage;
-      for (let page = firstPage; page <= lastPage && !reply; page += 1) {
+        ? Math.max(hintedPage, Math.ceil(topic.replyCount / NODESEEK_FLOORS_PER_PAGE))
+        : hintedPage;
+      const pages = commentId
+        ? [
+            hintedPage,
+            ...Array.from({ length: Math.max(0, lastPage - 1) }, (_, index) => index + 2).filter(
+              (page) => page !== hintedPage
+            )
+          ]
+        : [hintedPage];
+      for (const page of pages) {
         const pageResult = await getNodeSeekReplies(item.target.topicId, {
           ...readerOptions,
           page,
           limit: NODESEEK_FLOORS_PER_PAGE
         });
         reply = pageResult.items.find(matchesTarget);
+        if (reply) break;
       }
     }
     if (!reply) throw new Error('NodeSeek 消息对应的帖子内容未找到');
@@ -385,6 +418,35 @@ export const nodeSeekNotificationAdapter = {
       userAgent: options.userAgent
     });
     return { confirmed: true };
+  },
+
+  async replyToConversation(
+    item: ForumNotification,
+    content: string,
+    options: NotificationAdapterAccess
+  ): Promise<NotificationReplyResult> {
+    if (item.target.type !== 'private-conversation' || !/^\d+$/.test(item.target.conversationId)) {
+      throw new Error('NodeSeek 私信会话标识不正确');
+    }
+    const raw = content.trim();
+    if (!raw) throw new Error('请输入回复内容');
+    const data = await runNodeSeekAction({
+      request: {
+        path: '/api/notification/message/send',
+        method: 'POST',
+        headers: {},
+        body: JSON.stringify({ receiverUid: item.target.conversationId, content: raw, markdown: true })
+      },
+      fetcher: options.fetcher,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      userAgent: options.userAgent
+    });
+    if (!isRecord(data) || data.success !== true) {
+      return { confirmed: false, message: 'NodeSeek 未确认私信已发送' };
+    }
+    const message = text(data, 'message');
+    return { confirmed: true, ...(message ? { message } : {}) };
   },
 
   async markAllRead(options: NotificationAdapterAccess): Promise<NotificationMarkResult> {

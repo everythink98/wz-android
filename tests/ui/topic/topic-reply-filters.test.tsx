@@ -25,6 +25,7 @@ const mockScrollToIndex = jest.fn();
 const mockSplitTopicContentHtml = jest.fn();
 let lastFlashListItemTypes: string[] = [];
 let lastFlashListItemKeys: string[] = [];
+let lastFlashListProps: Record<string, any> = {};
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -38,7 +39,8 @@ jest.mock('@shopify/flash-list', () => {
         ListFooterComponent,
         ListHeaderComponent,
         renderItem,
-        testID
+        testID,
+        ...props
       }: {
         accessibilityLabel?: string;
         data?: unknown[];
@@ -47,6 +49,7 @@ jest.mock('@shopify/flash-list', () => {
         ListHeaderComponent?: React.ReactNode;
         renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
         testID?: string;
+        [key: string]: unknown;
       },
       ref: React.ForwardedRef<{ scrollToIndex: (options: unknown) => void; scrollToOffset: () => void }>
     ) {
@@ -56,6 +59,7 @@ jest.mock('@shopify/flash-list', () => {
       }));
       lastFlashListItemTypes = data.map((item) => String((item as { type?: unknown }).type || 'unknown'));
       lastFlashListItemKeys = data.map((item, index) => keyExtractor?.(item, index) ?? String(index));
+      lastFlashListProps = { ...props, data };
       return ReactModule.createElement(
         NativeView,
         { accessibilityLabel, testID },
@@ -389,8 +393,10 @@ function TopicFilterHarness({
   getDiscourseEmojiUrls = mockGetDiscourseSourceEmojiUrls,
   loadedQuotedReplies = {},
   loadingMoreReplies = false,
+  loadingPreviousReplies = false,
   loadingQuotedFloors = {},
   onLoadMoreReplies = jest.fn(),
+  onLoadPreviousReplies = jest.fn(),
   onInteract = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
   onReplyComposerOpenChange = jest.fn(),
@@ -402,6 +408,7 @@ function TopicFilterHarness({
   onDiscourseBookmark = jest.fn(),
   onToggleTopicBodyQuote = jest.fn(),
   replyHasMore = false,
+  replyHasPrevious = false,
   selectedTopic = topic,
   topicReplies = sourceReplies,
   topicDetail = topic,
@@ -422,8 +429,10 @@ function TopicFilterHarness({
   getDiscourseEmojiUrls?: (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
   loadedQuotedReplies?: Record<string, Reply>;
   loadingMoreReplies?: boolean;
+  loadingPreviousReplies?: boolean;
   loadingQuotedFloors?: Record<string, boolean>;
   onLoadMoreReplies?: (options?: { silent?: boolean }) => void;
+  onLoadPreviousReplies?: (options?: { silent?: boolean }) => void;
   onInteract?: (type: InteractionType, commentId?: number) => void;
   onRefreshWholeTopic?: () => void;
   onReplyComposerOpenChange?: (open: boolean) => void;
@@ -435,13 +444,14 @@ function TopicFilterHarness({
   onDiscourseBookmark?: () => void;
   onToggleTopicBodyQuote?: (options: ToggleTopicBodyQuoteOptions) => void;
   replyHasMore?: boolean;
+  replyHasPrevious?: boolean;
   selectedTopic?: Topic;
   topicReplies?: Reply[];
   topicDetail?: TopicDetail | null;
   topicError?: SourceErrorInfo | null;
   topicFavorite?: boolean;
   topicBusy?: boolean;
-  targetReply?: { commentId?: number; floor?: number };
+  targetReply?: { commentId?: number; floor?: number; pageHint?: number };
   identityBlocked?: boolean;
   identityChecking?: boolean;
   yaohuoVisualBookmarked?: boolean;
@@ -479,14 +489,21 @@ function TopicFilterHarness({
     votePoll: async (poll: TopicPoll, optionIds: string[]) => onVotePoll(poll, optionIds)
   } satisfies TopicActionsController;
   const read = {
+    loadPreviousReplies: async (options?: { silent?: boolean }) => {
+      onLoadPreviousReplies(options);
+      return true;
+    },
     loadMoreReplies: async (options?: { silent?: boolean }) => {
       onLoadMoreReplies(options);
       return true;
     },
     loadedQuotedReplies,
     loadingMoreReplies,
+    loadingPreviousReplies,
     loadingQuotedFloors,
     replyHasMore,
+    replyHasPrevious,
+    locateReply: jest.fn(async () => 'completed'),
     toggleReplyQuote: jest.fn(),
     toggleTopicBodyQuote: onToggleTopicBodyQuote,
     topicReplies,
@@ -575,7 +592,7 @@ function TopicFilterHarness({
 }
 
 describe('Topic reply filters', () => {
-  it('loads later pages and locates a notification reply by stable comment id', async () => {
+  it('[REG-TOPIC-062] scrolls an atomically anchored notification window without chasing pages', async () => {
     const pages: Reply[][] = [
       [
         {
@@ -614,32 +631,23 @@ describe('Topic reply filters', () => {
       replyCount: 3
     };
     const loadMore = jest.fn();
-    function NotificationTargetHarness() {
-      const [pageCount, setPageCount] = useState(1);
-      return (
-        <TopicFilterHarness
-          onLoadMoreReplies={(options) => {
-            loadMore(options);
-            setPageCount((current) => Math.min(pages.length, current + 1));
-          }}
-          replyHasMore={pageCount < pages.length}
-          selectedTopic={targetTopic}
-          targetReply={{ commentId: 11640077, floor: 21 }}
-          topicDetail={targetTopic}
-          topicReplies={pages.slice(0, pageCount).flat()}
-        />
-      );
-    }
     mockScrollToIndex.mockClear();
 
-    const view = await render(<NotificationTargetHarness />);
+    const view = await render(
+      <TopicFilterHarness
+        onLoadMoreReplies={loadMore}
+        replyHasMore
+        selectedTopic={targetTopic}
+        targetReply={{ commentId: 11640077, floor: 21 }}
+        topicDetail={targetTopic}
+        topicReplies={pages[2]}
+      />
+    );
 
-    await waitFor(() => expect(loadMore).toHaveBeenCalledTimes(2));
-    expect(loadMore).toHaveBeenNthCalledWith(1, { silent: true });
-    expect(loadMore).toHaveBeenNthCalledWith(2, { silent: true });
     await waitFor(() => expect(view.getByTestId('reply-floor-99')).toBeTruthy());
+    expect(loadMore).not.toHaveBeenCalled();
     expect(mockScrollToIndex).toHaveBeenCalledTimes(1);
-    expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: true }));
+    expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: true, viewPosition: 0.2 }));
   });
 
   it('[REG-PERF-008] gives split opening-post blocks to FlashList instead of mounting them in its header', async () => {
@@ -1317,6 +1325,117 @@ describe('Topic reply filters', () => {
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-TOPIC-062] maps both window edges without double-loading a gesture', async () => {
+    const onLoadMoreReplies = jest.fn();
+    const onLoadPreviousReplies = jest.fn();
+    const view = await render(
+      <TopicFilterHarness
+        replyHasMore
+        replyHasPrevious
+        onLoadMoreReplies={onLoadMoreReplies}
+        onLoadPreviousReplies={onLoadPreviousReplies}
+      />
+    );
+
+    expect(lastFlashListItemTypes).toContain('replyWindowStart');
+    expect(lastFlashListProps.maintainVisibleContentPosition).toEqual({ disabled: false });
+    const startItem = (lastFlashListProps.data as { type: string }[]).find((item) => item.type === 'replyWindowStart');
+    await act(async () => {
+      lastFlashListProps.onViewableItemsChanged({ viewableItems: [{ isViewable: true, item: startItem }] });
+      lastFlashListProps.onScrollBeginDrag();
+      lastFlashListProps.onEndReached();
+    });
+    expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+    expect(onLoadMoreReplies).not.toHaveBeenCalled();
+
+    await act(async () => {
+      lastFlashListProps.onViewableItemsChanged({ viewableItems: [] });
+      lastFlashListProps.onScrollBeginDrag();
+      lastFlashListProps.onEndReached();
+    });
+    expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
+    expect(view.getByLabelText('加载更早回复')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-063] prefetches the previous window before its retry button becomes visible', async () => {
+    const onLoadPreviousReplies = jest.fn();
+    const replyForFloor = (floor: number): Reply => ({
+      author: `author-${floor}`,
+      contentHtml: `<p>reply-${floor}</p>`,
+      createdAt: `2026-08-05T00:00:${String(floor).padStart(2, '0')}.000Z`,
+      floor
+    });
+    const windowReplies = Array.from({ length: 10 }, (_, index) => replyForFloor(index + 11));
+    const view = await render(
+      <TopicFilterHarness onLoadPreviousReplies={onLoadPreviousReplies} replyHasPrevious topicReplies={windowReplies} />
+    );
+
+    const data = lastFlashListProps.data as { type: string; reply?: Reply }[];
+    const visibleReplies = data.filter(
+      (item) => item.type === 'reply' && item.reply?.floor && item.reply.floor >= 14 && item.reply.floor <= 16
+    );
+    const windowStart = data.find((item) => item.type === 'replyWindowStart');
+    expect(visibleReplies).toHaveLength(3);
+    expect(windowStart).toBeDefined();
+    expect(visibleReplies).not.toContain(windowStart);
+
+    await act(async () => {
+      lastFlashListProps.onScrollBeginDrag();
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: visibleReplies.map((item) => ({ isViewable: true, item }))
+      });
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: visibleReplies.map((item) => ({ isViewable: true, item }))
+      });
+    });
+
+    expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+
+    await view.rerender(
+      <TopicFilterHarness
+        onLoadPreviousReplies={onLoadPreviousReplies}
+        replyHasPrevious
+        topicReplies={Array.from({ length: 15 }, (_, index) => replyForFloor(index + 6))}
+      />
+    );
+    await act(async () => {
+      lastFlashListProps.onScrollBeginDrag();
+    });
+    expect(onLoadPreviousReplies).toHaveBeenCalledTimes(1);
+
+    const prependedData = lastFlashListProps.data as { type: string; reply?: Reply }[];
+    const nextVisibleReplies = prependedData.filter(
+      (item) => item.type === 'reply' && item.reply?.floor && item.reply.floor >= 9 && item.reply.floor <= 11
+    );
+    await act(async () => {
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: nextVisibleReplies.map((item) => ({ isViewable: true, item }))
+      });
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: nextVisibleReplies.map((item) => ({ isViewable: true, item }))
+      });
+    });
+    expect(onLoadPreviousReplies).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-TOPIC-063] keeps position maintenance enabled for the final previous-window prepend', async () => {
+    const earlierReply: Reply = {
+      author: 'earlier',
+      commentId: 999,
+      contentHtml: '<p>earlier</p>',
+      createdAt: '2026-08-05T00:00:00.000Z',
+      floor: 0
+    };
+    const view = await render(<TopicFilterHarness replyHasPrevious />);
+
+    expect(lastFlashListProps.maintainVisibleContentPosition).toEqual({ disabled: false });
+    await view.rerender(<TopicFilterHarness topicReplies={[earlierReply, ...sourceReplies]} />);
+    expect(lastFlashListProps.maintainVisibleContentPosition).toEqual({ disabled: false });
+
+    await view.rerender(<TopicFilterHarness topicReplies={[earlierReply, ...sourceReplies]} />);
+    expect(lastFlashListProps.maintainVisibleContentPosition).toEqual({ disabled: true });
+  });
+
   it('toggles the local favorite for the current topic and reflects the updated state', async () => {
     const onToggleFavorite = jest.fn<() => void>();
     const view = await render(<TopicFilterHarness onToggleFavorite={onToggleFavorite} />);
@@ -1470,6 +1589,17 @@ describe('Topic reply filters', () => {
     expect(onRender.mock.calls.at(-1)?.[1]).toBe(initialRendererProps);
   });
 
+  it('[REG-TOPIC-063] does not expose unsupported reverse reply ordering', async () => {
+    const view = await render(<TopicFilterHarness />);
+
+    expect(view.queryByLabelText('倒序')).toBeNull();
+    expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual([
+      'reply-1-alice',
+      'reply-2-bob',
+      'reply-3-alice'
+    ]);
+  });
+
   it('updates visible replies for every filter and comment query', async () => {
     const view = await render(<TopicFilterHarness />);
 
@@ -1487,13 +1617,6 @@ describe('Topic reply filters', () => {
     await fireEvent.press(view.getByLabelText('只看带图'));
     expect(view.getByLabelText('只看带图，已选择')).toBeTruthy();
     expect(view.getByText('reply-2-bob')).toBeTruthy();
-
-    await fireEvent.press(view.getByLabelText('倒序'));
-    expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual([
-      'reply-3-alice',
-      'reply-2-bob',
-      'reply-1-alice'
-    ]);
 
     await fireEvent.press(view.getByLabelText('全部'));
     await fireEvent.changeText(view.getByLabelText('评论内查找'), 'needle');

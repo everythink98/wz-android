@@ -22,7 +22,15 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronRight, Drumstick, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserReference } from '@/domain/forum/models';
+import type {
+  Reply,
+  ReplyLocationTarget,
+  SourceErrorInfo,
+  Topic,
+  TopicDetail,
+  TopicPoll,
+  UserReference
+} from '@/domain/forum/models';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
@@ -92,6 +100,7 @@ import {
 import {
   buildReplyListItems,
   buildVirtualizedReplyItems,
+  getReplyKey,
   topicListItemSpacing,
   type TopicReplyListItem
 } from '../model/replyListModel';
@@ -272,12 +281,12 @@ export const TopicContentList = memo(function TopicContentList({
   headerState: ReactNode;
   html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string };
   nodeSeekUserId: number | null;
-  onOpenTopic: (topic: Topic) => void;
+  onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
-  targetReply?: Pick<Reply, 'commentId' | 'floor'>;
+  targetReply?: ReplyLocationTarget;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
   const { state, commands } = session;
@@ -319,14 +328,20 @@ export const TopicContentList = memo(function TopicContentList({
   const replyComposerOpen = state.replyComposerOpen;
   const replyFilter = state.replyFilter;
   const sourceReplies = read.topicReplies;
+  const replyHasPrevious = read.replyHasPrevious;
   const replyHasMore = read.replyHasMore;
+  const previousWindowWasAvailableRef = useRef(replyHasPrevious);
+  const maintainPreviousWindowPosition = replyHasPrevious || previousWindowWasAvailableRef.current;
   const loadedQuotedReplies = read.loadedQuotedReplies;
   const loadingMoreReplies = read.loadingMoreReplies;
+  const loadingPreviousReplies = read.loadingPreviousReplies;
   const loadingQuotedFloors = read.loadingQuotedFloors;
   const unreadReplyCount = read.unreadReplyCount;
   const onCommentQueryChange = commands.view.changeCommentQuery;
   const onReplyFilterChange = commands.view.changeReplyFilter;
   const onLoadMoreReplies = read.loadMoreReplies;
+  const onLoadPreviousReplies = read.loadPreviousReplies;
+  const onLocateReply = read.locateReply;
   const onReplyComposerOpenChange = commands.composer.toggle;
   const onReplyToFloor = commands.composer.replyToFloor;
   const onToggleReplyQuote = read.toggleReplyQuote;
@@ -574,6 +589,11 @@ export const TopicContentList = memo(function TopicContentList({
       repliesByFloor
     ]
   );
+  const replyWindowIndexByKey = useMemo(
+    () => new Map(replies.map((reply, index) => [getReplyKey(reply), index])),
+    [replies]
+  );
+  const replyWindowStartKey = replies[0] ? getReplyKey(replies[0]) : '';
   const acceptedAnswerReply = acceptedAnswer?.reply;
   const acceptedAnswerLoading = Boolean(acceptedAnswer && loadingQuotedFloors[acceptedAnswer.instanceKey]);
   const acceptedAnswerLoadAttemptRef = useRef('');
@@ -624,10 +644,11 @@ export const TopicContentList = memo(function TopicContentList({
     () =>
       buildReplyListItems({
         canShowReplies,
+        showWindowStart: replyHasPrevious,
         replyItems,
         topicShowsAccessNotice
       }),
-    [canShowReplies, replyItems, topicShowsAccessNotice]
+    [canShowReplies, replyHasPrevious, replyItems, topicShowsAccessNotice]
   );
   const topicPostludeVisible = Boolean(
     legacyTopicPollsVisible || (acceptedAnswer && !topicShowsAccessNotice) || topicHasPostActions
@@ -644,18 +665,25 @@ export const TopicContentList = memo(function TopicContentList({
     ],
     [replyListItems, topicContentItems, topicPostludeVisible]
   );
-  const targetReplyKey =
-    typeof targetReply?.commentId === 'number'
-      ? `comment:${targetReply.commentId}`
-      : typeof targetReply?.floor === 'number'
-        ? `floor:${targetReply.floor}`
+  const [localTargetReply, setLocalTargetReply] = useState<{ request: number; target: ReplyLocationTarget } | null>(
+    null
+  );
+  const activeTargetReply = localTargetReply?.target || targetReply;
+  const targetReplyKeyBase =
+    typeof activeTargetReply?.commentId === 'number'
+      ? `comment:${activeTargetReply.commentId}`
+      : typeof activeTargetReply?.floor === 'number'
+        ? `floor:${activeTargetReply.floor}`
         : '';
+  const targetReplyKey = localTargetReply
+    ? `${targetReplyKeyBase}:request:${localTargetReply.request}`
+    : targetReplyKeyBase;
   const targetReplyMatches = useCallback(
     (reply: Reply) =>
-      typeof targetReply?.commentId === 'number'
-        ? reply.commentId === targetReply.commentId
-        : typeof targetReply?.floor === 'number' && reply.floor === targetReply.floor,
-    [targetReply?.commentId, targetReply?.floor]
+      typeof activeTargetReply?.commentId === 'number'
+        ? reply.commentId === activeTargetReply.commentId
+        : typeof activeTargetReply?.floor === 'number' && reply.floor === activeTargetReply.floor,
+    [activeTargetReply?.commentId, activeTargetReply?.floor]
   );
   const targetReplyListIndex = useMemo(
     () =>
@@ -667,26 +695,46 @@ export const TopicContentList = memo(function TopicContentList({
         : -1,
     [targetReplyKey, targetReplyMatches, topicListItems]
   );
-  const targetReplyLoaded = useMemo(
-    () => Boolean(targetReplyKey && sourceReplies.some(targetReplyMatches)),
-    [sourceReplies, targetReplyKey, targetReplyMatches]
-  );
   const targetIsOpeningPost = Boolean(
     targetReplyKey &&
-    ((typeof targetReply?.commentId === 'number' && topic?.commentId === targetReply.commentId) ||
-      (typeof targetReply?.commentId !== 'number' &&
-        targetReply?.floor === 1 &&
+    ((typeof activeTargetReply?.commentId === 'number' && topic?.commentId === activeTargetReply.commentId) ||
+      (typeof activeTargetReply?.commentId !== 'number' &&
+        activeTargetReply?.floor === 1 &&
         itemSource &&
         isDiscourseSource(itemSource)))
   );
   const handledTargetReplyRef = useRef('');
-  const targetReplyLoadAttemptRef = useRef('');
+  const targetHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [highlightedTargetKey, setHighlightedTargetKey] = useState('');
   useEffect(() => {
     handledTargetReplyRef.current = '';
-    targetReplyLoadAttemptRef.current = '';
+    setHighlightedTargetKey('');
   }, [detailTopicStateKey, targetReplyKey]);
   useEffect(() => {
+    setLocalTargetReply(null);
+  }, [detailTopicStateKey, targetReply?.commentId, targetReply?.floor, targetReply?.pageHint]);
+  useEffect(
+    () => () => {
+      if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
+    },
+    []
+  );
+  const requestReplyLocation = useCallback(
+    (target: ReplyLocationTarget) => {
+      setLocalTargetReply((current) => ({ request: (current?.request || 0) + 1, target }));
+      onCommentQueryChange('');
+      onReplyFilterChange('all');
+      void onLocateReply(target);
+    },
+    [onCommentQueryChange, onLocateReply, onReplyFilterChange]
+  );
+  useEffect(() => {
     if (!targetReplyKey || !canShowReplies || handledTargetReplyRef.current === targetReplyKey) return;
+    if (commentQuery || replyFilter !== 'all') {
+      onCommentQueryChange('');
+      onReplyFilterChange('all');
+      return;
+    }
     if (targetIsOpeningPost) {
       handledTargetReplyRef.current = targetReplyKey;
       topicScrollRef.current?.scrollToOffset({ animated: true, offset: 0 });
@@ -694,31 +742,24 @@ export const TopicContentList = memo(function TopicContentList({
     }
     if (targetReplyListIndex >= 0) {
       handledTargetReplyRef.current = targetReplyKey;
-      topicScrollRef.current?.scrollToIndex({ animated: true, index: targetReplyListIndex });
-      return;
+      if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
+      setHighlightedTargetKey(targetReplyKey);
+      targetHighlightTimerRef.current = setTimeout(() => setHighlightedTargetKey(''), 1800);
+      topicScrollRef.current?.scrollToIndex({
+        animated: true,
+        index: targetReplyListIndex,
+        viewPosition: 0.2
+      });
     }
-    if (targetReplyLoaded) {
-      onCommentQueryChange('');
-      onReplyFilterChange('all');
-      return;
-    }
-    if (!replyHasMore || loadingMoreReplies) return;
-    const attemptKey = `${targetReplyKey}:${sourceReplies.length}`;
-    if (targetReplyLoadAttemptRef.current === attemptKey) return;
-    targetReplyLoadAttemptRef.current = attemptKey;
-    void onLoadMoreReplies({ silent: true });
   }, [
     canShowReplies,
-    loadingMoreReplies,
+    commentQuery,
     onCommentQueryChange,
-    onLoadMoreReplies,
     onReplyFilterChange,
-    replyHasMore,
-    sourceReplies.length,
+    replyFilter,
     targetIsOpeningPost,
     targetReplyKey,
     targetReplyListIndex,
-    targetReplyLoaded,
     topicScrollRef
   ]);
   const acceptedAnswerListIndex = useMemo(() => {
@@ -751,22 +792,61 @@ export const TopicContentList = memo(function TopicContentList({
     pendingAcceptedAnswerScrollRef.current = false;
     topicScrollRef.current?.scrollToIndex({ animated: true, index: acceptedAnswerListIndex });
   }, [acceptedAnswerListIndex, topicScrollRef]);
+  const windowStartWithinPrefetchRef = useRef(false);
+  const loadWindowStart = useCallback(() => {
+    if (!replyHasPrevious || loadingPreviousReplies || !autoLoadRepliesArmedRef.current) return;
+    autoLoadRepliesArmedRef.current = false;
+    void onLoadPreviousReplies();
+  }, [loadingPreviousReplies, onLoadPreviousReplies, replyHasPrevious]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
-  }, []);
+    if (windowStartWithinPrefetchRef.current) loadWindowStart();
+  }, [loadWindowStart]);
+  const handleViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: { isViewable?: boolean; item: TopicListItem }[] }) => {
+      const visibleReplyIndexes = new Set<number>();
+      let windowStartVisible = false;
+      viewableItems.forEach(({ isViewable, item: listItem }) => {
+        if (isViewable === false) return;
+        if (listItem.type === 'replyWindowStart') {
+          windowStartVisible = true;
+          return;
+        }
+        if ('reply' in listItem) {
+          const index = replyWindowIndexByKey.get(getReplyKey(listItem.reply));
+          if (index !== undefined) visibleReplyIndexes.add(index);
+        }
+      });
+      const firstVisibleReplyIndex = Math.min(...visibleReplyIndexes);
+      windowStartWithinPrefetchRef.current =
+        windowStartVisible || (visibleReplyIndexes.size > 0 && firstVisibleReplyIndex <= visibleReplyIndexes.size);
+      if (windowStartWithinPrefetchRef.current) loadWindowStart();
+    },
+    [loadWindowStart, replyWindowIndexByKey]
+  );
   const handleReplyEndReached = useCallback(() => {
-    if (!replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) {
-      return;
-    }
+    if (!replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) return;
     autoLoadRepliesArmedRef.current = false;
-    onLoadMoreReplies();
+    void onLoadMoreReplies();
   }, [loadingMoreReplies, onLoadMoreReplies, replyHasMore]);
-  const requestReplyLoadMore = useCallback(() => {
+  const requestWindowStartLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = false;
-    onLoadMoreReplies();
+    void onLoadPreviousReplies();
+  }, [onLoadPreviousReplies]);
+  const requestWindowEndLoad = useCallback(() => {
+    autoLoadRepliesArmedRef.current = false;
+    void onLoadMoreReplies();
   }, [onLoadMoreReplies]);
   useEffect(() => {
+    previousWindowWasAvailableRef.current = replyHasPrevious;
+  }, [replyHasPrevious]);
+  useEffect(() => {
     autoLoadRepliesArmedRef.current = false;
+    windowStartWithinPrefetchRef.current = false;
+  }, [replyWindowStartKey]);
+  useEffect(() => {
+    autoLoadRepliesArmedRef.current = false;
+    windowStartWithinPrefetchRef.current = false;
     pendingAcceptedAnswerScrollRef.current = false;
   }, [item?.id, item?.source]);
   const genericHtmlRenderers = useMemo<HtmlRenderers>(() => {
@@ -1345,8 +1425,7 @@ export const TopicContentList = memo(function TopicContentList({
               items={[
                 { value: 'all', label: '全部' },
                 { value: 'author', label: '只看楼主' },
-                { value: 'images', label: '只看带图' },
-                { value: 'newest', label: '倒序' }
+                { value: 'images', label: '只看带图' }
               ]}
               value={replyFilter}
               onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
@@ -1367,6 +1446,18 @@ export const TopicContentList = memo(function TopicContentList({
         );
       }
 
+      if (listItem.type === 'replyWindowStart') {
+        return renderTopicListItemFrame(
+          <View style={[styles.topicFooter, topicColumnStyle]}>
+            <AppButton
+              label={loadingPreviousReplies ? '正在加载...' : '加载更早回复'}
+              disabled={loadingPreviousReplies}
+              onPress={requestWindowStartLoad}
+            />
+          </View>
+        );
+      }
+
       if (listItem.type === 'emptyReplies') {
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
@@ -1376,7 +1467,13 @@ export const TopicContentList = memo(function TopicContentList({
       }
 
       return renderTopicListItemFrame(
-        <View style={[styles.replyListItem, topicColumnStyle]}>
+        <View
+          style={[
+            styles.replyListItem,
+            topicColumnStyle,
+            highlightedTargetKey && targetReplyMatches(listItem.reply) ? styles.replyLocationHighlight : undefined
+          ]}
+        >
           <MemoizedReplyItem
             actionBusy={actionBusy}
             decisionFor={decisionFor}
@@ -1400,6 +1497,7 @@ export const TopicContentList = memo(function TopicContentList({
             onInteract={onInteract}
             onDeleteReply={onDeleteReply}
             onEditReply={onEditReply}
+            onLocateReply={requestReplyLocation}
             onOpenTopic={onOpenTopic}
             onQuoteContentLayout={markReplyQuoteContentLayout}
             onVotePoll={onVotePoll}
@@ -1422,11 +1520,13 @@ export const TopicContentList = memo(function TopicContentList({
       contentWidth,
       decisionFor,
       expandedQuotes,
+      highlightedTargetKey,
       inlineSizedImageUrls,
       item?.author,
       item?.id,
       topicImageDeriver,
       loadedQuotedReplies,
+      loadingPreviousReplies,
       loadingQuotedFloors,
       discourseEmojiUrls,
       newReplyFloorStart,
@@ -1445,6 +1545,8 @@ export const TopicContentList = memo(function TopicContentList({
       pollSelections,
       renderTopicContentItem,
       renderTopicListItemFrame,
+      requestWindowStartLoad,
+      requestReplyLocation,
       itemSource,
       replyComposerOpen,
       replyHighlightQuery,
@@ -1457,6 +1559,7 @@ export const TopicContentList = memo(function TopicContentList({
       topicBaseUrl,
       topicColumnStyle,
       topicPostlude,
+      targetReplyMatches,
       unreadReplyCount,
       detailTopicStateKey
     ]
@@ -1584,9 +1687,10 @@ export const TopicContentList = memo(function TopicContentList({
           onEndReachedThreshold={0.55}
           onEndReached={handleReplyEndReached}
           onScrollBeginDrag={armReplyAutoLoad}
-          onMomentumScrollBegin={armReplyAutoLoad}
+          onViewableItemsChanged={handleViewableItemsChanged}
           extraData={listExtraData}
           {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
+          maintainVisibleContentPosition={{ disabled: !maintainPreviousWindowPosition }}
           ListHeaderComponent={listHeader}
           ListFooterComponent={
             canShowReplies && replyHasMore ? (
@@ -1595,7 +1699,7 @@ export const TopicContentList = memo(function TopicContentList({
                   <AppButton
                     label={loadingMoreReplies ? '正在加载...' : '加载更多回复'}
                     disabled={loadingMoreReplies}
-                    onPress={requestReplyLoadMore}
+                    onPress={requestWindowEndLoad}
                   />
                 </View>
               </View>

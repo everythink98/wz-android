@@ -15,24 +15,17 @@ const REPLY_COMPOSER_ACCESSORIES: Partial<Record<Source, ReplyComposerAccessory>
   yaohuo: 'yaohuo-face'
 };
 
-type Selection = {
-  start: number;
-  end: number;
-};
+type Selection = { start: number; end: number };
 
 function selectedText(content: string, selection?: Selection) {
-  if (!selection) {
-    return '';
-  }
+  if (!selection) return '';
   const start = Math.max(0, Math.min(selection.start, content.length));
   const end = Math.max(start, Math.min(selection.end, content.length));
   return content.slice(start, end);
 }
 
 export function replaceReplyComposerSelection(content: string, selection: Selection | undefined, value: string) {
-  if (!selection) {
-    return `${content}${content && !content.endsWith('\n') ? '\n' : ''}${value}`;
-  }
+  if (!selection) return `${content}${content && !content.endsWith('\n') ? '\n' : ''}${value}`;
   const start = Math.max(0, Math.min(selection.start, content.length));
   const end = Math.max(start, Math.min(selection.end, content.length));
   return `${content.slice(0, start)}${value}${content.slice(end)}`;
@@ -47,8 +40,7 @@ export function replyComposerExpressionGridKey(accessory: ReplyComposerAccessory
 }
 
 function linePrefix(text: string, prefix: string, fallback: string) {
-  const value = text || fallback;
-  return value
+  return (text || fallback)
     .split('\n')
     .map((line) => `${prefix}${line}`)
     .join('\n');
@@ -113,9 +105,7 @@ export function applyReplyComposerFormat({
 }
 
 function replyComposerFormatActions(source?: Source): { action: ReplyComposerFormatAction; label: string }[] {
-  if (!sourceSupportsTopicAction(source, 'reply')) {
-    return [];
-  }
+  if (!sourceSupportsTopicAction(source, 'reply')) return [];
   return [
     { action: 'bold', label: 'B' },
     { action: 'italic', label: 'I' },
@@ -130,9 +120,7 @@ function replyComposerFormatActions(source?: Source): { action: ReplyComposerFor
 
 export function replyComposerToolbarItems(source?: Source): ReplyComposerToolbarItem[] {
   const formatActions = replyComposerFormatActions(source);
-  if (!formatActions.length) {
-    return [];
-  }
+  if (!formatActions.length) return [];
   const accessory = source ? REPLY_COMPOSER_ACCESSORIES[source] : undefined;
   return [
     ...(accessory ? [{ type: 'accessory' as const, accessory, label: '表情' }] : []),

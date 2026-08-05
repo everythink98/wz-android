@@ -177,6 +177,7 @@ function leadingReplyReferenceParagraphHtml(
     `<${FORUM_REPLY_REFERENCE_TAG}`,
     ` data-mention="${escapeHtmlAttribute(mentionInfo.label)}"`,
     ` data-floor="${escapeHtmlAttribute(floorInfo.label)}"`,
+    ` data-floor-href="${escapeHtmlAttribute(floorInfo.href)}"`,
     ` data-user-href="${escapeHtmlAttribute(mentionInfo.href)}"`,
     `></${FORUM_REPLY_REFERENCE_TAG}>`
   ].join('');

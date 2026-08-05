@@ -30,7 +30,7 @@ describe('foreground notification access', () => {
     const fetcher = vi.fn<typeof fetch>();
     await expect(
       readForegroundNotificationAccess({ source: 'nodeseek', session: session('nodeseek'), fetcher })
-    ).resolves.toMatchObject({ identityKey: 'nodeseek:42', userId: '42', fetcher });
+    ).resolves.toMatchObject({ identityKey: 'nodeseek:42', userId: '42', username: 'alice', fetcher });
   });
 
   it('rejects a pending identity and a legacy Xiaoyinsi credential', async () => {
