@@ -341,8 +341,8 @@ describe('topic query controller', () => {
       replyNextPage: 2,
       replyNextOffset: 30
     };
-    const getReplies = jest.fn<ReadGateway['getReplies']>(async ({ targetFloor }) =>
-      targetFloor
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async ({ targetReply }) =>
+      targetReply?.floor
         ? {
             items: [target],
             currentPage: 16,
@@ -369,7 +369,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
     expect(getReplies).toHaveBeenCalledTimes(1);
     expect(getReplies).toHaveBeenCalledWith(
-      expect.objectContaining({ id: '1560939', page: 1, source: 'yaohuo', targetFloor: 90 }),
+      expect.objectContaining({ id: '1560939', page: 1, source: 'yaohuo', targetReply: { floor: 90 } }),
       expect.any(Object)
     );
     await act(async () => {
@@ -378,7 +378,7 @@ describe('topic query controller', () => {
 
     expect(getReplies).toHaveBeenCalledTimes(2);
     expect(getReplies.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ page: 17, source: 'yaohuo' }));
-    expect(getReplies.mock.calls[1]?.[0]).not.toHaveProperty('targetFloor');
+    expect(getReplies.mock.calls[1]?.[0]).not.toHaveProperty('targetReply');
     expect(getReplies.mock.calls.map(([request]) => request.page)).toEqual([1, 17]);
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target, older]));
   });
@@ -413,8 +413,8 @@ describe('topic query controller', () => {
       replyNextPage: 2,
       replyNextOffset: 10
     };
-    const getReplies = jest.fn<ReadGateway['getReplies']>(async ({ page, targetFloor }) => {
-      if (targetFloor === 155) {
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async ({ page, targetReply }) => {
+      if (targetReply?.floor === 155) {
         return {
           items: [target],
           currentPage: 16,
@@ -487,8 +487,8 @@ describe('topic query controller', () => {
       await hook.result.current.controller.loadMoreReplies({ silent: true });
     });
 
-    expect(getReplies.mock.calls.map(([request]) => request.targetFloor ?? request.page)).toEqual([155, 15, 17]);
-    expect(getReplies.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ limit: 30, targetFloor: 155 }));
+    expect(getReplies.mock.calls.map(([request]) => request.targetReply?.floor ?? request.page)).toEqual([155, 15, 17]);
+    expect(getReplies.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ limit: 30, targetReply: { floor: 155 } }));
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([previous, target, next]));
     expect(hook.result.current.controller.replyHasPrevious).toBe(false);
     expect(hook.result.current.controller.replyHasMore).toBe(false);
@@ -497,7 +497,7 @@ describe('topic query controller', () => {
       await hook.result.current.controller.loadPreviousReplies({ silent: true });
       await hook.result.current.controller.loadMoreReplies({ silent: true });
     });
-    expect(getReplies.mock.calls.map(([request]) => request.targetFloor ?? request.page)).toEqual([155, 15, 17]);
+    expect(getReplies.mock.calls.map(([request]) => request.targetReply?.floor ?? request.page)).toEqual([155, 15, 17]);
 
     await act(async () => {
       await expect(
@@ -513,14 +513,48 @@ describe('topic query controller', () => {
     expect(getReplies.mock.calls[3]?.[0]).toEqual(
       expect.objectContaining({ page: 16, offset: 150, source: 'nodeseek' })
     );
-    expect(getReplies.mock.calls[3]?.[0]).not.toHaveProperty('targetFloor');
+    expect(getReplies.mock.calls[3]?.[0]).not.toHaveProperty('targetReply');
 
     await act(async () => {
       await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('completed');
       await Promise.resolve();
     });
-    expect(getReplies.mock.calls.filter(([request]) => request.targetFloor === 155)).toHaveLength(1);
+    expect(getReplies.mock.calls.filter(([request]) => request.targetReply?.floor === 155)).toHaveLength(1);
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+  });
+
+  it('[REG-NOTIFY-047] passes a comment-only notification target through the shared reply gateway', async () => {
+    const target = { ...firstReply, floor: 25, commentId: 31 };
+    const detail = { ...firstDetail, replies: [firstReply], replyCount: 30 };
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+      items: [target],
+      currentPage: 3,
+      currentOffset: 20,
+      previousPage: 2,
+      previousOffset: 10,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null
+    }));
+    const hook = await renderTopicController({
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+        getReplies
+      },
+      targetReply: { commentId: 31 }
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
+    expect(getReplies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'nodeseek',
+        id: '1',
+        targetReply: { commentId: 31 },
+        replyCount: 30
+      }),
+      expect.any(Object)
+    );
+    expect(getReplies.mock.calls[0]?.[0]).not.toHaveProperty('targetFloor');
   });
 
   it('[REG-TOPIC-062] locates V2EX only from its already loaded reply collection', async () => {
@@ -620,7 +654,7 @@ describe('topic query controller', () => {
       await expect(recovery?.resume()).resolves.toBe('completed');
     });
 
-    expect(getReplies.mock.calls.map(([request]) => request.targetFloor)).toEqual([90, 90]);
+    expect(getReplies.mock.calls.map(([request]) => request.targetReply?.floor)).toEqual([90, 90]);
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
   });
 
@@ -885,7 +919,8 @@ describe('topic query controller', () => {
         id: '1',
         page: 1,
         offset: null,
-        targetFloor: 21,
+        targetReply: { floor: 21 },
+        replyCount: 21,
         limit: 30,
         signal: expect.any(Object)
       }),

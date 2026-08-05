@@ -15,7 +15,7 @@ import type {
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
-import { isNodeSeekChallengeResponse, NODESEEK_BASE_URL, NODESEEK_FLOORS_PER_PAGE, nodeSeekTopicUrl } from './protocol';
+import { isNodeSeekChallengeResponse, NODESEEK_BASE_URL, nodeSeekTopicUrl } from './protocol';
 import { runNodeSeekAction } from './actionClient';
 import { getNodeSeekReplies, getNodeSeekTopic } from './reader';
 import { nodeSeekMarkdownToHtml } from './markdown';
@@ -188,12 +188,11 @@ function rowNotification(group: NodeSeekGroup, row: Record<string, unknown>, own
   const createdValue = text(row, 'created_at', 'createdAt', 'time', 'sent_at', 'last_time');
   const preview = text(row, 'content', 'comment_content', 'excerpt', 'message', 'last_content');
   const floorValue = text(row, 'floor_id', 'floor', 'floorId');
+  const commentId = text(row, 'comment_id', 'message_id');
   const remoteId =
     group === 'message'
       ? rawId || (createdValue ? stableFallbackId(createdValue) : '')
-      : text(row, 'comment_id', 'message_id') ||
-        rawId ||
-        (floorValue || createdValue ? stableFallbackId(postId, floorValue, createdValue) : '');
+      : commentId || rawId || (floorValue || createdValue ? stableFallbackId(postId, floorValue, createdValue) : '');
   if (!remoteId) return null;
   const createdAt = toIsoString(createdValue) || null;
   const actorName =
@@ -218,7 +217,7 @@ function rowNotification(group: NodeSeekGroup, row: Record<string, unknown>, own
           type: 'topic-post',
           topicId: postId,
           ...(floor ? { postNumber: floor } : {}),
-          ...(text(row, 'comment_id') ? { postId: text(row, 'comment_id') } : {}),
+          ...(commentId ? { postId: commentId } : {}),
           url: nodeSeekTopicUrl(postId)
         } as const);
   if ((target.type === 'private-conversation' && !target.conversationId) || (target.type === 'topic-post' && !postId)) {
@@ -364,27 +363,16 @@ export const nodeSeekNotificationAdapter = {
       commentId ? candidate.commentId === commentId : candidate.floor === floor;
     let reply = topic.replies.find(matchesTarget);
     if (!reply) {
-      const hintedPage = floor && floor > 1 ? Math.floor((floor - 1) / NODESEEK_FLOORS_PER_PAGE) + 1 : 2;
-      const lastPage = commentId
-        ? Math.max(hintedPage, Math.ceil(topic.replyCount / NODESEEK_FLOORS_PER_PAGE))
-        : hintedPage;
-      const pages = commentId
-        ? [
-            hintedPage,
-            ...Array.from({ length: Math.max(0, lastPage - 1) }, (_, index) => index + 2).filter(
-              (page) => page !== hintedPage
-            )
-          ]
-        : [hintedPage];
-      for (const page of pages) {
-        const pageResult = await getNodeSeekReplies(item.target.topicId, {
-          ...readerOptions,
-          page,
-          limit: NODESEEK_FLOORS_PER_PAGE
-        });
-        reply = pageResult.items.find(matchesTarget);
-        if (reply) break;
-      }
+      const pageResult = await getNodeSeekReplies(item.target.topicId, {
+        ...readerOptions,
+        page: 2,
+        replyCount: topic.replyCount,
+        targetReply: {
+          ...(commentId ? { commentId } : {}),
+          ...(floor ? { floor } : {})
+        }
+      });
+      reply = pageResult.items.find(matchesTarget);
     }
     if (!reply) throw new Error('NodeSeek 消息对应的帖子内容未找到');
     return { notification: item, title: topic.title, contentHtml: reply.contentHtml, topic };

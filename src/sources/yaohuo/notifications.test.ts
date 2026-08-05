@@ -200,6 +200,37 @@ describe('Yaohuo notifications', () => {
     expect(result).toEqual({ confirmed: false, message: '原站仍显示为未读，请稍后重试' });
   });
 
+  it('[REG-NOTIFY-051] rechecks the exact Yaohuo category page after opening a detail', async () => {
+    const listUrls: URL[] = [];
+    const unreadHtml = `
+      <div class="listmms"><img src="/NetImages/new.gif"><a href="/bbs/messagelist_view.aspx?id=41">系统消息</a>来自系统管理员 [昨天]</div>
+      <div class="showpage">2/2 页</div>
+    `;
+    const readHtml = `
+      <div class="listmms"><a href="/bbs/messagelist_view.aspx?id=41">系统消息</a>来自系统管理员 [昨天]</div>
+      <div class="showpage">2/2 页</div>
+    `;
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname.endsWith('/messagelist_view.aspx')) {
+        return html('<div class="content"><b>内容：</b><span>系统正文</span></div>');
+      }
+      listUrls.push(url);
+      const exactOrigin = url.searchParams.get('issystem') === '1' && url.searchParams.get('page') === '2';
+      return html(listUrls.length === 1 ? unreadHtml : exactOrigin ? readHtml : '<div class="tip">暂无消息</div>');
+    });
+    const access = { fetcher, identityKey: 'yaohuo:7', userId: '7' };
+    const item = (await yaohuoNotificationAdapter.listPage({ ...access, categoryId: 'system', cursor: '2' })).items[0]!;
+
+    expect(item).toMatchObject({ remoteGroup: 'system', remoteCursor: '2' });
+    const detail = await yaohuoNotificationAdapter.loadDetail(item, access);
+    await expect(yaohuoNotificationAdapter.markRead(item, detail, access)).resolves.toEqual({ confirmed: true });
+    expect(listUrls.map((url) => [url.searchParams.get('issystem'), url.searchParams.get('page')])).toEqual([
+      ['1', '2'],
+      ['1', '2']
+    ]);
+  });
+
   it('[REG-NOTIFY-037] cleans, orders and de-duplicates chat; [REG-NOTIFY-042] keeps row-level time; [REG-NOTIFY-044] keeps topic links', async () => {
     const nativeDateParse = Date.parse.bind(Date);
     const dateParse = vi

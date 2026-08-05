@@ -843,7 +843,7 @@ export function useTopicController({
                 id: selectedTopic.id,
                 categoryId: topicDetail.categoryId,
                 page: target.page,
-                ...(anchorFloor ? { targetFloor: anchorFloor } : {}),
+                ...(anchorFloor ? { targetReply: { floor: anchorFloor }, replyCount: refreshedDetail.replyCount } : {}),
                 limit,
                 offset: target.offset,
                 signal
@@ -971,15 +971,28 @@ export function useTopicController({
   const locateReply = useCallback(
     async (target: ReplyLocationTarget, { silent = false }: { silent?: boolean } = {}) => {
       if (!selectedTopic || !topicDetail || selectedIdentityPending) return 'stale';
-      if (topicReplies.some((reply) => matchesReplyLocation(reply, target))) return 'completed';
-      const floor = target.floor;
-      if (!floor || !Number.isSafeInteger(floor) || floor <= 0 || selectedTopic.source === 'v2ex') {
+      const commentId =
+        target.commentId && Number.isSafeInteger(target.commentId) && target.commentId > 0
+          ? target.commentId
+          : undefined;
+      const floor = target.floor && Number.isSafeInteger(target.floor) && target.floor > 0 ? target.floor : undefined;
+      if ((target.commentId !== undefined && !commentId) || (!commentId && !floor)) {
         if (!silent) notify('目标楼层未找到');
         return 'failed';
       }
       const pageHint =
         target.pageHint && Number.isSafeInteger(target.pageHint) && target.pageHint > 0 ? target.pageHint : undefined;
-      const targetQueryKey = [...targetReplyQueryRoot, floor, target.commentId ?? null, pageHint ?? null] as const;
+      const normalizedTarget: ReplyLocationTarget = {
+        ...(commentId ? { commentId } : {}),
+        ...(floor ? { floor } : {}),
+        ...(pageHint ? { pageHint } : {})
+      };
+      if (topicReplies.some((reply) => matchesReplyLocation(reply, normalizedTarget))) return 'completed';
+      if (selectedTopic.source === 'v2ex') {
+        if (!silent) notify('目标楼层未找到');
+        return 'failed';
+      }
+      const targetQueryKey = [...targetReplyQueryRoot, floor ?? null, commentId ?? null, pageHint ?? null] as const;
       if (queryClient.getQueryState(targetQueryKey)?.fetchStatus === 'fetching') return 'completed';
       const loadTargetWindow = async () => {
         const trace = beginDiagnosticTrace('reply', 'load-more', {
@@ -996,10 +1009,10 @@ export function useTopicController({
                   id: topicDetail.id,
                   categoryId: topicDetail.categoryId,
                   page: pageHint || 1,
-                  pageHint,
                   limit: REPLY_PAGE_SIZE,
                   offset: null,
-                  targetFloor: floor,
+                  replyCount: topicDetail.replyCount,
+                  targetReply: normalizedTarget,
                   signal
                 },
                 { trace }
@@ -1008,7 +1021,7 @@ export function useTopicController({
           const resolvedPage = loaded.currentPage;
           if (
             sourceDiagnosticSummary(loaded)?.isParseEmpty ||
-            !loaded.items.some((reply) => matchesReplyLocation(reply, target)) ||
+            !loaded.items.some((reply) => matchesReplyLocation(reply, normalizedTarget)) ||
             !resolvedPage ||
             !Number.isSafeInteger(resolvedPage) ||
             resolvedPage <= 0

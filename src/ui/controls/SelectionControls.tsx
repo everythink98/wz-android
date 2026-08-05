@@ -7,6 +7,7 @@ import { pressWithFeedback, TOUCH_HIT_SLOP } from './pressFeedback';
 
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
+  const fontSize = (size: number) => Math.round(size * settings.fontScale);
   return StyleSheet.create({
     pillRail: { gap: 2, paddingRight: 18, paddingVertical: 0 },
     pill: {
@@ -23,7 +24,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       backgroundColor: theme.mist,
       borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.12)
     },
-    pillText: { color: theme.muted, fontFamily, fontSize: 11, fontWeight: '500' },
+    pillText: { color: theme.muted, fontFamily, fontSize: fontSize(11), fontWeight: '500' },
     pillTextActive: { color: theme.primary, fontWeight: '600' },
     subtabRail: { gap: 20, paddingRight: 18, paddingVertical: 0 },
     subtab: {
@@ -37,7 +38,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       paddingBottom: 5
     },
     subtabActive: { borderBottomColor: theme.primary },
-    subtabText: { color: theme.muted, fontFamily, fontSize: 12, fontWeight: '500' },
+    subtabText: { color: theme.muted, fontFamily, fontSize: fontSize(12), fontWeight: '500' },
     subtabTextActive: { color: theme.primary, fontWeight: '600' },
     tabRail: {
       gap: 22,
@@ -54,10 +55,10 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       paddingBottom: 4
     },
     tabActive: { borderBottomColor: theme.primary },
-    tabText: { color: theme.muted, fontFamily, fontSize: 13, fontWeight: '500', textAlign: 'center' },
+    tabText: { color: theme.muted, fontFamily, fontSize: fontSize(13), fontWeight: '500', textAlign: 'center' },
     tabTextActive: { color: theme.primary, fontWeight: '600' },
     settingGroup: { gap: 7 },
-    panelTitle: { color: theme.ink, fontFamily, fontSize: 15, fontWeight: '600' }
+    panelTitle: { color: theme.ink, fontFamily, fontSize: fontSize(15), fontWeight: '600' }
   });
 }
 

@@ -173,6 +173,29 @@ describe('NodeSeek notifications', () => {
     expect(second.items).toEqual([expect.objectContaining({ id: 'reply-to-me:99', remoteReadId: '12' })]);
   });
 
+  it('[REG-NOTIFY-048] carries the compatible message_id into the exact topic target', async () => {
+    const fetcher = vi.fn(async (input: string) =>
+      new URL(input).pathname.endsWith('/reply-to-me/list')
+        ? json({ replyList: [{ id: 12, message_id: 98, post_id: 102, viewed: false }] })
+        : json({ notifications: [] })
+    );
+
+    const page = await nodeSeekNotificationAdapter.listPage({
+      categoryId: 'replies',
+      fetcher,
+      identityKey: 'nodeseek:7',
+      userId: '7'
+    });
+
+    expect(page.items).toEqual([
+      expect.objectContaining({
+        id: 'reply-to-me:98',
+        remoteReadId: '12',
+        target: expect.objectContaining({ type: 'topic-post', topicId: '102', postId: '98' })
+      })
+    ]);
+  });
+
   it('[REG-NOTIFY-012] does not persist the counterpart id in a missing-id message fallback', async () => {
     const counterpartId = '918273645';
     const fetcher = vi.fn(async (input: string) => {

@@ -112,8 +112,6 @@ export function getTopic(options: GetTopicOptions) {
 
 type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & {
   categoryId?: string;
-  pageHint?: number;
-  targetFloor?: number;
 };
 
 export function getReplies(options: GetRepliesOptions) {
@@ -125,7 +123,7 @@ export function getReplies(options: GetRepliesOptions) {
     categoryId: options.categoryId,
     page: options.page,
     limit: options.limit,
-    targetFloor: options.targetFloor,
+    targetFloor: options.targetReply?.floor,
     yaohuoFetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs

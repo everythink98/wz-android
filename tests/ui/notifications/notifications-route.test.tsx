@@ -691,6 +691,68 @@ describe('notification routes', () => {
     expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-NOTIFY-049] preserves a private draft while identity is pending and clears it after a confirmed switch', async () => {
+    appQueryClient.clear();
+    const privateNotification: ForumNotification = {
+      ...notification,
+      id: 'message:pending-draft',
+      kind: 'private-message',
+      unread: false,
+      target: { type: 'private-conversation', conversationId: '9' }
+    };
+    const gateway = {
+      getCategories: jest.fn(),
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(async () => ({
+        notification: privateNotification,
+        title: '私信详情',
+        messages: [],
+        reply: { format: 'markdown' as const }
+      })),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn(),
+      replyToConversation: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const activeRuntime = routeRuntime(gateway);
+    const renderRoute = (runtime: NotificationRouteRuntimeValue) => (
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NotificationDetailRoute
+          navigation={{ navigate: jest.fn() } as never}
+          route={{
+            key: 'notification-detail',
+            name: 'NotificationDetail',
+            params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
+          }}
+        />
+      </NotificationRouteRuntimeProvider>
+    );
+    const view = await render(renderRoute(activeRuntime), { wrapper: QueryTestWrapper });
+
+    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    await fireEvent.changeText(view.getByLabelText('私信回复内容'), 'PENDING_DRAFT');
+
+    const pendingRuntime = { ...activeRuntime, activeSources: [] } as NotificationRouteRuntimeValue;
+    await act(async () => view.rerender(renderRoute(pendingRuntime)));
+    expect(view.queryByLabelText('私信回复内容')).toBeNull();
+
+    await act(async () => view.rerender(renderRoute(activeRuntime)));
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    expect(view.getByLabelText('私信回复内容').props.value).toBe('PENDING_DRAFT');
+
+    const switchedRuntime = {
+      ...activeRuntime,
+      identityKeys: { nodeseek: 'nodeseek:next-account' },
+      identitySignature: 'nodeseek:next-account'
+    } as NotificationRouteRuntimeValue;
+    await act(async () => view.rerender(renderRoute(switchedRuntime)));
+    await act(async () => view.rerender(renderRoute(activeRuntime)));
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    expect(view.getByLabelText('私信回复内容').props.value).toBe('');
+  });
+
   it('[REG-NOTIFY-032] aborts an in-flight private reply when the detail route loses focus', async () => {
     appQueryClient.clear();
     const privateNotification: ForumNotification = {

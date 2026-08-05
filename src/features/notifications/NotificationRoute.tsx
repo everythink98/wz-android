@@ -468,11 +468,11 @@ export function NotificationDetailRoute({
     replyControllerRef.current = undefined;
     replyBusyRef.current = false;
     setReplyBusy(false);
-    setReplyContent('');
+    if (currentIdentityKey !== identityKey) setReplyContent('');
     setReplyError('');
     setReplyStatus('');
     setReplyVisible(false);
-  }, [canAccessSource]);
+  }, [canAccessSource, currentIdentityKey, identityKey]);
   useEffect(() => {
     const detail = detailQuery.data;
     const markKey = `${identityKey}:${item.id}`;

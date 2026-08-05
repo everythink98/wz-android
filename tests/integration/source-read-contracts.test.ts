@@ -182,8 +182,7 @@ describe('Android local sources', () => {
       source: 'nodeseek',
       id: '999',
       page: 1,
-      pageHint: 16,
-      targetFloor: 155,
+      targetReply: { floor: 155, pageHint: 16 },
       limit: 10,
       fillPages: true,
       fetcher
@@ -192,7 +191,7 @@ describe('Android local sources', () => {
       source: 'nodeseek',
       id: '999',
       page: 1,
-      targetFloor: 155,
+      targetReply: { floor: 155 },
       limit: 10,
       fillPages: true,
       fetcher
@@ -218,6 +217,71 @@ describe('Android local sources', () => {
     expect(replies.items).toContainEqual(expect.objectContaining({ floor: 155, commentId: 155 }));
     expect(repliesWithoutHint).toMatchObject({ currentPage: 16, currentOffset: 150 });
     expect(next).toMatchObject({ currentPage: 17, currentOffset: 160, nextPage: 18, nextOffset: 170 });
+  });
+
+  it('[REG-NOTIFY-047] keeps commentId authoritative when the NodeSeek floor is missing or wrong', async () => {
+    const requestedPages: number[] = [];
+    const payload = (page: number) =>
+      Buffer.from(
+        JSON.stringify({
+          postData: {
+            postId: 999,
+            title: 'Comment identity topic',
+            replyCount: 30,
+            comments:
+              page === 1
+                ? [
+                    {
+                      commentId: 1,
+                      floorIndex: 0,
+                      poster: { name: 'author' },
+                      markdown: 'opening',
+                      time: { createdDate: '2026-08-05T00:00:00.000Z' }
+                    },
+                    {
+                      commentId: 11,
+                      floorIndex: 5,
+                      poster: { name: 'decoy-1' },
+                      markdown: 'decoy 1',
+                      time: { createdDate: '2026-08-05T00:01:00.000Z' }
+                    }
+                  ]
+                : [
+                    {
+                      commentId: page === 3 ? 31 : 21,
+                      floorIndex: page === 3 ? 25 : 15,
+                      poster: { name: page === 3 ? 'target' : 'decoy-2' },
+                      markdown: page === 3 ? 'target reply' : 'decoy 2',
+                      time: { createdDate: '2026-08-05T00:02:00.000Z' }
+                    }
+                  ]
+          }
+        })
+      ).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(input.match(/post-999-(\d+)/)?.[1]) || 1;
+      requestedPages.push(page);
+      return html(`<script>${payload(page)}</script>${page < 3 ? `<a href="/post-999-${page + 1}">下一页</a>` : ''}`);
+    });
+    const load = (targetReply: { commentId: number; floor?: number }) =>
+      getReplies({
+        source: 'nodeseek',
+        id: '999',
+        page: 1,
+        targetReply,
+        replyCount: 30,
+        limit: 30,
+        fetcher
+      });
+
+    const withoutFloor = await load({ commentId: 31 });
+    expect(withoutFloor).toMatchObject({ currentPage: 3, items: [expect.objectContaining({ commentId: 31 })] });
+    expect(requestedPages).toEqual([1, 2, 3]);
+
+    requestedPages.length = 0;
+    const wrongFloor = await load({ commentId: 31, floor: 15 });
+    expect(wrongFloor).toMatchObject({ currentPage: 3, items: [expect.objectContaining({ commentId: 31 })] });
+    expect(requestedPages).toEqual([2, 1, 3]);
   });
 
   it('converts NodeSeek Bilibili image syntax into embeddable player HTML', async () => {
@@ -2627,7 +2691,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       id: '900',
       page: 1,
-      targetFloor: 90,
+      targetReply: { floor: 90 },
       limit: 30,
       discourseAuth: testLinuxDoDiscourseAuth(),
       fetcher

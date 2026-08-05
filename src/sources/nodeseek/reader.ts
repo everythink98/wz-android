@@ -13,6 +13,7 @@ import type {
   FeedResponse,
   NodeSeekFeedFilter,
   RepliesResponse,
+  ReplyLocationTarget,
   SearchResponse,
   Topic,
   TopicPoll,
@@ -401,11 +402,11 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
 
 type NodeSeekRepliesOptions = NodeSeekOptions & {
   page?: number;
-  pageHint?: number;
   limit?: number;
   offset?: number | null;
   fillPages?: boolean;
-  targetFloor?: number;
+  replyCount?: number;
+  targetReply?: ReplyLocationTarget;
 };
 
 async function fillNodeSeekRepliesLimit(
@@ -465,18 +466,53 @@ function annotateNodeSeekReplies(
   });
 }
 
+function positiveReplyLocation(value: number | undefined) {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function matchesNodeSeekReplyLocation(reply: RepliesResponse['items'][number], target: ReplyLocationTarget) {
+  const commentId = positiveReplyLocation(target.commentId);
+  return commentId ? reply.commentId === commentId : reply.floor === positiveReplyLocation(target.floor);
+}
+
 export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOptions): Promise<RepliesResponse> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
-  const targetFloor = options.targetFloor;
-  if (targetFloor !== undefined && (!Number.isSafeInteger(targetFloor) || targetFloor <= 0)) {
-    throw new Error('NodeSeek 目标楼层不正确');
+  const target = options.targetReply;
+  if (target) {
+    const commentId = positiveReplyLocation(target.commentId);
+    const floor = positiveReplyLocation(target.floor);
+    if (target.commentId !== undefined && !commentId) throw new Error('NodeSeek 目标评论不正确');
+    if (!commentId && !floor) throw new Error('NodeSeek 目标楼层不正确');
+    const hintedPage = positiveReplyLocation(target.pageHint);
+    const firstPage =
+      hintedPage ||
+      (floor ? Math.floor((floor - 1) / NODESEEK_FLOORS_PER_PAGE) + 1 : positiveReplyLocation(options.page) || 1);
+    const lastPage = commentId
+      ? Math.max(Math.ceil(Math.max(0, options.replyCount || 0) / NODESEEK_FLOORS_PER_PAGE), 1)
+      : firstPage;
+    const pages = commentId
+      ? [firstPage, ...Array.from({ length: lastPage }, (_, index) => index + 1).filter((page) => page !== firstPage)]
+      : [firstPage];
+    for (const page of pages) {
+      const result = await getNodeSeekReplies(id, {
+        ...options,
+        fillPages: false,
+        limit: NODESEEK_FLOORS_PER_PAGE,
+        offset: null,
+        page,
+        replyCount: undefined,
+        targetReply: undefined
+      });
+      if (result.items.some((reply) => matchesNodeSeekReplyLocation(reply, target))) {
+        return result.nextPage && result.nextPage !== page
+          ? { ...result, nextOffset: (result.nextPage - 1) * NODESEEK_FLOORS_PER_PAGE }
+          : result;
+      }
+    }
+    throw new Error(commentId ? 'NodeSeek 目标评论未找到' : 'NodeSeek 目标楼层未找到');
   }
-  const pageHint =
-    options.pageHint && Number.isSafeInteger(options.pageHint) && options.pageHint > 0 ? options.pageHint : undefined;
-  const page = targetFloor
-    ? pageHint || Math.floor((targetFloor - 1) / NODESEEK_FLOORS_PER_PAGE) + 1
-    : options.page || 1;
-  const limit = targetFloor ? NODESEEK_FLOORS_PER_PAGE : options.limit || 30;
+  const page = options.page || 1;
+  const limit = options.limit || 30;
   const { html, postData, rendered } = await fetchTopicPageData(id, page, requestOptions);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? (options.offset as number) : 0;
@@ -486,12 +522,6 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     currentOffset: floorOffset,
     previousPage: page > 1 ? page - 1 : null,
     previousOffset: page > 1 ? Math.max(0, floorOffset - NODESEEK_FLOORS_PER_PAGE) : null
-  };
-  const confirmTarget = <T extends RepliesResponse>(result: T) => {
-    if (targetFloor && !result.items.some((reply) => reply.floor === targetFloor)) {
-      throw new Error('NodeSeek 目标楼层未找到');
-    }
-    return result;
   };
   if (rendered && (rendered.replies.length || !postData)) {
     const renderedSource = rendered.replies.map((reply, index) => ({
@@ -522,7 +552,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       nextOffset: hasMore
         ? page <= 1 && hasPageRemainder
           ? consumed
-          : targetFloor || page > 1
+          : page > 1
             ? ((nextPage || page + 1) - 1) * NODESEEK_FLOORS_PER_PAGE
             : floorOffset + items.length
         : null
@@ -534,10 +564,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       offset,
       page
     });
-    const confirmed = confirmTarget(annotated);
-    return requestOptions.fillPages && !targetFloor
-      ? fillNodeSeekRepliesLimit(id, requestOptions, confirmed, limit)
-      : confirmed;
+    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
   }
   if (!postData) {
     throw new Error('NodeSeek 主题解析失败');
@@ -555,13 +582,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       items,
       hasMore,
       nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
-      nextOffset: hasMore
-        ? hasPageRemainder
-          ? consumed
-          : targetFloor
-            ? ((nextPage || 2) - 1) * NODESEEK_FLOORS_PER_PAGE
-            : consumed
-        : null
+      nextOffset: hasMore ? consumed : null
     };
     const missingFloorCount = comments
       .slice(1)
@@ -575,10 +596,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       offset,
       page
     });
-    const confirmed = confirmTarget(annotated);
-    return requestOptions.fillPages && !targetFloor
-      ? fillNodeSeekRepliesLimit(id, requestOptions, confirmed, limit)
-      : confirmed;
+    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
   }
   const items = normalizeReplies(comments, { skipFirst: false, floorOffset });
   const nextPage = nextNodeSeekPostPage(html, id, page);
@@ -599,10 +617,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     offset,
     page
   });
-  const confirmed = confirmTarget(annotated);
-  return requestOptions.fillPages && !targetFloor
-    ? fillNodeSeekRepliesLimit(id, requestOptions, confirmed, limit)
-    : confirmed;
+  return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
 }
 
 export async function resolveNodeSeekUser(username: string, options: NodeSeekOptions = {}): Promise<UserReference> {

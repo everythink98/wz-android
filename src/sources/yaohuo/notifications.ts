@@ -38,7 +38,7 @@ function messageId(href: string) {
   }
 }
 
-function parsePage(html: string, unreadOnly = false): NotificationPage {
+function parsePage(html: string, unreadOnly = false, categoryId = 'all'): NotificationPage {
   const root = parseHtml(html);
   const rows = root.querySelectorAll('.listmms');
   const explicitEmpty =
@@ -98,7 +98,8 @@ function parsePage(html: string, unreadOnly = false): NotificationPage {
           messageId: id,
           url: `${YAOHUO_BASE_URL}/bbs/messagelist_view.aspx?id=${encodeURIComponent(id)}`
         },
-        remoteGroup: String(currentPage(root)),
+        remoteGroup: categoryId,
+        remoteCursor: String(currentPage(root)),
         remoteReadId: id
       } satisfies ForumNotification
     ];
@@ -243,7 +244,7 @@ async function readListPage(options: NotificationAdapterAccess, page: number, un
     signal: options.signal,
     timeoutMs: options.timeoutMs
   });
-  return parsePage(result.html, unreadOnly);
+  return parsePage(result.html, unreadOnly, categoryId);
 }
 
 export const yaohuoNotificationAdapter = {
@@ -337,7 +338,12 @@ export const yaohuoNotificationAdapter = {
     _detail: NotificationDetail,
     options: NotificationAdapterAccess
   ): Promise<NotificationMarkResult> {
-    const page = await readListPage(options, Math.max(1, Number(item.remoteGroup) || 1));
+    const page = await readListPage(
+      options,
+      Math.max(1, Number(item.remoteCursor) || 1),
+      false,
+      item.remoteGroup || 'all'
+    );
     const refreshed = page.items.find((candidate) => candidate.id === item.id);
     return refreshed && !refreshed.unread
       ? { confirmed: true }

@@ -30,6 +30,7 @@ export interface ForumNotification {
   unread: boolean;
   target: NotificationTarget;
   remoteGroup?: string;
+  remoteCursor?: string;
   remoteReadId?: string;
 }
 

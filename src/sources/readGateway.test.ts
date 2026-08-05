@@ -119,7 +119,7 @@ describe('source gateway reads', () => {
       id: '1560939',
       categoryId: '177',
       page: 1,
-      targetFloor: 90,
+      targetReply: { floor: 90 },
       fetcher
     });
 

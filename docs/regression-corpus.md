@@ -4648,7 +4648,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 妖火已读聊天详情给出真实 `book_re.aspx?classid=…&id=…&tofloor=90&fromuserid=…` 链接；原站用 `tofloor` 返回包含该楼层的回复页。 |
 | 根因 seam | `DetailHtml` 只调用 `parseForumTopicLink` 得到 canonical Topic，原始 query 被丢弃；`onOpenTopic` 与 Notification route 也没有继续传递链接级 `targetReply`。 |
 | 必须保持的行为 | 仅对 `www.yaohuo.me`/`yaohuo.me` 的 `/bbs/book_re.aspx` 读取正安全整数 `tofloor`；携带 `{ floor }` 进入现有 Topic route，由共享目标回复加载与滚动逻辑定位。普通主题链接不附加目标；缺失、零值、小数或站外伪链接不得猜楼层。 |
-| 精确失败 oracle | `tests/integration/forum-presentation-contracts.test.ts` 要求真实形态链接解析为 `{ floor: 90 }` 并拒绝无效/站外值；`tests/ui/notifications/notifications-screen.test.tsx` 点击两个链接后要求只有“查看完整回复”的第二次 callback 带 `{ floor: 90 }`；`tests/ui/notifications/notifications-route.test.tsx` 继续要求 `navigation.navigate('Topic', { topic, targetReply: { floor: 90 } })`。修复前第二次 callback 只有 Topic。 |
+| 精确失败 oracle | `src/domain/forum/links.test.ts` 要求真实形态链接解析为 `{ floor: 90 }` 并拒绝无效/站外值；`tests/ui/notifications/notifications-screen.test.tsx` 点击两个链接后要求只有“查看完整回复”的第二次 callback 带 `{ floor: 90 }`；`tests/ui/notifications/notifications-route.test.tsx` 继续要求 `navigation.navigate('Topic', { topic, targetReply: { floor: 90 } })`。修复前第二次 callback 只有 Topic。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：domain parser 固定协议与校验，Notifications Screen/Route RNTL 固定参数不丢失，匹配 App 只读确认最终滚到目标楼层。 |
 | Replay 或真实验收路径 | 妖火 → 聊天 → 已有已读 Clover 会话 → 查看完整回复；确认仍在 App、主题自动加载需要的回复页并滚到原站 `tofloor` 指向的楼层。返回后仍回到会话，不发送回复。 |
 | 负向验证方式 | 去掉 query parser、把 `tofloor` 当分页号、只传 Topic，或接受 `tofloor=0/1.5` 与站外同形 URL，编号测试必须失败。 |
@@ -4663,11 +4663,86 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 原站 `book_re.aspx?...&tofloor=90` 一次响应落到第 16 页，HTML 的 `page` 表单字段为 16；Android Native Fetch 的 `Response.url` 仍可能是无 `page` 的请求 URL。页面同时含第 17 页游标；第 10 页正文中又存在文本恰为“下一页”的用户链接。 |
 | 根因 seam | Topic 目标回复加载只保留 `{ floor }`，沿通用“加载更多”从当前页线性追赶；初次直达实现又把可选的 `Response.url` 当成唯一当前页依据，缺失时回退为 1，下一次错误请求第 2 页。妖火 HTML parser 还把链接文本当成分页身份，未要求合法 `page` 游标和对应列表 endpoint。 |
 | 必须保持的行为 | 妖火合法目标楼层只发送一次 `tofloor` 请求，以最终 URL 的正页码为首选、原站 HTML 的当前 `page` 字段为 Android 兜底，建立真实分页锚点并用下一页游标继续；定位到第 16 页后下一次只能请求第 17 页，不保留第 1 页与第 16 页之间的假连续列表，也不得退回逐页扫描。目标响应不含该楼层时明确失败。帖子回复、Feed、用户帖子和用户回复都只能接受带正页码的真实分页链接；同名用户链接不能成为 cursor。 |
-| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-NOTIFY-046` 固定请求页序列为 `[1（携带 targetFloor）, 17]`、目标页替换首屏且无 2～16；`src/sources/yaohuo/reader.test.ts` 模拟 Android 的无重定向 `Response.url`，要求从 HTML `page=16` 恢复 `currentPage`，并让用户链接先于真实分页链接出现，要求帖子回复、用户帖子和用户回复仍解析真实下一页。 |
+| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-NOTIFY-046` 固定请求页序列为 `[1（携带 targetReply.floor）, 17]`、目标页替换首屏且无 2～16；`src/sources/yaohuo/reader.test.ts` 模拟 Android 的无重定向 `Response.url`，要求从 HTML `page=16` 恢复 `currentPage`，并让用户链接先于真实分页链接出现，要求帖子回复、用户帖子和用户回复仍解析真实下一页。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：parser/reader 固定原站协议，Topic controller 固定跨页状态机，匹配 App 只读确认目标楼层与继续下滚。 |
 | Replay 或真实验收路径 | 妖火 → 聊天 → 已有已读会话 → 查看完整回复；确认一次定位到目标楼层，继续下滚加载紧邻下一页且没有回到页首。再打开包含同名用户的普通主题，确认仍可继续分页。不发送回复、不改变已读状态。 |
 | 负向验证方式 | 恢复按 `topicReplies.length` 反复调用通用加载更多，或在 `Response.url` 无页码时直接回退 1，编号测试都会出现页 2；恢复“第一个文本为下一页的链接”，parser 测试会得到用户主页或 `nextPage=null`。 |
 | 明确不覆盖范围 | 原站未提供可调 page-size，不能伪造批量页长；不并发抓取 2～16，不拼接有缺口的第 1/16 页，不用正文、时间或总回复数猜目标页。 |
+
+## `REG-NOTIFY-047` NodeSeek 完整主题链路丢弃 comment ID
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`TOPIC-03`；NodeSeek 通知到目标回复的强身份传递 |
+| 用户症状 | 通知详情能找到准确回复，但“查看完整主题”在缺少楼层时留在首屏；楼层提示错误时还可能定位到同楼层的其他回复。 |
+| 触发条件 | NodeSeek 通知 target 带合法 `commentId`，但 floor 缺失或错误；目标不在当前 Topic 窗口。 |
+| 根因 seam | Topic Controller 把 floor 当成必填目标，且共享读取接口只继续传 `targetFloor/pageHint`，路由已有的完整 `ReplyLocationTarget` 在到达 NodeSeek adapter 前被压扁。 |
+| 必须保持的行为 | Route → Controller → ReadGateway → source adapter 必须传递完整 `ReplyLocationTarget`；`commentId` 存在时为强身份，floor/pageHint 只决定首个候选页。NodeSeek 先读提示页，再在主题 `replyCount` 给出的已知页界内查找精确 comment ID；只允许返回包含目标实体的来源确认窗口。 |
+| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-NOTIFY-047` 只给 `{ commentId: 31 }`，要求 gateway 收到完整 target 与 `replyCount`；`tests/integration/source-read-contracts.test.ts` 分别给缺 floor 和错误 floor，要求请求页为 `[1,2,3]` 与 `[2,1,3]`，最终均返回 comment 31 所在页。修复前 Controller 零请求或返回首屏同楼层 decoy。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：来源读取契约固定跨页强身份，Controller RNTL 固定接口不丢字段。 |
+| Replay 或真实验收路径 | 从一条已有已读 NodeSeek @我/回复打开详情，再点“查看完整主题”；只读确认落到原消息对应回复。不得点击未读条目制造已读写入。 |
+| 负向验证方式 | 恢复 floor 必填、在 gateway 拆成 `targetFloor`，或以 floor 命中代替 comment ID，两个编号测试必须稳定失败。 |
+| 明确不覆盖范围 | 不按作者、正文或时间猜目标；主题没有可信 replyCount 且提示页不含目标时明确失败，不进行无界扫描。 |
+
+## `REG-NOTIFY-048` NodeSeek `message_id` 兼容值只用于去重未进入导航目标
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02/03`；NodeSeek 旧字段兼容与统一消息身份 |
+| 用户症状 | 某些 NodeSeek @我/回复行可以稳定显示和去重，但打开完整主题时没有精确 comment ID，只能退化到楼层。 |
+| 触发条件 | 列表行省略 `comment_id`，只提供兼容字段 `message_id`。 |
+| 根因 seam | mapper 用 `comment_id || message_id` 生成通知 ID，却只把 `comment_id` 写入 `target.postId`，同一个远端身份在投递和导航模型中分叉。 |
+| 必须保持的行为 | 一次解析得到的 `commentId = comment_id || message_id` 同时用于稳定通知 ID 与 `topic-post.postId`；原始列表行 `id` 仍只供远端 mark-read。 |
+| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的 `REG-NOTIFY-048` 输入只含 `message_id=98` 的回复行，要求 target 同时得到 `postId='98'`。修复前通知 ID 正确但 target 缺失 postId。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：NodeSeek adapter fixture。 |
+| Replay 或真实验收路径 | 只有原站实际返回此旧字段形态时，才用已有已读通知只读确认完整主题定位；否则保留自动证据。 |
+| 负向验证方式 | target 继续只读 `comment_id` 时编号断言必须失败。 |
+| 明确不覆盖范围 | 不把列表行 `id`、作者或楼层猜成 comment ID，不改变 mark-read 协议。 |
+
+## `REG-NOTIFY-049` 身份待确认被当成换号并清空私信草稿
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`、`NOTIFY-02`；私信草稿与身份屏障 |
+| 用户症状 | App 短暂重新确认账号时，正在编辑但未发送的私信草稿被清空；确认仍为同一账号后无法恢复。 |
+| 触发条件 | 当前来源暂时从 active 集合移除，但 route 捕获的 `identityKey` 与最近可信 `currentIdentityKey` 仍相同；随后同身份恢复。 |
+| 根因 seam | Notification route 在任何 `canAccessSource=false` 时无条件清草稿，把 pending/unknown 暂停访问误当成已确认退出或换号。 |
+| 必须保持的行为 | pending/unknown 立即取消网络、关闭 composer 并隐藏私有内容，但保留内存草稿；只有确认 `currentIdentityKey !== route identityKey` 的退出或换号才清空。草稿仍不得持久化。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-route.test.tsx` 的 `REG-NOTIFY-049` 输入草稿后经历同身份 pending → 恢复，要求正文仍在；再经历已确认身份切换 → 恢复，要求正文为空。修复前第一段即变空。 |
+| 最低可靠自动测试层 | `UI_PASS`：route RNTL 固定用户可见草稿生命周期。 |
+| Replay 或真实验收路径 | 不主动制造账号失效；匹配环境若自然出现 pending，可确认 composer 暂停且同身份恢复后草稿仍在。 |
+| 负向验证方式 | 恢复按 `canAccessSource` 无条件 `setReplyContent('')`，同身份恢复断言必须失败。 |
+| 明确不覆盖范围 | 不跨 route、重启或确认换号保存草稿；不发送真实私信。 |
+
+## `REG-NOTIFY-050` 消息共享 Tab 与按钮绕过 Reader 字号
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-03`、`FEED-02/03/04`、`SEARCH-02/03`、`LIBRARY-01/02/03`、`TOPIC-01/03`、`USER-01`、`ACCOUNT-01/02`、`NOTIFY-01/02`、`WRITE-01`；共享控件大字号一致性 |
+| 用户症状 | 消息正文随 Reader 字号放大，但来源/分类 Tab 与详情、回复操作按钮仍保持小号，130% 档位下层级割裂且可读性下降。 |
+| 触发条件 | Reader `fontScale=1.3`，消息页使用共享 `PillRail` 或 `AppButton/IconButton`。 |
+| 根因 seam | 两个共享控件虽然读取 Reader font family/theme，却把 11/12/13/15 和 line-height 写成固定值。 |
+| 必须保持的行为 | SelectionControls 与 ButtonControls 的所有文字字号和 tiny line-height 使用同一 Reader fontScale；点击区下限与横向滚动保持不变。 |
+| 精确失败 oracle | `tests/ui/shared/accessibility-basics.test.tsx` 的 `REG-NOTIFY-050` 在 130% Provider 中要求 Tab 与 AppButton 的 13 号基准均为 17。修复前两者仍为 13。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定数值，设备复核 100%/130% 布局。 |
+| Replay 或真实验收路径 | 匹配 APK 在 Reader 100% 与 130% 分别打开消息总览、详情和 composer，确认 Tab/按钮随字号变化且文字不截断。 |
+| 负向验证方式 | 任一共享控件恢复固定 fontSize，编号断言失败。 |
+| 明确不覆盖范围 | 不改变图标尺寸、点击区、系统 fontScale 策略或新增字号档位。 |
+
+## `REG-NOTIFY-051` 妖火已读复核丢失分类上下文
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-01/02`；妖火分类列表与逐条已读确认 |
+| 用户症状 | 从“系统”或“聊天”分类打开消息后，原站已经标为已读，App 仍提示“原站仍显示为未读”。 |
+| 触发条件 | 条目来自非默认分类或第 2 页以后；详情读取后 `markRead` 重新检查列表。 |
+| 根因 seam | adapter 只把页码塞进 `remoteGroup`，复核时回到默认收件箱，丢失原分类；分类与 cursor 两种来源上下文被压成一个字段。 |
+| 必须保持的行为 | adapter 分别保存 opaque `remoteGroup=categoryId` 与 `remoteCursor=page`；逐条已读复核必须读取原分类、原页，且仍只以原站列表 unread 状态确认。 |
+| 精确失败 oracle | `src/sources/yaohuo/notifications.test.ts` 的 `REG-NOTIFY-051` 从 system 第 2 页建立条目，要求保存 `{ remoteGroup: 'system', remoteCursor: '2' }`，随后复核 URL 同时含 `issystem=1&page=2` 并确认已读。修复前 group 为 `2` 且复核默认收件箱。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：妖火 adapter fixture 固定分类、页码与明确已读 oracle。 |
+| Replay 或真实验收路径 | 真实逐条已读属于远端写入；只有另获妖火测试对象授权后才可从系统/聊天非首分页执行 `LIVE_PASS`。 |
+| 负向验证方式 | 删除任一上下文字段或复核默认 `all/page=1`，编号测试必须失败。 |
+| 明确不覆盖范围 | 不以打开详情本身假定已读，不执行批量已读，不把旧错误字段形态做猜测兼容。 |
 
 ## `REG-TOPIC-062` 极大回复楼层被当作从首屏开始的连续前缀
 
@@ -4678,7 +4753,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | NodeSeek/Discourse/妖火主题包含远端楼层链接或通知携带目标，目标不在当前回复集合；列表采用无限滚动且当前缓存可能只含首屏、锚点中段或双向相邻窗口。V2EX 已经持有完整回复集合。 |
 | 根因 seam | Controller 把 Infinite Query 页组误认为“从第一页开始的完整前缀”，用 `loadMoreReplies` 反复追目标，并以 `topicReplies.length`、数组下标或扩大 page-size 推断绝对页面；route/parser 又使用零散的 reply Pick 类型并丢失 page/fragment。列表只支持 next cursor，写后刷新复用同一错误推断。 |
 | 必须保持的行为 | 使用统一 `ReplyLocationTarget { commentId?, floor?, pageHint? }`；存在 `commentId` 时它是强身份，同楼层不同实体不得命中。已加载目标零请求；未加载目标只请求一次来源确认的目标窗口并原子替换当前页组，随后 `fetchPreviousPage`/`fetchNextPage` 只读取紧邻 cursor。目标实体及可信 current page/offset 缺一即失败并保留原窗口，不猜页、不补中间页；验证恢复必须重试同一目标，来源 session epoch 前进后允许同一 route 目标重新消费。NodeSeek 固定 10 楼精确页且定位请求禁用 fill-pages；linux.do/小隐寺使用 near-post window；妖火只接受响应 URL 或 page 表单确认的 resolved page；V2EX 只在已加载全集本地定位。用户名与 `#楼层` 独立点击，定位前恢复全部/空搜索，成功滚动并短暂高亮。前插保持可见位置，指回任一已加载窗口的 cursor 立即停止。编辑/删除重读目标实体所在真实 `pageParam`，新回复按服务端权威尾楼重新锚定，整帖刷新才回首屏；route 初始目标消费后不得覆盖后续刷新窗口，离开时目标窗和尾窗都不得留作下次首屏。 |
-| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 输入 155 楼只允许请求序列 `[targetFloor=155, page=15, page=17]`，编辑目标随后只能重读真实 `page=16, offset=150`，不得出现 2～14；相邻页反向指回 16 时不得再次请求。测试还固定同楼层不同 `commentId` 失败、NodeSeek 验证恢复重试同一目标、来源 epoch 前进后恢复妖火同一目标、整帖刷新后旧 route 目标不重放，以及尾窗在 route 卸载时清除；目标无法确认时原列表不变，V2EX 未加载目标零请求。`tests/integration/source-read-contracts.test.ts` 固定 NodeSeek 在目标页仅返回一条且声明下一页时 `nextOffset=160`、后续第 17 页仍为 10 楼窗口，同时误传 `fillPages=true` 时仍只有一次传输，并覆盖 linux.do near-post；小隐寺和妖火 reader 测试分别固定独立凭据与 resolved-page falsifier。`tests/ui/topic/topic-components.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx` 固定用户名/楼层双目标、前后边缘、每手势单次自动加载、按钮重试、前插保持和一次滚动高亮。 |
+| 精确失败 oracle | `src/domain/forum/links.test.ts` 固定五站原生 anchor 到统一 `ReplyLocationTarget`；`tests/ui/topic/topic-session-controller.test.tsx` 输入 155 楼只允许请求序列 `[targetReply.floor=155, page=15, page=17]`，编辑目标随后只能重读真实 `page=16, offset=150`，不得出现 2～14；相邻页反向指回 16 时不得再次请求。测试还固定同楼层不同 `commentId` 失败、NodeSeek 验证恢复重试同一目标、来源 epoch 前进后恢复妖火同一目标、整帖刷新后旧 route 目标不重放，以及尾窗在 route 卸载时清除；目标无法确认时原列表不变，V2EX 未加载目标零请求。`tests/integration/source-read-contracts.test.ts` 固定 NodeSeek 在目标页仅返回一条且声明下一页时 `nextOffset=160`、后续第 17 页仍为 10 楼窗口，同时误传 `fillPages=true` 时仍只有一次传输，并覆盖 linux.do near-post；小隐寺和妖火 reader 测试分别固定独立凭据与 resolved-page falsifier。`tests/ui/topic/topic-components.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx` 固定用户名/楼层双目标、前后边缘、每手势单次自动加载、按钮重试、前插保持和一次滚动高亮。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter/unit 固定五站协议和 cursor，Controller/UI 固定窗口状态机与交互；匹配 APK 的五站只读主题验证真实布局、导航和相邻加载。 |
 | Replay 或真实验收路径 | 从普通 Topic 和消息“查看完整回复”各进入一个已有远端目标；确认直接出现目标并高亮，向上/向下各触发一次相邻加载，点击作者进入用户页、返回后再点击楼层仍留在主题。linux.do 若出现验证，停在“更多 → 账号中心 → linux.do 原站”由用户手动处理后继续。全程不发回复、不清登录态。 |
 | 负向验证方式 | 恢复递归 `loadMoreReplies`、`PageSize=400`、`1..N` 批量补抓、按已加载数量推页、目标请求继续 fill-pages、把用户名和楼层合成单个 Pressable，或在 adapter 未确认页面时应用窗口，任一编号测试都必须失败。 |

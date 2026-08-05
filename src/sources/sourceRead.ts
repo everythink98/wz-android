@@ -28,7 +28,15 @@ import {
 } from './discourseRead';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { sortTopicsByCreatedAt } from '@/domain/forum/feed';
-import type { Reply, RepliesResponse, Source, Topic, TopicDetail, UserProfile } from '@/domain/forum/models';
+import type {
+  Reply,
+  RepliesResponse,
+  ReplyLocationTarget,
+  Source,
+  Topic,
+  TopicDetail,
+  UserProfile
+} from '@/domain/forum/models';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import {
   annotateSourceDiagnosticSummary,
@@ -85,7 +93,6 @@ export function getReplies({
   source,
   id,
   page,
-  pageHint,
   limit = 20,
   offset,
   fetcher,
@@ -93,14 +100,14 @@ export function getReplies({
   nodeSeekUserAgent,
   discourseAuth,
   fillPages,
-  targetFloor,
+  replyCount,
+  targetReply,
   signal,
   timeoutMs
 }: {
   source: Source;
   id: string;
   page: number;
-  pageHint?: number;
   limit?: number;
   offset?: number | null;
   fetcher?: Fetcher;
@@ -108,20 +115,21 @@ export function getReplies({
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   fillPages?: boolean;
-  targetFloor?: number;
+  replyCount?: number;
+  targetReply?: ReplyLocationTarget;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
   const options = {
     authenticated: nodeSeekAuthenticated,
     page,
-    pageHint,
     limit,
     offset,
     fetcher,
     nodeSeekUserAgent,
     fillPages,
-    targetFloor,
+    replyCount,
+    targetReply,
     signal,
     timeoutMs
   };
@@ -132,8 +140,8 @@ export function getReplies({
       limit,
       offset,
       page,
-      pageHint,
-      targetFloor,
+      pageHint: targetReply?.pageHint,
+      targetFloor: targetReply?.floor,
       signal,
       timeoutMs
     });

@@ -76,6 +76,7 @@ export function useNotificationsRuntime({
   readAccessRef.current = readAccess;
   const stateRef = useRef<NotificationState>(defaultNotificationState());
   const permissionRef = useRef(false);
+  const backgroundErrorRef = useRef('');
   const mountedRef = useRef(true);
   const foregroundDeliveryRef = useRef<Promise<void> | undefined>(undefined);
   const pendingOpenSourceRef = useRef<NotificationSource | undefined>(undefined);
@@ -102,10 +103,15 @@ export function useNotificationsRuntime({
     async (next: NotificationState, granted: boolean, eligibleSources: readonly NotificationSource[]) => {
       try {
         await syncNotificationBackgroundRegistration(next, granted, eligibleSources);
-        if (mountedRef.current) setBackgroundError('');
+        if (mountedRef.current && backgroundErrorRef.current) {
+          backgroundErrorRef.current = '';
+          setBackgroundError('');
+        }
       } catch (error) {
-        if (mountedRef.current) {
-          setBackgroundError(error instanceof Error ? error.message : '后台任务设置失败');
+        const message = error instanceof Error ? error.message : '后台任务设置失败';
+        if (mountedRef.current && backgroundErrorRef.current !== message) {
+          backgroundErrorRef.current = message;
+          setBackgroundError(message);
         }
       }
     },
@@ -310,11 +316,17 @@ export function useNotificationsRuntime({
 
   useEffect(() => {
     if (!appActive || !ready) return;
+    let current = true;
     void notificationPermissionGranted().then((granted) => {
+      if (!current) return;
+      const changed = permissionRef.current !== granted;
       permissionRef.current = granted;
-      setPermission(granted ? 'granted' : 'denied');
+      if (changed) setPermission(granted ? 'granted' : 'denied');
       void syncBackground(stateRef.current, granted, activeSources);
     });
+    return () => {
+      current = false;
+    };
   }, [activeSources, appActive, ready, syncBackground]);
 
   const handleNotificationResponse = useCallback(

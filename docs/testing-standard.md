@@ -224,10 +224,13 @@ npm run smoke:android
    - `REG-NOTIFY-033` 固定 NodeSeek 通知携带精确 comment ID、远端 floor 位于后续页且主题 replyCount 被低估的组合；详情必须先读 floor 提示页并仍以 comment ID 精确匹配。
    - `REG-NOTIFY-034` 固定私信回复 dock 与普通通知主题操作 dock 都追加 bottom safe-area inset；共享 Composer 已自行消费安全区，不得重复垫高。
    - `REG-NOTIFY-035` 固定 tabs 短标签在至少 48dp 点击区与选中线内水平居中；保留内容宽度与横向滚动，不以强制等宽破坏大字号或长标签。
-   - `REG-NOTIFY-036/038/041` 固定消息与共享 ReplyComposer 消费 Reader 字号、完整工具换行、主题光标、Discourse 五列表情及 Bottom Sheet 的 top-safe 75% 高度与 bottom inset；设备必须在 100%/130%、键盘开关和 accessory 展开三种状态复核，不得只看默认字号静态截图。
+   - `REG-NOTIFY-036/038/041/050` 固定消息、共享 Tab/按钮与 ReplyComposer 消费 Reader 字号、完整工具换行、主题光标、Discourse 五列表情及 Bottom Sheet 的 top-safe 75% 高度与 bottom inset；设备必须在 100%/130%、键盘开关和 accessory 展开三种状态复核，不得只看默认字号静态截图。
    - `REG-NOTIFY-037/042` 的妖火 fixture 同时包含原消息重复项、倒序历史、日期作者、位于正文内或气泡外包装的斜杠“回复时间”、图片和导航链接；测试必须模拟 Android 严格日期解析，真实只读验收必须确认协议标签消失，但作者、图片、时间和导航链接仍保留。
    - `REG-NOTIFY-044` 固定妖火主题链接（`/bbs-*.html` 或 `book_view.aspx`）与 `book_re.aspx` 都保留 href；Notifications RNTL 必须证明点击后经过共享 `parseForumTopicLink` 进入 App 内 Topic，而不是调用 `Linking.openURL`。
-   - `REG-NOTIFY-045` 使用原站真实 `book_re.aspx?...&tofloor=90&...` 形态固定精确楼层；domain 测试拒绝无效/站外参数，Notifications Screen/Route RNTL 必须把 `{ floor: 90 }` 传入现有 Topic target，而普通主题链接不得伪造目标。
+   - `REG-NOTIFY-045` 使用原站真实 `book_re.aspx?...&tofloor=90&...` 形态固定精确楼层；`src/domain/forum/links.test.ts` 拒绝无效/站外参数，Notifications Screen/Route RNTL 必须把 `{ floor: 90 }` 传入现有 Topic target，而普通主题链接不得伪造目标。
+   - `REG-NOTIFY-047/048` 固定 NodeSeek 完整主题链路原样传递 `ReplyLocationTarget` 与 `replyCount`，缺失/错误 floor 时仍以 comment ID 在已知页界内精确命中；只含 `message_id` 的兼容行也必须把同一 ID 写入 target，不能只用于通知去重。
+   - `REG-NOTIFY-049` 固定同身份 pending/unknown 只暂停私信访问并保留内存草稿，确认退出或换号才清空；不得为测试持久化草稿。
+   - `REG-NOTIFY-051` 固定妖火条目分别保存来源分类和页码，详情后的已读复核必须回到原分类、原页；真实逐条已读仍需单独写授权。
    - `REG-NOTIFY-039/040` 分别固定列表/气泡统一 `YYYY-MM-DD HH:mm` 与富文本链接使用 Reader theme primary；未知时间继续显式未知，不能为视觉统一猜值。
 2. Store/worker/system 固定首次 baseline 静默、首发四站 opt-in allowlist、每站摘要、200-ID 上限、重复运行不重复、全局/单站开关重启恢复、换号/退出清理、代理失败零请求、墙钟 deadline 和单站失败不阻断其他站；至少用两页 fixture 证明 worker 沿 opaque cursor 请求 `[undefined, next]` 并只记录最新 60 条，同时固定重复 cursor/无下一页停止。系统通知或 identifier 保存失败必须回滚本轮投递 ID；记录后及 Android 返回后关闭全局/来源开关或换号，都必须复核、撤销账号级 exact identifier 并释放 ID，旧 identifier 不得复活或误删新账号摘要。registration 测试必须阻塞 register/unregister 并交错提交相反意图，最终状态只服从最后一次调用；空 eligible-source 集合不得注册后台任务，foreground handler 必须展示 banner/list 且不设置 badge。
 3. 隐私断言必须证明标题、正文、预览、会话、Cookie 和 token 不进入持久化、诊断或系统通知 payload；参与者只允许进入当次 Android 摘要正文，不进入持久化或诊断。摘要除此之外只含来源、动作和新增数量。

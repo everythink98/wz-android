@@ -6,6 +6,7 @@ import { alphaColor, androidRipple, fontFamilyValue, type ReaderTheme } from '@/
 import { pressWithFeedback, TOUCH_HIT_SLOP } from './pressFeedback';
 
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+  const fontSize = (size: number) => Math.round(size * settings.fontScale);
   return StyleSheet.create({
     floating: {
       alignItems: 'center',
@@ -78,19 +79,19 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     text: {
       color: theme.ink,
       fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: 13,
+      fontSize: fontSize(13),
       fontWeight: '600'
     },
     textCompact: {
-      fontSize: 12,
+      fontSize: fontSize(12),
       fontWeight: '500'
     },
     textTiny: {
       color: theme.muted,
-      fontSize: 12,
+      fontSize: fontSize(12),
       fontWeight: '500',
       includeFontPadding: false,
-      lineHeight: 16
+      lineHeight: fontSize(16)
     },
     textActive: {
       color: theme.primary
