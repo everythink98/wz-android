@@ -121,6 +121,13 @@ export interface ReplyLocationTarget {
   pageHint?: number;
 }
 
+export type ReplyOrder = 'oldest' | 'newest';
+
+export type ReplyWindowPosition =
+  | { kind: 'start' }
+  | { kind: 'cursor'; page: number; offset: number | null }
+  | { kind: 'target'; target: ReplyLocationTarget };
+
 export interface Reply {
   author: string;
   authorId?: string;

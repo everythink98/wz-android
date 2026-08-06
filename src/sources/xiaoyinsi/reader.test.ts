@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  categoryMapForTopics,
   getXiaoyinsiCategories,
   getXiaoyinsiEmojiUrls,
   getXiaoyinsiFeed,
@@ -99,6 +100,40 @@ function postsForRequest(url: URL) {
 
 describe('xiaoyinsi adapter', () => {
   beforeEach(() => resetXiaoyinsiCategoryCacheForTests());
+
+  it('[REG-XIAOYINSI-024] isolates category metadata across credential generations', async () => {
+    const firstSite = Promise.withResolvers<Response>();
+    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
+      const apiKey = new Headers(init?.headers).get('User-Api-Key');
+      return apiKey === 'first-key'
+        ? firstSite.promise
+        : json({ categories: [{ id: 5, name: 'Second account category' }] });
+    });
+    const data = { topic_list: { topics: [{ category_id: 5 }] } };
+    const topics = [{ category_id: 5 }];
+
+    const first = categoryMapForTopics(data, topics, {
+      fetcher,
+      credentials: { apiKey: 'first-key', clientId: 'install-client', generation: 1 }
+    });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    const second = categoryMapForTopics(data, topics, {
+      fetcher,
+      credentials: { apiKey: 'second-key', clientId: 'install-client', generation: 2 }
+    });
+    firstSite.resolve(json({ categories: [{ id: 5, name: 'First account category' }] }));
+
+    const [firstCategories, secondCategories] = await Promise.all([first, second]);
+    const secondAgain = await categoryMapForTopics(data, topics, {
+      fetcher,
+      credentials: { apiKey: 'second-key', clientId: 'install-client', generation: 2 }
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(firstCategories.get('5')).toBe('First account category');
+    expect(secondCategories.get('5')).toBe('Second account category');
+    expect(secondAgain.get('5')).toBe('Second account category');
+  });
 
   it('drops feed topics when the original author identity is missing', async () => {
     const fetcher = vi.fn(async (input: string) => {
@@ -218,7 +253,13 @@ describe('xiaoyinsi adapter', () => {
     const feed = await getXiaoyinsiFeed({ fetcher, credentials, limit: 1 });
     const categories = await getXiaoyinsiCategories({ fetcher, credentials });
     const detail = await getXiaoyinsiTopic('42', { fetcher, credentials });
-    const replies = await getXiaoyinsiReplies('42', { fetcher, credentials, page: 2, limit: 1, offset: 1 });
+    const replies = await getXiaoyinsiReplies('42', {
+      fetcher,
+      credentials,
+      order: 'oldest',
+      position: { kind: 'cursor', page: 2, offset: 1 },
+      limit: 1
+    });
     const reply = await getXiaoyinsiReply('42', 2, { fetcher, credentials });
     const search = await searchXiaoyinsi('正文', { fetcher, credentials });
     const profile = await getXiaoyinsiUserProfile('alice', 'alice', { fetcher, credentials });
@@ -411,7 +452,8 @@ describe('xiaoyinsi adapter', () => {
     const next = await getXiaoyinsiReplies('42', {
       fetcher,
       limit: 1,
-      offset: detail.replyNextOffset
+      order: 'oldest',
+      position: { kind: 'cursor', page: 3, offset: detail.replyNextOffset ?? null }
     });
 
     expect(detail.replies.map((reply) => reply.floor)).toEqual([3]);
@@ -440,7 +482,8 @@ describe('xiaoyinsi adapter', () => {
     const result = await getXiaoyinsiReplies('42', {
       fetcher,
       credentials: { apiKey: 'secret-key', clientId: 'install-client' },
-      targetFloor: 90,
+      order: 'oldest',
+      position: { kind: 'target', target: { floor: 90 } },
       limit: 30
     });
 
@@ -456,6 +499,93 @@ describe('xiaoyinsi adapter', () => {
     });
     expect(result.items.find((reply) => reply.floor === 90)?.author).toBe('user-90');
   });
+
+  it('[REG-TOPIC-067] reads only the 小隐寺 stream tail IDs and then the adjacent older IDs', async () => {
+    const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
+    const requestedPostIds: string[][] = [];
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      expect(new Headers(init?.headers).get('User-Api-Key')).toBe('secret-key');
+      if (url.pathname === '/t/42.json') {
+        return json({ post_stream: { stream, posts: [] } });
+      }
+      if (url.pathname === '/t/42/posts.json') {
+        const ids = url.searchParams.getAll('post_ids[]');
+        requestedPostIds.push(ids);
+        return json({
+          post_stream: {
+            posts: ids.map((id) => ({
+              id: Number(id),
+              post_number: Number(id) - 999,
+              username: `user-${id}`,
+              cooked: `<p>${id}</p>`,
+              created_at: '2026-08-05T00:00:00.000Z'
+            }))
+          }
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+    const credentials = { apiKey: 'secret-key', clientId: 'install-client' };
+
+    const tail = await getXiaoyinsiReplies('42', {
+      fetcher,
+      credentials,
+      order: 'newest',
+      position: { kind: 'start' },
+      limit: 10
+    });
+    const older = await getXiaoyinsiReplies('42', {
+      fetcher,
+      credentials,
+      order: 'newest',
+      position: { kind: 'cursor', page: tail.nextPage!, offset: tail.nextOffset ?? null },
+      limit: 10
+    });
+
+    expect(requestedPostIds).toEqual([
+      ['1041', '1042', '1043', '1044', '1045'],
+      ['1031', '1032', '1033', '1034', '1035', '1036', '1037', '1038', '1039', '1040']
+    ]);
+    expect(tail.items.map((reply) => reply.floor)).toEqual([46, 45, 44, 43, 42]);
+    expect(tail).toMatchObject({ currentPage: 5, previousPage: null, nextPage: 4, nextOffset: 30 });
+    expect(older.items.map((reply) => reply.floor)).toEqual([41, 40, 39, 38, 37, 36, 35, 34, 33, 32]);
+  });
+
+  it.each(['oldest', 'newest'] as const)(
+    '[REG-TOPIC-067] rejects an incomplete 小隐寺 %s window when the stream changes during hydration',
+    async (order) => {
+      const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === '/t/42.json') return json({ post_stream: { stream, posts: [] } });
+        if (url.pathname === '/t/42/posts.json') {
+          const ids = url.searchParams.getAll('post_ids[]').slice(0, -1);
+          return json({
+            post_stream: {
+              posts: ids.map((id) => ({
+                id: Number(id),
+                post_number: Number(id) - 999,
+                username: `user-${id}`,
+                cooked: `<p>${id}</p>`,
+                created_at: '2026-08-05T00:00:00.000Z'
+              }))
+            }
+          });
+        }
+        throw new Error(`unexpected ${input}`);
+      });
+
+      await expect(
+        getXiaoyinsiReplies('42', {
+          fetcher,
+          order,
+          position: { kind: 'start' },
+          limit: 10
+        })
+      ).rejects.toThrow('回复窗口不完整');
+    }
+  );
 
   it('[REG-XIAOYINSI-016] loads 小隐寺 tag candidates without the unsupported limit parameter', async () => {
     const fetcher = vi.fn(async (input: string) => {
@@ -605,6 +735,33 @@ describe('xiaoyinsi adapter', () => {
       items: [expect.objectContaining({ category: '缓存分类' })]
     });
     expect(fetcher.mock.calls.filter(([input]) => new URL(input).pathname === '/site.json')).toHaveLength(1);
+  });
+
+  it('[REG-XIAOYINSI-024] keeps a shared category request alive when the first consumer is canceled', async () => {
+    const categoryResponse = Promise.withResolvers<Response>();
+    const feedController = new AbortController();
+    const categoriesController = new AbortController();
+    let siteSignal: AbortSignal | undefined;
+    const isolatedTopic = { ...topic, category_id: 654321 };
+    const fetcher = vi.fn((input: string, init?: RequestInit) => {
+      if (new URL(input).pathname === '/site.json') {
+        siteSignal = init?.signal || undefined;
+        return categoryResponse.promise;
+      }
+      return Promise.resolve(json({ users: [{ id: 7, username: 'alice' }], topic_list: { topics: [isolatedTopic] } }));
+    });
+
+    await getXiaoyinsiFeed({ fetcher, signal: feedController.signal });
+    const categories = getXiaoyinsiCategories({ fetcher, signal: categoriesController.signal });
+    expect(fetcher.mock.calls.filter(([input]) => new URL(input).pathname === '/site.json')).toHaveLength(1);
+
+    feedController.abort();
+    expect(siteSignal?.aborted).toBe(false);
+    categoryResponse.resolve(json({ categories: [{ id: 654321, name: '共享分类' }] }));
+
+    await expect(categories).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: '654321', name: '共享分类' })]
+    });
   });
 
   it('[REG-XIAOYINSI-024] retries category lookup after a failed background request', async () => {

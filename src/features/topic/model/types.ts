@@ -1,5 +1,4 @@
-import { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-import type { Reply } from '@/domain/forum/models';
+import type { Reply, ReplyWindowPosition } from '@/domain/forum/models';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 
 export type ReplyFilter = 'all' | 'author' | 'images';
@@ -21,11 +20,21 @@ export interface ReplyEditTarget {
 
 export type ReplyRefreshTarget = Pick<Reply, 'commentId' | 'floor' | 'deletePath'>;
 
-export interface TopicRepliesRefreshOptions {
-  diagnosticTrace?: DiagnosticTrace;
-  silent?: boolean;
-  afterSubmit?: boolean;
-  editedReplyContent?: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>;
-  targetReply?: ReplyRefreshTarget | null;
-  excludeReply?: ReplyRefreshTarget | null;
-}
+export type ReplyCursor = Extract<ReplyWindowPosition, { kind: 'cursor' }>;
+
+export type ReplyRefreshCommand =
+  | { kind: 'manual'; silent?: boolean }
+  | { kind: 'created'; silent?: boolean }
+  | {
+      kind: 'edited';
+      target: ReplyRefreshTarget;
+      contentMarkdown: string;
+      position?: ReplyCursor;
+      silent?: boolean;
+    }
+  | {
+      kind: 'deleted';
+      target: ReplyRefreshTarget;
+      position?: ReplyCursor;
+      silent?: boolean;
+    };

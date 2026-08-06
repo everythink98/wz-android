@@ -224,7 +224,7 @@ function seedTopicCache(
   scope = initialForumSessionEpochs
 ) {
   const detailKey = forumQueryKeys.topic({ source: topicDetail.source, topicId: topicDetail.id, scope });
-  const repliesKey = forumQueryKeys.replies(detailKey);
+  const repliesKey = forumQueryKeys.replies(detailKey, 'oldest');
   appQueryClient.setQueryData(detailKey, topicDetail);
   appQueryClient.setQueryData(repliesKey, {
     pages: [{ items: topicReplies, hasMore: false, nextPage: null }],
@@ -337,7 +337,7 @@ describe('topic action query mutations', () => {
       collection = hook.result.current.actions.collectOnNodeSeekSite();
       await Promise.resolve();
     });
-    await waitFor(() => expect(cancelQueries).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(cancelQueries).toHaveBeenCalledTimes(3));
 
     ticketCurrent = false;
     await act(async () => {
@@ -415,6 +415,11 @@ describe('topic action query mutations', () => {
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
     const refreshTopicReplies = jest.fn(async () => 'completed');
     const { detailKey, repliesKey } = seedTopicCache();
+    const newestKey = forumQueryKeys.replies(detailKey, 'newest');
+    appQueryClient.setQueryData(newestKey, {
+      pages: [{ items: [], hasMore: false, nextPage: null }],
+      pageParams: [{ kind: 'start' }]
+    });
     const hook = await renderActions({ active, refreshTopicReplies });
     let submission!: Promise<void>;
 
@@ -439,10 +444,13 @@ describe('topic action query mutations', () => {
     expect(refreshTopicReplies).not.toHaveBeenCalled();
     expect(appQueryClient.getQueryData(detailKey)).toBeDefined();
     expect(appQueryClient.getQueryData(repliesKey)).toBeDefined();
+    expect(appQueryClient.getQueryData(newestKey)).toBeDefined();
+    expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
+    expect(appQueryClient.getQueryState(newestKey)?.isInvalidated).toBe(true);
     expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
   });
 
-  it('REG-LINUXDO-003 records a confirmed reply with a failed follow-up refresh as partial', async () => {
+  it('[REG-LINUXDO-003][REG-WRITE-017][REG-TOPIC-067] marks write caches stale without a competing refetch', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -450,7 +458,8 @@ describe('topic action query mutations', () => {
     const refreshTopicReplies = jest.fn(async (_options?: unknown) => 'failed');
     const notify = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
-    seedTopicCache(linuxDetail);
+    const { detailKey, repliesKey } = seedTopicCache(linuxDetail);
+    const invalidateQueries = jest.spyOn(appQueryClient, 'invalidateQueries');
     const hook = await renderActions({ notify, refreshTopicReplies, topicDetail: linuxDetail });
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('confirmed reply');
@@ -461,13 +470,9 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
-    expect(refreshTopicReplies).toHaveBeenCalledWith(
-      expect.objectContaining({
-        afterSubmit: true,
-        diagnosticTrace: expect.any(Object),
-        silent: true
-      })
-    );
+    expect(refreshTopicReplies).toHaveBeenCalledWith({ kind: 'created', silent: true }, expect.any(Object));
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: detailKey, exact: true, refetchType: 'none' });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: repliesKey, exact: true, refetchType: 'none' });
     expect(notify).toHaveBeenCalledWith('回复已提交');
     expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent)).toContainEqual(
       expect.objectContaining({
@@ -700,6 +705,120 @@ describe('topic action query mutations', () => {
       await interaction;
     });
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.upvoted).toBe(false);
+  });
+
+  it('[REG-TOPIC-062] does not roll an old reply snapshot over a newer target window', async () => {
+    const transport = Promise.withResolvers<unknown>();
+    mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
+    const original = { ...editableReply, canLike: true, upvoted: false };
+    const target = { ...editableReply, commentId: 150, floor: 50, author: 'target' };
+    const { repliesKey } = seedTopicCache({ ...detail, replyCount: 1 }, [original]);
+    const hook = await renderActions({ topicDetail: { ...detail, replyCount: 1 }, topicReplies: [original] });
+    let interaction!: Promise<void>;
+
+    await act(async () => {
+      interaction = hook.result.current.actions.interact('upvote', original.commentId);
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        (appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey)?.pages[0]?.items[0] as Reply).upvoted
+      ).toBe(true)
+    );
+    appQueryClient.setQueryData(repliesKey, {
+      pages: [{ items: [target], currentPage: 5, currentOffset: 40, hasMore: false, nextPage: null }],
+      pageParams: [{ kind: 'cursor', page: 5, offset: 40 }]
+    });
+
+    await act(async () => {
+      transport.reject(new Error('network failed'));
+      await interaction;
+    });
+
+    expect(appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey)?.pages[0]?.items).toEqual([target]);
+  });
+
+  it('[REG-TOPIC-067] projects an interaction into both loaded reply orders', async () => {
+    const transport = Promise.withResolvers<unknown>();
+    mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
+    const reply = { ...editableReply, canLike: true, upvoted: false };
+    const actionDetail = { ...detail, replyCount: 1 };
+    const { detailKey, repliesKey } = seedTopicCache(actionDetail, [reply]);
+    const newestKey = forumQueryKeys.replies(detailKey, 'newest');
+    appQueryClient.setQueryData(newestKey, {
+      pages: [{ items: [reply], hasMore: false, nextPage: null }],
+      pageParams: [{ kind: 'start' }]
+    });
+    const hook = await renderActions({ topicDetail: actionDetail, topicReplies: [reply] });
+    const cancelQueries = jest.spyOn(appQueryClient, 'cancelQueries');
+    let interaction!: Promise<void>;
+
+    await act(async () => {
+      interaction = hook.result.current.actions.interact('upvote', reply.commentId);
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(newestKey)?.pages[0]?.items[0]).toMatchObject(
+        {
+          upvoted: true
+        }
+      )
+    );
+    appQueryClient.setQueryData(newestKey, {
+      pages: [{ items: [reply], hasMore: false, nextPage: null }],
+      pageParams: [{ kind: 'start' }]
+    });
+    await act(async () => {
+      transport.resolve(true);
+      await interaction;
+    });
+
+    for (const key of [repliesKey, newestKey]) {
+      expect(appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(key)?.pages[0]?.items[0]).toMatchObject({
+        commentId: reply.commentId,
+        upvoted: true
+      });
+    }
+    expect(cancelQueries).toHaveBeenCalledWith({ queryKey: newestKey, exact: true });
+  });
+
+  it('[REG-TOPIC-067][REG-WRITE-017] keeps the current order cache when a pending submit crosses an order change', async () => {
+    const transport = Promise.withResolvers<unknown>();
+    mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
+    const { detailKey, repliesKey } = seedTopicCache();
+    const newestKey = forumQueryKeys.replies(detailKey, 'newest');
+    appQueryClient.setQueryData(newestKey, {
+      pages: [{ items: [{ ...editableReply, floor: 50 }], hasMore: false, nextPage: null }],
+      pageParams: [{ kind: 'start' }]
+    });
+    const refresh = Promise.withResolvers<'completed'>();
+    const refreshTopicReplies = jest.fn(async () => refresh.promise);
+    const hook = await renderActions({ refreshTopicReplies });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('submitted after order change');
+    });
+    let submission!: Promise<void>;
+    await act(async () => {
+      submission = hook.result.current.actions.submitReply();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      transport.resolve(true);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(refreshTopicReplies).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      hook.result.current.topicSession.commands.view.changeReplyOrder('newest');
+      refresh.resolve('completed');
+      await submission;
+    });
+
+    expect(refreshTopicReplies).toHaveBeenCalledTimes(1);
+    expect(appQueryClient.getQueryData(newestKey)).toBeDefined();
+    expect(appQueryClient.getQueryData(repliesKey)).toBeDefined();
+    expect(appQueryClient.getQueryState(newestKey)?.isInvalidated).toBe(true);
+    expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
   });
 
   it('[REG-WRITE-018] snapshots optimistic mutations only when their scoped transport starts', async () => {
@@ -1202,7 +1321,7 @@ describe('topic action query mutations', () => {
       submission = hook.result.current.actions.submitReply();
       await Promise.resolve();
     });
-    await waitFor(() => expect(cancelQueries).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(cancelQueries).toHaveBeenCalledTimes(3));
     seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
     await act(async () => {
       cancellation.resolve();
@@ -1395,7 +1514,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyContent).toBe('old');
   });
 
-  it('[REG-WRITE-026] derives edit cache keys from the issued ticket epoch', async () => {
+  it('[REG-WRITE-026][REG-TOPIC-067] derives edit cache keys without a competing refetch', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1408,6 +1527,7 @@ describe('topic action query mutations', () => {
     const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
     const ticketEpochs = { ...initialForumSessionEpochs, xiaoyinsi: 7 };
     const { repliesKey } = seedTopicCache(xiaDetail, [reply], ticketEpochs);
+    const invalidateQueries = jest.spyOn(appQueryClient, 'invalidateQueries');
     const hook = await renderActions({
       ensureWritableSession: async () => ({
         source: 'xiaoyinsi',
@@ -1434,6 +1554,7 @@ describe('topic action query mutations', () => {
       })
     );
     expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: repliesKey, exact: true, refetchType: 'none' });
   });
 
   it('[REG-XIAOYINSI-007] closes an edit composer, keeps unconfirmed content out of cache, and refreshes only replies', async () => {
@@ -1471,7 +1592,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryState(detailKey)?.isInvalidated).toBe(false);
   });
 
-  it('[REG-WRITE-011][REG-XIAOYINSI-012] removes a confirmed reply locally and refreshes only the reply query', async () => {
+  it('[REG-WRITE-011][REG-XIAOYINSI-012][REG-TOPIC-067] removes a reply without a competing refetch', async () => {
     const reply: Reply = {
       author: 'alice',
       canDelete: true,
@@ -1482,10 +1603,16 @@ describe('topic action query mutations', () => {
     };
     const xiaDetail = detailFor('xiaoyinsi', { polls: [], replies: [reply], replyCount: 1 });
     const { detailKey, repliesKey } = seedTopicCache(xiaDetail, [reply]);
+    appQueryClient.setQueryData(repliesKey, {
+      pages: [{ items: [reply], currentPage: 2, currentOffset: 30, hasMore: false, nextPage: null }],
+      pageParams: [{ kind: 'cursor', page: 2, offset: 30 }]
+    });
+    const refreshTopicReplies = jest.fn(async () => 'completed');
+    const invalidateQueries = jest.spyOn(appQueryClient, 'invalidateQueries');
     const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
       buttons?.find((button) => button.text === '删除')?.onPress?.();
     });
-    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    const hook = await renderActions({ refreshTopicReplies, topicDetail: xiaDetail, topicReplies: [reply] });
 
     await act(async () => {
       hook.result.current.actions.deleteReply(reply);
@@ -1497,6 +1624,14 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({ replyCount: 0, replies: [] });
     expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
     expect(appQueryClient.getQueryState(detailKey)?.isInvalidated).toBe(false);
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: repliesKey, exact: true, refetchType: 'none' });
+    expect(refreshTopicReplies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'deleted',
+        position: { kind: 'cursor', page: 2, offset: 30 }
+      }),
+      expect.any(Object)
+    );
     alert.mockRestore();
   });
 

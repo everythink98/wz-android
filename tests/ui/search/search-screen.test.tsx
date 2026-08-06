@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render as renderNative, waitFor } from '../render';
+import { act, fireEvent, render as renderNative, waitFor, within } from '../render';
 import React, { useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -355,6 +355,13 @@ function renderSearchScreen(overrides: Partial<React.ComponentProps<typeof Searc
 }
 
 describe('Search state', () => {
+  it('[REG-SEARCH-020] keeps the five-source rail on the home compact tab geometry', async () => {
+    const view = await renderSearchScreen();
+    const tab = view.getByTestId('search-source-all');
+    expect(StyleSheet.flatten(tab.props.style).minHeight).toBe(40);
+    expect(StyleSheet.flatten(within(tab).getByText('全部').props.style).fontSize).toBe(13);
+  });
+
   it('submits a recent search immediately and removes only the selected entry', async () => {
     const onRemoveRecentSearch = jest.fn<(query: string) => void>();
     const onSearch = jest.fn<(queryOverride?: string) => void>();

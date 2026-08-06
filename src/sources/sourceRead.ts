@@ -31,19 +31,15 @@ import { sortTopicsByCreatedAt } from '@/domain/forum/feed';
 import type {
   Reply,
   RepliesResponse,
-  ReplyLocationTarget,
+  ReplyOrder,
+  ReplyWindowPosition,
   Source,
   Topic,
   TopicDetail,
   UserProfile
 } from '@/domain/forum/models';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import {
-  annotateSourceDiagnosticSummary,
-  copySourceDiagnosticSummary,
-  mergeSourceDiagnosticSummaries,
-  sourceDiagnosticSummary
-} from './diagnostics';
+import { copySourceDiagnosticSummary, mergeSourceDiagnosticSummaries, sourceDiagnosticSummary } from './diagnostics';
 import { dispatchSourceRead } from './readAggregation';
 function pageNumberFromUrl(url: string) {
   try {
@@ -92,44 +88,41 @@ export function getTopic({
 export function getReplies({
   source,
   id,
-  page,
+  order,
+  position,
   limit = 20,
-  offset,
   fetcher,
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
   fillPages,
   replyCount,
-  targetReply,
   signal,
   timeoutMs
 }: {
   source: Source;
   id: string;
-  page: number;
+  order: ReplyOrder;
+  position: ReplyWindowPosition;
   limit?: number;
-  offset?: number | null;
   fetcher?: Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   fillPages?: boolean;
   replyCount?: number;
-  targetReply?: ReplyLocationTarget;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
   const options = {
     authenticated: nodeSeekAuthenticated,
-    page,
+    order,
+    position,
     limit,
-    offset,
     fetcher,
     nodeSeekUserAgent,
     fillPages,
     replyCount,
-    targetReply,
     signal,
     timeoutMs
   };
@@ -138,27 +131,15 @@ export function getReplies({
       auth: discourseAuth,
       fetcher,
       limit,
-      offset,
-      page,
-      pageHint: targetReply?.pageHint,
-      targetFloor: targetReply?.floor,
+      order,
+      position,
       signal,
       timeoutMs
     });
   }
   return dispatchSourceRead<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
-    v2ex: async (): Promise<RepliesResponse> =>
-      annotateSourceDiagnosticSummary(
-        { items: [], hasMore: false, nextPage: null },
-        {
-          parserVariant: 'unsupported-replies',
-          candidateCount: 0,
-          validCount: 0,
-          droppedCount: 0,
-          isExpectedEmpty: true
-        }
-      )
+    v2ex: () => Promise.reject(new Error('V2EX 回复集合未确认完整'))
   });
 }
 

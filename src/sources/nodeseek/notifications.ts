@@ -365,12 +365,15 @@ export const nodeSeekNotificationAdapter = {
     if (!reply) {
       const pageResult = await getNodeSeekReplies(item.target.topicId, {
         ...readerOptions,
-        page: 2,
-        replyCount: topic.replyCount,
-        targetReply: {
-          ...(commentId ? { commentId } : {}),
-          ...(floor ? { floor } : {})
-        }
+        order: 'oldest',
+        position: {
+          kind: 'target',
+          target: {
+            ...(commentId ? { commentId } : {}),
+            ...(floor ? { floor } : {})
+          }
+        },
+        replyCount: topic.replyCount
       });
       reply = pageResult.items.find(matchesTarget);
     }

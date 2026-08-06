@@ -68,7 +68,7 @@ describe('source gateway reads', () => {
     const fetcher = vi.fn(async (input: string) =>
       input.includes('book_re.aspx')
         ? new Response(
-            '<div class="line1">[沙发] 回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>'
+            '<input name="page" value="1" /><div class="line1">[沙发] 回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>'
           )
         : new Response(
             '<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>更多回帖(1)<a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>'
@@ -96,7 +96,8 @@ describe('source gateway reads', () => {
       source: 'yaohuo',
       id: '123',
       categoryId: '177',
-      page: 3,
+      order: 'oldest',
+      position: { kind: 'cursor', page: 3, offset: null },
       limit: 30,
       fetcher
     });
@@ -118,8 +119,8 @@ describe('source gateway reads', () => {
       source: 'yaohuo',
       id: '1560939',
       categoryId: '177',
-      page: 1,
-      targetReply: { floor: 90 },
+      order: 'oldest',
+      position: { kind: 'target', target: { floor: 90 } },
       fetcher
     });
 

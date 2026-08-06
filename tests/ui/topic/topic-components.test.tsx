@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
 import { fireEvent, render, within } from '../render';
 import React, { type ComponentProps } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { HTML_REPLY_CONTENT_CLASS } from '@/features/topic/rendering/htmlStyles';
@@ -458,6 +458,26 @@ describe('Topic real child components', () => {
       ['like', 22],
       ['dislike', 22]
     ]);
+  });
+
+  it('[REG-TOPIC-067] removes the divider after the confirmed terminal reply', async () => {
+    const view = await render(<ReplyItem {...replyProps({ isTerminal: true })} />);
+    const terminalStyle = StyleSheet.flatten(view.getByTestId('terminal-reply').props.style);
+
+    expect(terminalStyle).toMatchObject({ borderBottomWidth: 0 });
+  });
+
+  it('[REG-TOPIC-067] removes the divider after a terminal system event', async () => {
+    const reply: Reply = {
+      ...replyProps().reply,
+      actionCode: 'closed.enabled',
+      contentHtml: '',
+      systemAction: true
+    };
+    const view = await render(<ReplyItem {...replyProps({ isTerminal: true, reply, source: 'linuxdo' })} />);
+    const terminalStyle = StyleSheet.flatten(view.getByLabelText(/系统事件/).props.style);
+
+    expect(terminalStyle).toMatchObject({ borderBottomWidth: 0 });
   });
 
   it('[REG-TOPIC-047] keeps reply prose inset from the avatar column and article density separate', async () => {

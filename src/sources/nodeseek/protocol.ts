@@ -39,6 +39,22 @@ function nodeSeekPostPageFromHref(href: string | undefined, id: string) {
   }
 }
 
+export function resolvedNodeSeekPostPage(html: string, id: string, responseUrl?: string) {
+  const responsePage = nodeSeekPostPageFromHref(responseUrl, id);
+  if (responsePage) return responsePage;
+  const root = parseHtml(html);
+  for (const selector of [
+    'link[rel="canonical"][href]',
+    'a.post-title[href]',
+    '.post-title a[href]',
+    '.post-title[href]'
+  ]) {
+    const page = nodeSeekPostPageFromHref(root.querySelector(selector)?.getAttribute('href'), id);
+    if (page) return page;
+  }
+  return null;
+}
+
 export function nextNodeSeekPostPage(html: string, id: string, currentPage = 1) {
   let nextPage: number | null = null;
   for (const link of parseHtml(html).querySelectorAll('a')) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasNextReplyPage, hasPreviousReplyPage } from './useTopicController';
+import { hasNextReplyPage, hasPreviousReplyPage } from './replyPagination';
 
 describe('topic query pagination', () => {
   it('accepts an advancing reply cursor', () => {

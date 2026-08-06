@@ -617,6 +617,7 @@ export const SearchScreen = memo(function SearchScreen({
           onSearch={() => submitSearch()}
         />
         <PillRail
+          compactTabs
           variant="tabs"
           items={feedSourceItems}
           value={searchSource}

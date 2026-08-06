@@ -1,7 +1,107 @@
 import { decodeHtml, isRecord, textContentFromHtml, textExcerpt, toIsoString } from '@/domain/forum/html';
 import { stripDiscourseCalloutMarkersFromExcerpt } from './content';
-import type { Category, ReactionSummary, Reply, Source, TopicPoll, TopicPollOption } from '@/domain/forum/models';
+import type {
+  Category,
+  ReactionSummary,
+  Reply,
+  RepliesResponse,
+  ReplyOrder,
+  ReplyWindowPosition,
+  Source,
+  TopicPoll,
+  TopicPollOption
+} from '@/domain/forum/models';
 
+export function discourseStreamReplyWindow(
+  stream: unknown[],
+  {
+    limit,
+    order,
+    position
+  }: {
+    limit: number;
+    order: ReplyOrder;
+    position: Exclude<ReplyWindowPosition, { kind: 'target' }>;
+  }
+): Omit<RepliesResponse, 'items'> & { postIds: unknown[] } {
+  const pageSize = Math.max(1, Math.floor(limit));
+  const totalCount = Math.max(0, stream.length - 1);
+  if (totalCount === 0) {
+    return {
+      postIds: [],
+      currentPage: 1,
+      currentOffset: 0,
+      previousPage: null,
+      previousOffset: null,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null,
+      totalCount
+    };
+  }
+  const currentOffsetValue =
+    position.kind === 'cursor'
+      ? position.offset
+      : order === 'newest'
+        ? Math.floor((totalCount - 1) / pageSize) * pageSize
+        : 0;
+  if (
+    typeof currentOffsetValue !== 'number' ||
+    !Number.isSafeInteger(currentOffsetValue) ||
+    currentOffsetValue < 0 ||
+    currentOffsetValue >= totalCount
+  ) {
+    throw new Error('Discourse 回复游标已失效');
+  }
+  const currentOffset = currentOffsetValue;
+  const resolvedPage = Math.floor(currentOffset / pageSize) + 1;
+  if (position.kind === 'cursor' && position.page !== resolvedPage) {
+    throw new Error('Discourse 回复游标与页码不一致');
+  }
+  const currentPage = resolvedPage;
+  const endOffset = Math.min(totalCount, currentOffset + pageSize);
+  const olderOffset = currentOffset > 0 ? Math.max(0, currentOffset - pageSize) : null;
+  const newerOffset = endOffset < totalCount ? endOffset : null;
+  const olderPage = olderOffset === null ? null : Math.max(1, currentPage - 1);
+  const newerPage = newerOffset === null ? null : currentPage + 1;
+  return {
+    postIds: stream.slice(1 + currentOffset, 1 + endOffset),
+    currentPage,
+    currentOffset,
+    previousPage: order === 'oldest' ? olderPage : newerPage,
+    previousOffset: order === 'oldest' ? olderOffset : newerOffset,
+    hasMore: order === 'oldest' ? newerOffset !== null : olderOffset !== null,
+    nextPage: order === 'oldest' ? newerPage : olderPage,
+    nextOffset: order === 'oldest' ? newerOffset : olderOffset,
+    totalCount
+  };
+}
+
+function exactDiscourseWindow<T>(items: T[], postIds: unknown[], idFor: (item: T) => unknown) {
+  const ids = postIds.map(String);
+  const requested = new Set(ids);
+  const byId = new Map<string, T>();
+  if (requested.size !== ids.length) throw new Error('Discourse 回复窗口不完整');
+  for (const item of items) {
+    const rawId = idFor(item);
+    const id = rawId === undefined || rawId === null ? '' : String(rawId);
+    if (!requested.has(id) || byId.has(id)) throw new Error('Discourse 回复窗口不完整');
+    byId.set(id, item);
+  }
+  if (byId.size !== ids.length) throw new Error('Discourse 回复窗口不完整');
+  return ids.map((id) => byId.get(id)!);
+}
+
+export function discourseRepliesInStreamOrder(items: Reply[], postIds: unknown[], order: ReplyOrder) {
+  const ordered = exactDiscourseWindow(items, postIds, (item) => item.commentId);
+  return order === 'newest' ? ordered.reverse() : ordered;
+}
+
+export function discourseVisiblePostIds(posts: unknown[], postIds: unknown[]) {
+  return exactDiscourseWindow(posts, postIds, (post) => (isRecord(post) ? post.id : null))
+    .filter((post) => isRecord(post) && !post.deleted_at && post.user_deleted !== true)
+    .map((post) => String((post as Record<string, unknown>).id));
+}
 export function discourseReplyWindow(data: unknown, limit: number) {
   const postStream = isRecord(data) && isRecord(data.post_stream) ? data.post_stream : {};
   const stream = Array.isArray(postStream.stream) ? postStream.stream : [];
@@ -13,7 +113,8 @@ export function discourseReplyWindow(data: unknown, limit: number) {
       if (!isRecord(post)) return -1;
       const id = post.id;
       const streamIndex = stream.findIndex((streamId) => String(streamId) === String(id));
-      return streamIndex >= 0 ? streamIndex : (positiveInteger(post.post_number) || 1) - 1;
+      if (streamIndex < 0) throw new Error('Discourse 锚点回复流已变化');
+      return streamIndex;
     })
     .filter((index) => index > 0)
     .sort((left, right) => left - right);

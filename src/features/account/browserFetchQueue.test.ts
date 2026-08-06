@@ -42,6 +42,17 @@ describe('browser fetch queue', () => {
     await expect(response.text()).resolves.toBe('');
   });
 
+  it('keeps the final NodeSeek browser document URL on the synthetic response', () => {
+    const response = nodeSeekBrowserResponse(
+      '<html>page five</html>',
+      false,
+      undefined,
+      'https://www.nodeseek.com/post-42-5'
+    );
+
+    expect(response.url).toBe('https://www.nodeseek.com/post-42-5');
+  });
+
   it('classifies linux.do browser responses by body type', () => {
     expect(linuxDoBrowserResponse('{"ok":true}').headers.get('content-type')).toBe('application/json');
     expect(linuxDoBrowserResponse('<html></html>').headers.get('content-type')).toBe('text/html');

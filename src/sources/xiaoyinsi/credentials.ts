@@ -8,6 +8,7 @@ export type XiaoyinsiStoredCredential = {
 export type XiaoyinsiApiCredentials = {
   apiKey: string;
   clientId: string;
+  generation?: number;
   scopes?: XiaoyinsiApiScope[];
 };
 

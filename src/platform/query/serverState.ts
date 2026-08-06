@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import type { SourceSearchFilter } from '@/domain/forum/searchFilters';
 import { isSessionSource, type NotificationSource, type SessionSource } from '@/domain/forum/sourceCatalog';
-import type { FeedSource, Source } from '@/domain/forum/models';
+import type { FeedSource, ReplyOrder, Source } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from './sessionEpochs';
 
 export type ForumIdentityBarrierSource = SessionSource;
@@ -142,7 +142,7 @@ export const forumQueryKeys = {
         topicId
       }
     ] as const,
-  replies: (topicQueryKey: readonly unknown[]) => [...topicQueryKey, 'replies'] as const,
+  replies: (topicQueryKey: readonly unknown[], order: ReplyOrder) => [...topicQueryKey, 'replies', { order }] as const,
   replyRefresh: (repliesQueryKey: readonly unknown[], page: number, offset: number | null, limit: number) =>
     [...repliesQueryKey, 'refresh', { limit, offset, page }] as const,
   reply: ({

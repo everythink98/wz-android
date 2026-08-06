@@ -1,7 +1,15 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
 import { parseHtml, parsePositiveInteger } from '@/domain/forum/html';
-import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from '@/domain/forum/models';
+import type {
+  FeedResponse,
+  RepliesResponse,
+  ReplyOrder,
+  ReplyWindowPosition,
+  SearchResponse,
+  Topic,
+  TopicDetail
+} from '@/domain/forum/models';
 import { checkYaohuoLoginHtml, ensureYaohuoHtmlLoggedIn } from './sessionParser';
 import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
 import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesHtml, parseYaohuoTopicHtml } from './topicParser';
@@ -11,6 +19,8 @@ import {
   mergeSourceDiagnosticSummaries,
   sourceDiagnosticSummary
 } from '@/sources/diagnostics';
+import { emptyReplyWindow } from '@/sources/replyWindows';
+import { replyCountRefreshRequiredError } from '@/sources/sourceErrors';
 
 export interface DirectRequestOptions {
   signal?: AbortSignal;
@@ -180,8 +190,10 @@ export async function getYaohuoTopicDirect({
     getYaohuoRepliesDirect({
       id: detail.id || id,
       categoryId: detail.categoryId || topic.categoryId || DEFAULT_CLASS_ID,
-      page: 1,
+      order: 'oldest',
+      position: { kind: 'start' },
       limit: replyLimit,
+      replyCount: detail.replyCount,
       yaohuoFetcher,
       signal,
       timeoutMs
@@ -233,22 +245,44 @@ export async function getYaohuoTopicDirect({
 export async function getYaohuoRepliesDirect({
   id,
   categoryId,
-  page,
+  order,
+  position,
   limit = 30,
-  targetFloor,
+  replyCount,
   yaohuoFetcher,
   signal,
   timeoutMs
 }: {
   id: string;
   categoryId?: string;
-  page: number;
+  order: ReplyOrder;
+  position: ReplyWindowPosition;
   limit?: number;
-  targetFloor?: number;
+  replyCount?: number;
   yaohuoFetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
+  let page = 1;
+  let targetFloor: number | undefined;
+  if (position.kind === 'cursor') {
+    page = position.page;
+  } else if (position.kind === 'target') {
+    targetFloor = position.target.floor;
+  } else {
+    if (
+      typeof replyCount !== 'number' ||
+      !Number.isSafeInteger(replyCount) ||
+      replyCount < 0 ||
+      replyCount === Number.MAX_SAFE_INTEGER
+    ) {
+      throw replyCountRefreshRequiredError('妖火缺少可确认的回复总数');
+    }
+    if (replyCount === 0) {
+      return emptyReplyWindow('html-replies');
+    }
+    targetFloor = order === 'newest' ? replyCount : 1;
+  }
   if (targetFloor !== undefined && (!Number.isSafeInteger(targetFloor) || targetFloor <= 0)) {
     throw new Error('妖火目标楼层不正确');
   }
@@ -271,23 +305,43 @@ export async function getYaohuoRepliesDirect({
       parseHtml(pageResult.html).querySelector('input[name="page"], input#Action_page')?.getAttribute('value')
     );
   })();
-  if (targetFloor && !confirmedPage) {
+  if (targetFloor !== undefined && !confirmedPage) {
     throw new Error('妖火未确认目标楼层所在页');
   }
   const resolvedPage = confirmedPage || page;
+  if (position.kind === 'cursor' && resolvedPage !== page) {
+    throw new Error('妖火未确认请求的回复页');
+  }
   const result = parseYaohuoRepliesHtml(pageResult.html, {
     url: pageResult.url,
     page: resolvedPage,
     limit
   });
-  if (targetFloor && !result.items.some((reply) => reply.floor === targetFloor)) {
-    throw new Error('妖火目标楼层未找到');
+  if (targetFloor !== undefined && !result.items.some((reply) => reply.floor === targetFloor)) {
+    throw position.kind === 'start'
+      ? replyCountRefreshRequiredError('妖火目标楼层未找到')
+      : new Error('妖火目标楼层未找到');
   }
+  const floors = result.items.map((reply) => reply.floor || 0).filter(Boolean);
+  const minFloor = Math.min(...floors);
+  const maxFloor = Math.max(...floors);
+  if (order === 'newest' && position.kind === 'start' && (resolvedPage !== 1 || maxFloor !== targetFloor)) {
+    throw replyCountRefreshRequiredError('妖火回复总数已变化，无法确认最新窗口');
+  }
+  if (order === 'oldest' && position.kind === 'start' && minFloor !== 1) {
+    throw replyCountRefreshRequiredError('妖火回复总数已变化，无法确认最早窗口');
+  }
+  const olderPage = minFloor > 1 ? result.nextPage : null;
+  const newerPage = resolvedPage > 1 ? resolvedPage - 1 : null;
   return Object.assign(result, {
+    items: order === 'newest' ? [...result.items].reverse() : result.items,
     currentPage: resolvedPage,
     currentOffset: null,
-    previousPage: resolvedPage > 1 ? resolvedPage - 1 : null,
-    previousOffset: null
+    previousPage: order === 'newest' ? newerPage : olderPage,
+    previousOffset: null,
+    hasMore: Boolean(order === 'newest' ? olderPage : newerPage),
+    nextPage: order === 'newest' ? olderPage : newerPage,
+    nextOffset: null
   });
 }
 

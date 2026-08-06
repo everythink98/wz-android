@@ -188,6 +188,7 @@ export function ReplyItem({
   contentWidth,
   expandedQuotes,
   isNew,
+  isTerminal,
   loadedQuotedReplies,
   loadingQuotedFloors,
   inlineSizedImageUrls,
@@ -225,6 +226,7 @@ export function ReplyItem({
   inlineSizedImageUrls: Record<string, true>;
   discourseEmojiUrls?: DiscourseEmojiUrlMap;
   isNew?: boolean;
+  isTerminal?: boolean;
   loadedQuotedReplies: Record<string, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
   onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
@@ -414,7 +416,7 @@ export function ReplyItem({
       <View
         accessible
         accessibilityLabel={`系统事件，${author} 于 ${createdAt} ${actionText}`}
-        style={[styles.replyCard, styles.replyHead, styles.replySystemEvent]}
+        style={[styles.replyCard, styles.replyHead, styles.replySystemEvent, isTerminal && styles.replyCardTerminal]}
       >
         <Avatar contentSource={source || null} small name={author} uri={reply.authorAvatar} />
         <View style={styles.replyAuthorBlock}>
@@ -435,11 +437,13 @@ export function ReplyItem({
   const showTail = !section || section.type === 'replyEnd';
   return (
     <View
+      testID={isTerminal ? 'terminal-reply' : undefined}
       style={[
         styles.replyCard,
         section?.type === 'replyStart' && styles.replyCardStart,
         section?.type === 'replyQuoteSummary' && styles.replyCardMiddle,
-        section?.type === 'replyEnd' && styles.replyCardEnd
+        section?.type === 'replyEnd' && styles.replyCardEnd,
+        isTerminal && styles.replyCardTerminal
       ]}
     >
       {showStart ? (
@@ -1005,6 +1009,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.decisionFor !== next.decisionFor ||
     previous.contentWidth !== next.contentWidth ||
     previous.isNew !== next.isNew ||
+    previous.isTerminal !== next.isTerminal ||
     previous.discourseEmojiUrls !== next.discourseEmojiUrls ||
     previous.onDeleteReply !== next.onDeleteReply ||
     previous.onEditReply !== next.onEditReply ||

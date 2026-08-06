@@ -91,7 +91,7 @@ describe('withNetworkProxyModule local relay hardening', () => {
   it('[REG-PROXY-009] generates the controlled read-channel bridge and its Kotlin behavior test', () => {
     expect(pluginSource).toContain('fun recoverForumReadChannel(source: String, promise: Promise)');
     expect(pluginSource).toContain('internal fun forumReadChannelHostSuffix(source: String)');
-    expect(pluginSource).toContain('fun regProxy009CancelsOnlyTargetReadsAndRotatesOnlyTheForumPool()');
+    expect(pluginSource).toContain('fun regProxy009CancelsOnlyTargetReadsAndEvictsTheSharedForumPool()');
   });
 
   it('[REG-TOPIC-064] generates the exact Cloudflare image challenge behavior test', () => {

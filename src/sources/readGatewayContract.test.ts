@@ -4,6 +4,7 @@ import type {
   DiscourseTagOption,
   DiscourseUserOption,
   FeedResponse,
+  RepliesResponse,
   SearchResponse,
   Source,
   Topic
@@ -21,7 +22,7 @@ const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
   getCurrentUserProfile: vi.fn(),
   getFeed: vi.fn(async (): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
-  getReplies: vi.fn(async () => ({ items: [], hasMore: false, nextPage: null })),
+  getReplies: vi.fn(async (): Promise<RepliesResponse> => ({ items: [], hasMore: false, nextPage: null })),
   getReply: vi.fn(),
   getTopic: vi.fn(async ({ id, source }) => ({
     source,
@@ -767,14 +768,47 @@ describe('source gateway read contract', () => {
     await getFeed({ source });
     await searchTopics({ source, query: 'codex' });
     await getTopic({ source, id: 'topic-1' });
-    await getReplies({ source, id: 'topic-1', page: 1 });
+    await getReplies({ source, id: 'topic-1', order: 'oldest', position: { kind: 'start' } });
     await getUserProfile({ source, id: 'user-1' });
 
     expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source }));
     expect(forumMocks.searchTopics).toHaveBeenCalledWith(expect.objectContaining({ source, query: 'codex' }));
     expect(forumMocks.getTopic).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'topic-1' }));
-    expect(forumMocks.getReplies).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'topic-1' }));
+    expect(forumMocks.getReplies).toHaveBeenCalledWith(
+      expect.objectContaining({ source, id: 'topic-1', order: 'oldest', position: { kind: 'start' } })
+    );
     expect(forumMocks.getUserProfile).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'user-1' }));
+  });
+
+  it('[REG-TOPIC-067] records order, position kind, and resolved page without reply content', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    forumMocks.getReplies.mockResolvedValueOnce({
+      items: [{ author: 'private-author', floor: 45, contentHtml: '<p>private-body</p>', createdAt: '' }],
+      currentPage: 5,
+      currentOffset: 40,
+      hasMore: false,
+      nextPage: null
+    });
+    const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
+
+    await gateway.getReplies({
+      source: 'nodeseek',
+      id: 'private-topic-id',
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 45
+    });
+
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events.find(({ phase }) => phase === 'intent')).toMatchObject({
+      replyOrder: 'newest',
+      positionKind: 'start'
+    });
+    expect(events.find(({ phase }) => phase === 'parse')).toMatchObject({ resolvedPage: 5 });
+    expect(lines.join('')).not.toMatch(/private-topic-id|private-author|private-body/);
   });
 
   it('[REG-LINUXDO-005] preserves the confirmed-auth decision through the managed gateway', async () => {
@@ -875,7 +909,12 @@ describe('source gateway read contract', () => {
     await gateway.getFeed({ source: 'nodeseek' });
     await gateway.searchTopics({ source: 'nodeseek', query: 'codex' });
     await gateway.getTopic({ source: 'nodeseek', id: 'topic-1' });
-    await gateway.getReplies({ source: 'nodeseek', id: 'topic-1', page: 1 });
+    await gateway.getReplies({
+      source: 'nodeseek',
+      id: 'topic-1',
+      order: 'oldest',
+      position: { kind: 'start' }
+    });
     await gateway.getReply({ source: 'linuxdo', id: 'topic-1', floor: 2 });
     await gateway.getUserProfile({ source: 'nodeseek', id: 'user-1' });
 

@@ -3,6 +3,16 @@ import { isCanceledRequest } from '@/platform/network/errors';
 
 type LegacySourceErrorInfo = string | (Omit<SourceErrorInfo, 'kind'> & { kind?: SourceErrorKind });
 
+const REPLY_COUNT_REFRESH_REQUIRED = 'reply-count-refresh-required';
+
+export function replyCountRefreshRequiredError(message: string) {
+  return Object.assign(new Error(message), { reason: REPLY_COUNT_REFRESH_REQUIRED });
+}
+
+export function isReplyCountRefreshRequired(error: unknown) {
+  return errorProperty(error, 'reason') === REPLY_COUNT_REFRESH_REQUIRED;
+}
+
 function unknownErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error || '读取失败');
 }

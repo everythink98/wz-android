@@ -793,6 +793,38 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       borderTopWidth: StyleSheet.hairlineWidth,
       paddingTop: 12
     },
+    replySelectionRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8
+    },
+    replyFilterRailSlot: {
+      flex: 1,
+      minWidth: 0
+    },
+    replyOrderButton: {
+      minWidth: 62,
+      minHeight: 36,
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 0,
+      justifyContent: 'center',
+      gap: 2,
+      borderRadius: 8,
+      paddingHorizontal: 6,
+      paddingVertical: 3
+    },
+    replyOrderButtonPressed: {
+      backgroundColor: theme.mist
+    },
+    replyOrderButtonText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * fontScale),
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: Math.round(16 * fontScale)
+    },
     replyListItem: {
       alignSelf: 'center'
     },
@@ -803,6 +835,18 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
     topicFooter: {
       alignSelf: 'center',
       paddingTop: 14
+    },
+    replyEndMarker: {
+      alignSelf: 'center',
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * fontScale),
+      includeFontPadding: false,
+      lineHeight: Math.round(16 * fontScale),
+      paddingBottom: 18,
+      paddingHorizontal: 12,
+      paddingTop: 26,
+      textAlign: 'center'
     },
     replyCard: {
       gap: 8,
@@ -824,6 +868,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
     },
     replyCardEnd: {
       paddingTop: 0
+    },
+    replyCardTerminal: {
+      borderBottomWidth: 0
     },
     replyAcceptedNotice: {
       minHeight: 28,

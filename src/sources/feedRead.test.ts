@@ -137,7 +137,9 @@ describe('feed read', () => {
 
     await expect(getFeed({ source: 'yaohuo', fetcher })).rejects.toThrow('来源不支持');
     expect(() => getTopic({ source: 'yaohuo', id: '1', fetcher })).toThrow('来源不支持');
-    expect(() => getReplies({ source: 'yaohuo', id: '1', page: 1, fetcher })).toThrow('来源不支持');
+    expect(() =>
+      getReplies({ source: 'yaohuo', id: '1', order: 'oldest', position: { kind: 'start' }, fetcher })
+    ).toThrow('来源不支持');
     await expect(searchTopics({ source: 'yaohuo', query: 'test', fetcher })).rejects.toThrow('来源不支持');
     expect(categories.items[0]).toMatchObject({ source: 'yaohuo' });
     expect(fetcher).not.toHaveBeenCalled();
@@ -655,6 +657,42 @@ describe('feed read', () => {
     expect(result.hasMore).toBe(false);
     expect(result.nextCursor).toBeUndefined();
     expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi']);
+  });
+
+  it('[REG-FEED-014] preserves every source cursor when buffered content settles an otherwise failed page', async () => {
+    const sourceCursor = 'opaque-v2ex-cursor';
+    const cursor = encodeURIComponent(
+      JSON.stringify({
+        buffers: {
+          v2ex: [
+            {
+              source: 'v2ex',
+              id: 'buffered',
+              title: 'Buffered topic',
+              author: 'alice',
+              url: 'https://www.v2ex.com/t/buffered',
+              createdAt: '2026-08-06T00:00:00.000Z',
+              replyCount: 0
+            }
+          ]
+        },
+        nextPages: { nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2, xiaoyinsi: 2 },
+        sourceCursors: { v2ex: sourceCursor }
+      })
+    );
+    const fetcher = vi.fn(async () => {
+      throw new Error('temporary failure');
+    });
+
+    const result = await getFeed({ source: 'all', page: 2, cursor, limit: 2, fetcher });
+    const retryCursor = JSON.parse(decodeURIComponent(result.nextCursor || '')) as {
+      nextPages: Record<string, number>;
+      sourceCursors: Record<string, string>;
+    };
+
+    expect(result.items.map((item) => item.id)).toEqual(['buffered']);
+    expect(retryCursor.nextPages).toEqual({ nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2, xiaoyinsi: 2 });
+    expect(retryCursor.sourceCursors.v2ex).toBe(sourceCursor);
   });
 
   it('[REG-FEED-014] publishes feed and categories after the active five-second source budget', async () => {

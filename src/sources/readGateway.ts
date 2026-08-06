@@ -121,9 +121,10 @@ export function getReplies(options: GetRepliesOptions) {
   return getYaohuoRepliesDirect({
     id: options.id,
     categoryId: options.categoryId,
-    page: options.page,
+    order: options.order,
+    position: options.position,
     limit: options.limit,
-    targetFloor: options.targetReply?.floor,
+    replyCount: options.replyCount,
     yaohuoFetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs
@@ -235,6 +236,9 @@ function summarizeReadResult(result: unknown) {
   if ('nextCursor' in value) {
     summary.hasNextCursor = typeof value.nextCursor === 'string' && Boolean(value.nextCursor);
   }
+  if (typeof value.currentPage === 'number') {
+    summary.resolvedPage = value.currentPage;
+  }
   if (typeof value.contentHtml === 'string') {
     summary.hasContent = Boolean(value.contentHtml.trim());
   }
@@ -257,10 +261,14 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       nodeSeekUserAgent?: string;
       unavailableSources?: readonly Source[];
     }) => Promise<T>,
-    context?: ReadGatewayReadContext
+    context?: ReadGatewayReadContext,
+    intentFields: DiagnosticFields = {}
   ) => {
     const ownsTrace = !context?.trace;
-    const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
+    const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source, ...intentFields });
+    if (context?.trace && Object.keys(intentFields).length) {
+      markDiagnosticStage(trace, 'guard', { source, ...intentFields });
+    }
     const identitySources: readonly SessionSource[] =
       source === 'all' ? sessionSources : isSessionSource(source) ? [source] : [];
     const sessionEpochs = Object.fromEntries(
@@ -334,7 +342,14 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
                     }
                   }
                 : {}),
-              ...(xiaoyinsiCredentials ? { xiaoyinsi: xiaoyinsiCredentials } : {})
+              ...(xiaoyinsiCredentials
+                ? {
+                    xiaoyinsi: {
+                      ...xiaoyinsiCredentials,
+                      ...(xiaoyinsiGeneration === undefined ? {} : { generation: xiaoyinsiGeneration })
+                    }
+                  }
+                : {})
             }
           : undefined;
       const unavailableSources =
@@ -625,7 +640,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             ...options,
             ...credentials
           }),
-        context
+        context,
+        { replyOrder: options.order, positionKind: options.position.kind }
       );
     },
     getReply(options: ManagedGetReplyOptions, context?: ReadGatewayReadContext) {

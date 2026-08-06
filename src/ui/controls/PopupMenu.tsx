@@ -45,13 +45,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     text: {
       color: theme.ink,
       fontFamily: fontFamilyValue(settings.fontFamily),
-      fontSize: 14,
+      fontSize: Math.round(14 * settings.fontScale),
       fontWeight: '600'
     },
     textCompact: {
-      fontSize: 13,
+      fontSize: Math.round(13 * settings.fontScale),
       includeFontPadding: false,
-      lineHeight: 18
+      lineHeight: Math.round(18 * settings.fontScale)
     },
     textSelected: {
       color: theme.primary

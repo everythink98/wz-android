@@ -13,6 +13,7 @@ import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
+  NODESEEK_FLOORS_PER_PAGE,
   arrayField,
   nodeSeekEmbeddedReplyCount,
   nodeSeekEmbeddedUserId,
@@ -359,6 +360,9 @@ export function normalizePostData(
   const allReplies = normalizeReplies(comments, { skipFirst: true });
   const replies = allReplies.slice(0, replyLimit);
   const replyCount = nodeSeekEmbeddedReplyCount(data, allReplies.length);
+  const hasLocalRemainder = allReplies.length > replyLimit;
+  const hasNextOriginPage =
+    !hasLocalRemainder && allReplies.length === NODESEEK_FLOORS_PER_PAGE && replyCount > allReplies.length;
   const createdAt =
     toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
   const lastComment = comments.at(-1);
@@ -402,9 +406,9 @@ export function normalizePostData(
     locked: optionalBoolean(data.locked),
     ...(accessRequirement ? { accessRequirement } : {}),
     replies,
-    replyHasMore: allReplies.length > replyLimit,
-    replyNextPage: allReplies.length > replyLimit ? 1 : null,
-    replyNextOffset: allReplies.length > replyLimit ? replies.length : null
+    replyHasMore: hasLocalRemainder || hasNextOriginPage,
+    replyNextPage: hasLocalRemainder ? 1 : hasNextOriginPage ? 2 : null,
+    replyNextOffset: hasLocalRemainder || hasNextOriginPage ? replies.length : null
   };
 }
 
@@ -454,6 +458,8 @@ export function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: Top
         mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embedded.replies))
       )
     : embedded.replies;
+  const useRenderedCursor = Boolean(rendered.replies.length && rendered.replyHasMore);
+  const replyHasMore = useRenderedCursor || Boolean(embedded.replyHasMore);
   return {
     ...embedded,
     ...rendered,
@@ -471,11 +477,11 @@ export function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: Top
     collectionCount: rendered.collectionCount ?? embedded.collectionCount,
     collected: rendered.collected ?? embedded.collected,
     locked: rendered.locked ?? embedded.locked,
-    replyCount: rendered.replies.length ? rendered.replyCount : embedded.replyCount,
+    replyCount: Math.max(rendered.replyCount, embedded.replyCount),
     replies,
-    replyHasMore: rendered.replies.length ? rendered.replyHasMore : embedded.replyHasMore,
-    replyNextPage: rendered.replies.length ? rendered.replyNextPage : embedded.replyNextPage,
-    replyNextOffset: rendered.replies.length ? rendered.replyNextOffset : embedded.replyNextOffset
+    replyHasMore,
+    replyNextPage: replyHasMore ? (useRenderedCursor ? rendered.replyNextPage : embedded.replyNextPage) : null,
+    replyNextOffset: replyHasMore ? (useRenderedCursor ? rendered.replyNextOffset : embedded.replyNextOffset) : null
   };
 }
 

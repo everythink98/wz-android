@@ -1,8 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '../render';
+import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
-import { Text, View } from 'react-native';
-import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import { StyleSheet, Text, View } from 'react-native';
+import type { Reply, ReplyOrder, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ReplyFilter } from '@/features/topic/model/types';
 import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
@@ -19,6 +19,7 @@ import type { useTopicController } from '@/features/topic/useTopicController';
 import type { ToggleTopicBodyQuoteOptions } from '@/domain/forum/quotedPosts';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
@@ -282,10 +283,12 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
         `${stat.label} ${stat.value}${stat.imageUrl ? ` ${stat.imageUrl}` : ''}`
       ),
     MemoizedReplyItem: ({
+      isTerminal,
       onQuoteContentLayout,
       reply,
       section
     }: {
+      isTerminal?: boolean;
       onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
       reply: Reply;
       section?: {
@@ -297,16 +300,18 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
     }) =>
       ReactModule.createElement(
         NativeView,
-        section?.measureForMaterialization
-          ? {
-              onLayout: () =>
-                onQuoteContentLayout?.({
-                  contentToken: section.contentToken!,
-                  instanceKey: section.instanceKey!
-                }),
-              testID: `reply-quote-materialization-${section.key}`
-            }
-          : undefined,
+        isTerminal
+          ? { testID: 'terminal-reply' }
+          : section?.measureForMaterialization
+            ? {
+                onLayout: () =>
+                  onQuoteContentLayout?.({
+                    contentToken: section.contentToken!,
+                    instanceKey: section.instanceKey!
+                  }),
+                testID: `reply-quote-materialization-${section.key}`
+              }
+            : undefined,
         ReactModule.createElement(
           NativeText,
           { testID: `reply-floor-${reply.floor}` },
@@ -399,6 +404,7 @@ function TopicFilterHarness({
   onLoadPreviousReplies = jest.fn(),
   onInteract = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
+  onRetryReplies = jest.fn(),
   onReplyComposerOpenChange = jest.fn(),
   onToggleFavorite = jest.fn(),
   onYaohuoFavorite = jest.fn(),
@@ -409,6 +415,10 @@ function TopicFilterHarness({
   onToggleTopicBodyQuote = jest.fn(),
   replyHasMore = false,
   replyHasPrevious = false,
+  replyEndError = null,
+  replyStartError = null,
+  repliesError = null,
+  repliesLoading = false,
   selectedTopic = topic,
   topicReplies = sourceReplies,
   topicDetail = topic,
@@ -435,6 +445,7 @@ function TopicFilterHarness({
   onLoadPreviousReplies?: (options?: { silent?: boolean }) => void;
   onInteract?: (type: InteractionType, commentId?: number) => void;
   onRefreshWholeTopic?: () => void;
+  onRetryReplies?: (edge?: 'start' | 'end') => void;
   onReplyComposerOpenChange?: (open: boolean) => void;
   onToggleFavorite?: () => void;
   onYaohuoFavorite?: () => void;
@@ -445,6 +456,10 @@ function TopicFilterHarness({
   onToggleTopicBodyQuote?: (options: ToggleTopicBodyQuoteOptions) => void;
   replyHasMore?: boolean;
   replyHasPrevious?: boolean;
+  replyEndError?: SourceErrorInfo | null;
+  replyStartError?: SourceErrorInfo | null;
+  repliesError?: SourceErrorInfo | null;
+  repliesLoading?: boolean;
   selectedTopic?: Topic;
   topicReplies?: Reply[];
   topicDetail?: TopicDetail | null;
@@ -458,6 +473,7 @@ function TopicFilterHarness({
 } = {}) {
   const [commentQuery, setCommentQuery] = useState('');
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
+  const [replyOrder, setReplyOrder] = useState<ReplyOrder>('oldest');
   const topicScrollRef = useRef(null);
   const effectiveCommentQuery = filteredCommentQuery ?? commentQuery;
   const decisionFor = (({ action }) => {
@@ -503,6 +519,14 @@ function TopicFilterHarness({
     loadingQuotedFloors,
     replyHasMore,
     replyHasPrevious,
+    replyEndError,
+    replyStartError,
+    repliesError,
+    repliesLoading,
+    retryReplies: async (edge?: 'start' | 'end') => {
+      onRetryReplies(edge);
+      return 'completed';
+    },
     locateReply: jest.fn(async () => 'completed'),
     toggleReplyQuote: jest.fn(),
     toggleTopicBodyQuote: onToggleTopicBodyQuote,
@@ -520,6 +544,7 @@ function TopicFilterHarness({
       replyEditTarget: null,
       replyFace: '',
       replyFilter,
+      replyOrder,
       replyTarget: null,
       selectedTopic
     },
@@ -532,7 +557,8 @@ function TopicFilterHarness({
       },
       view: {
         changeCommentQuery: setCommentQuery,
-        changeReplyFilter: setReplyFilter
+        changeReplyFilter: setReplyFilter,
+        changeReplyOrder: setReplyOrder
       }
     }
   } as unknown as TopicSessionController;
@@ -587,6 +613,7 @@ function TopicFilterHarness({
         topicScrollRef={topicScrollRef}
       />
       <Text testID="active-filter">{replyFilter}</Text>
+      <Text testID="active-order">{replyOrder}</Text>
     </View>
   );
 }
@@ -1325,6 +1352,56 @@ describe('Topic reply filters', () => {
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-TOPIC-067] confirms the ordered reply boundary immediately after the final window', async () => {
+    const onLoadMoreReplies = jest.fn<() => void>();
+    const view = await render(<TopicFilterHarness replyHasMore onLoadMoreReplies={onLoadMoreReplies} />);
+
+    await fireEvent.press(view.getByLabelText('加载更多回复'));
+    expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
+
+    await view.rerender(<TopicFilterHarness onLoadMoreReplies={onLoadMoreReplies} />);
+    expect(view.queryByLabelText('加载更多回复')).toBeNull();
+    const replyEndMarker = view.getByLabelText('已到最新回复');
+    expect(replyEndMarker.type).toBe('Text');
+    expect(replyEndMarker.props.children).toBe('已到最新回复');
+    const decorativeViews = React.Children.toArray(replyEndMarker.props.children).filter(
+      (child) => React.isValidElement(child) && child.type === View
+    );
+    expect(view.getByText('已到最新回复')).toBeTruthy();
+    expect(decorativeViews).toHaveLength(0);
+    expect(view.getByTestId('terminal-reply')).toBeTruthy();
+    await act(async () => {
+      lastFlashListProps.onScrollBeginDrag();
+      lastFlashListProps.onEndReached();
+    });
+    expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
+
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+    expect(view.getByText('已到最早回复')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-067] scales the reply order control, menu and boundary with reader text size', async () => {
+    const settings = { ...readerData.settings, fontScale: 1.3 };
+    const value = { settings, theme: createTheme(settings) };
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <ReaderStyleProvider value={value}>{children}</ReaderStyleProvider>
+    );
+    const view = await render(<TopicFilterHarness />, { wrapper });
+
+    const orderButton = view.getByLabelText('回复排序，当前正序');
+    const orderButtonStyle = StyleSheet.flatten(orderButton.props.style);
+    expect(
+      orderButtonStyle.minHeight + orderButton.props.hitSlop.top + orderButton.props.hitSlop.bottom
+    ).toBeGreaterThanOrEqual(48);
+    expect(StyleSheet.flatten(view.getByText('正序').props.style).fontSize).toBe(16);
+    expect(StyleSheet.flatten(view.getByLabelText('已到最新回复').props.style).fontSize).toBe(16);
+
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    const menuText = within(view.getByLabelText('正序')).getByText('正序');
+    expect(StyleSheet.flatten(menuText.props.style)).toEqual(expect.objectContaining({ fontSize: 17, lineHeight: 23 }));
+  });
+
   it('[REG-TOPIC-062] maps both window edges without double-loading a gesture', async () => {
     const onLoadMoreReplies = jest.fn();
     const onLoadPreviousReplies = jest.fn();
@@ -1355,6 +1432,16 @@ describe('Topic reply filters', () => {
     });
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
     expect(view.getByLabelText('加载更早回复')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-067] labels the previous newest window as newer replies', async () => {
+    const view = await render(<TopicFilterHarness replyHasPrevious />);
+
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+
+    expect(view.getByLabelText('加载更新回复')).toBeTruthy();
+    expect(view.queryByLabelText('加载更早回复')).toBeNull();
   });
 
   it('[REG-TOPIC-063] prefetches the previous window before its retry button becomes visible', async () => {
@@ -1589,15 +1676,143 @@ describe('Topic reply filters', () => {
     expect(onRender.mock.calls.at(-1)?.[1]).toBe(initialRendererProps);
   });
 
-  it('[REG-TOPIC-063] does not expose unsupported reverse reply ordering', async () => {
+  it('[REG-TOPIC-063] exposes independent reply ordering without reversing the rendered array locally', async () => {
     const view = await render(<TopicFilterHarness />);
 
+    expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
     expect(view.queryByLabelText('倒序')).toBeNull();
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    expect(view.getByLabelText('正序').props.accessibilityState.selected).toBe(true);
+    await fireEvent.press(view.getByLabelText('倒序'));
+    expect(view.getByTestId('active-order').props.children).toBe('newest');
+    expect(view.getByLabelText('回复排序，当前倒序')).toBeTruthy();
     expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual([
       'reply-1-alice',
       'reply-2-bob',
       'reply-3-alice'
     ]);
+  });
+
+  it('[REG-TOPIC-067] shows newest-tail loading and a reply-level retry without stale replies', async () => {
+    const onRetryReplies = jest.fn();
+    const view = await render(<TopicFilterHarness onRetryReplies={onRetryReplies} repliesLoading topicReplies={[]} />);
+
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+    expect(view.getByText('正在读取最新回复...')).toBeTruthy();
+    expect(view.queryAllByText(/^reply-/)).toHaveLength(0);
+
+    await view.rerender(
+      <TopicFilterHarness
+        onRetryReplies={onRetryReplies}
+        repliesError={{ kind: 'ordinary', message: '无法确认最新回复窗口', retryable: true }}
+        topicReplies={[]}
+      />
+    );
+    expect(view.getByText('无法确认最新回复窗口')).toBeTruthy();
+    await fireEvent.press(view.getByText('重试评论'));
+    expect(onRetryReplies).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-067] keeps a full-window refresh error visible above trusted replies', async () => {
+    const onRetryReplies = jest.fn();
+    const view = await render(
+      <TopicFilterHarness
+        onRetryReplies={onRetryReplies}
+        repliesError={{ kind: 'ordinary', message: '回复总数已变化，请重试', retryable: true }}
+      />
+    );
+
+    expect(view.getAllByText(/^reply-/)).toHaveLength(3);
+    expect(view.getByText('回复总数已变化，请重试')).toBeTruthy();
+    await fireEvent.press(view.getByText('重试评论'));
+    expect(onRetryReplies).toHaveBeenLastCalledWith(undefined);
+
+    await view.rerender(
+      <TopicFilterHarness repliesError={{ kind: 'ordinary', message: '回复总数仍不一致', retryable: false }} />
+    );
+    expect(view.getByText('回复总数仍不一致')).toBeTruthy();
+    expect(view.queryByText('重试评论')).toBeNull();
+  });
+
+  it('[REG-TOPIC-067] keeps an adjacent-window failure visible at its exact retry edge', async () => {
+    const onLoadMoreReplies = jest.fn();
+    const onLoadPreviousReplies = jest.fn();
+    const onRetryReplies = jest.fn();
+    const startError = { kind: 'ordinary' as const, message: '无法确认更早回复窗口', retryable: true };
+    const endError = { kind: 'ordinary' as const, message: '无法确认更多回复窗口', retryable: true };
+    const view = await render(
+      <TopicFilterHarness
+        onLoadMoreReplies={onLoadMoreReplies}
+        onLoadPreviousReplies={onLoadPreviousReplies}
+        onRetryReplies={onRetryReplies}
+        replyHasMore
+        replyHasPrevious
+        replyStartError={startError}
+      />
+    );
+
+    expect(view.getByText('无法确认更早回复窗口')).toBeTruthy();
+    expect(view.queryByLabelText('加载更早回复')).toBeNull();
+    const startItem = (lastFlashListProps.data as { type: string }[]).find((item) => item.type === 'replyWindowStart');
+    await act(async () => {
+      lastFlashListProps.onScrollBeginDrag();
+      lastFlashListProps.onViewableItemsChanged({ viewableItems: [{ isViewable: true, item: startItem }] });
+    });
+    expect(onLoadPreviousReplies).not.toHaveBeenCalled();
+    await act(async () => {
+      lastFlashListProps.onScrollBeginDrag();
+      lastFlashListProps.onEndReached();
+    });
+    expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
+    await fireEvent.press(view.getByText('重试评论'));
+    expect(onRetryReplies).toHaveBeenLastCalledWith('start');
+
+    await view.rerender(
+      <TopicFilterHarness
+        onLoadMoreReplies={onLoadMoreReplies}
+        onLoadPreviousReplies={onLoadPreviousReplies}
+        onRetryReplies={onRetryReplies}
+        replyEndError={endError}
+        replyHasMore
+        replyHasPrevious
+      />
+    );
+    expect(view.getByText('无法确认更多回复窗口')).toBeTruthy();
+    expect(view.queryByLabelText('加载更多回复')).toBeNull();
+    await act(async () => {
+      lastFlashListProps.onViewableItemsChanged({ viewableItems: [] });
+      lastFlashListProps.onScrollBeginDrag();
+      lastFlashListProps.onEndReached();
+    });
+    expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
+    await fireEvent.press(view.getByText('重试评论'));
+    expect(onRetryReplies).toHaveBeenLastCalledWith('end');
+
+    await view.rerender(
+      <TopicFilterHarness
+        onRetryReplies={onRetryReplies}
+        replyEndError={endError}
+        replyHasMore
+        replyHasPrevious
+        replyStartError={startError}
+      />
+    );
+    expect(view.getAllByText('重试评论')).toHaveLength(2);
+  });
+
+  it('[REG-TOPIC-067][REG-WRITE-017] keeps independent root and edge failures reachable when their text matches', async () => {
+    const onRetryReplies = jest.fn();
+    const error = { kind: 'ordinary' as const, message: 'offline', retryable: true };
+    const view = await render(
+      <TopicFilterHarness onRetryReplies={onRetryReplies} repliesError={error} replyEndError={error} replyHasMore />
+    );
+
+    expect(view.getAllByText('offline')).toHaveLength(2);
+    const retries = view.getAllByText('重试评论');
+    await fireEvent.press(retries[0]);
+    await fireEvent.press(retries[1]);
+    expect(onRetryReplies.mock.calls).toEqual([[undefined], ['end']]);
   });
 
   it('updates visible replies for every filter and comment query', async () => {
@@ -1611,7 +1826,10 @@ describe('Topic reply filters', () => {
     ]);
 
     await fireEvent.press(view.getByLabelText('只看楼主'));
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
     expect(view.getByLabelText('只看楼主，已选择')).toBeTruthy();
+    expect(view.getByLabelText('回复排序，当前倒序')).toBeTruthy();
     expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual(['reply-1-alice', 'reply-3-alice']);
 
     await fireEvent.press(view.getByLabelText('只看带图'));

@@ -382,6 +382,38 @@ describe('inline media layout', () => {
     ).toEqual({ width: 100, height: 87 });
   });
 
+  it('[REG-TOPIC-066] keeps decoded sticker dimensions within 100dp after reader font scaling', () => {
+    expect(
+      inlineForumImageDisplaySize(
+        {
+          class: 'sticker',
+          alt: 'xhj015',
+          src: 'https://www.nodeseek.com/static/image/sticker/xhj/015.gif'
+        },
+        1.3,
+        320,
+        { width: 82, height: 82 }
+      )
+    ).toEqual({ width: 100, height: 100 });
+  });
+
+  it('[REG-TOPIC-066] fills one missing sticker axis from the decoded aspect ratio', () => {
+    const attributes = {
+      class: 'sticker',
+      alt: 'xhj003',
+      src: 'https://www.nodeseek.com/static/image/sticker/xhj/003.png'
+    };
+
+    expect(inlineForumImageDisplaySize({ ...attributes, width: '57' }, 1, 320, { width: 57, height: 48 })).toEqual({
+      width: 57,
+      height: 48
+    });
+    expect(inlineForumImageDisplaySize({ ...attributes, height: '48' }, 1, 320, { width: 57, height: 48 })).toEqual({
+      width: 57,
+      height: 48
+    });
+  });
+
   it('keeps small standalone sticker row source dimensions instead of enlarging them', () => {
     expect(
       inlineForumImageDisplaySize({
