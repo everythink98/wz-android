@@ -1341,7 +1341,7 @@ describe('Android direct yaohuo API', () => {
     ).rejects.toThrow('妖火未确认目标楼层所在页');
   });
 
-  it('[REG-TOPIC-067] follows 妖火 real floors across its newest-first server pages', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068] follows 妖火 real floors across its newest-first server pages', async () => {
     const detail = parseYaohuoTopicHtml(
       '<div class="content">[标题] topic</div>更多回帖(30)<a href="/bbs/book_re.aspx?id=1560940&amp;classid=177&amp;page=1&amp;tofloor=555">555楼</a><a href="/bbs/book_re.aspx?id=1560940&amp;classid=177&amp;reply=558">回复</a>',
       { id: '1560940' }
@@ -1365,36 +1365,48 @@ describe('Android direct yaohuo API', () => {
       return response;
     });
 
-    const load = (order: ReplyOrder, position: ReplyWindowPosition) =>
+    const load = (order: ReplyOrder, position: ReplyWindowPosition, replyCount = detail.replyCount) =>
       getYaohuoRepliesDirect({
         id: '1560940',
         categoryId: '177',
         order,
         position,
-        replyCount: detail.replyCount,
+        replyCount,
         limit: 30,
         yaohuoFetcher
       });
     const newest = await load('newest', { kind: 'start' });
-    const older = await load('newest', { kind: 'cursor', page: newest.nextPage!, offset: null });
+    const older = await load('newest', { kind: 'cursor', page: newest.nextPage!, offset: null }, 1);
     const oldest = await load('oldest', { kind: 'start' });
-    const newer = await load('oldest', { kind: 'cursor', page: oldest.nextPage!, offset: null });
+    const newer = await load('oldest', { kind: 'cursor', page: oldest.nextPage!, offset: null }, 9_999);
+    const newestAgain = await load(
+      'newest',
+      { kind: 'cursor', page: older.previousPage!, offset: older.previousOffset ?? null },
+      1
+    );
+    const oldestAgain = await load(
+      'oldest',
+      { kind: 'cursor', page: newer.previousPage!, offset: newer.previousOffset ?? null },
+      9_999
+    );
 
     expect(
       requests.map(
         (request) => new URL(request).searchParams.get('tofloor') || new URL(request).searchParams.get('page')
       )
-    ).toEqual(['558', '2', '1', '18']);
+    ).toEqual(['558', '2', '1', '18', '1', '19']);
     expect(newest.items.map((reply) => reply.floor)).toEqual(Array.from({ length: 30 }, (_, index) => 558 - index));
     expect(newest).toMatchObject({ currentPage: 1, previousPage: null, nextPage: 2 });
     expect(older.items.map((reply) => reply.floor)).toEqual(Array.from({ length: 30 }, (_, index) => 528 - index));
+    expect(newestAgain.items.map((reply) => reply.floor)).toEqual(newest.items.map((reply) => reply.floor));
     expect(oldest.items.map((reply) => reply.floor)).toEqual(Array.from({ length: 17 }, (_, index) => index + 1));
     expect(oldest).toMatchObject({ currentPage: 19, previousPage: null, nextPage: 18 });
     expect(newer.items.map((reply) => reply.floor)).toEqual(Array.from({ length: 30 }, (_, index) => index + 18));
     expect(newer).toMatchObject({ currentPage: 18, previousPage: 19, nextPage: 17 });
+    expect(oldestAgain.items.map((reply) => reply.floor)).toEqual(oldest.items.map((reply) => reply.floor));
   });
 
-  it('[REG-TOPIC-067] rejects an unconfirmed or still-advancing 妖火 tail', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068] rejects an unconfirmed or still-advancing 妖火 tail', async () => {
     const row =
       '<div class="list-reply line1" data-floor="558"><span class="retext">reply 558</span><span class="renick">user-558</span></div>';
     const unconfirmedFetcher = vi.fn(async (input: string) => {

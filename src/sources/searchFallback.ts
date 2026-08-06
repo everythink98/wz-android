@@ -54,6 +54,24 @@ function safeGoogleUrl(input: string) {
   }
 }
 
+function safeRejectedGoogleUrl(input: string) {
+  try {
+    const value = String(input);
+    if (value !== value.trim() || !/^https:\/\//i.test(value)) return null;
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return !url.username &&
+      !url.password &&
+      !url.port &&
+      !url.hash &&
+      (host === 'www.google.com' || host === 'consent.google.com' || host === 'accounts.google.com')
+      ? url
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isGoogleSiteSearchUrl(input: string, site: string) {
   const url = safeGoogleUrl(input);
   return Boolean(
@@ -67,14 +85,25 @@ export function isGoogleSiteSearchUrl(input: string, site: string) {
 export function isSameGoogleSiteSearchUrl(input: string, site: string, initialSearchUrl: string) {
   const target = safeGoogleUrl(input);
   const initial = safeGoogleUrl(initialSearchUrl);
+  if (!target || !initial || !isGoogleSiteSearchUrl(initial.href, site)) {
+    return false;
+  }
+  const hasSessionToken = target.searchParams.has('sei');
+  const expectedKeys = [
+    'q',
+    ...(initial.searchParams.has('start') ? ['start'] : []),
+    ...(hasSessionToken ? ['sei'] : [])
+  ];
+  const keys = [...target.searchParams.keys()];
   return Boolean(
-    target &&
-    initial &&
-    isGoogleSiteSearchUrl(target.href, site) &&
-    isGoogleSiteSearchUrl(initial.href, site) &&
     target.origin === initial.origin &&
+    target.pathname.replace(/\/+$/, '') === '/search' &&
+    keys.length === expectedKeys.length &&
+    expectedKeys.every((key) => target.searchParams.getAll(key).length === 1) &&
+    keys.every((key) => expectedKeys.includes(key)) &&
     target.searchParams.get('q') === initial.searchParams.get('q') &&
-    target.searchParams.get('start') === initial.searchParams.get('start')
+    target.searchParams.get('start') === initial.searchParams.get('start') &&
+    (!hasSessionToken || googleFlowTokenPattern.test(target.searchParams.get('sei') || ''))
   );
 }
 
@@ -100,15 +129,65 @@ export function isGoogleSiteSearchAccessTroubleUrl(input: string, site: string, 
   );
 }
 
+export function googleSiteSearchNavigationFailure(input: string, site: string, initialSearchUrl: string) {
+  if (!isGoogleSiteSearchUrl(initialSearchUrl, site)) return null;
+  const target = safeRejectedGoogleUrl(input);
+  if (!target) return null;
+  const facts = {
+    navigationHost: target.hostname.toLowerCase(),
+    navigationPath: target.pathname || '/',
+    navigationParamKeys: [...new Set(target.searchParams.keys())].sort().join(',') || 'none'
+  };
+  if (isGoogleSiteSearchAccessTroubleUrl(input, site, initialSearchUrl)) {
+    return {
+      ...facts,
+      navigationClass: 'access-trouble',
+      reason: 'verification_required',
+      message: 'Google 搜索环境验证暂时未通过，请稍后重试'
+    } as const;
+  }
+  if (
+    target.hostname === 'www.google.com' &&
+    (/^\/sorry(?:\/|$)/i.test(target.pathname) || /(?:captcha|recaptcha)/i.test(target.pathname))
+  ) {
+    return {
+      ...facts,
+      navigationClass: 'captcha',
+      reason: 'verification_required',
+      message: 'Google 要求完成人机验证，已停止读取'
+    } as const;
+  }
+  if (target.hostname === 'consent.google.com' || /^\/consent(?:\/|$)/i.test(target.pathname)) {
+    return {
+      ...facts,
+      navigationClass: 'consent',
+      reason: 'unsupported',
+      message: 'Google 要求确认隐私设置，已停止读取'
+    } as const;
+  }
+  if (target.hostname === 'accounts.google.com' || /^\/(?:accounts|signin)(?:\/|$)/i.test(target.pathname)) {
+    return {
+      ...facts,
+      navigationClass: 'login',
+      reason: 'login_required',
+      message: 'Google 要求登录，已停止读取'
+    } as const;
+  }
+  return {
+    ...facts,
+    navigationClass: 'unknown-google',
+    reason: 'unsupported',
+    message: 'Google 搜索流程已变化，已停止读取'
+  } as const;
+}
+
 export function isGoogleSiteSearchNavigationUrl(input: string, site: string, initialSearchUrl: string) {
   const target = safeGoogleUrl(input);
   const initial = safeGoogleUrl(initialSearchUrl);
   if (!target || !initial || !isGoogleSiteSearchUrl(initial.href, site)) {
     return false;
   }
-  if (isGoogleSiteSearchUrl(target.href, site)) {
-    return isSameGoogleSiteSearchUrl(target.href, site, initial.href);
-  }
+  if (isSameGoogleSiteSearchUrl(target.href, site, initial.href)) return true;
   const keys = target ? [...target.searchParams.keys()] : [];
   return Boolean(
     target.origin === initial.origin &&

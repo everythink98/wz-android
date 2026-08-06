@@ -1,8 +1,10 @@
+import type { HTMLElement } from 'node-html-parser';
+
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, Topic } from '@/domain/forum/models';
-import { elementText, isRecord, parseHtml, textExcerpt } from '@/domain/forum/html';
+import { decodeHtml, elementText, isRecord, parseHtml, textExcerpt } from '@/domain/forum/html';
 import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from '@/sources/searchFallback';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { discourseOriginalPoster, discourseUsersById } from '@/sources/discourse/model';
@@ -167,34 +169,81 @@ function linuxDoTopicIdFromUrl(value: string) {
   }
 }
 
+function linuxDoGoogleResultTitle(value: string, target: string) {
+  const title = decodeHtml(value).replace(/\s+/g, ' ').trim();
+  if (!title || /^(?:https?:\/\/|www\.)/i.test(title) || /^linux\.do(?:\s*(?:›|>|»|\/)\s*\S+)*$/i.test(title)) {
+    return '';
+  }
+  try {
+    const targetUrl = new URL(target);
+    const pathSegments = targetUrl.pathname.split('/').filter(Boolean);
+    const topicIndex = pathSegments.findIndex((segment) => segment.toLowerCase() === 't');
+    const slug = topicIndex >= 0 ? decodeURIComponent(pathSegments[topicIndex + 1] || '') : '';
+    if (slug && title.toLowerCase() === slug.toLowerCase()) {
+      return '';
+    }
+  } catch {
+    return '';
+  }
+  return title;
+}
+
+function linuxDoGoogleTitleFromLink(link: HTMLElement, target: string) {
+  const heading = elementText(link.querySelector('h3, [role="heading"]'));
+  return (
+    linuxDoGoogleResultTitle(heading, target) ||
+    linuxDoGoogleResultTitle(String(link.getAttribute('aria-label') || ''), target)
+  );
+}
+
+function isExplicitEmptyGoogleSearchPage(root: ReturnType<typeof parseHtml>) {
+  return /(?:did not match any documents|no results found|找不到和(?:您的)?查询相符的内容|没有找到相关结果)/i.test(
+    elementText(root)
+  );
+}
+
 function parseLinuxDoGoogleSearchTopics(html: string) {
   const root = parseHtml(html);
-  const seen = new Set<string>();
+  const candidates = new Map<string, { id: string; target: string; title: string; rowText: string }>();
   const now = new Date().toISOString();
-  const items: Topic[] = [];
   for (const link of root.querySelectorAll('a[href]')) {
     const target = googleResultTargetUrl(link.getAttribute('href') || '');
     const id = linuxDoTopicIdFromUrl(target);
-    const title = elementText(link.querySelector('h3')) || elementText(link);
-    if (!id || !title || seen.has(id)) {
+    if (!id) {
       continue;
     }
-    seen.add(id);
+    const title = linuxDoGoogleTitleFromLink(link, target);
     const row = link.parentNode as { text?: string } | null;
-    const text = String(row?.text || link.text || '');
-    items.push({
-      source: 'linuxdo',
-      id,
-      title,
-      author: '',
-      url: `${BASE_URL}/t/${id}`,
-      createdAt: now,
-      lastReplyAt: now,
-      replyCount: 0,
-      excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(text.replace(title, ' ')))
-    });
+    const existing = candidates.get(id);
+    if (!existing) {
+      candidates.set(id, { id, target, title, rowText: String(row?.text || link.text || '') });
+    } else if (!existing.title && title) {
+      candidates.set(id, { ...existing, target, title, rowText: String(row?.text || link.text || '') });
+    }
   }
-  return items;
+  const items: Topic[] = [...candidates.values()].flatMap(({ id, title, rowText }) =>
+    title
+      ? [
+          {
+            source: 'linuxdo',
+            id,
+            title,
+            author: '',
+            url: `${BASE_URL}/t/${id}`,
+            createdAt: now,
+            lastReplyAt: now,
+            replyCount: 0,
+            excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(rowText.replace(title, ' ')))
+          } satisfies Topic
+        ]
+      : []
+  );
+  return {
+    items,
+    candidateCount: candidates.size,
+    missingTitleCount: Math.max(0, candidates.size - items.length),
+    isExpectedEmpty: candidates.size === 0 && isExplicitEmptyGoogleSearchPage(root)
+  };
 }
 
 async function fetchLinuxDoGoogleSearchText(query: string, page: number, options: LinuxDoOptions = {}) {
@@ -238,21 +287,38 @@ async function searchLinuxDoGoogle(
   }
   const html = await fetchLinuxDoGoogleSearchText(cleanQuery, page, options);
   const nextPage = hasGoogleSiteSearchNextPage(html, 'linux.do', page + 1) ? page + 1 : null;
-  const parsedItems = parseLinuxDoGoogleSearchTopics(html);
-  const items = parsedItems.slice(0, options.limit || 30);
-  const candidateCount = parsedItems.length;
+  const parsed = parseLinuxDoGoogleSearchTopics(html);
+  const items = parsed.items.slice(0, options.limit || 30);
+  const parseError =
+    parsed.candidateCount > 0 && parsed.items.length === 0
+      ? 'Google 搜索结果缺少可确认的标题'
+      : parsed.candidateCount === 0 && !parsed.isExpectedEmpty
+        ? 'Google 搜索结果结构已变化'
+        : '';
   const result = {
     items,
-    errors: {},
+    errors: parseError
+      ? {
+          linuxdo: {
+            kind: 'ordinary' as const,
+            message: parseError,
+            reason: 'parse_empty',
+            retryable: true
+          }
+        }
+      : {},
     hasMore: Boolean(nextPage),
     nextPage
   };
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'google-search',
-    candidateCount,
-    validCount: items.length,
-    droppedCount: Math.max(0, candidateCount - items.length),
-    isExpectedEmpty: candidateCount === 0,
+    candidateCount: parsed.candidateCount,
+    validCount: parsed.items.length,
+    droppedCount: parsed.missingTitleCount,
+    missingTitleCount: parsed.missingTitleCount,
+    hasDegradation: parsed.missingTitleCount > 0,
+    isExpectedEmpty: parsed.isExpectedEmpty,
+    isParseEmpty: Boolean(parseError),
     hasRepeatedCursor: nextPage === page
   });
 }

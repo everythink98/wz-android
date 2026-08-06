@@ -432,7 +432,7 @@ export async function getXiaoyinsiTopic(
   const polls = discoursePolls(firstPost, { includeType: true });
   const details = isRecord(data.details) ? data.details : {};
   const bookmarkId = firstFields.bookmarkId || positiveNumber(data.bookmark_id);
-  const totalPosts = stream.length || normalized.replyCount + 1;
+  const totalPosts = stream.length || (normalized.replyCount || 0) + 1;
   const result: TopicDetail = {
     ...normalized,
     contentHtml: sanitizeXiaoyinsiContentHtml(firstFields.cookedHtml, polls),

@@ -42,6 +42,12 @@ function nodeSeekPostPageFromHref(href: string | undefined, id: string) {
 export function resolvedNodeSeekPostPage(html: string, id: string, responseUrl?: string) {
   const responsePage = nodeSeekPostPageFromHref(responseUrl, id);
   if (responsePage) return responsePage;
+  const embedded = extractNodeSeekEmbeddedData(html);
+  const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
+  if (postData && String(postData.postId || postData.id || '') === id) {
+    const embeddedPage = parsePositiveInteger(postData.postPage ?? postData.post_page);
+    if (embeddedPage) return embeddedPage;
+  }
   const root = parseHtml(html);
   for (const selector of [
     'link[rel="canonical"][href]',
@@ -55,15 +61,36 @@ export function resolvedNodeSeekPostPage(html: string, id: string, responseUrl?:
   return null;
 }
 
+function nodeSeekPostPagerLinks(root: ReturnType<typeof parseHtml>) {
+  return [
+    ...root.querySelectorAll('.nsk-pager a[href]'),
+    ...root.querySelectorAll('[role="navigation"][aria-label="pagination"] a[href]'),
+    ...root.querySelectorAll('a[rel="next"][href]')
+  ];
+}
+
 export function nextNodeSeekPostPage(html: string, id: string, currentPage = 1) {
   let nextPage: number | null = null;
-  for (const link of parseHtml(html).querySelectorAll('a')) {
+  const root = parseHtml(html);
+  for (const link of nodeSeekPostPagerLinks(root)) {
     const page = nodeSeekPostPageFromHref(link.getAttribute('href'), id);
     if (page && page > currentPage && (!nextPage || page < nextPage)) {
       nextPage = page;
     }
   }
   return nextPage;
+}
+
+export function lastNodeSeekPostPage(html: string, id: string, currentPage = 1) {
+  let lastPage = currentPage;
+  const root = parseHtml(html);
+  for (const link of nodeSeekPostPagerLinks(root)) {
+    const page = nodeSeekPostPageFromHref(link.getAttribute('href'), id);
+    if (page && page > lastPage) {
+      lastPage = page;
+    }
+  }
+  return lastPage;
 }
 
 export function nextNodeSeekListPage(html: string, currentPage = 1) {
@@ -83,7 +110,11 @@ export function nextNodeSeekListPage(html: string, currentPage = 1) {
 }
 
 export function withNodeSeekReplyPagination(topic: TopicDetail, html: string, id: string, currentPage = 1) {
-  const nextPage = nextNodeSeekPostPage(html, id, currentPage);
+  const embedded = extractNodeSeekEmbeddedData(html);
+  const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
+  const pageCount = postData ? nodeSeekEmbeddedPostPageCount(postData) : undefined;
+  const nextPage =
+    nextNodeSeekPostPage(html, id, currentPage) || (pageCount && currentPage < pageCount ? currentPage + 1 : null);
   if (!topic.replyHasMore && nextPage) {
     return {
       ...topic,
@@ -323,14 +354,23 @@ function nodeSeekReplyCountValue(value: unknown) {
   if (value === undefined || value === null || value === '' || Array.isArray(value)) {
     return undefined;
   }
-  return parsePositiveInteger(value);
+  return optionalNonNegativeInteger(value);
+}
+
+export function nodeSeekExplicitReplyCount(raw: Record<string, unknown>) {
+  return (
+    nodeSeekReplyCountValue(raw.replyCount) ??
+    nodeSeekReplyCountValue(raw.replies) ??
+    nodeSeekReplyCountValue(raw.reply_count)
+  );
+}
+
+export function nodeSeekEmbeddedPostPageCount(raw: Record<string, unknown>) {
+  return parsePositiveInteger(raw.postPageCount ?? raw.post_page_count);
 }
 
 export function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>, fallback = 0) {
-  const explicitReplyCount =
-    nodeSeekReplyCountValue(raw.replyCount) ??
-    nodeSeekReplyCountValue(raw.replies) ??
-    nodeSeekReplyCountValue(raw.reply_count);
+  const explicitReplyCount = nodeSeekExplicitReplyCount(raw);
   if (explicitReplyCount !== undefined) {
     return explicitReplyCount;
   }

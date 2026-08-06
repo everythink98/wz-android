@@ -572,6 +572,70 @@ describe('notification routes', () => {
     expect(view.queryByText('重试')).toBeNull();
   });
 
+  it('[REG-NOTIFY-053] opens a topic-only notification without inventing a reply target', async () => {
+    appQueryClient.clear();
+    const item: ForumNotification = {
+      source: 'linuxdo',
+      id: 'topic-reminder:18',
+      kind: 'system',
+      actor: { name: '站内消息' },
+      title: '主题提醒',
+      preview: '这是主题级通知，不对应某一条回复。',
+      createdAt: '2026-08-07T03:00:00.000Z',
+      unread: false,
+      target: {
+        type: 'topic',
+        topicId: '201',
+        url: 'https://linux.do/t/topic-reminder/201'
+      }
+    };
+    const topic = {
+      source: 'linuxdo' as const,
+      id: '201',
+      title: item.title,
+      author: item.actor.name,
+      url: 'https://linux.do/t/topic-reminder/201',
+      createdAt: item.createdAt || ''
+    };
+    const gateway = {
+      loadDetail: jest.fn(async () => ({
+        notification: item,
+        title: item.title,
+        contentText: item.preview,
+        topic
+      })),
+      markRead: jest.fn(async () => ({ confirmed: true }))
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['linuxdo'] as const,
+      identityKeys: { linuxdo: 'linuxdo:alice' },
+      identitySignature: 'linuxdo:alice'
+    } as NotificationRouteRuntimeValue;
+    const navigation = { navigate: jest.fn() };
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NotificationDetailRoute
+          navigation={navigation as never}
+          route={{
+            key: 'notification-detail',
+            name: 'NotificationDetail',
+            params: { notification: item, identityKey: 'linuxdo:alice' }
+          }}
+        />
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByText(item.preview!)).toBeTruthy());
+    await fireEvent.press(view.getByText('查看相关主题'));
+
+    expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
+      topic: expect.objectContaining({ source: 'linuxdo', id: '201' }),
+      targetReply: undefined
+    });
+  });
+
   it('[REG-NOTIFY-045] forwards the Yaohuo full-reply floor into the Topic route', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {

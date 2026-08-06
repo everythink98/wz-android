@@ -274,7 +274,7 @@ function topicSummary(topic: Topic): Topic {
     url: canonicalTopicUrl(topic.source, topic.id),
     createdAt: cleanString(topic.createdAt),
     lastReplyAt: cleanOptionalString(topic.lastReplyAt),
-    replyCount: cleanNonNegativeInteger(topic.replyCount),
+    replyCount: topic.replyCount === undefined ? undefined : cleanNonNegativeInteger(topic.replyCount),
     viewCount: cleanOptionalNonNegativeInteger(topic.viewCount),
     excerpt: cleanOptionalString(topic.excerpt),
     ...(accessRequirement ? { accessRequirement } : {})

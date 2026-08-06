@@ -770,7 +770,7 @@ export async function getV2exTopic(
     'data' in replyResult && Array.isArray(replyResult.data)
       ? mergeV2exReplyMeta(replyResult.data.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
       : [];
-  if (!apiReplies.length && 'error' in replyResult && topic.replyCount > 0 && !htmlDetail?.replies.length) {
+  if (!apiReplies.length && 'error' in replyResult && (topic.replyCount || 0) > 0 && !htmlDetail?.replies.length) {
     throw replyResult.error instanceof Error
       ? replyResult.error
       : new Error(String(replyResult.error || 'V2EX 回复读取失败'));

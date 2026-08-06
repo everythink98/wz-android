@@ -500,7 +500,7 @@ describe('xiaoyinsi adapter', () => {
     expect(result.items.find((reply) => reply.floor === 90)?.author).toBe('user-90');
   });
 
-  it('[REG-TOPIC-067] reads only the 小隐寺 stream tail IDs and then the adjacent older IDs', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068] reads only the 小隐寺 stream tail IDs and then the adjacent older IDs', async () => {
     const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
     const requestedPostIds: string[][] = [];
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {

@@ -7,7 +7,8 @@ import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './
 
 import { isLinuxDoBrowserNavigationUrl, isLinuxDoBrowserResultUrl } from '@/sources/linuxdo/browserFallback';
 import { isNodeSeekBrowserNavigationUrl, isNodeSeekBrowserResultUrl } from '@/sources/nodeseek/browserFallback';
-import { isGoogleSiteSearchAccessTroubleUrl } from '@/sources/searchFallback';
+import { googleSiteSearchNavigationFailure } from '@/sources/searchFallback';
+import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import type { AccountHostStyles } from './accountHostStyles';
 
 type HiddenBrowserState = {
@@ -20,6 +21,21 @@ type HiddenBrowserState = {
     userAgent: string;
   };
 };
+
+function recordRejectedGoogleNavigation(
+  source: 'linuxdo' | 'nodeseek',
+  failure: NonNullable<ReturnType<typeof googleSiteSearchNavigationFailure>>
+) {
+  const trace = beginDiagnosticTrace('search', 'browser-fetch', { source });
+  finishDiagnosticTrace(trace, 'blocked', {
+    source,
+    reason: failure.reason,
+    navigationClass: failure.navigationClass,
+    navigationHost: failure.navigationHost,
+    navigationPath: failure.navigationPath,
+    navigationParamKeys: failure.navigationParamKeys
+  });
+}
 
 export function HiddenBrowserHost({
   blockedMessage,
@@ -83,11 +99,11 @@ export function HiddenBrowserHost({
         return true;
       }
       if (nodeSeekBrowserFetchRequest) {
+        const googleFailure = googleSiteSearchNavigationFailure(url, 'nodeseek.com', nodeSeekBrowserFetchRequest.url);
+        if (googleFailure) recordRejectedGoogleNavigation('nodeseek', googleFailure);
         failNodeSeekBrowserFetchById(
           nodeSeekBrowserFetchRequest.id,
-          isGoogleSiteSearchAccessTroubleUrl(url, 'nodeseek.com', nodeSeekBrowserFetchRequest.url)
-            ? 'Google 搜索环境验证暂时未通过，请稍后重试'
-            : 'NodeSeek 页面跳转到外部地址，已停止读取'
+          googleFailure?.message || 'NodeSeek 页面跳转到外部地址，已停止读取'
         );
       }
       return false;
@@ -101,11 +117,11 @@ export function HiddenBrowserHost({
         return true;
       }
       if (linuxDoBrowserFetchRequest) {
+        const googleFailure = googleSiteSearchNavigationFailure(url, 'linux.do', linuxDoBrowserFetchRequest.url);
+        if (googleFailure) recordRejectedGoogleNavigation('linuxdo', googleFailure);
         failLinuxDoBrowserFetchById(
           linuxDoBrowserFetchRequest.id,
-          isGoogleSiteSearchAccessTroubleUrl(url, 'linux.do', linuxDoBrowserFetchRequest.url)
-            ? 'Google 搜索环境验证暂时未通过，请稍后重试'
-            : 'linux.do 页面跳转到外部地址，已停止读取'
+          googleFailure?.message || 'linux.do 页面跳转到外部地址，已停止读取'
         );
       }
       return false;

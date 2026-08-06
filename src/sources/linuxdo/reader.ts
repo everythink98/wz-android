@@ -538,7 +538,7 @@ export async function getLinuxDoTopic(
       .filter(Boolean) as Reply[],
     options
   );
-  const totalPosts = stream.length || topic.replyCount + 1;
+  const totalPosts = stream.length || (topic.replyCount || 0) + 1;
   const replyHasMore = totalPosts > replies.length + 1;
   const polls = discoursePolls(firstPost);
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;

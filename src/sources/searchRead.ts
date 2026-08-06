@@ -52,6 +52,14 @@ function filterSearchItems(
     response
   );
 }
+
+function requireSearchTopicTitles(response: SearchResponse) {
+  if (response.items.some((topic) => !topic.title.trim())) {
+    throw Object.assign(new Error('搜索结果缺少标题'), { reason: 'parse_empty' });
+  }
+  return response;
+}
+
 export async function searchTopics({
   source,
   query,
@@ -99,36 +107,40 @@ export async function searchTopics({
   if (source === 'all') {
     const sources = aggregateSearchSources;
     const results = await Promise.allSettled(
-      sources.map((item) => {
+      sources.map(async (item) => {
         if (unavailableSources?.includes(item)) {
-          return unavailableSourceRead(item);
+          return requireSearchTopicTitles(await unavailableSourceRead(item));
         }
         if (isDiscourseSource(item)) {
-          return searchDiscourseSourceTopics(item, adapterQuery, {
-            authenticated: item === 'linuxdo' && linuxDoAuthenticated === true,
-            auth: discourseAuth,
-            fetcher,
-            limit: adapterLimit,
-            page,
-            signal,
-            timeoutMs
-          });
+          return requireSearchTopicTitles(
+            await searchDiscourseSourceTopics(item, adapterQuery, {
+              authenticated: item === 'linuxdo' && linuxDoAuthenticated === true,
+              auth: discourseAuth,
+              fetcher,
+              limit: adapterLimit,
+              page,
+              signal,
+              timeoutMs
+            })
+          );
         }
         if (item === 'nodeseek') {
-          return searchNodeSeek(adapterQuery, options);
+          return requireSearchTopicTitles(await searchNodeSeek(adapterQuery, options));
         }
         if (item === 'v2ex') {
-          return searchV2ex(adapterQuery, options);
+          return requireSearchTopicTitles(await searchV2ex(adapterQuery, options));
         }
         if (item === 'yaohuo') {
-          return searchYaohuoDirect({
-            query: adapterQuery,
-            page,
-            limit: adapterLimit,
-            yaohuoFetcher: fetcher,
-            signal,
-            timeoutMs
-          });
+          return requireSearchTopicTitles(
+            await searchYaohuoDirect({
+              query: adapterQuery,
+              page,
+              limit: adapterLimit,
+              yaohuoFetcher: fetcher,
+              signal,
+              timeoutMs
+            })
+          );
         }
         throw new Error(`${item} 未注册聚合搜索 adapter`);
       })
@@ -191,5 +203,5 @@ export async function searchTopics({
             filter: activeFilter?.source === 'v2ex' ? activeFilter : undefined
           })
       });
-  return filterSearchItems(response, query, limit, activeFilter);
+  return filterSearchItems(requireSearchTopicTitles(response), query, limit, activeFilter);
 }

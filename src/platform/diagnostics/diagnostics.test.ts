@@ -320,6 +320,30 @@ describe('diagnostic traces', () => {
     );
   });
 
+  it('[REG-SEARCH-023] keeps only structural Google navigation facts', () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('search', 'browser-fetch', { source: 'linuxdo' });
+
+    finishDiagnosticTrace(trace, 'blocked', {
+      source: 'linuxdo',
+      reason: 'unsupported',
+      navigationClass: 'unknown-google',
+      navigationHost: 'www.google.com',
+      navigationPath: '/httpservice/retry/enablejs',
+      navigationParamKeys: 'next,sei'
+    });
+
+    expect(events().at(-1)).toEqual(
+      expect.objectContaining({
+        navigationClass: 'unknown-google',
+        navigationHost: 'www.google.com',
+        navigationPath: '/httpservice/retry/enablejs',
+        navigationParamKeys: 'next,sei'
+      })
+    );
+    expect(JSON.stringify(events())).not.toContain('https://');
+  });
+
   it.each([
     'xiaoyinsi-discourse-categories',
     'xiaoyinsi-discourse-feed',
@@ -610,6 +634,16 @@ describe('diagnostic traces', () => {
     expect(normalizeDiagnosticReason(new Error('备份文件过大'))).toBe('invalid_response');
     expect(normalizeDiagnosticReason(new Error('备份格式不兼容'))).toBe('invalid_response');
     expect(normalizeDiagnosticReason(new Error('备份文件大小无法确认'))).toBe('storage_error');
+    expect(normalizeDiagnosticReason(Object.assign(new Error('搜索结果缺少标题'), { reason: 'parse_empty' }))).toBe(
+      'parse_empty'
+    );
+    expect(
+      normalizeDiagnosticReason(
+        Object.assign(new Error('NodeSeek 原站未确认完整的相邻回复窗口'), {
+          reason: 'reply-count-refresh-required'
+        })
+      )
+    ).toBe('reply_count_stale');
   });
 
   it('redacts and bounds uncaught error details', () => {

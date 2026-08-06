@@ -326,7 +326,7 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(3);
   });
 
-  it('[REG-TOPIC-067] reverses a confirmed complete V2EX collection without another transport', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068] reverses a confirmed complete V2EX collection without another transport', async () => {
     const replies = [
       { ...firstReply, floor: 1, commentId: 101 },
       { ...firstReply, floor: 2, commentId: 102 },
@@ -562,6 +562,164 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.replyHasMore).toBe(true);
     await waitFor(() => expect(hook.result.current.controller.replyEndError?.message).toBe('offline'));
     expect(hook.result.current.controller.repliesError).toBeNull();
+  });
+
+  it.each(['linuxdo', 'xiaoyinsi', 'yaohuo'] as const)(
+    '[REG-TOPIC-068] retries an ordinary %s edge at the same cursor without refreshing the topic count',
+    async (source) => {
+      const topic: Topic = {
+        ...firstTopic,
+        source,
+        url:
+          source === 'linuxdo'
+            ? 'https://linux.do/t/1'
+            : source === 'xiaoyinsi'
+              ? 'https://forum.xiaoyinsi.com/t/1'
+              : 'https://www.yaohuo.me/bbs-1.html'
+      };
+      const detail: TopicDetail = {
+        ...firstDetail,
+        ...topic,
+        replyCount: 20,
+        replyHasMore: true,
+        replyNextPage: 2,
+        replyNextOffset: 10
+      };
+      const nextReply = { ...firstReply, floor: 11, commentId: 111 };
+      const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
+      const getReplies = jest
+        .fn<ReadGateway['getReplies']>()
+        .mockRejectedValueOnce(new Error('ordinary edge failure'))
+        .mockResolvedValueOnce({
+          items: [nextReply],
+          currentPage: 2,
+          currentOffset: 10,
+          hasMore: false,
+          nextPage: null,
+          nextOffset: null
+        });
+      const hook = await renderTopicController({ readGateway: { getReplies, getTopic }, topic });
+
+      await waitFor(() => expect(hook.result.current.controller.replyHasMore).toBe(true));
+      await act(async () => {
+        await hook.result.current.controller.loadMoreReplies();
+      });
+      await waitFor(() => expect(hook.result.current.controller.replyEndError?.message).toBe('ordinary edge failure'));
+      await act(async () => {
+        await expect(hook.result.current.controller.retryReplies('end')).resolves.toBe('completed');
+      });
+
+      expect(getTopic).toHaveBeenCalledTimes(1);
+      const expectedPage = source === 'yaohuo' ? 2 : 1;
+      expect(getReplies.mock.calls.map(([request]) => [request.position, request.replyCount])).toEqual([
+        [{ kind: 'cursor', page: expectedPage, offset: 10 }, 20],
+        [{ kind: 'cursor', page: expectedPage, offset: 10 }, 20]
+      ]);
+      expect(hook.result.current.controller.topicReplies).toEqual([firstReply, nextReply]);
+    }
+  );
+
+  it.each(['linuxdo', 'xiaoyinsi', 'yaohuo'] as const)(
+    '[REG-TOPIC-068] retries an ordinary %s previous edge at the same cursor without refreshing the topic count',
+    async (source) => {
+      const topic: Topic = {
+        ...firstTopic,
+        source,
+        url:
+          source === 'linuxdo'
+            ? 'https://linux.do/t/1'
+            : source === 'xiaoyinsi'
+              ? 'https://forum.xiaoyinsi.com/t/1'
+              : 'https://www.yaohuo.me/bbs-1.html'
+      };
+      const detail: TopicDetail = { ...firstDetail, ...topic, replies: [], replyCount: 20 };
+      const anchor = { ...firstReply, floor: 20, commentId: 120 };
+      const previousReply = { ...firstReply, floor: 10, commentId: 110 };
+      const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
+      const getReplies = jest
+        .fn<ReadGateway['getReplies']>()
+        .mockResolvedValueOnce({
+          items: [anchor],
+          currentPage: 2,
+          currentOffset: 10,
+          previousPage: 1,
+          previousOffset: 0,
+          hasMore: false,
+          nextPage: null
+        })
+        .mockRejectedValueOnce(new Error('ordinary previous edge failure'))
+        .mockResolvedValueOnce({
+          items: [previousReply],
+          currentPage: 1,
+          currentOffset: 0,
+          hasMore: true,
+          nextPage: 2,
+          nextOffset: 10
+        });
+      const hook = await renderTopicController({
+        readGateway: { getReplies, getTopic },
+        targetReply: { floor: 20 },
+        topic
+      });
+
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([anchor]));
+      await act(async () => {
+        await hook.result.current.controller.loadPreviousReplies();
+      });
+      await waitFor(() =>
+        expect(hook.result.current.controller.replyStartError?.message).toBe('ordinary previous edge failure')
+      );
+      await act(async () => {
+        await expect(hook.result.current.controller.retryReplies('start')).resolves.toBe('completed');
+      });
+
+      expect(getTopic).toHaveBeenCalledTimes(1);
+      expect(getReplies.mock.calls.map(([request]) => [request.position, request.replyCount])).toEqual([
+        [{ kind: 'target', target: { floor: 20 } }, 20],
+        [{ kind: 'cursor', page: 1, offset: 0 }, 20],
+        [{ kind: 'cursor', page: 1, offset: 0 }, 20]
+      ]);
+      expect(hook.result.current.controller.topicReplies).toEqual([previousReply, anchor]);
+    }
+  );
+
+  it('[REG-TOPIC-068] keeps the NodeSeek total unavailable after loading a terminal adjacent page', async () => {
+    const detail: TopicDetail = {
+      ...firstDetail,
+      replyCount: undefined,
+      replyHasMore: true,
+      replyNextPage: 2,
+      replyNextOffset: 10
+    };
+    const terminalReplies = [11, 12, 13, 14].map((floor) => ({
+      ...firstReply,
+      floor,
+      commentId: 100 + floor
+    }));
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+      items: terminalReplies,
+      currentPage: 2,
+      currentOffset: 10,
+      previousPage: 1,
+      previousOffset: 0,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null
+    }));
+    const hook = await renderTopicController({
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+        getReplies
+      }
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.replyHasMore).toBe(true));
+    await act(async () => {
+      await hook.result.current.controller.loadMoreReplies({ silent: true });
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.topicDetail?.replyCount).toBeUndefined());
+    expect(hook.result.current.controller.topicReplies.map((reply) => reply.floor)).toEqual([1, 11, 12, 13, 14]);
   });
 
   it('[REG-TOPIC-067] does not let opposite pagination replace a pending edge retry', async () => {

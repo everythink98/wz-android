@@ -75,14 +75,17 @@ describe('Android app utils', () => {
   });
 
   it('recognizes four-site topic links that should stay inside the app', () => {
-    expect(
-      parseForumTopicLink('https://www.nodeseek.com/post-123-2#reply', 'https://www.nodeseek.com/post-99-1')
-    ).toMatchObject({
+    const nodeSeekTopic = parseForumTopicLink(
+      'https://www.nodeseek.com/post-123-2#reply',
+      'https://www.nodeseek.com/post-99-1'
+    );
+    expect(nodeSeekTopic).toMatchObject({
       source: 'nodeseek',
       id: '123',
       title: 'NodeSeek 主题',
       url: 'https://www.nodeseek.com/post-123-1'
     });
+    expect(nodeSeekTopic).not.toHaveProperty('replyCount');
     expect(parseForumTopicLink('/t/a-topic/456/2#post_8', 'https://linux.do/t/current/1')).toMatchObject({
       source: 'linuxdo',
       id: '456',

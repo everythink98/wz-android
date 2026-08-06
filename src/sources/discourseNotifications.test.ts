@@ -472,6 +472,49 @@ describe('Discourse notifications', () => {
     expect(page.items.map((item) => item.kind)).toEqual(['system', 'reaction', 'system', 'mention', 'other']);
   });
 
+  it('[REG-NOTIFY-053] keeps a topic-only notification out of exact post lookup', async () => {
+    const fetcher = vi.fn(async (_input: string) =>
+      json({
+        notifications: [
+          {
+            id: 18,
+            notification_type: 18,
+            read: false,
+            topic_id: 201,
+            slug: 'topic-reminder',
+            fancy_title: '主题提醒',
+            data: { description: '这是主题级通知，不对应某一条回复。' }
+          }
+        ]
+      })
+    );
+    const access = {
+      fetcher,
+      identityKey: 'linuxdo:alice',
+      userId: 'alice'
+    };
+
+    const page = await discourseNotificationAdapters.linuxdo.listPage(access);
+    const item = page.items[0]!;
+
+    const requestCount = fetcher.mock.calls.length;
+    await expect(discourseNotificationAdapters.linuxdo.loadDetail(item, access)).resolves.toMatchObject({
+      title: '主题提醒',
+      contentText: '这是主题级通知，不对应某一条回复。',
+      topic: {
+        source: 'linuxdo',
+        id: '201',
+        url: 'https://linux.do/t/topic-reminder/201'
+      }
+    });
+    expect(item.target).toEqual({
+      type: 'topic',
+      topicId: '201',
+      url: 'https://linux.do/t/topic-reminder/201'
+    });
+    expect(fetcher).toHaveBeenCalledTimes(requestCount);
+  });
+
   it('loads the exact Discourse post for read-only detail', async () => {
     const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
       json({

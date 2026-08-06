@@ -618,6 +618,23 @@ function TopicFilterHarness({
   );
 }
 
+describe('NodeSeek reply count availability', () => {
+  it('[REG-TOPIC-068] omits an unavailable NodeSeek total instead of showing the loaded window size', async () => {
+    const nodeSeekTopic = {
+      ...topic,
+      source: 'nodeseek' as const,
+      url: 'https://www.nodeseek.com/post-topic-1-1',
+      replyCount: undefined as unknown as number
+    };
+    const view = await render(
+      <TopicFilterHarness selectedTopic={nodeSeekTopic} topicDetail={nodeSeekTopic} topicReplies={sourceReplies} />
+    );
+
+    expect(view.getByTestId('topic-detail-loaded')).toBeTruthy();
+    expect(view.queryByText('3 条')).toBeNull();
+  });
+});
+
 describe('Topic reply filters', () => {
   it('[REG-TOPIC-062] scrolls an atomically anchored notification window without chasing pages', async () => {
     const pages: Reply[][] = [

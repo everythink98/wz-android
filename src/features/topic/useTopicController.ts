@@ -379,7 +379,10 @@ export function useTopicController({
   const replyNextPage = nextReplyCursor?.page ?? null;
   const replyNextOffset = nextReplyCursor?.offset ?? null;
 
-  const authoritativeReplyCount = repliesQuery.data?.pages[0]?.totalCount;
+  const authoritativeReplyCount = repliesQuery.data?.pages.reduce<number | undefined>(
+    (confirmed, page) => (typeof page.totalCount === 'number' ? page.totalCount : confirmed),
+    undefined
+  );
   useEffect(() => {
     if (
       selectedTopic?.source !== 'xiaoyinsi' ||
@@ -817,8 +820,8 @@ export function useTopicController({
           if (!result.data) throw new Error('主题刷新未返回数据');
           refreshedDetail = result.data;
           if (
-            !Number.isSafeInteger(refreshedDetail.replyCount) ||
-            refreshedDetail.replyCount < 0 ||
+            (refreshedDetail.replyCount !== undefined &&
+              (!Number.isSafeInteger(refreshedDetail.replyCount) || refreshedDetail.replyCount < 0)) ||
             (command.kind === 'created' && refreshedDetail.replyCount === 0)
           ) {
             throw new Error('原站未返回可定位的最新楼层');
@@ -826,12 +829,18 @@ export function useTopicController({
         }
         if (!ownsWindow()) return 'stale';
 
+        const hasKnownReplies =
+          typeof refreshedDetail.replyCount === 'number'
+            ? refreshedDetail.replyCount > 0
+            : refreshedDetail.source === 'nodeseek';
         const reanchor =
           command.kind === 'created' ||
           (command.kind === 'deleted' &&
             (refreshedDetail.replyCount === 0 ||
               (!capturedPosition && !targetPage) ||
-              (typeof pageOffset === 'number' && pageOffset >= refreshedDetail.replyCount)));
+              (typeof refreshedDetail.replyCount === 'number' &&
+                typeof pageOffset === 'number' &&
+                pageOffset >= refreshedDetail.replyCount)));
         const position: ReplyPageParam = reanchor
           ? { kind: 'start' }
           : { kind: 'cursor', page: pageNumber, offset: pageOffset };
@@ -852,7 +861,7 @@ export function useTopicController({
             queryKey: refreshKey,
             staleTime: 0,
             queryFn: async ({ signal }) => {
-              if (reanchor && replyOrder === 'oldest' && refreshedDetail.replyCount > 0) {
+              if (reanchor && replyOrder === 'oldest' && hasKnownReplies) {
                 const tail = await loadReplyPage(refreshedDetail, 'newest', { kind: 'start' }, signal, trace);
                 const latest = tail.items[0];
                 const latestTarget: ReplyLocationTarget = {
@@ -872,7 +881,7 @@ export function useTopicController({
                 );
               }
               const loaded = await loadReplyPage(refreshedDetail, replyOrder, position, signal, trace);
-              if (command.kind === 'created' && refreshedDetail.replyCount > 0 && !loaded.items.length) {
+              if (command.kind === 'created' && !loaded.items.length) {
                 throw new Error('原站未返回可确认的最新回复');
               }
               return loaded;
@@ -1399,9 +1408,13 @@ export function useTopicController({
       ? sourceErrorFromUnknown(selectedTopic.source, detailQuery.error)
       : null;
   const topicFavorite = Boolean(currentTopic && readerData.favorites[topicKey(currentTopic)]);
-  const unreadReplyCount = topicDetail
-    ? Math.max(0, topicDetail.replyCount - (unreadBaselineRef.current[topicKey(topicDetail)] || topicDetail.replyCount))
-    : 0;
+  const unreadReplyCount =
+    typeof topicDetail?.replyCount === 'number'
+      ? Math.max(
+          0,
+          topicDetail.replyCount - (unreadBaselineRef.current[topicKey(topicDetail)] || topicDetail.replyCount)
+        )
+      : 0;
 
   return {
     cancelTopicQueries,

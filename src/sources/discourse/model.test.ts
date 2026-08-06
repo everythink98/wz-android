@@ -56,6 +56,41 @@ describe('portable Discourse fields', () => {
     ).toThrow('游标与页码不一致');
   });
 
+  it.each([
+    { order: 'oldest' as const, previousPage: 2, nextPage: 4 },
+    { order: 'newest' as const, previousPage: 4, nextPage: 2 }
+  ])(
+    '[REG-TOPIC-068] derives both $order directions from the current Discourse stream',
+    ({ order, previousPage, nextPage }) => {
+      const stream = Array.from({ length: 61 }, (_, index) => 1000 + index);
+      const center = discourseStreamReplyWindow(stream, {
+        limit: 10,
+        order,
+        position: { kind: 'cursor', page: 3, offset: 20 }
+      });
+      const previous = discourseStreamReplyWindow(stream, {
+        limit: 10,
+        order,
+        position: { kind: 'cursor', page: center.previousPage!, offset: center.previousOffset ?? null }
+      });
+      const next = discourseStreamReplyWindow(stream, {
+        limit: 10,
+        order,
+        position: { kind: 'cursor', page: center.nextPage!, offset: center.nextOffset ?? null }
+      });
+
+      expect(center).toMatchObject({
+        currentPage: 3,
+        currentOffset: 20,
+        previousPage,
+        nextPage
+      });
+      expect(previous.currentPage).toBe(previousPage);
+      expect(next.currentPage).toBe(nextPage);
+      expect(new Set([...previous.postIds, ...center.postIds, ...next.postIds]).size).toBe(30);
+    }
+  );
+
   it('[REG-TOPIC-067] rejects hydration that returns the right count but the wrong stream IDs', () => {
     expect(() =>
       discourseRepliesInStreamOrder(

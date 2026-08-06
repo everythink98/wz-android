@@ -699,6 +699,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 authenticated search 的精确失效 catch，编号测试第二次调用必须重新抛出 401；把普通 403、网络错误或取消也纳入 fallback，应由相邻来源错误契约与完整测试拒绝。 |
 | 明确不覆盖范围 | 不由搜索请求清除 Cookie或直接改写 canonical 会话；全局身份投影仍由账号 Query 更新。不保证 Google 当天有结果，也不把任意 HTML、权限错误或无限重试当作登录失效。 |
 
+## `REG-SEARCH-022` linux.do Google 结果被渲染成“无标题”
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
+| 用户症状 | L站未登录 Google 搜索出现“无标题”卡片；页面结构变化时还可能被误报为合法空结果。 |
+| 触发条件 | Google 返回可映射到 linux.do Topic 的站内候选，但链接只有 URL、面包屑、slug、摘要或没有可确认标题；旧解析器在标题过滤后才计数，TopicCard 又用“无标题”掩盖空值。 |
+| 根因 seam | `src/sources/linuxdo/search.ts` 的 Google 候选/标题提取、`src/sources/searchRead.ts` 的统一读取边界和 `src/ui/topic/TopicCard.tsx` 的展示兜底共同放松了标题契约。 |
+| 必须保持的行为 | 先按 canonical Topic ID 聚合候选，再只接受结果块内 `h3`、`role=heading` 或可靠 `aria-label` 的非 URL、非面包屑、非 slug 标题。混合页面只保留有效项并记录 `candidateCount/validCount/missingTitleCount`；候选全部缺标题或零候选且不是明确空结果时返回 `parse_empty`，明确无结果才是空列表。`searchRead` 在写入 Query cache 前再次拒绝空白标题，TopicCard 不制造标题。NodeSeek Google parser 保持独立。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-SEARCH-022` 固定 URL/面包屑不可作标题、混合结果保留有效项及缺标题计数、明确空结果与未知结构分离；`src/sources/searchRead.title-contract.test.ts` 注入空白标题并要求读取边界 reject；`tests/ui/shared/topic-card.test.tsx` 要求空标题不会渲染“无标题”。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：adapter fixture 固定第三方标记解析，读取边界固定 cache 前契约，RNTL 固定 UI 不再掩盖；匹配 APK 才能证明当前移动端 Google 页面。 |
+| Replay 或真实验收路径 | 在匹配 revision/APK 的未登录 Search → linux.do 查询普通关键词；只能出现带真实标题的结果、明确空态或可理解的解析/限制错误，不得出现“无标题”。不得清 Cookie、绕过 CAPTCHA 或提交原始 HTML。 |
+| 负向验证方式 | 恢复整段链接文字兜底、把 URL/面包屑当标题、在标题校验后计候选、让未知零候选页面返回空态，或恢复 TopicCard 的“无标题”，对应编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增搜索后端、API key、共享 provider 或 selector 状态机；不改变 NodeSeek Google 解析，也不保证第三方 HTML 永久不变。 |
+
+## `REG-SEARCH-023` Google 同任务会话跳转被拦截或误报为 linux.do 外链
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-04`；共享 `SEARCH-01`、`SEARCH-02` 的未登录 Google fallback |
+| 用户症状 | L站匿名搜索被 Google 导航到同一个 `/search?q=...&sei=...` 后，App 错误拦截并显示“linux.do 页面跳转到外部地址”或“Google 搜索流程已变化”；真正的验证、登录、consent 与未知流程也缺少准确原因。 |
+| 触发条件 | Google 在保持 site 查询和页码不变时附加单个 `sei` 会话参数；旧判断把最终 URL 必须严格落在初始 `q/start` 参数集合当作任务身份。其他受控 Google host/path 的拒绝又全部落入来源外链文案。 |
+| 根因 seam | `src/sources/searchFallback.ts` 把 Google 生成的惰性会话参数与 site/query/page 任务身份混为一谈，且 `src/features/account/HiddenBrowserHost.tsx` 没有对其余拒绝原因做局部分类。 |
+| 必须保持的行为 | Google 搜索任务身份由 HTTPS `www.google.com`、`/search`、site 查询和 `start` 页码共同确定。只允许身份完全不变的初始 URL，或只额外携带一个格式受限且不可重复的 `sei`；该语义同时用于 linux.do/NodeSeek 导航与结果 URL 识别。精确 JS capability gate继续允许。查询/页码变化、额外参数、redirect、`/sorry`/CAPTCHA、consent、login、未知 Google 路径和跨站继续拒绝，并显示准确原因。诊断仅记录受限 host、path、参数键名和分类，不记录参数值、完整 URL 或 Cookie。 |
+| 精确失败 oracle | `tests/integration/security-boundaries.test.ts` 的 `REG-SEARCH-023` 固定同任务 `q/start + sei`、exact JS gate/`SG_REL`、重复或非法 `sei`、额外参数、查询/页码篡改、跨站、sorry、consent、login 和未知路径；`tests/ui/account/hidden-browser-host.test.tsx` 固定两站同任务跳转可继续及 linux.do 拒绝文案；`src/platform/diagnostics/diagnostics.test.ts` 固定只保留结构字段。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：URL fixture 与 RNTL 固定安全和文案边界；只有同 revision/APK 的未登录实际跳转才能支持新增良性 allowlist。 |
+| Replay 或真实验收路径 | 在匹配 revision/APK 的未登录 Search → linux.do 发起 Google 查询；自然出现 `www.google.com/search` 的 `q,sei` 形态时必须继续读取，并最终显示带真实标题的结果、明确空态或准确限制错误。只核对脱敏 host/path/参数键名，不提交原始 URL 或 HTML。 |
+| 负向验证方式 | 放宽任意 Google `/search`、接受 query/site/page 变化或 redirect 参数、允许 consent/login/sorry/CAPTCHA，或把未知 Google 流程恢复成 linux.do 外链，编号测试必须失败。 |
+| 明确不覆盖范围 | 不接受尚无设备实证的其他 Google 参数或路径，不自动登录、同意 consent、重试或绕过 CAPTCHA，不记录原始导航 URL。 |
+
 ## `REG-LINUXDO-001` linux.do Cloudflare 429 被降级且大响应被截断
 
 | 字段 | 内容 |
@@ -4495,10 +4525,10 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `NOTIFY-02`、`TOPIC-03`；NodeSeek 通知精确帖子定位 |
 | 用户症状 | NodeSeek 的 @我/回复条目可正常进入完整主题并看到目标楼层，但消息详情却显示“NodeSeek 消息对应的帖子内容未找到”。 |
-| 触发条件 | 通知同时携带稳定 `comment_id` 与位于后续页的 floor，目标 floor 指向第 3 页或更后，而首屏主题数据的 `replyCount` 低估了真实页数。 |
-| 根因 seam | `src/sources/nodeseek/notifications.ts` 的通知详情分页在存在 comment ID 时固定从第 2 页开始并只按 `replyCount` 推导末页，丢弃了通知 floor 已提供的可靠页提示。 |
-| 必须保持的行为 | comment ID 始终是最终匹配身份；合法 floor 即使在 comment ID 存在时也必须作为首个分页提示，并与 `replyCount` 取更大的有界页范围。floor 错误时仍逐页按 comment ID 精确查找，不能按相同楼层误命中另一条回复。 |
-| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的 `REG-NOTIFY-033` fixture 给出 `commentId=31`、`floor=21`、`replyCount=10`，且目标只存在于第 3 页；修复前稳定抛出生产同款“帖子内容未找到”，修复后先请求第 3 页并返回 comment ID 31 的正文。 |
+| 触发条件 | 通知同时携带稳定 `comment_id` 与位于后续页的 floor，目标 floor 指向第 3 页或更后，而详情没有可信总回复数。 |
+| 根因 seam | `src/sources/nodeseek/notifications.ts` 的通知详情分页曾固定从第 2 页开始并按 `replyCount` 推导末页，丢弃了通知 floor 已提供的可靠页提示和原站页拓扑。 |
+| 必须保持的行为 | comment ID 始终是最终匹配身份；合法 floor 即使在 comment ID 存在时也必须作为首个分页提示。floor 错误时按响应 `postPageCount` / pager 的有界页集合继续匹配 comment ID，不能依赖 `replyCount`，也不能按相同楼层误命中另一条回复。 |
+| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的 `REG-NOTIFY-033` fixture 给出 `commentId=31`、`floor=21`、`postPageCount=3` 且没有总数，目标只存在于第 3 页；修复后先请求第 3 页并返回 comment ID 31 的正文。 |
 | 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：adapter fixture 固定低估分页组合；匹配当前身份的 App 内原站只读打开同一已有通知，确认详情正文与完整主题目标楼层一致。 |
 | Replay 或真实验收路径 | More → 消息通知 → NodeSeek → @我，打开已确认的 Monkeypox 通知；详情应显示 `@凡想世界 #5 佬能开源吗`。再打开完整主题，目标仍定位到同一条回复。该路径只读，不触发回复、上传或其他写操作。 |
 | 负向验证方式 | 恢复“存在 comment ID 时忽略 floor、固定从第 2 页开始”的页序，编号测试必须以同一生产错误失败。 |
@@ -4707,12 +4737,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 通知详情能找到准确回复，但“查看完整主题”在缺少楼层时留在首屏；楼层提示错误时还可能定位到同楼层的其他回复。 |
 | 触发条件 | NodeSeek 通知 target 带合法 `commentId`，但 floor 缺失或错误；目标不在当前 Topic 窗口。 |
 | 根因 seam | Topic Controller 把 floor 当成必填目标，且共享读取接口只继续传 `targetFloor/pageHint`，路由已有的完整 `ReplyLocationTarget` 在到达 NodeSeek adapter 前被压扁。 |
-| 必须保持的行为 | Route → Controller → ReadGateway → source adapter 必须传递完整 `ReplyLocationTarget`；`commentId` 存在时为强身份，floor/pageHint 只决定首个候选页。NodeSeek 先读提示页，再在主题 `replyCount` 给出的已知页界内查找精确 comment ID；只允许返回包含目标实体的来源确认窗口。 |
-| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-NOTIFY-047` 只给 `{ commentId: 31 }`，要求 gateway 收到完整 target 与 `replyCount`；`tests/integration/source-read-contracts.test.ts` 分别给缺 floor 和错误 floor，要求请求页为 `[1,2,3]` 与 `[2,1,3]`，最终均返回 comment 31 所在页。修复前 Controller 零请求或返回首屏同楼层 decoy。 |
+| 必须保持的行为 | Route → Controller → ReadGateway → source adapter 必须传递完整 `ReplyLocationTarget`；`commentId` 存在时为强身份，floor/pageHint 只决定首个候选页。NodeSeek 先读提示页，再在响应 `postPageCount` / pager 给出的已知页界内查找精确 comment ID；只允许返回包含目标实体的来源确认窗口。 |
+| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-NOTIFY-047` 只给 `{ commentId: 31 }`，要求 gateway 收到完整 target；`tests/integration/source-read-contracts.test.ts` 分别给缺 floor 和错误 floor，要求请求页为 `[1,2,3]` 与 `[2,1,3]`，最终均返回 comment 31 所在页且不依赖 `replyCount`。修复前 Controller 零请求或返回首屏同楼层 decoy。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：来源读取契约固定跨页强身份，Controller RNTL 固定接口不丢字段。 |
 | Replay 或真实验收路径 | 从一条已有已读 NodeSeek @我/回复打开详情，再点“查看完整主题”；只读确认落到原消息对应回复。不得点击未读条目制造已读写入。 |
 | 负向验证方式 | 恢复 floor 必填、在 gateway 拆成 `targetFloor`，或以 floor 命中代替 comment ID，两个编号测试必须稳定失败。 |
-| 明确不覆盖范围 | 不按作者、正文或时间猜目标；主题没有可信 replyCount 且提示页不含目标时明确失败，不进行无界扫描。 |
+| 明确不覆盖范围 | 不按作者、正文或时间猜目标；原站没有可确认页拓扑且提示页不含目标时明确失败，不进行无界扫描。 |
 
 ## `REG-NOTIFY-048` NodeSeek `message_id` 兼容值只用于去重未进入导航目标
 
@@ -4789,6 +4819,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 `hasUnread`、从 summary 文案解析状态、把合并后的 `moreBadgeState !== none` 传给消息入口，编号测试或 update-only 对照必须失败。 |
 | 明确不覆盖范围 | 不增加数字角标、动画、Toast、自动跳转或新的通知状态；不改变未读计算、Android 摘要或已读协议。 |
 
+## `REG-NOTIFY-053` 主题级通知被强制定位到不存在的具体帖子
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`NAV-03`；共享通知目标语义 |
+| 用户症状 | 点击主题提醒、系统通知或只有主题关系的消息时，详情提示“站内消息没有可定位的帖子”或进入主题后提示找不到对应回复。 |
+| 触发条件 | Discourse 通知只有 `topic_id`/主题 URL，没有 `post_id` 或 `post_number`；NodeSeek @我/回复行只有主题 ID，没有 comment ID 或 floor。 |
+| 根因 seam | 来源 mapper 把所有带主题身份的通知都生成 `topic-post`，详情 loader 因而强制查找具体帖子，route 又把不存在的定位信息传给 Topic。 |
+| 必须保持的行为 | 只有原站显式提供 `postId`、`postNumber`、comment ID 或 floor 时才生成 `topic-post`；只有主题身份时生成 `topic`，详情直接使用通知正文或主题正文，不做精确帖子查找。“查看相关主题”只传 Topic 且不含 `targetReply`。私信与显式帖子通知的既有协议保持不变。 |
+| 精确失败 oracle | `src/sources/discourseNotifications.test.ts` 的 `REG-NOTIFY-053` 用只有 `topic_id` 的 topic reminder 固定修复前“没有可定位的帖子”错误，并要求详情零额外 transport；`src/sources/nodeseek/notifications.test.ts` 固定无 comment ID/floor 的主题行；`tests/ui/notifications/notifications-route.test.tsx` 要求导航参数中的 `targetReply` 为 `undefined`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter fixture 固定来源目标语义，RNTL 固定 Topic 导航边界。 |
+| Replay 或真实验收路径 | 在匹配 revision/APK 的消息中心选择一条已有已读主题提醒或系统通知；详情应显示通知内容，点击“查看相关主题”进入主题且不出现回复定位失败。不得点击未读条目或执行全部已读。若账号没有此类已读样本，设备项记 `NOT_VERIFIED`，以确定性 fixture 为主要 oracle。 |
+| 负向验证方式 | 把 `topic` 合并回可选定位字段的 `topic-post`、按通知 kind/标题猜楼层，或 route 为主题级通知制造空 `ReplyLocationTarget`，编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增通知类型、服务端能力、消息专用主题页或导航状态机；不为缺失定位字段的通知扫描回复，也不改变原站已读协议。 |
+
 ## `REG-TOPIC-062` 极大回复楼层被当作从首屏开始的连续前缀
 
 | 字段 | 内容 |
@@ -4834,6 +4879,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 保留当前登录态，在 NodeSeek、linux.do、妖火、小隐寺各选一个多页主题，在 V2EX 选一个多回复主题；确认左侧三种筛选与右侧排序菜单，切换倒序后首条必须等于原站最新回复，向下只出现相邻更早窗口，末窗当次显示“已到最早回复”，再切回正序恢复头窗。不得发送回复、编辑、删除、互动或清理登录态。 |
 | 负向验证方式 | NodeSeek 出现 `[2, 3]` 追页、部分集合在 UI/Controller 本地反转、正倒序共用 Query key、Discourse 猜尾页或接受错误 hydration、V2EX 集合与权威计数不等、妖火未确认页码/末楼或仍有 newer cursor、计数竞态或重复 cursor 仍应用结果、相邻窗口失败只弹 toast、Controller 恢复 Promise/队列，或写后 invalidate 启动竞争 refetch，编号测试必须失败。 |
 | 明确不覆盖范围 | 不引入 V2EX PAT 或 API 2.0 Token 分页，不新增全局顺序偏好或持久化迁移，不并发预抓全部历史，也不通过真实写操作制造尾楼。 |
+
+## `REG-TOPIC-068` NodeSeek 真实下一页被旧回复总数否决
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`TOPIC-03` |
+| 用户症状 | NodeSeek 主题明明存在下一页，窗口到达边缘却报错；同一页面实际已到 `#14`，主题头和“回复列表”仍显示 10，切到倒序又报“回复总数已变化，无法确认最新窗口”。真实样本是 `post-861053-1`。 |
+| 触发条件 | 原站 page 1 payload 没有 `replyCount`，只有 `postPageCount=2` 和本页 10 条回复；旧 parser 把 `comments.length - 1` / rendered rows 当成总数。pager 已指向 page 2，page 2 也明确返回 `#11–#14`，但旧窗口仍用错误的 10 否决正序页和定位倒序尾窗。另一路径还会扫描正文内所有同帖链接，把引用楼层误当分页 cursor。 |
+| 根因 seam | `src/sources/nodeseek/topicParser.ts` 把详情页 `comments[]` 的当前页长度暴露成总回复数，`src/sources/nodeseek/reader.ts` 又拿这个伪总数定位倒序尾页并否决真实相邻页。`src/domain/forum/models.ts` 原先强制每个 Topic 都有 `replyCount`，使来源不知道总数时只能制造数字；`src/sources/nodeseek/protocol.ts` 还没有把 pager 链接与普通内容链接分开。Controller 的刷新计数恢复只能延后症状，不能修复错误事实。 |
+| 必须保持的行为 | `comments.length` 只表示当前页已加载数量；详情响应没有明确总数时 `replyCount` 缺失，Topic 读取不得额外请求末页只为计数，详情头和未筛选回复标题不显示伪总数。`postPageCount`、严格 `.nsk-pager` / pagination navigation / `rel=next`、响应 `postPage` 与显式连续楼层共同确认页拓扑；正文引用不产生 cursor。正序、倒序、双侧扩展和 commentId 目标扫描都不依赖调用方传入的 `replyCount`，倒序从页拓扑直达真实末页；错页、楼层缺口和无法确认的末页仍拒绝。linux.do/小隐寺继续使用 `post_stream` 与 offset，妖火继续使用真实 page/tofloor cursor，V2EX 为完整集合。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定真实数据形态：page 1 的 `postPageCount=2` 与 10 条页内回复、page 2 的 `#11–#14`；Topic 只请求 page 1、没有 `replyCount`，传入旧 `replyCount=10/45` 的正序相邻页和倒序尾窗仍按页拓扑成功。pager 新增末页时继续读取；错页、楼层缺口、局部推断末页仍失败，正文 `/post-861053-2#11` 引用不得生成下一页。中心窗口参数化覆盖 oldest/newest 两种顺序的两侧，通知 commentId 扫描由 `postPageCount` 有界。`tests/ui/topic/topic-reply-filters.test.tsx` 固定未知总数不显示已加载窗口大小；Controller 测试固定 linux.do/小隐寺/妖火两侧普通失败仍按原 cursor 重试、V2EX 零分页 transport。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter fixture 固定分页证据与 stale-count 竞态，Controller/RNTL 固定双侧窗口合并；匹配 APK 直达真实 NodeSeek 样本确认 page 2 可见。竞态本身以确定性测试为主要 oracle。 |
+| Replay 或真实验收路径 | 用匹配 revision/APK 直达 `https://www.nodeseek.com/post-861053-1`：主题头和未筛选回复标题不显示总回复数；正序滑到底必须出现 `#11–#14` 和“已到最新回复”且无边缘错误；切倒序必须从 `#14` 建立尾窗，再向旧回复加载。另以多页主题检查窗口另一侧。linux.do、小隐寺、妖火各只读验证一次真实相邻翻页，V2EX 只验证完整集合。不得发帖、删帖、清数据或破坏登录态制造竞态。 |
+| 负向验证方式 | 恢复以 page 1 rows 作为总数、为计数预读末页、用任意旧 `replyCount` 定位或否决 NodeSeek 页面、重新扫描所有同帖链接作为 pager、接受错页/楼层缺口/推断末页，或在 Controller 增加 NodeSeek 刷新计数再重试状态，编号测试必须失败。给其他来源套用 NodeSeek 页宽或总数判断也应被各自 cursor 回归拒绝。 |
+| 明确不覆盖范围 | 不新增统一 cursor/boundary 模型、分页状态机或自动重试，不重写四站协议；其他来源若出现不同根因只另行记录，不在本条猜测式修补。 |
 
 ## `REG-NODESEEK-004` NodeSeek 直连通道卡死只能靠重启 App 恢复
 

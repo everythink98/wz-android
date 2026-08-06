@@ -105,7 +105,7 @@ describe('HiddenBrowserHost linux.do transport', () => {
     expect(mockInjectJavaScript).toHaveBeenCalledWith(expect.stringContaining('const requestOwner = "account";'));
   });
 
-  it('[REG-SEARCH-014][REG-SEARCH-015] keeps the scoped Google gate scoped and classifies access trouble', async () => {
+  it('[REG-SEARCH-014][REG-SEARCH-015][REG-SEARCH-023] keeps the scoped Google gate scoped and classifies access trouble', async () => {
     const failLinuxDoBrowserFetchById = jest.fn();
     const failNodeSeekBrowserFetchById = jest.fn();
     const nodeSeekSearch = 'https://www.google.com/search?q=site%3Anodeseek.com+codex';
@@ -136,8 +136,16 @@ describe('HiddenBrowserHost linux.do transport', () => {
     );
 
     const gateUrl = 'https://www.google.com/httpservice/retry/enablejs?sei=Abc_123-xy';
+    const nodeSeekSearchWithSession = `${nodeSeekSearch}&sei=Abc_123-xy`;
+    const linuxDoSearchWithSession = `${linuxDoSearch}&sei=Abc_123-xy`;
     expect(mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({ url: gateUrl })).toBe(true);
     expect(mockWebViewPropsByUrl.get(linuxDoSearch)?.onShouldStartLoadWithRequest({ url: gateUrl })).toBe(true);
+    expect(
+      mockWebViewPropsByUrl.get(nodeSeekSearch)?.onShouldStartLoadWithRequest({ url: nodeSeekSearchWithSession })
+    ).toBe(true);
+    expect(
+      mockWebViewPropsByUrl.get(linuxDoSearch)?.onShouldStartLoadWithRequest({ url: linuxDoSearchWithSession })
+    ).toBe(true);
     expect(failNodeSeekBrowserFetchById).not.toHaveBeenCalled();
     expect(failLinuxDoBrowserFetchById).not.toHaveBeenCalled();
 
@@ -176,7 +184,44 @@ describe('HiddenBrowserHost linux.do transport', () => {
         url: 'https://www.google.com/httpservice/retry/enablejs?sei=Abc_123-xy&next=https%3A%2F%2Fevil.example'
       })
     ).toBe(false);
-    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(21, 'NodeSeek 页面跳转到外部地址，已停止读取');
+    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(21, 'Google 搜索流程已变化，已停止读取');
+  });
+
+  it('[REG-SEARCH-023] reports rejected linux.do Google flows without calling them linux.do external links', async () => {
+    const failLinuxDoBrowserFetchById = jest.fn();
+    const initial = 'https://www.google.com/search?q=site%3Alinux.do+codex';
+    await render(
+      <HiddenBrowserHost
+        blockedMessage=""
+        failLinuxDoBrowserFetchById={failLinuxDoBrowserFetchById}
+        failNodeSeekBrowserFetchById={jest.fn()}
+        handleLinuxDoBrowserFetchMessage={jest.fn()}
+        handleNodeSeekBrowserFetchMessage={jest.fn()}
+        linuxDoBrowserWebViewRef={createRef<WebView>()}
+        nodeSeekBrowserWebViewRef={createRef<WebView>()}
+        onLinuxDoHttpErrorStatus={jest.fn()}
+        onNodeSeekHttpErrorStatus={jest.fn()}
+        state={{
+          linuxDo: { request: { id: 31, url: initial }, userAgent: 'LinuxDo Agent' },
+          nodeSeek: { request: null, userAgent: 'NodeSeek Agent' }
+        }}
+        styles={{} as never}
+      />
+    );
+    const shouldNavigate = mockWebViewPropsByUrl.get(initial)?.onShouldStartLoadWithRequest;
+    const cases = [
+      ['https://www.google.com/search?q=site%3Alinux.do+different', 'Google 搜索流程已变化，已停止读取'],
+      ['https://www.google.com/sorry/index?continue=x', 'Google 要求完成人机验证，已停止读取'],
+      ['https://consent.google.com/m?continue=x', 'Google 要求确认隐私设置，已停止读取'],
+      ['https://accounts.google.com/v3/signin?continue=x', 'Google 要求登录，已停止读取'],
+      ['https://example.com/search?q=codex', 'linux.do 页面跳转到外部地址，已停止读取']
+    ] as const;
+
+    for (const [url, message] of cases) {
+      failLinuxDoBrowserFetchById.mockClear();
+      expect(shouldNavigate?.({ url })).toBe(false);
+      expect(failLinuxDoBrowserFetchById).toHaveBeenCalledWith(31, message);
+    }
   });
 
   it('inspects a main-document 429 instead of failing before DOM classification', async () => {

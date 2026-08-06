@@ -46,7 +46,6 @@ function internalTopic(source: Source, id: string, title: string, url: string, e
     author: '',
     url,
     createdAt: new Date().toISOString(),
-    replyCount: 0,
     ...extra
   };
 }

@@ -13,9 +13,8 @@ import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
-  NODESEEK_FLOORS_PER_PAGE,
   arrayField,
-  nodeSeekEmbeddedReplyCount,
+  nodeSeekExplicitReplyCount,
   nodeSeekEmbeddedUserId,
   nodeSeekRoleLabel,
   nodeSeekSpaceUrl,
@@ -359,10 +358,8 @@ export function normalizePostData(
         : undefined;
   const allReplies = normalizeReplies(comments, { skipFirst: true });
   const replies = allReplies.slice(0, replyLimit);
-  const replyCount = nodeSeekEmbeddedReplyCount(data, allReplies.length);
+  const replyCount = nodeSeekExplicitReplyCount(data);
   const hasLocalRemainder = allReplies.length > replyLimit;
-  const hasNextOriginPage =
-    !hasLocalRemainder && allReplies.length === NODESEEK_FLOORS_PER_PAGE && replyCount > allReplies.length;
   const createdAt =
     toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
   const lastComment = comments.at(-1);
@@ -390,7 +387,7 @@ export function normalizePostData(
     url,
     createdAt,
     lastReplyAt,
-    replyCount,
+    ...(replyCount !== undefined ? { replyCount } : {}),
     viewCount: parseViewCount(data.views),
     excerpt: textExcerpt(first.content || first.markdown),
     contentHtml: nodeSeekDisplayHtml(first.content, first.markdown),
@@ -406,9 +403,9 @@ export function normalizePostData(
     locked: optionalBoolean(data.locked),
     ...(accessRequirement ? { accessRequirement } : {}),
     replies,
-    replyHasMore: hasLocalRemainder || hasNextOriginPage,
-    replyNextPage: hasLocalRemainder ? 1 : hasNextOriginPage ? 2 : null,
-    replyNextOffset: hasLocalRemainder || hasNextOriginPage ? replies.length : null
+    replyHasMore: hasLocalRemainder,
+    replyNextPage: hasLocalRemainder ? 1 : null,
+    replyNextOffset: hasLocalRemainder ? replies.length : null
   };
 }
 
@@ -477,7 +474,11 @@ export function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: Top
     collectionCount: rendered.collectionCount ?? embedded.collectionCount,
     collected: rendered.collected ?? embedded.collected,
     locked: rendered.locked ?? embedded.locked,
-    replyCount: Math.max(rendered.replyCount, embedded.replyCount),
+    ...(typeof embedded.replyCount === 'number'
+      ? { replyCount: embedded.replyCount }
+      : typeof rendered.replyCount === 'number'
+        ? { replyCount: rendered.replyCount }
+        : {}),
     replies,
     replyHasMore,
     replyNextPage: replyHasMore ? (useRenderedCursor ? rendered.replyNextPage : embedded.replyNextPage) : null,
@@ -775,7 +776,6 @@ export function parseRenderedNodeSeekTopicHtml(
     url: nodeSeekTopicUrl(id),
     createdAt,
     lastReplyAt,
-    replyCount: allReplies.length,
     excerpt: textExcerpt(cleanedContentHtml || contentHtml),
     contentHtml: sanitizeContentHtml(cleanedContentHtml, BASE_URL),
     ...(renderedPolls.polls ? { polls: renderedPolls.polls } : {}),

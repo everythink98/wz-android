@@ -505,7 +505,8 @@ export function NotificationDetailRoute({
       if (markControllerRef.current === controller) markControllerRef.current = undefined;
     };
   }, [canAccessSource, detailQuery.data, gateway, identityKey, item, queryClient, refreshSnapshots, routeFocused]);
-  const fallbackTopic = item.target.type === 'topic-post' ? parseForumTopicLink(item.target.url) : null;
+  const fallbackTopic =
+    item.target.type === 'topic' || item.target.type === 'topic-post' ? parseForumTopicLink(item.target.url) : null;
   const targetTopic = detailQuery.data?.topic || (fallbackTopic ? { ...fallbackTopic, title: item.title } : null);
   const targetCommentId = item.target.type === 'topic-post' ? Number(item.target.postId) : 0;
   const targetReply =

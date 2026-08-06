@@ -351,7 +351,7 @@ export const TopicContentList = memo(function TopicContentList({
     topic && isDiscourseSource(topic.source) && (likeDecision.allowed || likeDecision.reason === 'pending')
   );
   const canWrite = decisionFor({ action: 'reply' }).allowed;
-  const replyTotalCount = item?.replyCount ?? replies.length;
+  const replyTotalCount = item ? item.replyCount : replies.length;
   const replyDisplayCount =
     replyFilter === 'author' || replyFilter === 'images' || replyHighlightQuery.trim()
       ? replies.length
@@ -1416,7 +1416,10 @@ export const TopicContentList = memo(function TopicContentList({
           <View style={[styles.replyHeader, topicColumnStyle]}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>
-                回复列表 <Text style={styles.countText}>{replyDisplayCount} 条</Text>
+                回复列表
+                {typeof replyDisplayCount === 'number' ? (
+                  <Text style={styles.countText}> {replyDisplayCount} 条</Text>
+                ) : null}
               </Text>
               {canWrite ? (
                 <AppButton
@@ -1684,7 +1687,8 @@ export const TopicContentList = memo(function TopicContentList({
                 ) : null}
               </View>
               <Text style={styles.meta}>
-                {formatDateTime(item.createdAt)} · {item.replyCount} 回复
+                {formatDateTime(item.createdAt)}
+                {typeof item.replyCount === 'number' ? ` · ${item.replyCount} 回复` : ''}
                 {item.viewCount ? ` · ${item.viewCount} 浏览` : ''}
               </Text>
             </View>

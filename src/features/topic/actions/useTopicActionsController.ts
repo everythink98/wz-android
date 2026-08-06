@@ -1038,7 +1038,7 @@ export function useTopicActionsController({
           current
             ? {
                 ...current,
-                replyCount: Math.max(0, current.replyCount - 1),
+                ...(typeof current.replyCount === 'number' ? { replyCount: Math.max(0, current.replyCount - 1) } : {}),
                 replies: current.replies.filter((item) =>
                   reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor
                 )

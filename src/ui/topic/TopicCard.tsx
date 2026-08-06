@@ -131,7 +131,7 @@ export function TopicCard({
           style={styles.cardTitle}
           highlightStyle={styles.highlightText}
           numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}
-          text={topic.title || '无标题'}
+          text={topic.title}
           query={highlightQuery}
         />
         {accessRequirementText ? <Text style={styles.topicAccessBadge}>{accessRequirementText}</Text> : null}
@@ -170,7 +170,7 @@ export function TopicCard({
             </Text>
           </View>
           <View style={styles.topicStatGroup}>
-            {!hideReplyCount ? (
+            {!hideReplyCount && typeof topic.replyCount === 'number' ? (
               <View style={styles.topicStatItem}>
                 <MessageCircle size={14} color={theme.muted} strokeWidth={1.9} />
                 <Text style={styles.topicStatText}>{topic.replyCount}</Text>

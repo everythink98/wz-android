@@ -114,6 +114,58 @@ function html(value: string) {
   });
 }
 
+function htmlAt(value: string, url: string) {
+  const response = html(value);
+  Object.defineProperty(response, 'url', { value: url });
+  return response;
+}
+
+function nodeSeekStaleCountPage(page: 1 | 2) {
+  const floors = page === 1 ? Array.from({ length: 10 }, (_, index) => index + 1) : [11, 12, 13, 14];
+  const comments = [
+    ...(page === 1
+      ? [
+          {
+            commentId: 11739860,
+            floorIndex: 0,
+            poster: { name: 'op' },
+            markdown: 'opening post',
+            time: { createdDate: '2026-08-06T13:49:00.000Z' }
+          }
+        ]
+      : []),
+    ...floors.map((floor) => ({
+      commentId: 11739860 + floor,
+      floorIndex: floor,
+      poster: { name: `user-${floor}` },
+      markdown: `reply ${floor}`,
+      time: { createdDate: `2026-08-06T14:${String(floor).padStart(2, '0')}:00.000Z` }
+    }))
+  ];
+  const payload = Buffer.from(
+    JSON.stringify({
+      postData: {
+        postId: 861053,
+        postPage: page,
+        postPageCount: 2,
+        title: 'NodeSeek topic',
+        op: { name: 'op' },
+        comments
+      }
+    })
+  ).toString('base64');
+  return htmlAt(
+    `
+      <script>${payload}</script>
+      <a class="post-title" href="/post-861053-${page}">NodeSeek topic</a>
+      <div class="nsk-pager" role="navigation" aria-label="pagination">
+        ${page === 1 ? '<a href="/post-861053-2" rel="next">2</a>' : '<a href="/post-861053-1" rel="prev">1</a>'}
+      </div>
+    `,
+    `https://www.nodeseek.com/post-861053-${page}`
+  );
+}
+
 function testLinuxDoAccess() {
   return { authenticated: true, userAgent: 'LinuxDo WebView UA' };
 }
@@ -130,7 +182,7 @@ describe('Android local sources', () => {
   it('reads NodeSeek feed, categories, topic, replies, and search without project server endpoints', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/post-101-2')) {
-        return html(`<script>${nodeSeekReplyPagePayload}</script>`);
+        return htmlAt(`<script>${nodeSeekReplyPagePayload}</script>`, input);
       }
       if (input.includes('/post-101-1')) {
         return html(`<script>${nodeSeekTopicPayload}</script>`);
@@ -181,7 +233,13 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const page = Number(input.match(/post-999-(\d+)/)?.[1]);
       expect([16, 17]).toContain(page);
-      return html(`<script>${payload(page === 16 ? 155 : 165)}</script><a href="/post-999-${page + 1}">下一页</a>`);
+      return htmlAt(
+        `<script>${payload(page === 16 ? 155 : 165)}</script>
+        <div class="nsk-pager" role="navigation" aria-label="pagination">
+          <a href="/post-999-${page + 1}" rel="next">下一页</a>
+        </div>`,
+        input
+      );
     });
 
     const replies = await getReplies({
@@ -232,6 +290,8 @@ describe('Android local sources', () => {
         JSON.stringify({
           postData: {
             postId: 999,
+            postPage: page,
+            postPageCount: 3,
             title: 'Comment identity topic',
             replyCount: 30,
             comments:
@@ -267,7 +327,11 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const page = Number(input.match(/post-999-(\d+)/)?.[1]) || 1;
       requestedPages.push(page);
-      return html(`<script>${payload(page)}</script>${page < 3 ? `<a href="/post-999-${page + 1}">下一页</a>` : ''}`);
+      const response = html(
+        `<script>${payload(page)}</script>${page < 3 ? `<a href="/post-999-${page + 1}">下一页</a>` : ''}`
+      );
+      Object.defineProperty(response, 'url', { value: `https://www.nodeseek.com/post-999-${page}` });
+      return response;
     });
     const load = (targetReply: { commentId: number; floor?: number }) =>
       getReplies({
@@ -491,6 +555,8 @@ describe('Android local sources', () => {
       JSON.stringify({
         postData: {
           postId: 207,
+          postPage: 1,
+          postPageCount: 2,
           title: 'NodeSeek embedded reply count',
           op: { name: 'alice' },
           replyCount: 12,
@@ -516,6 +582,8 @@ describe('Android local sources', () => {
       JSON.stringify({
         postData: {
           postId: 207,
+          postPage: 2,
+          postPageCount: 2,
           title: 'NodeSeek embedded reply count',
           replyCount: 12,
           comments: [11, 12].map((floor) => ({
@@ -559,6 +627,8 @@ describe('Android local sources', () => {
       JSON.stringify({
         postData: {
           postId: 209,
+          postPage: 1,
+          postPageCount: 5,
           title: 'NodeSeek mixed reply count',
           op: { name: 'alice' },
           replyCount: 45,
@@ -617,7 +687,7 @@ describe('Android local sources', () => {
     });
 
     expect(topic.replyCount).toBe(45);
-    expect(requestedPages).toEqual([1, 5]);
+    expect(requestedPages).toEqual([1, 1, 5]);
     expect(tail.items.map(({ floor }) => floor)).toEqual([45, 44, 43, 42, 41]);
   });
 
@@ -642,6 +712,8 @@ describe('Android local sources', () => {
         JSON.stringify({
           postData: {
             postId: 210,
+            postPage: page,
+            postPageCount: 3,
             title: 'NodeSeek compact windows',
             replyCount: 25,
             comments:
@@ -707,7 +779,7 @@ describe('Android local sources', () => {
     const topic = await getNodeSeekTopic('208', { fetcher });
 
     expect(topic.replies).toHaveLength(10);
-    expect(topic.replyCount).toBe(10);
+    expect(topic).not.toHaveProperty('replyCount');
   });
 
   it('uses rendered NodeSeek html for display and markdown only for editing', async () => {
@@ -1308,7 +1380,7 @@ describe('Android local sources', () => {
         postData: { postId: 723704, title: 'NodeSeek topic', comments }
       })
     ).toString('base64');
-    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+    const fetcher = vi.fn(async (input: string) => htmlAt(`<script>${payload}</script>`, input));
 
     const topic = await getNodeSeekTopic('723704', { fetcher, replyLimit: 30 });
     const replies = await getNodeSeekReplies('723704', {
@@ -1335,8 +1407,12 @@ describe('Android local sources', () => {
           postId: 723704,
           title: 'NodeSeek topic',
           comments: [
-            { poster: { name: 'alice' }, markdown: '正文' },
-            { poster: { name: 'reply 1' }, markdown: '回复 1' }
+            { floorIndex: 0, poster: { name: 'alice' }, markdown: '正文' },
+            ...Array.from({ length: 10 }, (_, index) => ({
+              floorIndex: index + 1,
+              poster: { name: `reply ${index + 1}` },
+              markdown: `回复 ${index + 1}`
+            }))
           ]
         }
       })
@@ -1347,17 +1423,22 @@ describe('Android local sources', () => {
           postId: 723704,
           title: 'NodeSeek topic',
           comments: [
-            { poster: { name: 'reply 2' }, markdown: '回复 2' },
-            { poster: { name: 'reply 3' }, markdown: '回复 3' }
+            { floorIndex: 11, poster: { name: 'reply 11' }, markdown: '回复 11' },
+            { floorIndex: 12, poster: { name: 'reply 12' }, markdown: '回复 12' }
           ]
         }
       })
     ).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/post-723704-2')) {
-        return html(`<script>${pageTwoPayload}</script>`);
+        return htmlAt(`<script>${pageTwoPayload}</script>`, input);
       }
-      return html(`<script>${pageOnePayload}</script><a href="/post-723704-2">2</a>`);
+      return html(`
+        <script>${pageOnePayload}</script>
+        <div class="nsk-pager" role="navigation" aria-label="pagination">
+          <a href="/post-723704-2" rel="next">2</a>
+        </div>
+      `);
     });
 
     const topic = await getNodeSeekTopic('723704', { fetcher, replyLimit: 30 });
@@ -1374,9 +1455,9 @@ describe('Android local sources', () => {
 
     expect(topic.replyHasMore).toBe(true);
     expect(topic.replyNextPage).toBe(2);
-    expect(topic.replyNextOffset).toBe(1);
-    expect(replies.items.map((item) => item.author)).toEqual(['reply 2', 'reply 3']);
-    expect(replies.items.map((item) => item.floor)).toEqual([2, 3]);
+    expect(topic.replyNextOffset).toBe(10);
+    expect(replies.items.map((item) => item.author)).toEqual(['reply 11', 'reply 12']);
+    expect(replies.items.map((item) => item.floor)).toEqual([11, 12]);
   });
 
   it('[REG-TOPIC-036] continues rendered NodeSeek floors from the page offset when floor markers are missing', async () => {
@@ -1456,9 +1537,11 @@ describe('Android local sources', () => {
         `;
       }).join('');
       return html(
-        `<a class="post-title" href="/post-852805-${page}">NodeSeek topic</a>${replies}${
-          page < 5 ? `<a href="/post-852805-${page + 1}">${page + 1}</a>` : ''
-        }`
+        `<a class="post-title" href="/post-852805-${page}">NodeSeek topic</a>${replies}
+        <div class="nsk-pager" role="navigation" aria-label="pagination">
+          ${page < 5 ? `<a href="/post-852805-${page + 1}" rel="next">${page + 1}</a>` : ''}
+          ${page < 5 ? '<a href="/post-852805-5">5</a>' : ''}
+        </div>`
       );
     });
 
@@ -1477,7 +1560,7 @@ describe('Android local sources', () => {
       limit: 10
     });
 
-    expect(requestedPages).toEqual([5, 4]);
+    expect(requestedPages).toEqual([1, 5, 4]);
     expect(requestedPages).not.toEqual(expect.arrayContaining([2, 3]));
     expect(tail.items.map((reply) => reply.floor)).toEqual([45, 44, 43, 42, 41]);
     expect(tail).toMatchObject({ currentPage: 5, hasMore: true, nextPage: 4 });
@@ -1485,18 +1568,87 @@ describe('Android local sources', () => {
     expect(older).toMatchObject({ currentPage: 4, previousPage: 5, nextPage: 3 });
   });
 
+  it.each(['oldest', 'newest'] as const)(
+    '[REG-TOPIC-068] follows both NodeSeek edges from a centered %s window',
+    async (order) => {
+      const requestedPages: number[] = [];
+      const fetcher = vi.fn(async (input: string) => {
+        const page = Number(input.match(/post-852809-(\d+)/)?.[1] || 1);
+        requestedPages.push(page);
+        const firstFloor = (page - 1) * 10 + 1;
+        const rows = Array.from({ length: 10 }, (_, index) => {
+          const floor = firstFloor + index;
+          return `
+            <li id="${floor}" data-comment-id="${50000 + floor}" class="content-item">
+              <a class="floor-link">#${floor}</a>
+              <a href="/space/${floor}" class="author-name">user-${floor}</a>
+              <article class="post-content"><p>reply ${floor}</p></article>
+            </li>
+          `;
+        }).join('');
+        return htmlAt(
+          `<a class="post-title" href="/post-852809-${page}">NodeSeek topic</a>${rows}
+          <div class="nsk-pager" role="navigation" aria-label="pagination">
+            ${page > 1 ? `<a href="/post-852809-${page - 1}" rel="prev">${page - 1}</a>` : ''}
+            ${page < 5 ? `<a href="/post-852809-${page + 1}" rel="next">${page + 1}</a>` : ''}
+          </div>`,
+          `https://www.nodeseek.com/post-852809-${page}`
+        );
+      });
+
+      const center = await getNodeSeekReplies('852809', {
+        fetcher,
+        order,
+        position: { kind: 'target', target: { floor: 25, pageHint: 3 } },
+        replyCount: 50,
+        limit: 10
+      });
+      const previous = await getNodeSeekReplies('852809', {
+        fetcher,
+        order,
+        position: { kind: 'cursor', page: center.previousPage!, offset: center.previousOffset ?? null },
+        replyCount: 50,
+        limit: 10
+      });
+      const next = await getNodeSeekReplies('852809', {
+        fetcher,
+        order,
+        position: { kind: 'cursor', page: center.nextPage!, offset: center.nextOffset ?? null },
+        replyCount: 50,
+        limit: 10
+      });
+
+      expect(center.currentPage).toBe(3);
+      expect(previous.currentPage).toBe(order === 'oldest' ? 2 : 4);
+      expect(next.currentPage).toBe(order === 'oldest' ? 4 : 2);
+      expect(requestedPages).toEqual(order === 'oldest' ? [3, 2, 4] : [3, 4, 2]);
+      expect(new Set([...previous.items, ...center.items, ...next.items].map((reply) => reply.floor)).size).toBe(30);
+    }
+  );
+
   it.each([
     {
       name: 'resolved to a different page',
       resolvedPage: 3,
-      floors: Array.from({ length: 10 }, (_, index) => index + 21)
+      floors: Array.from({ length: 10 }, (_, index) => index + 21),
+      message: '未确认请求的回复页'
     },
-    { name: 'missing a floor', resolvedPage: 4, floors: Array.from({ length: 9 }, (_, index) => index + 31) }
-  ])('[REG-TOPIC-067] rejects a NodeSeek adjacent cursor $name', async ({ resolvedPage, floors }) => {
+    {
+      name: 'missing a middle floor',
+      resolvedPage: 4,
+      floors: [31, 32, 33, 34, 35, 37, 38, 39, 40],
+      message: '回复窗口不完整'
+    }
+  ])('[REG-TOPIC-068] classifies a NodeSeek adjacent cursor $name', async ({ resolvedPage, floors, message }) => {
     const fetcher = vi.fn(async (input: string) => {
       const requestedPage = Number(input.match(/post-852808-(\d+)/)?.[1] || 1);
       const responsePage = requestedPage === 4 ? resolvedPage : requestedPage;
-      const responseFloors = requestedPage === 4 ? floors : [41, 42, 43, 44, 45];
+      const responseFloors =
+        requestedPage === 1
+          ? Array.from({ length: 10 }, (_, index) => index + 1)
+          : requestedPage === 4
+            ? floors
+            : [41, 42, 43, 44, 45];
       const response = html(`
         <a class="post-title" href="/post-852808-${responsePage}">NodeSeek topic</a>
         ${responseFloors
@@ -1510,6 +1662,7 @@ describe('Android local sources', () => {
           `;
           })
           .join('')}
+        ${requestedPage === 1 ? '<div class="nsk-pager"><a href="/post-852808-5" rel="next">5</a></div>' : ''}
       `);
       Object.defineProperty(response, 'url', {
         value: `https://www.nodeseek.com/post-852808-${responsePage}`
@@ -1525,31 +1678,280 @@ describe('Android local sources', () => {
       limit: 10
     });
 
-    await expect(
-      getNodeSeekReplies('852808', {
-        fetcher,
-        order: 'newest',
-        position: { kind: 'cursor', page: tail.nextPage!, offset: tail.nextOffset ?? null },
-        replyCount: 45,
-        limit: 10
-      })
-    ).rejects.toMatchObject({ reason: 'reply-count-refresh-required' });
+    const error = await getNodeSeekReplies('852808', {
+      fetcher,
+      order: 'newest',
+      position: { kind: 'cursor', page: tail.nextPage!, offset: tail.nextOffset ?? null },
+      replyCount: 45,
+      limit: 10
+    }).then(
+      () => null,
+      (reason: unknown) => reason
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(message);
+    expect((error as { reason?: unknown }).reason).toBeUndefined();
   });
 
-  it.each([
-    { name: 'stale count', floors: [41, 42, 43, 44], nextLink: '', refreshCount: true },
-    { name: 'missing middle floor', floors: [41, 42, 43, 45], nextLink: '', refreshCount: true },
-    {
-      name: 'newer cursor',
-      floors: [41, 42, 43, 44, 45],
-      nextLink: '<a href="/post-852806-6">6</a>',
-      refreshCount: true
-    }
-  ])('[REG-TOPIC-067] rejects a NodeSeek tail with $name', async ({ floors, nextLink, refreshCount }) => {
+  it('[REG-TOPIC-068] accepts an origin-confirmed adjacent page even when the previous reply count is stale', async () => {
+    const fetcher = vi.fn(async () =>
+      html(`
+        <a class="post-title" href="/post-852808-4">NodeSeek topic</a>
+        ${Array.from(
+          { length: 10 },
+          (_, index) => `
+            <li id="${index + 31}" data-comment-id="${40031 + index}" class="content-item">
+              <a class="floor-link">#${index + 31}</a>
+              <a href="/space/${index + 31}" class="author-name">user-${index + 31}</a>
+              <article class="post-content"><p>reply ${index + 31}</p></article>
+            </li>
+          `
+        ).join('')}
+      `)
+    );
+
+    const adjacent = await getNodeSeekReplies('852808', {
+      fetcher,
+      order: 'newest',
+      position: { kind: 'cursor', page: 4, offset: 30 },
+      replyCount: 35,
+      limit: 10
+    });
+
+    expect(adjacent.items.map((reply) => reply.floor)).toEqual([40, 39, 38, 37, 36, 35, 34, 33, 32, 31]);
+    expect(adjacent).toMatchObject({ currentPage: 4, previousPage: null, hasMore: true, nextPage: 3 });
+  });
+
+  it('[REG-TOPIC-068] follows the real full-page boundary shape without refetching a stale count first', async () => {
+    const requestedPages: number[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(input.match(/post-861053-(\d+)/)?.[1] || 1);
+      requestedPages.push(page);
+      const floors = page === 1 ? Array.from({ length: 10 }, (_, index) => index + 1) : [11, 12, 13, 14];
+      return htmlAt(
+        `
+          <a class="post-title" href="/post-861053-1">NodeSeek topic</a>
+          ${
+            page === 1
+              ? '<div id="0" data-comment-id="11740000" class="content-item"><a href="/space/0" class="author-name">op</a><article class="post-content"><p>opening post</p></article></div>'
+              : ''
+          }
+          <div class="nsk-pager post-top-pager" role="navigation" aria-label="pagination">
+            ${
+              page === 1
+                ? '<span class="pager-pos pager-cur">1</span><a href="/post-861053-2" rel="next" class="pager-next">2</a>'
+                : '<a href="/post-861053-1" rel="prev" class="pager-prev">1</a><span class="pager-pos pager-cur">2</span>'
+            }
+          </div>
+          ${floors
+            .map(
+              (floor) => `
+                <li id="${floor}" data-comment-id="${11740000 + floor}" class="content-item">
+                  <a class="floor-link">#${floor}</a>
+                  <a href="/space/${floor}" class="author-name">user-${floor}</a>
+                  <article class="post-content"><p>reply ${floor}</p></article>
+                </li>
+              `
+            )
+            .join('')}
+        `,
+        `https://www.nodeseek.com/post-861053-${page}`
+      );
+    });
+
+    const first = await getNodeSeekReplies('861053', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'start' },
+      replyCount: 10,
+      limit: 10
+    });
+    const second = await getNodeSeekReplies('861053', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'cursor', page: first.nextPage!, offset: first.nextOffset ?? null },
+      replyCount: 10,
+      limit: 10
+    });
+
+    expect(requestedPages).toEqual([1, 2]);
+    expect(first).toMatchObject({ hasMore: true, nextPage: 2, nextOffset: 10 });
+    expect(second.items.map((reply) => reply.floor)).toEqual([11, 12, 13, 14]);
+    expect(second).toMatchObject({ currentPage: 2, hasMore: false, nextPage: null });
+  });
+
+  it('[REG-TOPIC-068] does not fabricate a NodeSeek reply total or fetch the tail just to count it', async () => {
+    const requestedPages: number[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(input.match(/post-861053-(\d+)/)?.[1] || 1) as 1 | 2;
+      requestedPages.push(page);
+      return nodeSeekStaleCountPage(page);
+    });
+
+    const topic = await getNodeSeekTopic('861053', { fetcher, replyLimit: 10 });
+
+    expect(requestedPages).toEqual([1]);
+    expect(topic.replies.map((reply) => reply.floor)).toEqual(Array.from({ length: 10 }, (_, index) => index + 1));
+    expect(topic).not.toHaveProperty('replyCount');
+    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: 2, replyNextOffset: 10 });
+  });
+
+  it('[REG-TOPIC-068] discovers the confirmed NodeSeek newest tail even when the supplied reply count is stale', async () => {
+    const requestedPages: number[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(input.match(/post-861053-(\d+)/)?.[1] || 1) as 1 | 2;
+      requestedPages.push(page);
+      return nodeSeekStaleCountPage(page);
+    });
+
+    const tail = await getNodeSeekReplies('861053', {
+      fetcher,
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 10,
+      limit: 10
+    });
+
+    expect(requestedPages).toEqual([1, 2]);
+    expect(tail.items.map((reply) => reply.floor)).toEqual([14, 13, 12, 11]);
+    expect(tail).toMatchObject({ currentPage: 2, hasMore: true, nextPage: 1, nextOffset: 0 });
+    expect(tail).not.toHaveProperty('totalCount');
+  });
+
+  it('[REG-TOPIC-068] does not invent a reply cursor from an inline same-topic quote link', async () => {
+    const replies = await getNodeSeekReplies('861053', {
+      fetcher: vi.fn(async () =>
+        htmlAt(
+          `
+            <a class="post-title" href="/post-861053-1">NodeSeek topic</a>
+            <li id="1" data-comment-id="11740001" class="content-item">
+              <a class="floor-link">#1</a>
+              <a href="/space/1" class="author-name">user-1</a>
+              <article class="post-content"><a href="/post-861053-2#11">quoted floor</a></article>
+            </li>
+          `,
+          'https://www.nodeseek.com/post-861053-1'
+        )
+      ),
+      order: 'oldest',
+      position: { kind: 'start' },
+      replyCount: 1,
+      limit: 10
+    });
+
+    expect(replies).toMatchObject({ hasMore: false, nextPage: null, nextOffset: null });
+  });
+
+  it('[REG-TOPIC-068] does not treat an unconfirmed adjacent page as a stale reply count', async () => {
+    const fetcher = vi.fn(async () =>
+      html(`
+        <h1>NodeSeek topic</h1>
+        ${Array.from(
+          { length: 10 },
+          (_, index) => `
+            <li id="${index + 31}" data-comment-id="${40031 + index}" class="content-item">
+              <a class="floor-link">#${index + 31}</a>
+              <a href="/space/${index + 31}" class="author-name">user-${index + 31}</a>
+              <article class="post-content"><p>reply ${index + 31}</p></article>
+            </li>
+          `
+        ).join('')}
+      `)
+    );
+
+    const error = await getNodeSeekReplies('852808', {
+      fetcher,
+      order: 'newest',
+      position: { kind: 'cursor', page: 4, offset: 30 },
+      replyCount: 35,
+      limit: 10
+    }).then(
+      () => null,
+      (reason: unknown) => reason
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('未确认请求的回复页');
+    expect((error as { reason?: unknown }).reason).toBeUndefined();
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-068] accepts a self-proving NodeSeek tail when the supplied count is stale', async () => {
+    const requestedPages: number[] = [];
+    const tail = await getNodeSeekReplies('852806', {
+      fetcher: vi.fn(async (input: string) => {
+        const page = Number(input.match(/post-852806-(\d+)/)?.[1] || 1);
+        requestedPages.push(page);
+        const floors = page === 1 ? Array.from({ length: 10 }, (_, index) => index + 1) : [41, 42, 43, 44];
+        return html(`
+          <a class="post-title" href="/post-852806-${page}">NodeSeek topic</a>
+          ${floors
+            .map(
+              (floor) => `
+                <li id="${floor}" data-comment-id="${20000 + floor}" class="content-item">
+                  <a class="floor-link">#${floor}</a>
+                  <a href="/space/${floor}" class="author-name">user-${floor}</a>
+                  <article class="post-content"><p>reply ${floor}</p></article>
+                </li>
+              `
+            )
+            .join('')}
+          ${page === 1 ? '<div class="nsk-pager"><a href="/post-852806-5" rel="next">5</a></div>' : ''}
+        `);
+      }),
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 45,
+      limit: 10
+    });
+
+    expect(requestedPages).toEqual([1, 5]);
+    expect(tail.items.map((reply) => reply.floor)).toEqual([44, 43, 42, 41]);
+    expect(tail).toMatchObject({ currentPage: 5, hasMore: true, nextPage: 4 });
+    expect(tail).not.toHaveProperty('totalCount');
+  });
+
+  it('[REG-TOPIC-067] rejects a NodeSeek tail with a missing middle floor', async () => {
+    const error = await getNodeSeekReplies('852806', {
+      fetcher: vi.fn(async (input: string) => {
+        const page = Number(input.match(/post-852806-(\d+)/)?.[1] || 1);
+        const floors = page === 1 ? Array.from({ length: 10 }, (_, index) => index + 1) : [41, 42, 43, 45];
+        return html(`
+          <a class="post-title" href="/post-852806-${page}">NodeSeek topic</a>
+          ${floors
+            .map(
+              (floor) => `
+                <li id="${floor}" data-comment-id="${20000 + floor}" class="content-item">
+                  <a class="floor-link">#${floor}</a>
+                  <a href="/space/${floor}" class="author-name">user-${floor}</a>
+                  <article class="post-content"><p>reply ${floor}</p></article>
+                </li>
+              `
+            )
+            .join('')}
+          ${page === 1 ? '<div class="nsk-pager"><a href="/post-852806-5" rel="next">5</a></div>' : ''}
+        `);
+      }),
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 45,
+      limit: 10
+    }).then(
+      () => null,
+      (reason: unknown) => reason
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('回复窗口不完整');
+    expect((error as { reason?: unknown }).reason).toBeUndefined();
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-068] follows a newer NodeSeek pager cursor before accepting the tail', async () => {
     const requestedPages: number[] = [];
     const fetcher = vi.fn(async (input: string) => {
       const page = Number(input.match(/post-852806-(\d+)/)?.[1] || 1);
       requestedPages.push(page);
+      const floors = page === 1 ? Array.from({ length: 10 }, (_, index) => index + 1) : [51, 52];
       return html(`
         <a class="post-title" href="/post-852806-${page}">NodeSeek topic</a>
         ${floors
@@ -1563,24 +1965,26 @@ describe('Android local sources', () => {
             `
           )
           .join('')}
-        ${nextLink}
+        ${
+          page === 1
+            ? '<div class="nsk-pager" role="navigation" aria-label="pagination"><a href="/post-852806-6" rel="next">6</a></div>'
+            : ''
+        }
       `);
     });
 
-    const error = await getNodeSeekReplies('852806', {
+    const tail = await getNodeSeekReplies('852806', {
       fetcher,
       order: 'newest',
       position: { kind: 'start' },
       replyCount: 45,
       limit: 10
-    }).then(
-      () => null,
-      (reason: unknown) => reason
-    );
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain('无法确认最新窗口');
-    expect((error as { reason?: unknown }).reason).toBe(refreshCount ? 'reply-count-refresh-required' : undefined);
-    expect(requestedPages).toEqual([5]);
+    });
+
+    expect(requestedPages).toEqual([1, 6]);
+    expect(tail.items.map((reply) => reply.floor)).toEqual([52, 51]);
+    expect(tail).toMatchObject({ currentPage: 6, hasMore: true, nextPage: 5 });
+    expect(tail).not.toHaveProperty('totalCount');
   });
 
   it.each([
@@ -1603,15 +2007,19 @@ describe('Android local sources', () => {
       value: `https://www.nodeseek.com/post-852807-${resolvedPage}`
     });
 
-    await expect(
-      getNodeSeekReplies('852807', {
-        fetcher: vi.fn(async () => response),
-        order: 'newest',
-        position: { kind: 'start' },
-        replyCount: 45,
-        limit: 10
-      })
-    ).rejects.toMatchObject({ reason: 'reply-count-refresh-required' });
+    const error = await getNodeSeekReplies('852807', {
+      fetcher: vi.fn(async () => response),
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 45,
+      limit: 10
+    }).then(
+      () => null,
+      (reason: unknown) => reason
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as { reason?: unknown }).reason).toBeUndefined();
   });
 
   it('does not fill normal NodeSeek replies from following origin pages', async () => {
@@ -1646,7 +2054,12 @@ describe('Android local sources', () => {
       if (input.includes('/post-723704-2')) {
         return html(`<script>${pageTwoPayload}</script>`);
       }
-      return html(`<script>${pageOnePayload}</script><a href="/post-723704-2">2</a>`);
+      return html(`
+        <script>${pageOnePayload}</script>
+        <div class="nsk-pager" role="navigation" aria-label="pagination">
+          <a href="/post-723704-2" rel="next">2</a>
+        </div>
+      `);
     });
 
     const replies = await getNodeSeekReplies('723704', {
@@ -1696,7 +2109,12 @@ describe('Android local sources', () => {
       if (input.includes('/post-723704-2')) {
         return html(`<script>${pageTwoPayload}</script>`);
       }
-      return html(`<script>${pageOnePayload}</script><a href="/post-723704-2">2</a>`);
+      return html(`
+        <script>${pageOnePayload}</script>
+        <div class="nsk-pager" role="navigation" aria-label="pagination">
+          <a href="/post-723704-2" rel="next">2</a>
+        </div>
+      `);
     });
 
     const replies = await getNodeSeekReplies('723704', {
@@ -2070,7 +2488,7 @@ describe('Android local sources', () => {
     });
   });
 
-  it('[REG-TOPIC-067] rejects linux.do hydration that omits a required server floor', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068] rejects linux.do hydration that omits a required server floor', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/posts.json')) {
         return json({
@@ -2093,16 +2511,20 @@ describe('Android local sources', () => {
       });
     });
 
-    await expect(
-      getReplies({
-        source: 'linuxdo',
-        id: '42',
-        order: 'oldest',
-        position: { kind: 'cursor', page: 16, offset: 30 },
-        limit: 2,
-        fetcher
-      })
-    ).rejects.toThrow('回复窗口不完整');
+    const error = await getReplies({
+      source: 'linuxdo',
+      id: '42',
+      order: 'oldest',
+      position: { kind: 'cursor', page: 16, offset: 30 },
+      limit: 2,
+      fetcher
+    }).then(
+      () => null,
+      (reason: unknown) => reason
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('回复窗口不完整');
+    expect((error as { reason?: unknown }).reason).toBeUndefined();
     expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
       'https://linux.do/t/42.json',
       expect.stringContaining('https://linux.do/t/42/posts.json')
@@ -4125,8 +4547,8 @@ describe('Android local sources', () => {
             <head><title>site:linux.do codex - Google Search</title></head>
             <body>
             <a href="https://linux.do/t/topic/1424130"><span>https://linux.do</span><h3>Codex CLI 讨论</h3></a>
-            <a href="/url?q=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1577485&amp;sa=U">Codex 镜像讨论</a>
-            <a href="/url?url=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1577486&amp;sa=U">Codex 另一条讨论</a>
+            <a href="/url?q=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1577485&amp;sa=U"><h3>Codex 镜像讨论</h3></a>
+            <a href="/url?url=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1577486&amp;sa=U"><h3>Codex 另一条讨论</h3></a>
             <a href="https://linux.do/about">linux.do about</a>
             <a href="https://example.com/t/topic/999">外站结果</a>
           </body>
@@ -4157,6 +4579,99 @@ describe('Android local sources', () => {
     expect((await loggedInSearch()).items.map((item) => item.id)).toEqual(['1424130', '1577485', '1577486']);
   });
 
+  it('[REG-SEARCH-022] rejects linux.do Google candidates whose only text is a URL or breadcrumb', async () => {
+    const fetcher = vi.fn(async () =>
+      html(`
+        <html>
+          <head><title>site:linux.do codex - Google Search</title></head>
+          <body>
+            <a href="https://linux.do/t/topic/1424130"><span>https://linux.do/t/topic/1424130</span></a>
+            <a href="https://linux.do/t/topic/1577485"><span>linux.do › t › topic › 1577485</span></a>
+          </body>
+        </html>
+      `)
+    );
+
+    const search = await searchTopics({ source: 'linuxdo', query: 'codex', fetcher });
+
+    expect(search.items).toEqual([]);
+    expect(search.errors.linuxdo).toMatchObject({
+      message: 'Google 搜索结果缺少可确认的标题',
+      reason: 'parse_empty'
+    });
+    expect(sourceDiagnosticSummary(search)).toMatchObject({
+      candidateCount: 2,
+      validCount: 0,
+      missingTitleCount: 2,
+      isExpectedEmpty: false,
+      isParseEmpty: true
+    });
+  });
+
+  it('[REG-SEARCH-022] keeps valid linux.do Google titles and counts missing titles before dropping them', async () => {
+    const fetcher = vi.fn(async () =>
+      html(`
+        <html>
+          <head><title>site:linux.do codex - Google Search</title></head>
+          <body>
+            <a href="https://linux.do/t/topic/1424130"><span>linux.do</span><h3>Codex CLI 讨论</h3></a>
+            <a href="https://linux.do/t/topic/1424130"><span>重复链接不能重复计数</span></a>
+            <a href="https://linux.do/t/topic/1577485"><span>linux.do › t › topic › 1577485</span></a>
+            <a aria-label="Codex 可访问标题" href="https://linux.do/t/topic/1577486">
+              <span>https://linux.do/t/topic/1577486</span>
+            </a>
+          </body>
+        </html>
+      `)
+    );
+
+    const search = await searchTopics({ source: 'linuxdo', query: 'codex', fetcher });
+
+    expect(search.items.map((item) => [item.id, item.title])).toEqual([
+      ['1424130', 'Codex CLI 讨论'],
+      ['1577486', 'Codex 可访问标题']
+    ]);
+    expect(sourceDiagnosticSummary(search)).toMatchObject({
+      candidateCount: 3,
+      validCount: 2,
+      droppedCount: 1,
+      missingTitleCount: 1,
+      isExpectedEmpty: false,
+      isParseEmpty: false
+    });
+  });
+
+  it('[REG-SEARCH-022] distinguishes an explicit empty Google page from unsupported markup', async () => {
+    const explicitEmpty = vi.fn(async () =>
+      html(`
+        <html>
+          <head><title>site:linux.do no-match - Google Search</title></head>
+          <body><p>找不到和您的查询相符的内容</p></body>
+        </html>
+      `)
+    );
+    const empty = await searchTopics({ source: 'linuxdo', query: 'no-match', fetcher: explicitEmpty });
+
+    expect(empty.items).toEqual([]);
+    expect(sourceDiagnosticSummary(empty)).toMatchObject({ isExpectedEmpty: true, isParseEmpty: false });
+
+    const unsupported = vi.fn(async () =>
+      html(`
+        <html>
+          <head><title>site:linux.do codex - Google Search</title></head>
+          <body><main>Google result markup changed</main></body>
+        </html>
+      `)
+    );
+    const changed = await searchTopics({ source: 'linuxdo', query: 'codex', fetcher: unsupported });
+    expect(changed.items).toEqual([]);
+    expect(changed.errors.linuxdo).toMatchObject({
+      message: 'Google 搜索结果结构已变化',
+      reason: 'parse_empty'
+    });
+    expect(sourceDiagnosticSummary(changed)).toMatchObject({ isExpectedEmpty: false, isParseEmpty: true });
+  });
+
   it('[REG-LINUXDO-005] ignores supplied login access until the account session is confirmed', async () => {
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
       const url = new URL(input);
@@ -4165,7 +4680,7 @@ describe('Android local sources', () => {
       return html(`
         <html>
           <head><title>site:linux.do codex - Google Search</title></head>
-          <body><a href="https://linux.do/t/topic/1424130">Anonymous result</a></body>
+          <body><a href="https://linux.do/t/topic/1424130"><h3>Anonymous result</h3></a></body>
         </html>
       `);
     });
@@ -4190,7 +4705,7 @@ describe('Android local sources', () => {
           <html>
             <head><title>site:linux.do codex - Google Search</title></head>
             <body>
-              <a href="https://linux.do/t/topic/1424130">linux.do first page codex</a>
+              <a href="https://linux.do/t/topic/1424130"><h3>linux.do first page codex</h3></a>
               <a rel="next" href="/search?q=site%3Alinux.do+codex&start=10">Next</a>
             </body>
           </html>
@@ -4201,7 +4716,7 @@ describe('Android local sources', () => {
           <html>
             <head><title>site:linux.do codex - Google Search</title></head>
             <body>
-              <a href="https://linux.do/t/topic/1577485">linux.do second page codex</a>
+              <a href="https://linux.do/t/topic/1577485"><h3>linux.do second page codex</h3></a>
               <a rel="next" href="/search?q=site%3Alinux.do+codex&start=20">Next</a>
             </body>
           </html>
@@ -4212,7 +4727,7 @@ describe('Android local sources', () => {
           <html>
             <head><title>site:linux.do codex - Google Search</title></head>
             <body>
-              <a href="https://linux.do/t/topic/1577486">linux.do third page codex</a>
+              <a href="https://linux.do/t/topic/1577486"><h3>linux.do third page codex</h3></a>
             </body>
           </html>
         `);
@@ -5926,8 +6441,7 @@ describe('Android local sources', () => {
       author: 'alice',
       categoryId: 'daily',
       category: '日常',
-      createdAt: '2026-05-22T16:00:00.000Z',
-      replyCount: 1
+      createdAt: '2026-05-22T16:00:00.000Z'
     });
     expect(topic.contentHtml).toContain('正文提到了 Cloudflare');
     expect(topic.accessRequirement).toBeUndefined();
@@ -6256,8 +6770,7 @@ describe('Android local sources', () => {
       author: '我是ikun',
       authorAvatar: 'https://www.nodeseek.com/avatar/48872.png',
       commentId: 10232616,
-      categoryId: 'daily',
-      replyCount: 1
+      categoryId: 'daily'
     });
     expect(topic.replies[0]).toMatchObject({
       author: '纳西妲',

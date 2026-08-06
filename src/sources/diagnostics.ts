@@ -5,6 +5,7 @@ export type SourceDiagnosticSummary = {
   droppedCount: number;
   partialErrorCount: number;
   missingFloorCount: number;
+  missingTitleCount?: number;
   hasDegradation: boolean;
   hasRepeatedCursor: boolean;
   isExpectedEmpty: boolean;
@@ -25,6 +26,7 @@ function normalizedSummary(input: SourceDiagnosticSummaryInput): SourceDiagnosti
   const droppedCount = Math.max(count(input.droppedCount), candidateCount - validCount);
   const partialErrorCount = count(input.partialErrorCount);
   const missingFloorCount = count(input.missingFloorCount);
+  const missingTitleCount = count(input.missingTitleCount);
   const hasRepeatedCursor = input.hasRepeatedCursor === true;
   const isExpectedEmpty = input.isExpectedEmpty === true;
   const isParseEmpty = input.isParseEmpty === true || (!isExpectedEmpty && candidateCount > 0 && validCount === 0);
@@ -35,10 +37,12 @@ function normalizedSummary(input: SourceDiagnosticSummaryInput): SourceDiagnosti
     droppedCount,
     partialErrorCount,
     missingFloorCount,
+    ...(input.missingTitleCount === undefined ? {} : { missingTitleCount }),
     hasDegradation:
       input.hasDegradation === true ||
       partialErrorCount > 0 ||
       missingFloorCount > 0 ||
+      missingTitleCount > 0 ||
       hasRepeatedCursor ||
       isParseEmpty,
     hasRepeatedCursor,
@@ -71,6 +75,7 @@ export function mergeSourceDiagnosticSummaries<T extends object>(
   overrides: Partial<SourceDiagnosticSummary> = {}
 ): T {
   const values = sources.map(sourceDiagnosticSummary).filter(Boolean) as SourceDiagnosticSummary[];
+  const hasMissingTitleCount = values.some((value) => value.missingTitleCount !== undefined);
   return annotateSourceDiagnosticSummary(result, {
     parserVariant,
     candidateCount: values.reduce((total, value) => total + value.candidateCount, 0),
@@ -78,6 +83,9 @@ export function mergeSourceDiagnosticSummaries<T extends object>(
     droppedCount: values.reduce((total, value) => total + value.droppedCount, 0),
     partialErrorCount: values.reduce((total, value) => total + value.partialErrorCount, 0),
     missingFloorCount: values.reduce((total, value) => total + value.missingFloorCount, 0),
+    ...(hasMissingTitleCount
+      ? { missingTitleCount: values.reduce((total, value) => total + (value.missingTitleCount || 0), 0) }
+      : {}),
     hasDegradation: values.some((value) => value.hasDegradation),
     hasRepeatedCursor: values.some((value) => value.hasRepeatedCursor),
     isExpectedEmpty: values.length > 0 && values.every((value) => value.isExpectedEmpty),

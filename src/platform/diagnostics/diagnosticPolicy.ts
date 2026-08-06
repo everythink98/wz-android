@@ -46,6 +46,7 @@ const DIAGNOSTIC_REASONS = [
   'share_unavailable',
   'renderer_gone',
   'refresh_failed',
+  'reply_count_stale',
   'unknown'
 ] as const;
 
@@ -132,7 +133,11 @@ const stringFieldKeys = new Set([
   'candidateKind',
   'cacheType',
   'replyOrder',
-  'positionKind'
+  'positionKind',
+  'navigationClass',
+  'navigationHost',
+  'navigationPath',
+  'navigationParamKeys'
 ]);
 
 const closedValues = (...values: string[]) => new Set(values);
@@ -468,6 +473,7 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   cacheType: closedValues('none', 'disk', 'memory'),
   replyOrder: closedValues('oldest', 'newest'),
   positionKind: closedValues('start', 'cursor', 'target'),
+  navigationClass: closedValues('access-trouble', 'captcha', 'consent', 'login', 'unknown-google'),
   mediaClass: closedValues('same-source', 'cross-source', 'unmanaged', 'data'),
   fallback: closedValues('none', 'svg'),
   terminalReason: closedValues('loaded', 'fallback-loaded', 'native-error', 'fallback-error', 'stale', 'timeout'),
@@ -550,6 +556,7 @@ const numberFieldKeys = new Set([
   'beforeCount',
   'afterCount',
   'missingFloorCount',
+  'missingTitleCount',
   'selectedCount',
   'selectedOptionCount',
   'contentLength',
@@ -627,6 +634,16 @@ export function linkDiagnosticRefs(kind: string, rawValues: readonly unknown[]) 
 }
 
 export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
+  const typedReason =
+    error && typeof error === 'object' && typeof (error as { reason?: unknown }).reason === 'string'
+      ? (error as { reason: string }).reason
+      : '';
+  if (typedReason === 'parse_empty') {
+    return 'parse_empty';
+  }
+  if (typedReason === 'reply-count-refresh-required') {
+    return 'reply_count_stale';
+  }
   const text =
     error instanceof Error
       ? `${error.name} ${error.message}`.toLowerCase()
@@ -779,6 +796,18 @@ function safeStringField(key: string, value: string) {
   if (key === 'userRef') return safeReference(value, 'user');
   if (key === 'cursorRef') return safeReference(value, 'cursor');
   if (key === 'mediaRef') return safeReference(value, 'media');
+  if (key === 'navigationHost') {
+    return closedValues('www.google.com', 'consent.google.com', 'accounts.google.com').has(value) ? value : 'redacted';
+  }
+  if (key === 'navigationPath') {
+    return /^\/[a-z0-9._~/-]{0,127}$/i.test(value) && !value.includes('//') ? value : 'redacted';
+  }
+  if (key === 'navigationParamKeys') {
+    const keys = value === 'none' ? [] : value.split(',');
+    return value === 'none' || (keys.length <= 16 && keys.every((item) => /^[a-z][a-z0-9_]{0,31}$/i.test(item)))
+      ? value
+      : 'redacted';
+  }
   return categoricalFieldValues[key]?.has(value) ? value : 'redacted';
 }
 

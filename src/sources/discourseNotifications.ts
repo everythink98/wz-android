@@ -165,16 +165,23 @@ function parseNotification(source: DiscourseSource, value: unknown): ForumNotifi
   const preview = textContentFromHtml(text(data, 'excerpt', 'post_excerpt', 'description'));
   const avatarTemplate = text(value, 'acting_user_avatar_template') || text(data, 'avatar_template');
   const kind = notificationKind(value.notification_type);
+  const topicUrl = topicId
+    ? `${baseUrl}/t/${encodeURIComponent(slug || topicId)}/${encodeURIComponent(topicId)}${postNumber ? `/${postNumber}` : ''}`
+    : '';
   const target = topicId
     ? kind === 'private-message'
       ? ({ type: 'private-conversation', conversationId: topicId } as const)
-      : ({
-          type: 'topic-post',
-          topicId,
-          ...(postNumber ? { postNumber } : {}),
-          ...(postId ? { postId } : {}),
-          url: `${baseUrl}/t/${encodeURIComponent(slug || topicId)}/${encodeURIComponent(topicId)}${postNumber ? `/${postNumber}` : ''}`
-        } as const)
+      : postId
+        ? ({
+            type: 'topic-post',
+            topicId,
+            ...(postNumber ? { postNumber } : {}),
+            postId,
+            url: topicUrl
+          } as const)
+        : postNumber
+          ? ({ type: 'topic-post', topicId, postNumber, url: topicUrl } as const)
+          : ({ type: 'topic', topicId, url: topicUrl } as const)
     : ({ type: 'information' } as const);
   return {
     source,
@@ -470,6 +477,21 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
           },
           ...(historyNotice ? { historyNotice } : {}),
           topic
+        };
+      }
+      if (item.target.type === 'topic') {
+        return {
+          notification: item,
+          title: item.title,
+          contentText: item.preview || item.title,
+          topic: {
+            source,
+            id: item.target.topicId,
+            title: item.title,
+            author: item.actor.name,
+            url: item.target.url,
+            createdAt: item.createdAt || ''
+          }
         };
       }
       if (item.target.type !== 'topic-post') {

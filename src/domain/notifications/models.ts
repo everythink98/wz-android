@@ -9,7 +9,10 @@ export interface NotificationCategory {
 }
 
 export type NotificationTarget =
-  | { type: 'topic-post'; topicId: string; postNumber?: number; postId?: string; url: string }
+  | { type: 'topic'; topicId: string; url: string }
+  | ({ type: 'topic-post'; topicId: string; url: string } & (
+      { postId: string; postNumber?: number } | { postId?: string; postNumber: number }
+    ))
   | { type: 'private-conversation'; conversationId: string }
   | { type: 'message-detail'; messageId: string; url: string }
   | { type: 'information' };

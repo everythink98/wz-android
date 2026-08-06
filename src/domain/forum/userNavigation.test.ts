@@ -69,7 +69,7 @@ describe('Android user navigation helpers', () => {
     });
   });
 
-  it('keeps the NodeSeek list reply count when detail only loaded the first reply page', () => {
+  it('does not backfill a NodeSeek detail count from a list snapshot', () => {
     const listTopic: Topic = {
       source: 'nodeseek',
       id: '808101',
@@ -80,9 +80,9 @@ describe('Android user navigation helpers', () => {
       createdAt: '2026-07-05T07:33:37.000Z',
       replyCount: 14
     };
+    const { replyCount: _listReplyCount, ...detailFields } = listTopic;
     const detailTopic: TopicDetail = {
-      ...listTopic,
-      replyCount: 10,
+      ...detailFields,
       contentHtml: '<p>body</p>',
       replies: Array.from({ length: 10 }, (_, index) => ({
         author: `user-${index + 1}`,
@@ -93,7 +93,7 @@ describe('Android user navigation helpers', () => {
 
     const merged = topicWithAuthorFallback(detailTopic, listTopic);
 
-    expect(merged?.replyCount).toBe(14);
+    expect(merged).not.toHaveProperty('replyCount');
   });
 
   it('keeps the saved NodeSeek topic title and category when restricted detail uses a placeholder title', () => {

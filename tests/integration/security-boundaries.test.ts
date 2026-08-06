@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { exportReaderBackupJson, importReaderBackupJson } from '@/domain/reader/readerBackup';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { isGoogleSiteSearchAccessTroubleUrl } from '@/sources/searchFallback';
+import { googleSiteSearchNavigationFailure, isGoogleSiteSearchAccessTroubleUrl } from '@/sources/searchFallback';
 import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from '@/sources/yaohuo/protocol';
 import {
   isLinuxDoBrowserFetchUrl,
@@ -41,12 +41,15 @@ describe('Android App security review guards', () => {
     expect(isNodeSeekBrowserFetchUrl('https://@www.google.com/search?q=site%3Anodeseek.com+codex')).toBe(false);
     expect(isNodeSeekBrowserFetchUrl(' https://www.google.com/search?q=site%3Anodeseek.com+codex')).toBe(false);
     const nodeSeekGoogleSearch = 'https://www.google.com/search?q=site%3Anodeseek.com+codex';
+    const nodeSeekGoogleSearchWithSession = `${nodeSeekGoogleSearch}&sei=Abc_123-xy`;
     const googleJavaScriptGate = 'https://www.google.com/httpservice/retry/enablejs?sei=Abc_123-xy';
     const nodeSeekGoogleAccessTrouble =
       'https://www.google.com/search?q=site%3Anodeseek.com+codex&sca_esv=Abc_123&emsg=SG_REL&sei=Abc_123-xy';
     expect(isNodeSeekBrowserFetchUrl(googleJavaScriptGate)).toBe(false);
     expect(isNodeSeekBrowserNavigationUrl(googleJavaScriptGate, nodeSeekGoogleSearch)).toBe(true);
     expect(isNodeSeekBrowserNavigationUrl(nodeSeekGoogleSearch, nodeSeekGoogleSearch)).toBe(true);
+    expect(isNodeSeekBrowserNavigationUrl(nodeSeekGoogleSearchWithSession, nodeSeekGoogleSearch)).toBe(true);
+    expect(isNodeSeekBrowserResultUrl(nodeSeekGoogleSearchWithSession, nodeSeekGoogleSearch)).toBe(true);
     expect(isGoogleSiteSearchAccessTroubleUrl(nodeSeekGoogleAccessTrouble, 'nodeseek.com', nodeSeekGoogleSearch)).toBe(
       true
     );
@@ -74,6 +77,10 @@ describe('Android App security review guards', () => {
       )
     ).toBe(false);
     const nodeSeekGooglePageTwo = `${nodeSeekGoogleSearch}&start=10`;
+    expect(isNodeSeekBrowserNavigationUrl(`${nodeSeekGooglePageTwo}&sei=Abc_123-xy`, nodeSeekGooglePageTwo)).toBe(true);
+    expect(
+      isNodeSeekBrowserNavigationUrl(`${nodeSeekGoogleSearch}&start=10&sei=Abc_123-xy`, nodeSeekGoogleSearch)
+    ).toBe(false);
     expect(
       isGoogleSiteSearchAccessTroubleUrl(
         `${nodeSeekGooglePageTwo}&sca_esv=Abc_123&emsg=SG_REL&sei=Abc_123-xy`,
@@ -105,6 +112,13 @@ describe('Android App security review guards', () => {
         nodeSeekGoogleSearch
       )
     ).toBe(false);
+    expect(isNodeSeekBrowserNavigationUrl(`${nodeSeekGoogleSearchWithSession}&next=x`, nodeSeekGoogleSearch)).toBe(
+      false
+    );
+    expect(
+      isNodeSeekBrowserNavigationUrl(`${nodeSeekGoogleSearchWithSession}&sei=Second_token`, nodeSeekGoogleSearch)
+    ).toBe(false);
+    expect(isNodeSeekBrowserNavigationUrl(`${nodeSeekGoogleSearch}&sei=%2Fbad`, nodeSeekGoogleSearch)).toBe(false);
     expect(
       isNodeSeekBrowserNavigationUrl(
         'https://www.google.com:444/httpservice/retry/enablejs?sei=Abc_123-xy',
@@ -123,10 +137,13 @@ describe('Android App security review guards', () => {
     expect(isLinuxDoBrowserFetchUrl('https://www.google.com/search?q=codex')).toBe(false);
     expect(isLinuxDoBrowserFetchUrl('https://example.com/search?q=site%3Alinux.do+codex')).toBe(false);
     const linuxDoGoogleSearch = 'https://www.google.com/search?q=site%3Alinux.do+codex';
+    const linuxDoGoogleSearchWithSession = `${linuxDoGoogleSearch}&sei=Abc_123-xy`;
     const linuxDoGoogleAccessTrouble =
       'https://www.google.com/search?q=site%3Alinux.do+codex&sca_esv=Abc_123&emsg=SG_REL&sei=Abc_123-xy';
     expect(isLinuxDoBrowserFetchUrl(googleJavaScriptGate)).toBe(false);
     expect(isLinuxDoBrowserNavigationUrl(googleJavaScriptGate, linuxDoGoogleSearch)).toBe(true);
+    expect(isLinuxDoBrowserNavigationUrl(linuxDoGoogleSearchWithSession, linuxDoGoogleSearch)).toBe(true);
+    expect(isLinuxDoBrowserResultUrl(linuxDoGoogleSearchWithSession, linuxDoGoogleSearch)).toBe(true);
     expect(isGoogleSiteSearchAccessTroubleUrl(linuxDoGoogleAccessTrouble, 'linux.do', linuxDoGoogleSearch)).toBe(true);
     expect(isLinuxDoBrowserNavigationUrl('https://linux.do/search?q=codex', linuxDoGoogleSearch)).toBe(false);
     expect(isLinuxDoBrowserNavigationUrl(linuxDoGoogleSearch, 'https://linux.do/search?q=codex')).toBe(false);
@@ -144,6 +161,39 @@ describe('Android App security review guards', () => {
     expect(isYaohuoRequestUrl('http://yaohuo.me/bbs/book_view.aspx?id=1')).toBe(false);
     expect(isYaohuoRequestUrl('https://yaohuo.me.evil.example/bbs/book_view.aspx?id=1')).toBe(false);
     expect(isYaohuoRequestUrl('https://evil.example@yaohuo.me/bbs/book_view.aspx?id=1')).toBe(false);
+  });
+
+  it('[REG-SEARCH-023] classifies rejected Google navigation without widening the allowlist', () => {
+    const initial = 'https://www.google.com/search?q=site%3Alinux.do+codex';
+
+    expect(
+      googleSiteSearchNavigationFailure(`${initial}&sca_esv=Abc_123&emsg=SG_REL&sei=Abc_123-xy`, 'linux.do', initial)
+    ).toMatchObject({
+      message: 'Google 搜索环境验证暂时未通过，请稍后重试',
+      reason: 'verification_required',
+      navigationClass: 'access-trouble',
+      navigationHost: 'www.google.com',
+      navigationPath: '/search',
+      navigationParamKeys: 'emsg,q,sca_esv,sei'
+    });
+    expect(
+      googleSiteSearchNavigationFailure('https://www.google.com/sorry/index?continue=x', 'linux.do', initial)
+    ).toMatchObject({ message: 'Google 要求完成人机验证，已停止读取', navigationClass: 'captcha' });
+    expect(
+      googleSiteSearchNavigationFailure('https://consent.google.com/m?continue=x', 'linux.do', initial)
+    ).toMatchObject({ message: 'Google 要求确认隐私设置，已停止读取', navigationClass: 'consent' });
+    expect(
+      googleSiteSearchNavigationFailure('https://accounts.google.com/v3/signin?continue=x', 'linux.do', initial)
+    ).toMatchObject({ message: 'Google 要求登录，已停止读取', navigationClass: 'login' });
+    expect(
+      googleSiteSearchNavigationFailure(
+        'https://www.google.com/search?q=site%3Alinux.do+different',
+        'linux.do',
+        initial
+      )
+    ).toMatchObject({ message: 'Google 搜索流程已变化，已停止读取', navigationClass: 'unknown-google' });
+    expect(googleSiteSearchNavigationFailure('https://example.com/search?q=codex', 'linux.do', initial)).toBeNull();
+    expect(isLinuxDoBrowserNavigationUrl('https://www.google.com/sorry/index?continue=x', initial)).toBe(false);
   });
 
   it('removes sensitive keys and URL parameters from Android backup JSON', () => {

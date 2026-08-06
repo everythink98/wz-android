@@ -370,6 +370,11 @@ describe('NodeSeek notifications', () => {
     ]);
     expect(page.items[0]?.target).toEqual({ type: 'private-conversation', conversationId: '9' });
     expect(page.items[1]?.target).toMatchObject({ type: 'topic-post', topicId: '102', postNumber: 3 });
+    expect(page.items[2]?.target).toEqual({
+      type: 'topic',
+      topicId: '101',
+      url: 'https://www.nodeseek.com/post-101-1'
+    });
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
@@ -404,30 +409,38 @@ describe('NodeSeek notifications', () => {
   });
 
   it('loads the exact NodeSeek comment from its origin page', async () => {
-    const payload = (comments: unknown[]) =>
+    const payload = (comments: unknown[], page: number) =>
       Buffer.from(
         JSON.stringify({
           postData: {
             postId: 703863,
+            postPage: page,
+            postPageCount: 2,
             title: '目标主题',
             op: { name: '楼主' },
             comments
           }
         })
       ).toString('base64');
-    const pageOne = payload([
-      { commentId: 1, poster: { name: '楼主' }, markdown: '正文' },
-      ...Array.from({ length: 10 }, (_, index) => ({
-        commentId: index + 2,
-        floorIndex: index + 1,
-        poster: { name: `用户 ${index + 1}` },
-        markdown: `回复 ${index + 1}`
-      }))
-    ]);
-    const pageTwo = payload([
-      { commentId: 12, floorIndex: 11, poster: { name: '用户 11' }, markdown: '回复 11' },
-      { commentId: 13, floorIndex: 99, poster: { name: '目标用户' }, markdown: '目标回复' }
-    ]);
+    const pageOne = payload(
+      [
+        { commentId: 1, poster: { name: '楼主' }, markdown: '正文' },
+        ...Array.from({ length: 10 }, (_, index) => ({
+          commentId: index + 2,
+          floorIndex: index + 1,
+          poster: { name: `用户 ${index + 1}` },
+          markdown: `回复 ${index + 1}`
+        }))
+      ],
+      1
+    );
+    const pageTwo = payload(
+      [
+        { commentId: 12, floorIndex: 11, poster: { name: '用户 11' }, markdown: '回复 11' },
+        { commentId: 13, floorIndex: 99, poster: { name: '目标用户' }, markdown: '目标回复' }
+      ],
+      2
+    );
     const fetcher = vi.fn(async (input: string) =>
       html(
         new URL(input).pathname.endsWith('/post-703863-2')
@@ -465,11 +478,13 @@ describe('NodeSeek notifications', () => {
   it.each([undefined, 1, 22])(
     '[REG-TOPIC-060] uses comment id when the notification floor is %s',
     async (postNumber) => {
-      const payload = (comments: unknown[]) =>
+      const payload = (comments: unknown[], page: number) =>
         Buffer.from(
           JSON.stringify({
             postData: {
               postId: 703863,
+              postPage: page,
+              postPageCount: 2,
               title: '目标主题',
               replyCount: 12,
               op: { name: '楼主' },
@@ -477,10 +492,11 @@ describe('NodeSeek notifications', () => {
             }
           })
         ).toString('base64');
-      const firstPage = payload([{ commentId: 1, poster: { name: '楼主' }, markdown: '主楼正文' }]);
-      const secondPage = payload([
-        { commentId: 13, floorIndex: 12, poster: { name: '目标用户' }, markdown: '精确回复' }
-      ]);
+      const firstPage = payload([{ commentId: 1, poster: { name: '楼主' }, markdown: '主楼正文' }], 1);
+      const secondPage = payload(
+        [{ commentId: 13, floorIndex: 12, poster: { name: '目标用户' }, markdown: '精确回复' }],
+        2
+      );
       const fetcher = vi.fn(async (input: string) =>
         html(
           new URL(input).pathname.endsWith('/post-703863-2')
@@ -514,23 +530,25 @@ describe('NodeSeek notifications', () => {
     }
   );
 
-  it('[REG-NOTIFY-033] uses the notification floor as a page hint when replyCount is underestimated', async () => {
-    const payload = (comments: unknown[], replyCount = 10) =>
+  it('[REG-NOTIFY-033] uses the notification floor as a page hint without depending on replyCount', async () => {
+    const payload = (comments: unknown[], page: number) =>
       Buffer.from(
         JSON.stringify({
           postData: {
             postId: 703863,
+            postPage: page,
+            postPageCount: 3,
             title: '目标主题',
-            replyCount,
             op: { name: '楼主' },
             comments
           }
         })
       ).toString('base64');
-    const firstPage = payload([{ commentId: 1, poster: { name: '楼主' }, markdown: '主楼正文' }]);
-    const thirdPage = payload([
-      { commentId: 31, floorIndex: 21, poster: { name: '目标用户' }, markdown: '第三页精确回复' }
-    ]);
+    const firstPage = payload([{ commentId: 1, poster: { name: '楼主' }, markdown: '主楼正文' }], 1);
+    const thirdPage = payload(
+      [{ commentId: 31, floorIndex: 21, poster: { name: '目标用户' }, markdown: '第三页精确回复' }],
+      3
+    );
     const fetcher = vi.fn(async (input: string) =>
       html(
         new URL(input).pathname.endsWith('/post-703863-3')
@@ -581,7 +599,7 @@ describe('NodeSeek notifications', () => {
         title: '主题',
         createdAt: null,
         unread: true,
-        target: { type: 'topic-post', topicId: '1', url: 'https://www.nodeseek.com/post-1-1' },
+        target: { type: 'topic', topicId: '1', url: 'https://www.nodeseek.com/post-1-1' },
         remoteGroup: 'at-me',
         remoteReadId: '11'
       },
@@ -597,7 +615,7 @@ describe('NodeSeek notifications', () => {
         title: '主题',
         createdAt: null,
         unread: true,
-        target: { type: 'topic-post', topicId: '2', url: 'https://www.nodeseek.com/post-2-1' },
+        target: { type: 'topic', topicId: '2', url: 'https://www.nodeseek.com/post-2-1' },
         remoteGroup: 'reply-to-me',
         remoteReadId: '12'
       },

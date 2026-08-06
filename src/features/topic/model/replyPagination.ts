@@ -18,7 +18,11 @@ export type ReplyWindowEdge = 'start' | 'end';
 export type ReplyPage = RepliesResponse & { requestedOffset: number | null; requestedPage: number };
 
 function topicHasCompleteReplies(detail: TopicDetail) {
-  return detail.replyHasMore === false && detail.replies.length === detail.replyCount;
+  return (
+    typeof detail.replyCount === 'number' &&
+    detail.replyHasMore === false &&
+    detail.replies.length === detail.replyCount
+  );
 }
 
 function topicReplyPage(detail: TopicDetail, order: ReplyOrder): ReplyPage {

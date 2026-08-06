@@ -210,19 +210,21 @@ function rowNotification(group: NodeSeekGroup, row: Record<string, unknown>, own
       ? actorName
       : text(row, 'post_title', 'discussion_title', 'title') || (group === 'at-me' ? '提到了你' : '回复了你');
   const floor = integer(floorValue);
+  if ((group === 'message' && !actorId) || (group !== 'message' && !postId)) return null;
   const target =
     group === 'message'
       ? ({ type: 'private-conversation', conversationId: actorId } as const)
-      : ({
-          type: 'topic-post',
-          topicId: postId,
-          ...(floor ? { postNumber: floor } : {}),
-          ...(commentId ? { postId: commentId } : {}),
-          url: nodeSeekTopicUrl(postId)
-        } as const);
-  if ((target.type === 'private-conversation' && !target.conversationId) || (target.type === 'topic-post' && !postId)) {
-    return null;
-  }
+      : commentId
+        ? ({
+            type: 'topic-post',
+            topicId: postId,
+            ...(floor ? { postNumber: floor } : {}),
+            postId: commentId,
+            url: nodeSeekTopicUrl(postId)
+          } as const)
+        : floor
+          ? ({ type: 'topic-post', topicId: postId, postNumber: floor, url: nodeSeekTopicUrl(postId) } as const)
+          : ({ type: 'topic', topicId: postId, url: nodeSeekTopicUrl(postId) } as const);
   return {
     source: 'nodeseek',
     id: `${group}:${remoteId}`,
@@ -343,7 +345,7 @@ export const nodeSeekNotificationAdapter = {
           .map((message) => message.id)
       };
     }
-    if (item.target.type !== 'topic-post') {
+    if (item.target.type !== 'topic' && item.target.type !== 'topic-post') {
       return { notification: item, title: item.title, contentText: item.preview };
     }
     const readerOptions = {
@@ -354,11 +356,11 @@ export const nodeSeekNotificationAdapter = {
       timeoutMs: options.timeoutMs
     };
     const topic = await getNodeSeekTopic(item.target.topicId, readerOptions);
-    const floor = item.target.postNumber;
-    const commentId = integer(item.target.postId || '');
-    if (!commentId && (!floor || floor <= 1)) {
+    if (item.target.type === 'topic') {
       return { notification: item, title: topic.title, contentHtml: topic.contentHtml, topic };
     }
+    const floor = item.target.postNumber;
+    const commentId = integer(item.target.postId || '');
     const matchesTarget = (candidate: (typeof topic.replies)[number]) =>
       commentId ? candidate.commentId === commentId : candidate.floor === floor;
     let reply = topic.replies.find(matchesTarget);
@@ -372,8 +374,7 @@ export const nodeSeekNotificationAdapter = {
             ...(commentId ? { commentId } : {}),
             ...(floor ? { floor } : {})
           }
-        },
-        replyCount: topic.replyCount
+        }
       });
       reply = pageResult.items.find(matchesTarget);
     }

@@ -62,7 +62,7 @@ export interface Topic {
   createdAt: string;
   lastReplyAt?: string;
   displayTimeText?: string;
-  replyCount: number;
+  replyCount?: number;
   viewCount?: number;
   excerpt?: string;
   accessRequirement?: AccessRequirement;
