@@ -1,10 +1,12 @@
-import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type {
   CategoriesResponse,
   DiscourseFeedFilter,
   FeedResponse,
   Reply,
   RepliesResponse,
+  ReplyOrder,
+  ReplyWindowPosition,
   Topic,
   TopicDetail
 } from '@/domain/forum/models';
@@ -12,21 +14,28 @@ import { isRecord, parsePositiveInteger } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   discourseCategories,
-  discourseReplyWindow,
   discourseOriginalPoster,
   discoursePolls,
   discoursePostFields,
+  discourseRepliesInStreamOrder,
+  discourseReplyWindow,
+  discourseStreamReplyWindow,
   discourseTopicFields,
-  discourseUsersById
+  discourseUsersById,
+  discourseVisiblePostIds
 } from '@/sources/discourse/model';
 import { discourseAvatarUrl, discourseQuoteMetadata } from '@/sources/discourse/content';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { sanitizeXiaoyinsiContentHtml } from './parser';
 import { XIAOYINSI_BASE_URL } from './protocol';
 import { cleanCredentials, requestHeaders, type XiaoyinsiApiCredentials } from './credentials';
+import { orientReplyWindow } from '@/sources/replyWindows';
 
 export const LIST_PAGE_SIZE = 30;
 let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
+const ANONYMOUS_CATEGORY_SCOPE = Symbol('anonymous-xiaoyinsi-categories');
+type CategoryScope = typeof ANONYMOUS_CATEGORY_SCOPE | number | XiaoyinsiApiCredentials;
+let publicCategoryScope: CategoryScope = ANONYMOUS_CATEGORY_SCOPE;
 let publicCategoryCache: CategoryMap = new Map();
 let publicCategoryRequest: Promise<Record<string, unknown>> | null = null;
 
@@ -162,21 +171,71 @@ function categoryMapFromData(data: unknown) {
   return result;
 }
 
+function activateCategoryScope(options: XiaoyinsiOptions) {
+  const credentials = cleanCredentials(options.credentials);
+  const generation = options.credentials?.generation;
+  const scope: CategoryScope = credentials
+    ? Number.isSafeInteger(generation) && generation! >= 0
+      ? generation!
+      : options.credentials!
+    : ANONYMOUS_CATEGORY_SCOPE;
+  if (scope !== publicCategoryScope) {
+    publicCategoryScope = scope;
+    publicCategoryCache = new Map();
+    publicCategoryRequest = null;
+  }
+  return scope;
+}
+
 function fetchPublicCategoryData(options: XiaoyinsiOptions) {
+  const scope = activateCategoryScope(options);
   if (!publicCategoryRequest) {
-    publicCategoryRequest = fetchXiaoyinsiJson<Record<string, unknown>>('/site.json', undefined, options)
+    const request = fetchXiaoyinsiJson<Record<string, unknown>>('/site.json', undefined, {
+      ...options,
+      signal: undefined
+    })
       .then((data) => {
-        publicCategoryCache = new Map([...publicCategoryCache, ...categoryMapFromData(data)]);
+        if (publicCategoryScope === scope && publicCategoryRequest === request) {
+          publicCategoryCache = new Map([...publicCategoryCache, ...categoryMapFromData(data)]);
+        }
         return data;
       })
       .finally(() => {
-        publicCategoryRequest = null;
+        if (publicCategoryScope === scope && publicCategoryRequest === request) {
+          publicCategoryRequest = null;
+        }
       });
+    publicCategoryRequest = request;
   }
   return publicCategoryRequest;
 }
 
+function waitForPublicCategoryData(options: XiaoyinsiOptions) {
+  const request = fetchPublicCategoryData(options);
+  const signal = options.signal;
+  if (!signal) return request;
+  if (signal.aborted) return Promise.reject(new Error(REQUEST_CANCELED_MESSAGE));
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort);
+      reject(new Error(REQUEST_CANCELED_MESSAGE));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    request.then(
+      (data) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(data);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
 export function resetXiaoyinsiCategoryCacheForTests() {
+  publicCategoryScope = ANONYMOUS_CATEGORY_SCOPE;
   publicCategoryCache = new Map();
   publicCategoryRequest = null;
 }
@@ -191,6 +250,7 @@ function needsPublicCategories(categories: CategoryMap, topics: unknown[]) {
 }
 
 function publicCategoryMapForTopics(data: unknown, topics: unknown[], options: XiaoyinsiOptions) {
+  activateCategoryScope(options);
   const categories = new Map([...publicCategoryCache, ...categoryMapFromData(data)]);
   if (!needsPublicCategories(categories, topics)) {
     return categories;
@@ -200,10 +260,11 @@ function publicCategoryMapForTopics(data: unknown, topics: unknown[], options: X
 }
 
 export async function categoryMapForTopics(data: unknown, topics: unknown[], options: XiaoyinsiOptions) {
+  activateCategoryScope(options);
   const categories = new Map([...publicCategoryCache, ...categoryMapFromData(data)]);
   if (!needsPublicCategories(categories, topics)) return categories;
   try {
-    const siteData = await fetchPublicCategoryData(options);
+    const siteData = await waitForPublicCategoryData(options);
     return new Map([...categories, ...categoryMapFromData(siteData)]);
   } catch {
     return categories;
@@ -308,7 +369,7 @@ export async function getXiaoyinsiFeed(
 }
 
 export async function getXiaoyinsiCategories(options: XiaoyinsiOptions = {}): Promise<CategoriesResponse> {
-  const data = await fetchPublicCategoryData(options);
+  const data = await waitForPublicCategoryData(options);
   const categories = Array.isArray(data.categories)
     ? data.categories
     : isRecord(data.category_list) && Array.isArray(data.category_list.categories)
@@ -417,25 +478,24 @@ async function fetchPosts(id: string, postIds: unknown[], options: XiaoyinsiOpti
 export async function getXiaoyinsiReplies(
   id: string,
   options: XiaoyinsiOptions & {
-    page?: number;
+    order: ReplyOrder;
+    position: ReplyWindowPosition;
     limit?: number;
-    offset?: number | null;
-    targetFloor?: number;
-  } = {}
-): Promise<RepliesResponse> {
-  const page = options.page || 1;
-  const limit = options.limit || LIST_PAGE_SIZE;
-  if (options.targetFloor !== undefined && (!Number.isSafeInteger(options.targetFloor) || options.targetFloor <= 0)) {
-    throw new Error('小隐寺目标楼层不正确');
   }
-  if (options.targetFloor) {
-    const window = discourseReplyWindow(await topicData(id, options, options.targetFloor), limit);
+): Promise<RepliesResponse> {
+  const limit = options.limit || LIST_PAGE_SIZE;
+  if (options.position.kind === 'target') {
+    const targetFloor = options.position.target.floor;
+    if (!Number.isSafeInteger(targetFloor) || targetFloor! <= 0) {
+      throw new Error('小隐寺目标楼层不正确');
+    }
+    const window = discourseReplyWindow(await topicData(id, options, targetFloor), limit);
     const items = window.posts.map((post) => normalizePost(post, id)).filter((reply): reply is Reply => Boolean(reply));
-    if (!items.some((reply) => reply.floor === options.targetFloor)) {
+    if (!items.some((reply) => reply.floor === targetFloor)) {
       throw new Error('小隐寺目标楼层未找到');
     }
     const { posts, ...windowState } = window;
-    return annotateSourceDiagnosticSummary(
+    const chronological = annotateSourceDiagnosticSummary(
       { items, ...windowState },
       {
         parserVariant: 'xiaoyinsi-discourse-near-replies',
@@ -445,16 +505,18 @@ export async function getXiaoyinsiReplies(
         missingFloorCount: posts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number)).length
       }
     );
+    return orientReplyWindow(chronological, options.order);
   }
   const data = await topicData(id, options);
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
-  const previousReplyCount = typeof options.offset === 'number' ? options.offset : Math.max(0, (page - 1) * limit);
-  const previousOffset = previousReplyCount > 0 ? Math.max(0, previousReplyCount - limit) : null;
-  const start = 1 + previousReplyCount;
-  const postIds = stream.slice(start, start + limit);
+  const { postIds, ...windowState } = discourseStreamReplyWindow(stream, {
+    limit,
+    order: options.order,
+    position: options.position
+  });
   if (!postIds.length) {
     return annotateSourceDiagnosticSummary(
-      { items: [], hasMore: false, nextPage: null, totalCount: Math.max(0, stream.length - 1) },
+      { items: [], ...windowState },
       {
         parserVariant: 'xiaoyinsi-discourse-replies',
         candidateCount: 0,
@@ -465,19 +527,16 @@ export async function getXiaoyinsiReplies(
     );
   }
   const posts = await fetchPosts(id, postIds, options);
-  const items = posts.map((post) => normalizePost(post, id)).filter((reply): reply is Reply => Boolean(reply));
-  const hasMore = stream.length > start + postIds.length;
+  const visiblePostIds = discourseVisiblePostIds(posts, postIds);
+  const items = discourseRepliesInStreamOrder(
+    posts.map((post) => normalizePost(post, id)).filter((reply): reply is Reply => Boolean(reply)),
+    visiblePostIds,
+    options.order
+  );
   return annotateSourceDiagnosticSummary(
     {
       items,
-      currentPage: page,
-      currentOffset: previousReplyCount,
-      previousPage: previousOffset === null ? null : Math.floor(previousOffset / limit) + 1,
-      previousOffset,
-      hasMore,
-      nextPage: hasMore ? page + 1 : null,
-      nextOffset: hasMore ? previousReplyCount + postIds.length : null,
-      totalCount: Math.max(0, stream.length - 1)
+      ...windowState
     },
     {
       parserVariant: 'xiaoyinsi-discourse-replies',

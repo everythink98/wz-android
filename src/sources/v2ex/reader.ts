@@ -54,6 +54,7 @@ type V2exHtmlReplyMeta = {
 };
 
 type V2exHtmlDetail = {
+  replyCount?: number;
   supplementHtml: string;
   tags: string[];
   upvoteCount?: number;
@@ -229,21 +230,27 @@ function statCountByInteraction(data: unknown, pattern: RegExp) {
     if (!isRecord(stat) || !pattern.test(interactionTypeName(stat.interactionType))) {
       continue;
     }
-    const count = parsePositiveInteger(stat.userInteractionCount);
-    if (count > 0) {
+    const rawCount = stat.userInteractionCount;
+    const count =
+      typeof rawCount === 'number'
+        ? rawCount
+        : typeof rawCount === 'string' && /^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(rawCount.trim())
+          ? Number(rawCount.replace(/,/g, ''))
+          : NaN;
+    if (Number.isSafeInteger(count) && count >= 0) {
       return count;
     }
   }
   return undefined;
 }
 
-function parseV2exViewCount(root: ReturnType<typeof parseHtml>) {
+function parseV2exInteractionCount(root: ReturnType<typeof parseHtml>, pattern: RegExp) {
   for (const script of root.querySelectorAll('script[type="application/ld+json"]')) {
     try {
       const parsed = JSON.parse(script.text);
-      const viewCount = statCountByInteraction(parsed, /ViewAction/i);
-      if (typeof viewCount === 'number') {
-        return viewCount;
+      const count = statCountByInteraction(parsed, pattern);
+      if (typeof count === 'number') {
+        return count;
       }
     } catch {
       // Ignore unrelated structured data.
@@ -352,10 +359,11 @@ function parseV2exHtmlDetail(html: string): V2exHtmlDetail {
   const root = parseHtml(html);
   const replyMeta = parseV2exReplyMeta(root);
   return {
+    replyCount: parseV2exInteractionCount(root, /ReplyAction/i),
     supplementHtml: parseV2exSupplements(root),
     tags: parseV2exTags(root),
     upvoteCount: parseV2exTopicUpvoteCount(root),
-    viewCount: parseV2exViewCount(root),
+    viewCount: parseV2exInteractionCount(root, /ViewAction/i),
     replies: replyMeta.replies,
     repliesByCommentId: replyMeta.repliesByCommentId,
     repliesByFloor: replyMeta.repliesByFloor
@@ -768,12 +776,16 @@ export async function getV2exTopic(
       : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
   }
   const replies = apiReplies.length ? apiReplies : htmlDetail?.replies || [];
+  const replyCount = htmlDetail?.replyCount ?? topic.replyCount;
+  if (replies.length !== replyCount) {
+    throw new Error('V2EX 回复总数已变化，无法确认完整集合');
+  }
   const result = {
     ...topic,
     ...(typeof htmlDetail?.upvoteCount === 'number' ? { upvoteCount: htmlDetail.upvoteCount } : {}),
     ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
-    replyCount: replies.length || topic.replyCount,
+    replyCount,
     contentHtml: appendV2exSupplementHtml(apiContentHtml, htmlDetail?.supplementHtml || ''),
     replies,
     replyHasMore: false,

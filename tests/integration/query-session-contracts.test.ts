@@ -43,6 +43,17 @@ describe('forum server state', () => {
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-TOPIC-067] never shares partial reply caches between traversal orders', () => {
+    const topicKey = forumQueryKeys.topic({
+      source: 'nodeseek',
+      topicId: '123',
+      scope: initialForumSessionEpochs
+    });
+
+    expect(forumQueryKeys.replies(topicKey, 'oldest')).not.toEqual(forumQueryKeys.replies(topicKey, 'newest'));
+    expect(forumQueryKeys.replies(topicKey, 'newest')).toEqual([...topicKey, 'replies', { order: 'newest' }]);
+  });
+
   it('[REG-TOPIC-039] separates username resolution from the canonical user profile key', () => {
     const resolution = forumQueryKeys.userResolution({
       scope: initialForumSessionEpochs,

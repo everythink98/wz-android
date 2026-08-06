@@ -130,7 +130,9 @@ const stringFieldKeys = new Set([
   'mediaRef',
   'mediaRole',
   'candidateKind',
-  'cacheType'
+  'cacheType',
+  'replyOrder',
+  'positionKind'
 ]);
 
 const closedValues = (...values: string[]) => new Set(values);
@@ -464,6 +466,8 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   mediaRole: closedValues('body', 'preview-active', 'preview-adjacent'),
   candidateKind: closedValues('src', 'srcset', 'data-src', 'data-original', 'lightbox'),
   cacheType: closedValues('none', 'disk', 'memory'),
+  replyOrder: closedValues('oldest', 'newest'),
+  positionKind: closedValues('start', 'cursor', 'target'),
   mediaClass: closedValues('same-source', 'cross-source', 'unmanaged', 'data'),
   fallback: closedValues('none', 'svg'),
   terminalReason: closedValues('loaded', 'fallback-loaded', 'native-error', 'fallback-error', 'stale', 'timeout'),
@@ -550,6 +554,7 @@ const numberFieldKeys = new Set([
   'selectedOptionCount',
   'contentLength',
   'page',
+  'resolvedPage',
   'generation',
   'iteration',
   'queueLength',

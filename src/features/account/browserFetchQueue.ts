@@ -41,7 +41,12 @@ export function requestHeaderValue(headers: HeadersInit | undefined, name: strin
   return typeof value === 'string' ? value : undefined;
 }
 
-export function nodeSeekBrowserResponse(html: string, challenge: boolean, httpErrorStatus?: number) {
+export function nodeSeekBrowserResponse(
+  html: string,
+  challenge: boolean,
+  httpErrorStatus?: number,
+  responseUrl?: string
+) {
   const status = challenge ? 403 : httpErrorStatus || 200;
   const body = challenge ? '' : html;
   const headerValues: Record<string, string> = {
@@ -51,14 +56,19 @@ export function nodeSeekBrowserResponse(html: string, challenge: boolean, httpEr
     headerValues['cf-mitigated'] = 'challenge';
   }
   if (typeof Response !== 'undefined') {
-    return new Response(body, {
+    const response = new Response(body, {
       status,
       headers: headerValues
     });
+    if (responseUrl) {
+      Object.defineProperty(response, 'url', { value: responseUrl });
+    }
+    return response;
   }
   return {
     ok: status >= 200 && status < 300,
     status,
+    url: responseUrl || '',
     headers: {
       get: (headerName: string) => headerValues[headerName.toLowerCase()] || null
     },

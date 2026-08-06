@@ -149,6 +149,12 @@ export async function getFeed({
     const unavailableSourceSet = new Set(unavailableSources);
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
+    const hasRetryableCursor = Boolean(
+      cursor &&
+      (bufferedItems.length ||
+        Object.keys(cursorState.nextPages || {}).length ||
+        Object.keys(cursorState.sourceCursors || {}).length)
+    );
     const shouldFetchSource = (item: Source) =>
       !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
     const fetchedSources = allFeedSources.map(shouldFetchSource);
@@ -246,7 +252,7 @@ export async function getFeed({
         typeof result.reason === 'object' &&
         result.reason !== null &&
         (result.reason as { reason?: unknown }).reason === 'aggregate_timeout';
-      if (fetchedSources[index] && (hasFulfilledSource || aggregateTimedOut)) {
+      if (fetchedSources[index] && (hasRetryableCursor || hasFulfilledSource || aggregateTimedOut)) {
         nextPages[item] = requestedPages[item];
         if (cursorState.sourceCursors?.[item]) sourceCursors[item] = cursorState.sourceCursors[item];
       }

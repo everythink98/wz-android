@@ -669,6 +669,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 移除分页条件中的非空门禁，同名 UI 测试必须重新看到两条矛盾文案并失败。 |
 | 明确不覆盖范围 | 不改变各来源如何判断服务端下一页，不改变已有结果后的分页行为，也不自动重试任何失败请求。 |
 
+## `REG-SEARCH-020` 搜索来源 Tab 比首页明显偏大
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02` |
+| 用户症状 | 搜索页五站来源 Tab 比首页同一组来源明显更高、更宽，切换底部导航后视觉尺度跳变。 |
+| 触发条件 | `SearchScreen` 使用共享 `PillRail` 的默认 Tab 几何，而首页显式使用已有的 `compactTabs` 几何。 |
+| 根因 seam | `src/ui/controls/SelectionControls.tsx` 同时提供默认 48dp Tab 与来源栏 compact Tab；`src/features/search/SearchScreen.tsx` 漏传 compact 语义，形成同一来源导航的两套尺寸。 |
+| 必须保持的行为 | 首页与搜索顶部来源栏在 Reader 100% 时都使用 40dp 高度、自然宽度和 13 号字，并继续随 Reader 字号缩放；其他共享 Tab 保持默认 48dp 几何，触控 `hitSlop`、选中态和来源切换行为不变。 |
+| 精确失败 oracle | `tests/ui/search/search-screen.test.tsx` 通过真实 `SearchScreen → PillRail` 断言 `search-source-all` 为 `minHeight=40`、自然宽度和 13 号字；`tests/ui/feed/feed-screen.test.tsx` 的 `REG-FEED-016` 固定首页同一规则。修复前搜索稳定得到 48dp。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须覆盖真实页面传参和共享组件合成后的最终几何；只测试 `PillRail` 自身不能发现调用页漏传。 |
+| Replay 或真实验收路径 | 在相同 Reader 字号下依次打开首页和搜索，对照五站来源栏的高度、自然宽度、文字和选中态；130% 字号下再次确认文字同步缩放且不拥挤。 |
+| 负向验证方式 | 移除搜索页的 `compactTabs`，同名 UI 测试必须重新得到 48dp 并失败，首页既有用例仍通过。 |
+| 明确不覆盖范围 | 不全局缩小 `PillRail` 默认 Tab，不改变搜索请求、结果、筛选状态或其他页面的 Tab 尺寸。 |
+
+## `REG-SEARCH-021` linux.do 搜索会话途中失效后没有切到 Google
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-04` |
+| 用户症状 | 聚合搜索只有 linux.do 长时间停留在“搜索中”；重新登录后同一页面才完成。请求开始时 App 仍把旧会话投影为已登录，因此没有采用原本已有的匿名 Google 搜索。 |
+| 触发条件 | linux.do 身份在请求开始前已确认登录，但 Cookie 随后失效；`/search` 返回 HTTP 401，或响应正文明确表示需要登录（包括重定向后的 200 登录页）。 |
+| 根因 seam | `src/sources/linuxdo/search.ts` 只在发请求前按 `authenticated` 选择一次协议，authenticated search 响应明确失效后没有转入同一 Adapter 已有的 `searchLinuxDoGoogle`；`fetchLinuxDoJson` 还把 200 登录页误作普通格式错误。 |
+| 必须保持的行为 | 当前 authenticated search 遇到 HTTP 401 或明确 `accessRequirement.type=login` 时，只切换一次既有 Google site-search 并返回其结果；Google 请求不复用 Discourse 登录请求头。明确权限不足、Cloudflare、网络、解析和取消错误保持原分类，不自动重试，不给 Search Controller 增加 timeout、队列或会话恢复循环。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-SEARCH-021` 先固定匿名 Google 结果，再以已确认 access 分别让 linux.do 请求返回 401 与 200 登录页，要求同一 Adapter 链两次都返回相同 Google 结果；修复前分别稳定抛出 `HTTP 401` 与格式错误。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：来源契约 fixture 可确定性固定协议切换和结果解析；UI timeout 无法证明切换发生在正确 seam。 |
+| Replay 或真实验收路径 | 匹配 APK 的聚合 Search 必须有限结算；若验收期间自然遇到 linux.do 会话失效，确认该来源改用 Google 并显示未登录搜索提示。不得主动清 Cookie、退出账号或破坏登录态制造条件。 |
+| 负向验证方式 | 删除 authenticated search 的精确失效 catch，编号测试第二次调用必须重新抛出 401；把普通 403、网络错误或取消也纳入 fallback，应由相邻来源错误契约与完整测试拒绝。 |
+| 明确不覆盖范围 | 不由搜索请求清除 Cookie或直接改写 canonical 会话；全局身份投影仍由账号 Query 更新。不保证 Google 当天有结果，也不把任意 HTML、权限错误或无限重试当作登录失效。 |
+
 ## `REG-LINUXDO-001` linux.do Cloudflare 429 被降级且大响应被截断
 
 | 字段 | 内容 |
@@ -2843,13 +2873,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `WRITE-01`、`WRITE-02`、`TOPIC-03` |
 | 用户症状 | 回复、编辑或删除已由服务器确认后，当前回复区不出现目标楼层或仍显示旧内容；如果简单整页刷新又会丢失已加载分页和当前位置。 |
-| 触发条件 | write mutation 成功后需要按新增楼层、编辑楼层或排除已删除楼层刷新特定回复页。 |
-| 根因 seam | 请求改为 TanStack Query 唯一所有者时，旧 controller 的 targeted refresh seam 被删除，但 mutation success 没有等价的 Query-native 提交。 |
-| 必须保持的行为 | 服务器确认后通过独立 Query key 读取目标页，并原子合并/替换 replies InfiniteData；新增回复推导尾页，编辑/删除按 target 或 exclude 定位，保留无关已加载页和 cursor。跟进刷新失败只报告 partial，不回滚已确认写入或重发非幂等请求。 |
-| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-WRITE-017` 预置已加载回复页，提交后返回权威尾页；要求目标回复和总数更新、既有页保留且无重复。`tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-LINUXDO-003` 另固定写已确认但跟进刷新失败为 partial。 |
+| 触发条件 | write mutation 成功后需要按新增楼层、编辑楼层或排除已删除楼层刷新特定回复页；当前 route 可能处于正序或倒序。 |
+| 根因 seam | 请求改为 TanStack Query 唯一所有者时，旧 controller 的 targeted refresh seam 被删除，但 mutation success 没有等价的 Query-native 提交；顺序拆为独立 Query lane 后，写后刷新还必须保留真实服务端窗口语义。 |
+| 必须保持的行为 | 服务器确认后在当前 `ReplyOrder` 的 Query key 中读取并原子合并/替换真实窗口；编辑/删除按实体所在 `pageParam`。新增回复先以 `order=newest, position=start` 由 adapter 确认服务端尾窗；当前为正序时，再以该尾窗返回的真实 `commentId/floor/pageHint` 读取正序目标窗，不按回复数猜 Discourse post number。成功后失效另一顺序 cache，保留仍连续的无关已加载页和 cursor。跟进刷新失败只报告 partial，不应用未确认窗口、不回滚已确认写入或重发非幂等请求。 |
+| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-WRITE-017` 预置已加载回复页，提交后先返回 post number 有缺口的真实尾窗，再要求正序只以该实体定位；目标回复和总数更新且不能出现 `replyCount + 1` 猜测。`REG-TOPIC-067` 另固定倒序提交后以 `order=newest, position=start` 重新确认尾窗并失效相反顺序 cache。`tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-LINUXDO-003` 固定写已确认但跟进刷新失败为 partial。 |
 | 最低可靠自动测试层 | `UI_PASS`：必须覆盖 mutation success、临时 Query、InfiniteData 合并和可见 controller 状态。 |
 | Replay 或真实验收路径 | 默认只检查写入口，不提交真实内容；获得逐次写授权后记录原状态，提交一次并核对目标楼层、分页与 partial 提示，按可逆性清理。 |
-| 负向验证方式 | 移除 `afterSuccess` 的 Query 定向刷新或改为覆盖全部 pages，编号测试会缺少权威回复或丢失既有页。 |
+| 负向验证方式 | 移除 `afterSuccess` 的 Query 定向刷新、按 `replyCount + 1` 猜 Discourse 尾楼、倒序写后继续猜尾页、复用另一顺序 cache，或改为无条件覆盖全部 pages，编号测试会缺少权威回复、显示旧顺序或丢失既有页。 |
 | 明确不覆盖范围 | 不自动重试非幂等写请求，不把跟进读取失败伪装成写失败，也不授权真实回复、编辑或删除。 |
 
 ## `REG-WRITE-018` 串行 mutation 在排队前共享同一 optimistic snapshot
@@ -3131,8 +3161,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | NodeSeek 一次普通超时、403 或 fallback 失败后，linux.do、妖火、小隐寺等本来无关的在飞请求一起被取消；随后刷新 More 或重新发请求才恢复。 |
 | 触发条件 | NodeSeek 恢复分支调用共享 OkHttp `dispatcher.cancelAll()` 和 `connectionPool.evictAll()`，把站点级错误升级成进程级连接重置。 |
 | 根因 seam | `nodeseekFetchFallback` 的推测性网络恢复与 `NetworkProxyRuntime` 共享 dispatcher/connection pool 的资源所有权冲突。 |
-| 必须保持的行为 | 全局 cancel/evict 只属于代理配置 transition：应用、切换、关闭代理时先 fail-closed 再清理旧 transport。普通站点 403/429、Cloudflare、解析、账号或 fallback 失败只结算自己的请求，不调用全局恢复。只读 CookieJar 与代理安装在同一 OkHttp client builder；所有 client 复用 selector、dispatcher 与 Cookie policy，RN forum pool 可独立换代，Expo media pool 保持固定，不以另建绕过代理的 client 规避约束。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-PROXY-006` 先保持一个 linux.do shared-default transport pending，再连续触发两次 NodeSeek direct timeout/fallback；旧全局 recovery 会取消该 pending Promise，当前实现要求 legacy global recovery 零调用且 linux.do 仍成功。`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 另固定两站 hidden fallback 队列互不取消；`tests/tooling/release-packaging.test.ts` 固定生成源码中 `cancelAll()` 只剩代理 transition 的一个调用点，并分别固定 forum/media pool；生成的 Kotlin test 证明 selector、dispatcher 与只读 jar 共享，forum pool 换代而 media pool 身份不变。 |
+| 必须保持的行为 | 全局 cancel 和两个 pool 的成对 evict 只属于代理配置 transition：应用、切换、关闭代理时先 fail-closed 再清理旧 transport。普通站点 403/429、Cloudflare、解析、账号或 fallback 失败只结算自己的请求，不调用全局恢复。只读 CookieJar 与代理安装在同一 OkHttp client builder；所有 client 复用 selector、dispatcher、Cookie policy 与 RN forum pool，Expo media pool 保持独立，不以另建绕过代理的 client 规避约束。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-PROXY-006` 先保持一个 linux.do shared-default transport pending，再连续触发两次 NodeSeek direct timeout/fallback；旧全局 recovery 会取消该 pending Promise，当前实现要求 legacy global recovery 零调用且 linux.do 仍成功。`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 另固定两站 hidden fallback 队列互不取消；`tests/tooling/release-packaging.test.ts` 固定生成源码中 `cancelAll()` 只剩代理 transition 的一个调用点，并分别固定 forum/media pool；生成的 Kotlin test 证明 selector、dispatcher、只读 jar 与 forum pool 由既有和后续 client 共享，单站恢复清空该 pool 的空闲连接而 media pool 身份不变。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + 原生生成/编译：跨站 Promise 固定用户可见误取消，Kotlin 行为固定共享资源身份；字符串计数只作为调用点守卫。 |
 | Replay 或真实验收路径 | 冷启动并行读取多个站点，只记录自然来源失败与其他站最终结果；不得主动断网、破坏账号或反复撞 Cloudflare。真实代理仅在用户提供并授权配置时验证，否则代理 Live 标记 `NOT_VERIFIED`。 |
 | 负向验证方式 | 在任一站点 catch/超时恢复全局 cancel/evict，或给 Cookie bridge 另建独立 client；编号测试会观察到跨站取消、调用点增加或 managed client 资源身份不一致。 |
@@ -4662,8 +4692,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | “查看完整回复”进入主题后可能从第 2 页逐页请求到目标页；普通帖子或用户列表遇到昵称为“下一页”的用户时，还会提前停止分页或跳进用户主页。 |
 | 触发条件 | 原站 `book_re.aspx?...&tofloor=90` 一次响应落到第 16 页，HTML 的 `page` 表单字段为 16；Android Native Fetch 的 `Response.url` 仍可能是无 `page` 的请求 URL。页面同时含第 17 页游标；第 10 页正文中又存在文本恰为“下一页”的用户链接。 |
 | 根因 seam | Topic 目标回复加载只保留 `{ floor }`，沿通用“加载更多”从当前页线性追赶；初次直达实现又把可选的 `Response.url` 当成唯一当前页依据，缺失时回退为 1，下一次错误请求第 2 页。妖火 HTML parser 还把链接文本当成分页身份，未要求合法 `page` 游标和对应列表 endpoint。 |
-| 必须保持的行为 | 妖火合法目标楼层只发送一次 `tofloor` 请求，以最终 URL 的正页码为首选、原站 HTML 的当前 `page` 字段为 Android 兜底，建立真实分页锚点并用下一页游标继续；定位到第 16 页后下一次只能请求第 17 页，不保留第 1 页与第 16 页之间的假连续列表，也不得退回逐页扫描。目标响应不含该楼层时明确失败。帖子回复、Feed、用户帖子和用户回复都只能接受带正页码的真实分页链接；同名用户链接不能成为 cursor。 |
-| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 的 `REG-NOTIFY-046` 固定请求页序列为 `[1（携带 targetReply.floor）, 17]`、目标页替换首屏且无 2～16；`src/sources/yaohuo/reader.test.ts` 模拟 Android 的无重定向 `Response.url`，要求从 HTML `page=16` 恢复 `currentPage`，并让用户链接先于真实分页链接出现，要求帖子回复、用户帖子和用户回复仍解析真实下一页。 |
+| 必须保持的行为 | 妖火合法目标楼层只发送一次 `tofloor` 请求，以最终 URL 的正页码为首选、原站 HTML 的当前 `page` 字段为 Android 兜底，建立真实分页锚点；原站 page 1 最新且页码递增表示更早，因此正序定位到第 16 页后向下读取第 15 页、向上读取第 17 页，不保留第 1 页与第 16 页之间的假连续列表，也不得退回逐页扫描。目标响应不含该楼层时明确失败。帖子回复、Feed、用户帖子和用户回复都只能接受带正页码的真实分页链接；同名用户链接不能成为 cursor。 |
+| 精确失败 oracle | `tests/ui/topic/topic-session-controller.test.tsx` 固定任意锚点窗口只按 adapter 返回的双向 cursor 请求、目标页替换首屏且不补中间页；`src/sources/yaohuo/reader.test.ts` 的 `REG-NOTIFY-046` 模拟 Android 的无重定向 `Response.url`，要求从 HTML `page=16` 恢复 `currentPage`，并把正序 `previousPage=17`、`nextPage=15` 返回给 Controller；同名用户链接不能成为帖子回复、用户帖子或用户回复 cursor。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：parser/reader 固定原站协议，Topic controller 固定跨页状态机，匹配 App 只读确认目标楼层与继续下滚。 |
 | Replay 或真实验收路径 | 妖火 → 聊天 → 已有已读会话 → 查看完整回复；确认一次定位到目标楼层，继续下滚加载紧邻下一页且没有回到页首。再打开包含同名用户的普通主题，确认仍可继续分页。不发送回复、不改变已读状态。 |
 | 负向验证方式 | 恢复按 `topicReplies.length` 反复调用通用加载更多，或在 `Response.url` 无页码时直接回退 1，编号测试都会出现页 2；恢复“第一个文本为下一页的链接”，parser 测试会得到用户主页或 `nextPage=null`。 |
@@ -4767,8 +4797,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 点击很远的被回复楼层会从当前页逐页追赶，长帖产生请求风暴；即使跳到目标，中间缺失页面也可能被拼成连续列表。关系标签整块点击又会打开用户名片，用户无法单独点楼层。定位到中段后只能向下加载，编辑、删除或新回复还可能按已加载数量刷新错误页面。 |
 | 触发条件 | NodeSeek/Discourse/妖火主题包含远端楼层链接或通知携带目标，目标不在当前回复集合；列表采用无限滚动且当前缓存可能只含首屏、锚点中段或双向相邻窗口。V2EX 已经持有完整回复集合。 |
 | 根因 seam | Controller 把 Infinite Query 页组误认为“从第一页开始的完整前缀”，用 `loadMoreReplies` 反复追目标，并以 `topicReplies.length`、数组下标或扩大 page-size 推断绝对页面；route/parser 又使用零散的 reply Pick 类型并丢失 page/fragment。列表只支持 next cursor，写后刷新复用同一错误推断。 |
-| 必须保持的行为 | 使用统一 `ReplyLocationTarget { commentId?, floor?, pageHint? }`；存在 `commentId` 时它是强身份，同楼层不同实体不得命中。已加载目标零请求；未加载目标只请求一次来源确认的目标窗口并原子替换当前页组，随后 `fetchPreviousPage`/`fetchNextPage` 只读取紧邻 cursor。目标实体及可信 current page/offset 缺一即失败并保留原窗口，不猜页、不补中间页；验证恢复必须重试同一目标，来源 session epoch 前进后允许同一 route 目标重新消费。NodeSeek 固定 10 楼精确页且定位请求禁用 fill-pages；linux.do/小隐寺使用 near-post window；妖火只接受响应 URL 或 page 表单确认的 resolved page；V2EX 只在已加载全集本地定位。用户名与 `#楼层` 独立点击，定位前恢复全部/空搜索，成功滚动并短暂高亮。前插保持可见位置，指回任一已加载窗口的 cursor 立即停止。编辑/删除重读目标实体所在真实 `pageParam`，新回复按服务端权威尾楼重新锚定，整帖刷新才回首屏；route 初始目标消费后不得覆盖后续刷新窗口，离开时目标窗和尾窗都不得留作下次首屏。 |
-| 精确失败 oracle | `src/domain/forum/links.test.ts` 固定五站原生 anchor 到统一 `ReplyLocationTarget`；`tests/ui/topic/topic-session-controller.test.tsx` 输入 155 楼只允许请求序列 `[targetReply.floor=155, page=15, page=17]`，编辑目标随后只能重读真实 `page=16, offset=150`，不得出现 2～14；相邻页反向指回 16 时不得再次请求。测试还固定同楼层不同 `commentId` 失败、NodeSeek 验证恢复重试同一目标、来源 epoch 前进后恢复妖火同一目标、整帖刷新后旧 route 目标不重放，以及尾窗在 route 卸载时清除；目标无法确认时原列表不变，V2EX 未加载目标零请求。`tests/integration/source-read-contracts.test.ts` 固定 NodeSeek 在目标页仅返回一条且声明下一页时 `nextOffset=160`、后续第 17 页仍为 10 楼窗口，同时误传 `fillPages=true` 时仍只有一次传输，并覆盖 linux.do near-post；小隐寺和妖火 reader 测试分别固定独立凭据与 resolved-page falsifier。`tests/ui/topic/topic-components.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx` 固定用户名/楼层双目标、前后边缘、每手势单次自动加载、按钮重试、前插保持和一次滚动高亮。 |
+| 必须保持的行为 | 使用统一 `ReplyLocationTarget { commentId?, floor?, pageHint? }`；存在 `commentId` 时它是强身份，同楼层不同实体不得命中。已加载目标零请求；未加载目标只请求一次来源确认的目标窗口并原子替换当前页组，随后 `fetchPreviousPage`/`fetchNextPage` 只读取紧邻 cursor。target 是 replace-window 命令：取消当前 Reply Query，并只在 route、Query identity、order 与 generation 仍一致时应用；后发命令直接使旧结果 stale，不建立等待队列。目标实体及可信 current page/offset 缺一即失败并保留原窗口，不猜页、不补中间页。NodeSeek 固定 10 楼精确页且定位请求禁用 fill-pages；linux.do/小隐寺使用 near-post window；妖火只接受响应 URL 或页码表单确认的 resolved page；V2EX 只在已加载全集本地定位。用户名与 `#楼层` 独立点击，定位前恢复全部/空搜索并保留当前顺序，成功滚动并短暂高亮。前插保持可见位置，指回任一已加载窗口的 cursor 立即停止。编辑/删除重读目标实体所在真实 `pageParam`，新回复按服务端权威尾窗重新锚定。 |
+| 精确失败 oracle | `src/domain/forum/links.test.ts` 固定五站原生 anchor 到统一 `ReplyLocationTarget`；`tests/ui/topic/topic-session-controller.test.tsx` 输入 155 楼只允许请求序列 `[targetReply.floor=155, page=15, page=17]`，编辑目标随后只能重读真实 `page=16, offset=150`，不得出现 2～14；同文件固定后发 target 胜过先发整帖刷新、同楼层不同 `commentId` 失败、验证恢复、来源 epoch 前进后重试、旧 route 目标不重放、目标无法确认时原列表不变及 V2EX 未加载目标零请求。`tests/integration/source-read-contracts.test.ts` 固定 NodeSeek 目标页和 linux.do near-post；小隐寺和妖火 reader 测试固定独立凭据与 resolved-page falsifier。Topic 组件测试固定用户名/楼层双目标、前后边缘、每手势单次自动加载、按钮重试、前插保持和一次滚动高亮。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter/unit 固定五站协议和 cursor，Controller/UI 固定窗口状态机与交互；匹配 APK 的五站只读主题验证真实布局、导航和相邻加载。 |
 | Replay 或真实验收路径 | 从普通 Topic 和消息“查看完整回复”各进入一个已有远端目标；确认直接出现目标并高亮，向上/向下各触发一次相邻加载，点击作者进入用户页、返回后再点击楼层仍留在主题。linux.do 若出现验证，停在“更多 → 账号中心 → linux.do 原站”由用户手动处理后继续。全程不发回复、不清登录态。 |
 | 负向验证方式 | 恢复递归 `loadMoreReplies`、`PageSize=400`、`1..N` 批量补抓、按已加载数量推页、目标请求继续 fill-pages、把用户名和楼层合成单个 Pressable，或在 adapter 未确认页面时应用窗口，任一编号测试都必须失败。 |
@@ -4778,16 +4808,32 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
-| 能力 ID | `TOPIC-03`；回复窗口顺序和向上预取体验 |
+| 能力 ID | `TOPIC-03`；回复窗口展示顺序和向上预取体验 |
 | 用户症状 | 从锚点窗口向上滚动时，先看到“加载更早回复”按钮，随后才开始请求和前插，操作感觉迟滞；本地倒序又只翻转已加载片段，并不能代表原站完整倒序结果。 |
-| 触发条件 | 当前主题存在 previous cursor，用户从窗口中段向上滚动；列表同时把 `replyWindowStart` 渲染为重试按钮，并用该行进入可视区作为上一窗口请求条件。 |
-| 根因 seam | `TopicContentList` 把网络需求与重试 UI 绑定；`ReplyFilter` 还提供没有五站一致读取协议支撑的 `newest` 本机反转。 |
-| 必须保持的行为 | 回复始终按来源读取顺序展示，只保留全部、只看楼主和只看带图。用户开始滚动后，最早可见回复距窗口起点不超过当前可视回复数时提前读取上一 cursor；同一手势最多自动读取一次，按钮只承担正在加载状态和手动重试。前插后必须清除旧预取命中并按新窗口起点重新计算；即使该次插入最后一个 previous cursor，也要保持当前可见位置。下一窗口加载不受影响。 |
-| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 构造 10 条锚点窗口，只把第 4～6 条回复交给 viewability callback，且不包含 `replyWindowStart`；修复前 previous callback 为 0，修复后必须为 1，重复回调仍为 1；前插新窗口后，下一次手势在重新进入预取带前不得再次请求。另一用例固定最后一窗前插期间位置保持仍启用，随后才关闭；“倒序”入口必须不存在且回复保持正序。 |
-| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定提前触发、前插后预取重置、手势门禁、末窗位置保持、正序筛选和前后窗口按钮；匹配 APK 确认真实上滑没有按钮先出现再启动加载的停顿。 |
-| Replay 或真实验收路径 | 从消息里的远端楼层或普通长主题进入中段锚点，缓慢向上滚动；确认接近窗口起点时上一窗口提前出现、当前位置不跳，并且回复筛选栏没有“倒序”。只读验收，不发送回复。 |
-| 负向验证方式 | 恢复仅在 `replyWindowStart` 可见时加载，编号测试得到 previous callback 0；恢复 `newest` 本机 reverse，倒序入口断言失败。 |
-| 明确不覆盖范围 | 不增加站点倒序请求协议，不根据网络速度或滚动速度动态调参，不自动连续补齐全部历史。 |
+| 触发条件 | 当前主题存在 previous cursor，用户从窗口中段向上滚动；列表同时把 `replyWindowStart` 渲染为重试按钮，并用该行进入可视区作为上一窗口请求条件；或 UI 把顺序切换实现为对当前数组执行 `reverse()`。 |
+| 根因 seam | `TopicContentList` 把网络需求与重试 UI 绑定；旧实现又把 `newest` 混入 `ReplyFilter`，在展示层反转不完整集合。 |
+| 必须保持的行为 | 回复区左侧提供全部、只看楼主、只看带图，右侧提供显示当前值的正序/倒序单选菜单；来源 adapter 返回什么顺序，UI 就按什么顺序展示，内容筛选和评论内查找只过滤内容。用户开始滚动后，最早可见回复距窗口起点不超过当前可视回复数时提前读取上一 cursor；同一手势最多自动读取一次，按钮只承担正在加载状态和手动重试。前插后必须清除旧预取命中并按新窗口起点重新计算；即使该次插入最后一个 previous cursor，也要保持当前可见位置。下一窗口加载不受影响。 |
+| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 构造 10 条锚点窗口，只把第 4～6 条回复交给 viewability callback，且不包含 `replyWindowStart`；修复前 previous callback 为 0，修复后必须为 1，重复回调仍为 1；前插新窗口后，下一次手势在重新进入预取带前不得再次请求。另一用例固定最后一窗前插期间位置保持仍启用，随后才关闭；三种内容筛选与单一排序菜单必须并列，传入静态回复数组时切换倒序不得在 UI 层改变其顺序。真实倒序 transport 由 `REG-TOPIC-067` 固定。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定提前触发、前插后预取重置、手势门禁、末窗位置保持、顺序栏、内容筛选和前后窗口按钮；匹配 APK 确认真实上滑没有按钮先出现再启动加载的停顿。 |
+| Replay 或真实验收路径 | 从消息里的远端楼层或普通长主题进入中段锚点，缓慢向上滚动；确认接近窗口起点时上一窗口提前出现、当前位置不跳，并且回复区同时保留内容筛选与顺序栏。只读验收，不发送回复。 |
+| 负向验证方式 | 恢复仅在 `replyWindowStart` 可见时加载，编号测试得到 previous callback 0；在 `TopicContentList`、筛选器或 Controller 展示投影中恢复局部 `reverse()`，静态数组顺序断言失败。 |
+| 明确不覆盖范围 | 五站尾窗与倒序 cursor 协议由 `REG-TOPIC-067` 覆盖；本条不根据网络速度或滚动速度动态调参，也不自动连续补齐全部历史。 |
+
+## `REG-TOPIC-067` 倒序只反转已加载片段而非服务端回复流
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03`；共享 `NAV-02/03`、`NOTIFY-02`、`WRITE-01` |
+| 用户症状 | 多页主题切换倒序后仍先看到第一页的倒排片段，继续下滚又混入后续正序页；用户误以为看到最新回复，实际既不完整也不连续。 |
+| 触发条件 | 正序只加载了部分窗口后切换倒序；主题有五页，或 Discourse stream 存在删除/拆帖造成的 post number 缺口；尾页计数或响应页码发生竞态。 |
+| 根因 seam | `ReplyFilter.newest` 在 UI 对本地数组执行 `reverse()`，回复 Query key 不区分遍历方向；Controller 根据已加载数量猜页，来源 adapter 没有拥有尾窗算法、页内顺序和 cursor 转换。 |
+| 必须保持的行为 | 使用独立 `ReplyOrder = oldest | newest` 和 `ReplyWindowPosition(start | cursor | target)`；`ReadGateway.getReplies` 同时接收两者，正倒序 Query key 永不混用。adapter 返回的 `items` 与 cursor 都按请求顺序解释，`next*` 始终是用户向下滚动的相邻窗口，`currentPage/currentOffset` 保留服务端真实位置。NodeSeek 以权威回复数和固定 10 楼页宽直达第 5 页，下一窗只读第 4 页；linux.do/小隐寺按 `post_stream.stream` 真实 ID 取尾组并严格校验 hydration；妖火从主题页真实 `reply` / `tofloor` 链接取最大楼层，原站 page 1 为最新且 page + 1 更早，倒序从末楼向 page + 1、正序从 `tofloor=1` 向 page - 1 遍历，不能把“更多回帖(N)”当总数；V2EX 只复用条目数与权威计数严格相等的完整集合。切换部分集合先清空旧顺序并显示回复级 Loading，失败不应用结果。计数竞态只允许一次“刷新 Topic 权威计数后从当前顺序 start 重建”，再次不一致保留错误。Query 拥有 pages、cursor、取消和普通分页单飞；Controller 的 replace-window 命令只以 generation 实现 latest-command-wins，不保存 Promise 或恢复闭包。UI 保持左侧三种内容筛选和右侧顺序菜单；末窗结算当次显示弱化边界文字，最终回复和系统事件无多余底边。楼层定位保持顺序；编辑/删除刷新真实窗口，新回复先确认尾窗，正序再以真实实体定位。写成功只以 `refetchType: none` 标记精确 Query stale。 |
+| 精确失败 oracle | 来源测试固定 NodeSeek `[5, 4]` 且不出现 `[2, 3]`、Discourse 只请求 stream 尾部及相邻更早 IDs、错误 hydration 失败、妖火把主题页“更多回帖(30)”、引用楼层 `tofloor=555` 与回复动作楼层 `reply=558` 区分，倒序请求 `[tofloor=558, page=2]`、正序请求 `[tofloor=1, page=18]` 并确认真实页码和边缘楼层、V2EX 集合短于权威计数时失败；Query/Gateway 测试固定 order key 隔离、`order + position` 转发和脱敏 diagnostics。Controller 测试固定首次 Loading、尾窗/相邻窗、完整 V2EX 零额外 transport、一次 stale-count 刷新、边缘失败、latest-command-wins、整帖与写后重建；Topic UI 测试固定筛选/查找组合、顺序菜单、字号、立即边界、边缘重试及最终项无分割线；actions 测试固定写后 `refetchType: none`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter/gateway/Query 固定来源协议和 cache 隔离，Controller/RNTL 固定窗口状态机与交互；匹配 revision/APK 的五站只读 Live 才能证明真实尾窗。 |
+| 自动重试边界 | previous/next 失败后，所属 start/end 边缘的自动入口保持关闭，只能显式重试原 cursor；对侧仍可扩窗且不得清掉旧错误。同一 Reply Query 有分页 pending 时，另一普通分页零 transport；结算后才可读取相邻窗口。replace-window 命令不等待分页队列，直接取消旧 Query 并以 generation 丢弃旧结果。 |
+| Replay 或真实验收路径 | 保留当前登录态，在 NodeSeek、linux.do、妖火、小隐寺各选一个多页主题，在 V2EX 选一个多回复主题；确认左侧三种筛选与右侧排序菜单，切换倒序后首条必须等于原站最新回复，向下只出现相邻更早窗口，末窗当次显示“已到最早回复”，再切回正序恢复头窗。不得发送回复、编辑、删除、互动或清理登录态。 |
+| 负向验证方式 | NodeSeek 出现 `[2, 3]` 追页、部分集合在 UI/Controller 本地反转、正倒序共用 Query key、Discourse 猜尾页或接受错误 hydration、V2EX 集合与权威计数不等、妖火未确认页码/末楼或仍有 newer cursor、计数竞态或重复 cursor 仍应用结果、相邻窗口失败只弹 toast、Controller 恢复 Promise/队列，或写后 invalidate 启动竞争 refetch，编号测试必须失败。 |
+| 明确不覆盖范围 | 不引入 V2EX PAT 或 API 2.0 Token 分页，不新增全局顺序偏好或持久化迁移，不并发预抓全部历史，也不通过真实写操作制造尾楼。 |
 
 ## `REG-NODESEEK-004` NodeSeek 直连通道卡死只能靠重启 App 恢复
 
@@ -4824,14 +4870,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `MORE-01`；共享 `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/03`、`USER-01`、`ACCOUNT-01/02` 网络 seam |
-| 用户症状 | 为恢复 NodeSeek 或 linux.do 读取而全局 `cancelAll/evictAll`，会连带取消其他站读取，甚至让已提交写操作的结果变得不确定。 |
+| 用户症状 | 为恢复 NodeSeek 或 linux.do 读取而全局 `cancelAll` 或替换只有后续 client 才能看到的 pool，会连带取消其他站读取，或显示恢复成功但既有 client 仍复用故障连接。 |
 | 触发条件 | 运行中 Dispatcher 同时有目标站和无关站点、目标站读取和写入，然后调用 `recoverForumReadChannel('nodeseek' | 'linuxdo')`。 |
-| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的共享 CookieJar/ProxySelector/Dispatcher、可替换 forum `ConnectionPool`、固定 media pool 与受控域名/方法过滤；`src/platform/network/networkProxy.ts` 按来源 single-flight。 |
-| 必须保持的行为 | 原生层只接受 `nodeseek/linuxdo`，不接受任意 Host；只取消目标根域或子域的 queued/running `GET/HEAD`。无关站和 `POST/PUT/PATCH/DELETE` 继续；只替换 forum pool 并增加 generation，CookieJar、ProxySelector、Dispatcher 和 media pool 保持。代理切换仍按已有安全边界全局取消并清两个 pool。 |
-| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.kt` 使用真实 OkHttp Dispatcher 同时排队目标 GET、目标 POST 和无关 GET，固定取消计数、对象所有权与 pool 世代；`src/platform/network/networkProxy.test.ts` 固定 JS 同站 single-flight/跨站隔离。 |
+| 根因 seam | `plugins/withNetworkProxyModule.js` 生成的共享 CookieJar/ProxySelector/Dispatcher/forum `ConnectionPool`、独立 media pool 与受控域名/方法过滤；`src/platform/network/networkProxy.ts` 按来源 single-flight。 |
+| 必须保持的行为 | 原生层只接受 `nodeseek/linuxdo`，不接受任意 Host；只取消目标根域或子域的 queued/running `GET/HEAD`。无关站和 `POST/PUT/PATCH/DELETE` 继续；既有和后续 client 保持同一个 forum pool，并在恢复时清空其空闲连接、增加 generation，CookieJar、ProxySelector、Dispatcher 和 media pool 身份保持。代理切换仍按已有安全边界全局取消并清两个 pool。 |
+| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.kt` 使用真实 OkHttp Dispatcher 同时排队目标 GET、目标 POST 和无关 GET，固定取消计数、对象所有权，并要求恢复前后的 client 持有同一 forum pool；`src/platform/network/networkProxy.test.ts` 固定 JS 同站 single-flight/跨站隔离，`tests/tooling/release-packaging.test.ts` 固定 forum pool 恢复与代理 transition 的两个 `evictAll()` 调用点。 |
 | 最低可靠自动测试层 | `UNIT_PASS + STATIC_PASS`：Kotlin JUnit 执行真实 Dispatcher/Call 取消，JS 测试固定 bridge 协调；fresh prebuild 与 Kotlin 编译证明生成接线。 |
 | Replay 或真实验收路径 | 在匹配 APK 上只读同时打开目标站与另一站读取，自然触发恢复后确认无关请求结算；不用真实写操作制造并发。 |
-| 负向验证方式 | 改回 `dispatcher.cancelAll()`、放开任意 Host/写方法，共用可替换 media pool，或重建 CookieJar/ProxySelector/Dispatcher，Kotlin/JS 编号测试必须失败。 |
+| 负向验证方式 | 改回 `dispatcher.cancelAll()`、放开任意 Host/写方法、替换只有新 client 可见的 forum pool、共用 media pool，或重建 CookieJar/ProxySelector/Dispatcher，Kotlin/JS 编号测试必须失败。 |
 | 明确不覆盖范围 | 不保证第三方连接恢复后必然成功，不为每站建立独立 Dispatcher/client，不重放写请求。 |
 
 ## `REG-FEED-014` 一个慢来源拖住聚合首页与账号屏障
@@ -4842,8 +4888,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 首页“全部”、分类或启动账号对账一直 Loading，实际只有一个站请求不结算，其他站已可用。 |
 | 触发条件 | Feed/Categories 的一个并发来源或四站 Account probe 在 active time 5 秒内不结算。 |
 | 根因 seam | `src/sources/readAggregation.ts` 的唯一 `AGGREGATE_SOURCE_BUDGET_MS`、`src/sources/feedRead.ts` 的 child AbortController/cursor 边界和 `useAccountStatusController` 的批量 barrier。 |
-| 必须保持的行为 | 每来源独立计时并发；全部完成或 5 秒后只发布一次最终聚合。超时 Feed/Categories 记 partial，并始终保留该来源当前 page 与 opaque source cursor；全部只是普通非超时失败时仍不制造空 cursor。Account 超时站保持 pending/unknown，其他站完成；纯批量 probe 可取消，但被单站检查复用后，批量预算无论先后都只能停止等待，不能截短单站 watchdog。父 Query 取消必须整体抛取消，5 秒不计入 NS 通道恢复阈值。 |
-| 精确失败 oracle | `src/sources/feedRead.test.ts` 让 NS Feed/Categories 永不结算，固定 5 秒 partial、child abort、空成功来源与全来源超时时 current page/opaque V2EX cursor 仍可重试、普通全失败零空 cursor及父取消；`tests/ui/account/account-status-controller.test.tsx` 固定 barrier 结束、超时 pending、单站 probe 在批量前或批量后开始时均不被 5 秒预算取消。 |
+| 必须保持的行为 | 每来源独立计时并发；全部完成或 5 秒后只发布一次最终聚合。超时 Feed/Categories 记 partial，并始终保留该来源当前 page 与 opaque source cursor；已有聚合 cursor 的分页即使只靠旧 buffer 结算且所有本次来源读取普通失败，也必须保留每站原 page/cursor 供重试。只有没有输入 cursor、没有内容且全部普通失败时才不制造空 cursor。Account 超时站保持 pending/unknown，其他站完成；纯批量 probe 可取消，但被单站检查复用后，批量预算无论先后都只能停止等待，不能截短单站 watchdog。父 Query 取消必须整体抛取消，5 秒不计入 NS 通道恢复阈值。 |
+| 精确失败 oracle | `src/sources/feedRead.test.ts` 让 NS Feed/Categories 永不结算，固定 5 秒 partial、child abort、空成功来源与全来源超时时 current page/opaque V2EX cursor 仍可重试、普通首屏全失败零空 cursor及父取消；另用一个 buffered V2EX 条目结算分页、让五站新读取全部失败，要求五站 page 与 opaque V2EX cursor 完整保留。`tests/ui/account/account-status-controller.test.tsx` 固定 barrier 结束、超时 pending、单站 probe 在批量前或批量后开始时均不被 5 秒预算取消。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter 测试固定主动时钟/cursor，RNTL 固定真实 Account barrier 状态。 |
 | Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad`、`account-readonly.ad` 和 `logged-out-readonly.ad`，确认单站动态失败时其他来源可见、超时账号不被推断为退出。 |
 | 负向验证方式 | 改回无界 `allSettled`、用普通墙钟 `setTimeout`、把父取消降级为 partial、丢失失败 cursor、让超时账号变 anonymous，或用批量 signal 取消已有单站消费者，编号测试必须失败。 |
@@ -4870,13 +4916,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `FEED-01/02/04`、`TOPIC-01`、`SEARCH-01/02`、`USER-01` |
 | 用户症状 | 小隐寺公开 `/latest.json` 已返回主题，页面仍额外等待约 9.8 秒 `/site.json`；未登录时因此卡住并拖慢聚合首页。 |
-| 触发条件 | Feed/Topic 响应有 `category_id` 但没有完整分类字典，同时 `/site.json` 慢、失败或有并发调用。 |
+| 触发条件 | Feed/Topic 响应有 `category_id` 但没有完整分类字典，同时 `/site.json` 慢、失败、有并发调用，或发起 single-flight 的首个 Feed owner 随后被取消。 |
 | 根因 seam | `src/sources/xiaoyinsi/reader.ts` 的模块级公开 Category Map 和 pending Promise；Feed/Topic 的非阻塞分类投影与 Search/User 的完整回填边界。 |
-| 必须保持的行为 | Feed/Topic 立即使用响应内分类和缓存；缺失时后台发起或加入唯一 `/site.json`，当次未知保持“未分类”，后续读取使用缓存。`getXiaoyinsiCategories` 成功同样更新缓存；失败不缓存且下次可重试。未登录继续走公开读取。 |
-| 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 的 `REG-XIAOYINSI-024` 保持 `/site.json` pending 并要求 Feed 已结算；两个并发 Feed + Categories 只调用一次，成功后下次 Feed 使用缓存，首次失败后下次可重试。 |
+| 必须保持的行为 | Feed/Topic 立即使用响应内分类和缓存；缺失时后台发起或加入唯一 `/site.json`，当次未知保持“未分类”，后续读取使用缓存。共享 transport 不归首个调用方所有：任一 consumer 取消只能停止自己的等待，不能中止仍被 Categories/Search/User 使用的请求。`getXiaoyinsiCategories` 成功同样更新缓存；失败不缓存且下次可重试。未登录继续走公开读取。 |
+| 精确失败 oracle | `src/sources/xiaoyinsi/reader.test.ts` 的 `REG-XIAOYINSI-024` 保持 `/site.json` pending 并要求 Feed 已结算；两个并发 Feed + Categories 只调用一次，成功后下次 Feed 使用缓存，首次失败后下次可重试；首个 Feed owner abort 后底层 signal 仍存活，独立 Categories consumer 必须取得同一响应。 |
 | 最低可靠自动测试层 | `UNIT_PASS + DEVICE_REPLAY_PASS`：adapter Promise 时序测试固定非阻塞/single-flight，匹配未登录 APK 才能证明真实公开路径没有额外账号阻塞。 |
 | Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad`与隔离 AVD 的 `logged-out-readonly.ad`，打开小隐寺公开 Feed/Topic；允许首次暂时“未分类”，不要求登录或清主设备凭据。 |
-| 负向验证方式 | 让 Feed/Topic `await /site.json`、为每次读取各发一个分类请求、缓存 rejection 或把无凭据当错误，编号测试必须失败。 |
+| 负向验证方式 | 让 Feed/Topic `await /site.json`、为每次读取各发一个分类请求、把共享 transport 绑定首个 consumer signal、缓存 rejection 或把无凭据当错误，编号测试必须失败。 |
 | 明确不覆盖范围 | 不引入 TTL/外部缓存库，不为分类补全触发当前列表二次重排，不保证原站当天分类名不变。 |
 
 ## `REG-FEED-016` 首页来源 Tab 在 100% 下过高过宽
@@ -4929,14 +4975,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `TOPIC-02/03`；共享 inline sticker 布局 |
-| 用户症状 | 同一楼层中的 `xhj/003.png` 与 `xhj/015.gif` 在原站分别按约 `57×48`、`82×82` 显示，App 却把两张都压成约 `48×48`；过往按素材或目录修补后仍会在新贴纸上复发。 |
-| 触发条件 | HTML 没有 `width/height`，`knownForumStickerSourceDimensions()` 把整个 `/sticker/xhj/` 目录假定为 `48×48`，后续 inline `64px` 上限又会把真实的 `82×82` 再次缩小；同段后续出现大视频贴纸时，拆行逻辑还会让前面的图片贴纸回落为 textual inline image，最终被 Android TextView 行盒裁成约一行高。 |
+| 用户症状 | 同一楼层中的 `xhj/003.png` 与 `xhj/015.gif` 在原站分别按约 `57×48`、`82×82` 显示，App 却把两张都压成约 `48×48`；只有一个 HTML 尺寸轴时还会被画成正方形，阅读字号放大后又可能突破 100dp。过往按素材或目录修补后仍会在新贴纸上复发。 |
+| 触发条件 | HTML 缺少一个或两个 `width/height`，`knownForumStickerSourceDimensions()` 把整个 `/sticker/xhj/` 目录假定为 `48×48`，或缺失轴没有使用解码比例；自然尺寸先限到 100dp、随后再乘阅读字号也会越界。同段后续出现大视频贴纸时，拆行逻辑还会让前面的图片贴纸回落为 textual inline image，最终被 Android TextView 行盒裁成约一行高。 |
 | 根因 seam | `src/platform/media/inlineMedia.ts` 的混合段落分流与占位尺寸推导 → `src/features/topic/rendering/htmlElementModels.ts` 的 block/textual content model → `src/features/topic/rendering/contentMediaRenderers.tsx` 的 Expo Image `onLoad` → 已有 session-aware 有界自然尺寸缓存。 |
-| 必须保持的行为 | HTML 显式宽高仍优先；缺失时首帧可用保守占位，但图片解码成功后必须以完整 URL 的真实宽高和比例为最终事实，并在 100dp 安全上限内显示。同一媒体 session 再次渲染直接复用缓存尺寸，不能先回到小占位再跳变。混合段落拆出后续大贴纸时，前面的图片贴纸仍经专用 block renderer，不进入 TextView 行盒。目录 hint 只能优化首帧，不能覆盖真实尺寸；普通 inline emoji 继续按文本大小，显式尺寸和 sticker row 的既有约束不变。 |
-| 精确失败 oracle | `src/platform/media/inlineMedia.test.ts` 用第 14 楼同形结构固定图片贴纸在后续视频贴纸拆行时仍产出 `forum-sticker`，并固定未知 xhj 只使用中性占位；`tests/ui/topic/html-element-models.test.tsx` 固定 `forum-sticker` 为 block；`tests/ui/topic/topic-image-loading.test.tsx` 通过真实 Sticker renderer 依次提交 `57×48` PNG 与 `82×82` GIF 的 `onLoad`，要求最终 style 精确保持尺寸，并在卸载重建后首帧复用 `82×82`。三个任一回退都必须使编号测试失败。 |
+| 必须保持的行为 | HTML 显式宽高仍优先；缺失一个或两个尺寸轴时首帧可用保守占位，但图片解码成功后必须以完整 URL 的真实宽高和比例补齐缺失轴，并在应用阅读字号后的最终布局上保持 100dp 安全上限。同一媒体 session 再次渲染直接复用缓存尺寸，不能先回到小占位再跳变。混合段落拆出后续大贴纸时，前面的图片贴纸仍经专用 block renderer，不进入 TextView 行盒。目录 hint 只能优化首帧，不能覆盖真实尺寸；普通 inline emoji 继续按文本大小，双轴显式尺寸和 sticker row 的既有约束不变。 |
+| 精确失败 oracle | `src/platform/media/inlineMedia.test.ts` 用第 14 楼同形结构固定图片贴纸在后续视频贴纸拆行时仍产出 `forum-sticker`，并固定未知 xhj 只使用中性占位；同文件还要求 `57×48` 解码尺寸在仅有 width 或 height 时补齐另一轴，并要求 `82×82` 在 130% 阅读字号下最终仍不超过 100dp。`src/features/topic/rendering/htmlElementModels.test.ts` 固定 `forum-sticker` 为 block；`tests/ui/topic/topic-image-loading.test.tsx` 通过真实 Sticker renderer 依次提交 `57×48` PNG 与 `82×82` GIF 的 `onLoad`，要求最终 style 精确保持尺寸，并在卸载重建后首帧复用 `82×82`。三个任一回退都必须使编号测试失败。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：纯解析/布局测试固定路由与 fallback 边界，模型测试固定原生布局容器，RNTL 固定解码后和缓存重进，匹配 APK 固定真实 Expo Image 解码结果。 |
 | Replay 或真实验收路径 | 直达 `https://www.nodeseek.com/post-859086-2#14`，定位第 14 楼并与同设备原站对照 `xhj003`、`xhj015` 的比例和相对大小；按 Home 后恢复，确认尺寸不退回 `48×48`，GIF 继续播放。 |
-| 负向验证方式 | 恢复 `/sticker/xhj/ = 48×48`、按文件编号加表、忽略 `onLoad` 自然尺寸、让无显式尺寸的贴纸仍受 64dp 上限、把 `forum-sticker` 改回 textual、让拆行前缀绕过专用贴纸转换或把普通 emoji 一并放大，编号测试必须失败。 |
+| 负向验证方式 | 恢复 `/sticker/xhj/ = 48×48`、按文件编号加表、忽略 `onLoad` 自然尺寸、只缺一个轴时强制正方形、在阅读字号缩放前而非最终布局后执行 100dp 限制、让无显式尺寸的贴纸仍受 64dp 上限、把 `forum-sticker` 改回 textual、让拆行前缀绕过专用贴纸转换或把普通 emoji 一并放大，编号测试必须失败。 |
 | 明确不覆盖范围 | 不改变图片传输、Cronet、SVG、普通块图、预览或图片保存；不根据未知网页 CSS 猜任意缩放，只恢复素材固有比例并保留 100dp 安全边界。 |
 
 ## 待确认观察

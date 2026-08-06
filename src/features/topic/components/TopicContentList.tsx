@@ -4,10 +4,12 @@ import {
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type ViewStyle,
   Pressable,
   ScrollView,
   Text,
   TextInput,
+  useWindowDimensions,
   View
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
@@ -22,6 +24,7 @@ import { BookMarked, ChevronDown, ChevronRight, Drumstick, ThumbsDown, ThumbsUp,
 import type {
   Reply,
   ReplyLocationTarget,
+  ReplyOrder,
   SourceErrorInfo,
   Topic,
   TopicDetail,
@@ -45,8 +48,10 @@ import {
   type ReaderTheme
 } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { EmptyText } from '@/ui/controls/FeedbackStates';
+import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
@@ -242,6 +247,7 @@ export const TopicContentList = memo(function TopicContentList({
   const quoteStateVersion = state.quoteStateVersion;
   const replyComposerOpen = state.replyComposerOpen;
   const replyFilter = state.replyFilter;
+  const replyOrder = state.replyOrder;
   const sourceReplies = read.topicReplies;
   const replyHasPrevious = read.replyHasPrevious;
   const replyHasMore = read.replyHasMore;
@@ -251,9 +257,15 @@ export const TopicContentList = memo(function TopicContentList({
   const loadingMoreReplies = read.loadingMoreReplies;
   const loadingPreviousReplies = read.loadingPreviousReplies;
   const loadingQuotedFloors = read.loadingQuotedFloors;
+  const replyStartError = read.replyStartError;
+  const replyEndError = read.replyEndError;
+  const repliesError = read.repliesError;
+  const repliesLoading = read.repliesLoading;
+  const retryReplies = read.retryReplies;
   const unreadReplyCount = read.unreadReplyCount;
   const onCommentQueryChange = commands.view.changeCommentQuery;
   const onReplyFilterChange = commands.view.changeReplyFilter;
+  const onReplyOrderChange = commands.view.changeReplyOrder;
   const onLoadMoreReplies = read.loadMoreReplies;
   const onLoadPreviousReplies = read.loadPreviousReplies;
   const onLocateReply = read.locateReply;
@@ -266,7 +278,48 @@ export const TopicContentList = memo(function TopicContentList({
   const onYaohuoFavorite = actions.favoriteOnYaohuoSite;
   const onInteract = actions.interact;
   const onVotePoll = actions.votePoll;
+  const pendingReplyOrderScrollRef = useRef(false);
+  const changeReplyOrder = useCallback(
+    (order: ReplyOrder) => {
+      if (order === replyOrder) return;
+      pendingReplyOrderScrollRef.current = true;
+      onReplyOrderChange(order);
+    },
+    [onReplyOrderChange, replyOrder]
+  );
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const replyOrderMenuTriggerRef = useRef<View>(null);
+  const [replyOrderMenuOpen, setReplyOrderMenuOpen] = useState(false);
+  const [replyOrderMenuPlacement, setReplyOrderMenuPlacement] = useState<ViewStyle>({
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    minWidth: 104
+  });
+  const replyOrderLabel = replyOrder === 'newest' ? '倒序' : '正序';
+  const openReplyOrderMenu = useCallback(() => {
+    const trigger = replyOrderMenuTriggerRef.current;
+    setReplyOrderMenuOpen(true);
+    trigger?.measureInWindow((x, y, width, height) => {
+      const margin = 8;
+      const opensAbove = y + height / 2 > windowHeight / 2;
+      setReplyOrderMenuPlacement({
+        position: 'absolute',
+        right: Math.max(margin, windowWidth - x - width),
+        ...(opensAbove ? { bottom: Math.max(margin, windowHeight - y + 4) } : { top: y + height + 4 }),
+        minWidth: 104
+      });
+    });
+  }, [windowHeight, windowWidth]);
+  const closeReplyOrderMenu = useCallback(() => setReplyOrderMenuOpen(false), []);
+  const selectReplyOrder = useCallback(
+    (order: ReplyOrder) => {
+      setReplyOrderMenuOpen(false);
+      changeReplyOrder(order);
+    },
+    [changeReplyOrder]
+  );
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const mediaContext = useMemo(
     () => ({
@@ -303,13 +356,39 @@ export const TopicContentList = memo(function TopicContentList({
     replyFilter === 'author' || replyFilter === 'images' || replyHighlightQuery.trim()
       ? replies.length
       : replyTotalCount;
+  const renderReplyErrorState = useCallback(
+    (error: SourceErrorInfo | null, edge?: 'start' | 'end') =>
+      error ? (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>{error.message}</Text>
+          {error.retryable === false ? null : <AppButton label="重试评论" onPress={() => void retryReplies(edge)} />}
+        </View>
+      ) : null,
+    [retryReplies, styles]
+  );
   const listExtraData = useMemo(
     () => ({
       actionBusy,
       quoteStateVersion,
-      replyComposerOpen
+      replyComposerOpen,
+      replyEndError,
+      replyOrder,
+      replyOrderMenuOpen,
+      replyStartError,
+      repliesError,
+      repliesLoading
     }),
-    [actionBusy, quoteStateVersion, replyComposerOpen]
+    [
+      actionBusy,
+      quoteStateVersion,
+      repliesError,
+      repliesLoading,
+      replyComposerOpen,
+      replyEndError,
+      replyOrder,
+      replyOrderMenuOpen,
+      replyStartError
+    ]
   );
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
@@ -504,6 +583,9 @@ export const TopicContentList = memo(function TopicContentList({
       repliesByFloor
     ]
   );
+  const replyBoundaryConfirmed =
+    canShowReplies && sourceReplies.length > 0 && !replyHasMore && !repliesLoading && !repliesError;
+  const terminalReplyItemKey = replyBoundaryConfirmed ? replyItems.at(-1)?.key : undefined;
   const replyWindowIndexByKey = useMemo(
     () => new Map(replies.map((reply, index) => [getReplyKey(reply), index])),
     [replies]
@@ -580,6 +662,15 @@ export const TopicContentList = memo(function TopicContentList({
     ],
     [replyListItems, topicContentItems, topicPostludeVisible]
   );
+  useEffect(() => {
+    if (!pendingReplyOrderScrollRef.current || repliesLoading || repliesError) return;
+    const firstReplyIndex = topicListItems.findIndex(
+      (listItem) => listItem.type === 'reply' || listItem.type === 'replyStart'
+    );
+    if (firstReplyIndex < 0) return;
+    pendingReplyOrderScrollRef.current = false;
+    topicScrollRef.current?.scrollToIndex({ animated: true, index: firstReplyIndex, viewPosition: 0.2 });
+  }, [repliesError, repliesLoading, topicListItems, topicScrollRef]);
   const [localTargetReply, setLocalTargetReply] = useState<{ request: number; target: ReplyLocationTarget } | null>(
     null
   );
@@ -709,10 +800,10 @@ export const TopicContentList = memo(function TopicContentList({
   }, [acceptedAnswerListIndex, topicScrollRef]);
   const windowStartWithinPrefetchRef = useRef(false);
   const loadWindowStart = useCallback(() => {
-    if (!replyHasPrevious || loadingPreviousReplies || !autoLoadRepliesArmedRef.current) return;
+    if (replyStartError || !replyHasPrevious || loadingPreviousReplies || !autoLoadRepliesArmedRef.current) return;
     autoLoadRepliesArmedRef.current = false;
     void onLoadPreviousReplies();
-  }, [loadingPreviousReplies, onLoadPreviousReplies, replyHasPrevious]);
+  }, [loadingPreviousReplies, onLoadPreviousReplies, replyHasPrevious, replyStartError]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
     if (windowStartWithinPrefetchRef.current) loadWindowStart();
@@ -740,10 +831,10 @@ export const TopicContentList = memo(function TopicContentList({
     [loadWindowStart, replyWindowIndexByKey]
   );
   const handleReplyEndReached = useCallback(() => {
-    if (!replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) return;
+    if (replyEndError || !replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) return;
     autoLoadRepliesArmedRef.current = false;
     void onLoadMoreReplies();
-  }, [loadingMoreReplies, onLoadMoreReplies, replyHasMore]);
+  }, [loadingMoreReplies, onLoadMoreReplies, replyEndError, replyHasMore]);
   const requestWindowStartLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = false;
     void onLoadPreviousReplies();
@@ -1335,16 +1426,54 @@ export const TopicContentList = memo(function TopicContentList({
                 />
               ) : null}
             </View>
-            <PillRail
-              variant="subtabs"
-              items={[
-                { value: 'all', label: '全部' },
-                { value: 'author', label: '只看楼主' },
-                { value: 'images', label: '只看带图' }
-              ]}
-              value={replyFilter}
-              onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
-            />
+            <View style={styles.replySelectionRow}>
+              <View style={styles.replyFilterRailSlot}>
+                <PillRail
+                  variant="subtabs"
+                  items={[
+                    { value: 'all', label: '全部' },
+                    { value: 'author', label: '只看楼主' },
+                    { value: 'images', label: '只看带图' }
+                  ]}
+                  value={replyFilter}
+                  onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
+                />
+              </View>
+              <Pressable
+                ref={replyOrderMenuTriggerRef}
+                collapsable={false}
+                accessibilityRole="button"
+                accessibilityLabel={`回复排序，当前${replyOrderLabel}`}
+                accessibilityState={{ expanded: replyOrderMenuOpen }}
+                hitSlop={TOUCH_HIT_SLOP}
+                android_ripple={androidRipple(theme.primarySoft)}
+                style={({ pressed }) => [styles.replyOrderButton, pressed && styles.replyOrderButtonPressed]}
+                onPress={openReplyOrderMenu}
+              >
+                <Text style={styles.replyOrderButtonText}>{replyOrderLabel}</Text>
+                <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
+              </Pressable>
+              <PopupMenu
+                accessibilityLabel="关闭回复排序菜单"
+                placementStyle={replyOrderMenuPlacement}
+                visible={replyOrderMenuOpen}
+                onRequestClose={closeReplyOrderMenu}
+              >
+                <PopupMenuItem
+                  compact
+                  label="正序"
+                  selected={replyOrder === 'oldest'}
+                  onPress={() => selectReplyOrder('oldest')}
+                />
+                <PopupMenuItem
+                  compact
+                  label="倒序"
+                  last
+                  selected={replyOrder === 'newest'}
+                  onPress={() => selectReplyOrder('newest')}
+                />
+              </PopupMenu>
+            </View>
             {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
             <View style={styles.searchRow}>
               <TextInput
@@ -1357,6 +1486,7 @@ export const TopicContentList = memo(function TopicContentList({
               />
               {commentQuery ? <IconButton icon={X} label="清空查找" onPress={() => onCommentQueryChange('')} /> : null}
             </View>
+            {sourceReplies.length > 0 ? renderReplyErrorState(repliesError) : null}
           </View>
         );
       }
@@ -1364,11 +1494,17 @@ export const TopicContentList = memo(function TopicContentList({
       if (listItem.type === 'replyWindowStart') {
         return renderTopicListItemFrame(
           <View style={[styles.topicFooter, topicColumnStyle]}>
-            <AppButton
-              label={loadingPreviousReplies ? '正在加载...' : '加载更早回复'}
-              disabled={loadingPreviousReplies}
-              onPress={requestWindowStartLoad}
-            />
+            {replyStartError ? (
+              renderReplyErrorState(replyStartError, 'start')
+            ) : (
+              <AppButton
+                label={
+                  loadingPreviousReplies ? '正在加载...' : replyOrder === 'newest' ? '加载更新回复' : '加载更早回复'
+                }
+                disabled={loadingPreviousReplies}
+                onPress={requestWindowStartLoad}
+              />
+            )}
           </View>
         );
       }
@@ -1376,7 +1512,13 @@ export const TopicContentList = memo(function TopicContentList({
       if (listItem.type === 'emptyReplies') {
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
-            <EmptyText text="暂无回复" />
+            {repliesLoading ? (
+              <LoadingState text={replyOrder === 'newest' ? '正在读取最新回复...' : '正在读取回复...'} />
+            ) : repliesError ? (
+              renderReplyErrorState(repliesError)
+            ) : (
+              <EmptyText text="暂无回复" />
+            )}
           </View>
         );
       }
@@ -1422,6 +1564,7 @@ export const TopicContentList = memo(function TopicContentList({
             topicStateKey={detailTopicStateKey}
             query={replyHighlightQuery}
             isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
+            isTerminal={listItem.key === terminalReplyItemKey}
             source={itemSource}
             onOpenUser={onOpenUser}
           />
@@ -1431,6 +1574,7 @@ export const TopicContentList = memo(function TopicContentList({
     [
       actionBusy,
       canWrite,
+      closeReplyOrderMenu,
       commentQuery,
       contentWidth,
       decisionFor,
@@ -1450,6 +1594,7 @@ export const TopicContentList = memo(function TopicContentList({
       onEditReply,
       onInteract,
       onOpenTopic,
+      openReplyOrderMenu,
       markReplyQuoteContentLayout,
       onReplyComposerOpenChange,
       onReplyFilterChange,
@@ -1466,9 +1611,20 @@ export const TopicContentList = memo(function TopicContentList({
       replyComposerOpen,
       replyHighlightQuery,
       replyFilter,
+      replyOrderLabel,
+      replyOrder,
+      replyOrderMenuOpen,
+      replyOrderMenuPlacement,
+      renderReplyErrorState,
+      repliesError,
+      replyStartError,
       repliesByFloor,
       replyDisplayCount,
+      repliesLoading,
+      selectReplyOrder,
+      sourceReplies.length,
       styles,
+      terminalReplyItemKey,
       theme,
       togglePollSelection,
       topicBaseUrl,
@@ -1608,7 +1764,13 @@ export const TopicContentList = memo(function TopicContentList({
           maintainVisibleContentPosition={{ disabled: !maintainPreviousWindowPosition }}
           ListHeaderComponent={listHeader}
           ListFooterComponent={
-            canShowReplies && replyHasMore ? (
+            canShowReplies && replyEndError ? (
+              <View style={styles.topicListItemFrame}>
+                <View style={[styles.topicFooter, topicColumnStyle]}>
+                  {renderReplyErrorState(replyEndError, 'end')}
+                </View>
+              </View>
+            ) : canShowReplies && replyHasMore ? (
               <View style={styles.topicListItemFrame}>
                 <View style={[styles.topicFooter, topicColumnStyle]}>
                   <AppButton
@@ -1617,6 +1779,16 @@ export const TopicContentList = memo(function TopicContentList({
                     onPress={requestWindowEndLoad}
                   />
                 </View>
+              </View>
+            ) : replyBoundaryConfirmed ? (
+              <View style={styles.topicListItemFrame}>
+                <Text
+                  accessible
+                  accessibilityLabel={replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
+                  style={[styles.replyEndMarker, topicColumnStyle]}
+                >
+                  {replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
+                </Text>
               </View>
             ) : null
           }

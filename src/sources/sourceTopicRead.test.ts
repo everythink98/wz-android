@@ -26,7 +26,7 @@ describe('source topic read', () => {
     const fetcher = vi.fn(async () => new Response(`<script>${payload}</script>`));
 
     await getTopic({ source: 'nodeseek', id: '101', fetcher });
-    await getReplies({ source: 'nodeseek', id: '101', page: 1, fetcher });
+    await getReplies({ source: 'nodeseek', id: '101', order: 'oldest', position: { kind: 'start' }, fetcher });
 
     const calls = fetcher.mock.calls as unknown as [string, RequestInit?][];
     for (const [, init] of calls) {

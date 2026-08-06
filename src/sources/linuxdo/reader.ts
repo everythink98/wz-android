@@ -11,6 +11,8 @@ import type {
   FeedResponse,
   Reply,
   RepliesResponse,
+  ReplyOrder,
+  ReplyWindowPosition,
   Topic,
   TopicDetail
 } from '@/domain/forum/models';
@@ -34,12 +36,16 @@ import {
   discourseOriginalPoster,
   discoursePolls,
   discoursePostFields,
+  discourseRepliesInStreamOrder,
   discourseReplyWindow,
+  discourseStreamReplyWindow,
   discourseTopicFields,
-  discourseUsersById
+  discourseUsersById,
+  discourseVisiblePostIds
 } from '@/sources/discourse/model';
 import { discourseQuoteMetadata } from '@/sources/discourse/content';
 import { sanitizeLinuxDoContentHtml } from './parser';
+import { orientReplyWindow } from '@/sources/replyWindows';
 
 export const LIST_PAGE_SIZE = 30;
 
@@ -341,9 +347,9 @@ export async function fetchLinuxDoJson<T>(
     try {
       data = JSON.parse(text);
     } catch {
-      if (!response.ok) {
-        const bodyMessage = textContentFromHtml(text);
-        const accessRequirement = accessRequirementFromText(bodyMessage);
+      const bodyMessage = textContentFromHtml(text);
+      const accessRequirement = accessRequirementFromText(bodyMessage);
+      if (!response.ok || accessRequirement) {
         const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
         const error = new Error(message);
         Object.assign(error, {
@@ -582,29 +588,28 @@ async function fetchPosts(id: string, postIds: unknown[], options: LinuxDoOption
 export async function getLinuxDoReplies(
   id: string,
   options: LinuxDoOptions & {
-    page?: number;
+    order: ReplyOrder;
+    position: ReplyWindowPosition;
     limit?: number;
-    offset?: number | null;
-    targetFloor?: number;
-  } = {}
+  }
 ): Promise<RepliesResponse> {
   options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
-  const page = options.page || 1;
   const limit = options.limit || 30;
-  if (options.targetFloor !== undefined && (!Number.isSafeInteger(options.targetFloor) || options.targetFloor <= 0)) {
-    throw new Error('linux.do 目标楼层不正确');
-  }
-  if (options.targetFloor) {
-    const window = discourseReplyWindow(await topicData(id, options, options.targetFloor), limit);
+  if (options.position.kind === 'target') {
+    const targetFloor = options.position.target.floor;
+    if (!Number.isSafeInteger(targetFloor) || targetFloor! <= 0) {
+      throw new Error('linux.do 目标楼层不正确');
+    }
+    const window = discourseReplyWindow(await topicData(id, options, targetFloor), limit);
     const items = await hydrateEditableReplyContent(
       window.posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
       options
     );
-    if (!items.some((reply) => reply.floor === options.targetFloor)) {
+    if (!items.some((reply) => reply.floor === targetFloor)) {
       throw new Error('linux.do 目标楼层未找到');
     }
     const { posts, ...windowState } = window;
-    return annotateSourceDiagnosticSummary(
+    const chronological = annotateSourceDiagnosticSummary(
       { items, ...windowState },
       {
         parserVariant: 'discourse-near-replies',
@@ -614,20 +619,18 @@ export async function getLinuxDoReplies(
         missingFloorCount: posts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number)).length
       }
     );
+    return orientReplyWindow(chronological, options.order);
   }
   const streamState = topicStreamState(await topicData(id, options));
   const stream = streamState.stream;
-  const firstPageReplyCount = streamState.embeddedPostCount
-    ? Math.min(limit, Math.max(streamState.embeddedPostCount - 1, 0))
-    : limit;
-  const previousReplyCount =
-    page > 1 ? (typeof options.offset === 'number' ? options.offset : firstPageReplyCount + (page - 2) * limit) : 0;
-  const previousOffset = previousReplyCount > 0 ? Math.max(0, previousReplyCount - limit) : null;
-  const start = 1 + previousReplyCount;
-  const postIds = stream.slice(start, start + limit);
+  const { postIds, ...windowState } = discourseStreamReplyWindow(stream, {
+    limit,
+    order: options.order,
+    position: options.position
+  });
   if (!postIds.length) {
     return annotateSourceDiagnosticSummary(
-      { items: [], hasMore: false, nextPage: null },
+      { items: [], ...windowState },
       {
         parserVariant: 'discourse-replies',
         candidateCount: 0,
@@ -638,21 +641,15 @@ export async function getLinuxDoReplies(
     );
   }
   const posts = await fetchPosts(id, postIds, options);
-  const hasMore = stream.length > start + limit;
-  const items = await hydrateEditableReplyContent(
+  const visiblePostIds = discourseVisiblePostIds(posts, postIds);
+  const normalizedItems = await hydrateEditableReplyContent(
     posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
     options
   );
+  const items = discourseRepliesInStreamOrder(normalizedItems, visiblePostIds, options.order);
   const result = {
     items,
-    currentPage: page,
-    currentOffset: previousReplyCount,
-    previousPage: previousOffset === null ? null : Math.floor(previousOffset / limit) + 1,
-    previousOffset,
-    hasMore,
-    nextPage: hasMore ? page + 1 : null,
-    nextOffset: hasMore ? previousReplyCount + postIds.length : null,
-    totalCount: Math.max(0, stream.length - 1)
+    ...windowState
   };
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'discourse-replies',
@@ -660,7 +657,10 @@ export async function getLinuxDoReplies(
     validCount: items.length,
     droppedCount: Math.max(0, postIds.length - items.length),
     missingFloorCount: posts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number)).length,
-    hasRepeatedCursor: result.nextPage === page && result.nextOffset === options.offset
+    hasRepeatedCursor:
+      options.position.kind === 'cursor' &&
+      result.nextPage === options.position.page &&
+      result.nextOffset === options.position.offset
   });
 }
 

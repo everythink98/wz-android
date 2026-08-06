@@ -3,7 +3,7 @@ import { createReplyTextIndexForQuery, filterRepliesByQuery } from './model/repl
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from './model/topicDerivedData';
-import type { Reply, Topic, TopicDetail } from '@/domain/forum/models';
+import type { Reply, ReplyOrder, Topic, TopicDetail } from '@/domain/forum/models';
 
 export function replyContentAfterComposerClose(content: string, replyEditTarget: ReplyEditTarget | null) {
   return replyEditTarget ? '' : content;
@@ -45,6 +45,7 @@ export function filterTopicSessionReplies({
 
 export function useTopicSessionController({ notify, topic }: { notify: (message: string) => void; topic: Topic }) {
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
+  const [replyOrder, setReplyOrder] = useState<ReplyOrder>('oldest');
   const [replyContent, setReplyContent] = useState('');
   const [replyFace, setReplyFace] = useState('');
   const [commentQuery, setCommentQuery] = useState('');
@@ -146,6 +147,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
       replyEditTarget,
       replyFace,
       replyFilter,
+      replyOrder,
       replyTarget,
       selectedTopic: topic
     },
@@ -170,6 +172,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
       view: {
         changeCommentQuery: setCommentQuery,
         changeReplyFilter: setReplyFilter,
+        changeReplyOrder: setReplyOrder,
         rememberScrollY
       }
     }

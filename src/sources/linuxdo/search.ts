@@ -257,6 +257,13 @@ async function searchLinuxDoGoogle(
   });
 }
 
+function linuxDoSearchSessionExpired(error: unknown) {
+  if (!isRecord(error)) return false;
+  return (
+    Number(error.status) === 401 || (isRecord(error.accessRequirement) && error.accessRequirement.type === 'login')
+  );
+}
+
 export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions = {}): Promise<SearchResponse> {
   options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const limit = options.limit || 30;
@@ -277,47 +284,54 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   let searchHasMore = false;
   let candidateCount = 0;
   let droppedCount = 0;
-  while (collected.length < needed) {
-    const data = await fetchLinuxDoJson<Record<string, unknown>>(
-      '/search',
-      {
-        q: cleanQuery,
-        page: searchPage
-      },
-      options,
-      { referer: searchReferer, csrfToken }
-    );
-    const result = await topicsFromLinuxDoSearchData(data, options);
-    const pageSummary = sourceDiagnosticSummary(result);
-    candidateCount += pageSummary?.candidateCount || result.items.length;
-    droppedCount += pageSummary?.droppedCount || 0;
-    if (!result.items.length) {
-      searchHasMore = false;
-      break;
+  try {
+    while (collected.length < needed) {
+      const data = await fetchLinuxDoJson<Record<string, unknown>>(
+        '/search',
+        {
+          q: cleanQuery,
+          page: searchPage
+        },
+        options,
+        { referer: searchReferer, csrfToken }
+      );
+      const result = await topicsFromLinuxDoSearchData(data, options);
+      const pageSummary = sourceDiagnosticSummary(result);
+      candidateCount += pageSummary?.candidateCount || result.items.length;
+      droppedCount += pageSummary?.droppedCount || 0;
+      if (!result.items.length) {
+        searchHasMore = false;
+        break;
+      }
+      collected.push(...result.items);
+      searchHasMore = result.hasMore;
+      if (!result.hasMore) {
+        break;
+      }
+      searchPage += 1;
     }
-    collected.push(...result.items);
-    searchHasMore = result.hasMore;
-    if (!result.hasMore) {
-      break;
+    const items = collected.slice(firstOffset, firstOffset + limit);
+    const hasMore = collected.length > firstOffset + limit || searchHasMore;
+    const result = {
+      items,
+      errors: {},
+      hasMore,
+      nextPage: hasMore ? page + 1 : null
+    };
+    return annotateSourceDiagnosticSummary(result, {
+      parserVariant: 'discourse-search',
+      candidateCount,
+      validCount: items.length,
+      droppedCount,
+      isExpectedEmpty: candidateCount === 0,
+      hasRepeatedCursor: result.nextPage === page
+    });
+  } catch (error) {
+    if (linuxDoSearchSessionExpired(error)) {
+      return searchLinuxDoGoogle(cleanQuery, options);
     }
-    searchPage += 1;
+    throw error;
   }
-  const items = collected.slice(firstOffset, firstOffset + limit);
-  const hasMore = collected.length > firstOffset + limit || searchHasMore;
-  const result = {
-    items,
-    errors: {},
-    hasMore,
-    nextPage: hasMore ? page + 1 : null
-  };
-  return annotateSourceDiagnosticSummary(result, {
-    parserVariant: 'discourse-search',
-    candidateCount,
-    validCount: items.length,
-    droppedCount,
-    isExpectedEmpty: candidateCount === 0,
-    hasRepeatedCursor: result.nextPage === page
-  });
 }
 
 export async function searchLinuxDoSemantic(query: string, options: LinuxDoOptions = {}): Promise<SearchResponse> {

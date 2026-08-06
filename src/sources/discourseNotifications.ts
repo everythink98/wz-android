@@ -434,8 +434,8 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
           const page = await getDiscourseSourceReplies(source, item.target.conversationId, {
             ...readOptions(options),
             limit: 30,
-            page: nextPage,
-            offset: nextOffset
+            order: 'oldest',
+            position: { kind: 'cursor', page: nextPage, offset: nextOffset ?? null }
           });
           replies.push(...page.items);
           if (!page.hasMore || !page.nextPage) break;

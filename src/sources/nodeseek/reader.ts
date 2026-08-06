@@ -14,6 +14,8 @@ import type {
   NodeSeekFeedFilter,
   RepliesResponse,
   ReplyLocationTarget,
+  ReplyOrder,
+  ReplyWindowPosition,
   SearchResponse,
   Topic,
   TopicPoll,
@@ -22,6 +24,7 @@ import type {
 } from '@/domain/forum/models';
 import { elementText, isRecord, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
+import { replyCountRefreshRequiredError } from '@/sources/sourceErrors';
 import {
   NODESEEK_BASE_URL,
   NODESEEK_FLOORS_PER_PAGE,
@@ -33,6 +36,7 @@ import {
   nodeSeekTopicPagePath,
   nodeSeekTopicUrl,
   optionalInteger,
+  resolvedNodeSeekPostPage,
   withNodeSeekReplyPagination
 } from './protocol';
 import {
@@ -67,6 +71,7 @@ import {
 } from './userParser';
 import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo, stripLoadedNodeSeekVoteMarkers } from './polls';
 import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from '@/sources/diagnostics';
+import { emptyReplyWindow, orientReplyWindow } from '@/sources/replyWindows';
 
 const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
@@ -144,7 +149,7 @@ function isNodeSeekCloudflareError(error: unknown) {
   return isRecord(error) && error.reason === 'cloudflare';
 }
 
-async function fetchNodeSeekText(
+async function fetchNodeSeekTextResult(
   path: string,
   options: NodeSeekOptions = {},
   requestHeaders: Record<string, string> = {}
@@ -174,12 +179,20 @@ async function fetchNodeSeekText(
     throw new Error(`HTTP ${response.status}`);
   }
   if (!response.ok && (response.status === 403 || response.status === 404) && accessRequirementFromText(text)) {
-    return text;
+    return { responseUrl: response.url, text };
   }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return text;
+  return { responseUrl: response.url, text };
+}
+
+async function fetchNodeSeekText(
+  path: string,
+  options: NodeSeekOptions = {},
+  requestHeaders: Record<string, string> = {}
+) {
+  return (await fetchNodeSeekTextResult(path, options, requestHeaders)).text;
 }
 
 function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
@@ -314,14 +327,17 @@ async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions
 }
 
 async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
-  const html = await fetchTopicHtml(id, page, options);
+  const { responseUrl, text: html } = await fetchNodeSeekTextResult(
+    nodeSeekTopicPagePath(id, page),
+    nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
+  );
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER, page);
   if (!postData && !rendered) {
     throw new Error('NodeSeek 主题解析失败');
   }
-  return { html, postData, rendered };
+  return { html, postData, rendered, resolvedPage: resolvedNodeSeekPostPage(html, id, responseUrl) };
 }
 
 export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
@@ -400,7 +416,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   throw new Error('NodeSeek 主题解析失败');
 }
 
-type NodeSeekRepliesOptions = NodeSeekOptions & {
+type NodeSeekChronologicalRepliesOptions = NodeSeekOptions & {
   page?: number;
   limit?: number;
   offset?: number | null;
@@ -409,9 +425,32 @@ type NodeSeekRepliesOptions = NodeSeekOptions & {
   targetReply?: ReplyLocationTarget;
 };
 
+type NodeSeekChronologicalReplies = RepliesResponse & {
+  confirmedFloors?: number[];
+  resolvedPageConfirmed?: boolean;
+};
+
+function hasExactNodeSeekPage(result: NodeSeekChronologicalReplies, replyCount: number | undefined, page: number) {
+  if (!Number.isSafeInteger(replyCount) || replyCount! < 0) return null;
+  const firstFloor = (page - 1) * NODESEEK_FLOORS_PER_PAGE + 1;
+  const lastFloor = Math.min(replyCount!, page * NODESEEK_FLOORS_PER_PAGE);
+  const expectedLength = Math.max(0, lastFloor - firstFloor + 1);
+  const confirmedFloors = new Set(result.confirmedFloors || []);
+  const itemFloors = new Set(
+    result.items.map((reply) => reply.floor).filter((floor): floor is number => typeof floor === 'number')
+  );
+  return (
+    result.currentPage === page &&
+    result.resolvedPageConfirmed === true &&
+    result.items.length === expectedLength &&
+    confirmedFloors.size === expectedLength &&
+    itemFloors.size === expectedLength &&
+    [...confirmedFloors].every((floor) => floor >= firstFloor && floor <= lastFloor && itemFloors.has(floor))
+  );
+}
 async function fillNodeSeekRepliesLimit(
   id: string,
-  options: NodeSeekRepliesOptions,
+  options: NodeSeekChronologicalRepliesOptions,
   result: RepliesResponse,
   limit: number
 ): Promise<RepliesResponse> {
@@ -423,7 +462,7 @@ async function fillNodeSeekRepliesLimit(
   if (result.nextPage === page && result.nextOffset === offset) {
     return result;
   }
-  const extra = await getNodeSeekReplies(id, {
+  const extra = await getNodeSeekRepliesChronological(id, {
     ...options,
     page: result.nextPage,
     offset: result.nextOffset,
@@ -475,7 +514,10 @@ function matchesNodeSeekReplyLocation(reply: RepliesResponse['items'][number], t
   return commentId ? reply.commentId === commentId : reply.floor === positiveReplyLocation(target.floor);
 }
 
-export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOptions): Promise<RepliesResponse> {
+async function getNodeSeekRepliesChronological(
+  id: string,
+  options: NodeSeekChronologicalRepliesOptions
+): Promise<NodeSeekChronologicalReplies> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const target = options.targetReply;
   if (target) {
@@ -494,7 +536,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       ? [firstPage, ...Array.from({ length: lastPage }, (_, index) => index + 1).filter((page) => page !== firstPage)]
       : [firstPage];
     for (const page of pages) {
-      const result = await getNodeSeekReplies(id, {
+      const result = await getNodeSeekRepliesChronological(id, {
         ...options,
         fillPages: false,
         limit: NODESEEK_FLOORS_PER_PAGE,
@@ -513,17 +555,29 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
   }
   const page = options.page || 1;
   const limit = options.limit || 30;
-  const { html, postData, rendered } = await fetchTopicPageData(id, page, requestOptions);
+  const { html, postData, rendered, resolvedPage } = await fetchTopicPageData(id, page, requestOptions);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? (options.offset as number) : 0;
   const floorOffset = hasOffset ? offset : (page - 1) * limit;
   const windowFields = {
-    currentPage: page,
+    confirmedFloors: [] as number[],
+    currentPage: resolvedPage || page,
     currentOffset: floorOffset,
     previousPage: page > 1 ? page - 1 : null,
-    previousOffset: page > 1 ? Math.max(0, floorOffset - NODESEEK_FLOORS_PER_PAGE) : null
+    previousOffset: page > 1 ? Math.max(0, floorOffset - NODESEEK_FLOORS_PER_PAGE) : null,
+    resolvedPageConfirmed: resolvedPage === page
   };
   if (rendered && (rendered.replies.length || !postData)) {
+    const explicitFloors = [
+      ...rendered.replies.map((reply) => reply.floor),
+      ...(postData
+        ? arrayField(postData.comments).map((comment) =>
+            isRecord(comment) ? (comment.floorIndex ?? comment.floor) : undefined
+          )
+        : [])
+    ]
+      .map(optionalInteger)
+      .filter((floor): floor is number => Boolean(floor && floor > 0));
     const renderedSource = rendered.replies.map((reply, index) => ({
       ...reply,
       floor: reply.floor ?? (page <= 1 ? index + 1 : floorOffset + index + 1)
@@ -546,6 +600,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     const hasMore = hasPageRemainder || Boolean(nextPage);
     const result = {
       ...windowFields,
+      confirmedFloors: [...new Set(explicitFloors)],
       items,
       hasMore,
       nextPage: hasMore ? (hasPageRemainder ? page : nextPage || page + 1) : null,
@@ -571,6 +626,10 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
   }
   const comments = arrayField(postData.comments);
   if (page <= 1) {
+    const explicitFloors = comments
+      .slice(1)
+      .map((comment) => (isRecord(comment) ? optionalInteger(comment.floorIndex ?? comment.floor) : undefined))
+      .filter((floor): floor is number => Boolean(floor && floor > 0));
     const allReplies = normalizeReplies(comments, { skipFirst: true });
     const items = allReplies.slice(offset, offset + limit);
     const consumed = offset + items.length;
@@ -579,6 +638,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     const hasMore = hasPageRemainder || Boolean(nextPage);
     const result = {
       ...windowFields,
+      confirmedFloors: [...new Set(explicitFloors)],
       items,
       hasMore,
       nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
@@ -598,11 +658,15 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     });
     return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
   }
+  const explicitFloors = comments
+    .map((comment) => (isRecord(comment) ? optionalInteger(comment.floorIndex ?? comment.floor) : undefined))
+    .filter((floor): floor is number => Boolean(floor && floor > 0));
   const items = normalizeReplies(comments, { skipFirst: false, floorOffset });
   const nextPage = nextNodeSeekPostPage(html, id, page);
   const hasMore = Boolean(nextPage);
   const result = {
     ...windowFields,
+    confirmedFloors: [...new Set(explicitFloors)],
     items,
     hasMore,
     nextPage: nextPage || null,
@@ -618,6 +682,72 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     page
   });
   return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
+}
+
+export async function getNodeSeekReplies(
+  id: string,
+  options: NodeSeekOptions & {
+    order: ReplyOrder;
+    position: ReplyWindowPosition;
+    limit?: number;
+    fillPages?: boolean;
+    replyCount?: number;
+  }
+): Promise<RepliesResponse> {
+  const { order, position } = options;
+  let page = 1;
+  let offset: number | null = 0;
+  let targetReply: ReplyLocationTarget | undefined;
+  if (position.kind === 'cursor') {
+    page = position.page;
+    offset = position.offset;
+  } else if (position.kind === 'target') {
+    targetReply = position.target;
+    page = position.target.pageHint || 1;
+    offset = null;
+  } else if (order === 'newest') {
+    const replyCount = options.replyCount;
+    if (!Number.isSafeInteger(replyCount) || replyCount! < 0) {
+      throw replyCountRefreshRequiredError('NodeSeek 缺少可确认的回复总数');
+    }
+    if (replyCount === 0) {
+      return emptyReplyWindow('rendered-replies');
+    }
+    page = Math.ceil(replyCount! / NODESEEK_FLOORS_PER_PAGE);
+    offset = (page - 1) * NODESEEK_FLOORS_PER_PAGE;
+  }
+
+  let chronological = await getNodeSeekRepliesChronological(id, {
+    ...options,
+    page,
+    offset,
+    targetReply,
+    fillPages: order === 'oldest' ? options.fillPages : false
+  });
+  const hasExactPage = hasExactNodeSeekPage(chronological, options.replyCount, page);
+  if (position.kind === 'cursor' && hasExactPage === false) {
+    throw replyCountRefreshRequiredError('NodeSeek 原站未确认完整的相邻回复窗口');
+  }
+  if (
+    order === 'oldest' &&
+    position.kind !== 'target' &&
+    hasExactPage &&
+    !chronological.hasMore &&
+    page * NODESEEK_FLOORS_PER_PAGE < options.replyCount!
+  ) {
+    chronological = {
+      ...chronological,
+      hasMore: true,
+      nextPage: page + 1,
+      nextOffset: page * NODESEEK_FLOORS_PER_PAGE
+    };
+  }
+  if (position.kind === 'start' && order === 'newest') {
+    if (!hasExactPage || chronological.hasMore || chronological.nextPage) {
+      throw replyCountRefreshRequiredError('NodeSeek 回复总数已变化，无法确认最新窗口');
+    }
+  }
+  return orientReplyWindow(chronological, order);
 }
 
 export async function resolveNodeSeekUser(username: string, options: NodeSeekOptions = {}): Promise<UserReference> {

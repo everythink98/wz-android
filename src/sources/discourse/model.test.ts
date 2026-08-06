@@ -5,11 +5,97 @@ import {
   discourseOriginalPoster,
   discoursePostFields,
   discoursePolls,
+  discourseReplyWindow,
+  discourseRepliesInStreamOrder,
+  discourseStreamReplyWindow,
   discourseTopicFields,
   discourseUsersById
 } from './model';
 
 describe('portable Discourse fields', () => {
+  it('[REG-TOPIC-067] selects real stream tail IDs and advances toward older windows', () => {
+    const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
+    const tail = discourseStreamReplyWindow(stream, {
+      limit: 10,
+      order: 'newest',
+      position: { kind: 'start' }
+    });
+    const older = discourseStreamReplyWindow(stream, {
+      limit: 10,
+      order: 'newest',
+      position: { kind: 'cursor', page: tail.nextPage!, offset: tail.nextOffset ?? null }
+    });
+
+    expect(tail).toMatchObject({
+      postIds: [1041, 1042, 1043, 1044, 1045],
+      currentPage: 5,
+      currentOffset: 40,
+      nextPage: 4,
+      nextOffset: 30
+    });
+    expect(older.postIds).toEqual([1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040]);
+    expect(
+      discourseRepliesInStreamOrder(
+        [
+          { author: 'older', commentId: 1041, contentHtml: '<p>older</p>', createdAt: '', floor: 42 },
+          { author: 'middle-1', commentId: 1042, contentHtml: '<p>middle</p>', createdAt: '', floor: 43 },
+          { author: 'middle-2', commentId: 1043, contentHtml: '<p>middle</p>', createdAt: '', floor: 44 },
+          { author: 'middle-3', commentId: 1044, contentHtml: '<p>middle</p>', createdAt: '', floor: 45 },
+          { author: 'newer', commentId: 1045, contentHtml: '<p>newer</p>', createdAt: '', floor: 46 }
+        ],
+        tail.postIds,
+        'newest'
+      ).map(({ commentId }) => commentId)
+    ).toEqual([1045, 1044, 1043, 1042, 1041]);
+    expect(() =>
+      discourseStreamReplyWindow(stream, {
+        limit: 10,
+        order: 'newest',
+        position: { kind: 'cursor', page: 99, offset: 30 }
+      })
+    ).toThrow('游标与页码不一致');
+  });
+
+  it('[REG-TOPIC-067] rejects hydration that returns the right count but the wrong stream IDs', () => {
+    expect(() =>
+      discourseRepliesInStreamOrder(
+        [
+          { author: 'one', commentId: 101, contentHtml: '', createdAt: '', floor: 2 },
+          { author: 'two', commentId: 102, contentHtml: '', createdAt: '', floor: 3 },
+          { author: 'wrong', commentId: 999, contentHtml: '', createdAt: '', floor: 4 }
+        ],
+        [101, 102, 103],
+        'oldest'
+      )
+    ).toThrow('回复窗口不完整');
+  });
+
+  it('[REG-TOPIC-067] rejects an oldest cursor whose page disagrees with its stream offset', () => {
+    const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
+
+    expect(() =>
+      discourseStreamReplyWindow(stream, {
+        limit: 10,
+        order: 'oldest',
+        position: { kind: 'cursor', page: 99, offset: 0 }
+      })
+    ).toThrow('游标与页码不一致');
+  });
+
+  it('[REG-TOPIC-067] rejects an anchored post that is absent from the real stream', () => {
+    expect(() =>
+      discourseReplyWindow(
+        {
+          post_stream: {
+            stream: [1000, 1001, 1002],
+            posts: [{ id: 9999, post_number: 2 }]
+          }
+        },
+        10
+      )
+    ).toThrow('锚点回复流已变化');
+  });
+
   it('maps shared topic semantics and rejects a missing identity', () => {
     expect(
       discourseTopicFields({

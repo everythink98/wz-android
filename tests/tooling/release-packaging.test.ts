@@ -209,11 +209,11 @@ describe('Android release packaging guards', () => {
     expect(plugin).not.toContain('internal fun createManagedClient');
     expect(plugin).not.toContain('recoverNodeSeekNetwork');
     expect(plugin).toContain('private val mediaConnectionPool = ConnectionPool()');
-    expect(plugin).toContain('@Volatile private var forumConnectionPool = ConnectionPool()');
+    expect(plugin).toContain('private val forumConnectionPool = ConnectionPool()');
     expect(plugin).toContain('internal fun recoverForumReadChannel(source: String): ForumReadChannelRecovery');
     expect(plugin).toContain('dispatcher.cancelAll()');
     expect(plugin.match(/dispatcher\.cancelAll\(\)/g)).toHaveLength(1);
-    expect(plugin.match(/forumConnectionPool\.evictAll\(\)/g)).toHaveLength(1);
+    expect(plugin.match(/forumConnectionPool\.evictAll\(\)/g)).toHaveLength(2);
     expect(plugin.match(/mediaConnectionPool\.evictAll\(\)/g)).toHaveLength(1);
     expect(plugin).toContain('builder.dispatcher(dispatcher)');
     expect(plugin).toContain('androidx.webkit:webkit:1.14.0');

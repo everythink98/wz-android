@@ -631,7 +631,7 @@ object NetworkProxyRuntime {
   private val blockedProxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", BLOCKED_PROXY_PORT))
   @Volatile private var localProxy: Proxy? = blockedProxy
   private val mediaConnectionPool = ConnectionPool()
-  @Volatile private var forumConnectionPool = ConnectionPool()
+  private val forumConnectionPool = ConnectionPool()
   private var forumConnectionPoolGeneration = 0L
   private val dispatcher = Dispatcher()
   private val cookieHandler = ReadOnlyWebViewCookieHandler()
@@ -744,7 +744,7 @@ object NetworkProxyRuntime {
     queued.forEach { call -> call.cancel() }
     running.forEach { call -> call.cancel() }
     val generation = synchronized(lock) {
-      forumConnectionPool = ConnectionPool()
+      forumConnectionPool.evictAll()
       forumConnectionPoolGeneration += 1
       forumConnectionPoolGeneration
     }
@@ -2837,7 +2837,7 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
-  fun regProxy009CancelsOnlyTargetReadsAndRotatesOnlyTheForumPool() {
+  fun regProxy009CancelsOnlyTargetReadsAndEvictsTheSharedForumPool() {
     val before = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
     val mediaBefore = NetworkProxyRuntime.configureMediaClient(OkHttpClient.Builder()).build()
     val dispatcher = before.dispatcher
@@ -2894,7 +2894,7 @@ class NetworkProxyRuntimeTest {
       assertSame(before.cookieJar, after.cookieJar)
       assertSame(before.proxySelector, after.proxySelector)
       assertSame(before.dispatcher, after.dispatcher)
-      assertNotSame(before.connectionPool, after.connectionPool)
+      assertSame(before.connectionPool, after.connectionPool)
       assertSame(mediaBefore.connectionPool, mediaAfter.connectionPool)
 
       release.countDown()

@@ -101,10 +101,12 @@ export function inlineForumImageDisplaySize(
   const isStickerRow = /^true$/i.test(attributeValue(attributes, STICKER_ROW_ATTR));
   const naturalWidth = safeImageDimension(naturalDimensions?.width || 0);
   const naturalHeight = safeImageDimension(naturalDimensions?.height || 0);
-  const usesNaturalDimensions = !width && !height && naturalWidth > 0 && naturalHeight > 0;
-  const knownDimensions = usesNaturalDimensions
-    ? { width: naturalWidth, height: naturalHeight }
-    : knownForumStickerSourceDimensions(attributes);
+  const hasNaturalDimensions = naturalWidth > 0 && naturalHeight > 0;
+  const usesNaturalDimensions = !width && !height && hasNaturalDimensions;
+  const knownDimensions =
+    hasNaturalDimensions && (!width || !height)
+      ? { width: naturalWidth, height: naturalHeight }
+      : knownForumStickerSourceDimensions(attributes);
   const fallbackSize = isSticker ? (isStickerRow ? STICKER_ROW_DEFAULT_SIZE : INLINE_STICKER_DEFAULT_SIZE) : 20;
   let displayWidth =
     width ||
@@ -143,6 +145,12 @@ export function inlineForumImageDisplaySize(
   const safeScale = safeImageScale(scale);
   displayWidth *= safeScale;
   displayHeight *= safeScale;
+  const scaledMaxDimension = Math.max(displayWidth, displayHeight);
+  if (usesNaturalDimensions && scaledMaxDimension > STICKER_DISPLAY_MAX_SIZE) {
+    const ratio = STICKER_DISPLAY_MAX_SIZE / scaledMaxDimension;
+    displayWidth *= ratio;
+    displayHeight *= ratio;
+  }
   if (isStickerRow && Number.isFinite(contentWidth) && contentWidth > 0) {
     const rowMaxSize = Math.max(64, contentWidth * STICKER_ROW_CONTENT_WIDTH_RATIO);
     const rowMaxDimension = Math.min(STICKER_DISPLAY_MAX_SIZE, rowMaxSize);

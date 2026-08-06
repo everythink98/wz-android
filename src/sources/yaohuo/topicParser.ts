@@ -339,6 +339,14 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const polls = parseVotePolls(html, String(id || ''));
   const accessRequirement =
     yaohuoTopicAccessRequirementFromContent(contentHtml) || yaohuoTopicAccessRequirementFromContent(html);
+  const latestReplyFloor = Math.max(
+    0,
+    ...root
+      .querySelectorAll('a[href*="tofloor="], a[href*="reply="]')
+      .map((link) =>
+        parsePositiveInteger(link.getAttribute('href')?.match(/[?&](?:amp;)?(?:tofloor|reply)=(\d+)/i)?.[1])
+      )
+  );
   const result: TopicDetail = {
     source: 'yaohuo',
     id: String(id || ''),
@@ -351,7 +359,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     url: url || `${BASE_URL}/bbs-${id}.html`,
     createdAt,
     lastReplyAt: createdAt,
-    replyCount: parsePositiveInteger(html.match(/更多回帖\((\d+)\)/)?.[1]),
+    replyCount: latestReplyFloor || parsePositiveInteger(html.match(/更多回帖\((\d+)\)/)?.[1]),
     viewCount: parsePositiveInteger(contentText.match(/\(阅\s*(\d+)\)/)?.[1]) || undefined,
     excerpt: textExcerpt(contentHtml),
     contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),

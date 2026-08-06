@@ -512,7 +512,8 @@ export function useSessionController({
           nodeSeekBrowserResponse(
             data.html || '',
             Boolean(data.challenge),
-            data.httpErrorStatus || current.httpErrorStatus
+            data.httpErrorStatus || current.httpErrorStatus,
+            data.url
           )
         );
       });

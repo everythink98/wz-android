@@ -16,7 +16,6 @@ wait "id=\"account-site-yaohuo\" label=\"妖火，未登录，已选择\"" 60000
 press id="account-site-xiaoyinsi"
 wait "id=\"account-site-xiaoyinsi\" label=\"小隐寺，未登录，已选择\"" 60000
 press label="收起账号中心"
-
 press id="main-tab-search"
 wait id="search-query" 10000
 press id="search-source-all"
@@ -34,4 +33,6 @@ wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"
+wait "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\" || label=\"刷新账号状态\"" 60000
+press "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\" || label=\"刷新账号状态\""
 wait "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\"" 60000

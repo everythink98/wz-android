@@ -30,6 +30,8 @@ import type {
   FeedResponse,
   Reply,
   RepliesResponse,
+  ReplyOrder,
+  ReplyWindowPosition,
   SearchResponse,
   TopicDetail,
   UserProfile
@@ -65,10 +67,8 @@ export type DiscourseTopicReadOptions = DiscourseReadOptions & { replyLimit?: nu
 
 export type DiscourseRepliesReadOptions = DiscourseReadOptions & {
   limit?: number;
-  offset?: number | null;
-  page?: number;
-  pageHint?: number;
-  targetFloor?: number;
+  order: ReplyOrder;
+  position: ReplyWindowPosition;
 };
 
 export type DiscourseUserReadOptions = DiscourseReadOptions & {

@@ -400,6 +400,9 @@ describe('diagnostic traces', () => {
       channel: 'webview',
       state: 'session-expired',
       itemCount: 3,
+      replyOrder: 'newest',
+      positionKind: 'target',
+      resolvedPage: 5,
       hasCookie: true,
       mutationReason: 'password=ULTRA_FAKE_SECRET_9',
       unknown: 'ULTRA_FAKE_SECRET_9',
@@ -415,6 +418,9 @@ describe('diagnostic traces', () => {
         channel: 'webview',
         state: 'session-expired',
         itemCount: 3,
+        replyOrder: 'newest',
+        positionKind: 'target',
+        resolvedPage: 5,
         hasCookie: true,
         mutationReason: 'redacted'
       })
