@@ -2600,14 +2600,19 @@ describe('Android local sources', () => {
     });
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-068] rejects linux.do hydration that omits a required server floor', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068][REG-TOPIC-073] renders the available linux.do subset when hydration omits one stream post', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/posts.json')) {
         return json({
           post_stream: {
             posts: [
-              { id: 32, username: 'reply 31', cooked: '<p>31</p>', created_at: '2026-05-20T00:31:00.000Z' },
-              { id: 33, username: 'reply 32', cooked: '<p>32</p>', created_at: '2026-05-20T00:32:00.000Z' }
+              {
+                id: 32,
+                post_number: 32,
+                username: 'reply 32',
+                cooked: '<p>32</p>',
+                created_at: '2026-05-20T00:32:00.000Z'
+              }
             ]
           }
         });
@@ -2623,20 +2628,23 @@ describe('Android local sources', () => {
       });
     });
 
-    const error = await getReplies({
+    const replies = await getReplies({
       source: 'linuxdo',
       id: '42',
       order: 'oldest',
       position: { kind: 'cursor', page: 16, offset: 30 },
       limit: 2,
       fetcher
-    }).then(
-      () => null,
-      (reason: unknown) => reason
-    );
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain('回复窗口不完整');
-    expect((error as { reason?: unknown }).reason).toBeUndefined();
+    });
+    expect(replies.items.map((reply) => reply.floor)).toEqual([32]);
+    expect(replies).toMatchObject({
+      currentPage: 16,
+      currentOffset: 30,
+      nextPage: 17,
+      nextOffset: 32,
+      hasMore: true,
+      totalCount: 39
+    });
     expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
       'https://linux.do/t/42.json',
       expect.stringContaining('https://linux.do/t/42/posts.json')

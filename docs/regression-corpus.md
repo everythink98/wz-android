@@ -4902,12 +4902,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 多页主题切换倒序后仍先看到第一页的倒排片段，继续下滚又混入后续正序页；用户误以为看到最新回复，实际既不完整也不连续。 |
 | 触发条件 | 正序只加载了部分窗口后切换倒序；主题有五页，或 Discourse stream 存在删除/拆帖造成的 post number 缺口；尾页计数或响应页码发生竞态。 |
 | 根因 seam | `ReplyFilter.newest` 在 UI 对本地数组执行 `reverse()`，回复 Query key 不区分遍历方向；Controller 根据已加载数量猜页，来源 adapter 没有拥有尾窗算法、页内顺序和 cursor 转换。 |
-| 必须保持的行为 | 使用独立 `ReplyOrder = oldest | newest` 和 `ReplyWindowPosition(start | cursor | target)`；`ReadGateway.getReplies` 同时接收两者，正倒序 Query key 永不混用。adapter 返回的 `items` 与 cursor 都按请求顺序解释，`next*` 始终是用户向下滚动的相邻窗口，`currentPage/currentOffset` 保留服务端真实位置。NodeSeek 以 `postPageCount`、严格 pager、响应页码和固定 10 楼页宽确认尾页，下一窗只读相邻前页；页外热门/置顶展示投影按 `REG-TOPIC-070` 在完整性证明前过滤。linux.do/小隐寺按 `post_stream.stream` 真实 ID 取尾组并严格校验 hydration；妖火从主题页真实 `reply` / `tofloor` 链接取最大楼层，原站 page 1 为最新且 page + 1 更早，倒序从末楼向 page + 1、正序从 `tofloor=1` 向 page - 1 遍历，不能把“更多回帖(N)”当总数；V2EX 只复用由 HTML 显式分页集合证明的完整回复集。切换部分集合先清空旧顺序并显示回复级 Loading，失败不应用结果。计数竞态只允许一次“刷新 Topic 权威计数后从当前顺序 start 重建”，再次不一致保留错误。Query 拥有 pages、cursor、取消和普通分页单飞；Controller 的 replace-window 命令只以 generation 实现 latest-command-wins，不保存 Promise 或恢复闭包。UI 保持左侧三种内容筛选和右侧顺序菜单；末窗结算当次显示弱化边界文字，最终回复和系统事件无多余底边。楼层定位保持顺序；编辑/删除刷新真实窗口，新回复先确认尾窗，正序再以真实实体定位。写成功只以 `refetchType: none` 标记精确 Query stale。 |
-| 精确失败 oracle | 来源测试固定 NodeSeek `[5, 4]` 且不出现 `[2, 3]`、Discourse 只请求 stream 尾部及相邻更早 IDs、错误 hydration 失败、妖火把主题页“更多回帖(30)”、引用楼层 `tofloor=555` 与回复动作楼层 `reply=558` 区分，倒序请求 `[tofloor=558, page=2]`、正序请求 `[tofloor=1, page=18]` 并确认真实页码和边缘楼层、V2EX 集合短于权威计数时失败；Query/Gateway 测试固定 order key 隔离、`order + position` 转发和脱敏 diagnostics。Controller 测试固定首次 Loading、尾窗/相邻窗、完整 V2EX 零额外 transport、一次 stale-count 刷新、边缘失败、latest-command-wins、整帖与写后重建；Topic UI 测试固定筛选/查找组合、顺序菜单、字号、立即边界、边缘重试及最终项无分割线；actions 测试固定写后 `refetchType: none`。 |
+| 必须保持的行为 | 使用独立 `ReplyOrder = oldest | newest` 和 `ReplyWindowPosition(start | cursor | target)`；`ReadGateway.getReplies` 同时接收两者，正倒序 Query key 永不混用。adapter 返回的 `items` 与 cursor 都按请求顺序解释，`next*` 始终是用户向下滚动的相邻窗口，`currentPage/currentOffset` 保留服务端真实位置。NodeSeek 以 `postPageCount`、严格 pager、响应页码和固定 10 楼页宽确认尾页，下一窗只读相邻前页；页外热门/置顶展示投影按 `REG-TOPIC-070` 在完整性证明前过滤。linux.do/小隐寺按 `post_stream.stream` 真实 ID 取尾组，普通 hydration 漏回单条时按 `REG-TOPIC-073` 展示已验证子集；妖火从主题页真实 `reply` / `tofloor` 链接取最大楼层，原站 page 1 为最新且 page + 1 更早，倒序从末楼向 page + 1、正序从 `tofloor=1` 向 page - 1 遍历，不能把“更多回帖(N)”当总数；V2EX 只复用由 HTML 显式分页集合证明的完整回复集。切换部分集合先清空旧顺序并显示回复级 Loading，失败不应用结果。计数竞态只允许一次“刷新 Topic 权威计数后从当前顺序 start 重建”，再次不一致保留错误。Query 拥有 pages、cursor、取消和普通分页单飞；Controller 的 replace-window 命令只以 generation 实现 latest-command-wins，不保存 Promise 或恢复闭包。UI 保持左侧三种内容筛选和右侧顺序菜单；末窗结算当次显示弱化边界文字，最终回复和系统事件无多余底边。楼层定位保持顺序；编辑/删除刷新真实窗口，新回复先确认尾窗，正序再以真实实体定位。写成功只以 `refetchType: none` 标记精确 Query stale。 |
+| 精确失败 oracle | 来源测试固定 NodeSeek `[5, 4]` 且不出现 `[2, 3]`、Discourse 只请求 stream 尾部及相邻更早 IDs，漏回一条时保留可用子集，外来/重复/整窗空缺 hydration 失败、妖火把主题页“更多回帖(30)”、引用楼层 `tofloor=555` 与回复动作楼层 `reply=558` 区分，倒序请求 `[tofloor=558, page=2]`、正序请求 `[tofloor=1, page=18]` 并确认真实页码和边缘楼层、V2EX 集合短于权威计数时失败；Query/Gateway 测试固定 order key 隔离、`order + position` 转发和脱敏 diagnostics。Controller 测试固定首次 Loading、尾窗/相邻窗、完整 V2EX 零额外 transport、一次 stale-count 刷新、边缘失败、latest-command-wins、整帖与写后重建；Topic UI 测试固定筛选/查找组合、顺序菜单、字号、立即边界、边缘重试及最终项无分割线；actions 测试固定写后 `refetchType: none`。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter/gateway/Query 固定来源协议和 cache 隔离，Controller/RNTL 固定窗口状态机与交互；匹配 revision/APK 的五站只读 Live 才能证明真实尾窗。 |
 | 自动重试边界 | previous/next 失败后，所属 start/end 边缘的自动入口保持关闭，只能显式重试原 cursor；对侧仍可扩窗且不得清掉旧错误。同一 Reply Query 有分页 pending 时，另一普通分页零 transport；结算后才可读取相邻窗口。replace-window 命令不等待分页队列，直接取消旧 Query 并以 generation 丢弃旧结果。 |
 | Replay 或真实验收路径 | 保留当前登录态，在 NodeSeek、linux.do、妖火、小隐寺各选一个多页主题，在 V2EX 选一个多回复主题；确认左侧三种筛选与右侧排序菜单，切换倒序后首条必须等于原站最新回复，向下只出现相邻更早窗口，末窗当次显示“已到最早回复”，再切回正序恢复头窗。不得发送回复、编辑、删除、互动或清理登录态。 |
-| 负向验证方式 | NodeSeek 出现 `[2, 3]` 追页、部分集合在 UI/Controller 本地反转、正倒序共用 Query key、Discourse 猜尾页或接受错误 hydration、V2EX 集合与权威计数不等、妖火未确认页码/末楼或仍有 newer cursor、计数竞态或重复 cursor 仍应用结果、相邻窗口失败只弹 toast、Controller 恢复 Promise/队列，或写后 invalidate 启动竞争 refetch，编号测试必须失败。 |
+| 负向验证方式 | NodeSeek 出现 `[2, 3]` 追页、部分集合在 UI/Controller 本地反转、正倒序共用 Query key、Discourse 猜尾页、因单条 hydration 漏回丢掉其他回复或接受外来/重复 ID、V2EX 集合与权威计数不等、妖火未确认页码/末楼或仍有 newer cursor、计数竞态或重复 cursor 仍应用结果、相邻窗口失败只弹 toast、Controller 恢复 Promise/队列，或写后 invalidate 启动竞争 refetch，编号测试必须失败。 |
 | 明确不覆盖范围 | 不引入 V2EX PAT 或 API 2.0 Token 分页，不新增全局顺序偏好或持久化迁移，不并发预抓全部历史，也不通过真实写操作制造尾楼。 |
 
 ## `REG-TOPIC-068` NodeSeek 真实下一页被旧回复总数否决
@@ -4969,6 +4969,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 匹配 revision/APK 直达 `https://www.v2ex.com/t/1231874`；正序可到 `#101+`，倒序首条为当次最高楼，切换与仅刷新评论均不出现窗口错误。全程只读，不发送或互动。 |
 | 负向验证方式 | 恢复单页假设、按 100 条硬猜未链接页码、接受外站/他主题 `p`、静默跳过失败页、允许重复/缺楼后仍声明完整，或用公共回复 API 补洞，编号测试必须失败。 |
 | 明确不覆盖范围 | 不把 V2EX 改造成共享远端回复窗口，不引入 PAT/API 2.0、预抓未链接历史、自动重试、静默截断或公开类型变化。 |
+
+## `REG-TOPIC-072` 妖火删除边缘楼层与新页码字段阻断整个评论区
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/03`；共享 `NAV-02/03` |
+| 用户症状 | 妖火 `bbs-1570569.html` 的主题正文可读，但评论区正序或倒序弹出“妖火未确认目标楼层所在页”或目标楼层缺失错误，已经返回的回复也完全不展示。 |
+| 触发条件 | 原站删除了边缘楼层（真实样本中 `#1` 已删除、可见楼层为 `#2..#8`），`tofloor=1` 仍正确路由到边缘页；新页面用 `input[name=replyPage]` 声明页码而不是旧 `input[name=page]`。并发新增或删帖也可能让主题页的最大楼层 hint 与窗口响应暂时不同。 |
+| 根因 seam | `src/sources/yaohuo/reader.ts` 一方面只识别旧页码表单，另一方面把用于寻找正序/倒序边缘页的 `tofloor` hint 当成显式楼层 target，要求该楼层实体必须存在。页码证据与实体身份被错误合并成单一硬门禁，导致可解析、由服务器确认的整页回复被丢弃。 |
+| 必须保持的行为 | 页码确认同时接受响应 URL、旧 `page` 和新 `replyPage` 表单。显式 `target` 仍必须精确命中；`start` 边缘请求只要服务器确认 resolved page 且返回非空可解析回复，就展示该窗口，即使 hint 楼层已删除或因并发变化过期。倒序最新窗口仍必须确认 page 1；正序最早窗口不生成更早 cursor。未确认页、空窗口、cursor 错页和重复 cursor 仍明确失败。共享 Query、公开窗口类型及其他来源不变。 |
+| 精确失败 oracle | `src/sources/yaohuo/reader.test.ts` 的 `REG-TOPIC-072` 固定 `replyPage=1`、可见 `#2..#8` 且 `#1` 缺失：正序必须返回 `#2..#8`、无更早 cursor；另固定尾楼 hint 过期但确认 page 1，倒序必须返回 `#8..#2`。`REG-TOPIC-067/068/072` 同时固定未确认页仍失败、已确认且增长/过期的尾窗可展示、已确认空窗口以 `reply-count-refresh-required` 失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS + APK_SANITY`：adapter fixture 固定页码证据与边缘/target 分界；匹配 revision/APK 直达真实小帖和大帖验证正倒序与相邻窗口。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 直达 `https://www.yaohuo.me/bbs-1570569.html` 与小帖 `https://www.yaohuo.me/bbs-1540797.html`，两种顺序都必须展示现存回复；再直达 `https://www.yaohuo.me/bbs-1560939.html` 和 `https://www.yaohuo.me/bbs-1478784.html`，验证最新/最早窗口及至少一个相邻页连续可用。全程只读，不回复、互动、清数据、Cookie 或登录态。 |
+| 负向验证方式 | 删除 `replyPage` selector、恢复边缘 hint 必须命中、让显式 target 缺失也通过、接受未确认页/空窗口、为缺失首楼伪造更早 cursor，或改动共享 Controller/窗口模型，对应编号测试必须失败。 |
+| 明确不覆盖范围 | 不猜测妖火回复总数、不补抓缺失楼层、不压实楼层号、不放宽显式楼层定位，不修改 NodeSeek、linux.do、V2EX 或小隐寺的 adapter。 |
+
+## `REG-TOPIC-073` Discourse 单条 hydration 竞态阻断整个回复窗口
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/03`；共享 `NAV-02/03` |
+| 用户症状 | linux.do 或小隐寺的主题和大部分回复已返回，但批量 hydration 因删帖或读竞态漏回一条，App 仍报“Discourse 回复窗口不完整”并丢弃其他可读回复。 |
+| 触发条件 | `post_stream.stream` 已确认窗口 ID 和 offset，随后 `/posts.json?post_ids[]=...` 只返回其中的非空子集；典型原因是两次读之间的删帖或缓存竞态。 |
+| 根因 seam | `src/sources/discourse/model.ts` 的 hydration 校验把“所有返回实体都属于请求窗口”与“每个请求 ID 必须同次返回”合并成一个硬门禁。前者防止串帖，后者只是对投影时序的过强假设。 |
+| 必须保持的行为 | `post_stream.stream` 继续唯一决定窗口、顺序和 cursor。普通 `start/cursor` hydration 至少返回一条时，校验每条都是已请求且唯一的 ID，再按 stream 顺序展示可解析子集；cursor 仍使用原 stream offset，不按子集数量改写。未请求 ID、重复 ID、整窗 hydration 空缺与错误 cursor 继续失败。显式 `target`/near-post 路径继续要求目标实体存在。 |
+| 精确失败 oracle | `src/sources/discourse/model.test.ts` 固定已请求 ID 子集按 stream 顺序保留，整窗空缺和外来 ID 失败。`tests/integration/source-read-contracts.test.ts` 固定 linux.do 两条窗口只 hydration 一条时返回该楼且保持原 offset/cursor。`src/sources/xiaoyinsi/reader.test.ts` 在 oldest/newest 两个方向各漏回一条，其他楼层必须按请求方向展示。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：共享 model 与两站 adapter fixture 固定子集和负例；匹配 APK 在两站大/小帖分别验证正倒序和相邻窗口。 |
+| Replay 或真实验收路径 | 保留当前登录态，直达 linux.do 与小隐寺各一个小帖和多页帖；正序能读头窗，倒序从 stream 尾窗开始，大帖再向下读一个相邻旧窗。全程只读。 |
+| 负向验证方式 | 恢复必须同次 hydration 所有 ID，漏回 fixture 必须失败；放宽到接受外来/重复 ID、全空响应，或以可见子集重算 cursor，其他负例和 offset 断言必须失败。 |
+| 明确不覆盖范围 | 不预抓全部 stream、不重试 hydration、不伪造楼层或压实 post number，不放宽精确 target，不改动 NodeSeek、V2EX 或妖火协议。 |
 
 ## `REG-NODESEEK-004` NodeSeek 直连通道卡死只能靠重启 App 恢复
 

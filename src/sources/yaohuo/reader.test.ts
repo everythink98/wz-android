@@ -1341,6 +1341,57 @@ describe('Android direct yaohuo API', () => {
     ).rejects.toThrow('妖火未确认目标楼层所在页');
   });
 
+  it('[REG-TOPIC-072] renders a server-routed 妖火 edge window when the hinted first floor was deleted', async () => {
+    const response = new Response(`
+      <input name="replyPage" value="1" />
+      <input name="loadedThroughPage" value="1" />
+      ${Array.from({ length: 7 }, (_, index) => {
+        const floor = index + 2;
+        return `<div class="list-reply line1" data-floor="${floor}"><span class="retext">reply ${floor}</span><span class="renick">user-${floor}</span></div>`;
+      }).join('')}
+    `);
+    Object.defineProperty(response, 'url', {
+      value: 'https://www.yaohuo.me/bbs/book_re.aspx?id=1570569&classid=177&tofloor=1'
+    });
+
+    const result = await getYaohuoRepliesDirect({
+      id: '1570569',
+      categoryId: '177',
+      order: 'oldest',
+      position: { kind: 'start' },
+      replyCount: 8,
+      yaohuoFetcher: vi.fn(async () => response)
+    });
+
+    expect(result.items.map((reply) => reply.floor)).toEqual([2, 3, 4, 5, 6, 7, 8]);
+    expect(result).toMatchObject({ currentPage: 1, previousPage: null, nextPage: null, hasMore: false });
+  });
+
+  it('[REG-TOPIC-072] renders the confirmed newest 妖火 page when the reply hint becomes stale', async () => {
+    const response = new Response(`
+      <input name="replyPage" value="1" />
+      ${Array.from({ length: 7 }, (_, index) => {
+        const floor = index + 2;
+        return `<div class="list-reply line1" data-floor="${floor}"><span class="retext">reply ${floor}</span><span class="renick">user-${floor}</span></div>`;
+      }).join('')}
+    `);
+    Object.defineProperty(response, 'url', {
+      value: 'https://www.yaohuo.me/bbs/book_re.aspx?id=1570569&classid=177&tofloor=7'
+    });
+
+    const result = await getYaohuoRepliesDirect({
+      id: '1570569',
+      categoryId: '177',
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 7,
+      yaohuoFetcher: vi.fn(async () => response)
+    });
+
+    expect(result.items.map((reply) => reply.floor)).toEqual([8, 7, 6, 5, 4, 3, 2]);
+    expect(result).toMatchObject({ currentPage: 1, previousPage: null, nextPage: null, hasMore: false });
+  });
+
   it('[REG-TOPIC-067][REG-TOPIC-068] follows 妖火 real floors across its newest-first server pages', async () => {
     const detail = parseYaohuoTopicHtml(
       '<div class="content">[标题] topic</div>更多回帖(30)<a href="/bbs/book_re.aspx?id=1560940&amp;classid=177&amp;page=1&amp;tofloor=555">555楼</a><a href="/bbs/book_re.aspx?id=1560940&amp;classid=177&amp;reply=558">回复</a>',
@@ -1406,7 +1457,7 @@ describe('Android direct yaohuo API', () => {
     expect(oldestAgain.items.map((reply) => reply.floor)).toEqual(oldest.items.map((reply) => reply.floor));
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-068] rejects an unconfirmed or still-advancing 妖火 tail', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068][REG-TOPIC-072] rejects an unconfirmed 妖火 tail but renders a confirmed changing edge', async () => {
     const row =
       '<div class="list-reply line1" data-floor="558"><span class="retext">reply 558</span><span class="renick">user-558</span></div>';
     const unconfirmedFetcher = vi.fn(async (input: string) => {
@@ -1428,6 +1479,11 @@ describe('Android direct yaohuo API', () => {
       Object.defineProperty(response, 'url', { value: input });
       return response;
     });
+    const emptyFetcher = vi.fn(async (input: string) => {
+      const response = new Response('<input name="page" value="1" />');
+      Object.defineProperty(response, 'url', { value: input });
+      return response;
+    });
     const options = {
       id: '1560941',
       categoryId: '177',
@@ -1440,19 +1496,25 @@ describe('Android direct yaohuo API', () => {
     await expect(getYaohuoRepliesDirect({ ...options, yaohuoFetcher: unconfirmedFetcher })).rejects.toThrow(
       '未确认目标楼层所在页'
     );
-    await expect(getYaohuoRepliesDirect({ ...options, yaohuoFetcher: advancingFetcher })).rejects.toThrow(
-      '无法确认最新窗口'
-    );
-    const staleCountError = await getYaohuoRepliesDirect({ ...options, yaohuoFetcher: staleCountFetcher }).then(
+    await expect(getYaohuoRepliesDirect({ ...options, yaohuoFetcher: advancingFetcher })).resolves.toMatchObject({
+      currentPage: 1,
+      items: [expect.objectContaining({ floor: 559 }), expect.objectContaining({ floor: 558 })]
+    });
+    await expect(getYaohuoRepliesDirect({ ...options, yaohuoFetcher: staleCountFetcher })).resolves.toMatchObject({
+      currentPage: 1,
+      items: [expect.objectContaining({ floor: 557 })]
+    });
+    const emptyError = await getYaohuoRepliesDirect({ ...options, yaohuoFetcher: emptyFetcher }).then(
       () => null,
       (error: unknown) => error
     );
-    expect(staleCountError).toBeInstanceOf(Error);
-    expect((staleCountError as Error).message).toContain('目标楼层未找到');
-    expect((staleCountError as { reason?: unknown }).reason).toBe('reply-count-refresh-required');
+    expect(emptyError).toBeInstanceOf(Error);
+    expect((emptyError as Error).message).toContain('边缘回复窗口为空');
+    expect((emptyError as { reason?: unknown }).reason).toBe('reply-count-refresh-required');
     expect(unconfirmedFetcher.mock.calls[0]?.[0]).toContain('tofloor=558');
     expect(advancingFetcher.mock.calls[0]?.[0]).toContain('tofloor=558');
     expect(staleCountFetcher.mock.calls[0]?.[0]).toContain('tofloor=558');
+    expect(emptyFetcher.mock.calls[0]?.[0]).toContain('tofloor=558');
   });
 
   it('parses yaohuo activity replies from list-reply rows with real floors and rewards', () => {

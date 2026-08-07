@@ -302,7 +302,9 @@ export async function getYaohuoRepliesDirect({
       if (Number.isSafeInteger(value) && value > 0) return value;
     } catch {}
     return parsePositiveInteger(
-      parseHtml(pageResult.html).querySelector('input[name="page"], input#Action_page')?.getAttribute('value')
+      parseHtml(pageResult.html)
+        .querySelector('input[name="page"], input#Action_page, input[name="replyPage"], input#Action_replyPage')
+        ?.getAttribute('value')
     );
   })();
   if (targetFloor !== undefined && !confirmedPage) {
@@ -318,20 +320,19 @@ export async function getYaohuoRepliesDirect({
     limit
   });
   if (targetFloor !== undefined && !result.items.some((reply) => reply.floor === targetFloor)) {
-    throw position.kind === 'start'
-      ? replyCountRefreshRequiredError('妖火目标楼层未找到')
-      : new Error('妖火目标楼层未找到');
+    if (position.kind === 'target') {
+      throw new Error('妖火目标楼层未找到');
+    }
+    if (!result.items.length) {
+      throw replyCountRefreshRequiredError('妖火边缘回复窗口为空');
+    }
   }
   const floors = result.items.map((reply) => reply.floor || 0).filter(Boolean);
   const minFloor = Math.min(...floors);
-  const maxFloor = Math.max(...floors);
-  if (order === 'newest' && position.kind === 'start' && (resolvedPage !== 1 || maxFloor !== targetFloor)) {
+  if (order === 'newest' && position.kind === 'start' && resolvedPage !== 1) {
     throw replyCountRefreshRequiredError('妖火回复总数已变化，无法确认最新窗口');
   }
-  if (order === 'oldest' && position.kind === 'start' && minFloor !== 1) {
-    throw replyCountRefreshRequiredError('妖火回复总数已变化，无法确认最早窗口');
-  }
-  const olderPage = minFloor > 1 ? result.nextPage : null;
+  const olderPage = order === 'oldest' && position.kind === 'start' ? null : minFloor > 1 ? result.nextPage : null;
   const newerPage = resolvedPage > 1 ? resolvedPage - 1 : null;
   return Object.assign(result, {
     items: order === 'newest' ? [...result.items].reverse() : result.items,

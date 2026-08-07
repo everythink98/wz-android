@@ -553,7 +553,7 @@ describe('xiaoyinsi adapter', () => {
   });
 
   it.each(['oldest', 'newest'] as const)(
-    '[REG-TOPIC-067] rejects an incomplete 小隐寺 %s window when the stream changes during hydration',
+    '[REG-TOPIC-067][REG-TOPIC-073] renders an available 小隐寺 %s window when hydration omits one stream post',
     async (order) => {
       const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
       const fetcher = vi.fn(async (input: string) => {
@@ -576,14 +576,21 @@ describe('xiaoyinsi adapter', () => {
         throw new Error(`unexpected ${input}`);
       });
 
-      await expect(
-        getXiaoyinsiReplies('42', {
-          fetcher,
-          order,
-          position: { kind: 'start' },
-          limit: 10
-        })
-      ).rejects.toThrow('回复窗口不完整');
+      const result = await getXiaoyinsiReplies('42', {
+        fetcher,
+        order,
+        position: { kind: 'start' },
+        limit: 10
+      });
+
+      expect(result.items.map((reply) => reply.floor)).toEqual(
+        order === 'oldest' ? [2, 3, 4, 5, 6, 7, 8, 9, 10] : [45, 44, 43, 42]
+      );
+      expect(result).toMatchObject(
+        order === 'oldest'
+          ? { currentPage: 1, currentOffset: 0, nextPage: 2, nextOffset: 10, hasMore: true, totalCount: 45 }
+          : { currentPage: 5, currentOffset: 40, nextPage: 4, nextOffset: 30, hasMore: true, totalCount: 45 }
+      );
     }
   );
 

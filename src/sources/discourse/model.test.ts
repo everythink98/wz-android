@@ -9,7 +9,8 @@ import {
   discourseRepliesInStreamOrder,
   discourseStreamReplyWindow,
   discourseTopicFields,
-  discourseUsersById
+  discourseUsersById,
+  discourseVisiblePostIds
 } from './model';
 
 describe('portable Discourse fields', () => {
@@ -103,6 +104,25 @@ describe('portable Discourse fields', () => {
         'oldest'
       )
     ).toThrow('回复窗口不完整');
+  });
+
+  it('[REG-TOPIC-073] keeps a non-empty Discourse hydration subset without accepting unrelated data', () => {
+    const availableReply = {
+      author: 'one',
+      commentId: 101,
+      contentHtml: '<p>one</p>',
+      createdAt: '2026-08-07T00:00:00.000Z',
+      floor: 2
+    };
+
+    expect(
+      discourseVisiblePostIds([{ id: 101 }, { id: 103, deleted_at: '2026-08-07T00:00:00.000Z' }], [101, 102, 103])
+    ).toEqual(['101']);
+    expect(discourseRepliesInStreamOrder([availableReply], [101, 102], 'oldest')).toEqual([availableReply]);
+    expect(() => discourseVisiblePostIds([], [101, 102])).toThrow('回复窗口不完整');
+    expect(() => discourseVisiblePostIds([{ id: 999 }], [101, 102])).toThrow('回复窗口不完整');
+    expect(() => discourseVisiblePostIds([{ id: 101 }, { id: 101 }], [101, 102])).toThrow('回复窗口不完整');
+    expect(() => discourseVisiblePostIds([{ id: 101 }], [101, 101])).toThrow('回复窗口不完整');
   });
 
   it('[REG-TOPIC-067] rejects an oldest cursor whose page disagrees with its stream offset', () => {
