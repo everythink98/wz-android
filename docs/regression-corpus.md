@@ -3219,14 +3219,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `TOPIC-03` |
 | 用户症状 | App 内打开 V2EX 主题 `1229472` 并滚动到 67～68 楼时，两条正常回复之间出现超过一屏的空白，后续回复像被错误跳过。重启模拟器后仍稳定复现。 |
-| 触发条件 | V2EX API 仍返回网页端未展示的图片/文本回复，HTML 可见楼层压缩后与其合并，两个不同 `commentId` 可能得到相同楼层；其中一条高度较大时更容易暴露。 |
+| 触发条件 | 历史 V2EX adapter 曾把 API 回复与 HTML 楼层元数据合并，网页端未展示的回复会让两个不同 `commentId` 得到相同展示楼层；更一般地，任何来源只要出现“实体不同但楼层相同”，其中一条高度较大时就更容易暴露。 |
 | 根因 seam | `src/features/topic/components/TopicContentList.tsx` 通过 `src/features/topic/model/replyListModel.ts`、`src/features/topic/model/topicContentIdentity.ts`、`src/features/topic/model/topicHeaderModel.ts`、`src/features/topic/model/topicError.ts` 的 `getReplyKey` 把楼层作为 FlashList 稳定身份，导致不同回复复用同一 key 和历史布局高度；项目已有 `src/domain/forum/feed.ts` 的 `replyKey` 已按 `commentId` 优先表达正确身份。 |
-| 必须保持的行为 | 回复存在 `commentId` 时以其作为稳定列表身份：不同 id 即使显示同一楼层也必须是不同列表项，同一 id 即使楼层变化仍保持身份；只有来源没有 `commentId` 时才回退楼层，再缺失时使用既有内容回退。修复不得过滤 API 回复、重编号楼层或改变 V2EX HTML/API 合并。 |
+| 必须保持的行为 | 回复存在 `commentId` 时以其作为稳定列表身份：不同 id 即使显示同一楼层也必须是不同列表项，同一 id 即使楼层变化仍保持身份；只有来源没有 `commentId` 时才回退楼层，再缺失时使用既有内容回退。本条只约束列表 identity；V2EX 回复集合的数据所有权与完整性由 `REG-TOPIC-069` 约束，不得为保留本条历史现场恢复跨端点 HTML/API 合并。 |
 | 精确失败 oracle | `src/features/topic/model/replyListModel.test.ts`、`src/features/topic/model/topicContentIdentity.test.ts` 的 `REG-TOPIC-028` 使用现场对应的 `commentId=17900145` 与 `17900159`，让图片回复和文本回复同为 68 楼，要求 `getReplyKey` 不同；修复前二者都得到 `reply-floor-68`。同文件另固定同 id 换楼层 key 不变、无 id 时仍按楼层稳定。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：列表身份是确定性纯逻辑；普通 RNTL mock 不实现 FlashList 原生布局复用，不能替代本条 oracle。 |
 | Replay 或真实验收路径 | 使用 App 内部直链直接打开 `https://www.v2ex.com/t/1229472`，不经搜索；滚动到 67～69 楼，确认原空白区域渲染为独立回复内容，后续回复没有消失、重叠或高度串用。全程只读。 |
 | 负向验证方式 | 恢复楼层优先的 `getReplyKey`，或在 Topic 另建不含 `commentId` 的 key；编号测试必须重新得到重复 key，现场可再次出现大片空白。 |
-| 明确不覆盖范围 | 不决定 API 独有回复是否应显示，不校准网页删除状态或楼层编号，不新增依赖动态原帖的 tracked Replay；原帖内容变化导致现场不再具备重复楼层时记 `NOT_VERIFIED`。 |
+| 明确不覆盖范围 | 不决定 API 独有回复是否应显示，不校准网页删除状态或楼层编号，不新增依赖动态原帖的 tracked Replay；V2EX 是否采用某一回复集合按 `REG-TOPIC-069` 判断。原帖内容变化导致现场不再具备重复楼层时记 `NOT_VERIFIED`。 |
 
 ## `REG-FEED-007` 返回 Feed 后重复提示缓存的局部错误
 
@@ -4834,6 +4834,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把 `topic` 合并回可选定位字段的 `topic-post`、按通知 kind/标题猜楼层，或 route 为主题级通知制造空 `ReplyLocationTarget`，编号测试必须失败。 |
 | 明确不覆盖范围 | 不新增通知类型、服务端能力、消息专用主题页或导航状态机；不为缺失定位字段的通知扫描回复，也不改变原站已读协议。 |
 
+## `REG-NOTIFY-054` Discourse 首帖通知被当作回复楼层定位
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`NAV-03`；共享 `TOPIC-03` |
+| 用户症状 | 在消息详情点击“查看相关主题”后，主题正文已正常打开，却额外提示“目标楼层未找到”；现场样本为 linux.do 已读系统消息“LINUX DO 社区抽奖规则”。 |
+| 触发条件 | Discourse 通知明确携带 opening post 的 `post_id` 与 `post_number=1`；详情需要按 `post_id` 读取完整通知正文，但主题导航不应把 opening post 当作回复。 |
+| 根因 seam | `NotificationDetailRoute` 复用同一个 `topic-post` target 同时决定详情读取和 Topic 回复定位，把首帖的 post ID 与 post number 1 无条件转换成 `{ commentId, floor: 1 }`；Topic 回复集合不包含 opening post，因此定位必然失败。 |
+| 必须保持的行为 | 来源 target 继续保留 `topic-post` 与 `postId`，保证详情能读取完整首帖；只有在导航到 Topic 时，Discourse `postNumber === 1` 视为主题 opening post并省略 `targetReply`。post number 大于 1 的显式帖子、NodeSeek comment ID/floor、妖火 `tofloor` 等既有精确定位必须保持。判断只依赖来源协议和 post number，不按通知 kind、标题或正文猜测。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-route.test.tsx` 的 `REG-NOTIFY-054` 构造 linux.do `topic-post { postId: 777, postNumber: 1 }`：修复前导航携带 `{ commentId: 777, floor: 1 }`，修复后 `targetReply` 必须为 `undefined`；同文件 `REG-NOTIFY-045/053` 与来源 adapter 测试继续固定普通主题和真实回复定位。 |
+| 最低可靠自动测试层 | `UI_PASS`：错误发生在详情 target 到 Topic route 参数的投影，RNTL 是最低确定性层。 |
+| Replay 或真实验收路径 | 在匹配开发包中打开已有已读 linux.do 系统消息“LINUX DO 社区抽奖规则”，确认详情正文完整；点击“查看相关主题”后主题正常结算且不出现楼层定位提示。全程只读，不打开未读消息、不回复或互动。 |
+| 负向验证方式 | 删除 opening-post 判断、按 `kind === system` 粗略关闭所有定位，或把首帖 target 改成 `topic` 导致详情正文退化，编号测试或相邻精确帖子回归必须失败。 |
+| 明确不覆盖范围 | 不改变 Discourse 通知 target 类型、详情 transport、已读协议或 Topic 回复窗口；`postNumber` 缺失时不根据 post ID 或正文猜 opening post。 |
+
 ## `REG-TOPIC-062` 极大回复楼层被当作从首屏开始的连续前缀
 
 | 字段 | 内容 |
@@ -4894,6 +4909,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 用匹配 revision/APK 直达 `https://www.nodeseek.com/post-861053-1`：主题头和未筛选回复标题不显示总回复数；正序滑到底必须出现 `#11–#14` 和“已到最新回复”且无边缘错误；切倒序必须从 `#14` 建立尾窗，再向旧回复加载。另以多页主题检查窗口另一侧。linux.do、小隐寺、妖火各只读验证一次真实相邻翻页，V2EX 只验证完整集合。不得发帖、删帖、清数据或破坏登录态制造竞态。 |
 | 负向验证方式 | 恢复以 page 1 rows 作为总数、为计数预读末页、用任意旧 `replyCount` 定位或否决 NodeSeek 页面、重新扫描所有同帖链接作为 pager、接受错页/楼层缺口/推断末页，或在 Controller 增加 NodeSeek 刷新计数再重试状态，编号测试必须失败。给其他来源套用 NodeSeek 页宽或总数判断也应被各自 cursor 回归拒绝。 |
 | 明确不覆盖范围 | 不新增统一 cursor/boundary 模型、分页状态机或自动重试，不重写四站协议；其他来源若出现不同根因只另行记录，不在本条猜测式修补。 |
+
+## `REG-TOPIC-069` V2EX 独立缓存端点被拼成伪回复窗口错误
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/03/04`；共享 `NAV-02/03` |
+| 用户症状 | 活跃主题 `https://www.v2ex.com/t/1232497` 的原站 HTML 已完整包含全部回复，App 却报“回复总数已变化，无法确认完整集合”；正倒序、楼层定位和评论刷新因此都无法使用。 |
+| 触发条件 | V2EX 的主题 API、公共回复 API 与主题 HTML 命中不同缓存时刻；现场曾同时出现回复 API 68 条、主题 API 71 条、HTML 声明并渲染 73 条。旧实现优先采用任意非空 API 回复，再用另一端点的数量否决它。 |
+| 根因 seam | `src/sources/v2ex/reader.ts` 把三个独立缓存端点错误拼成一个快照，并让跨响应计数投票决定完整性。V2EX 实际一次返回回复全集，不存在可由公共回复 API 补齐的分页窗口。 |
+| 必须保持的行为 | 正常详情只并行读取主题 API 与主题 HTML；同一份 HTML 的结构化 `ReplyAction/commentCount` 声明必须彼此一致，并与原始回复 DOM 节点数、有效回复数相等，该响应才是唯一权威回复全集，主题/回复 API 的旧计数不得否决。声明冲突、节点不足或多出无法解析的节点都立即失败且不请求回复 API。HTML 没有声明数但原始节点数、有效回复数与主题 API 一致时仍采用 HTML；只有 HTML 不可用或无声明且无法自证时才延迟读取公共回复 API，并要求其有效回复数严格等于主题 API 数量；成功返回的空数组也是有效降级结果，不能再按“非空”猜数据所有权。HTML 回复继续提供作者、头像、楼层、comment ID、感谢数、回复目标和 `Pro` badge。结果固定 `replyHasMore=false`、空前后 cursor；正倒序、定位和刷新只复用/重读全集，不新增 V2EX `getReplies` transport。诊断只记录 `html-topic`、`html-topic-fallback` 或 `api-topic-fallback` 及计数，不记录 URL 或正文。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定主题 API/回复 API 各 2 条、HTML 声明并包含 3 条：修复前报错，修复后返回 `3/3` 且公共回复 API 零调用；HTML 声明 3 条但只有 2 个节点、声明 1 条却有额外 malformed 节点、`ReplyAction/commentCount` 冲突时均失败且零 API；`commentCount`-only 的自洽 HTML 正常结算。HTML 请求失败后 API 2/2 与 0/0 成功、2/3 与 0/1 失败；成功空数组优先于无法自证的 HTML。另固定空主题、旧 HTML 无声明数、自 HTML 解析 `Pro` 及完整回复元数据。`tests/ui/topic/topic-session-controller.test.tsx` 固定正倒序、本地楼层定位和专用评论刷新入口均零独立回复 transport。`src/platform/diagnostics/diagnostics.test.ts` 固定三个路径值不被脱敏成未知值。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：来源 fixture 固定单响应完整性和降级边界，Controller 固定本地全集行为；匹配 revision/APK 的目标主题只读验收真实活跃数据。 |
+| Replay 或真实验收路径 | 使用匹配当前 revision、App 版本和 APK 身份的开发包直达 `https://www.v2ex.com/t/1232497`；详情必须正常结算，显示回复数等于当次 HTML 可见全集。切换正序/倒序、定位已有楼层、仅刷新评论后仍是完整集合且没有独立回复 transport。全程只读，不发回复、不互动、不清 App 数据、Cookie 或登录态。 |
+| 负向验证方式 | 恢复三端点并行投票、让非空回复 API 优先、用主题 API 否决自洽 HTML、在 HTML 明确缺节点时用 API 掩盖、增加 cache-buster/自动重试/分页参数、或在 Controller 为 V2EX 增加特判 transport，编号测试必须失败。 |
+| 明确不覆盖范围 | 不修改 NodeSeek、linux.do、妖火和小隐寺的真实分页/stream 窗口，不增加 V2EX PAT/API 2.0 或持久化迁移。若未来主题 HTML 不再一次返回全集，应由同响应数量校验明确失败并重新设计 V2EX adapter，不能静默恢复跨端点猜测。 |
 
 ## `REG-NODESEEK-004` NodeSeek 直连通道卡死只能靠重启 App 恢复
 

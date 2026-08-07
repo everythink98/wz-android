@@ -509,8 +509,11 @@ export function NotificationDetailRoute({
     item.target.type === 'topic' || item.target.type === 'topic-post' ? parseForumTopicLink(item.target.url) : null;
   const targetTopic = detailQuery.data?.topic || (fallbackTopic ? { ...fallbackTopic, title: item.title } : null);
   const targetCommentId = item.target.type === 'topic-post' ? Number(item.target.postId) : 0;
+  const targetIsDiscourseOpeningPost =
+    item.target.type === 'topic-post' && isDiscourseSource(item.source) && item.target.postNumber === 1;
   const targetReply =
     item.target.type === 'topic-post' &&
+    !targetIsDiscourseOpeningPost &&
     ((Number.isSafeInteger(targetCommentId) && targetCommentId > 0) || item.target.postNumber)
       ? {
           ...(Number.isSafeInteger(targetCommentId) && targetCommentId > 0 ? { commentId: targetCommentId } : {}),

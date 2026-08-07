@@ -326,7 +326,7 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(3);
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-068] reverses a confirmed complete V2EX collection without another transport', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068][REG-TOPIC-069] reorders and refreshes a complete V2EX collection without another reply transport', async () => {
     const replies = [
       { ...firstReply, floor: 1, commentId: 101 },
       { ...firstReply, floor: 2, commentId: 102 },
@@ -334,10 +334,11 @@ describe('topic query controller', () => {
     ];
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 3 };
     const detail = { ...firstDetail, ...topic, replies, replyHasMore: false, replyNextPage: null };
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
     const getReplies = jest.fn<ReadGateway['getReplies']>();
     const hook = await renderTopicController({
       readGateway: {
-        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+        getTopic,
         getReplies
       },
       topic
@@ -353,6 +354,17 @@ describe('topic query controller', () => {
     await waitFor(() =>
       expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([3, 2, 1])
     );
+    await act(async () => {
+      hook.result.current.session.commands.view.changeReplyOrder('oldest');
+    });
+    await waitFor(() =>
+      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2, 3])
+    );
+    await act(async () => {
+      await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('completed');
+    });
+
+    expect(getTopic).toHaveBeenCalledTimes(2);
     expect(getReplies).not.toHaveBeenCalled();
   });
 
@@ -1120,7 +1132,7 @@ describe('topic query controller', () => {
     );
   });
 
-  it('[REG-TOPIC-062] locates V2EX only from its already loaded reply collection', async () => {
+  it('[REG-TOPIC-062][REG-TOPIC-069] locates V2EX only from its already loaded reply collection', async () => {
     const reply = { ...firstReply, floor: 12, commentId: 120 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1' };
     const detail = { ...firstDetail, ...topic, replies: [reply] };

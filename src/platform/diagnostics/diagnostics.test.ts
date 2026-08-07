@@ -360,6 +360,18 @@ describe('diagnostic traces', () => {
     expect(events().at(-1)).toEqual(expect.objectContaining({ parserVariant }));
   });
 
+  it.each(['html-topic', 'html-topic-fallback', 'api-topic-fallback'])(
+    'keeps the allowlisted V2EX parser variant %s',
+    (parserVariant) => {
+      const events = captureEvents();
+      const trace = beginDiagnosticTrace('topic', 'parse-topic');
+
+      markDiagnosticStage(trace, 'parse', { parserVariant });
+
+      expect(events().at(-1)).toEqual(expect.objectContaining({ parserVariant }));
+    }
+  );
+
   it('upgrades a successful terminal event to the most severe hinted outcome', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('topic', 'open');

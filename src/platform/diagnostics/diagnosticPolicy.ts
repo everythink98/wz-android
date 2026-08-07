@@ -371,6 +371,7 @@ const parserVariantValues = closedValues(
   'api-categories',
   'api-latest-feed',
   'api-topic',
+  'api-topic-fallback',
   'api-user',
   'api-user-basic',
   'atom-user-topics',

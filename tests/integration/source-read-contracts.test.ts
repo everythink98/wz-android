@@ -938,7 +938,7 @@ describe('Android local sources', () => {
     expect(topic.replies[0].authorLevelLabel).toBe('Lv2');
   });
 
-  it('reads V2EX Pro labels from topic and reply API members', async () => {
+  it('reads V2EX Pro labels from the topic API and origin reply badges', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([
@@ -964,7 +964,20 @@ describe('Android local sources', () => {
         ]);
       }
       if (input === 'https://www.v2ex.com/t/810') {
-        return html('');
+        return html(`
+          <script type="application/ld+json">
+            {"interactionStatistic":[
+              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":1}
+            ]}
+          </script>
+          <div id="r_7001" class="cell">
+            <img class="avatar" src="//cdn.v2ex.com/alice.png" />
+            <span class="no">1</span>
+            <strong><a href="/member/alice" class="dark">alice</a></strong>
+            <div class="badges"><div class="badge pro">PRO</div></div>
+            <div class="reply_content">first reply</div>
+          </div>
+        `);
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -973,6 +986,9 @@ describe('Android local sources', () => {
 
     expect(topic.authorLevelLabel).toBe('Pro');
     expect(topic.replies[0].authorLevelLabel).toBe('Pro');
+    expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=810&page=1'
+    );
   });
 
   it('loads NodeSeek vote info from nsapp vote links in topic content', async () => {
@@ -7086,6 +7102,15 @@ describe('Android local sources', () => {
       if (input.includes('/api/replies/show.json')) {
         return json([]);
       }
+      if (input === 'https://www.v2ex.com/t/701') {
+        return html(`
+          <script type="application/ld+json">
+            {"interactionStatistic":[
+              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":0}
+            ]}
+          </script>
+        `);
+      }
       throw new Error(`unexpected ${input}`);
     });
 
@@ -7094,8 +7119,14 @@ describe('Android local sources', () => {
     expect(topic).toMatchObject({
       createdAt: '2026-05-28T20:35:00.000Z',
       lastReplyAt: '2026-05-28T20:35:00.000Z',
-      replyCount: 0
+      replyCount: 0,
+      replies: [],
+      replyHasMore: false,
+      replyNextPage: null
     });
+    expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=701&page=1'
+    );
   });
 
   it('enriches V2EX topic details from the origin HTML without login-only actions', async () => {
@@ -7144,8 +7175,8 @@ describe('Android local sources', () => {
             <span class="fade">Supplement 1 &nbsp;·&nbsp; <span title="2026-05-28 10:24:10 +08:00">23h ago</span></span>
             <div class="topic_content"><p>补充正文 <img src="/supplement.svg" /></p></div>
           </div>
-          <div id="r_7001" class="cell"><span class="no">1</span><span class="ago" title="2026-05-28 10:01:40 +08:00">1h ago</span><div class="reply_content">first reply</div></div>
-          <div id="r_7002" class="cell"><span class="no">2</span><span class="ago" title="2026-05-28 10:03:20 +08:00">1h ago</span><span class="small fade"><img src="/static/img/heart_20250818.png" alt="heart"> 2</span><div class="reply_content">@<a href="/member/alice">alice</a> answer</div></div>
+          <div id="r_7001" class="cell"><img class="avatar" src="//cdn.v2ex.com/alice.png"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><span class="ago" title="2026-05-28 10:01:40 +08:00">1h ago</span><div class="reply_content">first reply</div></div>
+          <div id="r_7002" class="cell"><img class="avatar" src="//cdn.v2ex.com/neo.png"><span class="no">2</span><strong><a href="/member/neo">neo</a></strong><span class="ago" title="2026-05-28 10:03:20 +08:00">1h ago</span><span class="small fade"><img src="/static/img/heart_20250818.png" alt="heart"> 2</span><div class="reply_content">@<a href="/member/alice">alice</a> answer</div></div>
         `);
       }
       throw new Error(`unexpected ${input}`);
@@ -7170,6 +7201,165 @@ describe('Android local sources', () => {
     });
   });
 
+  it('[REG-TOPIC-069] trusts a complete V2EX origin reply snapshot over stale public JSON caches', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 817,
+            title: 'V2EX active reply race',
+            url: 'https://www.v2ex.com/t/817',
+            created: 1780000000,
+            replies: 2,
+            member: { username: 'neo' },
+            content_rendered: '<p>detail body</p>'
+          }
+        ]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([
+          { id: 8201, member: { username: 'alice' }, content_rendered: '<p>first stale reply</p>' },
+          { id: 8202, member: { username: 'bob' }, content_rendered: '<p>second stale reply</p>' }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/817') {
+        return html(`
+          <script type="application/ld+json">
+            {"interactionStatistic":[
+              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":3}
+            ]}
+          </script>
+          <div id="r_8201" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first current reply</div></div>
+          <div id="r_8202" class="cell"><span class="no">2</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second current reply</div></div>
+          <div id="r_8203" class="cell"><span class="no">3</span><strong><a href="/member/carol">carol</a></strong><div class="reply_content">third current reply</div></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '817', fetcher });
+
+    expect(topic.replyCount).toBe(3);
+    expect(topic.replies.map(({ commentId, floor }) => [commentId, floor])).toEqual([
+      [8201, 1],
+      [8202, 2],
+      [8203, 3]
+    ]);
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic', partialErrorCount: 0 });
+    expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=817&page=1'
+    );
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-069] rejects extra malformed V2EX reply nodes hidden by normalization', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 820,
+            title: 'V2EX malformed reply node',
+            url: 'https://www.v2ex.com/t/820',
+            created: 1780000000,
+            replies: 1,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([{ id: 7501, member: { username: 'alice' }, content_rendered: '<p>first</p>' }]);
+      }
+      if (input === 'https://www.v2ex.com/t/820') {
+        return html(`
+          <script type="application/ld+json">
+            {"commentCount":1,"interactionStatistic":[
+              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":1}
+            ]}
+          </script>
+          <div id="r_7501" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+          <div id="r_7502" class="cell"><span class="no">2</span></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getTopic({ source: 'v2ex', id: '820', fetcher })).rejects.toThrow('回复总数已变化');
+    expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=820&page=1'
+    );
+  });
+
+  it('[REG-TOPIC-069] accepts a self-consistent V2EX commentCount-only reply snapshot', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 821,
+            title: 'V2EX commentCount reply snapshot',
+            url: 'https://www.v2ex.com/t/821',
+            created: 1780000000,
+            replies: 2,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        throw new Error('public replies API must not run');
+      }
+      if (input === 'https://www.v2ex.com/t/821') {
+        return html(`
+          <script type="application/ld+json">{"commentCount":"3"}</script>
+          <div id="r_7601" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+          <div id="r_7602" class="cell"><span class="no">2</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
+          <div id="r_7603" class="cell"><span class="no">3</span><strong><a href="/member/carol">carol</a></strong><div class="reply_content">third</div></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '821', fetcher });
+
+    expect(topic.replyCount).toBe(3);
+    expect(topic.replies.map(({ floor }) => floor)).toEqual([1, 2, 3]);
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic' });
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-069] rejects conflicting V2EX reply declarations', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 822,
+            title: 'V2EX conflicting reply declarations',
+            url: 'https://www.v2ex.com/t/822',
+            created: 1780000000,
+            replies: 2,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([]);
+      }
+      if (input === 'https://www.v2ex.com/t/822') {
+        return html(`
+          <script type="application/ld+json">
+            {"commentCount":3,"interactionStatistic":[
+              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":2}
+            ]}
+          </script>
+          <div id="r_7701" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+          <div id="r_7702" class="cell"><span class="no">2</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getTopic({ source: 'v2ex', id: '822', fetcher })).rejects.toThrow('回复总数已变化');
+    expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=822&page=1'
+    );
+  });
+
   it('[REG-TOPIC-067] rejects a V2EX reply collection shorter than the authoritative topic count', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
@@ -7191,11 +7381,24 @@ describe('Android local sources', () => {
           { id: 8102, member: { username: 'bob' }, content_rendered: '<p>second</p>', created: 1780000200 }
         ]);
       }
-      if (input === 'https://www.v2ex.com/t/816') return html('<div class="box"></div>');
+      if (input === 'https://www.v2ex.com/t/816') {
+        return html(`
+          <script type="application/ld+json">
+            {"interactionStatistic":[
+              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":3}
+            ]}
+          </script>
+          <div id="r_8101" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+          <div id="r_8102" class="cell"><span class="no">2</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
+        `);
+      }
       throw new Error(`unexpected ${input}`);
     });
 
     await expect(getTopic({ source: 'v2ex', id: '816', fetcher })).rejects.toThrow('回复总数已变化');
+    expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=816&page=1'
+    );
   });
 
   it('REG-TOPIC-016 keeps the V2EX thanks count when an icon attribute contains a quoted greater-than sign', async () => {
@@ -7263,7 +7466,7 @@ describe('Android local sources', () => {
     expect(topic.replies[0].replyTarget).toBeUndefined();
   });
 
-  it('falls back to V2EX origin HTML replies when the public replies API times out', async () => {
+  it('uses a complete legacy V2EX HTML reply collection without the replies API', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([
@@ -7322,6 +7525,194 @@ describe('Android local sources', () => {
       replyTarget: { author: { name: 'alice', username: 'alice' } },
       thanksCount: 3
     });
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+      parserVariant: 'html-topic-fallback',
+      partialErrorCount: 0
+    });
+    expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=811&page=1'
+    );
+  });
+
+  it('[REG-TOPIC-069] falls back to the V2EX replies API only after the origin HTML request fails', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 812,
+            title: 'V2EX API fallback detail',
+            url: 'https://www.v2ex.com/t/812',
+            created: 1780000000,
+            replies: 2,
+            member: { username: 'neo' },
+            content_rendered: '<p>detail body</p>'
+          }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/812') {
+        throw new Error('origin HTML unavailable');
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([
+          {
+            id: 7201,
+            member: { username: 'alice' },
+            content_rendered: '<p>first API reply</p>',
+            created: 1780000100
+          },
+          {
+            id: 7202,
+            member: { username: 'bob' },
+            content_rendered: '<p>second API reply</p>',
+            created: 1780000200
+          }
+        ]);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '812', fetcher });
+
+    expect(topic.replyCount).toBe(2);
+    expect(topic.replies.map(({ author, commentId, floor }) => ({ author, commentId, floor }))).toEqual([
+      { author: 'alice', commentId: 7201, floor: 1 },
+      { author: 'bob', commentId: 7202, floor: 2 }
+    ]);
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+      parserVariant: 'api-topic-fallback',
+      partialErrorCount: 1
+    });
+    expect(fetcher.mock.calls.map(([input]) => input)).toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=812&page=1'
+    );
+  });
+
+  it('[REG-TOPIC-069] confirms an empty V2EX API fallback after the origin HTML request fails', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 818,
+            title: 'V2EX empty API fallback',
+            url: 'https://www.v2ex.com/t/818',
+            created: 1780000000,
+            replies: 0,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/818') {
+        throw new Error('origin HTML unavailable');
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([]);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '818', fetcher });
+
+    expect(topic).toMatchObject({ replyCount: 0, replies: [], replyHasMore: false, replyNextPage: null });
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+      parserVariant: 'api-topic-fallback',
+      partialErrorCount: 1
+    });
+    expect(fetcher.mock.calls.map(([input]) => input)).toContain(
+      'https://www.v2ex.com/api/replies/show.json?topic_id=818&page=1'
+    );
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-069] rejects a nonempty V2EX API fallback against a zero topic count', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 823,
+            title: 'V2EX stale zero topic count',
+            url: 'https://www.v2ex.com/t/823',
+            created: 1780000000,
+            replies: 0,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/823') {
+        throw new Error('origin HTML unavailable');
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([{ id: 7801, member: { username: 'alice' }, content_rendered: '<p>newer reply</p>' }]);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getTopic({ source: 'v2ex', id: '823', fetcher })).rejects.toThrow('回复总数已变化');
+  });
+
+  it('[REG-TOPIC-069] selects a matching empty V2EX API fallback over unproven HTML rows', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 819,
+            title: 'V2EX empty API fallback with legacy HTML',
+            url: 'https://www.v2ex.com/t/819',
+            created: 1780000000,
+            replies: 0,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/819') {
+        return html(`
+          <div id="r_7401" class="cell">
+            <span class="no">1</span>
+            <strong><a href="/member/alice">alice</a></strong>
+            <div class="reply_content">unproven HTML reply</div>
+          </div>
+        `);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([]);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '819', fetcher });
+
+    expect(topic).toMatchObject({ replyCount: 0, replies: [], replyHasMore: false, replyNextPage: null });
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+      parserVariant: 'api-topic-fallback',
+      partialErrorCount: 0
+    });
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-069] rejects an incomplete V2EX replies API fallback', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 813,
+            title: 'V2EX incomplete API fallback',
+            url: 'https://www.v2ex.com/t/813',
+            created: 1780000000,
+            replies: 3,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/813') {
+        throw new Error('origin HTML unavailable');
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([
+          { id: 7301, member: { username: 'alice' }, content_rendered: '<p>first</p>' },
+          { id: 7302, member: { username: 'bob' }, content_rendered: '<p>second</p>' }
+        ]);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getTopic({ source: 'v2ex', id: '813', fetcher })).rejects.toThrow('回复总数已变化');
   });
 
   it('keeps V2EX all feed pagination open through the recent HTML list', async () => {

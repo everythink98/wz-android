@@ -46,6 +46,7 @@ export interface V2exOptions {
 }
 
 type V2exHtmlReplyMeta = {
+  authorLevelLabel?: Reply['authorLevelLabel'];
   commentId?: number;
   createdAt?: string;
   floor?: number;
@@ -55,6 +56,8 @@ type V2exHtmlReplyMeta = {
 
 type V2exHtmlDetail = {
   replyCount?: number;
+  replyCountConflict: boolean;
+  replyNodeCount: number;
   supplementHtml: string;
   tags: string[];
   upvoteCount?: number;
@@ -220,6 +223,16 @@ function interactionTypeName(value: unknown) {
   return '';
 }
 
+function v2exStructuredCount(value: unknown) {
+  const count =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(value.trim())
+        ? Number(value.replace(/,/g, ''))
+        : NaN;
+  return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+}
+
 function statCountByInteraction(data: unknown, pattern: RegExp) {
   if (!isRecord(data)) {
     return undefined;
@@ -230,15 +243,35 @@ function statCountByInteraction(data: unknown, pattern: RegExp) {
     if (!isRecord(stat) || !pattern.test(interactionTypeName(stat.interactionType))) {
       continue;
     }
-    const rawCount = stat.userInteractionCount;
-    const count =
-      typeof rawCount === 'number'
-        ? rawCount
-        : typeof rawCount === 'string' && /^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(rawCount.trim())
-          ? Number(rawCount.replace(/,/g, ''))
-          : NaN;
-    if (Number.isSafeInteger(count) && count >= 0) {
+    const count = v2exStructuredCount(stat.userInteractionCount);
+    if (typeof count === 'number') {
       return count;
+    }
+  }
+  return undefined;
+}
+
+function commentCountFromStructuredData(data: unknown): number | undefined {
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const count = commentCountFromStructuredData(item);
+      if (typeof count === 'number') return count;
+    }
+    return undefined;
+  }
+  if (!isRecord(data)) return undefined;
+  const count = v2exStructuredCount(data.commentCount);
+  if (typeof count === 'number') return count;
+  return commentCountFromStructuredData(data['@graph']);
+}
+
+function parseV2exCommentCount(root: ReturnType<typeof parseHtml>) {
+  for (const script of root.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const count = commentCountFromStructuredData(JSON.parse(script.text));
+      if (typeof count === 'number') return count;
+    } catch {
+      // Ignore unrelated structured data.
     }
   }
   return undefined;
@@ -304,7 +337,8 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
   const repliesByCommentId = new Map<number, V2exHtmlReplyMeta>();
   const repliesByFloor = new Map<number, V2exHtmlReplyMeta>();
   const replies: Reply[] = [];
-  for (const element of root.querySelectorAll('[id^="r_"]')) {
+  const replyNodes = root.querySelectorAll('[id^="r_"]');
+  for (const element of replyNodes) {
     const commentId = parsePositiveInteger(String(element.getAttribute('id') || '').replace(/^r_/, ''));
     const floor = parsePositiveInteger(element.querySelector('.no')?.text);
     const createdAt = toV2exHtmlIsoString(element.querySelector('.ago')?.getAttribute('title'));
@@ -317,7 +351,9 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
     const replyTarget = replyTargetAuthor
       ? { author: { name: replyTargetAuthor, username: replyTargetAuthor } }
       : undefined;
+    const authorLevelLabel = element.querySelector('.badge.pro') ? 'Pro' : undefined;
     const meta: V2exHtmlReplyMeta = {
+      ...(authorLevelLabel ? { authorLevelLabel } : {}),
       ...(commentId ? { commentId } : {}),
       ...(floor ? { floor } : {}),
       ...(createdAt ? { createdAt } : {}),
@@ -345,6 +381,7 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
         authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : author ? memberUrl(author) : undefined,
         contentHtml,
         createdAt,
+        ...(authorLevelLabel ? { authorLevelLabel } : {}),
         ...(floor ? { floor } : {}),
         ...(commentId ? { commentId } : {}),
         ...(replyTarget ? { replyTarget } : {}),
@@ -352,14 +389,19 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
       });
     }
   }
-  return { replies, repliesByCommentId, repliesByFloor };
+  return { replyNodeCount: replyNodes.length, replies, repliesByCommentId, repliesByFloor };
 }
 
 function parseV2exHtmlDetail(html: string): V2exHtmlDetail {
   const root = parseHtml(html);
   const replyMeta = parseV2exReplyMeta(root);
+  const replyActionCount = parseV2exInteractionCount(root, /ReplyAction/i);
+  const commentCount = parseV2exCommentCount(root);
   return {
-    replyCount: parseV2exInteractionCount(root, /ReplyAction/i),
+    replyCount: replyActionCount ?? commentCount,
+    replyCountConflict:
+      typeof replyActionCount === 'number' && typeof commentCount === 'number' && replyActionCount !== commentCount,
+    replyNodeCount: replyMeta.replyNodeCount,
     supplementHtml: parseV2exSupplements(root),
     tags: parseV2exTags(root),
     upvoteCount: parseV2exTopicUpvoteCount(root),
@@ -734,6 +776,7 @@ function mergeV2exReplyMeta(replies: Reply[], detail: V2exHtmlDetail | null) {
     }
     return {
       ...reply,
+      ...(meta.authorLevelLabel && !reply.authorLevelLabel ? { authorLevelLabel: meta.authorLevelLabel } : {}),
       ...(meta.createdAt ? { createdAt: meta.createdAt } : {}),
       ...(meta.floor ? { floor: meta.floor } : {}),
       ...(meta.replyTarget && !reply.replyTarget ? { replyTarget: meta.replyTarget } : {}),
@@ -747,11 +790,8 @@ export async function getV2exTopic(
   options: V2exOptions & { replyLimit?: number } = {}
 ): Promise<TopicDetail> {
   let detailHtmlFailed = false;
-  const [topicData, replyResult, detailHtml] = await Promise.all([
+  const [topicData, detailHtml] = await Promise.all([
     fetchJson<unknown[]>(`${BASE_URL}/api/topics/show.json?id=${encodeURIComponent(id)}`, options),
-    fetchJson<unknown[]>(`${BASE_URL}/api/replies/show.json?topic_id=${encodeURIComponent(id)}&page=1`, options)
-      .then((data) => ({ data }))
-      .catch((error: unknown) => ({ error })),
     fetchText(`${BASE_URL}/t/${encodeURIComponent(id)}`, options).catch(() => {
       detailHtmlFailed = true;
       return '';
@@ -766,19 +806,62 @@ export async function getV2exTopic(
   const apiContentHtml = sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL);
   const htmlAccessRequirement =
     detailHtml && !textContentFromHtml(apiContentHtml) ? v2exHtmlAccessRequirement(detailHtml) : undefined;
-  const apiReplies =
-    'data' in replyResult && Array.isArray(replyResult.data)
-      ? mergeV2exReplyMeta(replyResult.data.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
-      : [];
-  if (!apiReplies.length && 'error' in replyResult && (topic.replyCount || 0) > 0 && !htmlDetail?.replies.length) {
-    throw replyResult.error instanceof Error
-      ? replyResult.error
-      : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
-  }
-  const replies = apiReplies.length ? apiReplies : htmlDetail?.replies || [];
-  const replyCount = htmlDetail?.replyCount ?? topic.replyCount;
-  if (replies.length !== replyCount) {
+  const htmlReplies = htmlDetail?.replies || [];
+  const htmlReplyCount = htmlDetail?.replyCount;
+  const htmlReplyNodeCount = htmlDetail?.replyNodeCount || 0;
+  let replies: Reply[];
+  let replyCount: number;
+  let replyCandidates: number;
+  let parserVariant: string;
+  let replyApiFailed = false;
+
+  if (htmlDetail?.replyCountConflict) {
     throw new Error('V2EX 回复总数已变化，无法确认完整集合');
+  }
+  if (typeof htmlReplyCount === 'number') {
+    if (htmlReplyNodeCount !== htmlReplyCount || htmlReplies.length !== htmlReplyNodeCount) {
+      throw new Error('V2EX 回复总数已变化，无法确认完整集合');
+    }
+    replies = htmlReplies;
+    replyCount = htmlReplyCount;
+    replyCandidates = htmlReplies.length;
+    parserVariant = 'html-topic';
+  } else if (
+    htmlDetail &&
+    htmlReplyNodeCount === (topic.replyCount || 0) &&
+    htmlReplies.length === htmlReplyNodeCount
+  ) {
+    replies = htmlReplies;
+    replyCount = topic.replyCount || 0;
+    replyCandidates = htmlReplies.length;
+    parserVariant = 'html-topic-fallback';
+  } else {
+    const replyResult = await fetchJson<unknown[]>(
+      `${BASE_URL}/api/replies/show.json?topic_id=${encodeURIComponent(id)}&page=1`,
+      options
+    )
+      .then((data) => ({ data }))
+      .catch((error: unknown) => {
+        replyApiFailed = true;
+        return { error };
+      });
+    const replyData = 'data' in replyResult && Array.isArray(replyResult.data) ? replyResult.data : null;
+    const apiReplies =
+      replyData !== null
+        ? mergeV2exReplyMeta(replyData.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
+        : [];
+    if ('error' in replyResult) {
+      throw replyResult.error instanceof Error
+        ? replyResult.error
+        : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
+    }
+    replies = replyData !== null ? apiReplies : htmlReplies;
+    replyCount = topic.replyCount || 0;
+    replyCandidates = replyData !== null ? replyData.length : htmlReplies.length;
+    parserVariant = replyData !== null ? 'api-topic-fallback' : 'html-topic-fallback';
+    if (replies.length !== replyCount) {
+      throw new Error('V2EX 回复总数已变化，无法确认完整集合');
+    }
   }
   const result = {
     ...topic,
@@ -792,13 +875,9 @@ export async function getV2exTopic(
     replyNextPage: null,
     ...(!topic.accessRequirement && htmlAccessRequirement ? { accessRequirement: htmlAccessRequirement } : {})
   };
-  const replyCandidates =
-    'data' in replyResult && Array.isArray(replyResult.data)
-      ? replyResult.data.length
-      : htmlDetail?.replies.length || 0;
-  const partialErrorCount = Number(detailHtmlFailed) + Number('error' in replyResult);
+  const partialErrorCount = Number(detailHtmlFailed) + Number(replyApiFailed);
   return annotateSourceDiagnosticSummary(result, {
-    parserVariant: apiReplies.length ? 'api-topic' : htmlDetail ? 'html-topic-fallback' : 'api-topic',
+    parserVariant,
     candidateCount: 1 + replyCandidates,
     validCount: 1 + replies.length,
     droppedCount: Math.max(0, replyCandidates - replies.length),
