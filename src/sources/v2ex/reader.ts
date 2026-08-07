@@ -55,6 +55,7 @@ type V2exHtmlReplyMeta = {
 };
 
 type V2exHtmlDetail = {
+  linkedPages: number[];
   replyCount?: number;
   replyCountConflict: boolean;
   replyNodeCount: number;
@@ -66,6 +67,8 @@ type V2exHtmlDetail = {
   repliesByCommentId: Map<number, V2exHtmlReplyMeta>;
   repliesByFloor: Map<number, V2exHtmlReplyMeta>;
 };
+
+const V2EX_REPLY_COLLECTION_ERROR = 'V2EX 回复总数已变化，无法确认完整集合';
 
 function escapeHtml(value: unknown) {
   return String(value || '')
@@ -392,12 +395,37 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
   return { replyNodeCount: replyNodes.length, replies, repliesByCommentId, repliesByFloor };
 }
 
-function parseV2exHtmlDetail(html: string): V2exHtmlDetail {
+function parseV2exLinkedTopicPages(root: ReturnType<typeof parseHtml>, id: string) {
+  const linkedPages = new Set<number>();
+  const expectedOrigin = new URL(BASE_URL).origin;
+  const expectedPath = `/t/${encodeURIComponent(id)}`;
+  const topicPageUrl = `${BASE_URL}${expectedPath}`;
+  for (const link of root.querySelectorAll('a[href]')) {
+    try {
+      const url = new URL(link.getAttribute('href') || '', topicPageUrl);
+      const pageValues = url.searchParams.getAll('p');
+      if (url.origin !== expectedOrigin || url.pathname !== expectedPath || pageValues.length !== 1) {
+        continue;
+      }
+      const pageText = pageValues[0].trim();
+      const page = /^\d+$/.test(pageText) ? Number(pageText) : NaN;
+      if (Number.isSafeInteger(page) && page > 0) {
+        linkedPages.add(page);
+      }
+    } catch {
+      // Ignore malformed and non-HTTP links.
+    }
+  }
+  return [...linkedPages].sort((left, right) => left - right);
+}
+
+function parseV2exHtmlDetail(html: string, id: string): V2exHtmlDetail {
   const root = parseHtml(html);
   const replyMeta = parseV2exReplyMeta(root);
   const replyActionCount = parseV2exInteractionCount(root, /ReplyAction/i);
   const commentCount = parseV2exCommentCount(root);
   return {
+    linkedPages: parseV2exLinkedTopicPages(root, id),
     replyCount: replyActionCount ?? commentCount,
     replyCountConflict:
       typeof replyActionCount === 'number' && typeof commentCount === 'number' && replyActionCount !== commentCount,
@@ -410,6 +438,93 @@ function parseV2exHtmlDetail(html: string): V2exHtmlDetail {
     repliesByCommentId: replyMeta.repliesByCommentId,
     repliesByFloor: replyMeta.repliesByFloor
   };
+}
+
+function assertV2exHtmlReplyPage(detail: V2exHtmlDetail, replyCount: number) {
+  if (
+    detail.replyCountConflict ||
+    detail.replyCount !== replyCount ||
+    detail.replyNodeCount !== detail.replies.length
+  ) {
+    throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+  }
+}
+
+function completeV2exHtmlReplyDetail(firstDetail: V2exHtmlDetail, pageDetails: V2exHtmlDetail[]) {
+  const replyCount = firstDetail.replyCount;
+  if (typeof replyCount !== 'number') {
+    return firstDetail;
+  }
+  const replies = pageDetails.flatMap((detail) => detail.replies);
+  if (replies.length !== replyCount) {
+    throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+  }
+  const seenCommentIds = new Set<number>();
+  const seenFloors = new Set<number>();
+  for (const reply of replies) {
+    if (!reply.floor || seenFloors.has(reply.floor)) {
+      throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+    }
+    seenFloors.add(reply.floor);
+    if (reply.commentId) {
+      if (seenCommentIds.has(reply.commentId)) {
+        throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+      }
+      seenCommentIds.add(reply.commentId);
+    }
+  }
+  const sortedReplies = [...replies].sort((left, right) => (left.floor || 0) - (right.floor || 0));
+  if (sortedReplies.some((reply, index) => reply.floor !== index + 1)) {
+    throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+  }
+  const repliesByCommentId = new Map<number, V2exHtmlReplyMeta>();
+  const repliesByFloor = new Map<number, V2exHtmlReplyMeta>();
+  for (const detail of pageDetails) {
+    for (const [commentId, meta] of detail.repliesByCommentId) {
+      repliesByCommentId.set(commentId, meta);
+    }
+    for (const [floor, meta] of detail.repliesByFloor) {
+      repliesByFloor.set(floor, meta);
+    }
+  }
+  return {
+    ...firstDetail,
+    replyNodeCount: pageDetails.reduce((total, detail) => total + detail.replyNodeCount, 0),
+    replies: sortedReplies,
+    repliesByCommentId,
+    repliesByFloor
+  };
+}
+
+async function loadCompleteV2exHtmlReplyDetail(id: string, firstDetail: V2exHtmlDetail, options: V2exOptions) {
+  const replyCount = firstDetail.replyCount;
+  if (typeof replyCount !== 'number') {
+    return firstDetail;
+  }
+  assertV2exHtmlReplyPage(firstDetail, replyCount);
+  const pageDetails = [firstDetail];
+  const visitedPages = new Set([1]);
+  const pendingPages = new Set(firstDetail.linkedPages.filter((page) => page !== 1));
+  let loadedReplyNodes = firstDetail.replyNodeCount;
+  while (loadedReplyNodes < replyCount) {
+    const page = [...pendingPages].sort((left, right) => left - right)[0];
+    if (!page || visitedPages.size >= Math.max(1, replyCount)) {
+      throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+    }
+    pendingPages.delete(page);
+    visitedPages.add(page);
+    const html = await fetchText(`${BASE_URL}/t/${encodeURIComponent(id)}?p=${page}`, options);
+    const detail = parseV2exHtmlDetail(html, id);
+    assertV2exHtmlReplyPage(detail, replyCount);
+    pageDetails.push(detail);
+    loadedReplyNodes += detail.replyNodeCount;
+    for (const linkedPage of detail.linkedPages) {
+      if (!visitedPages.has(linkedPage)) {
+        pendingPages.add(linkedPage);
+      }
+    }
+  }
+  return completeV2exHtmlReplyDetail(firstDetail, pageDetails);
 }
 
 function v2exHtmlAccessRequirement(html: string) {
@@ -802,7 +917,10 @@ export async function getV2exTopic(
     throw new Error('V2EX 主题不存在');
   }
   const rawTopic = Array.isArray(topicData) && isRecord(topicData[0]) ? topicData[0] : {};
-  const htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml) : null;
+  let htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml, id) : null;
+  if (htmlDetail && typeof htmlDetail.replyCount === 'number') {
+    htmlDetail = await loadCompleteV2exHtmlReplyDetail(id, htmlDetail, options);
+  }
   const apiContentHtml = sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL);
   const htmlAccessRequirement =
     detailHtml && !textContentFromHtml(apiContentHtml) ? v2exHtmlAccessRequirement(detailHtml) : undefined;
@@ -816,11 +934,11 @@ export async function getV2exTopic(
   let replyApiFailed = false;
 
   if (htmlDetail?.replyCountConflict) {
-    throw new Error('V2EX 回复总数已变化，无法确认完整集合');
+    throw new Error(V2EX_REPLY_COLLECTION_ERROR);
   }
   if (typeof htmlReplyCount === 'number') {
     if (htmlReplyNodeCount !== htmlReplyCount || htmlReplies.length !== htmlReplyNodeCount) {
-      throw new Error('V2EX 回复总数已变化，无法确认完整集合');
+      throw new Error(V2EX_REPLY_COLLECTION_ERROR);
     }
     replies = htmlReplies;
     replyCount = htmlReplyCount;
@@ -860,7 +978,7 @@ export async function getV2exTopic(
     replyCandidates = replyData !== null ? replyData.length : htmlReplies.length;
     parserVariant = replyData !== null ? 'api-topic-fallback' : 'html-topic-fallback';
     if (replies.length !== replyCount) {
-      throw new Error('V2EX 回复总数已变化，无法确认完整集合');
+      throw new Error(V2EX_REPLY_COLLECTION_ERROR);
     }
   }
   const result = {

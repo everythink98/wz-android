@@ -39,18 +39,14 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     composer: { width: '100%', gap: 10, paddingHorizontal: 16, paddingTop: 14 },
     title: { color: theme.ink, fontFamily, fontSize: scaled(15), fontWeight: '600' },
     toolbar: {
-      alignItems: 'center',
       backgroundColor: neutralSurface,
       borderColor: neutralBorder,
       borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 6,
       minHeight: 48,
-      padding: 6,
       width: '100%'
     },
+    toolbarContent: { alignItems: 'center', flexDirection: 'row', gap: 6, padding: 6 },
     selectedExpression: {
       alignSelf: 'flex-start',
       backgroundColor: neutralSurfaceStrong,
@@ -516,9 +512,17 @@ export function ReplyComposer({
     <View style={styles.composer}>
       <Text style={styles.title}>{title}</Text>
       {toolbarItems.length ? (
-        <View testID="reply-composer-toolbar" style={styles.toolbar}>
+        <GestureScrollView
+          testID="reply-composer-toolbar"
+          horizontal
+          nestedScrollEnabled
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          style={styles.toolbar}
+          contentContainerStyle={styles.toolbarContent}
+        >
           {toolbarItems.map(renderToolbarItem)}
-        </View>
+        </GestureScrollView>
       ) : null}
       {face && selectedFaceLabel ? <Text style={styles.selectedExpression}>表情：{selectedFaceLabel}</Text> : null}
       {disabledReason ? <Text style={styles.disabledReason}>{disabledReason}</Text> : null}

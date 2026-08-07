@@ -51,14 +51,6 @@ jest.mock('expo-image', () => ({ Image: () => null }));
 const submitReply = jest.fn();
 const largeTextSettings = { ...createEmptyReaderData().settings, fontScale: 1.3 };
 
-function LargeTextWrapper({ children }: { children: ReactNode }) {
-  return (
-    <ReaderStyleProvider value={{ settings: largeTextSettings, theme: createTheme(largeTextSettings) }}>
-      {children}
-    </ReaderStyleProvider>
-  );
-}
-
 function ReplyHarness({
   actionBusy = false,
   initialContent = '',
@@ -235,15 +227,31 @@ describe('Reply composer local behavior', () => {
     expect(linuxDoView.getByText('表情：踩')).toBeTruthy();
   });
 
-  it('[REG-NOTIFY-036][REG-NOTIFY-038] scales the editor, wraps every tool and uses the theme cursor', async () => {
-    const view = await render(<ReplyHarness onUploadReplyImage={jest.fn()} />, { wrapper: LargeTextWrapper });
-    const theme = createTheme(largeTextSettings);
-    const input = view.getByPlaceholderText('输入回复内容');
+  it.each([
+    ['100%', createEmptyReaderData().settings],
+    ['130%', largeTextSettings]
+  ])(
+    '[REG-NOTIFY-036][REG-NOTIFY-038][REG-NOTIFY-055] keeps the toolbar on one horizontal row at %s and uses the theme cursor',
+    async (_scale, settings) => {
+      function ScaledTextWrapper({ children }: { children: ReactNode }) {
+        return <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>{children}</ReaderStyleProvider>;
+      }
 
-    expect(StyleSheet.flatten(input.props.style).fontSize).toBe(Math.round(14 * largeTextSettings.fontScale));
-    expect(input.props.cursorColor).toBe(theme.primary);
-    expect(input.props.selectionColor).toBe(theme.primary);
-    expect(StyleSheet.flatten(view.getByTestId('reply-composer-toolbar').props.style).flexWrap).toBe('wrap');
-    expect(view.getByLabelText('列表')).toBeTruthy();
-  });
+      const view = await render(<ReplyHarness onUploadReplyImage={jest.fn()} />, { wrapper: ScaledTextWrapper });
+      const theme = createTheme(settings);
+      const toolbar = view.getByTestId('reply-composer-toolbar');
+      const toolbarContentStyle = StyleSheet.flatten(toolbar.props.contentContainerStyle);
+      const input = view.getByPlaceholderText('输入回复内容');
+
+      expect(StyleSheet.flatten(input.props.style).fontSize).toBe(Math.round(14 * settings.fontScale));
+      expect(input.props.cursorColor).toBe(theme.primary);
+      expect(input.props.selectionColor).toBe(theme.primary);
+      expect(toolbar.props.horizontal).toBe(true);
+      expect(toolbar.props.nestedScrollEnabled).toBe(true);
+      expect(toolbar.props.showsHorizontalScrollIndicator).toBe(false);
+      expect(toolbarContentStyle.flexDirection).toBe('row');
+      expect(toolbarContentStyle.flexWrap).toBeUndefined();
+      expect(view.getByLabelText('列表')).toBeTruthy();
+    }
+  );
 });

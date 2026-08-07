@@ -4572,9 +4572,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | More 已显示“字号 130%”，消息列表、私信气泡和回复输入框却仍保持 100% 大小；页面间字号所有权不一致，大字号也无法改善可读性。 |
 | 触发条件 | Reader settings 的 `fontScale` 非 1，进入消息列表、详情或 Topic/私信共用的回复面板。 |
 | 根因 seam | `createNotificationStyles` 与迁移后的 `src/ui/composer/ReplyComposer.tsx` 仍写死 fontSize/lineHeight，没有消费 `ReaderStyleProvider` 的 `settings.fontScale`。 |
-| 必须保持的行为 | 消息列表、空态、设置、详情、会话元信息/气泡、固定回复入口及共享 composer 的标题、工具、输入、状态与错误均按 Reader `fontScale` 成对缩放字号和行高；布局继续换行或滚动，不能靠截断恢复。 |
+| 必须保持的行为 | 消息列表、空态、设置、详情、会话元信息/气泡、固定回复入口及共享 composer 的标题、工具、输入、状态与错误均按 Reader `fontScale` 成对缩放字号和行高；工具栏继续遵循 `REG-NOTIFY-055` 的单行横滑契约，不能靠截断恢复。 |
 | 精确失败 oracle | `tests/integration/style-ownership.test.ts` 的 `REG-NOTIFY-036` 用 1.3 settings 创建真实消息样式，标题必须从 14 变为 18；`tests/ui/topic/reply-composer.test.tsx` 在真实 `ReaderStyleProvider` 下要求输入字号为 `round(14 × 1.3)`。修复前两者分别仍为 14。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：样式 ownership 集成测试固定消息全局 seam，RNTL 固定共享 composer；匹配 Android 再以 100%/130% 对照页面实际换行。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：样式 ownership 集成测试固定消息全局 seam，RNTL 固定共享 composer；匹配 Android 再以 100%/130% 对照字号与末尾工具可达性。 |
 | Replay 或真实验收路径 | More → 外观把字号从 100% 调到 130%，进入消息聚合、单站分类和已有已读会话，打开但不提交回复面板；确认字形、行高和点击区同步变化，结束后恢复 100%。 |
 | 负向验证方式 | 任一消息或 composer 文本恢复固定 fontSize，编号测试必须得到未缩放值并失败；只放大单个标题不能通过全页设备对照。 |
 | 明确不覆盖范围 | 不跟随 Android 系统字体倍率，不改变 App 已有 Reader 字号档位、字体族或密度设置；真实发送和上传仍不在字号验收内。 |
@@ -4599,14 +4599,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `NOTIFY-02`、`WRITE-01`；Topic/私信共享编辑器的工具可达性与视觉反馈 |
-| 用户症状 | 130% 下横向工具栏末尾的引用、代码或列表不可见；输入光标仍是系统默认色；Discourse 表情同时显示英文名称，网格拥挤且不像可浏览的表情面板。 |
+| 用户症状 | 130% 下工具栏末尾的引用、代码或列表无法通过横滑到达；输入光标仍是系统默认色；Discourse 表情同时显示英文名称，网格拥挤且不像可浏览的表情面板。 |
 | 触发条件 | NodeSeek/linux.do/小隐寺 Markdown composer 在窄屏或大字号下显示完整工具集合，或打开服务器返回的 Discourse emoji 目录。 |
-| 根因 seam | ReplyComposer 把格式工具放进单行横向 ScrollView；TextInput 未声明主题 cursor/selection color；Discourse emoji 使用文字型可变宽单元，而不是图像优先等宽网格。 |
-| 必须保持的行为 | 工具栏在自身边界内换行，全部动作无需隐藏横滑即可看到；输入光标和选区使用主题 primary。Discourse emoji 使用五列等宽图片网格，有图片时英文名只保留为 accessibility label，无图 fallback 才显示文字；图片上传、贴纸和所有原动作继续存在。 |
-| 精确失败 oracle | `tests/ui/topic/reply-composer.test.tsx` 的 `REG-NOTIFY-038` 要求 toolbar `flexWrap=wrap`、末尾“列表”可达、cursor/selection 为主题 primary；同文件表达式测试要求 Discourse list 为五列、`party parrot` 仍可通过无障碍找到但没有可见英文文本。修复前分别是未换行、默认光标和可见英文名。 |
+| 根因 seam | ReplyComposer 的工具容器没有同时保证单行内容宽度、嵌套横向手势和末尾工具可达；TextInput 未声明主题 cursor/selection color；Discourse emoji 使用文字型可变宽单元，而不是图像优先等宽网格。工具栏具体布局由后续 `REG-NOTIFY-055` 收敛。 |
+| 必须保持的行为 | 工具栏按 `REG-NOTIFY-055` 使用单行横向滑动，全部动作可达；输入光标和选区使用主题 primary。Discourse emoji 使用五列等宽图片网格，有图片时英文名只保留为 accessibility label，无图 fallback 才显示文字；图片上传、贴纸和所有原动作继续存在。 |
+| 精确失败 oracle | `tests/ui/topic/reply-composer.test.tsx` 的 `REG-NOTIFY-038/055` 要求 toolbar `horizontal=true`、末尾“列表”可达、cursor/selection 为主题 primary；同文件表达式测试要求 Discourse list 为五列、`party parrot` 仍可通过无障碍找到但没有可见英文文本。 |
 | 最低可靠自动测试层 | `UI_PASS`：必须渲染真实共享 ReplyComposer；匹配 Android 以 130% + 键盘/表情开关确认布局和焦点反馈。 |
-| Replay 或真实验收路径 | 在已有已读 NodeSeek 与 linux.do 私信中打开回复面板：NodeSeek 核对图片、贴纸和两行工具；linux.do 核对五列表情图、无英文噪声和图片入口。只打开/取消，不选择图片、不发送。 |
-| 负向验证方式 | 改回 horizontal toolbar、删除末尾动作、移除 cursorColor/selectionColor，或恢复带图片表情的可见英文标签，编号测试必须失败。 |
+| Replay 或真实验收路径 | 在已有已读 NodeSeek 与 linux.do 私信中打开回复面板：NodeSeek 核对图片、贴纸和单行工具横滑；linux.do 核对五列表情图、无英文噪声和图片入口。只打开/取消，不选择图片、不发送。 |
+| 负向验证方式 | 关闭横向手势、让工具换行或截断、删除末尾动作、移除 cursorColor/selectionColor，或恢复带图片表情的可见英文标签，编号测试必须失败。 |
 | 明确不覆盖范围 | 不增加新格式动作、表情搜索/分类或附件能力；只恢复并重排既有能力。 |
 
 ## `REG-NOTIFY-039` 四站消息时间格式互相跳变
@@ -4849,6 +4849,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 opening-post 判断、按 `kind === system` 粗略关闭所有定位，或把首帖 target 改成 `topic` 导致详情正文退化，编号测试或相邻精确帖子回归必须失败。 |
 | 明确不覆盖范围 | 不改变 Discourse 通知 target 类型、详情 transport、已读协议或 Topic 回复窗口；`postNumber` 缺失时不根据 post ID 或正文猜 opening post。 |
 
+## `REG-NOTIFY-055` 共享回复工具栏回归为两行换行
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`WRITE-01`；Topic 与私信共享 ReplyComposer |
+| 用户症状 | 富文本输入框上方的格式工具从原有单行横向滑动变成两行，挤占正文与键盘之间的编辑空间；Topic 和私信入口同时受影响。 |
+| 触发条件 | NodeSeek、linux.do 或小隐寺显示完整格式工具，尤其在窄屏或 Reader 字号 130% 时打开 Topic/已有私信的 Bottom Sheet。 |
+| 根因 seam | `src/ui/composer/ReplyComposer.tsx` 把 toolbar 从横向 `GestureScrollView` 改为普通 `View`，并在同一 style 加入 `flexWrap: 'wrap'`。历史 `REG-NOTIFY-038` 又把两行写成测试标准，导致回归被主动锁定。 |
+| 必须保持的行为 | Topic 与私信共用同一个横向 `GestureScrollView`；toolbar `horizontal=true`、`nestedScrollEnabled=true`、禁止换行并隐藏系统滚动指示器。100%/130% 下末尾“列表”均可横滑到达，全部既有格式、图片、贴纸、五列表情、主题光标/选区和焦点恢复保持；Bottom Sheet 操作按钮仍位于 Android bottom safe-area 上方。不增加入口级布局参数。 |
+| 精确失败 oracle | `tests/ui/topic/reply-composer.test.tsx` 在真实 `ReaderStyleProvider` 的 100%/130% 两档渲染共享组件，要求 toolbar `horizontal=true`、嵌套手势开启、系统指示器隐藏、content 为单行 `row` 且无 `flexWrap`，并能按 accessibility label 找到末尾“列表”。修复前两档都得到 `horizontal=undefined`。既有格式插入、主题光标和五列表情用例继续通过。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须渲染真实共享 ReplyComposer；纯样式字符串或只检查工具存在不能证明横向容器与两档字号行为。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 在一个可回复 Topic 和一个已有已读私信分别以 100%/130% 打开编辑器，横滑至末尾“列表”，展开表情/贴纸并关闭；不选择图片、不发送，验收后恢复原字号。 |
+| 负向验证方式 | 恢复普通 `View`、加入 `flexWrap`、只在 Topic 或私信入口单独包 ScrollView、显示两行，或隐藏末尾工具，编号 UI 测试必须失败。 |
+| 明确不覆盖范围 | 不新增格式动作、滚动指示器、入口级布局开关、键盘方案或附件能力；不改变表情网格、草稿、上传、提交与 safe-area 所有权。 |
+
 ## `REG-TOPIC-062` 极大回复楼层被当作从首屏开始的连续前缀
 
 | 字段 | 内容 |
@@ -4887,7 +4902,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 多页主题切换倒序后仍先看到第一页的倒排片段，继续下滚又混入后续正序页；用户误以为看到最新回复，实际既不完整也不连续。 |
 | 触发条件 | 正序只加载了部分窗口后切换倒序；主题有五页，或 Discourse stream 存在删除/拆帖造成的 post number 缺口；尾页计数或响应页码发生竞态。 |
 | 根因 seam | `ReplyFilter.newest` 在 UI 对本地数组执行 `reverse()`，回复 Query key 不区分遍历方向；Controller 根据已加载数量猜页，来源 adapter 没有拥有尾窗算法、页内顺序和 cursor 转换。 |
-| 必须保持的行为 | 使用独立 `ReplyOrder = oldest | newest` 和 `ReplyWindowPosition(start | cursor | target)`；`ReadGateway.getReplies` 同时接收两者，正倒序 Query key 永不混用。adapter 返回的 `items` 与 cursor 都按请求顺序解释，`next*` 始终是用户向下滚动的相邻窗口，`currentPage/currentOffset` 保留服务端真实位置。NodeSeek 以权威回复数和固定 10 楼页宽直达第 5 页，下一窗只读第 4 页；linux.do/小隐寺按 `post_stream.stream` 真实 ID 取尾组并严格校验 hydration；妖火从主题页真实 `reply` / `tofloor` 链接取最大楼层，原站 page 1 为最新且 page + 1 更早，倒序从末楼向 page + 1、正序从 `tofloor=1` 向 page - 1 遍历，不能把“更多回帖(N)”当总数；V2EX 只复用条目数与权威计数严格相等的完整集合。切换部分集合先清空旧顺序并显示回复级 Loading，失败不应用结果。计数竞态只允许一次“刷新 Topic 权威计数后从当前顺序 start 重建”，再次不一致保留错误。Query 拥有 pages、cursor、取消和普通分页单飞；Controller 的 replace-window 命令只以 generation 实现 latest-command-wins，不保存 Promise 或恢复闭包。UI 保持左侧三种内容筛选和右侧顺序菜单；末窗结算当次显示弱化边界文字，最终回复和系统事件无多余底边。楼层定位保持顺序；编辑/删除刷新真实窗口，新回复先确认尾窗，正序再以真实实体定位。写成功只以 `refetchType: none` 标记精确 Query stale。 |
+| 必须保持的行为 | 使用独立 `ReplyOrder = oldest | newest` 和 `ReplyWindowPosition(start | cursor | target)`；`ReadGateway.getReplies` 同时接收两者，正倒序 Query key 永不混用。adapter 返回的 `items` 与 cursor 都按请求顺序解释，`next*` 始终是用户向下滚动的相邻窗口，`currentPage/currentOffset` 保留服务端真实位置。NodeSeek 以 `postPageCount`、严格 pager、响应页码和固定 10 楼页宽确认尾页，下一窗只读相邻前页；页外热门/置顶展示投影按 `REG-TOPIC-070` 在完整性证明前过滤。linux.do/小隐寺按 `post_stream.stream` 真实 ID 取尾组并严格校验 hydration；妖火从主题页真实 `reply` / `tofloor` 链接取最大楼层，原站 page 1 为最新且 page + 1 更早，倒序从末楼向 page + 1、正序从 `tofloor=1` 向 page - 1 遍历，不能把“更多回帖(N)”当总数；V2EX 只复用由 HTML 显式分页集合证明的完整回复集。切换部分集合先清空旧顺序并显示回复级 Loading，失败不应用结果。计数竞态只允许一次“刷新 Topic 权威计数后从当前顺序 start 重建”，再次不一致保留错误。Query 拥有 pages、cursor、取消和普通分页单飞；Controller 的 replace-window 命令只以 generation 实现 latest-command-wins，不保存 Promise 或恢复闭包。UI 保持左侧三种内容筛选和右侧顺序菜单；末窗结算当次显示弱化边界文字，最终回复和系统事件无多余底边。楼层定位保持顺序；编辑/删除刷新真实窗口，新回复先确认尾窗，正序再以真实实体定位。写成功只以 `refetchType: none` 标记精确 Query stale。 |
 | 精确失败 oracle | 来源测试固定 NodeSeek `[5, 4]` 且不出现 `[2, 3]`、Discourse 只请求 stream 尾部及相邻更早 IDs、错误 hydration 失败、妖火把主题页“更多回帖(30)”、引用楼层 `tofloor=555` 与回复动作楼层 `reply=558` 区分，倒序请求 `[tofloor=558, page=2]`、正序请求 `[tofloor=1, page=18]` 并确认真实页码和边缘楼层、V2EX 集合短于权威计数时失败；Query/Gateway 测试固定 order key 隔离、`order + position` 转发和脱敏 diagnostics。Controller 测试固定首次 Loading、尾窗/相邻窗、完整 V2EX 零额外 transport、一次 stale-count 刷新、边缘失败、latest-command-wins、整帖与写后重建；Topic UI 测试固定筛选/查找组合、顺序菜单、字号、立即边界、边缘重试及最终项无分割线；actions 测试固定写后 `refetchType: none`。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter/gateway/Query 固定来源协议和 cache 隔离，Controller/RNTL 固定窗口状态机与交互；匹配 revision/APK 的五站只读 Live 才能证明真实尾窗。 |
 | 自动重试边界 | previous/next 失败后，所属 start/end 边缘的自动入口保持关闭，只能显式重试原 cursor；对侧仍可扩窗且不得清掉旧错误。同一 Reply Query 有分页 pending 时，另一普通分页零 transport；结算后才可读取相邻窗口。replace-window 命令不等待分页队列，直接取消旧 Query 并以 generation 丢弃旧结果。 |
@@ -4916,14 +4931,44 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `TOPIC-01/03/04`；共享 `NAV-02/03` |
 | 用户症状 | 活跃主题 `https://www.v2ex.com/t/1232497` 的原站 HTML 已完整包含全部回复，App 却报“回复总数已变化，无法确认完整集合”；正倒序、楼层定位和评论刷新因此都无法使用。 |
-| 触发条件 | V2EX 的主题 API、公共回复 API 与主题 HTML 命中不同缓存时刻；现场曾同时出现回复 API 68 条、主题 API 71 条、HTML 声明并渲染 73 条。旧实现优先采用任意非空 API 回复，再用另一端点的数量否决它。 |
-| 根因 seam | `src/sources/v2ex/reader.ts` 把三个独立缓存端点错误拼成一个快照，并让跨响应计数投票决定完整性。V2EX 实际一次返回回复全集，不存在可由公共回复 API 补齐的分页窗口。 |
-| 必须保持的行为 | 正常详情只并行读取主题 API 与主题 HTML；同一份 HTML 的结构化 `ReplyAction/commentCount` 声明必须彼此一致，并与原始回复 DOM 节点数、有效回复数相等，该响应才是唯一权威回复全集，主题/回复 API 的旧计数不得否决。声明冲突、节点不足或多出无法解析的节点都立即失败且不请求回复 API。HTML 没有声明数但原始节点数、有效回复数与主题 API 一致时仍采用 HTML；只有 HTML 不可用或无声明且无法自证时才延迟读取公共回复 API，并要求其有效回复数严格等于主题 API 数量；成功返回的空数组也是有效降级结果，不能再按“非空”猜数据所有权。HTML 回复继续提供作者、头像、楼层、comment ID、感谢数、回复目标和 `Pro` badge。结果固定 `replyHasMore=false`、空前后 cursor；正倒序、定位和刷新只复用/重读全集，不新增 V2EX `getReplies` transport。诊断只记录 `html-topic`、`html-topic-fallback` 或 `api-topic-fallback` 及计数，不记录 URL 或正文。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定主题 API/回复 API 各 2 条、HTML 声明并包含 3 条：修复前报错，修复后返回 `3/3` 且公共回复 API 零调用；HTML 声明 3 条但只有 2 个节点、声明 1 条却有额外 malformed 节点、`ReplyAction/commentCount` 冲突时均失败且零 API；`commentCount`-only 的自洽 HTML 正常结算。HTML 请求失败后 API 2/2 与 0/0 成功、2/3 与 0/1 失败；成功空数组优先于无法自证的 HTML。另固定空主题、旧 HTML 无声明数、自 HTML 解析 `Pro` 及完整回复元数据。`tests/ui/topic/topic-session-controller.test.tsx` 固定正倒序、本地楼层定位和专用评论刷新入口均零独立回复 transport。`src/platform/diagnostics/diagnostics.test.ts` 固定三个路径值不被脱敏成未知值。 |
+| 触发条件 | V2EX 的主题 API、公共回复 API 与主题 HTML 命中不同缓存时刻；现场曾同时出现回复 API 68 条、主题 API 71 条、HTML 声明并渲染 73 条。旧实现优先采用任意非空 API 回复，再用另一端点的数量否决它。超过 100 条时 HTML 还会通过同主题 `?p=N` 显式分页，详见 `REG-TOPIC-071`。 |
+| 根因 seam | `src/sources/v2ex/reader.ts` 把独立缓存端点错误拼成一个快照，并让跨响应计数投票决定完整性。HTML 页面集合才是同一来源内可自证的数据所有者；adapter 内部显式分页不等于 UI 的远端回复窗口，也不能由公共回复 API猜测补齐。 |
+| 必须保持的行为 | 正常详情只并行读取主题 API 与首个主题 HTML，再沿已读取页面中的同主题显式 `p` 链接聚合 HTML 集合；集合内每页的结构化 `ReplyAction/commentCount` 声明必须彼此一致，每个原始回复节点都可解析，合并后楼层精确覆盖 `1..replyCount`，该集合才是权威回复全集，主题/回复 API 的旧计数不得否决。声明冲突、节点不足、楼层冲突或链接耗尽都立即失败且不请求回复 API。HTML 没有声明数但原始节点数、有效回复数与主题 API 一致时仍采用 HTML；只有 HTML 不可用或无声明且无法自证时才延迟读取公共回复 API，并要求其有效回复数严格等于主题 API 数量；成功返回的空数组也是有效降级结果，不能再按“非空”猜数据所有权。HTML 回复继续提供作者、头像、楼层、comment ID、感谢数、回复目标和 `Pro` badge。结果固定 `replyHasMore=false`、空前后 cursor；正倒序、定位和刷新只复用/重读全集，不新增 UI 层 V2EX `getReplies` transport。诊断只记录 `html-topic`、`html-topic-fallback` 或 `api-topic-fallback` 及计数，不记录 URL 或正文。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定主题 API/回复 API 各 2 条、单页 HTML 声明并包含 3 条：修复前报错，修复后返回 `3/3` 且公共回复 API 零调用；HTML 声明 3 条但只有 2 个节点、声明 1 条却有额外 malformed 节点、`ReplyAction/commentCount` 冲突时均失败且零 API；`commentCount`-only 的自洽 HTML 正常结算。HTML 请求失败后 API 2/2 与 0/0 成功、2/3 与 0/1 失败；成功空数组优先于无法自证的 HTML。`REG-TOPIC-071` 另固定 107 条的显式两页集合及跨页负例。另固定空主题、旧 HTML 无声明数、自 HTML 解析 `Pro` 及完整回复元数据。`tests/ui/topic/topic-session-controller.test.tsx` 固定正倒序、本地楼层定位和专用评论刷新入口均零独立回复 transport。`src/platform/diagnostics/diagnostics.test.ts` 固定三个路径值不被脱敏成未知值。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：来源 fixture 固定单响应完整性和降级边界，Controller 固定本地全集行为；匹配 revision/APK 的目标主题只读验收真实活跃数据。 |
-| Replay 或真实验收路径 | 使用匹配当前 revision、App 版本和 APK 身份的开发包直达 `https://www.v2ex.com/t/1232497`；详情必须正常结算，显示回复数等于当次 HTML 可见全集。切换正序/倒序、定位已有楼层、仅刷新评论后仍是完整集合且没有独立回复 transport。全程只读，不发回复、不互动、不清 App 数据、Cookie 或登录态。 |
-| 负向验证方式 | 恢复三端点并行投票、让非空回复 API 优先、用主题 API 否决自洽 HTML、在 HTML 明确缺节点时用 API 掩盖、增加 cache-buster/自动重试/分页参数、或在 Controller 为 V2EX 增加特判 transport，编号测试必须失败。 |
-| 明确不覆盖范围 | 不修改 NodeSeek、linux.do、妖火和小隐寺的真实分页/stream 窗口，不增加 V2EX PAT/API 2.0 或持久化迁移。若未来主题 HTML 不再一次返回全集，应由同响应数量校验明确失败并重新设计 V2EX adapter，不能静默恢复跨端点猜测。 |
+| Replay 或真实验收路径 | 使用匹配当前 revision、App 版本和 APK 身份的开发包直达 `https://www.v2ex.com/t/1232497` 与 `https://www.v2ex.com/t/1231874`；详情必须正常结算，显示回复数等于当次 HTML 分页全集。切换正序/倒序、定位已有楼层、仅刷新评论后仍是完整集合且没有 UI 层独立回复 transport。全程只读，不发回复、不互动、不清 App 数据、Cookie 或登录态。 |
+| 负向验证方式 | 恢复三端点并行投票、让非空回复 API 优先、用主题 API 否决自洽 HTML 集合、在 HTML 明确缺节点时用 API 掩盖、猜测未链接页码、增加 cache-buster/自动重试，或在 Controller 为 V2EX 增加特判 transport，编号测试必须失败。 |
+| 明确不覆盖范围 | 不修改 NodeSeek、linux.do、妖火和小隐寺的真实分页/stream 窗口，不增加 V2EX PAT/API 2.0 或持久化迁移。若未来原站不再提供可闭合的同主题 HTML 分页集合，应由完整性校验明确失败并重新设计 V2EX adapter，不能静默恢复跨端点猜测。 |
+
+## `REG-TOPIC-070` NodeSeek 热门/置顶展示副本污染倒序窗口
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/03`；共享 `NAV-02/03`、`NOTIFY-02` |
+| 用户症状 | NodeSeek `post-832584-1` 正序可读，切换倒序却弹出回复窗口错误；最新回复和相邻更早窗口都无法显示。 |
+| 触发条件 | 原站 page 1 在普通 `#1..#10` 回复之外混入 `#44/#83/#117` 等热门或置顶展示项；adapter 为确认末页先读取 page 1 页拓扑，再直达 page 44。 |
+| 根因 seam | `src/sources/nodeseek/reader.ts` 把 HTML 中所有回复节点都当作当前固定 10 楼窗口的拓扑成员，并在页内投影前按 `limit` 截断。热门/置顶是展示副本，不证明其楼层属于当前页；把它纳入连续楼层校验会误报，把所有页外项都忽略又会掩盖真实错页。 |
+| 必须保持的行为 | 只在 `start/cursor` 有序窗口按固定 10 楼计算当前页合法范围。范围外、来源楼层明确且标记为 `hot/pinned` 的展示副本先过滤；范围内唯一表示某楼层的热门项仍保留。随后按 comment ID、回退 floor 去重，普通项优先于同回复的展示副本，并按 floor 升序供 `items` 与完整性证明共同使用。只有来源楼层已完整覆盖当前固定窗口时，额外普通页外楼层才构成响应错页；稀疏页或缺 floor marker 的回退楼层继续展示，不能把证据缺失当成错页。已确认错页、楼层缺口和重复 cursor 继续失败。Topic 首屏现有热门/置顶展示、楼层 target、共享窗口类型和页宽不变。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-TOPIC-070` 用 page 1 热门 `#44/#9/#83/#117` 与普通 `#1..#8/#10` 混排：倒序必须请求 `[1, 44, 43]`，尾窗返回 `#434..#431`，相邻窗返回 `#430..#421`。修复前在 page 1 报“未确认请求的回复页”。另一负例在已完整确认普通 `#1..#10` 后加入未标记 `#44`，必须继续失败；既有稀疏明确楼层、缺 floor marker 回退楼层、缺楼与 cursor 回归保持。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：真实 adapter fixture 固定投影与负例；匹配 APK 的目标主题固定原站当次页拓扑及真实倒序体验。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 直达 `https://www.nodeseek.com/post-832584-1`，切换倒序后首条等于当时最高楼层，向下加载一个相邻窗口且楼层连续。只读，不回复、点赞、收藏、清数据、Cookie 或登录态。 |
+| 负向验证方式 | 把所有解析节点直接送入页校验、在投影前截断、删除 `hot/pinned` 标记判断、过滤范围内唯一热门楼层、把稀疏/回退楼层一律当错页，或放宽到忽略已完整窗口后的普通页外回复，对应编号或既有兼容/缺楼测试必须失败。 |
+| 明确不覆盖范围 | 不修改其他来源、不重写共享 Controller/Query、不扩大 10 楼页宽、不预抓全部历史，也不改变 Topic 首屏热门/置顶视觉呈现。 |
+
+## `REG-TOPIC-071` V2EX 超过 100 条回复时只读取第一页
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/03/04`；共享 `NAV-02/03` |
+| 用户症状 | V2EX `t/1231874` 声明 107 条回复，App 只解析第一页 100 条并报窗口错误；用户无法看到 `#101..#107`，倒序也不能从最高楼开始。 |
+| 触发条件 | 主题 HTML 第 1 页只包含 `#1..#100`，并明确链接同主题 `?p=2`；旧 adapter 假定 V2EX HTML 永远单页全集。 |
+| 根因 seam | `src/sources/v2ex/reader.ts` 把“UI 一次消费完整集合”错误等同为“单个 HTML 响应一定包含完整集合”，没有在 adapter 内聚合原站已经声明的分页。 |
+| 必须保持的行为 | 从已读取 HTML 中只接受同 origin、同 `/t/{topicId}`、唯一正整数 `p` 参数的链接；原站 query-relative `?p=N` 必须以当前主题 URL 解析后再做同主题校验。按未访问页升序读取并去重；不猜 `ceil(replyCount/100)`、不扩大 page size。每页必须声明相同回复总数，所有原始回复节点都可解析；合并后 comment ID 与 floor 唯一且 floor 精确覆盖 `1..replyCount`。页间计数变化、缺楼、重复冲突、外站/他主题链接或显式链接耗尽都明确失败，不自动重试，也不使用公共回复 API 掩盖已声明 HTML 集合的缺陷。只有 HTML 不可用或无声明且无法自证时保留 `REG-TOPIC-069` 的 API 降级。最终仍返回 `replyHasMore=false` 的完整 `TopicDetail`，Controller、Query key 和本地正倒序不变。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-TOPIC-071` 固定第一页 `#1..#100`、原站 query-relative `?p=2`、第二页 `#101..#107`，要求合并 107 条且公共回复 API 零调用。参数化负例固定第二页计数变化、缺楼/链接耗尽与外站分页链接均失败，并确认公共回复 API 零调用。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：adapter fixture 固定链接发现、跨页完整性和降级边界；匹配 APK 的目标主题固定真实 100 条分页阈值与最高楼。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 直达 `https://www.v2ex.com/t/1231874`；正序可到 `#101+`，倒序首条为当次最高楼，切换与仅刷新评论均不出现窗口错误。全程只读，不发送或互动。 |
+| 负向验证方式 | 恢复单页假设、按 100 条硬猜未链接页码、接受外站/他主题 `p`、静默跳过失败页、允许重复/缺楼后仍声明完整，或用公共回复 API 补洞，编号测试必须失败。 |
+| 明确不覆盖范围 | 不把 V2EX 改造成共享远端回复窗口，不引入 PAT/API 2.0、预抓未链接历史、自动重试、静默截断或公开类型变化。 |
 
 ## `REG-NODESEEK-004` NodeSeek 直连通道卡死只能靠重启 App 恢复
 

@@ -1584,6 +1584,102 @@ describe('Android local sources', () => {
     expect(older).toMatchObject({ currentPage: 4, previousPage: 5, nextPage: 3 });
   });
 
+  it('[REG-TOPIC-070] excludes out-of-page featured copies from ordered NodeSeek reply windows', async () => {
+    const requestedPages: number[] = [];
+    const row = (floor: number, featured = '') => `
+      <li id="${floor}" data-comment-id="${80000 + floor}" class="content-item">
+        <div class="floor-link-wrapper">${featured}<a class="floor-link">#${floor}</a></div>
+        <a href="/space/${floor}" class="author-name">user-${floor}</a>
+        <article class="post-content"><p>reply ${floor}</p></article>
+      </li>
+    `;
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(input.match(/post-832584-(\d+)/)?.[1] || 1);
+      requestedPages.push(page);
+      const rows =
+        page === 1
+          ? [
+              row(44, '<div class="hot-badge"></div>'),
+              row(9, '<div class="hot-badge"></div>'),
+              row(83, '<div class="pinned-badge"></div>'),
+              row(117, '<div class="hot-badge"></div>'),
+              ...Array.from({ length: 8 }, (_, index) => row(index + 1)),
+              row(10)
+            ].join('')
+          : Array.from({ length: page === 44 ? 4 : 10 }, (_, index) => row((page - 1) * 10 + index + 1)).join('');
+      return htmlAt(
+        `
+          <a class="post-title" href="/post-832584-${page}">NodeSeek featured replies</a>
+          ${
+            page === 1
+              ? '<div id="0" data-comment-id="80000" class="content-item"><a href="/space/0" class="author-name">op</a><article class="post-content"><p>opening post</p></article></div>'
+              : ''
+          }
+          ${rows}
+          <div class="nsk-pager" role="navigation" aria-label="pagination">
+            ${page > 1 ? `<a href="/post-832584-${page - 1}" rel="prev">${page - 1}</a>` : ''}
+            ${page < 44 ? `<a href="/post-832584-${page + 1}" rel="next">${page + 1}</a>` : ''}
+            ${page < 44 ? '<a href="/post-832584-44">44</a>' : ''}
+          </div>
+        `,
+        `https://www.nodeseek.com/post-832584-${page}`
+      );
+    });
+
+    const tail = await getNodeSeekReplies('832584', {
+      fetcher,
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 434,
+      limit: 10
+    });
+    const older = await getNodeSeekReplies('832584', {
+      fetcher,
+      order: 'newest',
+      position: { kind: 'cursor', page: tail.nextPage!, offset: tail.nextOffset ?? null },
+      replyCount: 434,
+      limit: 10
+    });
+
+    expect(requestedPages).toEqual([1, 44, 43]);
+    expect(tail.items.map((reply) => reply.floor)).toEqual([434, 433, 432, 431]);
+    expect(older.items.map((reply) => reply.floor)).toEqual([430, 429, 428, 427, 426, 425, 424, 423, 422, 421]);
+  });
+
+  it('[REG-TOPIC-070] rejects an ordinary NodeSeek outlier after the requested page is fully confirmed', async () => {
+    const rows = [...Array.from({ length: 10 }, (_, index) => index + 1), 44]
+      .map(
+        (floor) => `
+          <li id="${floor}" data-comment-id="${81000 + floor}" class="content-item">
+            <a class="floor-link">#${floor}</a>
+            <a href="/space/${floor}" class="author-name">user-${floor}</a>
+            <article class="post-content"><p>reply ${floor}</p></article>
+          </li>
+        `
+      )
+      .join('');
+    const fetcher = vi.fn(async () =>
+      htmlAt(
+        `
+          <a class="post-title" href="/post-832585-1">NodeSeek wrong-page reply</a>
+          <div id="0" data-comment-id="81000" class="content-item"><a href="/space/0" class="author-name">op</a><article class="post-content"><p>opening post</p></article></div>
+          ${rows}
+        `,
+        'https://www.nodeseek.com/post-832585-1'
+      )
+    );
+
+    await expect(
+      getNodeSeekReplies('832585', {
+        fetcher,
+        order: 'oldest',
+        position: { kind: 'cursor', page: 1, offset: 0 },
+        replyCount: 10,
+        limit: 10
+      })
+    ).rejects.toThrow('NodeSeek 原站未确认请求的回复页');
+  });
+
   it.each(['oldest', 'newest'] as const)(
     '[REG-TOPIC-068] follows both NodeSeek edges from a centered %s window',
     async (order) => {
@@ -7249,6 +7345,143 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=817&page=1'
     );
+  });
+
+  it('[REG-TOPIC-071] resolves query-relative same-topic V2EX pages into one complete reply collection', async () => {
+    const rows = (firstFloor: number, lastFloor: number) =>
+      Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
+        .map(
+          (floor) => `
+            <div id="r_${90000 + floor}" class="cell">
+              <span class="no">${floor}</span>
+              <strong><a href="/member/user-${floor}">user-${floor}</a></strong>
+              <div class="reply_content">reply ${floor}</div>
+            </div>
+          `
+        )
+        .join('');
+    let replyApiCalls = 0;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 1231874,
+            title: 'V2EX paged replies',
+            url: 'https://www.v2ex.com/t/1231874',
+            created: 1780000000,
+            replies: 107,
+            member: { username: 'neo' },
+            content_rendered: '<p>detail body</p>'
+          }
+        ]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        replyApiCalls += 1;
+        throw new Error('public replies API must not run');
+      }
+      if (input === 'https://www.v2ex.com/t/1231874') {
+        return html(`
+          <script type="application/ld+json">{"commentCount":107,"interactionStatistic":[{"interactionType":"https://schema.org/ReplyAction","userInteractionCount":107}]}</script>
+          ${rows(1, 100)}
+          <a href="?p=2">2</a>
+        `);
+      }
+      if (input === 'https://www.v2ex.com/t/1231874?p=2') {
+        return html(`
+          <script type="application/ld+json">{"commentCount":107,"interactionStatistic":[{"interactionType":"https://schema.org/ReplyAction","userInteractionCount":107}]}</script>
+          ${rows(101, 107)}
+          <a href="?p=1">1</a>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '1231874', fetcher });
+
+    expect(topic.replyCount).toBe(107);
+    expect(topic.replies).toHaveLength(107);
+    expect(topic.replies.map(({ floor }) => floor)).toEqual(Array.from({ length: 107 }, (_, index) => index + 1));
+    expect(topic).toMatchObject({ replyHasMore: false, replyNextPage: null });
+    expect(replyApiCalls).toBe(0);
+    expect(fetcher.mock.calls.map(([input]) => input)).toContain('https://www.v2ex.com/t/1231874?p=2');
+  });
+
+  it.each([
+    {
+      name: 'a changed reply declaration on page two',
+      firstLink: '/t/1231875?p=2',
+      secondCount: 108,
+      secondFloors: Array.from({ length: 7 }, (_, index) => index + 101),
+      expectedPageCalls: 1
+    },
+    {
+      name: 'a missing floor after the explicit links are exhausted',
+      firstLink: '/t/1231875?p=2',
+      secondCount: 107,
+      secondFloors: [101, 102, 103, 104, 106, 107],
+      expectedPageCalls: 1
+    },
+    {
+      name: 'an external pagination link',
+      firstLink: 'https://example.com/t/1231875?p=2',
+      secondCount: 107,
+      secondFloors: Array.from({ length: 7 }, (_, index) => index + 101),
+      expectedPageCalls: 0
+    }
+  ])('[REG-TOPIC-071] rejects $name without using the replies API', async (scenario) => {
+    const rows = (floors: number[]) =>
+      floors
+        .map(
+          (floor) => `
+            <div id="r_${91000 + floor}" class="cell">
+              <span class="no">${floor}</span>
+              <strong><a href="/member/user-${floor}">user-${floor}</a></strong>
+              <div class="reply_content">reply ${floor}</div>
+            </div>
+          `
+        )
+        .join('');
+    let replyApiCalls = 0;
+    let pageCalls = 0;
+    const declaration = (count: number) => `
+      <script type="application/ld+json">{"commentCount":${count},"interactionStatistic":[{"interactionType":"https://schema.org/ReplyAction","userInteractionCount":${count}}]}</script>
+    `;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 1231875,
+            title: 'V2EX invalid paged replies',
+            url: 'https://www.v2ex.com/t/1231875',
+            created: 1780000000,
+            replies: 107,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        replyApiCalls += 1;
+        return json([]);
+      }
+      if (input === 'https://www.v2ex.com/t/1231875') {
+        return html(`
+          ${declaration(107)}
+          ${rows(Array.from({ length: 100 }, (_, index) => index + 1))}
+          <a href="${scenario.firstLink}">2</a>
+        `);
+      }
+      if (input === 'https://www.v2ex.com/t/1231875?p=2') {
+        pageCalls += 1;
+        return html(`${declaration(scenario.secondCount)}${rows(scenario.secondFloors)}`);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getTopic({ source: 'v2ex', id: '1231875', fetcher })).rejects.toThrow(
+      'V2EX 回复总数已变化，无法确认完整集合'
+    );
+    expect(replyApiCalls).toBe(0);
+    expect(pageCalls).toBe(scenario.expectedPageCalls);
   });
 
   it('[REG-TOPIC-067][REG-TOPIC-069] rejects extra malformed V2EX reply nodes hidden by normalization', async () => {

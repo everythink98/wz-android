@@ -428,6 +428,7 @@ type NodeSeekChronologicalRepliesOptions = NodeSeekOptions & {
   limit?: number;
   offset?: number | null;
   fillPages?: boolean;
+  orderedWindow?: boolean;
   targetReply?: ReplyLocationTarget;
 };
 
@@ -437,6 +438,80 @@ type NodeSeekChronologicalReplies = RepliesResponse & {
   responsePageResolved?: boolean;
   resolvedPageConfirmed?: boolean;
 };
+
+function projectNodeSeekOrderedPageItems(
+  items: RepliesResponse['items'],
+  page: number,
+  confirmedFloors: readonly number[] = []
+) {
+  const firstFloor = (page - 1) * NODESEEK_FLOORS_PER_PAGE + 1;
+  const lastFloor = page * NODESEEK_FLOORS_PER_PAGE;
+  const confirmedFloorSet = new Set(confirmedFloors);
+  // Sparse pages and inferred floors are usable data, not proof that the origin returned the wrong page.
+  const confirmedWindowFloors = new Set(confirmedFloors.filter((floor) => floor >= firstFloor && floor <= lastFloor));
+  if (
+    confirmedWindowFloors.size === NODESEEK_FLOORS_PER_PAGE &&
+    items.some((reply) => {
+      const floor = positiveReplyLocation(reply.floor);
+      return (
+        floor &&
+        confirmedFloorSet.has(floor) &&
+        (floor < firstFloor || floor > lastFloor) &&
+        !reply.hot &&
+        !reply.pinned
+      );
+    })
+  ) {
+    throw new Error('NodeSeek 原站未确认请求的回复页');
+  }
+  const projected = items.filter((reply) => {
+    const floor = positiveReplyLocation(reply.floor);
+    return (
+      !floor ||
+      !confirmedFloorSet.has(floor) ||
+      (floor >= firstFloor && floor <= lastFloor) ||
+      (!reply.hot && !reply.pinned)
+    );
+  });
+  const byLocation = new Map<string, (typeof projected)[number]>();
+  const unlocated: (typeof projected)[number][] = [];
+  for (const reply of projected) {
+    const commentId = positiveReplyLocation(reply.commentId);
+    const floor = positiveReplyLocation(reply.floor);
+    const key = commentId ? `comment:${commentId}` : floor ? `floor:${floor}` : null;
+    if (!key) {
+      unlocated.push(reply);
+      continue;
+    }
+    const existing = byLocation.get(key);
+    if (!existing || ((existing.hot || existing.pinned) && !reply.hot && !reply.pinned)) {
+      byLocation.set(key, reply);
+    }
+  }
+  return [...byLocation.values(), ...unlocated].sort((left, right) => {
+    const leftFloor = positiveReplyLocation(left.floor);
+    const rightFloor = positiveReplyLocation(right.floor);
+    if (leftFloor && rightFloor) return leftFloor - rightFloor;
+    if (leftFloor) return -1;
+    if (rightFloor) return 1;
+    return 0;
+  });
+}
+
+function projectNodeSeekOrderedPage(result: NodeSeekChronologicalReplies, page: number): NodeSeekChronologicalReplies {
+  const items = projectNodeSeekOrderedPageItems(result.items, page, result.confirmedFloors);
+  const retainedFloors = new Set(
+    items.map((reply) => positiveReplyLocation(reply.floor)).filter((floor): floor is number => Boolean(floor))
+  );
+  return copySourceDiagnosticSummary(
+    {
+      ...result,
+      confirmedFloors: (result.confirmedFloors || []).filter((floor) => retainedFloors.has(floor)),
+      items
+    },
+    result
+  );
+}
 
 function assertNodeSeekResolvedPage(result: NodeSeekChronologicalReplies, page: number) {
   if (result.currentPage !== page || result.resolvedPageConfirmed !== true) {
@@ -484,7 +559,7 @@ async function resolveNodeSeekTailChronological(
   initialResult: NodeSeekChronologicalReplies
 ) {
   let page = initialPage;
-  let result = initialResult;
+  let result = projectNodeSeekOrderedPage(initialResult, initialPage);
   const visitedPages = new Set<number>();
   while (true) {
     if (visitedPages.has(page)) {
@@ -495,14 +570,18 @@ async function resolveNodeSeekTailChronological(
     const candidate = Math.max(page, result.nodeSeekLastPage || page, result.nextPage || page);
     if (candidate > page) {
       page = candidate;
-      result = await getNodeSeekRepliesChronological(id, {
-        ...options,
-        page,
-        offset: (page - 1) * NODESEEK_FLOORS_PER_PAGE,
-        limit: NODESEEK_FLOORS_PER_PAGE,
-        fillPages: false,
-        targetReply: undefined
-      });
+      result = projectNodeSeekOrderedPage(
+        await getNodeSeekRepliesChronological(id, {
+          ...options,
+          page,
+          offset: (page - 1) * NODESEEK_FLOORS_PER_PAGE,
+          limit: NODESEEK_FLOORS_PER_PAGE,
+          fillPages: false,
+          orderedWindow: true,
+          targetReply: undefined
+        }),
+        page
+      );
       continue;
     }
     assertNodeSeekTerminalWindow(result, page);
@@ -682,9 +761,12 @@ async function getNodeSeekRepliesChronological(
           mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embeddedReplies))
         )
       : renderedSource;
-    const items = page <= 1 ? source.slice(offset, offset + limit) : source;
+    const orderedSource = options.orderedWindow
+      ? projectNodeSeekOrderedPageItems(source, page, explicitFloors)
+      : source;
+    const items = page <= 1 ? orderedSource.slice(offset, offset + limit) : orderedSource;
     const consumed = offset + items.length;
-    const hasPageRemainder = page <= 1 && consumed < source.length;
+    const hasPageRemainder = page <= 1 && consumed < orderedSource.length;
     const nextPage = originNextPage;
     const hasMore = hasPageRemainder || Boolean(nextPage);
     const result = {
@@ -720,9 +802,12 @@ async function getNodeSeekRepliesChronological(
       .map((comment) => (isRecord(comment) ? optionalInteger(comment.floorIndex ?? comment.floor) : undefined))
       .filter((floor): floor is number => Boolean(floor && floor > 0));
     const allReplies = normalizeReplies(comments, { skipFirst: true });
-    const items = allReplies.slice(offset, offset + limit);
+    const orderedReplies = options.orderedWindow
+      ? projectNodeSeekOrderedPageItems(allReplies, page, explicitFloors)
+      : allReplies;
+    const items = orderedReplies.slice(offset, offset + limit);
     const consumed = offset + items.length;
-    const hasPageRemainder = consumed < allReplies.length;
+    const hasPageRemainder = consumed < orderedReplies.length;
     const nextPage = originNextPage;
     const hasMore = hasPageRemainder || Boolean(nextPage);
     const result = {
@@ -750,7 +835,10 @@ async function getNodeSeekRepliesChronological(
   const explicitFloors = comments
     .map((comment) => (isRecord(comment) ? optionalInteger(comment.floorIndex ?? comment.floor) : undefined))
     .filter((floor): floor is number => Boolean(floor && floor > 0));
-  const items = normalizeReplies(comments, { skipFirst: false, floorOffset });
+  const normalizedItems = normalizeReplies(comments, { skipFirst: false, floorOffset });
+  const items = options.orderedWindow
+    ? projectNodeSeekOrderedPageItems(normalizedItems, page, explicitFloors)
+    : normalizedItems;
   const nextPage = originNextPage;
   const hasMore = Boolean(nextPage);
   const result = {
@@ -801,8 +889,12 @@ export async function getNodeSeekReplies(
     page,
     offset,
     targetReply,
+    orderedWindow: position.kind !== 'target',
     fillPages: order === 'oldest' ? options.fillPages : false
   });
+  if (position.kind !== 'target') {
+    chronological = projectNodeSeekOrderedPage(chronological, page);
+  }
   if (position.kind === 'start' && order === 'newest') {
     const confirmedTail = await resolveNodeSeekTailChronological(id, options, page, chronological);
     page = confirmedTail.page;
