@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createLinuxDoWebViewFallbackFetcher } from './browserFallback';
 import { buildLinuxDoLevelProfileFromSummary, getLinuxDoLevelProfile } from './level';
 
 vi.mock('@react-native-async-storage/async-storage', () => {
@@ -147,7 +148,7 @@ describe('linux.do level profile', () => {
 
   it('uses official connect progress for level 2 and above when available', async () => {
     const requests: string[] = [];
-    const fetcher = vi.fn(async (input: string) => {
+    const directFetcher = vi.fn(async (input: string) => {
       requests.push(input);
       if (input === 'https://linux.do/my/summary.json') {
         return new Response(
@@ -204,6 +205,11 @@ describe('linux.do level profile', () => {
       }
       throw new Error(`unexpected ${input}`);
     });
+    const webViewFetcher = vi.fn();
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: directFetcher,
+      webViewFetcher: webViewFetcher as never
+    });
 
     const profile = await getLinuxDoLevelProfile({
       fetcher
@@ -224,11 +230,68 @@ describe('linux.do level profile', () => {
       ['被禁言', 1, 0, false]
     ]);
     expect(requests).toEqual(['https://linux.do/my/summary.json', 'https://connect.linux.do/']);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('REG-LINUXDO-009 recovers an expired Connect session once through the existing hidden WebView', async () => {
+    const directFetcher = vi.fn(async (input: string) => {
+      if (input === 'https://linux.do/my/summary.json') {
+        return new Response(
+          JSON.stringify({
+            user_summary: {
+              user: { username: 'alice', trust_level: 2 },
+              days_visited: 40,
+              topics_entered: 300,
+              posts_read_count: 1000,
+              time_read: 12000
+            }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
+          }
+        );
+      }
+      if (input === 'https://connect.linux.do/') {
+        return new Response('<html>login required</html>', {
+          headers: { 'content-type': 'text/html' }
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+    const webViewFetcher = vi.fn(async (input: string) => {
+      expect(input).toBe('https://connect.linux.do/');
+      return new Response(
+        `
+          <div class="card">
+            <div class="tl3-ring">
+              <div class="tl3-ring-circle met" style="--val: 50; --max: 50"></div>
+              <div class="tl3-ring-label">访问天数</div>
+            </div>
+          </div>
+        `,
+        {
+          headers: { 'content-type': 'text/html' }
+        }
+      );
+    });
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: directFetcher,
+      webViewFetcher
+    });
+
+    const profile = await getLinuxDoLevelProfile({ fetcher });
+
+    expect(profile).toMatchObject({
+      source: 'connect',
+      estimate: false
+    });
+    expect(directFetcher).toHaveBeenCalledTimes(2);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to the summary estimate when official connect progress is unavailable', async () => {
     const requests: string[] = [];
-    const fetcher = vi.fn(async (input: string) => {
+    const directFetcher = vi.fn(async (input: string) => {
       requests.push(input);
       if (input === 'https://linux.do/my/summary.json') {
         return new Response(
@@ -257,6 +320,13 @@ describe('linux.do level profile', () => {
       }
       throw new Error(`unexpected ${input}`);
     });
+    const webViewFetcher = vi.fn(async () => {
+      throw new Error('hidden renderer unavailable');
+    });
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: directFetcher,
+      webViewFetcher
+    });
 
     const profile = await getLinuxDoLevelProfile({
       fetcher
@@ -272,6 +342,135 @@ describe('linux.do level profile', () => {
     });
     expect(profile.requirements.some((item) => item.key === 'days_visited' && item.required === 50)).toBe(true);
     expect(requests).toEqual(['https://linux.do/my/summary.json', 'https://connect.linux.do/']);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([0, 1])('does not recover Connect through the WebView for level %i', async (trustLevel) => {
+    const directFetcher = vi.fn(async (input: string) => {
+      expect(input).toBe('https://linux.do/my/summary.json');
+      return new Response(
+        JSON.stringify({
+          user_summary: {
+            user: { username: 'alice', trust_level: trustLevel },
+            topics_entered: 5,
+            posts_read_count: 30,
+            time_read: 600
+          }
+        }),
+        {
+          headers: { 'content-type': 'application/json' }
+        }
+      );
+    });
+    const webViewFetcher = vi.fn();
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: directFetcher,
+      webViewFetcher: webViewFetcher as never
+    });
+
+    await getLinuxDoLevelProfile({ fetcher });
+
+    expect(directFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('does not recover Connect through the WebView after cancellation', async () => {
+    const controller = new AbortController();
+    const directFetcher = vi.fn(async (input: string) => {
+      if (input === 'https://linux.do/my/summary.json') {
+        return new Response(
+          JSON.stringify({
+            user_summary: {
+              user: { username: 'alice', trust_level: 2 },
+              days_visited: 40,
+              topics_entered: 300,
+              posts_read_count: 1000,
+              time_read: 12000
+            }
+          }),
+          {
+            headers: { 'content-type': 'application/json' }
+          }
+        );
+      }
+      controller.abort();
+      return new Response('<html>login required</html>', {
+        headers: { 'content-type': 'text/html' }
+      });
+    });
+    const webViewFetcher = vi.fn();
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: directFetcher,
+      webViewFetcher: webViewFetcher as never
+    });
+
+    await expect(getLinuxDoLevelProfile({ fetcher, signal: controller.signal })).rejects.toThrow('请求已取消');
+
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('REG-LINUXDO-009 does not retry a timed-out direct Connect request before WebView recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      const directFetcher = vi.fn((input: string, init?: RequestInit) => {
+        if (input === 'https://linux.do/my/summary.json') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                user_summary: {
+                  user: { username: 'alice', trust_level: 2 },
+                  days_visited: 40,
+                  topics_entered: 300,
+                  posts_read_count: 1000,
+                  time_read: 12000
+                }
+              }),
+              {
+                headers: { 'content-type': 'application/json' }
+              }
+            )
+          );
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+            once: true
+          });
+        });
+      });
+      const webViewFetcher = vi.fn(
+        async () =>
+          new Response(
+            `
+            <div class="card">
+              <div class="tl3-ring">
+                <div class="tl3-ring-circle met" style="--val: 50; --max: 50"></div>
+                <div class="tl3-ring-label">访问天数</div>
+              </div>
+            </div>
+          `,
+            {
+              headers: { 'content-type': 'text/html' }
+            }
+          )
+      );
+      const recoverReadChannel = vi.fn(async () => ({ generation: 1 }));
+      const fetcher = createLinuxDoWebViewFallbackFetcher({
+        defaultFetcher: directFetcher,
+        recoverReadChannel,
+        webViewFetcher
+      });
+      const profilePromise = getLinuxDoLevelProfile({ fetcher });
+
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      await expect(profilePromise).resolves.toMatchObject({ source: 'connect', estimate: false });
+      expect(directFetcher).toHaveBeenCalledTimes(2);
+      expect(recoverReadChannel).not.toHaveBeenCalled();
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it('reads current account summary and records the previous snapshot delta', async () => {

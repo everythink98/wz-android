@@ -598,9 +598,9 @@ internal fun managedLoginCookieClearPlan(source: String): ManagedLoginCookieClea
       listOf("session", "connect.sid", "sid")
     )
     "linuxdo" -> Triple(
-      listOf("https://linux.do/", "https://www.linux.do/"),
-      listOf("linux.do"),
-      listOf("_t", "_forum_session")
+      listOf("https://linux.do/", "https://www.linux.do/", "https://connect.linux.do/"),
+      listOf("linux.do", "connect.linux.do"),
+      listOf("_t", "_forum_session", "auth.session-token")
     )
     "yaohuo" -> Triple(
       listOf("https://www.yaohuo.me/", "https://yaohuo.me/"),
@@ -2740,6 +2740,21 @@ class NetworkProxyRuntimeTest {
       expirations.contains(
         "https://yaohuo.me/" to
           "sidyaohuo=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Domain=www.yaohuo.me"
+      )
+    )
+  }
+
+  @Test
+  fun regLinuxdo009ExplicitClearCoversConnectSessionCookies() {
+    val plan = managedLoginCookieClearPlan("linuxdo")
+    val expired = "auth.session-token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
+
+    assertTrue(plan.urls.contains("https://connect.linux.do/"))
+    assertTrue(plan.names.contains("auth.session-token"))
+    assertTrue(plan.expirations.contains("https://connect.linux.do/" to expired))
+    assertTrue(
+      plan.expirations.contains(
+        "https://connect.linux.do/" to "$expired; Domain=connect.linux.do"
       )
     )
   }

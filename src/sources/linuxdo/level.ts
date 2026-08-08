@@ -9,6 +9,7 @@ import {
   type DiscourseLevelRequirement,
   type DiscourseSummaryInput
 } from '@/sources/discourse/level';
+import { withLinuxDoConnectSessionRecoveryIntent } from './browserFallback';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 
 const BASE_URL = 'https://linux.do';
@@ -283,17 +284,18 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
   return data;
 }
 
-async function fetchLinuxDoConnectHtml(options: LinuxDoRequestOptions) {
+async function fetchLinuxDoConnectHtml(options: LinuxDoRequestOptions, recoverSession = false) {
+  const requestInit: RequestInit = {
+    headers: {
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      Referer: BASE_URL,
+      ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
+    }
+  };
   const response = await fetchWithTimeout(
     CONNECT_URL,
-    {
-      headers: {
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        Referer: BASE_URL,
-        ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
-      }
-    },
+    recoverSession ? withLinuxDoConnectSessionRecoveryIntent(requestInit) : requestInit,
     {
       fetcher: options.fetcher,
       signal: options.signal,
@@ -430,7 +432,14 @@ export async function getLinuxDoLevelProfile({
       nextProfile = parseLinuxDoConnectProgress(html, profile);
     } catch (error) {
       throwIfCanceled(error);
-      nextProfile = profile;
+      try {
+        const html = await fetchLinuxDoConnectHtml(requestOptions, true);
+        assertNotAborted();
+        nextProfile = parseLinuxDoConnectProgress(html, profile);
+      } catch (recoveryError) {
+        throwIfCanceled(recoveryError);
+        nextProfile = profile;
+      }
     }
   }
   assertNotAborted();

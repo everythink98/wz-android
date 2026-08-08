@@ -26,6 +26,11 @@ import {
 } from './notificationPresentation';
 import { createNotificationStyles } from './styles';
 import { MessageReplyComposerSheet } from './MessageReplyComposerSheet';
+import { flowForumStickerMedia } from '@/platform/media/inlineMedia';
+import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
+import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
+import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
+import { createConversationAutoScrollController } from './conversationAutoScroll';
 
 export type NotificationFilterSource = 'all' | NotificationSource;
 
@@ -413,15 +418,29 @@ function DetailHtml({
   contentWidth,
   html,
   message = false,
+  source,
   onOpenTopic
 }: {
   contentWidth: number;
   html: string;
   message?: boolean;
+  source: NotificationSource;
   onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
 }) {
-  const { styles } = useReaderThemeStyles(createNotificationStyles);
+  const { settings, styles } = useReaderThemeStyles(createNotificationStyles);
+  const mediaContext = useForumMediaRequestContext(source);
+  const renderableHtml = useMemo(() => flowForumStickerMedia(html), [html]);
   const tagsStyles = useMemo(() => ({ a: styles.detailLink }), [styles.detailLink]);
+  const renderers = useMemo(
+    () =>
+      createForumStickerRenderers({
+        fontScale: settings.fontScale,
+        mediaContext,
+        mediaSessionIdentity: mediaContext.sessionIdentity,
+        textStyle: message ? styles.messageBody : styles.detailBody
+      }),
+    [mediaContext, message, settings.fontScale, styles.detailBody, styles.messageBody]
+  );
   const renderersProps = useMemo(
     () => ({
       a: {
@@ -443,8 +462,10 @@ function DetailHtml({
     <RenderHTML
       baseStyle={message ? styles.messageBody : styles.detailBody}
       contentWidth={contentWidth}
+      customHTMLElementModels={FORUM_STICKER_ELEMENT_MODELS}
+      renderers={renderers}
       renderersProps={renderersProps}
-      source={{ html }}
+      source={{ html: renderableHtml }}
       tagsStyles={tagsStyles}
     />
   );
@@ -498,7 +519,7 @@ export function NotificationDetailScreen({
   const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
-  const positionedConversationRef = useRef('');
+  const conversationAutoScroll = useRef(createConversationAutoScrollController()).current;
   const dockSafeAreaStyle = { paddingBottom: Math.max(9, insets.bottom + 9) };
   const replyToTopic =
     topicReplyAction || detail?.notification.kind === 'mention' || detail?.notification.kind === 'reply';
@@ -542,9 +563,11 @@ export function NotificationDetailScreen({
         contentContainerStyle={conversation ? styles.conversationContent : styles.detailContent}
         keyboardShouldPersistTaps="handled"
         onContentSizeChange={() => {
-          if (!conversationKey || positionedConversationRef.current === conversationKey) return;
-          positionedConversationRef.current = conversationKey;
+          if (!conversationAutoScroll.contentChanged(conversationKey)) return;
           requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
+        }}
+        onScrollBeginDrag={() => {
+          if (conversation) conversationAutoScroll.userScrolled();
         }}
       >
         {conversation ? (
@@ -581,7 +604,12 @@ export function NotificationDetailScreen({
           <View style={styles.conversationOriginal}>
             <Text style={styles.conversationOriginalLabel}>原消息</Text>
             {detail.contentHtml ? (
-              <DetailHtml contentWidth={contentWidth - 50} html={detail.contentHtml} onOpenTopic={onOpenTopic} />
+              <DetailHtml
+                contentWidth={contentWidth - 50}
+                html={detail.contentHtml}
+                source={item.source}
+                onOpenTopic={onOpenTopic}
+              />
             ) : null}
             {detail.contentText ? <Text style={styles.detailBody}>{detail.contentText}</Text> : null}
           </View>
@@ -604,6 +632,7 @@ export function NotificationDetailScreen({
                       message
                       contentWidth={Math.round(contentWidth * 0.72)}
                       html={message.contentHtml}
+                      source={item.source}
                       onOpenTopic={onOpenTopic}
                     />
                   ) : null}
@@ -618,7 +647,12 @@ export function NotificationDetailScreen({
         ) : (
           <>
             {detail.contentHtml ? (
-              <DetailHtml contentWidth={contentWidth} html={detail.contentHtml} onOpenTopic={onOpenTopic} />
+              <DetailHtml
+                contentWidth={contentWidth}
+                html={detail.contentHtml}
+                source={item.source}
+                onOpenTopic={onOpenTopic}
+              />
             ) : null}
             {detail.contentText ? <Text style={styles.detailBody}>{detail.contentText}</Text> : null}
             {!canOpenTopic ? (

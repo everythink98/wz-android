@@ -214,7 +214,7 @@ npm run smoke:android
 
 通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；覆盖安装后先读取设备 epoch、再写唯一 logcat marker 并执行第一次启动，以 `logcat -T` 有界读取该时间之后的日志，按包名与该包 PID 裁剪 marker 后窗口。`APK_SANITY` 只要求 `main-tab-feed` 可见、目标包在前台且该窗口无崩溃、ANR 或 RedBox；marker 丢失同样失败，不得清空设备全局 logcat。随后执行 `tests/device/` 的七条普通 Replay，形成独立的 `DEVICE_REPLAY_PASS`；真实未登录旅程通过独立设备命令另行执行。动态搜索无结果、合法空 Library 或第三方阻碍不构成 APK 产品失败，只有 APK 身份错误、App 自有入口或当前请求无法结算、永久 Loading、错误不可见或无恢复入口才失败。全程只读，不创建或切换收藏，也不执行其他真实写操作；独立能力继续取证。
 
-动态来源、真实账号和已授权写操作按 `tests/live/agent-live.md` 执行。普通改动只跑受影响能力的 `targeted`；集中修复、里程碑或发布前跑 `full`。场景相互独立，CF 由用户手动处理；无人处理记 `BLOCKED_BY_ENV`，不可逆结果不明确时不得重试。动态服务同时报告应用流程和数据读取结果：成功数据，或明确错误可见、可刷新且无自动请求突发，应用流程均可记 `LIVE_PASS`；数据真实出现记 `LIVE_PASS`，明确限流或有诊断证据的外部故障记 `BLOCKED_BY_ENV`，证据不足记 `NOT_VERIFIED`，诊断证明 App 的请求构造、凭据路由、鉴权头或解析契约错误时则记数据读取明确失败，即使错误 UI 流程本身正确。小隐寺等级首次失败时先保留错误和脱敏诊断；只有错误明确给出可执行的限流/冷却时间（时长或截止时刻），才等待至窗口结束再加 2 秒并显式刷新一次。复试成功仍记录首败，再次限流记数据 `BLOCKED_BY_ENV`；其他错误不猜成限流，也不得仅因 App 正确展示错误态就判产品失败。不得重跑整套或增加全局 retry。
+动态来源、真实账号和已授权写操作按 `tests/live/agent-live.md` 执行。普通改动只跑受影响能力的 `targeted`；集中修复、里程碑或发布前跑 `full`。非远端写入场景可无人值守且相互独立：App 内原站 WebView 的普通 CF checkbox 只在 Cloudflare 上下文、唯一 checkbox role 和语义 label 同时成立时按新 snapshot ref 点击一次，随后必须通过 App-owned canonical 检测并只恢复原 Query 一次；禁止坐标、DOM 注入、Cookie 导出、独立浏览器旁路、整套重跑或写请求自动重放。登录、账号授权、一次性验证码、题目式 CAPTCHA、无法语义定位、30 秒未通过或 canonical 检测失败只将对应来源记 `BLOCKED_BY_ENV`，不在运行中等待用户，继续其他独立场景；不可逆结果不明确时不得重试。动态服务同时报告应用流程和数据读取结果：成功数据，或明确错误可见、可刷新且无自动请求突发，应用流程均可记 `LIVE_PASS`；数据真实出现记 `LIVE_PASS`，明确限流或有诊断证据的外部故障记 `BLOCKED_BY_ENV`，证据不足记 `NOT_VERIFIED`，诊断证明 App 的请求构造、凭据路由、鉴权头或解析契约错误时则记数据读取明确失败，即使错误 UI 流程本身正确。小隐寺等级首次失败时先保留错误和脱敏诊断；只有错误明确给出可执行的限流/冷却时间（时长或截止时刻），才等待至窗口结束再加 2 秒并显式刷新一次。复试成功仍记录首败，再次限流记数据 `BLOCKED_BY_ENV`；其他错误不猜成限流，也不得仅因 App 正确展示错误态就判产品失败。不得重跑整套或增加全局 retry。
 
 ## 消息通知验收
 
@@ -531,9 +531,15 @@ npm run typecheck
 
 ## 模拟器规则
 
+主登录态 AVD 正是日常更新代码和保留真实登录态/本机数据验收的目标设备，必须支持反复就地覆盖安装。现有独立未登录 AVD 只服务未登录旅程，不替代主 AVD 更新，也不能作为安装失败后的清数据兜底；只有会卸载 target App 的 instrumentation 等特殊流程才使用明确的一次性空白 AVD。
+
 允许：
 
 ```powershell
+adb -s <serial> shell dumpsys package com.wz.reader | Select-String 'firstInstallTime|lastUpdateTime'
+npm run smoke:android
+agent-device install com.wz.reader <apk> --platform android --device <device>
+adb -s <serial> install -r <apk>
 npx expo start --dev-client --clear --port 8081
 npx expo run:android --no-bundler --app-id com.wz.reader --no-build-cache
 adb shell am force-stop com.wz.reader
@@ -543,9 +549,13 @@ adb shell monkey -p com.wz.reader -c android.intent.category.LAUNCHER 1
 禁止：
 
 ```powershell
+agent-device reinstall com.wz.reader <apk> --platform android
+agent-device uninstall com.wz.reader --platform android
 adb uninstall com.wz.reader
 adb shell pm clear com.wz.reader
 .\android\gradlew.bat :app:connectedDebugAndroidTest # 保留登录态的模拟器
 ```
+
+`agent-device 0.20.6 reinstall` 会先执行不带 `-k` 的 `adb uninstall`；“Replace installed app” 不是数据保留承诺。保留数据的安装必须在前后只读比对 `firstInstallTime`，值不变才算通过；安全安装失败时停止，不得切换到 reinstall。账号、本机数据或安装时间异常时立即冻结现场，不再启动/退出 AVD 或保存、加载、删除快照，只读采集包时间、启动参数、`quickbootChoice.ini` 与 `snapshot.trace` 后报告；UI 账号数量不是永久丢失或恢复的充分证据。快照恢复必须另行取得用户授权，并先完成可校验的离线 AVD 副本。
 
 确实需要清数据时，必须先得到用户明确同意。`connectedDebugAndroidTest` 只可在一次性空白 AVD 上运行；主模拟器如需原生 instrumentation，覆盖安装 target/test APK 后直接执行 runner，结束时只卸载 test package。

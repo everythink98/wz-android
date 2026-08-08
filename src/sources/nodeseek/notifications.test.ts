@@ -629,7 +629,7 @@ describe('NodeSeek notifications', () => {
     ]);
   });
 
-  it('loads a private conversation and marks only the exact unread incoming message ids', async () => {
+  it('[REG-NOTIFY-057] loads rich private messages and marks only the exact unread incoming message ids', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
@@ -641,7 +641,7 @@ describe('NodeSeek notifications', () => {
               id: 20,
               sender_id: 9,
               receiver_id: 7,
-              content: '**新消息**',
+              content: '**新消息** :ac04:',
               is_markdown: true,
               created_at: '2026-08-02T12:00:00Z',
               viewed: false
@@ -692,6 +692,9 @@ describe('NodeSeek notifications', () => {
     ]);
     expect(detail.reply).toEqual({ format: 'markdown' });
     expect(detail.messages?.[2]?.contentHtml).toContain('<strong>新消息</strong>');
+    expect(detail.messages?.[2]?.contentHtml).toContain(
+      '<img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/04.png" alt="ac04">'
+    );
     expect(detail.messages?.[1]).toMatchObject({ contentText: '*我的回复*' });
     expect(detail.unreadMessageIds).toEqual(['20']);
     expect(calls.at(-1)).toMatchObject({
@@ -700,33 +703,82 @@ describe('NodeSeek notifications', () => {
     expect(new URL(calls.at(-1)?.url || '').pathname).toBe('/api/notification/message/markViewed');
   });
 
-  it('[REG-NOTIFY-031] replies to the exact NodeSeek conversation as Markdown', async () => {
+  it('[REG-NOTIFY-031][REG-NOTIFY-056] serializes the exact NodeSeek receiver UID as a number', async () => {
+    let wireBody: Record<string, unknown> | undefined;
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
-      expect(init).toMatchObject({
-        method: 'POST',
-        body: JSON.stringify({ receiverUid: '9', content: '**你好**', markdown: true })
-      });
-      return json({ success: true, message: '发送成功' });
+      expect(init?.method).toBe('POST');
+      wireBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return json(typeof wireBody.receiverUid === 'number' ? { success: true } : { success: false });
     });
     const item = {
       source: 'nodeseek' as const,
-      id: 'message:9',
+      id: 'message:51153',
       kind: 'private-message' as const,
-      actor: { id: '9', name: '丙' },
-      title: '丙',
+      actor: { id: '51153', name: 'KongB' },
+      title: 'KongB',
       createdAt: null,
       unread: false,
-      target: { type: 'private-conversation' as const, conversationId: '9' }
+      target: { type: 'private-conversation' as const, conversationId: '51153' }
     };
 
     await expect(
-      nodeSeekNotificationAdapter.replyToConversation(item, '**你好**', {
+      nodeSeekNotificationAdapter.replyToConversation(item, '  **你好**  ', {
         fetcher,
         identityKey: 'nodeseek:7',
         userId: '7'
       })
-    ).resolves.toEqual({ confirmed: true, message: '发送成功' });
+    ).resolves.toEqual({ confirmed: true });
+    expect(wireBody).toEqual({ receiverUid: 51153, content: '**你好**', markdown: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
     expect(new URL(String(fetcher.mock.calls[0]?.[0])).pathname).toBe('/api/notification/message/send');
+  });
+
+  it.each(['', 'not-a-uid', '0', '9007199254740992'])(
+    '[REG-NOTIFY-056] rejects invalid receiver UID %s before network access',
+    async (conversationId) => {
+      const fetcher = vi.fn(async () => json({ success: true }));
+      const item = {
+        source: 'nodeseek' as const,
+        id: `message:${conversationId}`,
+        kind: 'private-message' as const,
+        actor: { id: conversationId, name: '对方' },
+        title: '对方',
+        createdAt: null,
+        unread: false,
+        target: { type: 'private-conversation' as const, conversationId }
+      };
+
+      await expect(
+        nodeSeekNotificationAdapter.replyToConversation(item, '内容', {
+          fetcher,
+          identityKey: 'nodeseek:7',
+          userId: '7'
+        })
+      ).rejects.toThrow('NodeSeek 私信会话标识不正确');
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  );
+
+  it('[REG-NOTIFY-056] does not confirm an ambiguous NodeSeek send response', async () => {
+    const fetcher = vi.fn(async () => json({}));
+    const item = {
+      source: 'nodeseek' as const,
+      id: 'message:51153',
+      kind: 'private-message' as const,
+      actor: { id: '51153', name: 'KongB' },
+      title: 'KongB',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation' as const, conversationId: '51153' }
+    };
+
+    await expect(
+      nodeSeekNotificationAdapter.replyToConversation(item, '内容', {
+        fetcher,
+        identityKey: 'nodeseek:7',
+        userId: '7'
+      })
+    ).resolves.toEqual({ confirmed: false, message: 'NodeSeek 未确认私信已发送' });
   });
 
   it('reads the three unread counters and marks all three groups through their real endpoints', async () => {

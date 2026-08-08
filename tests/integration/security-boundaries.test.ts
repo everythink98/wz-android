@@ -152,6 +152,19 @@ describe('Android App security review guards', () => {
     expect(isLinuxDoBrowserResultUrl(linuxDoGoogleSearch, 'https://linux.do/search?q=codex')).toBe(false);
     expect(isLinuxDoBrowserResultUrl(googleJavaScriptGate, linuxDoGoogleSearch)).toBe(false);
     expect(isLinuxDoBrowserNavigationUrl(googleJavaScriptGate, nodeSeekGoogleSearch)).toBe(false);
+    const linuxDoConnect = 'https://connect.linux.do/';
+    expect(
+      isLinuxDoBrowserNavigationUrl('https://linux.do/session/sso_provider?sso=fixed&sig=fixed', linuxDoConnect)
+    ).toBe(true);
+    expect(
+      isLinuxDoBrowserNavigationUrl(
+        'https://connect.linux.do/discourse/sso_callback?sso=fixed&sig=fixed',
+        linuxDoConnect
+      )
+    ).toBe(true);
+    expect(isLinuxDoBrowserResultUrl('https://connect.linux.do/', linuxDoConnect)).toBe(true);
+    expect(isLinuxDoBrowserNavigationUrl('https://example.com/callback', linuxDoConnect)).toBe(false);
+    expect(isLinuxDoBrowserResultUrl('https://example.com/callback', linuxDoConnect)).toBe(false);
 
     expect(isYaohuoRequestUrl('https://yaohuo.me/bbs/book_view.aspx?id=1')).toBe(false);
     expect(isYaohuoRequestUrl('https://www.yaohuo.me/bbs/book_view.aspx?id=1')).toBe(true);

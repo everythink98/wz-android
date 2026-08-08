@@ -4039,6 +4039,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 让 Java 重新使用 `firstOutputLine`、接受零/多个版本行或把原始输出拼进错误，编号测试必须记录提示行、错误接受冲突或泄露 marker。 |
 | 明确不覆盖范围 | 不改变 npm/Gradle 版本解析、manifest schema、toolchain 选择、签名或发布流程，也不引入新依赖。 |
 
+## `REG-OPS-017` Android Smoke 强制无窗口启动模拟器
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `RELEASE-02` |
+| 用户症状 | 执行 Android Smoke 时模拟器只在后台启动，操作者看不到设备画面，无法监督首次启动和后续 Replay。 |
+| 触发条件 | 目标 AVD 尚未启动，`withSmokeSession` 调用 `agent-device boot` 时显式传入 `--headless`。 |
+| 根因 seam | `scripts/smoke-android.mjs` 覆盖了 agent-device 默认的 GUI 启动行为。 |
+| 必须保持的行为 | Smoke 继续使用显式设备和唯一 `wz-apk-sanity` session，但 boot 不得传入 `--headless`；由 Smoke 启动的本机 Android Emulator 必须创建可见窗口。不得为转换窗口模式重启已有设备、清 App 数据、Cookie 或登录态。 |
+| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-OPS-017` 通过真实 `withSmokeSession` 记录 boot 参数，并断言其中不存在 `--headless`；`REG-OPS-014` 同时固定 boot、sanity 和 close 的既有顺序。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定真实 runner 参数；本机从关机态执行默认 `agent-device boot` 后，还需确认目标 AVD booted 且 Windows Emulator 窗口可见。该窗口证据不等于 `APK_SANITY` 或 `DEVICE_REPLAY_PASS`。 |
+| Replay 或真实验收路径 | 在不关闭共享设备、不清数据的前提下，从关机态启动主 AVD，确认 Emulator GUI 可见且未最小化；正式 APK Smoke 仍只在明确发布验证中执行。 |
+| 负向验证方式 | 给 Smoke boot 恢复 `--headless`，编号测试必须失败并输出包含该参数的实际命令。 |
+| 明确不覆盖范围 | 不自动重启已经由外部流程以 headless 模式启动的 AVD，不改变 Replay、录屏、签名、APK 安装或 release 上传流程。 |
+
+## `REG-OPS-018` 正常代码更新误用 agent-device reinstall 重置主 AVD App 数据
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `RELEASE-02`；共享 `ACCOUNT-01/02/04` 与 `DATA-01/02/03` 的登录态、凭据和本机数据保留边界 |
+| 用户症状 | 为查看最新构建而安装 APK 后，主模拟器账号中心从已有登录变成 `0/4`，本机数据看似被重置；后续普通启动载入旧 Quick Boot 状态后登录又出现，造成“数据已永久丢失”和“Cookie 自己恢复”的相互矛盾判断。 |
+| 触发条件 | 在已安装 `com.wz.reader` 的保留数据 AVD 上执行 `agent-device reinstall com.wz.reader <apk>`，随后在没有先冻结和复制 AVD 的情况下继续启停模拟器或操作快照。 |
+| 根因 seam | `agent-device 0.20.6` 的 Android `reinstall` 会先执行不带 `-k` 的 `adb uninstall`，再安装 APK；帮助文案 “Replace installed app” 没有承诺保留数据。仓库 Smoke 本来使用安全的 `install`，但临时人工命令绕过了该边界；看到 `0/4` 后又把 UI 当成永久丢失证据，在证据不足时操作 Quick Boot，扩大了诊断风险。 |
+| 必须保持的行为 | 主登录态 AVD 是日常更新代码和保留登录态验收的目标设备，必须支持反复就地覆盖安装；现有独立未登录 AVD 只服务未登录旅程，不能替代主 AVD 更新或作为安装失败后的清数据兜底。正常更新只允许仓库 `npm run smoke:android`、`agent-device install ...` 或带明确 serial 的 `adb install -r`，安全安装失败必须停止，禁止自动改用 reinstall/uninstall/pm clear。仓库 Smoke 的 boot、install、open 与 close 必须使用同一显式 session，避免安装步骤占用默认 session 后与自身 sanity session 冲突。安装前后只读比对 `firstInstallTime`，值必须不变。若账号、本机数据或安装时间异常，立即冻结现场，不再启停 AVD 或保存、加载、删除快照；先只读记录包时间、AVD/serial、进程启动参数、`quickbootChoice.ini` 与 `snapshot.trace`。UI 账号数量不能独立证明永久丢失或恢复；快照恢复需用户单独授权，并在修改前有已完成且校验过的离线 AVD 副本。只有会卸载 target App 的 instrumentation 等特殊流程才使用一次性空白 AVD。 |
+| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-OPS-018` 固定真实 Smoke 脚本包含 replacement `install`，且不包含 `uninstall`、`reinstall` 或 `pm clear`；boot、install、open 与 close 的实际命令必须包含同一个 `wz-apk-sanity` session。项目 `AGENTS.md`、`docs/operator-runbook.md` 与 `docs/testing-standard.md` 列出完全一致的允许/禁止命令及现场冻结顺序。2026-08-08 事故的只读判据为：误操作后安装时间曾变化；下一次普通启动的 `snapshot.trace=load_succeeded`，且 `firstInstallTime` 与 `lastUpdateTime` 同时回到卸载前，因而证明是整机快照状态回滚，不是 Cookie 续签或重新登录。 |
+| 最低可靠自动测试层 | `UNIT_PASS + STATIC_PASS`：单元测试保护仓库 Smoke 的实际安装命令，文档检查保护编号与引用。任意人工 CLI 无法由仓库测试拦截，因此仍由项目级高风险命令边界约束。 |
+| Replay 或真实验收路径 | 未来在保留数据 AVD 上执行 APK sanity 时，安装前后记录同一个包的 `firstInstallTime` 并要求不变，再进行只读账号与本机数据检查；不得通过真实 uninstall/reinstall 复现本事故。状态异常时本轮验收立即终止并按冻结流程报告。 |
+| 负向验证方式 | 将 `scripts/smoke-android.mjs` 的 `install` 换成 `reinstall/uninstall/pm clear`，编号测试必须失败。设备侧不执行破坏性负向测试；人工流程若建议在安全安装失败后改用 reinstall、只凭 `0/4` 定性或无离线副本操作快照，视为违反本条。 |
+| 明确不覆盖范围 | 本条不提供任意 shell 命令的系统级拦截，不保证卸载后数据可恢复，也不把 Quick Boot 当备份系统；已存在但未完成校验的拷贝不能作为恢复依据。 |
+
 ## `REG-NOTIFY-001` 前台恢复旧未读被误报为新消息
 
 | 字段 | 内容 |
@@ -4864,6 +4894,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复普通 `View`、加入 `flexWrap`、只在 Topic 或私信入口单独包 ScrollView、显示两行，或隐藏末尾工具，编号 UI 测试必须失败。 |
 | 明确不覆盖范围 | 不新增格式动作、滚动指示器、入口级布局开关、键盘方案或附件能力；不改变表情网格、草稿、上传、提交与 safe-area 所有权。 |
 
+## `REG-NOTIFY-056` NodeSeek 私信把字符串会话 ID 直接作为 receiver UID 发送
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`、`WRITE-01`；NodeSeek 私信 adapter 的真实 wire contract |
+| 用户症状 | App 原生 NodeSeek 私信回复后保留草稿并提示“NodeSeek 请求失败：HTTP 200”；刷新原生会话和 App 内 NodeSeek 原站同一会话都看不到该消息。 |
+| 触发条件 | 通知领域 target 使用字符串 `conversationId`，NodeSeek 原站 `/api/notification/message/send` 却要求 JSON 中的 `receiverUid` 为 number；当前 App 内原站控制组使用 number 时发送成功。 |
+| 根因 seam | `src/sources/nodeseek/notifications.ts` 把领域层字符串身份未经 adapter 转换直接泄漏到站点 JSON。旧测试又把字符串 receiver UID 与自造 `{ success: true }` 同时写进 Mock，只证明实现符合自身假设，没有固定真实协议。 |
+| 必须保持的行为 | adapter 只接受十进制数字形式的会话 ID，转换后必须是大于零的 JavaScript 安全整数，并以 number `receiverUid` 发送；空值、非数字、`0` 和超出安全整数范围的值必须零请求，不能舍入成另一个 UID。内容继续 trim，`markdown: true`，复用现有 NodeSeek action client、当前身份与 route-owned `AbortSignal`；不乐观插入消息，只有精确 `success === true` 才确认发送。失败或未确认继续保留草稿，确认成功后沿既有 Query 失效链刷新会话、单站/聚合列表与未读快照。 |
+| 精确失败 oracle | `src/sources/nodeseek/notifications.test.ts` 的 `REG-NOTIFY-056` 从公开 adapter 接口输入 `conversationId: '51153'`，Mock 对字符串 receiver UID 返回失败、对 number 返回 App 内原站捕获到的 `{ success: true }`；修复前精确拒绝为“NodeSeek 请求失败：HTTP 200”，修复后 body 必须等于 `{ receiverUid: 51153, content: trimmedContent, markdown: true }` 且只请求一次。参数化用例固定空值、非数字、`0` 和 `9007199254740992` 零请求，另一个用例固定模糊响应不得得到 `confirmed: true`。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：来源 adapter 的 Vitest 是 wire type、输入边界和确认语义的最低确定性层；gateway 与通知 route 既有测试继续固定身份/取消零请求、草稿保留、单次提交和 Query 失效。 |
+| Replay 或真实验收路径 | 仅在用户明确授权的 NodeSeek 账号 `凡想世界（UID 54874）` 与 `KongB（UID 51153）` 之间测试。先从 App 内原站同一会话以 Markdown 发送唯一 `WZ-NS-ORIGIN-*` 标记并脱敏记录请求字段/类型，再从原生会话发送唯一 `WZ-NS-NATIVE-*` 标记；确认 App 明确成功、草稿清空、原生与 App 内原站均只出现一条相同消息，force-stop 重开后仍可由服务端读取。每次发送前同时核对当前账号、目标 UID 与 KongB 会话标题，任一不符立即停止。 |
+| 负向验证方式 | 恢复字符串 `receiverUid`、仅调用 `Number()` 而不检查正安全整数、把任意 2xx/非 `success:false` 当成功、失败时清草稿或乐观插入消息，编号测试或既有 gateway/route 回归必须失败。 |
+| 明确不覆盖范围 | 不改变公开 navigation、notification target 或 gateway API，不改 headers/Cookie/CSRF，不新增重试、新建/搜索/删除私信，不调整私信时间、气泡或问题诊断样式，也不修改 linux.do、小隐寺、妖火的回复协议；其他站点真实写入保持 `NOT_VERIFIED`。 |
+
+## `REG-NOTIFY-057` NodeSeek 私信把表情码当作普通文字渲染
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02`；共享 `TOPIC-02` 的论坛 sticker 内容渲染 seam |
+| 用户症状 | App 原生 NodeSeek 私信会话把 `:ac04:` 原样显示在气泡内；App 内 NodeSeek 原站的同一条消息显示粗体 Markdown 与 AC 娘图片，双方内容语义不一致。 |
+| 触发条件 | NodeSeek 私信发送使用 `markdown: true`，详情 adapter 收到原始 Markdown 后只交给通用 Markdown parser；已知 NodeSeek shortcode 没有转换成原站的 `<img class="sticker">`，通知详情又只使用 bare `RenderHTML`，没有评论路径的 sticker element model 与媒体 renderer。 |
+| 根因 seam | NodeSeek 已知表情目录只属于 composer UI，来源 adapter 无法复用；评论的 sticker element model、ExpoImage renderer 和图片尺寸 cache 又封装在 Topic feature 内，导致私信输入归一化与展示分别绕过同一套论坛内容能力。 |
+| 必须保持的行为 | NodeSeek adapter 只把现有表情目录中的精确 shortcode 转成原站同语义的 sticker HTML，Markdown 强调继续由既有 parser 处理，行内/围栏代码中的 shortcode 和未知 shortcode 保持文字；sanitizer 继续作为最终 HTML 门禁。通知详情只对 sticker 执行评论已有的流式布局，复用同一个 custom element model、ExpoImage、来源媒体身份和 512 项尺寸 cache；普通 Markdown 图片继续走原 `img` 路径。首次进入会话时，sticker 异步取得自然尺寸并撑高内容后仍要定位最新消息；用户开始拖动后停止跟随，不能抢走其阅读位置。Topic 正文与评论的 sticker、行内媒体、视频和链接卡片行为不得变化，也不得新增私信专用 renderer。 |
+| 精确失败 oracle | `src/sources/nodeseek/markdown.test.ts` 的 `REG-NOTIFY-057` 输入粗体、已知 shortcode、行内/围栏代码与未知 shortcode，要求只生成一张精确 NodeSeek sticker；`src/sources/nodeseek/notifications.test.ts` 再从公开 adapter 的私信详情入口固定同一结果；`src/platform/media/inlineMedia.test.ts` 固定 sticker 升级但普通图片不被接管；`tests/ui/notifications/notifications-screen.test.tsx` 从通知详情公开界面同时断言粗体语义与可访问的 `ac04` 图片；`src/features/notifications/conversationAutoScroll.test.ts` 固定同一会话连续内容扩展时保持跟随、用户拖动后停止、新会话恢复跟随。修复前 adapter 测试看到原始 `:ac04:`，UI 测试落入默认图片路径且无法稳定渲染 sticker，异步尺寸更新又会把最新 sticker 挤到固定回复栏下。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：Vitest 固定来源转换和共享媒体 HTML 变换，Jest/RNTL 固定通知详情实际使用共享 sticker renderer；Topic 既有媒体与 HTML rendering controller 回归固定抽取前后的评论行为。 |
+| Replay 或真实验收路径 | 仅打开用户已授权的 NodeSeek `凡想世界（UID 54874）` 与 `KongB（UID 51153）` 会话。App 内原站已发送并确认唯一消息 `**WZ-NS-RENDER-20260808-172820** :ac04:`：原站 DOM 为 `<strong>` 加 `img.sticker`。覆盖安装后直接刷新原生同一会话，要求标记文字为粗体、`ac04` 显示为图片且不再出现原始 shortcode；无需再次发送写请求。任一账号、目标 UID 或会话标题不一致时立即停止。 |
+| 负向验证方式 | 删除 shortcode 转换、让转换进入 code token、接受目录外 shortcode、让通知继续使用 bare `RenderHTML`、复制一份私信 sticker renderer、让 sticker-only 变换接管普通图片、恢复一次性 `scrollToEnd` 或在用户拖动后继续强制跟随，编号 adapter/媒体/UI/滚动控制器测试必须失败；恢复 Topic 私有缓存函数时 unused/架构检查必须暴露旧 seam。 |
+| 明确不覆盖范围 | 不调整私信时间位置、气泡或问题诊断样式，不改变发送协议、Markdown 编辑器、图片上传、视频 sticker、新建/搜索/删除私信，也不修改 linux.do、小隐寺、妖火的通知正文协议；本次 Live 只验证既有 NodeSeek KongB 消息。 |
+
 ## `REG-TOPIC-062` 极大回复楼层被当作从首屏开始的连续前缀
 
 | 字段 | 内容 |
@@ -5029,6 +5089,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 匹配 revision/APK 运行 `four-source-feed.ad`、`account-readonly.ad` 及相关详情/搜索只读路径；自然超时时核对 generation 增加后的紧随直连，不主动破坏网络或登录态。 |
 | 负向验证方式 | 恢复递归 watchdog、第三次 transport、写请求恢复或把普通 HTTP/Cloudflare 归类为通道超时，编号测试必须失败。 |
 | 明确不覆盖范围 | 不自动重试非超时失败，不替换现有 Cloudflare 验证流程，不扩大到其他域名。 |
+
+## `REG-LINUXDO-009` Connect 会话失效让官方等级退回本机估算
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-04`；共享 `ACCOUNT-02` 的隐藏 WebView、CookieManager 与显式清除边界 |
+| 用户症状 | 同一账号在 App 内手动打开 Connect 官方页或在手机 App 可以看到官方等级进度，但模拟器直接点击“查看等级”偶发只显示“本级估算”；手动看过真实页面后又恢复。 |
+| 触发条件 | linux.do 主站登录仍有效且等级为 LV2+，但 `connect.linux.do` 的会话已过期；等级直连返回登录页、不可解析 HTML 或非成功响应，而真实 Connect 页面可经 linux.do SSO 回到官方卡片。 |
+| 根因 seam | `src/sources/linuxdo/level.ts` 在 Connect 直连/解析失败后直接吞错并降级估算，没有调用 `src/sources/linuxdo/browserFallback.ts` 已有隐藏 WebView；手动打开真实页之所以“治好”，是页面导航顺带完成了 SSO 和 Connect Cookie 续签。 |
+| 必须保持的行为 | LV2+ 每次先直连 Connect；可解析官方卡片立即返回且不打开 WebView。只有该次直连原本会估算时，才以 JS 内部 intent 精确执行一次 `GET https://connect.linux.do/` 的既有隐藏 WebView读取，允许 linux.do SSO provider、Connect callback 和最终页，拒绝外域；成功直接解析最终页为 `source: connect`、`estimate: false`，失败才保留既有估算。取消、LV0/LV1、其他 URL/方法零恢复；单次点击不循环。普通原生请求继续只读 Cookie、响应不写回；只有用户显式清除登录时定向过期 Connect 的 `auth.session-token` host-only 与 `Domain=connect.linux.do`。 |
+| 精确失败 oracle | `src/sources/linuxdo/level.test.ts` 的 `REG-LINUXDO-009` 先让直连返回登录 HTML、隐藏 WebView返回官方卡片，修复前结果为 `summary/estimate` 且 WebView 零调用，修复后必须为 `connect/false` 且 WebView 恰好一次；同文件固定直连成功零 WebView、恢复失败只一次后估算、Abort 与 LV0/LV1 零恢复。`tests/integration/source-read-contracts.test.ts` 固定 intent 只匹配精确 Connect GET、无特殊 header、禁用 fallback 时不二次直连；`tests/integration/security-boundaries.test.ts` 固定 SSO/callback 与外域边界；fresh prebuild 的 `NetworkProxyRuntimeTest.kt` 固定显式清除，并由既有 no-op 用例继续禁止响应 Cookie 写回。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + STATIC_PASS`：确定性 adapter/integration 测试固定恢复次数、结果和安全边界；隐藏 WebView UI 回归固定共享队列、Abort 与页面结算；release packaging、fresh prebuild、Kotlin JUnit/编译固定原生 Cookie 契约。 |
+| Replay 或真实验收路径 | 在匹配 revision/APK 的当前可见模拟器上覆盖安装并保留 App 数据，不先手动打开 Connect；从“更多”点击 linux.do 查看等级，正常会话直接显示官方进度并可重复刷新。只在测试期间自然遇到过期会话时核对单次隐藏 SSO 后仍显示官方进度；不得清 App 数据、重置模拟器或人为删除 Cookie 制造状态。未自然命中过期时，真实恢复记 `NOT_VERIFIED`，不影响确定性自动测试作为修复 oracle。 |
+| 负向验证方式 | 删除恢复 intent、让失败直接估算，或把恢复扩大到任意 URL/POST/循环重试，编号测试必须分别出现 `summary/estimate`、误用 WebView或超出一次。恢复普通原生响应 Cookie 写回、自动清 Cookie，既有 `REG-ACCOUNT-026/027/029` 与原生 no-op 测试必须失败。 |
+| 明确不覆盖范围 | 不新增 Cookie overlay、受限 CookieJar 写回、私有 Cookie store 或新会话系统；不改 Connect DOM 解析选择器，不把估算删除，不主动制造第三方过期状态，也不改变 `REG-ACCOUNT-026/027/029` 的普通原生请求只读契约。 |
 
 ## `REG-PROXY-009` 单站通道恢复误伤其他请求或写操作
 

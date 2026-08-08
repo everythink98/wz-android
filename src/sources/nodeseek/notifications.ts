@@ -420,6 +420,10 @@ export const nodeSeekNotificationAdapter = {
     if (item.target.type !== 'private-conversation' || !/^\d+$/.test(item.target.conversationId)) {
       throw new Error('NodeSeek 私信会话标识不正确');
     }
+    const receiverUid = Number(item.target.conversationId);
+    if (!Number.isSafeInteger(receiverUid) || receiverUid <= 0) {
+      throw new Error('NodeSeek 私信会话标识不正确');
+    }
     const raw = content.trim();
     if (!raw) throw new Error('请输入回复内容');
     const data = await runNodeSeekAction({
@@ -427,7 +431,7 @@ export const nodeSeekNotificationAdapter = {
         path: '/api/notification/message/send',
         method: 'POST',
         headers: {},
-        body: JSON.stringify({ receiverUid: item.target.conversationId, content: raw, markdown: true })
+        body: JSON.stringify({ receiverUid, content: raw, markdown: true })
       },
       fetcher: options.fetcher,
       signal: options.signal,

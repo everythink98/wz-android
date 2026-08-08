@@ -210,6 +210,18 @@ export function flowInlineImagesInMixedParagraphs(html: string) {
   }
 }
 
+export function flowForumStickerMedia(html: string) {
+  if (!/<img\b/i.test(html) && !FORUM_STICKER_MEDIA_PATTERN.test(html)) {
+    return html;
+  }
+  try {
+    const root = parseHtml(html);
+    return upgradeForumStickerMedia(root) ? root.toString() : html;
+  } catch {
+    return html;
+  }
+}
+
 function escapeHtmlText(value: string) {
   return value
     .replace(/&/g, '&amp;')
@@ -327,6 +339,7 @@ function flowImagesInMixedContainer(
 }
 
 function upgradeForumStickerMedia(root: { querySelectorAll?: (selector: string) => ParsedImageNode[] }) {
+  let changed = false;
   root.querySelectorAll?.('p').forEach((paragraph) => {
     const html = paragraph.innerHTML || '';
     if (!/<img\b/i.test(html) && !FORUM_STICKER_MEDIA_PATTERN.test(html)) {
@@ -335,8 +348,10 @@ function upgradeForumStickerMedia(root: { querySelectorAll?: (selector: string) 
     const replacementHtml = stickerRowHtmlFromParagraph(html);
     if (replacementHtml && typeof paragraph.replaceWith === 'function') {
       paragraph.replaceWith(replacementHtml);
+      changed = true;
     }
   });
+  return changed;
 }
 
 function stickerRowHtmlFromParagraph(html: string) {

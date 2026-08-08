@@ -45,8 +45,8 @@ npm run test:device:logged-out
 
 - `tests/live/agent-live.md` 是唯一 Agent Live 流程，不另建功能清单、DSL 或 runner。
 - 普通改动在 `verify` 与相关 Replay 后执行 `targeted`；集中修复、里程碑或发布前执行 `full`。
-- 启动任务时给 Agent Profile、Git revision、App version、APK SHA、设备和能力 ID；由现有 agent-device MCP 操作，用户监督。
-- 场景不 fail-fast；每项从可确认的根状态开始，只有冷启动本身是 oracle 时才 relaunch。同一次真实请求已有可用证据时不得重复请求。CF 等待用户手动完成；恢复失败时停止该来源后续写入。
+- 启动任务时给 Agent Profile、Git revision、App version、APK SHA、设备和能力 ID；由现有 agent-device MCP 操作。非远端写入场景可无人值守，登录、账号授权、交互式 CAPTCHA 和远端写入仍由用户监督。
+- 场景不 fail-fast；每项从可确认的根状态开始，只有冷启动本身是 oracle 时才 relaunch。同一次真实请求已有可用证据时不得重复请求。App 内原站 WebView 的普通 CF checkbox 使用语义 ref 自动点击一次，再由 App-owned canonical 检测确认并只恢复原 Query 一次；登录、授权、题目式验证或恢复失败只将对应来源记 `BLOCKED_BY_ENV`，不在中途等待用户，也不阻断其他独立场景。
 - 最终按能力 ID 报告 `LIVE_PASS`、`NOT_VERIFIED`、`BLOCKED_BY_ENV` 或明确失败，以及恢复状态和残留。
 
 ## 工具进程收口
@@ -77,9 +77,11 @@ npm run test:device:logged-out
 - More 页 `服务器代理` 支持 HTTP / SOCKS5；启用失败时网络请求不应静默直连。
 - WebView localhost relay 只允许 HTTP 80 与 HTTPS CONNECT 443，并固定连接、header 与共享双向 idle deadline 上限；任一方向读到字节都会续期，只有整个 tunnel 双向静默才超时。connection worker 必须用剩余 deadline 等待 copy task，阻塞写到期后由关闭双方 socket 解开；`Socket.soTimeout` 只唤醒读侧。非 CONNECT HTTP 必须只转发首个、由唯一 `Content-Length` 定长的 request body，拒绝 `Transfer-Encoding`、歧义长度、非标准 numeric IPv4 和 IPv4-compatible/mapped IPv6，且不得复用 client socket 透传后续请求。普通 `ServerSocket` 不能可靠证明 caller UID，因此同设备恶意 App 与 hostname DNS rebinding 仍是明确残余风险，不得把随机端口或 timeout 宣称为同-App认证。验证只连接测试进程内 fake upstream；禁止端口扫描、跨 App 探测与公网代理压测。
 - 账号状态刷新由 `src/features/account/useAccountStatusController.ts` 提供，备份 I/O 由 `src/features/more/useBackupStatusController.ts` 提供；启动后由 `AppRoot` 静默刷新一次，进入 More 页本身不应触发刷新。
-- 模拟器验证最新代码时禁止使用 `adb uninstall`、`adb shell pm clear`、清空模拟器数据或重置 emulator。
+- 主登录态 AVD 是日常更新代码并保留真实登录态/本机数据验收的目标设备，必须支持反复就地覆盖安装。现有独立未登录 AVD 只执行未登录旅程，不替代主 AVD 更新，也不能在安装失败时被当作清数据兜底；只有会卸载 target App 的 instrumentation 等特殊流程才使用一次性空白 AVD。
+- 模拟器验证最新代码时禁止使用 `agent-device reinstall`、`agent-device uninstall`、`adb uninstall`、`adb shell pm clear`、清空模拟器数据或重置 emulator。`agent-device 0.20.6 reinstall` 会先执行不带 `-k` 的 `adb uninstall`；帮助文案里的 “Replace installed app” 只表示替换包，不表示保留 App 数据。
 - 保留登录态的模拟器禁止运行 Gradle `connectedDebugAndroidTest`：该任务结束时会卸载 target Debug App。原生 instrumentation 只能在一次性空白 AVD 上运行，或手工覆盖安装 target/test APK 后执行 runner，并且只卸载 test package。
-- 默认使用覆盖安装、重启 Metro、`adb shell am force-stop com.wz.reader` 和重新启动 App；这样不会清掉既有登录态。
+- 默认使用仓库 `npm run smoke:android`、`agent-device install com.wz.reader <apk> --platform android --device <device>` 或 `adb -s <serial> install -r <apk>` 覆盖安装，再重启 Metro、`adb shell am force-stop com.wz.reader` 和重新启动 App。安装前后只读记录 `firstInstallTime`，值必须完全相同；覆盖安装失败时停止，不得自动降级为 uninstall/reinstall。
+- 如果账号数量、本机数据或 `firstInstallTime` 出现异常，立即冻结现场：不再启动或退出模拟器，不保存、加载或删除快照，也不尝试登录、清 Cookie 或再次安装。先只读记录 AVD/serial、包安装时间、进程启动参数、`quickbootChoice.ini` 与 `snapshot.trace`，再向用户报告；不能只凭 UI 的账号数量宣称数据永久丢失。快照恢复必须作为独立任务取得授权，并在任何修改前完成可校验的离线 AVD 副本。
 
 ## Android 验证
 
@@ -126,6 +128,10 @@ adb shell am start -W -a android.intent.action.VIEW -d "exp+wz-android://open-to
 
 ```powershell
 adb devices
+adb -s <serial> shell dumpsys package com.wz.reader | Select-String 'firstInstallTime|lastUpdateTime'
+npm run smoke:android
+agent-device install com.wz.reader <apk> --platform android --device <device>
+adb -s <serial> install -r <apk>
 npx expo start --dev-client --clear --port 8081
 npx expo run:android --no-bundler --app-id com.wz.reader --no-build-cache
 adb shell am force-stop com.wz.reader
@@ -135,6 +141,8 @@ adb shell monkey -p com.wz.reader -c android.intent.category.LAUNCHER 1
 禁止命令：
 
 ```powershell
+agent-device reinstall com.wz.reader <apk> --platform android
+agent-device uninstall com.wz.reader --platform android
 adb uninstall com.wz.reader
 adb shell pm clear com.wz.reader
 ```

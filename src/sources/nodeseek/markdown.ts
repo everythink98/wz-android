@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import { NODESEEK_URL } from '@/domain/forum/sourceUrls';
+import { nodeSeekStickerForCode } from '@/domain/forum/nodeSeekStickers';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 
 export const MAX_NODESEEK_MARKDOWN_BYTES = 256 * 1024;
@@ -10,6 +11,16 @@ const md = new MarkdownIt({
   breaks: true
 });
 Object.assign(md.options, { maxNesting: 100 });
+const defaultTextRenderer = md.renderer.rules.text;
+md.renderer.rules.text = (tokens, index, options, env, renderer) => {
+  const rendered = defaultTextRenderer
+    ? defaultTextRenderer(tokens, index, options, env, renderer)
+    : md.utils.escapeHtml(tokens[index]?.content || '');
+  return rendered.replace(/:[a-z]+\d+:/g, (code) => {
+    const sticker = nodeSeekStickerForCode(code);
+    return sticker ? `<img class="sticker" src="${sticker.imageUrl}" alt="${sticker.label}">` : code;
+  });
+};
 
 export function nodeSeekMarkdownToHtml(markdown: unknown) {
   const input = String(markdown || '');

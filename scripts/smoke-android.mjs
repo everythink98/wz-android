@@ -136,10 +136,9 @@ function resolveApkPath(value) {
 
 export function withSmokeSession({ selectedDevice, runAgentDeviceCommand = runAgentDevice }, action) {
   const [, deviceName] = deviceSelectionArgs(selectedDevice);
-  runAgentDeviceCommand(
-    ['boot', '--session', smokeSession, '--platform', 'android', '--device', deviceName, '--headless'],
-    { cwd: rootDir }
-  );
+  runAgentDeviceCommand(['boot', '--session', smokeSession, '--platform', 'android', '--device', deviceName], {
+    cwd: rootDir
+  });
   let failure;
   try {
     return action();
@@ -168,7 +167,16 @@ export function runApkSanity({
 }) {
   try {
     runAgentDeviceCommand(
-      ['install', appPackage, apkPath, '--platform', 'android', ...deviceSelectionArgs(device.name)],
+      [
+        'install',
+        appPackage,
+        apkPath,
+        '--session',
+        smokeSession,
+        '--platform',
+        'android',
+        ...deviceSelectionArgs(device.name)
+      ],
       { cwd: rootDir }
     );
   } catch (error) {

@@ -2,12 +2,25 @@ import { describe, expect, it } from 'vitest';
 
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import {
+  flowForumStickerMedia,
   flowInlineImagesInMixedParagraphs,
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize
 } from './inlineMedia';
 
 describe('inline media layout', () => {
+  it('[REG-NOTIFY-057] upgrades private-message stickers without taking over ordinary Markdown images', () => {
+    const html =
+      '<p><strong>私信正文</strong> <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/04.png" alt="ac04"> <img src="https://example.com/ordinary.png" alt="ordinary"></p>';
+    const result = flowForumStickerMedia(html);
+
+    expect(result).toContain('<strong>私信正文</strong>');
+    expect(result).toContain('<forum-sticker class="sticker"');
+    expect(result).toContain('src="https://www.nodeseek.com/static/image/sticker/ac/04.png"');
+    expect(result).toContain('<img src="https://example.com/ordinary.png" alt="ordinary">');
+    expect(result).not.toContain('<forum-inline-image');
+  });
+
   it('[REG-TOPIC-030] does not reactivate an unsafe lazy image URL after sanitization', () => {
     const sanitized = sanitizeContentHtml(
       '<img src="/safe.png" data-original="javascript:x.png">',

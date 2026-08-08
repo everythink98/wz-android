@@ -640,6 +640,38 @@ describe('notification screens', () => {
     scrollToEnd.mockRestore();
   });
 
+  it('[REG-NOTIFY-057] renders NodeSeek private-message Markdown and stickers as forum content', async () => {
+    const detail = {
+      notification: { ...notification, kind: 'private-message' as const },
+      title: '与 KongB 的私信',
+      messages: [
+        {
+          id: 'render-fixture',
+          author: '我',
+          contentHtml:
+            '<p><strong>WZ-NS-RENDER</strong> <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/04.png" alt="ac04"></p>',
+          createdAt: '2026-08-08T09:29:18Z',
+          mine: true
+        }
+      ],
+      reply: { format: 'markdown' as const }
+    };
+
+    const view = await render(
+      <NotificationDetailScreen
+        canOpenTopic={false}
+        contentWidth={360}
+        detail={detail}
+        loading={false}
+        onOpenTopic={jest.fn()}
+        onRetry={jest.fn()}
+      />
+    );
+
+    expect(StyleSheet.flatten(view.getByText('WZ-NS-RENDER').props.style).fontWeight).toBe('bold');
+    expect(view.getByLabelText('ac04')).toBeTruthy();
+  });
+
   it('forwards every source toggle and the Xiaoyinsi authorization upgrade', async () => {
     const onToggleSource = jest.fn();
     const onUpgradeXiaoyinsi = jest.fn();

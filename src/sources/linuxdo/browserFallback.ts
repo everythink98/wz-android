@@ -4,7 +4,7 @@ import {
   isGoogleSiteSearchUrl,
   isSameGoogleSiteSearchUrl
 } from '@/sources/searchFallback';
-import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { cancelRequestTimeoutForFallback, scheduleRequestTimeout, type Fetcher } from '@/platform/network/request';
 import {
   beginDiagnosticTrace,
@@ -19,7 +19,13 @@ export type LinuxDoHiddenBrowserFailureReason =
   'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
 
 const LINUXDO_CURRENT_SESSION_URL = 'https://linux.do/session/current.json';
+const LINUXDO_CONNECT_URL = 'https://connect.linux.do/';
 const LINUXDO_DIRECT_FETCH_TIMEOUT_MS = 8_000;
+const LINUXDO_CONNECT_SESSION_RECOVERY_INTENT = Symbol.for('wz.linuxDoConnectSessionRecoveryIntent');
+
+type LinuxDoConnectSessionRecoveryInit = RequestInit & {
+  [LINUXDO_CONNECT_SESSION_RECOVERY_INTENT]?: true;
+};
 
 class LinuxDoDirectFetchTimeoutError extends Error {}
 
@@ -56,6 +62,23 @@ export class LinuxDoHiddenBrowserFailureError extends Error {
   ) {
     super(message);
   }
+}
+
+export function withLinuxDoConnectSessionRecoveryIntent(init: RequestInit): RequestInit {
+  return withBrowserFetchIntent(
+    {
+      ...init,
+      [LINUXDO_CONNECT_SESSION_RECOVERY_INTENT]: true
+    } as RequestInit,
+    {
+      owner: 'account',
+      priority: 'foreground'
+    }
+  );
+}
+
+function hasLinuxDoConnectSessionRecoveryIntent(init: RequestInit | undefined) {
+  return (init as LinuxDoConnectSessionRecoveryInit | undefined)?.[LINUXDO_CONNECT_SESSION_RECOVERY_INTENT] === true;
 }
 
 export function isLinuxDoRequestUrl(input: string) {
@@ -254,6 +277,12 @@ export function createLinuxDoWebViewFallbackFetcher({
   return registerDiagnosticContextFetcher(async (input, init) => {
     const url = String(input);
     const method = String(init?.method || 'GET').toUpperCase();
+    if (hasLinuxDoConnectSessionRecoveryIntent(init) && url === LINUXDO_CONNECT_URL && method === 'GET') {
+      if (!allowWebViewFallback(url)) {
+        throw new LinuxDoHiddenBrowserFailureError('renderer', 'linux.do 页面读取当前不可用');
+      }
+      return fetchLinuxDoWebViewOnly(webViewFetcher, url, init);
+    }
     if (isLinuxDoGoogleSearchUrl(url)) {
       if (method !== 'GET') {
         return defaultFetcher(input, init);
@@ -267,7 +296,7 @@ export function createLinuxDoWebViewFallbackFetcher({
         ? await fetchLinuxDoDirectly(defaultFetcher, url, init)
         : await defaultFetcher(input, init);
     } catch (error) {
-      if (error instanceof LinuxDoDirectFetchTimeoutError && !init?.signal?.aborted) {
+      if (error instanceof LinuxDoDirectFetchTimeoutError && !init?.signal?.aborted && url !== LINUXDO_CONNECT_URL) {
         await recoverTimedOutRead();
         response = await defaultFetcher(input, init);
       } else {

@@ -1,8 +1,8 @@
-# Agent Live 受监督验收
+# Agent Live 验收
 
 ## 定位
 
-Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实登录态的 Android App 上验证动态来源、系统能力和经本次明确授权的写操作。它是发布前或受影响能力的受监督验收，不是确定性 CI，也不替代 Vitest、Jest/RNTL、Device Replay 或 APK sanity。
+Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实登录态的 Android App 上验证动态来源、系统能力和经本次明确授权的写操作。非远端写入场景默认允许无人值守运行；登录、账号授权、交互式 CAPTCHA 和远端写入仍保留人工边界。它不是确定性 CI，也不替代 Vitest、Jest/RNTL、Device Replay 或 APK sanity。
 
 执行顺序固定为：选择能力 ID → `npm run verify` → 相关 `.ad` Replay → Agent Live 非远端写入场景 → 汇报已完成结果并请求本次远端写入授权 → 只执行用户明确同意的场景。前一层失败时先记录失败；除非继续操作会造成数据、安全或状态污染，否则仍可收集其他独立场景的证据。
 
@@ -20,12 +20,20 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 每个场景从可确认的根状态开始，先确认入口和前置状态；只有冷启动或重启本身是 oracle 时才 relaunch。可复用同一请求证据，但不得依赖未确认的页面、选项或草稿。
 - 不卸载 App，不清 App 数据、Cookie、登录态，不退出账号，不重置模拟器；MCP、ADB 和共享模拟器保持运行。
 - 优先使用可见文案、accessibility role/label 和稳定 `testID`；禁止坐标点击和固定长等待替代状态断言。
-- Cloudflare/Turnstile 是人工边界。出现验证时暂停并请用户完成；不得自动绕过或代点。用户未处理则记 `BLOCKED_BY_ENV`，随后继续不依赖该来源的场景。
+- App 内原站 WebView 出现普通 Cloudflare checkbox 时按下文自动恢复协议处理，不暂停整轮，也不在运行中等待用户。登录表单、账号授权、一次性验证码、选图/文字题或其他交互式 CAPTCHA 仍是人工边界；只阻塞对应来源，随后继续其他独立场景。
 - 动态目标按场景规定的关键词和控件查找；没有合格目标记 `NOT_VERIFIED`，不能拿搜索结果页、普通主题或一次空结果冒充成功。
 - 用户给出 NodeSeek、linux.do、V2EX、妖火或小隐寺主题 URL 时，该 URL 是验收目标：先按来源和主题 id 直达 App 内详情，不得用搜索路径、相似主题或桌面浏览器替代。搜索只用于没有给定目标，或在给定目标已完成只读检查后寻找额外未投只读样本。
 - 可逆操作先记录初始状态，完成后恢复并通过刷新或重新进入确认。恢复失败时停止该来源后续写操作，记录残留，但继续其他独立来源。
 - 投票前必须记录明确的未投/已投状态和准确选项；不可逆操作按具体对象逐次授权且只提交一次。结果不明确时不得重试，记录可见状态和 `NOT_VERIFIED` 或失败，防止重复投票、签到或写入；提交后通过刷新/重进 App，并从 App 内原站同类页面核对。
 - 普通页面失败时保存截图、UI hierarchy 和操作摘要；成功只保留足以证明 oracle 的最小证据，不提交这些运行产物。凭据、登录/认证、代理配置及其他可能显示账号、密码、Cookie、token、代理地址的页面禁止截图和导出 UI hierarchy，只写不含值的脱敏状态摘要；若普通页面意外显示敏感值，立即停止取证并删除本任务产生的相关运行产物。
+
+### Cloudflare checkbox 自动恢复协议
+
+1. 只在 App 自己打开的目标站 WebView 中操作，并同时确认 Cloudflare challenge 上下文、唯一可用的 checkbox role，以及 `Verify you are human` 或语义等价 label。每次操作前重新获取 snapshot，只按语义 ref 点击一次；禁止坐标、图像猜点、DOM 注入、Cookie 导出或独立浏览器旁路。
+2. 点击后按 UI 状态有界等待，最长 30 秒，不用固定长 sleep。checkbox 消失且目标页开始加载后，调用 App-owned canonical 检测动作：NodeSeek 等待 `nodeseek-login-webview-settled` 后点“检测登录”，linux.do 点“检测状态”；不能以 checkbox 被点击、WebView 空白或页面看似正常代替账号/clearance 结论。
+3. canonical 检测成功后，只恢复触发验证的原始 Query 一次，并等待该请求自己的 `data/empty/partial/error/auth` outcome；不得重跑整套场景或自动重放任何写请求。
+4. checkbox 不唯一、没有语义节点、30 秒内未通过、canonical 检测仍返回 `verification-required`，或页面升级为登录、授权、一次性验证码及其他交互式挑战时，不继续猜测或重复点击。保存不含凭据的最小证据，将对应来源的数据轴记 `BLOCKED_BY_ENV`，跳过该来源后续依赖场景并继续其余场景；只在整轮汇报中说明需要用户恢复会话，不在中途等待回复。
+5. 全程不得清 Cookie、退出账号、卸载、重置设备或自动提交登录表单。远端写操作仍受逐次授权门禁约束，验证恢复不得让既有写请求自动重放。
 
 ### 永久排除
 
@@ -105,7 +113,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 能力：`TOPIC-02`、`TOPIC-03`、`USER-01`、`NAV-02`；共享 `USER-02`、`LIBRARY-02`、`NAV-03`。仅当当前 revision、version/versionCode、APK SHA 匹配，NodeSeek Account Query 已确认登录，且目标链接仍存在对应可信 href 时执行；否则按证据轴记 `BLOCKED_BY_ENV` 或 `NOT_VERIFIED`，不改用搜索、相似主题或纯文本 `@name`。
 - 用 App 内主题链接直达 `https://www.nodeseek.com/post-832584-1`，依次检查正文 `@lcy0828`、正文 `@xy`、回复 `@Tokin`，以及 `/space/1414` 的 `@男朋友`。每个 username 最多触发一次真实 resolver probe；`/space/1414` 必须零 resolver。不得连点、预取全文用户或用重复请求制造 429。
 - 每次点击后 `com.wz.reader` 必须保持前台并进入 `user-screen-loaded`；不得启动 Chrome/Google。`@xy` 必须归一到 exact canonical 用户（UID `8052`），不能选择排在前面的模糊结果；Profile、主题/回复分页和可见关注目标只使用 canonical 数字 UID。解析中不显示关注；无匹配、非法响应、网络或 429 必须留在 App 并显示可刷新错误与显式“原站主页”，零自动重试、零自动外开。
-- 每个 User 检查完成后使用 Android 物理返回，必须回到同一 Topic 并保持原回复位置，再检查下一个目标。全程只读，不切换关注、不执行任何真实写操作；Cloudflare/Turnstile 仍按人工边界暂停，完成后只恢复原 User Query。
+- 每个 User 检查完成后使用 Android 物理返回，必须回到同一 Topic 并保持原回复位置，再检查下一个目标。全程只读，不切换关注、不执行任何真实写操作；Cloudflare checkbox 按全局自动恢复协议处理，成功后只恢复原 User Query。
 
 ### LIVE-READ-05 五站真实回复顺序
 

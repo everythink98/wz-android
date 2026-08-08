@@ -2,20 +2,10 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { WebView } from 'react-native-webview';
-import { TChildrenRenderer, useContentWidth, type CustomBlockRenderer } from 'react-native-render-html';
+import { useContentWidth, type CustomBlockRenderer } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import {
-  imageRequestHeadersForUrl,
-  imageSourceFromUrl,
-  isNodeSeekHost,
-  normalizeImagePreviewUrl
-} from '@/platform/media/imageRequestSource';
-import {
-  inlineForumImageDisplaySize,
-  FORUM_INLINE_MEDIA_LINE_TAG,
-  FORUM_STICKER_ROW_TAG,
-  FORUM_STICKER_TAG
-} from '@/platform/media/inlineMedia';
+import { imageRequestHeadersForUrl, imageSourceFromUrl, isNodeSeekHost } from '@/platform/media/imageRequestSource';
+import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/domain/forum/videoEmbeds';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import type { HtmlRenderers } from './types';
@@ -24,7 +14,7 @@ import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
-import { cachedPreviewImageDimensions, rememberPreviewImageDimensions } from './previewRenderers';
+import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 
 export async function readManagedWebViewCookieHeader(url: string) {
   const result = await readManagedCookieHeader(url);
@@ -155,20 +145,6 @@ function ForumVideoStickerBrowser({
 }
 
 const embedStyles = StyleSheet.create({
-  inlineMediaLine: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap'
-  },
-  stickerRow: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 10,
-    marginTop: 8,
-    rowGap: 6
-  },
   stickerVideoFrame: {
     overflow: 'hidden'
   },
@@ -354,65 +330,6 @@ export function createContentMediaRenderers({
     );
   };
 
-  const ForumStickerRenderer: CustomBlockRenderer = (props) => {
-    const attributes = props.tnode.attributes || {};
-    const src = attributes.src || '';
-    const contentWidth = useContentWidth();
-    const normalizedSrc = normalizeImagePreviewUrl(src).trim();
-    const cacheKey = normalizedSrc ? `${mediaSessionIdentity}:${normalizedSrc}` : '';
-    const [loadedDimensions, setLoadedDimensions] = useState<{
-      cacheKey: string;
-      dimensions: { height: number; width: number };
-    } | null>(null);
-    const naturalDimensions =
-      loadedDimensions?.cacheKey === cacheKey
-        ? loadedDimensions.dimensions
-        : cacheKey
-          ? cachedPreviewImageDimensions(cacheKey)
-          : undefined;
-    const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth, naturalDimensions);
-    if (!src) {
-      return <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
-    }
-    return (
-      <ExpoImage
-        contentFit="contain"
-        onLoad={(event) => {
-          const dimensions = { height: event.source.height, width: event.source.width };
-          if (
-            !cacheKey ||
-            !Number.isFinite(dimensions.height) ||
-            !Number.isFinite(dimensions.width) ||
-            !(dimensions.height > 0 && dimensions.width > 0)
-          ) {
-            return;
-          }
-          rememberPreviewImageDimensions(cacheKey, dimensions);
-          setLoadedDimensions({ cacheKey, dimensions });
-        }}
-        recyclingKey={`${mediaSessionIdentity}:${src}`}
-        source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
-        style={[htmlRendererStyles.inlineForumImage, size]}
-      />
-    );
-  };
-
-  const ForumStickerRowRenderer: CustomBlockRenderer = (props) => {
-    return (
-      <View style={[embedStyles.stickerRow, trimsTrailingBlockSpacing(props.tnode) ? { marginBottom: -4 } : null]}>
-        <TChildrenRenderer tchildren={props.tnode.children} />
-      </View>
-    );
-  };
-
-  const ForumInlineMediaLineRenderer: CustomBlockRenderer = (props) => {
-    return (
-      <View style={embedStyles.inlineMediaLine}>
-        <TChildrenRenderer tchildren={props.tnode.children} />
-      </View>
-    );
-  };
-
   const LinkCardRenderer: CustomBlockRenderer = (props) => {
     const attributes = props.tnode.attributes || {};
     const href = attributes.href || '';
@@ -485,9 +402,15 @@ export function createContentMediaRenderers({
     return <VideoEmbedBlock embedUrl={embed.embedUrl} />;
   };
   return {
-    [FORUM_INLINE_MEDIA_LINE_TAG]: ForumInlineMediaLineRenderer,
-    [FORUM_STICKER_ROW_TAG]: ForumStickerRowRenderer,
-    [FORUM_STICKER_TAG]: ForumStickerRenderer,
+    ...createForumStickerRenderers({
+      fontScale: settings.fontScale,
+      imageStyle: htmlRendererStyles.inlineForumImage,
+      mediaContext,
+      mediaSessionIdentity,
+      nodeSeekMediaUserAgent,
+      textStyle: htmlRendererStyles.inlineForumImageText,
+      trimsTrailingBlockSpacing
+    }),
     [FORUM_LINK_CARD_TAG]: LinkCardRenderer,
     [FORUM_VIDEO_TAG]: ForumVideoRenderer,
     [FORUM_VIDEO_STICKER_TAG]: ForumVideoStickerRenderer,

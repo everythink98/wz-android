@@ -13,7 +13,8 @@ import { isLinuxDoCloudflareError } from '@/sources/errors';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import {
   createLinuxDoWebViewFallbackFetcher,
-  LinuxDoHiddenBrowserFailureError
+  LinuxDoHiddenBrowserFailureError,
+  withLinuxDoConnectSessionRecoveryIntent
 } from '@/sources/linuxdo/browserFallback';
 import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
 import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
@@ -8267,6 +8268,69 @@ describe('Android local sources', () => {
       expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
     ]);
     expect(JSON.stringify(events)).not.toMatch(/\/t\/42|https?:|cf-turnstile/);
+  });
+
+  it('[REG-LINUXDO-009] routes an exact Connect recovery GET through the existing WebView only', async () => {
+    const defaultFetcher = vi.fn(async () => new Response('unexpected direct response'));
+    const webViewFetcher = vi.fn(async () => new Response('<div class="card">official</div>'));
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher,
+      webViewFetcher
+    });
+
+    const response = await fetcher(
+      'https://connect.linux.do/',
+      withLinuxDoConnectSessionRecoveryIntent({
+        headers: { Accept: 'text/html' }
+      })
+    );
+
+    expect(await response.text()).toContain('official');
+    expect(defaultFetcher).not.toHaveBeenCalled();
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+    const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
+    expect(browserFetchIntentFromInit(webViewCalls[0]?.[1])).toEqual({
+      owner: 'account',
+      priority: 'foreground'
+    });
+    expect([...new Headers(webViewCalls[0]?.[1]?.headers).entries()]).toEqual([['accept', 'text/html']]);
+  });
+
+  it.each([
+    ['Connect query URL', 'https://connect.linux.do/?next=1', 'GET'],
+    ['Connect write', 'https://connect.linux.do/', 'POST'],
+    ['other linux.do read', 'https://linux.do/latest.json', 'GET'],
+    ['external read', 'https://example.com/', 'GET']
+  ])('[REG-LINUXDO-009] does not force WebView recovery for %s', async (_case, url, method) => {
+    const directResponse = new Response('direct');
+    const defaultFetcher = vi.fn(async () => directResponse);
+    const webViewFetcher = vi.fn();
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher,
+      webViewFetcher: webViewFetcher as never
+    });
+
+    await expect(fetcher(url, withLinuxDoConnectSessionRecoveryIntent({ method }))).resolves.toBe(directResponse);
+
+    expect(defaultFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-LINUXDO-009] does not issue a second direct Connect request when WebView recovery is unavailable', async () => {
+    const defaultFetcher = vi.fn(async () => new Response('unexpected direct response'));
+    const webViewFetcher = vi.fn();
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      allowWebViewFallback: () => false,
+      defaultFetcher,
+      webViewFetcher: webViewFetcher as never
+    });
+
+    await expect(
+      fetcher('https://connect.linux.do/', withLinuxDoConnectSessionRecoveryIntent({}))
+    ).rejects.toMatchObject({ reason: 'renderer' });
+
+    expect(defaultFetcher).not.toHaveBeenCalled();
+    expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
   it('[REG-LINUXDO-008] recovers a stalled read channel at eight seconds and retries only once', async () => {

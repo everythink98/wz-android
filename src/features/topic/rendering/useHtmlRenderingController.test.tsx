@@ -81,12 +81,16 @@ vi.mock('lucide-react-native', () => ({
 }));
 
 vi.mock('react-native-render-html', () => ({
+  HTMLContentModel: { block: 'block', mixed: 'mixed' },
+  HTMLElementModel: { fromCustomModel: vi.fn((model) => model) },
+  TChildrenRenderer: 'TChildrenRenderer',
   getNativePropsForTNode: vi.fn(() => ({})),
+  useContentWidth: vi.fn(() => 320),
   useIMGElementProps: vi.fn(),
   useIMGElementStateWithCache: vi.fn()
 }));
 
-import { cachedPreviewImageDimensions, rememberPreviewImageDimensions } from './previewRenderers';
+import { cachedImageDisplayDimensions, rememberImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
 import { readManagedWebViewCookieHeader } from './contentMediaRenderers';
 import './useHtmlRenderingController';
 
@@ -118,24 +122,24 @@ describe('HTML topic media loading state', () => {
   });
 
   it('[REG-PERF-007][REG-PERF-009] bounds preview dimensions with pure reads and committed promotion', () => {
-    rememberPreviewImageDimensions('nodeseek:1:https://img.example.com/shared.png', { height: 4, width: 5 });
-    expect(cachedPreviewImageDimensions('nodeseek:2:https://img.example.com/shared.png')).toBeUndefined();
+    rememberImageDisplayDimensions('nodeseek:1:https://img.example.com/shared.png', { height: 4, width: 5 });
+    expect(cachedImageDisplayDimensions('nodeseek:2:https://img.example.com/shared.png')).toBeUndefined();
 
     for (let index = 0; index < 512; index += 1) {
-      rememberPreviewImageDimensions(`session:lru-${index}`, { height: index + 1, width: index + 2 });
+      rememberImageDisplayDimensions(`session:lru-${index}`, { height: index + 1, width: index + 2 });
     }
-    const firstDimensions = cachedPreviewImageDimensions('session:lru-0');
+    const firstDimensions = cachedImageDisplayDimensions('session:lru-0');
     expect(firstDimensions).toEqual({ height: 1, width: 2 });
 
-    rememberPreviewImageDimensions('session:lru-overflow', { height: 9, width: 10 });
+    rememberImageDisplayDimensions('session:lru-overflow', { height: 9, width: 10 });
 
-    expect(cachedPreviewImageDimensions('session:lru-0')).toBeUndefined();
-    const promotedDimensions = cachedPreviewImageDimensions('session:lru-1');
+    expect(cachedImageDisplayDimensions('session:lru-0')).toBeUndefined();
+    const promotedDimensions = cachedImageDisplayDimensions('session:lru-1');
     expect(promotedDimensions).toEqual({ height: 2, width: 3 });
-    rememberPreviewImageDimensions('session:lru-1', promotedDimensions!);
-    rememberPreviewImageDimensions('session:lru-second-overflow', { height: 11, width: 12 });
+    rememberImageDisplayDimensions('session:lru-1', promotedDimensions!);
+    rememberImageDisplayDimensions('session:lru-second-overflow', { height: 11, width: 12 });
 
-    expect(cachedPreviewImageDimensions('session:lru-1')).toEqual({ height: 2, width: 3 });
-    expect(cachedPreviewImageDimensions('session:lru-2')).toBeUndefined();
+    expect(cachedImageDisplayDimensions('session:lru-1')).toEqual({ height: 2, width: 3 });
+    expect(cachedImageDisplayDimensions('session:lru-2')).toBeUndefined();
   });
 });

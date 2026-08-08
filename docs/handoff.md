@@ -46,7 +46,7 @@
 - NodeSeek、linux.do、妖火 Cookie 只由网站 WebView 与 Android `CookieManager` 持有；小隐寺 User API Key / Client ID、保存的账号密码和服务器代理配置使用 SecureStore；小隐寺 RSA 私钥只存在 Android Keystore。以上敏感材料都不进入备份 JSON，代理启用失败不能静默直连。
 - `App.tsx` 是真实 Expo bootstrap。
 - `android/` 是生成目录；长期原生配置只改 `app.json` 与 `plugins/`。
-- 模拟器验收不得卸载 App、清 App 数据、Cookie 或登录态；默认覆盖安装并 force-stop 后重启。
+- 主登录态 AVD 是日常更新代码和保留登录态验收的目标设备，必须支持反复就地覆盖安装；现有独立未登录 AVD 只服务未登录旅程，不能替代主 AVD 更新。模拟器验收不得卸载 App、清 App 数据、Cookie 或登录态；默认使用仓库 Smoke、`agent-device install` 或带明确 serial 的 `adb install -r` 并比对前后 `firstInstallTime`，禁止 `agent-device reinstall`。发现状态异常立即冻结 AVD，不再启停或操作快照，只读取证并报告。
 - 未经明确授权，不执行真实回复、编辑、删除、上传、点赞、投票或收藏切换。
 
 ## 按旅程定位

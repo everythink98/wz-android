@@ -107,10 +107,27 @@ describe('Android release evidence guards', () => {
       )
     ).toThrow(failure);
     expect(events).toEqual([
-      'boot --session wz-apk-sanity --platform android --device WZ Pixel API 35 --headless',
+      'boot --session wz-apk-sanity --platform android --device WZ Pixel API 35',
       'sanity',
       'close --session wz-apk-sanity --platform android'
     ]);
+  });
+
+  it('[REG-OPS-017] opens the Android Smoke emulator in a visible window', () => {
+    const events: string[] = [];
+
+    withSmokeSession(
+      {
+        selectedDevice: 'WZ Pixel API 35',
+        runAgentDeviceCommand: (args: string[]) => {
+          events.push(args.join(' '));
+          return '';
+        }
+      },
+      () => undefined
+    );
+
+    expect(events[0]).not.toContain('--headless');
   });
 
   it('[REG-OPS-004] maps the configured AVD name to the booted device display name', () => {
@@ -173,7 +190,7 @@ describe('Android release evidence guards', () => {
     ]);
   });
 
-  it('keeps Smoke limited to APK sanity and delegates journeys to Replay', () => {
+  it('[REG-OPS-018] keeps Smoke on replacement install and delegates journeys to Replay', () => {
     const smokeScript = readProjectFile('scripts', 'smoke-android.mjs');
 
     expect(smokeScript).toContain("['doctor', '--platform', 'android']");
@@ -181,7 +198,9 @@ describe('Android release evidence guards', () => {
     const sanityIndex = smokeScript.indexOf('runApkSanity({ apkPath, device: smokeDevice });');
     expect(bootIndex).toBeGreaterThan(0);
     expect(sanityIndex).toBeGreaterThan(bootIndex);
-    expect(smokeScript).toContain("['install', appPackage, apkPath");
+    expect(smokeScript).toMatch(
+      /'install',\s*appPackage,\s*apkPath,\s*'--session',\s*smokeSession,\s*'--platform',\s*'android'/
+    );
     expect(smokeScript).toContain("['logs', 'clear', '--restart'");
     expect(smokeScript).toContain(
       "['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']"
@@ -189,7 +208,8 @@ describe('Android release evidence guards', () => {
     expect(smokeScript).toContain('waitFor(\'id="main-tab-feed"\', 60_000, runAgentDeviceCommand);');
     expect(smokeScript).toContain("console.log('APK_SANITY');");
     expect(smokeScript).not.toContain('device-logged-out');
-    expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:press|click|fill|type|back|uninstall|reinstall)['"]/);
+    expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:press|click|fill|type|back)['"]/);
+    expect(smokeScript).not.toMatch(/\[['"](?:uninstall|reinstall)['"]\s*,/);
     expect(smokeScript).not.toContain("'--shutdown'");
     expect(smokeScript).not.toMatch(/['"]pm['"]\s*,\s*['"]clear['"]/);
   });
@@ -239,6 +259,7 @@ describe('Android release evidence guards', () => {
     const firstOpenIndex = events.findIndex((event) => event.startsWith('agent:open '));
     const dumpIndex = events.findIndex((event) => event.includes('logcat -d -v threadtime -T 1784102400.000'));
     expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(events[installIndex]).toContain('--session wz-apk-sanity');
     expect(timestampIndex).toBeGreaterThan(installIndex);
     expect(markerIndex).toBeGreaterThan(timestampIndex);
     expect(firstOpenIndex).toBeGreaterThan(markerIndex);

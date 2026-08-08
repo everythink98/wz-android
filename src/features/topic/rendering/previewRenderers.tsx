@@ -54,8 +54,11 @@ import {
   useOriginalImageDisplayRevision,
   useOriginalImageUpgradeEnabled
 } from '@/platform/media/originalImageLoading';
-
-type PreviewImageDimensions = { height: number; width: number };
+import {
+  cachedImageDisplayDimensions,
+  rememberImageDisplayDimensions,
+  type CachedImageDimensions
+} from '@/platform/media/imageDisplayDimensions';
 
 type BodyImageLoadMetrics = {
   cacheType?: ImageLoadEventData['cacheType'];
@@ -68,22 +71,6 @@ type BodyImageLoadMetrics = {
   startedAt: number;
   totalBytes?: number;
 };
-
-const PREVIEW_IMAGE_DIMENSIONS_CACHE_LIMIT = 512;
-
-const previewImageDimensionsByUrl = new Map<string, PreviewImageDimensions>();
-
-export function cachedPreviewImageDimensions(cacheKey: string) {
-  return previewImageDimensionsByUrl.get(cacheKey);
-}
-
-export function rememberPreviewImageDimensions(cacheKey: string, dimensions: PreviewImageDimensions) {
-  previewImageDimensionsByUrl.delete(cacheKey);
-  previewImageDimensionsByUrl.set(cacheKey, dimensions);
-  if (previewImageDimensionsByUrl.size > PREVIEW_IMAGE_DIMENSIONS_CACHE_LIMIT) {
-    previewImageDimensionsByUrl.delete(previewImageDimensionsByUrl.keys().next().value!);
-  }
-}
 
 function bodyImageMetricFields(
   metrics: BodyImageLoadMetrics,
@@ -213,7 +200,7 @@ function PreviewImageBlock({
   );
   const [loadedImage, setLoadedImage] = useState<{
     cacheType: ImageLoadEventData['cacheType'];
-    dimensions: PreviewImageDimensions;
+    dimensions: CachedImageDimensions;
     imageLoadIdentity: string;
     requestIdentity: string;
   } | null>(null);
@@ -439,10 +426,10 @@ function PreviewImageBlock({
     return () => clearTimeout(timeout);
   }, [currentBodyTrace, requestIdentity]);
   const cacheKey = `${mediaSessionIdentity}:${normalizeImagePreviewUrl(src).trim()}`;
-  const cachedDimensions = cachedPreviewImageDimensions(cacheKey);
+  const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
   useEffect(() => {
     if (cachedDimensions) {
-      rememberPreviewImageDimensions(cacheKey, cachedDimensions);
+      rememberImageDisplayDimensions(cacheKey, cachedDimensions);
     }
   }, [cacheKey, cachedDimensions]);
   const activeLoadedImage =
@@ -470,7 +457,7 @@ function PreviewImageBlock({
       return;
     }
     const dimensions = activeLoadedImage.dimensions;
-    rememberPreviewImageDimensions(cacheKey, dimensions);
+    rememberImageDisplayDimensions(cacheKey, dimensions);
     if (shouldMarkLoadedImageInline(attributes, dimensions.width, dimensions.height)) {
       markInlineSizedImageUrl(src);
     }
