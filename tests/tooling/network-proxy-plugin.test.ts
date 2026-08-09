@@ -28,7 +28,17 @@ const reviewedDataSource = readFileSync(
   'utf8'
 )
   .replace('import com.facebook.react.modules.network.OkHttpClientProvider', 'import okhttp3.OkHttpClient')
-  .replace('  val client = OkHttpClientProvider.createClient()', '  val client = OkHttpClient.Builder().build()');
+  .replace(
+    `  val client = ReadNetworkVideoClientRegistry.clientForGeneration(
+    videoSource.headers?.get(READ_NETWORK_GENERATION_HEADER)
+  ) ?: OkHttpClientProvider.createClient()`,
+    '  val client = OkHttpClient.Builder().build()'
+  )
+  .replace('  val client = OkHttpClientProvider.createClient()', '  val client = OkHttpClient.Builder().build()')
+  .replace(
+    '    val headers = videoSource.headers?.filterKeys { key -> key != READ_NETWORK_GENERATION_HEADER }',
+    '    val headers = videoSource.headers'
+  );
 
 function expoVideoFixture(source = reviewedDataSource) {
   const projectRoot = mkdtempSync(join(tmpdir(), 'wz-expo-video-plugin-'));
@@ -65,7 +75,9 @@ describe('withNetworkProxyModule Expo Video integration', () => {
     plugin.patchExpoVideoDataSource(fixture.projectRoot);
 
     expect(patched).toContain('import com.facebook.react.modules.network.OkHttpClientProvider');
-    expect(patched).toContain('val client = OkHttpClientProvider.createClient()');
+    expect(patched).toContain('ReadNetworkVideoClientRegistry.clientForGeneration');
+    expect(patched).toContain('?: OkHttpClientProvider.createClient()');
+    expect(patched).toContain('filterKeys { key -> key != READ_NETWORK_GENERATION_HEADER }');
     expect(patched).not.toContain('val client = OkHttpClient.Builder().build()');
     expect(readFileSync(fixture.sourcePath, 'utf8')).toBe(patched);
   });
@@ -86,18 +98,6 @@ describe('withNetworkProxyModule local relay hardening', () => {
 
   it('[REG-PROXY-007] binds the relay with the connection cap as its backlog', () => {
     expect(pluginSource).toContain('ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))');
-  });
-
-  it('[REG-PROXY-009] generates the controlled read-channel bridge and its Kotlin behavior test', () => {
-    expect(pluginSource).toContain('fun recoverForumReadChannel(source: String, promise: Promise)');
-    expect(pluginSource).toContain('internal fun forumReadChannelHostSuffix(source: String)');
-    expect(pluginSource).toContain('fun regProxy009CancelsOnlyTargetReadsAndEvictsTheSharedForumPool()');
-  });
-
-  it('[REG-TOPIC-064] generates the exact Cloudflare image challenge behavior test', () => {
-    expect(pluginSource).toContain('class ForumMediaCloudflareFallbackInterceptor');
-    expect(pluginSource).toContain('fun regTopic064OnlyCloudflareImageChallengesUseOneFallbackResponse()');
-    expect(pluginSource).toContain('fun regTopic064FallbackFailureOrSecondChallengeKeepsTheOriginalResponse()');
   });
 
   it('[REG-TOPIC-064] injects only the optional Cronet platform warnings once', () => {

@@ -26,7 +26,7 @@ import {
 } from './notificationPresentation';
 import { createNotificationStyles } from './styles';
 import { MessageReplyComposerSheet } from './MessageReplyComposerSheet';
-import { flowForumStickerMedia } from '@/platform/media/inlineMedia';
+import { normalizeForumStickerMediaHtml } from '@/domain/forum/forumContentMedia';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
@@ -429,7 +429,7 @@ function DetailHtml({
 }) {
   const { settings, styles } = useReaderThemeStyles(createNotificationStyles);
   const mediaContext = useForumMediaRequestContext(source);
-  const renderableHtml = useMemo(() => flowForumStickerMedia(html), [html]);
+  const renderableHtml = useMemo(() => normalizeForumStickerMediaHtml(html), [html]);
   const tagsStyles = useMemo(() => ({ a: styles.detailLink }), [styles.detailLink]);
   const renderers = useMemo(
     () =>

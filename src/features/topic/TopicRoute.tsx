@@ -316,6 +316,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
         style={{ flex: 1 }}
       >
         <TopicScreen
+          active={active}
           actions={actions}
           article={{
             busy: topicBusy && !identityError,
@@ -342,6 +343,7 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
             verifyNodeSeek
           }}
           currentNodeSeekUser={runtime.account.sessionViewModels.nodeseek.currentUser}
+          bodyMediaPaused={Boolean(imagePreviewController.imagePreview)}
           html={{ ...html, contentWidth: runtime.contentWidth, mediaSessionIdentity }}
           nodeSeekUserId={runtime.account.nodeSeekUserId}
           read={topicController}

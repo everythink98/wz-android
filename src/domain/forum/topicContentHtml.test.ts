@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   FORUM_REPLY_REFERENCE_TAG,
-  markNodeSeekReplyReferenceLinks,
+  markNodeSeekReplyReferenceNodes,
   normalizeRenderableHtml
 } from './topicContentHtml';
+import { parseHtml } from './html';
 
 describe('Android topic content HTML', () => {
   it('normalizes text and existing HTML into renderable content', () => {
@@ -67,7 +68,9 @@ describe('Android topic content HTML', () => {
       ' 后续正文',
       '</p>'
     ].join('');
-    const marked = markNodeSeekReplyReferenceLinks(html);
+    const root = parseHtml(html);
+    markNodeSeekReplyReferenceNodes(root);
+    const marked = root.toString();
 
     expect(marked).toContain(`<${FORUM_REPLY_REFERENCE_TAG}`);
     expect(marked).toContain('data-mention="@电动面包"');
@@ -84,7 +87,9 @@ describe('Android topic content HTML', () => {
       '<a href="https://www.nodeseek.com/post-793572-1#4">#4</a>',
       '</p>'
     ].join('');
-    const marked = markNodeSeekReplyReferenceLinks(html);
+    const root = parseHtml(html);
+    markNodeSeekReplyReferenceNodes(root);
+    const marked = root.toString();
 
     expect(marked).toContain('class="forum-mention-link"');
     expect(marked).toContain('class="forum-floor-link"');
@@ -99,6 +104,8 @@ describe('Android topic content HTML', () => {
       '</p>'
     ].join('');
 
-    expect(markNodeSeekReplyReferenceLinks(html)).toBe(html);
+    const root = parseHtml(html);
+    expect(markNodeSeekReplyReferenceNodes(root)).toBe(false);
+    expect(root.toString()).toBe(html);
   });
 });

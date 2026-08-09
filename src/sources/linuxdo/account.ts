@@ -12,6 +12,7 @@ import {
   toIsoString
 } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
 import {
   LINUXDO_BASE_URL as BASE_URL,
@@ -212,26 +213,29 @@ export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOp
     options
   );
   const text = await response.text();
-  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
-    throw new LinuxDoCloudflareError();
-  }
-  if (response.status === 404) {
-    throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
-      source: 'linuxdo' as const,
-      kind: 'login-expired' as const,
-      loginRequired: true,
-      reason: 'expired' as const
-    });
-  }
-  let data: unknown = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error('linux.do 当前用户返回内容格式不正确');
-  }
-  if (!response.ok) {
-    throw new Error(linuxDoErrorText(data, `HTTP ${response.status}`));
-  }
+  const data = await proveForumReadResponse(response, () => {
+    if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+      throw new LinuxDoCloudflareError();
+    }
+    if (response.status === 404) {
+      throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
+        source: 'linuxdo' as const,
+        kind: 'login-expired' as const,
+        loginRequired: true,
+        reason: 'expired' as const
+      });
+    }
+    let parsed: unknown = {};
+    try {
+      parsed = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error('linux.do 当前用户返回内容格式不正确');
+    }
+    if (!response.ok) {
+      throw new Error(linuxDoErrorText(parsed, `HTTP ${response.status}`));
+    }
+    return parsed;
+  });
   if (isRecord(data) && (data.current_user === null || data.user === null)) {
     throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
       source: 'linuxdo' as const,

@@ -2,6 +2,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { safeFileName } from '@/platform/storage/backupFiles';
 import { recordDiagnosticError, setDiagnosticWriter } from './diagnostics';
+import { readNativeReadNetworkDiagnosticLines } from './nativeReadNetworkDiagnostics';
 
 const MAX_LOG_BYTES = 1024 * 1024;
 const CURRENT_LOG_NAME = 'forum-reader-diagnostic-current.jsonl';
@@ -246,14 +247,41 @@ async function readLog(name: string) {
   return file.exists ? file.text() : '';
 }
 
+function mergeDiagnosticLinesChronologically(...contents: string[]) {
+  return contents
+    .flatMap((content) => content.split('\n'))
+    .filter(Boolean)
+    .map((line, index) => {
+      let time = Number.NEGATIVE_INFINITY;
+      try {
+        const parsed = JSON.parse(line) as { time?: unknown };
+        if (typeof parsed.time === 'string') {
+          const candidate = Date.parse(parsed.time);
+          if (Number.isFinite(candidate)) time = candidate;
+        }
+      } catch {
+        // Persisted lines are already privacy-filtered; keep a damaged line in its stable oldest position.
+      }
+      return { index, line, time };
+    })
+    .sort((left, right) => left.time - right.time || left.index - right.index)
+    .map(({ line }) => line)
+    .join('\n');
+}
+
 export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
   flushPendingDiagnosticLines();
   closeActiveLogHandle();
-  const [previous, current] = await Promise.all([readLog(PREVIOUS_LOG_NAME), readLog(CURRENT_LOG_NAME)]);
+  const [previous, current, nativeReadNetwork] = await Promise.all([
+    readLog(PREVIOUS_LOG_NAME),
+    readLog(CURRENT_LOG_NAME),
+    readNativeReadNetworkDiagnosticLines()
+  ]);
   const temporary = new File(Paths.cache, safeFileName('forum-reader-diagnostic', 'txt'));
   try {
     temporary.create({ overwrite: true });
-    temporary.write(`${metadataLine(metadata)}\n${previous}${current}`);
+    const diagnosticLines = mergeDiagnosticLinesChronologically(previous, current, nativeReadNetwork);
+    temporary.write(`${metadataLine(metadata)}\n${diagnosticLines}${diagnosticLines ? '\n' : ''}`);
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('当前设备不支持分享诊断日志。');
     }

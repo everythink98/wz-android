@@ -15,13 +15,20 @@ import {
   markDiagnosticStage,
   setDiagnosticWriter
 } from '@/platform/diagnostics/diagnostics';
+import type { Fetcher } from '@/platform/network/request';
 import { annotateSourceDiagnosticSummary } from './diagnostics';
+import { acceptForumReadResponse, registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { getYaohuoTopicDirect } from '@/sources/yaohuo/reader';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
   getCurrentUserProfile: vi.fn(),
-  getFeed: vi.fn(async (): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+  getFeed: vi.fn(async (_options: { fetcher: Fetcher }): Promise<FeedResponse> => ({
+    items: [],
+    errors: {},
+    hasMore: false,
+    nextPage: null
+  })),
   getReplies: vi.fn(async (): Promise<RepliesResponse> => ({ items: [], hasMore: false, nextPage: null })),
   getReply: vi.fn(),
   getTopic: vi.fn(async ({ id, source }) => ({
@@ -363,7 +370,7 @@ describe('source gateway read contract', () => {
         signal
       })
     );
-    expect(fetcher).toHaveBeenCalledWith('https://linux.do/emojis.json', { signal });
+    expect(fetcher).toHaveBeenCalledWith('https://linux.do/emojis.json', expect.objectContaining({ signal }));
     expect(lines.map((line) => JSON.parse(line).operation)).toEqual(expect.arrayContaining(['getEmojiUrls']));
   });
 
@@ -1006,6 +1013,112 @@ describe('source gateway read contract', () => {
       await expect(read).rejects.toThrow('请求已取消');
     }
   );
+
+  it('[REG-SOURCE-009] does not commit parsed fallback evidence after the gateway read is superseded', async () => {
+    let generation = 4;
+    const parsed = Promise.withResolvers<void>();
+    const finishAuxiliaryWork = Promise.withResolvers<void>();
+    const recoverReadChannel = vi.fn(async () => undefined);
+    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
+      const response = new Response('{}');
+      registerForumReadResponseEvidence(init, response, {
+        commit: recoverReadChannel,
+        kind: 'fallback',
+        ordinal: 1,
+        source: 'nodeseek'
+      });
+      return response;
+    });
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      const response = await scopedFetcher('https://www.nodeseek.com/');
+      acceptForumReadResponse(response);
+      parsed.resolve();
+      await finishAuxiliaryWork.promise;
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({
+      currentSessionEpoch: () => generation,
+      fetcher,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+    const read = gateway.getFeed({ source: 'nodeseek' });
+    await parsed.promise;
+
+    generation += 1;
+    finishAuxiliaryWork.resolve();
+
+    await expect(read).rejects.toThrow('请求已取消');
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-009] does not commit parsed fallback evidence after its AbortSignal is canceled', async () => {
+    const controller = new AbortController();
+    const parsed = Promise.withResolvers<void>();
+    const finishAuxiliaryWork = Promise.withResolvers<void>();
+    const recoverReadChannel = vi.fn(async () => undefined);
+    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
+      const response = new Response('{}');
+      registerForumReadResponseEvidence(init, response, {
+        commit: recoverReadChannel,
+        kind: 'fallback',
+        ordinal: 1,
+        source: 'nodeseek'
+      });
+      return response;
+    });
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      const response = await scopedFetcher('https://www.nodeseek.com/', { signal: controller.signal });
+      acceptForumReadResponse(response);
+      parsed.resolve();
+      await finishAuxiliaryWork.promise;
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+    const read = gateway.getFeed({ source: 'nodeseek', signal: controller.signal });
+    await parsed.promise;
+
+    controller.abort();
+    finishAuxiliaryWork.resolve();
+
+    await expect(read).resolves.toMatchObject({ items: [] });
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-009] stops committing response evidence when eligibility changes between commits', async () => {
+    let generation = 9;
+    let requestOrdinal = 0;
+    const firstCommit = vi.fn(async () => {
+      generation += 1;
+    });
+    const secondCommit = vi.fn(async () => undefined);
+    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
+      const response = new Response('{}');
+      const ordinal = ++requestOrdinal;
+      registerForumReadResponseEvidence(init, response, {
+        commit: ordinal === 1 ? firstCommit : secondCommit,
+        kind: 'fallback',
+        ordinal,
+        source: 'nodeseek'
+      });
+      return response;
+    });
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      const first = await scopedFetcher('https://www.nodeseek.com/first');
+      const second = await scopedFetcher('https://www.nodeseek.com/second');
+      acceptForumReadResponse(first);
+      acceptForumReadResponse(second);
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({
+      currentSessionEpoch: () => generation,
+      fetcher,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+
+    await expect(gateway.getFeed({ source: 'nodeseek' })).rejects.toThrow('请求已取消');
+    expect(firstCommit).toHaveBeenCalledTimes(1);
+    expect(secondCommit).not.toHaveBeenCalled();
+  });
 
   it('[REG-ACCOUNT-026] returns typed Yaohuo expiry without invoking a logout command', async () => {
     const gateway = createReadGateway({

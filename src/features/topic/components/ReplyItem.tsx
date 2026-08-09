@@ -21,7 +21,6 @@ import { stripHtml } from '@/domain/forum/text';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { parseForumTopicLink } from '@/domain/forum/links';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
-import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import {
   discourseReactionStats,
   type DiscourseEmojiUrlMap,
@@ -41,20 +40,22 @@ import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { normalizeUserReference, userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
-import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../model/topicDerivedData';
+import { sameInlineSizedImagesForReply } from '../model/topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
-import { getReplyKey, type TopicReplyListItem } from '../model/replyListModel';
-import { stableTextHash } from '../model/contentIdentity';
+import { getReplyKey, type ReplyQuoteContent, type TopicReplyListItem } from '../model/replyListModel';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
+import { TopicSplitDisclosureScope } from '../rendering/TopicSplitDisclosure';
+import { resolveForumContentRowHtml, type ForumContentRendering } from '@/domain/forum/topicContentSplit';
 
 type NodeSeekStat = { label: string; value: number };
 type ReplyItemSection = Extract<
   TopicReplyListItem,
   {
-    type: 'replyStart' | 'replyQuoteSummary' | 'replyQuoteContent' | 'replyEnd';
+    type:
+      'replyStart' | 'replyQuoteSummary' | 'replyQuoteContent' | 'replyContent' | 'replySignatureContent' | 'replyEnd';
   }
 >;
 
@@ -184,6 +185,7 @@ function systemActionText(reply: Pick<Reply, 'actionCode' | 'contentHtml'>) {
 
 export function ReplyItem({
   actionBusy,
+  bodyContent,
   decisionFor,
   contentWidth,
   expandedQuotes,
@@ -200,6 +202,7 @@ export function ReplyItem({
   replyFloor,
   repliesByFloor,
   section,
+  signatureContent,
   source,
   styles,
   theme,
@@ -207,7 +210,6 @@ export function ReplyItem({
   topicBaseUrl,
   topicId,
   topicStateKey,
-  topicImageDeriver,
   onInteract,
   onDeleteReply,
   onEditReply,
@@ -220,6 +222,7 @@ export function ReplyItem({
   onToggleReplyQuote
 }: {
   actionBusy: boolean;
+  bodyContent?: Extract<ReplyQuoteContent, { type: 'html' }>;
   decisionFor: TopicActionDecisionFor;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
@@ -236,6 +239,12 @@ export function ReplyItem({
   replyFloor: number;
   repliesByFloor: Map<number, Reply>;
   section?: ReplyItemSection;
+  signatureContent?: {
+    continuation: 'only' | 'first' | 'middle' | 'last';
+    groupKey: string;
+    html: string;
+    rendering?: ForumContentRendering;
+  };
   source?: Source;
   styles: TopicStyles;
   theme: ReaderTheme;
@@ -243,7 +252,6 @@ export function ReplyItem({
   topicBaseUrl?: string;
   topicId?: string;
   topicStateKey: string;
-  topicImageDeriver: TopicImageDeriver;
   onInteract: (type: InteractionType, commentId?: number) => void;
   onDeleteReply: (reply: Reply) => void;
   onEditReply: (reply: Reply) => void;
@@ -258,24 +266,38 @@ export function ReplyItem({
   const { getMappingKey } = useMappingHelper();
   const replyInstanceKey = getReplyKey(reply);
   const isDiscourse = isDiscourseSource(source);
-  const isQuoteContent = section?.type === 'replyQuoteContent';
+  const isDetachedContent =
+    section?.type === 'replyQuoteContent' ||
+    section?.type === 'replyContent' ||
+    section?.type === 'replySignatureContent';
+  const bodyVirtualized = section?.type === 'replyEnd' && Boolean(section.bodyVirtualized);
+  const signatureVirtualized = section?.type === 'replyEnd' && Boolean(section.signatureVirtualized);
   const replyQuotes = useMemo(
     () =>
-      isQuoteContent
+      isDetachedContent
         ? []
         : section?.type === 'replyQuoteSummary'
           ? [section.quote]
           : quotedPostsForSource(reply, source),
-    [isQuoteContent, reply, section, source]
+    [isDetachedContent, reply, section, source]
   );
-  const rendersReplyBody = !section || section.type === 'replyEnd';
+  const rendersReplyBody = !section || (section.type === 'replyEnd' && !bodyVirtualized);
   const highlightedHtml = useMemo(
-    () => (rendersReplyBody ? highlightHtml(reply.contentHtml, query) : ''),
-    [query, rendersReplyBody, reply.contentHtml]
+    () =>
+      rendersReplyBody
+        ? highlightHtml(
+            bodyContent ? resolveForumContentRowHtml(bodyContent, inlineSizedImageUrls) : reply.contentHtml,
+            query
+          )
+        : '',
+    [bodyContent, inlineSizedImageUrls, query, rendersReplyBody, reply.contentHtml]
   );
-  const discourseContentParts = useMemo(
-    () => (rendersReplyBody && isDiscourse ? splitDiscourseContentHtml(highlightedHtml, reply.polls) : []),
-    [highlightedHtml, isDiscourse, rendersReplyBody, reply.polls]
+  const highlightedSectionHtml = useMemo(
+    () =>
+      section?.type === 'replyContent' && section.content.type === 'html'
+        ? highlightHtml(resolveForumContentRowHtml(section.content, inlineSizedImageUrls), query)
+        : '',
+    [inlineSizedImageUrls, query, section]
   );
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const copyReplyTextToClipboard = useCallback(() => {
@@ -306,6 +328,57 @@ export function ReplyItem({
     source,
     topicId
   ]);
+  if (section?.type === 'replyContent') {
+    return (
+      <View style={[styles.replyCard, styles.replyCardMiddle]} testID={`reply-content-row-${section.key}`}>
+        <View style={styles.replyContentArea}>
+          {section.content.type === 'poll' ? (
+            <View style={styles.replyBody}>
+              <TopicPolls
+                actionBusy={actionBusy}
+                decisionFor={decisionFor}
+                keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
+                onTogglePollSelection={onTogglePollSelection}
+                onVotePoll={onVotePoll}
+                pollSelections={pollSelections}
+                polls={[section.content.poll]}
+                source={source}
+                styles={styles}
+                theme={theme}
+              />
+            </View>
+          ) : (
+            <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:body:${section.content.groupKey}`}>
+              <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
+                <MemoizedTopicContentBlock
+                  contentWidth={replyContentWidth}
+                  continuation={section.content.continuation}
+                  html={highlightedSectionHtml}
+                />
+              </Pressable>
+            </TopicSplitDisclosureScope>
+          )}
+        </View>
+      </View>
+    );
+  }
+  if (section?.type === 'replySignatureContent') {
+    return (
+      <View style={[styles.replyCard, styles.replyCardMiddle]} testID={`reply-signature-row-${section.key}`}>
+        <View style={styles.replyContentArea}>
+          <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:signature:${section.groupKey}`}>
+            <View style={section.first ? styles.replySignature : undefined}>
+              <MemoizedTopicContentBlock
+                contentWidth={replyContentWidth}
+                continuation={section.continuation}
+                html={resolveForumContentRowHtml(section, inlineSizedImageUrls)}
+              />
+            </View>
+          </TopicSplitDisclosureScope>
+        </View>
+      </View>
+    );
+  }
   if (section?.type === 'replyQuoteContent') {
     const bodyStyle = section.first ? [styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody] : undefined;
     return (
@@ -350,16 +423,15 @@ export function ReplyItem({
                   theme={theme}
                 />
               ) : (
-                <Pressable delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
-                  <MemoizedTopicContentBlock
-                    baseUrl={topicBaseUrl}
-                    compact
-                    contentWidth={Math.max(220, replyContentWidth - 24)}
-                    inlineSizedImageUrls={inlineSizedImageUrls}
-                    html={section.content.html}
-                    topicImageDeriver={topicImageDeriver}
-                  />
-                </Pressable>
+                <TopicSplitDisclosureScope scopeKey={`reply-quote:${section.instanceKey}:${section.content.groupKey}`}>
+                  <Pressable delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
+                    <MemoizedTopicContentBlock
+                      contentWidth={Math.max(220, replyContentWidth - 24)}
+                      continuation={section.content.continuation}
+                      html={resolveForumContentRowHtml(section.content, inlineSizedImageUrls)}
+                    />
+                  </Pressable>
+                </TopicSplitDisclosureScope>
               )}
             </View>
           </View>
@@ -536,7 +608,6 @@ export function ReplyItem({
                   section?.type === 'replyQuoteSummary' ? section.expanded : Boolean(expandedQuotes[key]);
                 const loading =
                   section?.type === 'replyQuoteSummary' ? section.loading : Boolean(loadingQuotedFloors[key]);
-                const completeQuotedPost = !section && expanded ? quotedReply : undefined;
                 const hasVirtualContent = section?.type === 'replyQuoteSummary' && section.hasContent;
                 return (
                   <View
@@ -608,55 +679,13 @@ export function ReplyItem({
                         </Text>
                       </Pressable>
                     ) : null}
-                    {quote.preview && !hasVirtualContent && !completeQuotedPost ? (
+                    {quote.preview && !hasVirtualContent ? (
                       <Text
                         style={styles.quotePreviewText}
                         testID={`reply-quote-preview-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
                       >
                         {quote.preview}
                       </Text>
-                    ) : null}
-                    {completeQuotedPost ? (
-                      <View
-                        style={[styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody]}
-                        testID={`reply-quote-complete-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
-                      >
-                        {(isDiscourse
-                          ? splitDiscourseContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
-                          : [{ type: 'html' as const, html: completeQuotedPost.contentHtml }]
-                        ).map((part) =>
-                          part.type === 'poll' ? (
-                            <TopicPolls
-                              embeddedInArticle
-                              key={`quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
-                              actionBusy={actionBusy}
-                              keyPrefix={`quote-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
-                              onTogglePollSelection={onTogglePollSelection}
-                              onVotePoll={onVotePoll}
-                              pollSelections={pollSelections}
-                              polls={[part.poll]}
-                              source={source}
-                              styles={styles}
-                              theme={theme}
-                            />
-                          ) : (
-                            <Pressable
-                              key={`quote-html-${stableTextHash(part.html)}`}
-                              delayLongPress={450}
-                              onLongPress={copyReplyTextToClipboard}
-                            >
-                              <MemoizedTopicContentBlock
-                                baseUrl={topicBaseUrl}
-                                compact
-                                contentWidth={Math.max(220, replyContentWidth - 24)}
-                                inlineSizedImageUrls={inlineSizedImageUrls}
-                                html={part.html}
-                                topicImageDeriver={topicImageDeriver}
-                              />
-                            </Pressable>
-                          )
-                        )}
-                      </View>
                     ) : null}
                   </View>
                 );
@@ -690,79 +719,27 @@ export function ReplyItem({
                   ) : null}
                 </View>
               ) : null}
-              {isDiscourse ? (
-                <View style={styles.replyBody}>
-                  {discourseContentParts.map((part, index) =>
-                    part.type === 'poll' ? (
-                      <TopicPolls
-                        key={`poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
-                        actionBusy={actionBusy}
-                        decisionFor={decisionFor}
-                        keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
-                        onTogglePollSelection={onTogglePollSelection}
-                        onVotePoll={onVotePoll}
-                        pollSelections={pollSelections}
-                        polls={[part.poll]}
-                        source={source}
-                        styles={styles}
-                        theme={theme}
-                      />
-                    ) : (
-                      <Pressable
-                        key={`html-${stableTextHash(part.html)}`}
-                        delayLongPress={450}
-                        onLongPress={copyReplyTextToClipboard}
-                      >
-                        <MemoizedTopicContentBlock
-                          baseUrl={topicBaseUrl}
-                          compact
-                          contentWidth={replyContentWidth}
-                          inlineSizedImageUrls={inlineSizedImageUrls}
-                          html={part.html}
-                          trimTrailingBlockSpacing={index === discourseContentParts.length - 1}
-                          topicImageDeriver={topicImageDeriver}
-                        />
-                      </Pressable>
-                    )
-                  )}
-                </View>
-              ) : (
-                <>
-                  <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
-                    <MemoizedTopicContentBlock
-                      baseUrl={topicBaseUrl}
-                      compact
-                      contentWidth={replyContentWidth}
-                      inlineSizedImageUrls={inlineSizedImageUrls}
-                      html={highlightedHtml}
-                      trimTrailingBlockSpacing
-                      topicImageDeriver={topicImageDeriver}
-                    />
-                  </Pressable>
-                  <TopicPolls
-                    actionBusy={actionBusy}
-                    decisionFor={decisionFor}
-                    keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
-                    onTogglePollSelection={onTogglePollSelection}
-                    onVotePoll={onVotePoll}
-                    pollSelections={pollSelections}
-                    polls={reply.polls || []}
-                    source={source}
-                    styles={styles}
-                    theme={theme}
+              {!bodyVirtualized ? (
+                <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
+                  <MemoizedTopicContentBlock
+                    contentWidth={replyContentWidth}
+                    continuation={bodyContent?.continuation}
+                    html={highlightedHtml}
+                    trimTrailingBlockSpacing
                   />
-                </>
-              )}
-              {reply.signatureHtml ? (
+                </Pressable>
+              ) : null}
+              {!signatureVirtualized && (signatureContent?.html || reply.signatureHtml) ? (
                 <View style={styles.replySignature}>
                   <MemoizedTopicContentBlock
-                    baseUrl={topicBaseUrl}
-                    compact
                     contentWidth={replyContentWidth}
-                    inlineSizedImageUrls={inlineSizedImageUrls}
-                    html={reply.signatureHtml}
+                    continuation={signatureContent?.continuation}
+                    html={
+                      signatureContent
+                        ? resolveForumContentRowHtml(signatureContent, inlineSizedImageUrls)
+                        : reply.signatureHtml
+                    }
                     trimTrailingBlockSpacing
-                    topicImageDeriver={topicImageDeriver}
                   />
                 </View>
               ) : null}
@@ -994,10 +971,40 @@ function sameReplyItemSection(previous: ReplyItemSection | undefined, next: Repl
       previous.measureForMaterialization === next.measureForMaterialization &&
       previous.content.type === next.content.type &&
       (previous.content.type === 'html' && next.content.type === 'html'
-        ? previous.content.html === next.content.html
+        ? previous.content.continuation === next.content.continuation &&
+          previous.content.groupKey === next.content.groupKey &&
+          previous.content.html === next.content.html
         : previous.content.type === 'poll' && next.content.type === 'poll'
           ? previous.content.poll === next.content.poll
           : false)
+    );
+  }
+  if (previous.type === 'replyContent' && next.type === 'replyContent') {
+    return (
+      previous.first === next.first &&
+      previous.last === next.last &&
+      previous.content.type === next.content.type &&
+      (previous.content.type === 'html' && next.content.type === 'html'
+        ? previous.content.continuation === next.content.continuation &&
+          previous.content.groupKey === next.content.groupKey &&
+          previous.content.html === next.content.html
+        : previous.content.type === 'poll' && next.content.type === 'poll'
+          ? previous.content.poll === next.content.poll
+          : false)
+    );
+  }
+  if (previous.type === 'replySignatureContent' && next.type === 'replySignatureContent') {
+    return (
+      previous.first === next.first &&
+      previous.last === next.last &&
+      previous.continuation === next.continuation &&
+      previous.groupKey === next.groupKey &&
+      previous.html === next.html
+    );
+  }
+  if (previous.type === 'replyEnd' && next.type === 'replyEnd') {
+    return (
+      previous.bodyVirtualized === next.bodyVirtualized && previous.signatureVirtualized === next.signatureVirtualized
     );
   }
   return true;
@@ -1006,6 +1013,7 @@ function sameReplyItemSection(previous: ReplyItemSection | undefined, next: Repl
 export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   if (
     previous.actionBusy !== next.actionBusy ||
+    previous.bodyContent !== next.bodyContent ||
     previous.decisionFor !== next.decisionFor ||
     previous.contentWidth !== next.contentWidth ||
     previous.isNew !== next.isNew ||
@@ -1028,13 +1036,16 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.replyFloor !== next.replyFloor ||
     !sameReplyItemSection(previous.section, next.section) ||
     previous.source !== next.source ||
+    previous.signatureContent !== next.signatureContent ||
     previous.styles !== next.styles ||
     previous.theme !== next.theme ||
     previous.topicAuthor !== next.topicAuthor ||
     previous.topicBaseUrl !== next.topicBaseUrl ||
     previous.topicId !== next.topicId ||
-    previous.topicImageDeriver !== next.topicImageDeriver ||
-    (next.section?.type === 'replyQuoteContent' && previous.inlineSizedImageUrls !== next.inlineSizedImageUrls) ||
+    ((next.section?.type === 'replyQuoteContent' ||
+      next.section?.type === 'replyContent' ||
+      next.section?.type === 'replySignatureContent') &&
+      previous.inlineSizedImageUrls !== next.inlineSizedImageUrls) ||
     !sameInlineSizedImagesForReply(previous.reply, next.reply, previous.inlineSizedImageUrls, next.inlineSizedImageUrls)
   ) {
     return false;

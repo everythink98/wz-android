@@ -128,6 +128,7 @@ describe('Android release packaging guards', () => {
 
   it('keeps the Android network proxy and narrow managed-Cookie boundary enabled', () => {
     const app = JSON.parse(readProjectFile('app.json'));
+    const packageJson = JSON.parse(readProjectFile('package.json'));
     const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
 
     expect(app.expo.plugins).toContain('./plugins/withNetworkProxyModule');
@@ -184,10 +185,17 @@ describe('Android release packaging guards', () => {
       clearCookieFlow.indexOf('cookieManager.getCookie(url)')
     );
     expect(plugin).toContain('installExpoImageClient');
-    expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory { client }');
-    expect(plugin).toContain('installExpoImageClient(appContext, imageClient)');
+    expect(packageJson.expo?.autolinking?.android?.buildFromSource).toContain('expo-video');
+    expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory { currentGeneration.mediaClient }');
+    expect(plugin).toContain('NetworkingModule.setCustomClientBuilder { builder ->');
+    expect(plugin).toContain(
+      'imageClientPublisher = { client -> installExpoImageClientOnMainThread(appContext, client) }'
+    );
+    expect(plugin).toContain('imageClientPublisher?.invoke(installedGeneration.imageClient)');
     expect(plugin).toContain('GlideUrlWrapperLoader.Factory(client)');
-    expect(plugin).toContain('.callTimeout(30, TimeUnit.SECONDS)');
+    expect(plugin).toContain('.callTimeout(0, TimeUnit.MILLISECONDS)');
+    expect(plugin).toContain('.connectTimeout(15, TimeUnit.SECONDS)');
+    expect(plugin).toContain('.readTimeout(30, TimeUnit.SECONDS)');
     expect(plugin).toContain('org.chromium.net:cronet-bundled:500.0.1');
     expect(plugin).toContain('com.google.net.cronet:cronet-okhttp:0.1.1');
     expect(plugin).toContain('exclude group: "com.squareup.okhttp3", module: "okhttp"');
@@ -201,21 +209,6 @@ describe('Android release packaging guards', () => {
     expect(plugin).not.toContain('-dontwarn android.**');
     expect(plugin).toContain('RedirectStrategy.withoutRedirects()');
     expect(plugin).toContain('CronetProxyOptions.ALL_PROXIES_FAILED_BEHAVIOR_DISALLOW_DIRECT');
-    expect(plugin).toContain('response.header("Cf-Mitigated")?.equals("challenge", ignoreCase = true) == true');
-    expect(plugin).toContain('addNetworkInterceptor(ForumMediaCloudflareFallbackInterceptor())');
-    expect(plugin).toContain('builder.interceptors().none { it is ForumMediaRequestInterceptor }');
-    expect(plugin).toContain('.removeHeader(FORUM_MEDIA_SOURCE_HEADER)');
-    expect(plugin).toContain('.cacheControl(CacheControl.Builder().noStore().build())');
-    expect(plugin).not.toContain('internal fun createManagedClient');
-    expect(plugin).not.toContain('recoverNodeSeekNetwork');
-    expect(plugin).toContain('private val mediaConnectionPool = ConnectionPool()');
-    expect(plugin).toContain('private val forumConnectionPool = ConnectionPool()');
-    expect(plugin).toContain('internal fun recoverForumReadChannel(source: String): ForumReadChannelRecovery');
-    expect(plugin).toContain('dispatcher.cancelAll()');
-    expect(plugin.match(/dispatcher\.cancelAll\(\)/g)).toHaveLength(1);
-    expect(plugin.match(/forumConnectionPool\.evictAll\(\)/g)).toHaveLength(2);
-    expect(plugin.match(/mediaConnectionPool\.evictAll\(\)/g)).toHaveLength(1);
-    expect(plugin).toContain('builder.dispatcher(dispatcher)');
     expect(plugin).toContain('androidx.webkit:webkit:1.14.0');
     expect(plugin).toContain('testImplementation("junit:junit:4.13.2")');
     expect(plugin).toMatch(/fs\.writeFileSync\(\s*path\.join\(testOutputDir, 'NetworkProxyRuntimeTest\.kt'\)/);
@@ -235,7 +228,8 @@ describe('Android release packaging guards', () => {
       'fun fetchSvgDocument(url: String, headers: ReadableMap, timeoutMs: Double, promise: Promise)'
     );
     expect(plugin).toContain('boundedSvgBytes(body.source())');
-    expect(plugin).toContain('NetworkProxyRuntime.forumImageClient()');
+    expect(plugin).toContain('val call = NetworkProxyRuntime.forumImageClient().newCall(request)');
+    expect(plugin).not.toContain('private val client by lazy { NetworkProxyRuntime.forumImageClient() }');
     expect(plugin).toContain('postVisualStateCallback');
     expect(plugin).toContain('blockNetworkLoads = true');
     expect(plugin).toContain('javaScriptEnabled = false');

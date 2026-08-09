@@ -12,8 +12,8 @@ const COMPATIBLE_SVG_TIMEOUT_MS = 10_000;
 const COMPATIBLE_SVG_TOTAL_TIMEOUT_MS = 30_000;
 
 const compatibleSvgArtifactCache = new Map<string, CompatibleSvgArtifact>();
-const compatibleSvgArtifactRequests = new Map<string, Promise<CompatibleSvgArtifact | null>>();
-const compatibleSvgPosterRefreshes = new Map<string, Promise<CompatibleSvgArtifact>>();
+const compatibleSvgArtifactRequests = new Map<string, CompatibleSvgSharedRequest<CompatibleSvgArtifact | null>>();
+const compatibleSvgPosterRefreshes = new Map<string, CompatibleSvgSharedRequest<CompatibleSvgArtifact>>();
 const compatibleSvgWorkQueue: CompatibleSvgWorkItem[] = [];
 let activeCompatibleSvgWorkItems = 0;
 let nextPosterRevision = 1;
@@ -32,14 +32,37 @@ type CompatibleSvgArtifactWithoutPoster = Omit<CompatibleSvgArtifact, 'posterRev
 export type CompatibleSvgArtifactOptions = Readonly<{
   fetcher?: Fetcher;
   renderPoster?: (svgBase64: string, cacheKey: string, timeoutMs: number) => Promise<SvgPosterRenderResult>;
+  signal?: AbortSignal;
 }>;
 
-type CompatibleSvgWorkItem = Readonly<{
+type CompatibleSvgConsumer<T> = {
+  abortListener?: () => void;
+  reject: (error: unknown) => void;
+  resolve: (value: T) => void;
+  signal?: AbortSignal;
+};
+
+type CompatibleSvgSharedRequest<T> = {
+  cancelWork?: () => void;
+  consumers: Set<CompatibleSvgConsumer<T>>;
+  onEmpty: () => void;
+  settlement?: CompatibleSvgSettlement<T>;
+};
+
+type CompatibleSvgSettlement<T> = { error: unknown } | { value: T };
+
+type CompatibleSvgScheduledWork = Readonly<{
+  cancel: () => void;
+  promise: Promise<CompatibleSvgArtifact | null>;
+}>;
+
+type CompatibleSvgWorkItem = {
+  abortController: AbortController;
   deadlineAt: number;
   reject: (error: unknown) => void;
   resolve: (artifact: CompatibleSvgArtifact | null) => void;
-  run: (deadlineAt: number) => Promise<CompatibleSvgArtifact | null>;
-}>;
+  run: (deadlineAt: number, signal: AbortSignal) => Promise<CompatibleSvgArtifact | null>;
+};
 
 export function compatibleImageRequestIdentity(source: ImageURISource) {
   const uri = normalizeImagePreviewUrl(source.uri || '');
@@ -72,6 +95,9 @@ export function recoverCompatibleSvgArtifact(
   source: ImageURISource,
   options: CompatibleSvgArtifactOptions = {}
 ): Promise<CompatibleSvgArtifact | null> {
+  if (options.signal?.aborted) {
+    return Promise.resolve(null);
+  }
   const requestIdentity = compatibleImageRequestIdentity(source);
   const cached = promoteCachedCompatibleSvgArtifact(requestIdentity);
   if (cached) {
@@ -79,33 +105,75 @@ export function recoverCompatibleSvgArtifact(
   }
   const pending = compatibleSvgArtifactRequests.get(requestIdentity);
   if (pending) {
-    return pending;
+    return subscribeCompatibleSvgRequest(pending, options.signal, () => null);
   }
-  const request = scheduleCompatibleSvgWork((deadlineAt) =>
-    loadCompatibleSvgArtifact(source, requestIdentity, options, deadlineAt)
-  )
-    .then((artifact) => {
-      if (artifact) {
-        rememberCompatibleSvgArtifact(requestIdentity, artifact);
+  let request!: CompatibleSvgSharedRequest<CompatibleSvgArtifact | null>;
+  request = {
+    consumers: new Set(),
+    onEmpty: () => {
+      if (compatibleSvgArtifactRequests.get(requestIdentity) === request) {
+        compatibleSvgArtifactRequests.delete(requestIdentity);
       }
-      return artifact;
-    })
+      request.cancelWork?.();
+    }
+  };
+  const subscription = subscribeCompatibleSvgRequest(request, options.signal, () => null);
+  compatibleSvgArtifactRequests.set(requestIdentity, request);
+  const work = scheduleCompatibleSvgWork((deadlineAt, signal) =>
+    loadCompatibleSvgArtifact(source, requestIdentity, options, deadlineAt, signal)
+  );
+  request.cancelWork = work.cancel;
+  if (request.consumers.size === 0) {
+    request.onEmpty();
+  }
+  void work.promise
+    .then(
+      (artifact) => {
+        if (artifact && request.consumers.size > 0 && compatibleSvgArtifactRequests.get(requestIdentity) === request) {
+          rememberCompatibleSvgArtifact(requestIdentity, artifact);
+        }
+        settleCompatibleSvgRequest(request, { value: artifact });
+      },
+      (error: unknown) => settleCompatibleSvgRequest(request, { error })
+    )
     .finally(() => {
+      if (compatibleSvgArtifactRequests.get(requestIdentity) !== request) return;
       compatibleSvgArtifactRequests.delete(requestIdentity);
     });
-  compatibleSvgArtifactRequests.set(requestIdentity, request);
-  return request;
+  return subscription;
 }
 
 export function refreshCompatibleSvgPoster(
   artifact: CompatibleSvgArtifact,
-  options: Pick<CompatibleSvgArtifactOptions, 'renderPoster'> = {}
+  options: Pick<CompatibleSvgArtifactOptions, 'renderPoster' | 'signal'> = {}
 ): Promise<CompatibleSvgArtifact> {
+  if (options.signal?.aborted) {
+    return Promise.reject(new Error('SVG 海报重建已取消'));
+  }
   const pending = compatibleSvgPosterRefreshes.get(artifact.requestIdentity);
   if (pending) {
-    return pending;
+    return subscribeCompatibleSvgRequest(pending, options.signal, () => {
+      throw new Error('SVG 海报重建已取消');
+    });
   }
-  const request = scheduleCompatibleSvgWork(async (deadlineAt) => {
+  let request!: CompatibleSvgSharedRequest<CompatibleSvgArtifact>;
+  request = {
+    consumers: new Set(),
+    onEmpty: () => {
+      if (compatibleSvgPosterRefreshes.get(artifact.requestIdentity) === request) {
+        compatibleSvgPosterRefreshes.delete(artifact.requestIdentity);
+      }
+      request.cancelWork?.();
+    }
+  };
+  const subscription = subscribeCompatibleSvgRequest(request, options.signal, () => {
+    throw new Error('SVG 海报重建已取消');
+  });
+  compatibleSvgPosterRefreshes.set(artifact.requestIdentity, request);
+  const work = scheduleCompatibleSvgWork(async (deadlineAt, signal) => {
+    if (signal.aborted) {
+      return null;
+    }
     const svgBase64 = svgBase64FromDocumentDataUri(artifact.documentDataUri);
     const remainingMs = remainingCompatibleSvgTime(deadlineAt);
     if (remainingMs <= 0) {
@@ -117,26 +185,38 @@ export function refreshCompatibleSvgPoster(
       remainingMs
     );
     return artifactWithPoster(artifact, poster);
-  })
+  });
+  request.cancelWork = work.cancel;
+  if (request.consumers.size === 0) {
+    request.onEmpty();
+  }
+  void work.promise
     .then((refreshed) => {
       if (!refreshed) {
         throw new Error('SVG 海报重建超时');
       }
-      rememberCompatibleSvgArtifact(artifact.requestIdentity, refreshed);
+      if (request.consumers.size > 0 && compatibleSvgPosterRefreshes.get(artifact.requestIdentity) === request) {
+        rememberCompatibleSvgArtifact(artifact.requestIdentity, refreshed);
+      }
       return refreshed;
     })
+    .then(
+      (refreshed) => settleCompatibleSvgRequest(request, { value: refreshed }),
+      (error: unknown) => settleCompatibleSvgRequest(request, { error })
+    )
     .finally(() => {
+      if (compatibleSvgPosterRefreshes.get(artifact.requestIdentity) !== request) return;
       compatibleSvgPosterRefreshes.delete(artifact.requestIdentity);
     });
-  compatibleSvgPosterRefreshes.set(artifact.requestIdentity, request);
-  return request;
+  return subscription;
 }
 
 async function loadCompatibleSvgArtifact(
   source: ImageURISource,
   requestIdentity: string,
   options: CompatibleSvgArtifactOptions,
-  deadlineAt: number
+  deadlineAt: number,
+  signal: AbortSignal
 ): Promise<CompatibleSvgArtifact | null> {
   const uri = normalizeImagePreviewUrl(source.uri || '');
   if (!/^https?:\/\//i.test(uri)) {
@@ -151,11 +231,14 @@ async function loadCompatibleSvgArtifact(
     return null;
   }
   const nativeDocument = options.fetcher ? undefined : await fetchBoundedSvgDocument(uri, headers, fetchTimeoutMs);
+  if (signal.aborted) {
+    return null;
+  }
   const bytes =
     nativeDocument === undefined
-      ? await fetchCompatibleSvgBytes(uri, headers, options.fetcher || fetch, fetchTimeoutMs)
+      ? await fetchCompatibleSvgBytes(uri, headers, options.fetcher || fetch, fetchTimeoutMs, signal)
       : nativeDocument && Buffer.from(nativeDocument.base64, 'base64');
-  if (!bytes || bytes.length > MAX_COMPATIBLE_SVG_BYTES) {
+  if (signal.aborted || !bytes || bytes.length > MAX_COMPATIBLE_SVG_BYTES) {
     return null;
   }
   const svg = bytes.toString('utf8');
@@ -164,7 +247,7 @@ async function loadCompatibleSvgArtifact(
   }
   const svgBase64 = bytes.toString('base64');
   const remainingMs = remainingCompatibleSvgTime(deadlineAt);
-  if (remainingMs <= 0) {
+  if (signal.aborted || remainingMs <= 0) {
     return null;
   }
   const poster = await (options.renderPoster || renderSvgPoster)(
@@ -187,13 +270,15 @@ async function fetchCompatibleSvgBytes(
   uri: string,
   headers: Record<string, string>,
   fetcher: Fetcher,
-  timeoutMs: number
+  timeoutMs: number,
+  signal: AbortSignal
 ) {
   const response = await fetchWithTimeout(
     uri,
     { headers },
     {
       fetcher,
+      signal,
       timeoutMs
     }
   );
@@ -226,19 +311,91 @@ function artifactWithPoster(
   };
 }
 
-function scheduleCompatibleSvgWork(run: CompatibleSvgWorkItem['run']): Promise<CompatibleSvgArtifact | null> {
-  if (activeCompatibleSvgWorkItems + compatibleSvgWorkQueue.length >= COMPATIBLE_SVG_MAX_WORK_ITEMS) {
-    return Promise.reject(new Error('SVG 兼容队列已满'));
+function subscribeCompatibleSvgRequest<T>(
+  request: CompatibleSvgSharedRequest<T>,
+  signal: AbortSignal | undefined,
+  canceledValue: () => T
+): Promise<T> {
+  if (request.settlement) {
+    return 'error' in request.settlement
+      ? Promise.reject(request.settlement.error)
+      : Promise.resolve(request.settlement.value);
   }
-  return new Promise((resolve, reject) => {
-    compatibleSvgWorkQueue.push({
+  if (signal?.aborted) {
+    try {
+      return Promise.resolve(canceledValue());
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+  return new Promise<T>((resolve, reject) => {
+    const consumer: CompatibleSvgConsumer<T> = { reject, resolve, signal };
+    const abortListener = () => {
+      if (!request.consumers.delete(consumer)) return;
+      signal?.removeEventListener('abort', abortListener);
+      try {
+        resolve(canceledValue());
+      } catch (error) {
+        reject(error);
+      }
+      if (request.consumers.size === 0) {
+        request.onEmpty();
+      }
+    };
+    consumer.abortListener = abortListener;
+    request.consumers.add(consumer);
+    signal?.addEventListener('abort', abortListener, { once: true });
+    if (signal?.aborted) {
+      abortListener();
+    }
+  });
+}
+
+function settleCompatibleSvgRequest<T>(request: CompatibleSvgSharedRequest<T>, settlement: CompatibleSvgSettlement<T>) {
+  if (request.settlement) return;
+  request.settlement = settlement;
+  for (const consumer of request.consumers) {
+    if (consumer.abortListener) {
+      consumer.signal?.removeEventListener('abort', consumer.abortListener);
+    }
+    if ('error' in settlement) {
+      consumer.reject(settlement.error);
+    } else {
+      consumer.resolve(settlement.value);
+    }
+  }
+  request.consumers.clear();
+}
+
+function scheduleCompatibleSvgWork(run: CompatibleSvgWorkItem['run']): CompatibleSvgScheduledWork {
+  if (activeCompatibleSvgWorkItems + compatibleSvgWorkQueue.length >= COMPATIBLE_SVG_MAX_WORK_ITEMS) {
+    return {
+      cancel: () => undefined,
+      promise: Promise.reject(new Error('SVG 兼容队列已满'))
+    };
+  }
+  let item!: CompatibleSvgWorkItem;
+  const promise = new Promise<CompatibleSvgArtifact | null>((resolve, reject) => {
+    item = {
+      abortController: new AbortController(),
       deadlineAt: Date.now() + COMPATIBLE_SVG_TOTAL_TIMEOUT_MS,
       reject,
       resolve,
       run
-    });
+    };
+    compatibleSvgWorkQueue.push(item);
     drainCompatibleSvgWorkQueue();
   });
+  return {
+    cancel: () => {
+      item.abortController.abort();
+      const queuedIndex = compatibleSvgWorkQueue.indexOf(item);
+      if (queuedIndex < 0) return;
+      compatibleSvgWorkQueue.splice(queuedIndex, 1);
+      item.resolve(null);
+    },
+    promise
+  };
 }
 
 function drainCompatibleSvgWorkQueue() {
@@ -247,13 +404,17 @@ function drainCompatibleSvgWorkQueue() {
     if (!item) {
       return;
     }
+    if (item.abortController.signal.aborted) {
+      item.resolve(null);
+      continue;
+    }
     if (remainingCompatibleSvgTime(item.deadlineAt) <= 0) {
       item.resolve(null);
       continue;
     }
     activeCompatibleSvgWorkItems += 1;
     void item
-      .run(item.deadlineAt)
+      .run(item.deadlineAt, item.abortController.signal)
       .then(item.resolve, item.reject)
       .finally(() => {
         activeCompatibleSvgWorkItems -= 1;

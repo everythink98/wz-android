@@ -11,7 +11,7 @@ import {
 } from './reader';
 import { getXiaoyinsiCurrentUserProfile, getXiaoyinsiLevelProfile, getXiaoyinsiUserProfile } from './account';
 import { searchXiaoyinsi, searchXiaoyinsiTags, searchXiaoyinsiUsers } from './search';
-import { splitDiscourseContentHtml } from '@/sources/discourse/content';
+import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 function json(value: unknown, status = 200) {
@@ -311,10 +311,14 @@ describe('xiaoyinsi adapter', () => {
     });
     expect(detail.replies[0].authorAvatar).toBeUndefined();
     expect(detail.replies[0].contentHtml).not.toContain('<aside');
-    expect(splitDiscourseContentHtml(detail.contentHtml, detail.polls).map((part) => part.type)).toEqual([
-      'html',
-      'poll'
-    ]);
+    expect(
+      compileForumContent({
+        html: detail.contentHtml,
+        polls: detail.polls,
+        role: 'opening',
+        source: 'xiaoyinsi'
+      }).rows.map((row) => row.type)
+    ).toEqual(['html', 'poll']);
     expect(replies).toMatchObject({ totalCount: 2 });
     expect(replies.items[0]).toMatchObject({
       author: 'carol',

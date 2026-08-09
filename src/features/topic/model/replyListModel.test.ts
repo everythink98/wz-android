@@ -37,6 +37,265 @@ const listCases: [string, boolean, TopicReplyListItem[], boolean, TopicReplyList
 ];
 
 describe('topic reply list model', () => {
+  it('[REG-PERF-010] promotes a poll-only reply into a parent-list content row', () => {
+    const poll = { name: 'choice', options: [{ id: 'yes', label: 'Yes' }] };
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [{ ...reply, contentHtml: '', polls: [poll] }],
+      repliesByFloor: new Map(),
+      source: 'linuxdo',
+      topicId: '42'
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['replyStart', 'replyContent', 'replyEnd']);
+    expect(items[1]).toMatchObject({ content: { poll, type: 'poll' }, type: 'replyContent' });
+  });
+
+  it('[REG-PERF-010] promotes a giant nested reply body into bounded parent-list rows', () => {
+    const imageReply: Reply = {
+      ...reply,
+      commentId: 863650,
+      contentHtml: `<p>${Array.from(
+        { length: 2000 },
+        (_, index) => `<img src="https://img.example.com/${index}.jpg">`
+      ).join('')}</p>`
+    };
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [imageReply],
+      repliesByFloor: new Map(),
+      source: 'nodeseek',
+      topicId: '863650'
+    });
+
+    expect(items[0]?.type).toBe('replyStart');
+    expect(items.at(-1)?.type).toBe('replyEnd');
+    const bodyRows = items.filter((item) => item.type === 'replyContent');
+    expect(bodyRows).toHaveLength(500);
+    expect(bodyRows.map((item) => (item.content.type === 'html' ? item.content.networkMediaCount : 0))).toEqual(
+      Array.from({ length: 500 }, () => 4)
+    );
+    expect(
+      bodyRows.every((item) => item.content.type === 'html' && (item.content.html.match(/<img\b/g) || []).length <= 4)
+    ).toBe(true);
+  });
+
+  it('[REG-PERF-010] never combines independently safe body and signature media into one oversized reply cell', () => {
+    const images = (prefix: string) =>
+      Array.from({ length: 4 }, (_, index) => `<img src="https://img.example.com/${prefix}-${index}.jpg">`).join('');
+    const mediaReply: Reply = {
+      ...reply,
+      commentId: 863652,
+      contentHtml: `<p>${images('body')}</p>`,
+      signatureHtml: `<p>${images('signature')}</p>`
+    };
+
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [mediaReply],
+      repliesByFloor: new Map(),
+      source: 'nodeseek',
+      topicId: '863652'
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['replyStart', 'replyContent', 'replySignatureContent', 'replyEnd']);
+    expect(items.find((item) => item.type === 'replyContent')?.content).toMatchObject({
+      networkMediaCount: 4,
+      type: 'html'
+    });
+    expect(items.find((item) => item.type === 'replySignatureContent')).toMatchObject({ networkMediaCount: 4 });
+  });
+
+  it('[REG-PERF-010] keeps a cheap body and short signature on the ordinary single-cell path', () => {
+    const cheapReply: Reply = {
+      ...reply,
+      commentId: 863653,
+      contentHtml: '<p>body <img src="https://img.example.com/body.jpg"></p>',
+      signatureHtml: '<p>short signature</p>'
+    };
+
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [cheapReply],
+      repliesByFloor: new Map(),
+      source: 'nodeseek',
+      topicId: '863653'
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({ networkMediaCount: 1, plannedRowCount: 2, reply: cheapReply, type: 'reply' })
+    ]);
+  });
+
+  it.each([
+    {
+      body: `<p>${'<span></span>'.repeat(40)}</p>`,
+      label: 'DOM-node',
+      signature: `<p>${'<span></span>'.repeat(40)}</p>`
+    },
+    {
+      body: `<p data-note="${'b'.repeat(9_000)}">body</p>`,
+      label: 'serialized-size',
+      signature: `<p data-note="${'s'.repeat(9_000)}">signature</p>`
+    }
+  ])('[REG-PERF-010] applies the combined $label budget before using one reply cell', ({ body, signature }) => {
+    const combinedReply: Reply = {
+      ...reply,
+      commentId: 863654,
+      contentHtml: body,
+      signatureHtml: signature
+    };
+
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [combinedReply],
+      repliesByFloor: new Map(),
+      source: 'nodeseek',
+      topicId: '863654'
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['replyStart', 'replyContent', 'replySignatureContent', 'replyEnd']);
+  });
+
+  it('[REG-PERF-010] combines sibling-region depth by maximum instead of summing independent trees', () => {
+    const nested = (label: string) => `${'<span>'.repeat(38)}${label}${'</span>'.repeat(38)}`;
+    const deepReply: Reply = {
+      ...reply,
+      commentId: 863655,
+      contentHtml: nested('body'),
+      signatureHtml: nested('signature')
+    };
+
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [deepReply],
+      repliesByFloor: new Map(),
+      source: 'nodeseek',
+      topicId: '863655'
+    });
+
+    expect(items).toEqual([expect.objectContaining({ reply: deepReply, type: 'reply' })]);
+  });
+
+  it('[REG-PERF-010] propagates planner groups through split reply body, signature, and quote rows', () => {
+    const oversizedDetails = (prefix: string) =>
+      `<details><summary>${prefix}</summary><p>${Array.from(
+        { length: 9 },
+        (_, index) => `<img src="https://img.example.com/${prefix}-${index}.jpg">`
+      ).join('')}</p></details>`;
+    const reference = { source: 'linuxdo' as const, topicId: 'quoted', postNumber: 2 };
+    const owner: Reply = {
+      ...reply,
+      commentId: 90,
+      contentHtml: oversizedDetails('body'),
+      quotedPosts: [{ reference }],
+      signatureHtml: oversizedDetails('signature')
+    };
+    const instanceKey = replyQuotedPostInstanceKey(getReplyKey(owner), reference);
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: { [instanceKey]: true },
+      loadedQuotedReplies: {
+        'linuxdo:quoted:2': { ...reply, contentHtml: oversizedDetails('quote'), floor: 2 }
+      },
+      loadingQuotedFloors: {},
+      primedQuoteContentTokens: new Map([[instanceKey, 'unused']]),
+      replies: [owner],
+      repliesByFloor: new Map(),
+      source: 'linuxdo',
+      topicId: 'owner'
+    });
+
+    const body = items.filter(
+      (item): item is Extract<TopicReplyListItem, { type: 'replyContent' }> =>
+        item.type === 'replyContent' && item.content.type === 'html'
+    );
+    const signature = items.filter((item) => item.type === 'replySignatureContent');
+    const quote = items.filter(
+      (item): item is Extract<TopicReplyListItem, { type: 'replyQuoteContent' }> =>
+        item.type === 'replyQuoteContent' && item.content.type === 'html'
+    );
+
+    expect(body).toHaveLength(3);
+    expect(signature).toHaveLength(3);
+    expect(signature).toEqual([
+      expect.objectContaining({ continuation: 'first' }),
+      expect.objectContaining({ continuation: 'middle' }),
+      expect.objectContaining({ continuation: 'last' })
+    ]);
+    expect(quote).toHaveLength(2);
+    expect(new Set(body.map((item) => item.content.type === 'html' && item.content.groupKey))).toEqual(
+      new Set(['0:block-0'])
+    );
+    expect(new Set(signature.map((item) => item.groupKey))).toEqual(new Set(['block-0']));
+    expect(new Set(quote.map((item) => item.content.type === 'html' && item.content.groupKey))).toEqual(
+      new Set(['0:block-0'])
+    );
+  });
+
+  it.each([
+    {
+      label: 'reply body',
+      contentHtml: `<p data-oversized="${'x'.repeat(20_000)}">safe reply body</p>`,
+      expectedBodyHtml: 'safe reply body',
+      expectedSignatureHtml: '<p>safe signature</p>',
+      signatureHtml: '<p>safe signature</p>'
+    },
+    {
+      label: 'reply signature',
+      contentHtml: '<p>safe reply body</p>',
+      expectedBodyHtml: '<p>safe reply body</p>',
+      expectedSignatureHtml: 'safe signature',
+      signatureHtml: `<p data-oversized="${'x'.repeat(20_000)}">safe signature</p>`
+    }
+  ])(
+    '[REG-PERF-010] renders planner output when an oversized $label attribute is rewritten',
+    ({ contentHtml, expectedBodyHtml, expectedSignatureHtml, signatureHtml }) => {
+      const unsafeReply: Reply = {
+        ...reply,
+        commentId: 863651,
+        contentHtml,
+        signatureHtml
+      };
+
+      const items = buildVirtualizedReplyItems({
+        expandedQuotes: {},
+        loadedQuotedReplies: {},
+        loadingQuotedFloors: {},
+        replies: [unsafeReply],
+        repliesByFloor: new Map(),
+        source: 'nodeseek',
+        topicId: '863651'
+      });
+
+      expect(items.map((item) => item.type)).toEqual([
+        'replyStart',
+        'replyContent',
+        'replySignatureContent',
+        'replyEnd'
+      ]);
+      const body = items.find((item) => item.type === 'replyContent');
+      const signature = items.find((item) => item.type === 'replySignatureContent');
+      expect(body?.content).toMatchObject({ type: 'html', networkMediaCount: 0 });
+      expect(body?.content.type === 'html' ? body.content.html : '').toContain(expectedBodyHtml);
+      expect(body?.content.type === 'html' ? body.content.html : '').toContain('class="forum-reply-content"');
+      expect(signature?.html).toContain(expectedSignatureHtml);
+      expect(signature?.html).toContain('class="forum-reply-content"');
+      expect(items.at(-1)).toMatchObject({ bodyVirtualized: true, signatureVirtualized: true });
+    }
+  );
+
   it('REG-TOPIC-028 keeps replies with the same display floor as distinct list items', () => {
     const imageReply: Reply = {
       ...reply,
@@ -130,12 +389,13 @@ describe('topic reply list model', () => {
       'replyQuoteSummary',
       'replyQuoteSummary',
       'replyQuoteContent',
+      'replyContent',
       'replyEnd'
     ]);
     const content = expanded.find((item) => item.type === 'replyQuoteContent');
     expect(content).toMatchObject({ first: true, last: true, reference: secondReference });
     expect(expanded.slice(0, -1).map((item, index) => topicListItemSpacing(item, expanded[index + 1]))).toEqual([
-      8, 12, 0, 8
+      8, 12, 0, 0, 8
     ]);
 
     const collapsed = buildVirtualizedReplyItems({ ...common, expandedQuotes: {} });
@@ -143,6 +403,7 @@ describe('topic reply list model', () => {
       'replyStart',
       'replyQuoteSummary',
       'replyQuoteSummary',
+      'replyContent',
       'replyEnd'
     ]);
     expect(collapsed[1].key).toBe(expanded[1].key);

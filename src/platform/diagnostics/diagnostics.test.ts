@@ -30,6 +30,49 @@ afterEach(() => {
 });
 
 describe('diagnostic traces', () => {
+  it('[REG-PERF-010] allowlists only aggregate topic body media counters', () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('media', 'topic-body-media', {
+      source: 'nodeseek',
+      topicRef: diagnosticRef('topic', 'nodeseek:863650')
+    });
+
+    finishDiagnosticTrace(trace, 'success', {
+      firstRowElapsedMs: 250,
+      plannedRowCount: 500,
+      networkMediaCount: 2000,
+      warmHighWater: 8,
+      runningHighWater: 4,
+      timerHighWater: 1,
+      timeoutCount: 2,
+      cancelCount: 3,
+      errorCount: 4,
+      displayCount: 5,
+      retryCount: 1,
+      requestIdentity: 'https://secret.example/image.jpg?token=private'
+    } as never);
+
+    expect(events()).toEqual([
+      expect.objectContaining({ operation: 'topic-body-media', phase: 'intent' }),
+      expect.objectContaining({
+        operation: 'topic-body-media',
+        phase: 'finish',
+        firstRowElapsedMs: 250,
+        plannedRowCount: 500,
+        networkMediaCount: 2000,
+        warmHighWater: 8,
+        runningHighWater: 4,
+        timerHighWater: 1,
+        timeoutCount: 2,
+        cancelCount: 3,
+        errorCount: 4,
+        displayCount: 5,
+        retryCount: 1
+      })
+    ]);
+    expect(JSON.stringify(events())).not.toContain('secret.example');
+  });
+
   it('correlates a trace from intent to one timed terminal event', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('feed', 'load', { source: 'v2ex' }, 1_000);

@@ -15,6 +15,17 @@ vi.mock('@/platform/network/managedCookies', () => ({
   readManagedCookieHeader
 }));
 
+vi.mock('@/platform/network/networkProxy', () => ({
+  releaseReadNetworkRuntimeGeneration: vi.fn(async () => true),
+  retainReadNetworkRuntimeGeneration: vi.fn(async (generation: number) => ({ generation, retained: true }))
+}));
+
+vi.mock('@/platform/network/readNetworkRuntime', () => ({
+  getReadNetworkRuntimeSnapshot: () => ({ generation: 0, triggerSource: null }),
+  useReadNetworkRuntimeGeneration: () => 0,
+  useReadNetworkRuntimeSnapshot: () => ({ generation: 0, triggerSource: null })
+}));
+
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
   Image: 'Image',

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { diagnosticRef } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   createImagePreviewCatalog,
@@ -10,7 +9,7 @@ import {
   selectImageDisplaySource,
   selectImageOriginalSource
 } from './imagePreviewCatalog';
-import { flowInlineImagesInMixedParagraphs, shouldMarkLoadedImageInline } from './inlineMedia';
+import { shouldMarkLoadedImageInline } from './inlineMedia';
 
 describe('image preview catalog', () => {
   it('links the responsive body URL and lightbox original to one media diagnostic ref', () => {
@@ -49,10 +48,6 @@ describe('image preview catalog', () => {
   it('[REG-TOPIC-040] keeps the responsive body image separate from the lightbox original', () => {
     const html =
       '<div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img src="https://cdn.example.com/optimized.png" alt="photo"></a></div>';
-    const rendered = flowInlineImagesInMixedParagraphs(html);
-
-    expect(rendered).toContain('src="https://cdn.example.com/optimized.png"');
-    expect(rendered).not.toContain('<img src="https://cdn.example.com/original.png"');
     expect(createImagePreviewCatalog([html], 300, 2).items).toEqual([
       {
         displayUri: 'https://cdn.example.com/optimized.png',
@@ -62,12 +57,6 @@ describe('image preview catalog', () => {
   });
 
   it('[REG-TOPIC-048] carries the safe lightbox original into the progressive renderer', () => {
-    const originalUrl = 'https://cdn.example.com/progressive-original.png';
-    const rendered = flowInlineImagesInMixedParagraphs(
-      `<a class="lightbox" href="${originalUrl}"><img src="https://cdn.example.com/display.png" srcset="https://cdn.example.com/display-640.png 640w, https://cdn.example.com/display-1280.png 1280w"></a>`
-    );
-
-    expect(rendered).toContain(`data-forum-original-src="${originalUrl}"`);
     expect(
       selectImageOriginalSource({
         'data-original': 'javascript:alert(1)',
@@ -113,6 +102,20 @@ describe('image preview catalog', () => {
       displaySize: { width: 1280, height: 720 }
     });
     expect(selectImageDisplaySource(attributes, 800, 2)?.uri).toBe('https://cdn.example.com/1280.jpg');
+  });
+
+  it('[REG-PERF-010] caps an inline body candidate at 2048 physical pixels', () => {
+    expect(
+      selectImageDisplaySource(
+        {
+          src: 'https://cdn.example.com/fallback.jpg',
+          srcset:
+            'https://cdn.example.com/1024.jpg 1024w, https://cdn.example.com/2048.jpg 2048w, https://cdn.example.com/4096.jpg 4096w'
+        },
+        1_400,
+        2
+      )?.uri
+    ).toBe('https://cdn.example.com/2048.jpg');
   });
 
   it('selects density srcset candidates and falls back from unreliable candidate sets', () => {
@@ -194,9 +197,6 @@ describe('image preview catalog', () => {
 
     const lazyHtml =
       '<img src="https://cdn.example.com/transparent.gif" data-src="https://cdn.example.com/lazy.jpg" data-original="https://cdn.example.com/original.jpg">';
-    const renderedLazyHtml = flowInlineImagesInMixedParagraphs(lazyHtml);
-    expect(renderedLazyHtml).toContain('src="https://cdn.example.com/lazy.jpg"');
-    expect(renderedLazyHtml).toContain('data-forum-display-candidate-kind="data-src"');
     expect(
       selectImageDisplaySource(
         {
@@ -212,19 +212,6 @@ describe('image preview catalog', () => {
       {
         displayUri: 'https://cdn.example.com/lazy.jpg',
         originalUri: 'https://cdn.example.com/original.jpg'
-      }
-    ]);
-  });
-
-  it('[REG-TOPIC-030] keeps unsafe lazy candidates out of the active preview catalog', () => {
-    const rendered = flowInlineImagesInMixedParagraphs(
-      sanitizeContentHtml('<img src="/safe.png" data-original="javascript:x.png">', 'https://linux.do/t/example/1')
-    );
-
-    expect(createImagePreviewCatalog([rendered], 300, 2).items).toEqual([
-      {
-        displayUri: 'https://linux.do/safe.png',
-        originalUri: 'https://linux.do/safe.png'
       }
     ]);
   });
@@ -403,18 +390,10 @@ describe('image preview catalog', () => {
   it('keeps tiny V2EX embedded images inline after their size is known', () => {
     const html =
       '<p>去年是机房火灾 <img src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20"></p><p><img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912"></p>';
-    const result = flowInlineImagesInMixedParagraphs(html);
-
     expect(shouldMarkLoadedImageInline({ class: 'embedded_image' }, 20, 20)).toBe(true);
     expect(shouldMarkLoadedImageInline({ class: 'thumbnail' }, 20, 20)).toBe(false);
     expect(shouldMarkLoadedImageInline({ class: 'embedded_image' }, 358, 76)).toBe(false);
-    expect(result).toContain(
-      '<forum-inline-image src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20">'
-    );
-    expect(result).toContain(
-      '<img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912">'
-    );
-    expect(extractImageUrlsFromHtml(result)).toEqual(['https://i.imgur.com/2ejt2Q6.png']);
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://i.imgur.com/2ejt2Q6.png']);
   });
 
   it('keeps forum emoji paths from all Android sources out of preview', () => {
@@ -429,41 +408,21 @@ describe('image preview catalog', () => {
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/photo.jpg']);
   });
 
-  it('renders xhj sticker images in mixed paragraphs through the inline media line path', () => {
+  it('keeps xhj sticker images out of the preview catalog', () => {
     const html = '<p>前两天刚买的bugnet，买早了<img alt="xhj032" src="https://cdn.example.com/xhj032.png"></p>';
-    const result = flowInlineImagesInMixedParagraphs(html);
-
-    expect(result).toContain('<forum-inline-media-line>前两天刚买的bugnet，买早了<forum-sticker alt="xhj032"');
-    expect(result).not.toContain('<img alt="xhj032"');
     expect(extractImageUrlsFromHtml(html)).toEqual([]);
   });
 
-  it('moves large text-mixed NodeSeek xhj stickers out of the text paragraph', () => {
+  it('keeps large NodeSeek xhj stickers out of the preview catalog', () => {
     const html =
       '<p>rt<br>有什么特别之处吗 <img alt="xhj032" title="xhj032" width="120" height="99" src="https://www.nodeseek.com/static/image/smiley/xhj032.png"><br><img alt="photo" src="https://www.nodeseek.com/api/attachments/123"></p>';
-    const result = flowInlineImagesInMixedParagraphs(html);
-
-    expect(result).toContain('<p>有什么特别之处吗</p>');
-    expect(result).toContain('<forum-sticker-row><forum-sticker alt="xhj032"');
-    expect(result).toContain('data-forum-sticker-row="true"');
-    expect(result).not.toContain('<forum-inline-image alt="xhj032"');
-    expect(result).not.toContain('<img alt="xhj032"');
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://www.nodeseek.com/api/attachments/123']);
   });
 
-  it('renders forum avatar images in quote headers through the inline image path', () => {
+  it('keeps forum avatar images out of the preview catalog', () => {
     const avatar = 'https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png';
     const html = `<aside class="quote"><div class="title"><div class="quote-controls"></div><img alt="" width="24" height="24" src="${avatar}" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/1">Quoted topic</a></div></div><blockquote><p>quoted text</p></blockquote></aside><p><img src="https://cdn.example.com/photo.jpg"></p>`;
-    const result = flowInlineImagesInMixedParagraphs(html);
-
-    expect(result).toContain(
-      '<forum-inline-image alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar">'
-    );
-    expect(result).toContain('<span class="quote-title__text-content">');
-    expect(result).not.toContain(
-      '<img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar">'
-    );
-    expect(extractImageUrlsFromHtml(result)).toEqual(['https://cdn.example.com/photo.jpg']);
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/photo.jpg']);
   });
 
   it('keeps real HTML images previewable even when their URLs have no file extension', () => {

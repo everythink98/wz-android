@@ -1,5 +1,4 @@
 import { StyleSheet } from 'react-native';
-import type { TNode } from 'react-native-render-html';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlTagsStyles } from './types';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from '@/ui/theme/tokens';
@@ -13,20 +12,26 @@ export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = [
   'textDecorationLine'
 ];
 export const HTML_REPLY_CONTENT_CLASS = 'forum-reply-content';
-export const TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE = 'data-trim-trailing-block-spacing';
 
-export function trimsTrailingBlockSpacing(tnode: TNode) {
-  let child = tnode;
-  for (let parent = child.parent; parent; parent = parent.parent) {
-    if (child.nodeIndex !== parent.children.length - 1) {
-      return false;
-    }
-    if (parent.attributes[TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE] === 'true') {
-      return true;
-    }
-    child = parent;
-  }
-  return false;
+export type ContentContinuation = 'only' | 'first' | 'middle' | 'last';
+
+export type ContentBoundary = {
+  trimLeading: boolean;
+  trimTrailing: boolean;
+};
+
+export function contentBoundaryForContinuation(continuation: ContentContinuation): ContentBoundary {
+  return {
+    trimLeading: continuation === 'middle' || continuation === 'last',
+    trimTrailing: continuation === 'first' || continuation === 'middle'
+  };
+}
+
+export function contentContinuationForBoundary({ trimLeading, trimTrailing }: ContentBoundary): ContentContinuation {
+  if (trimLeading && trimTrailing) return 'middle';
+  if (trimLeading) return 'last';
+  if (trimTrailing) return 'first';
+  return 'only';
 }
 
 export function createHtmlRendererStyles(settings: ReaderSettings, theme: ReaderTheme) {

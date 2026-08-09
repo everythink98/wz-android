@@ -18,6 +18,7 @@ import type {
 } from '@/domain/forum/models';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { mergeSourceDiagnosticSummaries } from './diagnostics';
+import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
   dispatchSourceRead,
   mergeSettledSourceErrors,
@@ -25,8 +26,6 @@ import {
   settledDiagnosticFacts,
   unavailableSourceRead
 } from './readAggregation';
-const allFeedSources = aggregateFeedSources;
-
 function sortByTime<T extends { createdAt: string; lastReplyAt?: string }>(items: T[]) {
   return [...items].sort(
     (left, right) =>
@@ -57,7 +56,7 @@ function decodeAllFeedCursor(cursor?: string): AllFeedCursorState {
     const buffers: Partial<Record<Source, Topic[]>> = {};
     const nextPages: Partial<Record<Source, number | null>> = {};
     const sourceCursors: Partial<Record<Source, string | null>> = {};
-    for (const source of allFeedSources) {
+    for (const source of aggregateFeedSources) {
       const items = Array.isArray(parsed.buffers?.[source])
         ? (parsed.buffers[source]?.map(cursorTopic).filter(Boolean) as Topic[])
         : [];
@@ -82,7 +81,7 @@ function encodeAllFeedCursor(state: AllFeedCursorState) {
   const buffers: Partial<Record<Source, Topic[]>> = {};
   const nextPages: Partial<Record<Source, number | null>> = {};
   const sourceCursors: Partial<Record<Source, string | null>> = {};
-  for (const source of allFeedSources) {
+  for (const source of aggregateFeedSources) {
     const items = state.buffers?.[source] || [];
     if (items.length) {
       buffers[source] = items;
@@ -146,139 +145,152 @@ export async function getFeed({
     timeoutMs
   };
   if (source === 'all') {
-    const unavailableSourceSet = new Set(unavailableSources);
-    const cursorState = decodeAllFeedCursor(cursor);
-    const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
-    const hasRetryableCursor = Boolean(
-      cursor &&
-      (bufferedItems.length ||
-        Object.keys(cursorState.nextPages || {}).length ||
-        Object.keys(cursorState.sourceCursors || {}).length)
-    );
-    const shouldFetchSource = (item: Source) =>
-      !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
-    const fetchedSources = allFeedSources.map(shouldFetchSource);
-    const requestedPages = Object.fromEntries(
-      allFeedSources.map((item) => [item, cursor ? cursorState.nextPages?.[item] || page : page])
-    ) as Record<(typeof allFeedSources)[number], number>;
-    const adapterLimit = limit < 30 ? limit * allFeedSources.length : limit;
-    const results = await Promise.allSettled(
-      allFeedSources.map((item, index) =>
-        readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
-          if (unavailableSourceSet.has(item)) {
-            return unavailableSourceRead(item);
+    return runForumSourceReadAggregateAttempt(
+      fetcher || fetch,
+      async (aggregateFetcher) => {
+        const unavailableSourceSet = new Set(unavailableSources);
+        const cursorState = decodeAllFeedCursor(cursor);
+        const bufferedItems = aggregateFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
+        const hasRetryableCursor = Boolean(
+          cursor &&
+          (bufferedItems.length ||
+            Object.keys(cursorState.nextPages || {}).length ||
+            Object.keys(cursorState.sourceCursors || {}).length)
+        );
+        const shouldFetchSource = (item: Source) =>
+          !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
+        const fetchedSources = aggregateFeedSources.map(shouldFetchSource);
+        const requestedPages = Object.fromEntries(
+          aggregateFeedSources.map((item) => [item, cursor ? cursorState.nextPages?.[item] || page : page])
+        ) as Record<(typeof aggregateFeedSources)[number], number>;
+        const adapterLimit = limit < 30 ? limit * aggregateFeedSources.length : limit;
+        const results = await Promise.allSettled(
+          aggregateFeedSources.map((item, index) =>
+            readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
+              if (unavailableSourceSet.has(item)) {
+                return unavailableSourceRead(item);
+              }
+              if (!fetchedSources[index]) {
+                return Promise.resolve({
+                  items: [],
+                  errors: {},
+                  hasMore: false,
+                  nextPage: cursorState.nextPages?.[item] ?? null,
+                  nextCursor: cursorState.sourceCursors?.[item] ?? null
+                });
+              }
+              const readSource = (sourceFetcher: Fetcher) => {
+                if (isDiscourseSource(item)) {
+                  return getDiscourseSourceFeed(item, {
+                    auth: discourseAuth,
+                    category,
+                    fetcher: sourceFetcher,
+                    limit: adapterLimit,
+                    page: requestedPages[item],
+                    signal: sourceSignal,
+                    timeoutMs
+                  });
+                }
+                if (item === 'nodeseek') {
+                  return getNodeSeekFeed({
+                    ...options,
+                    fetcher: sourceFetcher,
+                    limit: adapterLimit,
+                    page: requestedPages[item],
+                    signal: sourceSignal
+                  });
+                }
+                if (item === 'v2ex') {
+                  return getV2exFeed({
+                    ...options,
+                    cursor: cursorState.sourceCursors?.[item],
+                    fetcher: sourceFetcher,
+                    limit,
+                    page: requestedPages[item],
+                    signal: sourceSignal
+                  });
+                }
+                if (item === 'yaohuo') {
+                  return getYaohuoFeedDirect({
+                    category,
+                    page: requestedPages[item],
+                    limit: adapterLimit,
+                    yaohuoFetcher: sourceFetcher,
+                    signal: sourceSignal,
+                    timeoutMs
+                  });
+                }
+                throw new Error(`${item} 未注册聚合首页读取 adapter`);
+              };
+              return item === 'linuxdo' || item === 'nodeseek'
+                ? runForumSourceReadAttempt(item, aggregateFetcher, readSource, () => !sourceSignal.aborted)
+                : readSource(aggregateFetcher);
+            })
+          )
+        );
+        if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
+        const items = sortByTime([
+          ...bufferedItems,
+          ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
+        ]);
+        const selected = balanceTopicsBySource(items).slice(0, limit);
+        const selectedKeys = new Set(selected.map(topicIdentity));
+        const nextBuffers: Partial<Record<Source, Topic[]>> = {};
+        for (const item of items) {
+          if (selectedKeys.has(topicIdentity(item))) {
+            continue;
           }
-          if (!fetchedSources[index]) {
-            return Promise.resolve({
-              items: [],
-              errors: {},
-              hasMore: false,
-              nextPage: cursorState.nextPages?.[item] ?? null,
-              nextCursor: cursorState.sourceCursors?.[item] ?? null
-            });
-          }
-          if (isDiscourseSource(item)) {
-            return getDiscourseSourceFeed(item, {
-              auth: discourseAuth,
-              category,
-              fetcher,
-              limit: adapterLimit,
-              page: requestedPages[item],
-              signal: sourceSignal,
-              timeoutMs
-            });
-          }
-          if (item === 'nodeseek') {
-            return getNodeSeekFeed({
-              ...options,
-              limit: adapterLimit,
-              page: requestedPages[item],
-              signal: sourceSignal
-            });
-          }
-          if (item === 'v2ex') {
-            return getV2exFeed({
-              ...options,
-              cursor: cursorState.sourceCursors?.[item],
-              limit,
-              page: requestedPages[item],
-              signal: sourceSignal
-            });
-          }
-          if (item === 'yaohuo') {
-            return getYaohuoFeedDirect({
-              category,
-              page: requestedPages[item],
-              limit: adapterLimit,
-              yaohuoFetcher: fetcher,
-              signal: sourceSignal,
-              timeoutMs
-            });
-          }
-          throw new Error(`${item} 未注册聚合首页读取 adapter`);
-        })
-      )
-    );
-    if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-    const items = sortByTime([
-      ...bufferedItems,
-      ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
-    ]);
-    const selected = balanceTopicsBySource(items).slice(0, limit);
-    const selectedKeys = new Set(selected.map(topicIdentity));
-    const nextBuffers: Partial<Record<Source, Topic[]>> = {};
-    for (const item of items) {
-      if (selectedKeys.has(topicIdentity(item))) {
-        continue;
-      }
-      nextBuffers[item.source] = [...(nextBuffers[item.source] || []), item];
-    }
-    const nextPages: Partial<Record<Source, number | null>> = {};
-    const sourceCursors: Partial<Record<Source, string | null>> = {};
-    const hasFulfilledSource = results.some((result) => result.status === 'fulfilled');
-    allFeedSources.forEach((item, index) => {
-      const result = results[index];
-      if (result?.status === 'fulfilled') {
-        if (result.value.nextPage) {
-          nextPages[item] = result.value.nextPage;
+          nextBuffers[item.source] = [...(nextBuffers[item.source] || []), item];
         }
-        if (result.value.nextCursor) {
-          sourceCursors[item] = result.value.nextCursor;
-        }
-        return;
-      }
-      const aggregateTimedOut =
-        result?.status === 'rejected' &&
-        typeof result.reason === 'object' &&
-        result.reason !== null &&
-        (result.reason as { reason?: unknown }).reason === 'aggregate_timeout';
-      if (fetchedSources[index] && (hasRetryableCursor || hasFulfilledSource || aggregateTimedOut)) {
-        nextPages[item] = requestedPages[item];
-        if (cursorState.sourceCursors?.[item]) sourceCursors[item] = cursorState.sourceCursors[item];
-      }
-    });
-    const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages, sourceCursors });
-    const response = {
-      items: selected,
-      errors: mergeSettledSourceErrors(results, allFeedSources),
-      hasMore: Boolean(nextCursor),
-      nextPage: nextCursor ? page + 1 : null,
-      nextCursor
-    };
-    const facts = settledDiagnosticFacts(results);
-    return mergeSourceDiagnosticSummaries(
-      response,
-      'aggregate-feed',
-      results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : [])),
-      {
-        candidateCount: selected.length + facts.droppedCount,
-        validCount: selected.length,
-        droppedCount: facts.droppedCount,
-        partialErrorCount: facts.partialErrorCount,
-        missingFloorCount: facts.missingFloorCount,
-        hasRepeatedCursor: facts.hasRepeatedCursor || response.nextPage === page || response.nextCursor === cursor,
-        isExpectedEmpty: selected.length === 0 && facts.droppedCount === 0 && (page > 1 || Boolean(category))
-      }
+        const nextPages: Partial<Record<Source, number | null>> = {};
+        const sourceCursors: Partial<Record<Source, string | null>> = {};
+        const hasFulfilledSource = results.some((result) => result.status === 'fulfilled');
+        aggregateFeedSources.forEach((item, index) => {
+          const result = results[index];
+          if (result?.status === 'fulfilled') {
+            if (result.value.nextPage) {
+              nextPages[item] = result.value.nextPage;
+            }
+            if (result.value.nextCursor) {
+              sourceCursors[item] = result.value.nextCursor;
+            }
+            return;
+          }
+          const aggregateTimedOut =
+            result?.status === 'rejected' &&
+            typeof result.reason === 'object' &&
+            result.reason !== null &&
+            (result.reason as { reason?: unknown }).reason === 'aggregate_timeout';
+          if (fetchedSources[index] && (hasRetryableCursor || hasFulfilledSource || aggregateTimedOut)) {
+            nextPages[item] = requestedPages[item];
+            if (cursorState.sourceCursors?.[item]) sourceCursors[item] = cursorState.sourceCursors[item];
+          }
+        });
+        const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages, sourceCursors });
+        const response = {
+          items: selected,
+          errors: mergeSettledSourceErrors(results, aggregateFeedSources),
+          hasMore: Boolean(nextCursor),
+          nextPage: nextCursor ? page + 1 : null,
+          nextCursor
+        };
+        const facts = settledDiagnosticFacts(results);
+        return mergeSourceDiagnosticSummaries(
+          response,
+          'aggregate-feed',
+          results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : [])),
+          {
+            candidateCount: selected.length + facts.droppedCount,
+            validCount: selected.length,
+            droppedCount: facts.droppedCount,
+            partialErrorCount: facts.partialErrorCount,
+            missingFloorCount: facts.missingFloorCount,
+            hasRepeatedCursor: facts.hasRepeatedCursor || response.nextPage === page || response.nextCursor === cursor,
+            isExpectedEmpty: selected.length === 0 && facts.droppedCount === 0 && (page > 1 || Boolean(category))
+          }
+        );
+      },
+      () => signal?.aborted !== true
     );
   }
   if (isDiscourseSource(source)) {
@@ -320,52 +332,63 @@ export async function getCategories({
 } = {}): Promise<CategoriesResponse> {
   const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
-    const sources = sourceValues;
-    const results = await Promise.allSettled(
-      sources.map((item) =>
-        readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
-          if (unavailableSources?.includes(item)) {
-            return unavailableSourceRead(item);
+    return runForumSourceReadAggregateAttempt(
+      fetcher || fetch,
+      async (aggregateFetcher) => {
+        const sources = sourceValues;
+        const results = await Promise.allSettled(
+          sources.map((item) =>
+            readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
+              if (unavailableSources?.includes(item)) {
+                return unavailableSourceRead(item);
+              }
+              const readSource = (sourceFetcher: Fetcher) => {
+                if (isDiscourseSource(item)) {
+                  return getDiscourseSourceCategories(item, {
+                    auth: discourseAuth,
+                    fetcher: sourceFetcher,
+                    signal: sourceSignal,
+                    timeoutMs
+                  });
+                }
+                if (item === 'nodeseek') {
+                  return getNodeSeekCategories({ ...options, fetcher: sourceFetcher, signal: sourceSignal });
+                }
+                if (item === 'v2ex') {
+                  return getV2exCategories({ ...options, fetcher: sourceFetcher, signal: sourceSignal });
+                }
+                if (item === 'yaohuo') {
+                  return Promise.resolve(yaohuoCategoriesResponse());
+                }
+                throw new Error(`${item} 未注册分类读取 adapter`);
+              };
+              return item === 'linuxdo' || item === 'nodeseek'
+                ? runForumSourceReadAttempt(item, aggregateFetcher, readSource, () => !sourceSignal.aborted)
+                : readSource(aggregateFetcher);
+            })
+          )
+        );
+        if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
+        const response = {
+          items: results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : [])),
+          errors: mergeSettledSourceErrors(results, sources)
+        };
+        const facts = settledDiagnosticFacts(results);
+        return mergeSourceDiagnosticSummaries(
+          response,
+          'aggregate-categories',
+          results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : [])),
+          {
+            candidateCount: response.items.length + facts.droppedCount,
+            validCount: response.items.length,
+            droppedCount: facts.droppedCount,
+            partialErrorCount: facts.partialErrorCount,
+            missingFloorCount: facts.missingFloorCount,
+            hasRepeatedCursor: facts.hasRepeatedCursor
           }
-          if (isDiscourseSource(item)) {
-            return getDiscourseSourceCategories(item, {
-              auth: discourseAuth,
-              fetcher,
-              signal: sourceSignal,
-              timeoutMs
-            });
-          }
-          if (item === 'nodeseek') {
-            return getNodeSeekCategories({ ...options, signal: sourceSignal });
-          }
-          if (item === 'v2ex') {
-            return getV2exCategories({ ...options, signal: sourceSignal });
-          }
-          if (item === 'yaohuo') {
-            return Promise.resolve(yaohuoCategoriesResponse());
-          }
-          throw new Error(`${item} 未注册分类读取 adapter`);
-        })
-      )
-    );
-    if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-    const response = {
-      items: results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : [])),
-      errors: mergeSettledSourceErrors(results, sources)
-    };
-    const facts = settledDiagnosticFacts(results);
-    return mergeSourceDiagnosticSummaries(
-      response,
-      'aggregate-categories',
-      results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : [])),
-      {
-        candidateCount: response.items.length + facts.droppedCount,
-        validCount: response.items.length,
-        droppedCount: facts.droppedCount,
-        partialErrorCount: facts.partialErrorCount,
-        missingFloorCount: facts.missingFloorCount,
-        hasRepeatedCursor: facts.hasRepeatedCursor
-      }
+        );
+      },
+      () => signal?.aborted !== true
     );
   }
   if (source === 'yaohuo') {

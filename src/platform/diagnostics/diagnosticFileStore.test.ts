@@ -3,10 +3,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const boundary = vi.hoisted(() => ({
   failWrites: false,
   files: new Map<string, Uint8Array>(),
+  nativeEvents: [] as Record<string, unknown>[],
   openCount: 0,
   writeCount: 0,
   shared: [] as { content: string; uri: string }[],
   sharingAvailable: true
+}));
+
+vi.mock('react-native', () => ({
+  NativeModules: {
+    NetworkProxyModule: {
+      readNetworkDiagnosticEvents: vi.fn(async () => boundary.nativeEvents)
+    }
+  }
 }));
 
 vi.mock('expo-file-system', () => {
@@ -143,6 +152,7 @@ beforeEach(() => {
   setDiagnosticWriter(null);
   boundary.failWrites = false;
   boundary.files.clear();
+  boundary.nativeEvents.length = 0;
   boundary.openCount = 0;
   boundary.writeCount = 0;
   boundary.shared.length = 0;
@@ -246,6 +256,109 @@ describe('diagnostic file store', () => {
       expect(exported).not.toContain(privateValue);
     }
     expect(exported).toContain('"topicRef":"topic-');
+  });
+
+  it('[REG-PROXY-010] exports allowlisted native runtime phases without network secrets', async () => {
+    const secret = 'NATIVE_RUNTIME_SECRET_91827';
+    boundary.nativeEvents.push({
+      timeMs: 1_786_199_367_265,
+      operation: 'rotate-read-runtime',
+      phase: 'intent',
+      traceIdentity: 'trace-42',
+      source: 'linuxdo',
+      previousGeneration: 3,
+      generation: 4
+    });
+    boundary.nativeEvents.push({
+      timeMs: 1_786_199_367_267,
+      operation: 'request',
+      phase: 'connection-acquired',
+      generation: 3,
+      source: 'nodeseek',
+      lane: 'media',
+      method: 'GET',
+      callId: '1a2b3c',
+      clientId: '2b3c4d',
+      poolId: '3c4d5e',
+      dispatcherId: '4d5e6f',
+      connectionId: '5e6f70',
+      elapsedMs: 43,
+      queuedCount: 0,
+      runningCount: 1,
+      addressFamily: 'ipv4',
+      protocol: 'h2',
+      url: `https://nodeseek.com/private?token=${secret}`,
+      ip: '203.0.113.42',
+      cookie: `session=${secret}`,
+      message: secret
+    });
+    boundary.nativeEvents.push({
+      timeMs: 1_786_199_367_268,
+      operation: 'rotate-read-runtime',
+      phase: 'publish',
+      traceIdentity: 'trace-42',
+      source: 'linuxdo',
+      previousGeneration: 3,
+      generation: 4,
+      dispatcherId: '6f7081',
+      forumPoolId: '708192',
+      mediaPoolId: '8192a3',
+      imageClientId: '92a3b4'
+    });
+    boundary.nativeEvents.push({
+      timeMs: 1_786_199_367_269,
+      operation: 'rotate-read-runtime',
+      phase: 'drain',
+      traceIdentity: 'trace-42',
+      source: 'linuxdo',
+      generation: 3,
+      queuedCount: 0,
+      runningCount: 0,
+      leaseCount: 0,
+      cronetActiveCount: 1
+    });
+    boundary.nativeEvents.push({
+      timeMs: 1_786_199_367_270,
+      operation: 'rotate-read-runtime',
+      phase: 'finish',
+      traceIdentity: 'trace-42',
+      source: 'linuxdo',
+      previousGeneration: 3,
+      generation: 4,
+      outcome: 'retired'
+    });
+    appendDiagnosticLogLine(
+      JSON.stringify({
+        type: 'test-event',
+        time: new Date(1_786_199_367_300).toISOString(),
+        sequence: 'later-js-event'
+      })
+    );
+
+    await exportDiagnosticLog(metadata);
+
+    const exported = boundary.shared[0].content;
+    expect(exported).toContain('"type":"native-read-network"');
+    expect(exported).toContain('"nativePhase":"connection-acquired"');
+    expect(exported).toContain('"generation":3');
+    expect(exported).toContain('"addressFamily":"ipv4"');
+    expect(exported).toContain('"networkProtocol":"h2"');
+    expect(exported).toContain('"nativePhase":"publish"');
+    expect(exported).toContain('"forumPoolId":"708192"');
+    expect(exported).toContain('"mediaPoolId":"8192a3"');
+    const exportedEvents = exported
+      .trim()
+      .split('\n')
+      .slice(1)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const rotationEvents = exportedEvents.filter((event) => event.operation === 'rotate-read-runtime');
+    expect(rotationEvents.map((event) => event.phase)).toEqual(['intent', 'apply', 'apply', 'finish']);
+    expect(new Set(rotationEvents.map((event) => event.traceId))).toEqual(new Set(['trace-42']));
+    expect(rotationEvents.filter((event) => event.phase === 'finish')).toHaveLength(1);
+    expect(rotationEvents).toContainEqual(expect.objectContaining({ nativePhase: 'drain', cronetActiveCount: 1 }));
+    expect(exported.indexOf('"nativePhase":"finish"')).toBeLessThan(exported.indexOf('"sequence":"later-js-event"'));
+    expect(exported).not.toContain(secret);
+    expect(exported).not.toContain('203.0.113.42');
   });
 
   it('installs one global JS error handler that records before delegating', async () => {

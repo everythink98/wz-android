@@ -5,7 +5,6 @@ import {
   inlineSizedImageSignatureForHtml,
   inlineSizedImageSignatureForReply,
   replyHtmlWithSignature,
-  sameInlineSizedImagesForHtml,
   sameInlineSizedImagesForReply
 } from './topicDerivedData';
 import type { Reply } from '@/domain/forum/models';
@@ -113,9 +112,6 @@ describe('Android topic derived data', () => {
 
     expect(sameInlineSizedImagesForReply(replyWithImage, { ...replyWithImage }, firstMap, secondMap)).toBe(false);
     expect(sameInlineSizedImagesForReply(replyWithImage, replyWithImage, firstMap, firstMap)).toBe(true);
-    expect(
-      sameInlineSizedImagesForHtml(replyWithImage.contentHtml, replyWithImage.contentHtml, firstMap, firstMap)
-    ).toBe(true);
     expect(scanned).not.toHaveBeenCalled();
 
     expect(sameInlineSizedImagesForReply(replyWithImage, replyWithImage, firstMap, secondMap)).toBe(true);

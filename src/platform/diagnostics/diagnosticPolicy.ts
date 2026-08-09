@@ -203,6 +203,7 @@ const operationValues = closedValues(
   'submit',
   'test',
   'toggle-quote',
+  'topic-body-media',
   'topic-back',
   'transport-fallback',
   'uncaught-error',
@@ -584,7 +585,18 @@ const numberFieldKeys = new Set([
   'loadedBytes',
   'totalBytes',
   'sourceWidth',
-  'sourceHeight'
+  'sourceHeight',
+  'firstRowElapsedMs',
+  'plannedRowCount',
+  'networkMediaCount',
+  'warmHighWater',
+  'runningHighWater',
+  'timerHighWater',
+  'timeoutCount',
+  'cancelCount',
+  'errorCount',
+  'displayCount',
+  'retryCount'
 ]);
 
 const reservedFieldKeys = new Set([

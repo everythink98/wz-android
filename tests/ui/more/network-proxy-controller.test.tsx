@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/networkProxy';
+import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
 
 const mockLoadNetworkProxyState = jest.fn<() => Promise<NetworkProxyState>>();
@@ -193,6 +194,32 @@ describe('network proxy controller', () => {
       })
     );
     fetchSpy.mockRestore();
+  });
+
+  it('[REG-PROXY-010] classifies native content reads without exposing health probes to rotation cancellation', async () => {
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    try {
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+      await waitFor(() => expect(hook.result.current.loaded).toBe(true));
+
+      await hook.result.current.networkProxyFetcher(
+        'https://www.nodeseek.com/post-1-1',
+        withBrowserFetchIntent({}, { owner: 'topic', priority: 'foreground' })
+      );
+      await hook.result.current.networkProxyFetcher(
+        'https://www.nodeseek.com/api/account/status',
+        withBrowserFetchIntent({}, { owner: 'account', priority: 'background' })
+      );
+
+      const contentHeaders = new Headers(fetchSpy.mock.calls[0]?.[1]?.headers);
+      const healthHeaders = new Headers(fetchSpy.mock.calls[1]?.[1]?.headers);
+      expect(contentHeaders.get('X-WZ-Forum-Read-Source')).toBe('nodeseek');
+      expect(contentHeaders.get('X-WZ-Forum-Read-Cancel-Class')).toBe('content');
+      expect(healthHeaders.get('X-WZ-Forum-Read-Source')).toBe('nodeseek');
+      expect(healthHeaders.get('X-WZ-Forum-Read-Cancel-Class')).toBe('health');
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it('[REG-PROXY-002] does not apply a selected profile before its persistence succeeds', async () => {

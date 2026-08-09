@@ -20,6 +20,7 @@ import {
 import type { Category, FeedSource, SearchResponse, Source, Topic } from '@/domain/forum/models';
 import type { Fetcher } from '@/platform/network/request';
 import { copySourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from './diagnostics';
+import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
   dispatchSourceRead,
   mergeSettledSourceErrors,
@@ -105,72 +106,85 @@ export async function searchTopics({
     timeoutMs
   };
   if (source === 'all') {
-    const sources = aggregateSearchSources;
-    const results = await Promise.allSettled(
-      sources.map(async (item) => {
-        if (unavailableSources?.includes(item)) {
-          return requireSearchTopicTitles(await unavailableSourceRead(item));
-        }
-        if (isDiscourseSource(item)) {
-          return requireSearchTopicTitles(
-            await searchDiscourseSourceTopics(item, adapterQuery, {
-              authenticated: item === 'linuxdo' && linuxDoAuthenticated === true,
-              auth: discourseAuth,
-              fetcher,
-              limit: adapterLimit,
-              page,
-              signal,
-              timeoutMs
-            })
-          );
-        }
-        if (item === 'nodeseek') {
-          return requireSearchTopicTitles(await searchNodeSeek(adapterQuery, options));
-        }
-        if (item === 'v2ex') {
-          return requireSearchTopicTitles(await searchV2ex(adapterQuery, options));
-        }
-        if (item === 'yaohuo') {
-          return requireSearchTopicTitles(
-            await searchYaohuoDirect({
-              query: adapterQuery,
-              page,
-              limit: adapterLimit,
-              yaohuoFetcher: fetcher,
-              signal,
-              timeoutMs
-            })
-          );
-        }
-        throw new Error(`${item} 未注册聚合搜索 adapter`);
-      })
-    );
-    const expression = parseSearchExpression(query);
-    const response = {
-      items: sortTopicsByCreatedAt(
-        filterExcludedSearchItems(
-          results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : [])),
-          expression
-        )
-      ).slice(0, limit),
-      errors: mergeSettledSourceErrors(results, sources),
-      hasMore: results.some((result) => result.status === 'fulfilled' && result.value.hasMore),
-      nextPage: results.some((result) => result.status === 'fulfilled' && result.value.hasMore) ? page + 1 : null
-    };
-    const facts = settledDiagnosticFacts(results);
-    return mergeSourceDiagnosticSummaries(
-      response,
-      'aggregate-search',
-      results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : [])),
-      {
-        candidateCount: response.items.length + facts.droppedCount,
-        validCount: response.items.length,
-        droppedCount: facts.droppedCount,
-        partialErrorCount: facts.partialErrorCount,
-        missingFloorCount: facts.missingFloorCount,
-        hasRepeatedCursor: facts.hasRepeatedCursor || response.nextPage === page,
-        isExpectedEmpty: response.items.length === 0 && facts.droppedCount === 0 && facts.partialErrorCount === 0
-      }
+    return runForumSourceReadAggregateAttempt(
+      fetcher || fetch,
+      async (aggregateFetcher) => {
+        const sources = aggregateSearchSources;
+        const results = await Promise.allSettled(
+          sources.map(async (item) => {
+            if (unavailableSources?.includes(item)) {
+              return requireSearchTopicTitles(await unavailableSourceRead(item));
+            }
+            const readSource = async (sourceFetcher: Fetcher) => {
+              if (isDiscourseSource(item)) {
+                return requireSearchTopicTitles(
+                  await searchDiscourseSourceTopics(item, adapterQuery, {
+                    authenticated: item === 'linuxdo' && linuxDoAuthenticated === true,
+                    auth: discourseAuth,
+                    fetcher: sourceFetcher,
+                    limit: adapterLimit,
+                    page,
+                    signal,
+                    timeoutMs
+                  })
+                );
+              }
+              if (item === 'nodeseek') {
+                return requireSearchTopicTitles(
+                  await searchNodeSeek(adapterQuery, { ...options, fetcher: sourceFetcher })
+                );
+              }
+              if (item === 'v2ex') {
+                return requireSearchTopicTitles(await searchV2ex(adapterQuery, { ...options, fetcher: sourceFetcher }));
+              }
+              if (item === 'yaohuo') {
+                return requireSearchTopicTitles(
+                  await searchYaohuoDirect({
+                    query: adapterQuery,
+                    page,
+                    limit: adapterLimit,
+                    yaohuoFetcher: sourceFetcher,
+                    signal,
+                    timeoutMs
+                  })
+                );
+              }
+              throw new Error(`${item} 未注册聚合搜索 adapter`);
+            };
+            return item === 'linuxdo' || item === 'nodeseek'
+              ? runForumSourceReadAttempt(item, aggregateFetcher, readSource, () => signal?.aborted !== true)
+              : readSource(aggregateFetcher);
+          })
+        );
+        const expression = parseSearchExpression(query);
+        const response = {
+          items: sortTopicsByCreatedAt(
+            filterExcludedSearchItems(
+              results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : [])),
+              expression
+            )
+          ).slice(0, limit),
+          errors: mergeSettledSourceErrors(results, sources),
+          hasMore: results.some((result) => result.status === 'fulfilled' && result.value.hasMore),
+          nextPage: results.some((result) => result.status === 'fulfilled' && result.value.hasMore) ? page + 1 : null
+        };
+        const facts = settledDiagnosticFacts(results);
+        return mergeSourceDiagnosticSummaries(
+          response,
+          'aggregate-search',
+          results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : [])),
+          {
+            candidateCount: response.items.length + facts.droppedCount,
+            validCount: response.items.length,
+            droppedCount: facts.droppedCount,
+            partialErrorCount: facts.partialErrorCount,
+            missingFloorCount: facts.missingFloorCount,
+            hasRepeatedCursor: facts.hasRepeatedCursor || response.nextPage === page,
+            isExpectedEmpty: response.items.length === 0 && facts.droppedCount === 0 && facts.partialErrorCount === 0
+          }
+        );
+      },
+      () => signal?.aborted !== true
     );
   }
   const activeFilter = filter?.source === source ? filter : undefined;

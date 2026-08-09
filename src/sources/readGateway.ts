@@ -47,6 +47,7 @@ import {
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceDiagnosticSummary } from './diagnostics';
+import { runForumSourceReadAttempt, withForumSourceReadEligibility } from './forumSourceReadAttempt';
 import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
 import {
   isSessionSource,
@@ -262,6 +263,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       unavailableSources?: readonly Source[];
     }) => Promise<T>,
     context?: ReadGatewayReadContext,
+    signal?: AbortSignal,
     intentFields: DiagnosticFields = {}
   ) => {
     const ownsTrace = !context?.trace;
@@ -286,6 +288,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         !dependencies.currentXiaoyinsiCredentialGeneration ||
         dependencies.currentXiaoyinsiCredentialGeneration() === xiaoyinsiGeneration);
     const readIsCurrent = credentialGenerationsAreCurrent;
+    const recoveryCommitIsEligible = () => readIsCurrent() && signal?.aborted !== true;
     const credentialErrors: SourceErrors = {};
     const loadCredential = async <T>(credentialSource: FeedSource, loader: () => Promise<T>) => {
       try {
@@ -371,14 +374,19 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         isCredentialKnown: blockedIdentitySources.length === 0
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
-      const result = await operation({
-        discourseAuth,
-        fetcher: withDiagnosticFetcher(trace, dependencies.fetcher),
-        linuxDoAuthenticated,
-        nodeSeekAuthenticated,
-        nodeSeekUserAgent: source === 'nodeseek' || source === 'all' ? dependencies.nodeSeekUserAgent() : undefined,
-        ...(unavailableSources.length ? { unavailableSources } : {})
-      });
+      const runOperation = (fetcher: Fetcher) =>
+        operation({
+          discourseAuth,
+          fetcher: withForumSourceReadEligibility(withDiagnosticFetcher(trace, fetcher), recoveryCommitIsEligible),
+          linuxDoAuthenticated,
+          nodeSeekAuthenticated,
+          nodeSeekUserAgent: source === 'nodeseek' || source === 'all' ? dependencies.nodeSeekUserAgent() : undefined,
+          ...(unavailableSources.length ? { unavailableSources } : {})
+        });
+      const result =
+        source === 'linuxdo' || source === 'nodeseek'
+          ? await runForumSourceReadAttempt(source, dependencies.fetcher, runOperation, recoveryCommitIsEligible)
+          : await runOperation(dependencies.fetcher);
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
@@ -512,7 +520,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             ...options,
             ...credentials
           }),
-        context
+        context,
+        options.signal
       );
     },
     getFeed(options: ManagedGetFeedOptions, context?: ReadGatewayReadContext) {
@@ -524,7 +533,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             ...options,
             ...credentials
           }),
-        context
+        context,
+        options.signal
       );
     },
     getEmojiUrls({ source, ...options }: ManagedGetEmojiUrlsOptions, context?: ReadGatewayReadContext) {
@@ -537,7 +547,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             auth: discourseAuth,
             fetcher
           }),
-        context
+        context,
+        options.signal
       );
     },
     searchTopics(options: ManagedSearchTopicsOptions, context?: ReadGatewayReadContext) {
@@ -549,7 +560,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             ...options,
             ...credentials
           }),
-        context
+        context,
+        options.signal
       );
     },
     searchTagOptions(request: ManagedTagOptionSearchOptions, context?: ReadGatewayReadContext) {
@@ -563,7 +575,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             auth: discourseAuth,
             fetcher
           }),
-        context
+        context,
+        options.signal
       );
     },
     searchUserOptions(request: ManagedUserOptionSearchOptions, context?: ReadGatewayReadContext) {
@@ -577,7 +590,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             auth: discourseAuth,
             fetcher
           }),
-        context
+        context,
+        options.signal
       );
     },
     searchSemanticTopics(
@@ -593,7 +607,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             fetcher,
             linuxDoAccess: discourseAuth?.linuxdo
           }),
-        context
+        context,
+        options.signal
       );
     },
     getLinuxDoLevelProfile(
@@ -616,7 +631,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             fetcher
           });
         },
-        context
+        context,
+        options.signal
       );
     },
     getTopic(options: ManagedGetTopicOptions, context?: ReadGatewayReadContext) {
@@ -628,7 +644,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             ...options,
             ...credentials
           }),
-        context
+        context,
+        options.signal
       );
     },
     getReplies(options: ManagedGetRepliesOptions, context?: ReadGatewayReadContext) {
@@ -641,6 +658,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             ...credentials
           }),
         context,
+        options.signal,
         { replyOrder: options.order, positionKind: options.position.kind }
       );
     },
@@ -653,7 +671,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             ...options,
             ...credentials
           }),
-        context
+        context,
+        options.signal
       );
     },
     getUserProfile(options: ManagedGetUserProfileOptions, context?: ReadGatewayReadContext) {
@@ -665,7 +684,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             ...options,
             ...credentials
           }),
-        context
+        context,
+        options.signal
       );
     },
     resolveNodeSeekUser(options: ManagedResolveNodeSeekUserOptions, context?: ReadGatewayReadContext) {
@@ -679,7 +699,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             nodeSeekUserAgent,
             signal: options.signal
           }),
-        context
+        context,
+        options.signal
       );
     },
     getLevelProfile(
@@ -699,7 +720,8 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           }
           return getLocalXiaoyinsiLevelProfile({ ...options, credentials, fetcher });
         },
-        context
+        context,
+        options.signal
       );
     }
   };

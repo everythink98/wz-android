@@ -184,34 +184,22 @@ function leadingReplyReferenceParagraphHtml(
   return restHtml ? `${referenceHtml}<p>${restHtml}</p>` : referenceHtml;
 }
 
-export function markNodeSeekReplyReferenceLinks(html: string, baseUrl?: string) {
-  try {
-    const root = parseHtml(html);
-    let changed = false;
-    root.querySelectorAll('p').forEach((paragraph) => {
-      const replacementHtml = leadingReplyReferenceParagraphHtml(paragraph, baseUrl);
-      if (replacementHtml) {
-        paragraph.replaceWith(replacementHtml);
-        changed = true;
-      }
-    });
-    root.querySelectorAll('a[href]').forEach((link) => {
-      const info = linkReferenceInfo(link, baseUrl);
-      if (!info) {
-        return;
-      }
-      if (info.type === 'mention') {
-        appendClass(link, NODESEEK_MENTION_CLASS);
-        changed = true;
-        return;
-      }
-      appendClass(link, NODESEEK_FLOOR_CLASS);
+export function markNodeSeekReplyReferenceNodes(root: ReturnType<typeof parseHtml>, baseUrl?: string) {
+  let changed = false;
+  root.querySelectorAll('p').forEach((paragraph) => {
+    const replacementHtml = leadingReplyReferenceParagraphHtml(paragraph, baseUrl);
+    if (replacementHtml) {
+      paragraph.replaceWith(replacementHtml);
       changed = true;
-    });
-    return changed ? root.toString() : html;
-  } catch {
-    return html;
-  }
+    }
+  });
+  root.querySelectorAll('a[href]').forEach((link) => {
+    const info = linkReferenceInfo(link, baseUrl);
+    if (!info) return;
+    appendClass(link, info.type === 'mention' ? NODESEEK_MENTION_CLASS : NODESEEK_FLOOR_CLASS);
+    changed = true;
+  });
+  return changed;
 }
 
 export function normalizeRenderableHtml(html: string | undefined) {

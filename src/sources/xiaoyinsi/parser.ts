@@ -1,10 +1,7 @@
 import type { TopicPoll } from '@/domain/forum/models';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
-import {
-  discourseContentNeedsCalloutNormalization,
-  discoursePollPlaceholder,
-  normalizeDiscourseCallouts
-} from '@/sources/discourse/content';
+import { discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
+import { discourseContentNeedsCalloutNormalization, normalizeDiscourseCallouts } from '@/sources/discourse/content';
 import { XIAOYINSI_BASE_URL } from './protocol';
 
 export function sanitizeXiaoyinsiContentHtml(html: unknown, polls?: TopicPoll[]) {

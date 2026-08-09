@@ -10,6 +10,7 @@ vi.mock('react-native', () => ({
 }));
 
 import * as SecureStore from 'expo-secure-store';
+import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import {
   NETWORK_PROXY_STORAGE_KEY,
   applyNetworkProxy,
@@ -21,12 +22,15 @@ import {
   networkProxyWebViewBlockMessage,
   normalizeNetworkProxyState,
   removeNetworkProxyProfile,
-  recoverForumReadChannel,
+  releaseReadNetworkRuntimeGeneration,
+  recoverReadNetworkRuntime,
+  retainReadNetworkRuntimeGeneration,
   saveNetworkProxyState,
   testNetworkProxy,
   validateNetworkProxyProfile,
   type NetworkProxyProfile
 } from './networkProxy';
+import { getReadNetworkRuntimeSnapshot } from './readNetworkRuntime';
 
 const socksProfile: NetworkProxyProfile = {
   id: 'tg',
@@ -189,28 +193,204 @@ describe('network proxy settings', () => {
     expect(testProxy).toHaveBeenCalledWith(socksProfile);
   });
 
-  it('[REG-PROXY-009] keeps read-channel recovery single-flight per forum source', async () => {
-    const recover = vi.fn(async (source: string) => ({
+  it('[REG-PROXY-010] keeps read-channel recovery single-flight across sources for one generation', async () => {
+    const before = getReadNetworkRuntimeSnapshot();
+    const recover = vi.fn(async (_source: string, expectedGeneration: number) => ({
       ok: true,
-      generation: source === 'nodeseek' ? 2 : 3,
+      rotated: true,
+      previousGeneration: expectedGeneration,
+      generation: expectedGeneration + 1,
       canceledQueued: 1,
       canceledRunning: 1
     }));
-    const module = { recoverForumReadChannel: recover };
+    const acknowledgeReadNetworkRuntimeApply = vi.fn(async () => true);
+    const module = { acknowledgeReadNetworkRuntimeApply, recoverForumReadChannel: recover };
 
     await expect(
       Promise.all([
-        recoverForumReadChannel('nodeseek', module),
-        recoverForumReadChannel('nodeseek', module),
-        recoverForumReadChannel('linuxdo', module)
+        recoverReadNetworkRuntime('nodeseek', before.generation, { module }),
+        recoverReadNetworkRuntime('nodeseek', before.generation, { module }),
+        recoverReadNetworkRuntime('linuxdo', before.generation, { module })
       ])
     ).resolves.toEqual([
-      expect.objectContaining({ generation: 2 }),
-      expect.objectContaining({ generation: 2 }),
-      expect.objectContaining({ generation: 3 })
+      expect.objectContaining({ generation: before.generation + 1 }),
+      expect.objectContaining({ generation: before.generation + 1 }),
+      expect.objectContaining({ generation: before.generation + 1 })
     ]);
-    expect(recover).toHaveBeenCalledTimes(2);
-    expect(recover).toHaveBeenNthCalledWith(1, 'nodeseek');
-    expect(recover).toHaveBeenNthCalledWith(2, 'linuxdo');
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(recover).toHaveBeenCalledWith('nodeseek', before.generation, expect.stringMatching(/^trace-/));
+    expect(getReadNetworkRuntimeSnapshot()).toEqual({
+      generation: before.generation + 1,
+      triggerSource: 'nodeseek'
+    });
+    expect(acknowledgeReadNetworkRuntimeApply).toHaveBeenCalledWith(
+      expect.stringMatching(/^trace-/),
+      before.generation,
+      before.generation + 1
+    );
+  });
+
+  it('[REG-PROXY-010] rejects an invalid expected generation before crossing the Native recovery seam', async () => {
+    const before = getReadNetworkRuntimeSnapshot();
+    const recoverForumReadChannel = vi.fn();
+    const module = {
+      acknowledgeReadNetworkRuntimeApply: vi.fn(async () => true),
+      recoverForumReadChannel
+    };
+
+    await expect(recoverReadNetworkRuntime('nodeseek', -1, { module })).rejects.toThrow(
+      '读取网络运行时 generation 无效'
+    );
+    await expect(recoverReadNetworkRuntime('linuxdo', before.generation + 1, { module })).rejects.toThrow(
+      '读取网络运行时 generation 无效'
+    );
+
+    expect(recoverForumReadChannel).not.toHaveBeenCalled();
+    expect(getReadNetworkRuntimeSnapshot()).toEqual(before);
+  });
+
+  it('[REG-PROXY-010] reuses the initiating recovery trace across Native publication and JS state apply', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
+      source: 'nodeseek',
+      reason: 'timeout'
+    });
+    const before = getReadNetworkRuntimeSnapshot();
+    const recover = vi.fn(async (_source: string, expectedGeneration: number, _traceId: string) => ({
+      ok: true,
+      rotated: true,
+      previousGeneration: expectedGeneration,
+      generation: expectedGeneration + 1,
+      canceledQueued: 0,
+      canceledRunning: 1
+    }));
+    const acknowledgeReadNetworkRuntimeApply = vi.fn(async () => {
+      const events = lines.map((line) => JSON.parse(line));
+      expect(events.at(-1)?.phase).toBe('apply');
+      return true;
+    });
+
+    try {
+      await recoverReadNetworkRuntime('nodeseek', before.generation, {
+        module: { acknowledgeReadNetworkRuntimeApply, recoverForumReadChannel: recover },
+        trace
+      });
+
+      expect(recover).toHaveBeenCalledWith('nodeseek', before.generation, trace.traceId);
+      const events = lines.map((line) => JSON.parse(line));
+      expect(new Set(events.map((event) => event.traceId))).toEqual(new Set([trace.traceId]));
+      expect(events.map((event) => event.phase)).toEqual(['intent', 'apply']);
+      expect(acknowledgeReadNetworkRuntimeApply).toHaveBeenCalledWith(
+        trace.traceId,
+        before.generation,
+        before.generation + 1
+      );
+    } finally {
+      setDiagnosticWriter(null);
+    }
+  });
+
+  it('[REG-PROXY-010] keeps the generation retryable when native publication fails', async () => {
+    const before = getReadNetworkRuntimeSnapshot();
+    const recover = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Glide publication failed'))
+      .mockImplementationOnce(async (source: string, expectedGeneration: number) => ({
+        ok: true,
+        rotated: true,
+        previousGeneration: expectedGeneration,
+        generation: expectedGeneration + 1,
+        canceledQueued: 0,
+        canceledRunning: 0,
+        source
+      }));
+    const module = { acknowledgeReadNetworkRuntimeApply: vi.fn(async () => true), recoverForumReadChannel: recover };
+
+    await expect(recoverReadNetworkRuntime('yaohuo', before.generation, { module })).rejects.toThrow(
+      'Glide publication failed'
+    );
+    expect(getReadNetworkRuntimeSnapshot()).toEqual(before);
+    await expect(recoverReadNetworkRuntime('yaohuo', before.generation, { module })).resolves.toEqual(
+      expect.objectContaining({ generation: before.generation + 1 })
+    );
+    expect(recover).toHaveBeenNthCalledWith(1, 'yaohuo', before.generation, expect.stringMatching(/^trace-/));
+    expect(recover).toHaveBeenNthCalledWith(2, 'yaohuo', before.generation, expect.stringMatching(/^trace-/));
+  });
+
+  it('[REG-PROXY-010] keeps a published recovery successful when only the diagnostic apply ack fails', async () => {
+    const before = getReadNetworkRuntimeSnapshot();
+    const result = {
+      ok: true,
+      rotated: true,
+      previousGeneration: before.generation,
+      generation: before.generation + 1,
+      canceledQueued: 0,
+      canceledRunning: 0
+    };
+    const module = {
+      acknowledgeReadNetworkRuntimeApply: vi.fn(async () => {
+        throw new Error('diagnostic bridge unavailable');
+      }),
+      recoverForumReadChannel: vi.fn(async () => result)
+    };
+
+    await expect(recoverReadNetworkRuntime('xiaoyinsi', before.generation, { module })).resolves.toEqual(result);
+    expect(getReadNetworkRuntimeSnapshot()).toEqual({
+      generation: result.generation,
+      triggerSource: 'xiaoyinsi'
+    });
+  });
+
+  it('[REG-PROXY-010] retains and releases a generation for a healthy long-lived media owner', async () => {
+    const retain = vi.fn(async (generation: number) => ({ generation, retained: true }));
+    const release = vi.fn(async () => true);
+    const module = {
+      retainReadNetworkGeneration: retain,
+      releaseReadNetworkGeneration: release
+    };
+
+    await expect(retainReadNetworkRuntimeGeneration(7, module)).resolves.toEqual({ generation: 7, retained: true });
+    await expect(releaseReadNetworkRuntimeGeneration(7, module)).resolves.toBe(true);
+    expect(retain).toHaveBeenCalledWith(7);
+    expect(release).toHaveBeenCalledWith(7);
+    await expect(retainReadNetworkRuntimeGeneration(-1, module)).resolves.toBeNull();
+    await expect(releaseReadNetworkRuntimeGeneration(Number.NaN, module)).resolves.toBe(false);
+
+    retain.mockResolvedValueOnce({ generation: 8, retained: false });
+    await expect(retainReadNetworkRuntimeGeneration(7, module)).resolves.toEqual({ generation: 8, retained: false });
+  });
+
+  it('[REG-PROXY-010] rejects a native success claim that did not publish a newer generation', async () => {
+    const before = getReadNetworkRuntimeSnapshot();
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const module = {
+      acknowledgeReadNetworkRuntimeApply: vi.fn(async () => true),
+      recoverForumReadChannel: vi.fn(async () => ({
+        ok: true,
+        rotated: false,
+        previousGeneration: before.generation,
+        generation: before.generation,
+        canceledQueued: 0,
+        canceledRunning: 0
+      }))
+    };
+
+    try {
+      await expect(recoverReadNetworkRuntime('v2ex', before.generation, { module })).rejects.toThrow(
+        '读取网络运行时自愈失败'
+      );
+      expect(getReadNetworkRuntimeSnapshot()).toEqual(before);
+      const events = lines.map((line) => JSON.parse(line));
+      expect(events.map((event) => event.phase)).toEqual(['intent', 'finish']);
+      expect(events.at(-1)).toEqual(expect.objectContaining({ outcome: 'failure', reason: 'invalid_response' }));
+    } finally {
+      setDiagnosticWriter(null);
+    }
   });
 });

@@ -1,20 +1,46 @@
-import type { Reply, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { QuotedPostMetadata, Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import { accessRequirementFromNoticeText } from '@/domain/forum/accessRequirements';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { forumAccessRequirementText } from '@/domain/forum/presentation';
-import { forumVideoBlockFromHtml, splitTopicContentHtml } from '@/domain/forum/topicContentSplit';
+import {
+  compileForumContent,
+  type ForumContentCompileRole,
+  type ForumContentRendering
+} from '@/domain/forum/topicContentSplit';
 import {
   quotedPostReferenceFromReply,
   quotedPostReferenceKey,
+  topicQuotedPostInstanceKey,
   type QuotedPostReference
 } from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
-import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { stableTextHash } from './contentIdentity';
 
 export type TopicContentItem =
-  | { type: 'content'; key: string; html: string }
-  | { type: 'contentVideo'; key: string; src: string }
+  | {
+      type: 'content';
+      key: string;
+      html: string;
+      rendering?: ForumContentRendering;
+      groupKey: string;
+      continuation: 'only' | 'first' | 'middle' | 'last';
+      networkMediaCount: number;
+    }
+  | {
+      type: 'contentVideo';
+      key: string;
+      src: string;
+      groupKey: string;
+      continuation: 'only' | 'first' | 'middle' | 'last';
+      networkMediaCount: number;
+      rendering?: ForumContentRendering;
+    }
+  | {
+      type: 'quoteSummary';
+      key: string;
+      instanceKey: string;
+      quote: QuotedPostMetadata;
+    }
   | { type: 'poll'; key: string; poll: TopicPoll }
   | { type: 'accessNotice'; key: string; label: string; detail: string };
 
@@ -25,13 +51,72 @@ export type AcceptedAnswerPresentation = {
   reply?: Reply;
 };
 
-type TopicOpeningSeed = Pick<TopicDetail, 'accessRequirement' | 'contentHtml' | 'polls' | 'source'>;
+type TopicOpeningSeed = Pick<TopicDetail, 'accessRequirement' | 'contentHtml' | 'id' | 'polls' | 'source'>;
 type AcceptedAnswerSeed = Pick<TopicDetail, 'acceptedAnswerFloor' | 'id' | 'replies' | 'source'>;
+
+const plannedReplyContentCache = new WeakMap<Reply, Map<string, TopicContentItem[]>>();
 
 function isAccessNotice(topic: TopicOpeningSeed) {
   if (!topic.accessRequirement) return false;
   const text = textContentFromHtml(topic.contentHtml || '');
   return !text || Boolean(accessRequirementFromNoticeText(text));
+}
+
+function plannedContentItems({
+  html,
+  keyPrefix,
+  polls,
+  role,
+  source,
+  topicId
+}: {
+  html: string;
+  keyPrefix: string;
+  polls?: TopicPoll[];
+  role: ForumContentCompileRole;
+  source: Source;
+  topicId?: string;
+}): TopicContentItem[] {
+  let quoteIndex = 0;
+  return compileForumContent({ html, polls, role, source, topicId }).rows.map((row): TopicContentItem => {
+    if (row.type === 'poll') {
+      return {
+        type: 'poll',
+        key: `${keyPrefix}-poll-${row.poll.name || row.poll.id || row.keySuffix}`,
+        poll: row.poll
+      };
+    }
+    if (row.type === 'quote') {
+      const index = quoteIndex++;
+      const referenceKey = quotedPostReferenceKey(row.quote.reference);
+      return {
+        type: 'quoteSummary',
+        key: `${keyPrefix}-quote-${index}-${referenceKey}`,
+        instanceKey: topicQuotedPostInstanceKey(topicId!, row.quote.reference),
+        quote: row.quote
+      };
+    }
+    if (row.type === 'video') {
+      return {
+        type: 'contentVideo',
+        key: `${keyPrefix}-video-${row.keySuffix}-${stableTextHash(row.src)}`,
+        continuation: row.continuation,
+        groupKey: row.groupKey,
+        networkMediaCount: row.networkMediaCount,
+        rendering: row.rendering,
+        src: row.src
+      };
+    }
+    return {
+      type: 'content',
+      key: `${keyPrefix}-content-${row.keySuffix}-${stableTextHash(row.html)}`,
+      continuation: row.continuation,
+      groupKey: row.groupKey,
+      html: row.html,
+      rendering: row.rendering,
+      networkMediaCount: row.networkMediaCount
+    };
+  });
 }
 
 function topicContentItems(topic: TopicOpeningSeed, showsAccessNotice: boolean): TopicContentItem[] {
@@ -45,34 +130,66 @@ function topicContentItems(topic: TopicOpeningSeed, showsAccessNotice: boolean):
       }
     ];
   }
-  const parts = isDiscourseSource(topic.source)
-    ? splitDiscourseContentHtml(topic.contentHtml || '', topic.polls || [])
-    : [{ type: 'html' as const, html: topic.contentHtml || '' }];
-  return parts.flatMap((part, partIndex): TopicContentItem[] => {
-    if (part.type === 'poll') {
-      return [
-        {
-          type: 'poll',
-          key: `topic-poll-${part.poll.name || part.poll.id || partIndex}`,
-          poll: part.poll
-        }
-      ];
-    }
-    return splitTopicContentHtml(part.html).map((html, index) => {
-      const video = forumVideoBlockFromHtml(html);
-      return video
-        ? {
-            type: 'contentVideo',
-            key: `topic-video-${partIndex}-${index}-${stableTextHash(video.src)}`,
-            src: video.src
-          }
-        : {
-            type: 'content',
-            key: `topic-content-${partIndex}-${index}-${stableTextHash(html)}`,
-            html
-          };
-    });
+  return plannedContentItems({
+    html: topic.contentHtml || '',
+    keyPrefix: 'topic',
+    polls: topic.polls,
+    role: 'opening',
+    source: topic.source,
+    topicId: topic.id
   });
+}
+
+function plannedReplyContentItems(
+  reply: Reply,
+  source: Source,
+  keyPrefix: string,
+  role: 'accepted-answer' | 'quoted-reply'
+) {
+  const cacheKey = `${source}:${keyPrefix}:${role}`;
+  const cached = plannedReplyContentCache.get(reply)?.get(cacheKey);
+  if (cached) return cached;
+  const items = plannedContentItems({
+    html: reply.contentHtml,
+    keyPrefix,
+    polls: reply.polls,
+    role,
+    source
+  });
+  const replyCache = plannedReplyContentCache.get(reply) || new Map<string, TopicContentItem[]>();
+  replyCache.set(cacheKey, items);
+  plannedReplyContentCache.set(reply, replyCache);
+  return items;
+}
+
+export function buildTopicQuotedPostContentItems({
+  instanceKey,
+  reply,
+  source
+}: {
+  instanceKey: string;
+  reply: Reply;
+  source: Source;
+}) {
+  return plannedReplyContentItems(reply, source, `topic-quote-${stableTextHash(instanceKey)}`, 'quoted-reply');
+}
+
+export function buildAcceptedAnswerContentItems({
+  floor,
+  reply,
+  source
+}: {
+  floor: number;
+  reply: Reply;
+  source: Source;
+}) {
+  const fullItems = plannedReplyContentItems(reply, source, `accepted-answer-${floor}`, 'accepted-answer');
+  const firstItem = fullItems[0];
+  const firstAdditionalPoll = fullItems.slice(1).find((item) => item.type === 'poll');
+  return {
+    fullItems,
+    previewItems: [firstItem, firstAdditionalPoll].filter((item): item is TopicContentItem => Boolean(item))
+  };
 }
 
 function acceptedAnswerForTopic(

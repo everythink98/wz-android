@@ -1,4 +1,15 @@
-import { decodeHtml, isAllowedDataImageUrl, parseHtml } from '@/domain/forum/html';
+import { isAllowedDataImageUrl, parseHtml } from '@/domain/forum/html';
+import {
+  DISPLAY_CANDIDATE_KIND_ATTR,
+  forumImageAttributesFromText as imageAttributesFromText,
+  forumImageAttributeValue as attributeValue,
+  forumImageTagName as safeTagName,
+  isInlineForumImage as isInlineForumImageAttributes,
+  isInlineForumImageUrl,
+  ORIGINAL_IMAGE_SOURCE_ATTR,
+  parseForumImageDimension as parseImageDimension,
+  type ParsedForumImageNode
+} from '@/domain/forum/forumContentMedia';
 import { linkDiagnosticRefs } from '@/platform/diagnostics/diagnosticPolicy';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
 import { isHttpOrHttpsUrl, normalizeImagePreviewUrl } from './imageRequestSource';
@@ -27,11 +38,7 @@ export interface ImagePreviewCatalog {
   itemIndexBySourceUrl: Record<string, number>;
 }
 
-export const DISPLAY_CANDIDATE_KIND_ATTR = 'data-forum-display-candidate-kind';
-
-export const ORIGINAL_IMAGE_SOURCE_ATTR = 'data-forum-original-src';
-
-export const INLINE_EMOJI_MAX_SIZE = 24;
+const MAX_BODY_IMAGE_PIXEL_WIDTH = 2048;
 
 export function extractImageUrlsFromHtml(html: string): string[] {
   return extractImagePreviewEntriesFromHtml(html).map((entry) => entry.item.originalUri);
@@ -78,10 +85,6 @@ export function isPreviewableImageUrl(url: unknown): boolean {
     return true;
   }
   return /\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|webp)(?:[?#].*)?$/i.test(clean);
-}
-
-export function isInlineForumImage(attributes: Record<string, string | undefined>) {
-  return isInlineForumImageAttributes(attributes);
 }
 
 export function createImagePreviewCatalog(
@@ -159,7 +162,7 @@ type ImagePreviewEntry = {
 };
 
 export function imagePreviewEntryFromImage(
-  image: ParsedImageNode,
+  image: ParsedForumImageNode,
   contentWidth = 0,
   pixelRatio = 1
 ): ImagePreviewEntry | null {
@@ -357,7 +360,7 @@ function selectResponsiveSrcsetImageUrl(srcset: string, contentWidth: number, pi
   if (kind === 'w' && (!Number.isFinite(contentWidth) || contentWidth <= 0)) {
     return '';
   }
-  const target = kind === 'w' ? contentWidth * pixelRatio : pixelRatio;
+  const target = kind === 'w' ? Math.min(contentWidth * pixelRatio, MAX_BODY_IMAGE_PIXEL_WIDTH) : pixelRatio;
   const sorted = [...candidates].sort((left, right) => left.value - right.value);
   return (sorted.find((candidate) => candidate.value >= target) || sorted[sorted.length - 1])?.uri || '';
 }
@@ -383,10 +386,6 @@ function bestSrcsetImageUrl(srcset: string) {
   return bestUrl;
 }
 
-function decodeHtmlAttribute(value: unknown): string {
-  return typeof value === 'string' ? decodeHtml(value) : '';
-}
-
 function uniqueStrings(items: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -398,29 +397,6 @@ function uniqueStrings(items: string[]): string[] {
   }
   return result;
 }
-
-export function imageAttributesFromText(value: string): Record<string, string> {
-  const attributes: Record<string, string> = {};
-  const pattern = /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-  let match = pattern.exec(value);
-  while (match) {
-    attributes[match[1].toLowerCase()] = decodeHtmlAttribute(match[2] || match[3] || match[4] || '');
-    match = pattern.exec(value);
-  }
-  return attributes;
-}
-
-export type ParsedImageNode = {
-  tagName: string;
-  attributes: Record<string, string | undefined>;
-  innerHTML?: string;
-  set_content?: (content: string) => void;
-  setAttribute?: (name: string, value: string) => void;
-  replaceWith?: (content: string) => void;
-  querySelectorAll?: (selector: string) => ParsedImageNode[];
-  parentNode?: unknown;
-  parent?: unknown;
-};
 
 function lightboxHrefForImage(image: { parentNode?: unknown; parent?: unknown }) {
   let current = image.parentNode || image.parent;
@@ -444,109 +420,4 @@ function lightboxHrefForImage(image: { parentNode?: unknown; parent?: unknown })
     current = element.parentNode || element.parent;
   }
   return '';
-}
-
-export function safeTagName(value: unknown) {
-  if (!value || typeof value !== 'object') {
-    return '';
-  }
-  const element = value as { rawTagName?: string | null; tagName?: string };
-  return String(element.rawTagName || element.tagName || '').toLowerCase();
-}
-
-export function attributeValue(attributes: Record<string, string | undefined>, name: string) {
-  return String(attributes[name] || attributes[name.toLowerCase()] || '').trim();
-}
-
-export function isInlineForumImageAttributes(attributes: Record<string, string | undefined>) {
-  const className = attributeValue(attributes, 'class');
-  const src = attributeValue(attributes, 'src');
-  const title = attributeValue(attributes, 'title');
-  const alt = attributeValue(attributes, 'alt');
-  const role = attributeValue(attributes, 'role');
-  const width = parseImageDimension(attributeValue(attributes, 'width'));
-  const height = parseImageDimension(attributeValue(attributes, 'height'));
-  const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
-  const hasTinyExplicitSize = width > 0 && height > 0 && Math.max(width, height) <= INLINE_EMOJI_MAX_SIZE;
-  const classMarksEmoji = /(^|\s)(emoji|emoticon|smiley|twemoji)(\s|$)/i.test(className);
-  const classMarksSticker = /(^|\s)sticker(\s|$)/i.test(className);
-  const classMarksAvatar = /(^|\s)(avatar|user-avatar)(\s|$)/i.test(className);
-  const runtimeMarksInlineSized = /^true$/i.test(attributeValue(attributes, 'data-forum-inline-sized'));
-  const urlMarksEmoji = isInlineForumImageUrl(src);
-  const urlMarksAvatar = /(^|\/)user_avatar\//i.test(src);
-  const titleMarksEmoji = isForumEmojiLabel(title);
-  const altMarksEmoji = isForumEmojiLabel(alt);
-  const labelMarksSticker = isForumStickerImageAttributes(attributes);
-  const hasEmojiMarker =
-    classMarksEmoji || classMarksSticker || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
-  return (
-    runtimeMarksInlineSized ||
-    labelMarksSticker ||
-    (isV2exEmbeddedImageAttributes(attributes) && hasTinyExplicitSize) ||
-    (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji)) ||
-    ((classMarksAvatar || urlMarksAvatar) && hasSmallSize)
-  );
-}
-
-export function isV2exEmbeddedImageAttributes(attributes: Record<string, string | undefined>) {
-  return /(^|\s)embedded_image(\s|$)/i.test(attributeValue(attributes, 'class'));
-}
-
-export function isForumStickerImageAttributes(attributes: Record<string, string | undefined>) {
-  const className = attributeValue(attributes, 'class');
-  return (
-    /(^|\s)sticker(\s|$)/i.test(className) ||
-    isForumStickerLabel(attributeValue(attributes, 'title')) ||
-    isForumStickerLabel(attributeValue(attributes, 'alt'))
-  );
-}
-
-function isForumEmojiLabel(value: string) {
-  return /^:[a-z0-9_+.-]+:$/i.test(value) || isForumStickerLabel(value);
-}
-
-function isForumStickerLabel(value: string) {
-  return /^xhj\d{3}$/i.test(value.trim());
-}
-
-export function isForumAvatarImageAttributes(attributes: Record<string, string | undefined>) {
-  const className = attributeValue(attributes, 'class');
-  const src = attributeValue(attributes, 'src');
-  const width = parseImageDimension(attributeValue(attributes, 'width'));
-  const height = parseImageDimension(attributeValue(attributes, 'height'));
-  const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
-  return hasSmallSize && (/(^|\s)(avatar|user-avatar)(\s|$)/i.test(className) || /(^|\/)user_avatar\//i.test(src));
-}
-
-function isInlineForumImageUrl(url: string) {
-  const markers = new Set([
-    'emoji',
-    'emojis',
-    'emoticon',
-    'emoticons',
-    'emotion',
-    'emotions',
-    'face',
-    'faces',
-    'smiley',
-    'smilies',
-    'twemoji'
-  ]);
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname.toLowerCase().includes('twemoji')) {
-      return true;
-    }
-    return parsed.pathname.split('/').some((part) => markers.has(part.toLowerCase()));
-  } catch {
-    return url
-      .split(/[?#]/)[0]
-      .split('/')
-      .some((part) => markers.has(part.toLowerCase()));
-  }
-}
-
-export function parseImageDimension(value: string) {
-  const match = value.match(/^\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : 0;
 }

@@ -13,7 +13,9 @@ import {
   markDiagnosticStage,
   registerDiagnosticContextFetcher
 } from '@/platform/diagnostics/diagnostics';
-import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import { currentReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
+import { registerForumReadResponseEvidence } from '@/sources/forumSourceReadAttempt';
 
 export type LinuxDoHiddenBrowserFailureReason =
   'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
@@ -181,7 +183,7 @@ async function fetchLinuxDoWebViewOnly(
   webViewFetcher: Fetcher,
   url: string,
   init?: RequestInit,
-  directFailure?: { owner: 'account'; reason: 'network_error' }
+  directFailure?: { owner?: 'account'; reason: 'network_error' | 'timeout' }
 ) {
   const inheritedTrace = diagnosticTraceForRequest(init);
   const trace =
@@ -248,35 +250,39 @@ async function fetchLinuxDoWebViewOnly(
 export function createLinuxDoWebViewFallbackFetcher({
   allowWebViewFallback = () => true,
   defaultFetcher = fetch,
+  readNetworkRuntimeGeneration = currentReadNetworkRuntimeGeneration,
   recoverReadChannel,
   webViewFetcher
 }: {
   allowWebViewFallback?: (url: string) => boolean;
   defaultFetcher?: Fetcher;
-  recoverReadChannel?: () => Promise<unknown>;
+  readNetworkRuntimeGeneration?: () => number;
+  recoverReadChannel?: (expectedGeneration: number, trace: DiagnosticTrace) => Promise<unknown>;
   webViewFetcher: Fetcher;
 }): Fetcher {
-  const recoverTimedOutRead = async () => {
-    if (!recoverReadChannel) throw new LinuxDoDirectFetchTimeoutError('linux.do direct fetch timeout');
-    const trace = beginDiagnosticTrace('network', 'channel-recovery', { source: 'linuxdo', reason: 'timeout' });
+  let evidenceEpoch = 0;
+  let latestConfirmedDirectOrdinal = 0;
+  let requestOrdinal = 0;
+  const recordQualifiedReadFallback = async (
+    reason: 'network_error' | 'timeout',
+    ordinal: number,
+    expectedEvidenceEpoch: number,
+    expectedGeneration: number
+  ) => {
+    if (expectedEvidenceEpoch !== evidenceEpoch || ordinal <= latestConfirmedDirectOrdinal) return;
+    if (!recoverReadChannel) return;
+    evidenceEpoch += 1;
+    const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', { source: 'linuxdo', reason });
     try {
-      const result = await recoverReadChannel();
-      const fields = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
-      finishDiagnosticTrace(trace, 'success', {
-        source: 'linuxdo',
-        reason: 'timeout',
-        ...(typeof fields.generation === 'number' ? { generation: fields.generation } : {}),
-        ...(typeof fields.canceledQueued === 'number' ? { queuedCount: fields.canceledQueued } : {}),
-        ...(typeof fields.canceledRunning === 'number' ? { runningCount: fields.canceledRunning } : {})
-      });
-    } catch (error) {
-      finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: 'timeout' });
-      throw error;
+      await recoverReadChannel(expectedGeneration, trace);
+    } catch {
+      // Native owns the terminal event once the trace crosses the bridge.
     }
   };
   return registerDiagnosticContextFetcher(async (input, init) => {
     const url = String(input);
     const method = String(init?.method || 'GET').toUpperCase();
+    const ordinal = ++requestOrdinal;
     if (hasLinuxDoConnectSessionRecoveryIntent(init) && url === LINUXDO_CONNECT_URL && method === 'GET') {
       if (!allowWebViewFallback(url)) {
         throw new LinuxDoHiddenBrowserFailureError('renderer', 'linux.do 页面读取当前不可用');
@@ -290,15 +296,32 @@ export function createLinuxDoWebViewFallbackFetcher({
       return fetchLinuxDoWebViewOnly(webViewFetcher, url, init);
     }
     const isIdempotentRead = isLinuxDoRequestUrl(url) && (method === 'GET' || method === 'HEAD');
+    const requestStartGeneration = readNetworkRuntimeGeneration();
+    let qualifiedFallback = false;
     let response: Response;
     try {
       response = isIdempotentRead
         ? await fetchLinuxDoDirectly(defaultFetcher, url, init)
         : await defaultFetcher(input, init);
     } catch (error) {
-      if (error instanceof LinuxDoDirectFetchTimeoutError && !init?.signal?.aborted && url !== LINUXDO_CONNECT_URL) {
-        await recoverTimedOutRead();
-        response = await defaultFetcher(input, init);
+      if (
+        error instanceof LinuxDoDirectFetchTimeoutError &&
+        !init?.signal?.aborted &&
+        url !== LINUXDO_CONNECT_URL &&
+        allowWebViewFallback(url)
+      ) {
+        response = await fetchLinuxDoWebViewOnly(webViewFetcher, url, init, { reason: 'timeout' });
+        if (response.ok) {
+          qualifiedFallback = true;
+          const expectedEvidenceEpoch = evidenceEpoch;
+          registerForumReadResponseEvidence(init, response, {
+            commit: () =>
+              recordQualifiedReadFallback('timeout', ordinal, expectedEvidenceEpoch, requestStartGeneration),
+            kind: 'fallback',
+            ordinal,
+            source: 'linuxdo'
+          });
+        }
       } else {
         const intent = browserFetchIntentFromInit(init);
         if (
@@ -309,10 +332,21 @@ export function createLinuxDoWebViewFallbackFetcher({
           normalizeDiagnosticReason(error) === 'network_error' &&
           allowWebViewFallback(url)
         ) {
-          return fetchLinuxDoWebViewOnly(webViewFetcher, url, init, {
+          const fallbackResponse = await fetchLinuxDoWebViewOnly(webViewFetcher, url, init, {
             owner: 'account',
             reason: 'network_error'
           });
+          if (fallbackResponse.ok) {
+            const expectedEvidenceEpoch = evidenceEpoch;
+            registerForumReadResponseEvidence(init, fallbackResponse, {
+              commit: () =>
+                recordQualifiedReadFallback('network_error', ordinal, expectedEvidenceEpoch, requestStartGeneration),
+              kind: 'fallback',
+              ordinal,
+              source: 'linuxdo'
+            });
+          }
+          return fallbackResponse;
         }
         throw error;
       }
@@ -338,6 +372,19 @@ export function createLinuxDoWebViewFallbackFetcher({
       return allowWebViewFallback(url)
         ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status)
         : response;
+    }
+    if (response.ok && !qualifiedFallback) {
+      registerForumReadResponseEvidence(init, response, {
+        commit: async () => {
+          if (ordinal > latestConfirmedDirectOrdinal) {
+            latestConfirmedDirectOrdinal = ordinal;
+            evidenceEpoch += 1;
+          }
+        },
+        kind: 'direct',
+        ordinal,
+        source: 'linuxdo'
+      });
     }
     return response;
   });

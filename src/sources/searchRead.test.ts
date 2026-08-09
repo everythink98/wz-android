@@ -7,6 +7,7 @@ vi.mock('expo-secure-store', () => ({
 }));
 
 import { searchTopics } from './searchRead';
+import { registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 
 const nodeSeekPayload = Buffer.from(
   JSON.stringify({
@@ -37,6 +38,50 @@ describe('search read', () => {
     expect(result.items[0]).toMatchObject({ source: 'nodeseek', id: '1' });
     expect(result.errors.linuxdo).toBeTruthy();
     expect(result.errors.v2ex).toBeTruthy();
+  });
+
+  it('[REG-SOURCE-009] discards a parsed child fallback when the outer aggregate search is aborted', async () => {
+    const controller = new AbortController();
+    const nodeSeekBodyRead = Promise.withResolvers<void>();
+    const recoverReadChannel = vi.fn(async () => undefined);
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes('nodeseek.com')) {
+        const response = new Response(`<script>${nodeSeekPayload}</script>`);
+        const readText = response.text.bind(response);
+        vi.spyOn(response, 'text').mockImplementation(async () => {
+          const text = await readText();
+          nodeSeekBodyRead.resolve();
+          return text;
+        });
+        registerForumReadResponseEvidence(init, response, {
+          commit: recoverReadChannel,
+          kind: 'fallback',
+          ordinal: 1,
+          source: 'nodeseek'
+        });
+        return response;
+      }
+      if (input.includes('linux.do')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('请求已取消')), { once: true });
+        });
+      }
+      throw new Error('other source unavailable');
+    });
+    const read = searchTopics({
+      source: 'all',
+      query: 'NodeSeek',
+      fetcher,
+      nodeSeekAuthenticated: true,
+      signal: controller.signal
+    });
+    await nodeSeekBodyRead.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    controller.abort();
+
+    await expect(read).resolves.toMatchObject({ items: [expect.objectContaining({ source: 'nodeseek' })] });
+    expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
   it('includes the registered yaohuo adapter in authenticated aggregate search', async () => {

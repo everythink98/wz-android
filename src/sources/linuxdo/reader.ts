@@ -31,6 +31,7 @@ import {
 } from './protocol';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import {
   discourseCategories,
   discourseOriginalPoster,
@@ -339,42 +340,44 @@ export async function fetchLinuxDoJson<T>(
     options
   );
   const text = await response.text();
-  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
-    throw new LinuxDoCloudflareError();
-  }
-  let data: unknown = {};
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      const bodyMessage = textContentFromHtml(text);
-      const accessRequirement = accessRequirementFromText(bodyMessage);
-      if (!response.ok || accessRequirement) {
-        const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
-        const error = new Error(message);
-        Object.assign(error, {
-          status: response.status,
-          ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
-        });
-        throw error;
-      }
-      throw new Error('linux.do 返回内容格式不正确');
+  return proveForumReadResponse(response, () => {
+    if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+      throw new LinuxDoCloudflareError();
     }
-  }
-  if (!response.ok) {
-    const message = linuxDoErrorText(data, `HTTP ${response.status}`);
-    const accessRequirement = preferredLinuxDoAccessRequirement(
-      accessRequirementFromObject(data),
-      accessRequirementFromText(message)
-    );
-    const error = new Error(message);
-    Object.assign(error, {
-      status: response.status,
-      ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
-    });
-    throw error;
-  }
-  return data as T;
+    let data: unknown = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        const bodyMessage = textContentFromHtml(text);
+        const accessRequirement = accessRequirementFromText(bodyMessage);
+        if (!response.ok || accessRequirement) {
+          const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
+          const error = new Error(message);
+          Object.assign(error, {
+            status: response.status,
+            ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
+          });
+          throw error;
+        }
+        throw new Error('linux.do 返回内容格式不正确');
+      }
+    }
+    if (!response.ok) {
+      const message = linuxDoErrorText(data, `HTTP ${response.status}`);
+      const accessRequirement = preferredLinuxDoAccessRequirement(
+        accessRequirementFromObject(data),
+        accessRequirementFromText(message)
+      );
+      const error = new Error(message);
+      Object.assign(error, {
+        status: response.status,
+        ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
+      });
+      throw error;
+    }
+    return data as T;
+  });
 }
 
 function topicStreamState(data: unknown) {

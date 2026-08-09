@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HTMLContentModel } from 'react-native-render-html';
-import { FORUM_STICKER_TAG } from '@/platform/media/inlineMedia';
+import { FORUM_STICKER_TAG } from '@/domain/forum/forumContentMedia';
 import { HTML_CUSTOM_ELEMENT_MODELS } from './htmlElementModels';
 
 vi.mock('react-native-render-html', () => {

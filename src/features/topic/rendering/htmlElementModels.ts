@@ -1,5 +1,5 @@
 import { HTMLContentModel, HTMLElementModel, defaultHTMLElementModels } from 'react-native-render-html';
-import { INLINE_FORUM_IMAGE_TAG } from '@/platform/media/inlineMedia';
+import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import {
   FORUM_LINK_CARD_TAG,
   FORUM_TERMINAL_REPORT_TAG,

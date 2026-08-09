@@ -1,11 +1,8 @@
 import type { TopicPoll } from '@/domain/forum/models';
 import { FORUM_LINK_CARD_TAG } from '@/domain/forum/html';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
-import {
-  discourseContentNeedsCalloutNormalization,
-  discoursePollPlaceholder,
-  normalizeDiscourseCallouts
-} from '@/sources/discourse/content';
+import { discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
+import { discourseContentNeedsCalloutNormalization, normalizeDiscourseCallouts } from '@/sources/discourse/content';
 import { LINUXDO_BASE_URL } from './protocol';
 
 function escapeLinuxDoContentAttribute(value: string) {

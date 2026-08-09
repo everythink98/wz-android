@@ -34,8 +34,10 @@ export const TopicLoadingState = memo(function TopicLoadingState() {
 });
 
 export const TopicScreen = memo(function TopicScreen({
+  active = true,
   actions,
   article,
+  bodyMediaPaused = false,
   chrome,
   currentNodeSeekUser,
   html,
@@ -45,6 +47,7 @@ export const TopicScreen = memo(function TopicScreen({
   targetReply,
   topicScrollRef
 }: {
+  active?: boolean;
   actions: TopicActionsController;
   article: {
     busy: boolean;
@@ -52,6 +55,7 @@ export const TopicScreen = memo(function TopicScreen({
     topic: TopicDetail | null;
     yaohuoBookmarked?: boolean;
   };
+  bodyMediaPaused?: boolean;
   chrome: {
     favorite: boolean;
     identityBlocked: boolean;
@@ -217,8 +221,10 @@ export const TopicScreen = memo(function TopicScreen({
         </ScreenTopBarActions>
       </ScreenTopBar>
       <TopicContentList
+        active={active}
         actions={actions}
         article={article}
+        bodyMediaPaused={bodyMediaPaused}
         currentNodeSeekUser={currentNodeSeekUser}
         discourseEmojiUrls={discourseEmojiUrls}
         headerState={headerState}

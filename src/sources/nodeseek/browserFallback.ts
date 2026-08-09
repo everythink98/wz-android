@@ -12,9 +12,15 @@ import {
   markDiagnosticStage,
   registerDiagnosticContextFetcher
 } from '@/platform/diagnostics/diagnostics';
-import { normalizeDiagnosticReason, type DiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import {
+  normalizeDiagnosticReason,
+  type DiagnosticReason,
+  type DiagnosticTrace
+} from '@/platform/diagnostics/diagnosticPolicy';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import { currentReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
 import { hasNodeSeekAccountEvidenceHtml } from './userParser';
+import { registerForumReadResponseEvidence } from '@/sources/forumSourceReadAttempt';
 
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE = 'NodeSeek direct fetch timeout';
@@ -180,40 +186,45 @@ async function fetchNodeSeekWebViewOnly(webViewFetcher: Fetcher, url: string, in
 export function createNodeSeekWebViewFallbackFetcher({
   allowWebViewFallback = () => true,
   defaultFetcher = fetch,
+  readNetworkRuntimeGeneration = currentReadNetworkRuntimeGeneration,
   recoveryThreshold = 1,
   recoverReadChannel,
   webViewFetcher
 }: {
   allowWebViewFallback?: (url: string) => boolean;
   defaultFetcher?: Fetcher;
+  readNetworkRuntimeGeneration?: () => number;
   recoveryThreshold?: number;
-  recoverReadChannel?: (reason: 'timeout' | 'network_error') => Promise<unknown>;
+  recoverReadChannel?: (expectedGeneration: number, trace: DiagnosticTrace) => Promise<unknown>;
   webViewFetcher: Fetcher;
 }): Fetcher {
   const threshold = Math.max(1, Math.min(5, Math.round(recoveryThreshold)));
   let qualifiedFallbacks = 0;
-  const recordQualifiedFallback = async (reason: 'timeout' | 'network_error') => {
+  let evidenceEpoch = 0;
+  let latestConfirmedDirectOrdinal = 0;
+  let requestOrdinal = 0;
+  const recordQualifiedFallback = async (
+    reason: 'timeout' | 'network_error',
+    ordinal: number,
+    expectedEvidenceEpoch: number,
+    expectedGeneration: number
+  ) => {
+    if (expectedEvidenceEpoch !== evidenceEpoch || ordinal <= latestConfirmedDirectOrdinal) return;
     if (!recoverReadChannel || ++qualifiedFallbacks < threshold) return;
-    const trace = beginDiagnosticTrace('network', 'channel-recovery', { source: 'nodeseek', reason });
+    evidenceEpoch += 1;
+    const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', { source: 'nodeseek', reason });
     try {
-      const result = await recoverReadChannel(reason);
+      await recoverReadChannel(expectedGeneration, trace);
       qualifiedFallbacks = 0;
-      const fields = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
-      finishDiagnosticTrace(trace, 'success', {
-        source: 'nodeseek',
-        reason,
-        ...(typeof fields.generation === 'number' ? { generation: fields.generation } : {}),
-        ...(typeof fields.canceledQueued === 'number' ? { queuedCount: fields.canceledQueued } : {}),
-        ...(typeof fields.canceledRunning === 'number' ? { runningCount: fields.canceledRunning } : {})
-      });
     } catch {
-      finishDiagnosticTrace(trace, 'failure', { source: 'nodeseek', reason });
+      // Native owns the terminal event once the trace crosses the bridge.
     }
   };
   return registerDiagnosticContextFetcher(async (input, init) => {
     const url = String(input);
     const method = String(init?.method || 'GET').toUpperCase();
     const isIdempotentRead = method === 'GET' || method === 'HEAD';
+    const ordinal = ++requestOrdinal;
     const accountProbe = browserFetchIntentFromInit(init)?.owner === 'account';
     if (isNodeSeekGoogleSearchUrl(url)) {
       return fetchNodeSeekWebViewOnly(webViewFetcher, url, init);
@@ -221,6 +232,7 @@ export function createNodeSeekWebViewFallbackFetcher({
     if (!isNodeSeekRequestUrl(url)) {
       return defaultFetcher(input, init);
     }
+    const requestStartGeneration = readNetworkRuntimeGeneration();
     let response: Response;
     try {
       response = isIdempotentRead
@@ -232,14 +244,19 @@ export function createNodeSeekWebViewFallbackFetcher({
         const reason = diagnosticReason === 'unknown' ? 'network_error' : diagnosticReason;
         const fallbackResponse = await fetchNodeSeekThroughWebView(webViewFetcher, url, init, reason);
         if (fallbackResponse.ok && (reason === 'timeout' || reason === 'network_error')) {
-          await recordQualifiedFallback(reason);
+          const expectedEvidenceEpoch = evidenceEpoch;
+          registerForumReadResponseEvidence(init, fallbackResponse, {
+            commit: () => recordQualifiedFallback(reason, ordinal, expectedEvidenceEpoch, requestStartGeneration),
+            kind: 'fallback',
+            ordinal,
+            source: 'nodeseek'
+          });
         }
         return fallbackResponse;
       }
       throw error;
     }
-    if (isIdempotentRead) qualifiedFallbacks = 0;
-    else return response;
+    if (!isIdempotentRead) return response;
     const text = await response.clone().text();
     if (isNodeSeekChallengeResponse(response, text, url)) {
       return allowWebViewFallback(url)
@@ -248,6 +265,20 @@ export function createNodeSeekWebViewFallbackFetcher({
     }
     if (accountProbe && !hasNodeSeekAccountEvidenceHtml(text, url) && allowWebViewFallback(url)) {
       return fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'invalid_response', response.status);
+    }
+    if (response.ok) {
+      registerForumReadResponseEvidence(init, response, {
+        commit: async () => {
+          if (ordinal > latestConfirmedDirectOrdinal) {
+            latestConfirmedDirectOrdinal = ordinal;
+            evidenceEpoch += 1;
+            qualifiedFallbacks = 0;
+          }
+        },
+        kind: 'direct',
+        ordinal,
+        source: 'nodeseek'
+      });
     }
     return response;
   });

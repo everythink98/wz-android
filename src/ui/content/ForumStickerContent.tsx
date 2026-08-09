@@ -1,17 +1,25 @@
-import { useState, type ComponentProps } from 'react';
-import { StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle } from 'react-native';
+import { useState, type ComponentProps, type ReactNode } from 'react';
+import { StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import type RenderHTML from 'react-native-render-html';
 import { TChildrenRenderer, useContentWidth, type CustomBlockRenderer, type TNode } from 'react-native-render-html';
 import {
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
-  FORUM_STICKER_TAG,
-  inlineForumImageDisplaySize
-} from '@/platform/media/inlineMedia';
+  FORUM_STICKER_TAG
+} from '@/domain/forum/forumContentMedia';
+import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
 import { imageSourceFromUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import { cachedImageDisplayDimensions, rememberImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
+
+export type ForumStickerImageRenderProps = {
+  accessibilityLabel?: string;
+  onLoad?: ComponentProps<typeof ExpoImage>['onLoad'];
+  recyclingKey: string;
+  src: string;
+  style: ComponentProps<typeof ExpoImage>['style'];
+};
 
 type ForumStickerRenderersOptions = {
   fontScale: number;
@@ -19,8 +27,9 @@ type ForumStickerRenderersOptions = {
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
   nodeSeekMediaUserAgent?: string;
+  renderImage?: (props: ForumStickerImageRenderProps) => ReactNode;
   textStyle?: StyleProp<TextStyle>;
-  trimsTrailingBlockSpacing?: (tnode: TNode) => boolean;
+  useContentBoundarySpacing?: (tnode: TNode) => ViewStyle | undefined;
 };
 
 export function createForumStickerRenderers({
@@ -29,8 +38,9 @@ export function createForumStickerRenderers({
   mediaContext,
   mediaSessionIdentity,
   nodeSeekMediaUserAgent,
+  renderImage,
   textStyle,
-  trimsTrailingBlockSpacing = () => false
+  useContentBoundarySpacing = () => undefined
 }: ForumStickerRenderersOptions) {
   const ForumStickerRenderer: CustomBlockRenderer = (props) => {
     const attributes = props.tnode.attributes || {};
@@ -53,37 +63,49 @@ export function createForumStickerRenderers({
     if (!src) {
       return <Text style={textStyle}>{label}</Text>;
     }
-    return (
+    const imageProps: ForumStickerImageRenderProps = {
+      accessibilityLabel: label || '表情',
+      onLoad: (event) => {
+        const dimensions = { height: event.source.height, width: event.source.width };
+        if (
+          !cacheKey ||
+          !Number.isFinite(dimensions.height) ||
+          !Number.isFinite(dimensions.width) ||
+          !(dimensions.height > 0 && dimensions.width > 0)
+        ) {
+          return;
+        }
+        rememberImageDisplayDimensions(cacheKey, dimensions);
+        setLoadedDimensions({ cacheKey, dimensions });
+      },
+      recyclingKey: `${mediaSessionIdentity}:${src}`,
+      src,
+      style: [styles.image, imageStyle, size]
+    };
+    return renderImage ? (
+      renderImage(imageProps)
+    ) : (
       <ExpoImage
-        accessibilityLabel={label || '表情'}
+        accessibilityLabel={imageProps.accessibilityLabel}
         accessibilityRole="image"
         accessible
         contentFit="contain"
-        onLoad={(event) => {
-          const dimensions = { height: event.source.height, width: event.source.width };
-          if (
-            !cacheKey ||
-            !Number.isFinite(dimensions.height) ||
-            !Number.isFinite(dimensions.width) ||
-            !(dimensions.height > 0 && dimensions.width > 0)
-          ) {
-            return;
-          }
-          rememberImageDisplayDimensions(cacheKey, dimensions);
-          setLoadedDimensions({ cacheKey, dimensions });
-        }}
-        recyclingKey={`${mediaSessionIdentity}:${src}`}
+        onLoad={imageProps.onLoad}
+        recyclingKey={imageProps.recyclingKey}
         source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
-        style={[styles.image, imageStyle, size]}
+        style={imageProps.style}
       />
     );
   };
 
-  const ForumStickerRowRenderer: CustomBlockRenderer = (props) => (
-    <View style={[styles.stickerRow, trimsTrailingBlockSpacing(props.tnode) ? styles.trimmedStickerRow : null]}>
-      <TChildrenRenderer tchildren={props.tnode.children} />
-    </View>
-  );
+  const ForumStickerRowRenderer: CustomBlockRenderer = (props) => {
+    const boundarySpacing = useContentBoundarySpacing(props.tnode);
+    return (
+      <View style={[styles.stickerRow, boundarySpacing]} testID="forum-sticker-row">
+        <TChildrenRenderer tchildren={props.tnode.children} />
+      </View>
+    );
+  };
 
   const ForumInlineMediaLineRenderer: CustomBlockRenderer = (props) => (
     <View style={styles.inlineMediaLine}>
@@ -115,8 +137,5 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginTop: 8,
     rowGap: 6
-  },
-  trimmedStickerRow: {
-    marginBottom: -4
   }
 });

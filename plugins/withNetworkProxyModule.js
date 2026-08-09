@@ -21,8 +21,39 @@ const EXPO_VIDEO_OKHTTP_IMPORT = 'import okhttp3.OkHttpClient';
 const EXPO_VIDEO_MANAGED_IMPORT = 'import com.facebook.react.modules.network.OkHttpClientProvider';
 const EXPO_VIDEO_CLIENT = '  val client = OkHttpClient.Builder().build()';
 const EXPO_VIDEO_MANAGED_CLIENT = '  val client = OkHttpClientProvider.createClient()';
+const EXPO_VIDEO_GENERATION_CLIENT = `  val client = ReadNetworkVideoClientRegistry.clientForGeneration(
+    videoSource.headers?.get(READ_NETWORK_GENERATION_HEADER)
+  ) ?: OkHttpClientProvider.createClient()`;
+const EXPO_VIDEO_HEADERS = '    val headers = videoSource.headers';
+const EXPO_VIDEO_GENERATION_HEADERS =
+  '    val headers = videoSource.headers?.filterKeys { key -> key != READ_NETWORK_GENERATION_HEADER }';
 const EXPO_VIDEO_SOURCE_SHA256 = '18a6a000d9da4b16109978156917d98c09c728e12a186a660e7857d488db237a';
-const EXPO_VIDEO_PATCHED_SHA256 = '3e599f363e5be89357f7e97f9b3558a6f772ee151a2c7b43605b6f58791ac595';
+const EXPO_VIDEO_LEGACY_PATCHED_SHA256 = '3e599f363e5be89357f7e97f9b3558a6f772ee151a2c7b43605b6f58791ac595';
+const EXPO_VIDEO_PATCHED_SHA256 = 'b250d2938cfa450de98c62d059fe4789301681da47c0a0c1ec9d1ab562a3125f';
+const EXPO_VIDEO_CLIENT_REGISTRY_SOURCE = `package expo.modules.video
+
+import java.util.concurrent.ConcurrentHashMap
+import okhttp3.OkHttpClient
+
+const val READ_NETWORK_GENERATION_HEADER = "X-WZ-Read-Network-Generation"
+
+object ReadNetworkVideoClientRegistry {
+  private val clients = ConcurrentHashMap<Long, OkHttpClient>()
+
+  fun register(generation: Long, client: OkHttpClient) {
+    clients[generation] = client
+  }
+
+  fun unregister(generation: Long, client: OkHttpClient) {
+    clients.remove(generation, client)
+  }
+
+  fun clientForGeneration(value: String?): OkHttpClient? {
+    val generation = value?.toLongOrNull()?.takeIf { candidate -> candidate >= 0L } ?: return null
+    return clients[generation]
+  }
+}
+`;
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -32,21 +63,30 @@ function patchExpoVideoDataSource(projectRoot) {
   const packageRoot = path.join(projectRoot, 'node_modules', 'expo-video');
   const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
   const sourcePath = path.join(projectRoot, EXPO_VIDEO_DATA_SOURCE_PATH);
+  const registryPath = path.join(path.dirname(sourcePath), 'ReadNetworkVideoClientRegistry.kt');
   const source = fs.readFileSync(sourcePath, 'utf8');
   const sourceHash = sha256(source);
-  if (packageJson.version === EXPO_VIDEO_VERSION && sourceHash === EXPO_VIDEO_PATCHED_SHA256) {
-    return;
-  }
-  if (packageJson.version !== EXPO_VIDEO_VERSION || sourceHash !== EXPO_VIDEO_SOURCE_SHA256) {
+  if (
+    packageJson.version !== EXPO_VIDEO_VERSION ||
+    ![EXPO_VIDEO_SOURCE_SHA256, EXPO_VIDEO_LEGACY_PATCHED_SHA256, EXPO_VIDEO_PATCHED_SHA256].includes(sourceHash)
+  ) {
     throw new Error('Expo Video DataSource 源码与已审核版本不匹配，拒绝生成 Android 工程。');
   }
-  const patched = source
-    .replace(EXPO_VIDEO_OKHTTP_IMPORT, EXPO_VIDEO_MANAGED_IMPORT)
-    .replace(EXPO_VIDEO_CLIENT, EXPO_VIDEO_MANAGED_CLIENT);
+  const patched =
+    sourceHash === EXPO_VIDEO_PATCHED_SHA256
+      ? source
+      : source
+          .replace(EXPO_VIDEO_OKHTTP_IMPORT, EXPO_VIDEO_MANAGED_IMPORT)
+          .replace(EXPO_VIDEO_CLIENT, EXPO_VIDEO_GENERATION_CLIENT)
+          .replace(EXPO_VIDEO_MANAGED_CLIENT, EXPO_VIDEO_GENERATION_CLIENT)
+          .replace(EXPO_VIDEO_HEADERS, EXPO_VIDEO_GENERATION_HEADERS);
   if (sha256(patched) !== EXPO_VIDEO_PATCHED_SHA256) {
     throw new Error('Expo Video DataSource patch 结果不可信，拒绝生成 Android 工程。');
   }
-  fs.writeFileSync(sourcePath, patched);
+  if (source !== patched) {
+    fs.writeFileSync(sourcePath, patched);
+  }
+  fs.writeFileSync(registryPath, EXPO_VIDEO_CLIENT_REGISTRY_SOURCE);
 }
 
 function packagePath(packageName) {
@@ -63,15 +103,24 @@ import android.os.SystemClock
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import com.bumptech.glide.Glide
-import com.bumptech.glide.integration.okhttp3.OkHttpUrlLoader
+import com.bumptech.glide.Priority
+import com.bumptech.glide.load.DataSource
+import com.bumptech.glide.load.HttpException
+import com.bumptech.glide.load.Options
+import com.bumptech.glide.load.data.DataFetcher
 import com.bumptech.glide.load.model.GlideUrl
+import com.bumptech.glide.load.model.ModelLoader
+import com.bumptech.glide.load.model.ModelLoaderFactory
+import com.bumptech.glide.load.model.MultiModelLoaderFactory
+import com.bumptech.glide.util.ContentLengthInputStream
+import com.facebook.react.modules.network.ProgressResponseBody
 import com.facebook.react.modules.network.CookieJarContainer
 import com.facebook.react.modules.network.NetworkingModule
 import com.facebook.react.modules.network.OkHttpClientProvider
 import com.google.net.cronet.okhttptransport.CronetInterceptor
 import com.google.net.cronet.okhttptransport.RedirectStrategy
 import expo.modules.image.okhttp.GlideUrlWrapper
-import expo.modules.image.okhttp.GlideUrlWrapperLoader
+import expo.modules.video.ReadNetworkVideoClientRegistry
 import java.io.EOFException
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -80,6 +129,8 @@ import java.io.OutputStream
 import java.net.IDN
 import java.net.CookieHandler
 import java.net.InetAddress
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ProxySelector
@@ -90,6 +141,7 @@ import java.net.SocketTimeoutException
 import java.net.URI
 import java.nio.charset.Charset
 import java.util.Locale
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -100,6 +152,7 @@ import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLSocket
@@ -109,13 +162,17 @@ import android.util.Base64
 import okhttp3.ConnectionPool
 import okhttp3.CacheControl
 import okhttp3.Call
+import okhttp3.Connection
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
+import okhttp3.EventListener
+import okhttp3.Handshake
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.JavaNetCookieJar
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
@@ -193,6 +250,10 @@ private fun createPlatformProxyTlsConnection(
 
 internal const val FORUM_MEDIA_SOURCE_HEADER = "X-WZ-Forum-Media-Source"
 internal const val FORUM_MEDIA_IDENTITY_HEADER = "X-WZ-Forum-Media-Identity"
+internal const val FORUM_MEDIA_KIND_HEADER = "X-WZ-Forum-Media-Kind"
+internal const val FORUM_MEDIA_GENERATION_HEADER = "X-WZ-Read-Network-Generation"
+internal const val FORUM_READ_SOURCE_HEADER = "X-WZ-Forum-Read-Source"
+internal const val FORUM_READ_CANCEL_CLASS_HEADER = "X-WZ-Forum-Read-Cancel-Class"
 
 private class MediaRequestCookiePolicy(
   private val credentialSource: String?
@@ -231,17 +292,26 @@ internal class ForumMediaRequestInterceptor(
     val request = chain.request()
     val source = request.header(FORUM_MEDIA_SOURCE_HEADER)
       ?: return chain.proceed(
-        if (request.header(FORUM_MEDIA_IDENTITY_HEADER) == null) request else request.newBuilder()
+        if (
+          request.header(FORUM_MEDIA_IDENTITY_HEADER) == null &&
+          request.header(FORUM_MEDIA_KIND_HEADER) == null &&
+          request.header(FORUM_MEDIA_GENERATION_HEADER) == null
+        ) request else request.newBuilder()
           .removeHeader(FORUM_MEDIA_IDENTITY_HEADER)
+          .removeHeader(FORUM_MEDIA_KIND_HEADER)
+          .removeHeader(FORUM_MEDIA_GENERATION_HEADER)
           .build()
       )
+    val kind = request.header(FORUM_MEDIA_KIND_HEADER)?.takeIf { value -> value == "video" }
     val firstTargetSource = sourceForUri(URI(request.url.toString()))
     val policy = MediaRequestCookiePolicy(source.takeIf { it == firstTargetSource })
     val sanitized = request.newBuilder()
       .removeHeader(FORUM_MEDIA_SOURCE_HEADER)
       .removeHeader(FORUM_MEDIA_IDENTITY_HEADER)
+      .removeHeader(FORUM_MEDIA_KIND_HEADER)
+      .removeHeader(FORUM_MEDIA_GENERATION_HEADER)
       .removeHeader("Cookie")
-      .tag(ForumMediaRequestTag::class.java, ForumMediaRequestTag(source))
+      .tag(ForumMediaRequestTag::class.java, ForumMediaRequestTag(source, kind))
       .cacheControl(CacheControl.Builder().noStore().build())
       .build()
     return MediaRequestCookieContext.withPolicy(policy) {
@@ -250,7 +320,37 @@ internal class ForumMediaRequestInterceptor(
   }
 }
 
-internal data class ForumMediaRequestTag(val source: String)
+internal data class ForumMediaRequestTag(
+  val source: String,
+  val kind: String? = null
+)
+
+internal data class ForumReadRequestTag(
+  val source: String,
+  val cancelClass: String
+)
+
+internal class ForumReadRequestInterceptor : Interceptor {
+  override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
+    val request = chain.request()
+    val source = request.header(FORUM_READ_SOURCE_HEADER)
+    val cancelClass = request.header(FORUM_READ_CANCEL_CLASS_HEADER)
+    if (source == null && cancelClass == null) return chain.proceed(request)
+    val sanitized = request.newBuilder()
+      .removeHeader(FORUM_READ_SOURCE_HEADER)
+      .removeHeader(FORUM_READ_CANCEL_CLASS_HEADER)
+      .apply {
+        if (
+          source != null &&
+          (cancelClass == "content" || cancelClass == "health" || cancelClass == "retained")
+        ) {
+          tag(ForumReadRequestTag::class.java, ForumReadRequestTag(source, cancelClass))
+        }
+      }
+      .build()
+    return chain.proceed(sanitized)
+  }
+}
 
 internal fun isCloudflareMediaChallenge(request: Request, response: Response): Boolean =
   (request.method == "GET" || request.method == "HEAD") &&
@@ -280,15 +380,16 @@ internal fun recoverCloudflareMediaChallenge(
 }
 
 internal class ForumMediaCloudflareFallbackInterceptor(
+  private val generation: Long = 0L,
   private val recover: (Request, Call) -> Response? = { request, call ->
-    NetworkProxyRuntime.executeCronetMediaFallback(request, call)
+    NetworkProxyRuntime.executeCronetMediaFallback(generation, request, call)
   }
 ) : Interceptor {
   override fun intercept(chain: Interceptor.Chain): Response {
     val original = chain.proceed(chain.request())
     if (!isCloudflareMediaChallenge(chain.request(), original)) return original
     val startedAt = SystemClock.elapsedRealtime()
-    val generation = NetworkProxyRuntime.currentMediaTransportGeneration()
+    val transportGeneration = NetworkProxyRuntime.currentMediaTransportGeneration(generation)
     val source = chain.request().tag(ForumMediaRequestTag::class.java)?.source ?: "anonymous"
     val recovered = recoverCloudflareMediaChallenge(chain.request(), original, chain.call()) { request, call ->
       call?.let { recover(request, it) }
@@ -296,10 +397,169 @@ internal class ForumMediaCloudflareFallbackInterceptor(
     val outcome = if (recovered === original) "kept-original" else "recovered"
     Log.i(
       LOG_TAG,
-      "media cronet source=$source reason=challenge generation=$generation outcome=$outcome " +
+      "media cronet source=$source reason=challenge generation=$generation transportGeneration=$transportGeneration outcome=$outcome " +
         "status=\${recovered.code} elapsedMs=\${SystemClock.elapsedRealtime() - startedAt}"
     )
     return recovered
+  }
+}
+
+internal class CloseSafeGlideStreamFetcher(
+  private val callFactory: Call.Factory,
+  private val glideUrl: GlideUrl,
+  private val transformBody: (ResponseBody) -> ResponseBody = { body -> body }
+) : DataFetcher<InputStream>, okhttp3.Callback {
+  private val lock = Any()
+  private var callback: DataFetcher.DataCallback<in InputStream>? = null
+  private var call: Call? = null
+  private var responseBody: ResponseBody? = null
+  private var canceled = false
+  private var cleaned = false
+
+  override fun loadData(priority: Priority, callback: DataFetcher.DataCallback<in InputStream>) {
+    val requestBuilder = Request.Builder().url(glideUrl.toStringUrl())
+    glideUrl.headers.forEach { (name, value) -> requestBuilder.addHeader(name, value) }
+    val nextCall = callFactory.newCall(requestBuilder.build())
+    val shouldEnqueue = synchronized(lock) {
+      if (canceled || cleaned) {
+        false
+      } else {
+        this.callback = callback
+        call = nextCall
+        true
+      }
+    }
+    if (shouldEnqueue) {
+      nextCall.enqueue(this)
+    } else {
+      nextCall.cancel()
+    }
+  }
+
+  override fun onFailure(call: Call, e: IOException) {
+    synchronized(lock) {
+      if (!canceled && !cleaned) callback?.onLoadFailed(e)
+    }
+  }
+
+  override fun onResponse(call: Call, response: Response) {
+    if (!response.isSuccessful) {
+      response.close()
+      synchronized(lock) {
+        if (!canceled && !cleaned) callback?.onLoadFailed(HttpException(response.message, response.code))
+      }
+      return
+    }
+    val originalBody = response.body
+    if (originalBody == null) {
+      response.close()
+      synchronized(lock) {
+        if (!canceled && !cleaned) callback?.onLoadFailed(IOException("Successful image response has no body"))
+      }
+      return
+    }
+    var transformedBody = originalBody
+    val nextStream = try {
+      transformedBody = transformBody(originalBody)
+      ContentLengthInputStream.obtain(transformedBody.byteStream(), transformedBody.contentLength())
+    } catch (error: Exception) {
+      transformedBody.close()
+      synchronized(lock) {
+        if (!canceled && !cleaned) callback?.onLoadFailed(error)
+      }
+      return
+    }
+    val accepted = synchronized(lock) {
+      if (canceled || cleaned) {
+        false
+      } else {
+        responseBody = transformedBody
+        callback?.onDataReady(nextStream)
+        true
+      }
+    }
+    if (!accepted) transformedBody.close()
+  }
+
+  override fun cleanup() {
+    val body = synchronized(lock) {
+      if (cleaned) return
+      cleaned = true
+      callback = null
+      responseBody.also { responseBody = null }
+    }
+    body?.close()
+  }
+
+  override fun cancel() {
+    val owned = synchronized(lock) {
+      if (canceled) return
+      canceled = true
+      callback = null
+      val activeCall = call
+      val body = responseBody
+      responseBody = null
+      activeCall to body
+    }
+    try {
+      owned.first?.cancel()
+    } finally {
+      owned.second?.close()
+    }
+  }
+
+  override fun getDataClass(): Class<InputStream> = InputStream::class.java
+
+  override fun getDataSource(): DataSource = DataSource.REMOTE
+}
+
+internal class CloseSafeGlideUrlLoader(private val callFactory: Call.Factory) : ModelLoader<GlideUrl, InputStream> {
+  override fun buildLoadData(
+    model: GlideUrl,
+    width: Int,
+    height: Int,
+    options: Options
+  ): ModelLoader.LoadData<InputStream> =
+    ModelLoader.LoadData(model, CloseSafeGlideStreamFetcher(callFactory, model))
+
+  override fun handles(model: GlideUrl): Boolean = true
+
+  class Factory(private val callFactory: Call.Factory) : ModelLoaderFactory<GlideUrl, InputStream> {
+    override fun build(multiFactory: MultiModelLoaderFactory): ModelLoader<GlideUrl, InputStream> =
+      CloseSafeGlideUrlLoader(callFactory)
+
+    override fun teardown() = Unit
+  }
+}
+
+internal class CloseSafeGlideUrlWrapperLoader(
+  private val callFactory: Call.Factory,
+  private val notifyProgress: (GlideUrlWrapper, Long, Long, Boolean) -> Unit =
+    { model, bytesRead, contentLength, done ->
+      model.progressListener?.onProgress(bytesRead, contentLength, done)
+    }
+) : ModelLoader<GlideUrlWrapper, InputStream> {
+  override fun buildLoadData(
+    model: GlideUrlWrapper,
+    width: Int,
+    height: Int,
+    options: Options
+  ): ModelLoader.LoadData<InputStream> = ModelLoader.LoadData(
+    model.glideUrl,
+    CloseSafeGlideStreamFetcher(callFactory, model.glideUrl) { body ->
+      ProgressResponseBody(body) { bytesRead, contentLength, done ->
+        notifyProgress(model, bytesRead, contentLength, done)
+      }
+    }
+  )
+
+  override fun handles(model: GlideUrlWrapper): Boolean = true
+
+  class Factory(private val callFactory: Call.Factory) : ModelLoaderFactory<GlideUrlWrapper, InputStream> {
+    override fun build(multiFactory: MultiModelLoaderFactory): ModelLoader<GlideUrlWrapper, InputStream> =
+      CloseSafeGlideUrlWrapperLoader(callFactory)
+
+    override fun teardown() = Unit
   }
 }
 
@@ -334,13 +594,20 @@ private class ReleasingResponseBody(
   override fun source() = trackedSource
 }
 
+internal interface CronetMediaTransportHandle {
+  val generation: Long
+  fun execute(request: Request, outerCall: Call): Response?
+  fun activeCallsCount(): Int
+  fun retire(cancelActive: Boolean = true)
+}
+
 private class CronetMediaTransport(
-  val generation: Long,
+  override val generation: Long,
   private val engine: CronetEngine,
   private val interceptor: CronetInterceptor,
   private val client: OkHttpClient,
   private val lifecycleExecutor: ScheduledExecutorService
-) {
+) : CronetMediaTransportHandle {
   private val lock = Any()
   private val activeCalls = mutableMapOf<Call, Call>()
   private var retired = false
@@ -357,7 +624,7 @@ private class CronetMediaTransport(
     TimeUnit.MILLISECONDS
   )
 
-  fun execute(request: Request, outerCall: Call): Response? {
+  override fun execute(request: Request, outerCall: Call): Response? {
     if (outerCall.isCanceled()) return null
     val call = client.newCall(request)
     val registered = synchronized(lock) {
@@ -388,10 +655,12 @@ private class CronetMediaTransport(
     }
   }
 
-  fun retire() {
+  override fun activeCallsCount(): Int = synchronized(lock) { activeCalls.size }
+
+  override fun retire(cancelActive: Boolean) {
     val calls = synchronized(lock) {
       retired = true
-      activeCalls.keys.toList()
+      if (cancelActive) activeCalls.keys.toList() else emptyList()
     }
     calls.forEach { call -> call.cancel() }
     shutdownIfIdle()
@@ -432,6 +701,13 @@ private class CronetMediaTransport(
     }
   }
 }
+
+internal fun hasOutstandingReadRuntimeWork(
+  queued: Int,
+  running: Int,
+  leases: Int,
+  cronetActive: Int
+): Boolean = queued > 0 || running > 0 || leases > 0 || cronetActive > 0
 
 private fun cronetProxyOptions(
   proxy: Proxy,
@@ -572,23 +848,76 @@ internal data class ManagedLoginCookieClearPlan(
 )
 
 internal data class ForumReadChannelRecovery(
+  val rotated: Boolean,
+  val previousGeneration: Long,
   val generation: Long,
   val canceledQueued: Int,
   val canceledRunning: Int
 )
 
+internal data class ReadNetworkGenerationLease(
+  val retained: Boolean,
+  val generation: Long
+)
+
+private data class PendingReadRuntimeFinish(
+  val traceIdentity: String,
+  val source: String,
+  val retiredGeneration: Long,
+  val publishedGeneration: Long,
+  var applied: Boolean,
+  var drained: Boolean = false
+)
+
 internal fun forumReadChannelHostSuffix(source: String): String = when (source) {
   "nodeseek" -> "nodeseek.com"
   "linuxdo" -> "linux.do"
+  "yaohuo" -> "yaohuo.me"
+  "v2ex" -> "v2ex.com"
+  "xiaoyinsi" -> "forum.xiaoyinsi.com"
   else -> throw IllegalArgumentException("不支持的论坛读取通道")
+}
+
+internal fun requireReadNetworkTraceIdentity(value: String): String {
+  val normalized = value.trim()
+  require(
+    value == normalized &&
+      Regex("^(?:trace-[1-9][0-9]{0,9}|[0-9a-f]{1,16})$").matches(normalized)
+  ) {
+    "读取网络 traceId 不正确"
+  }
+  return normalized
+}
+
+internal fun requireReadNetworkGeneration(value: Double): Long {
+  require(value.isFinite() && value >= 0 && value == value.toLong().toDouble()) {
+    "读取通道 generation 不正确"
+  }
+  return value.toLong()
 }
 
 internal fun isForumReadChannelRequest(source: String, request: okhttp3.Request): Boolean {
   val suffix = forumReadChannelHostSuffix(source)
   val host = request.url.host.lowercase(Locale.US)
+  val readTag = request.tag(ForumReadRequestTag::class.java)
+  val readSource = request.header(FORUM_READ_SOURCE_HEADER) ?: readTag?.source
+  val readCancelClass = request.header(FORUM_READ_CANCEL_CLASS_HEADER) ?: readTag?.cancelClass
+  if (readSource == source && (readCancelClass == "health" || readCancelClass == "retained")) return false
+  val taggedSource = readSource
+    ?: request.header(FORUM_MEDIA_SOURCE_HEADER)
+    ?: request.tag(ForumMediaRequestTag::class.java)?.source
+  val sourceMatches = if (taggedSource != null) {
+    taggedSource == source
+  } else {
+    host == suffix || host.endsWith(".$suffix")
+  }
   return (request.method == "GET" || request.method == "HEAD") &&
-    (host == suffix || host.endsWith(".$suffix"))
+    sourceMatches
 }
+
+internal fun isRetainedVideoReadRequest(request: okhttp3.Request): Boolean =
+  (request.header(FORUM_MEDIA_KIND_HEADER)
+    ?: request.tag(ForumMediaRequestTag::class.java)?.kind) == "video"
 
 internal fun managedLoginCookieClearPlan(source: String): ManagedLoginCookieClearPlan {
   val specification = when (source) {
@@ -625,135 +954,941 @@ internal fun managedLoginCookieClearPlan(source: String): ManagedLoginCookieClea
   return ManagedLoginCookieClearPlan(urls, names, expirations)
 }
 
+internal data class ReadNetworkDiagnosticEvent(
+  val timeMs: Long,
+  val fields: Map<String, Any>
+)
+
+private object ReadNetworkDiagnostics {
+  private const val MAX_EVENTS = 512
+  private val lock = Any()
+  private val events = ArrayDeque<ReadNetworkDiagnosticEvent>()
+
+  fun record(fields: Map<String, Any>) {
+    val event = ReadNetworkDiagnosticEvent(System.currentTimeMillis(), fields)
+    synchronized(lock) {
+      events.addLast(event)
+      while (events.size > MAX_EVENTS) events.removeFirst()
+    }
+    Log.i(
+      LOG_TAG,
+      "read-network " + fields.entries.joinToString(" ") { entry -> entry.key + "=" + entry.value }
+    )
+  }
+
+  fun snapshot(): List<ReadNetworkDiagnosticEvent> = synchronized(lock) { events.toList() }
+}
+
+private fun opaqueNetworkIdentity(value: Any): String =
+  Integer.toHexString(System.identityHashCode(value))
+
+private fun readNetworkDiagnosticSource(request: Request): String? {
+  val tagged = request.header(FORUM_MEDIA_SOURCE_HEADER)
+    ?: request.tag(ForumMediaRequestTag::class.java)?.source
+  if (tagged == "nodeseek" || tagged == "linuxdo" || tagged == "yaohuo" ||
+    tagged == "v2ex" || tagged == "xiaoyinsi") {
+    return tagged
+  }
+  val host = request.url.host.lowercase(Locale.US)
+  return when {
+    host == "nodeseek.com" || host.endsWith(".nodeseek.com") -> "nodeseek"
+    host == "linux.do" || host.endsWith(".linux.do") -> "linuxdo"
+    host == "yaohuo.me" || host.endsWith(".yaohuo.me") -> "yaohuo"
+    host == "v2ex.com" || host.endsWith(".v2ex.com") -> "v2ex"
+    host == "forum.xiaoyinsi.com" || host.endsWith(".forum.xiaoyinsi.com") -> "xiaoyinsi"
+    else -> null
+  }
+}
+
+private fun readNetworkAddressFamily(address: InetAddress?): String = when (address) {
+  is Inet4Address -> "ipv4"
+  is Inet6Address -> "ipv6"
+  else -> "unknown"
+}
+
+private fun readNetworkAddressFamilies(addresses: List<InetAddress>): String =
+  addresses.map(::readNetworkAddressFamily).distinct().sorted().joinToString(",").ifEmpty { "unknown" }
+
+private open class ForwardingReadNetworkEventListener(
+  private val delegate: EventListener
+) : EventListener() {
+  override fun callStart(call: Call) = delegate.callStart(call)
+  override fun proxySelectStart(call: Call, url: HttpUrl) = delegate.proxySelectStart(call, url)
+  override fun proxySelectEnd(call: Call, url: HttpUrl, proxies: List<Proxy>) =
+    delegate.proxySelectEnd(call, url, proxies)
+  override fun dnsStart(call: Call, domainName: String) = delegate.dnsStart(call, domainName)
+  override fun dnsEnd(call: Call, domainName: String, inetAddressList: List<InetAddress>) =
+    delegate.dnsEnd(call, domainName, inetAddressList)
+  override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) =
+    delegate.connectStart(call, inetSocketAddress, proxy)
+  override fun secureConnectStart(call: Call) = delegate.secureConnectStart(call)
+  override fun secureConnectEnd(call: Call, handshake: Handshake?) = delegate.secureConnectEnd(call, handshake)
+  override fun connectEnd(
+    call: Call,
+    inetSocketAddress: InetSocketAddress,
+    proxy: Proxy,
+    protocol: Protocol?
+  ) = delegate.connectEnd(call, inetSocketAddress, proxy, protocol)
+  override fun connectFailed(
+    call: Call,
+    inetSocketAddress: InetSocketAddress,
+    proxy: Proxy,
+    protocol: Protocol?,
+    ioe: IOException
+  ) = delegate.connectFailed(call, inetSocketAddress, proxy, protocol, ioe)
+  override fun connectionAcquired(call: Call, connection: Connection) = delegate.connectionAcquired(call, connection)
+  override fun connectionReleased(call: Call, connection: Connection) = delegate.connectionReleased(call, connection)
+  override fun requestHeadersStart(call: Call) = delegate.requestHeadersStart(call)
+  override fun requestHeadersEnd(call: Call, request: Request) = delegate.requestHeadersEnd(call, request)
+  override fun requestBodyStart(call: Call) = delegate.requestBodyStart(call)
+  override fun requestBodyEnd(call: Call, byteCount: Long) = delegate.requestBodyEnd(call, byteCount)
+  override fun requestFailed(call: Call, ioe: IOException) = delegate.requestFailed(call, ioe)
+  override fun responseHeadersStart(call: Call) = delegate.responseHeadersStart(call)
+  override fun responseHeadersEnd(call: Call, response: Response) = delegate.responseHeadersEnd(call, response)
+  override fun responseBodyStart(call: Call) = delegate.responseBodyStart(call)
+  override fun responseBodyEnd(call: Call, byteCount: Long) = delegate.responseBodyEnd(call, byteCount)
+  override fun responseFailed(call: Call, ioe: IOException) = delegate.responseFailed(call, ioe)
+  override fun callEnd(call: Call) = delegate.callEnd(call)
+  override fun callFailed(call: Call, ioe: IOException) = delegate.callFailed(call, ioe)
+  override fun canceled(call: Call) = delegate.canceled(call)
+  override fun satisfactionFailure(call: Call, response: Response) = delegate.satisfactionFailure(call, response)
+  override fun cacheHit(call: Call, response: Response) = delegate.cacheHit(call, response)
+  override fun cacheMiss(call: Call) = delegate.cacheMiss(call)
+  override fun cacheConditionalHit(call: Call, cachedResponse: Response) =
+    delegate.cacheConditionalHit(call, cachedResponse)
+}
+
+private class ReadNetworkEventListener(
+  delegate: EventListener,
+  private val generation: Long,
+  private val lane: String,
+  private val clientIdentity: Any,
+  private val connectionPool: ConnectionPool,
+  private val dispatcher: Dispatcher,
+  private val call: Call
+) : ForwardingReadNetworkEventListener(delegate) {
+  private val startedAt = SystemClock.elapsedRealtime()
+  private val source = readNetworkDiagnosticSource(call.request())
+
+  private fun record(phase: String, extra: Map<String, Any> = emptyMap()) {
+    val safeSource = source ?: return
+    ReadNetworkDiagnostics.record(
+      linkedMapOf<String, Any>(
+        "operation" to "request",
+        "phase" to phase,
+        "generation" to generation,
+        "source" to safeSource,
+        "lane" to lane,
+        "method" to call.request().method,
+        "callId" to opaqueNetworkIdentity(call),
+        "clientId" to opaqueNetworkIdentity(clientIdentity),
+        "poolId" to opaqueNetworkIdentity(connectionPool),
+        "dispatcherId" to opaqueNetworkIdentity(dispatcher),
+        "elapsedMs" to (SystemClock.elapsedRealtime() - startedAt),
+        "queuedCount" to dispatcher.queuedCallsCount(),
+        "runningCount" to dispatcher.runningCallsCount()
+      ).apply { putAll(extra) }
+    )
+  }
+
+  override fun callStart(call: Call) {
+    super.callStart(call)
+    record("call-start")
+  }
+
+  override fun dnsStart(call: Call, domainName: String) {
+    super.dnsStart(call, domainName)
+    record("dns-start")
+  }
+
+  override fun dnsEnd(call: Call, domainName: String, inetAddressList: List<InetAddress>) {
+    super.dnsEnd(call, domainName, inetAddressList)
+    record("dns-end", mapOf("addressFamily" to readNetworkAddressFamilies(inetAddressList)))
+  }
+
+  override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
+    super.connectStart(call, inetSocketAddress, proxy)
+    record(
+      "connect-start",
+      mapOf(
+        "addressFamily" to readNetworkAddressFamily(inetSocketAddress.address),
+        "proxyType" to proxy.type().name.lowercase(Locale.US)
+      )
+    )
+  }
+
+  override fun secureConnectStart(call: Call) {
+    super.secureConnectStart(call)
+    record("tls-start")
+  }
+
+  override fun secureConnectEnd(call: Call, handshake: Handshake?) {
+    super.secureConnectEnd(call, handshake)
+    record("tls-end", mapOf("tlsVersion" to (handshake?.tlsVersion?.javaName ?: "unknown")))
+  }
+
+  override fun connectEnd(
+    call: Call,
+    inetSocketAddress: InetSocketAddress,
+    proxy: Proxy,
+    protocol: Protocol?
+  ) {
+    super.connectEnd(call, inetSocketAddress, proxy, protocol)
+    record(
+      "connect-end",
+      mapOf(
+        "addressFamily" to readNetworkAddressFamily(inetSocketAddress.address),
+        "protocol" to (protocol?.toString() ?: "unknown")
+      )
+    )
+  }
+
+  override fun connectFailed(
+    call: Call,
+    inetSocketAddress: InetSocketAddress,
+    proxy: Proxy,
+    protocol: Protocol?,
+    ioe: IOException
+  ) {
+    super.connectFailed(call, inetSocketAddress, proxy, protocol, ioe)
+    record(
+      "connect-failed",
+      mapOf(
+        "addressFamily" to readNetworkAddressFamily(inetSocketAddress.address),
+        "protocol" to (protocol?.toString() ?: "unknown"),
+        "errorType" to ioe.javaClass.simpleName
+      )
+    )
+  }
+
+  override fun connectionAcquired(call: Call, connection: Connection) {
+    super.connectionAcquired(call, connection)
+    record(
+      "connection-acquired",
+      mapOf(
+        "connectionId" to opaqueNetworkIdentity(connection),
+        "addressFamily" to readNetworkAddressFamily(connection.route().socketAddress.address),
+        "protocol" to connection.protocol().toString()
+      )
+    )
+  }
+
+  override fun connectionReleased(call: Call, connection: Connection) {
+    super.connectionReleased(call, connection)
+    record("connection-released", mapOf("connectionId" to opaqueNetworkIdentity(connection)))
+  }
+
+  override fun responseHeadersStart(call: Call) {
+    super.responseHeadersStart(call)
+    record("response-start")
+  }
+
+  override fun responseHeadersEnd(call: Call, response: Response) {
+    super.responseHeadersEnd(call, response)
+    record("response-headers", mapOf("protocol" to response.protocol.toString(), "status" to response.code))
+  }
+
+  override fun callEnd(call: Call) {
+    super.callEnd(call)
+    record("call-end", mapOf("outcome" to "success"))
+  }
+
+  override fun callFailed(call: Call, ioe: IOException) {
+    super.callFailed(call, ioe)
+    record(
+      "call-failed",
+      mapOf(
+        "outcome" to if (call.isCanceled()) "canceled" else "failure",
+        "errorType" to ioe.javaClass.simpleName
+      )
+    )
+  }
+
+  override fun canceled(call: Call) {
+    super.canceled(call)
+    record("call-canceled", mapOf("outcome" to "canceled"))
+  }
+}
+
+private class ReadNetworkEventListenerFactory(
+  private val delegate: EventListener.Factory,
+  private val generation: Long,
+  private val lane: String,
+  private val clientIdentity: Any,
+  private val connectionPool: ConnectionPool,
+  private val dispatcher: Dispatcher
+) : EventListener.Factory {
+  override fun create(call: Call): EventListener = ReadNetworkEventListener(
+    delegate.create(call),
+    generation,
+    lane,
+    clientIdentity,
+    connectionPool,
+    dispatcher,
+    call
+  )
+}
+
+internal class ReadNetworkGenerationProxySelector(
+  private val delegate: ProxySelector
+) : ProxySelector() {
+  override fun select(uri: URI?): MutableList<Proxy> = delegate.select(uri)
+
+  override fun connectFailed(uri: URI?, sa: java.net.SocketAddress?, ioe: IOException?) {
+    delegate.connectFailed(uri, sa, ioe)
+  }
+}
+
+private class ReadNetworkRuntimeGeneration(
+  val generation: Long,
+  baseClient: OkHttpClient,
+  private val cookieJar: CookieJar,
+  proxySelectorDelegate: ProxySelector
+) {
+  private val baseEventListenerFactory = baseClient.eventListenerFactory
+  val dispatcher = Dispatcher()
+  val forumConnectionPool = ConnectionPool()
+  val mediaConnectionPool = ConnectionPool()
+  val proxySelector: ProxySelector = ReadNetworkGenerationProxySelector(proxySelectorDelegate)
+  private val cronetLock = Any()
+  private var mediaTransportRevision = 0L
+  private var cronetMediaTransport: CronetMediaTransportHandle? = null
+  private var retirementSealed = false
+  @Volatile private var idleSince = 0L
+  private val externalLeaseCount = AtomicInteger(0)
+  private var lastDrainQueued = -1
+  private var lastDrainRunning = -1
+  private var lastDrainLeases = -1
+  private var lastDrainCronetActive = -1
+  @Volatile var retirementTraceIdentity: String? = null
+    private set
+  @Volatile var retirementSource: String? = null
+    private set
+  @Volatile var retirementDiagnosticsEnabled = true
+    private set
+  val mediaClient: OkHttpClient = configureMediaClient(baseClient.newBuilder()).build()
+  val imageClient: OkHttpClient = expoImageClient(mediaClient, generation)
+
+  init {
+    ReadNetworkVideoClientRegistry.register(generation, mediaClient)
+  }
+
+  fun configureManagedClient(builder: OkHttpClient.Builder): OkHttpClient.Builder =
+    configureClient(builder, forumConnectionPool, "forum")
+
+  fun configureMediaClient(builder: OkHttpClient.Builder): OkHttpClient.Builder =
+    configureClient(builder, mediaConnectionPool, "media")
+
+  fun currentMediaTransportGeneration(): Long = synchronized(cronetLock) {
+    generation * 1_000_000L + mediaTransportRevision
+  }
+
+  fun currentCronetMediaTransport(
+    context: Context,
+    proxy: Proxy?,
+    lifecycleExecutor: ScheduledExecutorService
+  ): CronetMediaTransportHandle = synchronized(cronetLock) {
+    check(!retirementSealed) { "媒体网络 generation 已退休" }
+    cronetMediaTransport?.let { return@synchronized it }
+    createCronetMediaTransport(
+      context,
+      currentMediaTransportGeneration(),
+      proxy,
+      lifecycleExecutor
+    ).also { created ->
+      cronetMediaTransport = created
+      Log.i(
+        LOG_TAG,
+        "media-cronet phase=publish generation=" + generation +
+          " transportGeneration=" + created.generation
+      )
+    }
+  }
+
+  fun resetCronetMediaTransport(): CronetMediaTransportHandle? = synchronized(cronetLock) {
+    mediaTransportRevision += 1
+    cronetMediaTransport.also { cronetMediaTransport = null }
+  }
+
+  fun retireCronetMediaTransport(): CronetMediaTransportHandle? = synchronized(cronetLock) {
+    cronetMediaTransport.also { cronetMediaTransport = null }
+  }
+
+  fun installCronetMediaTransportForTests(transport: CronetMediaTransportHandle): Boolean =
+    synchronized(cronetLock) {
+      if (cronetMediaTransport != null || retirementSealed) false else {
+        cronetMediaTransport = transport
+        true
+      }
+    }
+
+  fun activeCronetCalls(): Int = synchronized(cronetLock) {
+    cronetMediaTransport?.activeCallsCount() ?: 0
+  }
+
+  fun markRetiring(traceIdentity: String, source: String, diagnosticsEnabled: Boolean = true) {
+    retirementTraceIdentity = traceIdentity
+    retirementSource = source
+    retirementDiagnosticsEnabled = diagnosticsEnabled
+  }
+
+  fun clearRetirement() {
+    retirementTraceIdentity = null
+    retirementSource = null
+    retirementDiagnosticsEnabled = true
+    retirementSealed = false
+    idleSince = 0L
+  }
+
+  fun sealRetirement() = synchronized(cronetLock) {
+    retirementSealed = true
+  }
+
+  fun retainExternalLease() {
+    externalLeaseCount.incrementAndGet()
+    idleSince = 0L
+  }
+
+  fun releaseExternalLease(): Int {
+    while (true) {
+      val current = externalLeaseCount.get()
+      if (current <= 0) return 0
+      if (externalLeaseCount.compareAndSet(current, current - 1)) return current - 1
+    }
+  }
+
+  fun externalLeases(): Int = externalLeaseCount.get()
+
+  fun shouldRecordDrainState(queued: Int, running: Int, leases: Int, cronetActive: Int): Boolean {
+    if (
+      queued == lastDrainQueued &&
+      running == lastDrainRunning &&
+      leases == lastDrainLeases &&
+      cronetActive == lastDrainCronetActive
+    ) return false
+    lastDrainQueued = queued
+    lastDrainRunning = running
+    lastDrainLeases = leases
+    lastDrainCronetActive = cronetActive
+    return true
+  }
+
+  fun isReadyToDrain(now: Long): Boolean {
+    if (
+      hasOutstandingReadRuntimeWork(
+        dispatcher.queuedCallsCount(),
+        dispatcher.runningCallsCount(),
+        externalLeaseCount.get(),
+        activeCronetCalls()
+      )
+    ) {
+      idleSince = 0L
+      return false
+    }
+    if (idleSince == 0L) {
+      idleSince = now
+      return false
+    }
+    return now - idleSince >= 250L
+  }
+
+  fun finishRetirement() {
+    ReadNetworkVideoClientRegistry.unregister(generation, mediaClient)
+    forumConnectionPool.evictAll()
+    mediaConnectionPool.evictAll()
+    retireCronetMediaTransport()?.retire(cancelActive = false)
+    dispatcher.executorService.shutdown()
+  }
+
+  private fun configureClient(
+    builder: OkHttpClient.Builder,
+    connectionPool: ConnectionPool,
+    lane: String
+  ): OkHttpClient.Builder {
+    val clientIdentity = Any()
+    builder.cookieJar(cookieJar)
+    builder.proxySelector(proxySelector)
+    builder.connectionPool(connectionPool)
+    builder.dispatcher(dispatcher)
+    builder.eventListenerFactory(
+      ReadNetworkEventListenerFactory(
+        baseEventListenerFactory,
+        generation,
+        lane,
+        clientIdentity,
+        connectionPool,
+        dispatcher
+      )
+    )
+    builder.interceptors().removeAll { interceptor -> interceptor is ForumReadRequestInterceptor }
+    builder.interceptors().removeAll { interceptor -> interceptor is ForumMediaRequestInterceptor }
+    builder.addInterceptor(ForumReadRequestInterceptor())
+    builder.addInterceptor(ForumMediaRequestInterceptor())
+    return builder
+  }
+}
+
 object NetworkProxyRuntime {
   private val lock = Any()
+  private val rotationLock = Any()
   private val selector = NetworkProxySelector()
   private val blockedProxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", BLOCKED_PROXY_PORT))
   @Volatile private var localProxy: Proxy? = blockedProxy
-  private val mediaConnectionPool = ConnectionPool()
-  private val forumConnectionPool = ConnectionPool()
-  private var forumConnectionPoolGeneration = 0L
-  private val dispatcher = Dispatcher()
   private val cookieHandler = ReadOnlyWebViewCookieHandler()
   private val cookieJar = ReadOnlyCookieJarContainer(JavaNetCookieJar(cookieHandler))
   private val cronetLifecycleExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
     Thread(runnable, "WzMediaCronetLifecycle").apply { isDaemon = true }
   }
-  private var mediaTransportGeneration = 0L
-  private var cronetMediaTransport: CronetMediaTransport? = null
+  private val runtimeLifecycleExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+    Thread(runnable, "WzReadRuntimeLifecycle").apply { isDaemon = true }
+  }
+  private val retiredGenerations = ConcurrentHashMap<Long, ReadNetworkRuntimeGeneration>()
+  private val pendingRotationFinishes = mutableMapOf<String, PendingReadRuntimeFinish>()
+  private var baseClientTemplate = OkHttpClient()
+  private var nextGenerationNumber = 1L
+  @Volatile private var currentGeneration = ReadNetworkRuntimeGeneration(
+    0L,
+    baseClientTemplate,
+    cookieJar,
+    selector
+  )
   @Volatile private var applicationContext: Context? = null
-  @Volatile private var imageClient: OkHttpClient? = null
+  @Volatile private var imageClientPublisher: ((OkHttpClient) -> Unit)? = null
   private var installed = false
 
   fun install(context: Context) {
+    val previous: ReadNetworkRuntimeGeneration
+    val installedGeneration: ReadNetworkRuntimeGeneration
+    val appContext = context.applicationContext
     synchronized(lock) {
-      if (installed) {
-        return
-      }
-      val appContext = context.applicationContext
+      if (installed) return
       selector.setDelegate(ProxySelector.getDefault())
       ProxySelector.setDefault(selector)
-      val client = configureMediaClient(OkHttpClientProvider.createClientBuilder(appContext)).build()
-      val imageClient = expoImageClient(client)
+      baseClientTemplate = OkHttpClientProvider.createClientBuilder(appContext).build()
+      previous = currentGeneration
+      installedGeneration = ReadNetworkRuntimeGeneration(
+        previous.generation,
+        baseClientTemplate,
+        cookieJar,
+        selector
+      )
+      currentGeneration = installedGeneration
+      nextGenerationNumber = maxOf(nextGenerationNumber, installedGeneration.generation + 1L)
       applicationContext = appContext
-      this.imageClient = imageClient
-      OkHttpClientProvider.setOkHttpClientFactory { client }
+      imageClientPublisher = { client -> installExpoImageClientOnMainThread(appContext, client) }
+      OkHttpClientProvider.setOkHttpClientFactory { currentGeneration.mediaClient }
       NetworkingModule.setCustomClientBuilder { builder ->
         configureManagedClient(builder)
       }
-      installExpoImageClient(appContext, imageClient)
       installed = true
-      Log.i(LOG_TAG, "installed app proxy selector")
     }
+    imageClientPublisher?.invoke(installedGeneration.imageClient)
+    previous.finishRetirement()
+    Log.i(LOG_TAG, "installed read runtime " + runtimeIdentityFields(installedGeneration))
+    ReadNetworkDiagnostics.record(
+      linkedMapOf<String, Any>("operation" to "install", "phase" to "publish").apply {
+        putAll(runtimeIdentityDiagnosticFields(installedGeneration))
+      }
+    )
   }
 
-  fun setLocalProxyPort(port: Int?) {
+  fun setLocalProxyPort(port: Int?) = synchronized(rotationLock) {
     val next = port?.let { Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", it)) }
     val retired = synchronized(lock) {
       localProxy = next
-      mediaTransportGeneration += 1
-      cronetMediaTransport.also { cronetMediaTransport = null }
+      allGenerationsLocked().mapNotNull { generation -> generation.resetCronetMediaTransport() }
     }
-    retired?.retire()
+    retired.forEach { transport -> transport.retire() }
     Log.i(LOG_TAG, if (port == null) "disabled app proxy" else "enabled app proxy")
   }
 
-  fun blockNetworkRequests() {
-    val retired = synchronized(lock) {
+  fun blockNetworkRequests() = synchronized(rotationLock) {
+    val generations: List<ReadNetworkRuntimeGeneration>
+    val retired: List<CronetMediaTransportHandle>
+    synchronized(lock) {
       localProxy = blockedProxy
-      mediaTransportGeneration += 1
-      cronetMediaTransport.also { cronetMediaTransport = null }
+      generations = allGenerationsLocked()
+      retired = generations.mapNotNull { generation -> generation.resetCronetMediaTransport() }
     }
-    retired?.retire()
-    dispatcher.cancelAll()
-    forumConnectionPool.evictAll()
-    mediaConnectionPool.evictAll()
+    retired.forEach { transport -> transport.retire() }
+    generations.forEach { generation ->
+      generation.dispatcher.cancelAll()
+      generation.forumConnectionPool.evictAll()
+      generation.mediaConnectionPool.evictAll()
+    }
     Log.i(LOG_TAG, "blocked app requests while proxy switches")
   }
 
-  internal fun configureManagedClient(builder: OkHttpClient.Builder): OkHttpClient.Builder {
-    return configureSharedClient(builder, forumConnectionPool)
-  }
+  internal fun configureManagedClient(builder: OkHttpClient.Builder): OkHttpClient.Builder =
+    currentGeneration.configureManagedClient(builder)
 
-  internal fun configureMediaClient(builder: OkHttpClient.Builder): OkHttpClient.Builder {
-    return configureSharedClient(builder, mediaConnectionPool)
-  }
+  internal fun configureMediaClient(builder: OkHttpClient.Builder): OkHttpClient.Builder =
+    currentGeneration.configureMediaClient(builder)
 
-  internal fun currentMediaTransportGeneration(): Long = synchronized(lock) {
-    mediaTransportGeneration
-  }
+  internal fun currentReadNetworkGeneration(): Long = currentGeneration.generation
 
-  internal fun executeCronetMediaFallback(request: Request, outerCall: Call): Response? =
-    currentCronetMediaTransport().execute(request, outerCall)
+  internal fun currentMediaTransportGeneration(
+    runtimeGeneration: Long = currentGeneration.generation
+  ): Long = generation(runtimeGeneration)?.currentMediaTransportGeneration() ?: runtimeGeneration
 
-  internal fun forumImageClient(): OkHttpClient =
-    imageClient ?: throw IllegalStateException("论坛图片 client 尚未安装")
-
-  private fun currentCronetMediaTransport(): CronetMediaTransport = synchronized(lock) {
-    cronetMediaTransport?.let { return@synchronized it }
+  internal fun executeCronetMediaFallback(
+    runtimeGeneration: Long,
+    request: Request,
+    outerCall: Call
+  ): Response? {
     val context = applicationContext ?: throw IllegalStateException("网络运行时尚未安装")
-    createCronetMediaTransport(
+    val generation = generation(runtimeGeneration)
+      ?: throw IllegalStateException("媒体网络 generation 已退休")
+    return generation.currentCronetMediaTransport(
       context,
-      mediaTransportGeneration,
       localProxy,
       cronetLifecycleExecutor
-    ).also { created ->
-      cronetMediaTransport = created
-      Log.i(LOG_TAG, "initialized media cronet generation=\${created.generation}")
+    ).execute(request, outerCall)
+  }
+
+  internal fun forumImageClient(): OkHttpClient = currentGeneration.imageClient
+
+  internal fun recoverForumReadChannel(
+    source: String,
+    expectedGeneration: Long = currentGeneration.generation,
+    traceIdentity: String = java.lang.Integer.toHexString(System.identityHashCode(Any()))
+  ): ForumReadChannelRecovery = synchronized(rotationLock) {
+    requireReadNetworkTraceIdentity(traceIdentity)
+    val supportedSource = try {
+      forumReadChannelHostSuffix(source)
+      true
+    } catch (_: IllegalArgumentException) {
+      false
+    }
+    val diagnosticSource = source.takeIf { supportedSource }
+    var terminalRecorded = false
+    fun recordTerminal(outcome: String, generation: Long, error: Throwable? = null) {
+      if (terminalRecorded) return
+      terminalRecorded = true
+      Log.i(
+        LOG_TAG,
+        "rotate-read-runtime phase=finish source=" + (diagnosticSource ?: "unsupported") +
+          " generation=" + generation + " outcome=" + outcome +
+          (error?.let { failure -> " type=" + failure.javaClass.simpleName } ?: "")
+      )
+      ReadNetworkDiagnostics.record(
+        linkedMapOf<String, Any>(
+          "operation" to "rotate-read-runtime",
+          "phase" to "finish",
+          "traceIdentity" to traceIdentity,
+          "generation" to generation,
+          "outcome" to outcome
+        ).apply {
+          if (diagnosticSource != null) put("source", diagnosticSource)
+          if (error != null) put("errorType", error.javaClass.simpleName)
+        }
+      )
+    }
+
+    ReadNetworkDiagnostics.record(
+      linkedMapOf<String, Any>(
+        "operation" to "rotate-read-runtime",
+        "phase" to "intent",
+        "traceIdentity" to traceIdentity,
+        "previousGeneration" to expectedGeneration,
+        "generation" to currentGeneration.generation
+      ).apply { if (diagnosticSource != null) put("source", diagnosticSource) }
+    )
+    if (!supportedSource) {
+      val error = IllegalArgumentException("不支持的论坛读取通道")
+      recordTerminal("failure", currentGeneration.generation, error)
+      throw error
+    }
+    try {
+      val rotation = synchronized(lock) {
+        val previous = currentGeneration
+        if (expectedGeneration != previous.generation) {
+          null
+        } else {
+          val next = ReadNetworkRuntimeGeneration(
+            nextGenerationNumber++,
+            baseClientTemplate,
+            cookieJar,
+            selector
+          )
+          previous.markRetiring(traceIdentity, source)
+          retiredGenerations[previous.generation] = previous
+          pendingRotationFinishes[traceIdentity] = PendingReadRuntimeFinish(
+            traceIdentity,
+            source,
+            previous.generation,
+            next.generation,
+            applied = !traceIdentity.startsWith("trace-")
+          )
+          currentGeneration = next
+          previous to next
+        }
+      }
+      if (rotation == null) {
+        val current = currentGeneration.generation
+        if (!traceIdentity.startsWith("trace-")) {
+          recordTerminal("noop", current)
+        }
+        return@synchronized ForumReadChannelRecovery(
+          false,
+          expectedGeneration,
+          current,
+          0,
+          0
+        )
+      }
+      val (previous, next) = rotation
+      Log.i(
+        LOG_TAG,
+        "rotate-read-runtime phase=publish source=" + source +
+          " previousGeneration=" + previous.generation + " " + runtimeIdentityFields(next)
+      )
+      ReadNetworkDiagnostics.record(
+        linkedMapOf<String, Any>(
+          "operation" to "rotate-read-runtime",
+          "phase" to "publish",
+          "traceIdentity" to traceIdentity,
+          "source" to source,
+          "previousGeneration" to previous.generation
+        ).apply { putAll(runtimeIdentityDiagnosticFields(next)) }
+      )
+      try {
+        imageClientPublisher?.invoke(next.imageClient)
+      } catch (error: Throwable) {
+        synchronized(lock) {
+          if (currentGeneration === next) {
+            currentGeneration = previous
+            previous.clearRetirement()
+            retiredGenerations.remove(previous.generation, previous)
+            pendingRotationFinishes.remove(traceIdentity)
+            next.markRetiring(traceIdentity, source, diagnosticsEnabled = false)
+            retiredGenerations[next.generation] = next
+          }
+        }
+        scheduleDrain(next)
+        try {
+          imageClientPublisher?.invoke(previous.imageClient)
+        } catch (_: Throwable) {
+          Unit
+        }
+        recordTerminal("rollback", next.generation, error)
+        throw IllegalStateException("无法发布新的读取网络运行时", error)
+      }
+      val queued = previous.dispatcher.queuedCalls()
+        .filter { call ->
+          isForumReadChannelRequest(source, call.request()) && !isRetainedVideoReadRequest(call.request())
+        }
+      val running = previous.dispatcher.runningCalls()
+        .filter { call ->
+          isForumReadChannelRequest(source, call.request()) && !isRetainedVideoReadRequest(call.request())
+        }
+      queued.forEach { call -> call.cancel() }
+      running.forEach { call -> call.cancel() }
+      Log.i(
+        LOG_TAG,
+        "rotate-read-runtime phase=cancel source=" + source +
+          " previousGeneration=" + previous.generation +
+          " generation=" + next.generation +
+          " queued=" + queued.size + " running=" + running.size
+      )
+      ReadNetworkDiagnostics.record(
+        mapOf(
+          "operation" to "rotate-read-runtime",
+          "phase" to "cancel",
+          "traceIdentity" to traceIdentity,
+          "source" to source,
+          "previousGeneration" to previous.generation,
+          "generation" to next.generation,
+          "queuedCount" to queued.size,
+          "runningCount" to running.size
+        )
+      )
+      scheduleDrain(previous)
+      ForumReadChannelRecovery(
+        true,
+        previous.generation,
+        next.generation,
+        queued.size,
+        running.size
+      )
+    } catch (error: Throwable) {
+      if (!terminalRecorded) {
+        synchronized(lock) { pendingRotationFinishes.remove(traceIdentity) }
+        recordTerminal("failure", currentGeneration.generation, error)
+      }
+      throw error
     }
   }
 
-  private fun configureSharedClient(
-    builder: OkHttpClient.Builder,
-    connectionPool: ConnectionPool
-  ): OkHttpClient.Builder {
-    builder.cookieJar(cookieJar)
-    builder.proxySelector(selector)
-    builder.connectionPool(connectionPool)
-    builder.dispatcher(dispatcher)
-    if (builder.interceptors().none { it is ForumMediaRequestInterceptor }) {
-      builder.addInterceptor(ForumMediaRequestInterceptor())
+  internal fun retainReadNetworkGeneration(expectedGeneration: Long): ReadNetworkGenerationLease = synchronized(lock) {
+    val runtime = currentGeneration
+    if (runtime.generation != expectedGeneration) {
+      return@synchronized ReadNetworkGenerationLease(false, runtime.generation)
     }
-    return builder
+    runtime.retainExternalLease()
+    ReadNetworkGenerationLease(true, runtime.generation)
   }
 
-  internal fun recoverForumReadChannel(source: String): ForumReadChannelRecovery {
-    forumReadChannelHostSuffix(source)
-    val queued = dispatcher.queuedCalls().filter { call -> isForumReadChannelRequest(source, call.request()) }
-    val running = dispatcher.runningCalls().filter { call -> isForumReadChannelRequest(source, call.request()) }
-    queued.forEach { call -> call.cancel() }
-    running.forEach { call -> call.cancel() }
-    val generation = synchronized(lock) {
-      forumConnectionPool.evictAll()
-      forumConnectionPoolGeneration += 1
-      forumConnectionPoolGeneration
+  internal fun releaseReadNetworkGeneration(generation: Long): Boolean {
+    val runtime = synchronized(lock) {
+      generationLocked(generation)?.also { current -> current.releaseExternalLease() }
+    } ?: return false
+    if (retiredGenerations[generation] === runtime) scheduleDrain(runtime)
+    return true
+  }
+
+  internal fun acknowledgeReadNetworkRuntimeApply(
+    traceIdentity: String,
+    previousGeneration: Long,
+    generation: Long
+  ): Boolean {
+    requireReadNetworkTraceIdentity(traceIdentity)
+    val finish = synchronized(lock) {
+      val pending = pendingRotationFinishes[traceIdentity] ?: return false
+      if (
+        pending.retiredGeneration != previousGeneration ||
+        pending.publishedGeneration != generation
+      ) return false
+      pending.applied = true
+      if (!pending.drained) null else {
+        pendingRotationFinishes.remove(traceIdentity)
+        pending
+      }
     }
+    finish?.let(::recordReadNetworkRuntimeFinish)
+    return true
+  }
+
+  internal fun setImageClientPublisherForTests(publisher: ((OkHttpClient) -> Unit)?) {
+    imageClientPublisher = publisher
+  }
+
+  internal fun hasReadNetworkGenerationForTests(generation: Long): Boolean = generation(generation) != null
+
+  internal fun installCronetMediaTransportForTests(
+    generation: Long,
+    transport: CronetMediaTransportHandle
+  ): Boolean = synchronized(lock) {
+    generationLocked(generation)?.installCronetMediaTransportForTests(transport) ?: false
+  }
+
+  private fun generation(generation: Long): ReadNetworkRuntimeGeneration? = synchronized(lock) {
+    generationLocked(generation)
+  }
+
+  private fun generationLocked(generation: Long): ReadNetworkRuntimeGeneration? =
+    currentGeneration.takeIf { current -> current.generation == generation }
+      ?: retiredGenerations[generation]
+
+  private fun allGenerationsLocked(): List<ReadNetworkRuntimeGeneration> =
+    listOf(currentGeneration) + retiredGenerations.values.filter { generation -> generation !== currentGeneration }
+
+  private fun scheduleDrain(generation: ReadNetworkRuntimeGeneration) {
+    runtimeLifecycleExecutor.schedule(
+      { drainRetiredGeneration(generation) },
+      100L,
+      TimeUnit.MILLISECONDS
+    )
+  }
+
+  private fun drainRetiredGeneration(generation: ReadNetworkRuntimeGeneration) {
+    val queued = generation.dispatcher.queuedCallsCount()
+    val running = generation.dispatcher.runningCallsCount()
+    val leases = generation.externalLeases()
+    val cronetActive = generation.activeCronetCalls()
+    val traceIdentity = generation.retirementTraceIdentity
+      ?: java.lang.Long.toHexString(generation.generation)
+    val source = generation.retirementSource
+    val diagnosticsEnabled = generation.retirementDiagnosticsEnabled
+    if (diagnosticsEnabled && generation.shouldRecordDrainState(queued, running, leases, cronetActive)) {
+      Log.i(
+        LOG_TAG,
+        "rotate-read-runtime phase=drain generation=" + generation.generation +
+          " queued=" + queued + " running=" + running + " leases=" + leases + " cronetActive=" + cronetActive
+      )
+      ReadNetworkDiagnostics.record(
+        linkedMapOf<String, Any>(
+          "operation" to "rotate-read-runtime",
+          "phase" to "drain",
+          "traceIdentity" to traceIdentity,
+          "generation" to generation.generation,
+          "queuedCount" to queued,
+          "runningCount" to running,
+          "leaseCount" to leases,
+          "cronetActiveCount" to cronetActive
+        ).apply { if (source != null) put("source", source) }
+      )
+    }
+    val shouldFinish = synchronized(lock) {
+      if (retiredGenerations[generation.generation] !== generation) return
+      if (!generation.isReadyToDrain(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()))) {
+        false
+      } else {
+        generation.sealRetirement()
+        retiredGenerations.remove(generation.generation, generation)
+        true
+      }
+    }
+    if (!shouldFinish) {
+      scheduleDrain(generation)
+      return
+    }
+    generation.finishRetirement()
+    if (!diagnosticsEnabled) {
+      Log.i(LOG_TAG, "discarded unpublished read runtime generation=" + generation.generation)
+      return
+    }
+    markReadNetworkRuntimeDrained(traceIdentity, generation.generation, source)
+  }
+
+  private fun markReadNetworkRuntimeDrained(traceIdentity: String, generation: Long, source: String?) {
+    val finish = synchronized(lock) {
+      val pending = pendingRotationFinishes[traceIdentity] ?: return
+      if (pending.retiredGeneration != generation || pending.source != source) return
+      pending.drained = true
+      if (!pending.applied) null else {
+        pendingRotationFinishes.remove(traceIdentity)
+        pending
+      }
+    }
+    finish?.let(::recordReadNetworkRuntimeFinish)
+  }
+
+  private fun recordReadNetworkRuntimeFinish(pending: PendingReadRuntimeFinish) {
     Log.i(
       LOG_TAG,
-      "recovered $source read channel generation=$generation queued=\${queued.size} running=\${running.size}"
+      "rotate-read-runtime phase=finish generation=" + pending.retiredGeneration + " outcome=retired"
     )
-    return ForumReadChannelRecovery(generation, queued.size, running.size)
+    ReadNetworkDiagnostics.record(
+      mapOf(
+        "operation" to "rotate-read-runtime",
+        "phase" to "finish",
+        "traceIdentity" to pending.traceIdentity,
+        "source" to pending.source,
+        "generation" to pending.retiredGeneration,
+        "outcome" to "retired"
+      )
+    )
   }
+
+  private fun runtimeIdentityFields(generation: ReadNetworkRuntimeGeneration): String =
+    "generation=" + generation.generation +
+      " dispatcherId=" + opaqueNetworkIdentity(generation.dispatcher) +
+      " forumPoolId=" + opaqueNetworkIdentity(generation.forumConnectionPool) +
+      " mediaPoolId=" + opaqueNetworkIdentity(generation.mediaConnectionPool) +
+      " imageClientId=" + opaqueNetworkIdentity(generation.imageClient)
+
+  private fun runtimeIdentityDiagnosticFields(generation: ReadNetworkRuntimeGeneration): Map<String, Any> =
+    mapOf(
+      "generation" to generation.generation,
+      "dispatcherId" to opaqueNetworkIdentity(generation.dispatcher),
+      "forumPoolId" to opaqueNetworkIdentity(generation.forumConnectionPool),
+      "mediaPoolId" to opaqueNetworkIdentity(generation.mediaConnectionPool),
+      "imageClientId" to opaqueNetworkIdentity(generation.imageClient)
+    )
+
+  internal fun readNetworkDiagnosticEvents(): List<ReadNetworkDiagnosticEvent> =
+    ReadNetworkDiagnostics.snapshot()
 
   internal fun managedCookieHeaderForUrl(url: String): String? =
     cookieHandler.readCookieHeader(url)
@@ -807,10 +1942,12 @@ object NetworkProxyRuntime {
     (localProxy?.address() as? InetSocketAddress)?.port
 }
 
-internal fun expoImageClient(client: OkHttpClient): OkHttpClient =
+internal fun expoImageClient(client: OkHttpClient, generation: Long = 0L): OkHttpClient =
   client.newBuilder()
-    .callTimeout(30, TimeUnit.SECONDS)
-    .addNetworkInterceptor(ForumMediaCloudflareFallbackInterceptor())
+    .callTimeout(0, TimeUnit.MILLISECONDS)
+    .connectTimeout(15, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .addNetworkInterceptor(ForumMediaCloudflareFallbackInterceptor(generation))
     .build()
 
 private fun installExpoImageClient(context: Context, client: OkHttpClient) {
@@ -818,12 +1955,49 @@ private fun installExpoImageClient(context: Context, client: OkHttpClient) {
   registry.replace(
     GlideUrl::class.java,
     InputStream::class.java,
-    OkHttpUrlLoader.Factory(client)
+    CloseSafeGlideUrlLoader.Factory(client)
   )
   registry.replace(
     GlideUrlWrapper::class.java,
     InputStream::class.java,
-    GlideUrlWrapperLoader.Factory(client)
+    CloseSafeGlideUrlWrapperLoader.Factory(client)
+  )
+}
+
+internal fun awaitReadNetworkImageClientPublication(
+  isMainThread: Boolean,
+  timeoutMs: Long = 5_000L,
+  postToMainThread: ((() -> Unit) -> Boolean),
+  publish: () -> Unit
+) {
+  if (isMainThread) {
+    publish()
+    return
+  }
+  val completed = CountDownLatch(1)
+  val failure = AtomicReference<Throwable?>(null)
+  val posted = postToMainThread {
+    try {
+      publish()
+    } catch (error: Throwable) {
+      failure.set(error)
+    } finally {
+      completed.countDown()
+    }
+  }
+  if (!posted || !completed.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+    throw IllegalStateException("等待读取网络图片客户端切换超时")
+  }
+  failure.get()?.let { error ->
+    throw IllegalStateException("读取网络图片客户端切换失败", error)
+  }
+}
+
+private fun installExpoImageClientOnMainThread(context: Context, client: OkHttpClient) {
+  awaitReadNetworkImageClientPublication(
+    Looper.myLooper() == Looper.getMainLooper(),
+    postToMainThread = { action -> Handler(Looper.getMainLooper()).post(action) },
+    publish = { installExpoImageClient(context, client) }
   )
 }
 
@@ -1937,12 +3111,18 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
-  fun recoverForumReadChannel(source: String, promise: Promise) {
+  fun recoverForumReadChannel(source: String, expectedGeneration: Double, traceIdentity: String, promise: Promise) {
     worker.execute {
       try {
-        val result = NetworkProxyRuntime.recoverForumReadChannel(source)
+        val result = NetworkProxyRuntime.recoverForumReadChannel(
+          source,
+          requireReadNetworkGeneration(expectedGeneration),
+          traceIdentity
+        )
         promise.resolve(Arguments.createMap().apply {
           putBoolean("ok", true)
+          putBoolean("rotated", result.rotated)
+          putDouble("previousGeneration", result.previousGeneration.toDouble())
           putDouble("generation", result.generation.toDouble())
           putInt("canceledQueued", result.canceledQueued)
           putInt("canceledRunning", result.canceledRunning)
@@ -1950,6 +3130,70 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
       } catch (error: Exception) {
         promise.reject("forum_read_channel_recovery_failed", error.message ?: "论坛读取通道自愈失败", error)
       }
+    }
+  }
+
+  @ReactMethod
+  fun retainReadNetworkGeneration(generation: Double, promise: Promise) {
+    try {
+      val lease = NetworkProxyRuntime.retainReadNetworkGeneration(requireReadNetworkGeneration(generation))
+      promise.resolve(Arguments.createMap().apply {
+        putBoolean("retained", lease.retained)
+        putDouble("generation", lease.generation.toDouble())
+      })
+    } catch (error: Exception) {
+      promise.reject("read_network_generation_retain_failed", "无法保留读取网络运行时", error)
+    }
+  }
+
+  @ReactMethod
+  fun acknowledgeReadNetworkRuntimeApply(
+    traceIdentity: String,
+    previousGeneration: Double,
+    generation: Double,
+    promise: Promise
+  ) {
+    try {
+      promise.resolve(
+        NetworkProxyRuntime.acknowledgeReadNetworkRuntimeApply(
+          traceIdentity,
+          requireReadNetworkGeneration(previousGeneration),
+          requireReadNetworkGeneration(generation)
+        )
+      )
+    } catch (error: Exception) {
+      promise.reject("read_network_runtime_apply_ack_failed", "无法确认读取网络运行时状态发布", error)
+    }
+  }
+
+  @ReactMethod
+  fun releaseReadNetworkGeneration(generation: Double, promise: Promise) {
+    try {
+      promise.resolve(NetworkProxyRuntime.releaseReadNetworkGeneration(requireReadNetworkGeneration(generation)))
+    } catch (error: Exception) {
+      promise.reject("read_network_generation_release_failed", "无法释放读取网络运行时", error)
+    }
+  }
+
+  @ReactMethod
+  fun readNetworkDiagnosticEvents(promise: Promise) {
+    try {
+      val events = Arguments.createArray()
+      NetworkProxyRuntime.readNetworkDiagnosticEvents().forEach { event ->
+        events.pushMap(Arguments.createMap().apply {
+          putDouble("timeMs", event.timeMs.toDouble())
+          event.fields.forEach { (key, value) ->
+            when (value) {
+              is Boolean -> putBoolean(key, value)
+              is Number -> putDouble(key, value.toDouble())
+              is String -> putString(key, value)
+            }
+          }
+        })
+      }
+      promise.resolve(events)
+    } catch (error: Exception) {
+      promise.reject("network_diagnostics_read_failed", "无法读取原生网络诊断", error)
     }
   }
 
@@ -2203,8 +3447,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import com.bumptech.glide.Priority
+import com.bumptech.glide.load.Options
+import com.bumptech.glide.load.data.DataFetcher
+import com.bumptech.glide.load.model.GlideUrl
 import com.bumptech.glide.load.model.Headers
+import expo.modules.image.okhttp.GlideUrlWrapper
 import expo.modules.image.okhttp.GlideUrlWithCustomCacheKey
+import expo.modules.video.ReadNetworkVideoClientRegistry
 import okhttp3.Cache
 import okhttp3.Call
 import okhttp3.Callback
@@ -2218,6 +3468,10 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
+import okio.ForwardingSource
+import okio.Timeout
+import okio.buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -2230,6 +3484,127 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NetworkProxyRuntimeTest {
+  private class ControllableGlideCall(private val request: Request) : Call {
+    private var callback: Callback? = null
+    private val canceled = AtomicBoolean(false)
+    private val executed = AtomicBoolean(false)
+
+    override fun request(): Request = request
+
+    override fun execute(): Response = throw UnsupportedOperationException("Only async execution is supported")
+
+    override fun enqueue(responseCallback: Callback) {
+      check(executed.compareAndSet(false, true))
+      callback = responseCallback
+    }
+
+    override fun cancel() {
+      canceled.set(true)
+    }
+
+    override fun isExecuted(): Boolean = executed.get()
+
+    override fun isCanceled(): Boolean = canceled.get()
+
+    override fun timeout(): Timeout = Timeout.NONE
+
+    override fun clone(): Call = ControllableGlideCall(request)
+
+    fun respond(code: Int, body: okhttp3.ResponseBody) {
+      requireNotNull(callback).onResponse(
+        this,
+        Response.Builder()
+          .request(request)
+          .protocol(Protocol.HTTP_1_1)
+          .code(code)
+          .message(if (code in 200..299) "OK" else "Failure")
+          .body(body)
+          .build()
+      )
+    }
+
+    fun fail(error: IOException) {
+      requireNotNull(callback).onFailure(this, error)
+    }
+  }
+
+  private class ControllableGlideCallFactory : Call.Factory {
+    lateinit var latest: ControllableGlideCall
+
+    override fun newCall(request: Request): Call = ControllableGlideCall(request).also { latest = it }
+  }
+
+  private class CloseCountingResponseBody(private val contents: String) : okhttp3.ResponseBody() {
+    val closeCount = AtomicInteger()
+    private val trackedSource = object : ForwardingSource(Buffer().writeUtf8(contents)) {
+      override fun close() {
+        closeCount.incrementAndGet()
+        super.close()
+      }
+    }.buffer()
+
+    override fun contentType() = null
+
+    override fun contentLength(): Long = contents.toByteArray().size.toLong()
+
+    override fun source() = trackedSource
+  }
+
+  private class ThrowingAcquisitionResponseBody(
+    private val contents: String,
+    private val failurePoint: String
+  ) : okhttp3.ResponseBody() {
+    val closeCount = AtomicInteger()
+    private val trackedSource = Buffer().writeUtf8(contents)
+
+    override fun contentType() = null
+
+    override fun contentLength(): Long {
+      if (failurePoint == "contentLength") throw IOException("content length failed")
+      return contents.toByteArray().size.toLong()
+    }
+
+    override fun source() = if (failurePoint == "byteStream") {
+      throw IOException("byte stream failed")
+    } else {
+      trackedSource
+    }
+
+    override fun close() {
+      closeCount.incrementAndGet()
+      trackedSource.close()
+    }
+  }
+
+  private class RecordingGlideCallback(
+    private val failureObserved: (() -> Unit)? = null
+  ) : DataFetcher.DataCallback<InputStream> {
+    val readyCount = AtomicInteger()
+    val failureCount = AtomicInteger()
+    var data: InputStream? = null
+
+    override fun onDataReady(data: InputStream?) {
+      this.data = data
+      readyCount.incrementAndGet()
+    }
+
+    override fun onLoadFailed(error: Exception) {
+      failureObserved?.invoke()
+      failureCount.incrementAndGet()
+    }
+  }
+
+  private fun testGlideUrl(): GlideUrl = object : GlideUrl(
+    "https://images.example.test/a.webp",
+    object : Headers { override fun getHeaders() = emptyMap<String, String>() }
+  ) {
+    override fun toStringUrl() = "https://images.example.test/a.webp"
+  }
+
+  private fun closeSafeGlideFetcher(factory: Call.Factory): DataFetcher<InputStream> = requireNotNull(
+    CloseSafeGlideUrlLoader(factory).buildLoadData(testGlideUrl(), 100, 100, Options())
+  ).fetcher
+
   private class BlockingWriteSocket(private val writesStarted: CountDownLatch) : Socket() {
     private val closedState = AtomicBoolean(false)
     private val closed = CountDownLatch(1)
@@ -2283,6 +3658,175 @@ class NetworkProxyRuntimeTest {
     .message("OK")
     .body("".toResponseBody())
     .build()
+
+  @Test
+  fun regTopic074CancelAfter200ClosesOwnedBodyBeforeCleanup() {
+    val factory = ControllableGlideCallFactory()
+    val callback = RecordingGlideCallback()
+    val body = CloseCountingResponseBody("image")
+    val fetcher = closeSafeGlideFetcher(factory)
+    fetcher.loadData(Priority.NORMAL, callback)
+
+    factory.latest.respond(200, body)
+
+    assertEquals(1, callback.readyCount.get())
+    assertEquals(0, callback.failureCount.get())
+    assertEquals("a successful response stays readable until cancel or cleanup", 0, body.closeCount.get())
+
+    fetcher.cancel()
+    fetcher.cleanup()
+
+    assertTrue(factory.latest.isCanceled())
+    assertEquals("cancel must own and close the accepted response exactly once", 1, body.closeCount.get())
+  }
+
+  @Test
+  fun regTopic074SuccessfulBodyAcquisitionFailuresCloseExactlyOnce() {
+    listOf("byteStream", "contentLength").forEach { failurePoint ->
+      val factory = ControllableGlideCallFactory()
+      val body = ThrowingAcquisitionResponseBody("image", failurePoint)
+      val closeCountAtFailure = AtomicInteger(-1)
+      val callback = RecordingGlideCallback { closeCountAtFailure.set(body.closeCount.get()) }
+      val fetcher = closeSafeGlideFetcher(factory)
+      fetcher.loadData(Priority.NORMAL, callback)
+
+      factory.latest.respond(200, body)
+
+      assertEquals("a failed acquisition never exposes response data", 0, callback.readyCount.get())
+      assertEquals("a failed acquisition reports one Glide failure", 1, callback.failureCount.get())
+      assertEquals("the body closes before Glide observes acquisition failure", 1, closeCountAtFailure.get())
+      fetcher.cancel()
+      fetcher.cleanup()
+      assertEquals("the failed acquisition body stays closed exactly once", 1, body.closeCount.get())
+    }
+  }
+
+  @Test
+  fun regTopic074Late200AfterCancelClosesWithoutCallback() {
+    val factory = ControllableGlideCallFactory()
+    val callback = RecordingGlideCallback()
+    val body = CloseCountingResponseBody("late-image")
+    val fetcher = closeSafeGlideFetcher(factory)
+    fetcher.loadData(Priority.NORMAL, callback)
+
+    fetcher.cancel()
+    factory.latest.respond(200, body)
+    fetcher.cleanup()
+
+    assertTrue(factory.latest.isCanceled())
+    assertEquals(0, callback.readyCount.get())
+    assertEquals(0, callback.failureCount.get())
+    assertEquals("a response arriving after cancel must be closed exactly once", 1, body.closeCount.get())
+  }
+
+  @Test
+  fun regTopic074Late200AfterCleanupClosesWithoutCallback() {
+    val factory = ControllableGlideCallFactory()
+    val callback = RecordingGlideCallback()
+    val body = CloseCountingResponseBody("cleanup-late-image")
+    val fetcher = closeSafeGlideFetcher(factory)
+    fetcher.loadData(Priority.NORMAL, callback)
+
+    fetcher.cleanup()
+    factory.latest.respond(200, body)
+    fetcher.cancel()
+
+    assertEquals(0, callback.readyCount.get())
+    assertEquals(0, callback.failureCount.get())
+    assertEquals("a response arriving after cleanup must be closed exactly once", 1, body.closeCount.get())
+  }
+
+  @Test
+  fun regTopic074FailureAfterCancelDoesNotCallback() {
+    val factory = ControllableGlideCallFactory()
+    val callback = RecordingGlideCallback()
+    val fetcher = closeSafeGlideFetcher(factory)
+    fetcher.loadData(Priority.NORMAL, callback)
+
+    fetcher.cancel()
+    factory.latest.fail(IOException("canceled call failed"))
+    fetcher.cleanup()
+
+    assertTrue(factory.latest.isCanceled())
+    assertEquals(0, callback.readyCount.get())
+    assertEquals(0, callback.failureCount.get())
+  }
+
+  @Test
+  fun regTopic074CleanupAndCancelAreIdempotentInEitherOrder() {
+    val cleanupFirstFactory = ControllableGlideCallFactory()
+    val cleanupFirstCallback = RecordingGlideCallback()
+    val cleanupFirstBody = CloseCountingResponseBody("cleanup-first")
+    val cleanupFirstFetcher = closeSafeGlideFetcher(cleanupFirstFactory)
+    cleanupFirstFetcher.loadData(Priority.NORMAL, cleanupFirstCallback)
+    cleanupFirstFactory.latest.respond(200, cleanupFirstBody)
+
+    assertEquals(0, cleanupFirstBody.closeCount.get())
+    cleanupFirstFetcher.cleanup()
+    cleanupFirstFetcher.cleanup()
+    cleanupFirstFetcher.cancel()
+    assertEquals(1, cleanupFirstBody.closeCount.get())
+
+    val cancelFirstFactory = ControllableGlideCallFactory()
+    val cancelFirstCallback = RecordingGlideCallback()
+    val cancelFirstBody = CloseCountingResponseBody("cancel-first")
+    val cancelFirstFetcher = closeSafeGlideFetcher(cancelFirstFactory)
+    cancelFirstFetcher.loadData(Priority.NORMAL, cancelFirstCallback)
+    cancelFirstFactory.latest.respond(200, cancelFirstBody)
+
+    cancelFirstFetcher.cancel()
+    cancelFirstFetcher.cancel()
+    cancelFirstFetcher.cleanup()
+    assertEquals(1, cancelFirstBody.closeCount.get())
+  }
+
+  @Test
+  fun regTopic074Non2xxClosesBeforeReportingFailure() {
+    val factory = ControllableGlideCallFactory()
+    val body = CloseCountingResponseBody("denied")
+    val closeCountAtFailure = AtomicInteger(-1)
+    val callback = RecordingGlideCallback { closeCountAtFailure.set(body.closeCount.get()) }
+    val fetcher = closeSafeGlideFetcher(factory)
+    fetcher.loadData(Priority.NORMAL, callback)
+
+    factory.latest.respond(403, body)
+
+    assertEquals(0, callback.readyCount.get())
+    assertEquals(1, callback.failureCount.get())
+    assertEquals(1, closeCountAtFailure.get())
+    assertEquals("a non-success response is closed before Glide observes failure", 1, body.closeCount.get())
+    fetcher.cancel()
+    fetcher.cleanup()
+    assertEquals(1, body.closeCount.get())
+  }
+
+  @Test
+  fun regTopic074ExpoWrapperUsesCloseSafeFetcherAndPreservesProgress() {
+    val factory = ControllableGlideCallFactory()
+    val callback = RecordingGlideCallback()
+    val progress = mutableListOf<Triple<Long, Long, Boolean>>()
+    val model = GlideUrlWrapper(testGlideUrl())
+    val loadData = requireNotNull(
+      CloseSafeGlideUrlWrapperLoader(factory) { observedModel, bytesRead, contentLength, done ->
+        assertSame(model, observedModel)
+        progress.add(Triple(bytesRead, contentLength, done))
+      }.buildLoadData(model, 100, 100, Options())
+    )
+
+    assertSame(model.glideUrl, loadData.sourceKey)
+    assertTrue(loadData.fetcher is CloseSafeGlideStreamFetcher)
+    loadData.fetcher.loadData(Priority.NORMAL, callback)
+    val body = CloseCountingResponseBody("image")
+    factory.latest.respond(200, body)
+
+    assertEquals("image", callback.data?.readBytes()?.toString(Charsets.UTF_8))
+    assertEquals(
+      listOf(Triple(5L, 5L, false), Triple(5L, 5L, true)),
+      progress
+    )
+    loadData.fetcher.cleanup()
+    assertEquals(1, body.closeCount.get())
+  }
 
   @Test
   fun regTopic064OnlyCloudflareImageChallengesUseOneFallbackResponse() {
@@ -2705,12 +4249,14 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
-  fun regTopic032ExpoImageHasAFiniteCallTimeoutWithoutChangingTheBaseClient() {
+  fun regPerf010ExpoImageUsesPhaseTimeoutsWithoutACompleteCallDeadline() {
     val base = OkHttpClient.Builder().build()
     val image = expoImageClient(base)
 
     assertEquals(0, base.callTimeoutMillis)
-    assertEquals(30_000, image.callTimeoutMillis)
+    assertEquals(0, image.callTimeoutMillis)
+    assertEquals(15_000, image.connectTimeoutMillis)
+    assertEquals(30_000, image.readTimeoutMillis)
     assertSame(base.cookieJar, image.cookieJar)
     assertSame(base.proxySelector, image.proxySelector)
     assertSame(base.dispatcher, image.dispatcher)
@@ -2827,23 +4373,65 @@ class NetworkProxyRuntimeTest {
     assertSame(first.proxySelector, second.proxySelector)
     assertSame(first.dispatcher, second.dispatcher)
     assertSame(first.connectionPool, second.connectionPool)
+    assertEquals(1, reapplied.interceptors.count { it is ForumReadRequestInterceptor })
     assertEquals(1, reapplied.interceptors.count { it is ForumMediaRequestInterceptor })
   }
 
   @Test
   fun regProxy009MatchesOnlyControlledReadHostsAndMethods() {
-    assertTrue(isForumReadChannelRequest("nodeseek", Request.Builder().url("https://www.nodeseek.com/read").build()))
-    assertTrue(
-      isForumReadChannelRequest(
-        "linuxdo",
-        Request.Builder().url("https://api.linux.do/read").head().build()
-      )
-    )
+    listOf(
+      "nodeseek" to "https://www.nodeseek.com/read",
+      "linuxdo" to "https://api.linux.do/read",
+      "yaohuo" to "https://www.yaohuo.me/read",
+      "v2ex" to "https://www.v2ex.com/read",
+      "xiaoyinsi" to "https://forum.xiaoyinsi.com/read"
+    ).forEach { (source, url) ->
+      assertTrue(isForumReadChannelRequest(source, Request.Builder().url(url).head().build()))
+    }
     assertFalse(isForumReadChannelRequest("nodeseek", Request.Builder().url("https://evilnodeseek.com/read").build()))
     assertFalse(
       isForumReadChannelRequest(
         "nodeseek",
         Request.Builder().url("https://www.nodeseek.com/write").post(ByteArray(0).toRequestBody()).build()
+      )
+    )
+    assertFalse(
+      isForumReadChannelRequest(
+        "nodeseek",
+        Request.Builder()
+          .url("https://www.nodeseek.com/api/account/status")
+          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "health")
+          .build()
+      )
+    )
+    assertTrue(
+      isForumReadChannelRequest(
+        "nodeseek",
+        Request.Builder()
+          .url("https://www.nodeseek.com/post-1-1")
+          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "content")
+          .build()
+      )
+    )
+    assertTrue(
+      isForumReadChannelRequest(
+        "nodeseek",
+        Request.Builder()
+          .url("https://cdn.example.com/private-image.png")
+          .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+          .build()
+      )
+    )
+    assertFalse(
+      isForumReadChannelRequest(
+        "nodeseek",
+        Request.Builder()
+          .url("https://cdn.example.com/upload")
+          .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+          .post(ByteArray(0).toRequestBody())
+          .build()
       )
     )
     assertThrows(IllegalArgumentException::class.java) {
@@ -2852,16 +4440,56 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
-  fun regProxy009CancelsOnlyTargetReadsAndEvictsTheSharedForumPool() {
+  fun regProxy010ReadIntentHeadersAreStrippedAndHealthRequestsRemainRetained() {
+    val captured = mutableListOf<Request>()
+    val client = OkHttpClient.Builder()
+      .addInterceptor(ForumReadRequestInterceptor())
+      .addInterceptor { chain ->
+        captured.add(chain.request())
+        responseFor(chain.request())
+      }
+      .build()
+
+    listOf("content", "health").forEach { cancelClass ->
+      client.newCall(
+        Request.Builder()
+          .url("https://www.nodeseek.com/" + cancelClass)
+          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, cancelClass)
+          .build()
+      ).execute().close()
+    }
+
+    assertEquals(2, captured.size)
+    captured.forEach { request ->
+      assertNull(request.header(FORUM_READ_SOURCE_HEADER))
+      assertNull(request.header(FORUM_READ_CANCEL_CLASS_HEADER))
+      assertEquals("nodeseek", request.tag(ForumReadRequestTag::class.java)?.source)
+    }
+    assertTrue(isForumReadChannelRequest("nodeseek", captured[0]))
+    assertFalse(isForumReadChannelRequest("nodeseek", captured[1]))
+  }
+
+  @Test
+  fun regProxy010PublishesFreshRuntimeBeforeCanceledOldCallReleases() {
+    val expectedGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
     val before = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
     val mediaBefore = NetworkProxyRuntime.configureMediaClient(OkHttpClient.Builder()).build()
+    val imageBefore = NetworkProxyRuntime.forumImageClient()
     val dispatcher = before.dispatcher
     val previousMaxRequests = dispatcher.maxRequests
     val previousMaxRequestsPerHost = dispatcher.maxRequestsPerHost
-    val started = CountDownLatch(2)
+    val started = CountDownLatch(3)
     val release = CountDownLatch(1)
-    val completed = CountDownLatch(4)
-    val client = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder())
+    val completed = CountDownLatch(6)
+    val forumClient = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder())
+      .addInterceptor { chain ->
+        started.countDown()
+        release.await(5, TimeUnit.SECONDS)
+        responseFor(chain.request())
+      }
+      .build()
+    val activeMediaClient = NetworkProxyRuntime.configureMediaClient(OkHttpClient.Builder())
       .addInterceptor { chain ->
         started.countDown()
         release.await(5, TimeUnit.SECONDS)
@@ -2869,15 +4497,41 @@ class NetworkProxyRuntimeTest {
       }
       .build()
     val calls = listOf(
-      client.newCall(Request.Builder().url("https://www.nodeseek.com/running").build()),
-      client.newCall(Request.Builder().url("https://www.nodeseek.com/queued").build()),
-      client.newCall(
+      forumClient.newCall(
+        Request.Builder()
+          .url("https://www.nodeseek.com/running")
+          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "content")
+          .build()
+      ),
+      forumClient.newCall(
+        Request.Builder()
+          .url("https://www.nodeseek.com/queued")
+          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "content")
+          .build()
+      ),
+      activeMediaClient.newCall(
+        Request.Builder()
+          .url("https://cdn.example.com/running-image.png")
+          .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+          .header("Accept", "image/avif,image/webp,image/*,*/*;q=0.8")
+          .build()
+      ),
+      forumClient.newCall(
         Request.Builder()
           .url("https://www.nodeseek.com/write")
           .post(ByteArray(0).toRequestBody())
           .build()
       ),
-      client.newCall(Request.Builder().url("https://linux.do/unrelated").build())
+      forumClient.newCall(Request.Builder().url("https://linux.do/unrelated").build()),
+      forumClient.newCall(
+        Request.Builder()
+          .url("https://www.nodeseek.com/api/account/status")
+          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "health")
+          .build()
+      )
     )
     val callback = object : Callback {
       override fun onFailure(call: Call, error: IOException) {
@@ -2891,35 +4545,390 @@ class NetworkProxyRuntimeTest {
     }
 
     try {
-      dispatcher.maxRequests = 2
+      dispatcher.maxRequests = 3
       dispatcher.maxRequestsPerHost = 1
       calls.forEach { call -> call.enqueue(callback) }
       assertTrue(started.await(5, TimeUnit.SECONDS))
 
-      val recovery = NetworkProxyRuntime.recoverForumReadChannel("nodeseek")
+      val recovery = NetworkProxyRuntime.recoverForumReadChannel("nodeseek", expectedGeneration)
       val after = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
       val mediaAfter = NetworkProxyRuntime.configureMediaClient(OkHttpClient.Builder()).build()
+      val imageAfter = NetworkProxyRuntime.forumImageClient()
 
+      assertTrue(recovery.rotated)
+      assertEquals(expectedGeneration, recovery.previousGeneration)
+      assertEquals(expectedGeneration + 1L, recovery.generation)
       assertEquals(1, recovery.canceledQueued)
-      assertEquals(1, recovery.canceledRunning)
+      assertEquals(2, recovery.canceledRunning)
       assertTrue(calls[0].isCanceled())
       assertTrue(calls[1].isCanceled())
-      assertFalse(calls[2].isCanceled())
+      assertTrue(calls[2].isCanceled())
       assertFalse(calls[3].isCanceled())
+      assertFalse(calls[4].isCanceled())
+      assertFalse(calls[5].isCanceled())
       assertSame(before.cookieJar, after.cookieJar)
-      assertSame(before.proxySelector, after.proxySelector)
-      assertSame(before.dispatcher, after.dispatcher)
-      assertSame(before.connectionPool, after.connectionPool)
-      assertSame(mediaBefore.connectionPool, mediaAfter.connectionPool)
+      assertNotSame(before.proxySelector, after.proxySelector)
+      assertNotSame(before.dispatcher, after.dispatcher)
+      assertNotSame(before.connectionPool, after.connectionPool)
+      assertNotSame(mediaBefore.connectionPool, mediaAfter.connectionPool)
+      assertNotSame(imageBefore, imageAfter)
 
       release.countDown()
       assertTrue(completed.await(5, TimeUnit.SECONDS))
+      val drainDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+      while (!dispatcher.executorService.isShutdown && System.nanoTime() < drainDeadline) {
+        Thread.sleep(25)
+      }
+      assertTrue("retired runtime must drain after its late calls release", dispatcher.executorService.isShutdown)
+      val afterLateRelease = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
+      assertSame(after.dispatcher, afterLateRelease.dispatcher)
+      assertSame(after.connectionPool, afterLateRelease.connectionPool)
     } finally {
       release.countDown()
       calls.forEach { call -> call.cancel() }
       dispatcher.maxRequests = previousMaxRequests
       dispatcher.maxRequestsPerHost = previousMaxRequestsPerHost
     }
+  }
+
+  @Test
+  fun regProxy010KeepsHealthyVideoRuntimeAliveUntilItsOwnerReleasesTheLease() {
+    val expectedGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
+    val leasedClient = ReadNetworkVideoClientRegistry.clientForGeneration(expectedGeneration.toString())
+    assertNotNull(leasedClient)
+    val started = CountDownLatch(1)
+    val release = CountDownLatch(1)
+    val mediaClient = NetworkProxyRuntime.configureMediaClient(OkHttpClient.Builder())
+      .addInterceptor { chain ->
+        started.countDown()
+        release.await(5, TimeUnit.SECONDS)
+        responseFor(chain.request())
+      }
+      .build()
+    val oldDispatcher = mediaClient.dispatcher
+    val completed = CountDownLatch(1)
+    val videoCall = mediaClient.newCall(
+      Request.Builder()
+        .url("https://cdn.example.com/healthy-video.mp4")
+        .header(FORUM_MEDIA_SOURCE_HEADER, "nodeseek")
+        .header(FORUM_MEDIA_KIND_HEADER, "video")
+        .header("Accept", "video/mp4,video/*,*/*;q=0.8")
+        .build()
+    )
+    assertTrue(NetworkProxyRuntime.retainReadNetworkGeneration(expectedGeneration).retained)
+    try {
+      videoCall.enqueue(object : Callback {
+        override fun onFailure(call: Call, error: IOException) {
+          completed.countDown()
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+          response.close()
+          completed.countDown()
+        }
+      })
+      assertTrue(started.await(5, TimeUnit.SECONDS))
+
+      val recovery = NetworkProxyRuntime.recoverForumReadChannel("nodeseek", expectedGeneration)
+      assertTrue(recovery.rotated)
+      assertSame(
+        "the retained player generation must still resolve its exact client after publication",
+        leasedClient,
+        ReadNetworkVideoClientRegistry.clientForGeneration(expectedGeneration.toString())
+      )
+      assertNotSame(
+        leasedClient,
+        ReadNetworkVideoClientRegistry.clientForGeneration(recovery.generation.toString())
+      )
+      assertFalse(videoCall.isCanceled())
+      assertEquals(0, recovery.canceledQueued)
+      assertEquals(0, recovery.canceledRunning)
+      release.countDown()
+      assertTrue(completed.await(5, TimeUnit.SECONDS))
+      Thread.sleep(500)
+      assertFalse("a retained healthy player still owns the old runtime", oldDispatcher.executorService.isShutdown)
+
+      assertTrue(NetworkProxyRuntime.releaseReadNetworkGeneration(expectedGeneration))
+      val drainDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+      while (!oldDispatcher.executorService.isShutdown && System.nanoTime() < drainDeadline) {
+        Thread.sleep(25)
+      }
+      assertTrue("the old runtime retires after its healthy player is released", oldDispatcher.executorService.isShutdown)
+      assertNull(ReadNetworkVideoClientRegistry.clientForGeneration(expectedGeneration.toString()))
+    } finally {
+      release.countDown()
+      videoCall.cancel()
+      NetworkProxyRuntime.releaseReadNetworkGeneration(expectedGeneration)
+    }
+  }
+
+  @Test
+  fun regProxy010RejectsAStaleGenerationWhenANewVideoOwnerAcquiresItsLease() {
+    val staleGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
+    val recovery = NetworkProxyRuntime.recoverForumReadChannel("nodeseek", staleGeneration)
+    assertTrue(recovery.rotated)
+
+    val staleLease = NetworkProxyRuntime.retainReadNetworkGeneration(staleGeneration)
+    assertFalse(staleLease.retained)
+    assertEquals(recovery.generation, staleLease.generation)
+
+    val currentLease = NetworkProxyRuntime.retainReadNetworkGeneration(staleLease.generation)
+    assertTrue(currentLease.retained)
+    assertEquals(recovery.generation, currentLease.generation)
+    assertTrue(NetworkProxyRuntime.releaseReadNetworkGeneration(currentLease.generation))
+  }
+
+  @Test
+  fun regProxy010TreatsAnActiveCronetBodyAsOutstandingRuntimeWork() {
+    val expectedGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
+    val activeBodies = AtomicInteger(1)
+    val retireCalls = AtomicInteger(0)
+    val retiredWithCancellation = AtomicBoolean(true)
+    val transport = object : CronetMediaTransportHandle {
+      override val generation = expectedGeneration * 1_000_000L
+
+      override fun execute(request: Request, outerCall: Call): Response? = null
+
+      override fun activeCallsCount(): Int = activeBodies.get()
+
+      override fun retire(cancelActive: Boolean) {
+        retiredWithCancellation.set(cancelActive)
+        retireCalls.incrementAndGet()
+      }
+    }
+    assertTrue(NetworkProxyRuntime.installCronetMediaTransportForTests(expectedGeneration, transport))
+    val oldDispatcher = NetworkProxyRuntime.configureMediaClient(OkHttpClient.Builder()).build().dispatcher
+
+    val recovery = NetworkProxyRuntime.recoverForumReadChannel("nodeseek", expectedGeneration)
+    assertTrue(recovery.rotated)
+    Thread.sleep(500)
+    assertFalse("an open Cronet body must keep its runtime alive", oldDispatcher.executorService.isShutdown)
+    assertEquals(0, retireCalls.get())
+
+    activeBodies.set(0)
+    val drainDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+    while (!oldDispatcher.executorService.isShutdown && System.nanoTime() < drainDeadline) {
+      Thread.sleep(25)
+    }
+    assertTrue("the runtime retires after its Cronet body closes", oldDispatcher.executorService.isShutdown)
+    assertEquals(1, retireCalls.get())
+    assertFalse("normal generation retirement must not cancel an active Cronet call", retiredWithCancellation.get())
+  }
+
+  @Test
+  fun regProxy010RejectsInvalidRecoveryTraceAndGenerationValues() {
+    assertEquals("trace-42", requireReadNetworkTraceIdentity("trace-42"))
+    listOf("", " trace-42 ", "trace-0", "trace-01", "trace-12345678901", "native/raw", "xyz").forEach { value ->
+      assertThrows(IllegalArgumentException::class.java) {
+        requireReadNetworkTraceIdentity(value)
+      }
+    }
+    val generationBeforeInvalidTrace = NetworkProxyRuntime.currentReadNetworkGeneration()
+    assertThrows(IllegalArgumentException::class.java) {
+      NetworkProxyRuntime.recoverForumReadChannel("nodeseek", generationBeforeInvalidTrace, " trace-42 ")
+    }
+    assertEquals(generationBeforeInvalidTrace, NetworkProxyRuntime.currentReadNetworkGeneration())
+    assertEquals(42L, requireReadNetworkGeneration(42.0))
+    listOf(Double.NaN, Double.POSITIVE_INFINITY, -1.0, 1.5, Double.MAX_VALUE).forEach { value ->
+      assertThrows(IllegalArgumentException::class.java) {
+        requireReadNetworkGeneration(value)
+      }
+    }
+  }
+
+  @Test
+  fun regProxy010RecordsIntentBeforePublishingTheRuntime() {
+    val traceIdentity = "abc12345"
+    val before = NetworkProxyRuntime.readNetworkDiagnosticEvents().size
+
+    NetworkProxyRuntime.recoverForumReadChannel(
+      "nodeseek",
+      NetworkProxyRuntime.currentReadNetworkGeneration(),
+      traceIdentity
+    )
+
+    val phases = NetworkProxyRuntime.readNetworkDiagnosticEvents()
+      .drop(before)
+      .filter { event -> event.fields["traceIdentity"] == traceIdentity }
+      .map { event -> event.fields["phase"] }
+    assertEquals(listOf("intent", "publish", "cancel"), phases.take(3))
+  }
+
+  @Test
+  fun regProxy010RecordsTheTerminalOnlyAfterJsApplyIsAcknowledgedAndTheOldRuntimeDrains() {
+    val traceIdentity = "trace-4242"
+    val before = NetworkProxyRuntime.readNetworkDiagnosticEvents().size
+    val previousGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
+    val recovery = NetworkProxyRuntime.recoverForumReadChannel(
+      "nodeseek",
+      previousGeneration,
+      traceIdentity
+    )
+    assertTrue(recovery.rotated)
+
+    Thread.sleep(500)
+    assertFalse(NetworkProxyRuntime.readNetworkDiagnosticEvents().drop(before).any { event ->
+      event.fields["traceIdentity"] == traceIdentity && event.fields["phase"] == "finish"
+    })
+    assertTrue(
+      NetworkProxyRuntime.acknowledgeReadNetworkRuntimeApply(
+        traceIdentity,
+        recovery.previousGeneration,
+        recovery.generation
+      )
+    )
+
+    val finishDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+    while (
+      NetworkProxyRuntime.readNetworkDiagnosticEvents().drop(before).none { event ->
+        event.fields["traceIdentity"] == traceIdentity && event.fields["phase"] == "finish"
+      } && System.nanoTime() < finishDeadline
+    ) {
+      Thread.sleep(25)
+    }
+    val terminal = NetworkProxyRuntime.readNetworkDiagnosticEvents().drop(before).filter { event ->
+      event.fields["traceIdentity"] == traceIdentity && event.fields["phase"] == "finish"
+    }
+    assertEquals(1, terminal.size)
+    assertEquals("retired", terminal.single().fields["outcome"])
+  }
+
+  @Test
+  fun regProxy010UnsupportedSourceStillRecordsOneTerminalAfterIntent() {
+    val traceIdentity = "deadbeef"
+    val before = NetworkProxyRuntime.readNetworkDiagnosticEvents().size
+
+    assertThrows(IllegalArgumentException::class.java) {
+      NetworkProxyRuntime.recoverForumReadChannel(
+        "private-invalid-source",
+        NetworkProxyRuntime.currentReadNetworkGeneration(),
+        traceIdentity
+      )
+    }
+
+    val events = NetworkProxyRuntime.readNetworkDiagnosticEvents()
+      .drop(before)
+      .filter { event -> event.fields["traceIdentity"] == traceIdentity }
+    assertEquals(listOf("intent", "finish"), events.map { event -> event.fields["phase"] })
+    assertEquals("failure", events.last().fields["outcome"])
+    assertFalse(events.any { event -> event.fields["source"] == "private-invalid-source" })
+  }
+
+  @Test
+  fun regProxy010RollbackRecordsOneTerminalAndDiscardsTheUnpublishedRuntime() {
+    val expectedGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
+    val failedGeneration = expectedGeneration + 1L
+    val traceIdentity = "badc0ffe"
+    NetworkProxyRuntime.setImageClientPublisherForTests { throw IllegalStateException("publisher failed") }
+    try {
+      assertThrows(IllegalStateException::class.java) {
+        NetworkProxyRuntime.recoverForumReadChannel("nodeseek", expectedGeneration, traceIdentity)
+      }
+    } finally {
+      NetworkProxyRuntime.setImageClientPublisherForTests(null)
+    }
+
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+    while (
+      NetworkProxyRuntime.hasReadNetworkGenerationForTests(failedGeneration) &&
+      System.nanoTime() < deadline
+    ) {
+      Thread.sleep(25)
+    }
+    assertFalse(NetworkProxyRuntime.hasReadNetworkGenerationForTests(failedGeneration))
+    val terminal = NetworkProxyRuntime.readNetworkDiagnosticEvents().filter { event ->
+      event.fields["traceIdentity"] == traceIdentity && event.fields["phase"] == "finish"
+    }
+    assertEquals(1, terminal.size)
+    assertEquals("rollback", terminal.single().fields["outcome"])
+    assertFalse(NetworkProxyRuntime.readNetworkDiagnosticEvents().any { event ->
+      event.fields["traceIdentity"] == traceIdentity && event.fields["phase"] == "drain"
+    })
+    assertEquals(expectedGeneration, NetworkProxyRuntime.currentReadNetworkGeneration())
+  }
+
+  @Test
+  fun regProxy010UsesGenerationCasAcrossConcurrentSources() {
+    val expectedGeneration = NetworkProxyRuntime.currentReadNetworkGeneration()
+    val ready = CountDownLatch(2)
+    val start = CountDownLatch(1)
+    val executor = Executors.newFixedThreadPool(2)
+    try {
+      val recoveries = listOf("nodeseek", "linuxdo").map { source ->
+        executor.submit<ForumReadChannelRecovery> {
+          ready.countDown()
+          start.await()
+          NetworkProxyRuntime.recoverForumReadChannel(source, expectedGeneration)
+        }
+      }
+      assertTrue(ready.await(2, TimeUnit.SECONDS))
+      start.countDown()
+      val results = recoveries.map { recovery -> recovery.get(5, TimeUnit.SECONDS) }
+      val rotated = results.single { result -> result.rotated }
+      val stale = results.single { result -> !result.rotated }
+
+      assertEquals(expectedGeneration, stale.previousGeneration)
+      assertEquals(rotated.generation, stale.generation)
+      assertEquals(expectedGeneration + 1L, rotated.generation)
+      assertEquals(rotated.generation, NetworkProxyRuntime.currentReadNetworkGeneration())
+    } finally {
+      start.countDown()
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun regProxy010WaitsUntilTheImageClientPublisherCompletes() {
+    val postedAction = AtomicReference<(() -> Unit)?>()
+    val published = AtomicBoolean(false)
+    val executor = Executors.newSingleThreadExecutor()
+    try {
+      val result = executor.submit {
+        awaitReadNetworkImageClientPublication(
+          false,
+          postToMainThread = { action ->
+            postedAction.set(action)
+            true
+          },
+          publish = { published.set(true) }
+        )
+      }
+      val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+      while (postedAction.get() == null && System.nanoTime() < deadline) Thread.sleep(10)
+      assertNotNull(postedAction.get())
+      assertFalse(result.isDone)
+
+      postedAction.get()!!.invoke()
+
+      result.get(5, TimeUnit.SECONDS)
+      assertTrue(published.get())
+    } finally {
+      executor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun readNetworkDiagnosticsContainPhasesWithoutUrlsIpsOrCookies() {
+    val secretPath = "private-topic-secret-91827"
+    val client = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder())
+      .addInterceptor { chain -> responseFor(chain.request()) }
+      .build()
+
+    client.newCall(
+      Request.Builder()
+        .url("https://www.nodeseek.com/" + secretPath)
+        .header("Cookie", "session=must-not-leak")
+        .build()
+    ).execute().close()
+
+    val diagnostics = NetworkProxyRuntime.readNetworkDiagnosticEvents()
+    assertTrue(diagnostics.any { event -> event.fields["phase"] == "call-start" })
+    assertTrue(diagnostics.any { event -> event.fields["phase"] == "call-end" })
+    assertTrue(diagnostics.any { event -> event.fields["dispatcherId"] is String })
+    val serialized = diagnostics.toString()
+    assertFalse(serialized.contains(secretPath))
+    assertFalse(serialized.contains("must-not-leak"))
+    assertFalse(diagnostics.any { event -> event.fields.keys.any { key -> key.contains("url", true) || key == "ip" } })
   }
 
   @Test

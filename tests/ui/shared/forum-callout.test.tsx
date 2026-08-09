@@ -71,6 +71,61 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
     expect(view.getByText('正文保持可见')).toBeTruthy();
   });
 
+  it('[REG-PERF-010] renders a controlled continuation without duplicating its header', async () => {
+    const onExpandedChange = jest.fn();
+    const view = await render(
+      <ForumCallout
+        body={<Text>续段正文</Text>}
+        expanded={false}
+        fold="collapsed"
+        headerVisible={false}
+        onExpandedChange={onExpandedChange}
+        theme={lightTheme}
+        title={<Text>不得重复的标题</Text>}
+        titleLabel="不得重复的标题"
+        type="warning"
+      />
+    );
+
+    expect(view.queryByText('不得重复的标题')).toBeNull();
+    expect(view.queryByTestId('forum-callout-icon')).toBeNull();
+    expect(view.queryByText('续段正文')).toBeNull();
+
+    await view.rerender(
+      <ForumCallout
+        body={<Text>续段正文</Text>}
+        expanded
+        fold="collapsed"
+        headerVisible={false}
+        onExpandedChange={onExpandedChange}
+        theme={lightTheme}
+        title={<Text>不得重复的标题</Text>}
+        titleLabel="不得重复的标题"
+        type="warning"
+      />
+    );
+
+    expect(view.getByText('续段正文')).toBeTruthy();
+    expect(view.queryByText('不得重复的标题')).toBeNull();
+    expect(view.queryByRole('button')).toBeNull();
+    expect(onExpandedChange).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-010] applies exact zero margins at continuation boundaries', async () => {
+    const view = await render(
+      <ForumCallout
+        boundarySpacing={{ marginBottom: 0, marginTop: 0 }}
+        body={<Text>中间续段</Text>}
+        theme={lightTheme}
+        title={<Text>续段标题</Text>}
+        titleLabel="续段标题"
+        type="warning"
+      />
+    );
+
+    expect(view.getByTestId('forum-callout')).toHaveStyle({ marginBottom: 0, marginTop: 0 });
+  });
+
   it.each([
     { name: 'light', theme: lightTheme, backgroundAlpha: 0.1, borderAlpha: 0.28 },
     { name: 'dark', theme: darkTheme, backgroundAlpha: 0.16, borderAlpha: 0.36 }

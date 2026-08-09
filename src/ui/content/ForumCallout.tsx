@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import {
   Bug,
@@ -65,28 +65,44 @@ export function forumCalloutPalette(type: DiscourseCalloutType, theme: ReaderThe
 }
 
 export function ForumCallout({
+  boundarySpacing,
   body,
+  expanded: controlledExpanded,
   fold,
+  foldable: controlledFoldable,
+  headerVisible = true,
+  onExpandedChange,
   theme,
   title,
   titleLabel,
-  trimTrailingBlockSpacing = false,
   type
 }: {
+  boundarySpacing?: StyleProp<ViewStyle>;
   body?: ReactNode;
+  expanded?: boolean;
   fold?: DiscourseCalloutFold;
+  foldable?: boolean;
+  headerVisible?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
   theme: ReaderTheme;
   title: ReactNode;
   titleLabel: string;
-  trimTrailingBlockSpacing?: boolean;
   type: DiscourseCalloutType;
 }) {
-  const [expanded, setExpanded] = useState(fold !== 'collapsed');
-  const foldable = body !== undefined && body !== null && fold !== undefined;
+  const [internalExpanded, setInternalExpanded] = useState(fold !== 'collapsed');
+  const expanded = controlledExpanded ?? internalExpanded;
+  const foldable = controlledFoldable ?? (body !== undefined && body !== null && fold !== undefined);
   const bodyVisible = Boolean(body) && (!foldable || expanded);
   const palette = forumCalloutPalette(type, theme);
   const Icon = CALLOUT_ICONS[type];
   const FoldIcon = expanded ? ChevronDown : ChevronRight;
+  const toggleExpanded = () => {
+    const next = !expanded;
+    if (controlledExpanded === undefined) {
+      setInternalExpanded(next);
+    }
+    onExpandedChange?.(next);
+  };
   const header = (
     <>
       <View
@@ -105,25 +121,25 @@ export function ForumCallout({
   return (
     <Animated.View
       layout={CALLOUT_LAYOUT}
-      style={[calloutStyles.callout, palette, trimTrailingBlockSpacing ? calloutStyles.trimTrailing : null]}
+      style={[calloutStyles.callout, palette, boundarySpacing]}
       testID="forum-callout"
     >
-      {foldable ? (
+      {headerVisible && foldable ? (
         <Pressable
           accessibilityLabel={titleLabel}
           accessibilityRole="button"
           accessibilityState={{ expanded }}
           android_ripple={androidRipple(palette.borderColor)}
           style={[calloutStyles.header, calloutStyles.foldableHeader]}
-          onPress={() => setExpanded((value) => !value)}
+          onPress={toggleExpanded}
         >
           {header}
         </Pressable>
-      ) : (
+      ) : headerVisible ? (
         <View accessible accessibilityLabel={titleLabel} accessibilityRole="header" style={calloutStyles.header}>
           {header}
         </View>
-      )}
+      ) : null}
       {bodyVisible ? <View style={calloutStyles.body}>{body}</View> : null}
     </Animated.View>
   );
@@ -141,9 +157,6 @@ const calloutStyles = StyleSheet.create({
     paddingLeft: 24,
     paddingRight: 12,
     paddingTop: 12
-  },
-  trimTrailing: {
-    marginBottom: -4
   },
   header: {
     alignItems: 'center',

@@ -3,11 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   discourseAvatarUrl,
-  discoursePollPlaceholder,
   discourseQuoteMetadata,
-  splitDiscourseContentHtml,
   stripDiscourseCalloutMarkersFromExcerpt
 } from '@/sources/discourse/content';
+import { compileForumContent, discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 
 describe('portable Discourse content parts', () => {
@@ -229,33 +228,15 @@ describe('portable Discourse content parts', () => {
     const html = `<p>before</p>${discoursePollPlaceholder('first')}<p>after</p>`;
 
     expect(
-      splitDiscourseContentHtml(html, [first, second]).map((part) =>
-        part.type === 'poll' ? `poll:${part.poll.name}` : part.html
+      compileForumContent({ html, polls: [first, second], role: 'reply', source: 'linuxdo' }).rows.map((row) =>
+        row.type === 'poll' ? `poll:${row.poll.name}` : row.type === 'quote' ? 'quote' : row.html
       )
-    ).toEqual(['<p>before</p>', 'poll:first', '<p>after</p>', 'poll:second']);
-  });
-
-  it('[REG-PERF-008] skips DOM parsing when ordinary content has no poll placeholder', async () => {
-    const parseHtml = vi.fn(() => {
-      throw new Error('ordinary content should not be parsed here');
-    });
-    vi.resetModules();
-    vi.doMock('@/domain/forum/html', () => ({
-      absoluteUrl: vi.fn(),
-      parseHtml,
-      textContentFromHtml: vi.fn()
-    }));
-    try {
-      const { splitDiscourseContentHtml: splitWithoutPoll } = await import('@/sources/discourse/content');
-
-      expect(splitWithoutPoll('<p>ordinary content</p>', [])).toEqual([
-        { type: 'html', html: '<p>ordinary content</p>' }
-      ]);
-      expect(parseHtml).not.toHaveBeenCalled();
-    } finally {
-      vi.doUnmock('@/domain/forum/html');
-      vi.resetModules();
-    }
+    ).toEqual([
+      '<div class="forum-reply-content"><p>before</p></div>',
+      'poll:first',
+      '<div class="forum-reply-content"><p>after</p></div>',
+      'poll:second'
+    ]);
   });
 
   it('escapes poll names used in placeholder attributes', () => {
@@ -297,6 +278,18 @@ describe('portable Discourse content parts', () => {
     );
 
     expect(metadata.quotedPosts[0]?.preview).toBe('盘点徽章 注意！！ 正文');
+  });
+
+  it('[REG-PERF-010] bounds the shared quote-summary preview before main, reply, and accepted rendering', () => {
+    const oversizedPreview = '引'.repeat(400);
+    const metadata = discourseQuoteMetadata(
+      `<aside class="quote" data-topic="2679944" data-post="7"><blockquote>${oversizedPreview}</blockquote></aside>`,
+      'linuxdo',
+      '2685882'
+    );
+
+    expect(metadata.quotedPosts[0]?.preview).toBe(`${'引'.repeat(319)}…`);
+    expect(Array.from(metadata.quotedPosts[0]?.preview || '')).toHaveLength(320);
   });
 
   it('[REG-TOPIC-053] keeps rich metadata when the same quoted post appears again with fewer fields', () => {

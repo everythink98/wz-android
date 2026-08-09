@@ -6,6 +6,7 @@ import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 
 export function TopicBodyQuoteCard({
   completeContent,
+  completeContentMountedExternally,
   completeTestID,
   expanded,
   header,
@@ -18,6 +19,7 @@ export function TopicBodyQuoteCard({
   theme
 }: {
   completeContent?: ReactNode;
+  completeContentMountedExternally?: boolean;
   completeTestID?: string;
   expanded: boolean;
   header: ReactNode;
@@ -51,7 +53,7 @@ export function TopicBodyQuoteCard({
           </Pressable>
         ) : null}
       </View>
-      {preview && !completeContent ? (
+      {preview && !completeContent && !completeContentMountedExternally ? (
         <View style={[styles.quoteBody, styles.quotePanelBody]} testID={previewTestID}>
           {preview}
         </View>

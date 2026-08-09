@@ -76,6 +76,11 @@ import {
   copySourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries
 } from '@/sources/diagnostics';
+import {
+  acceptForumReadResponse,
+  proveForumReadResponse,
+  rejectForumReadResponse
+} from '@/sources/forumSourceReadAttempt';
 import { orientReplyWindow } from '@/sources/replyWindows';
 
 const BASE_URL = NODESEEK_BASE_URL;
@@ -184,20 +189,12 @@ async function fetchNodeSeekTextResult(
     throw new Error(`HTTP ${response.status}`);
   }
   if (!response.ok && (response.status === 403 || response.status === 404) && accessRequirementFromText(text)) {
-    return { responseUrl: response.url, text };
+    return { response, responseUrl: response.url, text };
   }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return { responseUrl: response.url, text };
-}
-
-async function fetchNodeSeekText(
-  path: string,
-  options: NodeSeekOptions = {},
-  requestHeaders: Record<string, string> = {}
-) {
-  return (await fetchNodeSeekTextResult(path, options, requestHeaders)).text;
+  return { response, responseUrl: response.url, text };
 }
 
 function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
@@ -231,12 +228,14 @@ async function fetchNodeSeekJson(
   options: NodeSeekOptions = {},
   requestHeaders: Record<string, string> = {}
 ) {
-  const text = await fetchNodeSeekText(path, options, requestHeaders);
-  try {
-    return JSON.parse(extractNodeSeekJsonText(text)) as unknown;
-  } catch {
-    throw new Error('NodeSeek 数据解析失败');
-  }
+  const { response, text } = await fetchNodeSeekTextResult(path, options, requestHeaders);
+  return proveForumReadResponse(response, () => {
+    try {
+      return JSON.parse(extractNodeSeekJsonText(text)) as unknown;
+    } catch {
+      throw new Error('NodeSeek 数据解析失败');
+    }
+  });
 }
 
 function extractNodeSeekJsonText(text: string) {
@@ -264,7 +263,10 @@ export async function getNodeSeekFeed(
   const page = options.page || 1;
   const limit = options.limit || 30;
   const feedFilter = options.category ? 'postTime' : options.feedFilter || 'postTime';
-  const html = await fetchNodeSeekText(listPath(page, options.category, feedFilter), requestOptions);
+  const { response, text: html } = await fetchNodeSeekTextResult(
+    listPath(page, options.category, feedFilter),
+    requestOptions
+  );
   const embedded = extractNodeSeekEmbeddedData(html);
   const renderedItems = parseHtmlTopics(html);
   const items = renderedItems.length ? renderedItems : embedded ? embeddedTopics(embedded) : [];
@@ -291,7 +293,7 @@ export async function getNodeSeekFeed(
     (html.match(/<a\b[^>]*href=["'][^"']*post-/gi) || []).length
   );
   const candidateCount = renderedItems.length ? renderedCandidateCount : embeddedCandidateCount;
-  return annotateSourceDiagnosticSummary(result, {
+  const parsed = annotateSourceDiagnosticSummary(result, {
     parserVariant: renderedItems.length ? 'rendered-list' : 'embedded-list',
     candidateCount,
     validCount: result.items.length,
@@ -300,11 +302,17 @@ export async function getNodeSeekFeed(
     isParseEmpty: page === 1 && !options.category && candidateCount === 0,
     hasRepeatedCursor: Boolean(nextPage && nextPage === page)
   });
+  if (page === 1 && !options.category && candidateCount === 0) {
+    rejectForumReadResponse(response);
+  } else {
+    acceptForumReadResponse(response);
+  }
+  return parsed;
 }
 
 export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'foreground');
-  const html = await fetchNodeSeekText('/', requestOptions);
+  const { response, text: html } = await fetchNodeSeekTextResult('/', requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
   const embeddedCategories = embedded ? normalizeCategories(embedded) : ([] as Category[]);
   const htmlCategories = parseHtmlCategories(html);
@@ -315,24 +323,34 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   const candidateCount = embeddedCategories.length
     ? arrayField(embedded?.allCategory).length
     : (html.match(/<a\b[^>]*href=["'][^"']*\/categories\//gi) || []).length;
-  return annotateSourceDiagnosticSummary(result, {
+  const parsed = annotateSourceDiagnosticSummary(result, {
     parserVariant: embeddedCategories.length ? 'embedded-categories' : 'rendered-categories',
     candidateCount,
     validCount: result.items.length,
     droppedCount: Math.max(0, candidateCount - result.items.length),
     isParseEmpty: candidateCount === 0
   });
+  if (candidateCount === 0) {
+    rejectForumReadResponse(response);
+  } else {
+    acceptForumReadResponse(response);
+  }
+  return parsed;
 }
 
 async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
-  return fetchNodeSeekText(
+  return fetchNodeSeekTextResult(
     nodeSeekTopicPagePath(id, page),
     nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
   );
 }
 
 async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
-  const { responseUrl, text: html } = await fetchNodeSeekTextResult(
+  const {
+    response,
+    responseUrl,
+    text: html
+  } = await fetchNodeSeekTextResult(
     nodeSeekTopicPagePath(id, page),
     nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
   );
@@ -340,14 +358,16 @@ async function fetchTopicPageData(id: string, page: number, options: NodeSeekOpt
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER, page);
   if (!postData && !rendered) {
+    rejectForumReadResponse(response);
     throw new Error('NodeSeek 主题解析失败');
   }
+  acceptForumReadResponse(response);
   return { html, postData, rendered, resolvedPage: resolvedNodeSeekPostPage(html, id, responseUrl) };
 }
 
 export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
-  const html = await fetchTopicHtml(id, 1, requestOptions);
+  const { response, text: html } = await fetchTopicHtml(id, 1, requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
@@ -373,7 +393,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     );
     const result = paged;
     const comments = postData ? arrayField(postData.comments) : [];
-    return annotateSourceDiagnosticSummary(result, {
+    const parsed = annotateSourceDiagnosticSummary(result, {
       parserVariant: 'rendered-topic',
       candidateCount: 1 + Math.max(rendered.replies.length, Math.max(0, comments.length - 1)),
       validCount: 1 + result.replies.length,
@@ -384,6 +404,8 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       partialErrorCount: voteLinkPolls.partialErrorCount,
       missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length
     });
+    acceptForumReadResponse(response);
+    return parsed;
   }
   if (postData) {
     const comments = arrayField(postData.comments);
@@ -411,7 +433,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       .filter(
         (comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined
       ).length;
-    return annotateSourceDiagnosticSummary(result, {
+    const parsed = annotateSourceDiagnosticSummary(result, {
       parserVariant: 'embedded-topic',
       candidateCount: 1 + replyCandidates,
       validCount: 1 + result.replies.length,
@@ -419,7 +441,10 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       partialErrorCount: voteLinkPolls.partialErrorCount,
       missingFloorCount
     });
+    acceptForumReadResponse(response);
+    return parsed;
   }
+  rejectForumReadResponse(response);
   throw new Error('NodeSeek 主题解析失败');
 }
 
@@ -990,18 +1015,22 @@ function nodeSeekLoginExpiredError() {
 export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {}): Promise<UserProfile> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
   for (const path of ['/', '/setting']) {
-    const html = await fetchNodeSeekText(path, requestOptions);
+    const { response, text: html } = await fetchNodeSeekTextResult(path, requestOptions);
     const embeddedUser = nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html));
     if (embeddedUser) {
+      acceptForumReadResponse(response);
       return embeddedUser;
     }
     if (isNodeSeekLoggedOutHtml(html)) {
+      acceptForumReadResponse(response);
       throw nodeSeekLoginExpiredError();
     }
     const user = parseNodeSeekCurrentUserHtml(html, { allowUidText: path === '/setting' });
     if (user) {
+      acceptForumReadResponse(response);
       return user;
     }
+    rejectForumReadResponse(response);
   }
   throw new Error('无法读取当前 NodeSeek 用户身份，请重新检测 NodeSeek 登录。');
 }
@@ -1031,11 +1060,20 @@ export async function searchNodeSeek(
   let nextPage: number | null = null;
   let candidateCount = 0;
   let parserVariant = 'rendered-search';
+  let sourceResponse: Response | undefined;
   try {
     const useGoogleSearch = !hasLoggedInNodeSeekCookie(requestOptions);
-    const html = useGoogleSearch
-      ? await fetchNodeSeekGoogleSearchText(trimmedQuery, page, requestOptions)
-      : await fetchNodeSeekText(searchPath(trimmedQuery, page, requestOptions.filter), requestOptions);
+    let html: string;
+    if (useGoogleSearch) {
+      html = await fetchNodeSeekGoogleSearchText(trimmedQuery, page, requestOptions);
+    } else {
+      const result = await fetchNodeSeekTextResult(
+        searchPath(trimmedQuery, page, requestOptions.filter),
+        requestOptions
+      );
+      html = result.text;
+      sourceResponse = result.response;
+    }
     parserVariant =
       useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com') ? 'google-search' : 'rendered-search';
     const parsedSearch = parseNodeSeekSearchTopics(html);
@@ -1065,7 +1103,7 @@ export async function searchNodeSeek(
     hasMore: Boolean(nextPage),
     nextPage
   };
-  return annotateSourceDiagnosticSummary(result, {
+  const parsed = annotateSourceDiagnosticSummary(result, {
     parserVariant,
     candidateCount,
     validCount: result.items.length,
@@ -1073,4 +1111,8 @@ export async function searchNodeSeek(
     isExpectedEmpty: candidateCount === 0,
     hasRepeatedCursor: nextPage === page
   });
+  if (sourceResponse) {
+    acceptForumReadResponse(sourceResponse);
+  }
+  return parsed;
 }

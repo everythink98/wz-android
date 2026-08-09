@@ -14,7 +14,8 @@ import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/l
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
 import type { ReplyLocationTarget, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 import type { HtmlRenderers, HtmlRenderersProps } from './types';
-import { buildHtmlRenderingStyles, createHtmlRendererStyles, trimsTrailingBlockSpacing } from './htmlStyles';
+import { buildHtmlRenderingStyles, createHtmlRendererStyles } from './htmlStyles';
+import { useContentBoundarySpacing } from './TopicContentPresentation';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import { ForumCallout } from '@/ui/content/ForumCallout';
 import { hasSameYaohuoTopicLayout } from '../model/topicContentIdentity';
@@ -34,6 +35,7 @@ import { createContentMediaRenderers } from './contentMediaRenderers';
 import { createPreviewRenderers } from './previewRenderers';
 import { createTerminalRenderers, terminalNodeHasClass, terminalNodeTagName, tnodeText } from './terminalRenderers';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
+import { useTopicSplitDisclosure } from './TopicSplitDisclosure';
 
 export function useHtmlRenderingController({
   mediaSessionIdentity,
@@ -152,18 +154,24 @@ export function useHtmlRenderingController({
   });
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const BlockquoteRenderer: CustomBlockRenderer = (props) => {
+      const boundarySpacing = useContentBoundarySpacing(props.tnode);
       const renderOrdinaryQuote = () => {
         const { InternalRenderer, ...internalRendererProps } = props;
         return (
           <InternalRenderer
             {...internalRendererProps}
-            style={trimsTrailingBlockSpacing(props.tnode) ? { ...props.style, marginBottom: -4 } : props.style}
+            style={boundarySpacing ? { ...props.style, ...boundarySpacing } : props.style}
           />
         );
       };
       const attributes = props.tnode.attributes || {};
       const type = attributes[DISCOURSE_CALLOUT_TYPE_ATTRIBUTE];
       const foldValue = attributes[DISCOURSE_CALLOUT_FOLD_ATTRIBUTE];
+      const disclosure = useTopicSplitDisclosure({
+        attributes,
+        defaultExpanded: foldValue !== 'collapsed',
+        kind: 'callout'
+      });
       if (
         !isDiscourseSource(mediaContext.contentSource) ||
         attributes[DISCOURSE_CALLOUT_ATTRIBUTE] !== 'true' ||
@@ -178,7 +186,7 @@ export function useHtmlRenderingController({
       const contentNodes = props.tnode.children.filter(
         (child) => terminalNodeTagName(child) === 'div' && terminalNodeHasClass(child, DISCOURSE_CALLOUT_CONTENT_CLASS)
       );
-      if (titleNodes.length !== 1 || contentNodes.length > 1) {
+      if ((disclosure.headerVisible ? titleNodes.length !== 1 : titleNodes.length !== 0) || contentNodes.length > 1) {
         return renderOrdinaryQuote();
       }
       const titleNode = titleNodes[0];
@@ -186,11 +194,15 @@ export function useHtmlRenderingController({
       return (
         <ForumCallout
           body={contentNode ? <TChildrenRenderer tchildren={[contentNode]} /> : undefined}
+          boundarySpacing={boundarySpacing}
+          expanded={disclosure.expanded}
           fold={foldValue as DiscourseCalloutFold | undefined}
+          foldable={disclosure.shared && disclosure.headerVisible && foldValue !== undefined ? true : undefined}
+          headerVisible={disclosure.headerVisible}
+          onExpandedChange={disclosure.toggle}
           theme={theme}
-          title={<TChildrenRenderer tchildren={[titleNode]} />}
-          titleLabel={tnodeText(titleNode) || DISCOURSE_CALLOUT_REGISTRY[type].title}
-          trimTrailingBlockSpacing={trimsTrailingBlockSpacing(props.tnode)}
+          title={titleNode ? <TChildrenRenderer tchildren={[titleNode]} /> : null}
+          titleLabel={titleNode ? tnodeText(titleNode) || DISCOURSE_CALLOUT_REGISTRY[type].title : ''}
           type={type}
         />
       );

@@ -6,6 +6,15 @@
     "node": "22.x"
   },
   "main": "index.ts",
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-video"
+        ]
+      }
+    }
+  },
   "scripts": {
     "start": "expo start --dev-client",
     "lint": "eslint . --max-warnings=0",

@@ -6,9 +6,13 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
+vi.mock('react-native', () => ({ NativeModules: {} }));
+
 import { getCategories, getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
 import { getReplies, getReply, getTopic } from '@/sources/sourceRead';
+import { createReadGateway } from '@/sources/readGateway';
+import { readAccountStatus } from '@/sources/accountRead';
 import { isLinuxDoCloudflareError } from '@/sources/errors';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import {
@@ -18,8 +22,8 @@ import {
 } from '@/sources/linuxdo/browserFallback';
 import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
 import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
-import { splitDiscourseContentHtml } from '@/sources/discourse/content';
 import { textContentFromHtml } from '@/domain/forum/html';
+import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '@/sources/nodeseek/browserFallback';
 import {
   getNodeSeekCurrentUserProfile,
@@ -37,6 +41,8 @@ import {
   setDiagnosticWriter,
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
+import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
+import { getReadNetworkRuntimeSnapshot } from '@/platform/network/readNetworkRuntime';
 
 const nodeSeekPayload = Buffer.from(
   JSON.stringify({
@@ -119,6 +125,28 @@ function htmlAt(value: string, url: string) {
   const response = html(value);
   Object.defineProperty(response, 'url', { value: url });
   return response;
+}
+
+function readLinuxDoAccountWith(fetcher: Parameters<typeof readAccountStatus>[1]['fetcher']) {
+  return readAccountStatus('linuxdo', {
+    fetcher,
+    linuxDoUserAgent: 'LinuxDo UA',
+    nodeSeekUserAgent: 'NodeSeek UA',
+    readManagedCookieHeader: async () => ({ status: 'ok', header: '_t=session' }),
+    readXiaoyinsiAuthorization: async () => ({ authenticated: null }),
+    signal: new AbortController().signal
+  });
+}
+
+function readNodeSeekAccountWith(fetcher: Parameters<typeof readAccountStatus>[1]['fetcher']) {
+  return readAccountStatus('nodeseek', {
+    fetcher,
+    linuxDoUserAgent: 'LinuxDo UA',
+    nodeSeekUserAgent: 'NodeSeek UA',
+    readManagedCookieHeader: async () => ({ status: 'ok', header: 'session=present' }),
+    readXiaoyinsiAuthorization: async () => ({ authenticated: null }),
+    signal: new AbortController().signal
+  });
 }
 
 function nodeSeekStaleCountPage(page: 1 | 2) {
@@ -2729,11 +2757,11 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).toContain('<forum-link-card');
     expect(topic.contentHtml).toContain('href="https://www.reddit.com/r/OpenAI/comments/abc123/topic/"');
     expect(topic.contentHtml).not.toContain('嵌入内容 · embed.reddit.com');
-    expect(splitDiscourseContentHtml(topic.contentHtml, topic.polls).map((part) => part.type)).toEqual([
-      'html',
-      'poll',
-      'html'
-    ]);
+    expect(
+      compileForumContent({ html: topic.contentHtml, polls: topic.polls, role: 'opening', source: 'linuxdo' }).rows.map(
+        (row) => row.type
+      )
+    ).toEqual(['html', 'poll', 'html']);
   });
 
   it('[REG-PERF-008] lets a queued Back cancellation win before Topic DOM parsing', async () => {
@@ -2831,7 +2859,12 @@ describe('Android local sources', () => {
     ]);
     expect(topic.replies[0].contentHtml).not.toContain('原始回复选项');
     expect(
-      splitDiscourseContentHtml(topic.replies[0].contentHtml, topic.replies[0].polls).map((part) => part.type)
+      compileForumContent({
+        html: topic.replies[0].contentHtml,
+        polls: topic.replies[0].polls,
+        role: 'reply',
+        source: 'linuxdo'
+      }).rows.map((row) => row.type)
     ).toEqual(['html', 'poll', 'html']);
   });
 
@@ -6079,35 +6112,44 @@ describe('Android local sources', () => {
     vi.useFakeTimers();
     try {
       let directMode: 'hang' | 'success' = 'hang';
+      const feedHtml = `
+        <ul class="post-list">
+          <li class="post-list-item">
+            <div class="post-title"><a href="/post-743018-1">qualified fallback row</a></div>
+            <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+          </li>
+        </ul>
+      `;
       const defaultFetcher = vi.fn(() =>
-        directMode === 'success'
-          ? Promise.resolve(html('<html>direct success</html>'))
-          : new Promise<Response>(() => undefined)
+        directMode === 'success' ? Promise.resolve(html(feedHtml)) : new Promise<Response>(() => undefined)
       );
       const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
       const fetcher = createNodeSeekWebViewFallbackFetcher({
         defaultFetcher,
-        webViewFetcher: vi.fn(async () => html('<html>webview success</html>')),
+        webViewFetcher: vi.fn(async () => html(feedHtml)),
         recoveryThreshold: 2,
         recoverReadChannel
       });
+      const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
 
-      const firstFallback = fetcher('https://www.nodeseek.com/first');
+      const firstFallback = gateway.getFeed({ source: 'nodeseek' });
       await vi.advanceTimersByTimeAsync(8_000);
-      await expect(firstFallback).resolves.toBeInstanceOf(Response);
+      await expect(firstFallback).resolves.toMatchObject({ items: [expect.objectContaining({ source: 'nodeseek' })] });
       expect(recoverReadChannel).not.toHaveBeenCalled();
 
-      const secondFallback = fetcher('https://www.nodeseek.com/second');
+      const secondFallback = gateway.getFeed({ source: 'nodeseek' });
       await vi.advanceTimersByTimeAsync(8_000);
-      await expect(secondFallback).resolves.toBeInstanceOf(Response);
+      await expect(secondFallback).resolves.toMatchObject({ items: [expect.objectContaining({ source: 'nodeseek' })] });
       expect(recoverReadChannel).toHaveBeenCalledTimes(1);
 
       directMode = 'success';
-      await expect(fetcher('https://www.nodeseek.com/direct')).resolves.toBeInstanceOf(Response);
+      await expect(gateway.getFeed({ source: 'nodeseek' })).resolves.toMatchObject({
+        items: [expect.objectContaining({ source: 'nodeseek' })]
+      });
       directMode = 'hang';
-      const afterReset = fetcher('https://www.nodeseek.com/after-reset');
+      const afterReset = gateway.getFeed({ source: 'nodeseek' });
       await vi.advanceTimersByTimeAsync(8_000);
-      await expect(afterReset).resolves.toBeInstanceOf(Response);
+      await expect(afterReset).resolves.toMatchObject({ items: [expect.objectContaining({ source: 'nodeseek' })] });
       expect(recoverReadChannel).toHaveBeenCalledTimes(1);
     } finally {
       vi.clearAllTimers();
@@ -6123,15 +6165,210 @@ describe('Android local sources', () => {
       defaultFetcher: vi.fn(async () => {
         throw new TypeError('Network request failed');
       }),
-      webViewFetcher: vi.fn(async () => html('<html>usable fallback</html>')),
+      webViewFetcher: vi.fn(async () =>
+        html(`
+          <ul class="post-list">
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-743018-1">usable fallback</a></div>
+              <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+            </li>
+          </ul>
+        `)
+      ),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+
+    const response = await gateway.getFeed({ source: 'nodeseek' });
+
+    expect(response.items.map((item) => item.title)).toEqual(['usable fallback']);
+    expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-SOURCE-009] does not rotate when a NodeSeek WebView response fails the source parser', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => html('<html><body><div class="content">temporary shell</div></body></html>')),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+    const gateway = createReadGateway({
+      fetcher: fallbackFetcher,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+
+    await expect(gateway.getTopic({ source: 'nodeseek', id: '743017' })).rejects.toThrow('NodeSeek 主题解析失败');
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-009] fails closed when a transport fallback has no source-read attempt scope', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`)),
       recoveryThreshold: 1,
       recoverReadChannel
     });
 
-    const response = await fetcher('https://www.nodeseek.com/read');
+    await expect(fallbackFetcher('https://www.nodeseek.com/?sortBy=postTime')).resolves.toBeInstanceOf(Response);
 
-    await expect(response.text()).resolves.toContain('usable fallback');
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-009] does not revive an older NodeSeek fallback after a newer direct success', async () => {
+    const topicBody = Promise.withResolvers<string>();
+    const webViewStarted = Promise.withResolvers<void>();
+    const fallbackResponse = html('');
+    vi.spyOn(fallbackResponse, 'text').mockImplementation(() => topicBody.promise);
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes('/post-743024-1')) {
+          throw new TypeError('Network request failed');
+        }
+        return html(`
+          <ul class="post-list">
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-743025-1">newer direct success</a></div>
+              <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+            </li>
+          </ul>
+        `);
+      }),
+      webViewFetcher: vi.fn(async () => {
+        webViewStarted.resolve();
+        return fallbackResponse;
+      }),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+    const gateway = createReadGateway({
+      fetcher: fallbackFetcher,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+    const topicPromise = gateway.getTopic({ source: 'nodeseek', id: '743024' });
+
+    await webViewStarted.promise;
+    const recoverCountBeforeParse = recoverReadChannel.mock.calls.length;
+    await gateway.getFeed({ source: 'nodeseek' });
+    topicBody.resolve(`
+      <a class="post-title" href="/post-743024-1">late parse topic</a>
+      <div class="content-item"><article class="post-content"><p>body</p></article></div>
+    `);
+
+    await expect(topicPromise).resolves.toMatchObject({ title: 'late parse topic' });
+    expect(recoverCountBeforeParse).toBe(0);
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-009] does not confirm a swallowed auxiliary NodeSeek poll parse failure', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 743026,
+          title: 'topic with optional poll',
+          op: { name: 'alice' },
+          comments: [
+            {
+              commentId: 1,
+              poster: { name: 'alice' },
+              markdown: '提交投票 nsapp://vote?id=2443',
+              time: { createdDate: '2026-08-09T00:00:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes('/api/vote/info/2443')) {
+          throw new TypeError('Network request failed');
+        }
+        return html(`<script>${payload}</script>`);
+      }),
+      webViewFetcher: vi.fn(async () => html('<html><body>temporary shell</body></html>')),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+    const gateway = createReadGateway({ fetcher: fallbackFetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+
+    const topic = await gateway.getTopic({ source: 'nodeseek', id: '743026' });
+
+    expect(topic.title).toBe('topic with optional poll');
+    expect(sourceDiagnosticSummary(topic)?.partialErrorCount).toBe(1);
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-009] keeps a proven primary NodeSeek fallback when its auxiliary poll succeeds direct', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 743027,
+          title: 'fallback topic with direct poll',
+          op: { name: 'alice' },
+          comments: [
+            {
+              commentId: 1,
+              poster: { name: 'alice' },
+              markdown: '提交投票 nsapp://vote?id=2443',
+              time: { createdDate: '2026-08-09T00:00:00.000Z' }
+            }
+          ]
+        }
+      })
+    ).toString('base64');
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes('/api/vote/info/2443')) {
+          return json({
+            vote: {
+              id: 2443,
+              title: 'direct poll',
+              items: [{ vote_item_id: 1, text: 'A', count: 0 }]
+            }
+          });
+        }
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => html(`<script>${payload}</script>`)),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+    const gateway = createReadGateway({ fetcher: fallbackFetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+
+    const topic = await gateway.getTopic({ source: 'nodeseek', id: '743027' });
+
+    expect(topic.title).toBe('fallback topic with direct poll');
+    expect(topic.polls).toEqual([expect.objectContaining({ id: '2443', title: 'direct poll' })]);
     expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-SOURCE-009] rejects an unproven NodeSeek Account fallback before accepting a direct setting page', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async (input: string | URL | Request) => {
+        if (new URL(String(input)).pathname === '/') {
+          throw new TypeError('Network request failed');
+        }
+        return html('<div>UID: 42</div><a href="/space/42">alice</a>');
+      }),
+      webViewFetcher: vi.fn(async () => html('<html><body>temporary shell</body></html>')),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+
+    const account = await readNodeSeekAccountWith(fallbackFetcher);
+
+    expect(account.session.currentUser).toMatchObject({ source: 'nodeseek', id: '42', username: 'alice' });
+    expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
   it('[REG-NODESEEK-004] excludes writes, Cloudflare and unsuccessful WebView results from recovery counting', async () => {
@@ -8333,9 +8570,8 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-008] recovers a stalled read channel at eight seconds and retries only once', async () => {
+  it('[REG-LINUXDO-008] rotates only after the eight-second timeout is recovered by WebView', async () => {
     vi.useFakeTimers();
-    const controller = new AbortController();
     try {
       const defaultFetcher = vi.fn(
         (_input: string, init?: RequestInit) =>
@@ -8345,53 +8581,186 @@ describe('Android local sources', () => {
             });
           })
       );
+      let resolveWebView!: (response: Response) => void;
+      const webViewFetcher = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveWebView = resolve;
+          })
+      );
       const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 4 }));
       const fetcher = createLinuxDoWebViewFallbackFetcher({
         defaultFetcher,
         recoverReadChannel,
-        webViewFetcher: vi.fn() as never
+        webViewFetcher
       });
-      const request = fetcher('https://linux.do/latest.json', { signal: controller.signal });
+      const gateway = createReadGateway({
+        fetcher,
+        linuxDoUserAgent: () => 'LinuxDo UA',
+        nodeSeekUserAgent: () => 'NodeSeek UA'
+      });
+      const request = gateway.getFeed({ source: 'linuxdo' });
 
       await vi.advanceTimersByTimeAsync(8_000);
+      expect(defaultFetcher).toHaveBeenCalledTimes(1);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+      expect(recoverReadChannel).not.toHaveBeenCalled();
+
+      const fallbackResponse = json({ topic_list: { topics: [] } });
+      resolveWebView(fallbackResponse);
+
+      await expect(request).resolves.toMatchObject({ items: [] });
       expect(recoverReadChannel).toHaveBeenCalledTimes(1);
-      expect(defaultFetcher).toHaveBeenCalledTimes(2);
-      await vi.advanceTimersByTimeAsync(8_000);
-      expect(defaultFetcher).toHaveBeenCalledTimes(2);
-      controller.abort();
-
-      await expect(request).rejects.toBeTruthy();
     } finally {
-      controller.abort();
       vi.clearAllTimers();
       vi.useRealTimers();
     }
   });
 
-  it('[REG-LINUXDO-008] returns the single retry response after read-channel recovery', async () => {
+  it('[REG-LINUXDO-008] returns successful WebView content even when runtime rotation fails', async () => {
     vi.useFakeTimers();
     try {
-      const defaultFetcher = vi
-        .fn<(input: string, init?: RequestInit) => Promise<Response>>()
-        .mockImplementationOnce(() => new Promise<Response>(() => undefined))
-        .mockResolvedValueOnce(json({ topic_list: { topics: [] } }));
-      const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 5 }));
+      const defaultFetcher = vi.fn(
+        (_input: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+              once: true
+            });
+          })
+      );
+      const fallbackResponse = json({ topic_list: { topics: [] } });
+      const webViewFetcher = vi.fn(async () => fallbackResponse);
+      const recoverReadChannel = vi.fn(async () => {
+        throw new Error('rotation failed');
+      });
       const fetcher = createLinuxDoWebViewFallbackFetcher({
         defaultFetcher,
         recoverReadChannel,
-        webViewFetcher: vi.fn() as never
+        webViewFetcher
       });
-      const request = fetcher('https://linux.do/latest.json');
+      const gateway = createReadGateway({
+        fetcher,
+        linuxDoUserAgent: () => 'LinuxDo UA',
+        nodeSeekUserAgent: () => 'NodeSeek UA'
+      });
+      const request = gateway.getFeed({ source: 'linuxdo' });
 
       await vi.advanceTimersByTimeAsync(8_000);
 
-      await expect(request).resolves.toMatchObject({ status: 200 });
-      expect(defaultFetcher).toHaveBeenCalledTimes(2);
+      await expect(request).resolves.toMatchObject({ items: [] });
+      expect(defaultFetcher).toHaveBeenCalledTimes(1);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
       expect(recoverReadChannel).toHaveBeenCalledTimes(1);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it('[REG-SOURCE-009] does not rotate when a timed-out linux.do WebView response fails JSON parsing', async () => {
+    vi.useFakeTimers();
+    try {
+      const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 5 }));
+      const fallbackFetcher = createLinuxDoWebViewFallbackFetcher({
+        defaultFetcher: vi.fn(
+          (_input: string, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+                once: true
+              });
+            })
+        ),
+        webViewFetcher: vi.fn(async () => html('<html><body>temporary shell</body></html>')),
+        recoverReadChannel
+      });
+      const gateway = createReadGateway({
+        fetcher: fallbackFetcher,
+        linuxDoUserAgent: () => 'LinuxDo UA',
+        nodeSeekUserAgent: () => 'NodeSeek UA'
+      });
+      const feedPromise = gateway.getFeed({ source: 'linuxdo' });
+      const feedOutcome = feedPromise.then(
+        (value) => ({ value, error: undefined }),
+        (error: unknown) => ({ value: undefined, error })
+      );
+
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      expect((await feedOutcome).error).toMatchObject({ message: 'linux.do 返回内容格式不正确' });
+      expect(recoverReadChannel).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('[REG-SOURCE-009] commits a source-readable linux.do anonymous Account result', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 5 }));
+    const fallbackFetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => json({ current_user: null })),
+      recoverReadChannel
+    });
+
+    const account = await readLinuxDoAccountWith(fallbackFetcher);
+
+    expect(account.session).toMatchObject({ site: 'linuxdo', status: 'anonymous' });
+    expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-SOURCE-009] rejects malformed linux.do Account JSON before recovery commit', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 5 }));
+    const fallbackFetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => html('<html><body>temporary shell</body></html>')),
+      recoverReadChannel
+    });
+
+    await expect(readLinuxDoAccountWith(fallbackFetcher)).rejects.toThrow('linux.do 当前用户返回内容格式不正确');
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-009] isolates an invalid NodeSeek aggregate child from another source success', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 6 }));
+    const defaultFetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('nodeseek.com')) {
+        throw new TypeError('Network request failed');
+      }
+      if (url.includes('linux.do')) {
+        return json({
+          topic_list: {
+            topics: [
+              {
+                id: 301,
+                title: 'healthy linux.do topic',
+                slug: 'healthy-topic',
+                created_at: '2026-08-09T00:00:00.000Z',
+                bumped_at: '2026-08-09T00:00:00.000Z',
+                posts_count: 1
+              }
+            ]
+          },
+          users: []
+        });
+      }
+      return html('');
+    });
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher,
+      webViewFetcher: vi.fn(async () => html('<html><body>not a NodeSeek feed</body></html>')),
+      recoveryThreshold: 1,
+      recoverReadChannel
+    });
+
+    const result = await getFeed({ source: 'all', limit: 5, fetcher: fallbackFetcher });
+
+    expect(result.items).toEqual([expect.objectContaining({ source: 'linuxdo', title: 'healthy linux.do topic' })]);
+    expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
   it('[REG-LINUXDO-008] excludes cancellation, writes, HTTP failures and Cloudflare from channel recovery', async () => {
@@ -8449,16 +8818,19 @@ describe('Android local sources', () => {
         }
       })
     );
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 7 }));
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
+      recoverReadChannel,
       webViewFetcher
     });
 
-    const currentUser = await getLinuxDoCurrentUserProfile({ fetcher });
+    const account = await readLinuxDoAccountWith(fetcher);
 
-    expect(currentUser).toMatchObject({ source: 'linuxdo', username: 'alice' });
+    expect(account.session.currentUser).toMatchObject({ source: 'linuxdo', username: 'alice' });
     expect(normalFetcher).toHaveBeenCalledTimes(1);
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
+    expect(recoverReadChannel).toHaveBeenCalledTimes(1);
     const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
     expect(browserFetchIntentFromInit(webViewCalls[0]?.[1])).toEqual({
       owner: 'account',
@@ -8479,11 +8851,37 @@ describe('Android local sources', () => {
     ).not.toMatch(/session\/current|https?:|cookie|alice|42/iu);
   });
 
-  it('[REG-LINUXDO-007] preserves trusted CF evidence returned by the hidden Account probe', async () => {
+  it('[REG-LINUXDO-007] preserves the recovered Account result when runtime rotation fails', async () => {
+    const fallbackResponse = json({
+      current_user: {
+        id: 42,
+        username: 'alice'
+      }
+    });
+    const recoverReadChannel = vi.fn(async () => {
+      throw new Error('rotation failed');
+    });
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => {
         throw new TypeError('Network request failed');
       }),
+      recoverReadChannel,
+      webViewFetcher: vi.fn(async () => fallbackResponse)
+    });
+
+    await expect(readLinuxDoAccountWith(fetcher)).resolves.toMatchObject({
+      session: { currentUser: { source: 'linuxdo', username: 'alice' } }
+    });
+    expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-LINUXDO-007] preserves trusted CF evidence returned by the hidden Account probe', async () => {
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 8 }));
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      recoverReadChannel,
       webViewFetcher: vi.fn(
         async () =>
           new Response('<div class="cf-turnstile"></div>', {
@@ -8496,20 +8894,111 @@ describe('Android local sources', () => {
     const error = await getLinuxDoCurrentUserProfile({ fetcher }).catch((caught) => caught);
 
     expect(isLinuxDoCloudflareError(error)).toBe(true);
+    expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
   it('[REG-LINUXDO-007] keeps an ordinary hidden Account failure ordinary', async () => {
     const hiddenError = new Error('hidden renderer unavailable');
+    const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 9 }));
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => {
         throw new TypeError('Network request failed');
       }),
+      recoverReadChannel,
       webViewFetcher: vi.fn(async () => {
         throw hiddenError;
       })
     });
 
     await expect(getLinuxDoCurrentUserProfile({ fetcher })).rejects.toBe(hiddenError);
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PROXY-010] keeps concurrent cross-source fallback evidence on its request-start generation', async () => {
+    const requestStartGeneration = getReadNetworkRuntimeSnapshot().generation;
+    let nativeGeneration = requestStartGeneration;
+    const nativeRotations: boolean[] = [];
+    const recoverForumReadChannel = vi.fn(async (_source: string, expectedGeneration: number) => {
+      const rotated = expectedGeneration === nativeGeneration;
+      nativeRotations.push(rotated);
+      if (rotated) {
+        nativeGeneration += 1;
+      }
+      return {
+        ok: true,
+        rotated,
+        previousGeneration: expectedGeneration,
+        generation: nativeGeneration,
+        canceledQueued: 0,
+        canceledRunning: 0
+      };
+    });
+    const module = {
+      acknowledgeReadNetworkRuntimeApply: vi.fn(async () => true),
+      recoverForumReadChannel
+    };
+    const nodeSeekFallback = Promise.withResolvers<Response>();
+    const linuxDoFallback = Promise.withResolvers<Response>();
+    const readNetworkRuntimeGeneration = () => getReadNetworkRuntimeSnapshot().generation;
+    const nodeSeekWebViewFetcher = vi.fn(() => nodeSeekFallback.promise);
+    const linuxDoWebViewFetcher = vi.fn(() => linuxDoFallback.promise);
+    const nodeSeekFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      readNetworkRuntimeGeneration,
+      recoverReadChannel: (expectedGeneration, trace) =>
+        recoverReadNetworkRuntime('nodeseek', expectedGeneration, { module, trace }),
+      webViewFetcher: nodeSeekWebViewFetcher
+    });
+    const linuxDoFetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      readNetworkRuntimeGeneration,
+      recoverReadChannel: (expectedGeneration, trace) =>
+        recoverReadNetworkRuntime('linuxdo', expectedGeneration, { module, trace }),
+      webViewFetcher: linuxDoWebViewFetcher
+    });
+
+    const nodeSeekRead = createReadGateway({
+      fetcher: nodeSeekFetcher,
+      linuxDoUserAgent: () => 'LinuxDo UA',
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    }).getFeed({ source: 'nodeseek' });
+    const linuxDoRead = readLinuxDoAccountWith(linuxDoFetcher);
+    await vi.waitFor(() => {
+      expect(nodeSeekWebViewFetcher).toHaveBeenCalledTimes(1);
+      expect(linuxDoWebViewFetcher).toHaveBeenCalledTimes(1);
+    });
+    nodeSeekFallback.resolve(
+      html(`
+        <ul class="post-list">
+          <li class="post-list-item">
+            <div class="post-title"><a href="/post-743018-1">captured generation</a></div>
+            <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+          </li>
+        </ul>
+      `)
+    );
+
+    await expect(nodeSeekRead).resolves.toMatchObject({
+      items: [expect.objectContaining({ title: 'captured generation' })]
+    });
+    expect(getReadNetworkRuntimeSnapshot().generation).toBe(requestStartGeneration + 1);
+
+    linuxDoFallback.resolve(json({ current_user: null }));
+    await expect(linuxDoRead).resolves.toMatchObject({ session: { status: 'anonymous' } });
+
+    expect(recoverForumReadChannel).toHaveBeenCalledTimes(2);
+    expect(recoverForumReadChannel.mock.calls.map(([, expectedGeneration]) => expectedGeneration)).toEqual([
+      requestStartGeneration,
+      requestStartGeneration
+    ]);
+    expect(nativeRotations).toEqual([true, false]);
+    expect(module.acknowledgeReadNetworkRuntimeApply).toHaveBeenCalledTimes(1);
+    expect(nativeGeneration).toBe(requestStartGeneration + 1);
+    expect(getReadNetworkRuntimeSnapshot().generation).toBe(requestStartGeneration + 1);
   });
 
   it.each([

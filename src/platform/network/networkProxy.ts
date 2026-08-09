@@ -1,17 +1,26 @@
 import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
+import type { Source } from '@/domain/forum/sourceCatalog';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import { getReadNetworkRuntimeSnapshot, publishReadNetworkRuntimeRotation } from './readNetworkRuntime';
 
 export const NETWORK_PROXY_STORAGE_KEY = 'network-proxy-settings';
 export const MAX_NETWORK_PROXY_PROFILES = 10;
 
 export type NetworkProxyProtocol = 'http' | 'socks5';
-export type ForumReadChannel = 'nodeseek' | 'linuxdo';
-
-export type ForumReadChannelRecoveryResult = {
+export type ReadNetworkRuntimeRecoveryResult = {
   ok: boolean;
+  rotated: boolean;
+  previousGeneration: number;
   generation: number;
   canceledQueued: number;
   canceledRunning: number;
+};
+
+export type ReadNetworkGenerationLease = {
+  retained: boolean;
+  generation: number;
 };
 
 export type NetworkProxyProfile = {
@@ -40,15 +49,31 @@ export type NetworkProxyStatus = {
 };
 
 export type NativeNetworkProxyModule = {
+  acknowledgeReadNetworkRuntimeApply?: (
+    traceId: string,
+    previousGeneration: number,
+    generation: number
+  ) => Promise<boolean>;
   applyProxy?: (profile: NetworkProxyProfile | null) => Promise<NetworkProxyStatus>;
   clearManagedLoginCookies?: (source: string) => Promise<unknown>;
   defaultWebViewUserAgent?: string;
   readManagedCookieHeader?: (exactUrl: string) => Promise<unknown>;
-  recoverForumReadChannel?: (source: ForumReadChannel) => Promise<ForumReadChannelRecoveryResult>;
+  recoverForumReadChannel?: (
+    source: Source,
+    expectedGeneration: number,
+    traceId: string
+  ) => Promise<ReadNetworkRuntimeRecoveryResult>;
+  releaseReadNetworkGeneration?: (generation: number) => Promise<boolean>;
+  retainReadNetworkGeneration?: (generation: number) => Promise<ReadNetworkGenerationLease>;
   testProxy?: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
 };
 
-const forumReadChannelRecoveries = new Map<ForumReadChannel, Promise<ForumReadChannelRecoveryResult>>();
+const readNetworkRuntimeRecoveries = new Map<number, Promise<ReadNetworkRuntimeRecoveryResult>>();
+
+export type ReadNetworkRuntimeRecoveryOptions = {
+  module?: NativeNetworkProxyModule;
+  trace?: DiagnosticTrace;
+};
 
 export function createEmptyNetworkProxyState(): NetworkProxyState {
   return {
@@ -259,23 +284,109 @@ export async function applyNetworkProxy(profile: NetworkProxyProfile | null, mod
   return result;
 }
 
-export function recoverForumReadChannel(source: ForumReadChannel, module = networkProxyNativeModule()) {
-  const active = forumReadChannelRecoveries.get(source);
-  if (active) return active;
-  if (!module?.recoverForumReadChannel) {
-    return Promise.reject(new Error('当前安装包不支持论坛读取通道自愈。'));
+export function recoverReadNetworkRuntime(
+  source: Source,
+  expectedGeneration: number,
+  options: ReadNetworkRuntimeRecoveryOptions = {}
+) {
+  const currentGeneration = getReadNetworkRuntimeSnapshot().generation;
+  const trace =
+    options.trace ||
+    beginDiagnosticTrace('network', 'rotate-read-runtime', {
+      source
+    });
+  if (!Number.isSafeInteger(expectedGeneration) || expectedGeneration < 0 || expectedGeneration > currentGeneration) {
+    finishDiagnosticTrace(trace, 'failure', {
+      source,
+      generation: currentGeneration,
+      reason: 'invalid_generation'
+    });
+    return Promise.reject(new Error('读取网络运行时 generation 无效'));
+  }
+  const active = readNetworkRuntimeRecoveries.get(expectedGeneration);
+  if (active) {
+    finishDiagnosticTrace(trace, 'noop', { source, reason: 'duplicate', generation: expectedGeneration });
+    return active;
+  }
+  const module = options.module || networkProxyNativeModule();
+  const acknowledgeReadNetworkRuntimeApply = module?.acknowledgeReadNetworkRuntimeApply;
+  if (!module?.recoverForumReadChannel || !acknowledgeReadNetworkRuntimeApply) {
+    finishDiagnosticTrace(trace, 'failure', { source, reason: 'unsupported', generation: expectedGeneration });
+    return Promise.reject(new Error('当前安装包不支持读取网络运行时自愈。'));
   }
   const recovery = module
-    .recoverForumReadChannel(source)
-    .then((result) => {
-      if (!result?.ok) throw new Error('论坛读取通道自愈失败');
+    .recoverForumReadChannel(source, expectedGeneration, trace.traceId)
+    .then(async (result) => {
+      if (
+        !result?.ok ||
+        !Number.isSafeInteger(result.previousGeneration) ||
+        result.previousGeneration !== expectedGeneration ||
+        !Number.isSafeInteger(result.generation) ||
+        result.generation <= expectedGeneration
+      ) {
+        finishDiagnosticTrace(trace, 'failure', {
+          source,
+          generation: expectedGeneration,
+          reason: 'invalid_response'
+        });
+        throw new Error('读取网络运行时自愈失败');
+      }
+      publishReadNetworkRuntimeRotation(result.generation, source);
+      markDiagnosticStage(trace, 'apply', {
+        source,
+        state: result.rotated ? 'published' : 'synchronized',
+        generation: result.generation,
+        queuedCount: result.canceledQueued,
+        runningCount: result.canceledRunning
+      });
+      if (!result.rotated) {
+        finishDiagnosticTrace(trace, 'noop', { source, generation: result.generation });
+      } else {
+        const acknowledged = await acknowledgeReadNetworkRuntimeApply(
+          trace.traceId,
+          result.previousGeneration,
+          result.generation
+        ).catch(() => false);
+        if (!acknowledged) {
+          finishDiagnosticTrace(trace, 'failure', {
+            source,
+            generation: result.generation,
+            reason: 'invalid_response'
+          });
+        }
+      }
       return result;
     })
     .finally(() => {
-      if (forumReadChannelRecoveries.get(source) === recovery) forumReadChannelRecoveries.delete(source);
+      if (readNetworkRuntimeRecoveries.get(expectedGeneration) === recovery) {
+        readNetworkRuntimeRecoveries.delete(expectedGeneration);
+      }
     });
-  forumReadChannelRecoveries.set(source, recovery);
+  readNetworkRuntimeRecoveries.set(expectedGeneration, recovery);
   return recovery;
+}
+
+export async function retainReadNetworkRuntimeGeneration(generation: number, module = networkProxyNativeModule()) {
+  if (!Number.isSafeInteger(generation) || generation < 0 || !module?.retainReadNetworkGeneration) {
+    return null;
+  }
+  const lease = await module.retainReadNetworkGeneration(generation);
+  if (
+    typeof lease?.retained !== 'boolean' ||
+    !Number.isSafeInteger(lease.generation) ||
+    lease.generation < 0 ||
+    (lease.retained && lease.generation !== generation)
+  ) {
+    return null;
+  }
+  return lease;
+}
+
+export async function releaseReadNetworkRuntimeGeneration(generation: number, module = networkProxyNativeModule()) {
+  if (!Number.isSafeInteger(generation) || generation < 0 || !module?.releaseReadNetworkGeneration) {
+    return false;
+  }
+  return module.releaseReadNetworkGeneration(generation);
 }
 
 export async function testNetworkProxy(profile: NetworkProxyProfile, module = networkProxyNativeModule()) {

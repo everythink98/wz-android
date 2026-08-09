@@ -21,7 +21,7 @@ import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { browserFetchIntentFromInit, type BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { errorMessage } from '@/platform/network/errors';
 import { clearManagedLoginCookies } from '@/platform/network/managedCookies';
-import { recoverForumReadChannel } from '@/platform/network/networkProxy';
+import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
 import {
   LEGACY_COOKIE_SNAPSHOT_KEYS,
   migrateLegacyCookieSnapshots
@@ -175,7 +175,7 @@ function finishBrowserFetchSuccess(
 }
 
 export function useSessionController({
-  defaultFetcher = fetch,
+  defaultFetcher,
   forumSessionEpochsRef,
   linuxDoBrowserWebViewRef,
   linuxDoWebViewUserAgentRef,
@@ -188,7 +188,7 @@ export function useSessionController({
   setWebLoginUserId,
   webLoginDetectedRef
 }: {
-  defaultFetcher?: Fetcher;
+  defaultFetcher: Fetcher;
   forumSessionEpochsRef: MutableRef<ForumSessionEpochs>;
   linuxDoBrowserWebViewRef: WebViewStopRef;
   linuxDoWebViewUserAgentRef: MutableRef<string>;
@@ -676,7 +676,8 @@ export function useSessionController({
       createNodeSeekWebViewFallbackFetcher({
         defaultFetcher,
         recoveryThreshold: nodeSeekRecoveryThreshold,
-        recoverReadChannel: () => recoverForumReadChannel('nodeseek'),
+        recoverReadChannel: (expectedGeneration, trace) =>
+          recoverReadNetworkRuntime('nodeseek', expectedGeneration, { trace }),
         webViewFetcher: nodeSeekFetchWithWebView
       }),
     [defaultFetcher, nodeSeekFetchWithWebView, nodeSeekRecoveryThreshold]
@@ -686,7 +687,8 @@ export function useSessionController({
     () =>
       createLinuxDoWebViewFallbackFetcher({
         defaultFetcher: nodeSeekFetchWithWebViewFallback,
-        recoverReadChannel: () => recoverForumReadChannel('linuxdo'),
+        recoverReadChannel: (expectedGeneration, trace) =>
+          recoverReadNetworkRuntime('linuxdo', expectedGeneration, { trace }),
         webViewFetcher: linuxDoFetchWithWebView
       }),
     [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback]

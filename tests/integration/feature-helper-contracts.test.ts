@@ -10,6 +10,7 @@ import {
   createReplyTextIndexForQuery
 } from '@/features/topic/model/replySearch';
 import { highlightHtml, highlightTextParts } from '@/ui/text/highlight';
+import { parseHtml } from '@/domain/forum/html';
 import { stripHtml } from '@/domain/forum/text';
 import type { Category, Reply, Topic } from '@/domain/forum/models';
 import type { TopicRecord } from '@/domain/reader/readerData';
@@ -25,6 +26,18 @@ const topic: Topic = {
   createdAt: '2026-05-20T00:00:00.000Z',
   replyCount: 2
 };
+
+function htmlDomNodeCount(html: string) {
+  const body = parseHtml(`<body>${html}</body>`).querySelector('body');
+  const pending = [...(body?.childNodes || [])];
+  let count = 0;
+  while (pending.length) {
+    const current = pending.pop()!;
+    count += 1;
+    pending.push(...(current.childNodes || []));
+  }
+  return count;
+}
 
 function record(patch: Partial<TopicRecord> & { id: string; savedAt: string }): TopicRecord {
   return {
@@ -61,6 +74,20 @@ describe('Android feature helpers', () => {
     expect(highlightHtml('<p><a title="VPS > private link">visible link</a></p>', 'link')).toBe(
       '<p><a title="VPS > private link">visible <mark>link</mark></a></p>'
     );
+  });
+
+  it('[REG-PERF-010] keeps dense planned-row highlights inside serialized and DOM budgets', () => {
+    const html = `<p>${'a '.repeat(6_000)}</p>`;
+
+    const highlighted = highlightHtml(html, 'a');
+    const markCount = highlighted.match(/<mark>/g)?.length || 0;
+
+    expect(markCount).toBeGreaterThan(0);
+    expect(markCount).toBeLessThan(6_000);
+    expect(highlighted).toMatch(/^<p><mark>a<\/mark>/);
+    expect(stripHtml(highlighted)).toBe(stripHtml(html));
+    expect(highlighted.length).toBeLessThanOrEqual(16_384);
+    expect(htmlDomNodeCount(highlighted)).toBeLessThanOrEqual(80);
   });
 
   it('copies rendered reply text without html while keeping visible line breaks', () => {

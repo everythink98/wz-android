@@ -1,5 +1,9 @@
 import { HTMLContentModel, HTMLElementModel } from 'react-native-render-html';
-import { FORUM_INLINE_MEDIA_LINE_TAG, FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG } from '@/platform/media/inlineMedia';
+import {
+  FORUM_INLINE_MEDIA_LINE_TAG,
+  FORUM_STICKER_ROW_TAG,
+  FORUM_STICKER_TAG
+} from '@/domain/forum/forumContentMedia';
 
 export const FORUM_STICKER_ELEMENT_MODELS = {
   [FORUM_STICKER_TAG]: HTMLElementModel.fromCustomModel({

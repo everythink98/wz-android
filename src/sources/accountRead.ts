@@ -8,6 +8,7 @@ import { readLinuxDoAccountStatus } from '@/sources/linuxdo/accountStatus';
 import { readNodeSeekAccountStatus } from '@/sources/nodeseek/accountStatus';
 import { readXiaoyinsiAccountStatus } from '@/sources/xiaoyinsi/accountStatus';
 import { readYaohuoAccountStatus } from '@/sources/yaohuo/accountStatus';
+import { runForumSourceReadAttempt } from './forumSourceReadAttempt';
 
 export function readAccountStatus(
   source: SessionSource,
@@ -32,19 +33,31 @@ export function readAccountStatus(
 ): Promise<AccountStatusObservation> {
   switch (source) {
     case 'linuxdo':
-      return readLinuxDoAccountStatus({
+      return runForumSourceReadAttempt(
+        'linuxdo',
         fetcher,
-        readManagedCookieHeader,
-        signal,
-        userAgent: linuxDoUserAgent
-      });
+        (scopedFetcher) =>
+          readLinuxDoAccountStatus({
+            fetcher: scopedFetcher,
+            readManagedCookieHeader,
+            signal,
+            userAgent: linuxDoUserAgent
+          }),
+        () => !signal.aborted
+      );
     case 'nodeseek':
-      return readNodeSeekAccountStatus({
+      return runForumSourceReadAttempt(
+        'nodeseek',
         fetcher,
-        readManagedCookieHeader,
-        signal,
-        userAgent: nodeSeekUserAgent
-      });
+        (scopedFetcher) =>
+          readNodeSeekAccountStatus({
+            fetcher: scopedFetcher,
+            readManagedCookieHeader,
+            signal,
+            userAgent: nodeSeekUserAgent
+          }),
+        () => !signal.aborted
+      );
     case 'xiaoyinsi':
       return readXiaoyinsiAccountStatus({ readAuthorization: readXiaoyinsiAuthorization, signal });
     case 'yaohuo':

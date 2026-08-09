@@ -6,11 +6,13 @@ import {
   StyleSheet,
   Text,
   View,
+  type ImageStyle,
   type ImageURISource,
   type StyleProp,
-  type TextStyle
+  type TextStyle,
+  type ViewStyle
 } from 'react-native';
-import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
+import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
 import {
   useContentWidth,
   useIMGElementProps,
@@ -22,21 +24,20 @@ import {
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { imageSourceFromUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import {
-  isInlineForumImage,
   selectImageDisplaySource,
   selectImageOriginalSource,
-  type ImageDisplayCandidateKind,
   type ImageDisplaySize
 } from '@/platform/media/imagePreviewCatalog';
+import { INLINE_FORUM_IMAGE_TAG, isInlineForumImage } from '@/domain/forum/forumContentMedia';
 import {
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize,
-  INLINE_FORUM_IMAGE_TAG,
   shouldMarkLoadedImageInline
 } from '@/platform/media/inlineMedia';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { HtmlRenderers } from './types';
-import { createHtmlRendererStyles, trimsTrailingBlockSpacing } from './htmlStyles';
+import { createHtmlRendererStyles } from './htmlStyles';
+import { useContentBoundarySpacing } from './TopicContentPresentation';
 import {
   cachedCompatibleSvgArtifact,
   compatibleImageRequestIdentity,
@@ -45,9 +46,7 @@ import {
   refreshCompatibleSvgPoster,
   type CompatibleSvgArtifact
 } from '@/platform/media/compatibleImageSources';
-import { forumMediaTargetClass, type ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
-import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
-import { diagnosticRef, type DiagnosticFields, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import {
   markOriginalImageDisplayed,
   originalImageDisplayIdentity,
@@ -59,58 +58,11 @@ import {
   rememberImageDisplayDimensions,
   type CachedImageDimensions
 } from '@/platform/media/imageDisplayDimensions';
+import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
 
-type BodyImageLoadMetrics = {
-  cacheType?: ImageLoadEventData['cacheType'];
-  firstProgressAt?: number;
-  loadedAt?: number;
-  loadedBytes?: number;
-  requestIdentity: string;
-  sourceHeight?: number;
-  sourceWidth?: number;
-  startedAt: number;
-  totalBytes?: number;
-};
-
-function bodyImageMetricFields(
-  metrics: BodyImageLoadMetrics,
-  finishedAt = Date.now(),
-  includeDisplayTime = false
-): DiagnosticFields {
-  return {
-    ...(metrics.cacheType ? { cacheType: metrics.cacheType } : {}),
-    ...(metrics.firstProgressAt === undefined
-      ? {}
-      : { firstProgressMs: Math.max(0, metrics.firstProgressAt - metrics.startedAt) }),
-    ...(metrics.loadedAt === undefined ? {} : { loadMs: Math.max(0, metrics.loadedAt - metrics.startedAt) }),
-    ...(metrics.loadedBytes === undefined ? {} : { loadedBytes: metrics.loadedBytes }),
-    ...(metrics.sourceHeight === undefined ? {} : { sourceHeight: metrics.sourceHeight }),
-    ...(metrics.sourceWidth === undefined ? {} : { sourceWidth: metrics.sourceWidth }),
-    ...(metrics.totalBytes === undefined ? {} : { totalBytes: metrics.totalBytes }),
-    ...(includeDisplayTime ? { displayMs: Math.max(0, finishedAt - metrics.startedAt) } : {})
-  };
-}
-
-function PreviewImageBlock({
-  attributes,
-  candidateKind,
-  errorTextStyle,
-  frameBackgroundColor,
-  frameBorderColor,
-  imageProps,
-  imageSource,
-  loadingColor,
-  markInlineSizedImageUrl,
-  mediaContext,
-  mediaSessionIdentity,
-  nodeSeekMediaUserAgent,
-  onOpenImagePreview,
-  originalUri,
-  src,
-  trimTrailingBlockSpacing
-}: {
+type PreviewImageBlockProps = {
   attributes: Record<string, string | undefined>;
-  candidateKind: ImageDisplayCandidateKind;
+  boundarySpacing?: ViewStyle;
   errorTextStyle: StyleProp<TextStyle>;
   frameBackgroundColor: string;
   frameBorderColor: string;
@@ -124,9 +76,90 @@ function PreviewImageBlock({
   onOpenImagePreview: (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void;
   originalUri: string;
   src: string;
-  trimTrailingBlockSpacing: boolean;
+};
+
+function ManagedOriginalImageLayer({
+  attemptIdentity,
+  forced,
+  onDisplay,
+  onRequestError,
+  onTerminalFailure,
+  placeholder,
+  requestIdentity,
+  source
+}: {
+  attemptIdentity: string;
+  forced: boolean;
+  onDisplay: () => void;
+  onRequestError: () => boolean;
+  onTerminalFailure: () => void;
+  placeholder: ImageURISource;
+  requestIdentity: string;
+  source: ImageURISource;
 }) {
+  const lease = useTopicBodyMediaLease({
+    kind: 'original',
+    priority: forced ? 'user' : 'upgrade',
+    requestIdentity
+  });
+  const activeAttemptIdRef = useRef(lease.attemptId);
+  useLayoutEffect(() => {
+    activeAttemptIdRef.current = lease.attemptId;
+  }, [lease.attemptId]);
+  useEffect(() => {
+    if (lease.failure) onTerminalFailure();
+  }, [lease.failure, onTerminalFailure]);
+  if (!lease.admitted) return null;
+  return (
+    <ExpoImage
+      key={lease.attemptId}
+      testID="topic-image-original"
+      allowDownscaling
+      cachePolicy="disk"
+      contentFit="contain"
+      placeholder={placeholder}
+      placeholderContentFit="contain"
+      priority={forced ? 'high' : 'low'}
+      recyclingKey={`${attemptIdentity}:body-original:${lease.attemptId}`}
+      source={source}
+      style={StyleSheet.absoluteFillObject}
+      transition={150}
+      onDisplay={() => {
+        if (activeAttemptIdRef.current !== lease.attemptId) return;
+        lease.settle('displayed');
+        onDisplay();
+      }}
+      onError={() => {
+        if (activeAttemptIdRef.current !== lease.attemptId) return;
+        if (!onRequestError()) return;
+        lease.settle('error');
+        if (lease.attemptId === 'unmanaged') onTerminalFailure();
+      }}
+      onProgress={(event) => lease.progress(event.loaded)}
+    />
+  );
+}
+
+function AdmittedPreviewImageBlock({
+  attributes,
+  boundarySpacing,
+  bodyMediaLease,
+  errorTextStyle,
+  frameBackgroundColor,
+  frameBorderColor,
+  imageProps,
+  imageSource,
+  loadingColor,
+  markInlineSizedImageUrl,
+  mediaContext,
+  mediaSessionIdentity,
+  nodeSeekMediaUserAgent,
+  onOpenImagePreview,
+  originalUri,
+  src
+}: PreviewImageBlockProps & { bodyMediaLease: ReturnType<typeof useTopicBodyMediaLease> }) {
   const requestIdentity = compatibleImageRequestIdentity(imageSource);
+  const bodyRequestIdentity = `${requestIdentity}\u0000attempt:${bodyMediaLease.attemptId}`;
   const originalSource = useMemo(() => {
     const cleanOriginalUri = normalizeImagePreviewUrl(originalUri);
     return cleanOriginalUri && cleanOriginalUri !== normalizeImagePreviewUrl(src)
@@ -140,64 +173,14 @@ function PreviewImageBlock({
   const originalRequestIdentity = originalImageDisplayIdentity(originalSource);
   const originalDisplayRevision = useOriginalImageDisplayRevision(originalSource);
   const originalUpgradeEnabled = useOriginalImageUpgradeEnabled();
+  const compatibleSvgConsumption = useMemo(
+    () => ({ controller: new AbortController(), requestIdentity: bodyRequestIdentity }),
+    [bodyRequestIdentity]
+  );
   const mountedRef = useRef(true);
-  const requestIdentityRef = useRef(requestIdentity);
-  const bodyStartedAtRef = useRef(0);
+  const requestIdentityRef = useRef(bodyRequestIdentity);
   const settledRequestIdentityRef = useRef('');
   const posterRefreshIdentityRef = useRef('');
-  const bodyMetricsRef = useRef<BodyImageLoadMetrics>({
-    requestIdentity,
-    startedAt: Date.now()
-  });
-  const bodyDiagnosticRef = useRef<{ fallback: boolean; requestIdentity: string; trace: DiagnosticTrace } | null>(null);
-  const currentBodyTrace = useCallback(
-    (fallback = false) => {
-      if (!mountedRef.current) {
-        return null;
-      }
-      const previous = bodyDiagnosticRef.current;
-      if (previous?.requestIdentity !== requestIdentity) {
-        if (previous) {
-          finishDiagnosticTrace(previous.trace, 'stale', { fallback: 'none', terminalReason: 'stale' });
-        }
-        bodyDiagnosticRef.current = {
-          fallback,
-          requestIdentity,
-          trace: beginDiagnosticTrace(
-            'media',
-            'load',
-            {
-              candidateKind,
-              mediaClass: forumMediaTargetClass(src, mediaContext.contentSource),
-              mediaRef: diagnosticRef('media', src),
-              mediaRole: 'body',
-              source: mediaContext.contentSource || 'unknown',
-              surface: 'body'
-            },
-            bodyStartedAtRef.current || Date.now()
-          )
-        };
-      } else if (fallback && previous) {
-        previous.fallback = true;
-      }
-      return bodyDiagnosticRef.current;
-    },
-    [candidateKind, mediaContext.contentSource, requestIdentity, src]
-  );
-  const finishBodyFailure = useCallback(
-    (fallback: boolean) => {
-      const diagnostic = currentBodyTrace(fallback);
-      if (diagnostic) {
-        finishDiagnosticTrace(diagnostic.trace, 'failure', {
-          ...bodyImageMetricFields(bodyMetricsRef.current),
-          fallback: fallback ? 'svg' : 'none',
-          terminalReason: fallback ? 'fallback-error' : 'native-error'
-        });
-        bodyDiagnosticRef.current = null;
-      }
-    },
-    [currentBodyTrace]
-  );
   const [loadedImage, setLoadedImage] = useState<{
     cacheType: ImageLoadEventData['cacheType'];
     dimensions: CachedImageDimensions;
@@ -221,26 +204,26 @@ function PreviewImageBlock({
     compatibleSvgArtifact?.requestIdentity === requestIdentity ? compatibleSvgArtifact : cachedArtifact;
   const activeFallbackSource = activeArtifact?.posterSource || null;
   const activeImageSource = activeFallbackSource || imageSource;
-  const imageLoadIdentity = `${requestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
+  const imageLoadIdentity = `${bodyRequestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      compatibleSvgConsumption.controller.abort();
     };
-  }, []);
+  }, [compatibleSvgConsumption]);
   useLayoutEffect(() => {
-    const startedAt = Date.now();
-    requestIdentityRef.current = requestIdentity;
-    bodyStartedAtRef.current = startedAt;
-    bodyMetricsRef.current = { requestIdentity, startedAt };
-  }, [requestIdentity]);
+    requestIdentityRef.current = compatibleSvgConsumption.requestIdentity;
+  }, [compatibleSvgConsumption]);
   const recoverSvgArtifact = useCallback(async () => {
     try {
-      const artifact = await recoverCompatibleSvgArtifact(imageSource);
+      const artifact = await recoverCompatibleSvgArtifact(imageSource, {
+        signal: compatibleSvgConsumption.controller.signal
+      });
       if (
         !mountedRef.current ||
-        requestIdentityRef.current !== requestIdentity ||
-        settledRequestIdentityRef.current === requestIdentity
+        requestIdentityRef.current !== bodyRequestIdentity ||
+        settledRequestIdentityRef.current === bodyRequestIdentity
       ) {
         return;
       }
@@ -248,29 +231,29 @@ function PreviewImageBlock({
         setCompatibleSvgArtifact(artifact);
         return;
       }
-      settledRequestIdentityRef.current = requestIdentity;
-      finishBodyFailure(false);
-      setFailedRequestIdentity(requestIdentity);
+      settledRequestIdentityRef.current = bodyRequestIdentity;
+      setFailedRequestIdentity(bodyRequestIdentity);
     } catch {
       if (
         mountedRef.current &&
-        requestIdentityRef.current === requestIdentity &&
-        settledRequestIdentityRef.current !== requestIdentity
+        requestIdentityRef.current === bodyRequestIdentity &&
+        settledRequestIdentityRef.current !== bodyRequestIdentity
       ) {
-        settledRequestIdentityRef.current = requestIdentity;
-        finishBodyFailure(true);
-        setFailedRequestIdentity(requestIdentity);
+        settledRequestIdentityRef.current = bodyRequestIdentity;
+        setFailedRequestIdentity(bodyRequestIdentity);
       }
     }
-  }, [finishBodyFailure, imageSource, requestIdentity]);
+  }, [bodyRequestIdentity, compatibleSvgConsumption, imageSource]);
   const refreshSvgPoster = useCallback(
     async (artifact: CompatibleSvgArtifact) => {
       try {
-        const refreshed = await refreshCompatibleSvgPoster(artifact);
+        const refreshed = await refreshCompatibleSvgPoster(artifact, {
+          signal: compatibleSvgConsumption.controller.signal
+        });
         if (
           !mountedRef.current ||
-          requestIdentityRef.current !== requestIdentity ||
-          settledRequestIdentityRef.current === requestIdentity
+          requestIdentityRef.current !== bodyRequestIdentity ||
+          settledRequestIdentityRef.current === bodyRequestIdentity
         ) {
           return;
         }
@@ -278,60 +261,42 @@ function PreviewImageBlock({
       } catch {
         if (
           mountedRef.current &&
-          requestIdentityRef.current === requestIdentity &&
-          settledRequestIdentityRef.current !== requestIdentity
+          requestIdentityRef.current === bodyRequestIdentity &&
+          settledRequestIdentityRef.current !== bodyRequestIdentity
         ) {
-          settledRequestIdentityRef.current = requestIdentity;
-          finishBodyFailure(true);
-          setFailedRequestIdentity(requestIdentity);
+          settledRequestIdentityRef.current = bodyRequestIdentity;
+          setFailedRequestIdentity(bodyRequestIdentity);
         }
       }
     },
-    [finishBodyFailure, requestIdentity]
+    [bodyRequestIdentity, compatibleSvgConsumption]
   );
   const handleImageError = useCallback(() => {
     if (
       !mountedRef.current ||
-      requestIdentityRef.current !== requestIdentity ||
-      settledRequestIdentityRef.current === requestIdentity
+      requestIdentityRef.current !== bodyRequestIdentity ||
+      settledRequestIdentityRef.current === bodyRequestIdentity
     ) {
       return;
     }
     if (activeArtifact) {
-      if (posterRefreshIdentityRef.current === requestIdentity) {
-        settledRequestIdentityRef.current = requestIdentity;
-        finishBodyFailure(true);
-        setFailedRequestIdentity(requestIdentity);
+      if (posterRefreshIdentityRef.current === bodyRequestIdentity) {
+        settledRequestIdentityRef.current = bodyRequestIdentity;
+        setFailedRequestIdentity(bodyRequestIdentity);
         return;
       }
-      posterRefreshIdentityRef.current = requestIdentity;
-      currentBodyTrace(true);
+      posterRefreshIdentityRef.current = bodyRequestIdentity;
       void refreshSvgPoster(activeArtifact);
       return;
     }
-    currentBodyTrace(true);
     void recoverSvgArtifact();
-  }, [activeArtifact, currentBodyTrace, finishBodyFailure, recoverSvgArtifact, refreshSvgPoster, requestIdentity]);
-  const handleImageLoadStart = useCallback(() => {
-    if (
-      mountedRef.current &&
-      requestIdentityRef.current === requestIdentity &&
-      settledRequestIdentityRef.current !== requestIdentity
-    ) {
-      if (bodyMetricsRef.current.requestIdentity !== requestIdentity) {
-        const startedAt = Date.now();
-        bodyStartedAtRef.current = startedAt;
-        bodyMetricsRef.current = { requestIdentity, startedAt };
-      }
-      currentBodyTrace(Boolean(activeFallbackSource));
-    }
-  }, [activeFallbackSource, currentBodyTrace, requestIdentity]);
+  }, [activeArtifact, bodyRequestIdentity, recoverSvgArtifact, refreshSvgPoster]);
   const handleImageLoad = useCallback(
     (event: ImageLoadEventData) => {
       if (
         !mountedRef.current ||
-        requestIdentityRef.current !== requestIdentity ||
-        settledRequestIdentityRef.current === requestIdentity
+        requestIdentityRef.current !== bodyRequestIdentity ||
+        settledRequestIdentityRef.current === bodyRequestIdentity
       ) {
         return;
       }
@@ -340,91 +305,39 @@ function PreviewImageBlock({
       if (!(width > 0 && height > 0)) {
         return;
       }
-      bodyMetricsRef.current = {
-        ...bodyMetricsRef.current,
-        cacheType: event.cacheType,
-        loadedAt: Date.now(),
-        sourceHeight: height,
-        sourceWidth: width
-      };
       setLoadedImage({
         cacheType: event.cacheType,
         dimensions: { height, width },
         imageLoadIdentity,
-        requestIdentity
+        requestIdentity: bodyRequestIdentity
       });
     },
-    [imageLoadIdentity, requestIdentity]
+    [bodyRequestIdentity, imageLoadIdentity]
   );
   const handleImageDisplay = useCallback(() => {
     if (
       !mountedRef.current ||
-      requestIdentityRef.current !== requestIdentity ||
-      settledRequestIdentityRef.current === requestIdentity
+      requestIdentityRef.current !== bodyRequestIdentity ||
+      settledRequestIdentityRef.current === bodyRequestIdentity
     ) {
       return;
     }
     setDisplayedImageLoadIdentity(imageLoadIdentity);
-  }, [imageLoadIdentity, requestIdentity]);
+  }, [bodyRequestIdentity, imageLoadIdentity]);
   const handleImageProgress = useCallback(
-    (event: ImageProgressEventData) => {
+    (event: { loaded: number }) => {
       if (
         !mountedRef.current ||
-        requestIdentityRef.current !== requestIdentity ||
-        settledRequestIdentityRef.current === requestIdentity
+        requestIdentityRef.current !== bodyRequestIdentity ||
+        settledRequestIdentityRef.current === bodyRequestIdentity
       ) {
         return;
       }
-      const loadedBytes = Number(event.loaded);
-      const totalBytes = Number(event.total);
-      bodyMetricsRef.current = {
-        ...bodyMetricsRef.current,
-        ...(bodyMetricsRef.current.firstProgressAt === undefined ? { firstProgressAt: Date.now() } : {}),
-        ...(Number.isFinite(loadedBytes) && loadedBytes >= 0 ? { loadedBytes } : {}),
-        ...(Number.isFinite(totalBytes) && totalBytes >= 0 ? { totalBytes } : {})
-      };
+      bodyMediaLease.progress(event.loaded);
     },
-    [requestIdentity]
+    [bodyMediaLease, bodyRequestIdentity]
   );
-  const loadFailed = failedRequestIdentity === requestIdentity;
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      if (requestIdentityRef.current === requestIdentity && settledRequestIdentityRef.current !== requestIdentity) {
-        currentBodyTrace();
-      }
-    }, 10_000);
-    return () => {
-      clearTimeout(timeout);
-      const active = bodyDiagnosticRef.current;
-      if (active?.requestIdentity === requestIdentity) {
-        finishDiagnosticTrace(active.trace, 'stale', {
-          ...bodyImageMetricFields(bodyMetricsRef.current),
-          fallback: active.fallback ? 'svg' : 'none',
-          terminalReason: 'stale'
-        });
-        bodyDiagnosticRef.current = null;
-      }
-    };
-  }, [currentBodyTrace, requestIdentity]);
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      if (requestIdentityRef.current !== requestIdentity || settledRequestIdentityRef.current === requestIdentity) {
-        return;
-      }
-      settledRequestIdentityRef.current = requestIdentity;
-      const diagnostic = currentBodyTrace();
-      if (diagnostic) {
-        finishDiagnosticTrace(diagnostic.trace, 'failure', {
-          ...bodyImageMetricFields(bodyMetricsRef.current),
-          fallback: diagnostic.fallback ? 'svg' : 'none',
-          terminalReason: 'timeout'
-        });
-        bodyDiagnosticRef.current = null;
-      }
-      setFailedRequestIdentity(requestIdentity);
-    }, 30_000);
-    return () => clearTimeout(timeout);
-  }, [currentBodyTrace, requestIdentity]);
+  const loadFailed = failedRequestIdentity === bodyRequestIdentity;
   const cacheKey = `${mediaSessionIdentity}:${normalizeImagePreviewUrl(src).trim()}`;
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
   useEffect(() => {
@@ -433,7 +346,7 @@ function PreviewImageBlock({
     }
   }, [cacheKey, cachedDimensions]);
   const activeLoadedImage =
-    loadedImage?.requestIdentity === requestIdentity && loadedImage.imageLoadIdentity === imageLoadIdentity
+    loadedImage?.requestIdentity === bodyRequestIdentity && loadedImage.imageLoadIdentity === imageLoadIdentity
       ? loadedImage
       : null;
   const naturalDimensions = activeLoadedImage
@@ -466,7 +379,7 @@ function PreviewImageBlock({
   const sharedContainerStyle = [
     { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const },
     containerStyle,
-    trimTrailingBlockSpacing ? { marginBottom: -4 } : null
+    boundarySpacing
   ];
   const imageStateFrameStyle = [
     {
@@ -490,10 +403,12 @@ function PreviewImageBlock({
   }, [cachedOriginalArtifact, originalRequestIdentity]);
   const progressiveSource = cachedOriginalArtifact?.posterSource || originalSource;
   const progressiveIdentity = progressiveSource ? compatibleImageRequestIdentity(progressiveSource) : '';
-  const progressiveIdentityRef = useRef(progressiveIdentity);
+  const originalAttemptIdentity = `${progressiveIdentity}\u0000revision:${originalDisplayRevision}`;
+  const originalLeaseIdentity = `${progressiveIdentity}\u0000revision:${originalDisplayRevision}`;
+  const progressiveIdentityRef = useRef(originalAttemptIdentity);
   const originalForced = Boolean(originalRequestIdentity) && forcedOriginalIdentity === originalRequestIdentity;
   const originalFailed =
-    failedOriginal.identity === progressiveIdentity && failedOriginal.revision === originalDisplayRevision;
+    failedOriginal.identity === originalAttemptIdentity && failedOriginal.revision === originalDisplayRevision;
   const originalDisplayed = Boolean(progressiveIdentity) && displayedOriginalIdentity === progressiveIdentity;
   const shouldLoadOriginal = Boolean(
     progressiveSource &&
@@ -501,29 +416,18 @@ function PreviewImageBlock({
     (originalDisplayRevision > 0 || originalForced || (originalUpgradeEnabled && imageDisplayed))
   );
   useLayoutEffect(() => {
-    progressiveIdentityRef.current = progressiveIdentity;
-  }, [progressiveIdentity]);
+    progressiveIdentityRef.current = originalAttemptIdentity;
+  }, [originalAttemptIdentity]);
   useEffect(() => {
-    if (!imageDisplayed || settledRequestIdentityRef.current === requestIdentity) {
+    if (!imageDisplayed || settledRequestIdentityRef.current === bodyRequestIdentity) {
       return;
     }
-    settledRequestIdentityRef.current = requestIdentity;
-    const diagnostic = bodyDiagnosticRef.current;
-    if (diagnostic?.requestIdentity === requestIdentity) {
-      const displayedAt = Date.now();
-      finishDiagnosticTrace(
-        diagnostic.trace,
-        'success',
-        {
-          ...bodyImageMetricFields(bodyMetricsRef.current, displayedAt, true),
-          fallback: activeFallbackSource ? 'svg' : 'none',
-          terminalReason: activeFallbackSource ? 'fallback-loaded' : 'loaded'
-        },
-        displayedAt
-      );
-      bodyDiagnosticRef.current = null;
-    }
-  }, [activeFallbackSource, imageDisplayed, requestIdentity]);
+    settledRequestIdentityRef.current = bodyRequestIdentity;
+    bodyMediaLease.settle('displayed');
+  }, [bodyMediaLease, bodyRequestIdentity, imageDisplayed]);
+  useEffect(() => {
+    if (loadFailed) bodyMediaLease.settle('error');
+  }, [bodyMediaLease, loadFailed]);
   return (
     <Pressable
       accessibilityLabel={imageState.alt || '查看图片'}
@@ -540,7 +444,8 @@ function PreviewImageBlock({
       <View testID="topic-image-frame" style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
         {!loadFailed && !originalDisplayed ? (
           <ExpoImage
-            cachePolicy="memory-disk"
+            allowDownscaling
+            cachePolicy="disk"
             contentFit="contain"
             priority="normal"
             recyclingKey={imageLoadIdentity}
@@ -549,26 +454,20 @@ function PreviewImageBlock({
             onDisplay={handleImageDisplay}
             onError={handleImageError}
             onLoad={handleImageLoad}
-            onLoadStart={handleImageLoadStart}
             onProgress={handleImageProgress}
           />
         ) : null}
-        {shouldLoadOriginal ? (
-          <ExpoImage
-            testID="topic-image-original"
-            cachePolicy="memory-disk"
-            contentFit="contain"
+        {shouldLoadOriginal && progressiveSource ? (
+          <ManagedOriginalImageLayer
+            attemptIdentity={originalAttemptIdentity}
+            forced={originalForced}
             placeholder={activeImageSource}
-            placeholderContentFit="contain"
-            priority={originalForced ? 'high' : 'low'}
-            recyclingKey={`${progressiveIdentity}:body-original`}
+            requestIdentity={originalLeaseIdentity}
             source={progressiveSource}
-            style={StyleSheet.absoluteFillObject}
-            transition={150}
             onDisplay={() => {
               if (
                 !mountedRef.current ||
-                progressiveIdentityRef.current !== progressiveIdentity ||
+                progressiveIdentityRef.current !== originalAttemptIdentity ||
                 displayedOriginalIdentity === progressiveIdentity
               ) {
                 return;
@@ -576,15 +475,25 @@ function PreviewImageBlock({
               setDisplayedOriginalIdentity(progressiveIdentity);
               markOriginalImageDisplayed(originalSource);
             }}
-            onError={() => {
+            onRequestError={() => {
               if (
                 !mountedRef.current ||
-                progressiveIdentityRef.current !== progressiveIdentity ||
+                progressiveIdentityRef.current !== originalAttemptIdentity ||
+                displayedOriginalIdentity === progressiveIdentity
+              ) {
+                return false;
+              }
+              return true;
+            }}
+            onTerminalFailure={() => {
+              if (
+                !mountedRef.current ||
+                progressiveIdentityRef.current !== originalAttemptIdentity ||
                 displayedOriginalIdentity === progressiveIdentity
               ) {
                 return;
               }
-              setFailedOriginal({ identity: progressiveIdentity, revision: originalDisplayRevision });
+              setFailedOriginal({ identity: originalAttemptIdentity, revision: originalDisplayRevision });
             }}
           />
         ) : null}
@@ -601,6 +510,79 @@ function PreviewImageBlock({
         ) : null}
       </View>
     </Pressable>
+  );
+}
+
+function PreviewImageBlock(props: PreviewImageBlockProps) {
+  const requestIdentity = compatibleImageRequestIdentity(props.imageSource);
+  const bodyMediaLease = useTopicBodyMediaLease({ kind: 'base', requestIdentity });
+  const contentWidth = Math.max(1, props.imageProps.contentWidth || 1);
+  const cacheKey = `${props.mediaSessionIdentity}:${normalizeImagePreviewUrl(props.src).trim()}`;
+  const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
+  const dimensions = cachedDimensions
+    ? {
+        height: Math.max(1, Math.round((cachedDimensions.height * contentWidth) / cachedDimensions.width)),
+        width: contentWidth
+      }
+    : { height: Math.round(contentWidth * 0.75), width: contentWidth };
+  if (bodyMediaLease.admitted) {
+    return <AdmittedPreviewImageBlock {...props} bodyMediaLease={bodyMediaLease} key={bodyMediaLease.attemptId} />;
+  }
+  const frameStyle = [
+    {
+      alignItems: 'center' as const,
+      alignSelf: 'center' as const,
+      backgroundColor: props.frameBackgroundColor,
+      borderColor: props.frameBorderColor,
+      borderWidth: StyleSheet.hairlineWidth,
+      justifyContent: 'center' as const,
+      overflow: 'hidden' as const
+    },
+    dimensions,
+    props.boundarySpacing
+  ];
+  if (bodyMediaLease.failure) {
+    return (
+      <Pressable
+        accessibilityLabel="图片加载失败，点按重试"
+        accessibilityRole="button"
+        style={frameStyle}
+        onPress={bodyMediaLease.retry}
+      >
+        <Text numberOfLines={2} style={props.errorTextStyle}>
+          图片加载失败，点按重试
+        </Text>
+      </Pressable>
+    );
+  }
+  return <View testID="topic-image-idle" style={frameStyle} />;
+}
+
+function ManagedInlineForumImage({
+  recyclingKey,
+  source,
+  style
+}: {
+  recyclingKey: string;
+  source: ImageURISource;
+  style: StyleProp<ImageStyle & ViewStyle>;
+}) {
+  const requestIdentity = compatibleImageRequestIdentity(source);
+  const lease = useTopicBodyMediaLease({ kind: 'inline', requestIdentity });
+  if (!lease.admitted) return <View style={style} />;
+  return (
+    <ExpoImage
+      key={lease.attemptId}
+      allowDownscaling
+      cachePolicy="disk"
+      contentFit="contain"
+      recyclingKey={`${recyclingKey}:${lease.attemptId}`}
+      source={source}
+      style={style}
+      onDisplay={() => lease.settle('displayed')}
+      onError={() => lease.settle('error')}
+      onProgress={(event) => lease.progress(event.loaded)}
+    />
   );
 }
 
@@ -626,6 +608,7 @@ export function createPreviewRenderers({
   theme: ReaderTheme;
 }): HtmlRenderers {
   const PreviewImageRenderer: CustomBlockRenderer = (props) => {
+    const boundarySpacing = useContentBoundarySpacing(props.tnode);
     const contentWidth = useContentWidth();
     const imageProps = useIMGElementProps(props);
     const attributes = props.tnode.attributes;
@@ -635,10 +618,14 @@ export function createPreviewRenderers({
         return <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
       }
       return (
-        <ExpoImage
-          contentFit="contain"
+        <ManagedInlineForumImage
           recyclingKey={`${mediaSessionIdentity}:${inlineSrc}`}
-          source={imageSourceFromUrl(inlineSrc, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
+          source={
+            imageSourceFromUrl(inlineSrc, {
+              mediaContext,
+              nodeSeekUserAgent: nodeSeekMediaUserAgent
+            }) as ImageURISource
+          }
           style={[
             htmlRendererStyles.inlineForumImage,
             inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth),
@@ -662,7 +649,7 @@ export function createPreviewRenderers({
       <PreviewImageBlock
         key={`${mediaSessionIdentity}:${src}`}
         attributes={attributes}
-        candidateKind={displaySource.candidateKind}
+        boundarySpacing={boundarySpacing}
         errorTextStyle={htmlRendererStyles.inlineForumImageText}
         frameBackgroundColor={theme.surface2}
         frameBorderColor={theme.line}
@@ -676,7 +663,6 @@ export function createPreviewRenderers({
         onOpenImagePreview={onOpenImagePreview}
         originalUri={originalUri}
         src={src}
-        trimTrailingBlockSpacing={trimsTrailingBlockSpacing(props.tnode)}
       />
     );
   };
@@ -692,10 +678,14 @@ export function createPreviewRenderers({
     const isInlineImage = isInlineForumImage(attributes);
     if (isInlineImage) {
       return (
-        <ExpoImage
-          contentFit="contain"
+        <ManagedInlineForumImage
           recyclingKey={`${mediaSessionIdentity}:${src}`}
-          source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
+          source={
+            imageSourceFromUrl(src, {
+              mediaContext,
+              nodeSeekUserAgent: nodeSeekMediaUserAgent
+            }) as ImageURISource
+          }
           style={[
             htmlRendererStyles.inlineForumImage,
             inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth),

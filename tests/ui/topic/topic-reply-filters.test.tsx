@@ -1,12 +1,12 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import type { Reply, ReplyOrder, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ReplyFilter } from '@/features/topic/model/types';
 import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
-import { discoursePollPlaceholder } from '@/sources/discourse/content';
+import { discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen } from '@/features/topic/TopicScreen';
@@ -16,17 +16,23 @@ import type { InteractionType } from '@/domain/forum/topicActionState';
 import type { TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
 import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import type { useTopicController } from '@/features/topic/useTopicController';
+import type { TopicListItem } from '@/features/topic/model/topicListModel';
 import type { ToggleTopicBodyQuoteOptions } from '@/domain/forum/quotedPosts';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
-const mockSplitTopicContentHtml = jest.fn();
+const mockCompileForumContent = jest.fn();
 let lastFlashListItemTypes: string[] = [];
 let lastFlashListItemKeys: string[] = [];
 let lastFlashListProps: Record<string, any> = {};
+
+function lastReplyListIndex(floor: number) {
+  return ((lastFlashListProps.data || []) as { reply?: Reply }[]).findIndex((item) => item.reply?.floor === floor);
+}
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -74,7 +80,8 @@ jest.mock('@shopify/flash-list', () => {
         ),
         ListFooterComponent
       );
-    })
+    }),
+    useMappingHelper: () => ({ getMappingKey: (key: string | number) => String(key) })
   };
 });
 
@@ -87,9 +94,16 @@ jest.mock('react-native-webview', () => ({ WebView: () => null }));
 
 jest.mock('react-native-render-html', () => {
   const ReactModule = require('react') as typeof React;
+  const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   const Passthrough = ({ children }: { children?: React.ReactNode }) =>
     ReactModule.createElement(ReactModule.Fragment, null, children);
   const RenderersContext = ReactModule.createContext<Record<string, React.ComponentType<any>>>({});
+  const nodeText = (node: { children?: unknown[]; data?: unknown }): string =>
+    `${typeof node.data === 'string' ? node.data : ''}${
+      Array.isArray(node.children)
+        ? node.children.map((child) => nodeText(child as { children?: unknown[]; data?: unknown })).join('')
+        : ''
+    }`;
   return {
     __useMockRenderers: () => ReactModule.useContext(RenderersContext),
     HTMLContentModel: { block: 'block', mixed: 'mixed', textual: 'textual' },
@@ -101,7 +115,14 @@ jest.mock('react-native-render-html', () => {
       children?: React.ReactNode;
       renderers?: Record<string, React.ComponentType<any>>;
     }) => ReactModule.createElement(RenderersContext.Provider, { value: renderers }, children),
-    TChildrenRenderer: () => null,
+    TChildrenRenderer: ({ tchildren }: { tchildren: { children?: unknown[]; data?: unknown; nodeIndex?: number }[] }) =>
+      ReactModule.createElement(
+        NativeView,
+        null,
+        ...tchildren.map((child, index) =>
+          ReactModule.createElement(NativeText, { key: child.nodeIndex ?? index }, nodeText(child))
+        )
+      ),
     TRenderEngineProvider: Passthrough,
     defaultHTMLElementModels: {
       details: { extend: () => ({}) },
@@ -130,16 +151,36 @@ jest.mock('lucide-react-native', () => {
 });
 
 jest.mock('@/ui/avatar/Avatar', () => ({ Avatar: () => null }));
-jest.mock('@/ui/content/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
+jest.mock('@/ui/content/ForumContentVideo', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Pressable: NativePressable } = require('react-native') as typeof import('react-native');
+  return {
+    ForumContentVideo: ({
+      admission,
+      boundarySpacing,
+      src
+    }: {
+      admission?: { admitted: boolean; settle: (outcome: string) => void };
+      boundarySpacing?: StyleProp<ViewStyle>;
+      src: string;
+    }) =>
+      ReactModule.createElement(NativePressable, {
+        accessibilityLabel: `mock forum video ${src}`,
+        onPress: () => admission?.settle('displayed'),
+        style: boundarySpacing,
+        testID: admission?.admitted === false ? 'topic-managed-video-waiting' : 'topic-managed-video-admitted'
+      })
+  };
+});
 jest.mock('@/domain/forum/topicContentSplit', () => {
   const actual = jest.requireActual<typeof import('@/domain/forum/topicContentSplit')>(
     '@/domain/forum/topicContentSplit'
   );
   return {
     ...actual,
-    splitTopicContentHtml: (...args: Parameters<typeof actual.splitTopicContentHtml>) => {
-      mockSplitTopicContentHtml(...args);
-      return actual.splitTopicContentHtml(...args);
+    compileForumContent: (...args: Parameters<typeof actual.compileForumContent>) => {
+      mockCompileForumContent(...args);
+      return actual.compileForumContent(...args);
     }
   };
 });
@@ -181,9 +222,11 @@ jest.mock('@/features/topic/components/TopicContentBlock', () => {
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     MemoizedTopicContentBlock: ({
+      continuation = 'only',
       html,
       originalImageUpgradeEnabled
     }: {
+      continuation?: 'only' | 'first' | 'middle' | 'last';
       html: string;
       originalImageUpgradeEnabled?: boolean;
     }) => {
@@ -192,6 +235,49 @@ jest.mock('@/features/topic/components/TopicContentBlock', () => {
           __useMockRenderers: () => Record<string, React.ComponentType<any>>;
         }
       ).__useMockRenderers();
+      const compactShellMatch = html
+        .trim()
+        .match(/^<div\b[^>]*\bclass=["'][^"']*\bforum-reply-content\b[^"']*["'][^>]*>([\s\S]*)<\/div>$/i);
+      const renderableHtml = compactShellMatch?.[1] || html.trim();
+      const detailsMatch = renderableHtml.match(/^<details\b([^>]*)>([\s\S]*)<\/details>$/i);
+      const DetailsRenderer = renderers.details;
+      if (detailsMatch && DetailsRenderer) {
+        const attributes: Record<string, string> = {};
+        for (const match of detailsMatch[1].matchAll(/([\w:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
+          attributes[match[1]] = match[2] ?? match[3] ?? match[4] ?? '';
+        }
+        const summaryMatch = detailsMatch[2].match(/<summary\b[^>]*>([\s\S]*?)<\/summary>/i);
+        const bodyHtml = summaryMatch ? detailsMatch[2].replace(summaryMatch[0], '') : detailsMatch[2];
+        const text = (value: string) => value.replace(/<[^>]+>/g, '').trim();
+        const summaryNode = summaryMatch
+          ? {
+              children: [{ data: text(summaryMatch[1]), nodeIndex: 2, type: 'text' }],
+              nodeIndex: 1,
+              tagName: 'summary'
+            }
+          : undefined;
+        const bodyNode = {
+          children: [{ data: text(bodyHtml), nodeIndex: 4, type: 'text' }],
+          nodeIndex: 3,
+          tagName: 'div'
+        };
+        return ReactModule.createElement(
+          NativeView,
+          {
+            accessibilityLabel: `content-continuation-${continuation}`,
+            testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
+          },
+          ReactModule.createElement(DetailsRenderer, {
+            tnode: {
+              attributes,
+              children: [...(summaryNode ? [summaryNode] : []), bodyNode],
+              nodeIndex: 0,
+              parent: null,
+              tagName: 'details'
+            }
+          })
+        );
+      }
       const children: React.ReactNode[] = [];
       const pattern = /<forum-nodeseek-poll\b[^>]*\bid=["']([^"']+)["'][^>]*>\s*<\/forum-nodeseek-poll\s*>/gi;
       let offset = 0;
@@ -220,6 +306,7 @@ jest.mock('@/features/topic/components/TopicContentBlock', () => {
       return ReactModule.createElement(
         NativeView,
         {
+          accessibilityLabel: `content-continuation-${continuation}`,
           testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
         },
         children
@@ -275,6 +362,9 @@ jest.mock('@/features/topic/components/TopicMenu', () => ({ TopicMenu: () => nul
 jest.mock('@/features/topic/components/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
+  const actual = jest.requireActual<typeof import('@/features/topic/components/ReplyItem')>(
+    '@/features/topic/components/ReplyItem'
+  );
   return {
     DiscourseReactionPill: ({ stat }: { stat: { id: string; imageUrl?: string; label: string; value: number } }) =>
       ReactModule.createElement(
@@ -282,12 +372,7 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
         { testID: `reaction-${stat.id}` },
         `${stat.label} ${stat.value}${stat.imageUrl ? ` ${stat.imageUrl}` : ''}`
       ),
-    MemoizedReplyItem: ({
-      isTerminal,
-      onQuoteContentLayout,
-      reply,
-      section
-    }: {
+    MemoizedReplyItem: (props: {
       isTerminal?: boolean;
       onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
       reply: Reply;
@@ -296,9 +381,18 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
         instanceKey?: string;
         key: string;
         measureForMaterialization?: boolean;
+        type?: string;
       };
-    }) =>
-      ReactModule.createElement(
+    }) => {
+      const { isTerminal, onQuoteContentLayout, reply, section } = props;
+      if (
+        section?.type === 'replyContent' ||
+        section?.type === 'replySignatureContent' ||
+        section?.type === 'replyQuoteContent'
+      ) {
+        return ReactModule.createElement(actual.ReplyItem, props as never);
+      }
+      return ReactModule.createElement(
         NativeView,
         isTerminal
           ? { testID: 'terminal-reply' }
@@ -317,7 +411,8 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
           { testID: `reply-floor-${reply.floor}` },
           `reply-${reply.floor}-${reply.author}`
         )
-      ),
+      );
+    },
     NodeSeekStatPill: ({ label, value }: { label: string; value: number }) =>
       ReactModule.createElement(NativeText, { testID: `readonly-stat-${label}` }, `${label} ${value}`),
     nodeSeekTopicReactionStats: () => []
@@ -713,6 +808,443 @@ describe('Topic reply filters', () => {
     expect(lastFlashListItemTypes.indexOf('replyControls')).toBe(contentItemCount);
   });
 
+  it('[REG-PERF-010] removes only the parent-list separator inside one logical continuation group', async () => {
+    await render(<TopicFilterHarness selectedTopic={topic} topicDetail={topic} topicReplies={[]} />);
+    const separatorHeight = (leadingItem: TopicListItem, trailingItem: TopicListItem) => {
+      const separator = lastFlashListProps.ItemSeparatorComponent({ leadingItem, trailingItem }) as React.ReactElement<{
+        style?: unknown;
+      }> | null;
+      return separator
+        ? (StyleSheet.flatten(separator.props.style as StyleProp<ViewStyle>) as ViewStyle | undefined)?.height || 0
+        : 0;
+    };
+    const content = (key: string, groupKey: string, continuation: 'only' | 'first' | 'middle' | 'last') => ({
+      type: 'content' as const,
+      key,
+      groupKey,
+      continuation,
+      html: `<p>${key}</p>`,
+      networkMediaCount: 0
+    });
+    const openingFirst: TopicListItem = {
+      type: 'topicContent',
+      key: 'opening-first',
+      content: content('opening-first', 'block-0', 'first')
+    };
+    const openingLast: TopicListItem = {
+      type: 'topicContent',
+      key: 'opening-last',
+      content: content('opening-last', 'block-0', 'last')
+    };
+    const openingOnly: TopicListItem = {
+      type: 'topicContent',
+      key: 'opening-only',
+      content: content('opening-only', 'block-1', 'only')
+    };
+    const quoteFirst: TopicListItem = {
+      type: 'topicQuoteContent',
+      key: 'quote-first',
+      content: content('quote-first', 'block-0', 'first'),
+      instanceKey: 'quote-a',
+      source: 'nodeseek'
+    };
+    const quoteLast: TopicListItem = {
+      type: 'topicQuoteContent',
+      key: 'quote-last',
+      content: content('quote-last', 'block-0', 'last'),
+      instanceKey: 'quote-a',
+      source: 'nodeseek'
+    };
+    const otherQuoteLast: TopicListItem = { ...quoteLast, key: 'other-quote-last', instanceKey: 'quote-b' };
+    const acceptedFirst: TopicListItem = {
+      type: 'topicAcceptedAnswerContent',
+      key: 'accepted-first',
+      content: content('accepted-first', 'block-0', 'first'),
+      preview: false
+    };
+    const acceptedLast: TopicListItem = {
+      type: 'topicAcceptedAnswerContent',
+      key: 'accepted-last',
+      content: content('accepted-last', 'block-0', 'last'),
+      preview: false
+    };
+
+    expect(separatorHeight(openingFirst, openingLast)).toBe(0);
+    expect(separatorHeight(quoteFirst, quoteLast)).toBe(0);
+    expect(separatorHeight(acceptedFirst, acceptedLast)).toBe(0);
+    expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(10);
+    expect(separatorHeight(openingFirst, { ...openingLast, content: content('different', 'block-2', 'last') })).toBe(
+      10
+    );
+    expect(separatorHeight(quoteFirst, otherQuoteLast)).toBe(10);
+    expect(separatorHeight(openingFirst, quoteLast)).toBe(10);
+  });
+
+  it('[REG-PERF-010] keeps continuation chrome only at the outer edges of a split opening group', async () => {
+    const splitTopic: TopicDetail = {
+      ...topic,
+      contentHtml: `<p>${Array.from(
+        { length: 12 },
+        (_, index) => `<img src="https://img.example.com/chrome-${index}.jpg">`
+      ).join('')}</p>`,
+      replies: [],
+      replyCount: 0
+    };
+    const view = await render(
+      <TopicFilterHarness selectedTopic={splitTopic} topicDetail={splitTopic} topicReplies={[]} />
+    );
+    const first = view.getByLabelText('content-continuation-first');
+    const middle = view.getByLabelText('content-continuation-middle');
+    const last = view.getByLabelText('content-continuation-last');
+    const firstContainer = StyleSheet.flatten(first.parent?.props.style);
+    const middleContainer = StyleSheet.flatten(middle.parent?.props.style);
+    const lastContainer = StyleSheet.flatten(last.parent?.props.style);
+
+    expect(firstContainer).toMatchObject({
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingBottom: 0,
+      paddingTop: 16
+    });
+    expect(middleContainer).toMatchObject({ borderBottomWidth: 0, borderTopWidth: 0, paddingBottom: 0, paddingTop: 0 });
+    expect(lastContainer).toMatchObject({ borderTopWidth: 0, paddingTop: 0 });
+    expect(lastContainer?.paddingBottom).toBeUndefined();
+  });
+
+  it('[REG-PERF-010] gives a 2000-image reply to FlashList as direct bounded content rows', async () => {
+    const imageReply: Reply = {
+      author: 'image-poster',
+      commentId: 863650,
+      contentHtml: `<p>${Array.from(
+        { length: 2000 },
+        (_, index) => `<img src="https://img.example.com/${index}.jpg">`
+      ).join('')}</p>`,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: 2
+    };
+    const imageTopic: TopicDetail = {
+      ...topic,
+      source: 'nodeseek',
+      id: '863650',
+      url: 'https://www.nodeseek.com/post-863650-1',
+      contentHtml: '<p>opening body</p>',
+      replies: [imageReply],
+      replyCount: 1
+    };
+    lastFlashListItemKeys = [];
+    lastFlashListItemTypes = [];
+
+    await render(
+      <TopicFilterHarness selectedTopic={imageTopic} topicDetail={imageTopic} topicReplies={[imageReply]} />
+    );
+
+    const replyStartIndex = lastFlashListItemTypes.indexOf('replyStart');
+    const replyEndIndex = lastFlashListItemTypes.indexOf('replyEnd', replyStartIndex + 1);
+    const directReplyRows = lastFlashListItemTypes.slice(replyStartIndex, replyEndIndex + 1);
+    expect(directReplyRows).toEqual(['replyStart', ...Array.from({ length: 500 }, () => 'replyContent'), 'replyEnd']);
+    const directRowKeys = lastFlashListItemKeys.slice(replyStartIndex, replyEndIndex + 1);
+    expect(new Set(directRowKeys).size).toBe(directRowKeys.length);
+    expect(directReplyRows).not.toContain('reply');
+  });
+
+  it('[REG-PERF-010] gives a poll-only reply to FlashList instead of materializing it inside ReplyItem', async () => {
+    const pollReply: Reply = {
+      author: 'poll-poster',
+      commentId: 864000,
+      contentHtml: '',
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: 2,
+      polls: [{ name: 'reply-choice', options: [{ id: 'yes', label: 'Yes' }] }]
+    };
+    const pollTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      id: 'poll-only-reply',
+      url: 'https://linux.do/t/poll-only-reply/864000',
+      contentHtml: '<p>opening body</p>',
+      replies: [pollReply],
+      replyCount: 1
+    };
+    lastFlashListItemTypes = [];
+
+    await render(<TopicFilterHarness selectedTopic={pollTopic} topicDetail={pollTopic} topicReplies={[pollReply]} />);
+
+    const replyStartIndex = lastFlashListItemTypes.indexOf('replyStart');
+    const replyEndIndex = lastFlashListItemTypes.indexOf('replyEnd', replyStartIndex + 1);
+    expect(lastFlashListItemTypes.slice(replyStartIndex, replyEndIndex + 1)).toEqual([
+      'replyStart',
+      'replyContent',
+      'replyEnd'
+    ]);
+    expect(lastFlashListItemTypes).not.toContain('reply');
+  });
+
+  it('[REG-PERF-010] shares split details within one entrance without crossing main, reply, or signature', async () => {
+    const oversizedDetails = (label: string) =>
+      `<details><summary>${label} header</summary>${Array.from({ length: 3 }, (_, part) => {
+        const imageCount = part < 2 ? 4 : 1;
+        return `<p>${label} body ${part + 1}${Array.from(
+          { length: imageCount },
+          (_, image) => `<img src="https://img.example.com/${label}-${part}-${image}.jpg">`
+        ).join('')}</p>`;
+      }).join('')}</details>`;
+    const detailsReply: Reply = {
+      author: 'details-author',
+      commentId: 902,
+      contentHtml: oversizedDetails('Reply'),
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: 2,
+      signatureHtml: oversizedDetails('Signature')
+    };
+    const detailsTopic: TopicDetail = {
+      ...topic,
+      contentHtml: oversizedDetails('Main'),
+      id: 'split-details',
+      replies: [detailsReply],
+      replyCount: 1,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/split-details'
+    };
+    const view = await render(
+      <TopicFilterHarness selectedTopic={detailsTopic} topicDetail={detailsTopic} topicReplies={[detailsReply]} />
+    );
+
+    expect(view.getAllByText('Main header')).toHaveLength(1);
+    expect(view.getAllByText('Reply header')).toHaveLength(1);
+    expect(view.getAllByText('Signature header')).toHaveLength(1);
+    expect(view.queryByText('详情')).toBeNull();
+    expect(view.queryByText('Main body 1')).toBeNull();
+    expect(view.queryByText('Main body 2')).toBeNull();
+    expect(view.queryByText('Main body 3')).toBeNull();
+
+    await fireEvent.press(view.getByText('Main header'));
+
+    expect(view.getByText('Main body 1')).toBeTruthy();
+    expect(view.getByText('Main body 2')).toBeTruthy();
+    expect(view.getByText('Main body 3')).toBeTruthy();
+    expect(view.queryByText('Reply body 1')).toBeNull();
+    expect(view.queryByText('Signature body 1')).toBeNull();
+
+    await fireEvent.press(view.getByText('Reply header'));
+
+    expect(view.getByText('Reply body 1')).toBeTruthy();
+    expect(view.getByText('Reply body 2')).toBeTruthy();
+    expect(view.getByText('Reply body 3')).toBeTruthy();
+    expect(view.queryByText('Signature body 1')).toBeNull();
+  });
+
+  it('[REG-PERF-010] emits one route aggregate with the actual bounded opening-post plan', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const imageTopic: TopicDetail = {
+      ...topic,
+      source: 'nodeseek',
+      id: '863650',
+      url: 'https://www.nodeseek.com/post-863650-1',
+      contentHtml: `<p>${Array.from(
+        { length: 2000 },
+        (_, index) => `<img src="https://secret.example/${index}.jpg?token=private">`
+      ).join('')}</p>`,
+      replies: [],
+      replyCount: 0
+    };
+
+    try {
+      const view = await render(
+        <TopicFilterHarness selectedTopic={imageTopic} topicDetail={imageTopic} topicReplies={[]} />
+      );
+      await view.unmount();
+
+      const aggregateEvents = lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((event) => event.operation === 'topic-body-media');
+      expect(aggregateEvents).toEqual([
+        expect.objectContaining({ phase: 'intent', source: 'nodeseek' }),
+        expect.objectContaining({
+          phase: 'finish',
+          outcome: 'success',
+          plannedRowCount: 500,
+          networkMediaCount: 2000
+        })
+      ]);
+      expect(JSON.stringify(aggregateEvents)).not.toContain('secret.example');
+    } finally {
+      setDiagnosticWriter(null);
+    }
+  });
+
+  it('[REG-PERF-010] records the first opening row layout from the response-ready monotonic epoch once', async () => {
+    const lines: string[] = [];
+    let now = 1_000;
+    const nowSpy = jest.spyOn(globalThis.performance, 'now').mockImplementation(() => now);
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+
+    try {
+      const layoutTopic: TopicDetail = { ...topic, contentHtml: '<p>opening body</p>' };
+      const view = await render(
+        <TopicFilterHarness selectedTopic={layoutTopic} topicDetail={layoutTopic} topicReplies={sourceReplies} />
+      );
+      now = 1_250;
+      await fireEvent(view.getAllByTestId(/^topic-html-block-/)[0], 'layout', {
+        nativeEvent: { layout: { height: 100, width: 720, x: 0, y: 0 } }
+      });
+      now = 1_900;
+      await fireEvent(view.getAllByTestId(/^topic-html-block-/)[0], 'layout', {
+        nativeEvent: { layout: { height: 100, width: 720, x: 0, y: 0 } }
+      });
+      await view.unmount();
+
+      const finish = lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((event) => event.operation === 'topic-body-media' && event.phase === 'finish');
+      expect(finish).toEqual(expect.objectContaining({ firstRowElapsedMs: 250 }));
+    } finally {
+      nowSpy.mockRestore();
+      setDiagnosticWriter(null);
+    }
+  });
+
+  it('[REG-PERF-010] admits at most four atomic opening videos before one settles', async () => {
+    const lines: string[] = [];
+    const videoTopic: TopicDetail = {
+      ...topic,
+      id: 'bounded-video-topic',
+      contentHtml: Array.from(
+        { length: 5 },
+        (_, index) => `<forum-video src="https://media.example.com/${index}.mp4"></forum-video>`
+      ).join(''),
+      replies: [],
+      replyCount: 0
+    };
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+
+    try {
+      const view = await render(
+        <TopicFilterHarness selectedTopic={videoTopic} topicDetail={videoTopic} topicReplies={[]} />
+      );
+      expect(view.queryAllByTestId('topic-managed-video-admitted')).toHaveLength(0);
+      expect(view.getAllByTestId('topic-managed-video-waiting')).toHaveLength(5);
+
+      const videoRows = (lastFlashListProps.data as { key: string; type: string }[]).filter(
+        (listItem) => listItem.type === 'topicContent'
+      );
+      expect(videoRows).toHaveLength(5);
+      await act(async () => {
+        lastFlashListProps.onViewableItemsChanged({
+          viewableItems: videoRows.map((listItem, index) => ({ index, isViewable: true, item: listItem }))
+        });
+      });
+      await waitFor(() => expect(view.getAllByTestId('topic-managed-video-admitted')).toHaveLength(4));
+
+      await fireEvent.press(view.getAllByTestId('topic-managed-video-admitted')[0]);
+      await waitFor(() => expect(view.getAllByTestId('topic-managed-video-admitted')).toHaveLength(5));
+      await view.unmount();
+
+      const finish = lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((event) => event.operation === 'topic-body-media' && event.phase === 'finish');
+      expect(finish).toEqual(expect.objectContaining({ runningHighWater: 4 }));
+    } finally {
+      setDiagnosticWriter(null);
+    }
+  });
+
+  it('[REG-PERF-010] inserts expanded opening-post quote content as direct FlashList rows', async () => {
+    const quoteInstanceKey = 'topic:opening-quote-owner:linuxdo:quoted-topic:8';
+    const quotedReply: Reply = {
+      author: 'quoted-author',
+      contentHtml: `<p>${Array.from(
+        { length: 2000 },
+        (_, index) => `<img src="https://img.example.com/quote-${index}.jpg">`
+      ).join('')}</p>`,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: 8
+    };
+    const quoteTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      id: 'opening-quote-owner',
+      url: 'https://linux.do/t/topic/opening-quote-owner',
+      contentHtml:
+        '<p>before</p><aside class="quote" data-post="8" data-topic="quoted-topic" data-username="quoted-author"><div class="title">quoted-author:</div><blockquote>preview</blockquote></aside><p>after</p>',
+      replies: [],
+      replyCount: 0
+    };
+    lastFlashListItemTypes = [];
+
+    const quoteProps = {
+      loadedQuotedReplies: { 'linuxdo:quoted-topic:8': quotedReply },
+      selectedTopic: quoteTopic,
+      topicDetail: quoteTopic,
+      topicReplies: [] as Reply[]
+    };
+    const view = await render(<TopicFilterHarness expandedQuotes={{ [quoteInstanceKey]: true }} {...quoteProps} />);
+
+    const summaryIndex = lastFlashListItemTypes.indexOf('topicQuoteSummary');
+    expect(summaryIndex).toBeGreaterThan(0);
+    expect(lastFlashListItemTypes.filter((type) => type === 'topicQuoteContent')).toHaveLength(500);
+    expect(lastFlashListItemTypes.slice(summaryIndex + 1, summaryIndex + 501)).toEqual(
+      Array.from({ length: 500 }, () => 'topicQuoteContent')
+    );
+    expect(lastFlashListItemTypes[summaryIndex + 501]).toBe('topicContent');
+    expect(lastFlashListItemTypes.indexOf('replyControls')).toBe(summaryIndex + 502);
+    expect(view.queryByText('preview')).toBeNull();
+
+    await view.rerender(<TopicFilterHarness expandedQuotes={{}} {...quoteProps} />);
+    expect(lastFlashListItemTypes.filter((type) => type === 'topicQuoteContent')).toHaveLength(0);
+    expect(view.getByText('preview')).toBeTruthy();
+  });
+
+  it('[REG-PERF-010] keeps a giant accepted answer to one preview row until explicitly expanded', async () => {
+    const acceptedFloor = 42;
+    const acceptedTopic: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: acceptedFloor,
+      id: 'accepted-image-owner',
+      replies: [],
+      solved: true,
+      source: 'xiaoyinsi',
+      url: 'https://forum.xiaoyinsi.com/t/topic/accepted-image-owner'
+    };
+    const acceptedReply: Reply = {
+      author: 'accepted-author',
+      acceptedAnswer: true,
+      contentHtml: `<p>${Array.from(
+        { length: 2000 },
+        (_, index) => `<img src="https://img.example.com/accepted-${index}.jpg">`
+      ).join('')}</p>`,
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: acceptedFloor
+    };
+    const referenceKey = `xiaoyinsi:${acceptedTopic.id}:${acceptedFloor}`;
+    lastFlashListItemTypes = [];
+    const view = await render(
+      <TopicFilterHarness
+        loadedQuotedReplies={{ [referenceKey]: acceptedReply }}
+        selectedTopic={acceptedTopic}
+        topicDetail={acceptedTopic}
+        topicReplies={[]}
+      />
+    );
+
+    expect(lastFlashListItemTypes.filter((type) => type === 'topicAcceptedAnswer')).toHaveLength(1);
+    expect(lastFlashListItemTypes.filter((type) => type === 'topicAcceptedAnswerContent')).toHaveLength(1);
+    expect(view.getByLabelText('content-continuation-only')).toBeTruthy();
+    expect(view.queryByLabelText('content-continuation-first')).toBeNull();
+
+    await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
+    await waitFor(() =>
+      expect(lastFlashListItemTypes.filter((type) => type === 'topicAcceptedAnswerContent')).toHaveLength(500)
+    );
+    expect(view.getByLabelText('content-continuation-first')).toBeTruthy();
+    expect(view.getByLabelText('content-continuation-last')).toBeTruthy();
+  });
+
   it('[REG-TOPIC-054][REG-TOPIC-055] measures a staged quote row before materializing the complete post', async () => {
     const pendingFrames: FrameRequestCallback[] = [];
     const requestFrame = jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -775,6 +1307,9 @@ describe('Topic reply filters', () => {
       const coldKeys = quoteContentKeys();
       const measuredRows = view.getAllByTestId(/^reply-quote-materialization-/);
       expect(measuredRows).toHaveLength(2);
+      expect(within(measuredRows[0]).getByLabelText('content-continuation-first')).toBeTruthy();
+      expect(within(measuredRows[1]).getByLabelText('content-continuation-last')).toBeTruthy();
+      expect(within(measuredRows[1]).queryByLabelText('content-continuation-middle')).toBeNull();
 
       await fireEvent(measuredRows[0], 'layout', {
         nativeEvent: { layout: { height: 300, width: 720, x: 0, y: 0 } }
@@ -790,6 +1325,8 @@ describe('Topic reply filters', () => {
       );
       expect(quoteContentKeys().slice(0, 2)).toEqual(coldKeys);
       expect(view.queryAllByTestId(/^reply-quote-materialization-/)).toHaveLength(0);
+      expect(view.getAllByLabelText('content-continuation-middle')).toHaveLength(4);
+      expect(view.getAllByLabelText('content-continuation-last')).toHaveLength(1);
 
       const fullKeys = quoteContentKeys();
       await view.rerender(<TopicFilterHarness {...props} topicFavorite />);
@@ -816,18 +1353,18 @@ describe('Topic reply filters', () => {
       contentHtml: '<p>opening body</p>',
       polls: []
     };
-    mockSplitTopicContentHtml.mockClear();
+    mockCompileForumContent.mockClear();
     const view = await render(<TopicFilterHarness selectedTopic={openingTopic} topicDetail={openingTopic} />);
-    const initialCalls = mockSplitTopicContentHtml.mock.calls.length;
+    const initialCalls = mockCompileForumContent.mock.calls.length;
     expect(initialCalls).toBeGreaterThan(0);
 
     const likedTopic = { ...openingTopic, liked: true };
     await view.rerender(<TopicFilterHarness selectedTopic={likedTopic} topicDetail={likedTopic} />);
-    expect(mockSplitTopicContentHtml).toHaveBeenCalledTimes(initialCalls);
+    expect(mockCompileForumContent).toHaveBeenCalledTimes(initialCalls);
 
     const changedBodyTopic = { ...likedTopic, contentHtml: '<p>changed opening body</p>' };
     await view.rerender(<TopicFilterHarness selectedTopic={changedBodyTopic} topicDetail={changedBodyTopic} />);
-    expect(mockSplitTopicContentHtml.mock.calls.length).toBeGreaterThan(initialCalls);
+    expect(mockCompileForumContent.mock.calls.length).toBeGreaterThan(initialCalls);
   });
 
   it('[REG-TOPIC-048] enables original-image upgrades when FlashList mounts an opening-post chunk', async () => {
@@ -878,22 +1415,24 @@ describe('Topic reply filters', () => {
       expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
       expect(view.getByText('已采纳答案')).toBeTruthy();
       expect(view.getByText('CyrilXu')).toBeTruthy();
-      expect(view.getByText('<p>采纳答案正文</p>')).toBeTruthy();
+      expect(view.getByText(/采纳答案正文/)).toBeTruthy();
       expect(view.getByText('查看完整答案 · #2')).toBeTruthy();
       const rendered = JSON.stringify(view.toJSON());
       expect(rendered.indexOf('提问正文')).toBeLessThan(rendered.indexOf('topic-accepted-answer'));
       expect(rendered.indexOf('topic-accepted-answer')).toBeLessThan(rendered.indexOf('回复列表'));
 
       await fireEvent.press(view.getByLabelText('收起已采纳答案'));
-      expect(view.queryByText('<p>采纳答案正文</p>')).toBeNull();
+      expect(view.queryByText(/采纳答案正文/)).toBeNull();
       expect(view.getByLabelText('展开已采纳答案')).toBeTruthy();
 
       await fireEvent.press(view.getByLabelText('展开已采纳答案'));
       await fireEvent.press(view.getByLabelText('查看完整解决方案，第 2 楼'));
+      const acceptedReplyIndex = lastReplyListIndex(2);
+      expect(acceptedReplyIndex).toBeGreaterThan(-1);
       expect(mockScrollToIndex).toHaveBeenCalledWith(
         expect.objectContaining({
           animated: true,
-          index: 4
+          index: acceptedReplyIndex
         })
       );
     }
@@ -961,14 +1500,14 @@ describe('Topic reply filters', () => {
         />
       );
 
-      expect(view.getByText('<p>后分页采纳答案正文</p>')).toBeTruthy();
+      expect(view.getByText(/后分页采纳答案正文/)).toBeTruthy();
       expect(view.getByText('采纳答案引用摘要')).toBeTruthy();
       expect(view.getByText('只读投票')).toBeTruthy();
       expect(view.getByTestId('topic-poll-undefined')).toBeTruthy();
       expect(view.getByText(`查看完整答案 · #${acceptedFloor}`)).toBeTruthy();
       await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
       expect(view.queryByText(`查看完整答案 · #${acceptedFloor}`)).toBeNull();
-      expect(view.getByText('<p>后分页采纳答案正文</p>')).toBeTruthy();
+      expect(view.getByText(/后分页采纳答案正文/)).toBeTruthy();
     }
   );
 
@@ -1030,12 +1569,14 @@ describe('Topic reply filters', () => {
 
     await waitFor(() => expect(view.getByTestId('active-filter').props.children).toBe('all'));
     await waitFor(() => expect(view.getByPlaceholderText('评论内查找').props.value).toBe(''));
-    await waitFor(() =>
+    await waitFor(() => {
+      const acceptedReplyIndex = lastReplyListIndex(2);
+      expect(acceptedReplyIndex).toBeGreaterThan(-1);
       expect(mockScrollToIndex).toHaveBeenCalledWith({
         animated: true,
-        index: 3
-      })
-    );
+        index: acceptedReplyIndex
+      });
+    });
   });
 
   it('[REG-XIAOYINSI-017] retries the emoji catalog after a same-topic refresh', async () => {

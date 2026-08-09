@@ -10,6 +10,8 @@ import { getCategories, getFeed } from './feedRead';
 import { getReplies, getTopic } from './sourceRead';
 import { searchTopics } from './searchRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
+import type { Fetcher } from '@/platform/network/request';
+import { registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 
 const nodeSeekPayload = Buffer.from(
   JSON.stringify({
@@ -127,6 +129,49 @@ describe('feed read', () => {
 
     expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'linuxdo', 'v2ex']);
   });
+
+  it.each([
+    ['feed', (fetcher: Fetcher, signal: AbortSignal) => getFeed({ source: 'all', limit: 5, fetcher, signal })],
+    ['categories', (fetcher: Fetcher, signal: AbortSignal) => getCategories({ source: 'all', fetcher, signal })]
+  ])(
+    '[REG-SOURCE-009] discards a parsed child fallback when the outer aggregate %s read is aborted',
+    async (_entry, startRead) => {
+      const controller = new AbortController();
+      const nodeSeekBodyRead = Promise.withResolvers<void>();
+      const recoverReadChannel = vi.fn(async () => undefined);
+      const fetcher: Fetcher = async (input, init) => {
+        const url = String(input);
+        if (url.includes('nodeseek.com')) {
+          const response = new Response(`<script>${nodeSeekPayload}</script>`);
+          const readText = response.text.bind(response);
+          vi.spyOn(response, 'text').mockImplementation(async () => {
+            const text = await readText();
+            nodeSeekBodyRead.resolve();
+            return text;
+          });
+          registerForumReadResponseEvidence(init, response, {
+            commit: recoverReadChannel,
+            kind: 'fallback',
+            ordinal: 1,
+            source: 'nodeseek'
+          });
+          return response;
+        }
+        if (url.includes('linux.do')) {
+          return new Promise<Response>(() => undefined);
+        }
+        throw new Error('other source unavailable');
+      };
+      const read = startRead(fetcher, controller.signal);
+      await nodeSeekBodyRead.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      controller.abort();
+
+      await expect(read).rejects.toThrow('请求已取消');
+      expect(recoverReadChannel).not.toHaveBeenCalled();
+    }
+  );
 
   it('keeps only yaohuo categories and user profiles on the shared forum facade', async () => {
     const fetcher = vi.fn(async () => {

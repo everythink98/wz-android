@@ -1,9 +1,9 @@
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 
-import { absoluteUrl, decodeHtml, parseHtml, textContentFromHtml } from '@/domain/forum/html';
-import { discourseQuotedPostReferenceFromAttributes, quotedPostReferenceKey } from '@/domain/forum/quotedPosts';
+import { absoluteUrl, decodeHtml, parseHtml } from '@/domain/forum/html';
+import { discourseQuotedPostMetadataFromNode, quotedPostReferenceKey } from '@/domain/forum/quotedPosts';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
-import type { QuotedPostMetadata, TopicPoll } from '@/domain/forum/models';
+import type { QuotedPostMetadata } from '@/domain/forum/models';
 import {
   DISCOURSE_CALLOUT_ATTRIBUTE,
   DISCOURSE_CALLOUT_CONTENT_CLASS,
@@ -13,8 +13,6 @@ import {
   DISCOURSE_CALLOUT_TONE_CLASS_PREFIX,
   DISCOURSE_CALLOUT_TYPE_ATTRIBUTE
 } from '@/domain/forum/callouts';
-
-export const DISCOURSE_POLL_PLACEHOLDER_TAG = 'forum-discourse-poll';
 
 const DEFAULT_CALLOUT = DISCOURSE_CALLOUT_REGISTRY.note;
 const CALLOUT_MARKER = /^\s*\[!([^\]]+)\]([+-])?[ \t]*/i;
@@ -279,145 +277,18 @@ export function discourseAvatarUrl(value: unknown, baseUrl: string) {
   return url && /^https?:\/\//i.test(url) ? url : undefined;
 }
 
-function quotedAuthorLabelFromTitle(value: string) {
-  const text = value.replace(/\s+/g, ' ').trim();
-  return (
-    text.match(/^([^:：]{1,64})\s*[:：]/)?.[1]?.trim() || text.match(/([^:：\s]{1,64})\s*[:：]\s*$/)?.[1]?.trim() || ''
-  );
-}
-
-function quotedAuthorLabelFromAvatarUrl(value: string) {
-  const match =
-    value.trim().match(/(?:^|\/)user_avatar\/(?:[^/?#]+\/)?([^/?#]+)\/\d+(?:\/|$)/i) ||
-    value.trim().match(/(?:^|\/)letter_avatar\/([^/?#]+)\/\d+(?:\/|$)/i);
-  if (!match) {
-    return '';
-  }
-  try {
-    return decodeURIComponent(match[1]).trim();
-  } catch {
-    return match[1].trim();
-  }
-}
-
-function discourseQuoteReference(node: ReturnType<typeof parseHtml>, source: DiscourseSource, topicId?: string) {
-  if (!/\bquote\b/i.test(String(node.getAttribute('class') || ''))) {
-    return null;
-  }
-  return discourseQuotedPostReferenceFromAttributes(
-    source,
-    {
-      'data-post': node.getAttribute('data-post'),
-      'data-topic': node.getAttribute('data-topic')
-    },
-    topicId
-  );
-}
-
 export function discourseQuoteMetadata(html: string, source: DiscourseSource, topicId?: string) {
   const quotedPosts = new Map<string, QuotedPostMetadata>();
   const root = parseHtml(html);
   root.querySelectorAll('aside').forEach((node) => {
-    const reference = discourseQuoteReference(node, source, topicId);
-    if (!reference) {
-      return;
-    }
-    const username = String(node.getAttribute('data-username') || '').trim();
-    const label =
-      username ||
-      String(node.getAttribute('data-display-name') || '').trim() ||
-      quotedAuthorLabelFromAvatarUrl(String(node.querySelector('.title img')?.getAttribute('src') || '')) ||
-      quotedAuthorLabelFromTitle(textContentFromHtml(node.querySelector('.title')?.toString() || ''));
-    const preview = stripDiscourseCalloutMarkersFromExcerpt(
-      textContentFromHtml(node.querySelector('blockquote')?.toString() || '')
-    )
-      .replace(/\s+/g, ' ')
-      .trim();
-    const topicLink = node.querySelector('.quote-title__text-content a') || node.querySelector('.title a');
-    const topicTitle = textContentFromHtml(topicLink?.toString() || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const topicUrl = String(topicLink?.getAttribute('href') || '').trim();
-    const key = quotedPostReferenceKey(reference);
+    const metadata = discourseQuotedPostMetadataFromNode(node, source, topicId);
+    if (!metadata) return;
+    const key = quotedPostReferenceKey(metadata.reference);
     quotedPosts.set(key, {
       ...quotedPosts.get(key),
-      reference,
-      ...(label ? { author: { label, ...(username ? { username } : {}) } } : {}),
-      ...(preview ? { preview } : {}),
-      ...(topicTitle ? { topicTitle } : {}),
-      ...(topicUrl ? { topicUrl } : {})
+      ...metadata
     });
     node.remove();
   });
   return { html: root.toString(), quotedPosts: [...quotedPosts.values()] };
-}
-
-export type DiscourseContentPart = { type: 'html'; html: string } | { type: 'poll'; poll: TopicPoll };
-
-function escapeAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-export function discoursePollPlaceholder(name: string) {
-  return `<${DISCOURSE_POLL_PLACEHOLDER_TAG} name="${escapeAttribute(name)}"></${DISCOURSE_POLL_PLACEHOLDER_TAG}>`;
-}
-
-function contentTagName(node: unknown) {
-  const value = node as { rawTagName?: unknown; tagName?: unknown };
-  return String(value.rawTagName || value.tagName || '').toLowerCase();
-}
-
-export function splitDiscourseContentHtml(
-  html: string | undefined,
-  polls: TopicPoll[] | undefined
-): DiscourseContentPart[] {
-  const clean = String(html || '').trim();
-  const pollList = polls || [];
-  if (!clean) {
-    return pollList.map((poll) => ({ type: 'poll', poll }));
-  }
-  if (!new RegExp(`<${DISCOURSE_POLL_PLACEHOLDER_TAG}\\b`, 'i').test(clean)) {
-    return [{ type: 'html', html: clean }, ...pollList.map((poll) => ({ type: 'poll' as const, poll }))];
-  }
-  const pollsByName = new Map(pollList.flatMap((poll) => (poll.name ? [[poll.name, poll] as const] : [])));
-  const matchedPolls = new Set<TopicPoll>();
-  const parts: DiscourseContentPart[] = [];
-  let currentHtml = '';
-  const pushHtml = () => {
-    const value = currentHtml.trim();
-    if (value) {
-      parts.push({ type: 'html', html: value });
-    }
-    currentHtml = '';
-  };
-  try {
-    const nodes = parseHtml(`<body>${clean}</body>`).querySelector('body')?.childNodes || [];
-    for (const node of nodes) {
-      if (contentTagName(node) === DISCOURSE_POLL_PLACEHOLDER_TAG) {
-        const name = String(
-          (node as unknown as { getAttribute?: (key: string) => string | undefined }).getAttribute?.('name') || ''
-        ).trim();
-        const poll = pollsByName.get(name);
-        if (poll) {
-          pushHtml();
-          parts.push({ type: 'poll', poll });
-          matchedPolls.add(poll);
-        }
-        continue;
-      }
-      currentHtml += node.toString();
-    }
-    pushHtml();
-  } catch {
-    const placeholder = new RegExp(
-      `<${DISCOURSE_POLL_PLACEHOLDER_TAG}\\b[^>]*>\\s*</${DISCOURSE_POLL_PLACEHOLDER_TAG}\\s*>`,
-      'gi'
-    );
-    const fallback = clean.replace(placeholder, '').trim();
-    if (fallback) {
-      parts.push({ type: 'html', html: fallback });
-    }
-  }
-  pollList.filter((poll) => !matchedPolls.has(poll)).forEach((poll) => parts.push({ type: 'poll', poll }));
-  return parts;
 }

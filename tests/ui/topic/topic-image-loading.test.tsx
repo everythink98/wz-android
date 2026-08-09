@@ -4,30 +4,48 @@ import React from 'react';
 import { NativeModules, StyleSheet, Text } from 'react-native';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
-import { FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
+import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import type { TopicDetail } from '@/domain/forum/models';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
-import { FORUM_STICKER_TAG } from '@/platform/media/inlineMedia';
+import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG } from '@/domain/forum/forumContentMedia';
 import {
   markOriginalImageDisplayed,
   OriginalImageUpgradeBoundary,
   useOriginalImageUpgradeEnabled
 } from '@/platform/media/originalImageLoading';
+import {
+  getReadNetworkRuntimeSnapshot,
+  publishReadNetworkRuntimeRotation
+} from '@/platform/network/readNetworkRuntime';
+import {
+  TopicBodyMediaCoordinatorProvider,
+  TopicBodyMediaRowBoundary,
+  useTopicBodyMediaLease
+} from '@/features/topic/media/TopicBodyMediaCoordinator';
+import { ManagedTopicContentVideo } from '@/features/topic/media/ManagedTopicContentVideo';
+import { TopicContentPresentationProvider } from '@/features/topic/rendering/TopicContentPresentation';
 
 const imageUrl = 'https://img.example.com/topic.png';
 let mockSourceHeaders: Record<string, string> | undefined;
 const mockExpoImageProps = jest.fn();
 const mockUseImage = jest.fn();
+let mockVideoStatus = 'idle';
+let mockVideoBufferedPosition = 0;
 const mockUseVideoPlayer = jest.fn((source: unknown) => ({
+  bufferedPosition: mockVideoBufferedPosition,
   pause: jest.fn(),
   play: jest.fn(),
   playing: false,
+  status: mockVideoStatus,
+  timeUpdateEventInterval: 0,
   source
 }));
+const mockRetainReadNetworkGeneration = jest.fn(async (generation: number) => ({ generation, retained: true }));
+const mockReleaseReadNetworkGeneration = jest.fn(async (_generation: number) => true);
 const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
   documentHeight: 1025,
   documentWidth: 920,
@@ -38,6 +56,8 @@ const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string
 const mockWebView = jest.fn((_props: unknown) => null);
 
 type MockExpoImageProps = {
+  allowDownscaling?: boolean;
+  cachePolicy?: 'disk' | 'memory' | 'memory-disk' | 'none';
   onDisplay?: () => void;
   onError?: (event: { error: string }) => void;
   onLoad?: (event: {
@@ -105,12 +125,25 @@ jest.mock('expo-image', () => {
 });
 
 jest.mock('expo', () => ({
-  useEvent: jest.fn((_player, _eventName, initialValue) => initialValue)
+  useEvent: jest.fn((_player, eventName, initialValue) =>
+    eventName === 'statusChange'
+      ? { status: mockVideoStatus }
+      : eventName === 'timeUpdate'
+        ? { bufferedPosition: mockVideoBufferedPosition, currentTime: 0 }
+        : initialValue
+  )
 }));
 
 jest.mock('expo-video', () => ({
   VideoView: () => null,
-  useVideoPlayer: (source: unknown) => mockUseVideoPlayer(source)
+  useVideoPlayer: (source: unknown, setup?: (player: ReturnType<typeof mockUseVideoPlayer>) => void) => {
+    const ReactModule = require('react') as typeof React;
+    return ReactModule.useMemo(() => {
+      const player = mockUseVideoPlayer(source);
+      setup?.(player);
+      return player;
+    }, [setup, source]);
+  }
 }));
 
 jest.mock('react-native-webview', () => ({ WebView: (props: unknown) => mockWebView(props) }));
@@ -180,37 +213,52 @@ const topic: TopicDetail = {
 
 function TopicImageHarness({
   attributes = { alt: '测试图片', src: imageUrl },
-  mediaSessionIdentity = 'yaohuo:2',
+  continuation = 'only',
+  mediaSessionIdentity,
   onOpenImagePreview = noop,
-  originalImageUpgradeEnabled = true
+  originalImageUpgradeEnabled = true,
+  topicSource = 'yaohuo'
 }: {
   attributes?: Record<string, string>;
+  continuation?: 'only' | 'first' | 'middle' | 'last';
   mediaSessionIdentity?: string;
   onOpenImagePreview?: (url: string, displaySize?: { height: number; width: number }, displayedUri?: string) => void;
   originalImageUpgradeEnabled?: boolean;
+  topicSource?: TopicDetail['source'];
 }) {
+  const selectedTopic =
+    topicSource === topic.source
+      ? topic
+      : {
+          ...topic,
+          source: topicSource,
+          url: topicSource === 'nodeseek' ? 'https://www.nodeseek.com/post-859086-1' : 'https://linux.do/t/123'
+        };
+  const resolvedMediaSessionIdentity = mediaSessionIdentity || `${topicSource}:2`;
   const { htmlRenderers } = useHtmlRenderingController({
-    mediaSessionIdentity,
+    mediaSessionIdentity: resolvedMediaSessionIdentity,
     onOpenExternalUrl: noop,
     onOpenImagePreview,
     onOpenTopic: noop,
     onOpenUser: noop,
-    selectedTopic: topic,
+    selectedTopic,
     settings: readerData.settings,
     theme,
-    topicDetail: topic,
-    topicKey: 'yaohuo:image-topic',
+    topicDetail: selectedTopic,
+    topicKey: `${topicSource}:image-topic`,
     webViewBlockMessage: ''
   });
   const ImageRenderer = htmlRenderers.img as unknown as React.ComponentType<Record<string, unknown>> | undefined;
   return ImageRenderer ? (
-    <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
-      {React.createElement(ImageRenderer, {
-        tnode: {
-          attributes
-        }
-      } as never)}
-    </OriginalImageUpgradeBoundary>
+    <TopicContentPresentationProvider continuation={continuation}>
+      <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
+        {React.createElement(ImageRenderer, {
+          tnode: {
+            attributes
+          }
+        } as never)}
+      </OriginalImageUpgradeBoundary>
+    </TopicContentPresentationProvider>
   ) : null;
 }
 
@@ -288,6 +336,100 @@ function NodeSeekImageStickerHarness({ src }: { src: string }) {
     : null;
 }
 
+function NodeSeekCustomMediaHarness({
+  attributes,
+  rendererKey
+}: {
+  attributes: Record<string, string>;
+  rendererKey: string;
+}) {
+  const nodeSeekTopic: TopicDetail = {
+    ...topic,
+    id: '859086',
+    source: 'nodeseek',
+    url: 'https://www.nodeseek.com/post-859086-1'
+  };
+  const { htmlRenderers } = useHtmlRenderingController({
+    mediaSessionIdentity: 'nodeseek:4',
+    onOpenExternalUrl: noop,
+    onOpenImagePreview: noop,
+    onOpenTopic: noop,
+    onOpenUser: noop,
+    selectedTopic: nodeSeekTopic,
+    settings: readerData.settings,
+    theme,
+    topicDetail: nodeSeekTopic,
+    topicKey: 'nodeseek:859086',
+    webViewBlockMessage: ''
+  });
+  const Renderer = htmlRenderers[rendererKey] as unknown as React.ComponentType<Record<string, unknown>> | undefined;
+  return Renderer ? React.createElement(Renderer, { tnode: { attributes } } as never) : null;
+}
+
+function MediaLeaseBlocker({ id }: { id: string }) {
+  const lease = useTopicBodyMediaLease({ kind: 'poster', requestIdentity: `test-blocker:${id}` });
+  return <Text testID={`media-blocker-${id}`}>{lease.admitted ? 'running' : 'waiting'}</Text>;
+}
+
+function ThreeMediaLeaseBlockers() {
+  return (
+    <>
+      <MediaLeaseBlocker id="one" />
+      <MediaLeaseBlocker id="two" />
+      <MediaLeaseBlocker id="three" />
+    </>
+  );
+}
+
+function FourMediaLeaseBlockers() {
+  return (
+    <>
+      <ThreeMediaLeaseBlockers />
+      <MediaLeaseBlocker id="four" />
+    </>
+  );
+}
+
+const nodeSeekVideoMediaContext = { contentSource: 'nodeseek' as const, sessionIdentity: 'nodeseek:video-test' };
+
+function CoordinatedVideoHarness({ src }: { src: string }) {
+  return (
+    <ManagedTopicContentVideo
+      mediaContext={nodeSeekVideoMediaContext}
+      mediaSessionIdentity={nodeSeekVideoMediaContext.sessionIdentity}
+      src={src}
+      theme={theme}
+    />
+  );
+}
+
+const linkCardIconUrl = 'https://img.example.com/link-icon.png';
+const linkCardThumbnailUrl = 'https://img.example.com/link-thumbnail.png';
+const trailingStickerUrl = 'https://img.example.com/trailing-sticker.png';
+const secondStickerUrl = 'https://img.example.com/second-sticker.png';
+const firstBilibiliIframeUrl = 'https://player.bilibili.com/player.html?aid=1';
+const secondBilibiliIframeUrl = 'https://player.bilibili.com/player.html?aid=2';
+
+function NodeSeekLinkCardHarness() {
+  return (
+    <NodeSeekCustomMediaHarness
+      rendererKey={FORUM_LINK_CARD_TAG}
+      attributes={{
+        description: 'card description',
+        href: 'https://example.com/article',
+        'icon-src': linkCardIconUrl,
+        'image-src': linkCardThumbnailUrl,
+        site: 'example.com',
+        title: 'card title'
+      }}
+    />
+  );
+}
+
+function NodeSeekIframeHarness({ src = firstBilibiliIframeUrl }: { src?: string }) {
+  return <NodeSeekCustomMediaHarness rendererKey="iframe" attributes={{ src }} />;
+}
+
 function htmlRenderingControllerProps(mediaSessionIdentity: string) {
   return {
     mediaSessionIdentity,
@@ -311,12 +453,607 @@ describe('topic block image loading', () => {
     mockExpoImageProps.mockClear();
     mockUseImage.mockClear();
     mockUseVideoPlayer.mockClear();
+    mockVideoStatus = 'idle';
+    mockVideoBufferedPosition = 0;
+    mockRetainReadNetworkGeneration.mockClear();
+    mockReleaseReadNetworkGeneration.mockClear();
     mockRenderSvgPoster.mockClear();
     mockWebView.mockClear();
     NativeModules.SvgRendererModule = {
       fetchSvgDocument: mockFetchSvgDocument,
       renderPoster: mockRenderSvgPoster
     };
+    NativeModules.NetworkProxyModule = {
+      retainReadNetworkGeneration: mockRetainReadNetworkGeneration,
+      releaseReadNetworkGeneration: mockReleaseReadNetworkGeneration
+    };
+  });
+
+  it('[REG-PERF-010] does not create an Expo Image source before the route coordinator grants a permit', async () => {
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused viewportRowKeys={['opening-row']}>
+        <TopicBodyMediaRowBoundary rowKey="opening-row">
+          <TopicImageHarness />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    expect(mockExpoImageProps).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-010] removes both outer image margins for a middle continuation row', async () => {
+    const view = await render(<TopicImageHarness continuation="middle" />);
+
+    expect(view.getByLabelText('测试图片')).toHaveStyle({ marginBottom: 0, marginTop: 0 });
+  });
+
+  it('[REG-PERF-010] keeps stickers, link-card art, and iframe browsers unmounted while their row is paused', async () => {
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused viewportRowKeys={['special-media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="special-media-row">
+          <NodeSeekImageStickerHarness src={trailingStickerUrl} />
+          <NodeSeekLinkCardHarness />
+          <NodeSeekVideoStickerHarness />
+          <NodeSeekIframeHarness />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    expect(mockExpoImageProps).not.toHaveBeenCalled();
+    expect(mockWebView).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-010] removes continuation margins from every custom block-media frame', async () => {
+    const videoUrl = 'https://cdn.example.com/boundary-video.mp4';
+    const view = await render(
+      <TopicContentPresentationProvider continuation="middle">
+        <NodeSeekLinkCardHarness />
+        <NodeSeekIframeHarness />
+        <NodeSeekCustomMediaHarness rendererKey={FORUM_STICKER_ROW_TAG} attributes={{}} />
+        <NodeSeekCustomMediaHarness rendererKey={FORUM_VIDEO_TAG} attributes={{ src: videoUrl }} />
+      </TopicContentPresentationProvider>
+    );
+
+    expect(view.getByRole('link', { name: 'card title' })).toHaveStyle({ marginBottom: 0, marginTop: 0 });
+    expect(view.getByTestId('topic-video-embed-frame')).toHaveStyle({ marginBottom: 0, marginTop: 0 });
+    expect(view.getByTestId('forum-sticker-row')).toHaveStyle({ marginBottom: 0, marginTop: 0 });
+    await waitFor(() =>
+      expect(view.getByTestId('forum-content-video-frame')).toHaveStyle({ marginBottom: 0, marginTop: 0 })
+    );
+  });
+
+  it('[REG-PERF-010] does not let whitespace-only art consume the remaining media permit', async () => {
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="special-media-row">
+          <ThreeMediaLeaseBlockers />
+          {[' ', '\t', '\n', ' \t '].map((src, index) => (
+            <NodeSeekCustomMediaHarness
+              key={`blank-art-${index}`}
+              rendererKey={FORUM_STICKER_TAG}
+              attributes={{ alt: 'blank art', src }}
+            />
+          ))}
+          <NodeSeekImageStickerHarness src={trailingStickerUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
+  });
+
+  it('[REG-PERF-010] gives link-card icon, thumbnail, and sticker independent image leases', async () => {
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="special-media-row">
+          <ThreeMediaLeaseBlockers />
+          <NodeSeekLinkCardHarness />
+          <NodeSeekImageStickerHarness src={trailingStickerUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() => expect(latestImageProps(linkCardIconUrl)).toBeTruthy());
+    expect(
+      mockExpoImageProps.mock.calls.some(
+        ([props]) => (props as MockExpoImageProps).source?.uri === linkCardThumbnailUrl
+      )
+    ).toBe(false);
+    expect(
+      mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === trailingStickerUrl)
+    ).toBe(false);
+    const icon = latestImageProps(linkCardIconUrl);
+    expect(icon).toEqual(
+      expect.objectContaining({
+        allowDownscaling: true,
+        cachePolicy: 'disk',
+        recyclingKey: expect.stringContaining(`nodeseek:4:${linkCardIconUrl}`)
+      })
+    );
+
+    await act(() => icon.onDisplay?.());
+    await waitFor(() => expect(latestImageProps(linkCardThumbnailUrl)).toBeTruthy());
+    const thumbnail = latestImageProps(linkCardThumbnailUrl);
+    expect(thumbnail).toEqual(
+      expect.objectContaining({
+        allowDownscaling: true,
+        cachePolicy: 'disk',
+        recyclingKey: expect.stringContaining(`nodeseek:4:${linkCardThumbnailUrl}`)
+      })
+    );
+    expect(latestImageProps(linkCardIconUrl).recyclingKey).toBe(icon.recyclingKey);
+
+    await act(() => thumbnail.onError?.({ error: 'thumbnail failed' }));
+    await waitFor(() => expect(latestImageProps(linkCardThumbnailUrl).recyclingKey).not.toBe(thumbnail.recyclingKey));
+    const retriedThumbnail = latestImageProps(linkCardThumbnailUrl);
+    await act(() => retriedThumbnail.onError?.({ error: 'thumbnail retry failed' }));
+    await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
+    expect(latestImageProps(trailingStickerUrl)).toEqual(
+      expect.objectContaining({ allowDownscaling: true, cachePolicy: 'disk' })
+    );
+  });
+
+  it('[REG-PERF-010] releases an admitted sticker lease when that renderer unmounts', async () => {
+    const tree = (showFirst: boolean) => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="special-media-row">
+          <ThreeMediaLeaseBlockers />
+          {showFirst ? (
+            <NodeSeekCustomMediaHarness
+              key="first-sticker"
+              rendererKey={FORUM_STICKER_TAG}
+              attributes={{ alt: 'first sticker', src: trailingStickerUrl }}
+            />
+          ) : null}
+          <NodeSeekCustomMediaHarness
+            key="second-sticker"
+            rendererKey={FORUM_STICKER_TAG}
+            attributes={{ alt: 'second sticker', src: secondStickerUrl }}
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(tree(true));
+
+    await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
+    expect(
+      mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === secondStickerUrl)
+    ).toBe(false);
+
+    await screen.rerender(tree(false));
+    await waitFor(() => expect(latestImageProps(secondStickerUrl)).toBeTruthy());
+  });
+
+  it('[REG-PERF-010] settles video-sticker readiness and iframe load before admitting the next resource', async () => {
+    const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="special-media-row">
+          <ThreeMediaLeaseBlockers />
+          <NodeSeekVideoStickerHarness />
+          <NodeSeekIframeHarness />
+          <NodeSeekImageStickerHarness src={trailingStickerUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() => expect(latestImageProps(fallbackUrl)).toBeTruthy());
+    expect(mockWebView).not.toHaveBeenCalled();
+    await act(() => latestImageProps(fallbackUrl).onDisplay?.());
+    await waitFor(() =>
+      expect(
+        mockWebView.mock.calls.some(
+          ([props]) => typeof (props as { source?: { html?: unknown } }).source?.html === 'string'
+        )
+      ).toBe(true)
+    );
+    const videoStickerWebView = mockWebView.mock.calls
+      .map(
+        ([props]) =>
+          props as {
+            onMessage?: (event: { nativeEvent: { data: string } }) => void;
+            source?: { html?: string };
+          }
+      )
+      .find((props) => typeof props.source?.html === 'string')!;
+
+    await act(() => videoStickerWebView.onMessage?.({ nativeEvent: { data: 'wz-video-sticker-ready' } }));
+    await waitFor(() =>
+      expect(
+        mockWebView.mock.calls.some(([props]) =>
+          String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=1')
+        )
+      ).toBe(true)
+    );
+    const iframeWebView = mockWebView.mock.calls
+      .map(([props]) => props as { onLoad?: () => void; source?: { uri?: string } })
+      .find((props) => String(props.source?.uri || '').includes('aid=1'))!;
+    expect(
+      mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === trailingStickerUrl)
+    ).toBe(false);
+
+    await act(() => iframeWebView.onLoad?.());
+    await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
+  });
+
+  it('[REG-PERF-010] keeps a progressing video-sticker bootstrap alive beyond sixty seconds', async () => {
+    const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
+    const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
+    jest.useFakeTimers();
+    jest.setSystemTime(10_000);
+    try {
+      const screen = await render(
+        <TopicBodyMediaCoordinatorProvider
+          active
+          diagnosticSession={{
+            networkMediaCount: 2,
+            plannedRowCount: 1,
+            source: 'nodeseek',
+            topicRef: 'topic-video-sticker-buffering'
+          }}
+          onDiagnosticFinish={onDiagnosticFinish}
+          paused={false}
+          viewportRowKeys={['special-media-row']}
+        >
+          <TopicBodyMediaRowBoundary rowKey="special-media-row">
+            <NodeSeekVideoStickerHarness />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      await waitFor(() => expect(latestImageProps(fallbackUrl)).toBeTruthy());
+      await act(() => latestImageProps(fallbackUrl).onDisplay?.());
+      const latestVideoSticker = () =>
+        mockWebView.mock.calls
+          .map(
+            ([props]) =>
+              props as {
+                onMessage?: (event: { nativeEvent: { data: string } }) => void;
+                source?: { html?: string };
+              }
+          )
+          .filter((props) => typeof props.source?.html === 'string')
+          .at(-1)!;
+      await waitFor(() => expect(latestVideoSticker()).toBeTruthy());
+      expect(latestVideoSticker().source?.html).toContain("video.addEventListener('progress'");
+      expect(latestVideoSticker().source?.html).toContain("video.addEventListener('loadedmetadata'");
+      expect(latestVideoSticker().source?.html).toContain('wz-video-sticker-progress');
+
+      for (let index = 0; index < 4; index += 1) {
+        await act(async () => {
+          jest.advanceTimersByTime(20_000);
+        });
+        await act(() =>
+          latestVideoSticker().onMessage?.({ nativeEvent: { data: `wz-video-sticker-progress:${index + 1}` } })
+        );
+      }
+
+      await screen.unmount();
+      expect(onDiagnosticFinish).toHaveBeenCalledTimes(1);
+      expect(onDiagnosticFinish).toHaveBeenCalledWith(
+        expect.objectContaining({ retryCount: 0, timeoutCount: 0, timerHighWater: 1 })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-PERF-010] remounts a failed video sticker once before releasing its slot', async () => {
+    const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="special-media-row">
+          <ThreeMediaLeaseBlockers />
+          <NodeSeekVideoStickerHarness />
+          <NodeSeekImageStickerHarness src={trailingStickerUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    await waitFor(() => expect(latestImageProps(fallbackUrl)).toBeTruthy());
+    await act(() => latestImageProps(fallbackUrl).onDisplay?.());
+    await waitFor(() =>
+      expect(
+        mockWebView.mock.calls.filter(
+          ([props]) => typeof (props as { source?: { html?: unknown } }).source?.html === 'string'
+        )
+      ).toHaveLength(1)
+    );
+    const firstVideoSticker = mockWebView.mock.calls
+      .map(([props]) => props as { onError?: (event: unknown) => void; source?: { html?: string }; testID?: string })
+      .find((props) => typeof props.source?.html === 'string')!;
+    expect(
+      mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === trailingStickerUrl)
+    ).toBe(false);
+
+    await act(() => firstVideoSticker.onError?.({ nativeEvent: {} }));
+    await waitFor(() =>
+      expect(
+        mockWebView.mock.calls.filter(
+          ([props]) => typeof (props as { source?: { html?: unknown } }).source?.html === 'string'
+        )
+      ).toHaveLength(2)
+    );
+    const retriedVideoSticker = mockWebView.mock.calls
+      .map(([props]) => props as { onError?: (event: unknown) => void; source?: { html?: string }; testID?: string })
+      .filter((props) => typeof props.source?.html === 'string')
+      .at(-1)!;
+    expect(retriedVideoSticker.testID).not.toBe(firstVideoSticker.testID);
+    expect(
+      mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === trailingStickerUrl)
+    ).toBe(false);
+
+    await act(() => retriedVideoSticker.onError?.({ nativeEvent: {} }));
+    await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
+  });
+
+  it('[REG-PERF-010] settles an iframe error before admitting a second iframe', async () => {
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
+        <TopicBodyMediaRowBoundary rowKey="special-media-row">
+          <ThreeMediaLeaseBlockers />
+          <NodeSeekIframeHarness src={firstBilibiliIframeUrl} />
+          <NodeSeekIframeHarness src={secondBilibiliIframeUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() =>
+      expect(
+        mockWebView.mock.calls.some(([props]) =>
+          String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=1')
+        )
+      ).toBe(true)
+    );
+    expect(
+      mockWebView.mock.calls.some(([props]) =>
+        String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=2')
+      )
+    ).toBe(false);
+    const firstIframe = mockWebView.mock.calls
+      .map(([props]) => props as { onError?: (event: unknown) => void; source?: { uri?: string } })
+      .find((props) => String(props.source?.uri || '').includes('aid=1'))!;
+
+    await act(() => firstIframe.onError?.({ nativeEvent: {} }));
+    await waitFor(() =>
+      expect(
+        mockWebView.mock.calls.filter(([props]) =>
+          String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=1')
+        )
+      ).toHaveLength(2)
+    );
+    const retriedFirstIframe = mockWebView.mock.calls
+      .map(([props]) => props as { onError?: (event: unknown) => void; source?: { uri?: string } })
+      .filter((props) => String(props.source?.uri || '').includes('aid=1'))
+      .at(-1)!;
+    await act(() => retriedFirstIframe.onError?.({ nativeEvent: {} }));
+    await waitFor(() =>
+      expect(
+        mockWebView.mock.calls.some(([props]) =>
+          String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=2')
+        )
+      ).toBe(true)
+    );
+  });
+
+  it('[REG-PERF-010] does not retain a native generation or create a video player while its row is paused', async () => {
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused viewportRowKeys={['video-row']}>
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          <NodeSeekCustomMediaHarness
+            rendererKey={FORUM_VIDEO_TAG}
+            attributes={{ src: 'https://cdn.example.com/paused-video.mp4' }}
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    expect(mockRetainReadNetworkGeneration).not.toHaveBeenCalled();
+    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-010] retains the exact native generation and creates a player only after video admission', async () => {
+    const videoUrl = 'https://cdn.example.com/admitted-video.mp4';
+    const tree = (blocked: boolean) => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-row']}>
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          {blocked ? <FourMediaLeaseBlockers /> : <ThreeMediaLeaseBlockers />}
+          <NodeSeekCustomMediaHarness rendererKey={FORUM_VIDEO_TAG} attributes={{ src: videoUrl }} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(tree(true));
+
+    expect(mockRetainReadNetworkGeneration).not.toHaveBeenCalled();
+    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+
+    await screen.rerender(tree(false));
+    const generation = getReadNetworkRuntimeSnapshot().generation;
+    await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenCalledWith(generation));
+    await waitFor(() =>
+      expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(true)
+    );
+    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-WZ-Read-Network-Generation': String(generation) }),
+        uri: videoUrl
+      })
+    );
+  });
+
+  it('[REG-PERF-010] reports native video progress only when the buffered position advances', async () => {
+    const progress = jest.fn();
+    const admission = {
+      admitted: true,
+      attemptId: 'video-progress:1',
+      failure: null,
+      progress,
+      retry: jest.fn(),
+      settle: jest.fn()
+    } as const;
+    mockVideoStatus = 'loading';
+    const tree = () => (
+      <ForumContentVideo
+        admission={admission}
+        mediaContext={nodeSeekVideoMediaContext}
+        src="https://cdn.example.com/progress-video.mp4"
+        theme={theme}
+      />
+    );
+    const screen = await render(tree());
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+
+    expect(mockUseVideoPlayer.mock.results[0]?.value).toEqual(expect.objectContaining({ timeUpdateEventInterval: 1 }));
+    expect(progress).not.toHaveBeenCalled();
+
+    mockVideoBufferedPosition = 1;
+    await screen.rerender(tree());
+    expect(progress).toHaveBeenCalledTimes(1);
+    expect(progress).toHaveBeenLastCalledWith(1);
+
+    await screen.rerender(tree());
+    mockVideoBufferedPosition = 0.5;
+    await screen.rerender(tree());
+    expect(progress).toHaveBeenCalledTimes(1);
+
+    mockVideoBufferedPosition = 2;
+    await screen.rerender(tree());
+    expect(progress).toHaveBeenCalledTimes(2);
+    expect(progress).toHaveBeenLastCalledWith(2);
+  });
+
+  it('[REG-PERF-010] keeps a continuously buffering native video alive beyond sixty seconds', async () => {
+    const videoUrl = 'https://cdn.example.com/long-buffering-video.mp4';
+    const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
+    mockVideoStatus = 'loading';
+    jest.useFakeTimers();
+    jest.setSystemTime(10_000);
+    const tree = () => (
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 1,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-video-buffering'
+        }}
+        onDiagnosticFinish={onDiagnosticFinish}
+        paused={false}
+        viewportRowKeys={['video-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          <CoordinatedVideoHarness src={videoUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    try {
+      const screen = await render(tree());
+      await waitFor(() =>
+        expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(
+          true
+        )
+      );
+
+      for (const bufferedPosition of [1, 2, 3, 4]) {
+        await act(async () => {
+          jest.advanceTimersByTime(20_000);
+        });
+        mockVideoBufferedPosition = bufferedPosition;
+        await screen.rerender(tree());
+      }
+
+      await screen.unmount();
+      expect(onDiagnosticFinish).toHaveBeenCalledTimes(1);
+      expect(onDiagnosticFinish).toHaveBeenCalledWith(
+        expect.objectContaining({ retryCount: 0, timeoutCount: 0, timerHighWater: 1 })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(['readyToPlay', 'error'] as const)(
+    '[REG-PERF-010] settles %s before admitting the next body video',
+    async (settledStatus) => {
+      const firstVideoUrl = `https://cdn.example.com/${settledStatus}-first.mp4`;
+      const secondVideoUrl = `https://cdn.example.com/${settledStatus}-second.mp4`;
+      const tree = () => (
+        <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-row']}>
+          <TopicBodyMediaRowBoundary rowKey="video-row">
+            <ThreeMediaLeaseBlockers />
+            <NodeSeekCustomMediaHarness
+              key="first-video"
+              rendererKey={FORUM_VIDEO_TAG}
+              attributes={{ src: firstVideoUrl }}
+            />
+            <NodeSeekCustomMediaHarness
+              key="second-video"
+              rendererKey={FORUM_VIDEO_TAG}
+              attributes={{ src: secondVideoUrl }}
+            />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const screen = await render(tree());
+
+      await waitFor(() =>
+        expect(
+          mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === firstVideoUrl)
+        ).toBe(true)
+      );
+      expect(
+        mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
+      ).toBe(false);
+
+      mockVideoStatus = settledStatus;
+      await screen.rerender(tree());
+      await waitFor(() =>
+        expect(
+          mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
+        ).toBe(true)
+      );
+    }
+  );
+
+  it('[REG-PERF-010] releases a loading video admission and its exact generation when it unmounts', async () => {
+    const firstVideoUrl = 'https://cdn.example.com/unmounted-first.mp4';
+    const secondVideoUrl = 'https://cdn.example.com/unmounted-second.mp4';
+    const tree = (showFirst: boolean) => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-row']}>
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          <ThreeMediaLeaseBlockers />
+          {showFirst ? (
+            <NodeSeekCustomMediaHarness
+              key="first-video"
+              rendererKey={FORUM_VIDEO_TAG}
+              attributes={{ src: firstVideoUrl }}
+            />
+          ) : null}
+          <NodeSeekCustomMediaHarness
+            key="second-video"
+            rendererKey={FORUM_VIDEO_TAG}
+            attributes={{ src: secondVideoUrl }}
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(tree(true));
+    const generation = getReadNetworkRuntimeSnapshot().generation;
+
+    await waitFor(() =>
+      expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === firstVideoUrl)).toBe(
+        true
+      )
+    );
+    expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)).toBe(
+      false
+    );
+
+    await screen.rerender(tree(false));
+    await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledWith(generation));
+    await waitFor(() =>
+      expect(
+        mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
+      ).toBe(true)
+    );
   });
 
   it('[REG-PERF-008] composes nested original-image gates with the inactive route gate', async () => {
@@ -338,7 +1075,7 @@ describe('topic block image loading', () => {
     expect(mockUseImage).not.toHaveBeenCalled();
     expect(mockExpoImageProps).toHaveBeenCalledWith(
       expect.objectContaining({
-        cachePolicy: 'memory-disk',
+        cachePolicy: 'disk',
         priority: 'normal',
         source: expect.objectContaining({
           headers: expect.objectContaining({
@@ -351,6 +1088,556 @@ describe('topic block image loading', () => {
         })
       })
     );
+  });
+
+  it('[REG-PROXY-010] remounts a same-source loading body image once on runtime rotation', async () => {
+    const view = await render(
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 1,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-body-runtime-remount'
+        }}
+        paused={false}
+        viewportRowKeys={['body-image-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="body-image-row">
+          <TopicImageHarness topicSource="nodeseek" />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const firstImage = latestImageProps(imageUrl);
+    const before = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    const retriedImage = latestImageProps(imageUrl);
+    expect(retriedImage.recyclingKey).not.toBe(firstImage.recyclingKey);
+    await loadAndDisplayImage(firstImage, { height: 600, width: 400 });
+    expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    await loadAndDisplayImage(retriedImage, { height: 600, width: 400 });
+    expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+  });
+
+  it('[REG-PROXY-010] resets the loading body-image deadline before a runtime rotation remount', async () => {
+    const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
+    jest.useFakeTimers();
+    jest.setSystemTime(10_000);
+    try {
+      const screen = await render(
+        <TopicBodyMediaCoordinatorProvider
+          active
+          diagnosticSession={{
+            networkMediaCount: 1,
+            plannedRowCount: 1,
+            source: 'nodeseek',
+            topicRef: 'topic-body-runtime-deadline'
+          }}
+          onDiagnosticFinish={onDiagnosticFinish}
+          paused={false}
+          viewportRowKeys={['body-image-row']}
+        >
+          <TopicBodyMediaRowBoundary rowKey="body-image-row">
+            <TopicImageHarness topicSource="nodeseek" />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const firstImage = latestImageProps(imageUrl);
+      await act(async () => {
+        jest.advanceTimersByTime(29_900);
+      });
+      const before = getReadNetworkRuntimeSnapshot();
+
+      await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+      expect(latestImageProps(imageUrl).recyclingKey).not.toBe(firstImage.recyclingKey);
+      await act(async () => {
+        jest.advanceTimersByTime(200);
+      });
+      await screen.unmount();
+      expect(onDiagnosticFinish).toHaveBeenCalledTimes(1);
+      expect(onDiagnosticFinish).toHaveBeenCalledWith(expect.objectContaining({ retryCount: 0, timeoutCount: 0 }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-PROXY-010] keeps an already displayed body image mounted across runtime rotation', async () => {
+    const view = await render(
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 1,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-body-runtime-displayed'
+        }}
+        paused={false}
+        viewportRowKeys={['body-image-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="body-image-row">
+          <TopicImageHarness topicSource="nodeseek" />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const displayedImage = latestImageProps(imageUrl);
+    await loadAndDisplayImage(displayedImage);
+    const before = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    expect(latestImageProps(imageUrl).recyclingKey).toBe(displayedImage.recyclingKey);
+    expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+  });
+
+  it('[REG-PROXY-010] retries only the still-loading original upgrade layer', async () => {
+    const displayUrl = 'https://cdn.example.com/runtime-display.png';
+    const originalUrl = 'https://cdn.example.com/runtime-original.png';
+    await render(
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 2,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-original-runtime-remount'
+        }}
+        paused={false}
+        viewportRowKeys={['original-image-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="original-image-row">
+          <TopicImageHarness
+            attributes={{ alt: '运行时轮换图片', 'data-original': originalUrl, src: displayUrl }}
+            topicSource="nodeseek"
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const displayImage = latestImageProps(displayUrl);
+    await loadAndDisplayImage(displayImage);
+    const firstOriginal = latestImageProps(originalUrl);
+    const before = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    const retriedOriginal = latestImageProps(originalUrl);
+    expect(latestImageProps(displayUrl).recyclingKey).toBe(displayImage.recyclingKey);
+    expect(retriedOriginal.recyclingKey).not.toBe(firstOriginal.recyclingKey);
+    await act(() => firstOriginal.onError?.({ error: 'stale old generation' }));
+    expect(latestImageProps(originalUrl).recyclingKey).toBe(retriedOriginal.recyclingKey);
+  });
+
+  it('[REG-PROXY-010] resets the loading original-image deadline before a runtime rotation remount', async () => {
+    const displayUrl = 'https://cdn.example.com/runtime-deadline-display.png';
+    const originalUrl = 'https://cdn.example.com/runtime-deadline-original.png';
+    const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
+    jest.useFakeTimers();
+    jest.setSystemTime(10_000);
+    try {
+      const screen = await render(
+        <TopicBodyMediaCoordinatorProvider
+          active
+          diagnosticSession={{
+            networkMediaCount: 2,
+            plannedRowCount: 1,
+            source: 'nodeseek',
+            topicRef: 'topic-original-runtime-deadline'
+          }}
+          onDiagnosticFinish={onDiagnosticFinish}
+          paused={false}
+          viewportRowKeys={['original-image-row']}
+        >
+          <TopicBodyMediaRowBoundary rowKey="original-image-row">
+            <TopicImageHarness
+              attributes={{ alt: '运行时轮换原图', 'data-original': originalUrl, src: displayUrl }}
+              topicSource="nodeseek"
+            />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      await loadAndDisplayImage(latestImageProps(displayUrl));
+      const firstOriginal = latestImageProps(originalUrl);
+      await act(async () => {
+        jest.advanceTimersByTime(29_900);
+      });
+      const before = getReadNetworkRuntimeSnapshot();
+
+      await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+      expect(latestImageProps(originalUrl).recyclingKey).not.toBe(firstOriginal.recyclingKey);
+      await act(async () => {
+        jest.advanceTimersByTime(200);
+      });
+      await screen.unmount();
+      expect(onDiagnosticFinish).toHaveBeenCalledTimes(1);
+      expect(onDiagnosticFinish).toHaveBeenCalledWith(expect.objectContaining({ retryCount: 0, timeoutCount: 0 }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-PERF-010] does not let runtime rotation bypass an exhausted original-image retry budget', async () => {
+    const displayUrl = 'https://cdn.example.com/failed-runtime-display.png';
+    const originalUrl = 'https://cdn.example.com/failed-runtime-original.png';
+    const view = await render(
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 2,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-original-runtime-exhausted'
+        }}
+        paused={false}
+        viewportRowKeys={['failed-original-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="failed-original-row">
+          <TopicImageHarness
+            attributes={{ alt: '失败原图', 'data-original': originalUrl, src: displayUrl }}
+            topicSource="nodeseek"
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    await loadAndDisplayImage(latestImageProps(displayUrl));
+    const firstOriginal = latestImageProps(originalUrl);
+    await act(() => firstOriginal.onError?.({ error: 'first original failure' }));
+    const retriedOriginal = latestImageProps(originalUrl);
+    expect(retriedOriginal.recyclingKey).not.toBe(firstOriginal.recyclingKey);
+    await act(() => retriedOriginal.onError?.({ error: 'second original failure' }));
+    expect(view.queryByTestId('topic-image-original')).toBeNull();
+    const originalRenderCount = mockExpoImageProps.mock.calls.filter(
+      ([props]) => (props as MockExpoImageProps).source?.uri === originalUrl
+    ).length;
+    const before = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    expect(
+      mockExpoImageProps.mock.calls.filter(([props]) => (props as MockExpoImageProps).source?.uri === originalUrl)
+    ).toHaveLength(originalRenderCount);
+    expect(view.queryByTestId('topic-image-original')).toBeNull();
+  });
+
+  it('[REG-PROXY-010] remounts the bounded inline, sticker, and link-card working set on runtime rotation', async () => {
+    const inlineUrl = 'https://img.example.com/runtime-inline.png';
+    await render(
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 5,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-special-media-runtime'
+        }}
+        paused={false}
+        viewportRowKeys={['special-media-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="special-media-row">
+          <TopicImageHarness
+            attributes={{ alt: 'inline', class: 'emoji', height: '24', src: inlineUrl, width: '24' }}
+            topicSource="nodeseek"
+          />
+          <NodeSeekImageStickerHarness src={trailingStickerUrl} />
+          <NodeSeekLinkCardHarness />
+          <NodeSeekIframeHarness />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const runningUrls = [inlineUrl, trailingStickerUrl, linkCardIconUrl, linkCardThumbnailUrl];
+    await waitFor(() => runningUrls.forEach((url) => expect(latestImageProps(url)).toBeTruthy()));
+    const firstKeys = runningUrls.map((url) => latestImageProps(url).recyclingKey);
+    expect(
+      mockWebView.mock.calls.some(([props]) =>
+        String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=1')
+      )
+    ).toBe(false);
+    const before = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    await waitFor(() =>
+      runningUrls.forEach((url, index) => expect(latestImageProps(url).recyclingKey).not.toBe(firstKeys[index]))
+    );
+    expect(
+      mockWebView.mock.calls.some(([props]) =>
+        String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=1')
+      )
+    ).toBe(false);
+  });
+
+  it('[REG-PROXY-010] remounts an admitted iframe through the coordinator runtime attempt', async () => {
+    await render(
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 1,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-iframe-runtime'
+        }}
+        paused={false}
+        viewportRowKeys={['iframe-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="iframe-row">
+          <NodeSeekIframeHarness />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const iframeCalls = () =>
+      mockWebView.mock.calls
+        .map(([props]) => props as { source?: { uri?: string }; testID?: string })
+        .filter((props) => String(props.source?.uri || '').includes('aid=1'));
+    await waitFor(() => expect(iframeCalls()).toHaveLength(1));
+    const firstAttemptId = iframeCalls()[0]?.testID;
+    const before = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    await waitFor(() => expect(iframeCalls()).toHaveLength(2));
+    expect(iframeCalls().at(-1)?.testID).not.toBe(firstAttemptId);
+  });
+
+  it('[REG-PROXY-010] remounts only an unhealthy same-source video player', async () => {
+    const videoUrl = 'https://cdn.example.com/runtime-video.mp4';
+    const tree = () => (
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 1,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-video-runtime'
+        }}
+        paused={false}
+        viewportRowKeys={['video-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          <CoordinatedVideoHarness src={videoUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const before = getReadNetworkRuntimeSnapshot();
+    const loadingVideo = await render(tree());
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    const loadingPlayerCount = mockUseVideoPlayer.mock.calls.length;
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(loadingPlayerCount + 1));
+    await loadingVideo.unmount();
+    mockRetainReadNetworkGeneration.mockClear();
+    mockReleaseReadNetworkGeneration.mockClear();
+
+    mockVideoStatus = 'readyToPlay';
+    const healthyPlayerCountBeforeRender = mockUseVideoPlayer.mock.calls.length;
+    const healthyVideo = await render(tree());
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCountBeforeRender + 1));
+    const healthyPlayerCount = mockUseVideoPlayer.mock.calls.length;
+    const current = getReadNetworkRuntimeSnapshot();
+    await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenLastCalledWith(current.generation));
+
+    await act(() => publishReadNetworkRuntimeRotation(current.generation + 1, 'nodeseek'));
+
+    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCount);
+    expect(mockReleaseReadNetworkGeneration).not.toHaveBeenCalledWith(current.generation);
+
+    await act(() => publishReadNetworkRuntimeRotation(current.generation + 2, 'linuxdo'));
+
+    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCount);
+    expect(mockReleaseReadNetworkGeneration).not.toHaveBeenCalledWith(current.generation);
+
+    mockVideoStatus = 'error';
+    await healthyVideo.rerender(tree());
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCount + 1));
+    await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledWith(current.generation));
+    expect(mockRetainReadNetworkGeneration).toHaveBeenLastCalledWith(current.generation + 2);
+    await healthyVideo.unmount();
+  });
+
+  it('[REG-PROXY-010] resets the loading video deadline before a runtime rotation remount', async () => {
+    const videoUrl = 'https://cdn.example.com/runtime-deadline-video.mp4';
+    const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
+    mockVideoStatus = 'loading';
+    jest.useFakeTimers();
+    jest.setSystemTime(10_000);
+    try {
+      const screen = await render(
+        <TopicBodyMediaCoordinatorProvider
+          active
+          diagnosticSession={{
+            networkMediaCount: 1,
+            plannedRowCount: 1,
+            source: 'nodeseek',
+            topicRef: 'topic-video-runtime-deadline'
+          }}
+          onDiagnosticFinish={onDiagnosticFinish}
+          paused={false}
+          viewportRowKeys={['video-row']}
+        >
+          <TopicBodyMediaRowBoundary rowKey="video-row">
+            <CoordinatedVideoHarness src={videoUrl} />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      await waitFor(() =>
+        expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(
+          true
+        )
+      );
+      const firstPlayerCount = mockUseVideoPlayer.mock.calls.length;
+      await act(async () => {
+        jest.advanceTimersByTime(29_900);
+      });
+      const before = getReadNetworkRuntimeSnapshot();
+
+      await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+      await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(firstPlayerCount + 1));
+      await act(async () => {
+        jest.advanceTimersByTime(200);
+      });
+      await screen.unmount();
+      expect(onDiagnosticFinish).toHaveBeenCalledTimes(1);
+      expect(onDiagnosticFinish).toHaveBeenCalledWith(expect.objectContaining({ retryCount: 0, timeoutCount: 0 }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-PROXY-010] creates no video player until its native generation lease is acquired', async () => {
+    const leasedGeneration = getReadNetworkRuntimeSnapshot().generation;
+    let resolveRetain: ((lease: { generation: number; retained: boolean }) => void) | undefined;
+    mockRetainReadNetworkGeneration.mockImplementationOnce(
+      () =>
+        new Promise<{ generation: number; retained: boolean }>((resolve) => {
+          resolveRetain = resolve;
+        })
+    );
+
+    const video = await render(
+      <ForumContentVideo
+        mediaContext={{ contentSource: 'nodeseek', sessionIdentity: 'nodeseek:lease-gate' }}
+        src="https://cdn.example.com/lease-gated-video.mp4"
+        theme={theme}
+      />
+    );
+
+    await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(1));
+    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+
+    await act(() => publishReadNetworkRuntimeRotation(leasedGeneration + 1, 'linuxdo'));
+    await act(() => resolveRetain?.({ generation: leasedGeneration, retained: true }));
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-WZ-Read-Network-Generation': String(leasedGeneration)
+        })
+      })
+    );
+    await video.unmount();
+  });
+
+  it('[REG-PROXY-010] reacquires the native current generation when the JS snapshot is stale', async () => {
+    const staleGeneration = getReadNetworkRuntimeSnapshot().generation;
+    const nativeCurrentGeneration = staleGeneration + 1;
+    mockRetainReadNetworkGeneration.mockResolvedValueOnce({
+      generation: nativeCurrentGeneration,
+      retained: false
+    });
+
+    const video = await render(
+      <ForumContentVideo
+        mediaContext={{ contentSource: 'yaohuo', sessionIdentity: 'yaohuo:native-publish-window' }}
+        src="https://cdn.example.com/native-publish-window.mp4"
+        theme={theme}
+      />
+    );
+
+    await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenNthCalledWith(1, staleGeneration));
+    await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenNthCalledWith(2, nativeCurrentGeneration));
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-WZ-Read-Network-Generation': String(nativeCurrentGeneration)
+        })
+      })
+    );
+    await video.unmount();
+  });
+
+  it('[REG-PROXY-010] reacquires the native current generation for managed video before JS applies publish', async () => {
+    const videoUrl = 'https://cdn.example.com/managed-native-publish-window.mp4';
+    const staleGeneration = getReadNetworkRuntimeSnapshot().generation;
+    const nativeCurrentGeneration = staleGeneration + 1;
+    mockRetainReadNetworkGeneration.mockResolvedValueOnce({
+      generation: nativeCurrentGeneration,
+      retained: false
+    });
+
+    const video = await render(
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 1,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-managed-native-publish-window'
+        }}
+        paused={false}
+        viewportRowKeys={['video-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          <CoordinatedVideoHarness src={videoUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenNthCalledWith(1, staleGeneration));
+    await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenNthCalledWith(2, nativeCurrentGeneration));
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-WZ-Read-Network-Generation': String(nativeCurrentGeneration)
+        })
+      })
+    );
+    expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(2);
+    await video.unmount();
+  });
+
+  it('[REG-PROXY-010] settles a managed video lease rejected at the same native generation without looping', async () => {
+    const generation = getReadNetworkRuntimeSnapshot().generation;
+    mockRetainReadNetworkGeneration
+      .mockResolvedValueOnce({ generation, retained: false })
+      .mockResolvedValueOnce({ generation, retained: false });
+
+    const video = await render(
+      <TopicBodyMediaCoordinatorProvider
+        active
+        diagnosticSession={{
+          networkMediaCount: 1,
+          plannedRowCount: 1,
+          source: 'nodeseek',
+          topicRef: 'topic-managed-native-lease-failure'
+        }}
+        paused={false}
+        viewportRowKeys={['video-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          <CoordinatedVideoHarness src="https://cdn.example.com/managed-native-lease-failure.mp4" />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() => expect(video.getByLabelText('视频加载失败，点按重试')).toBeTruthy());
+    expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(2);
+    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    await video.unmount();
   });
 
   it('[REG-TOPIC-040] requests the smallest responsive candidate that fits the body pixels', async () => {
@@ -742,7 +2029,7 @@ describe('topic block image loading', () => {
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
   });
 
-  it('summarizes progress, cache and display timing without logging the image URL', async () => {
+  it('[REG-PERF-010] does not emit a diagnostic trace for each body image', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
@@ -765,27 +2052,7 @@ describe('topic block image loading', () => {
       jest.setSystemTime(1_030);
       await act(() => imageProps.onDisplay?.());
 
-      const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
-      expect(diagnosticEvents[0]).toEqual(
-        expect.objectContaining({
-          candidateKind: 'src',
-          mediaRef: expect.stringMatching(/^media-\d+$/),
-          mediaRole: 'body'
-        })
-      );
-      expect(diagnosticEvents.at(-1)).toEqual(
-        expect.objectContaining({
-          cacheType: 'disk',
-          displayMs: 30,
-          firstProgressMs: 10,
-          loadedBytes: 4096,
-          loadMs: 20,
-          sourceHeight: 600,
-          sourceWidth: 400,
-          totalBytes: 8192
-        })
-      );
-      expect(diagnosticLines.join('')).not.toContain(imageUrl);
+      expect(diagnosticLines).toEqual([]);
     } finally {
       setDiagnosticWriter(null);
       jest.useRealTimers();
@@ -858,7 +2125,8 @@ describe('topic block image loading', () => {
     expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
       expect.objectContaining({
         headers: expect.objectContaining({
-          Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8'
+          Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8',
+          'X-WZ-Forum-Media-Kind': 'video'
         }),
         uri: videoUrl
       })
@@ -947,10 +2215,8 @@ describe('topic block image loading', () => {
     const firstRenderer = controller.result.current.htmlRenderers[FORUM_VIDEO_TAG] as unknown as (
       props: typeof videoProps
     ) => React.ReactElement<typeof ForumContentVideo>;
-    const firstVideo = firstRenderer(videoProps);
 
-    expect(firstVideo.key).toBe(`yaohuo:1:${videoUrl}`);
-    const video = await render(firstVideo);
+    const video = await render(React.createElement(firstRenderer, videoProps));
     expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
       expect.objectContaining({
         headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
@@ -968,9 +2234,7 @@ describe('topic block image loading', () => {
       props: typeof videoProps
     ) => React.ReactElement<typeof ForumContentVideo>;
     expect(secondRenderer).not.toBe(firstRenderer);
-    const secondVideo = secondRenderer(videoProps);
-    expect(secondVideo.key).toBe(`yaohuo:2:${videoUrl}`);
-    await video.rerender(secondVideo);
+    await video.rerender(React.createElement(secondRenderer, videoProps));
     await waitFor(() =>
       expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -1040,37 +2304,36 @@ describe('topic block image loading', () => {
       await waitFor(() => expect(screen.getByText('测试图片')).toBeTruthy());
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
       expect(screen.queryByTestId('expo-image')).toBeNull();
-      const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
-      expect(diagnosticEvents).toContainEqual(
-        expect.objectContaining({
-          area: 'media',
-          phase: 'intent',
-          surface: 'body'
-        })
-      );
-      expect(diagnosticEvents).toContainEqual(
-        expect.objectContaining({
-          area: 'media',
-          outcome: 'failure',
-          terminalReason: 'native-error'
-        })
-      );
-      expect(diagnosticLines.join('')).not.toContain(imageUrl);
+      expect(diagnosticLines).toEqual([]);
     } finally {
       setDiagnosticWriter(null);
       fetchSpy.mockRestore();
     }
   });
 
-  it('[REG-TOPIC-032] settles a stalled body image within the 30 second image budget', async () => {
+  it('[REG-TOPIC-032] gives each stalled body-image attempt one 30 second no-progress budget', async () => {
     const timeoutImageUrl = 'https://img.example.com/stalled-body-image.png';
-    const diagnosticLines: string[] = [];
-    setDiagnosticWriter((line) => {
-      diagnosticLines.push(line);
-    });
+    const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
     jest.useFakeTimers();
     try {
-      const screen = await render(<TopicImageHarness attributes={{ alt: '超时图片', src: timeoutImageUrl }} />);
+      const screen = await render(
+        <TopicBodyMediaCoordinatorProvider
+          active
+          diagnosticSession={{
+            networkMediaCount: 1,
+            plannedRowCount: 1,
+            source: 'yaohuo',
+            topicRef: 'topic-timeout-test'
+          }}
+          onDiagnosticFinish={onDiagnosticFinish}
+          paused={false}
+          viewportRowKeys={['timeout-row']}
+        >
+          <TopicBodyMediaRowBoundary rowKey="timeout-row">
+            <TopicImageHarness attributes={{ alt: '超时图片', src: timeoutImageUrl }} />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
       const stalledImageProps = latestImageProps(timeoutImageUrl);
 
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
@@ -1079,10 +2342,10 @@ describe('topic block image loading', () => {
         width: 320
       });
       await act(async () => {
-        jest.advanceTimersByTime(30_000);
+        jest.advanceTimersByTime(60_000);
       });
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
-      expect(screen.getByText('测试图片')).toBeTruthy();
+      expect(screen.getByText('图片加载失败，点按重试')).toBeTruthy();
       expect(screen.queryByTestId('expo-image')).toBeNull();
       await act(() =>
         stalledImageProps.onLoad?.({
@@ -1090,28 +2353,17 @@ describe('topic block image loading', () => {
           source: { height: 400, mediaType: 'image/png', url: timeoutImageUrl, width: 1_600 }
         })
       );
-      expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      expect(StyleSheet.flatten(screen.getByLabelText('图片加载失败，点按重试').props.style)).toMatchObject({
         height: 240,
         width: 320
       });
-      expect(screen.getByText('测试图片')).toBeTruthy();
-      const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
-      expect(diagnosticEvents).toContainEqual(
-        expect.objectContaining({
-          area: 'media',
-          phase: 'intent',
-          surface: 'body'
-        })
-      );
-      expect(diagnosticEvents).toContainEqual(
-        expect.objectContaining({
-          area: 'media',
-          outcome: 'failure',
-          terminalReason: 'timeout'
-        })
+      expect(screen.getByText('图片加载失败，点按重试')).toBeTruthy();
+      await screen.unmount();
+      expect(onDiagnosticFinish).toHaveBeenCalledTimes(1);
+      expect(onDiagnosticFinish).toHaveBeenCalledWith(
+        expect.objectContaining({ retryCount: 1, timeoutCount: 2, timerHighWater: 1 })
       );
     } finally {
-      setDiagnosticWriter(null);
       jest.useRealTimers();
     }
   });
@@ -1153,7 +2405,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('reports an abandoned SVG recovery as a stale fallback load', async () => {
+  it('[REG-PERF-010] releases an in-flight SVG recovery when its body image unmounts', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
@@ -1169,13 +2421,7 @@ describe('topic block image loading', () => {
       await act(() => latestImageProps(svgImageUrl).onError?.({ error: 'native SVG failure' }));
       await screen.unmount();
 
-      expect(diagnosticLines.map((line) => JSON.parse(line))).toContainEqual(
-        expect.objectContaining({
-          fallback: 'svg',
-          outcome: 'stale',
-          terminalReason: 'stale'
-        })
-      );
+      expect(diagnosticLines).toEqual([]);
       await act(async () => {
         resolvePendingResponse(
           new Response('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>', {
@@ -1184,14 +2430,98 @@ describe('topic block image loading', () => {
         );
         await pendingResponse;
       });
-      await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(1));
-      const finishEvents = diagnosticLines.map((line) => JSON.parse(line)).filter((event) => event.phase === 'finish');
-      expect(finishEvents).toEqual([
-        expect.objectContaining({ fallback: 'svg', outcome: 'stale', terminalReason: 'stale' })
-      ]);
+      expect(mockRenderSvgPoster).not.toHaveBeenCalled();
+      expect(diagnosticLines).toEqual([]);
     } finally {
       fetchSpy.mockRestore();
       setDiagnosticWriter(null);
+    }
+  });
+
+  it('[REG-PERF-010] stops an SVG recovery before poster work when its Topic route becomes inactive', async () => {
+    const svgImageUrl = 'https://img.example.com/inactive-route-complex.svg';
+    let resolvePendingResponse!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolvePendingResponse = resolve;
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(() => pendingResponse);
+    const renderBody = (active: boolean) => (
+      <TopicBodyMediaCoordinatorProvider active={active} paused={false} viewportRowKeys={['svg-row']}>
+        <TopicBodyMediaRowBoundary rowKey="svg-row">
+          <TopicImageHarness attributes={{ alt: '测试图片', src: svgImageUrl }} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    try {
+      const screen = await render(renderBody(true));
+      await act(() => latestImageProps(svgImageUrl).onError?.({ error: 'native SVG failure' }));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+
+      await screen.rerender(renderBody(false));
+      await act(async () => {
+        resolvePendingResponse(
+          new Response('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>', {
+            headers: { 'content-type': 'image/svg+xml' }
+          })
+        );
+        await pendingResponse;
+      });
+
+      expect(screen.getByTestId('topic-image-idle')).toBeTruthy();
+      expect(mockRenderSvgPoster).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('[REG-PROXY-010] releases the old SVG consumer when runtime rotation replaces its body attempt', async () => {
+    const svgImageUrl = 'https://img.example.com/replaced-attempt-complex.svg';
+    let resolvePendingResponse!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolvePendingResponse = resolve;
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(() => pendingResponse);
+    try {
+      await render(
+        <TopicBodyMediaCoordinatorProvider
+          active
+          diagnosticSession={{
+            networkMediaCount: 1,
+            plannedRowCount: 1,
+            source: 'nodeseek',
+            topicRef: 'topic-svg-attempt-owner'
+          }}
+          paused={false}
+          viewportRowKeys={['svg-row']}
+        >
+          <TopicBodyMediaRowBoundary rowKey="svg-row">
+            <TopicImageHarness
+              attributes={{ alt: '测试图片', src: svgImageUrl }}
+              mediaSessionIdentity="nodeseek:svg-attempt"
+              topicSource="nodeseek"
+            />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const oldAttempt = latestImageProps(svgImageUrl);
+      await act(() => oldAttempt.onError?.({ error: 'native SVG failure' }));
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      const before = getReadNetworkRuntimeSnapshot();
+
+      await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+      expect(latestImageProps(svgImageUrl).recyclingKey).not.toBe(oldAttempt.recyclingKey);
+      await act(async () => {
+        resolvePendingResponse(
+          new Response('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>', {
+            headers: { 'content-type': 'image/svg+xml' }
+          })
+        );
+        await pendingResponse;
+      });
+
+      expect(mockRenderSvgPoster).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
     }
   });
 
@@ -1265,7 +2595,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('REG-TOPIC-038 ignores a late SVG artifact from the previous media epoch', async () => {
+  it('REG-TOPIC-038 releases the late SVG consumer from the previous media epoch before poster work', async () => {
     const svgImageUrl = 'https://img.example.com/epoch-complex-report.svg';
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>';
     let resolveOldResponse!: (response: Response) => void;
@@ -1304,7 +2634,7 @@ describe('topic block image loading', () => {
         resolveOldResponse(new Response(svg, { headers: { 'content-type': 'image/svg+xml' } }));
         await oldResponse;
       });
-      await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2));
+      expect(mockRenderSvgPoster).toHaveBeenCalledTimes(1);
 
       expect(
         mockExpoImageProps.mock.calls.some(

@@ -78,18 +78,29 @@ describe('Android HTML rendering styles', () => {
     expect(htmlClassesStyles['forum-callout-tone-muted']).toMatchObject({ color: theme.muted });
   });
 
-  it('trims only the last visible block inside a marked reply fragment', () => {
-    const markedParent = {
-      attributes: { [htmlRenderingStyles.TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE]: 'true' },
-      children: [] as unknown[],
-      parent: null
-    };
-    const trailingChild = { nodeIndex: 0, parent: markedParent };
-    markedParent.children.push(trailingChild);
-
-    expect(htmlRenderingStyles.trimsTrailingBlockSpacing(trailingChild as never)).toBe(true);
-
-    const firstChild = { nodeIndex: 0, parent: { ...markedParent, children: [{}, {}] } };
-    expect(htmlRenderingStyles.trimsTrailingBlockSpacing(firstChild as never)).toBe(false);
+  it('[REG-PERF-010] exposes exact leading and trailing spacing for a continuation fragment', () => {
+    expect(htmlRenderingStyles.contentBoundaryForContinuation('first')).toEqual({
+      trimLeading: false,
+      trimTrailing: true
+    });
+    expect(htmlRenderingStyles.contentBoundaryForContinuation('middle')).toEqual({
+      trimLeading: true,
+      trimTrailing: true
+    });
+    expect(htmlRenderingStyles.contentBoundaryForContinuation('last')).toEqual({
+      trimLeading: true,
+      trimTrailing: false
+    });
+    expect(htmlRenderingStyles.contentBoundaryForContinuation('only')).toEqual({
+      trimLeading: false,
+      trimTrailing: false
+    });
+    for (const continuation of ['first', 'middle', 'last', 'only'] as const) {
+      expect(
+        htmlRenderingStyles.contentContinuationForBoundary(
+          htmlRenderingStyles.contentBoundaryForContinuation(continuation)
+        )
+      ).toBe(continuation);
+    }
   });
 });

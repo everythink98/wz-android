@@ -43,20 +43,6 @@ export function inlineSizedImageSignatureForReply(
   return inlineSizedImageSignatureForHtml(replyHtmlWithSignature(reply), inlineSizedImageUrls);
 }
 
-export function sameInlineSizedImagesForHtml(
-  previousHtml: string | undefined,
-  nextHtml: string | undefined,
-  previousUrls: InlineSizedImageUrlMap,
-  nextUrls: InlineSizedImageUrlMap
-) {
-  return (
-    previousHtml === nextHtml &&
-    (previousUrls === nextUrls ||
-      inlineSizedImageSignatureForHtml(previousHtml || '<p></p>', previousUrls) ===
-        inlineSizedImageSignatureForHtml(nextHtml || '<p></p>', nextUrls))
-  );
-}
-
 export function sameInlineSizedImagesForReply(
   previousReply: Pick<Reply, 'contentHtml' | 'signatureHtml'>,
   nextReply: Pick<Reply, 'contentHtml' | 'signatureHtml'>,

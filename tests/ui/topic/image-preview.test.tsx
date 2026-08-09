@@ -7,6 +7,10 @@ import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/plat
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { originalImageDisplayRevision } from '@/platform/media/originalImageLoading';
+import {
+  getReadNetworkRuntimeSnapshot,
+  publishReadNetworkRuntimeRotation
+} from '@/platform/network/readNetworkRuntime';
 
 const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
   documentHeight: 1025,
@@ -17,7 +21,12 @@ const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string
 }));
 let mockZoomScale = 1;
 let mockPagerNextToken = 0;
+let mockDeferProgrammaticPagerSelections = false;
+const mockPendingProgrammaticPagerSelections: number[] = [];
 let mockZoomNextToken = 0;
+const mockZoomResets = jest.fn<(index: string) => void>();
+const mockPreviewImageUnmounts = jest.fn<(testID: string) => void>();
+let mockPreviewImageNextToken = 0;
 let mockWebViewMounts = 0;
 let mockWebViewUnmounts = 0;
 let mockWebViewNextToken = 0;
@@ -55,6 +64,7 @@ jest.mock('react-native-webview', () => {
 jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
+  const ExpoImageMock = NativeView as React.ComponentType<Record<string, unknown>>;
   return {
     Image: ({
       contentFit,
@@ -69,6 +79,20 @@ jest.mock('expo-image', () => {
       source?: { uri?: string };
       testID?: string;
     }) => {
+      const token = ReactModule.useRef(0);
+      const latestTestID = ReactModule.useRef(testID);
+      if (token.current === 0) {
+        token.current = ++mockPreviewImageNextToken;
+      }
+      latestTestID.current = testID;
+      ReactModule.useEffect(
+        () => () => {
+          if (latestTestID.current?.startsWith('preview-image-')) {
+            mockPreviewImageUnmounts(latestTestID.current);
+          }
+        },
+        []
+      );
       ReactModule.useLayoutEffect(() => {
         if (props.source?.uri?.includes('fast-cache')) {
           props.onLoadStart?.();
@@ -79,8 +103,9 @@ jest.mock('expo-image', () => {
           props.onError?.();
         }
       }, [props.source?.uri]);
-      return ReactModule.createElement(NativeView, {
+      return ReactModule.createElement(ExpoImageMock, {
         ...props,
+        mockImageInstanceToken: token.current,
         testID: testID || (contentFit === 'contain' ? 'active-preview-image' : 'preview-thumbnail-image')
       });
     }
@@ -156,11 +181,13 @@ jest.mock('react-native-pager-view', () => {
           children,
           initialPage = 0,
           onPageSelected,
+          onPageScrollStateChanged,
           ...props
         }: {
           children?: React.ReactNode;
           initialPage?: number;
           onPageSelected?: (event: { nativeEvent: { position: number } }) => void;
+          onPageScrollStateChanged?: (event: { nativeEvent: { pageScrollState: string } }) => void;
         },
         ref: React.ForwardedRef<{
           setPage: (index: number) => void;
@@ -173,9 +200,19 @@ jest.mock('react-native-pager-view', () => {
           token.current = ++mockPagerNextToken;
         }
         const [index, setIndex] = ReactModule.useState(initialPage);
-        const select = (nextIndex: number) => {
+        const select = (nextIndex: number, userDriven = false) => {
+          if (userDriven) {
+            onPageScrollStateChanged?.({ nativeEvent: { pageScrollState: 'dragging' } });
+          }
           setIndex(nextIndex);
+          if (!userDriven && mockDeferProgrammaticPagerSelections) {
+            mockPendingProgrammaticPagerSelections.push(nextIndex);
+            return;
+          }
           onPageSelected?.({ nativeEvent: { position: nextIndex } });
+          if (userDriven) {
+            onPageScrollStateChanged?.({ nativeEvent: { pageScrollState: 'idle' } });
+          }
         };
         ReactModule.useImperativeHandle(ref, () => ({
           setPage: select,
@@ -184,11 +221,27 @@ jest.mock('react-native-pager-view', () => {
         }));
         return ReactModule.createElement(
           PagerMockView,
-          { ...props, mockPagerToken: token.current, testID: 'image-preview-pager' },
+          {
+            ...props,
+            mockPageCount: ReactModule.Children.count(children),
+            mockPageKeys: ReactModule.Children.toArray(children).map((child) =>
+              ReactModule.isValidElement(child) ? child.key : null
+            ),
+            mockPagerToken: token.current,
+            mockFlushProgrammaticPageSelections: () => {
+              for (const position of mockPendingProgrammaticPagerSelections.splice(0)) {
+                onPageSelected?.({ nativeEvent: { position } });
+              }
+            },
+            mockUserSelectPage: (nextIndex: number) => select(nextIndex, true),
+            onPageSelected,
+            onPageScrollStateChanged,
+            testID: 'image-preview-pager'
+          },
           children,
           ReactModule.createElement(NativeView, {
             accessibilityLabel: 'mock-next-gallery-page',
-            onTouchEnd: () => select(Math.min(index + 1, ReactModule.Children.count(children) - 1))
+            onTouchEnd: () => select(Math.min(index + 1, ReactModule.Children.count(children) - 1), true)
           })
         );
       }
@@ -228,11 +281,11 @@ jest.mock('react-native-zoom-toolkit', () => {
         if (token.current === 0) {
           token.current = ++mockZoomNextToken;
         }
+        const index = children.props.testID?.replace('preview-zoom-content-', '') || 'unknown';
         ReactModule.useImperativeHandle(ref, () => ({
           getState: () => ({ scale: mockZoomScale }),
-          reset: () => undefined
+          reset: () => mockZoomResets(index)
         }));
-        const index = children.props.testID?.replace('preview-zoom-content-', '') || 'unknown';
         return ReactModule.createElement(
           ZoomMockView,
           { ...props, mockZoomToken: token.current, testID: `preview-zoom-${index}` },
@@ -276,7 +329,12 @@ describe('Image preview', () => {
   beforeEach(() => {
     mockZoomScale = 1;
     mockPagerNextToken = 0;
+    mockDeferProgrammaticPagerSelections = false;
+    mockPendingProgrammaticPagerSelections.splice(0);
     mockZoomNextToken = 0;
+    mockZoomResets.mockClear();
+    mockPreviewImageUnmounts.mockClear();
+    mockPreviewImageNextToken = 0;
     mockWebViewMounts = 0;
     mockWebViewUnmounts = 0;
     mockWebViewNextToken = 0;
@@ -285,6 +343,82 @@ describe('Image preview', () => {
       fetchSvgDocument: mockFetchSvgDocument,
       renderPoster: mockRenderSvgPoster
     };
+  });
+
+  it('[REG-PROXY-010] retries only the current unhealthy preview page for the triggering source', async () => {
+    const items = [
+      previewItem('https://example.com/runtime-current.png'),
+      previewItem('https://example.com/runtime-adjacent.png')
+    ];
+    const view = await render(
+      <ImagePreviewModal preview={{ contentSource: 'nodeseek', items, index: 0 }} {...callbacks()} />
+    );
+    const currentKey = view.getByTestId('preview-image-0').props.recyclingKey;
+    const adjacentKey = view.getByTestId('preview-image-1').props.recyclingKey;
+    const before = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    expect(view.getByTestId('preview-image-0').props.recyclingKey).not.toBe(currentKey);
+    expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(adjacentKey);
+    await fireEvent(view.getByTestId('preview-image-0'), 'display');
+    const displayedKey = view.getByTestId('preview-image-0').props.recyclingKey;
+    const current = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(current.generation + 1, 'nodeseek'));
+
+    expect(view.getByTestId('preview-image-0').props.recyclingKey).toBe(displayedKey);
+  });
+
+  it('[REG-PROXY-010] defers an inactive loading preview retry until that page becomes active', async () => {
+    const items = [
+      previewItem('https://example.com/runtime-active.png'),
+      previewItem('https://example.com/runtime-deferred.png')
+    ];
+    const sharedCallbacks = callbacks();
+    const modal = (index: number) => (
+      <ImagePreviewModal preview={{ contentSource: 'nodeseek', items, index }} {...sharedCallbacks} />
+    );
+    const view = await render(modal(0));
+    const inactiveKey = view.getByTestId('preview-image-1').props.recyclingKey;
+    const before = getReadNetworkRuntimeSnapshot();
+
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(inactiveKey);
+    await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(1));
+    const retriedKey = await waitFor(() => {
+      const key = view.getByTestId('preview-image-1').props.recyclingKey;
+      expect(key).not.toBe(inactiveKey);
+      return key;
+    });
+    await view.rerender(modal(1));
+
+    expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(retriedKey);
+  });
+
+  it('[REG-PROXY-010] keeps a loaded adjacent preview healthy across rotation and later activation', async () => {
+    const items = [
+      previewItem('https://example.com/runtime-active.png'),
+      previewItem('https://example.com/runtime-loaded-adjacent.png')
+    ];
+    const sharedCallbacks = callbacks();
+    const modal = (index: number) => (
+      <ImagePreviewModal preview={{ contentSource: 'nodeseek', items, index }} {...sharedCallbacks} />
+    );
+    const view = await render(modal(0));
+    const adjacentImage = view.getByTestId('preview-image-1');
+    const loadedKey = adjacentImage.props.recyclingKey;
+
+    await fireEvent(adjacentImage, 'display');
+    const before = getReadNetworkRuntimeSnapshot();
+    await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
+
+    expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(loadedKey);
+    await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(1));
+    await view.rerender(modal(1));
+
+    expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(loadedKey);
   });
 
   it('[REG-TOPIC-050] mounts only current and adjacent originals and promotes them without cross-dissolving', async () => {
@@ -297,15 +431,23 @@ describe('Image preview', () => {
     expect(view.getByTestId('preview-image-1').props).toEqual(
       expect.objectContaining({
         allowDownscaling: true,
-        cachePolicy: 'memory-disk',
-        placeholder: expect.objectContaining({ uri: items[1]?.displayUri }),
-        priority: 'low'
+        cachePolicy: 'disk',
+        priority: 'low',
+        source: expect.objectContaining({ uri: items[1]?.originalUri })
+      })
+    );
+    expect(view.getByTestId('preview-display-underlay-1').props).toEqual(
+      expect.objectContaining({
+        allowDownscaling: true,
+        cachePolicy: 'disk',
+        priority: 'low',
+        source: expect.objectContaining({ uri: items[1]?.displayUri })
       })
     );
     expect(view.getByTestId('preview-image-2').props).toEqual(
       expect.objectContaining({
-        allowDownscaling: false,
-        placeholder: expect.objectContaining({ uri: items[2]?.displayUri }),
+        allowDownscaling: true,
+        cachePolicy: 'disk',
         priority: 'high',
         source: expect.objectContaining({ uri: items[2]?.originalUri })
       })
@@ -319,9 +461,300 @@ describe('Image preview', () => {
 
     await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
     expect(view.getByTestId('preview-image-2').props.allowDownscaling).toBe(true);
-    expect(view.getByTestId('preview-image-3').props.allowDownscaling).toBe(false);
+    expect(view.getByTestId('preview-image-3').props.allowDownscaling).toBe(true);
     expect(view.getByTestId('preview-image-2').props.transition).toBeUndefined();
     expect(view.getByTestId('preview-image-3').props.transition).toBeUndefined();
+  });
+
+  it('[REG-PERF-010][REG-TOPIC-075] keeps a 2000-image catalog to three disk-only downscaled pages', async () => {
+    const items = Array.from({ length: 2_000 }, (_, index) => previewItem(`https://example.com/catalog-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const modal = (index: number) => (
+      <ImagePreviewModal preview={previewProps(items, index)} {...callbacks({ onSelect })} />
+    );
+    const view = await render(modal(0));
+
+    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBeLessThanOrEqual(3);
+    expect(view.getAllByTestId(/^preview-image-/)).toHaveLength(2);
+
+    await view.rerender(modal(1_379));
+    await waitFor(() => expect(view.getByText('1380/2000')).toBeTruthy());
+    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
+    expect(view.getAllByTestId(/^preview-image-/)).toHaveLength(3);
+    expect(view.getAllByTestId(/^preview-image-/)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ props: expect.objectContaining({ allowDownscaling: true, cachePolicy: 'disk' }) })
+      ])
+    );
+    for (const image of view.getAllByTestId(/^preview-image-/)) {
+      expect(image.props.allowDownscaling).toBe(true);
+      expect(image.props.cachePolicy).toBe('disk');
+    }
+
+    const physicalPageKeys = view.getByTestId('image-preview-pager').props.mockPageKeys;
+    const leavingSourceOwner = view.getByTestId('preview-image-1378').props;
+    mockPreviewImageUnmounts.mockClear();
+
+    await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
+    expect(onSelect).toHaveBeenLastCalledWith(1_380);
+    expect(view.getByText('1381/2000')).toBeTruthy();
+    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
+    expect(view.getByTestId('image-preview-pager').props.mockPageKeys).toEqual(physicalPageKeys);
+    expect(view.getAllByTestId(/^preview-image-/)).toHaveLength(3);
+    const reusedSourceOwner = view.getByTestId('preview-image-1379').props;
+    expect(reusedSourceOwner.mockImageInstanceToken).toBe(leavingSourceOwner.mockImageInstanceToken);
+    expect(reusedSourceOwner.source.uri).toBe(items[1_379]?.originalUri);
+    expect(reusedSourceOwner.recyclingKey).not.toBe(leavingSourceOwner.recyclingKey);
+    expect(mockPreviewImageUnmounts).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-010][REG-TOPIC-075] reuses three native raster owners while their sources advance', async () => {
+    const items = Array.from({ length: 100 }, (_, index) =>
+      previewItem(`https://example.com/owner-original-${index}.png`, `https://example.com/owner-display-${index}.png`)
+    );
+    let selectedIndex = 20;
+    const onSelect = jest.fn((index: number) => {
+      selectedIndex = index;
+    });
+    const modal = () => <ImagePreviewModal preview={previewProps(items, selectedIndex)} {...callbacks({ onSelect })} />;
+    const view = await render(modal());
+    const mainTokens = new Set<number>();
+    const underlayTokens = new Set<number>();
+    const underlaySourceHistory = new Map<number, Set<string>>();
+    const ownerSources = (pattern: RegExp) =>
+      new Map<number, { recyclingKey: string; uri: string | null }>(
+        view
+          .getAllByTestId(pattern)
+          .map((image) => [
+            image.props.mockImageInstanceToken,
+            { recyclingKey: image.props.recyclingKey, uri: image.props.source?.uri ?? null }
+          ])
+      );
+    const rememberOwners = () => {
+      for (const image of view.getAllByTestId(/^preview-image-/)) {
+        mainTokens.add(image.props.mockImageInstanceToken);
+      }
+      for (const image of view.getAllByTestId(/^preview-display-underlay-/)) {
+        const token = image.props.mockImageInstanceToken as number;
+        underlayTokens.add(token);
+        const history = underlaySourceHistory.get(token) ?? new Set<string>();
+        history.add(`${image.props.recyclingKey}\u0000${image.props.source.uri}`);
+        underlaySourceHistory.set(token, history);
+      }
+    };
+    const settleMountedOwners = async () => {
+      for (const image of view.getAllByTestId(/^preview-image-/)) {
+        await fireEvent(image, 'display');
+      }
+    };
+
+    rememberOwners();
+    const initialMainOwners = ownerSources(/^preview-image-/);
+    const initialUnderlayOwners = ownerSources(/^preview-display-underlay-/);
+    await settleMountedOwners();
+
+    for (let index = 21; index <= 30; index += 1) {
+      await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(2));
+      await view.rerender(modal());
+      expect(view.getByText(`${index + 1}/100`)).toBeTruthy();
+      rememberOwners();
+      await settleMountedOwners();
+    }
+
+    expect(mainTokens.size).toBeLessThanOrEqual(3);
+    expect(underlayTokens.size).toBeLessThanOrEqual(3);
+    const finalMainOwners = ownerSources(/^preview-image-/);
+    const finalUnderlayOwners = ownerSources(/^(?:preview-display-underlay|preview-hidden-underlay-owner)-/);
+    expect([...finalMainOwners.keys()].sort()).toEqual([...initialMainOwners.keys()].sort());
+    expect([...finalUnderlayOwners.keys()].sort()).toEqual([...initialUnderlayOwners.keys()].sort());
+    for (const [token, source] of finalMainOwners) {
+      expect(source).not.toEqual(initialMainOwners.get(token));
+    }
+    for (const [token, source] of finalUnderlayOwners) {
+      expect(source).not.toEqual(initialUnderlayOwners.get(token));
+      expect(underlaySourceHistory.get(token)?.size).toBeGreaterThan(1);
+    }
+  });
+
+  it('[REG-TOPIC-075] resets logical load ownership when a stable native slot changes source', async () => {
+    const items = Array.from({ length: 6 }, (_, index) =>
+      previewItem(`https://example.com/reset-original-${index}.png`, `https://example.com/reset-display-${index}.png`)
+    );
+    const view = await render(<ImagePreviewModal preview={previewProps(items, 2)} {...callbacks()} />);
+    const previousImage = view.getByTestId('preview-image-2');
+    const previousOwnerToken = previousImage.props.mockImageInstanceToken;
+    const latePreviousDisplay = previousImage.props.onDisplay as () => void;
+
+    await fireEvent(previousImage, 'display');
+    expect(view.queryByTestId('preview-display-underlay-2')).toBeNull();
+
+    await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(2));
+    const nextImage = view.getByTestId('preview-image-3');
+    expect(nextImage.props.mockImageInstanceToken).toBe(previousOwnerToken);
+    expect(view.getByTestId('preview-display-underlay-3')).toBeTruthy();
+
+    await act(latePreviousDisplay);
+    expect(view.getByTestId('preview-display-underlay-3')).toBeTruthy();
+
+    await fireEvent(nextImage, 'display');
+    await waitFor(() => expect(view.queryByTestId('preview-display-underlay-3')).toBeNull());
+  });
+
+  it('[REG-TOPIC-075] never routes a remote continuity image through the Expo placeholder decoder', async () => {
+    const items = [
+      previewItem('https://example.com/same-original.png'),
+      previewItem('https://example.com/distinct-original.png', 'https://example.com/distinct-display.png')
+    ];
+    const view = await render(<ImagePreviewModal preview={previewProps(items)} {...callbacks()} />);
+
+    expect(view.getByTestId('preview-image-0').props.placeholder).toBeUndefined();
+    expect(view.queryByTestId('preview-display-underlay-0')).toBeNull();
+    expect(view.getByTestId('preview-image-1').props.placeholder).toBeUndefined();
+    expect(view.getByTestId('preview-display-underlay-1').props).toEqual(
+      expect.objectContaining({
+        allowDownscaling: true,
+        cachePolicy: 'disk',
+        source: expect.objectContaining({ uri: items[1]?.displayUri })
+      })
+    );
+  });
+
+  it('[REG-TOPIC-075] gives every mounted preview bitmap an explicit native decode ceiling', async () => {
+    const items = [
+      previewItem('https://example.com/huge-original-a.png', 'https://example.com/huge-display-a.png'),
+      previewItem('https://example.com/huge-original-b.png', 'https://example.com/huge-display-b.png')
+    ];
+    const view = await render(<ImagePreviewModal preview={previewProps(items)} {...callbacks()} />);
+    const rasterImages = [
+      ...view.getAllByTestId(/^preview-image-/),
+      ...view.getAllByTestId(/^preview-display-underlay-/)
+    ];
+
+    expect(rasterImages).toHaveLength(4);
+    for (const image of rasterImages) {
+      const source = image.props.source as { height?: number; scale?: number; width?: number };
+      expect(source.width).toEqual(expect.any(Number));
+      expect(source.height).toEqual(expect.any(Number));
+      expect(source.scale).toBe(1);
+      expect(source.width!).toBeLessThanOrEqual(2_048);
+      expect(source.height!).toBeLessThanOrEqual(2_048);
+      expect(source.width! * source.height!).toBeLessThanOrEqual(4_194_304);
+    }
+  });
+
+  it('[REG-PERF-010] ignores a delayed physical selection from the pager window before an arbitrary jump', async () => {
+    const items = Array.from({ length: 6 }, (_, index) => previewItem(`https://example.com/window-${index}.png`));
+    let selectedIndex = 2;
+    const savedIndices: number[] = [];
+    const onSelect = jest.fn((index: number) => {
+      selectedIndex = index;
+    });
+    const onSave = jest.fn(() => {
+      savedIndices.push(selectedIndex);
+    });
+    const modal = (index: number) => (
+      <ImagePreviewModal preview={previewProps(items, index)} {...callbacks({ onSave, onSelect })} />
+    );
+    const view = await render(modal(selectedIndex));
+
+    selectedIndex = 4;
+    await view.rerender(modal(selectedIndex));
+    await waitFor(() => expect(view.getByText('5/6')).toBeTruthy());
+    expect(mockZoomResets).toHaveBeenCalledWith('2');
+    mockZoomResets.mockClear();
+    onSelect.mockClear();
+
+    await fireEvent(view.getByTestId('image-preview-pager'), 'pageSelected', {
+      nativeEvent: { position: 2 }
+    });
+    await fireEvent.press(view.getByLabelText('保存图片'));
+
+    expect(view.getByText('5/6')).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(mockZoomResets).not.toHaveBeenCalled();
+    expect(savedIndices).toEqual([4]);
+  });
+
+  it('[REG-PERF-010] fences a stale native drag transaction after publishing a new pager window', async () => {
+    const items = Array.from({ length: 6 }, (_, index) => previewItem(`https://example.com/fenced-${index}.png`));
+    let selectedIndex = 2;
+    const savedIndices: number[] = [];
+    const onSelect = jest.fn((index: number) => {
+      selectedIndex = index;
+    });
+    const onSave = jest.fn(() => {
+      savedIndices.push(selectedIndex);
+    });
+    const modal = (index: number) => (
+      <ImagePreviewModal preview={previewProps(items, index)} {...callbacks({ onSave, onSelect })} />
+    );
+    const view = await render(modal(selectedIndex));
+
+    mockDeferProgrammaticPagerSelections = true;
+    selectedIndex = 4;
+    await view.rerender(modal(selectedIndex));
+    await waitFor(() => expect(view.getByText('5/6')).toBeTruthy());
+    onSelect.mockClear();
+
+    await fireEvent(view.getByTestId('image-preview-pager'), 'pageScrollStateChanged', {
+      nativeEvent: { pageScrollState: 'dragging' }
+    });
+    await fireEvent(view.getByTestId('image-preview-pager'), 'pageSelected', {
+      nativeEvent: { position: 0 }
+    });
+    await fireEvent(view.getByTestId('image-preview-pager'), 'pageScrollStateChanged', {
+      nativeEvent: { pageScrollState: 'idle' }
+    });
+    await fireEvent.press(view.getByLabelText('保存图片'));
+
+    expect(view.getByText('5/6')).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(savedIndices).toEqual([4]);
+
+    await act(() => view.getByTestId('image-preview-pager').props.mockFlushProgrammaticPageSelections());
+    await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(2));
+    await waitFor(() => expect(view.getByText('6/6')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('保存图片'));
+
+    expect(onSelect).toHaveBeenLastCalledWith(5);
+    expect(savedIndices).toEqual([4, 5]);
+  });
+
+  it('[REG-PERF-010] owns continuous middle transitions and both pager edges without losing logical order', async () => {
+    const items = Array.from({ length: 7 }, (_, index) => previewItem(`https://example.com/ordered-${index}.png`));
+    let selectedIndex = 0;
+    const savedIndices: number[] = [];
+    const onSelect = jest.fn((index: number) => {
+      selectedIndex = index;
+    });
+    const onSave = jest.fn(() => {
+      savedIndices.push(selectedIndex);
+    });
+    const view = await render(<ImagePreviewModal preview={previewProps(items)} {...callbacks({ onSave, onSelect })} />);
+    const userSelectPhysicalPage = async (position: number) => {
+      await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(position));
+    };
+
+    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
+    await userSelectPhysicalPage(1);
+    for (let logicalIndex = 2; logicalIndex <= 6; logicalIndex += 1) {
+      await userSelectPhysicalPage(2);
+      expect(view.getByText(`${logicalIndex + 1}/7`)).toBeTruthy();
+    }
+    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
+    await fireEvent.press(view.getByLabelText('保存图片'));
+    expect(savedIndices).toEqual([6]);
+
+    await userSelectPhysicalPage(1);
+    expect(view.getByText('6/7')).toBeTruthy();
+    for (let logicalIndex = 4; logicalIndex >= 0; logicalIndex -= 1) {
+      await userSelectPhysicalPage(0);
+      expect(view.getByText(`${logicalIndex + 1}/7`)).toBeTruthy();
+    }
+
+    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1, 0]);
+    expect(mockZoomResets.mock.calls.map(([index]) => Number(index))).toEqual([0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1]);
   });
 
   it('REG-TOPIC-031 settles an immediate cache hit only after the image is displayed', async () => {
@@ -363,11 +796,12 @@ describe('Image preview', () => {
         previewItem('https://example.com/neighbor.png', 'https://example.com/neighbor-thumb.png')
       ];
       const view = await render(<ImagePreviewModal preview={previewProps(items)} {...callbacks()} />);
+      const failedKey = view.getByTestId('preview-image-0').props.recyclingKey;
       const neighborKey = view.getByTestId('preview-image-1').props.recyclingKey;
 
       await fireEvent(view.getByTestId('preview-image-0'), 'error');
       await waitFor(() => expect(view.getByText('图片加载失败')).toBeTruthy());
-      const failedKey = view.getByTestId('preview-image-0').props.recyclingKey;
+      expect(view.queryByTestId('preview-image-0')).toBeNull();
 
       await fireEvent.press(view.getByLabelText('重试加载图片'));
 
@@ -603,21 +1037,65 @@ describe('Image preview', () => {
           {...callbacks()}
         />
       );
-      await fireEvent(view.getByTestId('preview-image-0'), 'loadStart');
+      const stalledImage = view.getByTestId('preview-image-0');
+      const lateDisplay = stalledImage.props.onDisplay as () => void;
+      await fireEvent(stalledImage, 'loadStart');
       await act(async () => jest.advanceTimersByTime(30_000));
 
       expect(view.getByText('图片加载失败')).toBeTruthy();
-      await fireEvent(view.getByTestId('preview-image-0'), 'display');
+      expect(view.queryByTestId('preview-image-0')).toBeNull();
+      expect(mockPreviewImageUnmounts).toHaveBeenCalledWith('preview-image-0');
+      await act(lateDisplay);
       expect(view.getByText('图片加载失败')).toBeTruthy();
+      expect(view.queryByTestId('preview-image-0')).toBeNull();
       const events = diagnosticLines.map((line) => JSON.parse(line));
       expect(events).toContainEqual(expect.objectContaining({ area: 'media', phase: 'intent', surface: 'preview' }));
       const timeoutEvent = events.find((event) => event.outcome === 'failure' && event.terminalReason === 'timeout');
       expect(timeoutEvent).toBeTruthy();
       expect(timeoutEvent).not.toHaveProperty('displayMs');
       await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
-      expect(view.getByTestId('preview-image-0').props.allowDownscaling).toBe(false);
+      expect(view.getByTestId('preview-image-1').props.allowDownscaling).toBe(true);
+      expect(view.getByTestId('preview-image-1').props.cachePolicy).toBe('disk');
     } finally {
       setDiagnosticWriter(null);
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-TOPIC-032] treats advancing bytes as progress and times out only after 30 seconds without progress', async () => {
+    jest.useFakeTimers();
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={previewProps([previewItem('https://example.com/slow-progress.png')])}
+          {...callbacks()}
+        />
+      );
+      const image = view.getByTestId('preview-image-0');
+      await fireEvent(image, 'loadStart');
+
+      await act(async () => jest.advanceTimersByTime(20_000));
+      await fireEvent(image, 'progress', { loaded: 1_024, total: 8_192 });
+      await act(async () => jest.advanceTimersByTime(20_000));
+      expect(view.queryByText('图片加载失败')).toBeNull();
+
+      await fireEvent(image, 'progress', { loaded: 2_048, total: 8_192 });
+      await act(async () => jest.advanceTimersByTime(20_000));
+      expect(view.queryByText('图片加载失败')).toBeNull();
+
+      await fireEvent(image, 'progress', { loaded: 3_072, total: 8_192 });
+      await act(async () => jest.advanceTimersByTime(10_000));
+      await fireEvent(image, 'progress', { loaded: 3_072, total: 8_192 });
+      await act(async () => jest.advanceTimersByTime(19_999));
+
+      expect(view.queryByText('图片加载失败')).toBeNull();
+      expect(view.getByTestId('preview-image-0')).toBeTruthy();
+
+      await act(async () => jest.advanceTimersByTime(1));
+
+      expect(view.getByText('图片加载失败')).toBeTruthy();
+      expect(view.queryByTestId('preview-image-0')).toBeNull();
+    } finally {
       jest.useRealTimers();
     }
   });
@@ -787,6 +1265,46 @@ describe('Image preview', () => {
     }
   });
 
+  it('[REG-PERF-010][REG-TOPIC-075] releases SVG artifact work when its logical page leaves the physical window', async () => {
+    const imageUrl = 'https://example.com/preview-unmounted-native-late.svg';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="460"><text>late</text></svg>';
+    let resolveNativeDocument: ((value: { base64: string }) => void) | undefined;
+    const fetchSvgDocument = jest.fn(
+      () =>
+        new Promise<{ base64: string }>((resolve) => {
+          resolveNativeDocument = resolve;
+        })
+    );
+    NativeModules.SvgRendererModule = {
+      fetchSvgDocument,
+      renderPoster: mockRenderSvgPoster
+    };
+    const items = [
+      previewItem(imageUrl),
+      previewItem('https://example.com/preview-window-1.png'),
+      previewItem('https://example.com/preview-window-2.png'),
+      previewItem('https://example.com/preview-window-3.png')
+    ];
+    const sharedCallbacks = callbacks();
+    const modal = (index: number) => <ImagePreviewModal preview={previewProps(items, index)} {...sharedCallbacks} />;
+    const view = await render(modal(0));
+
+    await fireEvent(view.getByTestId('preview-image-0'), 'error');
+    await waitFor(() => expect(fetchSvgDocument).toHaveBeenCalledTimes(1));
+
+    await view.rerender(modal(3));
+    await waitFor(() => expect(view.queryByTestId('preview-page-0')).toBeNull());
+    await act(async () => {
+      resolveNativeDocument?.({ base64: Buffer.from(svg).toString('base64') });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockRenderSvgPoster).not.toHaveBeenCalled();
+    expect(view.queryByTestId('preview-svg-poster-0')).toBeNull();
+    expect(view.queryByTestId('compatible-svg-document-view')).toBeNull();
+  });
+
   it('REG-TOPIC-018 renders an active incompatible SVG in the isolated document view', async () => {
     const imageUrl = 'https://example.com/active-dynamic.svg';
     const bodyPosterUrl = 'file:///cache/complex-svg-poster.png';
@@ -807,6 +1325,8 @@ describe('Image preview', () => {
       expect(view.getByTestId('preview-continuity-0').props.source).toEqual(
         expect.objectContaining({ uri: bodyPosterUrl })
       );
+      expect(view.getByTestId('preview-continuity-0').props.allowDownscaling).toBe(true);
+      expect(view.getByTestId('preview-continuity-0').props.cachePolicy).toBe('disk');
       const firstContinuityKey = view.getByTestId('preview-continuity-0').props.recyclingKey;
       await fireEvent(view.getByTestId('preview-continuity-0'), 'error');
       await waitFor(() => expect(mockRenderSvgPoster).toHaveBeenCalledTimes(2));
@@ -1096,7 +1616,8 @@ describe('Image preview', () => {
           uri: 'file:///cache/complex-svg-poster.png'
         })
       );
-      expect(poster.props.allowDownscaling).toBe(false);
+      expect(poster.props.allowDownscaling).toBe(true);
+      expect(poster.props.cachePolicy).toBe('disk');
       expect(view.queryByTestId('compatible-svg-document-view')).toBeNull();
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       expect(view.getByText('图片加载中...')).toBeTruthy();

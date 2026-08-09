@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   cachedCompatibleSvgArtifact,
+  compatibleImageRequestIdentity,
   recoverCompatibleSvgArtifact,
   refreshCompatibleSvgPoster
 } from './compatibleImageSources';
@@ -95,6 +96,108 @@ describe('compatible remote image sources', () => {
         signal: expect.any(AbortSignal)
       })
     );
+  });
+
+  it('[REG-PERF-010] keeps shared SVG work alive while another body consumer still owns it', async () => {
+    const source = { uri: 'https://images.example.com/shared-body-consumers.svg' };
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    let settleFetch!: (response: Response) => void;
+    let sharedWorkSignal: AbortSignal | undefined;
+    const fetcher = vi.fn<Fetcher>(
+      (_input, init) =>
+        new Promise<Response>((resolve) => {
+          sharedWorkSignal = init?.signal || undefined;
+          settleFetch = resolve;
+        })
+    );
+    const renderPoster = vi.fn(async () => poster(10, 5, 'file:///cache/shared-body-consumers.png'));
+
+    const first = recoverCompatibleSvgArtifact(source, {
+      fetcher,
+      renderPoster,
+      signal: firstController.signal
+    });
+    const second = recoverCompatibleSvgArtifact(source, {
+      fetcher,
+      renderPoster,
+      signal: secondController.signal
+    });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+
+    firstController.abort();
+
+    await expect(first).resolves.toBeNull();
+    expect(sharedWorkSignal?.aborted).toBe(false);
+    settleFetch(new Response('<svg width="10" height="5"></svg>', { headers: { 'content-type': 'image/svg+xml' } }));
+    await expect(second).resolves.toMatchObject({
+      dimensions: { height: 5, width: 10 },
+      requestIdentity: compatibleImageRequestIdentity(source)
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(renderPoster).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-PERF-010] aborts an abortable SVG fetch after its final body consumer releases', async () => {
+    const controller = new AbortController();
+    let workSignal: AbortSignal | undefined;
+    const fetcher = vi.fn<Fetcher>(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          workSignal = init?.signal || undefined;
+          workSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+            once: true
+          });
+        })
+    );
+    const renderPoster = vi.fn(async () => poster(10, 5, 'file:///cache/canceled-body-consumer.png'));
+    const recovery = recoverCompatibleSvgArtifact(
+      { uri: 'https://images.example.com/canceled-body-consumer.svg' },
+      { fetcher, renderPoster, signal: controller.signal }
+    );
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+
+    await expect(recovery).resolves.toBeNull();
+    expect(workSignal?.aborted).toBe(true);
+    await vi.waitFor(() => expect(renderPoster).not.toHaveBeenCalled());
+  });
+
+  it('[REG-PERF-010] never starts queued SVG work after its only body consumer releases', async () => {
+    const posterResolvers: ((value: ReturnType<typeof poster>) => void)[] = [];
+    const blockingRenderPoster = vi.fn(
+      () => new Promise<ReturnType<typeof poster>>((resolve) => posterResolvers.push(resolve))
+    );
+    const fetcher = vi.fn<Fetcher>(
+      async () => new Response('<svg width="10" height="5"></svg>', { headers: { 'content-type': 'image/svg+xml' } })
+    );
+    const first = recoverCompatibleSvgArtifact(
+      { uri: 'https://images.example.com/queued-cancel-blocker-1.svg' },
+      { fetcher, renderPoster: blockingRenderPoster }
+    );
+    const second = recoverCompatibleSvgArtifact(
+      { uri: 'https://images.example.com/queued-cancel-blocker-2.svg' },
+      { fetcher, renderPoster: blockingRenderPoster }
+    );
+    await vi.waitFor(() => expect(posterResolvers).toHaveLength(2));
+    const queuedController = new AbortController();
+    const queuedFetcher = vi.fn<Fetcher>(
+      async () => new Response('<svg width="10" height="5"></svg>', { headers: { 'content-type': 'image/svg+xml' } })
+    );
+    const queuedRenderPoster = vi.fn(async () => poster(10, 5, 'file:///cache/queued-canceled.png'));
+    const queued = recoverCompatibleSvgArtifact(
+      { uri: 'https://images.example.com/queued-canceled.svg' },
+      { fetcher: queuedFetcher, renderPoster: queuedRenderPoster, signal: queuedController.signal }
+    );
+
+    queuedController.abort();
+
+    await expect(queued).resolves.toBeNull();
+    posterResolvers.forEach((resolve, index) => resolve(poster(10, 5, `file:///cache/queue-blocker-${index}.png`)));
+    await Promise.all([first, second]);
+    expect(queuedFetcher).not.toHaveBeenCalled();
+    expect(queuedRenderPoster).not.toHaveBeenCalled();
   });
 
   it('[REG-TOPIC-038] rebuilds an evicted poster from the preserved SVG without another network request', async () => {
