@@ -25,6 +25,7 @@ import {
   previousReplyPage,
   REPLY_PAGE_SIZE,
   replyEdgePosition,
+  topicHasCompleteReplies,
   type ReplyCursorPosition,
   type ReplyPage,
   type ReplyPageParam,
@@ -35,6 +36,7 @@ import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './actio
 import type { TopicSessionController } from './useTopicSessionController';
 import {
   isReplyCountRefreshRequired,
+  isV2exReplySnapshotStale,
   sourceErrorFromUnknown,
   sourceReadRecoveryOutcome,
   yaohuoErrorRequiresLoginPanel
@@ -87,6 +89,19 @@ type ReplyFailure = {
 type ReplyWindowFailures = Record<ReplyWindowErrorSlot, ReplyFailure | null>;
 
 const EMPTY_REPLY_WINDOW_FAILURES: ReplyWindowFailures = { start: null, end: null, refresh: null };
+const V2EX_REPLY_SYNC_RETRIES = 5;
+const V2EX_REPLY_SYNC_RETRY_DELAY_MS = 5_000;
+
+function isCompleteV2exReplyPage(page: ReplyPage | undefined) {
+  return Boolean(
+    page &&
+    page.hasMore === false &&
+    page.nextPage === null &&
+    page.nextOffset === null &&
+    typeof page.totalCount === 'number' &&
+    page.items.length === page.totalCount
+  );
+}
 
 function replyFailure(
   source: Source,
@@ -161,6 +176,7 @@ export function useTopicController({
   const targetWindowCacheOwnedRef = useRef(new Map<ReplyOrder, readonly unknown[]>());
   const handledRouteTargetRef = useRef('');
   const replyWindowGenerationRef = useRef(0);
+  const successfulV2exRepliesIdentityRef = useRef('');
   const selectedSource = selectedTopic?.source || 'v2ex';
   const selectedTopicId = selectedTopic?.id || '';
   const selectedTopicKey = selectedTopic ? topicKey(selectedTopic) : '';
@@ -322,12 +338,14 @@ export function useTopicController({
     () => (topicDetail ? firstReplyData(topicDetail, replyOrder) : undefined),
     [detailQuery.dataUpdatedAt, replyOrder, topicDetail]
   );
+  const v2exRepliesNeedSync = Boolean(topicDetail?.source === 'v2ex' && !topicHasCompleteReplies(topicDetail));
   const repliesQuery = useInfiniteQuery({
     queryKey: repliesQueryKey,
     enabled: enabled && Boolean(topicDetail),
     initialPageParam: { kind: 'start' } satisfies ReplyPageParam,
-    initialData: initialReplies,
-    initialDataUpdatedAt: detailQuery.dataUpdatedAt || undefined,
+    initialData: v2exRepliesNeedSync ? undefined : initialReplies,
+    initialDataUpdatedAt: v2exRepliesNeedSync ? undefined : detailQuery.dataUpdatedAt || undefined,
+    placeholderData: v2exRepliesNeedSync ? initialReplies : undefined,
     queryFn: async ({ pageParam, signal }) => {
       const detail = topicDetail!;
       const trace = beginDiagnosticTrace('reply', pageParam.kind === 'start' ? 'refresh' : 'load-more', {
@@ -339,6 +357,9 @@ export function useTopicController({
       });
       try {
         const page = await loadReplyPage(detail, replyOrder, pageParam, signal, trace);
+        if (detail.source === 'v2ex') {
+          successfulV2exRepliesIdentityRef.current = repliesQueryIdentity;
+        }
         finishDiagnosticTrace(trace, 'success', {
           itemCount: page.items.length,
           hasMore: Boolean(nextReplyPage(page)),
@@ -356,21 +377,26 @@ export function useTopicController({
       }
     },
     getNextPageParam: (lastPage, allPages) => nextReplyPage(lastPage, allPages),
-    getPreviousPageParam: (firstPage, allPages) => previousReplyPage(firstPage, allPages)
+    getPreviousPageParam: (firstPage, allPages) => previousReplyPage(firstPage, allPages),
+    retry: (failureCount, error) =>
+      selectedTopic?.source === 'v2ex' && failureCount < V2EX_REPLY_SYNC_RETRIES && isV2exReplySnapshotStale(error),
+    retryDelay: V2EX_REPLY_SYNC_RETRY_DELAY_MS
   });
 
   useEffect(() => {
-    if (!topicDetail) return;
+    if (!topicDetail || v2exRepliesNeedSync) return;
     const seed = firstReplyData(topicDetail, replyOrder);
     if (!seed) return;
     queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, (current) => {
       return current || seed;
     });
-  }, [detailQuery.dataUpdatedAt, queryClient, repliesQueryKey, replyOrder, topicDetail]);
+  }, [detailQuery.dataUpdatedAt, queryClient, repliesQueryKey, replyOrder, topicDetail, v2exRepliesNeedSync]);
+
+  const visibleReplyData = repliesQuery.data || (v2exRepliesNeedSync ? initialReplies : undefined);
 
   const topicReplies = useMemo(
-    () => mergedReplyPages(repliesQuery.data as InfiniteData<ReplyPage, ReplyPageParam> | undefined),
-    [repliesQuery.data]
+    () => mergedReplyPages(visibleReplyData as InfiniteData<ReplyPage, ReplyPageParam> | undefined),
+    [visibleReplyData]
   );
   const lastReplyPage = repliesQuery.data?.pages.at(-1);
   const replyHasPrevious = Boolean(repliesQuery.hasPreviousPage);
@@ -383,6 +409,39 @@ export function useTopicController({
     (confirmed, page) => (typeof page.totalCount === 'number' ? page.totalCount : confirmed),
     undefined
   );
+  const fetchedV2exReplyPage =
+    selectedTopic?.source === 'v2ex' &&
+    successfulV2exRepliesIdentityRef.current === repliesQueryIdentity &&
+    !repliesQuery.isPlaceholderData &&
+    repliesQuery.data?.pages.length === 1
+      ? repliesQuery.data.pages[0]
+      : undefined;
+  const fetchedV2exRepliesComplete = isCompleteV2exReplyPage(fetchedV2exReplyPage);
+  const replyCollectionComplete =
+    selectedTopic?.source !== 'v2ex' ||
+    Boolean(topicDetail && topicHasCompleteReplies(topicDetail)) ||
+    fetchedV2exRepliesComplete;
+  const repliesSyncing = Boolean(
+    selectedTopic?.source === 'v2ex' && !replyCollectionComplete && repliesQuery.isFetching
+  );
+
+  useEffect(() => {
+    if (selectedTopic?.source !== 'v2ex' || !fetchedV2exRepliesComplete || !fetchedV2exReplyPage) return;
+    const ascendingReplies =
+      replyOrder === 'newest' ? [...fetchedV2exReplyPage.items].reverse() : fetchedV2exReplyPage.items;
+    queryClient.setQueryData<TopicDetail>(topicQueryKey, (current) =>
+      current
+        ? {
+            ...current,
+            replies: ascendingReplies,
+            replyCount: fetchedV2exReplyPage.totalCount,
+            replyHasMore: false,
+            replyNextPage: null,
+            replyNextOffset: null
+          }
+        : current
+    );
+  }, [fetchedV2exRepliesComplete, fetchedV2exReplyPage, queryClient, replyOrder, selectedTopic?.source, topicQueryKey]);
   useEffect(() => {
     if (
       selectedTopic?.source !== 'xiaoyinsi' ||
@@ -409,7 +468,8 @@ export function useTopicController({
       await Promise.all(replyKeys.map((queryKey) => queryClient.cancelQueries({ queryKey })));
       if (!ownsWindow()) return false;
 
-      let rebuilt = firstReplyData(detail, replyOrder);
+      let rebuilt =
+        detail.source === 'v2ex' && !topicHasCompleteReplies(detail) ? undefined : firstReplyData(detail, replyOrder);
       if (!rebuilt) {
         const queryKey = [...repliesQueryKey, 'rebuild-start'] as const;
         const trace = beginDiagnosticTrace('reply', 'refresh', {
@@ -421,8 +481,14 @@ export function useTopicController({
           const page = await queryClient.fetchQuery({
             queryKey,
             staleTime: 0,
-            queryFn: ({ signal }) => loadReplyPage(detail, replyOrder, { kind: 'start' }, signal, trace)
+            queryFn: ({ signal }) => loadReplyPage(detail, replyOrder, { kind: 'start' }, signal, trace),
+            retry: (failureCount, error) =>
+              detail.source === 'v2ex' && failureCount < V2EX_REPLY_SYNC_RETRIES && isV2exReplySnapshotStale(error),
+            retryDelay: V2EX_REPLY_SYNC_RETRY_DELAY_MS
           });
+          if (detail.source === 'v2ex') {
+            successfulV2exRepliesIdentityRef.current = repliesQueryIdentity;
+          }
           if (!ownsWindow()) {
             finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
             return false;
@@ -766,13 +832,6 @@ export function useTopicController({
       diagnosticTrace?: DiagnosticTrace
     ): Promise<LinuxDoReadResumeOutcome> {
       if (!selectedTopic || !topicDetail || selectedIdentityPending) return 'stale';
-      if (selectedTopic.source === 'v2ex') {
-        const trace = beginDiagnosticTrace('reply', 'refresh', { source: 'v2ex', replyOrder, positionKind: 'start' });
-        const outcome = await refreshWholeTopic();
-        const traceOutcome = outcome === 'completed' ? 'success' : outcome === 'failed' ? 'failure' : 'stale';
-        finishDiagnosticTrace(trace, traceOutcome, { replyOrder, positionKind: 'start' });
-        return outcome;
-      }
 
       const generation = ++replyWindowGenerationRef.current;
       const ownsWindow = () =>
@@ -1125,6 +1184,7 @@ export function useTopicController({
         return 'completed';
       }
       if (selectedTopic.source === 'v2ex') {
+        if (!replyCollectionComplete) return 'stale';
         if (!silent) notify('目标楼层未找到');
         return 'failed';
       }
@@ -1247,6 +1307,7 @@ export function useTopicController({
       queryClient,
       repliesQueryKey,
       replyOrder,
+      replyCollectionComplete,
       selectedIdentityPending,
       selectedTopic,
       targetReplyQueryRoot,
@@ -1258,12 +1319,28 @@ export function useTopicController({
 
   useEffect(() => {
     if (!targetReply || !topicDetail || !selectedTopic || selectedIdentityPending) return;
+    if (
+      selectedTopic.source === 'v2ex' &&
+      !replyCollectionComplete &&
+      !topicReplies.some((reply) => matchesReplyLocation(reply, targetReply))
+    ) {
+      return;
+    }
     const sessionEpoch = selectedTopic.source === 'v2ex' ? 0 : sessionEpochs[selectedTopic.source];
     const targetKey = `${topicKey(selectedTopic)}:${sessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}`;
     if (handledRouteTargetRef.current === targetKey) return;
     handledRouteTargetRef.current = targetKey;
     void locateReply(targetReply, { silent: true });
-  }, [locateReply, selectedIdentityPending, selectedTopic, sessionEpochs, targetReply, topicDetail]);
+  }, [
+    locateReply,
+    replyCollectionComplete,
+    selectedIdentityPending,
+    selectedTopic,
+    sessionEpochs,
+    targetReply,
+    topicDetail,
+    topicReplies
+  ]);
 
   const loadPreviousReplies = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
@@ -1446,6 +1523,8 @@ export function useTopicController({
       ((repliesQuery.isPending && !repliesQuery.data) ||
         (Boolean(replyWindowFailures.refresh) && detailQuery.isFetching)),
     retryReplies: retryFailedReplies,
+    repliesSyncing,
+    replyCollectionComplete,
     replyHasPrevious,
     replyHasMore,
     replyNextOffset,

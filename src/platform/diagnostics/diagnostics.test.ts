@@ -699,6 +699,13 @@ describe('diagnostic traces', () => {
         })
       )
     ).toBe('reply_count_stale');
+    expect(
+      normalizeDiagnosticReason(
+        Object.assign(new Error('V2EX 回复总数已变化，无法确认完整集合'), {
+          reason: 'v2ex-reply-snapshot-stale'
+        })
+      )
+    ).toBe('reply_count_stale');
   });
 
   it('redacts and bounds uncaught error details', () => {

@@ -512,8 +512,10 @@ function TopicFilterHarness({
   replyHasPrevious = false,
   replyEndError = null,
   replyStartError = null,
+  replyCollectionComplete = true,
   repliesError = null,
   repliesLoading = false,
+  repliesSyncing = false,
   selectedTopic = topic,
   topicReplies = sourceReplies,
   topicDetail = topic,
@@ -553,8 +555,10 @@ function TopicFilterHarness({
   replyHasPrevious?: boolean;
   replyEndError?: SourceErrorInfo | null;
   replyStartError?: SourceErrorInfo | null;
+  replyCollectionComplete?: boolean;
   repliesError?: SourceErrorInfo | null;
   repliesLoading?: boolean;
+  repliesSyncing?: boolean;
   selectedTopic?: Topic;
   topicReplies?: Reply[];
   topicDetail?: TopicDetail | null;
@@ -616,8 +620,10 @@ function TopicFilterHarness({
     replyHasPrevious,
     replyEndError,
     replyStartError,
+    replyCollectionComplete,
     repliesError,
     repliesLoading,
+    repliesSyncing,
     retryReplies: async (edge?: 'start' | 'end') => {
       onRetryReplies(edge);
       return 'completed';
@@ -1937,6 +1943,91 @@ describe('Topic reply filters', () => {
     await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
     await fireEvent.press(view.getByLabelText('倒序'));
     expect(view.getByText('已到最早回复')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-076] keeps V2EX prefix controls visible while withholding complete-collection controls', async () => {
+    const syncingTopic: TopicDetail = {
+      ...topic,
+      replyCount: 106,
+      replies: sourceReplies,
+      replyHasMore: true,
+      replyNextPage: null
+    };
+    const view = await render(
+      <TopicFilterHarness
+        replyCollectionComplete={false}
+        repliesSyncing
+        selectedTopic={syncingTopic}
+        topicDetail={syncingTopic}
+      />
+    );
+
+    expect(view.getByText('评论正在同步，暂已确认 3 / 106 条')).toBeTruthy();
+    expect(view.getByLabelText('评论内查找')).toBeTruthy();
+    expect(view.getByLabelText('只看楼主')).toBeTruthy();
+    expect(view.queryByLabelText('回复排序，当前正序')).toBeNull();
+    expect(view.queryByLabelText('已到最新回复')).toBeNull();
+
+    const unknownCountTopic = { ...syncingTopic, replyCount: undefined };
+    await view.rerender(
+      <TopicFilterHarness
+        replyCollectionComplete={false}
+        repliesSyncing
+        selectedTopic={unknownCountTopic}
+        topicDetail={unknownCountTopic}
+      />
+    );
+    expect(view.getByText('评论正在同步，暂已确认 3 条')).toBeTruthy();
+
+    await view.rerender(
+      <TopicFilterHarness
+        replyCollectionComplete={false}
+        repliesError={{ kind: 'ordinary', message: '回复总数仍未同步', retryable: true }}
+        selectedTopic={syncingTopic}
+        topicDetail={syncingTopic}
+      />
+    );
+    expect(view.getAllByText(/^reply-/)).toHaveLength(3);
+    expect(view.getByText('回复总数仍未同步')).toBeTruthy();
+    expect(view.getByText('重试评论')).toBeTruthy();
+    expect(view.queryByLabelText('回复排序，当前正序')).toBeNull();
+    expect(view.queryByLabelText('已到最新回复')).toBeNull();
+  });
+
+  it('[REG-TOPIC-076] waits to scroll to a V2EX floor outside the prefix until the full collection arrives', async () => {
+    const prefix = sourceReplies.slice(0, 1);
+    const syncingTopic: TopicDetail = {
+      ...topic,
+      replies: prefix,
+      replyHasMore: true,
+      replyNextPage: null
+    };
+    mockScrollToIndex.mockClear();
+    const view = await render(
+      <TopicFilterHarness
+        replyCollectionComplete={false}
+        repliesSyncing
+        selectedTopic={syncingTopic}
+        targetReply={{ floor: 2 }}
+        topicDetail={syncingTopic}
+        topicReplies={prefix}
+      />
+    );
+
+    expect(mockScrollToIndex).not.toHaveBeenCalled();
+
+    const completeTopic = { ...syncingTopic, replies: sourceReplies, replyHasMore: false };
+    await view.rerender(
+      <TopicFilterHarness
+        selectedTopic={completeTopic}
+        targetReply={{ floor: 2 }}
+        topicDetail={completeTopic}
+        topicReplies={sourceReplies}
+      />
+    );
+
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(1));
+    expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: true, viewPosition: 0.2 }));
   });
 
   it('[REG-TOPIC-067] scales the reply order control, menu and boundary with reader text size', async () => {

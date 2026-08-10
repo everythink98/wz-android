@@ -4,6 +4,7 @@ import { isCanceledRequest } from '@/platform/network/errors';
 type LegacySourceErrorInfo = string | (Omit<SourceErrorInfo, 'kind'> & { kind?: SourceErrorKind });
 
 const REPLY_COUNT_REFRESH_REQUIRED = 'reply-count-refresh-required';
+const V2EX_REPLY_SNAPSHOT_STALE = 'v2ex-reply-snapshot-stale';
 
 export function replyCountRefreshRequiredError(message: string) {
   return Object.assign(new Error(message), { reason: REPLY_COUNT_REFRESH_REQUIRED });
@@ -11,6 +12,14 @@ export function replyCountRefreshRequiredError(message: string) {
 
 export function isReplyCountRefreshRequired(error: unknown) {
   return errorProperty(error, 'reason') === REPLY_COUNT_REFRESH_REQUIRED;
+}
+
+export function v2exReplySnapshotStaleError(message: string) {
+  return Object.assign(new Error(message), { reason: V2EX_REPLY_SNAPSHOT_STALE });
+}
+
+export function isV2exReplySnapshotStale(error: unknown) {
+  return errorProperty(error, 'reason') === V2EX_REPLY_SNAPSHOT_STALE;
 }
 
 function unknownErrorMessage(error: unknown) {

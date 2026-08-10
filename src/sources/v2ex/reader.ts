@@ -3,6 +3,8 @@ import type {
   CategoriesResponse,
   FeedResponse,
   Reply,
+  RepliesResponse,
+  ReplyOrder,
   Topic,
   TopicDetail,
   V2exFeedFilter
@@ -32,6 +34,7 @@ import {
   v2exNodeIdFromHref as nodeIdFromHref
 } from './protocol';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { v2exReplySnapshotStaleError } from '@/sources/sourceErrors';
 
 const HTML_LIST_PAGE_SIZE = 20;
 const V2EX_FEED_CURSOR_LIMIT = 200;
@@ -441,13 +444,34 @@ function parseV2exHtmlDetail(html: string, id: string): V2exHtmlDetail {
 }
 
 function assertV2exHtmlReplyPage(detail: V2exHtmlDetail, replyCount: number) {
-  if (
-    detail.replyCountConflict ||
-    detail.replyCount !== replyCount ||
-    detail.replyNodeCount !== detail.replies.length
-  ) {
+  if (detail.replyCountConflict || detail.replyNodeCount !== detail.replies.length) {
     throw new Error(V2EX_REPLY_COLLECTION_ERROR);
   }
+  if (typeof detail.replyCount === 'number' && detail.replyCount !== replyCount) {
+    throw v2exReplySnapshotStaleError(V2EX_REPLY_COLLECTION_ERROR);
+  }
+  if (detail.replyCount !== replyCount) {
+    throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+  }
+}
+
+function continuousV2exHtmlReplyPrefix(detail: V2exHtmlDetail | null) {
+  if (!detail || detail.replyNodeCount !== detail.replies.length) {
+    return [];
+  }
+  const replies = [...detail.replies].sort((left, right) => (left.floor || 0) - (right.floor || 0));
+  const prefix: Reply[] = [];
+  const seenCommentIds = new Set<number>();
+  for (const reply of replies) {
+    if (reply.floor !== prefix.length + 1 || (reply.commentId && seenCommentIds.has(reply.commentId))) {
+      break;
+    }
+    if (reply.commentId) {
+      seenCommentIds.add(reply.commentId);
+    }
+    prefix.push(reply);
+  }
+  return prefix;
 }
 
 function completeV2exHtmlReplyDetail(firstDetail: V2exHtmlDetail, pageDetails: V2exHtmlDetail[]) {
@@ -917,16 +941,55 @@ export async function getV2exTopic(
     throw new Error('V2EX 主题不存在');
   }
   const rawTopic = Array.isArray(topicData) && isRecord(topicData[0]) ? topicData[0] : {};
-  let htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml, id) : null;
-  if (htmlDetail && typeof htmlDetail.replyCount === 'number') {
-    htmlDetail = await loadCompleteV2exHtmlReplyDetail(id, htmlDetail, options);
-  }
+  const htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml, id) : null;
   const apiContentHtml = sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL);
   const htmlAccessRequirement =
     detailHtml && !textContentFromHtml(apiContentHtml) ? v2exHtmlAccessRequirement(detailHtml) : undefined;
-  const htmlReplies = htmlDetail?.replies || [];
-  const htmlReplyCount = htmlDetail?.replyCount;
+  const replies = continuousV2exHtmlReplyPrefix(htmlDetail);
+  const htmlReplyCount = htmlDetail?.replyCountConflict ? undefined : htmlDetail?.replyCount;
   const htmlReplyNodeCount = htmlDetail?.replyNodeCount || 0;
+  const declaredComplete =
+    typeof htmlReplyCount === 'number' && htmlReplyNodeCount === replies.length && replies.length === htmlReplyCount;
+  const legacyComplete =
+    htmlDetail !== null &&
+    typeof htmlReplyCount !== 'number' &&
+    !htmlDetail.replyCountConflict &&
+    htmlReplyNodeCount === replies.length &&
+    replies.length === (topic.replyCount || 0);
+  const replyCollectionComplete = declaredComplete || legacyComplete;
+  const replyCount = declaredComplete ? htmlReplyCount : legacyComplete ? topic.replyCount || 0 : htmlReplyCount;
+  const parserVariant = declaredComplete ? 'html-topic' : legacyComplete ? 'html-topic-fallback' : 'html-topic-prefix';
+  const result = {
+    ...topic,
+    ...(typeof htmlDetail?.upvoteCount === 'number' ? { upvoteCount: htmlDetail.upvoteCount } : {}),
+    ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
+    ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
+    replyCount,
+    contentHtml: appendV2exSupplementHtml(apiContentHtml, htmlDetail?.supplementHtml || ''),
+    replies,
+    replyHasMore: !replyCollectionComplete,
+    replyNextPage: null,
+    ...(!topic.accessRequirement && htmlAccessRequirement ? { accessRequirement: htmlAccessRequirement } : {})
+  };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant,
+    candidateCount: 1 + htmlReplyNodeCount,
+    validCount: 1 + replies.length,
+    droppedCount: Math.max(0, htmlReplyNodeCount - replies.length),
+    partialErrorCount: Number(detailHtmlFailed)
+  });
+}
+
+export async function getV2exReplies(
+  id: string,
+  options: V2exOptions & { order?: ReplyOrder } = {}
+): Promise<RepliesResponse> {
+  let detailHtmlFailed = false;
+  const detailHtml = await fetchText(`${BASE_URL}/t/${encodeURIComponent(id)}`, options).catch(() => {
+    detailHtmlFailed = true;
+    return '';
+  });
+  let htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml, id) : null;
   let replies: Reply[];
   let replyCount: number;
   let replyCandidates: number;
@@ -936,69 +999,76 @@ export async function getV2exTopic(
   if (htmlDetail?.replyCountConflict) {
     throw new Error(V2EX_REPLY_COLLECTION_ERROR);
   }
-  if (typeof htmlReplyCount === 'number') {
-    if (htmlReplyNodeCount !== htmlReplyCount || htmlReplies.length !== htmlReplyNodeCount) {
-      throw new Error(V2EX_REPLY_COLLECTION_ERROR);
-    }
-    replies = htmlReplies;
-    replyCount = htmlReplyCount;
-    replyCandidates = htmlReplies.length;
+  if (htmlDetail && typeof htmlDetail.replyCount === 'number') {
+    const declaredReplyCount = htmlDetail.replyCount;
+    htmlDetail = await loadCompleteV2exHtmlReplyDetail(id, htmlDetail, options);
+    replies = htmlDetail.replies;
+    replyCount = declaredReplyCount;
+    replyCandidates = htmlDetail.replyNodeCount;
     parserVariant = 'html-topic';
-  } else if (
-    htmlDetail &&
-    htmlReplyNodeCount === (topic.replyCount || 0) &&
-    htmlReplies.length === htmlReplyNodeCount
-  ) {
-    replies = htmlReplies;
-    replyCount = topic.replyCount || 0;
-    replyCandidates = htmlReplies.length;
-    parserVariant = 'html-topic-fallback';
   } else {
-    const replyResult = await fetchJson<unknown[]>(
-      `${BASE_URL}/api/replies/show.json?topic_id=${encodeURIComponent(id)}&page=1`,
+    const topicData = await fetchJson<unknown[]>(
+      `${BASE_URL}/api/topics/show.json?id=${encodeURIComponent(id)}`,
       options
-    )
-      .then((data) => ({ data }))
-      .catch((error: unknown) => {
-        replyApiFailed = true;
-        return { error };
-      });
-    const replyData = 'data' in replyResult && Array.isArray(replyResult.data) ? replyResult.data : null;
-    const apiReplies =
-      replyData !== null
-        ? mergeV2exReplyMeta(replyData.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
-        : [];
-    if ('error' in replyResult) {
-      throw replyResult.error instanceof Error
-        ? replyResult.error
-        : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
+    );
+    const topic = normalizeApiTopic(Array.isArray(topicData) ? topicData[0] : null);
+    if (!topic) {
+      throw new Error('V2EX 主题不存在');
     }
-    replies = replyData !== null ? apiReplies : htmlReplies;
-    replyCount = topic.replyCount || 0;
-    replyCandidates = replyData !== null ? replyData.length : htmlReplies.length;
-    parserVariant = replyData !== null ? 'api-topic-fallback' : 'html-topic-fallback';
-    if (replies.length !== replyCount) {
-      throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+    const htmlReplies = continuousV2exHtmlReplyPrefix(htmlDetail);
+    const htmlReplyNodeCount = htmlDetail?.replyNodeCount || 0;
+    if (htmlDetail && htmlReplyNodeCount === htmlReplies.length && htmlReplies.length === (topic.replyCount || 0)) {
+      replies = htmlReplies;
+      replyCount = topic.replyCount || 0;
+      replyCandidates = htmlReplyNodeCount;
+      parserVariant = 'html-topic-fallback';
+    } else {
+      const replyResult = await fetchJson<unknown[]>(
+        `${BASE_URL}/api/replies/show.json?topic_id=${encodeURIComponent(id)}&page=1`,
+        options
+      )
+        .then((data) => ({ data }))
+        .catch((error: unknown) => {
+          replyApiFailed = true;
+          return { error };
+        });
+      const replyData = 'data' in replyResult && Array.isArray(replyResult.data) ? replyResult.data : null;
+      if ('error' in replyResult) {
+        throw replyResult.error instanceof Error
+          ? replyResult.error
+          : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
+      }
+      replies =
+        replyData !== null
+          ? mergeV2exReplyMeta(replyData.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
+          : htmlReplies;
+      replyCount = topic.replyCount || 0;
+      replyCandidates = replyData !== null ? replyData.length : htmlReplyNodeCount;
+      parserVariant = replyData !== null ? 'api-topic-fallback' : 'html-topic-fallback';
+      if (replies.length !== replyCount) {
+        throw new Error(V2EX_REPLY_COLLECTION_ERROR);
+      }
     }
   }
-  const result = {
-    ...topic,
-    ...(typeof htmlDetail?.upvoteCount === 'number' ? { upvoteCount: htmlDetail.upvoteCount } : {}),
-    ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
-    ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
-    replyCount,
-    contentHtml: appendV2exSupplementHtml(apiContentHtml, htmlDetail?.supplementHtml || ''),
-    replies,
-    replyHasMore: false,
-    replyNextPage: null,
-    ...(!topic.accessRequirement && htmlAccessRequirement ? { accessRequirement: htmlAccessRequirement } : {})
+
+  const orderedReplies = options.order === 'newest' ? [...replies].reverse() : replies;
+  const result: RepliesResponse = {
+    items: orderedReplies,
+    currentPage: 1,
+    currentOffset: 0,
+    previousPage: null,
+    previousOffset: null,
+    hasMore: false,
+    nextPage: null,
+    nextOffset: null,
+    totalCount: replyCount
   };
-  const partialErrorCount = Number(detailHtmlFailed) + Number(replyApiFailed);
   return annotateSourceDiagnosticSummary(result, {
     parserVariant,
-    candidateCount: 1 + replyCandidates,
-    validCount: 1 + replies.length,
+    candidateCount: replyCandidates,
+    validCount: replies.length,
     droppedCount: Math.max(0, replyCandidates - replies.length),
-    partialErrorCount
+    partialErrorCount: Number(detailHtmlFailed) + Number(replyApiFailed),
+    isExpectedEmpty: replyCount === 0
   });
 }

@@ -404,8 +404,10 @@ export const TopicContentList = memo(function TopicContentList({
   const loadingQuotedFloors = read.loadingQuotedFloors;
   const replyStartError = read.replyStartError;
   const replyEndError = read.replyEndError;
+  const replyCollectionComplete = read.replyCollectionComplete;
   const repliesError = read.repliesError;
   const repliesLoading = read.repliesLoading;
+  const repliesSyncing = read.repliesSyncing;
   const retryReplies = read.retryReplies;
   const unreadReplyCount = read.unreadReplyCount;
   const onCommentQueryChange = commands.view.changeCommentQuery;
@@ -525,6 +527,11 @@ export const TopicContentList = memo(function TopicContentList({
     replyFilter === 'author' || replyFilter === 'images' || replyHighlightQuery.trim()
       ? replies.length
       : replyTotalCount;
+  const repliesSyncStatus = repliesSyncing
+    ? `评论正在同步，暂已确认 ${sourceReplies.length}${
+        typeof topic?.replyCount === 'number' ? ` / ${topic.replyCount}` : ''
+      } 条`
+    : '';
   const renderReplyErrorState = useCallback(
     (error: SourceErrorInfo | null, edge?: 'start' | 'end') =>
       error ? (
@@ -540,18 +547,22 @@ export const TopicContentList = memo(function TopicContentList({
       actionBusy,
       quoteStateVersion,
       replyComposerOpen,
+      replyCollectionComplete,
       replyEndError,
       replyOrder,
       replyOrderMenuOpen,
       replyStartError,
       repliesError,
-      repliesLoading
+      repliesLoading,
+      repliesSyncing
     }),
     [
       actionBusy,
       quoteStateVersion,
+      replyCollectionComplete,
       repliesError,
       repliesLoading,
+      repliesSyncing,
       replyComposerOpen,
       replyEndError,
       replyOrder,
@@ -754,7 +765,12 @@ export const TopicContentList = memo(function TopicContentList({
     ]
   );
   const replyBoundaryConfirmed =
-    canShowReplies && sourceReplies.length > 0 && !replyHasMore && !repliesLoading && !repliesError;
+    canShowReplies &&
+    replyCollectionComplete &&
+    sourceReplies.length > 0 &&
+    !replyHasMore &&
+    !repliesLoading &&
+    !repliesError;
   const terminalReplyItemKey = replyBoundaryConfirmed ? replyItems.at(-1)?.key : undefined;
   const replyWindowIndexByKey = useMemo(
     () => new Map(replies.map((reply, index) => [getReplyKey(reply), index])),
@@ -1793,6 +1809,7 @@ export const TopicContentList = memo(function TopicContentList({
                 />
               ) : null}
             </View>
+            {repliesSyncStatus ? <Text style={styles.noticeText}>{repliesSyncStatus}</Text> : null}
             <View style={styles.replySelectionRow}>
               <View style={styles.replyFilterRailSlot}>
                 <PillRail
@@ -1806,40 +1823,44 @@ export const TopicContentList = memo(function TopicContentList({
                   onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
                 />
               </View>
-              <Pressable
-                ref={replyOrderMenuTriggerRef}
-                collapsable={false}
-                accessibilityRole="button"
-                accessibilityLabel={`回复排序，当前${replyOrderLabel}`}
-                accessibilityState={{ expanded: replyOrderMenuOpen }}
-                hitSlop={TOUCH_HIT_SLOP}
-                android_ripple={androidRipple(theme.primarySoft)}
-                style={({ pressed }) => [styles.replyOrderButton, pressed && styles.replyOrderButtonPressed]}
-                onPress={openReplyOrderMenu}
-              >
-                <Text style={styles.replyOrderButtonText}>{replyOrderLabel}</Text>
-                <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
-              </Pressable>
-              <PopupMenu
-                accessibilityLabel="关闭回复排序菜单"
-                placementStyle={replyOrderMenuPlacement}
-                visible={replyOrderMenuOpen}
-                onRequestClose={closeReplyOrderMenu}
-              >
-                <PopupMenuItem
-                  compact
-                  label="正序"
-                  selected={replyOrder === 'oldest'}
-                  onPress={() => selectReplyOrder('oldest')}
-                />
-                <PopupMenuItem
-                  compact
-                  label="倒序"
-                  last
-                  selected={replyOrder === 'newest'}
-                  onPress={() => selectReplyOrder('newest')}
-                />
-              </PopupMenu>
+              {replyCollectionComplete ? (
+                <>
+                  <Pressable
+                    ref={replyOrderMenuTriggerRef}
+                    collapsable={false}
+                    accessibilityRole="button"
+                    accessibilityLabel={`回复排序，当前${replyOrderLabel}`}
+                    accessibilityState={{ expanded: replyOrderMenuOpen }}
+                    hitSlop={TOUCH_HIT_SLOP}
+                    android_ripple={androidRipple(theme.primarySoft)}
+                    style={({ pressed }) => [styles.replyOrderButton, pressed && styles.replyOrderButtonPressed]}
+                    onPress={openReplyOrderMenu}
+                  >
+                    <Text style={styles.replyOrderButtonText}>{replyOrderLabel}</Text>
+                    <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
+                  </Pressable>
+                  <PopupMenu
+                    accessibilityLabel="关闭回复排序菜单"
+                    placementStyle={replyOrderMenuPlacement}
+                    visible={replyOrderMenuOpen}
+                    onRequestClose={closeReplyOrderMenu}
+                  >
+                    <PopupMenuItem
+                      compact
+                      label="正序"
+                      selected={replyOrder === 'oldest'}
+                      onPress={() => selectReplyOrder('oldest')}
+                    />
+                    <PopupMenuItem
+                      compact
+                      label="倒序"
+                      last
+                      selected={replyOrder === 'newest'}
+                      onPress={() => selectReplyOrder('newest')}
+                    />
+                  </PopupMenu>
+                </>
+              ) : null}
             </View>
             {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
             <View style={styles.searchRow}>
@@ -1879,8 +1900,16 @@ export const TopicContentList = memo(function TopicContentList({
       if (listItem.type === 'emptyReplies') {
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
-            {repliesLoading ? (
-              <LoadingState text={replyOrder === 'newest' ? '正在读取最新回复...' : '正在读取回复...'} />
+            {repliesLoading || repliesSyncing ? (
+              <LoadingState
+                text={
+                  repliesSyncing
+                    ? '评论正在同步...'
+                    : replyOrder === 'newest'
+                      ? '正在读取最新回复...'
+                      : '正在读取回复...'
+                }
+              />
             ) : repliesError ? (
               renderReplyErrorState(repliesError)
             ) : (
@@ -2006,6 +2035,7 @@ export const TopicContentList = memo(function TopicContentList({
       replyComposerOpen,
       replyHighlightQuery,
       replyFilter,
+      replyCollectionComplete,
       replyOrderLabel,
       replyOrder,
       replyOrderMenuOpen,
@@ -2016,6 +2046,8 @@ export const TopicContentList = memo(function TopicContentList({
       repliesByFloor,
       replyDisplayCount,
       repliesLoading,
+      repliesSyncing,
+      repliesSyncStatus,
       scrollToAcceptedAnswer,
       selectReplyOrder,
       sourceReplies.length,

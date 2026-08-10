@@ -45,6 +45,12 @@ function replyRequestTarget(request: ReplyRequest) {
   return request.position.kind === 'target' ? request.position.target : undefined;
 }
 
+function v2exSnapshotStaleError() {
+  return Object.assign(new Error('V2EX 回复总数已变化，无法确认完整集合'), {
+    reason: 'v2ex-reply-snapshot-stale'
+  });
+}
+
 describe('topic route sessions', () => {
   it('[REG-PERF-002] keeps route-local draft and filter state across rerenders', async () => {
     const hook = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn(), topic: firstTopic }));
@@ -326,7 +332,7 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(3);
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-068][REG-TOPIC-069] reorders and refreshes a complete V2EX collection without another reply transport', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-068][REG-TOPIC-069][REG-TOPIC-076] reorders a complete V2EX collection locally and refreshes only replies', async () => {
     const replies = [
       { ...firstReply, floor: 1, commentId: 101 },
       { ...firstReply, floor: 2, commentId: 102 },
@@ -335,7 +341,17 @@ describe('topic query controller', () => {
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 3 };
     const detail = { ...firstDetail, ...topic, replies, replyHasMore: false, replyNextPage: null };
     const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
-    const getReplies = jest.fn<ReadGateway['getReplies']>();
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+      items: replies,
+      currentPage: 1,
+      currentOffset: 0,
+      previousPage: null,
+      previousOffset: null,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null,
+      totalCount: 3
+    }));
     const hook = await renderTopicController({
       readGateway: {
         getTopic,
@@ -364,8 +380,247 @@ describe('topic query controller', () => {
       await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('completed');
     });
 
+    expect(getTopic).toHaveBeenCalledTimes(1);
+    expect(getReplies).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-076] keeps the V2EX body and prefix visible until stale snapshots converge', async () => {
+    jest.useFakeTimers();
+    try {
+      const prefix = [
+        { ...firstReply, floor: 1, commentId: 101 },
+        { ...firstReply, floor: 2, commentId: 102 }
+      ];
+      const fullReplies = [...prefix, { ...firstReply, floor: 3, commentId: 103 }];
+      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 3 };
+      const detail: TopicDetail = {
+        ...firstDetail,
+        ...topic,
+        contentHtml: '<p>V2EX body</p>',
+        replies: prefix,
+        replyHasMore: true,
+        replyNextPage: null
+      };
+      const getReplies = jest
+        .fn<ReadGateway['getReplies']>()
+        .mockRejectedValueOnce(v2exSnapshotStaleError())
+        .mockRejectedValueOnce(v2exSnapshotStaleError())
+        .mockResolvedValueOnce({
+          items: fullReplies,
+          currentPage: 1,
+          currentOffset: 0,
+          previousPage: null,
+          previousOffset: null,
+          hasMore: false,
+          nextPage: null,
+          nextOffset: null,
+          totalCount: 3
+        });
+      const hook = await renderTopicController({
+        readGateway: {
+          getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+          getReplies
+        },
+        topic
+      });
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(hook.result.current.controller.topicDetail?.contentHtml).toContain('V2EX body');
+      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2]);
+      expect(hook.result.current.controller.repliesSyncing).toBe(true);
+      expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
+      expect(getReplies).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+      });
+      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2]);
+      expect(getReplies).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(getReplies).toHaveBeenCalledTimes(3);
+      expect(
+        appQueryClient.getQueryData(forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest'))
+      ).toMatchObject({ pages: [{ items: fullReplies }] });
+      await act(async () => {
+        hook.rerender(undefined);
+      });
+      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2, 3]);
+      expect(hook.result.current.controller.repliesSyncing).toBe(false);
+      expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
+      expect(appQueryClient.getQueryData(hook.result.current.controller.topicQueryKey)).toMatchObject({
+        replyCount: 3,
+        replyHasMore: false,
+        replyNextPage: null
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-TOPIC-076] keeps the V2EX prefix and exposes a reply-level retry after six stale reads', async () => {
+    jest.useFakeTimers();
+    try {
+      const prefix = [{ ...firstReply, floor: 1, commentId: 101 }];
+      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
+      const detail: TopicDetail = {
+        ...firstDetail,
+        ...topic,
+        replies: prefix,
+        replyHasMore: true,
+        replyNextPage: null
+      };
+      const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
+        throw v2exSnapshotStaleError();
+      });
+      const hook = await renderTopicController({
+        readGateway: {
+          getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+          getReplies
+        },
+        topic
+      });
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(getReplies).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(25_000);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(getReplies).toHaveBeenCalledTimes(6);
+      expect(hook.result.current.controller.topicReplies).toEqual(prefix);
+      expect(hook.result.current.controller.repliesSyncing).toBe(false);
+      expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
+      expect(hook.result.current.controller.repliesError?.message).toContain('回复总数已变化');
+      expect(hook.result.current.controller.topicError).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-TOPIC-076] does not retry structural V2EX reply failures', async () => {
+    jest.useFakeTimers();
+    try {
+      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
+      const detail: TopicDetail = {
+        ...firstDetail,
+        ...topic,
+        replyHasMore: true,
+        replyNextPage: null
+      };
+      const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
+        throw new Error('V2EX 回复集合未确认完整');
+      });
+      const hook = await renderTopicController({
+        readGateway: {
+          getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+          getReplies
+        },
+        topic
+      });
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(30_000);
+      });
+      expect(getReplies).toHaveBeenCalledTimes(1);
+      expect(appQueryClient.getQueryData(hook.result.current.controller.topicQueryKey)).toMatchObject({
+        replies: detail.replies,
+        replyHasMore: true
+      });
+      expect(hook.result.current.controller.topicReplies).toEqual(detail.replies);
+      expect(hook.result.current.controller.repliesError?.message).toBe('V2EX 回复集合未确认完整');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-TOPIC-076] cancels delayed V2EX snapshot retries when the route becomes inactive', async () => {
+    jest.useFakeTimers();
+    try {
+      let active = true;
+      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
+      const detail: TopicDetail = {
+        ...firstDetail,
+        ...topic,
+        replyHasMore: true,
+        replyNextPage: null
+      };
+      const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
+        throw v2exSnapshotStaleError();
+      });
+      const hook = await renderTopicController({
+        getActive: () => active,
+        readGateway: {
+          getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+          getReplies
+        },
+        topic
+      });
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(getReplies).toHaveBeenCalledTimes(1);
+      active = false;
+      await act(async () => {
+        hook.rerender(undefined);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(30_000);
+      });
+      expect(getReplies).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-TOPIC-076] rebuilds incomplete V2EX replies through the convergence query on a full refresh', async () => {
+    const prefix = [{ ...firstReply, floor: 1, commentId: 101 }];
+    const fullReplies = [...prefix, { ...firstReply, floor: 2, commentId: 102 }];
+    const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replies: prefix,
+      replyHasMore: true,
+      replyNextPage: null
+    };
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+      items: fullReplies,
+      currentPage: 1,
+      currentOffset: 0,
+      previousPage: null,
+      previousOffset: null,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null,
+      totalCount: 2
+    }));
+    const hook = await renderTopicController({ readGateway: { getTopic, getReplies }, topic });
+
+    await waitFor(() => expect(hook.result.current.controller.replyCollectionComplete).toBe(true));
+    expect(getTopic).toHaveBeenCalledTimes(1);
+    expect(getReplies).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('completed');
+    });
+
     expect(getTopic).toHaveBeenCalledTimes(2);
-    expect(getReplies).not.toHaveBeenCalled();
+    expect(getReplies).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.controller.topicReplies).toEqual(fullReplies);
   });
 
   it('[REG-TOPIC-067] rejects an unconfirmed tail without applying it and retries the same order', async () => {
@@ -1135,7 +1390,7 @@ describe('topic query controller', () => {
   it('[REG-TOPIC-062][REG-TOPIC-069] locates V2EX only from its already loaded reply collection', async () => {
     const reply = { ...firstReply, floor: 12, commentId: 120 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1' };
-    const detail = { ...firstDetail, ...topic, replies: [reply] };
+    const detail = { ...firstDetail, ...topic, replies: [reply], replyCount: 1, replyHasMore: false };
     const getReplies = jest.fn<ReadGateway['getReplies']>();
     const hook = await renderTopicController({
       readGateway: {
@@ -1150,6 +1405,53 @@ describe('topic query controller', () => {
     await expect(hook.result.current.controller.locateReply({ floor: 12 })).resolves.toBe('completed');
     await expect(hook.result.current.controller.locateReply({ floor: 99 }, { silent: true })).resolves.toBe('failed');
     expect(getReplies).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-076] locates inside the V2EX prefix and waits for outside floors until convergence', async () => {
+    const prefixReply = { ...firstReply, floor: 1, commentId: 101 };
+    const target = { ...firstReply, floor: 2, commentId: 102 };
+    const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replies: [prefixReply],
+      replyHasMore: true,
+      replyNextPage: null
+    };
+    const pending = Promise.withResolvers<RepliesResponse>();
+    const notify = jest.fn();
+    const hook = await renderTopicController({
+      notify,
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+        getReplies: jest.fn<ReadGateway['getReplies']>(async () => pending.promise)
+      },
+      topic
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([prefixReply]));
+    await expect(hook.result.current.controller.locateReply({ floor: 1 })).resolves.toBe('completed');
+    await expect(hook.result.current.controller.locateReply({ floor: 2 })).resolves.toBe('stale');
+    expect(notify).not.toHaveBeenCalledWith('目标楼层未找到');
+
+    await act(async () => {
+      pending.resolve({
+        items: [prefixReply, target],
+        currentPage: 1,
+        currentOffset: 0,
+        previousPage: null,
+        previousOffset: null,
+        hasMore: false,
+        nextPage: null,
+        nextOffset: null,
+        totalCount: 2
+      });
+      await pending.promise;
+    });
+    await waitFor(() => expect(hook.result.current.controller.replyCollectionComplete).toBe(true));
+    await expect(hook.result.current.controller.locateReply({ floor: 2 })).resolves.toBe('completed');
+    await expect(hook.result.current.controller.locateReply({ floor: 99 })).resolves.toBe('failed');
+    expect(notify).toHaveBeenCalledWith('目标楼层未找到');
   });
 
   it('[REG-TOPIC-062] preserves the current window when a source cannot confirm the target floor', async () => {
@@ -1801,16 +2103,16 @@ describe('topic query controller', () => {
       source: 'v2ex' as const,
       url: 'https://www.v2ex.com/t/1'
     };
-    const v2exDetail = { ...firstDetail, ...v2exTopic };
-    const getTopic = jest
-      .fn<ReadGateway['getTopic']>()
-      .mockResolvedValueOnce(v2exDetail)
-      .mockRejectedValueOnce(new Error('V2EX refresh failed'));
+    const v2exDetail = { ...firstDetail, ...v2exTopic, replyCount: 1, replyHasMore: false };
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => v2exDetail);
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
+      throw new Error('V2EX refresh failed');
+    });
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
     });
-    const hook = await renderTopicController({ readGateway: { getTopic }, topic: v2exTopic });
+    const hook = await renderTopicController({ readGateway: { getTopic, getReplies }, topic: v2exTopic });
 
     await act(async () => {
       await hook.result.current.controller.openTopic(v2exTopic);
@@ -1821,6 +2123,8 @@ describe('topic query controller', () => {
     });
 
     expect(hook.result.current.controller.topicDetail).toEqual(v2exDetail);
+    expect(getTopic).toHaveBeenCalledTimes(1);
+    expect(getReplies).toHaveBeenCalledTimes(1);
     expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent)).toContainEqual(
       expect.objectContaining({ area: 'reply', operation: 'refresh', phase: 'finish', outcome: 'failure' })
     );

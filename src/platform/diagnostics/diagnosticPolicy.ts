@@ -654,7 +654,7 @@ export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
   if (typedReason === 'parse_empty') {
     return 'parse_empty';
   }
-  if (typedReason === 'reply-count-refresh-required') {
+  if (typedReason === 'reply-count-refresh-required' || typedReason === 'v2ex-reply-snapshot-stale') {
     return 'reply_count_stale';
   }
   const text =

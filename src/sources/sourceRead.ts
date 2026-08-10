@@ -15,7 +15,7 @@ import {
   yaohuoUserProfileReplyListUrl,
   yaohuoUserProfileTopicListUrl
 } from '@/sources/yaohuo/protocol';
-import { getV2exTopic } from '@/sources/v2ex/reader';
+import { getV2exReplies, getV2exTopic } from '@/sources/v2ex/reader';
 import { getV2exUserProfile } from '@/sources/v2ex/account';
 import { checkYaohuoLoginDirect } from '@/sources/yaohuo/reader';
 import {
@@ -139,7 +139,7 @@ export function getReplies({
   }
   return dispatchSourceRead<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
-    v2ex: () => Promise.reject(new Error('V2EX 回复集合未确认完整'))
+    v2ex: () => getV2exReplies(id, options)
   });
 }
 

@@ -17,7 +17,7 @@ export type ReplyCursorPosition = Extract<ReplyWindowPosition, { kind: 'cursor' 
 export type ReplyWindowEdge = 'start' | 'end';
 export type ReplyPage = RepliesResponse & { requestedOffset: number | null; requestedPage: number };
 
-function topicHasCompleteReplies(detail: TopicDetail) {
+export function topicHasCompleteReplies(detail: TopicDetail) {
   return (
     typeof detail.replyCount === 'number' &&
     detail.replyHasMore === false &&

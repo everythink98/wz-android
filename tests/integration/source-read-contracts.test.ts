@@ -7242,11 +7242,19 @@ describe('Android local sources', () => {
     const first = await getFeed({ source: 'v2ex', fetcher });
     const second = await getFeed({ source: 'v2ex', page: 2, fetcher });
     const topic = await getTopic({ source: 'v2ex', id: '121', fetcher });
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '121',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
     const search = await searchTopics({ source: 'v2ex', query: 'V2EX', fetcher });
 
     expect(first.items[0]).toMatchObject({ id: '121', categoryId: 'create' });
     expect(second.items[0]).toMatchObject({ id: '122', author: 'bob' });
-    expect(topic.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
+    expect(topic.contentHtml).toContain('detail');
+    expect(replies.items[0]).toMatchObject({ author: 'bob', floor: 1 });
     expect(search.items[0]).toMatchObject({ id: '121', title: 'V2EX search' });
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(
       /\/api\/feed|http:\/\/10\.0\.2\.2|http:\/\/127\.0\.0\.1:3000/
@@ -7593,6 +7601,104 @@ describe('Android local sources', () => {
     );
   });
 
+  it('[REG-TOPIC-076] exposes the V2EX body and continuous first-page prefix before reply pages converge', async () => {
+    const rows = (firstFloor: number, lastFloor: number) =>
+      Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
+        .map(
+          (floor) => `
+            <div id="r_${92000 + floor}" class="cell">
+              <span class="no">${floor}</span>
+              <strong><a href="/member/user-${floor}">user-${floor}</a></strong>
+              <div class="reply_content">reply ${floor}</div>
+            </div>
+          `
+        )
+        .join('');
+    let pageCalls = 0;
+    let replyApiCalls = 0;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 1232881,
+            title: 'V2EX reply snapshot race',
+            url: 'https://www.v2ex.com/t/1232881',
+            created: 1780000000,
+            replies: 105,
+            member: { username: 'neo' },
+            content_rendered: '<p>body remains available</p>'
+          }
+        ]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        replyApiCalls += 1;
+        throw new Error('public replies API must not run during the topic read');
+      }
+      if (input === 'https://www.v2ex.com/t/1232881') {
+        return html(`
+          <script type="application/ld+json">{"commentCount":106,"interactionStatistic":[{"interactionType":"https://schema.org/ReplyAction","userInteractionCount":106}]}</script>
+          ${rows(1, 100)}
+          <a href="?p=2">2</a>
+        `);
+      }
+      if (input === 'https://www.v2ex.com/t/1232881?p=2') {
+        pageCalls += 1;
+        throw new Error('the topic read must not wait for page two');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '1232881', fetcher });
+
+    expect(topic.contentHtml).toContain('body remains available');
+    expect(topic.replyCount).toBe(106);
+    expect(topic.replies.map(({ floor }) => floor)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: null });
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic-prefix' });
+    expect(pageCalls).toBe(0);
+    expect(replyApiCalls).toBe(0);
+  });
+
+  it('[REG-TOPIC-076] classifies a changed V2EX page declaration as a transient snapshot error', async () => {
+    const rows = (firstFloor: number, lastFloor: number) =>
+      Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
+        .map(
+          (floor) => `
+            <div id="r_${93000 + floor}" class="cell">
+              <span class="no">${floor}</span>
+              <strong><a href="/member/user-${floor}">user-${floor}</a></strong>
+              <div class="reply_content">reply ${floor}</div>
+            </div>
+          `
+        )
+        .join('');
+    const declaration = (count: number) => `
+      <script type="application/ld+json">{"commentCount":${count},"interactionStatistic":[{"interactionType":"https://schema.org/ReplyAction","userInteractionCount":${count}}]}</script>
+    `;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/t/1232881') {
+        return html(`${declaration(106)}${rows(1, 100)}<a href="?p=2">2</a>`);
+      }
+      if (input === 'https://www.v2ex.com/t/1232881?p=2') {
+        return html(`${declaration(105)}${rows(101, 105)}`);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const error = await getReplies({
+      source: 'v2ex',
+      id: '1232881',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    }).catch((caught) => caught);
+
+    expect(error).toMatchObject({
+      message: 'V2EX 回复总数已变化，无法确认完整集合',
+      reason: 'v2ex-reply-snapshot-stale'
+    });
+  });
+
   it('[REG-TOPIC-071] resolves query-relative same-topic V2EX pages into one complete reply collection', async () => {
     const rows = (firstFloor: number, lastFloor: number) =>
       Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
@@ -7645,9 +7751,33 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'v2ex', id: '1231874', fetcher });
 
     expect(topic.replyCount).toBe(107);
-    expect(topic.replies).toHaveLength(107);
-    expect(topic.replies.map(({ floor }) => floor)).toEqual(Array.from({ length: 107 }, (_, index) => index + 1));
-    expect(topic).toMatchObject({ replyHasMore: false, replyNextPage: null });
+    expect(topic.replies).toHaveLength(100);
+    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: null });
+    expect(fetcher.mock.calls.map(([input]) => input)).not.toContain('https://www.v2ex.com/t/1231874?p=2');
+
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '1231874',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+
+    expect(replies.items).toHaveLength(107);
+    expect(replies.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 107 }, (_, index) => index + 1));
+    expect(replies).toMatchObject({ hasMore: false, nextPage: null, nextOffset: null });
+
+    const newestReplies = await getReplies({
+      source: 'v2ex',
+      id: '1231874',
+      order: 'newest',
+      position: { kind: 'start' },
+      fetcher
+    });
+    expect(newestReplies.items.map(({ floor }) => floor)).toEqual(
+      Array.from({ length: 107 }, (_, index) => 107 - index)
+    );
+    expect(newestReplies).toMatchObject({ hasMore: false, nextPage: null, nextOffset: null });
     expect(replyApiCalls).toBe(0);
     expect(fetcher.mock.calls.map(([input]) => input)).toContain('https://www.v2ex.com/t/1231874?p=2');
   });
@@ -7665,6 +7795,13 @@ describe('Android local sources', () => {
       firstLink: '/t/1231875?p=2',
       secondCount: 107,
       secondFloors: [101, 102, 103, 104, 106, 107],
+      expectedPageCalls: 1
+    },
+    {
+      name: 'a duplicate floor and comment id across pages',
+      firstLink: '/t/1231875?p=2',
+      secondCount: 107,
+      secondFloors: [100, 102, 103, 104, 105, 106, 107],
       expectedPageCalls: 1
     },
     {
@@ -7723,9 +7860,19 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getTopic({ source: 'v2ex', id: '1231875', fetcher })).rejects.toThrow(
-      'V2EX 回复总数已变化，无法确认完整集合'
-    );
+    const topic = await getTopic({ source: 'v2ex', id: '1231875', fetcher });
+    expect(topic.replies).toHaveLength(100);
+    expect(topic.replyHasMore).toBe(true);
+
+    await expect(
+      getReplies({
+        source: 'v2ex',
+        id: '1231875',
+        order: 'oldest',
+        position: { kind: 'start' },
+        fetcher
+      })
+    ).rejects.toThrow('V2EX 回复总数已变化，无法确认完整集合');
     expect(replyApiCalls).toBe(0);
     expect(pageCalls).toBe(scenario.expectedPageCalls);
   });
@@ -7761,7 +7908,17 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getTopic({ source: 'v2ex', id: '820', fetcher })).rejects.toThrow('回复总数已变化');
+    const topic = await getTopic({ source: 'v2ex', id: '820', fetcher });
+    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
+    await expect(
+      getReplies({
+        source: 'v2ex',
+        id: '820',
+        order: 'oldest',
+        position: { kind: 'start' },
+        fetcher
+      })
+    ).rejects.toThrow('回复总数已变化');
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=820&page=1'
     );
@@ -7833,7 +7990,19 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getTopic({ source: 'v2ex', id: '822', fetcher })).rejects.toThrow('回复总数已变化');
+    const topic = await getTopic({ source: 'v2ex', id: '822', fetcher });
+    expect(topic.replies.map(({ floor }) => floor)).toEqual([1, 2]);
+    expect(topic.replyHasMore).toBe(true);
+    expect(topic.replyCount).toBeUndefined();
+    await expect(
+      getReplies({
+        source: 'v2ex',
+        id: '822',
+        order: 'oldest',
+        position: { kind: 'start' },
+        fetcher
+      })
+    ).rejects.toThrow('回复总数已变化');
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=822&page=1'
     );
@@ -7874,7 +8043,18 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getTopic({ source: 'v2ex', id: '816', fetcher })).rejects.toThrow('回复总数已变化');
+    const topic = await getTopic({ source: 'v2ex', id: '816', fetcher });
+    expect(topic.replies.map(({ floor }) => floor)).toEqual([1, 2]);
+    expect(topic.replyHasMore).toBe(true);
+    await expect(
+      getReplies({
+        source: 'v2ex',
+        id: '816',
+        order: 'oldest',
+        position: { kind: 'start' },
+        fetcher
+      })
+    ).rejects.toThrow('回复总数已变化');
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=816&page=1'
     );
@@ -8052,12 +8232,23 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '812', fetcher });
 
-    expect(topic.replyCount).toBe(2);
-    expect(topic.replies.map(({ author, commentId, floor }) => ({ author, commentId, floor }))).toEqual([
+    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
+    expect(topic.replyCount).toBeUndefined();
+
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '812',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+
+    expect(replies.totalCount).toBe(2);
+    expect(replies.items.map(({ author, commentId, floor }) => ({ author, commentId, floor }))).toEqual([
       { author: 'alice', commentId: 7201, floor: 1 },
       { author: 'bob', commentId: 7202, floor: 2 }
     ]);
-    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+    expect(sourceDiagnosticSummary(replies)).toMatchObject({
       parserVariant: 'api-topic-fallback',
       partialErrorCount: 1
     });
@@ -8091,8 +8282,19 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '818', fetcher });
 
-    expect(topic).toMatchObject({ replyCount: 0, replies: [], replyHasMore: false, replyNextPage: null });
-    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
+    expect(topic.replyCount).toBeUndefined();
+
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '818',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+
+    expect(replies).toMatchObject({ totalCount: 0, items: [], hasMore: false, nextPage: null });
+    expect(sourceDiagnosticSummary(replies)).toMatchObject({
       parserVariant: 'api-topic-fallback',
       partialErrorCount: 1
     });
@@ -8124,7 +8326,17 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getTopic({ source: 'v2ex', id: '823', fetcher })).rejects.toThrow('回复总数已变化');
+    const topic = await getTopic({ source: 'v2ex', id: '823', fetcher });
+    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
+    await expect(
+      getReplies({
+        source: 'v2ex',
+        id: '823',
+        order: 'oldest',
+        position: { kind: 'start' },
+        fetcher
+      })
+    ).rejects.toThrow('回复总数已变化');
   });
 
   it('[REG-TOPIC-069] selects a matching empty V2EX API fallback over unproven HTML rows', async () => {
@@ -8158,8 +8370,20 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '819', fetcher });
 
-    expect(topic).toMatchObject({ replyCount: 0, replies: [], replyHasMore: false, replyNextPage: null });
-    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+    expect(topic.replies.map(({ floor }) => floor)).toEqual([1]);
+    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: null });
+    expect(topic.replyCount).toBeUndefined();
+
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '819',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+
+    expect(replies).toMatchObject({ totalCount: 0, items: [], hasMore: false, nextPage: null });
+    expect(sourceDiagnosticSummary(replies)).toMatchObject({
       parserVariant: 'api-topic-fallback',
       partialErrorCount: 0
     });
@@ -8191,7 +8415,17 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getTopic({ source: 'v2ex', id: '813', fetcher })).rejects.toThrow('回复总数已变化');
+    const topic = await getTopic({ source: 'v2ex', id: '813', fetcher });
+    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
+    await expect(
+      getReplies({
+        source: 'v2ex',
+        id: '813',
+        order: 'oldest',
+        position: { kind: 'start' },
+        fetcher
+      })
+    ).rejects.toThrow('回复总数已变化');
   });
 
   it('keeps V2EX all feed pagination open through the recent HTML list', async () => {
