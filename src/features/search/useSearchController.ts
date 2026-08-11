@@ -40,6 +40,7 @@ import { remoteSearchSort, snapshotSearchFilters, type SearchRunOptions } from '
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 type SearchRunInput = Source | Partial<SearchRunOptions>;
@@ -154,7 +155,7 @@ export function useSearchController({
   const [recentSearchesHydrated, setRecentSearchesHydrated] = useState(false);
   const [recentSearchHistoryReadAttempt, setRecentSearchHistoryReadAttempt] = useState(0);
   const enabledSearchSourcesRef = useRef(enabledSearchSources);
-  enabledSearchSourcesRef.current = enabledSearchSources;
+  useCommitRefValue(enabledSearchSourcesRef, enabledSearchSources);
   const searchSourceIncluded = searchSource === 'all' || enabledSearchSources.includes(searchSource);
   const submittedSearchSourceIncluded =
     !submittedSearch || submittedSearch.source === 'all' || enabledSearchSources.includes(submittedSearch.source);

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import {
   getNativePropsForTNode,
@@ -18,7 +18,6 @@ import { buildHtmlRenderingStyles, createHtmlRendererStyles } from './htmlStyles
 import { useContentBoundarySpacing } from './TopicContentPresentation';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import { ForumCallout } from '@/ui/content/ForumCallout';
-import { hasSameYaohuoTopicLayout } from '../model/topicContentIdentity';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import {
   DISCOURSE_CALLOUT_ATTRIBUTE,
@@ -73,13 +72,6 @@ export function useHtmlRenderingController({
     }),
     [mediaSessionIdentity, selectedTopic?.source]
   );
-  const htmlTopicDetailRef = useRef(topicDetail);
-  const htmlTopicDetail = hasSameYaohuoTopicLayout(htmlTopicDetailRef.current, topicDetail)
-    ? htmlTopicDetailRef.current
-    : topicDetail;
-  useLayoutEffect(() => {
-    htmlTopicDetailRef.current = htmlTopicDetail;
-  }, [htmlTopicDetail]);
   const [inlineSizedImageState, setInlineSizedImageState] = useState<{ topicKey: string; urls: Record<string, true> }>({
     topicKey: '',
     urls: {}
@@ -131,10 +123,10 @@ export function useHtmlRenderingController({
       openImagePreview(href);
       return;
     }
-    const baseUrl = selectedTopic?.url || htmlTopicDetail?.url;
+    const baseUrl = selectedTopic?.url || topicDetail?.url;
     const candidates = [
       ...(selectedTopic ? [selectedTopic] : []),
-      ...(htmlTopicDetail ? [htmlTopicDetail, ...(htmlTopicDetail.replies || [])] : [])
+      ...(topicDetail ? [topicDetail, ...(topicDetail.replies || [])] : [])
     ];
     const appUser = parseForumUserLink(href, baseUrl, candidates);
     if (appUser) {

@@ -145,10 +145,7 @@ describe('session query ownership', () => {
   });
   it('[REG-ACCOUNT-042] keeps the canonical account snapshot outside the changing forum epoch', () => {
     const before = accountQueryKeys.snapshot('linuxdo');
-    const nextEpochs = forumSessionEpochsAfterSourceChange(
-      { ...initialForumSessionEpochs, linuxdo: 4 },
-      'linuxdo'
-    );
+    const nextEpochs = forumSessionEpochsAfterSourceChange({ ...initialForumSessionEpochs, linuxdo: 4 }, 'linuxdo');
     const after = accountQueryKeys.snapshot('linuxdo');
 
     expect(before).toEqual(['account', 'linuxdo', 'snapshot']);

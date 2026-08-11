@@ -2,6 +2,7 @@ import { memo, type RefObject, useCallback, useEffect, useState } from 'react';
 import { type NativeScrollEvent, type NativeSyntheticEvent, Text, View } from 'react-native';
 import type { FlashListRef } from '@shopify/flash-list';
 import { ChevronLeft, MoreHorizontal, Star } from 'lucide-react-native';
+import { useQuery } from '@tanstack/react-query';
 
 import { sourceLabel } from '@/domain/forum/presentation';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
@@ -11,6 +12,7 @@ import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { replyImageUploadSupported } from '@/sources/imageUpload';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
+import { forumQueryKeys } from '@/platform/query/serverState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
@@ -87,45 +89,32 @@ export const TopicScreen = memo(function TopicScreen({
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const itemSource = topic?.source;
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
-  const [discourseEmojiCatalog, setDiscourseEmojiCatalog] = useState<{
-    source: DiscourseSource;
-    urls: DiscourseEmojiUrlMap;
-  } | null>(null);
-  const discourseEmojiUrls =
-    discourseEmojiCatalog && discourseEmojiCatalog.source === itemSource
-      ? discourseEmojiCatalog.urls
-      : EMPTY_DISCOURSE_EMOJI_URLS;
+  const discourseEmojiSource = active && isDiscourseSource(itemSource) ? itemSource : null;
+  const { data: discourseEmojiData, refetch: refetchDiscourseEmojiUrls } = useQuery({
+    queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource),
+    enabled: Boolean(discourseEmojiSource),
+    queryFn: ({ signal }) =>
+      discourseEmojiSource
+        ? chrome.getDiscourseEmojiUrls({ source: discourseEmojiSource, signal })
+        : Promise.resolve(EMPTY_DISCOURSE_EMOJI_URLS)
+  });
+  const discourseEmojiUrls = discourseEmojiSource
+    ? discourseEmojiData || EMPTY_DISCOURSE_EMOJI_URLS
+    : EMPTY_DISCOURSE_EMOJI_URLS;
 
   useEffect(() => {
     setTopicMenuOpen(false);
   }, [item?.id, item?.source]);
-
-  useEffect(() => {
-    if (!isDiscourseSource(itemSource)) {
-      setDiscourseEmojiCatalog(null);
-      return undefined;
-    }
-    const controller = new AbortController();
-    chrome
-      .getDiscourseEmojiUrls({ source: itemSource, signal: controller.signal })
-      .then((urls) => {
-        if (!controller.signal.aborted) {
-          setDiscourseEmojiCatalog({ source: itemSource, urls });
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setDiscourseEmojiCatalog(null);
-        }
-      });
-    return () => controller.abort();
-  }, [chrome.getDiscourseEmojiUrls, itemSource, topic]);
 
   const runTopicMenuAction = useCallback((action: () => void) => {
     triggerPressFeedback();
     setTopicMenuOpen(false);
     action();
   }, []);
+  const refreshWholeTopic = useCallback(() => {
+    chrome.refreshTopic();
+    if (discourseEmojiSource) void refetchDiscourseEmojiUrls();
+  }, [chrome.refreshTopic, discourseEmojiSource, refetchDiscourseEmojiUrls]);
 
   if (!item) {
     return <EmptyText text="未选择主题" />;
@@ -172,7 +161,7 @@ export const TopicScreen = memo(function TopicScreen({
             {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? (
               <AppButton label="去验证" onPress={chrome.verifyNodeSeek} />
             ) : null}
-            <AppButton label="重试" onPress={chrome.refreshTopic} />
+            <AppButton label="重试" onPress={refreshWholeTopic} />
           </View>
         </View>
       ) : null}
@@ -230,7 +219,7 @@ export const TopicScreen = memo(function TopicScreen({
         onOpenOriginal={chrome.openOriginal}
         onOpenReadingSettings={chrome.openReadingSettings}
         onRefreshTopic={chrome.refreshReplies}
-        onRefreshWholeTopic={chrome.refreshTopic}
+        onRefreshWholeTopic={refreshWholeTopic}
         onRequestClose={() => setTopicMenuOpen(false)}
         onShareTopic={chrome.share}
         runTopicMenuAction={runTopicMenuAction}

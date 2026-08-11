@@ -33,6 +33,7 @@ import {
 } from '@/platform/notifications/notificationSystem';
 import { runNotificationBackgroundWorker } from '@/platform/notifications/notificationWorker';
 import { notificationAdapters } from '@/sources/notificationAdapters';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
 export type NotificationPermissionState = 'checking' | 'granted' | 'denied';
 
@@ -91,7 +92,7 @@ export function useNotificationsRuntime({
   const contentDisablePendingRef = useRef(new Set<NotificationSource>());
   const contentDisableOperationsRef = useRef<Partial<Record<NotificationSource, Promise<void>>>>({});
   const privateAccessAllowedRef = useRef(privateAccessAllowed);
-  privateAccessAllowedRef.current = privateAccessAllowed;
+  useCommitRefValue(privateAccessAllowedRef, privateAccessAllowed);
   const readAccess = useMemo<NotificationAccessReader>(
     () => (source) =>
       readForegroundNotificationAccess({
@@ -114,7 +115,7 @@ export function useNotificationsRuntime({
     [readAccess]
   );
   const readAccessRef = useRef(readAccess);
-  readAccessRef.current = readAccess;
+  useCommitRefValue(readAccessRef, readAccess);
   const stateRef = useRef<NotificationState>(defaultNotificationState());
   const permissionRef = useRef(false);
   const backgroundErrorRef = useRef('');
@@ -128,8 +129,7 @@ export function useNotificationsRuntime({
   const [permission, setPermission] = useState<NotificationPermissionState>('checking');
   const [backgroundError, setBackgroundError] = useState('');
   const [snapshotErrors, setSnapshotErrors] = useState<Partial<Record<NotificationSource, string>>>({});
-  const [xiaoyinsiScopeChecked, setXiaoyinsiScopeChecked] = useState(false);
-  const [xiaoyinsiNotificationsScope, setXiaoyinsiNotificationsScope] = useState(false);
+  const [xiaoyinsiNotificationsScope, setXiaoyinsiNotificationsScope] = useState<boolean | null>(null);
   const [operationalSources, setOperationalSources] = useState<readonly NotificationSource[]>([]);
   const runtimeReady = ready && contentSourcesReady;
   const xiaoyinsiContentEnabled = enabledSources.includes('xiaoyinsi');
@@ -209,20 +209,17 @@ export function useNotificationsRuntime({
     if (!runtimeReady || !xiaoyinsiContentEnabled) {
       if (runtimeReady) {
         setXiaoyinsiNotificationsScope(false);
-        setXiaoyinsiScopeChecked(true);
       }
       return undefined;
     }
     let current = true;
+    setXiaoyinsiNotificationsScope(null);
     void loadXiaoyinsiCredentials()
       .then((credentials) => {
         if (current) setXiaoyinsiNotificationsScope(xiaoyinsiCredentialsHaveScope(credentials, 'notifications'));
       })
       .catch(() => {
         if (current) setXiaoyinsiNotificationsScope(false);
-      })
-      .finally(() => {
-        if (current) setXiaoyinsiScopeChecked(true);
       });
     return () => {
       current = false;
@@ -260,7 +257,7 @@ export function useNotificationsRuntime({
         operationalSources.includes(source) &&
         Boolean(identityKeys[source]) &&
         sessions[source].identityTrust === 'confirmed' &&
-        (source !== 'xiaoyinsi' || xiaoyinsiNotificationsScope)
+        (source !== 'xiaoyinsi' || xiaoyinsiNotificationsScope === true)
     )
     .join('|');
   const activeNetworkSources = useMemo(
@@ -494,28 +491,22 @@ export function useNotificationsRuntime({
     const data = snapshotQuery.data;
     if (!data) return;
     setSnapshotErrors(data.errors);
-    const next: NotificationState = {
-      ...stateRef.current,
-      sources: { ...stateRef.current.sources }
-    };
     const refreshedSources = activeNetworkSources.filter((source) => Boolean(data.snapshots[source]));
     const writes = notificationSources.flatMap((source) => {
       const snapshot = data.snapshots[source];
       const identityKey = identityKeys[source];
       if (!snapshot || !identityKey) return [];
-      next.sources[source] = {
-        ...next.sources[source],
-        identityKey,
-        unreadCount: snapshot.total,
-        lastSuccessAt: snapshot.checkedAt
-      };
       return [recordNotificationSnapshot(source, identityKey, snapshot.total, snapshot.checkedAt)];
     });
-    commitState(next);
     void Promise.allSettled(writes).then(() => runForegroundDelivery(refreshedSources));
-  }, [activeNetworkSources, commitState, identityKeys, runForegroundDelivery, snapshotQuery.data]);
+  }, [activeNetworkSources, identityKeys, runForegroundDelivery, snapshotQuery.data]);
 
-  const unreadTotal = enabledSources.reduce((total, source) => total + (state.sources[source].unreadCount || 0), 0);
+  const unreadTotal = enabledSources.reduce((total, source) => {
+    const snapshot = snapshotQuery.data?.snapshots[source];
+    if (snapshot) return total + snapshot.total;
+    const persisted = state.sources[source];
+    return total + (persisted.identityKey === identityKeys[source] ? persisted.unreadCount || 0 : 0);
+  }, 0);
 
   useEffect(() => {
     if (!appActive || !runtimeReady) return;
@@ -643,7 +634,7 @@ export function useNotificationsRuntime({
     snapshotErrors,
     state,
     unreadTotal,
-    xiaoyinsiNeedsUpgrade: sessions.xiaoyinsi.isLoggedIn && xiaoyinsiScopeChecked && !xiaoyinsiNotificationsScope,
+    xiaoyinsiNeedsUpgrade: sessions.xiaoyinsi.isLoggedIn && xiaoyinsiNotificationsScope === false,
     beginXiaoyinsiAuthorization,
     openSystemSettings: openNotificationSystemSettings,
     onNavigationReady,

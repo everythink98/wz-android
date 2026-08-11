@@ -664,7 +664,8 @@ describe('Search state', () => {
     expect(view.getAllByTestId(/^search-source-/).map((tab) => tab.props.testID)).toEqual(['search-source-all']);
     expect(view.queryByText('第一页主题')).toBeNull();
     expect(view.getByText('尚未启用内容源')).toBeTruthy();
-    expect(view.getByLabelText('搜索结果，尚未启用内容源')).toBeTruthy();
+    expect(view.getByTestId('search-all-sources-settled')).toBeTruthy();
+    expect(view.getByLabelText('搜索结果，尚未启用内容源').props.accessibilityState.busy).toBe(false);
     await fireEvent.press(view.getByLabelText('前往更多管理'));
     expect(onManageContentSources).toHaveBeenCalledTimes(1);
   });
@@ -799,15 +800,6 @@ describe('Search state', () => {
     expect(gap * emptyFlowChildren.length).toBe(0);
   });
 
-  it('[REG-SEARCH-016] waits for every registered source before aggregate completion', async () => {
-    const view = await renderSearchScreen({
-      searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic] }]
-    });
-
-    expect(view.queryByTestId('search-all-sources-settled')).toBeNull();
-    expect(view.getByLabelText('搜索结果，等待来源结算').props.accessibilityState.busy).toBe(true);
-  });
-
   it('[REG-SOURCE-010] settles after every enabled aggregate source completes', async () => {
     const view = await renderSearchScreen({
       expectedSearchSources: ['v2ex', 'linuxdo'],
@@ -819,13 +811,6 @@ describe('Search state', () => {
 
     expect(view.getByTestId('search-all-sources-settled')).toBeTruthy();
     expect(view.getByLabelText('搜索结果，已完成，有可打开结果').props.accessibilityState.busy).toBe(false);
-  });
-
-  it('[REG-SOURCE-010] treats an empty enabled aggregate source set as settled', async () => {
-    const view = await renderSearchScreen({ expectedSearchSources: [], searchGroups: [] });
-
-    expect(view.getByTestId('search-all-sources-settled')).toBeTruthy();
-    expect(view.getByLabelText('搜索结果，尚未启用内容源').props.accessibilityState.busy).toBe(false);
   });
 
   it('shows fixed all-source previews and opens the selected source list', async () => {

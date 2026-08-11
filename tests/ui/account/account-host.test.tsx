@@ -49,7 +49,7 @@ describe('AccountHost NodeImage authorization boundary', () => {
     nodeImageModalProps = {};
   });
 
-  it('[REG-ACCOUNT-038] mounts one declarative script per non-interactive authorization phase', async () => {
+  it('[REG-ACCOUNT-038][REG-PROXY-001] mounts one authorization script and removes it while WebViews are blocked', async () => {
     const baseProps = {
       checking: false,
       closeImagePreview: jest.fn(),
@@ -144,5 +144,10 @@ describe('AccountHost NodeImage authorization boundary', () => {
     expect(nodeImageWebViewProps.injectedJavaScript).toBe('verify-script');
     expect(nodeImageWebViewMounts).toBe(3);
     expect(nodeImageModalProps.actions).toBeUndefined();
+
+    await view.rerender(<AccountHost {...({ ...baseProps, webViewBlockMessage: '代理状态切换中' } as any)} />);
+    expect(nodeImageModalProps.error).toBe('代理状态切换中');
+    expect(view.queryByTestId('nodeimage-webview', { includeHiddenElements: true })).toBeNull();
+    expect(nodeImageWebViewMounts).toBe(3);
   });
 });

@@ -1496,6 +1496,7 @@ describe('topic query controller', () => {
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
+    await waitFor(() => expect(hook.result.current.controller.loadingMoreReplies).toBe(false));
     expect(getReplies).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'nodeseek',
@@ -1508,7 +1509,7 @@ describe('topic query controller', () => {
     );
   });
 
-  it('[REG-TOPIC-077] accepts an adapter-confirmed target window without applying a second shared identity rule', async () => {
+  it('[REG-TOPIC-077] displays an adapter-confirmed target window', async () => {
     const topic: Topic = {
       ...firstTopic,
       source: 'yaohuo',
@@ -2335,7 +2336,7 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(2);
   });
 
-  it('loads quoted posts by a reference key without putting server data in route-local state', async () => {
+  it('loads a quoted Topic post by its complete reference', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const quoted: Reply = { author: 'carol', floor: 2, contentHtml: '<p>quoted</p>', createdAt: '' };
@@ -2361,8 +2362,6 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:1:2']).toEqual(quoted));
 
     expect(getReply).toHaveBeenCalledTimes(1);
-    expect(hook.result.current.session.state).not.toHaveProperty('loadedQuotedReplies');
-    expect(hook.result.current.session.state).not.toHaveProperty('topicDetail');
   });
 
   it('[REG-TOPIC-026] prefetches an accepted answer without expanding a quote or notifying', async () => {
@@ -2397,6 +2396,7 @@ describe('topic query controller', () => {
         getReplies: jest.fn<ReadGateway['getReplies']>(async () => ({
           items: [],
           completeness: 'partial',
+          currentPage: 1,
           hasMore: false,
           nextPage: null
         })),

@@ -588,7 +588,7 @@ describe('Account site panels', () => {
     expect(view.queryByTestId('nodeseek-login-webview-ready')).toBeNull();
   });
 
-  it('[REG-VERIFICATION-001] keeps Yaohuo readiness passive and detects only after the user asks', async () => {
+  it('[REG-VERIFICATION-001][REG-PROXY-001] keeps Yaohuo readiness passive and unmounts it while blocked', async () => {
     const onCheckYaohuoLogin = jest.fn();
     const onSetLoadingYaohuoLoginPage = jest.fn();
     const onWebViewState = jest.fn();
@@ -613,6 +613,19 @@ describe('Account site panels', () => {
     expect(onWebViewState).toHaveBeenCalledWith('error', 4);
     await fireEvent.press(view.getByLabelText('刷新页面'));
     expect(onSetLoadingYaohuoLoginPage).toHaveBeenLastCalledWith(true);
+
+    await view.rerender(
+      <YaohuoLoginHost
+        {...yaohuoProps({
+          onCheck: onCheckYaohuoLogin,
+          onSetLoading: onSetLoadingYaohuoLoginPage,
+          onWebViewState,
+          webViewBlockMessage: '代理状态切换中'
+        })}
+      />
+    );
+    expect(view.getByText('代理状态切换中')).toBeTruthy();
+    expect(view.queryByTestId('mock-login-webview')).toBeNull();
   });
 
   it('[REG-VERIFICATION-004] unmounts a timed-out Yaohuo WebView until the user refreshes', async () => {

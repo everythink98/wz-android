@@ -157,7 +157,7 @@ describe('notification gateway', () => {
     await expect(stoppedAfterAdapter).rejects.toMatchObject({ reason: 'source-disabled' });
   });
 
-  it('stops a multi-request adapter before its next transport when the source is disabled', async () => {
+  it('[gateway] stops a multi-request adapter before its next transport when the source is disabled', async () => {
     let allowed = true;
     const transport = vi.fn(async (input: string) => {
       if (input === '/first') allowed = false;

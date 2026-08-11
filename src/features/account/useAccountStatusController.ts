@@ -185,10 +185,7 @@ export function useAccountStatusController({
         accountSessionSnapshotFromEvent(current, event)
       );
       if (accountSessionIdentityKey(previous) !== accountSessionIdentityKey(next)) {
-        onAccountStatusChanged(
-          event.site,
-          'recoveryQueryKey' in event ? event.recoveryQueryKey : undefined
-        );
+        onAccountStatusChanged(event.site, 'recoveryQueryKey' in event ? event.recoveryQueryKey : undefined);
       }
       return true;
     },
@@ -314,8 +311,7 @@ export function useAccountStatusController({
           if (next.identityTrust === 'none') {
             return { status: 'anonymous', session: next, partial: observation.failed };
           }
-          const knownIdentityChanged =
-            previousIdentityWasKnown && previousIdentity !== nextIdentity;
+          const knownIdentityChanged = previousIdentityWasKnown && previousIdentity !== nextIdentity;
           return {
             status: knownIdentityChanged ? 'changed' : 'same',
             session: next,

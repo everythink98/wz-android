@@ -20,7 +20,7 @@ const topic: TopicDetail = {
 };
 
 describe('topic local session helpers', () => {
-  it('filters replies without owning their remote state', () => {
+  it('filters replies by author, images, and text', () => {
     const replies: Reply[] = [
       { author: 'alice', contentHtml: '<p>first</p>', createdAt: '', floor: 1 },
       { author: 'bob', contentHtml: '<p>needle</p><img src="https://img/2.png">', createdAt: '', floor: 2 },
@@ -53,7 +53,7 @@ describe('topic local session helpers', () => {
     ).toBe('');
   });
 
-  it('clears composer-local state after submission', () => {
+  it('resets the composer after successful submission', () => {
     expect(replyComposerAfterSuccessfulSubmission()).toEqual({
       replyComposerOpen: false,
       replyContent: '',

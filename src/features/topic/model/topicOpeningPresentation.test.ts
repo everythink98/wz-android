@@ -128,7 +128,7 @@ describe('topic opening presentation', () => {
     ).toBe(2000);
   });
 
-  it('projects opening content and a paged accepted answer without UI state', () => {
+  it('projects opening content with a paged accepted answer', () => {
     const accepted = {
       author: 'bob',
       contentHtml: '<p>answer</p>',

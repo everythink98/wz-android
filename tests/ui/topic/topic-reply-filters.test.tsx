@@ -22,6 +22,8 @@ import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { QueryTestWrapper } from '../QueryTestWrapper';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
@@ -661,55 +663,57 @@ function TopicFilterHarness({
   } as unknown as TopicSessionController;
 
   return (
-    <View>
-      <TopicScreen
-        actions={actions}
-        article={{
-          busy: topicBusy,
-          error: topicError,
-          topic: topicDetail,
-          yaohuoBookmarked: yaohuoVisualBookmarked ?? topicDetail?.bookmarked
-        }}
-        chrome={{
-          back: jest.fn(),
-          favorite: topicFavorite,
-          getDiscourseEmojiUrls,
-          onScroll: jest.fn(),
-          openOriginal: jest.fn(),
-          openReadingSettings: jest.fn(),
-          openTopic: jest.fn(),
-          openUser: jest.fn(),
-          refreshReplies: jest.fn(),
-          refreshTopic: onRefreshWholeTopic,
-          share: jest.fn(),
-          toggleFavorite: onToggleFavorite,
-          verifyLinuxDo: onVerifyLinuxDo,
-          verifyNodeSeek: onVerifyNodeSeek
-        }}
-        currentNodeSeekUser={undefined}
-        html={
-          {
-            contentWidth: 720,
-            htmlBaseStyle: htmlStyles.htmlBaseStyle,
-            htmlClassesStyles: htmlStyles.htmlClassesStyles,
-            htmlIgnoredStyles: htmlStyles.htmlIgnoredStyles,
-            htmlRenderers: {},
-            htmlRenderersProps: {},
-            htmlTagsStyles: htmlStyles.htmlTagsStyles,
-            inlineSizedImageUrls: {},
-            mediaSessionIdentity: `${topicDetail?.source || 'public'}:0`,
-            topicImageDeriver
-          } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
-        }
-        nodeSeekUserId={null}
-        read={read}
-        session={session}
-        targetReply={targetReply}
-        topicScrollRef={topicScrollRef}
-      />
-      <Text testID="active-filter">{replyFilter}</Text>
-      <Text testID="active-order">{replyOrder}</Text>
-    </View>
+    <QueryTestWrapper>
+      <View>
+        <TopicScreen
+          actions={actions}
+          article={{
+            busy: topicBusy,
+            error: topicError,
+            topic: topicDetail,
+            yaohuoBookmarked: yaohuoVisualBookmarked ?? topicDetail?.bookmarked
+          }}
+          chrome={{
+            back: jest.fn(),
+            favorite: topicFavorite,
+            getDiscourseEmojiUrls,
+            onScroll: jest.fn(),
+            openOriginal: jest.fn(),
+            openReadingSettings: jest.fn(),
+            openTopic: jest.fn(),
+            openUser: jest.fn(),
+            refreshReplies: jest.fn(),
+            refreshTopic: onRefreshWholeTopic,
+            share: jest.fn(),
+            toggleFavorite: onToggleFavorite,
+            verifyLinuxDo: onVerifyLinuxDo,
+            verifyNodeSeek: onVerifyNodeSeek
+          }}
+          currentNodeSeekUser={undefined}
+          html={
+            {
+              contentWidth: 720,
+              htmlBaseStyle: htmlStyles.htmlBaseStyle,
+              htmlClassesStyles: htmlStyles.htmlClassesStyles,
+              htmlIgnoredStyles: htmlStyles.htmlIgnoredStyles,
+              htmlRenderers: {},
+              htmlRenderersProps: {},
+              htmlTagsStyles: htmlStyles.htmlTagsStyles,
+              inlineSizedImageUrls: {},
+              mediaSessionIdentity: `${topicDetail?.source || 'public'}:0`,
+              topicImageDeriver
+            } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
+          }
+          nodeSeekUserId={null}
+          read={read}
+          session={session}
+          targetReply={targetReply}
+          topicScrollRef={topicScrollRef}
+        />
+        <Text testID="active-filter">{replyFilter}</Text>
+        <Text testID="active-order">{replyOrder}</Text>
+      </View>
+    </QueryTestWrapper>
   );
 }
 
@@ -1589,13 +1593,47 @@ describe('Topic reply filters', () => {
     mockGetDiscourseSourceEmojiUrls
       .mockRejectedValueOnce(new Error('temporary emoji failure'))
       .mockResolvedValue({ heart: 'https://forum.xiaoyinsi.com/heart.png' });
-    const view = await render(<TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />);
+    const onRefreshWholeTopic = jest.fn();
+    const view = await render(
+      <TopicFilterHarness
+        onRefreshWholeTopic={onRefreshWholeTopic}
+        selectedTopic={xiaoyinsiTopic}
+        topicDetail={xiaoyinsiTopic}
+        topicError={{ kind: 'ordinary', message: 'temporary topic failure', retryable: true }}
+      />
+    );
     await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(1));
 
-    const refreshedTopic = { ...xiaoyinsiTopic, title: '刷新后的主题' };
-    await view.rerender(<TopicFilterHarness selectedTopic={refreshedTopic} topicDetail={refreshedTopic} />);
+    await fireEvent.press(view.getByText('重试'));
 
+    expect(onRefreshWholeTopic).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows the cached source emoji catalog in Topic reactions without another request', async () => {
+    const linuxDoTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      reactionSummary: [{ id: 'heart', count: 1 }],
+      url: 'https://linux.do/t/topic-1'
+    };
+    const getDiscourseEmojiUrls = jest.fn(async () => ({ heart: 'https://linux.do/network-heart.png' }));
+    appQueryClient.setQueryData(forumQueryKeys.emojiUrls('linuxdo'), {
+      heart: 'https://linux.do/cached-heart.png'
+    });
+
+    const view = await render(
+      <TopicFilterHarness
+        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+        selectedTopic={linuxDoTopic}
+        topicDetail={linuxDoTopic}
+      />
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/cached-heart.png');
+    });
+    expect(getDiscourseEmojiUrls).not.toHaveBeenCalled();
   });
 
   it('[REG-TOPIC-027] aborts the old emoji read and ignores its late result after switching sites', async () => {
@@ -2159,7 +2197,7 @@ describe('Topic reply filters', () => {
     expect(view.getByLabelText('已收藏')).toBeTruthy();
   });
 
-  it('REG-WRITE-003 exposes the confirmed yaohuo favorite as a yellow cancel action', async () => {
+  it('REG-WRITE-003 exposes the confirmed yaohuo favorite as a selected cancel action', async () => {
     const onYaohuoFavorite = jest.fn<() => void>();
     const yaohuoTopic: TopicDetail = {
       ...topic,
@@ -2456,41 +2494,20 @@ describe('Topic reply filters', () => {
     expect(view.getByLabelText('只看楼主，已选择')).toBeTruthy();
     expect(view.getByLabelText('回复排序，当前倒序')).toBeTruthy();
     expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual(['reply-1-alice', 'reply-3-alice']);
+    expect(view.getByText('2 条')).toBeTruthy();
 
     await fireEvent.press(view.getByLabelText('只看带图'));
     expect(view.getByLabelText('只看带图，已选择')).toBeTruthy();
     expect(view.getByText('reply-2-bob')).toBeTruthy();
+    expect(view.getByText('1 条')).toBeTruthy();
 
     await fireEvent.press(view.getByLabelText('全部'));
     await fireEvent.changeText(view.getByLabelText('评论内查找'), 'needle');
     expect(view.getAllByText(/^reply-/).map((node) => node.props.children)).toEqual(['reply-2-bob', 'reply-3-alice']);
+    expect(view.getByText('2 条')).toBeTruthy();
 
     await fireEvent.press(view.getByLabelText('清空查找'));
     expect(view.getByText('3 条')).toBeTruthy();
-  });
-
-  it('[REG-TOPIC-001] shows the two visible replies in the count after selecting only the author', async () => {
-    const view = await render(<TopicFilterHarness />);
-
-    await fireEvent.press(view.getByLabelText('只看楼主'));
-
-    expect(view.getByText('2 条')).toBeTruthy();
-  });
-
-  it('[REG-TOPIC-001] shows the one visible reply in the count after selecting replies with images', async () => {
-    const view = await render(<TopicFilterHarness />);
-
-    await fireEvent.press(view.getByLabelText('只看带图'));
-
-    expect(view.getByText('1 条')).toBeTruthy();
-  });
-
-  it('[REG-TOPIC-001] shows the two visible replies in the count after a comment query', async () => {
-    const view = await render(<TopicFilterHarness />);
-
-    await fireEvent.changeText(view.getByPlaceholderText('评论内查找'), 'needle');
-
-    expect(view.getByText('2 条')).toBeTruthy();
   });
 
   it('[REG-TOPIC-001] keeps the count aligned with the debounced result while a cleared query settles', async () => {

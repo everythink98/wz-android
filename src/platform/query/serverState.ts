@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import type { SourceSearchFilter } from '@/domain/forum/searchFilters';
-import { isSessionSource, type NotificationSource } from '@/domain/forum/sourceCatalog';
+import { isSessionSource, type DiscourseSource, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { FeedSource, ReplyOrder, Source } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from './sessionEpochs';
 
@@ -238,6 +238,7 @@ export const forumQueryKeys = {
       }
     ] as const,
   userLane: (userKey: readonly unknown[], lane: 'topics' | 'replies') => [...userKey, lane] as const,
+  emojiUrls: (source: DiscourseSource | null) => ['forum', source || 'none', 'emoji-urls'] as const,
   notifications: (source: NotificationSource | 'all') => ['forum', source, 'notifications'] as const,
   notificationList: ({
     categoryId,

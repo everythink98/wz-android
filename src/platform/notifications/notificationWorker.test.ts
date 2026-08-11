@@ -306,7 +306,7 @@ describe('background notification digest', () => {
     expect(record).not.toHaveBeenCalled();
   });
 
-  it('stops a multi-request adapter before its next transport when the source is disabled', async () => {
+  it('[worker] stops a multi-request adapter before its next transport when the source is disabled', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {

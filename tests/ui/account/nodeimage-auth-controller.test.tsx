@@ -125,10 +125,8 @@ describe('NodeImage auth controller', () => {
     jest.useRealTimers();
   });
 
-  it('keeps key and panel behavior behind two controller groups', async () => {
+  it('opens and closes the authorization panel through the account surface', async () => {
     const { beginSurface, finishSurface, hook, prepareSurfaceOpen, reconcileAccountStatus } = await openController();
-
-    expect(Object.keys(hook.result.current).sort()).toEqual(['key', 'panel']);
 
     await waitFor(() => {
       expect(hook.result.current.panel.visible).toBe(true);

@@ -673,35 +673,34 @@ describe('Android direct yaohuo API', () => {
     }
   );
 
-  it('[REG-ACCOUNT-019] does not infer the current Yaohuo user from a public profile card', () => {
-    const currentUser = parseYaohuoCurrentUserHtml(`
-      <div class="line1">个人资料：<a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>
-      <div class="listdata"><a href="/bbs-123.html">公开主题</a></div>
-    `);
-
-    expect(currentUser).toBeNull();
-  });
-
-  it('[REG-ACCOUNT-019] does not infer the current Yaohuo user from a public row whose title contains 我的', () => {
-    const currentUser = parseYaohuoCurrentUserHtml(`
-      <div class="listdata">
-        <a href="/bbs/userinfo.aspx?touserid=7">发帖人</a>
-        <a href="/bbs-123.html">我的一天</a>
-      </div>
-    `);
-
-    expect(currentUser).toBeNull();
-  });
-
-  it('[REG-ACCOUNT-019] does not infer the current Yaohuo user from welcome text in a public row', () => {
-    const currentUser = parseYaohuoCurrentUserHtml(`
-      <div class="listdata">
-        <a href="/bbs/userinfo.aspx?touserid=7">alice</a>
-        <a href="/bbs-123.html">欢迎 alice 加入</a>
-      </div>
-    `);
-
-    expect(currentUser).toBeNull();
+  it.each([
+    [
+      'a public profile card',
+      `
+        <div class="line1">个人资料：<a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>
+        <div class="listdata"><a href="/bbs-123.html">公开主题</a></div>
+      `
+    ],
+    [
+      'a public row whose title contains 我的',
+      `
+        <div class="listdata">
+          <a href="/bbs/userinfo.aspx?touserid=7">发帖人</a>
+          <a href="/bbs-123.html">我的一天</a>
+        </div>
+      `
+    ],
+    [
+      'welcome text in a public row',
+      `
+        <div class="listdata">
+          <a href="/bbs/userinfo.aspx?touserid=7">alice</a>
+          <a href="/bbs-123.html">欢迎 alice 加入</a>
+        </div>
+      `
+    ]
+  ])('[REG-ACCOUNT-019] does not infer the current Yaohuo user from %s', (_label, html) => {
+    expect(parseYaohuoCurrentUserHtml(html)).toBeNull();
   });
 
   it('[REG-ACCOUNT-031] does not accept legacy top welcome or logout text as identity proof', () => {

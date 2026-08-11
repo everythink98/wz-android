@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { Text } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppComposition } from '@/app/AppComposition';
 import { createAppStyles } from '@/app/styles';
@@ -23,7 +24,7 @@ describe('App composition bootstrap', () => {
     const settings = createEmptyReaderData().settings;
     const theme = createTheme(settings);
     jest.mocked(useAppRuntime).mockReturnValue({
-      accountHost: (<></>) as ReturnType<typeof useAppRuntime>['accountHost'],
+      accountHost: (<Text>账号 WebView 已阻止</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),
       mediaTransportIdentity: 'loading',
       readerStyleContext: { settings, theme },
@@ -40,6 +41,7 @@ describe('App composition bootstrap', () => {
       accessibilityLiveRegion: 'polite',
       accessibilityState: { busy: true }
     });
+    expect(view.getByText('账号 WebView 已阻止')).toBeTruthy();
     expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
   });
 });

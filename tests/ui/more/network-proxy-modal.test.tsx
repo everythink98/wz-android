@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Keyboard, StyleSheet } from 'react-native';
 import { createEmptyNetworkProxyState, type NetworkProxyProfile } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { NetworkProxyModal } from '@/features/more/components/NetworkProxyModal';
@@ -173,6 +173,7 @@ describe('Network proxy modal', () => {
   });
 
   it('[REG-PROXY-005] shows full connectivity results and optimistically reflects proxy enable requests', async () => {
+    const onSelectProfile = jest.fn(async (_id: string) => undefined);
     const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
     const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));
     const proxyState = {
@@ -184,6 +185,7 @@ describe('Network proxy modal', () => {
       proxyModal({
         activeProfile: primaryProfile,
         proxyState,
+        onSelectProfile,
         onSetEnabled,
         onTestProfile
       })
@@ -194,11 +196,34 @@ describe('Network proxy modal', () => {
       expect(onTestProfile).toHaveBeenCalledWith(primaryProfile);
       expect(view.getByText(/连通性: 42 ms/)).toBeTruthy();
     });
+    expect(onSelectProfile).not.toHaveBeenCalled();
 
     expect(view.getByRole('switch').props.accessibilityState.checked).toBe(false);
     await fireEvent.press(view.getByRole('switch'));
     expect(onSetEnabled).toHaveBeenCalledWith(true);
     expect(view.getByRole('switch').props.accessibilityState.checked).toBe(true);
+  });
+
+  it('clears the proxy draft inset when the Android keyboard hides', async () => {
+    let showKeyboard: ((event: { endCoordinates: { height: number } }) => void) | undefined;
+    let hideKeyboard: (() => void) | undefined;
+    jest.spyOn(Keyboard, 'addListener').mockImplementation((event, listener) => {
+      if (event === 'keyboardDidShow') showKeyboard = listener as typeof showKeyboard;
+      if (event === 'keyboardDidHide') hideKeyboard = listener as typeof hideKeyboard;
+      return { remove: jest.fn() } as never;
+    });
+    const view = await render(proxyModal());
+
+    await fireEvent.press(view.getByText('添加代理'));
+    await act(async () => {
+      showKeyboard?.({ endCoordinates: { height: 240 } });
+    });
+    expect(StyleSheet.flatten(view.getByText('新增代理').parent?.parent?.props.style).marginBottom).toBe(240);
+
+    await act(async () => {
+      hideKeyboard?.();
+    });
+    expect(StyleSheet.flatten(view.getByText('新增代理').parent?.parent?.props.style).marginBottom).toBeUndefined();
   });
 
   it('deletes selected profiles only after destructive confirmation', async () => {

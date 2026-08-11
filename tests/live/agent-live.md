@@ -172,6 +172,14 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 记录代理启用状态和全部外观值；只使用已有配置进行延迟/读取验证，逐项改变一个外观值后检查 Feed/Topic，再恢复全部初始值。
 - oracle：代理失败不能静默直连；恢复后重新进入显示原设置。报告不得包含代理地址或凭据。
 
+### LIVE-LOCAL-04 内容源管理往返
+
+- 能力：`MORE-05`；共享 `FEED-01/02/04`、`SEARCH-01..04`、`LIBRARY-01..03`、`ACCOUNT-01/02`、`NOTIFY-01..03`、`NAV-01/02`、`DATA-01..03`。
+- 先只读记录 `firstInstallTime`、五站精确顺序与开关状态，以及 Feed、Search、Library、Account、Notifications 当前投影。选择相邻两站，用排序手柄完成一次语义化长按拖拽；按各入口支持的来源子集核对相对顺序后立即做反向拖拽，并重新进入 More 确认恢复。普通滚动和开关不得触发排序。
+- 记录妖火初始状态；若初始停用，先启用并等待一次账号结算作为前置。随后只停用一次，重启并做一次前后台往返；Feed、Search、Library、Account、Notifications 不得再显示妖火，旧 Topic/User/Notification 入口必须 fail-closed 到明确管理或错误状态。只有当前会话确实捕获到 host 级请求时才判定妖火请求为零；没有网络事件的日志不能冒充零请求，网络轴记 `NOT_VERIFIED`，由既有 Gateway、Query、Account 和 worker 确定性测试承担自动 oracle。
+- 最后恢复妖火原始开关和五站原始顺序，重启后逐项复读，并确认 `firstInstallTime` 未变化。任一恢复步骤失败立即停止后续 App/AVD 变更并报告残留；不得卸载、清数据、清 Cookie、退出账号或用默认顺序覆盖用户设置。
+- oracle：排序和开关持久化，五入口投影一致，恢复后与初始记录逐项相同。应用流程、网络轴和恢复结果分别报告，不得用 UI 隐藏推断零请求。
+
 ## 站点互动与上传
 
 ### LIVE-WRITE-01 NodeSeek 互动

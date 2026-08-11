@@ -7,7 +7,6 @@ import {
   useId,
   useLayoutEffect,
   useMemo,
-  useRef,
   useState
 } from 'react';
 import { type Source } from '@/domain/forum/sourceCatalog';
@@ -531,16 +530,15 @@ function TopicBodyMediaCoordinatorSessionProvider({
   onDiagnosticFinish?: TopicBodyMediaAggregateReporter;
   runtimeGeneration: number;
 }) {
-  const coordinatorRef = useRef<TopicBodyMediaCoordinator | null>(null);
-  if (!coordinatorRef.current) {
-    coordinatorRef.current = new TopicBodyMediaCoordinator(
-      { active, paused, viewportRowKeys },
-      diagnosticSession,
-      onDiagnosticFinish,
-      runtimeGeneration
-    );
-  }
-  const coordinator = coordinatorRef.current;
+  const [coordinator] = useState(
+    () =>
+      new TopicBodyMediaCoordinator(
+        { active, paused, viewportRowKeys },
+        diagnosticSession,
+        onDiagnosticFinish,
+        runtimeGeneration
+      )
+  );
   useLayoutEffect(() => {
     coordinator.updateGate({ active, paused, viewportRowKeys });
   }, [active, coordinator, paused, viewportRowKeys]);

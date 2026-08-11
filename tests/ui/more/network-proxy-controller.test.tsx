@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/networkProxy';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
@@ -50,10 +51,17 @@ describe('network proxy controller', () => {
     mockApplyNetworkProxy.mockResolvedValue({ ok: true });
   });
 
+  afterEach(() => {
+    setDiagnosticWriter(null);
+  });
+
   it('[REG-PROXY-003] can reset an unreadable saved proxy to a confirmed direct connection', async () => {
     mockLoadNetworkProxyState.mockRejectedValueOnce(new Error('corrupted proxy state'));
-    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    const notify = jest.fn();
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
+    await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('代理配置读取失败');
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('代理配置读取失败'));
 
     await act(async () => {
       await hook.result.current.setProxyEnabled(false);
@@ -410,6 +418,10 @@ describe('network proxy controller', () => {
   });
 
   it('[REG-PROXY-002] keeps an enabled proxy usable when an unchanged profile is saved', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: true,
       activeId: profileA.id,
@@ -426,6 +438,14 @@ describe('network proxy controller', () => {
     expect(hook.result.current.applyStatus).toBe('applied');
     await expect(hook.result.current.ensureNetworkProxyReady()).resolves.toBeUndefined();
     expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
+
+    const loadEvents = lines.map((line) => JSON.parse(line)).filter((event) => event.operation === 'load');
+    expect(loadEvents).toEqual([
+      expect.objectContaining({ area: 'proxy', phase: 'intent' }),
+      expect.objectContaining({ phase: 'persist', store: 'secure-store', hasProxy: true, isEnabled: true }),
+      expect.objectContaining({ phase: 'finish', outcome: 'success', hasProxy: true, isEnabled: true })
+    ]);
+    expect(lines.join('')).not.toMatch(/proxy-a|a\.proxy\.example|"A"|8080/);
   });
 
   it('[REG-PROXY-007] does not restart an enabled proxy when only its saved name changes', async () => {
@@ -451,6 +471,10 @@ describe('network proxy controller', () => {
   });
 
   it('[REG-PROXY-002] settles rapid enable then disable commands in order', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: false,
       activeId: null,
@@ -475,5 +499,39 @@ describe('network proxy controller', () => {
     expect(hook.result.current.proxyState.enabled).toBe(false);
     expect(hook.result.current.applyStatus).toBe('disabled');
     expect(mockApplyNetworkProxy.mock.calls.map(([profile]) => profile?.id || null)).toEqual([null, profileA.id, null]);
+
+    const events = lines.map((line) => JSON.parse(line));
+    const enableTraceId = events.find(
+      (event) => event.operation === 'set-enabled' && event.phase === 'intent' && event.isEnabled === true
+    )?.traceId;
+    const enableEvents = events.filter((event) => event.traceId === enableTraceId);
+    const persistIndex = enableEvents.findIndex((event) => event.phase === 'persist');
+    const nativeApplyIndex = enableEvents.findIndex(
+      (event) => event.phase === 'apply' && event.channel === 'native' && event.state === 'start'
+    );
+    const finishIndex = enableEvents.findIndex((event) => event.phase === 'finish');
+    expect(enableTraceId).toEqual(expect.any(String));
+    expect(persistIndex).toBeLessThan(nativeApplyIndex);
+    expect(nativeApplyIndex).toBeLessThan(finishIndex);
+    expect(enableEvents[finishIndex]).toEqual(expect.objectContaining({ outcome: 'success', state: 'applied' }));
+  });
+
+  it('[REG-PROXY-001] remains fail-closed when native proxy disable fails', async () => {
+    mockLoadNetworkProxyState.mockResolvedValue({
+      enabled: true,
+      activeId: profileA.id,
+      profiles: [profileA]
+    });
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
+    mockApplyNetworkProxy.mockRejectedValueOnce(new Error('native disable failed'));
+
+    await act(async () => {
+      await expect(hook.result.current.setProxyEnabled(false)).rejects.toThrow('native disable failed');
+    });
+
+    expect(hook.result.current.proxyState.enabled).toBe(false);
+    expect(hook.result.current.applyStatus).toBe('failed');
+    await expect(hook.result.current.ensureNetworkProxyReady()).rejects.toThrow('native disable failed');
   });
 });

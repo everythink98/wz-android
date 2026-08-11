@@ -21,8 +21,6 @@ import {
 
 const SEARCH_PAGE_SIZE = 50;
 
-let csrfTokenCache: string | null = null;
-
 type LinuxDoSearchOptions = LinuxDoOptions & {
   authenticated?: boolean;
   limit?: number;
@@ -102,14 +100,10 @@ export async function searchLinuxDoUsers(
 }
 
 async function linuxDoCsrfToken(options: LinuxDoOptions) {
-  if (csrfTokenCache) {
-    return csrfTokenCache;
-  }
   try {
     const data = await fetchLinuxDoJson<Record<string, unknown>>('/session/csrf.json', undefined, options);
     const token = typeof data.csrf === 'string' ? data.csrf.trim() : '';
-    csrfTokenCache = token || null;
-    return csrfTokenCache || undefined;
+    return token || undefined;
   } catch {
     return undefined;
   }

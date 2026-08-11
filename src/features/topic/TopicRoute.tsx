@@ -199,7 +199,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     settings: runtime.reader.data.settings,
     styleSettings: runtime.readerStyle.settings,
     theme: runtime.readerStyle.theme,
-    topicDetail,
+    topicDetail: topicLayoutDetail,
     topicKey: `${topic.source}:${topic.id}`,
     webViewBlockMessage: runtime.networkProxyWebViewBlockMessage
   });

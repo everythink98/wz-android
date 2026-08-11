@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Keyboard, type StyleProp, type ViewStyle, useWindowDimensions } from 'react-native';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView, type BottomSheetBackdropProps } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
 export function ComposerBottomSheet({
   backgroundStyle,
@@ -26,7 +27,7 @@ export function ComposerBottomSheet({
   const { height } = useWindowDimensions();
   const bottomSheetRef = useRef<BottomSheet>(null);
   const focusRequestRef = useRef(onFocusRequest);
-  focusRequestRef.current = onFocusRequest;
+  useCommitRefValue(focusRequestRef, onFocusRequest);
   const [focusSignal, setFocusSignal] = useState(0);
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (

@@ -91,7 +91,7 @@ export function useAppRuntime() {
   } = accountRuntime.read;
   const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession } =
     accountRuntime.write;
-  const { webLoginUserId, xiaoyinsiAuth: xiaoyinsiAuthController } = accountRuntime.center;
+  const { xiaoyinsiAuth: xiaoyinsiAuthController } = accountRuntime.center;
   const {
     closeTopmostSurface: closeTopmostAccountSurface,
     linuxDoVerificationVisible: showLinuxDoPanel,
@@ -104,7 +104,7 @@ export function useAppRuntime() {
     [xiaoyinsiAuthController.beginAuthorization]
   );
   const nodeSeekMediaUserAgent = getNodeSeekUserAgent();
-  const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek, webLoginUserId);
+  const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek);
   const notificationsRuntime = useNotificationsRuntime({
     appActive,
     authorizationRevision: xiaoyinsiAuthController.phase,
@@ -378,8 +378,7 @@ export function useAppRuntime() {
             saved: accountRuntime.center.nodeImage.key.saved
           },
           nodeSeek: {
-            checkIn: accountRuntime.center.checkIn,
-            webLoginUserId: accountRuntime.center.webLoginUserId
+            checkIn: accountRuntime.center.checkIn
           },
           xiaoyinsiAuth: {
             begin: accountRuntime.center.xiaoyinsiAuth.beginAuthorization,

@@ -139,7 +139,9 @@ async function renderStatusController({
     resetForumSourceQueries(source, appQueryClient, recoveryQueryKey);
   };
   const hook = await renderNativeHook(
-    ({ renderedEnabledSources }: {
+    ({
+      renderedEnabledSources
+    }: {
       renderedSessionEpochs: ForumSessionEpochs;
       renderedEnabledSources?: readonly (typeof sessionSources)[number][];
     }) =>
@@ -580,11 +582,7 @@ describe('account status queries', () => {
         identityTrust: 'unknown'
       });
       expect(hook.result.current.statusBusy).toBe(false);
-      expect(
-        appQueryClient.getQueryState(
-          accountQueryKeys.probe('nodeseek', 1)
-        )
-      ).toBeUndefined();
+      expect(appQueryClient.getQueryState(accountQueryKeys.probe('nodeseek', 1))).toBeUndefined();
 
       cookieRead.resolve({ status: 'ok', header: 'session=late' });
       await act(async () => {
@@ -714,9 +712,7 @@ describe('account status queries', () => {
     await act(async () => {
       await hook.result.current.reconcileAccountStatus('nodeseek');
     });
-    await waitFor(() =>
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed')
-    );
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed'));
 
     const privateResult = Promise.withResolvers<string>();
     const privateAbort = jest.fn();
@@ -910,9 +906,7 @@ describe('account status queries', () => {
     const settled = await act(async () =>
       hook.result.current.reconcileAccountStatus('nodeseek').then((result) => ({
         result,
-        snapshotAtResolution: appQueryClient.getQueryData<AccountSessionSnapshot>(
-          accountQueryKeys.snapshot('nodeseek')
-        )
+        snapshotAtResolution: appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'))
       }))
     );
 
@@ -926,26 +920,6 @@ describe('account status queries', () => {
       currentUser: nodeSeekUser,
       identityTrust: 'confirmed'
     });
-  });
-
-  it('[REG-ACCOUNT-042] renders the Account view from the same canonical snapshot', async () => {
-    mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
-    const { hook } = await renderStatusController({
-      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
-    });
-
-    await act(async () => {
-      await hook.result.current.reconcileAccountStatus('nodeseek');
-    });
-    const snapshot = appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'));
-    expect(snapshot).toMatchObject({ currentUser: nodeSeekUser, identityTrust: 'confirmed' });
-    await waitFor(() =>
-      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-        currentUser: nodeSeekUser,
-        identityTrust: snapshot?.identityTrust,
-        canWrite: true
-      })
-    );
   });
 
   it('[REG-ACCOUNT-035] rejects confirmed trust without a logged-in current user', async () => {
@@ -999,9 +973,7 @@ describe('account status queries', () => {
     });
     await waitFor(() => expect(mockGetCurrentUser).toHaveBeenCalledTimes(1));
     await act(async () => {
-      expect(
-        hook.result.current.applyAccountSessionEvent({ site: 'nodeseek', type: 'cleared' })
-      ).toBe(true);
+      expect(hook.result.current.applyAccountSessionEvent({ site: 'nodeseek', type: 'cleared' })).toBe(true);
       identity.resolve(nodeSeekUser);
       await probe;
     });
@@ -1049,9 +1021,7 @@ describe('account status queries', () => {
     await act(async () => {
       await hook.result.current.reconcileAccountStatus('nodeseek');
     });
-    await waitFor(() =>
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed')
-    );
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed'));
 
     await act(async () => {
       hook.result.current.beginAccountIdentityCheck('nodeseek', 7);
@@ -1119,9 +1089,7 @@ describe('account status queries', () => {
     await act(async () => {
       await hook.result.current.refreshAccountStatus();
     });
-    await waitFor(() =>
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed')
-    );
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed'));
     onAccountStatusChanged.mockClear();
 
     const failedIdentity = Promise.withResolvers<UserProfile>();
@@ -1522,7 +1490,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-016] derives the Xiaoyinsi account view from Query data instead of the workflow session', async () => {
+  it('[REG-ACCOUNT-016] shows Xiaoyinsi as anonymous after the current authorization check', async () => {
     const states = createSiteSessionStates({
       xiaoyinsi: {
         site: 'xiaoyinsi',

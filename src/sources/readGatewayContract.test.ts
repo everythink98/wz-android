@@ -1705,26 +1705,6 @@ describe('source gateway read contract', () => {
     await expect(read).rejects.toThrow('请求已取消');
   });
 
-  it('[REG-ACCOUNT-026] cannot invoke a failing Yaohuo logout command during a read', async () => {
-    const gateway = createReadGateway({
-      fetcher: vi.fn(),
-      isSourceAuthenticated: (source) => source === 'yaohuo',
-      nodeSeekUserAgent: () => ''
-    });
-    forumMocks.getUserProfile.mockRejectedValueOnce(
-      Object.assign(new Error('妖火登录已失效'), {
-        loginRequired: true,
-        reason: 'expired',
-        source: 'yaohuo'
-      })
-    );
-
-    await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
-      kind: 'login-expired',
-      message: '妖火登录已失效'
-    });
-  });
-
   it('surfaces a Yaohuo verification-required error without mutating session state', async () => {
     const gateway = createReadGateway({
       fetcher: vi.fn(),

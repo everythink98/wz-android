@@ -565,7 +565,7 @@ describe('小隐寺授权 controller', () => {
     expect(notify).toHaveBeenCalledWith('小隐寺等级已更新。');
   });
 
-  it('[REG-ACCOUNT-016] returns a read-only authorization event without publishing it to workflow state', async () => {
+  it('[REG-ACCOUNT-016] checks authorization without interrupting an active device-code workflow', async () => {
     Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background', writable: true });
     mockLoadPending.mockResolvedValue(pending);
     const { hook, dispatchSiteSessionEvent } = await renderController();

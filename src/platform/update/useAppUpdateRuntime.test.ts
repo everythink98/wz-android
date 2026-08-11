@@ -93,13 +93,19 @@ describe('app update controller', () => {
 
   it('runs the silent startup check once when the update runtime owns auto-check', async () => {
     mocks.checkGithubAppUpdate.mockResolvedValue(null);
+    const beforeRequest = vi.fn(async () => undefined);
 
-    useAppUpdateRuntime({ autoCheck: true, fetcher: vi.fn(), notify: vi.fn() });
+    useAppUpdateRuntime({ autoCheck: true, beforeRequest, fetcher: vi.fn(), notify: vi.fn() });
 
     await vi.waitFor(() => expect(mocks.checkGithubAppUpdate).toHaveBeenCalledTimes(1));
+    expect(beforeRequest).toHaveBeenCalledTimes(1);
+    expect(beforeRequest.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.checkGithubAppUpdate.mock.invocationCallOrder[0]!
+    );
   });
 
   it('[REG-UPDATE-005] reuses one cache target across versions and keeps a successful APK', async () => {
+    const beforeRequest = vi.fn(async () => undefined);
     mocks.createDownloadResumable.mockImplementation((_url, target) => ({
       downloadAsync: vi.fn(async () => ({ status: 200, uri: target }))
     }));
@@ -107,7 +113,7 @@ describe('app update controller', () => {
     for (const version of ['1.4.0', '1.5.0']) {
       mocks.initialUpdateInfo = updateInfo(version);
       mocks.nullStateIndex = 0;
-      await useAppUpdateRuntime({ fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
+      await useAppUpdateRuntime({ beforeRequest, fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
     }
 
     expect(mocks.createDownloadResumable.mock.calls.map((call) => call[1])).toEqual([
@@ -116,6 +122,12 @@ describe('app update controller', () => {
     ]);
     expect(mocks.deleteAsync).toHaveBeenCalledTimes(2);
     expect(mocks.installVerifiedApk).toHaveBeenCalledTimes(2);
+    expect(beforeRequest).toHaveBeenCalledTimes(2);
+    for (const index of [0, 1]) {
+      expect(beforeRequest.mock.invocationCallOrder[index]).toBeLessThan(
+        mocks.createDownloadResumable.mock.invocationCallOrder[index]!
+      );
+    }
   });
 
   it('[REG-UPDATE-005] removes the fixed partial APK after a failed download', async () => {

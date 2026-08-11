@@ -101,14 +101,12 @@ export function useAccountRuntime({
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
-  const webLoginDetectedRef = useRef(false);
   const prepareAuthSurfaceOpenRef = useRef<(surface: AuthSurface) => void>(() => undefined);
   const credentialFailureHandlerRef = useRef<
     (site: CredentialSite, attempt: number, reason: LoginWebViewFailureReason) => void
   >(() => undefined);
   const credentialClearIntentHandlerRef = useRef<(site: CredentialSite) => void>(() => undefined);
   const initialStatusRefreshStartedRef = useRef(false);
-  const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
@@ -185,17 +183,20 @@ export function useAccountRuntime({
   const updateLinuxDoRecoveryBarrier = useCallback((active: boolean) => {
     linuxDoRecoveryBarrierRef.current = active;
   }, []);
-  const beginAuthSurfaceTicket = useCallback((surface: AuthSurface, source: SessionSite, checkIdentity = true) => {
-    const account = readSessionRuntimeSnapshot(source);
-    const ticket = beginAuthSurface(authSurfaceRegistryRef.current, {
-      source,
-      surface,
-      identityKey: account.identityKey,
-      sessionEpoch: forumSessionEpochsRef.current[source]
-    });
-    if (checkIdentity) beginAccountIdentityCheckRef.current(source, ticket.generation);
-    return ticket;
-  }, [readSessionRuntimeSnapshot]);
+  const beginAuthSurfaceTicket = useCallback(
+    (surface: AuthSurface, source: SessionSite, checkIdentity = true) => {
+      const account = readSessionRuntimeSnapshot(source);
+      const ticket = beginAuthSurface(authSurfaceRegistryRef.current, {
+        source,
+        surface,
+        identityKey: account.identityKey,
+        sessionEpoch: forumSessionEpochsRef.current[source]
+      });
+      if (checkIdentity) beginAccountIdentityCheckRef.current(source, ticket.generation);
+      return ticket;
+    },
+    [readSessionRuntimeSnapshot]
+  );
   const finishAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
       const ticket = finishAuthSurface(authSurfaceRegistryRef.current, surface, reason);
@@ -237,9 +238,7 @@ export function useAccountRuntime({
     notify,
     onSiteSessionEvent: handleSiteSessionEvent,
     setLinuxDoWebViewUserAgent,
-    setNodeSeekWebViewUserAgent,
-    setWebLoginUserId,
-    webLoginDetectedRef
+    setNodeSeekWebViewUserAgent
   });
   const { handleLinuxDoBrowserFetchMessage, handleNodeSeekBrowserFetchMessage } = useHiddenBrowserFetchController({
     completeLinuxDoBrowserFetch: session.completeLinuxDoBrowserFetch,
@@ -267,7 +266,7 @@ export function useAccountRuntime({
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     onAccountStatusChanged: session.commitAccountStatusChange,
-    readXiaoyinsiAuthorization: xiaoyinsiAuth.readAuthorization,
+    readXiaoyinsiAuthorization: xiaoyinsiAuth.readAuthorization
   });
   const reconcileAccountStatus = status.reconcileAccountStatus;
   const refreshAccountStatus = status.refreshAccountStatus;
@@ -687,7 +686,6 @@ export function useAccountRuntime({
           saved: nodeImage.key.saved
         }
       },
-      webLoginUserId,
       xiaoyinsiAuth: {
         beginAuthorization: xiaoyinsiAuth.beginAuthorization,
         cancelAuthorization: xiaoyinsiAuth.cancelAuthorization,

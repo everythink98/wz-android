@@ -466,17 +466,13 @@ function EnabledNotificationDetailRoute({
   const markControllerRef = useRef<AbortController | undefined>(undefined);
   const replyControllerRef = useRef<AbortController | undefined>(undefined);
   const replyBusyRef = useRef(false);
-  const [routeFocused, setRouteFocused] = useState(() => navigation.isFocused?.() ?? true);
+  const routeFocused = useIsFocused();
   const [markMessage, setMarkMessage] = useState('');
   const [replyBusy, setReplyBusy] = useState(false);
   const [replyContent, setReplyContent] = useState('');
   const [replyError, setReplyError] = useState('');
   const [replyStatus, setReplyStatus] = useState('');
   const [replyVisible, setReplyVisible] = useState(false);
-  const [discourseEmojiCatalog, setDiscourseEmojiCatalog] = useState<{
-    source: 'linuxdo' | 'xiaoyinsi';
-    urls: DiscourseEmojiUrlMap;
-  } | null>(null);
   const detailQueryKey = forumQueryKeys.notificationDetail({
     source: item.source,
     identityKey,
@@ -488,25 +484,17 @@ function EnabledNotificationDetailRoute({
     staleTime: 0,
     queryFn: ({ signal }) => runtime.gateway.loadDetail(item, identityKey, signal)
   });
-  const discourseEmojiUrls =
-    discourseEmojiCatalog?.source === item.source ? discourseEmojiCatalog.urls : ({} as DiscourseEmojiUrlMap);
-  useEffect(() => {
-    if (!routeFocused || !canAccessSource || !detailQuery.data?.reply || !isDiscourseSource(item.source)) {
-      setDiscourseEmojiCatalog(null);
-      return undefined;
-    }
-    const discourseSource = item.source;
-    const controller = new AbortController();
-    runtime.composer
-      .getDiscourseEmojiUrls({ source: discourseSource, signal: controller.signal })
-      .then((urls) => {
-        if (!controller.signal.aborted) setDiscourseEmojiCatalog({ source: discourseSource, urls });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setDiscourseEmojiCatalog(null);
-      });
-    return () => controller.abort();
-  }, [canAccessSource, detailQuery.data?.reply, item.source, routeFocused, runtime.composer]);
+  const discourseEmojiSource =
+    routeFocused && canAccessSource && detailQuery.data?.reply && isDiscourseSource(item.source) ? item.source : null;
+  const discourseEmojiQuery = useQuery({
+    queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource),
+    enabled: Boolean(discourseEmojiSource),
+    queryFn: ({ signal }) =>
+      discourseEmojiSource
+        ? runtime.composer.getDiscourseEmojiUrls({ source: discourseEmojiSource, signal })
+        : Promise.resolve({} as DiscourseEmojiUrlMap)
+  });
+  const discourseEmojiUrls = discourseEmojiSource ? discourseEmojiQuery.data || {} : {};
   useEffect(() => {
     navigation.setOptions?.({ title: detailQuery.data?.messages ? detailQuery.data.title : '消息详情' });
   }, [detailQuery.data?.messages, detailQuery.data?.title, navigation]);
@@ -521,23 +509,16 @@ function EnabledNotificationDetailRoute({
     [identityKey, item.id]
   );
   useEffect(() => {
-    const removeFocus = navigation.addListener?.('focus', () => setRouteFocused(true));
-    const removeBlur = navigation.addListener?.('blur', () => {
-      setRouteFocused(false);
-      markControllerRef.current?.abort();
-      markControllerRef.current = undefined;
-      replyControllerRef.current?.abort();
-      replyControllerRef.current = undefined;
-      replyBusyRef.current = false;
-      setReplyBusy(false);
-      setReplyVisible(false);
-      void queryClient.cancelQueries({ queryKey: detailQueryKey });
-    });
-    return () => {
-      removeFocus?.();
-      removeBlur?.();
-    };
-  }, [detailQueryKey, navigation, queryClient]);
+    if (routeFocused) return;
+    markControllerRef.current?.abort();
+    markControllerRef.current = undefined;
+    replyControllerRef.current?.abort();
+    replyControllerRef.current = undefined;
+    replyBusyRef.current = false;
+    setReplyBusy(false);
+    setReplyVisible(false);
+    void queryClient.cancelQueries({ queryKey: detailQueryKey });
+  }, [detailQueryKey, queryClient, routeFocused]);
   useEffect(() => {
     if (canAccessSource) return;
     replyControllerRef.current?.abort();

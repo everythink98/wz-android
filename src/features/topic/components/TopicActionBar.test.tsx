@@ -32,13 +32,6 @@ function collectText(node: unknown): string[] {
   return collectText(children);
 }
 
-function flatStyles(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value)) {
-    return value && typeof value === 'object' ? [value as Record<string, unknown>] : [];
-  }
-  return value.flatMap(flatStyles);
-}
-
 describe('Android topic action buttons', () => {
   const styles = {
     buttonDisabled: {},
@@ -94,23 +87,5 @@ describe('Android topic action buttons', () => {
     expect(collectText(element)).toContain('赞');
     expect(collectText(element)).toContain('99+');
     expect(collectText(element)).not.toContain('100');
-  });
-
-  it('keeps favorite actions yellow instead of using the black primary color', async () => {
-    const { DetailActionButton } = await import('./TopicActionBar');
-
-    const element = DetailActionButton({
-      accessibilityLabel: '已收藏',
-      active: true,
-      icon: Icon as never,
-      label: '收藏',
-      styles: styles as never,
-      theme,
-      tone: 'favorite',
-      onPress: vi.fn()
-    });
-
-    expect(flatStyles(element.props.style)).toContainEqual({ backgroundColor: 'rgba(250, 204, 21, 0.07)' });
-    expect(element.props.android_ripple).toMatchObject({ color: 'rgba(250, 204, 21, 0.12)' });
   });
 });

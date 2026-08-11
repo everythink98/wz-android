@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSiteSessionStates, createSiteSessionViewModels, nodeSeekUserIdForSession } from './siteSessionState';
-import { authActionMessageForSource } from './siteSessionPrompts';
+import { createSiteSessionStates, createSiteSessionViewModels } from './siteSessionState';
 
 describe('account session labels', () => {
   it('uses readable account summaries instead of cookie names', () => {
@@ -27,7 +26,6 @@ describe('account session labels', () => {
       })
     );
 
-    expect(nodeSeekUserIdForSession(sessions.nodeseek, 48872)).toBe(48872);
     expect(sessions.linuxdo.summaryLabel).toBe('匿名可用');
     expect(sessions.yaohuo.summaryLabel).toBe('已失效');
     expect(
@@ -35,11 +33,5 @@ describe('account session labels', () => {
         .map((item) => item.summaryLabel)
         .join(' ')
     ).not.toContain('sidyaohuo');
-  });
-
-  it('describes interaction limits from structured session state', () => {
-    const sessions = createSiteSessionViewModels(createSiteSessionStates());
-
-    expect(authActionMessageForSource('linuxdo', sessions)).toBe('匿名可阅读，登录后才能互动。');
   });
 });

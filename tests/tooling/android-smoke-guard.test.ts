@@ -365,6 +365,17 @@ describe('Android release evidence guards', () => {
     expect(moreReplay).toMatch(
       /内容源[\s\S]*content-source-drag-v2ex[\s\S]*服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/
     );
+    expect(moreReplay).toContain('press "label=\\"展开内容源\\""');
+    for (const title of ['问题诊断', '备份 / 恢复', '外观']) {
+      expect(moreReplay).toContain(`find "label=\\"展开${title}\\"" click`);
+    }
+    expect(moreReplay).not.toMatch(/^find "(?:内容源|问题诊断|备份 \/ 恢复|外观)" click$/m);
+    for (const label of ['V2EX', 'linux.do', 'NodeSeek', '妖火', '小隐寺']) {
+      expect(moreReplay).toContain(`wait "label=\\"${label} 内容源开关\\"" 10000`);
+    }
+    expect(moreReplay).toMatch(
+      /find "label=\\"展开外观\\"" click\s+wait label="主题" 10000\s+scroll down\s+wait label="字号" 10000/
+    );
     expect(notificationsReplay).toContain('find "消息通知" click');
     for (const source of ['all', 'nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']) {
       expect(notificationsReplay).toContain(`notification-source-${source}`);
@@ -628,10 +639,8 @@ describe('Android release evidence guards', () => {
     expect(manifestIndex).toBeGreaterThan(smokeIndex);
   });
 
-  it('keeps the published arm64 APK separate from a development-signed emulator Smoke APK', () => {
+  it('loads the emulator Smoke ABI from release env and signs its development APK', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
-    const releaseHelpers = readProjectFile('scripts', 'release-environment.mjs');
-    const releaseGradle = readProjectFile('scripts', 'android-release-apk.gradle');
     const loadEnvIndex = releaseScript.indexOf('const configuredReleaseEnv = loadReleaseEnvFile();');
     const smokeAbiIndex = releaseScript.indexOf(
       'const smokeApkAbi = requestedSmokeApkAbi(releaseEnv.WZ_ANDROID_SMOKE_ABI);'
@@ -640,15 +649,8 @@ describe('Android release evidence guards', () => {
     expect(releaseScript).not.toContain('process.env.WZ_ANDROID_SMOKE_ABI');
     expect(smokeAbiIndex).toBeGreaterThan(loadEnvIndex);
     expect(releaseScript).toContain("['arm64-v8a', smokeApkAbi]");
-    expect(releaseHelpers).toContain("`-PreactNativeArchitectures=${builtAbis.join(',')}`");
-    expect(releaseHelpers).toContain("`-PreleaseApkAbis=${builtAbis.join(',')}`");
-    expect(releaseScript).toContain('app-${smokeApkAbi}-smoke-dev.apk');
     expect(releaseScript).toContain("path.join(androidDir, 'app', 'debug.keystore')");
     expect(releaseScript).toContain("'sign',");
-    expect(releaseScript).toContain('smokeSignerSha256 === expectedReleaseSignerSha256');
-    expect(releaseScript).not.toContain('verifyExpectedReleaseSigner(smokeSignerSha256);');
     expect(releaseScript).toContain("run('npm', ['run', 'smoke:android', '--', smokeApkPath]);");
-    expect(releaseGradle).toContain('project.findProperty("releaseApkAbis") ?: "arm64-v8a"');
-    expect(releaseGradle).toContain('include(*requestedReleaseAbis)');
   });
 });

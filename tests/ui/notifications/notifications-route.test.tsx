@@ -76,6 +76,7 @@ jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
     MessageReplyComposerSheet: ({
       busy,
       content,
+      discourseEmojiUrls,
       error,
       status,
       visible,
@@ -85,6 +86,7 @@ jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
     }: {
       busy: boolean;
       content: string;
+      discourseEmojiUrls?: Record<string, string>;
       error?: string;
       status?: string;
       visible: boolean;
@@ -103,6 +105,11 @@ jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
               value: content,
               onChangeText: onChangeContent
             }),
+            ReactModule.createElement(
+              Text,
+              { testID: 'message-composer-emoji-heart' },
+              discourseEmojiUrls?.heart || ''
+            ),
             ReactModule.createElement(
               Text,
               { accessibilityLabel: '测试发送私信', onPress: busy || !content.trim() ? undefined : onSubmit },
@@ -130,6 +137,7 @@ const notification: ForumNotification = {
 };
 
 type FocusTestStackParamList = {
+  NotificationDetail: { notification: ForumNotification; identityKey: string };
   Notifications: undefined;
   Other: undefined;
 };
@@ -752,14 +760,16 @@ describe('notification routes', () => {
 
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
-        <NotificationDetailRoute
-          navigation={navigation as never}
-          route={{
-            key: 'notification-detail',
-            name: 'NotificationDetail',
-            params: { notification, identityKey: 'nodeseek:old-account' }
-          }}
-        />
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={navigation as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification, identityKey: 'nodeseek:old-account' }
+            }}
+          />
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>,
       { wrapper: QueryTestWrapper }
     );
@@ -813,14 +823,16 @@ describe('notification routes', () => {
     const navigation = { navigate: jest.fn() };
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
-        <NotificationDetailRoute
-          navigation={navigation as never}
-          route={{
-            key: 'notification-detail',
-            name: 'NotificationDetail',
-            params: { notification: item, identityKey: 'linuxdo:alice' }
-          }}
-        />
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={navigation as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: item, identityKey: 'linuxdo:alice' }
+            }}
+          />
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>,
       { wrapper: QueryTestWrapper }
     );
@@ -878,14 +890,16 @@ describe('notification routes', () => {
     const navigation = { navigate: jest.fn() };
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
-        <NotificationDetailRoute
-          navigation={navigation as never}
-          route={{
-            key: 'notification-detail',
-            name: 'NotificationDetail',
-            params: { notification: item, identityKey: 'linuxdo:alice' }
-          }}
-        />
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={navigation as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: item, identityKey: 'linuxdo:alice' }
+            }}
+          />
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>,
       { wrapper: QueryTestWrapper }
     );
@@ -933,14 +947,16 @@ describe('notification routes', () => {
     const navigation = { navigate: jest.fn() };
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
-        <NotificationDetailRoute
-          navigation={navigation as never}
-          route={{
-            key: 'notification-detail',
-            name: 'NotificationDetail',
-            params: { notification: item, identityKey: 'yaohuo:7' }
-          }}
-        />
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={navigation as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: item, identityKey: 'yaohuo:7' }
+            }}
+          />
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>,
       { wrapper: QueryTestWrapper }
     );
@@ -952,6 +968,62 @@ describe('notification routes', () => {
       topic: expect.objectContaining({ source: 'yaohuo', id: '1560939', categoryId: '177' }),
       targetReply: { floor: 90 }
     });
+  });
+
+  it('shows the cached source emoji catalog in a private composer without another request', async () => {
+    appQueryClient.clear();
+    const privateNotification: ForumNotification = {
+      ...notification,
+      source: 'linuxdo',
+      id: 'message:emoji-cache',
+      kind: 'private-message',
+      unread: false,
+      target: { type: 'private-conversation', conversationId: '9' }
+    };
+    const gateway = {
+      loadDetail: jest.fn(async () => ({
+        notification: privateNotification,
+        title: 'linux.do 私信',
+        messages: [],
+        reply: { format: 'markdown' as const }
+      })),
+      markRead: jest.fn(async () => ({ confirmed: true }))
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const getDiscourseEmojiUrls = jest.fn(async () => ({ heart: 'https://linux.do/network-heart.png' }));
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['linuxdo'],
+      composer: {
+        ...routeRuntime(gateway).composer,
+        getDiscourseEmojiUrls
+      },
+      identityKeys: { linuxdo: 'linuxdo:alice' },
+      identitySignature: 'linuxdo:alice'
+    } as NotificationRouteRuntimeValue;
+    appQueryClient.setQueryData(forumQueryKeys.emojiUrls('linuxdo'), {
+      heart: 'https://linux.do/cached-heart.png'
+    });
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: privateNotification, identityKey: 'linuxdo:alice' }
+            }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    expect(view.getByTestId('message-composer-emoji-heart').props.children).toBe('https://linux.do/cached-heart.png');
+    expect(getDiscourseEmojiUrls).not.toHaveBeenCalled();
   });
 
   it('[REG-NOTIFY-031] preserves an unconfirmed private draft and clears it only after server confirmation', async () => {
@@ -985,14 +1057,16 @@ describe('notification routes', () => {
     const runtime = routeRuntime(gateway);
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
-        <NotificationDetailRoute
-          navigation={{ navigate: jest.fn() } as never}
-          route={{
-            key: 'notification-detail',
-            name: 'NotificationDetail',
-            params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
-          }}
-        />
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
+            }}
+          />
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>,
       { wrapper: QueryTestWrapper }
     );
@@ -1045,14 +1119,16 @@ describe('notification routes', () => {
     const activeRuntime = routeRuntime(gateway);
     const renderRoute = (runtime: NotificationRouteRuntimeValue) => (
       <NotificationRouteRuntimeProvider value={runtime}>
-        <NotificationDetailRoute
-          navigation={{ navigate: jest.fn() } as never}
-          route={{
-            key: 'notification-detail',
-            name: 'NotificationDetail',
-            params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
-          }}
-        />
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
+            }}
+          />
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>
     );
     const view = await render(renderRoute(activeRuntime), { wrapper: QueryTestWrapper });
@@ -1108,26 +1184,22 @@ describe('notification routes', () => {
       readUnreadSnapshot: jest.fn(),
       replyToConversation
     } as unknown as NotificationRouteRuntimeValue['gateway'];
-    const listeners = new Map<string, () => void>();
-    const navigation = {
-      addListener: jest.fn((event: string, listener: () => void) => {
-        listeners.set(event, listener);
-        return jest.fn();
-      }),
-      isFocused: jest.fn(() => true),
-      navigate: jest.fn(),
-      setOptions: jest.fn()
-    };
+    const navigationRef = createNavigationContainerRef<FocusTestStackParamList>();
     const view = await render(
       <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
-        <NotificationDetailRoute
-          navigation={navigation as never}
-          route={{
-            key: 'notification-detail',
-            name: 'NotificationDetail',
-            params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
-          }}
-        />
+        <NavigationContainer ref={navigationRef}>
+          <FocusTestStack.Navigator initialRouteName="NotificationDetail">
+            <FocusTestStack.Screen
+              name="NotificationDetail"
+              initialParams={{ notification: privateNotification, identityKey: 'nodeseek:new-account' }}
+            >
+              {(props) => (
+                <NotificationDetailRoute navigation={props.navigation as never} route={props.route as never} />
+              )}
+            </FocusTestStack.Screen>
+            <FocusTestStack.Screen name="Other">{() => null}</FocusTestStack.Screen>
+          </FocusTestStack.Navigator>
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>,
       { wrapper: QueryTestWrapper }
     );
@@ -1139,7 +1211,8 @@ describe('notification routes', () => {
     await waitFor(() => expect(replyToConversation).toHaveBeenCalledTimes(1));
     const signal = replyToConversation.mock.calls[0]?.[3] as AbortSignal;
 
-    await act(async () => listeners.get('blur')?.());
+    await act(async () => navigationRef.navigate('Other'));
+    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('Other'));
     expect(signal.aborted).toBe(true);
     expect(view.queryByLabelText('私信回复内容')).toBeNull();
   });
@@ -1190,14 +1263,16 @@ describe('notification routes', () => {
     };
     const view = await render(
       <NotificationRouteRuntimeProvider value={runtime}>
-        <NotificationDetailRoute
-          navigation={{ navigate: jest.fn() } as never}
-          route={{
-            key: 'notification-detail',
-            name: 'NotificationDetail',
-            params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
-          }}
-        />
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: privateNotification, identityKey: 'nodeseek:new-account' }
+            }}
+          />
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>,
       { wrapper: QueryTestWrapper }
     );
@@ -1284,7 +1359,9 @@ describe('notification routes', () => {
     const navigation = { navigate: jest.fn() };
     const screen = () => (
       <NotificationRouteRuntimeProvider value={runtime}>
-        <NotificationDetailRoute navigation={navigation as never} route={route} />
+        <NavigationContainer>
+          <NotificationDetailRoute navigation={navigation as never} route={route} />
+        </NavigationContainer>
       </NotificationRouteRuntimeProvider>
     );
     const view = await render(screen(), { wrapper: QueryTestWrapper });

@@ -1068,8 +1068,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 代理 load catch 用空状态继续完成启动，既没有设置 failed 门禁，也没有阻止随后对空 profile 执行 native disable。 |
 | 根因 seam | `useNetworkProxyRuntime` 的安全存储加载终态、native apply effect 与 `ensureNetworkProxyReady` 门禁。 |
 | 必须保持的行为 | 代理配置读取失败必须进入用户可见 failed 状态并阻断所有受代理保护请求，不能推断用户未启用代理；成功保存新的明确配置后才可退出加载失败门禁并重新应用。 |
-| 精确失败 oracle | `tests/tooling/network-proxy-controller-guard.test.ts` 的 `REG-PROXY-001` 注入 load rejection，要求 `ensureNetworkProxyReady` rejection 且提示配置读取失败。 |
-| 最低可靠自动测试层 | `UNIT_PASS`：controller 的 ref、ready promise 和 guard 必须一起覆盖；只测 SecureStore loader 或 UI 错误文案不能证明请求没有直连。 |
+| 精确失败 oracle | `tests/ui/more/network-proxy-controller.test.tsx` 注入 SecureStore load rejection 与 native disable rejection，分别要求 `ensureNetworkProxyReady` fail-closed、显示配置读取失败且不能静默转为直连；Account、HiddenBrowser、Topic media 与 App startup 的 RNTL 用例分别要求 block message 透传且不挂载 WebView。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：controller 的 ref、ready promise 和 guard 证明请求门禁，RNTL 证明各 WebView 消费者接线；只测 SecureStore loader 或错误文案不能证明没有直连。 |
 | Replay 或真实验收路径 | 正常状态只读打开服务器代理面板，核对已保存状态；不破坏 SecureStore。获明确授权启用代理时，再通过真实页面和关闭恢复验收 native 通道。 |
 | 负向验证方式 | 在 load catch 中恢复空状态后继续，编号测试应从 rejection 退化为成功 resolve。 |
 | 明确不覆盖范围 | 不自动开启未知代理，不删除或重建现有代理配置，也不通过损坏真实安全存储制造故障。 |
@@ -1366,8 +1366,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | Topic detail 的 `replyCount` 大于筛选后的 `replies.length`，且回复筛选或评论查询处于生效状态。 |
 | 根因 seam | `src/features/topic/components/TopicContentList.tsx` 的回复标题计数直接读取主题总数，没有区分当前可见结果与未筛选总数。 |
 | 必须保持的行为 | “只看楼主”“只看带图”和评论内查找显示当前可见回复数；“全部”继续显示主题总回复数；可见列表、选中状态和数量必须同步。 |
-| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 渲染真实 Topic 回复筛选控件：普通用例断言全部、只看楼主和只看带图三种筛选、评论查询和列表顺序，4 个带 `REG-TOPIC-001` 的普通测试分别钉住楼主/带图/查询后的标题数量，以及清空原始输入但 debounce 结果尚未更新时的列表与数量一致；`src/features/topic/useTopicSessionController.test.ts` 固定确定性过滤结果。 |
-| 最低可靠自动测试层 | `UI_PASS`：Vitest 可证明过滤数组，但只有 RNTL 能证明用户看到的标题数量跟随数组变化。4 个回归用例必须作为普通测试真实通过。 |
+| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 渲染真实 Topic 回复筛选控件：一条完整交互旅程同时断言全部、只看楼主、只看带图和评论查询后的列表、选中状态与标题数量；独立 debounce 用例固定输入已清空但结果尚未更新时的列表与数量一致。`src/features/topic/useTopicSessionController.test.ts` 固定确定性过滤结果。 |
+| 最低可靠自动测试层 | `UI_PASS`：Vitest 可证明过滤数组，但只有 RNTL 能证明用户看到的标题数量跟随数组变化；完整交互旅程与 debounce 用例都必须真实通过。 |
 | Replay 或真实验收路径 | 从 Feed/Search/Library 打开有多位回复者且含图片的 Topic，逐项切换筛选并执行一次评论内查找；作者页返回后复核筛选与数量仍保留。 |
 | 负向验证方式 | 修复前同一 UI 测试在“只看楼主”步骤精确失败：可见回复为 2 条而标题仍为 3 条；恢复直接读取 `replyCount` 时该断言必须再次失败。 |
 | 明确不覆盖范围 | 动态来源返回的原始 `replyCount`、回复分页完整性和图片解析正确性仍由 gateway/controller 测试及 App 内 Live 验收负责。 |
@@ -3344,7 +3344,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 必须保持的行为 | Catalog 始终保留五站能力；偏好清洗未知/重复并补齐新来源。用户顺序只控制展示，canonical enabled-set 控制 Query。停用后在 credential/fetch 前拒绝 direct read，只聚合 enabled snapshot，取消旧 source/aggregate Query 并拒绝迟到提交；Account 不 probe 且保留身份材料；本机收藏/历史/关注只隐藏不删除；Topic/User/NotificationDetail 外层拦截；通知保留 intent，撤摘要并清 baseline/delivered/unread，headless 在 probe 与投递前后复核。重新启用 managed 来源先 fresh reconcile，消息首次扫描只建 baseline。 |
 | 精确失败 oracle | `src/domain/reader/contentSourcePreferences.test.ts` 与 reader store/backup tests 固定默认、清洗、全关与兼容；`src/sources/readGatewayContract.test.ts`、`src/sources/feedRead.test.ts`、`src/sources/searchRead.test.ts` 固定 credential/fetch 前拒绝及 aggregate/cursor 子集；Account controller/runtime tests 固定冷启动、停用 stale 与重新启用一次对账；`tests/ui/app/content-source-query-cleanup.test.tsx`、Feed/Search/Library/More/Account tests 与 `tests/ui/app/content-source-route-gates.test.tsx` 固定 UI、选择回退、零 refetch/零 controller；NotificationGateway/worker/background/runtime/route/screen tests 固定 allowlist、竞态撤销、清水位、旧点击和不补报。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯投影/请求与 worker 用 Vitest，React 生命周期、route/controller 是否挂载和跨入口展示用 Jest/RNTL。源码字符串或只看菜单隐藏不能替代。 |
-| Replay 或真实验收路径 | 在匹配 revision/APK、保留登录态与本机数据的设备记录原偏好和 `firstInstallTime`；关闭妖火后重启并覆盖首页全部、搜索全部、收藏、账号、消息、前后台恢复和旧链接，以 host 级网络 oracle 确认妖火请求为 0。重新启用后只先发生一次账号核对，随后内容恢复且通知不补旧消息；最后恢复原偏好，禁止卸载或清数据/Cookie。 |
+| Replay 或真实验收路径 | 按 `tests/live/agent-live.md` 的 `LIVE-LOCAL-04`，在匹配 revision/APK、保留登录态与本机数据的设备记录原偏好和 `firstInstallTime`；关闭妖火后重启并覆盖首页全部、搜索全部、收藏、账号、消息、前后台恢复和旧链接，以 host 级网络 oracle 确认妖火请求为 0。重新启用后只先发生一次账号核对，随后内容恢复且通知不补旧消息；最后恢复原偏好，禁止卸载或清数据/Cookie。 |
 | 负向验证方式 | 分别移除 Gateway 前置检查、aggregate includedSources、Account enabled filter、headless 持久化 allowlist、route 外层 gate、notification cleanup 或 canonical key；对应测试必须观察到 credential/fetch/probe/controller/投递调用、隐藏数据回显、排序 refetch 或旧消息补报。 |
 | 明确不覆盖范围 | “零请求”只约束 App 管理的论坛来源请求；检查更新、代理恢复及用户主动交给系统浏览器的普通外链不属于该来源 allowlist。已经进入网络层的 HTTP 字节只能尽力 abort，但其迟到结果仍必须被拒绝。 |
 

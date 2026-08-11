@@ -36,7 +36,6 @@ import {
   pushUserRoute,
   shouldUpdateAppRootScreen
 } from './appNavigation';
-import { AppNavigator } from './AppNavigator';
 
 const topic: Topic = {
   source: 'linuxdo',
@@ -50,8 +49,7 @@ const topic: Topic = {
 const user: UserReference = { source: 'linuxdo', id: '7', username: 'alice', url: 'https://linux.do/u/alice' };
 
 describe('AppNavigator', () => {
-  it('is memoized and publishes only real route changes', () => {
-    expect(AppNavigator).toMatchObject({ $$typeof: Symbol.for('react.memo') });
+  it('publishes only real route changes', () => {
     expect(shouldUpdateAppRootScreen('feed', 'topic')).toBe(true);
     expect(shouldUpdateAppRootScreen('topic', 'user')).toBe(true);
     expect(shouldUpdateAppRootScreen('feed', 'feed')).toBe(false);

@@ -25,6 +25,7 @@ describe('Android App security review guards', () => {
     expect(isNodeSeekRequestUrl('https://www.nodeseek.com.evil.example/search')).toBe(false);
     expect(isNodeSeekRequestUrl('https://evil.example@www.nodeseek.com/search')).toBe(false);
     expect(isNodeSeekRequestUrl('https://www.nodeseek.com@evil.example/search')).toBe(false);
+    expect(isNodeSeekBrowserFetchUrl('https://www.nodeseek.com/search?q=codex')).toBe(true);
     expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=site%3Anodeseek.com+codex')).toBe(true);
     expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=site%3Anodeseek.com.evil+codex')).toBe(false);
     expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=codex')).toBe(false);

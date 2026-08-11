@@ -46,10 +46,7 @@ import {
   settleBrowserFetchRequestOnce,
   startNextBrowserFetchRequest
 } from './browserFetchQueue';
-import {
-  forumSessionEpochsAfterSourceChange,
-  resetForumSourceQueries
-} from './sessionQueryOwnership';
+import { forumSessionEpochsAfterSourceChange, resetForumSourceQueries } from './sessionQueryOwnership';
 
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
@@ -176,9 +173,7 @@ export function useSessionController({
   notify,
   onSiteSessionEvent,
   setLinuxDoWebViewUserAgent,
-  setNodeSeekWebViewUserAgent,
-  setWebLoginUserId,
-  webLoginDetectedRef
+  setNodeSeekWebViewUserAgent
 }: {
   defaultFetcher: Fetcher;
   forumSessionEpochsRef: MutableRef<ForumSessionEpochs>;
@@ -191,8 +186,6 @@ export function useSessionController({
   onSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
-  setWebLoginUserId: Dispatch<SetStateAction<number | null>>;
-  webLoginDetectedRef: MutableRef<boolean>;
 }) {
   const nodeSeekBrowserFetchIdRef = useRef(0);
   const nodeSeekBrowserFetchCurrentRef = useRef<PendingNodeSeekBrowserFetchRequest | null>(null);
@@ -238,17 +231,6 @@ export function useSessionController({
         eventType: event.type
       });
       onSiteSessionEvent?.(event);
-      if (
-        event.site === 'nodeseek' &&
-        (event.type === 'login-expired' ||
-          event.type === 'cleared' ||
-          event.type === 'verification-required' ||
-          event.type === 'verification-started' ||
-          (event.type === 'cookie-loaded' && event.loggedIn === false) ||
-          (event.type === 'session-updated' && event.loggedIn !== true))
-      ) {
-        setWebLoginUserId(null);
-      }
       markDiagnosticStage(trace, 'apply', {
         source: event.site,
         eventType: event.type,
@@ -256,7 +238,7 @@ export function useSessionController({
       });
       finishDiagnosticTrace(trace, 'success', { source: event.site, state: 'published' });
     },
-    [onSiteSessionEvent, setWebLoginUserId]
+    [onSiteSessionEvent]
   );
 
   const updateNodeSeekSession = useCallback(
@@ -796,8 +778,6 @@ export function useSessionController({
             }
           : { type: 'cleared' };
         if (source === 'nodeseek') {
-          webLoginDetectedRef.current = false;
-          setWebLoginUserId(null);
           updateNodeSeekSession(event);
         } else if (source === 'linuxdo') {
           updateLinuxDoSession(event);
@@ -828,7 +808,7 @@ export function useSessionController({
         throw error;
       }
     },
-    [notify, setWebLoginUserId, updateLinuxDoSession, updateNodeSeekSession, updateYaohuoSession, webLoginDetectedRef]
+    [notify, updateLinuxDoSession, updateNodeSeekSession, updateYaohuoSession]
   );
 
   const clearNodeSeekLoginState = useCallback(

@@ -960,75 +960,46 @@ describe('Android topic content splitting', () => {
     expect(rows.map((row) => row.html).join('')).toBe('<p>safe body</p>');
   });
 
-  it('[REG-PERF-010] counts a forum video source and poster as two potential network media', () => {
-    const plan = planForumContent(
-      '<forum-video src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></forum-video>'
-    );
+  it.each(['forum-video', 'video'])(
+    '[REG-PERF-010] counts a %s source and poster as two potential network media',
+    (tag) => {
+      const plan = planForumContent(
+        `<${tag} src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></${tag}>`
+      );
 
-    expect(plan.rows[0]?.networkMediaCount).toBe(2);
-  });
-
-  it('[REG-PERF-010] counts a raw video body and poster as two potential network media', () => {
-    const plan = planForumContent(
-      '<video src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></video>'
-    );
-
-    expect(plan.rows[0]?.networkMediaCount).toBe(2);
-  });
-
-  it('[REG-PERF-010] counts a forum video source and poster in parser fallback media budgets', async () => {
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
-      const plan = compileWithFallback({
-        html: '<forum-video src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></forum-video>',
-        role: 'signature',
-        source: 'nodeseek'
-      });
-
-      expect(renderedContentRows(plan)[0]?.networkMediaCount).toBe(2);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
+      expect(plan.rows[0]?.networkMediaCount).toBe(2);
     }
-  });
+  );
 
-  it('[REG-PERF-010] counts a raw video body and poster in parser fallback media budgets', async () => {
-    vi.resetModules();
-    vi.doMock('./html', () => ({
-      FORUM_LINK_CARD_TAG: 'forum-link-card',
-      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-      FORUM_VIDEO_TAG: 'forum-video',
-      parseHtml: () => {
-        throw new Error('parser unavailable');
-      }
-    }));
-    try {
-      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
-      const plan = compileWithFallback({
-        html: '<video src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></video>',
-        role: 'signature',
-        source: 'nodeseek'
-      });
-
-      expect(renderedContentRows(plan)[0]?.networkMediaCount).toBe(2);
-    } finally {
-      vi.doUnmock('./html');
+  it.each(['forum-video', 'video'])(
+    '[REG-PERF-010] counts a %s source and poster in parser fallback media budgets',
+    async (tag) => {
       vi.resetModules();
+      vi.doMock('./html', () => ({
+        FORUM_LINK_CARD_TAG: 'forum-link-card',
+        FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
+        FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
+        FORUM_VIDEO_TAG: 'forum-video',
+        parseHtml: () => {
+          throw new Error('parser unavailable');
+        }
+      }));
+      try {
+        const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
+
+        const plan = compileWithFallback({
+          html: `<${tag} src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></${tag}>`,
+          role: 'signature',
+          source: 'nodeseek'
+        });
+
+        expect(renderedContentRows(plan)[0]?.networkMediaCount).toBe(2);
+      } finally {
+        vi.doUnmock('./html');
+        vi.resetModules();
+      }
     }
-  });
+  );
 
   it('[REG-PERF-010] keeps forum sticker sources bounded in parser fallback rows', async () => {
     const sourceUrls = Array.from({ length: 5 }, (_, index) => `https://img.example/fallback-sticker-${index}.webp`);

@@ -49,8 +49,6 @@ function renderSessionController(
       notify: jest.fn(),
       setLinuxDoWebViewUserAgent: jest.fn(),
       setNodeSeekWebViewUserAgent: jest.fn(),
-      setWebLoginUserId: jest.fn(),
-      webLoginDetectedRef: { current: false },
       onSiteSessionEvent
     })
   );

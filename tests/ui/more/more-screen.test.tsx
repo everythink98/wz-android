@@ -176,7 +176,6 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       },
       nodeSeek: {
         checkIn: jest.fn(),
-        webLoginUserId: null,
         ...overrides.account?.center?.nodeSeek
       },
       xiaoyinsiAuth: {

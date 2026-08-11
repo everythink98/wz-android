@@ -2,6 +2,8 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
 import { useAppRuntime } from '@/app/useAppRuntime';
 
+const mockUseAccountRuntime = jest.fn();
+
 jest.mock('@/app/useAppLifecycleRuntime', () => ({
   useAppLifecycleRuntime: () => ({
     appActive: true,
@@ -58,73 +60,75 @@ jest.mock('@/platform/network/useNetworkProxyRuntime', () => ({
 }));
 
 jest.mock('@/features/account/useAccountRuntime', () => ({
-  useAccountRuntime: () => ({
-    center: {
-      account: {
-        linuxDoLevelBusy: false,
-        linuxDoLevelError: '',
-        linuxDoLevelProfile: null,
-        refreshLinuxDoLevel: jest.fn()
-      },
-      checkIn: {},
-      credentials: { credentialSummaries: [], pendingCredentialFillSite: null },
-      handleAccountCenterCommand: jest.fn(),
-      nodeImage: {
-        key: {
-          authorize: jest.fn(),
-          busy: false,
-          clear: jest.fn(),
-          save: jest.fn(),
-          saved: false
+  useAccountRuntime: (options: unknown) => {
+    mockUseAccountRuntime(options);
+    return {
+      center: {
+        account: {
+          linuxDoLevelBusy: false,
+          linuxDoLevelError: '',
+          linuxDoLevelProfile: null,
+          refreshLinuxDoLevel: jest.fn()
+        },
+        checkIn: {},
+        credentials: { credentialSummaries: [], pendingCredentialFillSite: null },
+        handleAccountCenterCommand: jest.fn(),
+        nodeImage: {
+          key: {
+            authorize: jest.fn(),
+            busy: false,
+            clear: jest.fn(),
+            save: jest.fn(),
+            saved: false
+          }
+        },
+        xiaoyinsiAuth: {
+          beginAuthorization: jest.fn(),
+          cancelAuthorization: jest.fn(),
+          message: '',
+          openAuthorizationBrowser: jest.fn(),
+          pending: false,
+          phase: 'idle',
+          refreshAuthorization: jest.fn(),
+          revokeAuthorization: jest.fn(),
+          secondsRemaining: 0
+        },
+        xiaoyinsiLevel: {
+          levelBusy: false,
+          levelError: '',
+          levelProfile: null,
+          refreshLevel: jest.fn()
         }
       },
-      webLoginUserId: null,
-      xiaoyinsiAuth: {
-        beginAuthorization: jest.fn(),
-        cancelAuthorization: jest.fn(),
-        message: '',
-        openAuthorizationBrowser: jest.fn(),
-        pending: false,
-        phase: 'idle',
-        refreshAuthorization: jest.fn(),
-        revokeAuthorization: jest.fn(),
-        secondsRemaining: 0
+      hosts: {
+        closePanels: jest.fn(),
+        closeTopmostSurface: jest.fn(),
+        element: null,
+        linuxDoVerificationVisible: false,
+        requestNodeSeekVerification: jest.fn(),
+        showLinuxDoVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        surfaces: { linuxdo: {}, nodeseek: {}, yaohuo: {} }
       },
-      xiaoyinsiLevel: {
-        levelBusy: false,
-        levelError: '',
-        levelProfile: null,
-        refreshLevel: jest.fn()
+      read: {
+        accountIdentityPending: false,
+        accountSessionViewModels: { nodeseek: { isLoggedIn: false } },
+        forumSessionEpochs: { linuxdo: 0, nodeseek: 0, xiaoyinsi: 0, yaohuo: 0 },
+        getLinuxDoUserAgent: jest.fn(),
+        getNodeSeekUserAgent: jest.fn(),
+        identityBarriers: {},
+        readGateway: { getEmojiUrls: jest.fn() },
+        reconcileAccountStatus: jest.fn(),
+        statusBusy: false
+      },
+      write: {
+        ensureNodeImageApiKey: jest.fn(),
+        ensureWritableSession: jest.fn(),
+        isWritableSessionTicketCurrent: jest.fn(),
+        reconcileWritableSession: jest.fn()
       }
-    },
-    hosts: {
-      closePanels: jest.fn(),
-      closeTopmostSurface: jest.fn(),
-      element: null,
-      linuxDoVerificationVisible: false,
-      requestNodeSeekVerification: jest.fn(),
-      showLinuxDoVerification: jest.fn(),
-      showYaohuoLogin: jest.fn(),
-      surfaces: { linuxdo: {}, nodeseek: {}, yaohuo: {} }
-    },
-    read: {
-      accountIdentityPending: false,
-      accountSessionViewModels: { nodeseek: { isLoggedIn: false } },
-      forumSessionEpochs: { linuxdo: 0, nodeseek: 0, xiaoyinsi: 0, yaohuo: 0 },
-      getLinuxDoUserAgent: jest.fn(),
-      getNodeSeekUserAgent: jest.fn(),
-      identityBarriers: {},
-      readGateway: { getEmojiUrls: jest.fn() },
-      reconcileAccountStatus: jest.fn(),
-      statusBusy: false
-    },
-    write: {
-      ensureNodeImageApiKey: jest.fn(),
-      ensureWritableSession: jest.fn(),
-      isWritableSessionTicketCurrent: jest.fn(),
-      reconcileWritableSession: jest.fn()
-    }
-  })
+    };
+  }
 }));
 
 jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
@@ -146,11 +150,14 @@ jest.mock('@/app/useAppBackHandler', () => ({ useAppBackHandler: jest.fn() }));
 jest.mock('@/app/useContentSourceQueryCleanup', () => ({ useContentSourceQueryCleanup: jest.fn() }));
 
 describe('app runtime startup', () => {
-  it('[REG-PROXY-011] exposes local routes while proxy state is still unavailable', async () => {
+  it('[REG-PROXY-001][REG-PROXY-011] exposes local routes while keeping WebViews blocked during proxy load', async () => {
     const hook = await renderHook(() => useAppRuntime());
 
     expect(hook.result.current.routes).not.toBeNull();
     expect(hook.result.current.routes?.libraryRouteRuntime).toBeDefined();
     expect(hook.result.current.routes?.moreRouteRuntime).toBeDefined();
+    expect(mockUseAccountRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ webViewBlockMessage: '代理状态读取中。' })
+    );
   });
 });

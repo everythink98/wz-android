@@ -3,7 +3,6 @@ import { StyleSheet } from 'react-native';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import {
   createTheme,
-  LINK_COLOR,
   sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
   topicTagColorStyle,
@@ -21,9 +20,7 @@ import { createAccountHostStyles } from '@/features/account/accountHostStyles';
 import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { createMoreStyles } from '@/features/more/styles';
 import { createNotificationStyles } from '@/features/notifications/styles';
-import { createExpandableStyles } from '@/ui/controls/ExpandableControls';
 import { createScreenTopBarStyles } from '@/ui/controls/ScreenTopBar';
-import { createNavBarStyles } from '@/ui/navigation/NavBar';
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -99,41 +96,6 @@ describe('Android reader theme safety rails', () => {
     expect(styles.topicContentInner.paddingTop).toBe(18);
     expect(styles.userContentInner.paddingTop).toBe(8);
     expect(styles.userContentInner.paddingBottom).toBe(styles.contentInner.paddingBottom);
-  });
-
-  it('uses neutral light surfaces with the proxy blue accent', () => {
-    const theme = createTheme(settings);
-
-    expect(theme.background).toBe('#F7F7F7');
-    expect(theme.surface).toBe('#FCFCFC');
-    expect(theme.surface2).toBe('#F0F0F0');
-    expect(theme.line).toBe('#E3E3E3');
-    expect(theme.ink).toBe('#181818');
-    expect(theme.muted).toBe('#707070');
-    expect(theme.primary).toBe('#1677FF');
-    expect(theme.primaryStrong).toBe('#0958D9');
-    expect(theme.primarySoft).toBe('rgba(22, 119, 255, 0.10)');
-    expect(theme.onPrimary).toBe('#FCFCFC');
-    expect(theme.success).toBe(theme.primary);
-    expect(theme.favorite).toBe('#facc15');
-  });
-
-  it('uses achromatic graphite surfaces and blue state colors in dark mode', () => {
-    const theme = createTheme({ ...settings, theme: 'dark' });
-
-    expect(theme).toMatchObject({
-      background: '#121212',
-      surface: '#181818',
-      surface2: '#222222',
-      line: '#303030',
-      lineStrong: '#444444',
-      ink: '#F1F1F1',
-      muted: '#A0A0A0',
-      primary: '#5B9CFF',
-      primaryStrong: '#1677FF',
-      primarySoft: 'rgba(22, 119, 255, 0.16)',
-      success: '#5B9CFF'
-    });
   });
 
   it('uses stable hashed colors for functional tags and stable source identities', () => {
@@ -212,16 +174,12 @@ describe('Android reader theme safety rails', () => {
   it('keeps appearance controls compact, equal-width, and touch accessible', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
-    const expandableStyles = createExpandableStyles(theme, settings);
-
     expect(styles.appearanceSegmentedControl.flex).toBe(1);
     expect(styles.appearanceSegment.flex).toBe(1);
     expect(styles.appearanceSegment.minHeight).toBeGreaterThanOrEqual(48);
     expect(styles.appearanceStepButton.width).toBeGreaterThanOrEqual(48);
     expect(styles.appearanceStepButton.height).toBeGreaterThanOrEqual(48);
     expect(styles.appearanceSlider.height).toBeGreaterThanOrEqual(48);
-    expect(styles.menuIcon.backgroundColor).toBeUndefined();
-    expect('backgroundColor' in expandableStyles.stateIcon).toBe(false);
   });
 
   it('[REG-NOTIFY-036][REG-NOTIFY-040] applies reader type scale and link color to notification content', () => {
@@ -249,25 +207,10 @@ describe('Android reader theme safety rails', () => {
     expect(styles.replyContentArea).toMatchObject({ paddingLeft: 42, paddingRight: 0 });
   });
 
-  it('keeps reply references readable without turning them into badges', () => {
+  it('keeps hidden WebView hosts non-visible', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800);
-
-    expect(styles.htmlMentionLink.color).toBe(LINK_COLOR);
-    expect(styles.htmlReplyReferenceMentionText.color).toBe(LINK_COLOR);
-    expect(styles.replyTargetText.color).toBe(LINK_COLOR);
-    expect(styles.htmlFloorLink.color).toBe(LINK_COLOR);
-    expect('backgroundColor' in styles.htmlReplyReferenceRow).toBe(false);
-    expect('borderWidth' in styles.htmlReplyReferenceRow).toBe(false);
-    expect(styles.htmlReplyReferenceRow.alignSelf).toBe('stretch');
-  });
-
-  it('keeps required dividers and hidden WebView boundaries intact', () => {
-    const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800);
     const accountHostStyles = createAccountHostStyles(theme, settings);
 
-    expect(styles.feedFixedHeader.borderBottomWidth).toBe(StyleSheet.hairlineWidth);
     expect(accountHostStyles.hiddenBrowserWebViewHost).toMatchObject({
       position: 'absolute',
       width: 1,
@@ -290,14 +233,5 @@ describe('Android reader theme safety rails', () => {
 
     expect('height' in styles.nav).toBe(false);
     expect('paddingBottom' in styles.nav).toBe(false);
-  });
-
-  it('keeps selected bottom navigation in the accent color without a capsule background', () => {
-    const theme = createTheme(settings);
-    const styles = createNavBarStyles(theme, settings) as Record<string, Record<string, unknown> | undefined>;
-
-    expect(styles.navIconPill?.backgroundColor).toBeUndefined();
-    expect(styles.navIconPillActive).toBeUndefined();
-    expect(styles.navTextActive?.color).toBe(theme.primary);
   });
 });

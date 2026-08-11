@@ -506,7 +506,6 @@ describe('Topic real child components', () => {
     expect(onLocateReply).toHaveBeenCalledWith({ floor: 1 });
     const replyTarget = view.getByText('@bob');
     expect(replyTarget.parent?.props.hitSlop).toBe(12);
-    expect(styles.replyTargetPill).not.toHaveProperty('minHeight');
     await fireEvent.press(replyTarget);
     expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', username: 'bob' }));
     await fireEvent.press(view.getByText('#1'));

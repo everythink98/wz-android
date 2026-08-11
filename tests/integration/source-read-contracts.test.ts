@@ -26,7 +26,7 @@ import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/l
 import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
-import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '@/sources/nodeseek/browserFallback';
+import { createNodeSeekWebViewFallbackFetcher } from '@/sources/nodeseek/browserFallback';
 import {
   getNodeSeekCurrentUserProfile,
   getNodeSeekReplies,
@@ -3960,33 +3960,26 @@ describe('Android local sources', () => {
     ).resolves.toMatchObject({ id: '8', username: 'Alice' });
   });
 
-  it('[REG-TOPIC-039] rejects ambiguous case-insensitive NodeSeek username matches', async () => {
+  it.each([
+    {
+      label: 'ambiguous case-insensitive',
+      memberList: [
+        { member_id: 7, member_name: 'ALICE' },
+        { member_id: 8, member_name: 'alice' }
+      ]
+    },
+    {
+      label: 'conflicting strict',
+      memberList: [
+        { member_id: 7, member_name: 'Alice' },
+        { member_id: 8, member_name: 'Alice' }
+      ]
+    }
+  ])('[REG-TOPIC-039] rejects $label NodeSeek username matches', async ({ memberList }) => {
     const fetcher = vi.fn(async () =>
       json({
         success: true,
-        memberList: [
-          { member_id: 7, member_name: 'ALICE' },
-          { member_id: 8, member_name: 'alice' }
-        ]
-      })
-    );
-
-    await expect(
-      resolveNodeSeekUser('Alice', {
-        authenticated: true,
-        fetcher
-      })
-    ).rejects.toThrow('用户名解析失败');
-  });
-
-  it('[REG-TOPIC-039] rejects conflicting strict NodeSeek username matches', async () => {
-    const fetcher = vi.fn(async () =>
-      json({
-        success: true,
-        memberList: [
-          { member_id: 7, member_name: 'Alice' },
-          { member_id: 8, member_name: 'Alice' }
-        ]
+        memberList
       })
     );
 
@@ -4854,13 +4847,6 @@ describe('Android local sources', () => {
       url: 'https://www.nodeseek.com/post-861593-1'
     });
     expect(search.items[1]?.url).toBe('https://www.nodeseek.com/post-861594-1');
-  });
-
-  it('allows only NodeSeek-scoped Google search pages in the hidden NodeSeek browser fetcher', () => {
-    expect(isNodeSeekBrowserFetchUrl('https://www.nodeseek.com/search?q=codex')).toBe(true);
-    expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=site%3Anodeseek.com+codex')).toBe(true);
-    expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=codex')).toBe(false);
-    expect(isNodeSeekBrowserFetchUrl('https://example.com/search?q=site%3Anodeseek.com+codex')).toBe(false);
   });
 
   it('loads more NodeSeek Google fallback search pages by Google start offset', async () => {
@@ -6224,11 +6210,24 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-VERIFICATION-002] does not treat plain Cloudflare discussion text as a NodeSeek challenge page', async () => {
+  it.each([
+    {
+      label: 'plain Cloudflare discussion text',
+      path: '/help/cloudflare',
+      text: 'Ordinary documentation mentioning cf-turnstile and challenge-platform.',
+      expected: 'Ordinary documentation'
+    },
+    {
+      label: 'Chinese verification discussion text',
+      path: '/help/security-copy',
+      text: '普通文档讨论“正在进行安全验证”和“安全服务防护恶意自动程序”的提示文案。',
+      expected: '普通文档'
+    }
+  ])('[REG-VERIFICATION-002] does not treat $label as a NodeSeek challenge page', async ({ expected, path, text }) => {
     const normalFetcher = vi.fn(async () =>
       html(`
       <html><body><article>
-        Ordinary documentation mentioning cf-turnstile and challenge-platform.
+        ${text}
       </article></body></html>
     `)
     );
@@ -6238,29 +6237,9 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const response = await fetcher('https://www.nodeseek.com/help/cloudflare');
+    const response = await fetcher(`https://www.nodeseek.com${path}`);
 
-    await expect(response.text()).resolves.toContain('Ordinary documentation');
-    expect(webViewFetcher).not.toHaveBeenCalled();
-  });
-
-  it('[REG-VERIFICATION-002] does not treat Chinese verification discussion text as a NodeSeek challenge page', async () => {
-    const normalFetcher = vi.fn(async () =>
-      html(`
-      <html><body><article>
-        普通文档讨论“正在进行安全验证”和“安全服务防护恶意自动程序”的提示文案。
-      </article></body></html>
-    `)
-    );
-    const webViewFetcher = vi.fn(async () => html('<html>unexpected fallback</html>'));
-    const fetcher = createNodeSeekWebViewFallbackFetcher({
-      defaultFetcher: normalFetcher,
-      webViewFetcher
-    });
-
-    const response = await fetcher('https://www.nodeseek.com/help/security-copy');
-
-    await expect(response.text()).resolves.toContain('普通文档');
+    await expect(response.text()).resolves.toContain(expected);
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 

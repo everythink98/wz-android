@@ -169,7 +169,7 @@ describe('site session state', () => {
     });
   });
 
-  it('keeps site capabilities derived from canonical status instead of scattered booleans', () => {
+  it('distinguishes verified browser access from confirmed account login', () => {
     const states = createSiteSessionStates({
       nodeseek: {
         site: 'nodeseek',
@@ -241,7 +241,7 @@ describe('site session state', () => {
     });
   });
 
-  it('builds UI view models from canonical session state without separate login booleans', () => {
+  it('builds verified, logged-in, and expired UI labels from session status', () => {
     const viewModels = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {
@@ -317,8 +317,7 @@ describe('site session state', () => {
       })
     );
 
-    expect(nodeSeekUserIdForSession(viewModels.nodeseek, null)).toBeNull();
-    expect(nodeSeekUserIdForSession(viewModels.nodeseek, 123)).toBeNull();
+    expect(nodeSeekUserIdForSession(viewModels.nodeseek)).toBeNull();
     expect(
       nodeSeekUserIdForSession(
         createSiteSessionViewModels(
@@ -331,14 +330,13 @@ describe('site session state', () => {
               lastError: '需要验证'
             }
           })
-        ).nodeseek,
-        123
+        ).nodeseek
       )
     ).toBeNull();
-    expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates()).nodeseek, 123)).toBeNull();
+    expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates()).nodeseek)).toBeNull();
   });
 
-  it('[REG-ACCOUNT-019] uses the verified NodeSeek account projection for topic ownership after a remote refresh', () => {
+  it('[REG-ACCOUNT-019] returns only the confirmed NodeSeek profile id as the session identity', () => {
     const view = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {
@@ -357,7 +355,21 @@ describe('site session state', () => {
       })
     ).nodeseek;
 
-    expect(nodeSeekUserIdForSession(view, null)).toBe(48872);
+    expect(nodeSeekUserIdForSession(view)).toBe(48872);
+    expect(
+      nodeSeekUserIdForSession(
+        createSiteSessionViewModels(
+          createSiteSessionStates({
+            nodeseek: {
+              site: 'nodeseek',
+              status: 'logged-in',
+              cookieSummary: ['session'],
+              isVerifying: false
+            }
+          })
+        ).nodeseek
+      )
+    ).toBeNull();
   });
 
   it('moves observed login, verification status, expiry, and clearing through one reducer', () => {

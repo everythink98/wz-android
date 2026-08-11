@@ -39,16 +39,13 @@ export function cancelForumSourceQueries(
 ) {
   return client.cancelQueries({
     predicate: ({ queryKey }) =>
-      queryKey[0] === 'forum' &&
-      (queryKey[1] === source || (includeAggregate && queryKey[1] === 'all'))
+      queryKey[0] === 'forum' && (queryKey[1] === source || (includeAggregate && queryKey[1] === 'all'))
   });
 }
 
 export function removeUnconfirmedForumSourceQueries(source: Source, client: QueryClient = appQueryClient) {
   client.removeQueries({
-    predicate: ({ queryKey }) =>
-      queryKey[0] === 'forum' &&
-      queryKey[1] === source
+    predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === source
   });
 }
 

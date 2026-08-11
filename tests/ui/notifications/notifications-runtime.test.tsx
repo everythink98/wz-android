@@ -1,12 +1,21 @@
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { ToastAndroid } from 'react-native';
-import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
+import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
-import { defaultNotificationState } from '@/platform/notifications/notificationStore';
+import {
+  clearNotificationSourceForContentDisable,
+  defaultNotificationState,
+  loadNotificationState,
+  recordNotificationDelivery,
+  recordNotificationSnapshot,
+  resetNotificationSourceIdentity,
+  setGlobalNotificationIntent,
+  setSourceNotificationIntent
+} from '@/platform/notifications/notificationStore';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import {
   dismissSourceNotification,
@@ -58,6 +67,31 @@ jest.mock('@/platform/notifications/notificationWorker', () => ({
     timedOut: false
   }))
 }));
+
+const mockContentDisableReleases: (() => void)[] = [];
+
+jest.mock('@/platform/notifications/notificationStore', () => {
+  const actual = jest.requireActual<typeof import('@/platform/notifications/notificationStore')>(
+    '@/platform/notifications/notificationStore'
+  );
+  return {
+    ...actual,
+    clearNotificationSourceForContentDisable: jest.fn(
+      (...args: Parameters<typeof actual.clearNotificationSourceForContentDisable>) =>
+        new Promise<Awaited<ReturnType<typeof actual.clearNotificationSourceForContentDisable>>>((resolve, reject) => {
+          mockContentDisableReleases.push(() => {
+            void actual.clearNotificationSourceForContentDisable(...args).then(resolve, reject);
+          });
+        })
+    ),
+    loadNotificationState: jest.fn(actual.loadNotificationState),
+    recordNotificationDelivery: jest.fn(actual.recordNotificationDelivery),
+    recordNotificationSnapshot: jest.fn(actual.recordNotificationSnapshot),
+    resetNotificationSourceIdentity: jest.fn(actual.resetNotificationSourceIdentity),
+    setGlobalNotificationIntent: jest.fn(actual.setGlobalNotificationIntent),
+    setSourceNotificationIntent: jest.fn(actual.setSourceNotificationIntent)
+  };
+});
 
 function notificationResponse(source: string, identifier: string, date: number): Notifications.NotificationResponse {
   return {
@@ -168,7 +202,8 @@ function nodeSeekAndLinuxDoSessions() {
 
 function runtimeOptions(
   openSource = jest.fn(() => true),
-  sessions = createSiteSessionViewModels(createSiteSessionStates())
+  sessions = createSiteSessionViewModels(createSiteSessionStates()),
+  enabledNotificationSources: readonly NotificationSource[] = []
 ) {
   const privateAccessAllowed = (source: NotificationSource, identityKey: string) => {
     const session = sessions[source];
@@ -180,7 +215,7 @@ function runtimeOptions(
     authorizationRevision: 'idle',
     beginXiaoyinsiAuthorization: jest.fn(),
     contentSourcesReady: true,
-    enabledNotificationSources: notificationSources,
+    enabledNotificationSources,
     fetcher: jest.fn(),
     getLinuxDoUserAgent: jest.fn(() => 'linux.do'),
     getNodeSeekUserAgent: jest.fn(() => 'NodeSeek'),
@@ -188,6 +223,32 @@ function runtimeOptions(
     privateAccessAllowed,
     sessions
   };
+}
+
+async function settleStartedRuntimeTasks(unmount = true) {
+  if (unmount) await cleanup();
+  await act(async () => {
+    let settledCount = -1;
+    while (true) {
+      const tasks = [
+        ...jest.mocked(clearNotificationSourceForContentDisable).mock.results,
+        ...jest.mocked(loadNotificationState).mock.results,
+        ...jest.mocked(recordNotificationDelivery).mock.results,
+        ...jest.mocked(recordNotificationSnapshot).mock.results,
+        ...jest.mocked(resetNotificationSourceIdentity).mock.results,
+        ...jest.mocked(setGlobalNotificationIntent).mock.results,
+        ...jest.mocked(setSourceNotificationIntent).mock.results,
+        ...jest.mocked(dismissSourceNotification).mock.results,
+        ...jest.mocked(runNotificationBackgroundWorker).mock.results,
+        ...jest.mocked(syncNotificationBackgroundRegistration).mock.results
+      ].map(({ value }) => Promise.resolve(value));
+      mockContentDisableReleases.splice(0).forEach((release) => release());
+      const stable = tasks.length === settledCount;
+      settledCount = tasks.length;
+      await Promise.allSettled(tasks);
+      if (stable) break;
+    }
+  });
 }
 
 describe('notification runtime', () => {
@@ -251,9 +312,13 @@ describe('notification runtime', () => {
     contentSourcesReady = true;
     await act(async () => hook.rerender({}));
     await waitFor(() => expect(hook.result.current.ready).toBe(true));
-    expect(loadXiaoyinsiCredentials).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(loadXiaoyinsiCredentials).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await jest.mocked(loadXiaoyinsiCredentials).mock.results[0]?.value;
+    });
     await waitFor(() => expect(fetcher).toHaveBeenCalled());
     expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalled();
+    await settleStartedRuntimeTasks();
   });
 
   it('clears disabled content-source delivery state while preserving notification intent and trusted identity', async () => {
@@ -287,6 +352,7 @@ describe('notification runtime', () => {
     );
 
     await waitFor(() => expect(hook.result.current.ready).toBe(true));
+    await settleStartedRuntimeTasks(false);
     await waitFor(() =>
       expect(hook.result.current.state.sources.nodeseek).toEqual({
         intentEnabled: true,
@@ -299,6 +365,7 @@ describe('notification runtime', () => {
     expect(hook.result.current.unreadTotal).toBe(0);
     expect(dismissSourceNotification).toHaveBeenCalledWith('nodeseek', 'android-id', 'nodeseek:42');
     expect(loadXiaoyinsiCredentials).not.toHaveBeenCalled();
+    await settleStartedRuntimeTasks();
   });
 
   it('cancels the previous aggregate notification owner without aborting the new enabled-set owner', async () => {
@@ -353,6 +420,7 @@ describe('notification runtime', () => {
       expect(canceledKeys).toContainEqual(oldKey);
       expect(canceledKeys).not.toContainEqual(newKey);
       expect(appQueryClient.getQueryData(newKey)).toBe('new-owner');
+      await settleStartedRuntimeTasks();
     } finally {
       cancelQueries.mockRestore();
     }
@@ -381,9 +449,13 @@ describe('notification runtime', () => {
     );
     await waitFor(() => expect(hook.result.current.activeSources).toEqual(['nodeseek', 'linuxdo']));
     await waitFor(() => expect(syncNotificationBackgroundRegistration).toHaveBeenCalled());
+    await settleStartedRuntimeTasks(false);
     const cancelQueries = jest.spyOn(appQueryClient, 'cancelQueries');
     const removeQueries = jest.spyOn(appQueryClient, 'removeQueries');
-    jest.clearAllMocks();
+    const dismissCount = jest.mocked(dismissSourceNotification).mock.calls.length;
+    const credentialLoadCount = jest.mocked(loadXiaoyinsiCredentials).mock.calls.length;
+    const workerCount = jest.mocked(runNotificationBackgroundWorker).mock.calls.length;
+    const registrationCount = jest.mocked(syncNotificationBackgroundRegistration).mock.calls.length;
 
     enabledNotificationSources = ['linuxdo', 'nodeseek'];
     await act(async () => hook.rerender({}));
@@ -392,12 +464,13 @@ describe('notification runtime', () => {
     expect(hook.result.current.activeSources).toEqual(['linuxdo', 'nodeseek']);
     expect(cancelQueries).not.toHaveBeenCalled();
     expect(removeQueries).not.toHaveBeenCalled();
-    expect(dismissSourceNotification).not.toHaveBeenCalled();
-    expect(loadXiaoyinsiCredentials).not.toHaveBeenCalled();
-    expect(runNotificationBackgroundWorker).not.toHaveBeenCalled();
-    expect(syncNotificationBackgroundRegistration).not.toHaveBeenCalled();
+    expect(dismissSourceNotification).toHaveBeenCalledTimes(dismissCount);
+    expect(loadXiaoyinsiCredentials).toHaveBeenCalledTimes(credentialLoadCount);
+    expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(workerCount);
+    expect(syncNotificationBackgroundRegistration).toHaveBeenCalledTimes(registrationCount);
     cancelQueries.mockRestore();
     removeQueries.mockRestore();
+    await settleStartedRuntimeTasks();
   });
 
   it('keeps a rapidly re-enabled source operationally paused until its disable cleanup finishes', async () => {
@@ -411,6 +484,7 @@ describe('notification runtime', () => {
       identityKey: 'nodeseek:42',
       baselineReady: true,
       deliveredIds: ['reply:old'],
+      unreadCount: 4,
       notificationIdentifier: 'node-digest'
     };
     let persisted = JSON.stringify(stored);
@@ -425,7 +499,7 @@ describe('notification runtime', () => {
           headers: { 'content-type': 'application/json' }
         })
     );
-    let enabledNotificationSources: readonly NotificationSource[] = notificationSources;
+    let enabledNotificationSources: readonly NotificationSource[] = ['nodeseek'];
     const hook = await renderHook(
       () =>
         useNotificationsRuntime({
@@ -454,15 +528,16 @@ describe('notification runtime', () => {
       if (source === 'nodeseek') await dismissPending;
     });
 
-    enabledNotificationSources = notificationSources.filter((source) => source !== 'nodeseek');
+    enabledNotificationSources = [];
     await act(async () => hook.rerender({}));
+    expect(hook.result.current.unreadTotal).toBe(0);
     await waitFor(() =>
       expect(dismissSourceNotification).toHaveBeenCalledWith('nodeseek', 'node-digest', 'nodeseek:42')
     );
     await expect(firstWorker.sourceAllowed('nodeseek')).resolves.toBe(false);
     expect(hook.result.current.activeSources).not.toContain('nodeseek');
 
-    enabledNotificationSources = notificationSources;
+    enabledNotificationSources = ['nodeseek'];
     await act(async () => hook.rerender({}));
 
     expect(hook.result.current.activeSources).not.toContain('nodeseek');
@@ -470,7 +545,10 @@ describe('notification runtime', () => {
     expect(runNotificationBackgroundWorker).not.toHaveBeenCalled();
 
     await act(async () => finishDismiss());
+    await settleStartedRuntimeTasks(false);
     await waitFor(() => expect(hook.result.current.activeSources).toContain('nodeseek'));
+    await waitFor(() => expect(hook.result.current.state.sources.nodeseek.deliveredIds).toEqual([]));
+    await settleStartedRuntimeTasks();
   });
 
   it('keeps a failed disable cleanup fail-closed and retries it after another explicit source change', async () => {
@@ -481,7 +559,7 @@ describe('notification runtime', () => {
     jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
       persisted = value;
     });
-    let enabledNotificationSources: readonly NotificationSource[] = notificationSources;
+    let enabledNotificationSources: readonly NotificationSource[] = ['nodeseek'];
     const hook = await renderHook(
       () =>
         useNotificationsRuntime({
@@ -499,31 +577,46 @@ describe('notification runtime', () => {
       .mocked(dismissSourceNotification)
       .mockRejectedValueOnce(new Error('dismiss failed'))
       .mockResolvedValue(undefined);
-    enabledNotificationSources = notificationSources.filter((source) => source !== 'nodeseek');
+    enabledNotificationSources = [];
     await act(async () => hook.rerender({}));
+    await settleStartedRuntimeTasks(false);
 
     await waitFor(() => expect(hook.result.current.snapshotErrors.nodeseek).toBe('dismiss failed'));
     expect(hook.result.current.activeSources).not.toContain('nodeseek');
 
-    enabledNotificationSources = notificationSources;
+    enabledNotificationSources = ['nodeseek'];
     await act(async () => hook.rerender({}));
+    await settleStartedRuntimeTasks(false);
 
-    await waitFor(() => expect(dismissSourceNotification).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        jest.mocked(dismissSourceNotification).mock.calls.filter(([source]) => source === 'nodeseek')
+      ).toHaveLength(2)
+    );
     await waitFor(() => expect(hook.result.current.activeSources).toContain('nodeseek'));
     expect(hook.result.current.snapshotErrors.nodeseek).toBeUndefined();
+    await settleStartedRuntimeTasks();
   });
 
   it('[REG-NOTIFY-001] keeps stored unread state without showing a native foreground toast', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek.unreadCount = 1;
-    jest.mocked(AsyncStorage.getItem).mockResolvedValueOnce(JSON.stringify(stored));
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
     const toast = jest.spyOn(ToastAndroid, 'show').mockImplementation(() => undefined);
 
     try {
-      const hook = await renderHook(() => useNotificationsRuntime(runtimeOptions()), { wrapper: QueryTestWrapper });
+      const hook = await renderHook(
+        () =>
+          useNotificationsRuntime({
+            ...runtimeOptions(),
+            enabledNotificationSources: ['nodeseek']
+          }),
+        { wrapper: QueryTestWrapper }
+      );
 
       await waitFor(() => expect(hook.result.current.unreadTotal).toBe(1));
       expect(toast).not.toHaveBeenCalled();
+      await settleStartedRuntimeTasks();
     } finally {
       toast.mockRestore();
     }
@@ -549,11 +642,19 @@ describe('notification runtime', () => {
     });
 
     expect(hook.result.current.identityKeys).toBe(firstIdentityKeys);
+    await settleStartedRuntimeTasks();
   });
 
   it('opens a warm Android notification response once and clears it', async () => {
     const openSource = jest.fn(() => true);
-    await renderHook(() => useNotificationsRuntime(runtimeOptions(openSource)), { wrapper: QueryTestWrapper });
+    await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(openSource),
+          enabledNotificationSources: ['nodeseek']
+        }),
+      { wrapper: QueryTestWrapper }
+    );
 
     await waitFor(() => expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalledTimes(1));
     const listener = jest.mocked(Notifications.addNotificationResponseReceivedListener).mock.calls[0]![0];
@@ -567,13 +668,21 @@ describe('notification runtime', () => {
     expect(openSource).toHaveBeenCalledTimes(1);
     expect(openSource).toHaveBeenCalledWith('nodeseek');
     await waitFor(() => expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1));
+    await settleStartedRuntimeTasks();
   });
 
   it('opens a cold Android notification response once and clears duplicate delivery', async () => {
     const response = notificationResponse('linuxdo', 'cold-linuxdo', 2);
     jest.mocked(Notifications.getLastNotificationResponseAsync).mockResolvedValue(response);
     const openSource = jest.fn(() => true);
-    await renderHook(() => useNotificationsRuntime(runtimeOptions(openSource)), { wrapper: QueryTestWrapper });
+    await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(openSource),
+          enabledNotificationSources: ['linuxdo']
+        }),
+      { wrapper: QueryTestWrapper }
+    );
 
     await waitFor(() => expect(openSource).toHaveBeenCalledWith('linuxdo'));
     const listener = jest.mocked(Notifications.addNotificationResponseReceivedListener).mock.calls[0]![0];
@@ -581,6 +690,7 @@ describe('notification runtime', () => {
 
     expect(openSource).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1));
+    await settleStartedRuntimeTasks();
   });
 
   it.each(['warm', 'cold'] as const)(
@@ -607,12 +717,13 @@ describe('notification runtime', () => {
 
       await waitFor(() => expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalledTimes(1));
       expect(openSource).not.toHaveBeenCalled();
+      await settleStartedRuntimeTasks();
     }
   );
 
   it('drops a deferred notification response when its source is disabled before navigation becomes ready', async () => {
     const openSource = jest.fn(() => false);
-    let enabledNotificationSources: readonly NotificationSource[] = notificationSources;
+    let enabledNotificationSources: readonly NotificationSource[] = ['nodeseek'];
     const hook = await renderHook(
       () =>
         useNotificationsRuntime({
@@ -626,15 +737,16 @@ describe('notification runtime', () => {
     await act(async () => listener(notificationResponse('nodeseek', 'deferred-disabled', 4)));
     expect(openSource).toHaveBeenCalledTimes(1);
 
-    enabledNotificationSources = notificationSources.filter((source) => source !== 'nodeseek');
+    enabledNotificationSources = [];
     await act(async () => hook.rerender({}));
     await act(async () => hook.result.current.onNavigationReady());
     expect(openSource).toHaveBeenCalledTimes(1);
 
-    enabledNotificationSources = notificationSources;
+    enabledNotificationSources = ['nodeseek'];
     await act(async () => hook.rerender({}));
     await act(async () => hook.result.current.onNavigationReady());
     expect(openSource).toHaveBeenCalledTimes(1);
+    await settleStartedRuntimeTasks();
   });
 
   it('keeps first opt-in intent but leaves background disabled when Android permission is denied', async () => {
@@ -654,6 +766,7 @@ describe('notification runtime', () => {
       false,
       []
     );
+    await settleStartedRuntimeTasks();
   });
 
   it.each(['pending', 'unknown'] as const)(
@@ -680,7 +793,8 @@ describe('notification runtime', () => {
           useNotificationsRuntime({
             ...runtimeOptions(
               jest.fn(() => true),
-              nodeSeekSessions(identityTrust)
+              nodeSeekSessions(identityTrust),
+              ['nodeseek']
             ),
             fetcher
           }),
@@ -693,6 +807,7 @@ describe('notification runtime', () => {
       expect(appQueryClient.getQueryData(forumQueryKeys.notifications('nodeseek'))).toBe(notificationCache);
       expect(dismissSourceNotification).not.toHaveBeenCalledWith('nodeseek', expect.anything(), expect.anything());
       expect(fetcher).not.toHaveBeenCalled();
+      await settleStartedRuntimeTasks();
     }
   );
 
@@ -708,7 +823,8 @@ describe('notification runtime', () => {
         useNotificationsRuntime(
           runtimeOptions(
             jest.fn(() => true),
-            nodeSeekSessions('confirmed')
+            nodeSeekSessions('confirmed'),
+            ['nodeseek', 'xiaoyinsi']
           )
         ),
       { wrapper: QueryTestWrapper }
@@ -716,6 +832,49 @@ describe('notification runtime', () => {
 
     await waitFor(() => expect(hook.result.current.ready).toBe(true));
     await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:42'));
+    await settleStartedRuntimeTasks();
+  });
+
+  it('pauses Xiaoyinsi notifications while a changed authorization scope is being rechecked', async () => {
+    let authorizationRevision = 'authorized';
+    let persisted: string | null = null;
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    jest.mocked(loadXiaoyinsiCredentials).mockImplementation(() =>
+      authorizationRevision === 'authorized'
+        ? Promise.resolve({
+            apiKey: 'scoped-key',
+            clientId: 'client-id',
+            scopes: ['read', 'write', 'notifications']
+          })
+        : new Promise((resolve) => setTimeout(() => resolve(undefined), 50))
+    );
+    const sessions = xiaoyinsiSessions();
+    const openSource = jest.fn(() => true);
+    const options = runtimeOptions(openSource, sessions, ['xiaoyinsi']);
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...options,
+          authorizationRevision
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(hook.result.current.activeSources).toContain('xiaoyinsi'));
+    authorizationRevision = 'rechecking';
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(loadXiaoyinsiCredentials).toHaveBeenCalledTimes(2));
+
+    const activeWhileRechecking = hook.result.current.activeSources.includes('xiaoyinsi');
+    const upgradeShownWhileRechecking = hook.result.current.xiaoyinsiNeedsUpgrade;
+
+    await waitFor(() => expect(hook.result.current.xiaoyinsiNeedsUpgrade).toBe(true));
+    expect(activeWhileRechecking).toBe(false);
+    expect(upgradeShownWhileRechecking).toBe(false);
+    await settleStartedRuntimeTasks();
   });
 
   it('[REG-NOTIFY-020] does not report background enabled for a legacy Xiaoyinsi-only credential', async () => {
@@ -740,7 +899,8 @@ describe('notification runtime', () => {
         useNotificationsRuntime(
           runtimeOptions(
             jest.fn(() => true),
-            xiaoyinsiSessions()
+            xiaoyinsiSessions(),
+            ['xiaoyinsi']
           )
         ),
       { wrapper: QueryTestWrapper }
@@ -749,9 +909,10 @@ describe('notification runtime', () => {
     await waitFor(() => expect(hook.result.current.xiaoyinsiNeedsUpgrade).toBe(true));
     expect(hook.result.current.backgroundEnabled).toBe(false);
     expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(expect.anything(), true, []);
+    await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-018] runs the shared delivery state machine after a foreground unread refresh', async () => {
+  it('[REG-NOTIFY-018] refreshes and persists current unread before running shared delivery', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
@@ -763,7 +924,11 @@ describe('notification runtime', () => {
       baselineReady: true,
       deliveredIds: ['reply:old']
     };
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
     const fetcher = jest.fn(
       async () =>
         new Response(JSON.stringify({ atMe: 0, reply: 1, message: 0 }), {
@@ -772,12 +937,13 @@ describe('notification runtime', () => {
         })
     );
 
-    await renderHook(
+    const hook = await renderHook(
       () =>
         useNotificationsRuntime({
           ...runtimeOptions(
             jest.fn(() => true),
-            nodeSeekSessions('confirmed')
+            nodeSeekSessions('confirmed'),
+            ['nodeseek']
           ),
           appActive: true,
           fetcher
@@ -786,8 +952,11 @@ describe('notification runtime', () => {
     );
 
     await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalled());
+    await waitFor(() => expect(hook.result.current.unreadTotal).toBe(1));
+    await waitFor(() => expect(JSON.parse(persisted).sources.nodeseek.unreadCount).toBe(1));
     expect(runNotificationBackgroundWorker).toHaveBeenCalledWith(expect.objectContaining({ sources: ['nodeseek'] }));
     const dependencies = jest.mocked(runNotificationBackgroundWorker).mock.calls[0]![0];
+    jest.mocked(dismissSourceNotification).mockClear();
     await dependencies.system.presentDigest(
       'nodeseek',
       {
@@ -807,6 +976,7 @@ describe('notification runtime', () => {
       'nodeseek:42',
       'wz-message-nodeseek-nodeseek%3A42'
     );
+    await settleStartedRuntimeTasks();
   });
 
   it('[REG-ACCOUNT-041] gives the foreground worker a canonical private-access predicate', async () => {
@@ -853,7 +1023,8 @@ describe('notification runtime', () => {
         useNotificationsRuntime({
           ...runtimeOptions(
             jest.fn(() => true),
-            nodeSeekSessions('confirmed')
+            nodeSeekSessions('confirmed'),
+            ['nodeseek']
           ),
           appActive: true,
           fetcher,
@@ -877,6 +1048,7 @@ describe('notification runtime', () => {
     await expect(dependencies.privateAccessAllowed?.('nodeseek', 'nodeseek:42')).resolves.toBe(false);
     snapshot = { ...snapshot, authenticated: true, sourceEnabled: false };
     await expect(dependencies.privateAccessAllowed?.('nodeseek', 'nodeseek:42')).resolves.toBe(false);
+    await settleStartedRuntimeTasks();
   });
 
   it('[REG-NOTIFY-026] does not suppress foreground delivery when snapshot persistence fails', async () => {
@@ -901,12 +1073,13 @@ describe('notification runtime', () => {
         })
     );
 
-    await renderHook(
+    const hook = await renderHook(
       () =>
         useNotificationsRuntime({
           ...runtimeOptions(
             jest.fn(() => true),
-            nodeSeekSessions('confirmed')
+            nodeSeekSessions('confirmed'),
+            ['nodeseek']
           ),
           appActive: true,
           fetcher
@@ -921,6 +1094,8 @@ describe('notification runtime', () => {
         })
       )
     );
+    await waitFor(() => expect(hook.result.current.unreadTotal).toBe(1));
+    await settleStartedRuntimeTasks();
   });
 
   it('[REG-NOTIFY-025] still presents an Android notification while the message center is visible', async () => {
@@ -946,7 +1121,8 @@ describe('notification runtime', () => {
     const appActive = true;
     const options = runtimeOptions(
       jest.fn(() => true),
-      nodeSeekSessions('confirmed')
+      nodeSeekSessions('confirmed'),
+      ['nodeseek']
     );
     const hook = await renderHook(
       () =>
@@ -976,6 +1152,7 @@ describe('notification runtime', () => {
       )
     ).resolves.toBe('wz-message-nodeseek-nodeseek%3A42');
     expect(presentSourceNotification).toHaveBeenCalledTimes(1);
+    await settleStartedRuntimeTasks();
   });
 
   it('[REG-NOTIFY-005] keeps a signed-in legacy Xiaoyinsi credential paused for upgrade without discarding identity state', async () => {
@@ -1002,7 +1179,8 @@ describe('notification runtime', () => {
         useNotificationsRuntime(
           runtimeOptions(
             jest.fn(() => true),
-            xiaoyinsiSessions()
+            xiaoyinsiSessions(),
+            ['xiaoyinsi']
           )
         ),
       { wrapper: QueryTestWrapper }
@@ -1012,15 +1190,18 @@ describe('notification runtime', () => {
     expect(hook.result.current.identityKeys.xiaoyinsi).toBe('xiaoyinsi:7');
     expect(hook.result.current.activeSources).not.toContain('xiaoyinsi');
     expect(hook.result.current.state.sources.xiaoyinsi.deliveredIds).toEqual(['reply:known']);
+    await settleStartedRuntimeTasks();
   });
 
   it('clears the previous account watermark after a confirmed account switch', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek = {
+      ...stored.sources.nodeseek,
       intentEnabled: true,
       identityKey: 'nodeseek:42',
       baselineReady: true,
-      deliveredIds: ['reply:known']
+      deliveredIds: ['reply:known'],
+      unreadCount: 7
     };
     let persisted = JSON.stringify(stored);
     jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
@@ -1030,22 +1211,32 @@ describe('notification runtime', () => {
     appQueryClient.setQueryData(forumQueryKeys.notifications('nodeseek'), { items: ['cached'] });
 
     let sessions = nodeSeekSessions('confirmed');
+    const seenUnreadTotals: number[] = [];
     const hook = await renderHook(
-      () =>
-        useNotificationsRuntime(
+      () => {
+        const runtime = useNotificationsRuntime(
           runtimeOptions(
             jest.fn(() => true),
-            sessions
+            sessions,
+            ['nodeseek']
           )
-        ),
+        );
+        seenUnreadTotals.push(runtime.unreadTotal);
+        return runtime;
+      },
       { wrapper: QueryTestWrapper }
     );
+    await waitFor(() => expect(hook.result.current.ready).toBe(true));
+    seenUnreadTotals.length = 0;
     sessions = nodeSeekSessions('confirmed', '84');
     await act(async () => hook.rerender({}));
 
     await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:84'));
+    expect(hook.result.current.identityKeys.nodeseek).toBe('nodeseek:84');
+    expect(seenUnreadTotals).not.toContain(7);
     expect(hook.result.current.state.sources.nodeseek.deliveredIds).toEqual([]);
     expect(appQueryClient.getQueryData(forumQueryKeys.notifications('nodeseek'))).toBeUndefined();
+    await settleStartedRuntimeTasks();
   });
 
   it('[REG-NOTIFY-023] lets only the latest account reconciliation persist its identity', async () => {
@@ -1080,7 +1271,8 @@ describe('notification runtime', () => {
         useNotificationsRuntime(
           runtimeOptions(
             jest.fn(() => true),
-            sessions
+            sessions,
+            ['nodeseek']
           )
         ),
       { wrapper: QueryTestWrapper }
@@ -1095,10 +1287,8 @@ describe('notification runtime', () => {
     await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:126'));
 
     releaseDismissal();
-    await act(async () => {
-      await dismissalBlocked;
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await act(async () => dismissalBlocked);
+    await settleStartedRuntimeTasks();
 
     expect(JSON.parse(persisted).sources.nodeseek.identityKey).toBe('nodeseek:126');
   });
@@ -1130,7 +1320,8 @@ describe('notification runtime', () => {
         useNotificationsRuntime(
           runtimeOptions(
             jest.fn(() => true),
-            sessions
+            sessions,
+            ['nodeseek']
           )
         ),
       { wrapper: QueryTestWrapper }
@@ -1142,5 +1333,6 @@ describe('notification runtime', () => {
     expect(hook.result.current.state.sources.nodeseek.deliveredIds).toEqual([]);
     expect(appQueryClient.getQueryData(forumQueryKeys.notifications('nodeseek'))).toBeUndefined();
     expect(appQueryClient.getQueryData(aggregateKey)).toBeUndefined();
+    await settleStartedRuntimeTasks();
   });
 });

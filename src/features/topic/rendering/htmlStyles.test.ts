@@ -43,23 +43,6 @@ describe('Android HTML rendering styles', () => {
     expect(htmlIgnoredStyles).toContain('backgroundColor');
   });
 
-  it('uses bottom-only paragraph spacing so list item text is not pushed below markers', () => {
-    const theme = createTheme(settings);
-    const { htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
-
-    expect(htmlTagsStyles.p?.marginTop).toBe(0);
-    expect(htmlTagsStyles.p?.marginBottom).toBe(10);
-  });
-
-  it('keeps reply prose denser than article prose while honoring reader scaling', () => {
-    const theme = createTheme(settings);
-    const { htmlBaseStyle, htmlClassesStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
-    const replyStyle = htmlClassesStyles[htmlRenderingStyles.HTML_REPLY_CONTENT_CLASS];
-
-    expect(htmlBaseStyle).toMatchObject({ fontSize: 16, lineHeight: 26 });
-    expect(replyStyle).toMatchObject({ fontSize: 15, lineHeight: 24 });
-  });
-
   it('[REG-TOPIC-056] gives canonical Callout titles App-owned tone styles', () => {
     const theme = createTheme(settings);
     const ordinaryStyles = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });

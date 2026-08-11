@@ -158,113 +158,62 @@ describe('Android user navigation helpers', () => {
     expect(merged?.accessRequirement).toEqual(listTopic.accessRequirement);
   });
 
-  it('does not copy a stale fallback access requirement onto a readable detail', () => {
-    const listTopic: Topic = {
-      source: 'nodeseek',
-      id: '7202',
-      title: '新版块“内版”，以及试行版规',
-      author: 'alice',
-      url: 'https://www.nodeseek.com/post-7202-1',
-      createdAt: '2026-06-04T06:58:00.000Z',
-      replyCount: 0,
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv2'
-      }
-    };
-    const detailTopic: TopicDetail = {
-      ...listTopic,
-      accessRequirement: undefined,
-      contentHtml: '<p>为什么会有这个版块，以及这里的试行版规。</p>',
-      replies: []
-    };
+  it.each([
+    [
+      'ordinary NodeSeek prose',
+      'nodeseek',
+      '7202',
+      '新版块“内版”，以及试行版规',
+      { type: 'level', label: '需等级', detail: 'Lv2' },
+      '<p>为什么会有这个版块，以及这里的试行版规。</p>'
+    ],
+    [
+      'NodeSeek prose mentioning login',
+      'nodeseek',
+      '7203',
+      '登录教程',
+      { type: 'level', label: '需等级', detail: 'Lv2' },
+      '<p>这篇公开内容说明需要登录后才能同步某个外部服务。</p>'
+    ],
+    [
+      'long V2EX prose mentioning a private topic',
+      'v2ex',
+      '7204',
+      '权限说明讨论',
+      { type: 'permission', label: '需权限', detail: 'This topic is private.' },
+      `<p>${'公开正文'.repeat(60)} Some users call this a private topic, but this page is readable.</p>`
+    ],
+    [
+      'short V2EX prose mentioning a private topic',
+      'v2ex',
+      '7205',
+      '权限说明讨论',
+      { type: 'permission', label: '需权限', detail: 'This topic is private.' },
+      '<p>We call this a private topic in our docs.</p>'
+    ]
+  ] as const)(
+    'keeps a readable detail free of a stale list access requirement: %s',
+    (_case, source, id, title, accessRequirement, contentHtml) => {
+      const listTopic: Topic = {
+        source,
+        id,
+        title,
+        author: 'alice',
+        url: source === 'nodeseek' ? `https://www.nodeseek.com/post-${id}-1` : `https://www.v2ex.com/t/${id}`,
+        createdAt: '2026-06-04T06:58:00.000Z',
+        replyCount: 0,
+        accessRequirement: { ...accessRequirement }
+      };
+      const detailTopic: TopicDetail = {
+        ...listTopic,
+        accessRequirement: undefined,
+        contentHtml,
+        replies: []
+      };
 
-    const merged = topicWithAuthorFallback(detailTopic, listTopic);
-
-    expect(merged?.accessRequirement).toBeUndefined();
-  });
-
-  it('does not copy a stale fallback access requirement when readable detail mentions login text', () => {
-    const listTopic: Topic = {
-      source: 'nodeseek',
-      id: '7203',
-      title: '登录教程',
-      author: 'alice',
-      url: 'https://www.nodeseek.com/post-7203-1',
-      createdAt: '2026-06-04T06:58:00.000Z',
-      replyCount: 0,
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv2'
-      }
-    };
-    const detailTopic: TopicDetail = {
-      ...listTopic,
-      accessRequirement: undefined,
-      contentHtml: '<p>这篇公开内容说明需要登录后才能同步某个外部服务。</p>',
-      replies: []
-    };
-
-    const merged = topicWithAuthorFallback(detailTopic, listTopic);
-
-    expect(merged?.accessRequirement).toBeUndefined();
-  });
-
-  it('does not copy a stale fallback access requirement from ordinary text mentioning private topics', () => {
-    const listTopic: Topic = {
-      source: 'v2ex',
-      id: '7204',
-      title: '权限说明讨论',
-      author: 'alice',
-      url: 'https://www.v2ex.com/t/7204',
-      createdAt: '2026-06-04T06:58:00.000Z',
-      replyCount: 0,
-      accessRequirement: {
-        type: 'permission',
-        label: '需权限',
-        detail: 'This topic is private.'
-      }
-    };
-    const detailTopic: TopicDetail = {
-      ...listTopic,
-      accessRequirement: undefined,
-      contentHtml: `<p>${'公开正文'.repeat(60)} Some users call this a private topic, but this page is readable.</p>`,
-      replies: []
-    };
-
-    const merged = topicWithAuthorFallback(detailTopic, listTopic);
-
-    expect(merged?.accessRequirement).toBeUndefined();
-  });
-
-  it('does not copy a stale fallback access requirement from a short ordinary sentence mentioning a private topic', () => {
-    const listTopic: Topic = {
-      source: 'v2ex',
-      id: '7205',
-      title: '权限说明讨论',
-      author: 'alice',
-      url: 'https://www.v2ex.com/t/7205',
-      createdAt: '2026-06-04T06:58:00.000Z',
-      replyCount: 0,
-      accessRequirement: {
-        type: 'permission',
-        label: '需权限',
-        detail: 'This topic is private.'
-      }
-    };
-    const detailTopic: TopicDetail = {
-      ...listTopic,
-      accessRequirement: undefined,
-      contentHtml: '<p>We call this a private topic in our docs.</p>',
-      replies: []
-    };
-
-    const merged = topicWithAuthorFallback(detailTopic, listTopic);
-
-    expect(merged?.accessRequirement).toBeUndefined();
-  });
+      expect(topicWithAuthorFallback(detailTopic, listTopic)?.accessRequirement).toBeUndefined();
+    }
+  );
 
   it('uses a more specific list level when a restricted detail only has a generic permission notice', () => {
     const listTopic: Topic = {

@@ -54,7 +54,6 @@ export type MoreAccountCapabilities = {
     };
     nodeSeek: {
       checkIn: () => unknown;
-      webLoginUserId: number | null;
     };
     xiaoyinsiAuth: {
       begin: () => unknown;
@@ -227,9 +226,7 @@ export function MoreAccountPanel({
                 : null
       }
       pendingFillSite={runtime.center.credentials.pendingFillSite}
-      nodeSeekUserId={
-        nodeSeekEnabled ? nodeSeekUserIdForSession(sessions.nodeseek, runtime.center.nodeSeek.webLoginUserId) : null
-      }
+      nodeSeekUserId={nodeSeekEnabled ? nodeSeekUserIdForSession(sessions.nodeseek) : null}
       sessions={projectedSessions}
       siteContent={{
         nodeseek: nodeSeekEnabled ? (

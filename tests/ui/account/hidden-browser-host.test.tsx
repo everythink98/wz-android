@@ -30,37 +30,26 @@ describe('HiddenBrowserHost linux.do transport', () => {
     mockWebViewPropsByUrl.clear();
   });
 
-  it('[REG-ACCOUNT-026] never injects saved app cookies into the shared site WebViews', async () => {
-    await render(
-      <HiddenBrowserHost
-        blockedMessage=""
-        failLinuxDoBrowserFetchById={jest.fn()}
-        failNodeSeekBrowserFetchById={jest.fn()}
-        handleLinuxDoBrowserFetchMessage={jest.fn()}
-        handleNodeSeekBrowserFetchMessage={jest.fn()}
-        linuxDoBrowserWebViewRef={createRef<WebView>()}
-        nodeSeekBrowserWebViewRef={createRef<WebView>()}
-        onLinuxDoHttpErrorStatus={jest.fn()}
-        onNodeSeekHttpErrorStatus={jest.fn()}
-        state={{
-          linuxDo: {
-            request: {
-              id: 2,
-              url: 'https://linux.do/latest.json'
-            },
-            userAgent: 'LinuxDo Agent'
-          },
-          nodeSeek: {
-            request: {
-              id: 1,
-              url: 'https://www.nodeseek.com/post-1-1'
-            },
-            userAgent: 'NodeSeek Agent'
-          }
-        }}
-        styles={{} as never}
-      />
-    );
+  it('[REG-ACCOUNT-026][REG-PROXY-001] keeps shared site WebViews cookie-clean and unmounted while blocked', async () => {
+    const failLinuxDoBrowserFetchById = jest.fn();
+    const failNodeSeekBrowserFetchById = jest.fn();
+    const props: React.ComponentProps<typeof HiddenBrowserHost> = {
+      blockedMessage: '',
+      failLinuxDoBrowserFetchById,
+      failNodeSeekBrowserFetchById,
+      handleLinuxDoBrowserFetchMessage: jest.fn(),
+      handleNodeSeekBrowserFetchMessage: jest.fn(),
+      linuxDoBrowserWebViewRef: createRef<WebView>(),
+      nodeSeekBrowserWebViewRef: createRef<WebView>(),
+      onLinuxDoHttpErrorStatus: jest.fn(),
+      onNodeSeekHttpErrorStatus: jest.fn(),
+      state: {
+        linuxDo: { request: { id: 2, url: 'https://linux.do/latest.json' }, userAgent: 'LinuxDo Agent' },
+        nodeSeek: { request: { id: 1, url: 'https://www.nodeseek.com/post-1-1' }, userAgent: 'NodeSeek Agent' }
+      },
+      styles: {} as never
+    };
+    const view = await render(<HiddenBrowserHost {...props} />);
 
     expect(mockWebViewPropsByUrl.get('https://www.nodeseek.com/post-1-1')?.source).toEqual({
       uri: 'https://www.nodeseek.com/post-1-1'
@@ -71,6 +60,12 @@ describe('HiddenBrowserHost linux.do transport', () => {
     expect(mockWebViewPropsByUrl.get('https://linux.do/latest.json')?.source).toEqual({
       uri: 'https://linux.do/latest.json'
     });
+
+    mockWebViewPropsByUrl.clear();
+    await view.rerender(<HiddenBrowserHost {...props} blockedMessage="代理状态切换中" />);
+    expect(failNodeSeekBrowserFetchById).toHaveBeenCalledWith(1, '代理状态切换中');
+    expect(failLinuxDoBrowserFetchById).toHaveBeenCalledWith(2, '代理状态切换中');
+    expect(mockWebViewPropsByUrl).toHaveProperty('size', 0);
   });
 
   it('[REG-ACCOUNT-037] passes the account owner into the NodeSeek identity probe script', async () => {

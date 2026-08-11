@@ -189,22 +189,22 @@ describe('Android local access requirement detection', () => {
     expect(feed.items[0].accessRequirement).toBeUndefined();
   });
 
-  it('keeps linux.do category access requirements on list topics', async () => {
+  it.each([2, 4])('keeps linux.do category trust level Lv%i on list topics', async (level) => {
     const fetcher = vi.fn(async () =>
       json({
         categories: [
           {
             id: 12,
-            name: 'Lv2 分类',
-            required_trust_level: 2
+            name: `Lv${level} 分类`,
+            required_trust_level: level
           }
         ],
         topic_list: {
           topics: [
             {
               id: 123,
-              title: 'linux.do 限制主题',
-              slug: 'restricted-topic',
+              title: `linux.do Lv${level} 主题`,
+              slug: `level-${level}-topic`,
               category_id: 12,
               created_at: '2026-05-22T00:00:00.000Z',
               bumped_at: '2026-05-22T01:00:00.000Z',
@@ -223,45 +223,7 @@ describe('Android local access requirement detection', () => {
     expect(feed.items[0].accessRequirement).toEqual({
       type: 'level',
       label: '需等级',
-      detail: 'Lv2'
-    });
-  });
-
-  it('keeps real linux.do category trust levels above Lv2 on list topics', async () => {
-    const fetcher = vi.fn(async () =>
-      json({
-        categories: [
-          {
-            id: 12,
-            name: 'Lv4 分类',
-            required_trust_level: 4
-          }
-        ],
-        topic_list: {
-          topics: [
-            {
-              id: 123,
-              title: 'linux.do 四级主题',
-              slug: 'level-four-topic',
-              category_id: 12,
-              created_at: '2026-05-22T00:00:00.000Z',
-              bumped_at: '2026-05-22T01:00:00.000Z',
-              posts_count: 2,
-              views: 10,
-              last_poster_username: 'alice'
-            }
-          ]
-        },
-        users: []
-      })
-    );
-
-    const feed = await getLinuxDoFeed({ fetcher, limit: 1 });
-
-    expect(feed.items[0].accessRequirement).toEqual({
-      type: 'level',
-      label: '需等级',
-      detail: 'Lv4'
+      detail: `Lv${level}`
     });
   });
 
@@ -639,15 +601,18 @@ describe('Android local access requirement detection', () => {
     expect(feed.items[0].accessRequirement).toBeUndefined();
   });
 
-  it('keeps NodeSeek list read-level requirements from embedded homepage data', async () => {
+  it.each([
+    { level: 2, postId: 760813, title: '求新闻类app分流域名合集', username: '江shan-123' },
+    { level: 5, postId: 760814, title: '需要更高等级的帖子', username: 'alice' }
+  ])('keeps NodeSeek embedded read level Lv$level on list topics', async ({ level, postId, title, username }) => {
     const payload = Buffer.from(
       JSON.stringify({
         topicList: [
           {
-            postId: 760813,
-            title: '求新闻类app分流域名合集',
-            readLevel: 2,
-            op: { name: '江shan-123', userId: 13510 },
+            postId,
+            title,
+            readLevel: level,
+            op: { name: username, userId: 13510 },
             category: { key: 'inside', name: '内版' },
             time: { createdDate: '2026-06-04T06:58:05Z' }
           }
@@ -664,46 +629,12 @@ describe('Android local access requirement detection', () => {
     const feed = await getNodeSeekFeed({ fetcher });
 
     expect(feed.items[0]).toMatchObject({
-      id: '760813',
+      id: String(postId),
       categoryId: 'inside',
       accessRequirement: {
         type: 'level',
         label: '需等级',
-        detail: 'Lv2'
-      }
-    });
-  });
-
-  it('keeps real NodeSeek list read levels above Lv2 from embedded topic fields', async () => {
-    const payload = Buffer.from(
-      JSON.stringify({
-        topicList: [
-          {
-            postId: 760814,
-            title: '需要更高等级的帖子',
-            readLevel: 5,
-            op: { name: 'alice', userId: 13510 },
-            category: { key: 'inside', name: '内版' },
-            time: { createdDate: '2026-06-04T06:58:05Z' }
-          }
-        ]
-      })
-    ).toString('base64');
-    const fetcher = vi.fn(
-      async () =>
-        new Response(`<script>${payload}</script>`, {
-          headers: { 'content-type': 'text/html' }
-        })
-    );
-
-    const feed = await getNodeSeekFeed({ fetcher });
-
-    expect(feed.items[0]).toMatchObject({
-      id: '760814',
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv5'
+        detail: `Lv${level}`
       }
     });
   });

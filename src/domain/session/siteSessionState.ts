@@ -113,24 +113,23 @@ export function createAccountSessionSnapshot(site: SessionSite): AccountSessionS
 function hasValidAccountUser(session: Pick<SiteSessionState, 'currentUser' | 'site' | 'status'>) {
   return Boolean(
     session.status === 'logged-in' &&
-      session.currentUser?.source === session.site &&
-      typeof session.currentUser.id === 'string' &&
-      session.currentUser.id.trim()
+    session.currentUser?.source === session.site &&
+    typeof session.currentUser.id === 'string' &&
+    session.currentUser.id.trim()
   );
 }
 
-export function accountSessionIdentityKey(
-  session: Pick<AccountSessionSnapshot, 'currentUser' | 'site' | 'status'>
-) {
-  return hasValidAccountUser(session) ? `${session.site}:${session.currentUser!.id.trim()}` : `${session.site}:anonymous`;
+export function accountSessionIdentityKey(session: Pick<AccountSessionSnapshot, 'currentUser' | 'site' | 'status'>) {
+  return hasValidAccountUser(session)
+    ? `${session.site}:${session.currentUser!.id.trim()}`
+    : `${session.site}:anonymous`;
 }
 
 export function accountSessionAccess(snapshot: AccountSessionSnapshot) {
   const identityKey = accountSessionIdentityKey(snapshot);
   const authenticated = identityKey !== `${snapshot.site}:anonymous`;
   const identityTrust =
-    (snapshot.identityTrust === 'confirmed' && !authenticated) ||
-    (snapshot.identityTrust === 'none' && authenticated)
+    (snapshot.identityTrust === 'confirmed' && !authenticated) || (snapshot.identityTrust === 'none' && authenticated)
       ? ('unknown' as const)
       : snapshot.identityTrust;
   return {
@@ -184,10 +183,7 @@ export function accountSessionSnapshotFromEvent(
   if (event.type === 'recovery-failed') {
     return { ...previous, isVerifying: false, lastError: event.message };
   }
-  if (
-    (event.type === 'cookie-loaded' || event.type === 'session-updated') &&
-    event.loggedIn === undefined
-  ) {
+  if ((event.type === 'cookie-loaded' || event.type === 'session-updated') && event.loggedIn === undefined) {
     return {
       ...reduceSiteSessionState(previous, { ...event, type: 'cookie-loaded' }),
       identityTrust: previous.identityTrust
@@ -423,12 +419,12 @@ export function createAccountSessionViewModel(snapshot: AccountSessionSnapshot):
   };
 }
 
-export function nodeSeekUserIdForSession(state: SiteSessionViewModel, webLoginUserId: number | null) {
+export function nodeSeekUserIdForSession(state: SiteSessionViewModel) {
   if (!state.isLoggedIn) {
     return null;
   }
   const currentUserId = Number(state.currentUser?.id);
-  return Number.isInteger(currentUserId) && currentUserId > 0 ? currentUserId : webLoginUserId;
+  return Number.isInteger(currentUserId) && currentUserId > 0 ? currentUserId : null;
 }
 
 export function createSiteSessionViewModels(states: SiteSessionStates): SiteSessionViewModels {

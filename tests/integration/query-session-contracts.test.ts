@@ -3,10 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { accountQueryKeys, createAppQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { canonicalEnabledSourcesKey } from '@/domain/reader/contentSourcePreferences';
-import {
-  forumSessionEpochsAfterSourceChange,
-  resetForumSourceQueries
-} from '@/features/account/sessionQueryOwnership';
+import { forumSessionEpochsAfterSourceChange, resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 
 describe('forum server state', () => {
   it('deduplicates concurrent reads and keeps the successful value for the same structured key', async () => {

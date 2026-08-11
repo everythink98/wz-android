@@ -338,10 +338,12 @@ function NodeSeekImageStickerHarness({ src }: { src: string }) {
 
 function NodeSeekCustomMediaHarness({
   attributes,
-  rendererKey
+  rendererKey,
+  webViewBlockMessage = ''
 }: {
   attributes: Record<string, string>;
   rendererKey: string;
+  webViewBlockMessage?: string;
 }) {
   const nodeSeekTopic: TopicDetail = {
     ...topic,
@@ -360,7 +362,7 @@ function NodeSeekCustomMediaHarness({
     theme,
     topicDetail: nodeSeekTopic,
     topicKey: 'nodeseek:859086',
-    webViewBlockMessage: ''
+    webViewBlockMessage
   });
   const Renderer = htmlRenderers[rendererKey] as unknown as React.ComponentType<Record<string, unknown>> | undefined;
   return Renderer ? React.createElement(Renderer, { tnode: { attributes } } as never) : null;
@@ -426,8 +428,16 @@ function NodeSeekLinkCardHarness() {
   );
 }
 
-function NodeSeekIframeHarness({ src = firstBilibiliIframeUrl }: { src?: string }) {
-  return <NodeSeekCustomMediaHarness rendererKey="iframe" attributes={{ src }} />;
+function NodeSeekIframeHarness({
+  src = firstBilibiliIframeUrl,
+  webViewBlockMessage
+}: {
+  src?: string;
+  webViewBlockMessage?: string;
+}) {
+  return (
+    <NodeSeekCustomMediaHarness rendererKey="iframe" attributes={{ src }} webViewBlockMessage={webViewBlockMessage} />
+  );
 }
 
 function htmlRenderingControllerProps(mediaSessionIdentity: string) {
@@ -500,6 +510,13 @@ describe('topic block image loading', () => {
     );
 
     expect(mockExpoImageProps).not.toHaveBeenCalled();
+    expect(mockWebView).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PROXY-001] renders the proxy block message instead of mounting an iframe WebView', async () => {
+    const view = await render(<NodeSeekIframeHarness webViewBlockMessage="代理状态切换中" />);
+
+    expect(view.getByText('代理状态切换中')).toBeTruthy();
     expect(mockWebView).not.toHaveBeenCalled();
   });
 

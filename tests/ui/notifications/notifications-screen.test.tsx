@@ -659,7 +659,8 @@ describe('notification screens', () => {
     await fireEvent.press(view.getByLabelText('发送回复'));
     expect(onSubmitReply).toHaveBeenCalledTimes(1);
 
-    await view.rerender(
+    await view.unmount();
+    const linuxDoView = await render(
       <NotificationDetailScreen
         {...props}
         detail={{ ...detail, notification: { ...detail.notification, source: 'linuxdo' } }}
@@ -667,11 +668,12 @@ describe('notification screens', () => {
         replyVisible
       />
     );
-    await fireEvent.press(view.getByLabelText('表情'));
-    expect(view.getByLabelText('party parrot')).toBeTruthy();
-    expect(view.getByLabelText('图片')).toBeTruthy();
+    await fireEvent.press(linuxDoView.getByLabelText('表情'));
+    expect(linuxDoView.getByLabelText('party parrot')).toBeTruthy();
+    expect(linuxDoView.getByLabelText('图片')).toBeTruthy();
 
-    await view.rerender(
+    await linuxDoView.unmount();
+    const yaohuoView = await render(
       <NotificationDetailScreen
         {...props}
         detail={{
@@ -682,9 +684,9 @@ describe('notification screens', () => {
         replyVisible
       />
     );
-    expect(view.getByText('纯文本')).toBeTruthy();
-    expect(view.queryByLabelText('表情')).toBeNull();
-    expect(view.queryByLabelText('图片')).toBeNull();
+    expect(yaohuoView.getByText('纯文本')).toBeTruthy();
+    expect(yaohuoView.queryByLabelText('表情')).toBeNull();
+    expect(yaohuoView.queryByLabelText('图片')).toBeNull();
     scrollToEnd.mockRestore();
   });
 
@@ -780,25 +782,40 @@ describe('notification screens', () => {
     expect(onUpgradeXiaoyinsi).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a signed-in Xiaoyinsi account as confirming instead of logged out', async () => {
-    const sessions = createSiteSessionViewModels(
-      createSiteSessionStates({
-        xiaoyinsi: {
-          site: 'xiaoyinsi',
-          status: 'logged-in',
-          cookieSummary: [],
-          isVerifying: true,
-          currentUser: {
-            source: 'xiaoyinsi',
-            id: '7',
-            username: 'temple-user',
-            url: 'https://xiaoyinsi.net/u/temple-user',
-            topics: []
-          }
-        }
-      })
-    );
-    sessions.xiaoyinsi = { ...sessions.xiaoyinsi, isLoggedIn: true, identityTrust: 'pending' };
+  it.each([
+    {
+      title: 'shows a signed-in Xiaoyinsi account as confirming instead of logged out',
+      createSessions: () => {
+        const sessions = createSiteSessionViewModels(
+          createSiteSessionStates({
+            xiaoyinsi: {
+              site: 'xiaoyinsi',
+              status: 'logged-in',
+              cookieSummary: [],
+              isVerifying: true,
+              currentUser: {
+                source: 'xiaoyinsi',
+                id: '7',
+                username: 'temple-user',
+                url: 'https://xiaoyinsi.net/u/temple-user',
+                topics: []
+              }
+            }
+          })
+        );
+        sessions.xiaoyinsi = { ...sessions.xiaoyinsi, isLoggedIn: true, identityTrust: 'pending' };
+        return sessions;
+      }
+    },
+    {
+      title: '[REG-NOTIFY-016] shows a pending identity as confirming before login is established',
+      createSessions: () => {
+        const sessions = createSiteSessionViewModels(createSiteSessionStates());
+        sessions.yaohuo = { ...sessions.yaohuo, identityTrust: 'pending' };
+        return sessions;
+      }
+    }
+  ])('$title', async ({ createSessions }) => {
     const view = await render(
       <NotificationSettingsScreen
         backgroundEnabled={false}
@@ -806,31 +823,7 @@ describe('notification screens', () => {
         busy={false}
         enabledSources={['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']}
         permission="granted"
-        sessions={sessions}
-        state={notificationState()}
-        xiaoyinsiNeedsUpgrade={false}
-        onOpenSystemSettings={jest.fn()}
-        onToggleGlobal={jest.fn()}
-        onToggleSource={jest.fn()}
-        onUpgradeXiaoyinsi={jest.fn()}
-      />
-    );
-
-    expect(view.getByText('账号确认中；开关意图会保留')).toBeTruthy();
-    expect(view.getAllByText('未登录；开关意图会保留')).toHaveLength(3);
-  });
-
-  it('[REG-NOTIFY-016] shows a pending identity as confirming before login is established', async () => {
-    const sessions = createSiteSessionViewModels(createSiteSessionStates());
-    sessions.yaohuo = { ...sessions.yaohuo, identityTrust: 'pending' };
-    const view = await render(
-      <NotificationSettingsScreen
-        backgroundEnabled={false}
-        backgroundError=""
-        busy={false}
-        enabledSources={['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']}
-        permission="granted"
-        sessions={sessions}
+        sessions={createSessions()}
         state={notificationState()}
         xiaoyinsiNeedsUpgrade={false}
         onOpenSystemSettings={jest.fn()}
