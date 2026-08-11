@@ -700,6 +700,10 @@ function TopicFilterHarness({
               htmlRenderersProps: {},
               htmlTagsStyles: htmlStyles.htmlTagsStyles,
               inlineSizedImageUrls: {},
+              mediaContext: {
+                contentSource: topicDetail?.source || null,
+                sessionIdentity: `${topicDetail?.source || 'public'}:0`
+              },
               mediaSessionIdentity: `${topicDetail?.source || 'public'}:0`,
               topicImageDeriver
             } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
@@ -812,7 +816,7 @@ describe('Topic reply filters', () => {
     expect(lastFlashListItemTypes.indexOf('replyControls')).toBe(contentItemCount);
   });
 
-  it('[REG-PERF-010] removes only the parent-list separator inside one logical continuation group', async () => {
+  it('[REG-TOPIC-081] removes virtual-list separators across adjacent opening article rows', async () => {
     await render(<TopicFilterHarness selectedTopic={topic} topicDetail={topic} topicReplies={[]} />);
     const separatorHeight = (leadingItem: TopicListItem, trailingItem: TopicListItem) => {
       const separator = lastFlashListProps.ItemSeparatorComponent({ leadingItem, trailingItem }) as React.ReactElement<{
@@ -876,12 +880,28 @@ describe('Topic reply filters', () => {
     expect(separatorHeight(openingFirst, openingLast)).toBe(0);
     expect(separatorHeight(quoteFirst, quoteLast)).toBe(0);
     expect(separatorHeight(acceptedFirst, acceptedLast)).toBe(0);
-    expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(10);
-    expect(separatorHeight(openingFirst, { ...openingLast, content: content('different', 'block-2', 'last') })).toBe(
-      10
-    );
+    expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(0);
+    expect(separatorHeight(openingFirst, { ...openingLast, content: content('different', 'block-2', 'last') })).toBe(0);
     expect(separatorHeight(quoteFirst, otherQuoteLast)).toBe(10);
     expect(separatorHeight(openingFirst, quoteLast)).toBe(10);
+  });
+
+  it('[REG-TOPIC-081] gives a multi-row opening article only one top boundary', async () => {
+    const article: TopicDetail = {
+      ...topic,
+      contentHtml: Array.from({ length: 6 }, (_, index) => `<p>${String(index).repeat(2300)}</p>`).join(''),
+      replies: [],
+      replyCount: 0
+    };
+    const view = await render(<TopicFilterHarness selectedTopic={article} topicDetail={article} topicReplies={[]} />);
+    const blocks = view.getAllByLabelText(/^content-continuation-/);
+    expect(blocks.length).toBeGreaterThan(1);
+    const containers = blocks.map((block) => StyleSheet.flatten(block.parent?.props.style));
+
+    expect(containers[0]).toMatchObject({ borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 16 });
+    containers.slice(1).forEach((container) => {
+      expect(container).toMatchObject({ borderTopWidth: 0, paddingTop: 0 });
+    });
   });
 
   it('[REG-PERF-010] keeps continuation chrome only at the outer edges of a split opening group', async () => {

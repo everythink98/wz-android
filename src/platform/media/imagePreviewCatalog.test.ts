@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { diagnosticRef } from '@/platform/diagnostics/diagnosticPolicy';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import {
   createImagePreviewCatalog,
   extractImageUrlsFromHtml,
@@ -12,6 +13,63 @@ import {
 import { shouldMarkLoadedImageInline } from './inlineMedia';
 
 describe('image preview catalog', () => {
+  it('[REG-TOPIC-078] keeps element policy and separates one URL when its final Referer differs', () => {
+    const imageUrl = 'https://i.imgur.com/shared.png';
+    const referrer = { documentUrl: 'https://www.v2ex.com/t/1233346' } as const;
+    const mediaContext = { contentSource: 'v2ex', referrer, sessionIdentity: 'v2ex:7' } as const;
+    const catalog = createImagePreviewCatalog(
+      [`<img src="${imageUrl}" referrerpolicy="no-referrer">`, `<img src="${imageUrl}" referrerpolicy="origin">`],
+      300,
+      2,
+      mediaContext
+    );
+
+    expect(catalog.items).toEqual([
+      { displayUri: imageUrl, originalUri: imageUrl, referrerPolicy: 'no-referrer' },
+      { displayUri: imageUrl, originalUri: imageUrl, referrerPolicy: 'origin' }
+    ]);
+    expect(imagePreviewListFromCatalog(catalog, imageUrl, 'v2ex', undefined, 'origin')).toEqual({
+      contentSource: 'v2ex',
+      index: 1,
+      items: catalog.items,
+      referrer
+    });
+  });
+
+  it('[REG-TOPIC-078] does not reuse an explicit policy when the tapped image uses the document policy', () => {
+    const imageUrl = 'https://i.imgur.com/shared.png';
+    const referrer = { documentUrl: 'https://www.v2ex.com/t/1233346' } as const;
+    const mediaContext = { contentSource: 'v2ex', referrer, sessionIdentity: 'v2ex:7' } as const;
+    const catalog = createImagePreviewCatalog(
+      [`<img src="${imageUrl}" referrerpolicy="no-referrer">`],
+      300,
+      2,
+      mediaContext
+    );
+
+    expect(imagePreviewListFromCatalog(catalog, imageUrl, 'v2ex')).toEqual({
+      contentSource: 'v2ex',
+      index: 1,
+      items: [
+        { displayUri: imageUrl, originalUri: imageUrl, referrerPolicy: 'no-referrer' },
+        { displayUri: imageUrl, originalUri: imageUrl }
+      ],
+      referrer
+    });
+  });
+
+  it('[REG-TOPIC-078] keeps a mixed-case image policy after sanitizing into the preview catalog', () => {
+    const imageUrl = 'https://cdn.example.com/mixed-case.png';
+    const html = sanitizeContentHtml(
+      `<img src="${imageUrl}" ReFeRrErPoLiCy="no-referrer">`,
+      'https://www.v2ex.com/t/1233346'
+    );
+
+    expect(createImagePreviewCatalog([html], 300, 2).items).toEqual([
+      { displayUri: imageUrl, originalUri: imageUrl, referrerPolicy: 'no-referrer' }
+    ]);
+  });
+
   it('links the responsive body URL and lightbox original to one media diagnostic ref', () => {
     const displayUrl = 'https://cdn.example.com/diagnostic-display-640.webp';
     const originalUrl = 'https://cdn.example.com/diagnostic-original.png';

@@ -309,7 +309,11 @@ describe('Android local access requirement detection', () => {
 
     const topic = await getLinuxDoTopic('123', { fetcher });
 
-    expect(topic).toMatchObject({ id: '123', title: '公开可读主题' });
+    expect(topic).toMatchObject({
+      id: '123',
+      title: '公开可读主题',
+      mediaReferrer: { documentUrl: 'https://linux.do/t/public-topic/123' }
+    });
     expect(topic.accessRequirement).toBeUndefined();
   });
 
@@ -390,16 +394,22 @@ describe('Android local access requirement detection', () => {
         }
       })
     ).toString('base64');
-    const fetcher = vi.fn(
-      async () =>
-        new Response(`<script>${payload}</script>`, {
-          headers: { 'content-type': 'text/html' }
-        })
-    );
+    const fetcher = vi.fn(async () => {
+      const response = new Response(`<script>${payload}</script>`, {
+        headers: { 'content-type': 'text/html' }
+      });
+      Object.defineProperty(response, 'url', {
+        value: 'https://www.nodeseek.com/post-101-1?from=redirect'
+      });
+      return response;
+    });
 
     const topic = await getNodeSeekTopic('101', { fetcher });
 
     expect(topic.contentHtml).toContain('登录');
+    expect(topic.mediaReferrer).toEqual({
+      documentUrl: 'https://www.nodeseek.com/post-101-1?from=redirect'
+    });
     expect(topic.accessRequirement).toBeUndefined();
   });
 
@@ -789,6 +799,7 @@ describe('Android local access requirement detection', () => {
 
     const topic = await getV2exTopic('202', { fetcher });
 
+    expect(topic.mediaReferrer).toEqual({ documentUrl: 'https://www.v2ex.com/t/202' });
     expect(topic.accessRequirement).toMatchObject({
       type: 'permission',
       label: '需权限',

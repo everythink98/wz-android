@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type ImageURISource } from 'react-native';
 import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
 
-import type { CompatibleSvgArtifact } from '@/platform/media/compatibleImageSources';
+import { compatibleImageRequestIdentity, type CompatibleSvgArtifact } from '@/platform/media/compatibleImageSources';
 import { type PreviewBitmapDecodeTarget, withPreviewBitmapDecodeTarget } from '@/platform/media/previewBitmapBudget';
 
 export function PreviewPageLoadLayer({
@@ -37,14 +37,14 @@ export function PreviewPageLoadLayer({
   activeAnimatedArtifact: CompatibleSvgArtifact | null;
   animatedSvgPosterReady: boolean;
   animatedSvgZoomSuspended: boolean;
-  displaySource: object;
+  displaySource: ImageURISource;
   displayUri: string;
   decodeTarget: PreviewBitmapDecodeTarget;
   index: number;
   knownArtifact: CompatibleSvgArtifact | null;
   mediaSessionIdentity: string;
   originalUri: string;
-  originalSource: object;
+  originalSource: ImageURISource;
   readySvgViewIdentity: string;
   retryVersion: number;
   sourceIdentity: string;
@@ -77,6 +77,8 @@ export function PreviewPageLoadLayer({
     () => withPreviewBitmapDecodeTarget(originalSource, decodeTarget),
     [decodeTarget, originalSource]
   );
+  const displaySourceIdentity = useMemo(() => compatibleImageRequestIdentity(displaySource), [displaySource]);
+  const originalSourceIdentity = useMemo(() => compatibleImageRequestIdentity(originalSource), [originalSource]);
   const displayUnderlayVisible = showDisplayUnderlay && displayUri !== originalUri;
 
   if (activeAnimatedArtifact) {
@@ -137,7 +139,7 @@ export function PreviewPageLoadLayer({
         priority={displayUnderlayVisible && active ? 'high' : 'low'}
         recyclingKey={
           displayUnderlayVisible
-            ? `${mediaSessionIdentity}:${displayUri}:${retryVersion}:display-underlay`
+            ? `${displaySourceIdentity}:${retryVersion}:display-underlay`
             : `${mediaSessionIdentity}:empty:display-underlay`
         }
         source={displayUnderlayVisible ? boundedDisplaySource : null}
@@ -150,7 +152,7 @@ export function PreviewPageLoadLayer({
         cachePolicy="disk"
         contentFit="contain"
         priority={active ? 'high' : 'low'}
-        recyclingKey={`${mediaSessionIdentity}:${originalUri}:${retryVersion}:native`}
+        recyclingKey={`${originalSourceIdentity}:${retryVersion}:native`}
         source={boundedOriginalSource}
         style={StyleSheet.absoluteFill}
         onDisplay={onDisplay}

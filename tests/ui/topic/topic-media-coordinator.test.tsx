@@ -19,19 +19,21 @@ type MediaKind = Parameters<typeof useTopicBodyMediaLease>[0]['kind'];
 type MediaLease = ReturnType<typeof useTopicBodyMediaLease>;
 
 function MediaProbe({
+  automaticRetry = true,
   enabled = true,
   id,
   kind = 'base',
   onLease,
   probeKey = id
 }: {
+  automaticRetry?: boolean;
   enabled?: boolean;
   id: string;
   kind?: MediaKind;
   onLease?: (lease: MediaLease) => void;
   probeKey?: string;
 }) {
-  const lease = useTopicBodyMediaLease({ enabled, kind, requestIdentity: id });
+  const lease = useTopicBodyMediaLease({ automaticRetry, enabled, kind, requestIdentity: id });
   useEffect(() => {
     onLease?.(lease);
   }, [lease, onLease]);
@@ -180,6 +182,58 @@ describe('TopicBodyMediaCoordinator', () => {
     await fireEvent.press(view.getByLabelText('error-image-0'));
     expect(view.getByTestId('media-image-0').props.children).toBe('failed:error');
     expect(view.getByTestId('media-image-4').props.children).toBe('admitted');
+  });
+
+  it('[REG-TOPIC-079] leaves opted-out media failed until one explicit retry and releases its permit', async () => {
+    const view = await render(
+      <CoordinatorHarness>
+        <MediaProbe automaticRetry={false} id="native-video" kind="video" />
+        {Array.from({ length: 4 }, (_, index) => (
+          <MediaProbe id={`queued-${index}`} key={index} />
+        ))}
+      </CoordinatorHarness>
+    );
+    const firstAttempt = view.getByTestId('attempt-native-video').props.children;
+
+    await fireEvent.press(view.getByLabelText('error-native-video'));
+
+    expect(view.getByTestId('media-native-video').props.children).toBe('failed:error');
+    expect(view.getByTestId('attempt-native-video').props.children).toBe(firstAttempt);
+    expect(view.getByTestId('media-queued-3').props.children).toBe('admitted');
+
+    await fireEvent.press(view.getByLabelText('display-queued-0'));
+    await fireEvent.press(view.getByLabelText('retry-native-video'));
+    expect(view.getByTestId('media-native-video').props.children).toBe('admitted');
+    expect(view.getByTestId('attempt-native-video').props.children).not.toBe(firstAttempt);
+  });
+
+  it('[REG-TOPIC-079] leaves opted-out media timed out until one explicit retry and releases its permit', async () => {
+    jest.useFakeTimers();
+    try {
+      const view = await render(
+        <CoordinatorHarness>
+          <MediaProbe automaticRetry={false} id="native-video-timeout" kind="video" />
+          {Array.from({ length: 4 }, (_, index) => (
+            <MediaProbe id={`timeout-queued-${index}`} key={index} />
+          ))}
+        </CoordinatorHarness>
+      );
+      const firstAttempt = view.getByTestId('attempt-native-video-timeout').props.children;
+
+      await act(() => jest.advanceTimersByTime(30_000));
+
+      expect(view.getByTestId('media-native-video-timeout').props.children).toBe('failed:timeout');
+      expect(view.getByTestId('attempt-native-video-timeout').props.children).toBe(firstAttempt);
+      expect(view.getByTestId('media-timeout-queued-3').props.children).toBe('admitted');
+
+      await fireEvent.press(view.getByLabelText('display-timeout-queued-0'));
+      await fireEvent.press(view.getByLabelText('retry-native-video-timeout'));
+      expect(view.getByTestId('media-native-video-timeout').props.children).toBe('admitted');
+      expect(view.getByTestId('attempt-native-video-timeout').props.children).not.toBe(firstAttempt);
+      await view.unmount();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('[REG-PROXY-010] restarts a running attempt when its source publishes a newer runtime generation', async () => {

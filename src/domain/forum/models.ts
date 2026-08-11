@@ -1,6 +1,8 @@
 import type { DiscourseSource, FeedFilterSource, Source } from './sourceCatalog';
+import type { MediaReferrerContext } from './mediaReferrer';
 
 export type { FeedFilterSource, Source } from './sourceCatalog';
+export type { MediaReferrerContext, MediaReferrerPolicy } from './mediaReferrer';
 export type FeedSource = Source | 'all';
 export type DiscourseFeedFilter = 'latest' | 'hot' | 'new-all' | 'new-topics' | 'new-replies';
 export type NodeSeekFeedFilter = 'postTime' | 'replyTime';
@@ -239,6 +241,7 @@ export interface TopicPoll {
 
 export interface TopicDetail extends Topic {
   contentHtml: string;
+  mediaReferrer?: MediaReferrerContext;
   replies: Reply[];
   replyCompleteness?: ReplyCompleteness;
   currentUser?: UserProfile;

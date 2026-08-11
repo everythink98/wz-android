@@ -317,6 +317,9 @@ describe('xiaoyinsi adapter', () => {
     expect(detail).toMatchObject({
       source: 'xiaoyinsi',
       id: '42',
+      mediaReferrer: {
+        documentUrl: 'https://forum.xiaoyinsi.com/t/temple-topic/42'
+      },
       category: '生活',
       authorAvatar: undefined,
       canCreatePost: true,

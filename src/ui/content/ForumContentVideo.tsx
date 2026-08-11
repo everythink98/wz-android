@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -10,10 +10,11 @@ import {
   type ViewStyle
 } from 'react-native';
 import { useEvent } from 'expo';
-import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
+import { VideoView, useVideoPlayer, type VideoPlayer, type VideoSource } from 'expo-video';
 import { Maximize2, Play } from 'lucide-react-native';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
+import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
 import {
   releaseReadNetworkRuntimeGeneration,
@@ -29,6 +30,20 @@ const VIDEO_ACCEPT = 'video/webm,video/mp4,video/*,*/*;q=0.8';
 const VIDEO_TIME_UPDATE_INTERVAL_SECONDS = 1;
 const FORUM_MEDIA_KIND_HEADER = 'X-WZ-Forum-Media-Kind';
 const READ_NETWORK_GENERATION_HEADER = 'X-WZ-Read-Network-Generation';
+const DEFAULT_VIDEO_ASPECT_RATIO = 16 / 9;
+const MIN_VIDEO_ASPECT_RATIO = 1 / 2;
+
+function configureVideoPlayer(player: VideoPlayer) {
+  player.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
+}
+
+function videoAspectRatio(size: { height?: number; width?: number } | null | undefined) {
+  const width = Number(size?.width);
+  const height = Number(size?.height);
+  return width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height)
+    ? Math.max(MIN_VIDEO_ASPECT_RATIO, width / height)
+    : DEFAULT_VIDEO_ASPECT_RATIO;
+}
 
 export type ForumContentVideoAdmission = {
   admitted: boolean;
@@ -51,8 +66,10 @@ const UNMANAGED_VIDEO_ADMISSION: ForumContentVideoAdmission = {
 type ForumContentVideoProps = {
   admission?: ForumContentVideoAdmission;
   boundarySpacing?: StyleProp<ViewStyle>;
-  headers?: Record<string, string>;
   mediaContext: ForumMediaRequestContext;
+  nodeSeekMediaUserAgent?: string;
+  poster?: ReactNode;
+  referrerPolicy?: MediaReferrerPolicy;
   src: string;
   theme: ReaderTheme;
 };
@@ -76,13 +93,15 @@ function UnmanagedForumContentVideo({
 function ForumContentVideoRuntime({
   admission,
   boundarySpacing,
-  headers,
   mediaContext,
+  nodeSeekMediaUserAgent,
+  poster,
+  referrerPolicy,
   runtimeSnapshot,
   src,
   theme
 }: Required<Pick<ForumContentVideoProps, 'admission' | 'mediaContext' | 'src' | 'theme'>> &
-  Pick<ForumContentVideoProps, 'boundarySpacing' | 'headers'> & {
+  Pick<ForumContentVideoProps, 'boundarySpacing' | 'nodeSeekMediaUserAgent' | 'poster' | 'referrerPolicy'> & {
     runtimeSnapshot: ReadNetworkRuntimeSnapshot | null;
   }) {
   const retryRuntimeGeneration =
@@ -199,6 +218,7 @@ function ForumContentVideoRuntime({
         style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
         testID="forum-content-video-frame"
       >
+        <VideoPosterLayer poster={poster} />
         {admission.failure ? (
           <Pressable
             accessibilityLabel="视频加载失败，点按重试"
@@ -224,6 +244,7 @@ function ForumContentVideoRuntime({
         style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
         testID="forum-content-video-frame"
       >
+        <VideoPosterLayer poster={poster} />
         <View style={styles.videoState}>
           {failed ? (
             <Text style={{ color: theme.muted }}>视频加载失败</Text>
@@ -239,8 +260,10 @@ function ForumContentVideoRuntime({
     <ForumContentVideoPlayer
       key={`${mediaContext.sessionIdentity}:${src}:admission:${admission.attemptId}:runtime:${playerGeneration}`}
       boundarySpacing={boundarySpacing}
-      headers={headers}
       mediaContext={mediaContext}
+      nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
+      poster={poster}
+      referrerPolicy={referrerPolicy}
       runtimeGeneration={playerGeneration}
       src={src}
       theme={theme}
@@ -252,19 +275,23 @@ function ForumContentVideoRuntime({
 
 function ForumContentVideoPlayer({
   boundarySpacing,
-  headers,
   mediaContext,
+  nodeSeekMediaUserAgent,
   onProgress,
   onStatusChange,
+  poster,
+  referrerPolicy,
   runtimeGeneration,
   src,
   theme
 }: {
   boundarySpacing?: StyleProp<ViewStyle>;
-  headers?: Record<string, string>;
   mediaContext: ForumMediaRequestContext;
+  nodeSeekMediaUserAgent?: string;
   onProgress: (value: number) => void;
   onStatusChange: (status: string) => void;
+  poster?: ReactNode;
+  referrerPolicy?: MediaReferrerPolicy;
   runtimeGeneration: number;
   src: string;
   theme: ReaderTheme;
@@ -272,13 +299,16 @@ function ForumContentVideoPlayer({
   const videoRef = useRef<VideoView>(null);
   const requestHeaders = useMemo(
     () => ({
-      ...(imageRequestHeadersForUrl(src, { mediaContext }) || {}),
+      ...(imageRequestHeadersForUrl(src, {
+        mediaContext,
+        nodeSeekUserAgent: nodeSeekMediaUserAgent,
+        referrerPolicy
+      }) || {}),
       Accept: VIDEO_ACCEPT,
-      ...(headers || {}),
       [FORUM_MEDIA_KIND_HEADER]: 'video',
       [READ_NETWORK_GENERATION_HEADER]: String(runtimeGeneration)
     }),
-    [headers, mediaContext, runtimeGeneration, src]
+    [mediaContext, nodeSeekMediaUserAgent, referrerPolicy, runtimeGeneration, src]
   );
   const source = useMemo<VideoSource>(
     () => ({
@@ -288,24 +318,20 @@ function ForumContentVideoPlayer({
     }),
     [mediaContext.sessionIdentity, requestHeaders, src]
   );
-  const player = useVideoPlayer(source);
+  const player = useVideoPlayer(source, configureVideoPlayer);
+  const [hasPlayed, setHasPlayed] = useState(false);
   const lastBufferedPositionRef = useRef(
     Number.isFinite(player.bufferedPosition) ? Math.max(0, player.bufferedPosition) : 0
   );
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const status = useEvent(player, 'statusChange', { status: player.status }).status;
+  const videoTrack = useEvent(player, 'videoTrackChange', { videoTrack: player.videoTrack }).videoTrack;
   const bufferedPosition = useEvent(player, 'timeUpdate', {
     bufferedPosition: player.bufferedPosition,
     currentLiveTimestamp: null,
     currentOffsetFromLive: null,
     currentTime: player.currentTime
   }).bufferedPosition;
-  useEffect(() => {
-    player.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
-    return () => {
-      player.timeUpdateEventInterval = 0;
-    };
-  }, [player]);
   useEffect(() => {
     if (!Number.isFinite(bufferedPosition) || bufferedPosition <= lastBufferedPositionRef.current) {
       return;
@@ -314,8 +340,12 @@ function ForumContentVideoPlayer({
     onProgress(bufferedPosition);
   }, [bufferedPosition, onProgress]);
   useEffect(() => onStatusChange(status || 'idle'), [onStatusChange, status]);
+  useEffect(() => {
+    if (isPlaying) setHasPlayed(true);
+  }, [isPlaying]);
   const loadFailed = status === 'error';
   const loading = status === 'idle' || status === 'loading';
+  const interactionDisabled = loading || loadFailed;
   const togglePlayback = useCallback(() => {
     if (loadFailed) {
       return;
@@ -332,18 +362,23 @@ function ForumContentVideoPlayer({
   }, []);
   return (
     <View
-      style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
+      style={[
+        styles.frame,
+        { aspectRatio: videoAspectRatio(videoTrack?.size), borderColor: theme.line, backgroundColor: theme.surface2 },
+        boundarySpacing
+      ]}
       testID="forum-content-video-frame"
     >
       <VideoView
-        allowsFullscreen
         contentFit="contain"
+        fullscreenOptions={{ enable: true }}
         nativeControls={false}
         player={player}
         ref={videoRef}
         style={styles.video}
         surfaceType="textureView"
       />
+      {!hasPlayed ? <VideoPosterLayer poster={poster} /> : null}
       {loading || loadFailed ? (
         <View style={styles.videoState}>
           {loadFailed ? (
@@ -356,16 +391,18 @@ function ForumContentVideoPlayer({
       <Pressable
         accessibilityLabel={isPlaying ? '暂停视频' : '播放视频'}
         accessibilityRole="button"
+        accessibilityState={{ disabled: interactionDisabled }}
+        disabled={interactionDisabled}
         onPress={togglePlayback}
-        style={styles.touchLayer}
+        style={({ pressed }) => [styles.touchLayer, pressed && !interactionDisabled && styles.touchLayerPressed]}
       >
-        {!loadFailed && !isPlaying ? (
-          <View style={[styles.centerButton, { backgroundColor: theme.surface }]}>
-            <Play size={34} color={theme.ink} fill={theme.ink} strokeWidth={1.8} />
+        {!loading && !loadFailed && !isPlaying ? (
+          <View style={styles.centerButton} testID="forum-content-video-play-button">
+            <Play size={28} color="#fff" fill="#fff" strokeWidth={1.6} />
           </View>
         ) : null}
       </Pressable>
-      {!loadFailed ? (
+      {!loading && !loadFailed ? (
         <Pressable
           accessibilityLabel="全屏播放"
           accessibilityRole="button"
@@ -377,6 +414,20 @@ function ForumContentVideoPlayer({
       ) : null}
     </View>
   );
+}
+
+function VideoPosterLayer({ poster }: { poster?: ReactNode }) {
+  return poster ? (
+    <View
+      accessibilityElementsHidden
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      style={styles.poster}
+    >
+      {poster}
+    </View>
+  ) : null;
 }
 
 const styles = StyleSheet.create({
@@ -393,8 +444,8 @@ const styles = StyleSheet.create({
     flex: 1
   },
   videoState: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
-    flex: 1,
     justifyContent: 'center'
   },
   touchLayer: {
@@ -408,21 +459,32 @@ const styles = StyleSheet.create({
   },
   centerButton: {
     alignItems: 'center',
-    borderRadius: 34,
-    height: 68,
+    backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    borderRadius: 28,
+    elevation: 3,
+    height: 56,
     justifyContent: 'center',
-    opacity: 0.94,
-    width: 68
+    shadowColor: '#000',
+    shadowOffset: { height: 2, width: 0 },
+    shadowOpacity: 0.24,
+    shadowRadius: 4,
+    width: 56
   },
   fullscreenButton: {
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.36)',
-    borderRadius: 22,
-    bottom: 18,
-    height: 44,
+    borderRadius: 24,
+    bottom: 12,
+    height: 48,
     justifyContent: 'center',
     position: 'absolute',
-    right: 18,
-    width: 44
+    right: 12,
+    width: 48
+  },
+  poster: {
+    ...StyleSheet.absoluteFillObject
+  },
+  touchLayerPressed: {
+    backgroundColor: 'rgba(0, 0, 0, 0.08)'
   }
 });

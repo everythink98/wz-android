@@ -168,6 +168,31 @@ describe('image library saving', () => {
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg');
   });
 
+  it('[REG-TOPIC-078] saves with the same element Referrer Policy as the displayed image', async () => {
+    const fetcher = vi.fn<Fetcher>(
+      async () =>
+        new Response('image-bytes', {
+          headers: { 'content-type': 'image/png' },
+          status: 200
+        })
+    );
+
+    await saveImageUriToLibrary(
+      'https://i.imgur.com/topic.png',
+      {
+        mediaContext: {
+          contentSource: 'v2ex',
+          referrer: { documentUrl: 'https://www.v2ex.com/t/1233346' },
+          sessionIdentity: 'v2ex:7'
+        },
+        referrerPolicy: 'no-referrer'
+      },
+      fetcher
+    );
+
+    expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]?.headers).not.toHaveProperty('Referer');
+  });
+
   it('REG-TOPIC-019 keeps NodeSeek media credentials when saving a protected image', async () => {
     const fetcher = vi.fn<Fetcher>(
       async () =>

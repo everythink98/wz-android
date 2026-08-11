@@ -69,6 +69,26 @@ describe('Android topic derived data', () => {
     expect(markInlineSizedImageHtml).not.toHaveBeenCalled();
   });
 
+  it('[REG-TOPIC-078] marks only the image whose final Referer identity was classified inline', () => {
+    const url = 'https://cdn.example.com/shared.png';
+    const requestIdentityForImage = (src: string, referrerPolicy?: string) =>
+      `${src}\u0000referrer:${referrerPolicy === 'no-referrer' ? 'none' : 'https://forum.example/'}`;
+    const noReferrerIdentity = requestIdentityForImage(url, 'no-referrer');
+    const deriver = createTopicImageDeriver({ requestIdentityForImage });
+    const html = [`<img src="${url}" referrerpolicy="no-referrer">`, `<img src="${url}" referrerpolicy="origin">`].join(
+      ''
+    );
+
+    expect(deriver.markInlineSizedImages(html, { [noReferrerIdentity]: true })).toBe(
+      [
+        `<img src="${url}" referrerpolicy="no-referrer" data-forum-inline-sized="true">`,
+        `<img src="${url}" referrerpolicy="origin">`
+      ].join('')
+    );
+    expect(deriver.isInlineSizedImage(url, 'no-referrer', { [noReferrerIdentity]: true })).toBe(true);
+    expect(deriver.isInlineSizedImage(url, 'origin', { [noReferrerIdentity]: true })).toBe(false);
+  });
+
   it('scopes inline-sized image signatures to html that contains the image', () => {
     const inlineSizedImageUrls = {
       'https://cdn.example.com/a.png': true as const,

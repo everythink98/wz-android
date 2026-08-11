@@ -345,6 +345,32 @@ describe('Image preview', () => {
     };
   });
 
+  it('[REG-TOPIC-078] isolates raster recycling by final Referer', async () => {
+    const sharedUrl = 'https://cdn.example.com/shared-preview.png';
+    const sharedItem = previewItem(sharedUrl);
+    const items = [
+      { ...sharedItem, referrerPolicy: 'no-referrer' as const },
+      { ...sharedItem, referrerPolicy: 'origin' as const }
+    ];
+    const view = await render(
+      <ImagePreviewModal
+        preview={{
+          contentSource: 'v2ex',
+          index: 0,
+          items,
+          referrer: { documentUrl: 'https://www.v2ex.com/t/1233346' }
+        }}
+        {...callbacks()}
+      />
+    );
+
+    const noReferrerImage = view.getByTestId('preview-image-0');
+    const originImage = view.getByTestId('preview-image-1');
+    expect(noReferrerImage.props.source.headers).not.toHaveProperty('Referer');
+    expect(originImage.props.source.headers).toEqual(expect.objectContaining({ Referer: 'https://www.v2ex.com/' }));
+    expect(noReferrerImage.props.recyclingKey).not.toBe(originImage.props.recyclingKey);
+  });
+
   it('[REG-PROXY-010] retries only the current unhealthy preview page for the triggering source', async () => {
     const items = [
       previewItem('https://example.com/runtime-current.png'),
@@ -1742,10 +1768,11 @@ describe('Image preview', () => {
     const view = await render(modal(4));
     const epochFourImage = view.getByTestId('preview-image-0');
     const epochFourSource = epochFourImage.props.source;
+    const epochFourRecyclingKey = epochFourImage.props.recyclingKey;
     const epochFourPagerToken = view.getByTestId('image-preview-pager').props.mockPagerToken;
     const epochFourZoomToken = view.getByTestId('preview-zoom-0').props.mockZoomToken;
     const staleNextPage = view.getByLabelText('mock-next-gallery-page').props.onTouchEnd;
-    expect(epochFourImage.props.recyclingKey).toBe(`${epochFourIdentity}:${imageUrl}:0:native`);
+    expect(epochFourRecyclingKey).toEqual(expect.stringContaining(epochFourIdentity));
     await fireEvent(view.getByTestId('preview-zoom-0'), 'doubleTapStart', {});
     mockZoomScale = 3;
     await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
@@ -1755,7 +1782,8 @@ describe('Image preview', () => {
     await view.rerender(modal(5));
 
     const epochFiveImage = view.getByTestId('preview-image-0');
-    expect(epochFiveImage.props.recyclingKey).toBe(`${epochFiveIdentity}:${imageUrl}:0:native`);
+    expect(epochFiveImage.props.recyclingKey).toEqual(expect.stringContaining(epochFiveIdentity));
+    expect(epochFiveImage.props.recyclingKey).not.toBe(epochFourRecyclingKey);
     expect(epochFiveImage.props.source).toEqual(
       expect.objectContaining({ cacheKey: `${epochFiveIdentity}:${imageUrl}` })
     );

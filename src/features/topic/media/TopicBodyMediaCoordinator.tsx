@@ -54,6 +54,7 @@ type TopicBodyMediaSnapshot = {
 };
 
 type TopicBodyMediaEntry = {
+  automaticRetry: boolean;
   attempt: number;
   deadline: number | null;
   failure: TopicBodyMediaFailure;
@@ -123,6 +124,7 @@ class TopicBodyMediaCoordinator {
 
   register(
     options: {
+      automaticRetry: boolean;
       key: string;
       kind: TopicBodyMediaKind;
       priority: TopicBodyMediaPriority;
@@ -132,6 +134,7 @@ class TopicBodyMediaCoordinator {
     listener: TopicBodyMediaEntry['listener']
   ) {
     const entry: TopicBodyMediaEntry = {
+      automaticRetry: options.automaticRetry,
       attempt: 0,
       deadline: null,
       failure: null,
@@ -227,8 +230,8 @@ class TopicBodyMediaCoordinator {
     entry.deadline = null;
     if (outcome === 'error') {
       this.errorCount += 1;
-      if (!this.beginAutomaticRetry(entry.requestIdentity, entry.key)) {
-        this.failIdentity(entry.requestIdentity, 'error');
+      if (!entry.automaticRetry || !this.beginAutomaticRetry(entry.requestIdentity, entry.key)) {
+        this.failIdentity(entry.requestIdentity, 'error', entry.key);
       }
     } else {
       this.displayCount += 1;
@@ -302,10 +305,16 @@ class TopicBodyMediaCoordinator {
     this.timerHighWater = Math.max(this.timerHighWater, this.timer ? 1 : 0);
   }
 
-  private failIdentity(requestIdentity: string, failure: Exclude<TopicBodyMediaFailure, null>) {
+  private failIdentity(
+    requestIdentity: string,
+    failure: Exclude<TopicBodyMediaFailure, null>,
+    failedEntryKey?: string
+  ) {
     this.failedIdentities.set(requestIdentity, failure);
     for (const entry of this.entries.values()) {
-      if (entry.requestIdentity !== requestIdentity || entry.status === 'displayed') continue;
+      if (entry.requestIdentity !== requestIdentity || (entry.status === 'displayed' && entry.key !== failedEntryKey)) {
+        continue;
+      }
       entry.deadline = null;
       entry.failure = failure;
       entry.lastProgressValue = null;
@@ -456,17 +465,20 @@ class TopicBodyMediaCoordinator {
         this.timer = null;
         this.timerDeadline = null;
         const now = Date.now();
-        const timedOutIdentities = new Set<string>();
+        const timedOutIdentities = new Map<string, boolean>();
         let timedOutCount = 0;
         for (const entry of this.entries.values()) {
           if (entry.status === 'running' && entry.deadline !== null && entry.deadline <= now) {
-            timedOutIdentities.add(entry.requestIdentity);
+            timedOutIdentities.set(
+              entry.requestIdentity,
+              (timedOutIdentities.get(entry.requestIdentity) ?? true) && entry.automaticRetry
+            );
             timedOutCount += 1;
           }
         }
         this.timeoutCount += timedOutCount;
-        for (const requestIdentity of timedOutIdentities) {
-          if (!this.beginAutomaticRetry(requestIdentity)) {
+        for (const [requestIdentity, automaticRetry] of timedOutIdentities) {
+          if (!automaticRetry || !this.beginAutomaticRetry(requestIdentity)) {
             this.failIdentity(requestIdentity, 'timeout');
           }
         }
@@ -575,11 +587,13 @@ const UNMANAGED_MEDIA_LEASE = {
 } as const;
 
 export function useTopicBodyMediaLease({
+  automaticRetry = true,
   enabled = true,
   kind,
   priority = 'visible',
   requestIdentity
 }: {
+  automaticRetry?: boolean;
   enabled?: boolean;
   kind: TopicBodyMediaKind;
   priority?: TopicBodyMediaPriority;
@@ -609,10 +623,10 @@ export function useTopicBodyMediaLease({
   useEffect(() => {
     if (!coordinator || !rowKey || !enabled) return undefined;
     setRegisteredSnapshot({ key, snapshot: idleSnapshot });
-    return coordinator.register({ key, kind, priority, requestIdentity, rowKey }, (nextSnapshot) => {
+    return coordinator.register({ automaticRetry, key, kind, priority, requestIdentity, rowKey }, (nextSnapshot) => {
       setRegisteredSnapshot({ key, snapshot: nextSnapshot });
     });
-  }, [coordinator, enabled, idleSnapshot, key, kind, priority, requestIdentity, rowKey]);
+  }, [automaticRetry, coordinator, enabled, idleSnapshot, key, kind, priority, requestIdentity, rowKey]);
   const settle = useCallback(
     (outcome: TopicBodyMediaOutcome) => {
       coordinator?.settle(key, snapshot.attemptId, outcome);

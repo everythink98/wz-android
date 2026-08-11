@@ -963,6 +963,7 @@ export async function getV2exTopic(
   const parserVariant = declaredComplete ? 'html-topic' : legacyComplete ? 'html-topic-fallback' : 'html-topic-partial';
   const result = {
     ...topic,
+    mediaReferrer: { documentUrl: topic.url },
     ...(typeof htmlDetail?.upvoteCount === 'number' ? { upvoteCount: htmlDetail.upvoteCount } : {}),
     ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),

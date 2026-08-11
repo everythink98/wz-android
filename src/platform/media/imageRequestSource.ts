@@ -1,5 +1,6 @@
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
+import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import {
   FORUM_MEDIA_IDENTITY_HEADER,
   FORUM_MEDIA_SOURCE_HEADER,
@@ -11,6 +12,7 @@ import {
 export type ImageRequestOptions = {
   mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
+  referrerPolicy?: MediaReferrerPolicy;
 };
 
 export type ImageSourceOptions = ImageRequestOptions & {
@@ -20,6 +22,60 @@ export type ImageSourceOptions = ImageRequestOptions & {
 const IMAGE_ACCEPT = 'image/avif,image/webp,image/*,*/*;q=0.8';
 const FALLBACK_ACCEPT_LANGUAGE = 'en-US,en;q=0.9';
 const DEFAULT_ACCEPT_LANGUAGE = defaultAcceptLanguage();
+const DEFAULT_REFERRER_POLICY: MediaReferrerPolicy = 'strict-origin-when-cross-origin';
+
+function cleanReferrerUrl(value: unknown) {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null;
+    }
+    url.username = '';
+    url.password = '';
+    url.hash = '';
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function referrerForMediaUrl(targetUrl: URL, options: ImageRequestOptions) {
+  const context = options.mediaContext?.referrer;
+  if (!context) {
+    const contentSource = options.mediaContext?.contentSource;
+    return contentSource ? `${new URL(sourceCatalog[contentSource].baseUrl).origin}/` : undefined;
+  }
+  const documentUrl = cleanReferrerUrl(context.documentUrl);
+  if (!documentUrl) {
+    return undefined;
+  }
+  const policy =
+    normalizeMediaReferrerPolicy(options.referrerPolicy) ||
+    normalizeMediaReferrerPolicy(context.documentPolicy) ||
+    DEFAULT_REFERRER_POLICY;
+  const sameOrigin = documentUrl.origin === targetUrl.origin;
+  const downgrade = documentUrl.protocol === 'https:' && targetUrl.protocol === 'http:';
+  const fullReferrer = documentUrl.toString();
+  const originReferrer = `${documentUrl.origin}/`;
+  switch (policy) {
+    case 'no-referrer':
+      return undefined;
+    case 'no-referrer-when-downgrade':
+      return downgrade ? undefined : fullReferrer;
+    case 'origin':
+      return originReferrer;
+    case 'origin-when-cross-origin':
+      return sameOrigin ? fullReferrer : originReferrer;
+    case 'same-origin':
+      return sameOrigin ? fullReferrer : undefined;
+    case 'strict-origin':
+      return downgrade ? undefined : originReferrer;
+    case 'strict-origin-when-cross-origin':
+      return sameOrigin ? fullReferrer : downgrade ? undefined : originReferrer;
+    case 'unsafe-url':
+      return fullReferrer;
+  }
+}
 
 export function isHttpOrHttpsUrl(url: unknown): boolean {
   const clean = typeof url === 'string' ? url.trim() : '';
@@ -62,8 +118,9 @@ export function imageRequestHeadersForUrl(
       [FORUM_MEDIA_SOURCE_HEADER]: forumMediaSourceHeaderValue(options?.mediaContext)
     };
     const contentSource = options?.mediaContext?.contentSource;
-    if (contentSource) {
-      headers.Referer = `${new URL(sourceCatalog[contentSource].baseUrl).origin}/`;
+    const referrer = referrerForMediaUrl(parsed, options);
+    if (referrer) {
+      headers.Referer = referrer;
     }
     const userAgent =
       (contentSource === 'nodeseek' ? String(options?.nodeSeekUserAgent || '').trim() : '') ||
@@ -84,11 +141,12 @@ export function imageSourceFromUrl(url: string, options: ImageSourceOptions) {
     source && typeof source === 'object' && !Array.isArray(source)
       ? { ...(source as Record<string, unknown>), uri: clean }
       : { uri: clean };
+  const headers = imageRequestHeadersForUrl(clean, options);
   const mediaSessionIdentity = options?.mediaContext?.sessionIdentity || '';
   if (mediaSessionIdentity && /^https?:\/\//i.test(clean)) {
-    base.cacheKey = `${mediaSessionIdentity}:${clean}`;
+    const referrerIdentity = options.mediaContext.referrer ? `:referrer:${headers?.Referer || 'none'}` : '';
+    base.cacheKey = `${mediaSessionIdentity}:${clean}${referrerIdentity}`;
   }
-  const headers = imageRequestHeadersForUrl(clean, options);
   if (!headers) {
     return base;
   }

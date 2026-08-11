@@ -554,6 +554,7 @@ export async function getLinuxDoTopic(
   const sanitizedContentHtml = sanitizeLinuxDoContentHtml(firstPostFields.cookedHtml, polls);
   const result = {
     ...topic,
+    mediaReferrer: { documentUrl: topic.url },
     contentHtml: sanitizedContentHtml,
     replies,
     replyCompleteness: replies.length === initialReplyPosts.length ? ('complete' as const) : ('partial' as const),

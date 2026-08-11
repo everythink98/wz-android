@@ -371,7 +371,8 @@ async function fetchTopicPageData(id: string, page: number, options: NodeSeekOpt
 
 export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
-  const { response, text: html } = await fetchTopicHtml(id, 1, requestOptions);
+  const { response, responseUrl, text: html } = await fetchTopicHtml(id, 1, requestOptions);
+  const documentUrl = responseUrl || nodeSeekTopicUrl(id);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
@@ -399,6 +400,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const replyCandidates = Math.max(rendered.replies.length, Math.max(0, comments.length - 1));
     const result = {
       ...paged,
+      mediaReferrer: { documentUrl },
       replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
     };
     const parsed = annotateSourceDiagnosticSummary(result, {
@@ -434,6 +436,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const replyCandidates = Math.max(0, comments.length - 1);
     const result = {
       ...paged,
+      mediaReferrer: { documentUrl },
       replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
     };
     const missingFloorCount = comments

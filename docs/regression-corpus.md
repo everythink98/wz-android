@@ -5232,12 +5232,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03`、`NAV-03`、`USER-01`、`ACCOUNT-01/02`、`MORE-02` 媒体 seam |
 | 用户症状 | NodeSeek `post-857589-1` 的 `im.legend.moe` 1028×937 WebP 在原站 WebView 正常显示，原生详情只显示灰色占位。Expo Image 的 OkHttp 响应为 `403 + Cf-Mitigated: challenge`；复制完整浏览器头仍是 challenge，而匿名 WebView 与 Cronet 均能取得图片。 |
 | 触发条件 | 论坛图片的幂等 `GET/HEAD` 已带通用浏览器请求画像，但服务端仍按 TLS/HTTP 网络指纹返回 Cloudflare Challenge Page。Cookie 不是该真实样本成功所必需。 |
-| 根因 seam | `src/platform/media/imageRequestSource.ts` 的通用来源画像只负责热链、UA 和语言检查；传输恢复 seam 是 `plugins/withNetworkProxyModule.js` 生成的 Expo Image/SVG 专用 client。把补请求头或补图床 Host 当成浏览器等价无法解决网络栈指纹差异。 |
-| 必须保持的行为 | 所有合法 HTTP(S) 图片继续按内容来源携带 image Accept、UA、Accept-Language、canonical origin Referer 和内部身份标记，不按目标 Host 分支；视频覆盖为 video Accept。Expo Image 与 SVG 有界复取先走现有 OkHttp/Glide 快路径，只有响应精确包含 `Cf-Mitigated: challenge` 且方法为 `GET/HEAD` 才懒初始化当前 generation 的 bundled Cronet，并通过官方 OkHttp transport 流式重试一次。Cronet 不缓存 body、不自行跟随重定向；非 challenge 响应交回外层 OkHttp，二次 challenge、初始化或网络失败保留原始响应且不递归。JS 永不附加 Cookie；同来源 Cookie、跨站匿名、离源永久降级和内部头移除保持不变。App 代理启用或切换阻塞态时 Cronet 只走本地 relay 且 `DISALLOW_DIRECT`；generation 变化取消旧调用，响应体释放后关闭旧 engine。普通图片、普通 `403/429`、超时、写请求、API、视频和图片保存均不进入 Cronet。 |
+| 根因 seam | `src/platform/media/imageRequestSource.ts` 的通用请求画像只负责 Accept、UA、语言、内部来源和 identity；`Referer` 由 `REG-TOPIC-078` 的文档/元素契约独立决定。传输恢复 seam 是 `plugins/withNetworkProxyModule.js` 生成的 Expo Image/SVG 专用 client。把补请求头或补图床 Host 当成浏览器等价无法解决网络栈指纹差异。 |
+| 必须保持的行为 | 所有合法 HTTP(S) 图片继续携带 image Accept、UA、Accept-Language 和内部身份标记，不按目标 Host 分支；`contentSource` 不再隐式生成 canonical origin Referer，最终值按 `REG-TOPIC-078` 解析，视频覆盖为 video Accept。Expo Image 与 SVG 有界复取先走现有 OkHttp/Glide 快路径，只有响应精确包含 `Cf-Mitigated: challenge` 且方法为 `GET/HEAD` 才懒初始化当前 generation 的 bundled Cronet，并通过官方 OkHttp transport 流式重试一次。Cronet 不缓存 body、不自行跟随重定向；非 challenge 响应交回外层 OkHttp，二次 challenge、初始化或网络失败保留原始响应且不递归。JS 永不附加 Cookie；同来源 Cookie、跨站匿名、离源永久降级和内部头移除保持不变。App 代理启用或切换阻塞态时 Cronet 只走本地 relay 且 `DISALLOW_DIRECT`；generation 变化取消旧调用，响应体释放后关闭旧 engine。普通图片、普通 `403/429`、超时、写请求、API、视频和图片保存均不进入 Cronet。 |
 | 精确失败 oracle | `src/platform/media/imageRequestSource.test.ts` 与 `tests/ui/topic/topic-image-loading.test.tsx` 固定未知 CDN 的通用画像、UA 隔离、零 JS Cookie及 video Accept。fresh prebuild 生成的 `NetworkProxyRuntimeTest.regTopic064OnlyCloudflareImageChallengesUseOneFallbackResponse` 用真实本地 OkHttp hop 证明只有 challenge GET 被替换为一次流式恢复，普通 403/429 与 POST 零恢复；`regTopic064FallbackFailureOrSecondChallengeKeepsTheOriginalResponse` 固定失败和二次 challenge 保留原响应。tooling 门禁固定 bundled 依赖、旧 OkHttp/Okio/Cronet API 排除、无重定向、`DISALLOW_DIRECT`、Expo Image network interceptor、SVG 共享 client，以及只允许 Cronet 500 缺失平台 API 的四条精确 R8 `-dontwarn`；既有 Kotlin 测试继续固定 Cookie、重定向和 session cache 边界，`assembleRelease` 必须通过 R8。修复前行为测试缺少恢复器并失败。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + STATIC_PASS`：Vitest/RNTL 固定 JS 和 renderer，生成 Kotlin JUnit 固定真实 OkHttp fallback 行为，fresh prebuild 与 Release Kotlin compile 固定原生依赖/API 接线。 |
 | Replay 或真实验收路径 | 匹配 revision/APK 使用现有登录态从“更多 → 账号中心 → NodeSeek”打开 `https://www.nodeseek.com/post-857589-1` 作原站对照，再在原生 Topic 详情确认 1028×937 WebP 显示；另只读回归普通第三方图片、同来源私有附件与 `post-841430-1` 的复杂动态 SVG。确认普通图片日志没有 Cronet 初始化或主线程阻塞；不清 App 数据、Cookie 或登录态，不保存图片、不启用真实代理。 |
-| 负向验证方式 | 恢复图床 Host 列表、把所有图片/API/视频直接改走 Cronet、按普通 403/429 或超时触发、递归重试、让 Cronet 自行跟随跨站重定向、代理失败回落直连、给第三方图床附加论坛 Cookie，或让 SVG 绕开同一图片 client，编号测试或原生编译必须失败。 |
+| 负向验证方式 | 恢复图床 Host 列表、把内容来源强制当成 Referer、把所有图片/API/视频直接改走 Cronet、按普通 403/429 或超时触发、递归重试、让 Cronet 自行跟随跨站重定向、代理失败回落直连、给第三方图床附加论坛 Cookie，或让 SVG 绕开同一图片 client，编号测试或原生编译必须失败。 |
 | 明确不覆盖范围 | 不覆盖 JavaScript 生成图片、`blob:`、canvas、DRM、第三方登录 Cookie 或交互 CAPTCHA；不增加隐藏媒体 WebView、服务端代理、图床配置、curl impersonation 或无限重试。若锁定的 Cronet 在保留 TLS 校验和代理边界下仍让目标图片返回 challenge，停止合并并记录受控状态/协议证据，再单独评估其他隔离 transport。 |
 
 ## `REG-TOPIC-065` NodeSeek 透明动态贴纸出现黑底并在前后台切换时重载
@@ -5464,6 +5464,81 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 在匹配 APK 上只读打开自然有评论的五站主题，观察首屏评论、相邻窗口与刷新；遇到自然稀疏/计数变化时有效行必须保留并显示受影响状态，静置后不得继续请求。不得通过发帖、删帖、清缓存或人为改响应制造竞态。 |
 | 负向验证方式 | 恢复 `items.length === expectedCount` 的整窗硬失败、让普通 partial 自动请求/轮询、在共享层按正文或跨站 ID/floor 合并/过滤、二次否决 adapter target、让妖火 `reid` 进入通用 `commentId`，或让写后删除回退 floor；对应 adapter/controller/helper 测试必须失败。 |
 | 明确不覆盖范围 | 不伪造权威总回复数、不自动补抓任意中间页、不把一站的 comment ID/floor/reid 语义外推给另一站，也不改变写操作与原站确认要求。 |
+
+## `REG-TOPIC-078` Topic 媒体首跳忽略页面 Referrer Policy
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03`、`ACCOUNT-01/02`、`MORE-02` 媒体 seam |
+| 用户症状 | 妖火指定主题的外部图片与视频在原站可用，App 却因额外发送论坛来源而收到 403；V2EX、NodeSeek、linux.do、小隐寺的正文、预览或保存又可能使用与原页面不同的 Referer。随机素材偶尔返回 200 不能证明 Header 契约正确。 |
+| 触发条件 | 共享媒体层把 `contentSource` 的 canonical origin 无条件写成 Referer，忽略元素 `referrerpolicy`、响应/文档策略、真实 Topic URL、同源关系和 HTTPS→HTTP 降级；同 URL 的不同契约还会被缓存或预览目录合并。 |
+| 根因 seam | 五站 Topic adapter 产出的 `MediaReferrerContext` → Sanitizer 的元素策略保留 → `imageRequestSource` 的标准 policy resolver → 正文、原图升级、全屏预览、保存、贴纸、卡片和视频消费者；`contentSource` 只保留身份、Cookie 和重定向隔离职责。 |
+| 必须保持的行为 | HTTP `Referrer-Policy` Header 解析逗号列表并采用最后一个有效 token；元素 `referrerpolicy` 只接受 ASCII case-insensitive、无首尾空格的单个标准 token，逗号列表或包裹空格均无效并回退文档策略。策略优先级固定为元素、文档、默认 `strict-origin-when-cross-origin`，支持八种标准值、同源/跨源与 HTTPS 降级，并从文档 URL 移除凭据和 fragment；禁止按站点或图床分支。妖火外部媒体和 V2EX `no-referrer` 图片首跳不发送 Referer，NodeSeek/linux.do 跨域媒体首跳发送来源 origin，小隐寺同源图片首跳发送完整 Topic URL。正文、原图、预览、保存、普通/动态贴纸、卡片图和 native video 使用同一首跳契约；最终 Referer 或 `none` 进入图片、贴纸、预览、尺寸、inline 分类和视频 coordinator identity。内部来源/identity 头、原生 CookieJar 和重定向单调降权保持。 |
+| 精确失败 oracle | `src/domain/forum/mediaReferrer.test.ts` 固定 Header/attribute parser 差异；`src/platform/media/imageRequestSource.test.ts` 固定五站真实形状和八种 policy；`src/domain/forum/contentSanitizer.test.ts`、`src/domain/forum/forumContentMedia.test.ts` 固定属性在普通及转换标签中保留；五站 reader tests 固定最终文档 URL/妖火响应 policy；`src/platform/media/imagePreviewCatalog.test.ts`、`src/platform/media/imageSave.test.ts`、`tests/ui/topic/image-preview-controller.test.tsx` 与 `tests/ui/topic/topic-image-loading.test.tsx` 固定正文、预览、保存、卡片、贴纸、尺寸、inline 分类和视频 Header 及 identity 隔离。修复前分别观察到妖火/V2EX 多发 Referer、目录误合并和保存回退来源 origin。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：确定性 resolver/转换用 Vitest，真实 renderer/预览链用 RNTL，匹配 APK 用原站对照与实际首跳 Header；仅断言素材返回 200 不合格。 |
+| Replay 或真实验收路径 | 保留登录态覆盖安装后，从“更多 → 账号中心”进入原站对照；核对妖火 `bbs-1571096.html` 图片和 `bbs-1571173.html?lpage=11` 视频无 Referer/403，V2EX `t/1233346` 的 Imgur 无 Referer，NodeSeek `post-857589-1` 为 `https://www.nodeseek.com/`，linux.do `t/topic/847468` 为 `https://linux.do/`，小隐寺 `t/topic/263` 同源图为完整 Topic URL；正文和预览一致。不得清数据、Cookie 或登录态，不保存图片或执行互动写入。 |
+| 负向验证方式 | 恢复 `contentSource → canonical origin`、全局删除 Referer、加入站点/CDN 例外、丢弃元素策略、只测随机 200，或让同 URL 不同最终 Referer 共用缓存/预览/video identity；任一编号测试必须失败。 |
+| 明确不覆盖范围 | 非 Topic 旧调用暂保留既有画像且不据此宣称 Referer 正确；跨 origin 重定向后的 Referer 重算不在本次范围，不增加浏览器 Cookie 作为小隐寺登录依据，也不改变原生插件、外部 API 或数据格式。 |
+
+## `REG-TOPIC-079` Expo Video 重建或卸载释放竞态导致原生崩溃
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03`、`NAV-03` native media 生命周期 |
+| 用户症状 | 正文视频请求失败或超时后，App 立即自动创建第二个 Expo player；正在播放时离开 Topic，组件卸载清理又访问已由 Expo 释放的 player。两条路径均可触发 Android Fatal 或进程退出。 |
+| 触发条件 | native video 按 `attemptId` 重挂整个 `ForumContentVideo`，或 `useVideoPlayer` 的内部卸载 Effect 先 `release()`，组件随后再写 `timeUpdateEventInterval=0`。 |
+| 根因 seam | `TopicBodyMediaCoordinator` 的 per-lease retry policy → `ManagedTopicContentVideo` admission/identity → `ForumContentVideo` runtime lease、初始化与 Expo 独占的 shared-object 释放生命周期。 |
+| 必须保持的行为 | 仅 native 正文视频关闭 coordinator 自动重试；错误或 30 秒无进展超时后释放 permit、稳定显示“视频加载失败，点按重试”，不得创建第二个 player。用户显式重试在本 Topic session 内最多一次，只创建一个新 attempt/player；移除外层按 attemptId 的重复 key。`timeUpdateEventInterval` 只在 `useVideoPlayer` setup 中初始化，卸载后不得再访问 player，释放由 Expo 独占。图片、原图、WebView 视频和贴纸继续保留既有一次自动重试。 |
+| 精确失败 oracle | `tests/ui/topic/topic-media-coordinator.test.tsx` 固定 `automaticRetry=false` 后 attempt 不变、失败态稳定且后续排队媒体获得 permit，显式重试才改变一次；`tests/ui/topic/topic-image-loading.test.tsx` 模拟 Expo `statusChange=error`，要求显式重试前 player 调用数保持 1、点击后精确为 2，并模拟 Expo 先释放 shared object 后卸载组件，要求零次释放后访问。修复前分别观察到自动第二次 attempt/player，以及 `Cannot use shared object that was already released`。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定 JS/React 生命周期；匹配 Android APK 必须连续播放妖火目标视频并检查无 Fatal、App PID 不变。 |
+| Replay 或真实验收路径 | 保留主 AVD 登录态覆盖安装，打开妖火 `bbs-1571173.html?lpage=11` 连续播放，再直接进入另一个 Topic；两阶段均核对 logcat 无 Fatal 且 PID 不变。不得用卸载、清数据或退出登录制造状态。 |
+| 负向验证方式 | 恢复 native video 自动重试、重新给整个组件加 `key={attemptId}`、在 error callback 内直接新建 player、在卸载 cleanup 中访问 player、让失败视频继续占 permit，或全局关闭图片/WebView 自动重试；编号 UI 测试必须失败。 |
+| 明确不覆盖范围 | 不改变 DRM、格式支持、透明贴纸 WebView 或网络代理策略；不承诺服务端拒绝的视频一定播放，只保证错误路径稳定且由用户控制重试。 |
+
+## `REG-TOPIC-080` 原生正文视频忽略固有比例
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03` 的正文媒体 seam |
+| 用户症状 | 妖火 `bbs-1571173.html?lpage=11` 的原视频为 `576×1024`，原站按竖屏显示，App 却固定放进 `16:9` 横屏框。 |
+| 触发条件 | 正文视频 frame 把所有素材写死为 `16:9`，播放器已经暴露的 `videoTrack.size` 与 `videoTrackChange` 未参与布局。 |
+| 根因 seam | `ForumContentVideo` 对 Expo player 元数据的订阅与 frame `aspectRatio`；coordinator 只负责 admission/retry，不能决定媒体形状。 |
+| 必须保持的行为 | 元数据未到或无效时使用 `16:9` 占位；有效尺寸到达后切换为固有宽高比，正文最窄限制 `1:2`，所以 `576×1024` 显示为 `9:16`，更窄素材在 `contain` 容器内留边。比例变化只更新 frame，不重建 player；全屏仍服从原始媒体比例。 |
+| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 模拟 null、`576×1024`、`360×1000` 与无效 track size，分别断言 `16:9`、`9:16`、`1:2`、`16:9`，且整个变化过程中 `useVideoPlayer` 调用数保持 1。修复前 `576×1024` 仍为 `16:9`。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：Jest/RNTL 固定布局与 player identity；匹配 Android APK 固定真实 track 事件和竖屏视觉结果。 |
+| Replay 或真实验收路径 | 保留主 AVD 登录态覆盖安装，从“更多 → 账号中心 → 妖火”对照原站，再打开原生 `bbs-1571173.html?lpage=11`；等待元数据后应为竖屏 frame，可连续播放，切换 Topic 后无 Fatal 且 PID 不变。 |
+| 负向验证方式 | 恢复固定 `16:9`、按 URL/站点猜比例、让 `videoTrackChange` 改变 source/key 或创建新 player，或取消 `contain`/正文最窄约束；编号 UI 测试必须失败。 |
+| 明确不覆盖范围 | 不增加播放器依赖、原生插件或媒体探测请求，不改变 DRM/codec 支持，也不保证服务端拒绝的媒体可播放。 |
+
+## `REG-TOPIC-081` Topic 虚拟化 row 泄漏文章边界与妖火原站结构
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 opening article、sanitizer 与来源 adapter seam |
+| 用户症状 | 妖火附件帖被拆成多段卡片，每段重复横线和顶部留白；连续 `<br>`、隐藏占位节点变成异常空洞，原站附件 class 直接泄漏到 App 后呈现松散或不可操作。 |
+| 触发条件 | opening HTML 的虚拟化 row 被当作视觉段落；sanitizer 先删除 style 再识别 `display:none`；正文边界空节点未裁剪；renderer 直接依赖妖火 `.attachment` DOM 形状。 |
+| 根因 seam | `contentSanitizer` 的隐藏节点删除 → 妖火 Topic adapter 的语义归一化 → `topicContentSplit/topicOpeningPresentation` → `TopicContentList` article continuation → 共享 HTML styles。 |
+| 必须保持的行为 | 相邻 opening 正文、原生图片和视频 rows 属于一个 article scope，只有首个可见块有顶部边界/padding，列表 separator 不得暴露虚拟化接缝；quote、poll、accepted answer 与正文 `<hr>` 保留语义边界。`hidden` 与内联 `display:none` 节点在 style 清理前删除，正文首尾空 wrapper/连续 `<br>` 裁掉，内部单个换行不变。妖火正常附件结构归一为单个 `forum-attachment` 语义块，费用、标题、动作与次数可读。 |
+| 精确失败 oracle | `src/domain/forum/contentSanitizer.test.ts` 固定隐藏节点删除；`src/sources/yaohuo/reader.test.ts` 用真实附件形状固定单一语义块、无隐藏/边界 `<br>`；`tests/ui/topic/topic-reply-filters.test.tsx` 固定相邻 opening rows 零 separator 且只有一个顶部边界；`src/features/topic/rendering/htmlStyles.test.ts` 固定共享 `strong`、`hr` 与附件卡片样式。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest 固定 sanitizer/adapter，Jest/RNTL 固定虚拟化文章边界；匹配 APK 固定整体正文视觉结果。 |
+| Replay 或真实验收路径 | 保留登录态覆盖安装，从“更多 → 账号中心 → 妖火”对照 `bbs-1540797.html`，再打开原生 Topic；整篇正文不得有重复横线或异常空洞，附件为一个紧凑卡片。只读检查，不点击下载。 |
+| 负向验证方式 | 恢复每 row 的 border/padding/separator、清除 style 后再找 hidden、让边界 `<br>` 形成独立 row、在 renderer 中识别原站 class、或把 quote/poll/accepted 的边界一并抹掉；编号测试必须失败。 |
+| 明确不覆盖范围 | 不复制妖火复古 CSS、不增加站点皮肤或新组件，不兼容原站任意畸形附件结构，不模拟附件扣费/下载脚本，也不执行真实下载。 |
+
+## `REG-TOPIC-082` 原生正文视频丢失封面并在加载期黑屏
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03` 的正文媒体与虚拟化 typed-row seam |
+| 用户症状 | 原帖已有真实视频封面，App 在加载和待播放阶段却只显示纯色底或视频首帧；播放按钮笨重，暂停后还可能错误恢复封面。 |
+| 触发条件 | sanitizer 已保留 `poster`，但 standalone video compiler、opening projection 或 HTML renderer 在转为 typed video 时丢弃；poster 若直接挂在视频请求上，还会绕过图片 permit、Referrer identity 和失败隔离。 |
+| 根因 seam | `contentSanitizer` → `topicContentSplit` → `topicOpeningPresentation/TopicContentList` 与 HTML renderer → `ManagedTopicContentVideo` 的独立图片 lease → `ForumContentVideo` 的首次播放状态。 |
+| 必须保持的行为 | 安全 poster 在普通与 parser-fallback standalone video 中完整传递，危险 poster 只移除自身且不删除可播放 source。poster 使用现有图片请求画像、Cookie/Referrer、disk cache 和独立 `poster` permit，最终 Referer 不同不得共享 identity；它按 `cover` 铺满且不进入无障碍树。加载期保留封面和 Spinner，ready 时显示 56dp 半透明播放按钮；首次 `playingChange=true` 后永久移除封面，暂停只在当前视频帧上恢复播放按钮。poster 失败不影响视频，视频失败仍保留显式重试且不自动重建 player。全屏按钮至少 48dp，使用 `fullscreenOptions`，视频继续 `contain`、textureView、无自动播放和既有比例。 |
+| 精确失败 oracle | `src/domain/forum/contentSanitizer.test.ts` 固定安全/危险 poster；`src/domain/forum/topicContentSplit.test.ts` 与 `src/features/topic/model/topicOpeningPresentation.test.ts` 固定普通、fallback 和 opening typed seam；`tests/ui/topic/topic-image-loading.test.tsx` 固定 poster 请求隔离、加载/ready/首次播放/暂停/失败状态、按钮尺寸、当前 fullscreen API、比例与 poster 状态变化均不重建 player。修复前 sanitizer 后的 poster 在 compiled row 中消失。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest 固定转换，Jest/RNTL 固定请求与播放器生命周期；匹配 Android APK 固定真实封面、按钮、播放/暂停和全屏。 |
+| Replay 或真实验收路径 | 保留主 AVD 登录态覆盖安装，从“更多 → 账号中心 → 妖火”对照原站，再打开 `bbs-1571173.html?lpage=11`；首屏应出现真实竖向封面和新按钮，点击后封面退出并连续播放，暂停保留当前帧，全屏可用，PID 稳定且无 Fatal。 |
+| 负向验证方式 | 在任一 typed seam 删除 poster、让 poster 与视频共用 permit/identity、按 ready 而非首次 playing 隐藏封面、暂停时重新挂封面、poster error 触发 player 重建、恢复 `allowsFullscreen` 或固定重型按钮；编号测试必须失败。 |
+| 明确不覆盖范围 | 不增加进度条、音量控制、动画库、依赖或原生插件，不改变 WebView 视频/贴纸播放器、视频固有比例、codec/DRM 或服务端媒体可用性。 |
 
 ## 待确认观察
 

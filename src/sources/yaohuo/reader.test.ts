@@ -779,7 +779,8 @@ describe('Android direct yaohuo API', () => {
         return new Response('');
       }
       return new Response(
-        '<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>更多回帖(1)<a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>'
+        '<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>更多回帖(1)<a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>',
+        { headers: { 'Referrer-Policy': 'same-origin' } }
       );
     });
 
@@ -791,7 +792,15 @@ describe('Android direct yaohuo API', () => {
 
     expect(yaohuoFetcher).toHaveBeenNthCalledWith(1, 'https://www.yaohuo.me/bbs-123.html', expect.any(Object));
     expect(detail.replyCount).toBe(1);
-    expect(detail).toMatchObject({ replies: [], replyCompleteness: 'partial', replyHasMore: true });
+    expect(detail).toMatchObject({
+      mediaReferrer: {
+        documentUrl: 'https://www.yaohuo.me/bbs-123.html',
+        documentPolicy: 'same-origin'
+      },
+      replies: [],
+      replyCompleteness: 'partial',
+      replyHasMore: true
+    });
   });
 
   it('REG-WRITE-003 loads the original favorite record with the topic detail', async () => {
@@ -1178,7 +1187,7 @@ describe('Android direct yaohuo API', () => {
     expect(detail.contentHtml).not.toContain('<svg');
   });
 
-  it('keeps yaohuo markdown resource body when the bbscontent wrapper is malformed', () => {
+  it('[REG-TOPIC-081] keeps the real yaohuo article and attachment shape together', () => {
     const detail = parseYaohuoTopicHtml(
       `
       <div id="book-view-content" class="content">
@@ -1219,6 +1228,12 @@ describe('Android direct yaohuo API', () => {
     expect(detail.contentHtml).toContain('核心亮点功能');
     expect(detail.contentHtml).toContain('温馨提示');
     expect(detail.contentHtml).toContain('夸克网盘下载');
+    expect(detail.contentHtml.match(/class="forum-attachment"/g)).toHaveLength(1);
+    expect(detail.contentHtml).toContain('扣50个妖晶');
+    expect(detail.contentHtml).toContain('Hypic醒图国际版 v8.7.0 免登录使用所有特权');
+    expect(detail.contentHtml).toContain('(1次)');
+    expect(detail.contentHtml).not.toMatch(/KL_show_next_list|attachmenSum|attachmentinfo|attachmentnumber/);
+    expect(detail.contentHtml).not.toMatch(/<br\s*\/?>(?:\s*<br\s*\/?>)*\s*<div class="forum-attachment"/i);
     expect(detail.contentHtml).not.toContain('李慕婉o');
     expect(detail.contentHtml).not.toContain('更多回帖');
   });

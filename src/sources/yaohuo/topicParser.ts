@@ -198,6 +198,115 @@ function escapeHtmlText(value: string) {
     .replace(/'/g, '&#39;');
 }
 
+function yaohuoAttachmentHref(value: unknown) {
+  const href = absoluteUrl(value, BASE_URL);
+  if (!href) return '';
+  try {
+    const protocol = new URL(href).protocol;
+    return protocol === 'http:' || protocol === 'https:' ? href : '';
+  } catch {
+    return '';
+  }
+}
+
+function yaohuoAttachmentTrailingNodes(node: HTMLElement) {
+  const siblings = node.parentNode?.childNodes || [];
+  const trailing: unknown[] = [];
+  for (let index = siblings.indexOf(node) + 1; index > 0 && index < siblings.length; index += 1) {
+    const sibling = siblings[index];
+    if (!isHtmlElementNode(sibling)) {
+      if (isEmptyYaohuoBoundaryNode(sibling)) {
+        trailing.push(sibling);
+        continue;
+      }
+      break;
+    }
+    const attachmentClass = String(sibling.getAttribute('class') || '')
+      .split(/\s+/)
+      .some((name) => /^(?:attachment(?:info|number|name|itle|note)?|download(?:name|link|url|count))$/i.test(name));
+    if (!attachmentClass) break;
+    trailing.push(sibling);
+  }
+  return trailing;
+}
+
+function yaohuoAttachmentHtml(node: HTMLElement, trailingNodes: readonly unknown[]) {
+  const scope = parseHtml(`${node.innerHTML}${trailingNodes.map((item) => String(item)).join('')}`);
+  const summary = elementText(scope.querySelector('.attachmenSum'));
+  const items = scope.querySelectorAll('.attachmentinfo');
+  const itemHtml = (items.length ? items : [scope])
+    .map((item) => {
+      const title = elementText(item.querySelector('.attachmentitle, .attachmentname'));
+      const count = elementText(item.querySelector('.downloadcount'));
+      const note = elementText(item.querySelector('.attachmentNote'));
+      const link = item.querySelector('a[href]');
+      const href = yaohuoAttachmentHref(link?.getAttribute('href'));
+      const action = elementText(link) || '下载附件';
+      if (!title && !href && !note) return '';
+      return [
+        '<div class="forum-attachment-item">',
+        title ? `<div class="forum-attachment-title">${escapeHtmlText(title)}</div>` : '',
+        href || count
+          ? `<div class="forum-attachment-actions">${
+              href
+                ? `<a class="forum-attachment-action" href="${escapeHtmlText(href)}">${escapeHtmlText(action)}</a>`
+                : ''
+            }${count ? `<span class="forum-attachment-count">${escapeHtmlText(count)}</span>` : ''}</div>`
+          : '',
+        note ? `<div class="forum-attachment-note">${escapeHtmlText(note)}</div>` : '',
+        '</div>'
+      ].join('');
+    })
+    .filter(Boolean)
+    .join('');
+  return `<div class="forum-attachment">${
+    summary ? `<div class="forum-attachment-meta">${escapeHtmlText(summary)}</div>` : ''
+  }${itemHtml}</div>`;
+}
+
+function isEmptyYaohuoBoundaryNode(node: unknown) {
+  if (!node || typeof node !== 'object') return true;
+  if (!isHtmlElementNode(node)) {
+    return !String((node as { text?: unknown }).text || '')
+      .replace(/\u00a0/g, ' ')
+      .trim();
+  }
+  const tagName = String(node.rawTagName || node.tagName || '').toLowerCase();
+  if (tagName === 'br') return true;
+  return (
+    ['div', 'p', 'span'].includes(tagName) &&
+    !node.querySelector('img, video, forum-video, a[href]') &&
+    !textContentFromHtml(node.toString())
+  );
+}
+
+function removeNode(node: unknown) {
+  (node as { remove?: () => void })?.remove?.();
+}
+
+function trimYaohuoArticleBoundaries(root: HTMLElement) {
+  while (root.childNodes.length && isEmptyYaohuoBoundaryNode(root.childNodes[0])) removeNode(root.childNodes[0]);
+  while (root.childNodes.length && isEmptyYaohuoBoundaryNode(root.childNodes.at(-1)))
+    removeNode(root.childNodes.at(-1));
+  root.querySelectorAll('.forum-attachment').forEach((attachment) => {
+    const siblings = attachment.parentNode?.childNodes || [];
+    let index = siblings.indexOf(attachment);
+    while (index > 0 && isEmptyYaohuoBoundaryNode(siblings[index - 1])) {
+      removeNode(siblings[index - 1]);
+      index -= 1;
+    }
+  });
+}
+
+function normalizeYaohuoTopicContent(root: HTMLElement) {
+  root.querySelectorAll('.attachment').forEach((node) => {
+    const trailingNodes = yaohuoAttachmentTrailingNodes(node);
+    node.replaceWith(yaohuoAttachmentHtml(node, trailingNodes));
+    trailingNodes.forEach(removeNode);
+  });
+  trimYaohuoArticleBoundaries(root);
+}
+
 function readableYaohuoActivityText(value: unknown) {
   return textContentFromHtml(value)
     .replace(/(派币|礼金|每人|余|获赏)\s*(\d+)/g, '$1 $2')
@@ -362,7 +471,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     replyCount: latestReplyFloor || parsePositiveInteger(html.match(/更多回帖\((\d+)\)/)?.[1]),
     viewCount: parsePositiveInteger(contentText.match(/\(阅\s*(\d+)\)/)?.[1]) || undefined,
     excerpt: textExcerpt(contentHtml),
-    contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),
+    contentHtml: sanitizeContentHtml(contentHtml, BASE_URL, normalizeYaohuoTopicContent),
     replies: [],
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(accessRequirement ? { accessRequirement } : {}),

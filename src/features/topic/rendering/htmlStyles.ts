@@ -159,6 +159,15 @@ export function buildHtmlRenderingStyles({
     h4: heading(16, 24, '600', 14, 6),
     h5: heading(15, 22, '600', 12, 5),
     h6: heading(14, 21, '600', 10, 4),
+    strong: {
+      fontWeight: '700'
+    },
+    hr: {
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      marginBottom: 14,
+      marginTop: 14
+    },
     a: {
       color: linkColor
     },
@@ -251,6 +260,50 @@ export function buildHtmlRenderingStyles({
       paddingHorizontal: 5,
       paddingVertical: 1,
       textDecorationLine: 'none'
+    },
+    'forum-attachment': {
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      marginBottom: 12,
+      marginTop: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 12
+    },
+    'forum-attachment-item': {
+      marginTop: 8
+    },
+    'forum-attachment-meta': {
+      color: theme.muted,
+      fontSize: Math.round(12 * settings.fontScale),
+      lineHeight: Math.round(18 * settings.fontScale)
+    },
+    'forum-attachment-title': {
+      color: theme.ink,
+      fontSize: Math.round(14 * settings.fontScale),
+      fontWeight: '700',
+      lineHeight: Math.round(21 * settings.fontScale)
+    },
+    'forum-attachment-actions': {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginTop: 8
+    },
+    'forum-attachment-action': {
+      color: linkColor,
+      fontWeight: '700',
+      marginRight: 8
+    },
+    'forum-attachment-count': {
+      color: theme.muted,
+      fontSize: Math.round(12 * settings.fontScale)
+    },
+    'forum-attachment-note': {
+      color: theme.muted,
+      fontSize: Math.round(12 * settings.fontScale),
+      marginTop: 4
     },
     ...(enableDiscourseCallouts
       ? {

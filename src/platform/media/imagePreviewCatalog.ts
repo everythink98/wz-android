@@ -12,7 +12,12 @@ import {
 } from '@/domain/forum/forumContentMedia';
 import { linkDiagnosticRefs } from '@/platform/diagnostics/diagnosticPolicy';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
-import { isHttpOrHttpsUrl, normalizeImagePreviewUrl } from './imageRequestSource';
+import { imageRequestHeadersForUrl, isHttpOrHttpsUrl, normalizeImagePreviewUrl } from './imageRequestSource';
+import {
+  normalizeMediaReferrerPolicy,
+  type MediaReferrerContext,
+  type MediaReferrerPolicy
+} from '@/domain/forum/mediaReferrer';
 
 export type ImageDisplayCandidateKind = 'src' | 'srcset' | 'data-src' | 'data-original';
 
@@ -25,17 +30,20 @@ export interface ImagePreviewItem {
   displayUri: string;
   originalUri: string;
   displaySize?: ImageDisplaySize;
+  referrerPolicy?: MediaReferrerPolicy;
 }
 
 export interface ImagePreviewList {
   contentSource: ForumMediaRequestContext['contentSource'];
   items: ImagePreviewItem[];
   index: number;
+  referrer?: MediaReferrerContext;
 }
 
 export interface ImagePreviewCatalog {
   items: ImagePreviewItem[];
   itemIndexBySourceUrl: Record<string, number>;
+  mediaContext?: ForumMediaRequestContext;
 }
 
 const MAX_BODY_IMAGE_PIXEL_WIDTH = 2048;
@@ -90,7 +98,8 @@ export function isPreviewableImageUrl(url: unknown): boolean {
 export function createImagePreviewCatalog(
   htmlParts: string[],
   contentWidth: number,
-  pixelRatio: number
+  pixelRatio: number,
+  mediaContext?: ForumMediaRequestContext
 ): ImagePreviewCatalog {
   const itemIndexBySourceUrl: Record<string, number> = {};
   const entries = htmlParts.flatMap((html) => extractImagePreviewEntriesFromHtml(html, contentWidth, pixelRatio));
@@ -102,28 +111,32 @@ export function createImagePreviewCatalog(
       .map(normalizeImagePreviewUrl)
       .filter(Boolean);
     linkDiagnosticRefs('media', aliases);
-    let itemIndex = itemIndexByOriginalUri.get(originalUri);
+    const originalIdentity = previewRequestIdentity(originalUri, entry.item.referrerPolicy, mediaContext);
+    let itemIndex = itemIndexByOriginalUri.get(originalIdentity);
     if (itemIndex === undefined) {
       itemIndex = items.length;
-      itemIndexByOriginalUri.set(originalUri, itemIndex);
+      itemIndexByOriginalUri.set(originalIdentity, itemIndex);
       items.push(entry.item);
     }
     aliases.forEach((url) => {
-      itemIndexBySourceUrl[url] = itemIndex;
+      itemIndexBySourceUrl[previewRequestIdentity(url, entry.item.referrerPolicy, mediaContext)] = itemIndex;
     });
   });
-  return { items, itemIndexBySourceUrl };
+  return { items, itemIndexBySourceUrl, ...(mediaContext ? { mediaContext } : {}) };
 }
 
 export function imagePreviewListFromCatalog(
   catalog: ImagePreviewCatalog,
   tappedUrl: string,
   contentSource: ForumMediaRequestContext['contentSource'],
-  tappedDisplaySize?: ImageDisplaySize
+  tappedDisplaySize?: ImageDisplaySize,
+  tappedReferrerPolicy?: MediaReferrerPolicy
 ): ImagePreviewList {
   const tapped = normalizeImagePreviewUrl(tappedUrl);
-  const mappedIndex = Object.prototype.hasOwnProperty.call(catalog.itemIndexBySourceUrl, tapped)
-    ? catalog.itemIndexBySourceUrl[tapped]
+  const referrerPolicy = normalizeMediaReferrerPolicy(tappedReferrerPolicy);
+  const tappedIdentity = previewRequestIdentity(tapped, referrerPolicy, catalog.mediaContext);
+  const mappedIndex = Object.prototype.hasOwnProperty.call(catalog.itemIndexBySourceUrl, tappedIdentity)
+    ? catalog.itemIndexBySourceUrl[tappedIdentity]
     : undefined;
   const tappedUri = isAllowedActiveImageSource(tapped) && !isInlineForumImageUrl(tapped) ? tapped : '';
   const displaySize =
@@ -140,20 +153,46 @@ export function imagePreviewListFromCatalog(
     items[index] = {
       ...items[index],
       displayUri: tappedUri,
-      ...(displaySize ? { displaySize } : {})
+      ...(displaySize ? { displaySize } : {}),
+      ...(referrerPolicy ? { referrerPolicy } : {})
     };
   }
   if (index === undefined && tappedUri) {
-    index = items.findIndex((item) => item.originalUri === tappedUri);
+    index = items.findIndex((item) => item.originalUri === tappedUri && item.referrerPolicy === referrerPolicy);
     if (index < 0) {
       index = items.length;
-      items.push({ displayUri: tappedUri, originalUri: tappedUri, ...(displaySize ? { displaySize } : {}) });
+      items.push({
+        displayUri: tappedUri,
+        originalUri: tappedUri,
+        ...(displaySize ? { displaySize } : {}),
+        ...(referrerPolicy ? { referrerPolicy } : {})
+      });
     }
   }
   if (index === undefined || index < 0) {
-    return { contentSource, items: [], index: 0 };
+    return {
+      contentSource,
+      items: [],
+      index: 0,
+      ...(catalog.mediaContext?.referrer ? { referrer: catalog.mediaContext.referrer } : {})
+    };
   }
-  return { contentSource, items, index };
+  return {
+    contentSource,
+    items,
+    index,
+    ...(catalog.mediaContext?.referrer ? { referrer: catalog.mediaContext.referrer } : {})
+  };
+}
+
+function previewRequestIdentity(
+  url: string,
+  referrerPolicy?: MediaReferrerPolicy,
+  mediaContext?: ForumMediaRequestContext
+) {
+  if (!mediaContext?.referrer) return url;
+  const referrer = imageRequestHeadersForUrl(url, { mediaContext, referrerPolicy })?.Referer || 'none';
+  return `${url}\u0000referrer:${referrer}`;
 }
 
 type ImagePreviewEntry = {
@@ -176,6 +215,7 @@ function imagePreviewEntryFromAttributes(
   pixelRatio = 1
 ): ImagePreviewEntry | null {
   const displaySource = selectImageDisplaySource(attributes, contentWidth, pixelRatio);
+  const referrerPolicy = normalizeMediaReferrerPolicy(attributeValue(attributes, 'referrerpolicy'));
   const sourceUrls = uniqueStrings(
     [
       linkedUrl,
@@ -200,7 +240,8 @@ function imagePreviewEntryFromAttributes(
     item: {
       displayUri: displaySource?.uri || originalUri,
       originalUri,
-      ...(displaySource?.displaySize ? { displaySize: displaySource.displaySize } : {})
+      ...(displaySource?.displaySize ? { displaySize: displaySource.displaySize } : {}),
+      ...(referrerPolicy ? { referrerPolicy } : {})
     },
     sourceUrls
   };

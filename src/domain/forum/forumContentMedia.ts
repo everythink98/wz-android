@@ -6,6 +6,7 @@ import {
   parseHtml,
   textContentFromHtml
 } from './html';
+import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
 
 export const FORUM_STICKER_TAG = 'forum-sticker';
 export const FORUM_STICKER_ROW_TAG = 'forum-sticker-row';
@@ -19,6 +20,7 @@ export const INLINE_EMOJI_MAX_SIZE = 24;
 
 export type DynamicInlineImageDescriptor = {
   id: string;
+  referrerPolicy?: MediaReferrerPolicy;
   url: string;
 };
 
@@ -177,7 +179,8 @@ function markDynamicV2exInlineImageNodes(root: ForumContentMediaRoot) {
     image.tagName = FORUM_DYNAMIC_INLINE_IMAGE_TAG;
     image.setAttribute(FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE, id);
     image.set_content(label);
-    descriptors.push({ id, url });
+    const referrerPolicy = normalizeMediaReferrerPolicy(image.attributes.referrerpolicy);
+    descriptors.push({ id, url, ...(referrerPolicy ? { referrerPolicy } : {}) });
   });
   return descriptors;
 }
@@ -623,7 +626,7 @@ function inlineMixedStickerMediaHtml(html: string) {
 }
 
 function stickerFallbackAttributesText(attributes: Record<string, string | undefined>, src: string) {
-  const names = ['class', 'alt', 'title', 'width', 'height'];
+  const names = ['class', 'alt', 'title', 'width', 'height', 'referrerpolicy'];
   return [
     `src="${escapeHtmlText(src)}"`,
     ...names.map((name) => {

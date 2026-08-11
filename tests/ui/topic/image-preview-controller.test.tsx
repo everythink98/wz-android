@@ -96,6 +96,102 @@ describe('Image preview controller', () => {
     );
   });
 
+  it('[REG-TOPIC-078] keeps the Topic document and element policy through preview and saving', async () => {
+    mockSaveImageUriToLibrary.mockResolvedValue();
+    const imageUrl = 'https://i.imgur.com/v2ex-topic.png';
+    const mediaReferrer = { documentUrl: 'https://www.v2ex.com/t/1233346' } as const;
+    const hook = await renderHook(() =>
+      useImagePreviewController({
+        contentSource: 'v2ex',
+        contentWidth: 360,
+        htmlParts: [`<img src="${imageUrl}" referrerpolicy="no-referrer">`],
+        inlineSizedImageUrls: {},
+        mediaReferrer,
+        notify: jest.fn(),
+        topicImageDeriver: createTopicImageDeriver()
+      })
+    );
+
+    await act(() => {
+      hook.result.current.openImagePreview(imageUrl, undefined, undefined, 'no-referrer');
+    });
+    expect(hook.result.current.imagePreview).toEqual({
+      contentSource: 'v2ex',
+      index: 0,
+      items: [{ displayUri: imageUrl, originalUri: imageUrl, referrerPolicy: 'no-referrer' }],
+      referrer: mediaReferrer
+    });
+
+    await act(async () => {
+      await hook.result.current.savePreviewImage();
+    });
+    expect(mockSaveImageUriToLibrary).toHaveBeenCalledWith(
+      imageUrl,
+      {
+        mediaContext: {
+          contentSource: 'v2ex',
+          referrer: mediaReferrer,
+          sessionIdentity: expect.stringMatching(/^public:0:/)
+        },
+        nodeSeekUserAgent: undefined,
+        referrerPolicy: 'no-referrer'
+      },
+      undefined,
+      expect.anything()
+    );
+  });
+
+  it('[REG-TOPIC-078] suppresses preview only for the inline-classified Referer identity', async () => {
+    const imageUrl = 'https://images.example/shared-policy.png';
+    const requestIdentityForImage = (url: string, policy?: string) => `${url}\u0000referrer:${policy || 'default'}`;
+    const noReferrerIdentity = requestIdentityForImage(imageUrl, 'no-referrer');
+    const hook = await renderHook(() =>
+      useImagePreviewController({
+        contentSource: 'v2ex',
+        contentWidth: 360,
+        htmlParts: [
+          `<img src="${imageUrl}" referrerpolicy="no-referrer"><img src="${imageUrl}" referrerpolicy="origin">`
+        ],
+        inlineSizedImageUrls: { [noReferrerIdentity]: true },
+        mediaReferrer: { documentUrl: 'https://www.v2ex.com/t/1233346' },
+        notify: jest.fn(),
+        topicImageDeriver: createTopicImageDeriver({ requestIdentityForImage })
+      })
+    );
+
+    await act(() => hook.result.current.openImagePreview(imageUrl, undefined, undefined, 'no-referrer'));
+    expect(hook.result.current.imagePreview).toBeNull();
+
+    await act(() => hook.result.current.openImagePreview(imageUrl, undefined, undefined, 'origin'));
+    expect(hook.result.current.imagePreview?.items[hook.result.current.imagePreview.index]).toEqual(
+      expect.objectContaining({ originalUri: imageUrl, referrerPolicy: 'origin' })
+    );
+  });
+
+  it('[REG-TOPIC-078] uses the latest image identity when Topic context arrives after mount', async () => {
+    const imageUrl = 'https://images.example/late-topic-context.png';
+    const baseDeriver = createTopicImageDeriver();
+    const firstDeriver = { ...baseDeriver, isInlineSizedImage: () => false };
+    const latestDeriver = { ...baseDeriver, isInlineSizedImage: () => true };
+    const hook = await renderHook(
+      ({ topicImageDeriver }: { topicImageDeriver: typeof baseDeriver }) =>
+        useImagePreviewController({
+          contentSource: 'v2ex',
+          contentWidth: 360,
+          htmlParts: [`<img src="${imageUrl}">`],
+          inlineSizedImageUrls: {},
+          notify: jest.fn(),
+          topicImageDeriver
+        }),
+      { initialProps: { topicImageDeriver: firstDeriver } }
+    );
+
+    await hook.rerender({ topicImageDeriver: latestDeriver });
+    await act(() => hook.result.current.openImagePreview(imageUrl));
+
+    expect(hook.result.current.imagePreview).toBeNull();
+  });
+
   it('keeps the exact body-rendered image as the preview continuity frame', async () => {
     const originalUrl = 'https://images.example/original.svg';
     const displayUrl = 'https://images.example/display.svg';

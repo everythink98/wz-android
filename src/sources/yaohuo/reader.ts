@@ -1,5 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
+import { normalizeMediaReferrerPolicyHeader } from '@/domain/forum/mediaReferrer';
 import { parseHtml, parsePositiveInteger } from '@/domain/forum/html';
 import type {
   FeedResponse,
@@ -74,6 +75,7 @@ export async function fetchYaohuoHtml(url: string, fetcher: Fetcher = fetch, opt
   }
   return {
     html,
+    referrerPolicy: normalizeMediaReferrerPolicyHeader(response.headers.get('referrer-policy')),
     url: responseUrl
   };
 }
@@ -212,6 +214,10 @@ export async function getYaohuoTopicDirect({
 
   const result = {
     ...detail,
+    mediaReferrer: {
+      documentUrl: topicPage.url,
+      ...(topicPage.referrerPolicy ? { documentPolicy: topicPage.referrerPolicy } : {})
+    },
     categoryId: detail.categoryId || topic.categoryId,
     category: detail.category || topic.category,
     ...(favoritePage

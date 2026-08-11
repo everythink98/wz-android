@@ -438,6 +438,7 @@ export async function getXiaoyinsiTopic(
   const totalPosts = stream.length || (normalized.replyCount || 0) + 1;
   const result: TopicDetail = {
     ...normalized,
+    mediaReferrer: { documentUrl: normalized.url },
     contentHtml: sanitizeXiaoyinsiContentHtml(firstFields.cookedHtml, polls),
     replies,
     replyCompleteness: replies.length === initialReplyPosts.length ? ('complete' as const) : ('partial' as const),

@@ -1,10 +1,12 @@
 import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
+import type { MediaReferrerContext } from '@/domain/forum/models';
 
 export const FORUM_MEDIA_SOURCE_HEADER = 'X-WZ-Forum-Media-Source';
 export const FORUM_MEDIA_IDENTITY_HEADER = 'X-WZ-Forum-Media-Identity';
 
 export type ForumMediaRequestContext = Readonly<{
   contentSource: Source | null;
+  referrer?: MediaReferrerContext;
   sessionIdentity: string;
 }>;
 

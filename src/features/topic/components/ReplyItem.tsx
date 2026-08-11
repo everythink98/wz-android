@@ -40,7 +40,7 @@ import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { normalizeUserReference, userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
-import { sameInlineSizedImagesForReply } from '../model/topicDerivedData';
+import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../model/topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -209,6 +209,7 @@ export function ReplyItem({
   topicAuthor,
   topicBaseUrl,
   topicId,
+  topicImageDeriver,
   topicStateKey,
   onInteract,
   onDeleteReply,
@@ -251,6 +252,7 @@ export function ReplyItem({
   topicAuthor?: string;
   topicBaseUrl?: string;
   topicId?: string;
+  topicImageDeriver?: TopicImageDeriver;
   topicStateKey: string;
   onInteract: (type: InteractionType, commentId?: number) => void;
   onDeleteReply: (reply: Reply) => void;
@@ -286,18 +288,23 @@ export function ReplyItem({
     () =>
       rendersReplyBody
         ? highlightHtml(
-            bodyContent ? resolveForumContentRowHtml(bodyContent, inlineSizedImageUrls) : reply.contentHtml,
+            bodyContent
+              ? resolveForumContentRowHtml(bodyContent, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage)
+              : reply.contentHtml,
             query
           )
         : '',
-    [bodyContent, inlineSizedImageUrls, query, rendersReplyBody, reply.contentHtml]
+    [bodyContent, inlineSizedImageUrls, query, rendersReplyBody, reply.contentHtml, topicImageDeriver]
   );
   const highlightedSectionHtml = useMemo(
     () =>
       section?.type === 'replyContent' && section.content.type === 'html'
-        ? highlightHtml(resolveForumContentRowHtml(section.content, inlineSizedImageUrls), query)
+        ? highlightHtml(
+            resolveForumContentRowHtml(section.content, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage),
+            query
+          )
         : '',
-    [inlineSizedImageUrls, query, section]
+    [inlineSizedImageUrls, query, section, topicImageDeriver]
   );
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const copyReplyTextToClipboard = useCallback(() => {
@@ -371,7 +378,7 @@ export function ReplyItem({
               <MemoizedTopicContentBlock
                 contentWidth={replyContentWidth}
                 continuation={section.continuation}
-                html={resolveForumContentRowHtml(section, inlineSizedImageUrls)}
+                html={resolveForumContentRowHtml(section, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage)}
               />
             </View>
           </TopicSplitDisclosureScope>
@@ -428,7 +435,11 @@ export function ReplyItem({
                     <MemoizedTopicContentBlock
                       contentWidth={Math.max(220, replyContentWidth - 24)}
                       continuation={section.content.continuation}
-                      html={resolveForumContentRowHtml(section.content, inlineSizedImageUrls)}
+                      html={resolveForumContentRowHtml(
+                        section.content,
+                        inlineSizedImageUrls,
+                        topicImageDeriver?.isInlineSizedImage
+                      )}
                     />
                   </Pressable>
                 </TopicSplitDisclosureScope>
@@ -736,7 +747,11 @@ export function ReplyItem({
                     continuation={signatureContent?.continuation}
                     html={
                       signatureContent
-                        ? resolveForumContentRowHtml(signatureContent, inlineSizedImageUrls)
+                        ? resolveForumContentRowHtml(
+                            signatureContent,
+                            inlineSizedImageUrls,
+                            topicImageDeriver?.isInlineSizedImage
+                          )
                         : reply.signatureHtml
                     }
                     trimTrailingBlockSpacing
@@ -1042,6 +1057,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.topicAuthor !== next.topicAuthor ||
     previous.topicBaseUrl !== next.topicBaseUrl ||
     previous.topicId !== next.topicId ||
+    previous.topicImageDeriver !== next.topicImageDeriver ||
     ((next.section?.type === 'replyQuoteContent' ||
       next.section?.type === 'replyContent' ||
       next.section?.type === 'replySignatureContent') &&

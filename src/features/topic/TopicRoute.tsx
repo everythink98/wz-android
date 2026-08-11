@@ -7,7 +7,6 @@ import * as Clipboard from 'expo-clipboard';
 import type { Fetcher } from '@/platform/network/request';
 import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
-import { type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
 import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -185,13 +184,14 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     },
     [runtime]
   );
-  const openImagePreviewRef = useRef<(url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void>(
+  const openImagePreviewRef = useRef<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>(
     () => undefined
   );
   const html = useHtmlRenderingController({
     mediaSessionIdentity,
     onOpenExternalUrl: openExternalUrl,
-    onOpenImagePreview: (url, displaySize, posterUri) => openImagePreviewRef.current(url, displaySize, posterUri),
+    onOpenImagePreview: (url, displaySize, posterUri, referrerPolicy) =>
+      openImagePreviewRef.current(url, displaySize, posterUri, referrerPolicy),
     onOpenTopic: openTopicDestination,
     onOpenUser: (user) => navigation.push('User', { user }),
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
@@ -219,6 +219,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     fetcher: runtime.fetcher,
     htmlParts: getTopicHtmlParts,
     inlineSizedImageUrls: html.inlineSizedImageUrls,
+    mediaReferrer: html.mediaContext?.referrer,
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
     notify: runtime.notify,
     topicImageDeriver: html.topicImageDeriver

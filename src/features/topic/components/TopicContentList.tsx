@@ -188,6 +188,14 @@ function logicalContentContinuation(item: TopicListItem): LogicalContentContinua
 }
 
 function continuesSameLogicalContentGroup(leadingItem: TopicListItem, trailingItem: TopicListItem) {
+  if (
+    leadingItem.type === 'topicContent' &&
+    trailingItem.type === 'topicContent' &&
+    (leadingItem.content.type === 'content' || leadingItem.content.type === 'contentVideo') &&
+    (trailingItem.content.type === 'content' || trailingItem.content.type === 'contentVideo')
+  ) {
+    return true;
+  }
   const leading = logicalContentContinuation(leadingItem);
   const trailing = logicalContentContinuation(trailingItem);
   if (!leading || !trailing || leading.scopeKey !== trailing.scopeKey || leading.groupKey !== trailing.groupKey) {
@@ -366,7 +374,9 @@ export const TopicContentList = memo(function TopicContentList({
     htmlRenderersProps,
     htmlTagsStyles,
     inlineSizedImageUrls,
+    mediaContext,
     mediaSessionIdentity,
+    nodeSeekMediaUserAgent,
     topicImageDeriver
   } = html;
   const filteredReplies = useMemo(
@@ -468,13 +478,6 @@ export const TopicContentList = memo(function TopicContentList({
     [changeReplyOrder]
   );
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
-  const mediaContext = useMemo(
-    () => ({
-      contentSource: item?.source || null,
-      sessionIdentity: mediaSessionIdentity
-    }),
-    [item?.source, mediaSessionIdentity]
-  );
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
@@ -1432,7 +1435,11 @@ export const TopicContentList = memo(function TopicContentList({
       }
 
       if (contentItem.type === 'content') {
-        const resolvedHtml = resolveForumContentRowHtml(contentItem, inlineSizedImageUrls);
+        const resolvedHtml = resolveForumContentRowHtml(
+          contentItem,
+          inlineSizedImageUrls,
+          topicImageDeriver.isInlineSizedImage
+        );
         return wrapContent(
           <TopicSplitDisclosureScope scopeKey={`${options?.scopeKey || 'opening'}:${contentItem.groupKey}`}>
             <RenderHTMLConfigProvider
@@ -1462,7 +1469,9 @@ export const TopicContentList = memo(function TopicContentList({
           key={`${mediaSessionIdentity}:${contentItem.src}`}
           boundarySpacing={contentBoundarySpacing}
           mediaContext={mediaContext}
-          mediaSessionIdentity={mediaSessionIdentity}
+          nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
+          poster={contentItem.poster}
+          referrerPolicy={contentItem.referrerPolicy}
           src={contentItem.src}
           theme={theme}
         />
@@ -1476,6 +1485,7 @@ export const TopicContentList = memo(function TopicContentList({
       inlineSizedImageUrls,
       mediaContext,
       mediaSessionIdentity,
+      nodeSeekMediaUserAgent,
       nearbyTopicContentKeys,
       onVotePoll,
       pollSelections,
@@ -1487,7 +1497,8 @@ export const TopicContentList = memo(function TopicContentList({
       togglePollSelection,
       topic?.source,
       topicBodyHtmlRenderers,
-      topicColumnStyle
+      topicColumnStyle,
+      topicImageDeriver
     ]
   );
 
@@ -1940,6 +1951,7 @@ export const TopicContentList = memo(function TopicContentList({
             contentWidth={contentWidth}
             expandedQuotes={expandedQuotes}
             inlineSizedImageUrls={inlineSizedImageUrls}
+            topicImageDeriver={topicImageDeriver}
             discourseEmojiUrls={discourseEmojiUrls}
             topicBaseUrl={topicBaseUrl}
             loadedQuotedReplies={loadedQuotedReplies}
@@ -1994,6 +2006,7 @@ export const TopicContentList = memo(function TopicContentList({
       inlineSizedImageUrls,
       item?.author,
       item?.id,
+      topicImageDeriver,
       loadedQuotedReplies,
       loadingPreviousReplies,
       loadingQuotedFloors,

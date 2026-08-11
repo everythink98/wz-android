@@ -5,6 +5,7 @@ import { safeFileName } from '@/platform/storage/backupFiles';
 import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './imageRequestSource';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
+import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -16,6 +17,7 @@ import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diag
 export interface ImageSaveRequestOptions {
   mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
+  referrerPolicy?: MediaReferrerPolicy;
 }
 
 function imageFileExtension(uri: string) {
@@ -89,7 +91,8 @@ async function downloadImageWithFetcher(
 ) {
   const headers = imageRequestHeadersForUrl(uri, {
     mediaContext: requestOptions.mediaContext,
-    nodeSeekUserAgent: requestOptions.nodeSeekUserAgent
+    nodeSeekUserAgent: requestOptions.nodeSeekUserAgent,
+    referrerPolicy: requestOptions.referrerPolicy
   });
   const response = await fetchWithTimeout(uri, headers ? { headers } : {}, {
     fetcher: withDiagnosticFetcher(trace, fetcher)

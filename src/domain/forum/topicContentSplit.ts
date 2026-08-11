@@ -15,6 +15,7 @@ import type { QuotedPostMetadata, Source, TopicPoll } from './models';
 import { discourseQuotedPostMetadataFromNode, quotedPostReferenceKey } from './quotedPosts';
 import { isDiscourseSource, type DiscourseSource } from './sourceCatalog';
 import { markNodeSeekReplyReferenceNodes, normalizeRenderableHtml } from './topicContentHtml';
+import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
 import {
   FORUM_DYNAMIC_INLINE_IMAGE_TAG,
   FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE,
@@ -56,6 +57,8 @@ type ForumContentPlanRow = {
   html: string;
   keySuffix: string;
   networkMediaCount: number;
+  videoPoster?: string;
+  videoReferrerPolicy?: MediaReferrerPolicy;
   videoSrc?: string;
 };
 
@@ -72,13 +75,20 @@ export type ForumContentMaterializationBudget = {
 };
 
 export type ForumContentRendering = {
+  readonly referrerPolicies?: readonly (MediaReferrerPolicy | undefined)[];
   readonly urls: readonly string[];
   readonly variants: readonly string[];
 };
 
 export type CompiledForumContentRow =
   | (ForumContentPlanRow & { rendering?: ForumContentRendering; type: 'html' })
-  | (ForumContentPlanRow & { rendering?: ForumContentRendering; src: string; type: 'video' })
+  | (ForumContentPlanRow & {
+      poster?: string;
+      referrerPolicy?: MediaReferrerPolicy;
+      rendering?: ForumContentRendering;
+      src: string;
+      type: 'video';
+    })
   | { keySuffix: string; poll: TopicPoll; type: 'poll' }
   | { keySuffix: string; quote: QuotedPostMetadata; type: 'quote' };
 
@@ -129,11 +139,18 @@ type NodeMetrics = {
 
 export function resolveForumContentRowHtml(
   row: Pick<Extract<CompiledForumContentRow, { type: 'html' | 'video' }>, 'html' | 'rendering'>,
-  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>
+  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
+  isInlineSizedImage: (
+    url: string,
+    referrerPolicy: MediaReferrerPolicy | undefined,
+    identities: Readonly<Record<string, boolean | undefined>>
+  ) => boolean = (url, _referrerPolicy, identities) => Boolean(identities[normalizeDynamicInlineImageUrl(url)])
 ) {
   if (!row.rendering) return row.html;
   const mask = row.rendering.urls.reduce(
-    (value, url, index) => value | (inlineSizedImageUrls[normalizeDynamicInlineImageUrl(url)] ? 1 << index : 0),
+    (value, url, index) =>
+      value |
+      (isInlineSizedImage(url, row.rendering?.referrerPolicies?.[index], inlineSizedImageUrls) ? 1 << index : 0),
     0
   );
   return row.rendering.variants[mask] || row.html;
@@ -185,9 +202,17 @@ type PlannedCompileSegment =
   | { type: 'poll'; poll: TopicPoll }
   | { type: 'quote'; quote: QuotedPostMetadata };
 
-function nodeAttribute(node: PlanningNode | null | undefined, name: string) {
+function rawNodeAttribute(node: PlanningNode | null | undefined, name: string) {
   if (!node) return '';
-  return String(node.getAttribute?.(name) || node.attributes?.[name] || '').trim();
+  return String(node.getAttribute?.(name) || node.attributes?.[name] || '');
+}
+
+function nodeAttribute(node: PlanningNode | null | undefined, name: string) {
+  return rawNodeAttribute(node, name).trim();
+}
+
+function nodeReferrerPolicy(node: PlanningNode | null | undefined) {
+  return normalizeMediaReferrerPolicy(rawNodeAttribute(node, 'referrerpolicy'));
 }
 
 function isPlannedDiscourseCallout(node: PlanningNode) {
@@ -490,9 +515,13 @@ const FALLBACK_MEDIA_TAG_PATTERN = new RegExp(
   'gi'
 );
 
-function fallbackAttribute(tag: string, name: string) {
+function rawFallbackAttribute(tag: string, name: string) {
   const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*(?:(["'])(.*?)\\1|([^\\s>]+))`, 'i'));
-  return (match?.[2] || match?.[3] || '').trim();
+  return match?.[2] || match?.[3] || '';
+}
+
+function fallbackAttribute(tag: string, name: string) {
+  return rawFallbackAttribute(tag, name).trim();
 }
 
 function fallbackMediaSlots(tag: string) {
@@ -912,13 +941,21 @@ function plannedRowsForTopLevelNode(
   const groupKey = `block-${groupIndex}`;
   const fragments = fragmentNode(node, metrics, 0, groupKey, 0, undefined, trustedContinuationGroups);
   const videoSrc = nodeTagName(node) === FORUM_VIDEO_TAG ? nodeAttribute(node, 'src') : '';
+  const videoPoster = nodeTagName(node) === FORUM_VIDEO_TAG ? nodeAttribute(node, 'poster') : '';
+  const videoReferrerPolicy = nodeTagName(node) === FORUM_VIDEO_TAG ? nodeReferrerPolicy(node) : undefined;
   return fragments.map((fragment, index) => ({
     continuation: continuationFor(index, fragments.length),
     groupKey,
     html: fragment.html,
     keySuffix: `${groupKey}:${index}`,
     networkMediaCount: fragment.mediaSlots,
-    ...(fragments.length === 1 && fragment.html !== CONTENT_TOO_COMPLEX_NOTICE_HTML && videoSrc ? { videoSrc } : {})
+    ...(fragments.length === 1 && fragment.html !== CONTENT_TOO_COMPLEX_NOTICE_HTML && videoSrc
+      ? {
+          videoSrc,
+          ...(videoPoster ? { videoPoster } : {}),
+          ...(videoReferrerPolicy ? { videoReferrerPolicy } : {})
+        }
+      : {})
   }));
 }
 
@@ -962,7 +999,11 @@ function planParsedForumContent(
           keySuffix: 'block-0:0',
           networkMediaCount: mediaSlots,
           ...(nodes.length === 1 && nodeTagName(nodes[0]) === FORUM_VIDEO_TAG && nodeAttribute(nodes[0], 'src')
-            ? { videoSrc: nodeAttribute(nodes[0], 'src') }
+            ? {
+                videoSrc: nodeAttribute(nodes[0], 'src'),
+                ...(nodeAttribute(nodes[0], 'poster') ? { videoPoster: nodeAttribute(nodes[0], 'poster') } : {}),
+                ...(nodeReferrerPolicy(nodes[0]) ? { videoReferrerPolicy: nodeReferrerPolicy(nodes[0]) } : {})
+              }
             : {})
         }
       ],
@@ -1198,7 +1239,7 @@ function compileNodeWithTypedRows({
   });
 }
 
-function standaloneForumVideoSrc(html: string) {
+function standaloneForumVideo(html: string) {
   const direct = html.match(new RegExp(`^<${FORUM_VIDEO_TAG}\\b([^>]*)>[\\s\\S]*<\\/${FORUM_VIDEO_TAG}\\s*>$`, 'i'));
   const compact = html.match(
     new RegExp(
@@ -1206,7 +1247,12 @@ function standaloneForumVideoSrc(html: string) {
       'i'
     )
   );
-  return fallbackAttribute(direct?.[1] || compact?.[1] || '', 'src');
+  const attributes = direct?.[1] || compact?.[1] || '';
+  const src = fallbackAttribute(attributes, 'src');
+  if (!src) return null;
+  const poster = fallbackAttribute(attributes, 'poster');
+  const referrerPolicy = normalizeMediaReferrerPolicy(rawFallbackAttribute(attributes, 'referrerpolicy'));
+  return { src, ...(poster ? { poster } : {}), ...(referrerPolicy ? { referrerPolicy } : {}) };
 }
 
 function compiledRowsFromPlannedSegments(segments: readonly PlannedCompileSegment[]) {
@@ -1243,7 +1289,7 @@ function compiledRowsFromPlannedSegments(segments: readonly PlannedCompileSegmen
     }
     const groupKey = groups.length > 1 ? `${groupIndex}:block-0` : 'block-0';
     return group.fragments.map((fragment, index) => {
-      const videoSrc = standaloneForumVideoSrc(fragment.html);
+      const video = standaloneForumVideo(fragment.html);
       const plannedRow = {
         continuation: continuationFor(index, group.fragments.length),
         groupKey,
@@ -1251,9 +1297,7 @@ function compiledRowsFromPlannedSegments(segments: readonly PlannedCompileSegmen
         keySuffix: `${groupKey}:${index}`,
         networkMediaCount: fragment.mediaSlots
       };
-      return videoSrc
-        ? { ...plannedRow, src: videoSrc, type: 'video' as const }
-        : { ...plannedRow, type: 'html' as const };
+      return video ? { ...plannedRow, ...video, type: 'video' as const } : { ...plannedRow, type: 'html' as const };
     });
   });
 }
@@ -1266,11 +1310,15 @@ function compileRoleIncludesPolls(role: ForumContentCompileRole, source: Source)
 
 function compiledRowsFromForumPlan(plan: ForumContentPlan): CompiledForumContentRow[] {
   return plan.rows.map((row) => {
-    const { videoSrc, ...publicRow } = row;
-    const resolvedVideoSrc = videoSrc || standaloneForumVideoSrc(row.html);
-    return resolvedVideoSrc
-      ? { ...publicRow, src: resolvedVideoSrc, type: 'video' as const }
-      : { ...publicRow, type: 'html' as const };
+    const { videoPoster, videoReferrerPolicy, videoSrc, ...publicRow } = row;
+    const video = videoSrc
+      ? {
+          src: videoSrc,
+          ...(videoPoster ? { poster: videoPoster } : {}),
+          ...(videoReferrerPolicy ? { referrerPolicy: videoReferrerPolicy } : {})
+        }
+      : standaloneForumVideo(row.html);
+    return video ? { ...publicRow, ...video, type: 'video' as const } : { ...publicRow, type: 'html' as const };
   });
 }
 
@@ -1390,6 +1438,7 @@ function renderingForCompiledRow(html: string, dynamicImagesById: ReadonlyMap<st
     return variant;
   });
   const rendering: ForumContentRendering = {
+    referrerPolicies: descriptors.map((descriptor) => descriptor.referrerPolicy),
     urls: descriptors.map((descriptor) => normalizeDynamicInlineImageUrl(descriptor.url)),
     variants
   };

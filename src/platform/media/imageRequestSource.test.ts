@@ -113,6 +113,129 @@ describe('image request source', () => {
     ).toBeUndefined();
   });
 
+  it('[REG-TOPIC-078] follows the original document referrer contract for all five topic sources', () => {
+    const yaohuoHeaders = imageRequestHeadersForUrl(
+      'https://cdn.waimaimingtang.com/file/images/bwc/20260809205204-e60bd8a4a2.jpg',
+      {
+        mediaContext: {
+          contentSource: 'yaohuo',
+          sessionIdentity: 'yaohuo:4',
+          referrer: {
+            documentUrl: 'https://www.yaohuo.me/bbs-1571096.html',
+            documentPolicy: 'same-origin'
+          }
+        },
+        referrerPolicy: 'no-referrer'
+      }
+    );
+    const v2exHeaders = imageRequestHeadersForUrl('https://i.imgur.com/PxlOHiu.jpeg', {
+      mediaContext: {
+        contentSource: 'v2ex',
+        sessionIdentity: 'public:0',
+        referrer: { documentUrl: 'https://www.v2ex.com/t/1233346' }
+      },
+      referrerPolicy: 'no-referrer'
+    });
+    const nodeSeekHeaders = imageRequestHeadersForUrl('https://im.legend.moe/topic.webp', {
+      mediaContext: {
+        contentSource: 'nodeseek',
+        sessionIdentity: 'nodeseek:4',
+        referrer: { documentUrl: 'https://www.nodeseek.com/post-857589-1' }
+      }
+    });
+    const linuxDoHeaders = imageRequestHeadersForUrl('https://cdn.ldstatic.com/topic.png', {
+      mediaContext: {
+        contentSource: 'linuxdo',
+        sessionIdentity: 'linuxdo:4',
+        referrer: {
+          documentUrl: 'https://linux.do/t/topic/847468',
+          documentPolicy: 'strict-origin-when-cross-origin'
+        }
+      }
+    });
+    const xiaoyinsiHeaders = imageRequestHeadersForUrl(
+      'https://forum.xiaoyinsi.com/uploads/default/optimized/topic.jpeg',
+      {
+        mediaContext: {
+          contentSource: 'xiaoyinsi',
+          sessionIdentity: 'xiaoyinsi:4',
+          referrer: {
+            documentUrl: 'https://forum.xiaoyinsi.com/t/topic/263',
+            documentPolicy: 'strict-origin-when-cross-origin'
+          }
+        }
+      }
+    );
+
+    expect(yaohuoHeaders).not.toHaveProperty('Referer');
+    expect(v2exHeaders).not.toHaveProperty('Referer');
+    expect(nodeSeekHeaders).toHaveProperty('Referer', 'https://www.nodeseek.com/');
+    expect(linuxDoHeaders).toHaveProperty('Referer', 'https://linux.do/');
+    expect(xiaoyinsiHeaders).toHaveProperty('Referer', 'https://forum.xiaoyinsi.com/t/topic/263');
+  });
+
+  it.each([
+    ['no-referrer', 'https://forum.example.com/media.png', undefined],
+    ['no-referrer-when-downgrade', 'http://cdn.example.com/media.png', undefined],
+    ['no-referrer-when-downgrade', 'https://cdn.example.com/media.png', 'https://forum.example.com/t/42?q=1'],
+    ['origin', 'http://cdn.example.com/media.png', 'https://forum.example.com/'],
+    ['origin-when-cross-origin', 'https://forum.example.com/media.png', 'https://forum.example.com/t/42?q=1'],
+    ['origin-when-cross-origin', 'https://cdn.example.com/media.png', 'https://forum.example.com/'],
+    ['same-origin', 'https://cdn.example.com/media.png', undefined],
+    ['same-origin', 'https://forum.example.com/media.png', 'https://forum.example.com/t/42?q=1'],
+    ['strict-origin', 'http://cdn.example.com/media.png', undefined],
+    ['strict-origin', 'https://cdn.example.com/media.png', 'https://forum.example.com/'],
+    ['strict-origin-when-cross-origin', 'https://forum.example.com/media.png', 'https://forum.example.com/t/42?q=1'],
+    ['strict-origin-when-cross-origin', 'https://cdn.example.com/media.png', 'https://forum.example.com/'],
+    ['strict-origin-when-cross-origin', 'http://cdn.example.com/media.png', undefined],
+    ['unsafe-url', 'http://cdn.example.com/media.png', 'https://forum.example.com/t/42?q=1']
+  ] as const)('[REG-TOPIC-078] applies %s to %s', (documentPolicy, mediaUrl, expectedReferer) => {
+    const headers = imageRequestHeadersForUrl(mediaUrl, {
+      mediaContext: {
+        contentSource: 'v2ex',
+        sessionIdentity: 'public:0',
+        referrer: {
+          documentUrl: 'https://user:password@forum.example.com/t/42?q=1#reply',
+          documentPolicy
+        }
+      }
+    });
+
+    expect(headers?.Referer).toBe(expectedReferer);
+  });
+
+  it('[REG-TOPIC-078] falls back from an invalid element policy to the document policy', () => {
+    expect(
+      imageRequestHeadersForUrl('https://cdn.example.com/media.png', {
+        mediaContext: {
+          contentSource: 'v2ex',
+          sessionIdentity: 'public:0',
+          referrer: {
+            documentUrl: 'https://www.v2ex.com/t/1233346',
+            documentPolicy: 'same-origin'
+          }
+        },
+        referrerPolicy: 'invalid' as never
+      })
+    ).not.toHaveProperty('Referer');
+  });
+
+  it('[REG-TOPIC-078] separates image cache identity by the effective Referer header', () => {
+    const url = 'https://i.imgur.com/PxlOHiu.jpeg';
+    const mediaContext = {
+      contentSource: 'v2ex',
+      sessionIdentity: 'public:0',
+      referrer: { documentUrl: 'https://www.v2ex.com/t/1233346' }
+    } as const;
+
+    expect(imageSourceFromUrl(url, { mediaContext, referrerPolicy: 'no-referrer' })).toMatchObject({
+      cacheKey: `public:0:${url}:referrer:none`
+    });
+    expect(imageSourceFromUrl(url, { mediaContext, referrerPolicy: 'origin' })).toMatchObject({
+      cacheKey: `public:0:${url}:referrer:https://www.v2ex.com/`
+    });
+  });
+
   it('[REG-TOPIC-029] marks every remote media request with its owning forum source', () => {
     expect(
       imageRequestHeadersForUrl('https://cdn.example.com/public.png', {

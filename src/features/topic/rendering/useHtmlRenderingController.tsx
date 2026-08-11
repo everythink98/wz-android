@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type ImageURISource } from 'react-native';
 import {
   getNativePropsForTNode,
   TChildrenRenderer,
@@ -8,11 +8,18 @@ import {
 } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { createTopicImageDeriver } from '../model/topicDerivedData';
-import { isHttpOrHttpsUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
+import { imageSourceFromUrl, isHttpOrHttpsUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
+import { compatibleImageRequestIdentity } from '@/platform/media/compatibleImageSources';
 import { isPreviewableImageUrl, type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
 import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/links';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
-import type { ReplyLocationTarget, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type {
+  MediaReferrerPolicy,
+  ReplyLocationTarget,
+  Topic,
+  TopicDetail,
+  UserReference
+} from '@/domain/forum/models';
 import type { HtmlRenderers, HtmlRenderersProps } from './types';
 import { buildHtmlRenderingStyles, createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
@@ -53,7 +60,12 @@ export function useHtmlRenderingController({
 }: {
   onOpenExternalUrl: (url: string) => void;
   mediaSessionIdentity: string;
-  onOpenImagePreview: (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void;
+  onOpenImagePreview: (
+    url: string,
+    displaySize?: ImageDisplaySize,
+    renderedPosterUri?: string,
+    referrerPolicy?: MediaReferrerPolicy
+  ) => void;
   onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void | Promise<void>;
   onOpenUser: (user: UserReference) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
@@ -68,9 +80,10 @@ export function useHtmlRenderingController({
   const mediaContext = useMemo<ForumMediaRequestContext>(
     () => ({
       contentSource: selectedTopic?.source || null,
-      sessionIdentity: mediaSessionIdentity
+      sessionIdentity: mediaSessionIdentity,
+      ...(topicDetail?.mediaReferrer ? { referrer: topicDetail.mediaReferrer } : {})
     }),
-    [mediaSessionIdentity, selectedTopic?.source]
+    [mediaSessionIdentity, selectedTopic?.source, topicDetail?.mediaReferrer]
   );
   const [inlineSizedImageState, setInlineSizedImageState] = useState<{ topicKey: string; urls: Record<string, true> }>({
     topicKey: '',
@@ -79,28 +92,43 @@ export function useHtmlRenderingController({
   const emptyInlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [topicKey]);
   const inlineSizedImageUrls =
     inlineSizedImageState.topicKey === topicKey ? inlineSizedImageState.urls : emptyInlineSizedImageUrls;
+  const requestIdentityForImage = useCallback(
+    (url: string, referrerPolicy?: MediaReferrerPolicy) =>
+      compatibleImageRequestIdentity(
+        imageSourceFromUrl(url, {
+          mediaContext,
+          nodeSeekUserAgent: nodeSeekMediaUserAgent,
+          referrerPolicy
+        }) as ImageURISource
+      ),
+    [mediaContext, nodeSeekMediaUserAgent]
+  );
   const markInlineSizedImageUrl = useCallback(
-    (url: string) => {
+    (url: string, referrerPolicy?: MediaReferrerPolicy) => {
       const clean = normalizeImagePreviewUrl(url).trim();
       if (!clean) {
         return;
       }
+      const identity = requestIdentityForImage(clean, referrerPolicy);
       setInlineSizedImageState((current) =>
-        current.topicKey === topicKey && current.urls[clean]
+        current.topicKey === topicKey && current.urls[identity]
           ? current
           : {
               topicKey,
               urls: {
                 ...(current.topicKey === topicKey ? current.urls : {}),
-                [clean]: true
+                [identity]: true
               }
             }
       );
     },
-    [topicKey]
+    [requestIdentityForImage, topicKey]
   );
 
-  const topicImageDeriver = useMemo(() => createTopicImageDeriver(), [topicKey]);
+  const topicImageDeriver = useMemo(
+    () => createTopicImageDeriver({ requestIdentityForImage }),
+    [requestIdentityForImage, topicKey]
+  );
 
   const { htmlBaseStyle, htmlClassesStyles, htmlIgnoredStyles, htmlTagsStyles } = useMemo(
     () =>
@@ -347,10 +375,12 @@ export function useHtmlRenderingController({
     htmlBaseStyle,
     htmlClassesStyles,
     htmlIgnoredStyles,
+    mediaContext,
     htmlRenderers,
     htmlRenderersProps,
     htmlTagsStyles,
     inlineSizedImageUrls,
+    nodeSeekMediaUserAgent,
     topicImageDeriver
   };
 }

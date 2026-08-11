@@ -8,7 +8,7 @@ import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
-import type { TopicDetail } from '@/domain/forum/models';
+import type { MediaReferrerContext, MediaReferrerPolicy, TopicDetail } from '@/domain/forum/models';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG } from '@/domain/forum/forumContentMedia';
@@ -34,16 +34,44 @@ let mockSourceHeaders: Record<string, string> | undefined;
 const mockExpoImageProps = jest.fn();
 const mockUseImage = jest.fn();
 let mockVideoStatus = 'idle';
+let mockVideoPlaying = false;
 let mockVideoBufferedPosition = 0;
-const mockUseVideoPlayer = jest.fn((source: unknown) => ({
-  bufferedPosition: mockVideoBufferedPosition,
-  pause: jest.fn(),
-  play: jest.fn(),
-  playing: false,
-  status: mockVideoStatus,
-  timeUpdateEventInterval: 0,
-  source
-}));
+let mockVideoTrack: { size: { height: number; width: number } } | null = null;
+let mockReleaseVideoPlayersOnUnmount = false;
+let mockReleasedVideoPlayerAccesses = 0;
+const mockUseVideoPlayer = jest.fn((source: unknown) => {
+  let released = false;
+  let timeUpdateEventInterval = 0;
+  const player = {
+    bufferedPosition: mockVideoBufferedPosition,
+    pause: jest.fn(),
+    play: jest.fn(),
+    playing: mockVideoPlaying,
+    release: () => {
+      released = true;
+    },
+    status: mockVideoStatus,
+    source,
+    videoTrack: mockVideoTrack
+  };
+  Object.defineProperty(player, 'timeUpdateEventInterval', {
+    get: () => {
+      if (released) {
+        mockReleasedVideoPlayerAccesses += 1;
+        throw new Error('Cannot use shared object that was already released');
+      }
+      return timeUpdateEventInterval;
+    },
+    set: (value: number) => {
+      if (released) {
+        mockReleasedVideoPlayerAccesses += 1;
+        throw new Error('Cannot use shared object that was already released');
+      }
+      timeUpdateEventInterval = value;
+    }
+  });
+  return player;
+});
 const mockRetainReadNetworkGeneration = jest.fn(async (generation: number) => ({ generation, retained: true }));
 const mockReleaseReadNetworkGeneration = jest.fn(async (_generation: number) => true);
 const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
@@ -54,10 +82,13 @@ const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string
   width: 920
 }));
 const mockWebView = jest.fn((_props: unknown) => null);
+const mockVideoView = jest.fn((_props: unknown) => null);
 
 type MockExpoImageProps = {
+  accessible?: boolean;
   allowDownscaling?: boolean;
   cachePolicy?: 'disk' | 'memory' | 'memory-disk' | 'none';
+  contentFit?: 'contain' | 'cover' | 'fill' | 'none' | 'scale-down';
   onDisplay?: () => void;
   onError?: (event: { error: string }) => void;
   onLoad?: (event: {
@@ -128,21 +159,34 @@ jest.mock('expo', () => ({
   useEvent: jest.fn((_player, eventName, initialValue) =>
     eventName === 'statusChange'
       ? { status: mockVideoStatus }
-      : eventName === 'timeUpdate'
-        ? { bufferedPosition: mockVideoBufferedPosition, currentTime: 0 }
-        : initialValue
+      : eventName === 'playingChange'
+        ? { isPlaying: mockVideoPlaying }
+        : eventName === 'videoTrackChange'
+          ? { videoTrack: mockVideoTrack }
+          : eventName === 'timeUpdate'
+            ? { bufferedPosition: mockVideoBufferedPosition, currentTime: 0 }
+            : initialValue
   )
 }));
 
 jest.mock('expo-video', () => ({
-  VideoView: () => null,
+  VideoView: (props: unknown) => mockVideoView(props),
   useVideoPlayer: (source: unknown, setup?: (player: ReturnType<typeof mockUseVideoPlayer>) => void) => {
     const ReactModule = require('react') as typeof React;
-    return ReactModule.useMemo(() => {
+    const player = ReactModule.useMemo(() => {
       const player = mockUseVideoPlayer(source);
       setup?.(player);
       return player;
     }, [setup, source]);
+    ReactModule.useEffect(
+      () => () => {
+        if (mockReleaseVideoPlayersOnUnmount) {
+          player.release();
+        }
+      },
+      [player]
+    );
+    return player;
   }
 }));
 
@@ -214,6 +258,7 @@ const topic: TopicDetail = {
 function TopicImageHarness({
   attributes = { alt: '测试图片', src: imageUrl },
   continuation = 'only',
+  mediaReferrer,
   mediaSessionIdentity,
   onOpenImagePreview = noop,
   originalImageUpgradeEnabled = true,
@@ -221,12 +266,18 @@ function TopicImageHarness({
 }: {
   attributes?: Record<string, string>;
   continuation?: 'only' | 'first' | 'middle' | 'last';
+  mediaReferrer?: MediaReferrerContext;
   mediaSessionIdentity?: string;
-  onOpenImagePreview?: (url: string, displaySize?: { height: number; width: number }, displayedUri?: string) => void;
+  onOpenImagePreview?: (
+    url: string,
+    displaySize?: { height: number; width: number },
+    displayedUri?: string,
+    referrerPolicy?: MediaReferrerPolicy
+  ) => void;
   originalImageUpgradeEnabled?: boolean;
   topicSource?: TopicDetail['source'];
 }) {
-  const selectedTopic =
+  const selectedTopicWithoutReferrer =
     topicSource === topic.source
       ? topic
       : {
@@ -234,6 +285,9 @@ function TopicImageHarness({
           source: topicSource,
           url: topicSource === 'nodeseek' ? 'https://www.nodeseek.com/post-859086-1' : 'https://linux.do/t/123'
         };
+  const selectedTopic = mediaReferrer
+    ? { ...selectedTopicWithoutReferrer, mediaReferrer }
+    : selectedTopicWithoutReferrer;
   const resolvedMediaSessionIdentity = mediaSessionIdentity || `${topicSource}:2`;
   const { htmlRenderers } = useHtmlRenderingController({
     mediaSessionIdentity: resolvedMediaSessionIdentity,
@@ -301,12 +355,21 @@ function NodeSeekVideoStickerHarness() {
     : null;
 }
 
-function NodeSeekImageStickerHarness({ src }: { src: string }) {
+function NodeSeekImageStickerHarness({
+  mediaReferrer,
+  referrerPolicy,
+  src
+}: {
+  mediaReferrer?: MediaReferrerContext;
+  referrerPolicy?: MediaReferrerPolicy;
+  src: string;
+}) {
   const nodeSeekTopic: TopicDetail = {
     ...topic,
     id: '859086',
     source: 'nodeseek',
-    url: 'https://www.nodeseek.com/post-859086-1'
+    url: 'https://www.nodeseek.com/post-859086-1',
+    ...(mediaReferrer ? { mediaReferrer } : {})
   };
   const { htmlRenderers } = useHtmlRenderingController({
     mediaSessionIdentity: 'nodeseek:4',
@@ -329,7 +392,8 @@ function NodeSeekImageStickerHarness({ src }: { src: string }) {
           attributes: {
             alt: 'sticker',
             class: 'sticker',
-            src
+            src,
+            ...(referrerPolicy ? { referrerpolicy: referrerPolicy } : {})
           }
         }
       } as never)
@@ -338,10 +402,12 @@ function NodeSeekImageStickerHarness({ src }: { src: string }) {
 
 function NodeSeekCustomMediaHarness({
   attributes,
+  mediaReferrer,
   rendererKey,
   webViewBlockMessage = ''
 }: {
   attributes: Record<string, string>;
+  mediaReferrer?: MediaReferrerContext;
   rendererKey: string;
   webViewBlockMessage?: string;
 }) {
@@ -349,7 +415,8 @@ function NodeSeekCustomMediaHarness({
     ...topic,
     id: '859086',
     source: 'nodeseek',
-    url: 'https://www.nodeseek.com/post-859086-1'
+    url: 'https://www.nodeseek.com/post-859086-1',
+    ...(mediaReferrer ? { mediaReferrer } : {})
   };
   const { htmlRenderers } = useHtmlRenderingController({
     mediaSessionIdentity: 'nodeseek:4',
@@ -394,15 +461,8 @@ function FourMediaLeaseBlockers() {
 
 const nodeSeekVideoMediaContext = { contentSource: 'nodeseek' as const, sessionIdentity: 'nodeseek:video-test' };
 
-function CoordinatedVideoHarness({ src }: { src: string }) {
-  return (
-    <ManagedTopicContentVideo
-      mediaContext={nodeSeekVideoMediaContext}
-      mediaSessionIdentity={nodeSeekVideoMediaContext.sessionIdentity}
-      src={src}
-      theme={theme}
-    />
-  );
+function CoordinatedVideoHarness({ poster, src }: { poster?: string; src: string }) {
+  return <ManagedTopicContentVideo mediaContext={nodeSeekVideoMediaContext} poster={poster} src={src} theme={theme} />;
 }
 
 const linkCardIconUrl = 'https://img.example.com/link-icon.png';
@@ -464,11 +524,16 @@ describe('topic block image loading', () => {
     mockUseImage.mockClear();
     mockUseVideoPlayer.mockClear();
     mockVideoStatus = 'idle';
+    mockVideoPlaying = false;
     mockVideoBufferedPosition = 0;
+    mockVideoTrack = null;
+    mockReleaseVideoPlayersOnUnmount = false;
+    mockReleasedVideoPlayerAccesses = 0;
     mockRetainReadNetworkGeneration.mockClear();
     mockReleaseReadNetworkGeneration.mockClear();
     mockRenderSvgPoster.mockClear();
     mockWebView.mockClear();
+    mockVideoView.mockClear();
     NativeModules.SvgRendererModule = {
       fetchSvgDocument: mockFetchSvgDocument,
       renderPoster: mockRenderSvgPoster
@@ -1467,9 +1532,9 @@ describe('topic block image loading', () => {
 
     mockVideoStatus = 'error';
     await healthyVideo.rerender(tree());
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCount + 1));
+    await waitFor(() => expect(healthyVideo.getByLabelText('视频加载失败，点按重试')).toBeTruthy());
+    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCount);
     await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledWith(current.generation));
-    expect(mockRetainReadNetworkGeneration).toHaveBeenLastCalledWith(current.generation + 2);
     await healthyVideo.unmount();
   });
 
@@ -1652,7 +1717,10 @@ describe('topic block image loading', () => {
     );
 
     await waitFor(() => expect(video.getByLabelText('视频加载失败，点按重试')).toBeTruthy());
-    expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(2);
+    expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(1);
+    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    await fireEvent.press(video.getByLabelText('视频加载失败，点按重试'));
+    await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(2));
     expect(mockUseVideoPlayer).not.toHaveBeenCalled();
     await video.unmount();
   });
@@ -2046,6 +2114,41 @@ describe('topic block image loading', () => {
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
   });
 
+  it('[REG-TOPIC-078] isolates block-image dimensions by final Referer', async () => {
+    const sharedUrl = 'https://cdn.example.com/referrer-dimensions.png';
+    const mediaReferrer = { documentUrl: 'https://www.v2ex.com/t/1233346' } as const;
+    const first = await render(
+      <TopicImageHarness
+        attributes={{ referrerpolicy: 'no-referrer', src: sharedUrl }}
+        mediaReferrer={mediaReferrer}
+        topicSource="v2ex"
+      />
+    );
+    await act(() =>
+      latestImageProps(sharedUrl).onLoad?.({
+        cacheType: 'none',
+        source: { height: 600, mediaType: 'image/png', url: sharedUrl, width: 400 }
+      })
+    );
+    expect(StyleSheet.flatten(first.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 480,
+      width: 320
+    });
+    await first.unmount();
+
+    const second = await render(
+      <TopicImageHarness
+        attributes={{ referrerpolicy: 'origin', src: sharedUrl }}
+        mediaReferrer={mediaReferrer}
+        topicSource="v2ex"
+      />
+    );
+    expect(StyleSheet.flatten(second.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 240,
+      width: 320
+    });
+  });
+
   it('[REG-PERF-010] does not emit a diagnostic trace for each body image', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
@@ -2139,15 +2242,333 @@ describe('topic block image loading', () => {
       />
     );
 
-    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8',
-          'X-WZ-Forum-Media-Kind': 'video'
-        }),
-        uri: videoUrl
-      })
+    await waitFor(() =>
+      expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8',
+            'X-WZ-Forum-Media-Kind': 'video'
+          }),
+          uri: videoUrl
+        })
+      )
     );
+    expect(mockExpoImageProps).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-080] follows intrinsic video ratio without recreating the player', async () => {
+    const videoUrl = 'https://cdn.example.com/portrait-topic.mp4';
+    const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:portrait' };
+    const tree = () => <ForumContentVideo mediaContext={mediaContext} src={videoUrl} theme={theme} />;
+    const screen = await render(tree());
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style)).toMatchObject({
+      aspectRatio: 16 / 9
+    });
+
+    mockVideoTrack = { size: { height: 1024, width: 576 } };
+    await screen.rerender(tree());
+    expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style)).toMatchObject({
+      aspectRatio: 9 / 16
+    });
+    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
+
+    mockVideoTrack = { size: { height: 1000, width: 360 } };
+    await screen.rerender(tree());
+    expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style)).toMatchObject({
+      aspectRatio: 1 / 2
+    });
+    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
+
+    mockVideoTrack = { size: { height: 0, width: 576 } };
+    await screen.rerender(tree());
+    expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style)).toMatchObject({
+      aspectRatio: 16 / 9
+    });
+    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-082] keeps the poster until first playback and then preserves the live video frame', async () => {
+    const videoUrl = 'https://cdn.example.com/poster-first.mp4';
+    const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:poster-first' };
+    mockVideoStatus = 'loading';
+    const tree = () => (
+      <ForumContentVideo
+        mediaContext={mediaContext}
+        poster={<Text testID="forum-content-video-poster">poster</Text>}
+        src={videoUrl}
+        theme={theme}
+      />
+    );
+    const screen = await render(tree());
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByTestId('forum-content-video-poster', { includeHiddenElements: true })).toBeTruthy();
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.getByLabelText('播放视频').props.accessibilityState).toEqual({ disabled: true });
+
+    mockVideoStatus = 'readyToPlay';
+    await screen.rerender(tree());
+    expect(screen.getByTestId('forum-content-video-poster', { includeHiddenElements: true })).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-play-button').props.style)).toMatchObject({
+      height: 56,
+      width: 56
+    });
+    expect(mockVideoView.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ fullscreenOptions: { enable: true } })
+    );
+
+    const player = mockUseVideoPlayer.mock.results[0]?.value as { pause: jest.Mock; play: jest.Mock };
+    await fireEvent.press(screen.getByLabelText('播放视频'));
+    expect(player.play).toHaveBeenCalledTimes(1);
+
+    mockVideoPlaying = true;
+    await screen.rerender(tree());
+    await waitFor(() =>
+      expect(screen.queryByTestId('forum-content-video-poster', { includeHiddenElements: true })).toBeNull()
+    );
+    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
+    await fireEvent.press(screen.getByLabelText('暂停视频'));
+    expect(player.pause).toHaveBeenCalledTimes(1);
+
+    mockVideoPlaying = false;
+    await screen.rerender(tree());
+    expect(screen.queryByTestId('forum-content-video-poster', { includeHiddenElements: true })).toBeNull();
+    expect(screen.getByLabelText('播放视频')).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByLabelText('全屏播放').props.style)).toMatchObject({ height: 48, width: 48 });
+    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-082] gives poster images their own referrer-aware request identity', async () => {
+    const posterUrl = 'https://cdn.example.com/shared-poster.webp';
+    const mediaContext = {
+      contentSource: 'v2ex' as const,
+      sessionIdentity: 'public:poster-policy',
+      referrer: { documentUrl: 'https://www.v2ex.com/t/1233346' }
+    };
+    mockVideoStatus = 'readyToPlay';
+
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-one', 'video-two']}>
+        <TopicBodyMediaRowBoundary rowKey="video-one">
+          <ManagedTopicContentVideo
+            mediaContext={mediaContext}
+            poster={posterUrl}
+            referrerPolicy="no-referrer"
+            src="https://cdn.example.com/video-one.mp4"
+            theme={theme}
+          />
+        </TopicBodyMediaRowBoundary>
+        <TopicBodyMediaRowBoundary rowKey="video-two">
+          <ManagedTopicContentVideo
+            mediaContext={mediaContext}
+            poster={posterUrl}
+            referrerPolicy="origin"
+            src="https://cdn.example.com/video-two.mp4"
+            theme={theme}
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() =>
+      expect(
+        new Set(
+          mockExpoImageProps.mock.calls
+            .map(([props]) => props as MockExpoImageProps)
+            .filter((props) => props.source?.uri === posterUrl)
+            .map((props) => props.source?.headers?.Referer || 'none')
+        )
+      ).toEqual(new Set(['none', 'https://www.v2ex.com/']))
+    );
+    const posters = mockExpoImageProps.mock.calls
+      .map(([props]) => props as MockExpoImageProps & { accessible?: boolean })
+      .filter((props) => props.source?.uri === posterUrl);
+    const noReferrerPoster = posters.findLast((props) => !props.source?.headers?.Referer)!;
+    const originPoster = posters.findLast((props) => props.source?.headers?.Referer === 'https://www.v2ex.com/')!;
+    expect(noReferrerPoster.source?.cacheKey).not.toBe(originPoster.source?.cacheKey);
+    expect(noReferrerPoster.recyclingKey).not.toBe(originPoster.recyclingKey);
+    expect(posters.every((props) => props.accessible === false)).toBe(true);
+  });
+
+  it('[REG-TOPIC-082] passes an HTML video poster through the image contract without coupling failures', async () => {
+    const posterUrl = 'https://cdn.example.com/html-video-poster.webp';
+    const videoUrl = 'https://cdn.example.com/html-video.mp4';
+    mockVideoStatus = 'readyToPlay';
+
+    const screen = await render(
+      <NodeSeekCustomMediaHarness
+        attributes={{ poster: posterUrl, referrerpolicy: 'no-referrer', src: videoUrl }}
+        mediaReferrer={{ documentUrl: 'https://www.nodeseek.com/post-857589-1' }}
+        rendererKey={FORUM_VIDEO_TAG}
+      />
+    );
+    await waitFor(() => expect(latestImageProps(posterUrl)).toBeTruthy());
+    const posterProps = latestImageProps(posterUrl);
+    expect(posterProps.contentFit).toBe('cover');
+    expect(posterProps.source?.headers).not.toHaveProperty('Referer');
+    expect(posterProps.accessible).toBe(false);
+    expect(
+      mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
+    ).toHaveLength(1);
+
+    await act(() => posterProps.onError?.({ error: 'poster failed' }));
+
+    expect(screen.getByLabelText('播放视频')).toBeTruthy();
+    expect(
+      mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
+    ).toHaveLength(1);
+  });
+
+  it('[REG-TOPIC-078] applies the document and element policy to body images and native video', async () => {
+    const onOpenImagePreview = jest.fn();
+    const mediaReferrer = { documentUrl: 'https://yaohuo.me/bbs-1571096.html', documentPolicy: 'same-origin' } as const;
+    const image = await render(
+      <TopicImageHarness
+        attributes={{ alt: '测试图片', referrerpolicy: 'no-referrer', src: imageUrl }}
+        mediaReferrer={mediaReferrer}
+        onOpenImagePreview={onOpenImagePreview}
+      />
+    );
+    const imageProps = latestImageProps(imageUrl);
+    expect(imageProps.source?.headers).not.toHaveProperty('Referer');
+    await loadAndDisplayImage(imageProps);
+    await fireEvent.press(image.getByLabelText('测试图片'));
+    expect(onOpenImagePreview).toHaveBeenCalledWith(imageUrl, { height: 240, width: 320 }, undefined, 'no-referrer');
+
+    const videoUrl = 'https://cdn.example.com/topic-policy.mp4';
+    await render(
+      <NodeSeekCustomMediaHarness
+        attributes={{ referrerpolicy: 'no-referrer', src: videoUrl }}
+        mediaReferrer={{ documentUrl: 'https://www.nodeseek.com/post-857589-1' }}
+        rendererKey={FORUM_VIDEO_TAG}
+      />
+    );
+    await waitFor(() =>
+      expect(
+        mockUseVideoPlayer.mock.calls.find(([source]) => (source as { uri?: string }).uri === videoUrl)?.[0]
+      ).toEqual(
+        expect.objectContaining({
+          headers: expect.not.objectContaining({ Referer: expect.any(String) }),
+          uri: videoUrl
+        })
+      )
+    );
+  });
+
+  it('[REG-TOPIC-078] applies independent policies to link-card media and sticker WebView media', async () => {
+    const mediaReferrer = { documentUrl: 'https://www.nodeseek.com/post-857589-1' } as const;
+    await render(
+      <NodeSeekCustomMediaHarness
+        attributes={{
+          href: 'https://example.com/card',
+          'icon-referrerpolicy': 'no-referrer',
+          'icon-src': linkCardIconUrl,
+          'image-referrerpolicy': 'origin',
+          'image-src': linkCardThumbnailUrl,
+          title: 'card'
+        }}
+        mediaReferrer={mediaReferrer}
+        rendererKey={FORUM_LINK_CARD_TAG}
+      />
+    );
+    expect(latestImageProps(linkCardIconUrl).source?.headers).not.toHaveProperty('Referer');
+    expect(latestImageProps(linkCardThumbnailUrl).source?.headers).toEqual(
+      expect.objectContaining({ Referer: 'https://www.nodeseek.com/' })
+    );
+
+    const stickerUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.webm';
+    await render(
+      <NodeSeekCustomMediaHarness
+        attributes={{ referrerpolicy: 'no-referrer', src: stickerUrl }}
+        mediaReferrer={mediaReferrer}
+        rendererKey={FORUM_VIDEO_STICKER_TAG}
+      />
+    );
+    const stickerWebView = mockWebView.mock.calls.at(-1)?.[0] as { source?: { baseUrl?: string; html?: string } };
+    expect(stickerWebView.source?.baseUrl).toBe(mediaReferrer.documentUrl);
+    expect(stickerWebView.source?.html).toContain('<meta name="referrer" content="no-referrer">');
+  });
+
+  it('[REG-TOPIC-078] coordinates the same video URL separately when its effective Referer differs', async () => {
+    const videoUrl = 'https://cdn.example.com/shared-policy-video.mp4';
+    const mediaContext = {
+      contentSource: 'v2ex' as const,
+      sessionIdentity: 'public:referrer-policy',
+      referrer: { documentUrl: 'https://www.v2ex.com/t/1233346' }
+    };
+
+    await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-row']}>
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          <ManagedTopicContentVideo
+            mediaContext={mediaContext}
+            referrerPolicy="no-referrer"
+            src={videoUrl}
+            theme={theme}
+          />
+          <ManagedTopicContentVideo mediaContext={mediaContext} referrerPolicy="origin" src={videoUrl} theme={theme} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() =>
+      expect(
+        mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
+      ).toHaveLength(2)
+    );
+    const sources = mockUseVideoPlayer.mock.calls
+      .map(([source]) => source as { headers?: Record<string, string>; uri?: string })
+      .filter((source) => source.uri === videoUrl);
+    expect(sources.map((source) => source.headers?.Referer)).toEqual(
+      expect.arrayContaining([undefined, 'https://www.v2ex.com/'])
+    );
+  });
+
+  it('[REG-TOPIC-079] does not recreate an Expo player until the user retries a failed native video', async () => {
+    const videoUrl = 'https://cdn.example.com/no-auto-retry.mp4';
+    const posterUrl = 'https://cdn.example.com/no-auto-retry-poster.webp';
+    const tree = () => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-row']}>
+        <TopicBodyMediaRowBoundary rowKey="video-row">
+          <CoordinatedVideoHarness poster={posterUrl} src={videoUrl} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(tree());
+    const playerCalls = () =>
+      mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl);
+    await waitFor(() => expect(playerCalls()).toHaveLength(1));
+
+    mockVideoStatus = 'error';
+    await screen.rerender(tree());
+    await waitFor(() => expect(screen.getByLabelText('视频加载失败，点按重试')).toBeTruthy());
+    expect(screen.getByTestId('expo-image', { includeHiddenElements: true })).toBeTruthy();
+    expect(latestImageProps(posterUrl).contentFit).toBe('cover');
+    expect(playerCalls()).toHaveLength(1);
+
+    mockVideoStatus = 'idle';
+    await fireEvent.press(screen.getByLabelText('视频加载失败，点按重试'));
+    await waitFor(() => expect(playerCalls()).toHaveLength(2));
+  });
+
+  it('[REG-TOPIC-079] lets Expo release an unmounted native player without later shared-object access', async () => {
+    const videoUrl = 'https://cdn.example.com/unmount.mp4';
+    mockReleaseVideoPlayersOnUnmount = true;
+    const screen = await render(
+      <ForumContentVideo
+        mediaContext={{ contentSource: 'yaohuo', sessionIdentity: 'yaohuo:unmount' }}
+        src={videoUrl}
+        theme={theme}
+      />
+    );
+    await waitFor(() =>
+      expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(true)
+    );
+
+    await screen.unmount();
+
+    expect(mockReleasedVideoPlayerAccesses).toBe(0);
   });
 
   it('[REG-TOPIC-065] renders transparent NodeSeek video stickers in Chromium without native player churn', async () => {
@@ -2219,6 +2640,27 @@ describe('topic block image loading', () => {
     expect(StyleSheet.flatten(latestImageProps(squareUrl).style)).toEqual(
       expect.objectContaining({ height: 82, width: 82 })
     );
+  });
+
+  it('[REG-TOPIC-078] isolates sticker dimensions and recycling by final Referer', async () => {
+    const sharedUrl = 'https://cdn.example.com/shared-sticker.png';
+    const mediaReferrer = { documentUrl: 'https://www.nodeseek.com/post-859086-1' } as const;
+    const first = await render(
+      <NodeSeekImageStickerHarness mediaReferrer={mediaReferrer} referrerPolicy="no-referrer" src={sharedUrl} />
+    );
+    const firstProps = latestImageProps(sharedUrl);
+    await act(() =>
+      firstProps.onLoad?.({
+        cacheType: 'none',
+        source: { height: 48, mediaType: 'image/png', url: sharedUrl, width: 57 }
+      })
+    );
+    await first.unmount();
+
+    await render(<NodeSeekImageStickerHarness mediaReferrer={mediaReferrer} referrerPolicy="origin" src={sharedUrl} />);
+    const secondProps = latestImageProps(sharedUrl);
+    expect(StyleSheet.flatten(secondProps.style)).toEqual(expect.objectContaining({ height: 48, width: 48 }));
+    expect(secondProps.recyclingKey).not.toBe(firstProps.recyclingKey);
   });
 
   it('[REG-ACCOUNT-029] rebuilds the native-managed video source when the media epoch changes', async () => {

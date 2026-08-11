@@ -15,6 +15,7 @@ import {
   textContentFromHtml
 } from './html';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
+import { normalizeMediaReferrerPolicy } from './mediaReferrer';
 
 function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: string) {
   const next = absoluteUrl(value, baseUrl);
@@ -227,6 +228,28 @@ function sanitizedStyleAttribute(value: string) {
   return declarations.length ? declarations.join('; ') : undefined;
 }
 
+function inlineStyleHidesElement(value: string) {
+  return value.split(';').some((declaration) => {
+    const separatorIndex = declaration.indexOf(':');
+    if (separatorIndex < 0) return false;
+    const name = declaration.slice(0, separatorIndex).trim().toLowerCase();
+    const nextValue = declaration
+      .slice(separatorIndex + 1)
+      .replace(/\s*!important\s*$/i, '')
+      .trim()
+      .toLowerCase();
+    return name === 'display' && nextValue === 'none';
+  });
+}
+
+function removeHiddenContent(root: HTMLElement) {
+  root.querySelectorAll('*').forEach((node) => {
+    if (node.hasAttribute('hidden') || inlineStyleHidesElement(node.getAttribute('style') || '')) {
+      node.remove();
+    }
+  });
+}
+
 const imageDimensionPattern = /\d{2,5}\s*[x×]\s*\d{2,5}\b/i;
 
 const imageFileSizePattern = /\b\d+(?:\.\d+)?\s*(?:bytes?|[KMGT]?B)\b/i;
@@ -261,6 +284,11 @@ function escapeHtmlAttribute(value: string) {
 
 function escapeHtmlText(value: string) {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function referrerPolicyHtmlAttribute(name: string, value: unknown) {
+  const policy = normalizeMediaReferrerPolicy(value);
+  return policy ? ` ${name}="${policy}"` : '';
 }
 
 function oneboxText(node: HTMLElement | null | undefined, maxLength: number) {
@@ -303,7 +331,7 @@ function sanitizeDiscourseOneboxes(root: HTMLElement, baseUrl: string) {
     const imageSrc = thumbnail ? sanitizedUrlAttribute('src', thumbnail.getAttribute('src') || '', baseUrl) || '' : '';
     const iconSrc = siteIcon ? sanitizedUrlAttribute('src', siteIcon.getAttribute('src') || '', baseUrl) || '' : '';
     node.replaceWith(
-      `<${FORUM_LINK_CARD_TAG} href="${escapeHtmlAttribute(href)}" site="${escapeHtmlAttribute(site)}" title="${escapeHtmlAttribute(title)}" description="${escapeHtmlAttribute(description)}" image-src="${escapeHtmlAttribute(imageSrc)}" icon-src="${escapeHtmlAttribute(iconSrc)}"></${FORUM_LINK_CARD_TAG}>`
+      `<${FORUM_LINK_CARD_TAG} href="${escapeHtmlAttribute(href)}" site="${escapeHtmlAttribute(site)}" title="${escapeHtmlAttribute(title)}" description="${escapeHtmlAttribute(description)}" image-src="${escapeHtmlAttribute(imageSrc)}" icon-src="${escapeHtmlAttribute(iconSrc)}"${referrerPolicyHtmlAttribute('image-referrerpolicy', thumbnail?.getAttribute('referrerpolicy'))}${referrerPolicyHtmlAttribute('icon-referrerpolicy', siteIcon?.getAttribute('referrerpolicy'))}></${FORUM_LINK_CARD_TAG}>`
     );
   });
 }
@@ -407,7 +435,7 @@ function sanitizeNodeSeekStickerVideos(root: HTMLElement, baseUrl: string) {
     const alt = String(node.getAttribute('alt') || node.getAttribute('title') || 'sticker');
     const stickerSrc = videoUrl || fallbackUrl || '';
     node.replaceWith(
-      `<${FORUM_VIDEO_STICKER_TAG} class="sticker" src="${escapeHtmlAttribute(stickerSrc)}" data-fallback-src="${escapeHtmlAttribute(fallbackUrl || '')}" alt="${escapeHtmlAttribute(alt)}" width="${width}" height="${height}"></${FORUM_VIDEO_STICKER_TAG}>`
+      `<${FORUM_VIDEO_STICKER_TAG} class="sticker" src="${escapeHtmlAttribute(stickerSrc)}" data-fallback-src="${escapeHtmlAttribute(fallbackUrl || '')}" alt="${escapeHtmlAttribute(alt)}" width="${width}" height="${height}"${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}></${FORUM_VIDEO_STICKER_TAG}>`
     );
   });
 }
@@ -434,7 +462,7 @@ function sanitizePlayableVideos(root: HTMLElement, baseUrl: string) {
     }
     const poster = sanitizedUrlAttribute('src', node.getAttribute('poster') || '', baseUrl) || '';
     node.replaceWith(
-      `<${FORUM_VIDEO_TAG} src="${escapeHtmlAttribute(src)}"${poster ? ` poster="${escapeHtmlAttribute(poster)}"` : ''}></${FORUM_VIDEO_TAG}>`
+      `<${FORUM_VIDEO_TAG} src="${escapeHtmlAttribute(src)}"${poster ? ` poster="${escapeHtmlAttribute(poster)}"` : ''}${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}></${FORUM_VIDEO_TAG}>`
     );
   });
 }
@@ -752,6 +780,7 @@ function sanitizePlainCodeBlocks(root: HTMLElement) {
 
 export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoot?: (root: HTMLElement) => void) {
   const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
+  removeHiddenContent(root);
   transformRoot?.(root);
   for (const selector of ['script', 'style', 'noscript']) {
     root.querySelectorAll(selector).forEach((node) => node.remove());
@@ -778,6 +807,16 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoo
         const next = sanitizedStyleAttribute(value);
         if (next) {
           node.setAttribute(name, next);
+        } else {
+          node.removeAttribute(name);
+        }
+        continue;
+      }
+      if (lower === 'referrerpolicy' || lower === 'image-referrerpolicy' || lower === 'icon-referrerpolicy') {
+        const next = normalizeMediaReferrerPolicy(value);
+        if (next) {
+          node.removeAttribute(name);
+          node.setAttribute(lower, next);
         } else {
           node.removeAttribute(name);
         }

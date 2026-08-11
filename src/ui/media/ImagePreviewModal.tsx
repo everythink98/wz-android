@@ -22,7 +22,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-native-zoom-toolkit';
 import { X } from 'lucide-react-native';
-import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { imageRequestHeadersForUrl, imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/imagePreviewCatalog';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -124,7 +124,11 @@ type PreviewPagerOwnership = {
 };
 
 export function ImagePreviewModal(props: ImagePreviewModalProps) {
-  const mediaContext = useForumMediaRequestContext(props.preview?.contentSource);
+  const sessionContext = useForumMediaRequestContext(props.preview?.contentSource);
+  const mediaContext = useMemo(
+    () => (props.preview?.referrer ? { ...sessionContext, referrer: props.preview.referrer } : sessionContext),
+    [props.preview?.referrer, sessionContext]
+  );
   return <ImagePreviewModalContent key={mediaContext.sessionIdentity} {...props} mediaContext={mediaContext} />;
 }
 
@@ -237,9 +241,7 @@ function ImagePreviewModalContent({
   }, [closing, overlayOpacity, preview, pullTranslateY]);
 
   const activeItem = previewItems[activeIndex];
-  const activeRequestIdentity = activeItem
-    ? previewResolutionIdentity(mediaContext.sessionIdentity, activeItem.originalUri)
-    : '';
+  const activeRequestIdentity = activeItem ? previewResolutionIdentity(mediaContext, activeItem) : '';
   const activeResolution = resolutions[activeRequestIdentity] || activeItem?.displaySize || null;
   const imagePreviewMaxScale = useMemo(() => {
     if (!activeResolution?.width || !activeResolution.height) {
@@ -702,16 +704,26 @@ function PreviewPagerPage({
   const runtimeGeneration = useReadNetworkRuntimeGeneration(mediaContext.contentSource);
   const decodeTarget = useMemo(() => previewBitmapDecodeTarget({ width, height }, PixelRatio.get()), [height, width]);
   const originalSource = useMemo(
-    () => imageSourceFromUrl(item.originalUri, { mediaContext, nodeSeekUserAgent }) as ImageURISource,
-    [item.originalUri, mediaContext, nodeSeekUserAgent]
+    () =>
+      imageSourceFromUrl(item.originalUri, {
+        mediaContext,
+        nodeSeekUserAgent,
+        referrerPolicy: item.referrerPolicy
+      }) as ImageURISource,
+    [item.originalUri, item.referrerPolicy, mediaContext, nodeSeekUserAgent]
   );
   const displaySource = useMemo(
-    () => imageSourceFromUrl(item.displayUri, { mediaContext, nodeSeekUserAgent }) as ImageURISource,
-    [item.displayUri, mediaContext, nodeSeekUserAgent]
+    () =>
+      imageSourceFromUrl(item.displayUri, {
+        mediaContext,
+        nodeSeekUserAgent,
+        referrerPolicy: item.referrerPolicy
+      }) as ImageURISource,
+    [item.displayUri, item.referrerPolicy, mediaContext, nodeSeekUserAgent]
   );
   const displayedBeforeMount = useMemo(() => originalImageDisplayRevision(originalSource) > 0, [originalSource]);
   const requestIdentity = compatibleImageRequestIdentity(originalSource);
-  const resolutionIdentity = previewResolutionIdentity(mediaContext.sessionIdentity, item.originalUri);
+  const resolutionIdentity = previewResolutionIdentity(mediaContext, item);
   const [retryState, setRetryState] = useState({ requestIdentity, version: 0 });
   const retryVersion = retryState.requestIdentity === requestIdentity ? retryState.version : 0;
   const [progressDeadlineVersion, setProgressDeadlineVersion] = useState(0);
@@ -1382,8 +1394,11 @@ function createPreviewPagerWindow(items: readonly ImagePreviewItem[], activeInde
   };
 }
 
-function previewResolutionIdentity(sessionIdentity: string, originalUri: string) {
-  return `${sessionIdentity}\u0000${originalUri}`;
+function previewResolutionIdentity(mediaContext: ForumMediaRequestContext, item: ImagePreviewItem) {
+  const referrer =
+    imageRequestHeadersForUrl(item.originalUri, { mediaContext, referrerPolicy: item.referrerPolicy })?.Referer ||
+    'none';
+  return `${mediaContext.sessionIdentity}\u0000${item.originalUri}\u0000referrer:${referrer}`;
 }
 
 function previewImageMetricFields(

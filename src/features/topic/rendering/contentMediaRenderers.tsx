@@ -1,24 +1,9 @@
-import { useEffect, useMemo, useState, type ComponentProps } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  type ImageURISource,
-  type StyleProp,
-  type ViewStyle
-} from 'react-native';
-import { Image as ExpoImage } from 'expo-image';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useContentWidth, type CustomBlockRenderer } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import {
-  imageRequestHeadersForUrl,
-  imageSourceFromUrl,
-  isNodeSeekHost,
-  normalizeImagePreviewUrl
-} from '@/platform/media/imageRequestSource';
+import { imageRequestHeadersForUrl, isNodeSeekHost } from '@/platform/media/imageRequestSource';
 import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/domain/forum/videoEmbeds';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
@@ -28,10 +13,15 @@ import { useContentBoundarySpacing } from './TopicContentPresentation';
 import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
-import { createForumStickerRenderers, type ForumStickerImageRenderProps } from '@/ui/content/ForumStickerContent';
+import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
 import { ManagedTopicContentVideo } from '../media/ManagedTopicContentVideo';
-import { compatibleImageRequestIdentity } from '@/platform/media/compatibleImageSources';
+import { ManagedTopicMediaImage } from '../media/ManagedTopicMediaImage';
+import {
+  normalizeMediaReferrerPolicy,
+  type MediaReferrerContext,
+  type MediaReferrerPolicy
+} from '@/domain/forum/mediaReferrer';
 
 export async function readManagedWebViewCookieHeader(url: string) {
   const result = await readManagedCookieHeader(url);
@@ -48,9 +38,10 @@ function isVideoStickerUrl(url: string) {
 function videoStickerRequestHeaders(
   url: string,
   mediaContext: ForumMediaRequestContext,
-  userAgent?: string
+  userAgent?: string,
+  referrerPolicy?: MediaReferrerPolicy
 ): Record<string, string> | undefined {
-  const headers = imageRequestHeadersForUrl(url, { mediaContext, nodeSeekUserAgent: userAgent });
+  const headers = imageRequestHeadersForUrl(url, { mediaContext, nodeSeekUserAgent: userAgent, referrerPolicy });
   return headers
     ? {
         ...headers,
@@ -63,72 +54,20 @@ const VIDEO_STICKER_READY_MESSAGE = 'wz-video-sticker-ready';
 const VIDEO_STICKER_ERROR_MESSAGE = 'wz-video-sticker-error';
 const VIDEO_STICKER_PROGRESS_MESSAGE = 'wz-video-sticker-progress';
 
-function ForumManagedContentImage({
-  accessibilityLabel,
-  contentFit,
-  kind,
-  mediaContext,
-  nodeSeekMediaUserAgent,
-  onLoad,
-  recyclingKey,
-  src,
-  style
-}: ForumStickerImageRenderProps & {
-  contentFit: ComponentProps<typeof ExpoImage>['contentFit'];
-  kind: 'poster' | 'sticker';
-  mediaContext: ForumMediaRequestContext;
-  nodeSeekMediaUserAgent?: string;
-}) {
-  const normalizedSrc = normalizeImagePreviewUrl(src).trim();
-  const source = useMemo(
-    () =>
-      imageSourceFromUrl(normalizedSrc, {
-        mediaContext,
-        nodeSeekUserAgent: nodeSeekMediaUserAgent
-      }) as ImageURISource,
-    [mediaContext, nodeSeekMediaUserAgent, normalizedSrc]
-  );
-  const requestIdentity = compatibleImageRequestIdentity(source);
-  const lease = useTopicBodyMediaLease({ enabled: Boolean(normalizedSrc), kind, requestIdentity });
-  if (!normalizedSrc || !lease.admitted) {
-    return <View pointerEvents="none" style={style} />;
-  }
-  return (
-    <ExpoImage
-      key={lease.attemptId}
-      accessibilityLabel={accessibilityLabel}
-      accessibilityRole="image"
-      accessible
-      allowDownscaling
-      cachePolicy="disk"
-      contentFit={contentFit}
-      onDisplay={() => lease.settle('displayed')}
-      onError={() => lease.settle('error')}
-      onLoad={onLoad}
-      onProgress={(event) => lease.progress(event.loaded)}
-      recyclingKey={`${recyclingKey}:${lease.attemptId}`}
-      source={source}
-      style={style}
-    />
-  );
-}
-
 function ForumVideoStickerWebView({
   document,
   loadingColor,
-  mediaSessionIdentity,
   nodeSeekUserAgent,
-  src
+  requestIdentity
 }: {
   document: NonNullable<ReturnType<typeof videoStickerBrowserDocument>>;
   loadingColor: string;
-  mediaSessionIdentity: string;
   nodeSeekUserAgent?: string;
-  src: string;
+  requestIdentity: string;
 }) {
   const lease = useTopicBodyMediaLease({
     kind: 'video',
-    requestIdentity: `video-sticker:${mediaSessionIdentity}:${src}`
+    requestIdentity
   });
   const [ready, setReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -207,6 +146,7 @@ function ForumVideoStickerBrowser({
   mediaContext,
   mediaSessionIdentity,
   nodeSeekUserAgent,
+  referrerPolicy,
   src,
   videoStyle
 }: {
@@ -215,19 +155,28 @@ function ForumVideoStickerBrowser({
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
   nodeSeekUserAgent?: string;
+  referrerPolicy?: MediaReferrerPolicy;
   src: string;
   videoStyle: StyleProp<ViewStyle>;
 }) {
-  const document = useMemo(() => videoStickerBrowserDocument(src), [src]);
+  const document = useMemo(
+    () => videoStickerBrowserDocument(src, mediaContext.referrer, referrerPolicy),
+    [mediaContext.referrer, referrerPolicy, src]
+  );
+  const requestIdentity = useMemo(() => {
+    const referrer =
+      videoStickerRequestHeaders(src, mediaContext, nodeSeekUserAgent, referrerPolicy)?.Referer || 'none';
+    return `video-sticker:${mediaSessionIdentity}:${src}:referrer:${referrer}`;
+  }, [mediaContext, mediaSessionIdentity, nodeSeekUserAgent, referrerPolicy, src]);
   return (
     <View pointerEvents="none" style={videoStyle}>
       {fallbackSrc ? (
-        <ForumManagedContentImage
+        <ManagedTopicMediaImage
           contentFit="contain"
           kind="sticker"
           mediaContext={mediaContext}
           nodeSeekMediaUserAgent={nodeSeekUserAgent}
-          recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
+          referrerPolicy={referrerPolicy}
           src={fallbackSrc}
           style={embedStyles.stickerVideoFallback}
         />
@@ -236,9 +185,8 @@ function ForumVideoStickerBrowser({
         <ForumVideoStickerWebView
           document={document}
           loadingColor={loadingColor}
-          mediaSessionIdentity={mediaSessionIdentity}
           nodeSeekUserAgent={nodeSeekUserAgent}
-          src={src}
+          requestIdentity={requestIdentity}
         />
       ) : null}
     </View>
@@ -404,16 +352,17 @@ export function createContentMediaRenderers({
     const attributes = props.tnode.attributes || {};
     const src = attributes.src || '';
     const fallbackSrc = attributes['data-fallback-src'] || '';
+    const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     const contentWidth = useContentWidth();
     const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth);
     if (!src) {
       return fallbackSrc ? (
-        <ForumManagedContentImage
+        <ManagedTopicMediaImage
           contentFit="contain"
           kind="sticker"
           mediaContext={mediaContext}
           nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-          recyclingKey={`${mediaSessionIdentity}:${fallbackSrc}`}
+          referrerPolicy={referrerPolicy}
           src={fallbackSrc}
           style={[htmlRendererStyles.inlineForumImage, size, boundarySpacing]}
         />
@@ -421,12 +370,12 @@ export function createContentMediaRenderers({
     }
     if (!isVideoStickerUrl(src)) {
       return (
-        <ForumManagedContentImage
+        <ManagedTopicMediaImage
           contentFit="contain"
           kind="sticker"
           mediaContext={mediaContext}
           nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-          recyclingKey={`${mediaSessionIdentity}:${src}`}
+          referrerPolicy={referrerPolicy}
           src={src}
           style={[htmlRendererStyles.inlineForumImage, size, boundarySpacing]}
         />
@@ -440,6 +389,7 @@ export function createContentMediaRenderers({
         mediaContext={mediaContext}
         mediaSessionIdentity={mediaSessionIdentity}
         nodeSeekUserAgent={nodeSeekMediaUserAgent}
+        referrerPolicy={referrerPolicy}
         src={src}
         videoStyle={[size, embedStyles.inlineVideoSticker, embedStyles.stickerVideoFrame, boundarySpacing]}
       />
@@ -449,7 +399,9 @@ export function createContentMediaRenderers({
   const ForumVideoRenderer: CustomBlockRenderer = (props) => {
     const boundarySpacing = useContentBoundarySpacing(props.tnode);
     const attributes = props.tnode.attributes || {};
+    const poster = attributes.poster || '';
     const src = attributes.src || '';
+    const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     if (!src) {
       return null;
     }
@@ -457,9 +409,10 @@ export function createContentMediaRenderers({
       <ManagedTopicContentVideo
         key={`${mediaSessionIdentity}:${src}`}
         boundarySpacing={boundarySpacing}
-        headers={videoStickerRequestHeaders(src, mediaContext, nodeSeekMediaUserAgent)}
         mediaContext={mediaContext}
-        mediaSessionIdentity={mediaSessionIdentity}
+        nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
+        poster={poster}
+        referrerPolicy={referrerPolicy}
         src={src}
         theme={theme}
       />
@@ -475,6 +428,8 @@ export function createContentMediaRenderers({
     const description = attributes.description || '';
     const imageSrc = attributes['image-src'] || '';
     const iconSrc = attributes['icon-src'] || '';
+    const imageReferrerPolicy = normalizeMediaReferrerPolicy(attributes['image-referrerpolicy']);
+    const iconReferrerPolicy = normalizeMediaReferrerPolicy(attributes['icon-referrerpolicy']);
     if (!href) {
       return null;
     }
@@ -492,12 +447,12 @@ export function createContentMediaRenderers({
         {site || iconSrc ? (
           <View style={embedStyles.linkCardHeader}>
             {iconSrc ? (
-              <ForumManagedContentImage
+              <ManagedTopicMediaImage
                 contentFit="contain"
                 kind="poster"
                 mediaContext={mediaContext}
                 nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-                recyclingKey={`${mediaSessionIdentity}:${iconSrc}`}
+                referrerPolicy={iconReferrerPolicy}
                 src={iconSrc}
                 style={embedStyles.linkCardIcon}
               />
@@ -511,12 +466,12 @@ export function createContentMediaRenderers({
         ) : null}
         <View style={embedStyles.linkCardBody}>
           {imageSrc ? (
-            <ForumManagedContentImage
+            <ManagedTopicMediaImage
               contentFit="cover"
               kind="poster"
               mediaContext={mediaContext}
               nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-              recyclingKey={`${mediaSessionIdentity}:${imageSrc}`}
+              referrerPolicy={imageReferrerPolicy}
               src={imageSrc}
               style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]}
             />
@@ -553,7 +508,7 @@ export function createContentMediaRenderers({
       mediaSessionIdentity,
       nodeSeekMediaUserAgent,
       renderImage: (props) => (
-        <ForumManagedContentImage
+        <ManagedTopicMediaImage
           {...props}
           contentFit="contain"
           kind="sticker"
@@ -571,7 +526,11 @@ export function createContentMediaRenderers({
   };
 }
 
-function videoStickerBrowserDocument(src: string) {
+function videoStickerBrowserDocument(
+  src: string,
+  referrer?: MediaReferrerContext,
+  referrerPolicy?: MediaReferrerPolicy
+) {
   try {
     const url = new URL(src);
     if (
@@ -582,11 +541,30 @@ function videoStickerBrowserDocument(src: string) {
     ) {
       return null;
     }
-    const baseUrl = `${url.origin}/`;
+    let baseUrl = `${url.origin}/`;
+    let policy: MediaReferrerPolicy = 'origin';
+    if (referrer) {
+      policy = 'no-referrer';
+      try {
+        const documentUrl = new URL(referrer.documentUrl);
+        if (documentUrl.protocol === 'http:' || documentUrl.protocol === 'https:') {
+          documentUrl.username = '';
+          documentUrl.password = '';
+          documentUrl.hash = '';
+          baseUrl = documentUrl.toString();
+          policy =
+            normalizeMediaReferrerPolicy(referrerPolicy) ||
+            normalizeMediaReferrerPolicy(referrer.documentPolicy) ||
+            'strict-origin-when-cross-origin';
+        }
+      } catch {
+        // Keep the media load alive while matching the shared resolver's no-Referer fallback.
+      }
+    }
     return {
       source: {
         baseUrl,
-        html: videoStickerBrowserHtml(url.toString(), url.origin)
+        html: videoStickerBrowserHtml(url.toString(), url.origin, policy)
       }
     };
   } catch {
@@ -594,13 +572,13 @@ function videoStickerBrowserDocument(src: string) {
   }
 }
 
-function videoStickerBrowserHtml(src: string, origin: string) {
+function videoStickerBrowserHtml(src: string, origin: string, referrerPolicy: MediaReferrerPolicy) {
   return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<meta name="referrer" content="origin">
+<meta name="referrer" content="${referrerPolicy}">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src ${escapeHtmlAttribute(origin)}; style-src 'unsafe-inline'; script-src 'nonce-wz-video-sticker'; base-uri 'none'; connect-src 'none'; font-src 'none'; form-action 'none'; frame-src 'none'; img-src 'none'; object-src 'none'; worker-src 'none'">
 <style>
 html, body, video { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }

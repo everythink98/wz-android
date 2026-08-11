@@ -283,13 +283,18 @@ describe('Android topic content splitting', () => {
       const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
 
       const compilation = compileTrackedContent({
-        html: '<forum-video src="https://media.example/video.mp4"></forum-video>',
+        html: '<forum-video src="https://media.example/video.mp4" poster="https://media.example/poster.webp" referrerpolicy="no-referrer"></forum-video>',
         role: 'reply',
         source: 'yaohuo'
       });
 
       expect(compilation.rows).toEqual([
-        expect.objectContaining({ src: 'https://media.example/video.mp4', type: 'video' })
+        expect.objectContaining({
+          poster: 'https://media.example/poster.webp',
+          referrerPolicy: 'no-referrer',
+          src: 'https://media.example/video.mp4',
+          type: 'video'
+        })
       ]);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
     } finally {
@@ -1102,6 +1107,75 @@ describe('Android topic content splitting', () => {
         source: 'yaohuo'
       }).rows
     ).toEqual([expect.objectContaining({ src: 'https://yaohuo.me/uploads/demo.mp4', type: 'video' })]);
+  });
+
+  it('[REG-TOPIC-078] rejects whitespace-wrapped standalone video policies', () => {
+    const [video] = compileForumContent({
+      html: '<forum-video src="https://media.example/video.mp4" referrerpolicy=" unsafe-url "></forum-video>',
+      role: 'reply',
+      source: 'yaohuo'
+    }).rows;
+
+    expect(video).not.toHaveProperty('referrerPolicy');
+  });
+
+  it('[REG-TOPIC-082] preserves a standalone video poster in parser fallback rows', async () => {
+    vi.resetModules();
+    vi.doMock('./html', () => ({
+      FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
+      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
+      FORUM_VIDEO_TAG: 'forum-video',
+      parseHtml: () => {
+        throw new Error('parser unavailable');
+      }
+    }));
+    try {
+      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
+
+      expect(
+        compileWithFallback({
+          html: '<forum-video src="https://media.example/video.mp4" poster="https://media.example/poster.webp"></forum-video>',
+          role: 'reply',
+          source: 'yaohuo'
+        }).rows
+      ).toEqual([
+        expect.objectContaining({
+          poster: 'https://media.example/poster.webp',
+          src: 'https://media.example/video.mp4',
+          type: 'video'
+        })
+      ]);
+    } finally {
+      vi.doUnmock('./html');
+      vi.resetModules();
+    }
+  });
+
+  it('[REG-TOPIC-078] rejects whitespace-wrapped standalone video policies in parser fallback', async () => {
+    vi.resetModules();
+    vi.doMock('./html', () => ({
+      FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
+      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
+      FORUM_VIDEO_TAG: 'forum-video',
+      parseHtml: () => {
+        throw new Error('parser unavailable');
+      }
+    }));
+    try {
+      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
+      const [video] = compileWithFallback({
+        html: '<forum-video src="https://media.example/video.mp4" referrerpolicy=" unsafe-url "></forum-video>',
+        role: 'reply',
+        source: 'yaohuo'
+      }).rows;
+
+      expect(video).not.toHaveProperty('referrerPolicy');
+    } finally {
+      vi.doUnmock('./html');
+      vi.resetModules();
+    }
   });
 
   it('does not treat mixed content as a standalone video block', () => {

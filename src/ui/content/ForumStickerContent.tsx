@@ -11,12 +11,15 @@ import {
 import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
 import { imageSourceFromUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import { cachedImageDisplayDimensions, rememberImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
+import { compatibleImageRequestIdentity } from '@/platform/media/compatibleImageSources';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
+import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 
 export type ForumStickerImageRenderProps = {
   accessibilityLabel?: string;
   onLoad?: ComponentProps<typeof ExpoImage>['onLoad'];
   recyclingKey: string;
+  referrerPolicy?: MediaReferrerPolicy;
   src: string;
   style: ComponentProps<typeof ExpoImage>['style'];
 };
@@ -36,7 +39,6 @@ export function createForumStickerRenderers({
   fontScale,
   imageStyle,
   mediaContext,
-  mediaSessionIdentity,
   nodeSeekMediaUserAgent,
   renderImage,
   textStyle,
@@ -44,11 +46,21 @@ export function createForumStickerRenderers({
 }: ForumStickerRenderersOptions) {
   const ForumStickerRenderer: CustomBlockRenderer = (props) => {
     const attributes = props.tnode.attributes || {};
+    const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     const src = attributes.src || '';
     const label = attributes.alt || attributes.title || '';
     const contentWidth = useContentWidth();
     const normalizedSrc = normalizeImagePreviewUrl(src).trim();
-    const cacheKey = normalizedSrc ? `${mediaSessionIdentity}:${normalizedSrc}` : '';
+    const source = imageSourceFromUrl(src, {
+      mediaContext,
+      nodeSeekUserAgent: nodeSeekMediaUserAgent,
+      referrerPolicy
+    });
+    const cacheKey = normalizedSrc
+      ? typeof (source as { cacheKey?: unknown }).cacheKey === 'string'
+        ? String((source as { cacheKey: string }).cacheKey)
+        : compatibleImageRequestIdentity(source)
+      : '';
     const [loadedDimensions, setLoadedDimensions] = useState<{
       cacheKey: string;
       dimensions: { height: number; width: number };
@@ -78,7 +90,8 @@ export function createForumStickerRenderers({
         rememberImageDisplayDimensions(cacheKey, dimensions);
         setLoadedDimensions({ cacheKey, dimensions });
       },
-      recyclingKey: `${mediaSessionIdentity}:${src}`,
+      recyclingKey: cacheKey,
+      ...(referrerPolicy ? { referrerPolicy } : {}),
       src,
       style: [styles.image, imageStyle, size]
     };
@@ -92,7 +105,7 @@ export function createForumStickerRenderers({
         contentFit="contain"
         onLoad={imageProps.onLoad}
         recyclingKey={imageProps.recyclingKey}
-        source={imageSourceFromUrl(src, { mediaContext, nodeSeekUserAgent: nodeSeekMediaUserAgent })}
+        source={source}
         style={imageProps.style}
       />
     );

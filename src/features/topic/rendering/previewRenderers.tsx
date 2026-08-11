@@ -59,6 +59,13 @@ import {
   type CachedImageDimensions
 } from '@/platform/media/imageDisplayDimensions';
 import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
+import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
+
+function imageDisplayCacheIdentity(source: ImageURISource) {
+  return typeof (source as ImageURISource & { cacheKey?: unknown }).cacheKey === 'string'
+    ? String((source as ImageURISource & { cacheKey: string }).cacheKey)
+    : compatibleImageRequestIdentity(source);
+}
 
 type PreviewImageBlockProps = {
   attributes: Record<string, string | undefined>;
@@ -69,11 +76,16 @@ type PreviewImageBlockProps = {
   imageProps: IMGElementProps;
   imageSource: ImageURISource;
   loadingColor: string;
-  markInlineSizedImageUrl: (url: string) => void;
+  markInlineSizedImageUrl: (url: string, referrerPolicy?: MediaReferrerPolicy) => void;
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
   nodeSeekMediaUserAgent?: string;
-  onOpenImagePreview: (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void;
+  onOpenImagePreview: (
+    url: string,
+    displaySize?: ImageDisplaySize,
+    renderedPosterUri?: string,
+    referrerPolicy?: MediaReferrerPolicy
+  ) => void;
   originalUri: string;
   src: string;
 };
@@ -152,12 +164,12 @@ function AdmittedPreviewImageBlock({
   loadingColor,
   markInlineSizedImageUrl,
   mediaContext,
-  mediaSessionIdentity,
   nodeSeekMediaUserAgent,
   onOpenImagePreview,
   originalUri,
   src
 }: PreviewImageBlockProps & { bodyMediaLease: ReturnType<typeof useTopicBodyMediaLease> }) {
+  const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
   const requestIdentity = compatibleImageRequestIdentity(imageSource);
   const bodyRequestIdentity = `${requestIdentity}\u0000attempt:${bodyMediaLease.attemptId}`;
   const originalSource = useMemo(() => {
@@ -166,10 +178,11 @@ function AdmittedPreviewImageBlock({
       ? (imageSourceFromUrl(cleanOriginalUri, {
           baseSource: imageProps.source,
           mediaContext,
-          nodeSeekUserAgent: nodeSeekMediaUserAgent
+          nodeSeekUserAgent: nodeSeekMediaUserAgent,
+          referrerPolicy
         }) as ImageURISource)
       : null;
-  }, [imageProps.source, mediaContext, nodeSeekMediaUserAgent, originalUri, src]);
+  }, [imageProps.source, mediaContext, nodeSeekMediaUserAgent, originalUri, referrerPolicy, src]);
   const originalRequestIdentity = originalImageDisplayIdentity(originalSource);
   const originalDisplayRevision = useOriginalImageDisplayRevision(originalSource);
   const originalUpgradeEnabled = useOriginalImageUpgradeEnabled();
@@ -338,7 +351,7 @@ function AdmittedPreviewImageBlock({
     [bodyMediaLease, bodyRequestIdentity]
   );
   const loadFailed = failedRequestIdentity === bodyRequestIdentity;
-  const cacheKey = `${mediaSessionIdentity}:${normalizeImagePreviewUrl(src).trim()}`;
+  const cacheKey = imageDisplayCacheIdentity(imageSource);
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
   useEffect(() => {
     if (cachedDimensions) {
@@ -372,9 +385,9 @@ function AdmittedPreviewImageBlock({
     const dimensions = activeLoadedImage.dimensions;
     rememberImageDisplayDimensions(cacheKey, dimensions);
     if (shouldMarkLoadedImageInline(attributes, dimensions.width, dimensions.height)) {
-      markInlineSizedImageUrl(src);
+      markInlineSizedImageUrl(src, referrerPolicy);
     }
-  }, [activeLoadedImage, attributes, cacheKey, markInlineSizedImageUrl, src]);
+  }, [activeLoadedImage, attributes, cacheKey, markInlineSizedImageUrl, referrerPolicy, src]);
   const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
   const sharedContainerStyle = [
     { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const },
@@ -438,7 +451,16 @@ function AdmittedPreviewImageBlock({
         if (originalRequestIdentity) {
           setForcedOriginalIdentity(originalRequestIdentity);
         }
-        onOpenImagePreview(src, activeLoadedImage?.dimensions || cachedDimensions, activeArtifact?.posterSource.uri);
+        if (referrerPolicy) {
+          onOpenImagePreview(
+            src,
+            activeLoadedImage?.dimensions || cachedDimensions,
+            activeArtifact?.posterSource.uri,
+            referrerPolicy
+          );
+        } else {
+          onOpenImagePreview(src, activeLoadedImage?.dimensions || cachedDimensions, activeArtifact?.posterSource.uri);
+        }
       }}
     >
       <View testID="topic-image-frame" style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
@@ -517,7 +539,7 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
   const requestIdentity = compatibleImageRequestIdentity(props.imageSource);
   const bodyMediaLease = useTopicBodyMediaLease({ kind: 'base', requestIdentity });
   const contentWidth = Math.max(1, props.imageProps.contentWidth || 1);
-  const cacheKey = `${props.mediaSessionIdentity}:${normalizeImagePreviewUrl(props.src).trim()}`;
+  const cacheKey = imageDisplayCacheIdentity(props.imageSource);
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
   const dimensions = cachedDimensions
     ? {
@@ -559,11 +581,9 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
 }
 
 function ManagedInlineForumImage({
-  recyclingKey,
   source,
   style
 }: {
-  recyclingKey: string;
   source: ImageURISource;
   style: StyleProp<ImageStyle & ViewStyle>;
 }) {
@@ -576,7 +596,7 @@ function ManagedInlineForumImage({
       allowDownscaling
       cachePolicy="disk"
       contentFit="contain"
-      recyclingKey={`${recyclingKey}:${lease.attemptId}`}
+      recyclingKey={`${requestIdentity}:${lease.attemptId}`}
       source={source}
       style={style}
       onDisplay={() => lease.settle('displayed')}
@@ -599,11 +619,16 @@ export function createPreviewRenderers({
 }: {
   htmlBaseStyle: { lineHeight?: number };
   htmlRendererStyles: ReturnType<typeof createHtmlRendererStyles>;
-  markInlineSizedImageUrl: (url: string) => void;
+  markInlineSizedImageUrl: (url: string, referrerPolicy?: MediaReferrerPolicy) => void;
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
   nodeSeekMediaUserAgent?: string;
-  onOpenImagePreview: (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => void;
+  onOpenImagePreview: (
+    url: string,
+    displaySize?: ImageDisplaySize,
+    renderedPosterUri?: string,
+    referrerPolicy?: MediaReferrerPolicy
+  ) => void;
   settings: Pick<ReaderSettings, 'fontScale'>;
   theme: ReaderTheme;
 }): HtmlRenderers {
@@ -612,6 +637,7 @@ export function createPreviewRenderers({
     const contentWidth = useContentWidth();
     const imageProps = useIMGElementProps(props);
     const attributes = props.tnode.attributes;
+    const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     const inlineSrc = attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
     if (isInlineForumImage(attributes)) {
       if (!inlineSrc) {
@@ -619,11 +645,11 @@ export function createPreviewRenderers({
       }
       return (
         <ManagedInlineForumImage
-          recyclingKey={`${mediaSessionIdentity}:${inlineSrc}`}
           source={
             imageSourceFromUrl(inlineSrc, {
               mediaContext,
-              nodeSeekUserAgent: nodeSeekMediaUserAgent
+              nodeSeekUserAgent: nodeSeekMediaUserAgent,
+              referrerPolicy
             }) as ImageURISource
           }
           style={[
@@ -643,11 +669,12 @@ export function createPreviewRenderers({
     const imageSource = imageSourceFromUrl(src, {
       baseSource: imageProps.source,
       mediaContext,
-      nodeSeekUserAgent: nodeSeekMediaUserAgent
+      nodeSeekUserAgent: nodeSeekMediaUserAgent,
+      referrerPolicy
     });
     return (
       <PreviewImageBlock
-        key={`${mediaSessionIdentity}:${src}`}
+        key={compatibleImageRequestIdentity(imageSource as ImageURISource)}
         attributes={attributes}
         boundarySpacing={boundarySpacing}
         errorTextStyle={htmlRendererStyles.inlineForumImageText}
@@ -670,6 +697,7 @@ export function createPreviewRenderers({
   const InlineForumImageRenderer: CustomMixedRenderer = (props) => {
     const contentWidth = useContentWidth();
     const attributes = (props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {};
+    const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     const src = attributes.src || '';
     const label = attributes.alt || attributes.title || '';
     if (!src) {
@@ -679,11 +707,11 @@ export function createPreviewRenderers({
     if (isInlineImage) {
       return (
         <ManagedInlineForumImage
-          recyclingKey={`${mediaSessionIdentity}:${src}`}
           source={
             imageSourceFromUrl(src, {
               mediaContext,
-              nodeSeekUserAgent: nodeSeekMediaUserAgent
+              nodeSeekUserAgent: nodeSeekMediaUserAgent,
+              referrerPolicy
             }) as ImageURISource
           }
           style={[

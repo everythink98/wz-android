@@ -15,6 +15,7 @@ import {
 } from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { stableTextHash } from './contentIdentity';
+import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 
 export type TopicContentItem =
   | {
@@ -33,7 +34,9 @@ export type TopicContentItem =
       groupKey: string;
       continuation: 'only' | 'first' | 'middle' | 'last';
       networkMediaCount: number;
+      poster?: string;
       rendering?: ForumContentRendering;
+      referrerPolicy?: MediaReferrerPolicy;
     }
   | {
       type: 'quoteSummary';
@@ -103,6 +106,8 @@ function plannedContentItems({
         continuation: row.continuation,
         groupKey: row.groupKey,
         networkMediaCount: row.networkMediaCount,
+        poster: row.poster,
+        referrerPolicy: row.referrerPolicy,
         rendering: row.rendering,
         src: row.src
       };

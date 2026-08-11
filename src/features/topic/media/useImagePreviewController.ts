@@ -13,6 +13,7 @@ import { saveImageUriToLibrary } from '@/platform/media/imageSave';
 import type { Fetcher } from '@/platform/network/request';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { Source } from '@/domain/forum/models';
+import type { MediaReferrerContext, MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
@@ -34,6 +35,7 @@ export function useImagePreviewController({
   fetcher,
   htmlParts,
   inlineSizedImageUrls,
+  mediaReferrer,
   nodeSeekMediaUserAgent,
   notify,
   topicImageDeriver
@@ -44,48 +46,67 @@ export function useImagePreviewController({
   fetcher?: Fetcher;
   htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
+  mediaReferrer?: MediaReferrerContext;
   nodeSeekMediaUserAgent?: string;
   notify: (message: string) => void;
   topicImageDeriver: TopicImageDeriver;
 }) {
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
-  const previewMediaContext = useForumMediaRequestContext(imagePreview?.contentSource);
+  const catalogSessionContext = useForumMediaRequestContext(contentSource);
+  const catalogMediaContext = useMemo(
+    () => (mediaReferrer ? { ...catalogSessionContext, referrer: mediaReferrer } : catalogSessionContext),
+    [catalogSessionContext, mediaReferrer]
+  );
+  const previewSessionContext = useForumMediaRequestContext(imagePreview?.contentSource);
+  const previewMediaContext = useMemo(
+    () =>
+      imagePreview?.referrer ? { ...previewSessionContext, referrer: imagePreview.referrer } : previewSessionContext,
+    [imagePreview?.referrer, previewSessionContext]
+  );
   const saveBusyRef = useRef(false);
   const inlineSizedImageUrlsRef = useCommittedRef(inlineSizedImageUrls);
+  const topicImageDeriverRef = useCommittedRef(topicImageDeriver);
   const resolveImagePreview = useMemo(() => {
     let catalog: ReturnType<typeof createImagePreviewCatalog> | null = null;
-    return (tappedUrl: string, tappedDisplaySize?: ImageDisplaySize) => {
+    return (tappedUrl: string, tappedDisplaySize?: ImageDisplaySize, tappedReferrerPolicy?: MediaReferrerPolicy) => {
       if (!catalog) {
         catalog = createImagePreviewCatalog(
           htmlPartsFromSource(htmlParts).map((html) =>
             topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls)
           ),
           contentWidth,
-          PixelRatio.get()
+          PixelRatio.get(),
+          catalogMediaContext
         );
       }
-      return imagePreviewListFromCatalog(catalog, tappedUrl, contentSource, tappedDisplaySize);
+      return imagePreviewListFromCatalog(catalog, tappedUrl, contentSource, tappedDisplaySize, tappedReferrerPolicy);
     };
-  }, [contentSource, contentWidth, htmlParts, inlineSizedImageUrls, topicImageDeriver]);
+  }, [catalogMediaContext, contentSource, contentWidth, htmlParts, inlineSizedImageUrls, topicImageDeriver]);
   const resolveImagePreviewRef = useCommittedRef(resolveImagePreview);
 
-  const openImagePreview = useCallback((url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string) => {
-    const clean = normalizeImageCacheKey(url);
-    if (clean && inlineSizedImageUrlsRef.current[clean]) {
-      return;
-    }
-    const nextPreview = resolveImagePreviewRef.current(url, displaySize);
-    const posterUri = normalizeImagePreviewUrl(renderedPosterUri || '');
-    if (posterUri.startsWith('file://') && nextPreview.items[nextPreview.index]) {
-      nextPreview.items[nextPreview.index] = {
-        ...nextPreview.items[nextPreview.index],
-        displayUri: posterUri
-      };
-    }
-    if (nextPreview.items.length > 0) {
-      setImagePreview(nextPreview);
-    }
-  }, []);
+  const openImagePreview = useCallback(
+    (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string, referrerPolicy?: MediaReferrerPolicy) => {
+      const clean = normalizeImageCacheKey(url);
+      if (
+        clean &&
+        topicImageDeriverRef.current.isInlineSizedImage(clean, referrerPolicy, inlineSizedImageUrlsRef.current)
+      ) {
+        return;
+      }
+      const nextPreview = resolveImagePreviewRef.current(url, displaySize, referrerPolicy);
+      const posterUri = normalizeImagePreviewUrl(renderedPosterUri || '');
+      if (posterUri.startsWith('file://') && nextPreview.items[nextPreview.index]) {
+        nextPreview.items[nextPreview.index] = {
+          ...nextPreview.items[nextPreview.index],
+          displayUri: posterUri
+        };
+      }
+      if (nextPreview.items.length > 0) {
+        setImagePreview(nextPreview);
+      }
+    },
+    []
+  );
   const closeImagePreview = useCallback(() => setImagePreview(null), []);
   const selectPreviewImage = useCallback((index: number) => {
     setImagePreview((current) =>
@@ -121,7 +142,8 @@ export function useImagePreviewController({
         uri,
         {
           mediaContext: previewMediaContext,
-          nodeSeekUserAgent: nodeSeekMediaUserAgent
+          nodeSeekUserAgent: nodeSeekMediaUserAgent,
+          referrerPolicy: item.referrerPolicy
         },
         fetcher,
         trace

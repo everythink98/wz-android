@@ -205,6 +205,15 @@ describe('forum content media normalization', () => {
     expect(result.match(/<forum-sticker-row>/g)).toHaveLength(1);
   });
 
+  it('[REG-TOPIC-078] keeps video-sticker policy when a small inline fallback becomes an image sticker', () => {
+    const result = normalizeForumContentMediaHtml(
+      '<p>text <forum-video-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/00.webm" data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/00.png" width="50" height="50" referrerpolicy="no-referrer"></forum-video-sticker></p>'
+    );
+
+    expect(result).toContain('<forum-sticker src="https://www.nodeseek.com/static/image/sticker/emoji/00.png"');
+    expect(result).toContain('referrerpolicy="no-referrer"');
+  });
+
   it('moves large text-mixed sticker videos out of the text paragraph', () => {
     const html =
       '<p>hhhhhhh <forum-video-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/00.webm" data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/00.png" alt="emoji00" width="100" height="100"></forum-video-sticker></p>';

@@ -1,6 +1,9 @@
 import type { Reply } from '@/domain/forum/models';
 import { extractImageUrlsFromHtml } from '@/platform/media/imagePreviewCatalog';
 import { markInlineSizedImageHtml } from '@/platform/media/inlineMedia';
+import { parseHtml } from '@/domain/forum/html';
+import { forumImageAttributeValue } from '@/domain/forum/forumContentMedia';
+import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 
 export type InlineSizedImageUrlMap = Record<string, true>;
 
@@ -8,10 +11,16 @@ interface TopicImageDeriverOptions {
   cacheLimit?: number;
   extractImageUrls?: (html: string) => string[];
   markInlineSizedImageHtml?: (html: string, url: string) => string;
+  requestIdentityForImage?: (url: string, referrerPolicy?: MediaReferrerPolicy) => string;
 }
 
 export interface TopicImageDeriver {
   imageUrlsForHtml: (html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) => string[];
+  isInlineSizedImage: (
+    url: string,
+    referrerPolicy: MediaReferrerPolicy | undefined,
+    inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>
+  ) => boolean;
   markInlineSizedImages: (html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) => string;
 }
 
@@ -24,8 +33,29 @@ function inlineSizedImageUrlsForHtml(html: string, inlineSizedImageUrls: InlineS
     return [];
   }
   return Object.keys(inlineSizedImageUrls)
-    .filter((url) => htmlContainsImageUrl(html, url))
+    .filter((identity) => htmlContainsImageUrl(html, identity.split('\u0000', 1)[0]))
     .sort();
+}
+
+function markInlineSizedImagesByIdentity(
+  html: string,
+  inlineSizedImageUrls: InlineSizedImageUrlMap,
+  requestIdentityForImage: NonNullable<TopicImageDeriverOptions['requestIdentityForImage']>
+) {
+  try {
+    const root = parseHtml(html);
+    let changed = false;
+    root.querySelectorAll('img').forEach((image) => {
+      const url = forumImageAttributeValue(image.attributes, 'src');
+      const referrerPolicy = normalizeMediaReferrerPolicy(forumImageAttributeValue(image.attributes, 'referrerpolicy'));
+      if (!url || !inlineSizedImageUrls[requestIdentityForImage(url, referrerPolicy)]) return;
+      image.setAttribute('data-forum-inline-sized', 'true');
+      changed = true;
+    });
+    return changed ? root.toString() : html;
+  } catch {
+    return html;
+  }
 }
 
 export function inlineSizedImageSignatureForHtml(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
@@ -75,6 +105,7 @@ function rememberCacheValue<T>(cache: Map<string, T>, key: string, value: T, lim
 export function createTopicImageDeriver(options: TopicImageDeriverOptions = {}): TopicImageDeriver {
   const extractImages = options.extractImageUrls || extractImageUrlsFromHtml;
   const markInlineImage = options.markInlineSizedImageHtml || markInlineSizedImageHtml;
+  const requestIdentityForImage = options.requestIdentityForImage;
   const cacheLimit = Math.max(1, Math.floor(options.cacheLimit || 200));
   const markedHtmlCache = new Map<string, string>();
   const imageUrlsCache = new Map<string, string[]>();
@@ -85,10 +116,12 @@ export function createTopicImageDeriver(options: TopicImageDeriverOptions = {}):
     if (cached !== undefined) {
       return cached;
     }
-    const marked = inlineSizedImageUrlsForHtml(html, inlineSizedImageUrls).reduce(
-      (current, url) => markInlineImage(current, url),
-      html
-    );
+    const marked = requestIdentityForImage
+      ? markInlineSizedImagesByIdentity(html, inlineSizedImageUrls, requestIdentityForImage)
+      : inlineSizedImageUrlsForHtml(html, inlineSizedImageUrls).reduce(
+          (current, url) => markInlineImage(current, url),
+          html
+        );
     rememberCacheValue(markedHtmlCache, cacheKey, marked, cacheLimit);
     return marked;
   };
@@ -104,8 +137,18 @@ export function createTopicImageDeriver(options: TopicImageDeriverOptions = {}):
       rememberCacheValue(imageUrlsCache, marked, urls, cacheLimit);
       return urls;
     },
+    isInlineSizedImage: (url, referrerPolicy, inlineSizedImageUrls) =>
+      Boolean(
+        inlineSizedImageUrls[
+          requestIdentityForImage ? requestIdentityForImage(url, referrerPolicy) : normalizeImageIdentityUrl(url)
+        ]
+      ),
     markInlineSizedImages
   };
+}
+
+function normalizeImageIdentityUrl(url: string) {
+  return url.trim();
 }
 
 export function filterRepliesWithImages(

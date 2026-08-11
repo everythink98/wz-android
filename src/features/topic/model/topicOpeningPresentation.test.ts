@@ -37,6 +37,23 @@ function maxElementDepth(html: string) {
 }
 
 describe('topic opening presentation', () => {
+  it('[REG-TOPIC-078] keeps an element referrer policy on a native opening video', () => {
+    const result = buildTopicOpeningContent({
+      ...topic,
+      contentHtml:
+        '<forum-video src="https://media.example/video.mp4" poster="https://media.example/poster.webp" referrerpolicy="no-referrer"></forum-video>'
+    });
+
+    expect(result.contentItems).toEqual([
+      expect.objectContaining({
+        poster: 'https://media.example/poster.webp',
+        referrerPolicy: 'no-referrer',
+        src: 'https://media.example/video.mp4',
+        type: 'contentVideo'
+      })
+    ]);
+  });
+
   it('[REG-PERF-010] lifts nested opening-post quotes into ordered typed parent rows', () => {
     const result = buildTopicOpeningContent({
       ...topic,

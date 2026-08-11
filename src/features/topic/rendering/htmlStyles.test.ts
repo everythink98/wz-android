@@ -87,4 +87,18 @@ describe('Android HTML rendering styles', () => {
       ).toBe(continuation);
     }
   });
+
+  it('[REG-TOPIC-081] defines one shared article rhythm and semantic attachment card', () => {
+    const theme = createTheme(settings);
+    const { htmlClassesStyles, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+
+    expect(htmlTagsStyles.strong).toMatchObject({ fontWeight: '700' });
+    expect(htmlTagsStyles.hr).toMatchObject({ borderBottomColor: theme.line, borderBottomWidth: 1 });
+    expect(htmlClassesStyles['forum-attachment']).toMatchObject({
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderWidth: 1
+    });
+    expect(htmlClassesStyles['forum-attachment-title']).toMatchObject({ fontWeight: '700' });
+  });
 });

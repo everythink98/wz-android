@@ -105,4 +105,20 @@ describe('render-ready dynamic forum image variants', () => {
     expect(resolved).toContain(`<${INLINE_FORUM_IMAGE_TAG}`);
     expect(resolved.indexOf(urls[0])).toBeLessThan(resolved.indexOf(urls[1]));
   });
+
+  it('[REG-TOPIC-078] resolves duplicate URLs independently by their final Referer identity', () => {
+    const url = 'https://i.imgur.com/shared-policy.png';
+    const row = renderedRow(
+      `<p><img class="embedded_image" src="${url}" referrerpolicy="no-referrer"><img class="embedded_image" src="${url}" referrerpolicy="origin"></p>`
+    );
+    const noReferrerIdentity = `${url}\u0000referrer:none`;
+    const resolved = resolveForumContentRowHtml(row, { [noReferrerIdentity]: true }, (src, policy, identities) =>
+      Boolean(identities[`${src}\u0000referrer:${policy === 'no-referrer' ? 'none' : 'origin'}`])
+    );
+
+    expect(resolved.match(new RegExp(`<${INLINE_FORUM_IMAGE_TAG}\\b`, 'g'))).toHaveLength(1);
+    expect(resolved.match(/<img\b/g)).toHaveLength(1);
+    expect(resolved).toContain('referrerpolicy="no-referrer"');
+    expect(resolved).toContain('referrerpolicy="origin"');
+  });
 });
